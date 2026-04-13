@@ -10,6 +10,7 @@ module;
 #include <QWheelEvent>
 #include <QKeyEvent>
 #include <QFocusEvent>
+#include <QEnterEvent>
 #include <QShowEvent>
 #include <QCloseEvent>
 #include <QRectF>
@@ -31,6 +32,8 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Tool.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
+import Event.Bus;
+import Artifact.Event.Types;
 import InputEvent;
 import Input.Operator;
 import Undo.UndoManager;
@@ -122,6 +125,7 @@ namespace Artifact {
   std::mutex renderMutex_;
   QWidget* widget_ = nullptr;
   QTimer* resizeDebounceTimer_ = nullptr;
+  QTimer* wheelRenderTimer_ = nullptr;
   QSize pendingResizeSize_;
   
   QPointF lastMousePos_;
@@ -154,6 +158,11 @@ namespace Artifact {
     renderer_->recreateSwapChain(widget_);
     renderer_->setViewportSize(static_cast<float>(pendingSize.width()),
                                static_cast<float>(pendingSize.height()));
+    requestRender();
+   });
+   wheelRenderTimer_ = new QTimer(widget_);
+   wheelRenderTimer_->setSingleShot(true);
+   QObject::connect(wheelRenderTimer_, &QTimer::timeout, widget_, [this]() {
     requestRender();
    });
    if (auto* playback = ArtifactPlaybackService::instance()) {
@@ -443,6 +452,11 @@ namespace Artifact {
   QWidget::focusOutEvent(event);
  }
 
+void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
+  QWidget::enterEvent(event);
+  impl_->updateHoverCursor(event->position());
+}
+
  void ArtifactCompositionRenderWidget::leaveEvent(QEvent* event) {
   if (!impl_->isPanningViewport_ && !impl_->isDraggingLayer_) {
    unsetCursor();
@@ -462,7 +476,11 @@ namespace Artifact {
    float zoomFactor = (delta > 0) ? 1.1f : 0.909f;
    QPointF pos = event->position();
    impl_->renderer_->zoomAroundViewportPoint({(float)pos.x(), (float)pos.y()}, zoomFactor);
-   impl_->requestRender();
+   if (impl_->wheelRenderTimer_) {
+    impl_->wheelRenderTimer_->start(16);
+   } else {
+    impl_->requestRender();
+   }
   }
   event->accept();
  }
@@ -475,6 +493,7 @@ namespace Artifact {
    setCursor(Qt::ClosedHandCursor);
    impl_->lastMousePos_ = event->position();
    impl_->isPanningViewport_ = true;
+   grabMouse();
    impl_->requestRender();
    event->accept();
   } else if (event->button() == Qt::RightButton) {
@@ -607,6 +626,9 @@ namespace Artifact {
       t3.setPosition(t0, t3.positionX() - (float)totalDelta.x(), t3.positionY() - (float)totalDelta.y());
       UndoManager::instance()->push(std::move(cmd));
       layer->changed(); // Final notification
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
      }
     }
     impl_->dragAppliedDelta_ = totalDelta;
@@ -617,6 +639,7 @@ namespace Artifact {
   else impl_->updateHoverCursor(event->position());
   impl_->isDraggingLayer_ = false;
   impl_->isPanningViewport_ = false;
+  releaseMouse();
   impl_->dragMode_ = LayerDragMode::None;
   impl_->requestRender();
   event->accept();
@@ -678,6 +701,9 @@ namespace Artifact {
                       impl_->dragStartLayerPos_.y() + static_cast<float>(moveDelta.y()));
        layer->setDirty(LayerDirtyFlag::Transform);
        layer->changed();
+       ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+           LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                             LayerChangedEvent::ChangeType::Modified});
       } else {
        if (std::abs(totalDelta.x()) < 0.01 && std::abs(totalDelta.y()) < 0.01) {
         impl_->dragAppliedDelta_ = totalDelta;
@@ -719,6 +745,9 @@ namespace Artifact {
                     impl_->dragStartScaleY_ * scaleFactorY);
         layer->setDirty(LayerDirtyFlag::Transform);
         layer->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
        }
       }
      }

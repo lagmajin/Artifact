@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 
@@ -15,6 +15,8 @@ module;
 #include <limits>
 #include <memory>
 #include <opencv2/opencv.hpp>
+
+//#include <QImage>
 
 export module Artifact.Render.CompositionViewDrawing;
 

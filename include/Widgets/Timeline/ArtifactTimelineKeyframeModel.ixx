@@ -2,6 +2,7 @@ module;
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 #include <vector>
 #include <functional>
@@ -29,6 +30,10 @@ public:
   explicit ArtifactTimelineKeyframeModel(QObject* parent = nullptr);
   ~ArtifactTimelineKeyframeModel();
 
+  static QStringList transformPropertyPaths();
+  static QString displayLabelForPropertyPath(const QString& propertyPath);
+  static bool isTransformPropertyPath(const QString& propertyPath);
+
   std::vector<KeyFrame> getKeyframesFor(const CompositionID& compId,
                                         const LayerID& layerId,
                                         const QString& propertyPath) const;
@@ -39,6 +44,12 @@ public:
                    const RationalTime& time,
                    const QVariant& value,
                    EasingType easing = EasingType::Linear);
+
+  bool moveKeyframe(const CompositionID& compId,
+                    const LayerID& layerId,
+                    const QString& propertyPath,
+                    const RationalTime& fromTime,
+                    const RationalTime& toTime);
 
   bool removeKeyframe(const CompositionID& compId,
                       const LayerID& layerId,

@@ -2,6 +2,7 @@ module;
 #include <utility>
 
 #include <QWidget>
+#include <QEnterEvent>
 #include <QEvent>
 #include <wobjectdefs.h>
 export module Artifact.Widgets.CompositionRenderWidget;
@@ -25,6 +26,7 @@ export namespace Artifact {
   void showEvent(QShowEvent* event) override;
   void closeEvent(QCloseEvent* event) override;
   void leaveEvent(QEvent* event) override;
+  void enterEvent(QEnterEvent* event) override;
   
   void mouseDoubleClickEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;

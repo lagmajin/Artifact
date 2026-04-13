@@ -14,6 +14,7 @@ module;
 module Artifact.Timeline.ScrubBar;
 
 import std;
+import Diagnostics.Profiler;
 
 import Frame.Position;
 import Widgets.Utils.CSS;
@@ -62,6 +63,10 @@ namespace Artifact
   bool seekLockDuringPlayback_ = true;
   bool isPlaying_ = false;
   bool hover_ = false;
+  bool interactiveSeekingEnabled_ = true;
+  bool cacheRangeVisible_ = false;
+  int cacheRangeStart_ = 0;
+  int cacheRangeEnd_ = 0;
   int fps_ = 30;
   double rulerPixelsPerFrame_ = 0.0;  // 0 = ruler無効
   double rulerHorizontalOffset_ = 0.0;
@@ -176,6 +181,8 @@ namespace Artifact
  {
   if (totalFrames > 0 && impl_->totalFrames_ != totalFrames) {
    impl_->totalFrames_ = totalFrames;
+   impl_->cacheRangeStart_ = std::clamp(impl_->cacheRangeStart_, 0, totalFrames - 1);
+   impl_->cacheRangeEnd_ = std::clamp(impl_->cacheRangeEnd_, 0, totalFrames - 1);
    if (impl_->currentFrame_.framePosition() >= totalFrames) {
     setCurrentFrame(FramePosition(totalFrames - 1));
    }
@@ -221,6 +228,41 @@ namespace Artifact
    return impl_->fps_;
   }
 
+ void ArtifactTimelineScrubBar::setCachedFrameRange(int startFrame, int endFrame, bool visible)
+ {
+  const int maxFrame = std::max(0, impl_->totalFrames_ - 1);
+  const int clampedStart = std::clamp(std::min(startFrame, endFrame), 0, maxFrame);
+  const int clampedEnd = std::clamp(std::max(startFrame, endFrame), 0, maxFrame);
+  const bool changed = impl_->cacheRangeVisible_ != visible ||
+                       impl_->cacheRangeStart_ != clampedStart ||
+                       impl_->cacheRangeEnd_ != clampedEnd;
+  impl_->cacheRangeVisible_ = visible;
+  impl_->cacheRangeStart_ = clampedStart;
+  impl_->cacheRangeEnd_ = clampedEnd;
+  if (changed) {
+   update();
+  }
+ }
+
+ void ArtifactTimelineScrubBar::setInteractiveSeekingEnabled(bool enabled)
+ {
+  if (impl_->interactiveSeekingEnabled_ == enabled) {
+   return;
+  }
+  impl_->interactiveSeekingEnabled_ = enabled;
+  if (!enabled) {
+   impl_->dragging_ = false;
+   impl_->hover_ = false;
+   setCursor(Qt::ArrowCursor);
+  }
+  update();
+ }
+
+ bool ArtifactTimelineScrubBar::interactiveSeekingEnabled() const
+ {
+  return impl_->interactiveSeekingEnabled_;
+ }
+
   void ArtifactTimelineScrubBar::setRulerPixelsPerFrame(double ppf)
  {
   if (std::abs(impl_->rulerPixelsPerFrame_ - ppf) > 0.0001) {
@@ -239,6 +281,8 @@ namespace Artifact
 
  void ArtifactTimelineScrubBar::paintEvent(QPaintEvent* event)
  {
+  ArtifactCore::ProfileTimer _profTimer("ScrubBarPaint",
+                                        ArtifactCore::ProfileCategory::UI);
   Q_UNUSED(event);
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing, true);
@@ -248,6 +292,8 @@ namespace Artifact
   const int w = r.width();
   const int h = r.height();
   const int currentX = impl_->resolveFrameToX(std::max(0, static_cast<int>(impl_->currentFrame_.framePosition())), w);
+  const int cacheStartX = impl_->resolveFrameToX(impl_->cacheRangeStart_, w);
+  const int cacheEndX = impl_->resolveFrameToX(impl_->cacheRangeEnd_, w);
   const int railHalfH = std::max(3, h / 7);
   const int railBottomInset = std::max(3, h / 10);
   const int centerY = h - railBottomInset - railHalfH;
@@ -260,8 +306,9 @@ namespace Artifact
   const QColor bgBottom = theme.background.darker(116);
  const QColor railColor = theme.surface.darker(108);
  const QColor railBorder = theme.border;
- const QColor playheadColor(255, 106, 71);
- const QColor playheadStrong = impl_->dragging_ ? playheadColor.lighter(120) : (impl_->hover_ ? playheadColor.lighter(110) : playheadColor);
+ const QColor cacheBaseColor(84, 198, 120);
+ const QColor cacheStrongColor = cacheBaseColor.lighter(118);
+ const QColor playheadColor(255, 142, 73);
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
   bgGrad.setColorAt(0.0, bgTop);
   bgGrad.setColorAt(1.0, bgBottom);
@@ -328,16 +375,26 @@ namespace Artifact
   p.setBrush(railColor);
   p.drawRoundedRect(railRect, railHalfH, railHalfH);
 
+  if (impl_->cacheRangeVisible_) {
+   const int cacheLeft = std::clamp(std::min(cacheStartX, cacheEndX), railRect.left(), railRect.right());
+   const int cacheRight = std::clamp(std::max(cacheStartX, cacheEndX), railRect.left(), railRect.right());
+   const QRect cacheRect(cacheLeft, railRect.top(), std::max(1, cacheRight - cacheLeft + 1), railRect.height());
+   if (cacheRect.width() > 1) {
+    QLinearGradient cacheGrad(cacheRect.topLeft(), cacheRect.bottomLeft());
+    cacheGrad.setColorAt(0.0, cacheStrongColor.lighter(112));
+    cacheGrad.setColorAt(1.0, cacheBaseColor.darker(125));
+    p.setPen(QPen(cacheBaseColor.lighter(130), 1));
+    p.setBrush(cacheGrad);
+    p.drawRoundedRect(cacheRect.adjusted(0, 0, -1, 0), railHalfH, railHalfH);
+   }
+  }
+
   const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());
-  QRect activeRect = railRect;
-  activeRect.setRight(std::max(activeRect.left(), clampedX));
-  if (activeRect.width() > 1) {
-   QLinearGradient activeGrad(activeRect.topLeft(), activeRect.bottomLeft());
-   activeGrad.setColorAt(0.0, playheadStrong.lighter(118));
-   activeGrad.setColorAt(1.0, playheadStrong.darker(120));
+  if (railRect.width() > 0) {
    p.setPen(Qt::NoPen);
-   p.setBrush(activeGrad);
-   p.drawRoundedRect(activeRect, railHalfH, railHalfH);
+   p.setBrush(QColor(playheadColor.red(), playheadColor.green(), playheadColor.blue(), 180));
+   p.drawRect(QRect(std::clamp(clampedX, railRect.left(), railRect.right()), railRect.top(),
+                    2, railRect.height()));
   }
 
   if (impl_->totalFrames_ > 1 && railRect.width() > 20) {
@@ -362,7 +419,9 @@ namespace Artifact
    const int ss = totalSeconds % 60;
    const int mm = (totalSeconds / 60) % 60;
    const int hh = totalSeconds / 3600;
-  const QString leftLabel = QString("F%1").arg(frame);
+   const QString leftLabel = impl_->cacheRangeVisible_
+       ? QString("Cache %1-%2").arg(impl_->cacheRangeStart_).arg(impl_->cacheRangeEnd_)
+       : QStringLiteral("Cache");
   const QString rightLabel = QString("%1:%2:%3:%4")
    .arg(hh, 2, 10, QChar('0'))
    .arg(mm, 2, 10, QChar('0'))
@@ -377,6 +436,10 @@ namespace Artifact
 
  void ArtifactTimelineScrubBar::mousePressEvent(QMouseEvent* event)
  {
+  if (!impl_->interactiveSeekingEnabled_) {
+   event->ignore();
+   return;
+  }
   if (event->button() == Qt::LeftButton) {
    if (impl_->isPlaying_ && impl_->seekLockDuringPlayback_) {
     event->ignore();
@@ -407,6 +470,10 @@ namespace Artifact
 
  void ArtifactTimelineScrubBar::mouseMoveEvent(QMouseEvent* event)
  {
+  if (!impl_->interactiveSeekingEnabled_) {
+   event->ignore();
+   return;
+  }
   if (impl_->dragging_) {
    int newFrame = impl_->resolveXToFrame(event->pos().x(), width());
    newFrame = qBound(0, newFrame, impl_->totalFrames_ - 1);
@@ -435,6 +502,10 @@ namespace Artifact
 
  void ArtifactTimelineScrubBar::mouseReleaseEvent(QMouseEvent* event)
  {
+  if (!impl_->interactiveSeekingEnabled_) {
+   event->ignore();
+   return;
+  }
   if (event->button() == Qt::LeftButton && impl_->dragging_) {
    impl_->dragging_ = false;
    impl_->hover_ = false;

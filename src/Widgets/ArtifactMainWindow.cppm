@@ -261,6 +261,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget* parent)
  CDockManager::setConfigFlag(CDockManager::UseNativeWindows, true);
  //CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden, true);
  CDockManager::setConfigFlag(CDockManager::FocusHighlighting, false);
+ CDockManager::setConfigFlag(CDockManager::TabCloseButtonIsToolButton, true);
  CDockManager::setConfigFlag(CDockManager::AllTabsHaveCloseButton, true);
 
   QTimer::singleShot(0, this, [this]() {

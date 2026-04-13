@@ -46,6 +46,7 @@ import Artifact.Widget.WorkAreaControlWidget;
 import Artifact.Widgets.LayerPanelWidget;
 import Widget.CurveEditor;
 import Artifact.Timeline.ScrubBar;
+import Artifact.Timeline.KeyframeModel;
 import Artifact.Widgets.Timeline.Label;
 import Artifact.Timeline.NavigatorWidget;
 import Artifact.Timeline.TrackPainterView;
@@ -218,8 +219,9 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
   }
   
   // layer::changed() でレンダラーとタイムライン Track ビューに通知する。
-  // Qt signal projectChanged() は廃止済み。直接 layer->changed() を発火する。
-  emit layer->changed();
+  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+      LayerChangedEvent{compositionId.toString(), layerIdText,
+                        LayerChangedEvent::ChangeType::Modified});
   return true;
 }
 
@@ -640,6 +642,10 @@ bool pasteKeyframesToLayers(
     }
     if (layerChanged) {
       layer->changed();
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{composition->id().toString(),
+                            layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
       changed = true;
     }
   }
@@ -681,8 +687,34 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
 
   if (changed) {
     layer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{composition->id().toString(), layer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
   }
   return changed;
+}
+
+bool moveTimelineKeyframe(const ArtifactCompositionPtr& composition,
+                          const ArtifactAbstractLayerPtr& layer,
+                          const QString& propertyPath,
+                          const qint64 fromFrame,
+                          const qint64 toFrame)
+{
+  if (!composition || !layer || propertyPath.trimmed().isEmpty()) {
+    return false;
+  }
+  if (fromFrame == toFrame) {
+    return false;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const RationalTime fromTime(fromFrame, static_cast<int64_t>(std::llround(fps)));
+  const RationalTime toTime(toFrame, static_cast<int64_t>(std::llround(fps)));
+
+  ArtifactTimelineKeyframeModel model;
+  return model.moveKeyframe(composition->id(), layer->id(), propertyPath,
+                            fromTime, toTime);
 }
 
 bool applyKeyframeEditAtPlayhead(const ArtifactCompositionPtr& composition,
@@ -725,6 +757,9 @@ bool applyKeyframeEditAtPlayhead(const ArtifactCompositionPtr& composition,
 
   if (changed) {
     layer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{composition->id().toString(), layer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
   }
   return changed;
 }
@@ -1469,8 +1504,8 @@ protected:
     painter.setRenderHint(QPainter::Antialiasing, false);
 
     const QRect bounds = rect();
-    const QColor base = palette().color(QPalette::Window);
-    const QColor border = palette().color(QPalette::Mid).darker(120);
+    const QColor base = palette().color(QPalette::Window).lighter(108);
+    const QColor border = palette().color(QPalette::Mid).darker(110);
     const QColor topShade = palette().color(QPalette::Shadow);
 
     painter.fillRect(bounds, base);
@@ -1478,7 +1513,7 @@ protected:
     painter.drawRect(bounds.adjusted(0, 0, -1, -1));
 
     QColor accent = topShade;
-    accent.setAlpha(72);
+    accent.setAlpha(28);
     painter.fillRect(QRect(bounds.left(), bounds.top(), bounds.width(), 1),
                      accent);
   }
@@ -1530,7 +1565,7 @@ protected:
          << QPointF(playheadX + headWidth * 0.5, 1.5)
          << QPointF(playheadX, stemTop);
     p.setBrush(playheadColor);
-    p.setPen(QPen(QColor(18, 18, 18, 180), 1));
+    p.setPen(QPen(QColor(18, 18, 18, 110), 1));
     p.drawPolygon(head);
   }
 
@@ -1618,6 +1653,7 @@ public:
   QLabel *keyframeStatusLabel_ = nullptr;
   QLabel *currentLayerLabel_ = nullptr;
   QLabel *frameSummaryLabel_ = nullptr;
+  QLabel *zoomSummaryLabel_ = nullptr;
   QLabel *selectionSummaryLabel_ = nullptr;
   ArtifactLayerTimelinePanelWrapper *layerTimelinePanel_ = nullptr;
   ArtifactTimelineTrackPainterView *painterTrackView_ = nullptr;
@@ -1793,6 +1829,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto keyframeStatusLabel = new QLabel();
   auto currentLayerLabel = new QLabel();
   auto frameSummaryLabel = new QLabel();
+  auto zoomSummaryLabel = new QLabel();
   auto selectionSummaryLabel = new QLabel();
 
   impl_->searchBar_ = searchBar;
@@ -1800,6 +1837,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->keyframeStatusLabel_ = keyframeStatusLabel;
   impl_->currentLayerLabel_ = currentLayerLabel;
   impl_->frameSummaryLabel_ = frameSummaryLabel;
+  impl_->zoomSummaryLabel_ = zoomSummaryLabel;
   impl_->selectionSummaryLabel_ = selectionSummaryLabel;
   impl_->globalSwitches_ = globalSwitches;
 
@@ -1947,8 +1985,21 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     frameSummaryLabel->setPalette(pal);
   }
   frameSummaryLabel->setText("");
+  zoomSummaryLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  zoomSummaryLabel->setMinimumWidth(92);
+  zoomSummaryLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  {
+    QFont font = zoomSummaryLabel->font();
+    font.setWeight(QFont::DemiBold);
+    zoomSummaryLabel->setFont(font);
+    QPalette pal = zoomSummaryLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(186, 219, 255));
+    zoomSummaryLabel->setPalette(pal);
+  }
+  zoomSummaryLabel->setText(QStringLiteral("Zoom: 100%"));
   currentLayerLabel->setCursor(Qt::PointingHandCursor);
   frameSummaryLabel->setCursor(Qt::PointingHandCursor);
+  zoomSummaryLabel->setCursor(Qt::PointingHandCursor);
   selectionSummaryLabel->setCursor(Qt::PointingHandCursor);
   selectionSummaryLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   selectionSummaryLabel->setMinimumWidth(220);
@@ -1977,6 +2028,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->addWidget(keyframeStatusLabel);
   searchBarLayout->addWidget(currentLayerLabel);
   searchBarLayout->addWidget(frameSummaryLabel);
+  searchBarLayout->addWidget(zoomSummaryLabel);
   searchBarLayout->addWidget(selectionSummaryLabel);
   searchBarLayout->addWidget(globalSwitches);
   searchBarLayout->addStretch(1);
@@ -1991,7 +2043,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setStretch(8, 0);
   searchBarLayout->setStretch(9, 0);
   searchBarLayout->setStretch(10, 0);
-  searchBarLayout->setStretch(11, 1);
+  searchBarLayout->setStretch(11, 0);
+  searchBarLayout->setStretch(12, 1);
 
   // legacy direct signal connection disabled — prefer EventBus
   if (false) QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
@@ -2086,6 +2139,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       },
       headerWidget);
   frameSummaryLabel->installEventFilter(frameSummaryClickFilter);
+
+  auto *zoomSummaryClickFilter = new TimelineStatusClickFilter(
+      zoomSummaryLabel, [this]() {
+        if (!impl_ || !impl_->painterTrackView_) {
+          return;
+        }
+        syncTimelineViewportFromNavigator();
+        impl_->painterTrackView_->setFocus(Qt::MouseFocusReason);
+      },
+      headerWidget);
+  zoomSummaryLabel->installEventFilter(zoomSummaryClickFilter);
 
   auto *searchStatusClickFilter = new SearchStatusClickFilter(
       searchStatusLabel, [this]() { jumpToSearchHit(+1); },
@@ -2217,8 +2281,24 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   workAreaWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   scrubBar->setTotalFrames(kDefaultTimelineFrames);
   scrubBar->setCurrentFrame(FramePosition(0));
+  scrubBar->setInteractiveSeekingEnabled(false);
+  scrubBar->setToolTip(QStringLiteral("RAM preview cache range"));
   scrubBar->setVisible(true);
   scrubBar->update();
+
+  if (auto *playback = ArtifactPlaybackService::instance()) {
+    scrubBar->setCachedFrameRange(static_cast<int>(playback->ramPreviewRange().start()),
+                                  static_cast<int>(playback->ramPreviewRange().end()),
+                                  playback->isRamPreviewEnabled());
+    QObject::connect(playback, &ArtifactPlaybackService::ramPreviewStateChanged, this,
+                     [scrubBar](bool enabled, const FrameRange &range) {
+                       scrubBar->setCachedFrameRange(static_cast<int>(range.start()),
+                                                    static_cast<int>(range.end()),
+                                                    enabled);
+                     });
+  } else {
+    scrubBar->setCachedFrameRange(0, 0, false);
+  }
 
   auto updateZoom = [this]() { syncTimelineViewportFromNavigator(); };
 
@@ -2315,6 +2395,74 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
              const double durationFrame) {
         applyTimelineLayerTrim(impl_->compositionId_, clipId, startFrame,
                                durationFrame);
+      });
+  QObject::connect(
+      painterTrackView, &ArtifactTimelineTrackPainterView::keyframeMoveRequested,
+      this,
+      [this](const LayerID &layerId, const QString &propertyPath,
+             const qint64 fromFrame, const qint64 toFrame) {
+        const auto composition = safeCompositionLookup(impl_->compositionId_);
+        if (!composition || layerId.isNil() || propertyPath.trimmed().isEmpty()) {
+          return;
+        }
+        const auto layer = composition->layerById(layerId);
+        if (!layer) {
+          return;
+        }
+        if (moveTimelineKeyframe(composition, layer, propertyPath, fromFrame,
+                                 toFrame)) {
+          refreshTracks();
+          updateKeyframeState();
+          Q_EMIT timelineDebugMessage(
+              QStringLiteral("Moved keyframe %1 -> %2 for %3")
+                  .arg(fromFrame)
+                  .arg(toFrame)
+                  .arg(ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
+                      propertyPath)));
+        }
+      });
+  QObject::connect(
+      painterTrackView, &ArtifactTimelineTrackPainterView::zoomLevelChanged, this,
+      [this](double zoomPercent) {
+        if (!impl_ || !impl_->painterTrackView_) {
+          return;
+        }
+
+        const double duration = std::max(1.0, impl_->painterTrackView_->durationFrames());
+        const double zoom = std::max(0.001, impl_->painterTrackView_->pixelsPerFrame());
+        const double offset = std::max(0.0, impl_->painterTrackView_->horizontalOffset());
+        const int viewW = std::max(1, impl_->painterTrackView_->width());
+
+        if (impl_->scrubBar_) {
+          impl_->scrubBar_->setRulerPixelsPerFrame(zoom);
+          impl_->scrubBar_->setRulerHorizontalOffset(offset);
+        }
+
+        if (impl_->navigator_) {
+          const double visibleStart = offset / (duration * zoom);
+          const double visibleEnd = (offset + static_cast<double>(viewW)) / (duration * zoom);
+          const QSignalBlocker blocker(impl_->navigator_);
+          impl_->navigator_->setStart(static_cast<float>(std::clamp(visibleStart, 0.0, 1.0)));
+          impl_->navigator_->setEnd(static_cast<float>(
+              std::clamp(std::max(visibleStart, visibleEnd), 0.0, 1.0)));
+        }
+
+        if (impl_->zoomSummaryLabel_) {
+          impl_->zoomSummaryLabel_->setText(
+              QStringLiteral("Zoom: %1%")
+                  .arg(QString::number(std::clamp(zoomPercent, 1.0, 6400.0), 'f', 0)));
+        }
+
+        syncPlayheadOverlay();
+        Q_EMIT zoomLevelChanged(zoomPercent);
+      });
+  QObject::connect(
+      painterTrackView, &ArtifactTimelineTrackPainterView::trackRowHeightChanged, this,
+      [this](int rowHeight) {
+        if (!impl_ || !impl_->layerTimelinePanel_) {
+          return;
+        }
+        impl_->layerTimelinePanel_->setRowHeight(std::max(16, rowHeight));
       });
   QObject::connect(painterTrackView, &ArtifactTimelineTrackPainterView::timelineDebugMessage, this, &ArtifactTimelineWidget::timelineDebugMessage);
   QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::graphEditorToggled,
@@ -2508,7 +2656,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   });
   timeNavigatorWidget->installEventFilter(headerSeekFilter);
   workAreaWidget->installEventFilter(headerSeekFilter);
-  scrubBar->installEventFilter(headerSeekFilter); // Install on scrub bar
 
   auto *headerScrollFilter =
       new HeaderScrollFilter(
@@ -2519,7 +2666,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           rightPanel);
   rightPanel->installEventFilter(headerScrollFilter);
   timeNavigatorWidget->installEventFilter(headerScrollFilter);
-  scrubBar->installEventFilter(headerScrollFilter);
   workAreaWidget->installEventFilter(headerScrollFilter);
 
   if (painterTrackView) {
@@ -2528,31 +2674,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     painterTrackView->installEventFilter(viewResizeFilter);
   }
 
-  QObject::connect(scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
-                   [this](const auto &frame) {
-                     impl_->currentFrame_ = static_cast<double>(frame.framePosition());
-                     if (impl_->curveEditor_) {
-                       impl_->curveEditor_->setCurrentFrame(frame.framePosition());
-                     }
-                     // Emit debug message for any playhead change (playback, scroll, scrub)
-                     Q_EMIT timelineDebugMessage(QStringLiteral("Playhead: %1").arg(frame.framePosition()));
-                     if (impl_->painterTrackView_) {
-                       impl_->painterTrackView_->setCurrentFrame(
-                           static_cast<double>(frame.framePosition()));
-                     }
-                     syncPlayheadOverlay();
-                     updateSelectionState();
-                     updateKeyframeState();
-                     if (auto *app = ArtifactApplicationManager::instance()) {
-                       if (auto *ctx = app->activeContextService()) {
-                         ctx->seekToFrame(frame.framePosition());
-                         return;
-                       }
-                     }
-                     if (auto *playback = ArtifactPlaybackService::instance()) {
-                       playback->goToFrame(frame);
-                     }
-                   });
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<FrameChangedEvent>(
           [this, scrubBar](const FrameChangedEvent &event) {
@@ -2986,7 +3107,7 @@ void ArtifactTimelineWidget::paintEvent(QPaintEvent *event) {
   painter.drawRect(bounds.adjusted(0, 0, -1, -1));
 
   QColor accent = topShade;
-  accent.setAlpha(90);
+  accent.setAlpha(32);
   painter.fillRect(QRect(bounds.left(), bounds.top(), bounds.width(), 1),
                    accent);
 }
@@ -3601,9 +3722,6 @@ void ArtifactTimelineWidget::addKeyframeAtPlayhead()
     changed |= applyKeyframeEditAtFrame(composition, layer, frame, false);
   }
   if (changed) {
-    if (auto* svc = ArtifactProjectService::instance()) {
-      svc->projectChanged();
-    }
     updateKeyframeState();
     Q_EMIT timelineDebugMessage(
         QStringLiteral("Added keyframe at F%1 for %2 layer(s)")
@@ -3645,9 +3763,6 @@ void ArtifactTimelineWidget::removeKeyframeAtPlayhead()
     changed |= applyKeyframeEditAtFrame(composition, layer, frame, true);
   }
   if (changed) {
-    if (auto* svc = ArtifactProjectService::instance()) {
-      svc->projectChanged();
-    }
     updateKeyframeState();
     Q_EMIT timelineDebugMessage(
         QStringLiteral("Removed keyframe at F%1 for %2 layer(s)")

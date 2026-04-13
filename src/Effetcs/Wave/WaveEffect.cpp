@@ -1,8 +1,11 @@
 module;
 #include <QList>
 #include <QVariant>
+#include <QVector>
 #include <cmath>
 #include <opencv2/core/mat.hpp>
+#include <QtConcurrent>
+#include <numeric>
 
 #include <iostream>
 #include <vector>
@@ -64,11 +67,16 @@ void WaveEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     int wType = waveType_;
     int orient = orientation_;
     
-    // ピクセルごとの処理
-    for (int y = 0; y < height; y++) {
+    // ピクセルごとの処理 — 行単位で並列化
+    std::vector<cv::Vec4f> rowResults(width * height);
+
+    QVector<int> rows(height);
+    std::iota(rows.begin(), rows.end(), 0);
+
+    QtConcurrent::blockingMap(rows, [&](int y) {
         for (int x = 0; x < width; x++) {
             float offset = 0.0f;
-            
+
             if (orient == 0) { // Horizontal
                 if (wType == 0) { // Sine
                     offset = amp * std::sin(2.0f * CV_PI * freq * x + phase);
@@ -82,7 +90,7 @@ void WaveEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
                     offset = amp * std::cos(2.0f * CV_PI * freq * y + phase);
                 }
             }
-            
+
             // シフト後の座標を計算
             int srcX, srcY;
             if (orient == 0) {
@@ -92,14 +100,21 @@ void WaveEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
                 srcX = x;
                 srcY = y + static_cast<int>(offset);
             }
-            
+
             // 境界チェック
             srcX = std::max(0, std::min(width - 1, srcX));
             srcY = std::max(0, std::min(height - 1, srcY));
-            
+
             // ピクセルをコピー
             cv::Vec4f pixel = srcMat.at<cv::Vec4f>(srcY, srcX);
-            dstMat.at<cv::Vec4f>(y, x) = pixel;
+            rowResults[y * width + x] = pixel;
+        }
+    });
+
+    // 結果をdstMatにコピー
+    for (int y = 0; y < height; y++) {
+        for (int x = 0; x < width; x++) {
+            dstMat.at<cv::Vec4f>(y, x) = rowResults[y * width + x];
         }
     }
     

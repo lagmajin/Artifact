@@ -8,6 +8,7 @@
 #include <DeviceContext.h>
 #include <RefCntAutoPtr.hpp>
 #include <memory>
+#include <functional>
 #include <QImage>
 #include <QTransform>
 #include <QMatrix4x4>
@@ -74,6 +75,10 @@ public:
 
  QImage readbackToImage() const;
 
+ // Async readback: returns immediately, calls callback when ready
+ using ReadbackCallback = std::function<void(const QImage&)>;
+ void readbackToImageAsync(ReadbackCallback callback) const;
+
  void setClearColor(const FloatColor& color);
  FloatColor getClearColor() const;
  void setViewportSize(float w, float h);
@@ -103,6 +108,7 @@ public:
  void drawRectOutline(float x, float y, float w, float h, const FloatColor& color);
  void drawRectOutline(Detail::float2 pos, Detail::float2 size, const FloatColor& color);
  void drawSolidLine(Detail::float2 start, Detail::float2 end, const FloatColor& color, float thickness);
+ void drawPolyline(const std::vector<Detail::float2>& points, const FloatColor& color, float thickness);
  void drawQuadLocal(Detail::float2 p0, Detail::float2 p1, Detail::float2 p2, Detail::float2 p3, const FloatColor& color);
  void drawSolidRect(float x, float y, float w, float h);
  void drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity = 1.0f);
@@ -140,6 +146,9 @@ public:
  void drawGizmoRing(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness = 1.0f);
  void drawGizmoTorus(Detail::float3 center, Detail::float3 normal, float majorRadius, float minorRadius, const FloatColor& color);
  void drawGizmoCube(Detail::float3 center, float halfExtent, const FloatColor& color);
+ // Submit all accumulated 3D gizmo geometry in one batch draw call.
+ // Call once after all drawGizmo*/draw3D* calls for a frame.
+ void flushGizmo3D();
   void draw3DLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness = 1.0f);
   void draw3DArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size = 1.0f);
   void draw3DCircle(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness = 1.0f);

@@ -164,6 +164,10 @@ public:
     RefCntAutoPtr<IBuffer> gizmoLineVertexBuffer_;
     Uint32 gizmoLineVertexCapacity_ = 0;
 
+    // CPU-side accumulation buffers — flushed once per flushGizmoGeometry() call
+    std::vector<GizmoLineVertex> pendingLineVerts_;
+    std::vector<GizmoLineVertex> pendingTriVerts_;
+
     QMatrix4x4 viewMatrix_;
     QMatrix4x4 projMatrix_;
 
@@ -469,54 +473,83 @@ public:
     }
 
     void drawGizmoGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount, const PSOAndSRB& psoAndSrb,
-                           PRIMITIVE_TOPOLOGY primitiveTopology)
+                           PRIMITIVE_TOPOLOGY /*primitiveTopology*/)
     {
-        (void)primitiveTopology;
-        if (!hasRenderTarget() || !ctx_ || !psoAndSrb.pPSO || !psoAndSrb.pSRB ||
-            !gizmoLineVertexBuffer_ || !gizmoLineConstantBuffer_ || vertexCount < 2) {
+        if (!psoAndSrb.pPSO || !psoAndSrb.pSRB || vertexCount < 2) {
+            return;
+        }
+        // Accumulate into CPU-side vector; GPU submission deferred to flushGizmoGeometry()
+        const bool isTriangle = gizmo3DTrianglePsoAndSrb_.pPSO &&
+                                (psoAndSrb.pPSO == gizmo3DTrianglePsoAndSrb_.pPSO);
+        auto& pending = isTriangle ? pendingTriVerts_ : pendingLineVerts_;
+        pending.insert(pending.end(), vertices, vertices + vertexCount);
+    }
+
+    void flushGizmoGeometry()
+    {
+        if (pendingLineVerts_.empty() && pendingTriVerts_.empty()) {
+            return;
+        }
+        if (!hasRenderTarget() || !ctx_ || !gizmoLineConstantBuffer_) {
+            pendingLineVerts_.clear();
+            pendingTriVerts_.clear();
             return;
         }
 
-        ensureGizmoLineCapacity(vertexCount);
-        if (!gizmoLineVertexBuffer_) {
-            return;
-        }
-
-        void* mapped = nullptr;
-        ctx_->MapBuffer(gizmoLineVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
-        if (!mapped) {
-            return;
-        }
-        std::memcpy(mapped, vertices, sizeof(GizmoLineVertex) * vertexCount);
-        ctx_->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
-
+        // Upload constants once for both batches (same view/proj throughout frame)
         updateGizmoLineConstants();
-        mapped = nullptr;
+        void* mapped = nullptr;
         ctx_->MapBuffer(gizmoLineConstantBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
         if (!mapped) {
+            pendingLineVerts_.clear();
+            pendingTriVerts_.clear();
             return;
         }
         std::memcpy(mapped, &gizmoLineConstants_, sizeof(GizmoLineConstants));
         ctx_->UnmapBuffer(gizmoLineConstantBuffer_, MAP_WRITE);
 
-        auto* rtv = currentRTV();
-        ctx_->SetRenderTargets(1, &rtv, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-        ctx_->SetPipelineState(psoAndSrb.pPSO);
+        auto submitBatch = [&](std::vector<GizmoLineVertex>& verts, const PSOAndSRB& psoAndSrb) {
+            if (verts.empty() || !psoAndSrb.pPSO || !psoAndSrb.pSRB) {
+                verts.clear();
+                return;
+            }
+            const auto vertexCount = static_cast<Uint32>(verts.size());
+            ensureGizmoLineCapacity(vertexCount);
+            if (!gizmoLineVertexBuffer_) {
+                verts.clear();
+                return;
+            }
+            void* vmapped = nullptr;
+            ctx_->MapBuffer(gizmoLineVertexBuffer_, MAP_WRITE, MAP_FLAG_DISCARD, vmapped);
+            if (!vmapped) {
+                verts.clear();
+                return;
+            }
+            std::memcpy(vmapped, verts.data(), sizeof(GizmoLineVertex) * vertexCount);
+            ctx_->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
 
-        IBuffer* buffers[] = { gizmoLineVertexBuffer_ };
-        Uint64 offsets[] = { 0 };
-        ctx_->SetVertexBuffers(0, 1, buffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
-                               SET_VERTEX_BUFFERS_FLAG_RESET);
+            auto* rtv = currentRTV();
+            ctx_->SetRenderTargets(1, &rtv, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            ctx_->SetPipelineState(psoAndSrb.pPSO);
 
-        if (auto* cbVar = psoAndSrb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
-            cbVar->Set(gizmoLineConstantBuffer_);
-        }
-        ctx_->CommitShaderResources(psoAndSrb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            IBuffer* buffers[] = { gizmoLineVertexBuffer_ };
+            Uint64 offsets[] = { 0 };
+            ctx_->SetVertexBuffers(0, 1, buffers, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                   SET_VERTEX_BUFFERS_FLAG_RESET);
+            if (auto* cbVar = psoAndSrb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+                cbVar->Set(gizmoLineConstantBuffer_);
+            }
+            ctx_->CommitShaderResources(psoAndSrb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-        DrawAttribs drawAttrs;
-        drawAttrs.NumVertices = vertexCount;
-        drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
-        ctx_->Draw(drawAttrs);
+            DrawAttribs drawAttrs;
+            drawAttrs.NumVertices = vertexCount;
+            drawAttrs.Flags = DRAW_FLAG_NONE;
+            ctx_->Draw(drawAttrs);
+            verts.clear();
+        };
+
+        submitBatch(pendingLineVerts_, gizmo3DPsoAndSrb_);
+        submitBatch(pendingTriVerts_, gizmo3DTrianglePsoAndSrb_);
     }
 
     void drawGizmoLineGeometry(const GizmoLineVertex* vertices, Uint32 vertexCount)
@@ -777,7 +810,7 @@ public:
 
         DrawAttribs drawAttrs;
         drawAttrs.NumVertices = 4;
-        drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+        drawAttrs.Flags = DRAW_FLAG_NONE;
         ctx_->Draw(drawAttrs);
     }
 };
@@ -835,6 +868,8 @@ void PrimitiveRenderer3D::setOverrideRTV(ITextureView* rtv)
 void PrimitiveRenderer3D::destroy()
 {
     impl_->textureCache_.clear();
+    impl_->pendingLineVerts_.clear();
+    impl_->pendingTriVerts_.clear();
     impl_->defaultTextureSRV_ = nullptr;
     impl_->defaultTexture_ = nullptr;
     impl_->sampler_ = nullptr;
@@ -938,6 +973,11 @@ void PrimitiveRenderer3D::draw3DCube(const QVector3D& center, float halfExtent,
                                      const FloatColor& color)
 {
     impl_->drawGizmoCube(center, halfExtent, color);
+}
+
+void PrimitiveRenderer3D::flushGizmo3D()
+{
+    impl_->flushGizmoGeometry();
 }
 
 } // namespace Artifact

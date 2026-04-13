@@ -2,6 +2,8 @@ module;
 #include <utility>
 
 #include <memory>
+#include <functional>
+#include <atomic>
 #include <wobjectdefs.h>
 #include <QString>
 #include <QStringList>
@@ -56,6 +58,18 @@ export namespace Artifact {
    void loadFromFile(const QString& fullpath);
    ArtifactProjectExporterResult saveToFile(const QString& fullpath);
    ArtifactProjectExporterResult saveIncremental(const QString& fullpath);
+
+   // Async versions (non-blocking, with progress callback)
+   using ProjectProgressFn = std::function<void(int progress, int total, const QString& phase)>;
+   using ProjectLoadFinishedFn = std::function<void(ArtifactProjectImporterResult)>;
+   using ProjectSaveFinishedFn = std::function<void(ArtifactProjectExporterResult)>;
+
+   void loadFromFileAsync(const QString& fullpath,
+                          ProjectLoadFinishedFn onFinished,
+                          ProjectProgressFn onProgress = nullptr);
+   void saveToFileAsync(const QString& fullpath,
+                        ProjectSaveFinishedFn onFinished,
+                        ProjectProgressFn onProgress = nullptr);
    QString currentProjectPath() const;
   QString currentProjectAssetsPath() const;
   QStringList copyFilesToProjectAssets(const QStringList& sourcePaths);

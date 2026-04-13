@@ -117,6 +117,8 @@ export namespace Artifact
   void clipResized(const QString& clipId, double startFrame, double durationFrame) W_SIGNAL(clipResized, clipId, startFrame, durationFrame);
   void keyframeMoveRequested(const LayerID& layerId, const QString& propertyPath, qint64 fromFrame, qint64 toFrame) W_SIGNAL(keyframeMoveRequested, layerId, propertyPath, fromFrame, toFrame);
   void keyframeSelectionChanged(int selectedCount) W_SIGNAL(keyframeSelectionChanged, selectedCount);
+  void zoomLevelChanged(double zoomPercent) W_SIGNAL(zoomLevelChanged, zoomPercent);
+  void trackRowHeightChanged(int rowHeight) W_SIGNAL(trackRowHeightChanged, rowHeight);
   void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
  };
 }

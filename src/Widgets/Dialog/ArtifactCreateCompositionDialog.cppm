@@ -17,6 +17,10 @@ module;
 #include <QComboBox>
 #include <QPushButton>
 #include <QToolButton>
+#include <QIcon>
+#include <QPixmap>
+#include <QPainter>
+#include <QPen>
 #include <QSignalBlocker>
 #include <QGuiApplication>
 #include <QScreen>
@@ -116,6 +120,26 @@ QString makeUniqueSequentialName(QString baseName, const QSet<QString>& occupied
 QString uniqueCompositionName(const QString& baseName)
 {
  return makeUniqueSequentialName(baseName, occupiedCompositionNames());
+}
+
+void updateColorButtonPreview(QPushButton* button, const QColor& color)
+{
+ if (!button) {
+  return;
+ }
+ QPixmap pix(button->size().isEmpty() ? QSize(40, 24) : button->size());
+ pix.fill(Qt::transparent);
+ {
+  QPainter painter(&pix);
+  painter.setRenderHint(QPainter::Antialiasing);
+  painter.setPen(QPen(QColor(85, 85, 85), 1));
+  painter.setBrush(color);
+  painter.drawRoundedRect(pix.rect().adjusted(1, 1, -2, -2), 3, 3);
+ }
+ button->setIcon(QIcon(pix));
+ button->setIconSize(pix.size());
+ button->setToolTip(QStringLiteral("Background Color: %1").arg(color.name(QColor::HexArgb)));
+ button->setText(QString());
 }
 
 } // namespace
@@ -221,6 +245,7 @@ QString uniqueCompositionName(const QString& baseName)
 
   impl_->bgColorButton = new QPushButton("Pick Color");
   impl_->bgColorButton->setFixedSize(100, 24);
+  updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
   
   formLayout->addRow("Preset:", impl_->resolutionCombobox_);
   formLayout->addRow("Resolution:", sizeWidget);
@@ -313,6 +338,7 @@ QString uniqueCompositionName(const QString& baseName)
       QColor c = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
       if (c.isValid()) {
           impl_->bgColor = c;
+          updateColorButtonPreview(impl_->bgColorButton, c);
       }
   });
 

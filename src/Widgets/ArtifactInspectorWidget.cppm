@@ -97,6 +97,7 @@ import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Wave;
 import Artifact.Effect.Spherize;
+import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
@@ -290,6 +291,9 @@ constexpr int kInspectorRackMarginB = 6;
    QScrollArea* effectsScrollArea = nullptr;
    QWidget* effectsTabWidget = nullptr;
    QLabel* effectsStateLabel = nullptr;
+   QLabel* effectParametersHintLabel = nullptr;
+   ArtifactPropertyWidget* effectPropertyWidget = nullptr;
+   QString focusedEffectId_;
 
    struct EffectRack {
        QListWidget* listWidget = nullptr;
@@ -341,6 +345,7 @@ constexpr int kInspectorRackMarginB = 6;
    void updateLayerInfo();
    void updateEffectsList();
    void updatePropertiesForEffect(const QString& effectId);
+   void syncEffectPropertyWidget();
    void handleAddEffectClicked(int rackIndex);
    void handleAddGeneratorEffect(int rackIndex);
    void handleRemoveEffectClicked(int rackIndex);
@@ -402,8 +407,90 @@ void ArtifactInspectorWidget::Impl::refreshNow()
 
 void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(const QString& effectId)
 {
-    // Now handled entirely by ArtifactPropertyWidget when a layer is set.
-    // Kept here for compatibility until we completely remove old effect list coupling.
+    focusedEffectId_ = effectId.trimmed();
+    syncEffectPropertyWidget();
+}
+
+void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget()
+{
+  if (!effectPropertyWidget) {
+    return;
+  }
+
+  auto projectService = ArtifactProjectService::instance();
+  if (!projectService || currentCompositionId_.isNil() || currentLayerId_.isNil()) {
+    effectPropertyWidget->clear();
+    effectPropertyWidget->setVisible(false);
+    if (effectParametersHintLabel) {
+      effectParametersHintLabel->setText(
+          QStringLiteral("Select a layer and effect to edit parameters."));
+      effectParametersHintLabel->setVisible(true);
+    }
+    return;
+  }
+
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) {
+    effectPropertyWidget->clear();
+    effectPropertyWidget->setVisible(false);
+    if (effectParametersHintLabel) {
+      effectParametersHintLabel->setText(
+          QStringLiteral("Select a layer and effect to edit parameters."));
+      effectParametersHintLabel->setVisible(true);
+    }
+    return;
+  }
+
+  auto comp = findResult.ptr.lock();
+  if (!comp) {
+    effectPropertyWidget->clear();
+    effectPropertyWidget->setVisible(false);
+    if (effectParametersHintLabel) {
+      effectParametersHintLabel->setText(
+          QStringLiteral("Select a layer and effect to edit parameters."));
+      effectParametersHintLabel->setVisible(true);
+    }
+    return;
+  }
+
+  auto layer = comp->layerById(currentLayerId_);
+  if (!layer) {
+    effectPropertyWidget->clear();
+    effectPropertyWidget->setVisible(false);
+    if (effectParametersHintLabel) {
+      effectParametersHintLabel->setText(
+          QStringLiteral("Select a layer and effect to edit parameters."));
+      effectParametersHintLabel->setVisible(true);
+    }
+    return;
+  }
+
+  bool effectExists = false;
+  if (!focusedEffectId_.trimmed().isEmpty()) {
+    for (const auto& effect : layer->getEffects()) {
+      if (effect && effect->effectID().toQString() == focusedEffectId_) {
+        effectExists = true;
+        break;
+      }
+    }
+  }
+
+  if (!effectExists) {
+    focusedEffectId_.clear();
+  }
+
+  effectPropertyWidget->setLayer(layer);
+  effectPropertyWidget->setFocusedEffectId(focusedEffectId_);
+
+  const bool hasFocus = !focusedEffectId_.trimmed().isEmpty();
+  effectPropertyWidget->setVisible(hasFocus);
+  if (effectParametersHintLabel) {
+    effectParametersHintLabel->setText(hasFocus
+                                           ? QStringLiteral("Editing effect parameters.")
+                                           : QStringLiteral(
+                                                 "Select an effect to edit its parameters."));
+    effectParametersHintLabel->setVisible(!hasFocus);
+  }
 }
 
 void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString& text, bool visible)
@@ -690,6 +777,8 @@ void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID& id)
 {
  qDebug() << "[Inspector] Layer selected:" << id.toString();
  currentLayerId_ = id;
+ focusedEffectId_.clear();
+ syncEffectPropertyWidget();
  scheduleRefresh(LayerNoteDirty | LayerInfoDirty | EffectsDirty);
 }
 
@@ -1024,6 +1113,16 @@ void ArtifactInspectorWidget::Impl::setNoProjectState()
   lastRackSignatures_.fill(QString());
   refreshMask_ = 0;
   refreshQueued_ = false;
+  focusedEffectId_.clear();
+  if (effectPropertyWidget) {
+    effectPropertyWidget->clear();
+    effectPropertyWidget->setVisible(false);
+  }
+  if (effectParametersHintLabel) {
+    effectParametersHintLabel->setText(
+        QStringLiteral("Select a layer and effect to edit parameters."));
+    effectParametersHintLabel->setVisible(true);
+  }
   setEffectRackEnabled(false);
   setEffectsStateText("Create or open a project to manage effects.", true);
 }
@@ -1059,6 +1158,16 @@ void ArtifactInspectorWidget::Impl::setNoLayerState()
   lastRackSignatures_.fill(QString());
   refreshMask_ = 0;
   refreshQueued_ = false;
+  focusedEffectId_.clear();
+  if (effectPropertyWidget) {
+    effectPropertyWidget->clear();
+    effectPropertyWidget->setVisible(false);
+  }
+  if (effectParametersHintLabel) {
+    effectParametersHintLabel->setText(
+        QStringLiteral("Select an effect to edit its parameters."));
+    effectParametersHintLabel->setVisible(true);
+  }
   setEffectRackEnabled(false);
   setEffectsStateText("Select a layer to manage effects.", true);
   refreshRackButtons();
@@ -1206,6 +1315,28 @@ void ArtifactInspectorWidget::Impl::updateEffectsList()
       setEffectsStateText(QString(), false);
   }
   refreshRackButtons();
+
+  if (!focusedEffectId_.trimmed().isEmpty()) {
+    for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
+      auto* list = racks[rackIndex].listWidget;
+      if (!list) {
+        continue;
+      }
+      for (int row = 0; row < list->count(); ++row) {
+        auto* item = list->item(row);
+        if (!item) {
+          continue;
+        }
+        if (item->data(Qt::UserRole).toString().trimmed() == focusedEffectId_) {
+          const QSignalBlocker blocker(list);
+          list->setCurrentItem(item);
+          break;
+        }
+      }
+    }
+  }
+
+  syncEffectPropertyWidget();
  }
 
  void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex)
@@ -1466,6 +1597,16 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
   applyInspectorLabelPalette(impl_->effectsStateLabel, false);
   effectsLayout->addWidget(impl_->effectsStateLabel);
 
+  impl_->effectParametersHintLabel = new QLabel("Select an effect to edit its parameters.");
+  impl_->effectParametersHintLabel->setWordWrap(true);
+  applyInspectorLabelPalette(impl_->effectParametersHintLabel, false);
+  effectsLayout->addWidget(impl_->effectParametersHintLabel);
+
+  impl_->effectPropertyWidget = new ArtifactPropertyWidget();
+  impl_->effectPropertyWidget->setVisible(false);
+  impl_->effectPropertyWidget->setMinimumHeight(220);
+  effectsLayout->addWidget(impl_->effectPropertyWidget);
+
   QString rackNames[5] = {
       "1. Generator",
       "2. Geometry Transform",
@@ -1560,21 +1701,23 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex)
               impl_->showRackContextMenu(i, item, lw->viewport()->mapToGlobal(pos));
           });
       }
-      QObject::connect(impl_->racks[i].listWidget, &QListWidget::currentItemChanged, this, [this](QListWidgetItem*, QListWidgetItem*) {
-          QString focusedEffectId;
-          for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
-              auto* list = impl_->racks[rackIndex].listWidget;
-              if (!list) continue;
-              auto* item = list->currentItem();
-              if (!item) continue;
-              const QString id = item->data(Qt::UserRole).toString().trimmed();
-              if (!id.isEmpty()) {
-                  focusedEffectId = id;
-                  break;
-              }
-          }
-          impl_->refreshRackButtons();
-      });
+      QObject::connect(impl_->racks[i].listWidget, &QListWidget::currentItemChanged,
+                       this, [this](QListWidgetItem*, QListWidgetItem*) {
+                         QString focusedEffectId;
+                         for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
+                           auto* list = impl_->racks[rackIndex].listWidget;
+                           if (!list) continue;
+                           auto* item = list->currentItem();
+                           if (!item) continue;
+                           const QString id = item->data(Qt::UserRole).toString().trimmed();
+                           if (!id.isEmpty()) {
+                             focusedEffectId = id;
+                             break;
+                           }
+                         }
+                         impl_->updatePropertiesForEffect(focusedEffectId);
+                         impl_->refreshRackButtons();
+                       });
       QObject::connect(impl_->racks[i].listWidget, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item) {
           if (!item) return;
           const QString effectId = item->data(Qt::UserRole).toString();

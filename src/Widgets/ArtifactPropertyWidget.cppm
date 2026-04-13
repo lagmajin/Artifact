@@ -718,6 +718,10 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
   impl_->updateValuesTimer->setSingleShot(true);
   QObject::connect(impl_->updateValuesTimer, &QTimer::timeout, this,
                    [this]() { impl_->updatePropertyValues(); });
+  QObject::connect(UndoManager::instance(), &UndoManager::historyChanged, this, [this]() {
+    impl_->updatePropertyValues();
+  });
+
   QObject::connect(this, &QWidget::customContextMenuRequested, this,
                    [this](const QPoint &pos) {
                      QMenu menu(this);
@@ -1063,17 +1067,25 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
   }
 
-  addRowsFromProperties(
-      summaryGroup, summaryLayout, layerSummaryProperties, filterText,
-      [this](const QString &name, const QVariant &value) {
-        if (currentLayer) {
-          ScopedPropertyEditGuard guard(localPropertyEditDepth);
-          currentLayer->setLayerPropertyValue(name, value);
-          notifyProjectIfLayerNameChanged(name);
-          notifyProjectIfTimelinePropertyChanged(name);
-        }
-      },
-      &hasSummaryProperties, &propertyEditors, &summaryRows);
+    addRowsFromProperties(
+        summaryGroup, summaryLayout, layerSummaryProperties, filterText,
+        [this](const QString &name, const QVariant &value) {
+          if (currentLayer) {
+            ScopedPropertyEditGuard guard(localPropertyEditDepth);
+            const float oldOpacity = currentLayer->opacity();
+            currentLayer->setLayerPropertyValue(name, value);
+            if (name.compare(QStringLiteral("layer.opacity"), Qt::CaseInsensitive) == 0) {
+              const float newOpacity = value.toFloat();
+              if (oldOpacity != newOpacity) {
+                auto* cmd = new ChangeLayerOpacityCommand(currentLayer, oldOpacity, newOpacity);
+                UndoManager::instance()->push(std::unique_ptr<ChangeLayerOpacityCommand>(cmd));
+              }
+            }
+            notifyProjectIfLayerNameChanged(name);
+            notifyProjectIfTimelinePropertyChanged(name);
+          }
+        },
+        &hasSummaryProperties, &propertyEditors, &summaryRows);
 
   const auto effects = currentLayer->getEffects();
   const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
@@ -1140,7 +1152,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         [this](const QString &name, const QVariant &value) {
           if (currentLayer) {
             ScopedPropertyEditGuard guard(localPropertyEditDepth);
+            const float oldOpacity = currentLayer->opacity();
             currentLayer->setLayerPropertyValue(name, value);
+            if (name.compare(QStringLiteral("layer.opacity"), Qt::CaseInsensitive) == 0) {
+              const float newOpacity = value.toFloat();
+              if (oldOpacity != newOpacity) {
+                auto* cmd = new ChangeLayerOpacityCommand(currentLayer, oldOpacity, newOpacity);
+                UndoManager::instance()->push(std::unique_ptr<ChangeLayerOpacityCommand>(cmd));
+              }
+            }
             notifyProjectIfLayerNameChanged(name);
             notifyProjectIfTimelinePropertyChanged(name);
           }

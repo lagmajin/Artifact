@@ -1,6 +1,7 @@
 module;
 #include <QAction>
 #include <QActionGroup>
+#include <QClipboard>
 #include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
@@ -19,6 +20,7 @@ module;
 #include <QFileInfo>
 #include <QFocusEvent>
 #include <QFontMetrics>
+#include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QHideEvent>
@@ -45,8 +47,8 @@ module;
 #include <QWheelEvent>
 #include <algorithm>
 #include <array>
-#include <functional>
 #include <deque>
+#include <functional>
 #include <utility>
 #include <wobjectimpl.h>
 
@@ -76,6 +78,9 @@ import Application.AppSettings;
 import Widgets.Utils.CSS;
 import Event.Bus;
 import Artifact.Event.Types;
+import Artifact.Widgets.ProfilerOverlay;
+import Artifact.Widgets.ProfilerPanel;
+import Diagnostics.Profiler;
 
 namespace Artifact {
 
@@ -152,11 +157,11 @@ public:
   bool eventFilter(QObject *obj, QEvent *event) override {
     if (event->type() == QEvent::KeyPress) {
       auto *ke = static_cast<QKeyEvent *>(event);
-      if (ke->key() == Qt::Key_Escape ||
-          (ke->key() == Qt::Key_Return &&
-           (ke->modifiers() & Qt::ControlModifier)) ||
-          (ke->key() == Qt::Key_Enter &&
-           (ke->modifiers() & Qt::ControlModifier))) {
+      if (isCancelKey(ke)) {
+        cancel();
+        return true;
+      }
+      if (isCommitKey(ke)) {
         commit();
         return true;
       }
@@ -202,7 +207,12 @@ private:
     if (layer_->text().toQString() != editor_->toPlainText()) {
       layer_->setText(
           ArtifactCore::UniString::fromQString(editor_->toPlainText()));
-      Q_EMIT layer_->changed();
+      if (auto *comp = static_cast<ArtifactAbstractComposition *>(
+              layer_->composition())) {
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+      }
       if (ctrl_)
         ctrl_->renderOneFrame();
     }
@@ -210,6 +220,33 @@ private:
     editor_->deleteLater();
     editor_ = nullptr;
   }
+
+  void cancel() {
+    if (!editor_) {
+      return;
+    }
+    editor_->hide();
+    editor_->deleteLater();
+    editor_ = nullptr;
+  }
+
+  bool isCommitKey(QKeyEvent *ke) const {
+    return ke && ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) &&
+                  (ke->modifiers() & Qt::ControlModifier));
+  }
+
+  bool isCancelKey(QKeyEvent *ke) const {
+    return ke && ke->key() == Qt::Key_Escape;
+  }
+
+  void finishInlineEdit(bool commitChanges) {
+    if (commitChanges) {
+      commit();
+    } else {
+      cancel();
+    }
+  }
+
   QPlainTextEdit *editor_;
   std::shared_ptr<ArtifactTextLayer> layer_;
   CompositionRenderController *ctrl_;
@@ -383,7 +420,8 @@ public:
       asset.originalPath = path;
       asset.layerName = fi.completeBaseName();
       asset.svgShapeFile = isSvgShapeFile(path);
-      asset.importedPath = resolveImportedAssetPathForSource(path, importedPaths);
+      asset.importedPath =
+          resolveImportedAssetPathForSource(path, importedPaths);
       asset.fileType = asset.svgShapeFile ? ArtifactCore::FileType::Image
                                           : detector.detect(path);
       pendingDroppedAssets_.push_back(asset);
@@ -392,9 +430,8 @@ public:
     if (!pendingDropTimer_) {
       pendingDropTimer_ = new QTimer(this);
       pendingDropTimer_->setSingleShot(true);
-      QObject::connect(pendingDropTimer_, &QTimer::timeout, this, [this]() {
-        processPendingDroppedAssets();
-      });
+      QObject::connect(pendingDropTimer_, &QTimer::timeout, this,
+                       [this]() { processPendingDroppedAssets(); });
     }
     if (!pendingDropTimer_->isActive()) {
       pendingDropTimer_->start(0);
@@ -614,7 +651,8 @@ protected:
         resizeDebounceTimer_->stop();
         resizeDebounceTimer_->start(160);
       }
-      controller_->renderOneFrame();
+      // Render is deferred to the debounce timer — no immediate
+      // renderOneFrame() to avoid redundant work during continuous resize.
     }
   }
 
@@ -663,9 +701,11 @@ protected:
       if (!layerId.isNil()) {
         if (const auto comp = currentComposition()) {
           if (auto layer = comp->layerById(layerId)) {
-            editTextLayerInline(this, layer, controller_);
-            event->accept();
-            return;
+            if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+              editTextLayerInline(this, layer, controller_);
+              event->accept();
+              return;
+            }
           }
         }
       } else {
@@ -764,7 +804,7 @@ protected:
         // event-loop tick
         if (!pendingGizmoDragRender_) {
           pendingGizmoDragRender_ = true;
-          QTimer::singleShot(0, this, [this]() {
+          QTimer::singleShot(16, this, [this]() {
             pendingGizmoDragRender_ = false;
             if (controller_)
               controller_->renderOneFrame();
@@ -891,13 +931,13 @@ protected:
       return;
     }
     if (!event->isAutoRepeat() &&
-        (event->key() == Qt::Key_W || event->key() == Qt::Key_R ||
-         event->key() == Qt::Key_S)) {
+        (event->key() == Qt::Key_W || event->key() == Qt::Key_E ||
+         event->key() == Qt::Key_R)) {
       if (controller_) {
         if (auto *gizmo = controller_->gizmo()) {
           if (event->key() == Qt::Key_W) {
             gizmo->setMode(TransformGizmo::Mode::Move);
-          } else if (event->key() == Qt::Key_R) {
+          } else if (event->key() == Qt::Key_E) {
             gizmo->setMode(TransformGizmo::Mode::Rotate);
           } else {
             gizmo->setMode(TransformGizmo::Mode::Scale);
@@ -1145,6 +1185,9 @@ private:
       layer->setPosition3D(centeredPos);
     }
     layer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
   }
 
   QVector<TemporarySoloState> temporarySoloStates_;
@@ -1594,9 +1637,7 @@ public:
     update();
   }
 
-  ArtifactCore::ViewOrientationHotspot orientation() const {
-    return hotspot_;
-  }
+  ArtifactCore::ViewOrientationHotspot orientation() const { return hotspot_; }
 
   void setEnabledState(bool enabled) {
     setEnabled(enabled);
@@ -1810,6 +1851,8 @@ public:
   bool toolLabelSyncQueued_ = false;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+  ProfilerOverlayWidget *profilerOverlay_ = nullptr;
+  ProfilerPanelWidget *profilerPanel_ = nullptr;
 
   // 外部 signal から即時に widget を書き換えず、イベントループの次 tick
   // にまとめて反映する。
@@ -1913,6 +1956,15 @@ public:
         viewOrientationWidget_->raise();
       }
     }
+    if (profilerOverlay_) {
+      const QRect vg = compositionView_->geometry();
+      const QSize ps = profilerOverlay_->size();
+      profilerOverlay_->move(vg.left() + 8, vg.top() + 8);
+      if (profilerOverlay_->isVisible()) {
+        profilerOverlay_->raise();
+      }
+      Q_UNUSED(ps);
+    }
   }
 
   void toggleImmersiveMode(ArtifactCompositionEditor *owner, bool immersive) {
@@ -1982,7 +2034,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       new CompositionOverlayWidget(impl_->compositionView_, this);
   impl_->compositionView_->setOverlayWidget(impl_->overlayView_);
   impl_->overlayView_->hide();
-  impl_->viewOrientationWidget_ = new ViewOrientationWidget(impl_->overlayView_);
+  impl_->viewOrientationWidget_ =
+      new ViewOrientationWidget(impl_->overlayView_);
   impl_->viewOrientationWidget_->setActivatedCallback(
       [this](ArtifactCore::ViewOrientationHotspot hotspot) {
         if (impl_->renderController_) {
@@ -2106,9 +2159,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   const auto applyPivotPreset = [this](const bool useCenter) {
     auto *app = ArtifactApplicationManager::instance();
     auto *selection = app ? app->layerSelectionManager() : nullptr;
+    const auto comp = resolvePreferredComposition();
     const auto layer =
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
-    if (!layer || !impl_ || !impl_->renderController_) {
+    if (!layer || !impl_ || !impl_->renderController_ || !comp) {
       return;
     }
 
@@ -2139,7 +2193,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                     t3d.positionY() + static_cast<float>(compensation.y()));
     layer->setDirty(LayerDirtyFlag::Transform);
     layer->addDirtyReason(LayerDirtyReason::UserEdit);
-    Q_EMIT layer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
     impl_->renderController_->renderOneFrame();
   };
   const auto addPivotAction = [&](const QString &text, bool useCenter,
@@ -2531,6 +2587,56 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
             }
             setComposition(nullptr);
           }));
+
+  // --- Profiler overlay (Ctrl+Shift+P to toggle) ---
+  impl_->profilerOverlay_ = new ProfilerOverlayWidget(this);
+  impl_->profilerOverlay_->hide();
+
+  auto *profilerShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), this);
+  QObject::connect(profilerShortcut, &QShortcut::activated, this, [this]() {
+    if (!impl_ || !impl_->profilerOverlay_)
+      return;
+    const bool willShow = !impl_->profilerOverlay_->isVisible();
+    ArtifactCore::Profiler::instance().setEnabled(willShow);
+    impl_->profilerOverlay_->setVisible(willShow);
+    if (willShow) {
+      impl_->syncOverlayGeometry(this);
+    }
+  });
+
+  // Ctrl+Shift+C: copy diagnostic report to clipboard
+  auto *profilerCopyShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this);
+  QObject::connect(profilerCopyShortcut, &QShortcut::activated, this, [this]() {
+    if (!ArtifactCore::Profiler::instance().isEnabled())
+      return;
+    const std::string report =
+        ArtifactCore::Profiler::instance().generateDiagnosticReport(60);
+    QGuiApplication::clipboard()->setText(QString::fromStdString(report));
+  });
+
+  // --- Profiler panel (Ctrl+Shift+D to toggle) ---
+  impl_->profilerPanel_ = new ProfilerPanelWidget(nullptr);
+  impl_->profilerPanel_->hide();
+
+  auto *profilerPanelShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D), this);
+  QObject::connect(
+      profilerPanelShortcut, &QShortcut::activated, this, [this]() {
+        if (!impl_ || !impl_->profilerPanel_)
+          return;
+        const bool willShow = !impl_->profilerPanel_->isVisible();
+        ArtifactCore::Profiler::instance().setEnabled(
+            willShow || impl_->profilerOverlay_->isVisible());
+        impl_->profilerPanel_->setVisible(willShow);
+        if (willShow) {
+          // Position panel to the right of the composite editor
+          const QRect geom = frameGeometry();
+          impl_->profilerPanel_->move(geom.right() + 8, geom.top());
+          impl_->profilerPanel_->raise();
+        }
+      });
 }
 
 void ArtifactCompositionEditor::resizeEvent(QResizeEvent *event) {

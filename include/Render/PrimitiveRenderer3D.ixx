@@ -70,6 +70,10 @@ public:
   void draw3DCube(const QVector3D &center, float halfExtent,
                   const FloatColor &color);
 
+  // Submit all accumulated 3D gizmo geometry to the GPU in one batch.
+  // Must be called once after all draw3D*/drawGizmo* calls for the frame.
+  void flushGizmo3D();
+
   // ImGuizmo 対応 追加関数
   void draw3DCircleArc(const QVector3D &center, const QVector3D &normal,
                        float radius, float startAngle, float endAngle,

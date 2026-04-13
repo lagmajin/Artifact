@@ -72,7 +72,7 @@ void artifactSetShowPropertyResetButtons(bool show);
 
 class ArtifactFloatPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
-    explicit ArtifactFloatPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    explicit ArtifactFloatPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr, bool showSlider = true);
     QVariant value() const override;
     void setValueFromVariant(const QVariant& value) override;
     bool supportsScrub() const override;
@@ -97,7 +97,7 @@ private:
 
 class ArtifactIntPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
-    explicit ArtifactIntPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    explicit ArtifactIntPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr, bool showSlider = true);
     QVariant value() const override;
     void setValueFromVariant(const QVariant& value) override;
     bool supportsScrub() const override;

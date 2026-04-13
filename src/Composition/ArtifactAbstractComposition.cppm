@@ -26,6 +26,8 @@ import Composition.Settings;
 import Artifact.Composition.Result;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Factory;
+import Artifact.Event.Types;
+import Event.Bus;
 //import Playback.Clock;
 
 namespace Artifact {
@@ -127,8 +129,10 @@ namespace Artifact {
   result.success = true;
   result.error = AppendLayerToCompositionError::None;
   result.message = QString("Layer added successfully");
-  
-  Q_EMIT owner_->changed();
+
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      owner_->id().toString(), id.toString(),
+      LayerChangedEvent::ChangeType::Created});
   return result;
   }
 
@@ -153,7 +157,9 @@ namespace Artifact {
    }
   }
   layerMultiIndex_.clear();
-  Q_EMIT owner_->changed();
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      owner_->id().toString(), QString{},
+      LayerChangedEvent::ChangeType::Removed});
  }
 
 void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
@@ -168,7 +174,9 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     layerMultiIndex_.removeById(id);
     if (removedLayer) {
      removedLayer->setComposition(nullptr);
-     Q_EMIT owner_->changed();
+     ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+         owner_->id().toString(), id.toString(),
+         LayerChangedEvent::ChangeType::Removed});
     }
 }
 
@@ -237,7 +245,9 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       recalculateFrameRange();
       result.success = true;
       result.error = AppendLayerToCompositionError::None;
-      Q_EMIT owner_->changed();
+      ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+          owner_->id().toString(), layer->id().toString(),
+          LayerChangedEvent::ChangeType::Created});
       return result;
   }
 
@@ -248,7 +258,9 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, newIndex);
-      Q_EMIT owner_->changed();
+      ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+          owner_->id().toString(), id.toString(),
+          LayerChangedEvent::ChangeType::Modified});
   }
 
   void ArtifactAbstractComposition::Impl::bringToFront(const LayerID& id)
@@ -258,7 +270,9 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, layerMultiIndex_.all().size() - 1);
-      Q_EMIT owner_->changed();
+      ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+          owner_->id().toString(), id.toString(),
+          LayerChangedEvent::ChangeType::Modified});
   }
 
   void ArtifactAbstractComposition::Impl::sendToBack(const LayerID& id)
@@ -268,7 +282,9 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, 0);
-      Q_EMIT owner_->changed();
+      ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+          owner_->id().toString(), id.toString(),
+          LayerChangedEvent::ChangeType::Modified});
   }
 
  bool ArtifactAbstractComposition::Impl::hasVideo() const

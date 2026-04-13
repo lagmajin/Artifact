@@ -43,6 +43,15 @@ module;
 #include <algorithm>
 #include <wobjectimpl.h>
 
+// Async waveform thumbnail
+#include <QtConcurrent>
+#include <QFutureWatcher>
+#include <QCache>
+
+// Audio waveform includes
+#include <QAudioFormat>
+#include <QAudioDecoder>
+
 module Widgets.AssetBrowser;
 
 import Widgets.Utils.CSS;
@@ -53,6 +62,9 @@ import AssetMenuModel;
 import AssetDirectoryModel;
 import Utils.String.UniString;
 import File.TypeDetector;
+import Artifact.Audio.Waveform;
+import Audio.Segment;
+import Audio.SimpleWav;
 
 namespace Artifact {
 
@@ -261,6 +273,18 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
   QIcon defaultAudioIcon_;
   QIcon defaultFontIcon_;
   QSet<QString> unusedAssetPaths_;
+
+  // Async waveform thumbnail generation
+  struct PendingWaveJob {
+    QString filePath;
+    QFutureWatcher<QIcon>* watcher = nullptr;
+  };
+  QHash<QString, PendingWaveJob> pendingWaveJobs_;
+  QSet<QString> failedWavePaths_;  // Don't retry failed loads
+
+  // Optimized: partial audio loading for thumbnails
+  // Only load first N seconds for waveform thumbnail
+  static constexpr int kMaxThumbnailAudioSeconds = 30;
  public:
   Impl();
   ~Impl();
@@ -297,6 +321,9 @@ QButtonGroup* filterButtonGroup_ = nullptr;
    bool isVideoFile(const QString& fileName) const;
    bool isAudioFile(const QString& fileName) const;
    bool isFontFile(const QString& fileName) const;
+   QIcon generateAudioWaveformThumbnail(const QString& audioFilePath);
+   ArtifactCore::AudioSegment loadAudioFile(const QString& audioFilePath);
+   void startAsyncWaveformGeneration(const QString& audioFilePath);
    ArtifactCore::FileType fileType(const QString& fileName) const;
   bool isImportedAssetPath(const QString& filePath) const;
   bool isUnusedAssetPath(const QString& filePath) const;
@@ -542,8 +569,14 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
       return defaultVideoIcon_;
   }
 
-  // For audio files, use a default audio icon
+  // For audio files, generate waveform thumbnail
   if (isAudioFile(fileInfo.fileName())) {
+   QIcon waveIcon = generateAudioWaveformThumbnail(filePath);
+   if (!waveIcon.isNull()) {
+    thumbnailCache_[filePath] = waveIcon;
+    return waveIcon;
+   }
+   // Fallback to default audio icon
    thumbnailCache_[filePath] = defaultAudioIcon_;
    return defaultAudioIcon_;
   }
@@ -1568,4 +1601,165 @@ if (!item.isFolder) {
   contextMenu.exec(impl_->fileView_->mapToGlobal(pos));
  }
 
+// ─────────────────────────────────────────────
+// Audio waveform thumbnail generation
+// ─────────────────────────────────────────────
+
+ArtifactCore::AudioSegment ArtifactAssetBrowser::Impl::loadAudioFile(const QString& audioFilePath)
+{
+    ArtifactCore::AudioSegment segment;
+
+    // Try to load via SimpleWav
+    ArtifactCore::SimpleWav wav;
+    if (!wav.loadFromFile(audioFilePath)) {
+        qWarning() << "[AssetBrowser] Failed to load audio file:" << audioFilePath;
+        return segment;
+    }
+
+    // Convert to AudioSegment - OPTIMIZED: only load first N seconds
+    const int maxFrames = kMaxThumbnailAudioSeconds * wav.sampleRate();
+    const auto fullData = wav.getAudioData();
+    const int framesToLoad = std::min(fullData.size(), maxFrames);
+
+    segment.sampleRate = wav.sampleRate();
+    segment.layout = ArtifactCore::AudioChannelLayout::Mono;
+    segment.channelData.resize(1);
+    segment.channelData[0] = fullData.mid(0, framesToLoad);
+    segment.startFrame = 0;
+
+    return segment;
 }
+
+QIcon ArtifactAssetBrowser::Impl::generateAudioWaveformThumbnail(const QString& audioFilePath)
+{
+    // Check if we already have a pending job for this file
+    if (pendingWaveJobs_.contains(audioFilePath)) {
+        return defaultAudioIcon_;  // Return placeholder while generating
+    }
+
+    // Check if this file previously failed
+    if (failedWavePaths_.contains(audioFilePath)) {
+        return defaultAudioIcon_;
+    }
+
+    // Check cache first
+    if (thumbnailCache_.contains(audioFilePath)) {
+        return thumbnailCache_[audioFilePath];
+    }
+
+    // Start async generation
+    startAsyncWaveformGeneration(audioFilePath);
+
+    // Return placeholder while generating
+    return defaultAudioIcon_;
+}
+
+void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& audioFilePath)
+{
+    if (pendingWaveJobs_.contains(audioFilePath)) {
+        return;  // Already pending
+    }
+
+    auto* watcher = new QFutureWatcher<QIcon>();
+
+    // Connect finished signal
+    QObject::connect(watcher, &QFutureWatcher<QIcon>::finished, this, [this, watcher, audioFilePath]() {
+        const QIcon icon = watcher->result();
+        if (!icon.isNull()) {
+            thumbnailCache_[audioFilePath] = icon;
+            pendingWaveJobs_.remove(audioFilePath);
+
+            // Trigger view update for this item
+            if (fileView_) {
+                fileView_->update();
+            }
+        } else {
+            // Mark as failed to avoid retry
+            failedWavePaths_.insert(audioFilePath);
+            pendingWaveJobs_.remove(audioFilePath);
+        }
+        watcher->deleteLater();
+    });
+
+    // Capture thumbnail size for the worker
+    const QSize thumbSize = thumbnailSize_;
+
+    // Run waveform generation in background thread
+    QFuture<QIcon> future = QtConcurrent::run([audioFilePath, thumbSize]() -> QIcon {
+        try {
+            // Load audio (in background thread)
+            ArtifactCore::SimpleWav wav;
+            if (!wav.loadFromFile(audioFilePath)) {
+                return QIcon();
+            }
+
+            // Downsample for thumbnail (max 30 seconds)
+            const int maxFrames = 30 * wav.sampleRate();
+            const auto fullData = wav.getAudioData();
+            const int framesToLoad = std::min(fullData.size(), maxFrames);
+
+            ArtifactCore::AudioSegment segment;
+            segment.sampleRate = wav.sampleRate();
+            segment.layout = ArtifactCore::AudioChannelLayout::Mono;
+            segment.channelData.resize(1);
+            segment.channelData[0] = fullData.mid(0, framesToLoad);
+            segment.startFrame = 0;
+
+            if (segment.channelData[0].isEmpty()) {
+                return QIcon();
+            }
+
+            // Generate waveform data
+            AudioWaveformGenerator generator;
+            const int thumbWidth = thumbSize.width() * 2;
+            WaveformData waveData = generator.generate(segment, thumbWidth);
+
+            if (waveData.peaks.isEmpty()) {
+                return QIcon();
+            }
+
+            // Render to pixmap
+            QPixmap pixmap(thumbSize);
+            pixmap.fill(Qt::transparent);
+
+            QPainter painter(&pixmap);
+            painter.setRenderHint(QPainter::Antialiasing);
+
+            const int w = pixmap.width();
+            const int h = pixmap.height();
+            const int centerY = h / 2;
+            const float padding = 2.0f;
+
+            painter.fillRect(0, 0, w, h, QColor(30, 30, 40, 200));
+            painter.setPen(QColor(80, 80, 100));
+            painter.drawLine(QLineF(padding, centerY, w - padding, centerY));
+
+            const float maxAmplitude = std::max(std::abs(waveData.minSample), std::abs(waveData.maxSample));
+            const float scale = (centerY - padding) / (maxAmplitude > 0.001f ? maxAmplitude : 1.0f);
+
+            if (!waveData.rms.isEmpty()) {
+                painter.setPen(QPen(QColor(60, 100, 160, 120), 1.0f));
+                for (int i = 0; i < waveData.rms.size() && i < w; ++i) {
+                    const float rmsVal = waveData.rms[i] * scale;
+                    painter.drawLine(QLineF(i, centerY - rmsVal, i, centerY + rmsVal));
+                }
+            }
+
+            painter.setPen(QPen(QColor(100, 160, 230, 200), 1.2f));
+            for (int i = 0; i < waveData.peaks.size() && i < w; ++i) {
+                const float peakVal = waveData.peaks[i] * scale;
+                painter.drawLine(QLineF(i, centerY - peakVal, i, centerY + peakVal));
+            }
+
+            painter.end();
+            return QIcon(pixmap);
+        } catch (...) {
+            return QIcon();
+        }
+    });
+
+    watcher->setFuture(future);
+    pendingWaveJobs_[audioFilePath] = {audioFilePath, watcher};
+}
+
+} // namespace Artifact

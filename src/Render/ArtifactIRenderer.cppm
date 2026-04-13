@@ -10,9 +10,11 @@ module;
 #include <cmath>
 #include <algorithm>
 #include <mutex>
+#include <functional>
 #include <QImage>
 #include <QElapsedTimer>
 #include <QDebug>
+#include <QtConcurrent>
 #include <QTransform>
 #include <QMatrix4x4>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
@@ -42,6 +44,8 @@ import Artifact.Render.PrimitiveRenderer3D;
 import Artifact.Render.Config;
 import Graphics.ParticleRenderer;
 import Graphics.GPUcomputeContext;
+import Artifact.Render.DiligentImmediateSubmitter;
+import Artifact.Render.RenderCommandBuffer;
 
 namespace Artifact
 {
@@ -67,6 +71,9 @@ namespace Artifact
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
+
+  mutable DiligentImmediateSubmitter submitter_;
+  mutable RenderCommandBuffer cmdBuf_;
 
   RefCntAutoPtr<ITexture> m_layerRT;
   Uint32 m_layerRTWidth = 0;
@@ -162,6 +169,13 @@ namespace Artifact
   { primitiveRenderer_.drawRectOutlineLocal(pos.x, pos.y, size.x, size.y, color); }
   void drawSolidLine(float2 start, float2 end, const FloatColor& color, float thickness)
   { primitiveRenderer_.drawThickLineLocal(start, end, thickness, color); }
+  void drawPolyline(const std::vector<Detail::float2>& points, const FloatColor& color, float thickness)
+  {
+    if (points.size() < 2) return;
+    for (size_t i = 0; i < points.size() - 1; ++i) {
+      primitiveRenderer_.drawThickLineLocal(points[i], points[i+1], thickness, color);
+    }
+  }
   void drawQuadLocal(float2 p0, float2 p1, float2 p2, float2 p3, const FloatColor& color)
   { primitiveRenderer_.drawQuadLocal(p0, p1, p2, p3, color); }
   void drawSolidRect(float2 pos, float2 size, const FloatColor& color, float opacity)
@@ -298,6 +312,9 @@ namespace Artifact
   primitiveRenderer_.setPSOs(shaderManager_);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(),
                                 deviceManager_.swapChain());
+  submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
+  submitter_.setPSOs(shaderManager_);
+  primitiveRenderer_.setCommandBuffer(&cmdBuf_);
   qInfo() << "[ArtifactIRenderer][Init] primitiveRenderer2D ms=" << timer.elapsed();
 
   timer.restart();
@@ -327,6 +344,9 @@ namespace Artifact
 
   primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   primitiveRenderer_.setPSOs(shaderManager_);
+  submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
+  submitter_.setPSOs(shaderManager_);
+  primitiveRenderer_.setCommandBuffer(&cmdBuf_);
 
   primitiveRenderer3D_.createBuffers(deviceManager_.device());
   primitiveRenderer3D_.setPSOs(shaderManager_);
@@ -438,6 +458,9 @@ namespace Artifact
    m_readbackFenceValue = 0;
   }
 
+  // Flush any pending draw packets before reading back.
+  submitter_.submit(cmdBuf_, ctx);
+
   // Transition both textures to the required states and issue the copy.
   // Unbind the render target first so Vulkan doesn't complain about copying
   // from a texture that is still attached as an RTV.
@@ -501,6 +524,152 @@ namespace Artifact
   return result;
  }
 
+ void ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
+ {
+  if (!deviceManager_.device() || !deviceManager_.immediateContext()) {
+    if (callback) callback(QImage());
+    return;
+  }
+
+  auto* ctx = deviceManager_.immediateContext();
+  auto* device = deviceManager_.device();
+
+  // Get swap chain back buffer info
+  RefCntAutoPtr<ITexture> srcTex;
+  Uint32 srcWidth = 0, srcHeight = 0;
+
+  if (auto* sc = deviceManager_.swapChain()) {
+   if (auto* rtv = sc->GetCurrentBackBufferRTV()) {
+    srcTex = rtv->GetTexture();
+    if (srcTex) {
+     const auto& desc = srcTex->GetDesc();
+     srcWidth  = desc.Width;
+     srcHeight = desc.Height;
+    }
+   }
+  }
+
+  if (!srcTex || srcWidth == 0 || srcHeight == 0) {
+    if (callback) callback(QImage());
+    return;
+  }
+
+  const TEXTURE_FORMAT srcFormat = srcTex->GetDesc().Format;
+  const bool useFloatReadback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
+  const TEXTURE_FORMAT stagingFormat =
+      useFloatReadback ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM;
+
+  // Create/recreate staging texture if needed
+  RefCntAutoPtr<ITexture> stagingTex;
+  {
+    TextureDesc stagDesc;
+    stagDesc.Name           = "AsyncReadbackStaging";
+    stagDesc.Type           = RESOURCE_DIM_TEX_2D;
+    stagDesc.Width          = srcWidth;
+    stagDesc.Height         = srcHeight;
+    stagDesc.MipLevels      = 1;
+    stagDesc.Format         = stagingFormat;
+    stagDesc.Usage          = USAGE_STAGING;
+    stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
+    stagDesc.BindFlags      = BIND_NONE;
+    device->CreateTexture(stagDesc, nullptr, &stagingTex);
+    if (!stagingTex) {
+      if (callback) callback(QImage());
+      return;
+    }
+  }
+
+  // Create/reuse fence
+  RefCntAutoPtr<IFence> fence;
+  {
+    FenceDesc fDesc;
+    fDesc.Name = "AsyncReadbackFence";
+    fDesc.Type = FENCE_TYPE_GENERAL;
+    device->CreateFence(fDesc, &fence);
+    if (!fence) {
+      if (callback) callback(QImage());
+      return;
+    }
+  }
+
+  // Unbind render target, then copy
+  ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
+
+  CopyTextureAttribs copyAttribs;
+  copyAttribs.pSrcTexture              = srcTex;
+  copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  copyAttribs.pDstTexture              = stagingTex;
+  copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  ctx->CopyTexture(copyAttribs);
+
+  // Signal fence and flush (non-blocking)
+  const Uint64 waitValue = 1;
+  ctx->EnqueueSignal(fence, waitValue);
+  ctx->Flush();
+
+  // Capture data for background thread
+  const Uint32 w = srcWidth;
+  const Uint32 h = srcHeight;
+  const bool floatReadback = useFloatReadback;
+
+  // Run fence wait + pixel conversion in background thread
+  QtConcurrent::run([fence, stagingTex, ctx, w, h, floatReadback, cb = std::move(callback)]() mutable {
+    // Wait for GPU copy to complete
+    fence->Wait(waitValue);
+
+    // Map staging texture
+    MappedTextureSubresource mapped = {};
+    ctx->MapTextureSubresource(stagingTex, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
+    if (!mapped.pData) {
+      if (cb) cb(QImage());
+      return;
+    }
+
+    // Convert to QImage
+    QImage result(static_cast<int>(w), static_cast<int>(h), QImage::Format_RGBA8888);
+    const size_t copyRowBytes = static_cast<size_t>(w) * 4u;
+    const size_t sourceRowBytes =
+        floatReadback ? static_cast<size_t>(w) * 8u : copyRowBytes;
+
+    if (mapped.Stride < sourceRowBytes) {
+      ctx->UnmapTextureSubresource(stagingTex, 0, 0);
+      if (cb) cb(QImage());
+      return;
+    }
+
+    if (!floatReadback) {
+      const auto* srcRow = static_cast<const uint8_t*>(mapped.pData);
+      for (Uint32 row = 0; row < h; ++row) {
+        std::memcpy(result.scanLine(static_cast<int>(row)), srcRow, copyRowBytes);
+        srcRow += mapped.Stride;
+      }
+    } else {
+      const auto* srcRow = static_cast<const uint16_t*>(mapped.pData);
+      for (Uint32 row = 0; row < h; ++row) {
+        auto* dst = result.scanLine(static_cast<int>(row));
+        const auto* srcHalf = srcRow;
+        for (Uint32 x = 0; x < w; ++x) {
+          const float r = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 0]), 0.0f, 1.0f);
+          const float g = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]), 0.0f, 1.0f);
+          const float b = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]), 0.0f, 1.0f);
+          const float a = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]), 0.0f, 1.0f);
+          dst[x * 4 + 0] = static_cast<uint8_t>(std::pow(r, 1.0f / 2.2f) * 255.0f + 0.5f);
+          dst[x * 4 + 1] = static_cast<uint8_t>(std::pow(g, 1.0f / 2.2f) * 255.0f + 0.5f);
+          dst[x * 4 + 2] = static_cast<uint8_t>(std::pow(b, 1.0f / 2.2f) * 255.0f + 0.5f);
+          dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+        }
+        srcRow = reinterpret_cast<const uint16_t*>(
+            reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
+      }
+    }
+
+    ctx->UnmapTextureSubresource(stagingTex, 0, 0);
+
+    // Invoke callback on the caller's thread (or thread pool)
+    if (cb) cb(result);
+  });
+ }
+
  // ---------------------------------------------------------------------------
  // createSwapChain / recreateSwapChain
  // ---------------------------------------------------------------------------
@@ -545,6 +714,9 @@ namespace Artifact
    primitiveRenderer_.setPSOs(shaderManager_);
    primitiveRenderer3D_.createBuffers(deviceManager_.device());
    primitiveRenderer3D_.setPSOs(shaderManager_);
+   submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
+   submitter_.setPSOs(shaderManager_);
+   primitiveRenderer_.setCommandBuffer(&cmdBuf_);
    m_initialized = true;
   }
 
@@ -630,7 +802,7 @@ namespace Artifact
 
  void ArtifactIRenderer::Impl::clear()
  {
-  primitiveRenderer_.clear(clearColor_);
+  primitiveRenderer_.clear(deviceManager_.immediateContext(), clearColor_);
  }
 
  void ArtifactIRenderer::Impl::setClearColor(const FloatColor& color)
@@ -663,7 +835,9 @@ namespace Artifact
 
  void ArtifactIRenderer::Impl::destroy()
  {
-  m_readbackStagingTex = nullptr;
+  submitter_.destroy();
+  cmdBuf_.reset();
+  m_readbackStagingTex= nullptr;
   m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
   m_readbackFence = nullptr;
   m_readbackStagingWidth = 0;
@@ -684,6 +858,7 @@ namespace Artifact
   {
    if (auto sc = deviceManager_.swapChain())
    {
+    submitter_.submit(cmdBuf_, deviceManager_.immediateContext());
     try {
      sc->Present();
     } catch (const std::exception& ex) {
@@ -746,6 +921,9 @@ namespace Artifact
   bool ArtifactIRenderer::hasSwapChain() const { return impl_->deviceManager_.swapChain() != nullptr; }
 
  QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
+ void ArtifactIRenderer::readbackToImageAsync(ReadbackCallback callback) const {
+  impl_->readbackToImageAsync(std::move(callback));
+ }
 
  void ArtifactIRenderer::present()
  {
@@ -793,6 +971,9 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
  void ArtifactIRenderer::drawSolidLine(Detail::float2 start, Detail::float2 end,
                                        const FloatColor& color, float thickness)
  { impl_->drawSolidLine(toDiligentFloat2(start), toDiligentFloat2(end), color, thickness); }
+ void ArtifactIRenderer::drawPolyline(const std::vector<Detail::float2>& points,
+                                      const FloatColor& color, float thickness)
+ { impl_->drawPolyline(points, color, thickness); }
  void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h)
  { impl_->drawSolidRect(float2(x, y), float2(w, h), {1.0f, 1.0f, 1.0f, 1.0f}, 1.0f); }
  void ArtifactIRenderer::drawSolidRect(float x, float y, float w, float h, const FloatColor& color, float opacity)
@@ -882,6 +1063,8 @@ void ArtifactIRenderer::drawGizmoTorus(Detail::float3 center, Detail::float3 nor
 { impl_->primitiveRenderer3D_.draw3DTorus({center.x, center.y, center.z}, {normal.x, normal.y, normal.z}, majorRadius, minorRadius, color); }
 void ArtifactIRenderer::drawGizmoCube(Detail::float3 center, float halfExtent, const FloatColor& color)
 { impl_->primitiveRenderer3D_.draw3DCube({center.x, center.y, center.z}, halfExtent, color); }
+void ArtifactIRenderer::flushGizmo3D()
+{ impl_->primitiveRenderer3D_.flushGizmo3D(); }
 void ArtifactIRenderer::draw3DLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
 { drawGizmoLine(start, end, color, thickness); }
 void ArtifactIRenderer::draw3DArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size)

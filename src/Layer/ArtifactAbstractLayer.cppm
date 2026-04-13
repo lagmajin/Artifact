@@ -26,6 +26,8 @@ import Frame.Rate;
 import Animation.Value;
 import Transform.Hlper;
 
+import Time.TimeRemap;
+
 import Artifact.Layer.Settings;
 import Artifact.Layer.Physics;
 import Artifact.Layer.Matte;
@@ -37,6 +39,8 @@ import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
 import Property.Group;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace Artifact {
 
@@ -60,6 +64,12 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   }
   layer->setDirty(flag);
   layer->addDirtyReason(reason);
+  const auto *comp =
+      static_cast<ArtifactAbstractComposition *>(layer->composition());
+  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+      comp ? comp->id().toString() : QString{},
+      layer->id().toString(),
+      LayerChangedEvent::ChangeType::Modified});
   Q_EMIT layer->changed();
 }
 
@@ -126,6 +136,9 @@ public:
   // マスクコンテナ
   std::vector<LayerMask> masks_;
   mutable QHash<QString, std::shared_ptr<AbstractProperty>> propertyCache_;
+
+  // Time remap
+  std::unique_ptr<ArtifactCore::TimeRemapEffect> timeRemapEffect_;
 
 public:
   Impl();
@@ -296,15 +309,15 @@ void ArtifactAbstractLayer::setGuide(bool guide) {
   if (!assignIfChanged(impl_->isGuide_, guide)) {
     return;
   }
-  notifyLayerMutation(this, LayerDirtyFlag::All,
-                      LayerDirtyReason::PropertyChanged);
+  notifyLayerMutation(this, LayerDirtyFlag::Visibility,
+                      LayerDirtyReason::VisibilityChanged);
 }
 bool ArtifactAbstractLayer::isSolo() const { return impl_->isSolo_; }
 void ArtifactAbstractLayer::setSolo(bool solo) {
   if (!assignIfChanged(impl_->isSolo_, solo)) {
     return;
   }
-  notifyLayerMutation(this, LayerDirtyFlag::All,
+  notifyLayerMutation(this, LayerDirtyFlag::Visibility,
                       LayerDirtyReason::PlaybackChanged);
 }
 bool ArtifactAbstractLayer::isLocked() const { return impl_->isLocked_; }
@@ -312,7 +325,7 @@ void ArtifactAbstractLayer::setLocked(bool locked) {
   if (!assignIfChanged(impl_->isLocked_, locked)) {
     return;
   }
-  notifyLayerMutation(this, LayerDirtyFlag::All,
+  notifyLayerMutation(this, LayerDirtyFlag::Visibility,
                       LayerDirtyReason::PropertyChanged);
 }
 bool ArtifactAbstractLayer::isShy() const { return impl_->isShy_; }
@@ -320,7 +333,7 @@ void ArtifactAbstractLayer::setShy(bool shy) {
   if (!assignIfChanged(impl_->isShy_, shy)) {
     return;
   }
-  notifyLayerMutation(this, LayerDirtyFlag::All,
+  notifyLayerMutation(this, LayerDirtyFlag::Visibility,
                       LayerDirtyReason::PropertyChanged);
 }
 
@@ -675,12 +688,59 @@ void ArtifactAbstractLayer::setIs3D(bool value) {
     impl_->is3D_ = value;
 }
 
-void ArtifactAbstractLayer::setTimeRemapEnabled(bool) {}
+void ArtifactAbstractLayer::setTimeRemapEnabled(bool enabled) {
+    if (!impl_->timeRemapEffect_) {
+        impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
+    }
+    impl_->timeRemapEffect_->setEnabled(enabled);
+    impl_->timeRemapEffect_->setHasAudio(hasAudio());
+    setDirty(LayerDirtyFlag::All);
+}
 
 void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
-                                            double sourceFrame) {}
+                                            double sourceFrame) {
+    if (!impl_->timeRemapEffect_) {
+        impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
+    }
 
-bool ArtifactAbstractLayer::isTimeRemapEnabled() const { return false; }
+    // FrameRateを取得
+    double fps = 30.0;
+    if (impl_->composition_) {
+        // TODO: compositionからFrameRateを取得
+        fps = 30.0;
+    }
+
+    const double outputTime = static_cast<double>(compFrame) / fps;
+    const double sourceTime = sourceFrame / fps;
+
+    ArtifactCore::TimeRemapKeyframe kf;
+    kf.outputTime = outputTime;
+    kf.sourceTime = sourceTime;
+    kf.interpolation = ArtifactCore::TimeRemapKeyframe::Interpolation::Linear;
+
+    impl_->timeRemapEffect_->remap().addKeyframe(kf);
+    impl_->timeRemapEffect_->remap().setFrameRate(ArtifactCore::FrameRate(fps));
+    setDirty(LayerDirtyFlag::All);
+}
+
+bool ArtifactAbstractLayer::isTimeRemapEnabled() const {
+    return impl_->timeRemapEffect_ && impl_->timeRemapEffect_->isEnabled();
+}
+
+double ArtifactAbstractLayer::getSourceFrameAtCompFrame(int64_t compFrame) const {
+    if (!isTimeRemapEnabled()) {
+        return static_cast<double>(compFrame);
+    }
+
+    double fps = 30.0;
+    if (impl_->composition_) {
+        fps = 30.0; // TODO: compositionから取得
+    }
+
+    const double outputTime = static_cast<double>(compFrame) / fps;
+    float blendFwd = 0.0f, blendBwd = 0.0f;
+    return impl_->timeRemapEffect_->processFrame(outputTime, blendFwd, blendBwd);
+}
 
 bool ArtifactAbstractLayer::isNullLayer() const { return false; }
 
@@ -1525,7 +1585,11 @@ void ArtifactAbstractLayer::setOpacity(float value) {
   const float clamped = std::clamp(value, 0.0f, 1.0f);
   if (impl_->opacity_ != clamped) {
     impl_->opacity_ = clamped;
-    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+    if (auto it = impl_->propertyCache_.find(QStringLiteral("layer.opacity"));
+        it != impl_->propertyCache_.end() && it.value()) {
+      it.value()->setValue(clamped);
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::Property,
                         LayerDirtyReason::PropertyChanged);
   }
 }

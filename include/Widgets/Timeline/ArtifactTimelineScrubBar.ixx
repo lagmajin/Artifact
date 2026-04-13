@@ -43,6 +43,14 @@ export namespace Artifact
   void setTotalFrames(int totalFrames);
   int totalFrames() const;
 
+  // Cache visualization for RAM preview / prewarm range.
+  void setCachedFrameRange(int startFrame, int endFrame, bool visible = true);
+
+  // The old scrub interaction is still available for other callers, but the
+  // timeline now uses this widget as a display-only cache bar.
+  void setInteractiveSeekingEnabled(bool enabled);
+  bool interactiveSeekingEnabled() const;
+
   // タイムラインズーム座標に合わせたルーラーのための設定
   void setRulerPixelsPerFrame(double ppf);
   void setRulerHorizontalOffset(double offset);

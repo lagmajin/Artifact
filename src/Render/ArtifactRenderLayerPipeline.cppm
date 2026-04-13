@@ -126,8 +126,8 @@ namespace Artifact
   }
 
   const TEXTURE_FORMAT resolvedFormat = format != TEX_FORMAT_UNKNOWN
-                                            ? format
-                                            : RenderConfig::PipelineFormat;
+                                             ? format
+                                             : RenderConfig::MainRTVFormat;
 
   const bool sameSize = impl_->device_ == device &&
                         impl_->width_ == width &&
@@ -245,9 +245,9 @@ namespace Artifact
   {
    return false;
   }
-  if (!createTextureBundle(device, width, height, RenderConfig::MainRTVFormat,
-                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
-                           "RenderPipeline.Layer", impl_->layer_))
+   if (!createTextureBundle(device, width, height, RenderConfig::MainRTVFormat,
+                            BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
+                            "RenderPipeline.Layer", impl_->layer_))
   {
    return false;
   }

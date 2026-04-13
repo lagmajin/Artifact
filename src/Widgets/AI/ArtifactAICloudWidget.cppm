@@ -4,6 +4,7 @@ module;
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QMouseEvent>
 #include <QEvent>
 #include <QFontDatabase>
 #include <QFormLayout>
@@ -65,9 +66,10 @@ namespace {
 class CloudChatBubble : public QFrame {
 public:
   enum class Role { User, Assistant, System };
+  enum class Importance { Normal, Important, Critical };
 
   explicit CloudChatBubble(Role role, QWidget *parent = nullptr)
-      : QFrame(parent), role_(role) {
+      : QFrame(parent), role_(role), importance_(Importance::Normal) {
     setFrameShape(QFrame::NoFrame);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
     setAttribute(Qt::WA_TranslucentBackground, true);
@@ -102,8 +104,15 @@ public:
     update();
   }
 
+  void setImportance(Importance importance) {
+    importance_ = importance;
+    refreshLabelAppearance();
+    update();
+  }
+
   QString text() const { return text_; }
   Role role() const { return role_; }
+  Importance importance() const { return importance_; }
 
 protected:
   void paintEvent(QPaintEvent *event) override {
@@ -113,6 +122,7 @@ protected:
 
     QColor fill;
     QColor border;
+    int borderWidth = 1;
     switch (role_) {
     case Role::User:
       fill = QColor("#1f4e79");
@@ -128,7 +138,16 @@ protected:
       break;
     }
 
-    painter.setPen(QPen(border, 1));
+    // Adjust border based on importance
+    if (importance_ == Importance::Important) {
+      border = QColor("#ff6b6b"); // Red border for important
+      borderWidth = 2;
+    } else if (importance_ == Importance::Critical) {
+      border = QColor("#ff0000"); // Bright red for critical
+      borderWidth = 3;
+    }
+
+    painter.setPen(QPen(border, borderWidth));
     painter.setBrush(fill);
     painter.drawRoundedRect(r, 10.0, 10.0);
   }
@@ -137,6 +156,7 @@ private:
   void refreshLabelAppearance() {
     QColor fill;
     QColor textColor;
+    QFont font = label_->font();
     switch (role_) {
     case Role::User:
       fill = QColor("#1f4e79");
@@ -152,6 +172,17 @@ private:
       break;
     }
 
+    // Adjust text style based on importance
+    if (importance_ == Importance::Important) {
+      font.setBold(true);
+    } else if (importance_ == Importance::Critical) {
+      font.setBold(true);
+      textColor = QColor("#ff4444"); // Red text for critical
+    } else {
+      font.setBold(false);
+    }
+
+    label_->setFont(font);
     QPalette palette = label_->palette();
     palette.setColor(QPalette::Window, fill);
     palette.setColor(QPalette::Base, fill);
@@ -161,6 +192,7 @@ private:
 
   QLabel *label_ = nullptr;
   Role role_ = Role::Assistant;
+  Importance importance_ = Importance::Normal;
   QString text_;
 };
 
@@ -491,6 +523,10 @@ QString buildCloudSystemPrompt(const AIContext &context) {
       "- Null / Solid レイヤー追加: "
       "WorkspaceAutomation.addNullLayerToCurrentComposition / "
       "addSolidLayerToCurrentComposition\n"
+      "- レイヤー合成モード変更: "
+      "WorkspaceAutomation.setLayerBlendModeInCurrentComposition(layerId, blendMode)\n"
+      "- レイヤー不透明度変更: "
+      "WorkspaceAutomation.setLayerOpacityInCurrentComposition(layerId, opacity)\n"
       "- 新規作成や追加を頼まれたら、まずこれらの tool "
       "を優先して使ってください。\n"
       "- project が空なら createProject を先に使ってから composition "
@@ -606,6 +642,43 @@ QStringList extractMcpToolNames(const ArtifactCore::McpCallResult &result) {
     }
   }
   return names;
+}
+
+CloudChatBubble::Importance detectMessageImportance(const QString &text) {
+  const QString lower = text.toLower();
+  const QStringList importantKeywords = {
+      QStringLiteral("error"), QStringLiteral("failed"), QStringLiteral("warning"),
+      QStringLiteral("bug"), QStringLiteral("issue"), QStringLiteral("exception"),
+      QStringLiteral("alert"), QStringLiteral("urgent"), QStringLiteral("important"),
+      QStringLiteral("エラー"), QStringLiteral("失敗"), QStringLiteral("警告"),
+      QStringLiteral("バグ"), QStringLiteral("問題"), QStringLiteral("例外"),
+      QStringLiteral("アラート"), QStringLiteral("緊急"), QStringLiteral("重要")
+  };
+  const QStringList criticalKeywords = {
+      QStringLiteral("critical"), QStringLiteral("fatal"), QStringLiteral("severe"),
+      QStringLiteral("緊急"), QStringLiteral("致命的"), QStringLiteral("重大")
+  };
+
+  int importantCount = 0;
+  bool hasCritical = false;
+  for (const QString &keyword : importantKeywords) {
+    if (lower.contains(keyword)) {
+      ++importantCount;
+    }
+  }
+  for (const QString &keyword : criticalKeywords) {
+    if (lower.contains(keyword)) {
+      hasCritical = true;
+      break;
+    }
+  }
+
+  if (hasCritical || importantCount >= 2) {
+    return CloudChatBubble::Importance::Critical;
+  } else if (importantCount >= 1) {
+    return CloudChatBubble::Importance::Important;
+  }
+  return CloudChatBubble::Importance::Normal;
 }
 
 bool looksLikeToolCallText(const QString &text) {
@@ -787,36 +860,13 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   apiKeyEdit_->setPlaceholderText(QStringLiteral("API key / bearer token"));
   apiKeyEdit_->setVisible(false);
 
-  const auto connectionCard = makeSectionCard(
-      leftPanel, QStringLiteral("Connection"),
-      QStringLiteral(
-          "Use the settings dialog to edit provider, endpoint, and key."));
-  auto *connectionSummary = new QVBoxLayout();
-  connectionSummary->setContentsMargins(0, 0, 0, 0);
-  connectionSummary->setSpacing(4);
-  connectionCard.body->addLayout(connectionSummary);
+  modelFilterEdit_ = new QLineEdit(leftPanel);
+  modelFilterEdit_->setPlaceholderText(QStringLiteral("Filter models..."));
+  modelFilterEdit_->setClearButtonEnabled(true);
+  modelFilterEdit_->setVisible(false);
 
-  connectionProviderLabel_ = new QLabel(leftPanel);
-  connectionEndpointLabel_ = new QLabel(leftPanel);
-  connectionApiKeyLabel_ = new QLabel(leftPanel);
-  connectionProviderLabel_->setWordWrap(true);
-  connectionEndpointLabel_->setWordWrap(true);
-  connectionApiKeyLabel_->setWordWrap(true);
-  connectionSummary->addWidget(connectionProviderLabel_);
-  connectionSummary->addWidget(connectionEndpointLabel_);
-  connectionSummary->addWidget(connectionApiKeyLabel_);
-
-  auto *openSettingsRow = new QHBoxLayout();
-  openSettingsRow->setContentsMargins(0, 0, 0, 0);
-  openSettingsRow->setSpacing(6);
-  openSettingsRow->addStretch();
-  openSettingsButton_ =
-      new QPushButton(QStringLiteral("Open Settings..."), leftPanel);
-  openSettingsButton_->setMinimumWidth(140);
-  openSettingsRow->addWidget(openSettingsButton_);
-  connectionCard.body->addLayout(openSettingsRow);
-
-  leftLayout->addWidget(connectionCard.frame);
+  modelCombo_ = new QComboBox(leftPanel);
+  modelCombo_->setVisible(false);
 
   auto *advancedToggleRow = new QHBoxLayout();
   advancedToggleRow->setContentsMargins(0, 0, 0, 0);
@@ -836,34 +886,6 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   advancedLayout->setContentsMargins(0, 0, 0, 0);
   advancedLayout->setSpacing(10);
   advancedPanel->setVisible(false);
-
-  const auto modelCard =
-      makeSectionCard(leftPanel, QStringLiteral("Model"),
-                      QStringLiteral("Search and pick a remote model from the "
-                                     "list. Settings live in the dialog."));
-  auto *filterRow = new QHBoxLayout();
-  filterRow->setContentsMargins(0, 0, 0, 0);
-  filterRow->setSpacing(6);
-  modelFilterEdit_ = new QLineEdit(leftPanel);
-  modelFilterEdit_->setPlaceholderText(QStringLiteral("Filter models..."));
-  modelFilterEdit_->setClearButtonEnabled(true);
-  modelCountLabel_ = new QLabel(QStringLiteral("0 models"), leftPanel);
-  modelCountLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-  filterRow->addWidget(modelFilterEdit_, 1);
-  filterRow->addWidget(modelCountLabel_);
-  modelCard.body->addLayout(filterRow);
-
-  auto *modelRow = new QHBoxLayout();
-  modelRow->setContentsMargins(0, 0, 0, 0);
-  modelRow->setSpacing(6);
-  modelCombo_ = new QComboBox(leftPanel);
-  modelRow->addWidget(modelCombo_, 1);
-  auto *refreshModelsButton =
-      new QPushButton(QStringLiteral("Reload"), leftPanel);
-  refreshModelsButton->setFixedWidth(74);
-  modelRow->addWidget(refreshModelsButton);
-  modelCard.body->addLayout(modelRow);
-  advancedLayout->addWidget(modelCard.frame);
 
   const auto toolsCard = makeSectionCard(
       leftPanel, QStringLiteral("Tools"),
@@ -1048,6 +1070,22 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   rightLayout->setContentsMargins(0, 0, 0, 0);
   rightLayout->setSpacing(10);
 
+  auto *panelControlRow = new QHBoxLayout();
+  panelControlRow->setContentsMargins(0, 0, 0, 0);
+  panelControlRow->setSpacing(6);
+  auto *panelToggleButton =
+      new QPushButton(QStringLiteral("Show Cloud Panel"), rightPanel);
+  panelToggleButton->setToolTip(
+      QStringLiteral("Show or hide the left-side cloud controls panel"));
+  panelToggleButton->setCheckable(true);
+  panelToggleButton->setChecked(false);
+  panelControlRow->addWidget(panelToggleButton);
+  panelControlRow->addStretch();
+  openSettingsButton_ = new QPushButton(QStringLiteral("Cloud Settings..."),
+                                        rightPanel);
+  panelControlRow->addWidget(openSettingsButton_);
+  rightLayout->addLayout(panelControlRow);
+
   const auto transcriptCard = makeSectionCard(
       rightPanel, QStringLiteral("Conversation"),
       QStringLiteral(
@@ -1114,14 +1152,66 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   sendRow->addWidget(sendButton_);
   promptCard.body->addLayout(sendRow);
 
+  auto *modelPickRow = new QHBoxLayout();
+  modelPickRow->setContentsMargins(0, 0, 0, 0);
+  modelPickRow->setSpacing(6);
+  modelPickRow->addStretch();
+  modelSelectionLabel_ = new QLabel(rightPanel);
+  modelSelectionLabel_->setCursor(Qt::PointingHandCursor);
+  modelSelectionLabel_->setTextFormat(Qt::RichText);
+  modelSelectionLabel_->setTextInteractionFlags(Qt::NoTextInteraction);
+  modelSelectionLabel_->setToolTip(QStringLiteral("Click to choose a model"));
+  modelSelectionLabel_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+  QFont modelFont = modelSelectionLabel_->font();
+  if (modelFont.pointSize() > 0) {
+    modelFont.setPointSize(std::max(1, modelFont.pointSize() - 1));
+  }
+  modelSelectionLabel_->setFont(modelFont);
+  QPalette modelPalette = modelSelectionLabel_->palette();
+  modelPalette.setColor(QPalette::WindowText, QColor(191, 224, 255));
+  modelSelectionLabel_->setPalette(modelPalette);
+  modelSelectionLabel_->installEventFilter(this);
+  modelPickRow->addWidget(modelSelectionLabel_);
+  promptCard.body->addLayout(modelPickRow);
+  updateModelSelectionLabel();
+
   rightLayout->addWidget(promptCard.frame);
 
   splitter->addWidget(leftPanel);
   splitter->addWidget(rightPanel);
   splitter->setStretchFactor(0, 0);
   splitter->setStretchFactor(1, 1);
-  splitter->setSizes({220, 980});
+  leftPanel->setVisible(false);
+  splitter->setSizes({0, 1200});
   layout->addWidget(splitter, 1);
+
+  connect(panelToggleButton, &QPushButton::toggled, this,
+          [splitter, leftPanel, panelToggleButton](bool checked) {
+            QSettings settings(QStringLiteral("ArtifactStudio"),
+                               QStringLiteral("AICloud"));
+            settings.setValue(QStringLiteral("cloudPanelVisible"), checked);
+            leftPanel->setVisible(checked);
+            panelToggleButton->setText(checked ? QStringLiteral("Hide Cloud Panel")
+                                               : QStringLiteral("Show Cloud Panel"));
+            splitter->setSizes(checked ? QList<int>{320, 880}
+                                       : QList<int>{0, 1200});
+          });
+  connect(openSettingsButton_, &QPushButton::clicked, this, [this]() {
+    if (openCloudSettingsDialog(this)) {
+      loadApiKey();
+      updateConnectionSummary();
+      refreshModelList();
+      updateSendButtonState();
+    }
+  });
+
+  {
+    QSettings settings(QStringLiteral("ArtifactStudio"),
+                       QStringLiteral("AICloud"));
+    const bool showCloudPanel =
+        settings.value(QStringLiteral("cloudPanelVisible"), false).toBool();
+    panelToggleButton->setChecked(showCloudPanel);
+  }
 
   connect(apiKeyEdit_, &QLineEdit::textChanged, this,
           [this]() { updateSendButtonState(); });
@@ -1132,7 +1222,10 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   connect(copyTranscriptButton_, &QPushButton::clicked, this,
           [this]() { copyTranscriptToClipboard(); });
   connect(modelCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-          this, [this]() { updateSendButtonState(); });
+          this, [this]() {
+            updateSendButtonState();
+            updateModelSelectionLabel();
+          });
   connect(modelFilterEdit_, &QLineEdit::textChanged, this,
           [this](const QString &) { applyModelFilter(); });
   connect(promptEdit_, &QTextEdit::textChanged, this,
@@ -1143,25 +1236,12 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
 
   connect(providerCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
           this, &ArtifactAICloudWidget::onProviderChanged);
-  connect(openSettingsButton_, &QPushButton::clicked, this, [this]() {
-    if (!openCloudSettingsDialog(this)) {
-      return;
-    }
-    loadApiKey();
-    onProviderChanged(providerCombo_ ? providerCombo_->currentIndex() : -1);
-    updateConnectionSummary();
-    updateToolSchemaPreview();
-    refreshMcpToolSelector();
-    updateMcpPreview();
-  });
 
   connect(networkManager_, &QNetworkAccessManager::finished, this,
           &ArtifactAICloudWidget::onApiReply);
 
   connect(modelsNetworkManager_, &QNetworkAccessManager::finished, this,
           &ArtifactAICloudWidget::onModelsReply);
-  connect(refreshModelsButton, &QPushButton::clicked, this,
-          &ArtifactAICloudWidget::refreshModelList);
   connect(refreshToolsButton, &QPushButton::clicked, this, [this]() {
     updateToolSchemaPreview();
     refreshMcpToolSelector();
@@ -1569,6 +1649,7 @@ void Artifact::ArtifactAICloudWidget::applyModelFilter(
     }
   }
 
+  updateModelSelectionLabel();
   updateSendButtonState();
 }
 
@@ -1611,6 +1692,7 @@ void Artifact::ArtifactAICloudWidget::loadApiKey() {
   // Load base URL for custom providers
   baseUrlEdit_->setText(settings.value("baseUrl").toString());
   updateConnectionSummary();
+  updateModelSelectionLabel();
 }
 
 void Artifact::ArtifactAICloudWidget::saveApiKey() {
@@ -1619,6 +1701,7 @@ void Artifact::ArtifactAICloudWidget::saveApiKey() {
   settings.setValue("provider", providerCombo_->currentText());
   settings.setValue("baseUrl", baseUrlEdit_->text());
   updateConnectionSummary();
+  updateModelSelectionLabel();
 }
 
 void Artifact::ArtifactAICloudWidget::updateConnectionSummary() {
@@ -1887,6 +1970,11 @@ void Artifact::ArtifactAICloudWidget::appendTranscriptMessage(
 
   auto *bubble = new CloudChatBubble(bubbleRole, row);
   bubble->setText(text);
+  // Detect importance for assistant messages
+  if (normalizedRole == QStringLiteral("assistant")) {
+    const auto importance = detectMessageImportance(text);
+    bubble->setImportance(importance);
+  }
 
   if (normalizedRole == QStringLiteral("user")) {
     rowLayout->addStretch(1);
@@ -1946,6 +2034,87 @@ void Artifact::ArtifactAICloudWidget::copyTranscriptToClipboard() {
   }
 }
 
+void Artifact::ArtifactAICloudWidget::updateModelSelectionLabel() {
+  if (!modelSelectionLabel_) {
+    return;
+  }
+
+  QString text = QStringLiteral("<u>Model: ");
+  const QString currentModel =
+      modelCombo_ ? modelCombo_->currentData().toString().trimmed() : QString();
+  if (currentModel.isEmpty()) {
+    text += QStringLiteral("Choose...");
+  } else {
+    text += currentModel.toHtmlEscaped();
+  }
+  text += QStringLiteral("</u>");
+  modelSelectionLabel_->setText(text);
+}
+
+void Artifact::ArtifactAICloudWidget::openModelSelectionPopup() {
+  if (!modelCombo_ || !modelSelectionLabel_) {
+    return;
+  }
+
+  auto *popup = new QFrame(this, Qt::Popup | Qt::FramelessWindowHint);
+  popup->setAttribute(Qt::WA_DeleteOnClose, true);
+  popup->setObjectName(QStringLiteral("ArtifactModelPopup"));
+  auto *layout = new QVBoxLayout(popup);
+  layout->setContentsMargins(10, 10, 10, 10);
+  layout->setSpacing(6);
+
+  auto *combo = new QComboBox(popup);
+  combo->setSizeAdjustPolicy(QComboBox::AdjustToContentsOnFirstShow);
+  combo->setMinimumWidth(std::max(260, modelSelectionLabel_->width() + 36));
+  layout->addWidget(combo);
+
+  const QString currentModel =
+      modelCombo_->currentData().toString().trimmed();
+  for (const QString &id : availableModelIds_) {
+    const QString trimmed = id.trimmed();
+    if (!trimmed.isEmpty()) {
+      combo->addItem(trimmed, trimmed);
+    }
+  }
+  if (combo->count() == 0) {
+    combo->addItem(QStringLiteral("(No models available)"), QString());
+  } else {
+    const int idx = combo->findData(currentModel);
+    combo->setCurrentIndex(idx >= 0 ? idx : 0);
+  }
+
+  QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), popup,
+                   [this, popup, combo](int) {
+                     if (!modelCombo_ || !combo) {
+                       if (popup) {
+                         popup->close();
+                       }
+                       return;
+                     }
+                     const QString chosen = combo->currentData().toString().trimmed();
+                     if (chosen.isEmpty()) {
+                       if (popup) {
+                         popup->close();
+                       }
+                       return;
+                     }
+                     const int idx = modelCombo_->findData(chosen);
+                     if (idx >= 0) {
+                       modelCombo_->setCurrentIndex(idx);
+                     }
+                     updateModelSelectionLabel();
+                     updateSendButtonState();
+                     popup->close();
+                   });
+
+  const QPoint anchor = modelSelectionLabel_->mapToGlobal(
+      QPoint(0, modelSelectionLabel_->height() + 2));
+  popup->move(anchor);
+  popup->show();
+  combo->setFocus(Qt::PopupFocusReason);
+  combo->showPopup();
+}
+
 void Artifact::ArtifactAICloudWidget::replaceLastAssistantMessage(
     const QString &text) {
   if (activeAssistantBubbleIndex_ < 0 ||
@@ -1958,6 +2127,8 @@ void Artifact::ArtifactAICloudWidget::replaceLastAssistantMessage(
   if (auto *bubble = static_cast<CloudChatBubble *>(
           transcriptBubbles_.at(activeAssistantBubbleIndex_))) {
     bubble->setText(text);
+    const auto importance = detectMessageImportance(text);
+    bubble->setImportance(importance);
     scrollTranscriptToBottom();
     return;
   }
@@ -1972,6 +2143,16 @@ void Artifact::ArtifactAICloudWidget::scrollTranscriptToBottom() {
   }
   if (auto *bar = transcriptScrollArea_->verticalScrollBar()) {
     bar->setValue(bar->maximum());
+  }
+  if (transcriptScrollArea_) {
+    QTimer::singleShot(0, this, [this]() {
+      if (!transcriptScrollArea_) {
+        return;
+      }
+      if (auto *bar = transcriptScrollArea_->verticalScrollBar()) {
+        bar->setValue(bar->maximum());
+      }
+    });
   }
 }
 
@@ -2092,6 +2273,16 @@ void Artifact::ArtifactAICloudWidget::cancelCurrentSend() {
 
 bool Artifact::ArtifactAICloudWidget::eventFilter(QObject *watched,
                                                   QEvent *event) {
+  if (watched == modelSelectionLabel_ && event) {
+    if (event->type() == QEvent::MouseButtonRelease) {
+      auto *mouseEvent = static_cast<QMouseEvent *>(event);
+      if (mouseEvent->button() == Qt::LeftButton) {
+        openModelSelectionPopup();
+        return true;
+      }
+    }
+  }
+
   if (watched == promptEdit_ && event && event->type() == QEvent::KeyPress) {
     auto *keyEvent = static_cast<QKeyEvent *>(event);
     if (keyEvent->key() == Qt::Key_Escape && isSending_) {

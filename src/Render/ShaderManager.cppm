@@ -3,11 +3,15 @@ module;
 #include <RenderDevice.h>
 #include <Shader.h>
 #include <PipelineState.h>
+#include <PipelineStateCache.h>
 #include <Sampler.h>
 #include <RefCntAutoPtr.hpp>
 #include <tbb/task_group.h>
 #include <BasicMath.hpp>
 #include <QByteArray>
+#include <QCryptographicHash>
+#include <QDir>
+#include <QFile>
 #include <QDebug>
 #include <cmath>
 
@@ -17,6 +21,8 @@ import Graphics.Shader.Set;
 import Graphics;
 import Graphics.Shader.Compile.Task;
 import Graphics.Shader.HLSL.Basics.Vertex;
+import Graphics.PSO.Cache;
+import Utils.String.UniString;
 import Render.Shader.ThickLine;
 import Render.Shader.ViewerHelpers;
 
@@ -29,6 +35,7 @@ class ShaderManager::Impl {
 public:
     RefCntAutoPtr<IRenderDevice> device_;
     TEXTURE_FORMAT rtvFormat_ = TEX_FORMAT_RGBA8_UNORM_SRGB;
+    RefCntAutoPtr<IPipelineStateCache> psoCache_;
 
     RenderShaderPair lineShaders_;
     RenderShaderPair outlineShaders_;
@@ -74,6 +81,9 @@ public:
 
     void createShaders();
     void createPSOs();
+    void createPSOCache();
+    QString psoCacheFilePath() const;
+    void savePSOCache() const;
     void destroy();
 
     void createLineFamilyPSOs();
@@ -214,95 +224,191 @@ float4 main(PS_INPUT input) : SV_TARGET
     gridPsInfo.Source = g_gridPS.constData();
     gridPsInfo.SourceLength = g_gridPS.length();
 
-    device_->CreateShader(lineVsInfo, &lineShaders_.VS);
-    device_->CreateShader(linePsInfo, &lineShaders_.PS);
-    device_->CreateShader(sprite2DVsInfo, &spriteShaders_.VS);
-    device_->CreateShader(sprite2DPsInfo, &spriteShaders_.PS);
-    device_->CreateShader(solidRectVsInfo2, &solidShaders_.VS);
-    device_->CreateShader(solidRectPsInfo2, &solidShaders_.PS);
-    solidTriangleShaders_ = solidShaders_;
-    device_->CreateShader(solidRectTransformVsInfo, &solidRectTransformShaders_.VS);
-    device_->CreateShader(solidRectPsInfo2, &solidRectTransformShaders_.PS);
-    device_->CreateShader(spriteTransformVsInfo, &spriteTransformShaders_.VS);
-    spriteTransformShaders_.PS = spriteShaders_.PS;
-    device_->CreateShader(spriteTransformVsInfo, &maskedSpriteShaders_.VS);
-    device_->CreateShader(maskedSpritePsInfo, &maskedSpriteShaders_.PS);
+    // Static source for gizmo3D VS (inline literal → read-only data segment, always valid)
+    static const char* const s_gizmo3DVS = R"(
+        cbuffer TransformCB {
+            float4x4 g_WorldViewProj;
+        };
+        struct VSInput {
+            float3 Pos   : ATTRIB0;
+            float4 Color : ATTRIB1;
+        };
+        struct PSInput {
+            float4 Pos   : SV_POSITION;
+            float4 Color : COLOR;
+        };
+        void main(in VSInput VSIn, out PSInput PSIn) {
+            PSIn.Pos   = mul(float4(VSIn.Pos, 1.0), g_WorldViewProj);
+            PSIn.Color = VSIn.Color;
+        }
+    )";
+    ShaderCreateInfo gizmo3DVsInfo;
+    gizmo3DVsInfo.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
+    gizmo3DVsInfo.Desc.ShaderType = SHADER_TYPE_VERTEX;
+    gizmo3DVsInfo.Desc.Name = "Gizmo3D VS";
+    gizmo3DVsInfo.Source = s_gizmo3DVS;
 
-    checkerboardShaders_.VS = solidShaders_.VS;
-    device_->CreateShader(checkerboardPsInfo, &checkerboardShaders_.PS);
-    gridShaders_.VS = solidShaders_.VS;
-    device_->CreateShader(gridPsInfo, &gridShaders_.PS);
+    ShaderCreateInfo thickLineVsInfo;
+    thickLineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    thickLineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+    thickLineVsInfo.Desc.Name = "ThickLineVertexShader";
+    thickLineVsInfo.Source = g_thickLineVS.constData();
+    thickLineVsInfo.SourceLength = g_thickLineVS.length();
 
-    // Outline shaders
-    device_->CreateShader(drawOutlineRectVsInfo, &outlineShaders_.VS);
-    device_->CreateShader(drawOutlineRectPsInfo, &outlineShaders_.PS);
+    ShaderCreateInfo thickLinePsInfo;
+    thickLinePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    thickLinePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+    thickLinePsInfo.Desc.Name = "ThickLinePixelShader";
+    thickLinePsInfo.Source = g_thickLinePS.constData();
+    thickLinePsInfo.SourceLength = g_thickLinePS.length();
 
-    {
-        ShaderCreateInfo thickLineVsInfo;
-        thickLineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
-        thickLineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
-        thickLineVsInfo.Desc.Name = "ThickLineVertexShader";
-        thickLineVsInfo.Source = g_thickLineVS.constData();
-        thickLineVsInfo.SourceLength = g_thickLineVS.length();
+    ShaderCreateInfo dotLineVsInfo;
+    dotLineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    dotLineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+    dotLineVsInfo.Desc.Name = "DotLineVertexShader";
+    dotLineVsInfo.Source = g_dotLineVS.constData();
+    dotLineVsInfo.SourceLength = g_dotLineVS.length();
 
-        ShaderCreateInfo thickLinePsInfo;
-        thickLinePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
-        thickLinePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
-        thickLinePsInfo.Desc.Name = "ThickLinePixelShader";
-        thickLinePsInfo.Source = g_thickLinePS.constData();
-        thickLinePsInfo.SourceLength = g_thickLinePS.length();
+    ShaderCreateInfo dotLinePsInfo;
+    dotLinePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    dotLinePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+    dotLinePsInfo.Desc.Name = "DotLinePixelShader";
+    dotLinePsInfo.Source = g_dotLinePS.constData();
+    dotLinePsInfo.SourceLength = g_dotLinePS.length();
 
-        device_->CreateShader(thickLineVsInfo, &thickLineShaders_.VS);
-        device_->CreateShader(thickLinePsInfo, &thickLineShaders_.PS);
+    // All CreateShader calls are independent: run them in parallel.
+    // Each writes to a distinct output field; ShaderCreateInfo structs are read-only during
+    // compilation. maskedSpritePsSource is a local QByteArray that outlives tasks.wait().
+    tbb::task_group shaderTasks;
+    shaderTasks.run([&] { device_->CreateShader(lineVsInfo,                &lineShaders_.VS); });
+    shaderTasks.run([&] { device_->CreateShader(linePsInfo,                &lineShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(sprite2DVsInfo,            &spriteShaders_.VS); });
+    shaderTasks.run([&] { device_->CreateShader(sprite2DPsInfo,            &spriteShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(solidRectVsInfo2,          &solidShaders_.VS); });
+    shaderTasks.run([&] { device_->CreateShader(solidRectPsInfo2,          &solidShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(solidRectTransformVsInfo,  &solidRectTransformShaders_.VS); });
+    shaderTasks.run([&] { device_->CreateShader(solidRectPsInfo2,          &solidRectTransformShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(spriteTransformVsInfo,     &spriteTransformShaders_.VS); });
+    shaderTasks.run([&] { device_->CreateShader(spriteTransformVsInfo,     &maskedSpriteShaders_.VS); });
+    shaderTasks.run([&] { device_->CreateShader(maskedSpritePsInfo,        &maskedSpriteShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(checkerboardPsInfo,        &checkerboardShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(gridPsInfo,                &gridShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(drawOutlineRectVsInfo,     &outlineShaders_.VS); });
+    shaderTasks.run([&] { device_->CreateShader(drawOutlineRectPsInfo,     &outlineShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(thickLineVsInfo,           &thickLineShaders_.VS); });
+    shaderTasks.run([&] { device_->CreateShader(thickLinePsInfo,           &thickLineShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(dotLineVsInfo,             &dotLineShaders_.VS); });
+    shaderTasks.run([&] { device_->CreateShader(dotLinePsInfo,             &dotLineShaders_.PS); });
+    shaderTasks.run([&] { device_->CreateShader(gizmo3DVsInfo,             &gizmo3DShaders_.VS); });
+    shaderTasks.wait();
+
+    // Post-parallel pointer assignments (no CreateShader needed, just sharing refs)
+    solidTriangleShaders_              = solidShaders_;
+    solidRectTransformShaders_.PS      = solidShaders_.PS;
+    spriteTransformShaders_.PS         = spriteShaders_.PS;
+    checkerboardShaders_.VS            = solidShaders_.VS;
+    gridShaders_.VS                    = solidShaders_.VS;
+    gizmo3DShaders_.PS                 = lineShaders_.PS;
+}
+
+QString ShaderManager::Impl::psoCacheFilePath() const
+{
+    if (!device_) {
+        return {};
     }
 
-    {
-        ShaderCreateInfo dotLineVsInfo;
-        dotLineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
-        dotLineVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
-        dotLineVsInfo.Desc.Name = "DotLineVertexShader";
-        dotLineVsInfo.Source = g_dotLineVS.constData();
-        dotLineVsInfo.SourceLength = g_dotLineVS.length();
+    const auto& adapterInfo = device_->GetAdapterInfo();
+    const auto& deviceInfo = device_->GetDeviceInfo();
 
-        ShaderCreateInfo dotLinePsInfo;
-        dotLinePsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
-        dotLinePsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
-        dotLinePsInfo.Desc.Name = "DotLinePixelShader";
-        dotLinePsInfo.Source = g_dotLinePS.constData();
-        dotLinePsInfo.SourceLength = g_dotLinePS.length();
+    const QString vendorKey = QStringLiteral("%1_%2")
+                                  .arg(adapterInfo.VendorId, 8, 16, QLatin1Char('0'))
+                                  .arg(QString::fromLatin1(adapterInfo.Description).trimmed());
+    const QString deviceKey = QStringLiteral("%1_%2_api_%3_%4_backend_%5")
+                                  .arg(QString::fromLatin1(adapterInfo.Description).trimmed())
+                                  .arg(adapterInfo.DeviceId, 8, 16, QLatin1Char('0'))
+                                  .arg(deviceInfo.APIVersion.Major)
+                                  .arg(deviceInfo.APIVersion.Minor)
+                                  .arg(static_cast<int>(deviceInfo.Type));
 
-        device_->CreateShader(dotLineVsInfo, &dotLineShaders_.VS);
-        device_->CreateShader(dotLinePsInfo, &dotLineShaders_.PS);
+    const QString signature = QStringLiteral("backend=%1|rtv=%2|vendorId=%3|deviceId=%4|api=%5.%6")
+                                  .arg(static_cast<int>(deviceInfo.Type))
+                                  .arg(static_cast<int>(rtvFormat_))
+                                  .arg(adapterInfo.VendorId)
+                                  .arg(adapterInfo.DeviceId)
+                                  .arg(deviceInfo.APIVersion.Major)
+                                  .arg(deviceInfo.APIVersion.Minor);
+
+    const QByteArray hash = QCryptographicHash::hash(signature.toUtf8(), QCryptographicHash::Sha1);
+    const QString fileName = QStringLiteral("pso_%1.bin").arg(QString::fromLatin1(hash.toHex()));
+
+    const UniString cacheDir = getPSOCacheDirectory(
+        UniString(vendorKey.toStdString()),
+        UniString(deviceKey.toStdString()),
+        true);
+
+    return QDir(cacheDir.toQString()).filePath(fileName);
+}
+
+void ShaderManager::Impl::createPSOCache()
+{
+    psoCache_ = nullptr;
+    if (!device_) {
+        return;
     }
 
-    {
-        // Gizmo 3D Shader (Simple 3D transformation)
-        const char* gizmo3DVS = R"(
-            cbuffer TransformCB {
-                float4x4 g_WorldViewProj;
-            };
-            struct VSInput {
-                float3 Pos   : ATTRIB0;
-                float4 Color : ATTRIB1;
-            };
-            struct PSInput {
-                float4 Pos   : SV_POSITION;
-                float4 Color : COLOR;
-            };
-            void main(in VSInput VSIn, out PSInput PSIn) {
-                PSIn.Pos   = mul(float4(VSIn.Pos, 1.0), g_WorldViewProj);
-                PSIn.Color = VSIn.Color;
-            }
-        )";
-        ShaderCreateInfo vsInfo;
-        vsInfo.SourceLanguage = SHADER_SOURCE_LANGUAGE_HLSL;
-        vsInfo.Desc.ShaderType = SHADER_TYPE_VERTEX;
-        vsInfo.Desc.Name = "Gizmo3D VS";
-        vsInfo.Source = gizmo3DVS;
-        
-        device_->CreateShader(vsInfo, &gizmo3DShaders_.VS);
-        gizmo3DShaders_.PS = lineShaders_.PS; // Reuse simple color pixel shader
+    PipelineStateCacheCreateInfo cacheCI{};
+    cacheCI.Desc.Name = "Artifact ShaderManager PSO Cache";
+    cacheCI.Desc.Mode = PSO_CACHE_MODE_LOAD_STORE;
+
+    const QString filePath = psoCacheFilePath();
+    QByteArray cacheData;
+    if (!filePath.isEmpty()) {
+        QFile file(filePath);
+        if (file.open(QIODevice::ReadOnly)) {
+            cacheData = file.readAll();
+        }
     }
+
+    if (!cacheData.isEmpty()) {
+        cacheCI.pCacheData = cacheData.constData();
+        cacheCI.CacheDataSize = static_cast<Uint32>(cacheData.size());
+    }
+
+    device_->CreatePipelineStateCache(cacheCI, &psoCache_);
+    if (!psoCache_) {
+        qInfo() << "[ShaderManager] PSO cache unavailable for this device";
+        return;
+    }
+
+    qInfo() << "[ShaderManager] PSO cache ready"
+            << (cacheData.isEmpty() ? "(cold start)" : "(loaded)")
+            << filePath;
+}
+
+void ShaderManager::Impl::savePSOCache() const
+{
+    if (!psoCache_) {
+        return;
+    }
+
+    RefCntAutoPtr<IDataBlob> pBlob;
+    psoCache_->GetData(&pBlob);
+    if (!pBlob || pBlob->GetSize() == 0) {
+        return;
+    }
+
+    const QString filePath = psoCacheFilePath();
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    QFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+        qWarning() << "[ShaderManager] Failed to save PSO cache:" << filePath;
+        return;
+    }
+
+    file.write(static_cast<const char*>(pBlob->GetConstDataPtr()), static_cast<qint64>(pBlob->GetSize()));
 }
 
 void ShaderManager::Impl::createLineFamilyPSOs()
@@ -322,6 +428,7 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     GraphicsPipelineStateCreateInfo lineInfo;
     lineInfo.PSODesc.Name = "DrawLine PSO";
     lineInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    lineInfo.pPSOCache = psoCache_.RawPtr();
     lineInfo.pVS = lineShaders_.VS;
     lineInfo.pPS = lineShaders_.PS;
     auto& lineGP = lineInfo.GraphicsPipeline;
@@ -351,6 +458,7 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     GraphicsPipelineStateCreateInfo solidInfo;
     solidInfo.PSODesc.Name = "DrawSolidRect PSO";
     solidInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    solidInfo.pPSOCache = psoCache_.RawPtr();
     solidInfo.pVS = solidShaders_.VS;
     solidInfo.pPS = solidShaders_.PS;
     auto& solidGP = solidInfo.GraphicsPipeline;
@@ -379,6 +487,7 @@ void ShaderManager::Impl::createLineFamilyPSOs()
 
     GraphicsPipelineStateCreateInfo transformInfo = solidInfo;
     transformInfo.PSODesc.Name = "DrawSolidRectTransform PSO";
+    transformInfo.pPSOCache = psoCache_.RawPtr();
     transformInfo.pVS = solidRectTransformShaders_.VS;
     transformInfo.pPS = solidRectTransformShaders_.PS;
     transformInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -389,6 +498,7 @@ void ShaderManager::Impl::createLineFamilyPSOs()
 
     GraphicsPipelineStateCreateInfo triangleInfo = solidInfo;
     triangleInfo.PSODesc.Name = "DrawSolidTriangle PSO";
+    triangleInfo.pPSOCache = psoCache_.RawPtr();
     triangleInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     device_->CreateGraphicsPipelineState(triangleInfo, &solidTrianglePsoAndSrb_.pPSO);
     if (solidTrianglePsoAndSrb_.pPSO) {
@@ -409,6 +519,7 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     GraphicsPipelineStateCreateInfo outlineInfo;
     outlineInfo.PSODesc.Name = "DrawOutlineRect PSO";
     outlineInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    outlineInfo.pPSOCache = psoCache_.RawPtr();
     outlineInfo.pVS = outlineShaders_.VS;
     outlineInfo.pPS = outlineShaders_.PS;
     auto& outlineGP = outlineInfo.GraphicsPipeline;
@@ -460,6 +571,7 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     GraphicsPipelineStateCreateInfo batchInfo;
     batchInfo.PSODesc.Name = "BatchSolidRect PSO";
     batchInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    batchInfo.pPSOCache = psoCache_.RawPtr();
     batchInfo.pVS = batchSolidRectShaders_.VS;
     batchInfo.pPS = batchSolidRectShaders_.PS;
     auto& batchGP = batchInfo.GraphicsPipeline;
@@ -507,6 +619,7 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     GraphicsPipelineStateCreateInfo spriteInfo;
     spriteInfo.PSODesc.Name = "DrawSprite PSO";
     spriteInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    spriteInfo.pPSOCache = psoCache_.RawPtr();
     spriteInfo.pVS = spriteShaders_.VS;
     spriteInfo.pPS = spriteShaders_.PS;
     auto& spriteGP = spriteInfo.GraphicsPipeline;
@@ -547,6 +660,7 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
 
     GraphicsPipelineStateCreateInfo spriteTransformInfo = spriteInfo;
     spriteTransformInfo.PSODesc.Name = "DrawSpriteTransform PSO";
+    spriteTransformInfo.pPSOCache = psoCache_.RawPtr();
     spriteTransformInfo.pVS = spriteTransformShaders_.VS;
     spriteTransformInfo.pPS = spriteTransformShaders_.PS;
     spriteTransformInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
@@ -566,6 +680,7 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
 
     GraphicsPipelineStateCreateInfo maskedSpriteInfo = spriteInfo;
     maskedSpriteInfo.PSODesc.Name = "DrawMaskedSprite PSO";
+    maskedSpriteInfo.pPSOCache = psoCache_.RawPtr();
     maskedSpriteInfo.pVS = maskedSpriteShaders_.VS;
     maskedSpriteInfo.pPS = maskedSpriteShaders_.PS;
     maskedSpriteInfo.PSODesc.ResourceLayout.Variables = maskedSpriteVars;
@@ -595,6 +710,7 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     GraphicsPipelineStateCreateInfo thickLineInfo;
     thickLineInfo.PSODesc.Name = "DrawThickLine PSO";
     thickLineInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    thickLineInfo.pPSOCache = psoCache_.RawPtr();
     thickLineInfo.pVS = thickLineShaders_.VS;
     thickLineInfo.pPS = thickLineShaders_.PS;
     auto& thickGP = thickLineInfo.GraphicsPipeline;
@@ -625,6 +741,7 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     GraphicsPipelineStateCreateInfo dotLineInfo;
     dotLineInfo.PSODesc.Name = "DrawDotLine PSO";
     dotLineInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    dotLineInfo.pPSOCache = psoCache_.RawPtr();
     dotLineInfo.pVS = dotLineShaders_.VS;
     dotLineInfo.pPS = dotLineShaders_.PS;
     auto& dotGP = dotLineInfo.GraphicsPipeline;
@@ -655,6 +772,7 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     GraphicsPipelineStateCreateInfo checkerInfo;
     checkerInfo.PSODesc.Name = "Checkerboard PSO";
     checkerInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    checkerInfo.pPSOCache = psoCache_.RawPtr();
     checkerInfo.pVS = solidShaders_.VS;
     checkerInfo.pPS = checkerboardShaders_.PS;
     auto& checkerGP = checkerInfo.GraphicsPipeline;
@@ -674,6 +792,7 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
 
     GraphicsPipelineStateCreateInfo gridInfo = checkerInfo;
     gridInfo.PSODesc.Name = "Grid PSO";
+    gridInfo.pPSOCache = psoCache_.RawPtr();
     gridInfo.pPS = gridShaders_.PS;
     device_->CreateGraphicsPipelineState(gridInfo, &gridPsoAndSrb_.pPSO);
     if (gridPsoAndSrb_.pPSO) {
@@ -691,6 +810,7 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     GraphicsPipelineStateCreateInfo gizmoInfo;
     gizmoInfo.PSODesc.Name = "Gizmo3D PSO";
     gizmoInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    gizmoInfo.pPSOCache = psoCache_.RawPtr();
     gizmoInfo.pVS = gizmo3DShaders_.VS;
     gizmoInfo.pPS = gizmo3DShaders_.PS;
     auto& gizmoGP = gizmoInfo.GraphicsPipeline;
@@ -714,6 +834,7 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
 
     GraphicsPipelineStateCreateInfo gizmoTriangleInfo = gizmoInfo;
     gizmoTriangleInfo.PSODesc.Name = "Gizmo3D Triangle PSO";
+    gizmoTriangleInfo.pPSOCache = psoCache_.RawPtr();
     gizmoTriangleInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     device_->CreateGraphicsPipelineState(gizmoTriangleInfo, &gizmo3DTrianglePsoAndSrb_.pPSO);
     if (gizmo3DTrianglePsoAndSrb_.pPSO) {
@@ -726,6 +847,7 @@ void ShaderManager::Impl::createPSOs()
     if (!device_) {
         return;
     }
+    createPSOCache();
     tbb::task_group tasks;
     tasks.run([this]() { createLineFamilyPSOs(); });
     tasks.run([this]() { createSpriteFamilyPSOs(); });
@@ -745,6 +867,8 @@ void ShaderManager::Impl::createPSOs()
     spriteSamplerDesc.MinLOD = 0.0f;
     spriteSamplerDesc.MaxLOD = FLT_MAX;
     device_->CreateSampler(spriteSamplerDesc, &spriteSampler_);
+
+    savePSOCache();
 }
 
 void ShaderManager::Impl::destroy()
@@ -789,6 +913,7 @@ void ShaderManager::Impl::destroy()
     clearShaderPair(batchSolidRectShaders_);
 
     spriteSampler_ = nullptr;
+    psoCache_ = nullptr;
 
     initialized_ = false;
 }

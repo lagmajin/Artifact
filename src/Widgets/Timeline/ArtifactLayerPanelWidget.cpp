@@ -38,6 +38,7 @@ module;
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
+import Diagnostics.Profiler;
 
 import Utils.Path;
 import Artifact.Service.Project;
@@ -512,14 +513,30 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
 // ArtifactLayerPanelWidget Implementation
 // ============================================================================
 
- class ArtifactLayerPanelWidget::Impl
- {
- public:
-  enum class RowKind
-  {
-   Layer,
-   Group
-  };
+class ArtifactLayerPanelWidget::Impl
+{
+public:
+ Impl();
+ ~Impl();
+ QPixmap visibilityIcon;
+ QPixmap lockIcon;
+ QPixmap soloIcon;
+ QPixmap audioIcon;
+ QPixmap shyIcon;
+ 
+ QPushButton* visibilityButton = nullptr;
+ QPushButton* lockButton = nullptr;
+ QPushButton* soloButton = nullptr;
+ QPushButton* audioButton = nullptr;
+ QPushButton* layerNameButton = nullptr;
+ QPushButton* shyButton = nullptr;
+ QPushButton* parentHeaderButton = nullptr;
+ QPushButton* blendHeaderButton = nullptr;
+
+ ArtifactTimelineKeyframeModel* keyframeModel = nullptr;
+ RationalTime currentTime{};
+ QString currentPropertyPath = "transform.position.x"; // Default to first transform prop
+};
 
   struct VisibleRow
   {
@@ -591,9 +608,8 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
   bool dragStarted_ = false;
   bool updatingLayout = false;  // 再帰呼び出し防止フラグ
   QTimer* layoutDebounceTimer = nullptr;
-  QHash<QString, QMetaObject::Connection> layerChangedConnections;
   int lastContentHeight = -1;
-  // EventBus 購読リスト。Qt シグナル接続は廃止し全て EventBus 経由で受け取る。
+  // EventBus 購読リスト
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   
@@ -645,55 +661,6 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
    draggedLayerId = LayerID();
    dragInsertVisibleRow = -1;
    dragStarted_ = false;
-  }
-
-  void clearLayerChangedSubscriptions()
-  {
-   for (auto it = layerChangedConnections.begin(); it != layerChangedConnections.end(); ++it) {
-    QObject::disconnect(it.value());
-   }
-   layerChangedConnections.clear();
-  }
-
-  void refreshLayerChangedSubscriptions(ArtifactLayerPanelWidget* owner)
-  {
-   if (!owner) {
-    clearLayerChangedSubscriptions();
-    return;
-   }
-
-   auto comp = safeCompositionLookup(compositionId);
-   if (!comp) {
-    clearLayerChangedSubscriptions();
-    return;
-   }
-
-   QSet<QString> activeIds;
-   for (auto& layer : comp->allLayer()) {
-    if (!layer) {
-      continue;
-    }
-    const QString idStr = layer->id().toString();
-    activeIds.insert(idStr);
-    if (layerChangedConnections.contains(idStr)) {
-      continue;
-    }
-    // [Optimization] layer::changed (property changes) should ONLY trigger repaint,
-    // not a full layout rebuild. Structural changes are handled by separate signals.
-    layerChangedConnections.insert(
-      idStr,
-      QObject::connect(layer.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
-       owner->update();
-      }));
-   }
-
-   const auto knownIds = layerChangedConnections.keys();
-   for (const auto& idStr : knownIds) {
-    if (activeIds.contains(idStr)) {
-      continue;
-    }
-    QObject::disconnect(layerChangedConnections.take(idStr));
-   }
   }
 
   int insertionVisibleRowForY(const int y) const
@@ -828,26 +795,28 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
 
  W_OBJECT_IMPL(ArtifactLayerPanelWidget)
 
- ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
-  : QWidget(parent), impl_(new Impl())
- {
-  setMouseTracking(true);
-  setAcceptDrops(true);
-  setFocusPolicy(Qt::StrongFocus);
+ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
+ : QWidget(parent), impl_(new Impl())
+{
+ impl_->keyframeModel = new ArtifactTimelineKeyframeModel(this);
+ QObject::connect(impl_->keyframeModel, &ArtifactTimelineKeyframeModel::keyframesChanged, this, &ArtifactLayerPanelWidget::update);
 
-  impl_->layoutDebounceTimer = new QTimer(this);
-  impl_->layoutDebounceTimer->setSingleShot(true);
-  // [Fix C] 100ms → 16ms（～60fps相当）。最小限の遅延でレイアウトの連続要求をまとめて 1 回に回す。
-  impl_->layoutDebounceTimer->setInterval(16);
-  QObject::connect(impl_->layoutDebounceTimer, &QTimer::timeout, this, [this]() {
-    this->performUpdateLayout();
+ QObject::connect(UndoManager::instance(), &UndoManager::historyChanged, this, [this]() {
+  updateLayout();
+ });
+
+ if (auto* playback = ArtifactPlaybackService::instance()) {
+  QObject::connect(playback, &ArtifactPlaybackService::frameChanged, this, [this]() {
+   if (auto* playback = ArtifactPlaybackService::instance()) {
+    const auto fps = playback->frameRate().framerate();
+    impl_->currentTime = RationalTime(playback->currentFrame().framePosition(), fps);
+    update();
+   }
   });
+ }
 
-  // Qt シグナルは使用しない。全てのサービスイベントは EventBus 経由で受け取る。
-  // ArtifactProjectService の Qt signal (layerCreated / layerRemoved / layerSelected /
-  // compositionCreated / projectChanged) への QObject::connect は廃止済み。
-  impl_->eventBusSubscriptions_.push_back(
-    impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {
+ impl_->eventBusSubscriptions_.push_back(
+  impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {
       if (event.changeType == LayerChangedEvent::ChangeType::Created) {
         if (impl_->compositionId.isNil() ||
             event.compositionId == impl_->compositionId.toString()) {
@@ -877,6 +846,11 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
         if (event.compositionId == impl_->compositionId.toString()) {
           updateLayout();
         }
+      } else if (event.changeType == LayerChangedEvent::ChangeType::Modified) {
+        // Per-property change: lightweight repaint only (no layout rebuild)
+        if (event.compositionId == impl_->compositionId.toString()) {
+          update();
+        }
       }
     }));
   impl_->eventBusSubscriptions_.push_back(
@@ -905,7 +879,6 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
 
 ArtifactLayerPanelWidget::~ArtifactLayerPanelWidget()
 {
-  impl_->clearLayerChangedSubscriptions();
   delete impl_;
 }
 
@@ -913,7 +886,6 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 {
   impl_->compositionId = id;
   impl_->selectedLayerId = LayerID();
-  impl_->refreshLayerChangedSubscriptions(this);
   updateLayout();
 }
 
@@ -1026,7 +998,6 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
   };
 
   const QVector<Impl::VisibleRow> oldRows = impl_->visibleRows;
-  impl_->refreshLayerChangedSubscriptions(this);
   
   impl_->clearInlineEditors();
   impl_->rebuildVisibleRows();
@@ -1113,22 +1084,24 @@ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
     const int editorWidth = std::max(60, width() - textX - kInlineParentWidth - kInlineBlendWidth - 8);
     impl_->inlineNameEditor->setGeometry(textX, idx * kLayerRowHeight + 2, editorWidth, kLayerRowHeight - 4);
 
-    QObject::connect(impl_->inlineNameEditor, &QLineEdit::editingFinished, this, [this, id]() {
-      if (!impl_->inlineNameEditor) return;
-      QString newName = impl_->inlineNameEditor->text();
-      impl_->inlineNameEditor->deleteLater();
-      impl_->inlineNameEditor = nullptr;
-      if (auto* svc = ArtifactProjectService::instance()) {
-        svc->renameLayerInCurrentComposition(id, newName);
-      }
-      setFocus();
+    QObject::connect(impl_->inlineNameEditor, &QLineEdit::editingFinished, this, [this, l, id]() {
+     if (!impl_->inlineNameEditor) return;
+     QString newName = impl_->inlineNameEditor->text();
+     impl_->inlineNameEditor->deleteLater();
+     impl_->inlineNameEditor = nullptr;
+     if (newName != l->layerName()) {
+      const QString oldName = l->layerName();
+      auto* cmd = new RenameLayerCommand(l, oldName, newName);
+      UndoManager::instance()->push(std::unique_ptr<RenameLayerCommand>(cmd));
+     }
+     setFocus();
     });
 
     impl_->inlineNameEditor->show();
     impl_->inlineNameEditor->setFocus();
    }
   }
-}
+ }
 
 void ArtifactLayerPanelWidget::scrollToLayer(const LayerID& id)
 {
@@ -1265,11 +1238,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, service, layer, combo](int i) {
         const auto mode = static_cast<LAYER_BLEND_TYPE>(combo->itemData(i).toInt());
         layer->setBlendMode(mode);
-        // Qt signal / ProjectChangedEvent は使用しない。
-        // ブレンドモードはレンダリング属性のみの変更であり、
-        // layer->changed() でレンダラーに直接通知するだけで十分。
-        // project->projectChanged() を呼ぶと全ウィジェットがフルリビルドされるため不適切。
-        emit layer->changed();
+        impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+            impl_->compositionId.toString(), layer->id().toString(),
+            LayerChangedEvent::ChangeType::Modified});
         combo->deleteLater();
         update();
       });
@@ -1383,20 +1354,24 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     auto comp = safeCompositionLookup(impl_->compositionId);
 
     if (chosen == renameAct) {
-      bool ok = false;
-      const QString newName = QInputDialog::getText(
-       this,
-       "Rename Layer",
-       "Layer name:",
-       QLineEdit::Normal,
-       layer->layerName(),
-       &ok);
-      if (ok) {
-       const QString trimmed = newName.trimmed();
-       if (!trimmed.isEmpty()) {
-        if (service) service->renameLayerInCurrentComposition(layer->id(), trimmed);
-        update();
-       }
+     bool ok = false;
+     const QString newName = QInputDialog::getText(
+      this,
+      "Rename Layer",
+      "Layer name:",
+      QLineEdit::Normal,
+      layer->layerName(),
+      &ok);
+     if (ok) {
+      const QString trimmed = newName.trimmed();
+      if (!trimmed.isEmpty() && trimmed != layer->layerName()) {
+       const QString oldName = layer->layerName();
+       auto* cmd = new RenameLayerCommand(layer, oldName, trimmed);
+       UndoManager::instance()->push(std::unique_ptr<RenameLayerCommand>(cmd));
+       update();
+      }
+     }
+    }
       }
     } else if (chosen == replaceSourceAct) {
       QString filter;
@@ -1723,10 +1698,12 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
             }
           }
           newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
-          if (newIndex != oldIndex) {
-            svc->moveLayerInCurrentComposition(dragLayerId, newIndex);
+           if (newIndex != oldIndex) {
+            auto layer = comp->layerById(dragLayerId);
+            auto* cmd = new MoveLayerIndexCommand(comp, layer, oldIndex, newIndex);
+            UndoManager::instance()->push(std::unique_ptr<MoveLayerIndexCommand>(cmd));
             updateLayout();
-          }
+           }
         }
       }
       impl_->clearDragState();
@@ -1916,8 +1893,9 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
           const auto newMode = items[newIndex].second;
           layer->setBlendMode(newMode);
           // [Fix 2] projectChanged() の代わりに layer->changed() を発火。
-          // projectChanged → updateLayout() 連鎖を避け、再描画のみに留める。
-          emit layer->changed();
+          impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+              impl_->compositionId.toString(), layer->id().toString(),
+              LayerChangedEvent::ChangeType::Modified});
           update();
           event->accept();
           return;
@@ -1974,6 +1952,8 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 
 void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 {
+  ArtifactCore::ProfileTimer _profTimer("LayerPanelPaint",
+                                        ArtifactCore::ProfileCategory::UI);
   QPainter p(this);
   p.setRenderHint(QPainter::SmoothPixmapTransform);
   const int rowH = kLayerRowHeight;
@@ -2097,30 +2077,78 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const QRect parentRect(parentRectX, y + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
     const QRect blendRect(parentRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
 
-    auto drawInlineCombo = [&](const QRect& r, const QString& label) {
-      p.setPen(QColor(80, 80, 86));
-      p.setBrush(QColor(38, 38, 42));
-      p.drawRoundedRect(r, 3, 3);
-      p.setPen(QColor(210, 210, 210));
-      p.drawText(r.adjusted(6, 0, -16, 0), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(label, Qt::ElideRight, r.width() - 20));
-      QPolygon arrow;
-      const int ax = r.right() - 10;
-      const int ay = r.center().y();
-      arrow << QPoint(ax - 4, ay - 2) << QPoint(ax + 4, ay - 2) << QPoint(ax, ay + 3);
-      p.setBrush(QColor(170, 170, 170));
+    // Keyframe track (20px wide, after name, before combos)
+    const int kfTrackStartX = textX + std::max(120, textWidth + 8);
+    const int kfTrackWidth = 20;
+    const QRect kfTrackRect(kfTrackStartX, y, kfTrackWidth, rowH);
+    p.fillRect(kfTrackRect, QColor(40, 40, 45));
+    p.setPen(QColor(60, 60, 65));
+    p.drawLine(kfTrackStartX, y + rowH/2, kfTrackStartX + kfTrackWidth, y + rowH/2);
+
+    if (row.layer && impl_->compositionId.isValid()) {
+     const auto keyframes = impl_->keyframeModel->getKeyframesFor(impl_->compositionId, row.layer->id(), impl_->currentPropertyPath);
+     for (const auto& kf : keyframes) {
+      const float normTime = static_cast<float>(kf.time.framePosition()) / 1000.0f; // Normalize to row width (simplified)
+      const int kfX = kfTrackStartX + static_cast<int>(normTime * kfTrackWidth);
+      const QColor kfColor = (kf.time == impl_->currentTime) ? QColor(255, 255, 0) : QColor(255, 255, 255);
       p.setPen(Qt::NoPen);
-      p.drawPolygon(arrow);
+      p.setBrush(kfColor);
+      p.drawEllipse(kfX - 3, y + rowH/2 - 3, 6, 6); // Diamond approx as circle for now
+     }
+    }
+
+    auto drawInlineCombo = [&](const QRect& r, const QString& label) {
+     p.setPen(QColor(80, 80, 86));
+     p.setBrush(QColor(38, 38, 42));
+     p.drawRoundedRect(r, 3, 3);
+     p.setPen(QColor(210, 210, 210));
+     p.drawText(r.adjusted(6, 0, -16, 0), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(label, Qt::ElideRight, r.width() - 20));
+     QPolygon arrow;
+     const int ax = r.right() - 10;
+     const int ay = r.center().y();
+     arrow << QPoint(ax - 4, ay - 2) << QPoint(ax + 4, ay - 2) << QPoint(ax, ay + 3);
+     p.setBrush(QColor(170, 170, 170));
+     p.setPen(Qt::NoPen);
+     p.drawPolygon(arrow);
     };
 
     const QString parentId = l->parentLayerId().toString();
     QString parentName = QStringLiteral("<None>");
     if (!parentId.isEmpty()) {
-      if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-        for (const auto& candidate : comp->allLayer()) {
-          if (candidate && candidate->id().toString() == parentId) {
-            parentName = candidate->layerName();
-            break;
-          }
+     if (auto comp = safeCompositionLookup(impl_->compositionId)) {
+      for (const auto& candidate : comp->allLayer()) {
+       if (candidate && candidate->id().toString() == parentId) {
+        parentName = candidate->layerName();
+        break;
+       }
+      }
+     }
+    }
+
+    if (showInlineCombos) {
+     drawInlineCombo(parentRect, QStringLiteral("Parent: %1").arg(parentName));
+     drawInlineCombo(blendRect, QStringLiteral("Blend: %1").arg(blendModeToText(l->layerBlendType())));
+    }
+    p.setPen(Qt::white);
+    const int textWidth = showInlineCombos ? std::max(20, parentRect.left() - kfTrackStartX - kfTrackWidth - 8) : std::max(20, width() - kfTrackStartX - kfTrackWidth - 8);
+    p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
+   }
+
+   if (!impl_->draggedLayerId.isNil() && impl_->dragInsertVisibleRow >= 0) {
+    const int lineY = std::clamp(impl_->dragInsertVisibleRow * rowH, 1, std::max(1, height() - 2));
+    const QColor accent(0, 153, 255);
+    QPen pen(accent, 2);
+    p.setPen(pen);
+    p.drawLine(0, lineY, width(), lineY);
+
+    p.setPen(Qt::NoPen);
+    p.setBrush(accent);
+    const int markerSize = 6;
+    p.drawEllipse(QPoint(markerSize, lineY), markerSize / 2, markerSize / 2);
+    p.drawEllipse(QPoint(std::max(markerSize, width() - markerSize), lineY), markerSize / 2, markerSize / 2);
+   }
+  }
+ }
         }
       }
     }
@@ -2281,10 +2309,12 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         }
 
         newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
-        if (newIndex != oldIndex) {
-          svc->moveLayerInCurrentComposition(dragLayerId, newIndex);
+         if (newIndex != oldIndex) {
+          auto layer = comp->layerById(dragLayerId);
+          auto* cmd = new MoveLayerIndexCommand(comp, layer, oldIndex, newIndex);
+          UndoManager::instance()->push(std::unique_ptr<MoveLayerIndexCommand>(cmd));
           updateLayout();
-        }
+         }
       }
     }
     impl_->clearDragState();

@@ -46,10 +46,17 @@ import Artifact.Service.Playback;
 namespace {
 
 QIcon loadIcon(const QString& path) {
+    if (path.trimmed().isEmpty()) {
+        return QIcon();
+    }
     const QString resPath = ArtifactCore::resolveIconResourcePath(path);
     QIcon icon(resPath);
     if (!icon.isNull()) return icon;
-    return QIcon(ArtifactCore::resolveIconPath(path));
+    const QString filePath = ArtifactCore::resolveIconPath(path);
+    if (filePath.trimmed().isEmpty()) {
+        return QIcon();
+    }
+    return QIcon(filePath);
 }
 
 } // namespace

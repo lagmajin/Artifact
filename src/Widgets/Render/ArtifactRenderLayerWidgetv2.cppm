@@ -132,6 +132,12 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
    return;
   }
   renderer_->recreateSwapChain(window);
+  // Set the actual widget size so ViewportTransformer doesn't stay at the
+  // default {1920, 1080} until the first resizeEvent fires.
+  if (window && window->width() > 0 && window->height() > 0) {
+   renderer_->setViewportSize(static_cast<float>(window->width()),
+                              static_cast<float>(window->height()));
+  }
  }
 
  void ArtifactLayerEditorWidgetV2::Impl::destroy()
