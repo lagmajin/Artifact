@@ -1200,11 +1200,19 @@ namespace Artifact
         }
 
         void moveJob(int fromIndex, int toIndex) {
-            if (fromIndex >= 0 && fromIndex < jobs.size() && toIndex >= 0 && toIndex < jobs.size()) {
-                ArtifactRenderJob job = jobs.takeAt(fromIndex);
-                jobs.insert(toIndex, job);
-                if (queueReordered) queueReordered(fromIndex, toIndex);
+            if (fromIndex < 0 || fromIndex >= jobs.size() || toIndex < 0) {
+                return;
             }
+            if (toIndex > jobs.size()) {
+                toIndex = jobs.size();
+            }
+            ArtifactRenderJob job = jobs.takeAt(fromIndex);
+            if (fromIndex < toIndex) {
+                --toIndex;
+            }
+            toIndex = std::clamp(toIndex, 0, jobs.size());
+            jobs.insert(toIndex, job);
+            if (queueReordered) queueReordered(fromIndex, toIndex);
         }
 
         void startRendering(int index) {

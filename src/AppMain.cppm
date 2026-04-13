@@ -12,11 +12,10 @@ module;
 
 #include <clocale>
 #include <cstdio>
-#include <iostream>
 #include <fcntl.h>
 #include <io.h>
+#include <iostream>
 #include <windows.h>
-
 
 // #include <pybind11/pybind11.h>
 #include <QAbstractButton>
@@ -55,7 +54,6 @@ module;
 #include <ads_globals.h>
 #include <filesystem>
 #include <qthreadpool.h>
-
 
 #include <QByteArray>
 #include <opencv2/opencv.hpp>
@@ -389,8 +387,8 @@ void sanitizeLayoutStore(ArtifactCore::FastSettingsStore &layoutStore) {
 }
 
 QString buildWindowTitle() {
-  QString title = QStringLiteral("Artifact %1").arg(
-      QStringLiteral(ARTIFACT_VERSION_STRING));
+  QString title = QStringLiteral("Artifact %1")
+                      .arg(QStringLiteral(ARTIFACT_VERSION_STRING));
 
   const QString buildHash = QStringLiteral(ARTIFACT_BUILD_GIT_HASH);
   const QString buildStamp = QStringLiteral(ARTIFACT_BUILD_TIMESTAMP);
@@ -734,10 +732,11 @@ static int runMcpServerMode() {
 
     QJsonObject request;
     while (ArtifactCore::McpBridge::tryPopFrame(&inputBuffer, &request)) {
-      const QJsonObject response =
-          ArtifactCore::McpBridge::handleRequest(request, ArtifactCore::AIContext());
+      const QJsonObject response = ArtifactCore::McpBridge::handleRequest(
+          request, ArtifactCore::AIContext());
       const QByteArray frame = ArtifactCore::McpBridge::encodeFrame(response);
-      std::cout.write(frame.constData(), static_cast<std::streamsize>(frame.size()));
+      std::cout.write(frame.constData(),
+                      static_cast<std::streamsize>(frame.size()));
       std::cout.flush();
     }
   }
@@ -955,6 +954,28 @@ int main(int argc, char *argv[]) {
   status->setProjectText("Loaded");
   auto *projectService = ArtifactProjectService::instance();
   auto *playbackService = ArtifactPlaybackService::instance();
+  // Enable output monitoring for debugging
+  if (playbackService->controller()) {
+    playbackService->controller()->enableOutputMonitoring(true);
+    playbackService->controller()->setOutputMonitorCallback(
+        [mw](bool audioOk, bool videoOk, const QString &context) {
+          if (!audioOk || !videoOk) {
+            auto *aiWidget = mw->aiCloudWidget();
+            if (aiWidget) {
+              QString prompt =
+                  QString("プレビュー再生中に問題が発生しました。音: %1, 映像: "
+                          "%2, コンテキスト: %3。原因を分析してください。")
+                      .arg(audioOk ? "OK" : "NG")
+                      .arg(videoOk ? "OK" : "NG")
+                      .arg(context);
+              aiWidget->startChatRequest(
+                  prompt,
+                  "あなたはAfter "
+                  "Effectsのような動画編集アプリのデバッグアシスタントです。");
+            }
+          }
+        });
+  }
   auto *autoSaveManager = new ArtifactAutoSaveManager();
   QPointer<ArtifactRenderCenterWindow> renderCenterWindow;
   const QString recoveryDir =

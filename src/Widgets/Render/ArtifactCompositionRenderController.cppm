@@ -2503,12 +2503,24 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
             } else {
               selection->selectLayer(hitLayerRef);
             }
+            // If svc failed to update the selection manager (e.g., its
+            // currentComposition doesn't match the render controller's
+            // composition), it may have called clearSelection(). Fix this
+            // directly so the deferred syncSelectionState() won't nullify the
+            // gizmo on the next tick.
+            if (selection && !selection->currentLayer()) {
+              selection->selectLayer(hitLayerRef);
+            }
           }
         }
 
+        // Use hitLayer as the fallback: if the selection manager still has no
+        // current layer (composition mismatch, etc.), don't override with null.
         ArtifactAbstractLayerPtr primaryLayer = hitLayer;
         if (selection) {
-          primaryLayer = selection->currentLayer();
+          if (auto current = selection->currentLayer()) {
+            primaryLayer = current;
+          }
         }
         setSelectedLayerId(primaryLayer ? primaryLayer->id() : LayerID::Nil());
         impl_->gizmo_->setLayer(primaryLayer);
