@@ -1210,7 +1210,7 @@ namespace Artifact
             if (fromIndex < toIndex) {
                 --toIndex;
             }
-            toIndex = std::clamp(toIndex, 0, jobs.size());
+            toIndex = std::clamp<int>(toIndex, 0, static_cast<int>(jobs.size()));
             jobs.insert(toIndex, job);
             if (queueReordered) queueReordered(fromIndex, toIndex);
         }

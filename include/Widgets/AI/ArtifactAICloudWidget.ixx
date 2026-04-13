@@ -34,6 +34,8 @@ class ArtifactAICloudWidget : public QWidget {
   W_OBJECT(ArtifactAICloudWidget)
 public:
   ArtifactAICloudWidget(QWidget *parent = nullptr);
+  void startChatRequest(const QString &userPrompt, const QString &systemPrompt,
+                        const QString &toolTrace = QString());
 
 private:
   void onSendClicked();
@@ -43,8 +45,6 @@ private:
   void onProviderChanged(int index);
   void refreshModelList();
   void cancelCurrentSend();
-  void startChatRequest(const QString &userPrompt, const QString &systemPrompt,
-                        const QString &toolTrace = QString());
   bool tryHandleToolCallResponse(const QString &responseText,
                                  QString *toolTraceOut,
                                  QString *errorOut = nullptr);
