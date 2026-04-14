@@ -102,6 +102,7 @@ import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Project.Roles;
 import EnvironmentVariable;
+import Core.Localization;
 import Artifact.Widgets.UndoHistoryWidget;
 import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Widgets.ProjectManagerWidget;
@@ -773,6 +774,35 @@ int main(int argc, char *argv[]) {
   }
   if (appArgs.contains(QStringLiteral("--mcp-server"))) {
     return runMcpServerMode();
+  }
+
+  // ============================================================
+  // 起動言語オプションの処理
+  // --lang ja/en/zh
+  // ============================================================
+  {
+    int langIndex = appArgs.indexOf(QStringLiteral("--lang"));
+    if (langIndex >= 0 && langIndex + 1 < appArgs.size()) {
+      QString langCode = appArgs[langIndex + 1].toLower();
+      ArtifactCore::LocaleLanguage targetLang = ArtifactCore::LocaleLanguage::Auto;
+      
+      if (langCode == QStringLiteral("ja") || langCode == QStringLiteral("japanese")) {
+        targetLang = ArtifactCore::LocaleLanguage::Japanese;
+        qInfo() << "[AppMain] Language set to Japanese via --lang";
+      } else if (langCode == QStringLiteral("en") || langCode == QStringLiteral("english")) {
+        targetLang = ArtifactCore::LocaleLanguage::English;
+        qInfo() << "[AppMain] Language set to English via --lang";
+      } else if (langCode == QStringLiteral("zh") || langCode == QStringLiteral("chinese")) {
+        targetLang = ArtifactCore::LocaleLanguage::Chinese;
+        qInfo() << "[AppMain] Language set to Chinese via --lang";
+      } else {
+        qWarning() << "[AppMain] Unknown language code:" << langCode;
+      }
+      
+      if (targetLang != ArtifactCore::LocaleLanguage::Auto) {
+        ArtifactCore::LocalizationManager::instance().setLanguage(targetLang);
+      }
+    }
   }
 
   QApplication a(argc, argv);
