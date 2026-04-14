@@ -43,19 +43,10 @@ void ArtifactGroupLayer::setComposition(void *comp) {
 }
 
 void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
-    if (!isVisible() || opacity() <= 0.0f) return;
+    if (!isVisible() || opacity() <= 0.0f || groupImpl_->children.empty()) return;
 
-    // TODO: In the future, we should render children to a temporary texture
-    // and apply effects/blending of the Group layer to that texture.
-    // For now, we simply draw them in sequence (painter's algorithm).
-    
-    // We sort by reverse order if they were just indices, but here they are a vector.
-    // Assuming the vector order is back-to-front.
-    for (auto& child : groupImpl_->children) {
-        if (child && child->isVisible()) {
-            child->draw(renderer);
-        }
-    }
+    // Render children to offscreen texture first, then apply group effects
+    renderToOffscreen(renderer);
 }
 
 void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
@@ -135,7 +126,7 @@ QJsonObject ArtifactGroupLayer::toJson() const {
 void ArtifactGroupLayer::fromJsonProperties(const QJsonObject& obj) {
     ArtifactAbstractLayer::fromJsonProperties(obj);
     clearChildren();
-    
+
     if (obj.contains("children") && obj["children"].isArray()) {
         QJsonArray childrenArr = obj["children"].toArray();
         for (const auto& v : childrenArr) {
@@ -146,6 +137,82 @@ void ArtifactGroupLayer::fromJsonProperties(const QJsonObject& obj) {
             }
         }
     }
+}
+
+void ArtifactGroupLayer::renderToOffscreen(ArtifactIRenderer* renderer) {
+    if (!renderer || groupImpl_->children.empty()) return;
+
+    // Get group bounds
+    QRectF bounds = localBounds();
+    int width = std::max(1, static_cast<int>(bounds.width()));
+    int height = std::max(1, static_cast<int>(bounds.height()));
+
+    // Create offscreen render target
+    auto offscreen = createOffscreenTexture(renderer, width, height);
+    if (!offscreen) {
+        // Fallback: draw children directly
+        drawChildrenDirect(renderer);
+        return;
+    }
+
+    // Render children to offscreen texture
+    renderer->pushRenderTarget(offscreen);
+    renderer->clearRenderTarget({0.0f, 0.0f, 0.0f, 0.0f});
+
+    for (const auto& child : groupImpl_->children) {
+        if (child && child->isVisible()) {
+            child->draw(renderer);
+        }
+    }
+
+    renderer->popRenderTarget();
+
+    // Apply group opacity and effects to the offscreen texture
+    applyGroupEffects(renderer, offscreen, bounds);
+}
+
+void ArtifactGroupLayer::drawChildrenDirect(ArtifactIRenderer* renderer) {
+    // Fallback: draw children without offscreen pass
+    for (const auto& child : groupImpl_->children) {
+        if (child && child->isVisible()) {
+            child->draw(renderer);
+        }
+    }
+}
+
+std::shared_ptr<GroupOffscreenTexture> ArtifactGroupLayer::createOffscreenTexture(
+    ArtifactIRenderer* renderer, int width, int height) {
+    
+    if (!renderer) return nullptr;
+
+    // Try to create offscreen texture via renderer
+    auto texture = renderer->createOffscreenTexture(width, height);
+    if (texture) {
+        return std::make_shared<GroupOffscreenTexture>(texture, width, height);
+    }
+
+    return nullptr;
+}
+
+void ArtifactGroupLayer::applyGroupEffects(
+    ArtifactIRenderer* renderer,
+    const std::shared_ptr<GroupOffscreenTexture>& offscreen,
+    const QRectF& bounds) {
+    
+    if (!renderer || !offscreen) return;
+
+    // Apply group opacity
+    float groupOpacity = opacity();
+    
+    // Draw the offscreen texture with group opacity
+    renderer->drawOffscreenTexture(
+        offscreen->textureView,
+        bounds,
+        groupOpacity
+    );
+
+    // TODO: Apply group blend mode
+    // TODO: Apply group effects stack
 }
 
 } // namespace Artifact

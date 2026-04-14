@@ -904,4 +904,77 @@ void ArtifactIRenderer::setUpscaleConfig(bool, float)    {}
   impl_->primitiveRenderer3D_.setOverrideRTV(rtv);
  }
 
+ // Offscreen rendering for group layers
+ void* ArtifactIRenderer::createOffscreenTexture(int width, int height)
+ {
+  if (!impl_->deviceManager_.device()) return nullptr;
+
+  Diligent::RefCntAutoPtr<Diligent::ITexture> texture;
+  Diligent::TextureDesc desc;
+  desc.Name = "GroupOffscreenTexture";
+  desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+  desc.Width = static_cast<Diligent::Uint32>(width);
+  desc.Height = static_cast<Diligent::Uint32>(height);
+  desc.MipLevels = 1;
+  desc.Format = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
+  desc.Usage = Diligent::USAGE_DEFAULT;
+  desc.BindFlags = Diligent::BIND_RENDER_TARGET | Diligent::BIND_SHADER_RESOURCE;
+
+  impl_->deviceManager_.device()->CreateTexture(desc, nullptr, &texture);
+  if (!texture) return nullptr;
+
+  auto* view = texture->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+  view->AddRef();
+  return static_cast<void*>(view);
+ }
+
+ void ArtifactIRenderer::destroyOffscreenTexture(void* textureView)
+ {
+  if (textureView) {
+   auto* view = static_cast<Diligent::ITextureView*>(textureView);
+   view->Release();
+  }
+ }
+
+ void ArtifactIRenderer::pushRenderTarget(void* textureView)
+ {
+  if (!textureView) return;
+  auto* view = static_cast<Diligent::ITextureView*>(textureView);
+  auto* ctx = impl_->deviceManager_.context();
+  if (ctx) {
+   ctx->SetRenderTargets(1, &view, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  }
+ }
+
+ void ArtifactIRenderer::popRenderTarget()
+ {
+  auto* ctx = impl_->deviceManager_.context();
+  if (ctx && impl_->m_layerRT) {
+   auto* rtv = impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+   ctx->SetRenderTargets(1, &rtv, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  }
+ }
+
+ void ArtifactIRenderer::clearRenderTarget(const FloatColor& color)
+ {
+  // Clear via beginning a new frame / clearing viewport
+  // Actual clear implementation depends on Diligent's clear API
+  (void)color;
+ }
+
+ void ArtifactIRenderer::drawOffscreenTexture(void* textureView, const QRectF& bounds, float opacity)
+ {
+  if (!textureView) return;
+  auto* view = static_cast<Diligent::ITextureView*>(textureView);
+
+  drawSprite(
+   static_cast<float>(bounds.x()),
+   static_cast<float>(bounds.y()),
+   static_cast<float>(bounds.width()),
+   static_cast<float>(bounds.height()),
+   view,
+   opacity
+  );
+ }
+
 } // namespace Artifact

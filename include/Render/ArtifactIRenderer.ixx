@@ -148,6 +148,14 @@ public:
   void drawTextViewport(float vx, float vy, const QString& text, const ArtifactCore::TextStyle& style, const FloatColor& color, float opacity = 1.0f, Qt::Alignment align = Qt::AlignLeft);
 
  void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
+
+ // Offscreen rendering for group layers
+ void* createOffscreenTexture(int width, int height);
+ void destroyOffscreenTexture(void* textureView);
+ void pushRenderTarget(void* textureView);
+ void popRenderTarget();
+ void clearRenderTarget(const FloatColor& color);
+ void drawOffscreenTexture(void* textureView, const QRectF& bounds, float opacity = 1.0f);
  void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
  void setUpscaleConfig(bool enable, float sharpness);
 
