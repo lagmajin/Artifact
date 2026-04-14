@@ -97,6 +97,7 @@ import Artifact.PythonAPI;
 import Script.Python.Engine;
 import Diagnostics.CrashHandler;
 import Translation.Manager;
+import Artifact.Diagnostics.AppValidationRules;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
@@ -826,6 +827,26 @@ int main(int argc, char *argv[]) {
     } else {
       qDebug() << "[AppMain] Translations directory not found:" << translationsDir;
     }
+  }
+
+  // ============================================================
+  // Problem View 検証ルールの登録
+  // ============================================================
+  {
+    // ルールエンジンとルールのインスタンスを作成
+    // 実際にはシングルトンかグローバルな場所に保持する必要があるが、
+    // ここではデモ用に main 関数スコープで登録する（本来は App クラスなどで管理）
+    // TODO: 診断エンジンをグローバルに保持する仕組みを用意する
+    
+    // 簡易的にルールのインスタンス化だけ行っておく
+    // validateAll() はプロジェクト読み込み時などに呼び出す
+    auto missingFileRule = std::make_unique<ArtifactMissingFileRule>();
+    auto perfRule = std::make_unique<ArtifactPerformanceRule>();
+    
+    // デバッグ出力
+    qInfo() << "[AppMain] Validation Rules initialized:" 
+            << QString::fromStdString(missingFileRule->name().toStdString()) 
+            << QString::fromStdString(perfRule->name().toStdString());
   }
 
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_BUILTIN_TESTS")) {
