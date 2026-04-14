@@ -792,9 +792,12 @@ int main(int argc, char *argv[]) {
       } else if (langCode == QStringLiteral("en") || langCode == QStringLiteral("english")) {
         targetLang = ArtifactCore::LocaleLanguage::English;
         qInfo() << "[AppMain] Language set to English via --lang";
-      } else if (langCode == QStringLiteral("zh") || langCode == QStringLiteral("chinese")) {
-        targetLang = ArtifactCore::LocaleLanguage::Chinese;
-        qInfo() << "[AppMain] Language set to Chinese via --lang";
+      } else if (langCode.startsWith("zh-tw") || langCode == QStringLiteral("chinese-traditional")) {
+        targetLang = ArtifactCore::LocaleLanguage::ChineseTraditional;
+        qInfo() << "[AppMain] Language set to Traditional Chinese via --lang";
+      } else if (langCode.startsWith("zh") || langCode == QStringLiteral("chinese-simplified")) {
+        targetLang = ArtifactCore::LocaleLanguage::ChineseSimplified;
+        qInfo() << "[AppMain] Language set to Simplified Chinese via --lang";
       } else {
         qWarning() << "[AppMain] Unknown language code:" << langCode;
       }
