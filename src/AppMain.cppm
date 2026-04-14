@@ -809,6 +809,22 @@ int main(int argc, char *argv[]) {
   configureQtPaths();
   Artifact::WorkspaceAutomation::ensureRegistered();
 
+  // ============================================================
+  // 翻訳システムの初期化 (LocalizationManager へ統合)
+  // ============================================================
+  {
+    auto &loc = ArtifactCore::LocalizationManager::instance();
+    const QString translationsDir =
+        QDir(QCoreApplication::applicationDirPath())
+            .filePath(QStringLiteral("translations"));
+    if (QDir(translationsDir).exists()) {
+      loc.loadFromDirectory(translationsDir);
+      qDebug() << "[AppMain] Localization loaded, locale:" << loc.languageCode();
+    } else {
+      qDebug() << "[AppMain] Translations directory not found:" << translationsDir;
+    }
+  }
+
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_BUILTIN_TESTS")) {
     const int builtinTestFailures = Artifact::runAllTests();
     if (builtinTestFailures != 0) {
@@ -820,21 +836,6 @@ int main(int argc, char *argv[]) {
   auto *envManager = ArtifactCore::EnvironmentVariableManager::instance();
   qDebug() << "[AppMain] Environment variables loaded:"
            << envManager->variableNames().size();
-
-  // Initialize translations
-  {
-    auto &tr = Artifact::TranslationManager::instance();
-    const QString translationsDir =
-        QDir(QCoreApplication::applicationDirPath())
-            .filePath(QStringLiteral("translations"));
-    if (QDir(translationsDir).exists()) {
-      tr.loadFromDirectory(translationsDir);
-      qDebug() << "[AppMain] translations loaded, locale:" << tr.locale();
-    } else {
-      qDebug() << "[AppMain] translations directory not found:"
-               << translationsDir;
-    }
-  }
 
   QLoggingCategory::setFilterRules(
       QStringLiteral("artifact.compositionview.debug=false\n"
