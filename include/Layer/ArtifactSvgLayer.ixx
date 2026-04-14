@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <iostream>
 #include <vector>
@@ -68,7 +68,6 @@ public:
   QRectF localBounds() const override;
 
 private:
-  void drawVector(ArtifactIRenderer* renderer);
   void drawRaster(ArtifactIRenderer* renderer);
 };
 
