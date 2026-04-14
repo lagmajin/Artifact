@@ -465,7 +465,9 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
  }
 
  void ArtifactCompositionRenderWidget::mouseDoubleClickEvent(QMouseEvent* event) {
-  resetView();
+  // Double click to reset view is disabled to prevent accidental resets
+  // during normal workflow. Use the toolbar button or View > Reset View instead.
+  // resetView(); 
   event->accept();
  }
 

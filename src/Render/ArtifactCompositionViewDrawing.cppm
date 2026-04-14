@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 
@@ -31,6 +31,7 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Particle;
 import Artifact.Layer.Composition;
+import Artifact.Layer.AdjustableLayer;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
@@ -267,11 +268,17 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
 }
 
 void applyRasterizerEffectsAndMasksToSurface(ArtifactAbstractLayer* targetLayer,
-                                             QImage& surface)
+                                             QImage& surface,
+                                             DetailLevel lod)
 {
-  ArtifactCore::ImageF32x4_RGBA processed;
-  if (buildRasterizedSurfaceBuffer(targetLayer, surface, &processed)) {
-    surface = processed.toQImage();
+  // Feature 1: Effect LOD Integration
+  // Downsample surface based on LOD before applying effects to reduce cost.
+  const QImage processedSurface = downsampleForLOD(surface, lod);
+  if (processedSurface.isNull()) return;
+
+  ArtifactCore::ImageF32x4_RGBA buffer;
+  if (buildRasterizedSurfaceBuffer(targetLayer, processedSurface, &buffer)) {
+    surface = buffer.toQImage();
   }
 }
 
@@ -402,7 +409,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         cacheEntry = &(*surfaceCache)[ownerId];
       }
     } else if (allowSurfaceCache) {
-      applyRasterizerEffectsAndMasksToSurface(layer, surface);
+      applyRasterizerEffectsAndMasksToSurface(layer, surface, lod);
     }
 
     const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
@@ -562,6 +569,17 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
     if (!surface.isNull()) {
       applySurfaceAndDraw(surface, localRect, hasRasterizerEffectsOrMasks(layer));
+    }
+    return;
+  }
+
+  if (layer->isAdjustmentLayer()) {
+    // 調整レイヤー: 背面の画像をキャプチャしてエフェクトを適用する
+    // GPUパスの場合は既に controller 側で background がコピーされている前提。
+    // readbackToImage は現在の描画ターゲット（RTV）の内容を QImage として取得する。
+    QImage background = renderer->readbackToImage();
+    if (!background.isNull()) {
+      applySurfaceAndDraw(background, localRect, true);
     }
     return;
   }
