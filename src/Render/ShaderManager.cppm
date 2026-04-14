@@ -60,8 +60,11 @@ public:
     PSOAndSRB gizmo3DPsoAndSrb_;
     PSOAndSRB gizmo3DTrianglePsoAndSrb_;
     PSOAndSRB batchSolidRectPsoAndSrb_;
+    PSOAndSRB glyphQuadPsoAndSrb_;
 
+    RenderShaderPair glyphQuadShaders_;
     RefCntAutoPtr<ISampler> spriteSampler_;
+    RefCntAutoPtr<ISampler> glyphAtlasSampler_;
 
     bool initialized_ = false;
 
@@ -719,6 +722,106 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     if (gizmo3DTrianglePsoAndSrb_.pPSO) {
         gizmo3DTrianglePsoAndSrb_.pPSO->CreateShaderResourceBinding(&gizmo3DTrianglePsoAndSrb_.pSRB, true);
     }
+
+    // -----------------------------------------------------------------------
+    // Glyph Quad PSO (GPU text rendering)
+    // Vertex layout: float2 pos (NDC), float2 uv, float4 color
+    // Pixel shader: samples atlas as R8 (alpha) and modulates with color
+    // -----------------------------------------------------------------------
+    {
+        const char* glyphVS = R"(
+            cbuffer GlyphTransformCB : register(b0) {
+                float4x4 g_Transform;
+            };
+            struct VSInput {
+                float2 Pos   : ATTRIB0;
+                float2 UV    : ATTRIB1;
+                float4 Color : ATTRIB2;
+            };
+            struct PSInput {
+                float4 Pos   : SV_POSITION;
+                float2 UV    : TEXCOORD0;
+                float4 Color : COLOR0;
+            };
+            void main(VSInput In, out PSInput Out) {
+                Out.Pos   = mul(float4(In.Pos, 0.0, 1.0), g_Transform);
+                Out.UV    = In.UV;
+                Out.Color = In.Color;
+            }
+        )";
+
+        const char* glyphPS = R"(
+            Texture2D    g_atlas   : register(t0);
+            SamplerState g_sampler : register(s0);
+            struct PSInput {
+                float4 Pos   : SV_POSITION;
+                float2 UV    : TEXCOORD0;
+                float4 Color : COLOR0;
+            };
+            float4 main(PSInput In) : SV_TARGET {
+                // atlas は RGBA8 — alphaMapForGlyph は alpha channel に密度を格納
+                float alpha = g_atlas.Sample(g_sampler, In.UV).a;
+                return float4(In.Color.rgb, In.Color.a * alpha);
+            }
+        )";
+
+        ShaderCreateInfo glyphVsInfo;
+        glyphVsInfo.SourceLanguage    = SHADER_SOURCE_LANGUAGE_HLSL;
+        glyphVsInfo.Desc.ShaderType   = SHADER_TYPE_VERTEX;
+        glyphVsInfo.Desc.Name         = "GlyphQuadVS";
+        glyphVsInfo.Source            = glyphVS;
+        device_->CreateShader(glyphVsInfo, &glyphQuadShaders_.VS);
+
+        ShaderCreateInfo glyphPsInfo;
+        glyphPsInfo.SourceLanguage    = SHADER_SOURCE_LANGUAGE_HLSL;
+        glyphPsInfo.Desc.ShaderType   = SHADER_TYPE_PIXEL;
+        glyphPsInfo.Desc.Name         = "GlyphQuadPS";
+        glyphPsInfo.Source            = glyphPS;
+        device_->CreateShader(glyphPsInfo, &glyphQuadShaders_.PS);
+
+        if (glyphQuadShaders_.VS && glyphQuadShaders_.PS) {
+            static const LayoutElement glyphLayout[] = {
+                LayoutElement{0, 0, 2, VT_FLOAT32, false}, // pos
+                LayoutElement{1, 0, 2, VT_FLOAT32, false}, // uv
+                LayoutElement{2, 0, 4, VT_FLOAT32, false}, // color
+            };
+            static const ShaderResourceVariableDesc glyphVars[] = {
+                { SHADER_TYPE_VERTEX, "GlyphTransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+                { SHADER_TYPE_PIXEL,  "g_atlas",          SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC },
+            };
+
+            GraphicsPipelineStateCreateInfo glyphInfo;
+            glyphInfo.PSODesc.Name        = "GlyphQuad PSO";
+            glyphInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+            glyphInfo.pVS = glyphQuadShaders_.VS;
+            glyphInfo.pPS = glyphQuadShaders_.PS;
+            auto& glyphGP = glyphInfo.GraphicsPipeline;
+            glyphGP.NumRenderTargets     = 1;
+            glyphGP.RTVFormats[0]        = rtvFormat_;
+            glyphGP.PrimitiveTopology    = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+            glyphGP.RasterizerDesc.CullMode    = CULL_MODE_NONE;
+            glyphGP.DepthStencilDesc.DepthEnable = False;
+            auto& glyphBlend = glyphGP.BlendDesc.RenderTargets[0];
+            glyphBlend.BlendEnable          = True;
+            glyphBlend.SrcBlend             = BLEND_FACTOR_SRC_ALPHA;
+            glyphBlend.DestBlend            = BLEND_FACTOR_INV_SRC_ALPHA;
+            glyphBlend.BlendOp              = BLEND_OPERATION_ADD;
+            glyphBlend.SrcBlendAlpha        = BLEND_FACTOR_ONE;
+            glyphBlend.DestBlendAlpha       = BLEND_FACTOR_INV_SRC_ALPHA;
+            glyphBlend.BlendOpAlpha         = BLEND_OPERATION_ADD;
+            glyphBlend.RenderTargetWriteMask = COLOR_MASK_ALL;
+            glyphGP.InputLayout.LayoutElements = glyphLayout;
+            glyphGP.InputLayout.NumElements    = _countof(glyphLayout);
+            glyphInfo.PSODesc.ResourceLayout.Variables    = glyphVars;
+            glyphInfo.PSODesc.ResourceLayout.NumVariables = _countof(glyphVars);
+            device_->CreateGraphicsPipelineState(glyphInfo, &glyphQuadPsoAndSrb_.pPSO);
+            if (glyphQuadPsoAndSrb_.pPSO) {
+                glyphQuadPsoAndSrb_.pPSO->CreateShaderResourceBinding(&glyphQuadPsoAndSrb_.pSRB, true);
+            } else {
+                qWarning() << "[ShaderManager] Failed to create PSO: GlyphQuad PSO";
+            }
+        }
+    }
 }
 
 void ShaderManager::Impl::createPSOs()
@@ -745,6 +848,21 @@ void ShaderManager::Impl::createPSOs()
     spriteSamplerDesc.MinLOD = 0.0f;
     spriteSamplerDesc.MaxLOD = FLT_MAX;
     device_->CreateSampler(spriteSamplerDesc, &spriteSampler_);
+
+    // Glyph atlas sampler: point sampling to preserve glyph sharpness
+    SamplerDesc glyphSamplerDesc;
+    glyphSamplerDesc.MinFilter       = FILTER_TYPE_LINEAR;
+    glyphSamplerDesc.MagFilter       = FILTER_TYPE_LINEAR;
+    glyphSamplerDesc.MipFilter       = FILTER_TYPE_POINT;
+    glyphSamplerDesc.AddressU        = TEXTURE_ADDRESS_CLAMP;
+    glyphSamplerDesc.AddressV        = TEXTURE_ADDRESS_CLAMP;
+    glyphSamplerDesc.AddressW        = TEXTURE_ADDRESS_CLAMP;
+    glyphSamplerDesc.ComparisonFunc  = COMPARISON_FUNC_ALWAYS;
+    glyphSamplerDesc.MaxAnisotropy   = 1;
+    glyphSamplerDesc.MipLODBias      = 0.0f;
+    glyphSamplerDesc.MinLOD          = 0.0f;
+    glyphSamplerDesc.MaxLOD          = FLT_MAX;
+    device_->CreateSampler(glyphSamplerDesc, &glyphAtlasSampler_);
 }
 
 void ShaderManager::Impl::destroy()
@@ -772,6 +890,7 @@ void ShaderManager::Impl::destroy()
     clearPso(gizmo3DPsoAndSrb_);
     clearPso(gizmo3DTrianglePsoAndSrb_);
     clearPso(batchSolidRectPsoAndSrb_);
+    clearPso(glyphQuadPsoAndSrb_);
 
     clearShaderPair(lineShaders_);
     clearShaderPair(outlineShaders_);
@@ -787,8 +906,10 @@ void ShaderManager::Impl::destroy()
     clearShaderPair(gridShaders_);
     clearShaderPair(gizmo3DShaders_);
     clearShaderPair(batchSolidRectShaders_);
+    clearShaderPair(glyphQuadShaders_);
 
-    spriteSampler_ = nullptr;
+    spriteSampler_     = nullptr;
+    glyphAtlasSampler_ = nullptr;
 
     initialized_ = false;
 }
@@ -955,9 +1076,19 @@ PSOAndSRB ShaderManager::batchSolidRectPsoAndSrb() const
     return impl_->batchSolidRectPsoAndSrb_;
 }
 
+PSOAndSRB ShaderManager::glyphQuadPsoAndSrb() const
+{
+    return impl_->glyphQuadPsoAndSrb_;
+}
+
 RefCntAutoPtr<ISampler> ShaderManager::spriteSampler() const
 {
     return impl_->spriteSampler_;
+}
+
+RefCntAutoPtr<ISampler> ShaderManager::glyphAtlasSampler() const
+{
+    return impl_->glyphAtlasSampler_;
 }
 
 bool ShaderManager::isInitialized() const

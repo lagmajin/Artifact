@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
@@ -72,6 +72,7 @@ import Artifact.Render.Pipeline;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
 import Widgets.Utils.CSS;
+import Time.Code;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback; // 追加
@@ -990,7 +991,9 @@ public:
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
   bool showMotionPathOverlay_ = true;
-  bool showFrameInfo_ = false; // Changed to false by default
+  bool showFrameInfo_ = false;
+  bool showViewportRulers_ = true;
+  bool showViewportTimecode_ = true;
   int currentFrameForOverlay_ = 0;
   quint64 renderFrameCounter_ = 0;
   bool renderQueueActive_ =
@@ -2983,6 +2986,75 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       const FloatColor origClearColor = renderer_->getClearColor();
       float origPanX, origPanY;
       renderer_->getPan(origPanX, origPanY);
+      const int overlayW = (int)hostWidth_;
+      const int overlayH = (int)hostHeight_;
+
+      // -------------------------------------------------------------------------
+      // Viewport Rulers
+      // -------------------------------------------------------------------------
+      if (showViewportRulers_) {
+        const float zoom = renderer_->getZoom();
+        float panX, panY;
+        renderer_->getPan(panX, panY);
+
+        const FloatColor rulerBgColor = {0.12f, 0.12f, 0.14f, 0.8f};
+        const FloatColor tickColor = {0.5f, 0.5f, 0.55f, 0.9f};
+        const float rulerBreadth = 20.0f;
+
+        // Horizontal Ruler BG
+        renderer_->drawSolidRect(0, 0, (float)overlayW, rulerBreadth, rulerBgColor);
+        // Vertical Ruler BG
+        renderer_->drawSolidRect(0, 0, rulerBreadth, (float)overlayH, rulerBgColor);
+
+        ArtifactCore::TextStyle rulerStyle;
+        rulerStyle.fontSize = 9;
+        rulerStyle.fontFamily = QStringLiteral("Inter");
+
+        // Horizontal Ticks
+        float startCanvasX = -panX / zoom;
+        float endCanvasX = (overlayW - panX) / zoom;
+        int interval = (zoom > 2.0f) ? 50 : (zoom > 0.5f ? 100 : 500);
+        int firstTick = (int)(std::floor(startCanvasX / interval) * interval);
+
+        for (int cx = firstTick; cx <= endCanvasX; cx += interval) {
+          float vx = cx * zoom + panX;
+          if (vx < rulerBreadth) continue;
+          renderer_->drawLineLocal({vx, 0}, {vx, 10}, tickColor, tickColor);
+          renderer_->drawTextViewport(vx + 2, 2, QString::number(cx), rulerStyle, tickColor, 1.0f);
+        }
+
+        // Vertical Ticks
+        float startCanvasY = -panY / zoom;
+        float endCanvasY = (overlayH - panY) / zoom;
+        int firstTickY = (int)(std::floor(startCanvasY / interval) * interval);
+        for (int cy = firstTickY; cy <= endCanvasY; cy += interval) {
+          float vy = cy * zoom + panY;
+          if (vy < rulerBreadth) continue;
+          renderer_->drawLineLocal({0, vy}, {10, vy}, tickColor, tickColor);
+          // Draw rotated text for vertical ruler? For now, just horizontal alignment
+          renderer_->drawTextViewport(2, vy + 2, QString::number(cy), rulerStyle, tickColor, 1.0f);
+        }
+      }
+
+      // -------------------------------------------------------------------------
+      // Timecode Display
+      // -------------------------------------------------------------------------
+      if (showViewportTimecode_ && comp) {
+        const int frame = (int)currentFrame.framePosition();
+        const double fps = comp->frameRate().framerate();
+        const TimeCode tc(frame, fps);
+        const QString tcStr = tc.toString();
+
+        ArtifactCore::TextStyle tcStyle;
+        tcStyle.fontSize = 24;
+        tcStyle.fontWeight = ArtifactCore::FontWeight::Bold;
+        tcStyle.fontFamily = QStringLiteral("Roboto Mono");
+
+        renderer_->drawTextViewport((float)overlayW - 20.0f, 40.0f, tcStr, tcStyle, {0.1f, 0.8f, 1.0f, 0.9f}, 1.0f, Qt::AlignRight);
+      }
+
+      if (showFrameInfo_ && comp) {
+      }
       const float origViewW = hostWidth_;
       const float origViewH = hostHeight_;
       const float offscreenScale =
@@ -3636,6 +3708,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->drawSolidRect(infoX, infoY, barW, infoH,
                                  {0.2f, 0.6f, 1.0f, 0.5f}, 0.6f);
       }
+      // GPU Text frame number
+      ArtifactCore::TextStyle infoStyle;
+      infoStyle.fontFamily = QApplication::font().family().toStdString();
+      infoStyle.fontSize = 10.0f;
+      infoStyle.pixelSize = 10.0f;
+      renderer_->drawTextViewport(infoX + 2.0f, infoY + 1.0f, QStringLiteral("F%1").arg(frame), infoStyle, {1.0f, 1.0f, 1.0f, 0.9f});
     }
 
     if (showSafeMargins_) {
@@ -3758,8 +3836,9 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
                            selectedLayer->isVisible() &&
                            isScaleHandle(gizmo_->activeHandle());
   const bool dropActive = dropGhostVisible_ && !dropGhostRect_.isNull();
-  if (!scaleActive && !dropActive) {
-    return;
+  if (!scaleActive && !dropActive && !infoOverlayVisible_) {
+    const bool snapHintActive = gizmo_ && gizmo_->isDragging() && selectedLayer;
+    if (!snapHintActive) return;
   }
 
   const float overlayWf = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
@@ -3782,6 +3861,8 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
   auto drawLabelBox = [&](const QRectF &boxRect, const QColor &fill,
                           const QColor &border, const QString &title,
                           const QString &subtitle) {
+    Q_UNUSED(title);
+    Q_UNUSED(subtitle);
     if (!boxRect.isValid()) {
       return;
     }
@@ -3793,21 +3874,7 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(255, 255, 255, 18));
     p.drawRoundedRect(inner, 6.0, 6.0);
-
-    const QFontMetrics fm(p.font());
-    const int innerWidth = std::max(10, static_cast<int>(inner.width()) - 20);
-    const QRect titleRect(static_cast<int>(inner.left()) + 10,
-                          static_cast<int>(inner.top()) + 8, innerWidth,
-                          fm.height() + 2);
-    const QRect hintRect(static_cast<int>(inner.left()) + 10,
-                         static_cast<int>(inner.top()) + 8 + fm.height() + 4,
-                         innerWidth, fm.height() + 2);
-    p.setPen(QColor(235, 245, 255));
-    p.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
-               fm.elidedText(title, Qt::ElideRight, titleRect.width()));
-    p.setPen(QColor(180, 195, 210));
-    p.drawText(hintRect, Qt::AlignLeft | Qt::AlignVCenter,
-               fm.elidedText(subtitle, Qt::ElideRight, hintRect.width()));
+    // p.drawText calls removed - now handled by GPU pass
   };
 
   if (dropActive) {
@@ -3839,10 +3906,7 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
       p.setPen(Qt::NoPen);
       p.setBrush(QColor(20, 30, 60, 200));
       p.drawRoundedRect(labelRect, 6, 6);
-      p.setPen(QColor(200, 220, 255));
-      p.drawText(labelRect, Qt::AlignCenter,
-                 fm.elidedText(dropCandidateLabel_, Qt::ElideMiddle,
-                               labelRect.width() - 16));
+      // p.drawText removed
     }
   }
 
@@ -3891,15 +3955,11 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
       p.setPen(Qt::NoPen);
       p.setBrush(QColor(12, 14, 17, 220));
       p.drawRoundedRect(labelRect, 6, 6);
-      p.setPen(QColor(230, 235, 240));
-      p.drawText(labelRect.adjusted(10, 6, -10, -6),
-                 Qt::AlignLeft | Qt::AlignVCenter,
-                 fm.elidedText(text, Qt::ElideRight, labelRect.width() - 20));
+      // p.drawText removed
     }
   }
 
-  if (infoOverlayVisible_ && (!infoOverlayTitle_.trimmed().isEmpty() ||
-                              !infoOverlayDetail_.trimmed().isEmpty())) {
+  if (infoOverlayVisible_) {
     const QString title = infoOverlayTitle_.trimmed().isEmpty()
                               ? QStringLiteral("Info")
                               : infoOverlayTitle_.trimmed();
@@ -3921,28 +3981,20 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(8, 10, 14, 210));
     p.drawRoundedRect(labelRect, 7, 7);
-    p.setPen(QColor(232, 238, 244));
-    p.drawText(labelRect.adjusted(10, 6, -10, -6), Qt::AlignLeft | Qt::AlignTop,
-               title);
-    if (!detail.isEmpty()) {
-      p.setPen(QColor(178, 190, 204));
-      const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
-      p.drawText(detailRect, Qt::AlignLeft | Qt::AlignTop,
-                 fm.elidedText(detail, Qt::ElideRight, detailRect.width()));
-    }
+    // p.drawText removed
   }
 
   const bool snapHintActive = gizmo_ && gizmo_->isDragging() && selectedLayer;
   if (snapHintActive) {
     const bool snapBypassed =
         QGuiApplication::keyboardModifiers().testFlag(Qt::AltModifier);
+    const QFontMetrics fm(p.font());
+    const int lineHeight = fm.height();
     const QString snapTitle =
         snapBypassed ? QStringLiteral("Snap Off") : QStringLiteral("Snap On");
     const QString snapDetail =
         snapBypassed ? QStringLiteral("Hold Alt to enable free move")
                      : QStringLiteral("Hold Alt to bypass snapping");
-    const QFontMetrics fm(p.font());
-    const int lineHeight = fm.height();
     const int contentWidth = std::max(fm.horizontalAdvance(snapTitle),
                                       fm.horizontalAdvance(snapDetail));
     QRect labelRect(12, overlayH - (lineHeight * 2 + 28), contentWidth + 24,
@@ -3956,13 +4008,7 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     p.setPen(Qt::NoPen);
     p.setBrush(QColor(8, 10, 14, 210));
     p.drawRoundedRect(labelRect, 7, 7);
-    p.setPen(QColor(232, 238, 244));
-    p.drawText(labelRect.adjusted(10, 6, -10, -6), Qt::AlignLeft | Qt::AlignTop,
-               snapTitle);
-    p.setPen(QColor(178, 190, 204));
-    const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
-    p.drawText(detailRect, Qt::AlignLeft | Qt::AlignTop,
-               fm.elidedText(snapDetail, Qt::ElideRight, detailRect.width()));
+    // p.drawText removed
   }
 
   p.end();
@@ -3978,6 +4024,86 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
   renderer_->setZoom(1.0f);
   renderer_->setPan(0.0f, 0.0f);
   renderer_->drawSprite(0.0f, 0.0f, drawW, drawH, overlayImage, 1.0f);
+
+  // --- GPU Text Rendering Pass for High-Quality Overlays ---
+  ArtifactCore::TextStyle style;
+  const QFont qf = QApplication::font();
+  style.fontFamily = qf.family().toStdString();
+  style.fontSize   = std::max(10.0f, (float)qf.pointSizeF() * 1.05f);
+  style.pixelSize  = style.fontSize;
+
+  if (infoOverlayVisible_) {
+      const QString title = infoOverlayTitle_.trimmed().isEmpty() ? QStringLiteral("Info") : infoOverlayTitle_.trimmed();
+      const QString detail = infoOverlayDetail_.trimmed();
+      const QFontMetrics fm(qf);
+      const int lineHeight = fm.height();
+      const int contentWidth = std::max(fm.horizontalAdvance(title), detail.isEmpty() ? 0 : fm.horizontalAdvance(detail));
+      const int contentHeight = detail.isEmpty() ? lineHeight : lineHeight * 2 + 4;
+      QRect labelRect(12, 12, contentWidth + 24, contentHeight + 12);
+      if (labelRect.right() > overlayW - 8) labelRect.moveRight(overlayW - 8);
+      if (labelRect.bottom() > overlayH - 8) labelRect.moveBottom(overlayH - 8);
+
+      const float tx = (float)labelRect.left() + 10.0f;
+      const float ty = (float)labelRect.top() + 6.0f;
+      renderer_->drawTextViewport(tx, ty, title, style, {0.91f, 0.93f, 0.96f, 1.0f});
+      if (!detail.isEmpty()) {
+          renderer_->drawTextViewport(tx, ty + lineHeight, detail, style, {0.70f, 0.75f, 0.80f, 1.0f});
+      }
+  }
+
+  if (scaleActive) {
+      const auto& t3 = selectedLayer->transform3D();
+      const QString text = QStringLiteral("Scale  %1%%  x  %2%%")
+          .arg(QString::number(t3.scaleX() * 100.0f, 'f', 0))
+          .arg(QString::number(t3.scaleY() * 100.0f, 'f', 0));
+      const QFontMetrics fm(qf);
+      const QRectF bbox = selectedLayer->transformedBoundingBox();
+      const auto tr = renderer_->canvasToViewport({(float)bbox.right(), (float)bbox.top()});
+      const QSize textSize = fm.size(Qt::TextSingleLine, text);
+      
+      float lx = tr.x + 22.0f;
+      float ly = tr.y - textSize.height() - 8.0f;
+      if (lx + textSize.width() > overlayW - 16) lx = (float)overlayW - textSize.width() - 16;
+      if (ly < 12) ly = 12;
+
+      renderer_->drawTextViewport(lx, ly, text, style, {0.90f, 0.92f, 0.94f, 1.0f});
+  }
+
+  if (snapHintActive) {
+      const bool snapBypassed = QGuiApplication::keyboardModifiers().testFlag(Qt::AltModifier);
+      const QString snapTitle = snapBypassed ? QStringLiteral("Snap Off") : QStringLiteral("Snap On");
+      const QString snapDetail = snapBypassed ? QStringLiteral("Hold Alt to enable free move") : QStringLiteral("Hold Alt to bypass snapping");
+      const QFontMetrics fm(qf);
+      const int lineHeight = fm.height();
+      const int contentWidth = std::max(fm.horizontalAdvance(snapTitle), fm.horizontalAdvance(snapDetail));
+      QRect labelRect(12, overlayH - (lineHeight * 2 + 28), contentWidth + 24, lineHeight * 2 + 12);
+      if (labelRect.bottom() > overlayH - 8) labelRect.moveBottom(overlayH - 8);
+      if (labelRect.left() < 8) labelRect.moveLeft(8);
+
+      const float tx = (float)labelRect.left() + 10.0f;
+      const float ty = (float)labelRect.top() + 6.0f;
+      renderer_->drawTextViewport(tx, ty, snapTitle, style, {0.91f, 0.93f, 0.96f, 1.0f});
+      renderer_->drawTextViewport(tx, ty + lineHeight, snapDetail, style, {0.70f, 0.75f, 0.80f, 1.0f});
+  }
+
+  if (dropActive) {
+      const QRectF ghostRect = dropGhostRect_.normalized();
+      const QString ghostTitle = dropGhostTitle_.isEmpty() ? QStringLiteral("Drop to add layer") : dropGhostTitle_;
+      const QString ghostHint = dropGhostHint_.isEmpty() ? QStringLiteral("Release to place") : dropGhostHint_;
+      
+      const QRectF inner = ghostRect.adjusted(6.0, 6.0, -6.0, -6.0);
+      renderer_->drawTextViewport((float)inner.left() + 10.0f, (float)inner.top() + 8.0f, ghostTitle, style, {0.92f, 0.96f, 1.0f, 1.0f});
+      renderer_->drawTextViewport((float)inner.left() + 10.0f, (float)inner.top() + 8.0f + style.fontSize + 4.0f, ghostHint, style, {0.70f, 0.76f, 0.82f, 1.0f});
+
+      if (!dropCandidateLabel_.isEmpty()) {
+          const QFontMetrics fm(qf);
+          const int labelW = std::min(overlayW - 24, std::max(180, fm.horizontalAdvance(dropCandidateLabel_) + 24));
+          const int labelH = fm.height() + 12;
+          const QRect labelRect(std::max(12, overlayW / 2 - labelW / 2), std::max(8, overlayH / 2 - labelH / 2), labelW, labelH);
+          renderer_->drawTextViewport((float)labelRect.left() + 12.0f, (float)labelRect.top() + 6.0f, dropCandidateLabel_, style, {1.0f, 1.0f, 1.0f, 1.0f});
+      }
+  }
+
   renderer_->setZoom(prevZoom);
   renderer_->setPan(prevPanX, prevPanY);
   if (comp) {

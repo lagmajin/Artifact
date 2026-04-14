@@ -1,11 +1,14 @@
-module;
+module; // GPU Text Rendering Test
 #include <utility>
 #include <array>
 #include <cmath>
 #include <cstring>
+#include <vector>
+#include <QFont>
 #include <QImage>
 #include <QPointF>
 #include <QRectF>
+#include <QString>
 #include <QTransform>
 #include <QDebug>
 #include <QLoggingCategory>
@@ -30,6 +33,9 @@ import Render.Shader.ThickLine;
 import Render.Shader.ViewerHelpers;
 import Color.Float;
 import Artifact.Render.ShaderManager;
+import Text.GlyphAtlas;
+import Text.Style;
+import Font.FreeFont;
 
 namespace Artifact {
 
@@ -125,7 +131,6 @@ public:
     ViewportTransformer viewport_;
 
     QMatrix4x4 externalViewMatrix_;
-    QMatrix4x4 externalProjMatrix_;
     bool useExternalMatrices_ = false;
 
     ITextureView* m_overrideRTV = nullptr;
@@ -138,6 +143,14 @@ public:
     // Batch vertex buffer
     RefCntAutoPtr<IBuffer> m_batchVertexBuffer;
     RefCntAutoPtr<IBuffer> m_batchIndexBuffer;
+
+    // GPU Text
+    ArtifactCore::GlyphAtlas glyphAtlas_;
+    RefCntAutoPtr<ITexture>  glyphAtlasTexture_;
+    RefCntAutoPtr<ISampler>  glyphSampler_;
+    PSOAndSRB               m_draw_glyph_pso_and_srb;
+    RefCntAutoPtr<IBuffer>  m_draw_glyph_vertex_buffer;
+    RefCntAutoPtr<IBuffer>  m_draw_glyph_transform_cb;
 };
 
 PrimitiveRenderer2D::PrimitiveRenderer2D()
@@ -172,6 +185,8 @@ void PrimitiveRenderer2D::setPSOs(ShaderManager& shaderManager)
     impl_->m_draw_grid_pso_and_srb            = shaderManager.gridPsoAndSrb();
     impl_->m_draw_rect_outline_pso_and_srb    = shaderManager.outlinePsoAndSrb();
     impl_->m_batch_solid_rect_pso_and_srb     = shaderManager.batchSolidRectPsoAndSrb();
+    impl_->m_draw_glyph_pso_and_srb           = shaderManager.glyphQuadPsoAndSrb();
+    impl_->glyphSampler_                      = shaderManager.glyphAtlasSampler();
 }
 
 void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEXTURE_FORMAT /*rtvFormat*/)
@@ -347,6 +362,25 @@ void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
         desc.Size           = sizeof(OutlineParamsCB);
         device->CreateBuffer(desc, nullptr, &impl_->m_draw_outline_params_cb);
     }
+
+    {
+        // Glyph rendering resources
+        BufferDesc desc;
+        desc.Name           = "Glyph vertex buffer";
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_VERTEX_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        // Batch size for text: 1024 glyphs * 4 vertices
+        desc.Size           = sizeof(SpriteVertex) * 4 * 1024; 
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_glyph_vertex_buffer);
+
+        desc.Name           = "GlyphTransformCB";
+        desc.Size           = sizeof(CBSolidRectTransform2D);
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.BindFlags      = BIND_UNIFORM_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        device->CreateBuffer(desc, nullptr, &impl_->m_draw_glyph_transform_cb);
+    }
 }
 
 void PrimitiveRenderer2D::destroy()
@@ -381,6 +415,11 @@ void PrimitiveRenderer2D::destroy()
     impl_->m_draw_checkerboard_pso_and_srb   = {};
     impl_->m_draw_grid_pso_and_srb           = {};
     impl_->m_draw_rect_outline_pso_and_srb   = {};
+    impl_->m_draw_glyph_pso_and_srb          = {};
+    impl_->m_draw_glyph_vertex_buffer        = nullptr;
+    impl_->m_draw_glyph_transform_cb         = nullptr;
+    impl_->glyphAtlasTexture_                = nullptr;
+    impl_->glyphSampler_                     = nullptr;
 
     impl_->pCtx_        = nullptr;
     impl_->pSwapChain_  = nullptr;
@@ -2148,6 +2187,302 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
 
     DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_VERIFY_ALL);
     impl_->pCtx_->DrawIndexed(drawAttrs);
+}
+
+void PrimitiveRenderer2D::flushGlyphAtlasUpload()
+{
+    if (!impl_->pDevice_ || !impl_->pCtx_ || !impl_->glyphAtlas_.isDirty()) return;
+
+    const QImage& atlas = impl_->glyphAtlas_.atlasImage();
+    if (atlas.isNull()) return;
+
+    if (!impl_->glyphAtlasTexture_ || 
+        impl_->glyphAtlasTexture_->GetDesc().Width != (Uint32)atlas.width() ||
+        impl_->glyphAtlasTexture_->GetDesc().Height != (Uint32)atlas.height()) 
+    {
+        TextureDesc desc;
+        desc.Name      = "Glyph Atlas Texture";
+        desc.Type      = RESOURCE_DIM_TEX_2D;
+        desc.Width     = (Uint32)atlas.width();
+        desc.Height    = (Uint32)atlas.height();
+        desc.Format    = TEX_FORMAT_RGBA8_UNORM;
+        desc.Usage     = USAGE_DEFAULT;
+        desc.BindFlags = BIND_SHADER_RESOURCE;
+        impl_->pDevice_->CreateTexture(desc, nullptr, &impl_->glyphAtlasTexture_);
+        
+        // Update SRB
+        if (auto* var = impl_->m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_atlas")) {
+            var->Set(impl_->glyphAtlasTexture_->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE));
+        }
+        if (auto* var = impl_->m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
+            if (impl_->glyphSampler_) var->Set(impl_->glyphSampler_);
+        }
+    }
+
+    TextureSubResData subRes;
+    subRes.pData  = atlas.constBits();
+    subRes.Stride = (Uint64)atlas.bytesPerLine();
+    
+    impl_->pCtx_->UpdateTexture(impl_->glyphAtlasTexture_, 0, 0, Box(0, (Uint32)atlas.width(), 0, (Uint32)atlas.height()), subRes, 
+                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION, 
+                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    impl_->glyphAtlas_.clearDirty();
+}
+
+void PrimitiveRenderer2D::drawText(float x, float y, const QString& text, const ArtifactCore::TextStyle& style, const ArtifactCore::FloatColor& color, float opacity, Qt::Alignment align)
+{
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_glyph_pso_and_srb.pPSO || text.isEmpty()) return;
+    
+    flushGlyphAtlasUpload();
+    if (!impl_->glyphAtlasTexture_) return;
+
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+    const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+
+    auto qfont = ArtifactCore::FontManager::makeFont(style, text);
+    
+    // Calculate total width for alignment if needed
+    float totalWidth = 0.0f;
+    if (align & (Qt::AlignRight | Qt::AlignHCenter)) {
+        for (int i = 0; i < text.length(); ++i) {
+            char32_t code = text[i].unicode();
+            ArtifactCore::GlyphKey key;
+            key.codePoint = code;
+            key.fontSize = style.fontSize;
+            key.fontFamily = style.fontFamily.toStdString();
+            key.styleFlags = (style.fontWeight == ArtifactCore::FontWeight::Bold ? 1 : 0) | 
+                             (style.fontStyle == ArtifactCore::FontStyle::Italic ? 2 : 0);
+            auto rect = impl_->glyphAtlas_.acquire(key, qfont);
+            if (rect.valid) {
+                totalWidth += rect.advance;
+            }
+        }
+    }
+
+    float penX = x;
+    if (align & Qt::AlignRight) {
+        penX -= totalWidth;
+    } else if (align & Qt::AlignHCenter) {
+        penX -= totalWidth * 0.5f;
+    }
+
+    float penY = y;
+
+    std::vector<SpriteVertex> vertices;
+    vertices.reserve(text.length() * 6); // 6 vertices per glyph (triangle list)
+
+    float4 glyphColor = {color.r(), color.g(), color.b(), color.a() * opacity};
+
+    for (int i = 0; i < text.length(); ++i) {
+        char32_t code = text[i].unicode();
+        ArtifactCore::GlyphKey key;
+        key.codePoint = code;
+        key.fontSize = style.fontSize;
+        key.fontFamily = style.fontFamily.toStdString();
+        key.styleFlags = (style.fontWeight == ArtifactCore::FontWeight::Bold ? 1 : 0) | 
+                         (style.fontStyle == ArtifactCore::FontStyle::Italic ? 2 : 0);
+
+        auto rect = impl_->glyphAtlas_.acquire(key, qfont);
+        if (!rect.valid) continue;
+
+        float x0 = penX + rect.bearingX;
+        float y0 = penY - rect.bearingY; // bearingY is from baseline up
+        float x1 = x0 + (float)rect.width;
+        float y1 = y0 + (float)rect.height;
+
+        float u0 = rect.u0(impl_->glyphAtlas_.width());
+        float v0 = rect.v0(impl_->glyphAtlas_.height());
+        float u1 = rect.u1(impl_->glyphAtlas_.width());
+        float v1 = rect.v1(impl_->glyphAtlas_.height());
+
+        // Quad vertices
+        vertices.push_back({ {x0, y0}, {u0, v0}, glyphColor });
+        vertices.push_back({ {x1, y0}, {u1, v0}, glyphColor });
+        vertices.push_back({ {x0, y1}, {u0, v1}, glyphColor });
+        vertices.push_back({ {x0, y1}, {u0, v1}, glyphColor });
+        vertices.push_back({ {x1, y0}, {u1, v0}, glyphColor });
+        vertices.push_back({ {x1, y1}, {u1, v1}, glyphColor });
+
+        penX += rect.advance;
+    }
+
+    if (vertices.empty()) return;
+
+    // Use viewport transform to NDC
+    QMatrix4x4 canvasToNdc;
+    canvasToNdc.setToIdentity();
+    canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+    canvasToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+    canvasToNdc.scale(zoom, zoom, 1.0f);
+    canvasToNdc.translate(viewportCB.offset.x / zoom, viewportCB.offset.y / zoom, 0.0f);
+
+    CBSolidRectTransform2D cbTransform;
+    cbTransform.row0 = { canvasToNdc.row(0).x(), canvasToNdc.row(0).y(), canvasToNdc.row(0).z(), canvasToNdc.row(0).w() };
+    cbTransform.row1 = { canvasToNdc.row(1).x(), canvasToNdc.row(1).y(), canvasToNdc.row(1).z(), canvasToNdc.row(1).w() };
+    cbTransform.row2 = { canvasToNdc.row(2).x(), canvasToNdc.row(2).y(), canvasToNdc.row(2).z(), canvasToNdc.row(2).w() };
+    cbTransform.row3 = { canvasToNdc.row(3).x(), canvasToNdc.row(3).y(), canvasToNdc.row(3).z(), canvasToNdc.row(3).w() };
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_glyph_transform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_glyph_transform_cb, MAP_WRITE);
+    }
+
+    auto* pRTV = impl_->getCurrentRTV();
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    // Dynamic map/unmap for vertex buffer
+    Uint32 drawCount = (Uint32)vertices.size();
+    if (drawCount > 4096) drawCount = 4096; // Limit by buffer size (1024 glyphs)
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_glyph_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices.data(), drawCount * sizeof(SpriteVertex));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_glyph_vertex_buffer, MAP_WRITE);
+    }
+
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_glyph_pso_and_srb.pPSO);
+    if (auto* var = impl_->m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "GlyphTransformCB")) {
+        var->Set(impl_->m_draw_glyph_transform_cb);
+    }
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_glyph_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    IBuffer* pBuffs[] = { impl_->m_draw_glyph_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffs, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+
+    DrawAttribs drawAttrs(drawCount, DRAW_FLAG_VERIFY_ALL);
+    impl_->pCtx_->Draw(drawAttrs);
+}
+
+void PrimitiveRenderer2D::drawTextViewport(float vx, float vy, const QString& text, const ArtifactCore::TextStyle& style, const ArtifactCore::FloatColor& color, float opacity, Qt::Alignment align)
+{
+    if (!impl_->hasRenderTarget() || !impl_->m_draw_glyph_pso_and_srb.pPSO || text.isEmpty()) return;
+    
+    flushGlyphAtlasUpload();
+    if (!impl_->glyphAtlasTexture_) return;
+
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+    const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+
+    auto qfont = ArtifactCore::FontManager::makeFont(style, text);
+    
+    // Calculate total width for alignment if needed
+    float totalWidth = 0.0f;
+    if (align & (Qt::AlignRight | Qt::AlignHCenter)) {
+        for (int i = 0; i < text.length(); ++i) {
+            char32_t code = text[i].unicode();
+            ArtifactCore::GlyphKey key;
+            key.codePoint = code;
+            key.fontSize = style.fontSize;
+            key.fontFamily = style.fontFamily.toStdString();
+            key.styleFlags = (style.fontWeight == ArtifactCore::FontWeight::Bold ? 1 : 0) | 
+                             (style.fontStyle == ArtifactCore::FontStyle::Italic ? 2 : 0);
+            auto rect = impl_->glyphAtlas_.acquire(key, qfont);
+            if (rect.valid) {
+                totalWidth += rect.advance;
+            }
+        }
+    }
+
+    float penX = vx;
+    if (align & Qt::AlignRight) {
+        penX -= totalWidth;
+    } else if (align & Qt::AlignHCenter) {
+        penX -= totalWidth * 0.5f;
+    }
+
+    float penY = vy;
+
+    std::vector<SpriteVertex> vertices;
+    vertices.reserve(text.length() * 6);
+
+    float4 glyphColor = {color.r(), color.g(), color.b(), color.a() * opacity};
+
+    for (int i = 0; i < text.length(); ++i) {
+        char32_t code = text[i].unicode();
+        ArtifactCore::GlyphKey key;
+        key.codePoint = code;
+        key.fontSize = style.fontSize;
+        key.fontFamily = style.fontFamily.toStdString();
+        key.styleFlags = (style.fontWeight == ArtifactCore::FontWeight::Bold ? 1 : 0) | 
+                         (style.fontStyle == ArtifactCore::FontStyle::Italic ? 2 : 0);
+
+        auto rect = impl_->glyphAtlas_.acquire(key, qfont);
+        if (!rect.valid) continue;
+
+        float x0 = penX + rect.bearingX;
+        float y0 = penY - rect.bearingY; 
+        float x1 = x0 + (float)rect.width;
+        float y1 = y0 + (float)rect.height;
+
+        float u0 = rect.u0(impl_->glyphAtlas_.width());
+        float v0 = rect.v0(impl_->glyphAtlas_.height());
+        float u1 = rect.u1(impl_->glyphAtlas_.width());
+        float v1 = rect.v1(impl_->glyphAtlas_.height());
+
+        vertices.push_back({ {x0, y0}, {u0, v0}, glyphColor });
+        vertices.push_back({ {x1, y0}, {u1, v0}, glyphColor });
+        vertices.push_back({ {x0, y1}, {u0, v1}, glyphColor });
+        vertices.push_back({ {x0, y1}, {u0, v1}, glyphColor });
+        vertices.push_back({ {x1, y0}, {u1, v0}, glyphColor });
+        vertices.push_back({ {x1, y1}, {u1, v1}, glyphColor });
+
+        penX += rect.advance;
+    }
+
+    if (vertices.empty()) return;
+
+    // Viewport space to NDC (Pixel space)
+    QMatrix4x4 viewToNdc;
+    viewToNdc.setToIdentity();
+    viewToNdc.translate(-1.0f, 1.0f, 0.0f);
+    viewToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+
+    CBSolidRectTransform2D cbTransform;
+    cbTransform.row0 = { viewToNdc.row(0).x(), viewToNdc.row(0).y(), viewToNdc.row(0).z(), viewToNdc.row(0).w() };
+    cbTransform.row1 = { viewToNdc.row(1).x(), viewToNdc.row(1).y(), viewToNdc.row(1).z(), viewToNdc.row(1).w() };
+    cbTransform.row2 = { viewToNdc.row(2).x(), viewToNdc.row(2).y(), viewToNdc.row(2).z(), viewToNdc.row(2).w() };
+    cbTransform.row3 = { viewToNdc.row(3).x(), viewToNdc.row(3).y(), viewToNdc.row(3).z(), viewToNdc.row(3).w() };
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_glyph_transform_cb, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, &cbTransform, sizeof(cbTransform));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_glyph_transform_cb, MAP_WRITE);
+    }
+
+    auto* pRTV = impl_->getCurrentRTV();
+    impl_->pCtx_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    Uint32 drawCount = (Uint32)vertices.size();
+    if (drawCount > 4096) drawCount = 4096;
+
+    {
+        void* pData = nullptr;
+        impl_->pCtx_->MapBuffer(impl_->m_draw_glyph_vertex_buffer, MAP_WRITE, MAP_FLAG_DISCARD, pData);
+        std::memcpy(pData, vertices.data(), drawCount * sizeof(SpriteVertex));
+        impl_->pCtx_->UnmapBuffer(impl_->m_draw_glyph_vertex_buffer, MAP_WRITE);
+    }
+
+    impl_->pCtx_->SetPipelineState(impl_->m_draw_glyph_pso_and_srb.pPSO);
+    if (auto* var = impl_->m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "GlyphTransformCB")) {
+        var->Set(impl_->m_draw_glyph_transform_cb);
+    }
+    impl_->pCtx_->CommitShaderResources(impl_->m_draw_glyph_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    IBuffer* pBuffs[] = { impl_->m_draw_glyph_vertex_buffer };
+    Uint64 offsets[] = { 0 };
+    impl_->pCtx_->SetVertexBuffers(0, 1, pBuffs, offsets, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+
+    DrawAttribs drawAttrs(drawCount, DRAW_FLAG_VERIFY_ALL);
+    impl_->pCtx_->Draw(drawAttrs);
 }
 
 } // namespace Artifact

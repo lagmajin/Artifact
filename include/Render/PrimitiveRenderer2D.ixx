@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
@@ -9,12 +9,14 @@
 #include <QImage>
 #include <QTransform>
 #include <QMatrix4x4>
+#include <QString>
 export module Artifact.Render.PrimitiveRenderer2D;
-
 
 import Graphics;
 import Color.Float;
 import Artifact.Render.ShaderManager;
+import Text.GlyphAtlas;
+import Text.Style;
 
 export namespace Artifact {
 
@@ -86,6 +88,34 @@ public:
     // Batch rendering
     void beginBatch();
     void endBatch();
+
+    // -----------------------------------------------------------------------
+    // GPU Text Rendering
+    // -----------------------------------------------------------------------
+
+    /// canvas 座標系で文字列を GPU glyph quad で直接描画する。
+    /// @param x, y  canvas 上のペン開始位置（左上基準）
+    /// @param style フォント設定（family / size / weight / italic）
+    /// @param color 描画色（アルファ込み）
+    void drawText(float x, float y,
+                  const QString& text,
+                  const ArtifactCore::TextStyle& style,
+                  const ArtifactCore::FloatColor& color,
+                  float opacity = 1.0f,
+                  Qt::Alignment align = Qt::AlignLeft);
+
+    /// viewport 座標系（ピクセル）で文字列を描画するバリアント。
+    /// zoom / pan を無視して screen space に直描きしたい editor UI 向け。
+    void drawTextViewport(float vx, float vy,
+                          const QString& text,
+                          const ArtifactCore::TextStyle& style,
+                          const ArtifactCore::FloatColor& color,
+                          float opacity = 1.0f,
+                          Qt::Alignment align = Qt::AlignLeft);
+
+    /// atlas が更新されたとき GPU テクスチャを再アップロードする。
+    /// 通常フレームの draw*() で自動的に呼ばれるため、明示的に呼ぶ必要はない。
+    void flushGlyphAtlasUpload();
 
 private:
     class Impl;

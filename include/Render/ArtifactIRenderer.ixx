@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 // ArtifactIRenderer maintenance rule:
 // Do not rewrite the existing D3D12-specific path by guesswork.
@@ -18,6 +18,7 @@ export module Artifact.Render.IRenderer;
 import Color.Float;
 import Graphics.RayTracingManager;
 import Graphics.ParticleData;
+import Text.Style;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -143,6 +144,8 @@ public:
   void draw3DArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size = 1.0f);
   void draw3DCircle(Detail::float3 center, Detail::float3 normal, float radius, const FloatColor& color, float thickness = 1.0f);
   void draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail::float3 v2, Detail::float3 v3, const FloatColor& color);
+  void drawText(float x, float y, const QString& text, const ArtifactCore::TextStyle& style, const FloatColor& color, float opacity = 1.0f, Qt::Alignment align = Qt::AlignLeft);
+  void drawTextViewport(float vx, float vy, const QString& text, const ArtifactCore::TextStyle& style, const FloatColor& color, float opacity = 1.0f, Qt::Alignment align = Qt::AlignLeft);
 
  void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
  void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
