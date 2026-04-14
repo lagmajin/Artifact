@@ -81,6 +81,7 @@ export namespace Artifact {
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
   bool groupSelectedLayersInCurrentComposition(const UniString& groupName = UniString(QStringLiteral("Group 1")));
+  bool ungroupSelectedGroupInCurrentComposition();
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);
   bool moveLayerInCurrentComposition(const LayerID& layerId, int newIndex);
   bool duplicateLayerInCurrentComposition(const LayerID& layerId);
