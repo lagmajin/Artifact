@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 // ArtifactIRenderer maintenance rule:
 // Do not rewrite the existing D3D12-specific path by guesswork.
@@ -19,6 +19,8 @@ export module Artifact.Render.IRenderer;
 import Color.Float;
 import Graphics.RayTracingManager;
 import Graphics.ParticleData;
+import Core.Light;
+import Artifact.LOD.Manager;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -105,6 +107,10 @@ public:
  Detail::float2 canvasToViewport(Detail::float2 pos) const;
  Detail::float2 viewportToCanvas(Detail::float2 pos) const;
 
+ // LOD (Level of Detail)
+ void setDetailLevel(LODManager::DetailLevel lod);
+ LODManager::DetailLevel detailLevel() const;
+
  void drawRectOutline(float x, float y, float w, float h, const FloatColor& color);
  void drawRectOutline(Detail::float2 pos, Detail::float2 size, const FloatColor& color);
  void drawSolidLine(Detail::float2 start, Detail::float2 end, const FloatColor& color, float thickness);
@@ -164,6 +170,9 @@ public:
  Diligent::ITextureView* layerRenderTargetView() const;
  ArtifactCore::IRayTracingManager* rayTracingManager() const;
  void setOverrideRTV(Diligent::ITextureView* rtv);
+
+ void setSceneLights(const std::vector<ArtifactCore::Light>& lights);
+ const std::vector<ArtifactCore::Light>& getSceneLights() const;
 
 private:
  std::unique_ptr<Impl> impl_;

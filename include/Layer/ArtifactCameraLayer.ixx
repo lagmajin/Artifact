@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <wobjectdefs.h>
@@ -27,6 +27,9 @@ export namespace Artifact {
   // ArtifactAbstractLayer overrides
   void draw(ArtifactIRenderer* renderer) override;
   UniString className() const override { return "ArtifactCameraLayer"; }
+  bool is3D() const override { return true; }
+  bool isNullLayer() const override { return true; }
+  QRectF localBounds() const override;
 
   // Camera specific properties (AE standard)
   float zoom() const;

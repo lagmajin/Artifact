@@ -2740,8 +2740,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             } else if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
               onLayerRemoved(CompositionID(event.compositionId), LayerID(event.layerId));
             } else {
-              if (!impl_ || !impl_->painterTrackView_) return;
-              scheduleRefresh();
+              // Modified の場合はトラック構造（レイヤーの並びや存在）の変更ではないため、
+              // refreshTracks() は不要。これによりプロパティ編集時に不必要なUI再構築が走り、
+              // 選択状態がクリアされてしまうバグを回避する。
+              // scheduleRefresh(); 
             }
           }));
   impl_->eventBusSubscriptions_.push_back(

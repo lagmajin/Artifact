@@ -42,6 +42,7 @@ ArtifactCameraLayer::ArtifactCameraLayer()
     : camImpl_(new Impl())
 {
     setLayerName("Camera 1");
+    setIs3D(true);
 }
 
 ArtifactCameraLayer::~ArtifactCameraLayer()
@@ -49,9 +50,61 @@ ArtifactCameraLayer::~ArtifactCameraLayer()
     delete camImpl_;
 }
 
-void ArtifactCameraLayer::draw(ArtifactIRenderer* /*renderer*/)
+void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
 {
-    // Camera is invisible in the final render
+    if (!renderer || !isVisible()) return;
+
+    // Get current state
+    const auto pos = transform3D().position();
+    const auto type = projectionMode();
+    const auto zoom = renderer->getZoom();
+    
+    // Scale-independent gizmo size
+    const float s = 25.0f / (zoom > 0.001f ? zoom : 1.0f);
+    const ArtifactCore::FloatColor camColor{ 1.0f, 0.8f, 0.0f, 1.0f }; // Amber/Yellow
+    
+    using namespace Artifact::Detail;
+    float3 p{ pos.x(), pos.y(), pos.z() };
+
+    // 1. Draw Camera Body (Small Cube)
+    renderer->drawGizmoCube(p, s, camColor);
+
+    // 2. Draw Lens Direction
+    // Camera forward is +Z in our coordinate system
+    QMatrix4x4 globalMat = getGlobalTransform4x4();
+    QVector3D forward = globalMat.mapVector(QVector3D(0, 0, 1)).normalized();
+    QVector3D right = globalMat.mapVector(QVector3D(1, 0, 0)).normalized();
+    QVector3D up = globalMat.mapVector(QVector3D(0, 1, 0)).normalized();
+    
+    QVector3D tip = pos + forward * (s * 2.5f);
+    renderer->drawGizmoArrow(p, float3{ tip.x(), tip.y(), tip.z() }, camColor, s * 0.8f);
+
+    // 3. Draw Frustum (Simplified)
+    // We draw local corners to form the viewing pyramid
+    float fovV = fov();
+    float fovH = fovV; // Simplified, ideally uses aspect
+    float dist = zoom; // Use zoom value as a proxy for frustum length in gizmo
+    
+    float tanHalfV = std::tan(fovV * 0.5f * 0.0174532925f);
+    float h = dist * tanHalfV;
+    float w = h * 1.777f; // 16:9 approx
+    
+    auto drawCorner = [&](float x, float y) {
+        QVector3D cp = pos + forward * dist + right * x + up * y;
+        renderer->drawGizmoLine(p, float3{ cp.x(), cp.y(), cp.z() }, camColor, 0.5f);
+        return cp;
+    };
+    
+    auto c1 = drawCorner(-w, -h);
+    auto c2 = drawCorner(w, -h);
+    auto c3 = drawCorner(w, h);
+    auto c4 = drawCorner(-w, h);
+    
+    // Connect corners
+    renderer->drawGizmoLine(float3{c1.x(), c1.y(), c1.z()}, float3{c2.x(), c2.y(), c2.z()}, camColor, 0.5f);
+    renderer->drawGizmoLine(float3{c2.x(), c2.y(), c2.z()}, float3{c3.x(), c3.y(), c3.z()}, camColor, 0.5f);
+    renderer->drawGizmoLine(float3{c3.x(), c3.y(), c3.z()}, float3{c4.x(), c4.y(), c4.z()}, camColor, 0.5f);
+    renderer->drawGizmoLine(float3{c4.x(), c4.y(), c4.z()}, float3{c1.x(), c1.y(), c1.z()}, camColor, 0.5f);
 }
 
 float ArtifactCameraLayer::zoom() const { return camImpl_->zoom_; }
@@ -76,7 +129,11 @@ float ArtifactCameraLayer::fov() const {
     if (camImpl_->useManualFov_) {
         return camImpl_->fov_;
     }
-    // Auto FOV from zoom (AE behavior)
+    
+    // AE behavior: Zoom corresponds to the distance where the comp height is exactly mapped.
+    // vFov = 2 * atan( (height/2) / zoom )
+    // Default to 1080p height (540 half) if comp is unknown, 
+    // but typically zoom is set relative to the composition height in AE.
     return static_cast<float>(2.0 * std::atan(540.0 / camImpl_->zoom_) * 180.0 / 3.14159265358979);
 }
 void ArtifactCameraLayer::setFov(float fovDegrees) {
@@ -138,6 +195,12 @@ QMatrix4x4 ArtifactCameraLayer::projectionMatrix(float aspect) const
     }
     
     return proj;
+}
+
+QRectF ArtifactCameraLayer::localBounds() const
+{
+    // Return a virtual selection area for the camera icon
+    return QRectF(-30.0, -30.0, 60.0, 60.0);
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGroups() const

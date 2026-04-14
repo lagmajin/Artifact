@@ -9,8 +9,20 @@ import Artifact.Layer.Abstract;
 import Property.Group;
 import Property;
 import Color.Float;
+#include <QColor>
 
 namespace Artifact {
+
+namespace {
+QColor toQColor(const ArtifactCore::FloatColor& color) {
+    return QColor::fromRgbF(
+        static_cast<qreal>(color.r()),
+        static_cast<qreal>(color.g()),
+        static_cast<qreal>(color.b()),
+        static_cast<qreal>(color.a())
+    );
+}
+}
 
 W_OBJECT_IMPL(ArtifactLightLayer)
 
@@ -33,9 +45,52 @@ ArtifactLightLayer::~ArtifactLightLayer()
     delete lightImpl_;
 }
 
-void ArtifactLightLayer::draw(ArtifactIRenderer* /*renderer*/)
-{
-    // Light is invisible in final render
+void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
+  if (!renderer || !isVisible()) {
+    return;
+  }
+
+  // Get position from 3D transform at current frame
+  const ArtifactCore::RationalTime frameTime(currentFrame(), 30);
+  const auto &t3 = transform3D();
+  const QVector3D pos(
+      static_cast<float>(t3.positionXAt(frameTime)),
+      static_cast<float>(t3.positionYAt(frameTime)),
+      static_cast<float>(t3.positionZAt(frameTime))
+  );
+
+  const auto type = lightType();
+  const auto lightColor = color();
+  
+  // Calculate gizmo size (scale inversely with zoom to keep constant screen size if desired, 
+  // or just use a fixed 3D size). Here we use a fixed size that's easy to see.
+  const float zoom = renderer->getZoom();
+  const float baseSize = 15.0f / (zoom > 0.001f ? zoom : 1.0f);
+
+  // Use renderer's gizmo APIs
+  using namespace Artifact::Detail;
+  float3 p{pos.x(), pos.y(), pos.z()};
+
+  // Main "bulb" representation: 3 orthogonal rings
+  renderer->drawGizmoRing(p, float3{1, 0, 0}, baseSize, lightColor, 1.0f);
+  renderer->drawGizmoRing(p, float3{0, 1, 0}, baseSize, lightColor, 1.0f);
+  renderer->drawGizmoRing(p, float3{0, 0, 1}, baseSize, lightColor, 1.0f);
+
+  // Direction indicators for oriented lights
+  if (type == LightType::Spot || type == LightType::Parallel) {
+    // In AE, lights generally look towards -Z of their local space or special target.
+    // Basic representation: a line pointing in the forward direction.
+    // For now, simpler: just draw a small "antenna" or axis.
+    QMatrix4x4 m;
+    m.rotate(static_cast<float>(t3.rotationXAt(frameTime)), 1, 0, 0);
+    m.rotate(static_cast<float>(t3.rotationYAt(frameTime)), 0, 1, 0);
+    m.rotate(static_cast<float>(t3.rotationZAt(frameTime)), 0, 0, 1);
+    
+    QVector3D forward = m.mapVector(QVector3D(0, 0, 100.0f / (zoom > 0.001f ? zoom : 1.0f)));
+    QVector3D tip = pos + forward;
+    
+    renderer->drawGizmoArrow(p, float3{tip.x(), tip.y(), tip.z()}, lightColor, baseSize);
+  }
 }
 
 LightType ArtifactLightLayer::lightType() const { return lightImpl_->type_; }
@@ -58,7 +113,18 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
     
     ArtifactCore::PropertyGroup lightOptions("Light Options");
-    // Simplified enum handling for now (could use a specialized enum property)
+    
+    auto typeProp = persistentLayerProperty(QStringLiteral("Light Options/Light Type"),
+                                            ArtifactCore::PropertyType::Integer,
+                                            static_cast<int>(lightImpl_->type_), -150);
+    typeProp->setTooltip(QStringLiteral("0: Parallel, 1: Point, 2: Spot, 3: Ambient"));
+    lightOptions.addProperty(typeProp);
+
+    auto colorProp = persistentLayerProperty(QStringLiteral("Light Options/Color"),
+                                             ArtifactCore::PropertyType::Color,
+                                             toQColor(lightImpl_->color_), -145);
+    lightOptions.addProperty(colorProp);
+
     auto intensityProp = persistentLayerProperty(QStringLiteral("Light Options/Intensity"),
                                                  ArtifactCore::PropertyType::Float,
                                                  static_cast<double>(lightImpl_->intensity_), -140);
@@ -87,7 +153,19 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
 
 bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
 {
-    if (propertyPath == "Light Options/Intensity") {
+    if (propertyPath == "Light Options/Light Type") {
+        setLightType(static_cast<LightType>(value.toInt()));
+        return true;
+    } else if (propertyPath == "Light Options/Color") {
+        const QColor qc = value.value<QColor>();
+        setColor(ArtifactCore::FloatColor(
+            static_cast<float>(qc.redF()),
+            static_cast<float>(qc.greenF()),
+            static_cast<float>(qc.blueF()),
+            static_cast<float>(qc.alphaF())
+        ));
+        return true;
+    } else if (propertyPath == "Light Options/Intensity") {
         setIntensity(value.toFloat());
         return true;
     } else if (propertyPath == "Light Options/Shadows") {

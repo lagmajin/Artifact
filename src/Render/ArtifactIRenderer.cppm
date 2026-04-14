@@ -99,6 +99,9 @@ namespace Artifact
   float m_viewportHeight = 0.0f;
 
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
+  std::vector<ArtifactCore::Light> m_sceneLights;
+  LODManager::DetailLevel detailLevel_ = LODManager::DetailLevel::High;
+
 
   void initFrameQueries();
   void createLayerRT(QWidget* window);
@@ -136,6 +139,13 @@ namespace Artifact
   void setZoom(float zoom)               { primitiveRenderer_.setZoom(zoom); }
   float getZoom() const                  { return primitiveRenderer_.getZoom(); }
   void panBy(float dx, float dy)         { primitiveRenderer_.panBy(dx, dy); }
+  void resetView()                       { primitiveRenderer_.resetView(); }
+  void fitToViewport(float margin)       { primitiveRenderer_.fitToViewport(margin); }
+  void zoomAroundViewportPoint(Detail::float2 viewportPos, float newZoom) { primitiveRenderer_.zoomAroundViewportPoint(viewportPos, newZoom); }
+
+  // LOD
+  void setDetailLevel(LODManager::DetailLevel lod) { detailLevel_ = lod; }
+  LODManager::DetailLevel detailLevel() const { return detailLevel_; }
   void resetView()                       { primitiveRenderer_.resetView(); }
   void fitToViewport(float margin)       { primitiveRenderer_.fitToViewport(margin); }
   void fillToViewport(float margin)      { primitiveRenderer_.fillToViewport(margin); }
@@ -964,6 +974,12 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
  { return impl_->canvasToViewport(pos); }
  Detail::float2 ArtifactIRenderer::viewportToCanvas(Detail::float2 pos) const
  { return impl_->viewportToCanvas(pos); }
+
+ // LOD Implementation
+ void ArtifactIRenderer::setDetailLevel(LODManager::DetailLevel lod)
+ { impl_->setDetailLevel(lod); }
+ LODManager::DetailLevel ArtifactIRenderer::detailLevel() const
+ { return impl_->detailLevel(); }
 
  void ArtifactIRenderer::drawRectOutline(float x, float y, float w, float h, const FloatColor& color)
  { impl_->drawRectOutline(x, y, w, h, color); }

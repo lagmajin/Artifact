@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
@@ -967,12 +967,22 @@ void drawViewportCheckerboardBackground(ArtifactIRenderer *renderer,
     return;
   }
 
+  // Save current state
+  const float savedZoom = renderer->getZoom();
+  float savedPanX = 0.0f;
+  float savedPanY = 0.0f;
+  renderer->getPan(savedPanX, savedPanY);
+
   renderer->setCanvasSize(vw, vh);
   renderer->setZoom(1.0f);
   renderer->setPan(0.0f, 0.0f);
   renderer->drawCheckerboard(0.0f, 0.0f, vw, vh, 16.0f,
                              {0.18f, 0.18f, 0.18f, 1.0f},
                              {0.28f, 0.28f, 0.28f, 1.0f});
+
+  // Restore state
+  renderer->setZoom(savedZoom);
+  renderer->setPan(savedPanX, savedPanY);
 }
 
 // Draws checkerboard over the composition canvas in Composition Space.
@@ -3365,6 +3375,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                             ArtifactCore::ProfileCategory::Composite);
       if (!frameOutOfRange) {
         const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
+        renderer_->setDetailLevel(lod); // Pass LOD to renderer/effects
         for (const auto &layer : layers) {
           if (!layer || !layer->isVisible())
             continue;
@@ -3376,6 +3387,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           if (layerBounds.isValid() && layerBounds.intersected(roiRect).isEmpty()) {
             continue;
           }
+
+          // --- Feature 3: Layer Drawing Skip (LOD-based) ---
+          // Skip rendering layers that are too small to be visible on screen.
+          if (layerBounds.isValid()) {
+            const auto tl = renderer_->canvasToViewport({(float)layerBounds.left(), (float)layerBounds.top()});
+            const auto br = renderer_->canvasToViewport({(float)layerBounds.right(), (float)layerBounds.bottom()});
+            const float screenW = std::abs(br.x - tl.x);
+            const float screenH = std::abs(br.y - tl.y);
+
+            if (lod == DetailLevel::Low) {
+              if (screenW < 8.0f || screenH < 8.0f) continue;
+            } else if (lod == DetailLevel::Medium) {
+              if (screenW < 2.0f || screenH < 2.0f) continue;
+            }
+          }
+          // ------------------------------------------------
 
           ++drawnLayerCount;
           if (layerUsesSurfaceUploadForCompositionView(layer.get())) {
@@ -3396,9 +3423,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           if (opacity <= 0.0f)
             continue;
 
+          // -- Adjustment Layer or Normal Layer? --
           renderer_->setOverrideRTV(layerRTV);
-          renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
-          renderer_->clear();
+          if (layer->isAdjustmentLayer()) {
+            // -- Adjustment Layer: Capture the background --
+            // We draw the current composition result (accumSRV) into our layer buffer.
+            // This makes the 'background' available as a source for this layer's effects.
+            const QSize compSize = comp->settings().compositionSize();
+            const float cw = static_cast<float>(compSize.width());
+            const float ch = static_cast<float>(compSize.height());
+            renderer_->drawSprite(0.0f, 0.0f, cw, ch, accumSRV, 1.0f);
+          } else {
+            renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+            renderer_->clear();
+          }
+
           QString *dbgOut =
               QLoggingCategory::defaultCategory()->isDebugEnabled()
                   ? &lastVideoDebug_
@@ -3578,6 +3617,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       if (!frameOutOfRange) {
         const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
+        renderer_->setDetailLevel(lod); // Pass LOD to renderer/effects
 
         for (const auto &layer : layers) {
           if (!layer || !layer->isVisible())
@@ -3590,6 +3630,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // === 段階 2: ROI 計算 ===
           const QRectF layerBounds = layer->transformedBoundingBox();
           const QRectF intersected = layerBounds.intersected(roiRect);
+
+          // --- Feature 3: Layer Drawing Skip (LOD-based) ---
+          // Skip rendering layers that are too small to be visible on screen.
+          if (layerBounds.isValid()) {
+            const auto tl = renderer_->canvasToViewport({(float)layerBounds.left(), (float)layerBounds.top()});
+            const auto br = renderer_->canvasToViewport({(float)layerBounds.right(), (float)layerBounds.bottom()});
+            const float screenW = std::abs(br.x - tl.x);
+            const float screenH = std::abs(br.y - tl.y);
+
+            if (lod == DetailLevel::Low) {
+              if (screenW < 8.0f || screenH < 8.0f) continue;
+            } else if (lod == DetailLevel::Medium) {
+              if (screenW < 2.0f || screenH < 2.0f) continue;
+            }
+          }
+          // ------------------------------------------------
 
           // === 段階 3: 空 ROI スキップ ===
           if (intersected.isEmpty()) {
