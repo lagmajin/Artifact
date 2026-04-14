@@ -868,6 +868,7 @@ namespace Artifact
    {
     submitter_.submit(cmdBuf_, deviceManager_.immediateContext());
     try {
+      primitiveRenderer_.flushGlyphAtlasUpload();
      sc->Present();
     } catch (const std::exception& ex) {
      const QString msg = QString::fromLocal8Bit(ex.what());
@@ -1060,6 +1061,10 @@ void ArtifactIRenderer::drawDashedLineLocal(Detail::float2 p1, Detail::float2 p2
  { impl_->primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
  void ArtifactIRenderer::drawCrosshair(float x, float y, float size, const FloatColor& color)
  { impl_->primitiveRenderer_.drawCrosshair(x, y, size, color); }
+ void ArtifactIRenderer::drawText(float x, float y, const QString& text, const ArtifactCore::TextStyle& style, const FloatColor& color, float opacity, Qt::Alignment align)
+ { impl_->primitiveRenderer_.drawText(x, y, text, style, color, opacity, align); }
+ void ArtifactIRenderer::drawTextViewport(float vx, float vy, const QString& text, const ArtifactCore::TextStyle& style, const FloatColor& color, float opacity, Qt::Alignment align)
+ { impl_->primitiveRenderer_.drawTextViewport(vx, vy, text, style, color, opacity, align); }
 void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h,
                                          float tileSize, const FloatColor& c1, const FloatColor& c2)
 { impl_->drawCheckerboard(x, y, w, h, tileSize, c1, c2); }
