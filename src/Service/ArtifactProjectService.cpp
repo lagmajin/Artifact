@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -635,6 +635,81 @@ void ArtifactProjectService::addLayerToCurrentComposition(
 void ArtifactProjectService::addLayerToCurrentComposition(
     const ArtifactLayerInitParams &params, bool selectNewLayer) {
   impl_->addLayerToCurrentComposition(params, selectNewLayer);
+}
+
+bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()
+{
+    auto comp = currentComposition().lock();
+    if (!comp) {
+        return false;
+    }
+
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    if (!selectionManager) {
+        return false;
+    }
+
+    // 現在選択されているのがグループか確認
+    auto selectedLayer = selectionManager->currentLayer();
+    if (!selectedLayer || !selectedLayer->isGroupLayer()) {
+        return false;
+    }
+
+    auto groupLayer = std::dynamic_pointer_cast<ArtifactGroupLayer>(selectedLayer);
+    if (!groupLayer) {
+        return false;
+    }
+
+    // グループの子を退避
+    const auto children = groupLayer->children();
+    if (children.empty()) {
+        // 空のグループは削除
+        removeLayerFromComposition(comp->id(), groupLayer->id());
+        return true;
+    }
+
+    // グループのインデックスを取得
+    const auto allLayers = comp->allLayer();
+    int groupIndex = -1;
+    for (int i = 0; i < allLayers.size(); ++i) {
+        if (allLayers[i]->id() == groupLayer->id()) {
+            groupIndex = i;
+            break;
+        }
+    }
+
+    if (groupIndex < 0) {
+        return false;
+    }
+
+    // 子をグループから外して親のレベルに移動
+    // 子を逆順に処理（元の順序を維持するため）
+    for (int i = children.size() - 1; i >= 0; --i) {
+        const auto& child = children[i];
+        if (!child) continue;
+
+        // グループから子を外す
+        groupLayer->removeChild(child->id());
+
+        // 親のCompositionに直接追加（グループの位置に）
+        comp->insertLayerAtIndex(child, groupIndex);
+    }
+
+    // グループを削除
+    removeLayerFromComposition(comp->id(), groupLayer->id());
+
+    // 元の子らを選択状態に設定
+    QVector<LayerID> childIds;
+    childIds.reserve(children.size());
+    for (const auto& child : children) {
+        if (child) {
+            childIds.push_back(child->id());
+        }
+    }
+    selectionManager->setSelectedLayers(childIds);
+
+    return true;
 }
 
 bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(
