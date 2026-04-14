@@ -161,6 +161,14 @@ public:
   void draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail::float3 v2, Detail::float3 v3, const FloatColor& color);
 
  void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
+
+ // Offscreen rendering for group layers
+ void* createOffscreenTexture(int width, int height);
+ void destroyOffscreenTexture(void* textureView);
+ void pushRenderTarget(void* textureView);
+ void popRenderTarget();
+ void clearRenderTarget(const FloatColor& color);
+ void drawOffscreenTexture(void* textureView, const QRectF& bounds, float opacity = 1.0f);
  void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
  void setUpscaleConfig(bool enable, float sharpness);
 
