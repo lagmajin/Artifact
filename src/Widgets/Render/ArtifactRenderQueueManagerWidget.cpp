@@ -49,6 +49,11 @@ module Artifact.Widgets.Render.QueueManager;
 
 import Widgets.Utils.CSS;
 import Artifact.Event.Types;
+import Artifact.Diagnostics.AppValidationRules;
+import Core.Diagnostics.DiagnosticEngine;
+import Core.Diagnostics.ProjectDiagnostic;
+import Artifact.Composition._2D;
+import Artifact.Project.Manager;
 import Event.Bus;
 import Artifact.Render.Queue.Service;
 import Artifact.Render.Queue.Presets;
@@ -692,7 +697,59 @@ namespace Artifact
   });
 
   connect(impl_->startButton, &QPushButton::clicked, this, [this]() {
-    if (impl_->service) impl_->service->startAllJobs();
+    if (!impl_->service) return;
+
+    // ============================================================
+    // Pre-Render Validation (Phase 2.5)
+    // ============================================================
+    auto& projectMgr = ArtifactProjectManager::getInstance();
+    auto currentComp = projectMgr.currentComposition();
+    auto* comp = dynamic_cast<ArtifactComposition*>(currentComp.get());
+
+    if (comp) {
+      // 検証ルールを作成
+      ArtifactMissingFileRule missingFileRule;
+      ArtifactPerformanceRule perfRule;
+
+      std::vector<ArtifactCore::ProjectDiagnostic> errors;
+      std::vector<ArtifactCore::ProjectDiagnostic> warnings;
+
+      // Missing File チェック
+      for (auto& diag : missingFileRule.validate(comp)) {
+        if (diag.isError()) errors.push_back(std::move(diag));
+        else if (diag.isWarning()) warnings.push_back(std::move(diag));
+      }
+
+      // Performance チェック
+      for (auto& diag : perfRule.validate(comp)) {
+        if (diag.isError()) errors.push_back(std::move(diag));
+        else if (diag.isWarning()) warnings.push_back(std::move(diag));
+      }
+
+      // エラーがあれば中断
+      if (!errors.empty()) {
+        QString errorMsg = "レンダーを開始できません。以下のエラーを解決してください:\n\n";
+        for (const auto& e : errors) {
+          errorMsg += "• " + e.getMessage() + "\n";
+        }
+        QMessageBox::critical(this, "Render Validation Error", errorMsg);
+        return;
+      }
+
+      // 警告があれば確認
+      if (!warnings.empty()) {
+        QString warnMsg = "警告が検出されました。続行しますか？\n\n";
+        for (const auto& w : warnings) {
+          warnMsg += "• " + w.getMessage() + "\n";
+        }
+        QMessageBox::StandardButton btn = QMessageBox::warning(
+            this, "Render Validation Warning", warnMsg,
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (btn != QMessageBox::Yes) return;
+      }
+    }
+
+    impl_->service->startAllJobs();
   });
 
   connect(impl_->clearHistoryButton, &QPushButton::clicked, this, [this]() {
