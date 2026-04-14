@@ -135,6 +135,7 @@ public:
 
     QAction* precomposeAction = nullptr;
     QAction* groupSelectionAction = nullptr;
+    QAction* ungroupAction = nullptr;
     QAction* splitAction = nullptr;
 
     void handleCreateSolid();
@@ -161,6 +162,7 @@ public:
 
     void handlePrecompose();
     void handleGroupSelection();
+    void handleUngroup();
     void handleSplitLayer();
 
     bool hasCurrentComposition() const;
@@ -240,6 +242,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
     groupSelectionAction = new QAction("グループ化(&G)...", menu);
+    ungroupAction = new QAction("グループ解除(&U)", menu);
     splitAction = new QAction("レイヤー分割(&L)", menu);
     splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
     splitAction->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
@@ -255,6 +258,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addSeparator();
     menu->addAction(precomposeAction);
     menu->addAction(groupSelectionAction);
+    menu->addAction(ungroupAction);
     menu->addAction(splitAction);
 
     QObject::connect(createSolidAction, &QAction::triggered, menu, [this]() { handleCreateSolid(); });
@@ -281,6 +285,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     QObject::connect(precomposeAction, &QAction::triggered, menu, [this]() { handlePrecompose(); });
     QObject::connect(groupSelectionAction, &QAction::triggered, menu, [this]() { handleGroupSelection(); });
+    QObject::connect(ungroupAction, &QAction::triggered, menu, [this]() { handleUngroup(); });
     QObject::connect(splitAction, &QAction::triggered, menu, [this]() { handleSplitLayer(); });
 
     auto* service = ArtifactProjectService::instance();
@@ -363,6 +368,15 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     clearParentAction->setEnabled(hasParent);
     precomposeAction->setEnabled(hasLayer);
     groupSelectionAction->setEnabled(hasLayer && hasComp);
+    
+    // Ungroup: 選択中のレイヤーがグループの場合のみ有効
+    bool isGroupSelected = false;
+    if (app && app->layerSelectionManager()) {
+        auto current = app->layerSelectionManager()->currentLayer();
+        isGroupSelected = current && current->isGroupLayer();
+    }
+    ungroupAction->setEnabled(isGroupSelected && hasComp);
+    
     splitAction->setEnabled(hasLayer);
 }
 
@@ -636,6 +650,18 @@ void ArtifactLayerMenu::Impl::handleGroupSelection()
 
     if (!service->groupSelectedLayersInCurrentComposition(UniString(groupName))) {
         QMessageBox::warning(menu_->window(), "グループ化", "選択レイヤーをグループ化できませんでした。");
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleUngroup()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || !hasCurrentComposition()) {
+        return;
+    }
+
+    if (!service->ungroupSelectedGroupInCurrentComposition()) {
+        QMessageBox::warning(menu_->window(), "グループ解除", "グループを解除できませんでした。グループを選択してください。");
     }
 }
 
