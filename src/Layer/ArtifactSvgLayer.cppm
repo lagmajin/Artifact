@@ -11,6 +11,10 @@ module;
 #include <wobjectimpl.h>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 
+// nanosvg for vector parsing
+#define NANOSVG_IMPLEMENTATION
+#include "nanosvg/nanosvg.h"
+
 module Artifact.Layer.Svg;
 
 import std;
@@ -74,18 +78,58 @@ QImage renderSvgToImage(const QString& path, const QSize& sizeHint)
     renderer.render(&painter);
     return img;
 }
+
+// nanosvg paths to QPainterPath
+QPainterPath nvgToQPainterPath(NSVGimage* image)
+{
+    QPainterPath painterPath;
+    if (!image) return painterPath;
+
+    for (NSVGshape* shape = image->shapes; shape; shape = shape->next) {
+        for (NSVGpath* path = shape->paths; path; path = path->next) {
+            if (path->npts < 2) continue;
+
+            QPainterPath subPath;
+            subPath.moveTo(path->pts[0], path->pts[1]);
+
+            for (int i = 1; i < path->npts; i += 3) {
+                float* p = &path->pts[i * 2];
+                subPath.cubicTo(p[0], p[1], p[2], p[3], p[4], p[5]);
+            }
+
+            if (shape->closed) {
+                subPath.closeSubpath();
+            }
+
+            painterPath.addPath(subPath);
+        }
+    }
+
+    return painterPath;
+}
 } // namespace
 
 class ArtifactSvgLayer::Impl {
 public:
     bool fitToLayer_ = true;
     bool loaded_ = false;
+    bool vectorMode_ = true;  // ベクター描画モード
     int width_ = 0;
     int height_ = 0;
     QString sourcePath_;
     mutable std::shared_ptr<QImage> cache_;
     mutable QFuture<QImage> prefetchFuture_;
     mutable bool prefetchDone_ = false;
+    
+    // nanosvg vector data
+    NSVGimage* svgImage_ = nullptr;
+    
+    ~Impl() {
+        if (svgImage_) {
+            nsvgDelete(svgImage_);
+            svgImage_ = nullptr;
+        }
+    }
 };
 
 W_OBJECT_IMPL(ArtifactSvgLayer)
@@ -106,27 +150,48 @@ bool ArtifactSvgLayer::loadFromPath(const QString& path)
         return false;
     }
 
-    const QSize size = svgNaturalSize(trimmed);
-    if (!size.isValid() || size.isEmpty()) {
-        qWarning() << "[ArtifactSvgLayer] Failed to read SVG size:" << trimmed;
-        impl_->loaded_ = false;
-        return false;
+    // nanosvgでパース
+    NSVGimage* image = nsvgParseFromFile(trimmed.toUtf8().constData(), "px", 96.0f);
+    if (!image) {
+        qWarning() << "[ArtifactSvgLayer] Failed to parse SVG:" << trimmed;
+        // フォールバック: QSvgRendererで試す
+        const QSize size = svgNaturalSize(trimmed);
+        if (!size.isValid() || size.isEmpty()) {
+            impl_->loaded_ = false;
+            return false;
+        }
+        impl_->sourcePath_ = trimmed;
+        impl_->cache_.reset();
+        impl_->prefetchDone_ = false;
+        impl_->loaded_ = true;
+        impl_->vectorMode_ = false;
+        impl_->width_ = size.width();
+        impl_->height_ = size.height();
+        setSourceSize(Size_2D(size.width(), size.height()));
+        impl_->prefetchFuture_ = QtConcurrent::run([trimmed, size]() -> QImage {
+            return renderSvgToImage(trimmed, size);
+        });
+        Q_EMIT changed();
+        return true;
     }
 
+    // 古いSVGイメージを削除
+    if (impl_->svgImage_) {
+        nsvgDelete(impl_->svgImage_);
+    }
+
+    impl_->svgImage_ = image;
     impl_->sourcePath_ = trimmed;
     impl_->cache_.reset();
     impl_->prefetchDone_ = false;
     impl_->loaded_ = true;
-    impl_->width_ = size.width();
-    impl_->height_ = size.height();
-    setSourceSize(Size_2D(size.width(), size.height()));
+    impl_->vectorMode_ = true;
+    impl_->width_ = static_cast<int>(image->width);
+    impl_->height_ = static_cast<int>(image->height);
+    setSourceSize(Size_2D(impl_->width_, impl_->height_));
 
-    impl_->prefetchFuture_ = QtConcurrent::run([trimmed, size]() -> QImage {
-        return renderSvgToImage(trimmed, size);
-    });
-
-    qDebug() << "[ArtifactSvgLayer] Prefetch started:" << trimmed
-             << "sizeHint=" << size;
+    qDebug() << "[ArtifactSvgLayer] Loaded SVG (vector mode):" << trimmed
+             << "size=" << impl_->width_ << "x" << impl_->height_;
     Q_EMIT changed();
     return true;
 }
@@ -254,6 +319,86 @@ void ArtifactSvgLayer::draw(ArtifactIRenderer* renderer)
         return;
     }
 
+    if (impl_->vectorMode_ && impl_->svgImage_) {
+        // ベクター描画モード
+        drawVector(renderer);
+    } else {
+        // ラスター描画モード（従来通り）
+        drawRaster(renderer);
+    }
+}
+
+void ArtifactSvgLayer::drawVector(ArtifactIRenderer* renderer)
+{
+    if (!impl_->svgImage_) return;
+
+    // SVGをQPainterPathに変換
+    QPainterPath vectorPath = nvgToQPainterPath(impl_->svgImage_);
+    if (vectorPath.isEmpty()) return;
+
+    auto size = sourceSize();
+    if (!impl_->fitToLayer_) {
+        size = Size_2D(impl_->width_, impl_->height_);
+    }
+
+    // スケール計算
+    float scaleX = static_cast<float>(size.width) / impl_->svgImage_->width;
+    float scaleY = static_cast<float>(size.height) / impl_->svgImage_->height;
+
+    // 変換マトリクス
+    const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+    
+    drawWithClonerEffect(this, baseTransform, [renderer, &vectorPath, scaleX, scaleY, this](const QMatrix4x4& transform, float weight) {
+        // 最終的な変換を適用
+        QMatrix4x4 finalTransform = transform;
+        finalTransform.scale(scaleX, scaleY);
+        
+        // TODO: ベクターパスをGPUで描画する
+        // 現状: CPUでQImageにレンダリングしてスプライト描画
+        // 将来的: GPUテセレーション or ベクター描画API
+        
+        QSize renderSize(static_cast<int>(impl_->svgImage_->width * scaleX),
+                        static_cast<int>(impl_->svgImage_->height * scaleY));
+        
+        QImage img(renderSize, QImage::Format_RGBA8888);
+        img.fill(Qt::transparent);
+        
+        QPainter painter(&img);
+        painter.setTransform(QTransform::fromScale(scaleX, scaleY));
+        painter.setRenderHint(QPainter::Antialiasing);
+        
+        // パスの描画
+        for (NSVGshape* shape = impl_->svgImage_->shapes; shape; shape = shape->next) {
+            QColor fillColor(static_cast<int>(shape->fill.color & 0xFF),
+                            static_cast<int>((shape->fill.color >> 8) & 0xFF),
+                            static_cast<int>((shape->fill.color >> 16) & 0xFF),
+                            static_cast<int>((shape->fill.color >> 24) & 0xFF));
+            
+            if (shape->fill.type == NSVG_PAINT_COLOR && shape->fill.color != 0) {
+                painter.fillPath(vectorPath, fillColor);
+            }
+            
+            if (shape->stroke.type == NSVG_PAINT_COLOR && shape->strokeWidth > 0) {
+                QColor strokeColor(static_cast<int>(shape->stroke.color & 0xFF),
+                                  static_cast<int>((shape->stroke.color >> 8) & 0xFF),
+                                  static_cast<int>((shape->stroke.color >> 16) & 0xFF),
+                                  static_cast<int>((shape->stroke.color >> 24) & 0xFF));
+                QPen pen(strokeColor, shape->strokeWidth);
+                painter.strokePath(vectorPath, pen);
+            }
+        }
+        
+        painter.end();
+        
+        renderer->drawSpriteTransformed(0.0f, 0.0f,
+                                        static_cast<float>(size.width),
+                                        static_cast<float>(size.height),
+                                        transform, img, this->opacity() * weight);
+    });
+}
+
+void ArtifactSvgLayer::drawRaster(ArtifactIRenderer* renderer)
+{
     const QImage img = toQImage();
     if (img.isNull()) {
         return;

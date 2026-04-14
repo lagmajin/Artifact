@@ -66,6 +66,10 @@ public:
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
   void draw(ArtifactIRenderer* renderer) override;
   QRectF localBounds() const override;
+
+private:
+  void drawVector(ArtifactIRenderer* renderer);
+  void drawRaster(ArtifactIRenderer* renderer);
 };
 
 }
