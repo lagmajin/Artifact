@@ -2307,6 +2307,11 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   if (!event || !impl_->renderer_)
     return;
 
+  qCDebug(compositionViewLog) << "[MousePress] ENTER pos:" << event->position()
+                              << "button:" << event->button()
+                              << "modifiers:" << event->modifiers()
+                              << "devicePixelRatio:" << impl_->devicePixelRatio_;
+
   // event->position() is in logical pixels; convert to physical for rendering
   // pipeline
   const QPointF viewportPos = event->position() * impl_->devicePixelRatio_;
@@ -2649,6 +2654,9 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
 
 void CompositionRenderController::handleMouseMove(
     const QPointF &viewportPosLogical) {
+  qCDebug(compositionViewLog) << "[MouseMove] ENTER logicalPos:" << viewportPosLogical
+                              << "devicePixelRatio:" << impl_->devicePixelRatio_;
+
   // Convert logical pixels (from Qt event) to physical pixels for the rendering
   // pipeline
   const QPointF viewportPos = viewportPosLogical * impl_->devicePixelRatio_;
@@ -2809,6 +2817,8 @@ void CompositionRenderController::handleMouseMove(
 }
 
 void CompositionRenderController::handleMouseRelease() {
+  qCDebug(compositionViewLog) << "[MouseRelease] ENTER";
+
   impl_->isDraggingLayer_ = false;
 
   if (impl_->isRubberBandSelecting_) {

@@ -400,6 +400,13 @@ public:
 static LRESULT CALLBACK RenderHwndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 {
     switch (uMsg) {
+    case WM_NCHITTEST:
+        // Return HTTRANSPARENT so Windows skips this child HWND during
+        // hit-testing and delivers mouse messages to the parent
+        // CompositionViewport HWND instead.  WS_EX_TRANSPARENT alone is
+        // not sufficient for child windows — the WndProc must explicitly
+        // opt out of hit-testing.  D3D12/Vulkan presentation is unaffected.
+        return HTTRANSPARENT;
     case WM_ERASEBKGND:
         return 1; // Claim we erased — DX12/Vulkan owns the surface
     case WM_PAINT: {

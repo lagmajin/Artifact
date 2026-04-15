@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 
 #include <QAbstractButton>
@@ -173,8 +173,18 @@ void applyPropertyLabelPalette(QLabel *label, const bool prominent = false) {
       themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
   const QColor accent =
       themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+
+  // Match label background to the property panel background so labels visually
+  // blend with the surrounding widget. Use the theme background color which
+  // is what applyPropertyPanelPalette uses for the widget Window background.
+  const QColor background =
+      themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
+
   QPalette pal = label->palette();
   pal.setColor(QPalette::WindowText, prominent ? accent : text);
+  pal.setColor(QPalette::Window, background);
+  // Ensure the label actually paints its background from the palette.
+  label->setAutoFillBackground(true);
   label->setPalette(pal);
 }
 } // namespace

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QAction>
 #include <QActionGroup>
 #include <QClipboard>
@@ -9,6 +9,7 @@ module;
 #include <QCoreApplication>
 #include <QCursor>
 #include <QDebug>
+#include <QLoggingCategory>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDragEnterEvent>
@@ -90,6 +91,7 @@ import ArtifactCore.Utils.PerformanceProfiler;
 namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactCompositionEditor)
+Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
 // CompositionEditor 内部の同期は Qt signal を増やさず、
@@ -1126,46 +1128,75 @@ protected:
     QWidget::keyPressEvent(event);
   }
 
-  void keyReleaseEvent(QKeyEvent *event) override {
-    if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {
-      if (pieMenu_ && pieMenu_->isVisible()) {
-        pieMenu_->confirmSelection();
-      }
-      event->accept();
-      return;
-    }
+   void keyReleaseEvent(QKeyEvent *event) override {
+     if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {
+       if (pieMenu_ && pieMenu_->isVisible()) {
+         pieMenu_->confirmSelection();
+       }
+       event->accept();
+       return;
+     }
 
-    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
-      spacePressed_ = false;
-      if (!isPanningWithMiddle_) {
-        isPanning_ = false;
-      }
-      if (controller_) {
-        controller_->finishViewportInteraction();
-      }
-      unsetCursor();
-      if (controller_) {
-        setCursor(controller_->cursorShapeForViewportPos(
-            mapFromGlobal(QCursor::pos())));
-      }
-      event->accept();
-      return;
-    }
-    if (!event->isAutoRepeat() && (event->key() == Qt::Key_QuoteLeft ||
-                                   event->key() == Qt::Key_AsciiTilde)) {
-      restoreTemporarySolo();
-      event->accept();
-      return;
-    }
-    if (!event->isAutoRepeat() && event->key() == Qt::Key_P) {
-      restoreTemporaryPlayback();
-      event->accept();
-      return;
-    }
-    QWidget::keyReleaseEvent(event);
-  }
+     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+       spacePressed_ = false;
+       if (!isPanningWithMiddle_) {
+         isPanning_ = false;
+       }
+       if (controller_) {
+         controller_->finishViewportInteraction();
+       }
+       unsetCursor();
+       if (controller_) {
+         setCursor(controller_->cursorShapeForViewportPos(
+             mapFromGlobal(QCursor::pos())));
+       }
+       event->accept();
+       return;
+     }
+     if (!event->isAutoRepeat() && (event->key() == Qt::Key_QuoteLeft ||
+                                    event->key() == Qt::Key_AsciiTilde)) {
+       restoreTemporarySolo();
+       event->accept();
+       return;
+     }
+     if (!event->isAutoRepeat() && event->key() == Qt::Key_P) {
+       restoreTemporaryPlayback();
+       event->accept();
+       return;
+     }
+     QWidget::keyReleaseEvent(event);
+   }
 
-private:
+   // ============================================================
+   // Debug: Event filter to trace mouse events
+   // ============================================================
+   bool eventFilter(QObject *obj, QEvent *event) override {
+     static const QEvent::Type mouseTypes[] = {
+         QEvent::MouseButtonPress,
+         QEvent::MouseButtonRelease,
+         QEvent::MouseMove,
+         QEvent::Wheel,
+         QEvent::HoverMove,
+         QEvent::HoverEnter,
+         QEvent::HoverLeave
+     };
+     for (QEvent::Type t : mouseTypes) {
+       if (event->type() == t) {
+         QString objName = obj ? obj->objectName() : QString("<null>");
+         if (objName.isEmpty()) {
+           objName = obj ? obj->metaObject()->className() : QString("<null>");
+         }
+         qCDebug(compositionViewLog)
+             << "[EVENT]" << event->type()
+             << "obj:" << objName
+             << "visible:" << (obj && obj->isWidgetType() ? qobject_cast<QWidget*>(obj)->isVisible() : "n/a");
+         break;
+       }
+     }
+     return QWidget::eventFilter(obj, event);
+   }
+
+ private:
   struct TemporarySoloState {
     LayerID layerId;
     bool solo = false;
@@ -2779,6 +2810,9 @@ void ArtifactCompositionEditor::resizeEvent(QResizeEvent *event) {
   if (impl_) {
     impl_->syncOverlayGeometry(this);
   }
+
+  // Debug: event filter to trace mouse events
+  installEventFilter(this);
 }
 
 ArtifactCompositionEditor::~ArtifactCompositionEditor() { delete impl_; }

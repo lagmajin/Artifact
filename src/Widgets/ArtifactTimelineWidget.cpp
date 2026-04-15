@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QBoxLayout>
 #include <QBrush>
@@ -1956,7 +1956,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     pal.setColor(QPalette::WindowText, QColor(186, 219, 255));
     zoomSummaryLabel->setPalette(pal);
   }
-  zoomSummaryLabel->setText(QStringLiteral("Zoom: 100%"));
+   zoomSummaryLabel->setText(QStringLiteral("Zoom: 100%"));
+  // Hide zoom percentage label on the left header — user prefers it not shown.
+   zoomSummaryLabel->setVisible(false);
   currentLayerLabel->setCursor(Qt::PointingHandCursor);
   frameSummaryLabel->setCursor(Qt::PointingHandCursor);
   zoomSummaryLabel->setCursor(Qt::PointingHandCursor);

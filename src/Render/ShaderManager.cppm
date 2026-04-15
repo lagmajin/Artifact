@@ -25,6 +25,7 @@ import Graphics.PSO.Cache;
 import Utils.String.UniString;
 import Render.Shader.ThickLine;
 import Render.Shader.ViewerHelpers;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
 
@@ -96,6 +97,9 @@ void ShaderManager::Impl::createShaders()
     if (!device_) {
         return;
     }
+    ArtifactCore::ScopedStartupTimer shaderTimer(
+        "ShaderManager::createShaders", ArtifactCore::StartupPhase::ShaderCompilation,
+        /*threadCount=*/20, /*itemCount=*/20);
 
     ShaderCreateInfo lineVsInfo;
     lineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
@@ -351,6 +355,8 @@ QString ShaderManager::Impl::psoCacheFilePath() const
 
 void ShaderManager::Impl::createPSOCache()
 {
+    ArtifactCore::ScopedStartupTimer cacheTimer(
+        "ShaderManager::loadPSOCache", ArtifactCore::StartupPhase::PSOCacheLoad);
     psoCache_ = nullptr;
     if (!device_) {
         return;
@@ -847,6 +853,9 @@ void ShaderManager::Impl::createPSOs()
     if (!device_) {
         return;
     }
+    ArtifactCore::ScopedStartupTimer psoTimer(
+        "ShaderManager::createPSOs", ArtifactCore::StartupPhase::PSOCreation,
+        /*threadCount=*/3, /*itemCount=*/15);
     createPSOCache();
     tbb::task_group tasks;
     tasks.run([this]() { createLineFamilyPSOs(); });
