@@ -1,6 +1,7 @@
 module;
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QColor>
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
@@ -16,7 +17,7 @@ import Mesh;
 import Time.Rational;
 import MeshImporter;
 import Utils.String.UniString;
-import Material.Material3D;
+import Material.Material;
 
 namespace Artifact {
 
@@ -29,7 +30,7 @@ Artifact::Detail::float3 toFloat3(const QVector3D &v) {
 class Artifact3DLayer::Impl {
 public:
   RenderMode renderMode_ = RenderMode::Wireframe;
-  ArtifactCore::Material3D material_ = ArtifactCore::Material3D::makeDefault();
+  ArtifactCore::Material material_ = ArtifactCore::Material::makeDefault();
   Mesh mesh_; // The 3D mesh data
   bool meshLoaded_ = false;
   Impl() {}
@@ -167,7 +168,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
 
   // Draw based on render mode
   const FloatColor wireframeColor{1.0f, 1.0f, 1.0f, opacity()};
-  const QColor diffuseColor = impl_->material_.diffuseColor();
+  const QColor diffuseColor = impl_->material_.baseColor();
   const FloatColor solidColor{diffuseColor.redF(), diffuseColor.greenF(),
                               diffuseColor.blueF(), opacity()};
   const float thickness = 2.0f;
@@ -226,26 +227,32 @@ Artifact3DLayer::getLayerPropertyGroups() const {
 
   PropertyGroup materialGroup(QStringLiteral("Material"));
 
-  auto diffuseColorProp = persistentLayerProperty(
-      QStringLiteral("material.diffuse.color"), PropertyType::Color,
-      impl_->material_.diffuseColor(), -40);
-  diffuseColorProp->setDisplayLabel(QStringLiteral("Diffuse Color"));
-  materialGroup.addProperty(diffuseColorProp);
+  auto baseColorProp = persistentLayerProperty(
+      QStringLiteral("material.base.color"), PropertyType::Color,
+      impl_->material_.baseColor(), -40);
+  baseColorProp->setDisplayLabel(QStringLiteral("Base Color"));
+  materialGroup.addProperty(baseColorProp);
 
-  auto specularColorProp = persistentLayerProperty(
-      QStringLiteral("material.specular.color"), PropertyType::Color,
-      impl_->material_.specularColor(), -39);
-  specularColorProp->setDisplayLabel(QStringLiteral("Specular Color"));
-  materialGroup.addProperty(specularColorProp);
+  auto emissionColorProp = persistentLayerProperty(
+      QStringLiteral("material.emission.color"), PropertyType::Color,
+      impl_->material_.emissionColor(), -39);
+  emissionColorProp->setDisplayLabel(QStringLiteral("Emission Color"));
+  materialGroup.addProperty(emissionColorProp);
+
+  auto metallicProp = persistentLayerProperty(
+      QStringLiteral("material.metallic"), PropertyType::Float,
+      impl_->material_.metallic(), -38);
+  metallicProp->setDisplayLabel(QStringLiteral("Metallic"));
+  materialGroup.addProperty(metallicProp);
 
   auto roughnessProp = persistentLayerProperty(
       QStringLiteral("material.roughness"), PropertyType::Float,
-      impl_->material_.roughness(), -38);
+      impl_->material_.roughness(), -37);
   roughnessProp->setDisplayLabel(QStringLiteral("Roughness"));
   materialGroup.addProperty(roughnessProp);
 
   // MaterialX summary
-  if (impl_->material_.hasMaterialXDocument()) {
+  if (impl_->material_.materialXDocument().length() > 0) {
     auto materialXProp = persistentLayerProperty(
         QStringLiteral("material.materialx.summary"), PropertyType::String,
         QStringLiteral("MaterialX document present"), -37);
@@ -268,12 +275,16 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
       Q_EMIT changed();
       return true;
     }
-  } else if (propertyPath == QStringLiteral("material.diffuse.color")) {
-    impl_->material_.setDiffuseColor(value.value<QColor>());
+  } else if (propertyPath == QStringLiteral("material.base.color")) {
+    impl_->material_.setBaseColor(value.value<QColor>());
     Q_EMIT changed();
     return true;
-  } else if (propertyPath == QStringLiteral("material.specular.color")) {
-    impl_->material_.setSpecularColor(value.value<QColor>());
+  } else if (propertyPath == QStringLiteral("material.emission.color")) {
+    impl_->material_.setEmissionColor(value.value<QColor>());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.metallic")) {
+    impl_->material_.setMetallic(value.toFloat());
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.roughness")) {

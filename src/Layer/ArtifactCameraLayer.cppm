@@ -11,6 +11,7 @@ import Artifact.Layer.Abstract;
 import Property.Group;
 import Property;
 import Animation.Transform3D;
+import Time.Rational;
 
 namespace Artifact {
 
@@ -55,7 +56,12 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
     if (!renderer || !isVisible()) return;
 
     // Get current state
-    const auto pos = transform3D().position();
+    const auto frameTime = RationalTime(currentFrame(), 30);
+    const auto &t3 = transform3D();
+    const QVector3D pos(
+        t3.positionXAt(frameTime),
+        t3.positionYAt(frameTime),
+        t3.positionZAt(frameTime));
     const auto type = projectionMode();
     const auto zoom = renderer->getZoom();
     

@@ -141,13 +141,10 @@ namespace Artifact
   void panBy(float dx, float dy)         { primitiveRenderer_.panBy(dx, dy); }
   void resetView()                       { primitiveRenderer_.resetView(); }
   void fitToViewport(float margin)       { primitiveRenderer_.fitToViewport(margin); }
-  void zoomAroundViewportPoint(Detail::float2 viewportPos, float newZoom) { primitiveRenderer_.zoomAroundViewportPoint(viewportPos, newZoom); }
 
   // LOD
   void setDetailLevel(LODManager::DetailLevel lod) { detailLevel_ = lod; }
   LODManager::DetailLevel detailLevel() const { return detailLevel_; }
-  void resetView()                       { primitiveRenderer_.resetView(); }
-  void fitToViewport(float margin)       { primitiveRenderer_.fitToViewport(margin); }
   void fillToViewport(float margin)      { primitiveRenderer_.fillToViewport(margin); }
   void setViewMatrix(const QMatrix4x4& view) { primitiveRenderer_.setViewMatrix(view); primitiveRenderer3D_.setViewMatrix(view); }
   void setProjectionMatrix(const QMatrix4x4& proj) { primitiveRenderer_.setProjectionMatrix(proj); primitiveRenderer3D_.setProjectionMatrix(proj); }

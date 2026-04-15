@@ -80,7 +80,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Widgets.ProfilerOverlay;
 import Artifact.Widgets.ProfilerPanel;
-import Diagnostics.Profiler;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
 

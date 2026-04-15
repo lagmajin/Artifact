@@ -17,7 +17,7 @@
 module Artifact.Timeline.TrackPainterView;
 
 import std;
-import Diagnostics.Profiler;
+import ArtifactCore.Utils.PerformanceProfiler;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;

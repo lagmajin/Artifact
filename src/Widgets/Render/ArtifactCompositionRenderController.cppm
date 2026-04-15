@@ -85,7 +85,7 @@ import Frame.Position;
 import Color.Float;
 import Image;
 import CvUtils;
-import Diagnostics.Profiler;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
 
@@ -3375,7 +3375,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                             ArtifactCore::ProfileCategory::Composite);
       if (!frameOutOfRange) {
         const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
-        renderer_->setDetailLevel(lod); // Pass LOD to renderer/effects
+        renderer_->setDetailLevel(static_cast<LODManager::DetailLevel>(lod)); // Pass LOD to renderer/effects
         for (const auto &layer : layers) {
           if (!layer || !layer->isVisible())
             continue;
@@ -3617,7 +3617,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
       if (!frameOutOfRange) {
         const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
-        renderer_->setDetailLevel(lod); // Pass LOD to renderer/effects
+        renderer_->setDetailLevel(static_cast<LODManager::DetailLevel>(lod)); // Pass LOD to renderer/effects
 
         for (const auto &layer : layers) {
           if (!layer || !layer->isVisible())

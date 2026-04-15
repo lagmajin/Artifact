@@ -17,7 +17,7 @@ module;
 
 module Artifact.Widgets.ProfilerOverlay;
 
-import Diagnostics.Profiler;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
 

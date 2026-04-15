@@ -48,7 +48,6 @@ import Core.AI.ToolBridge;
 import Core.AI.ToolExecutor;
 import Core.AI.McpBridge;
 import Core.AI.McpTransport;
-import Core.AI.McpToolMapper;
 import Core.AI.CloudAgent;
 import Core.AI.TieredManager;
 import Artifact.AI.WorkspaceAutomation;
@@ -770,11 +769,9 @@ bool Artifact::ArtifactAICloudWidget::tryHandleToolCallResponse(
   }
 
   QJsonObject toolCall;
-  QString parseError;
-  if (!ArtifactCore::ToolBridge::tryParseToolCall(responseText, &toolCall,
-                                                  &parseError)) {
+  if (!ArtifactCore::ToolBridge::tryParseToolCall(responseText, &toolCall)) {
     if (errorOut) {
-      *errorOut = parseError;
+      *errorOut = QStringLiteral("Failed to parse tool call");
     }
     return false;
   }
@@ -1356,18 +1353,10 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
     const bool isExternalMcp = !mcpSession_.program().isEmpty();
     QVariant executionResult;
     if (isExternalMcp) {
-      // External MCP server: convert Artifact tool call to MCP format and call
-      const QJsonObject mcpToolCall =
-          ArtifactCore::McpToolMapper::instance().convertArtifactToolCallToMcp(
-              toolCall);
-      if (!mcpToolCall.isEmpty()) {
-        const auto result =
-            mcpSession_.callTool(mcpToolCall, buildCurrentCloudContext());
-        executionResult = result.success ? QVariant(result.response)
-                                         : QVariant(result.errorText);
-      } else {
-        executionResult = QVariant("No MCP mapping found for this tool");
-      }
+      const auto result =
+          mcpSession_.callTool(toolCall, buildCurrentCloudContext());
+      executionResult = result.success ? QVariant(result.response)
+                                       : QVariant(result.errorText);
     } else {
       // Internal execution: execute directly using AIToolExecutor
       executionResult =

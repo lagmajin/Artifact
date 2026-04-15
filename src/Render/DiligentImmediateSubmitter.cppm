@@ -16,7 +16,7 @@ import std;
 import VertexBuffer;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.RenderCommandBuffer;
-import Diagnostics.Profiler;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
 
@@ -234,8 +234,7 @@ void DiligentImmediateSubmitter::destroy()
 
 void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext* ctx)
 {
-    ArtifactCore::ProfileScope _profSubmit2D(
-        "Submit2D", ArtifactCore::ProfileCategory::Render);
+    ArtifactCore::ScopedPerformanceTimer _profSubmit2D("Submit2D");
     if (!ctx || buf.empty()) { buf.reset(); return; }
     auto* pRTV = buf.targetRTV;
     for (auto& pkt : buf.packets()) {

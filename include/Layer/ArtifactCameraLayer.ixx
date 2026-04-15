@@ -27,7 +27,7 @@ export namespace Artifact {
   // ArtifactAbstractLayer overrides
   void draw(ArtifactIRenderer* renderer) override;
   UniString className() const override { return "ArtifactCameraLayer"; }
-  bool is3D() const override { return true; }
+  bool is3D() const { return true; }
   bool isNullLayer() const override { return true; }
   QRectF localBounds() const override;
 

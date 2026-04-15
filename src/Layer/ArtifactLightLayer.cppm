@@ -1,15 +1,17 @@
 module;
 #include <utility>
+#include <QColor>
 #include <QVariant>
 #include <wobjectimpl.h>
 
 module Artifact.Layer.Light;
 
 import Artifact.Layer.Abstract;
+import Animation.Transform3D;
+import Time.Rational;
 import Property.Group;
 import Property;
 import Color.Float;
-#include <QColor>
 
 namespace Artifact {
 
@@ -51,7 +53,7 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   }
 
   // Get position from 3D transform at current frame
-  const ArtifactCore::RationalTime frameTime(currentFrame(), 30);
+  const RationalTime frameTime(currentFrame(), 30);
   const auto &t3 = transform3D();
   const QVector3D pos(
       static_cast<float>(t3.positionXAt(frameTime)),
@@ -82,9 +84,7 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
     // Basic representation: a line pointing in the forward direction.
     // For now, simpler: just draw a small "antenna" or axis.
     QMatrix4x4 m;
-    m.rotate(static_cast<float>(t3.rotationXAt(frameTime)), 1, 0, 0);
-    m.rotate(static_cast<float>(t3.rotationYAt(frameTime)), 0, 1, 0);
-    m.rotate(static_cast<float>(t3.rotationZAt(frameTime)), 0, 0, 1);
+    m.rotate(static_cast<float>(t3.rotationAt(frameTime)), 0, 0, 1);
     
     QVector3D forward = m.mapVector(QVector3D(0, 0, 100.0f / (zoom > 0.001f ? zoom : 1.0f)));
     QVector3D tip = pos + forward;
