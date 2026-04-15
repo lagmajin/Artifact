@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <functional>
 
 #include <QObject>
@@ -44,8 +44,10 @@ import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
 import Artifact.Playback.Engine;
 import Artifact.Composition.InOutPoints;
+import Artifact.Event.Types;
 
 W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)
+W_REGISTER_ARGTYPE(Artifact::PlaybackRangeMode)
 
 export namespace Artifact {
 
@@ -106,6 +108,10 @@ public:
   bool isRealTime() const;
   void setRealTime(bool realTime);
 
+  // Playback Range Mode
+  void setPlaybackRangeMode(PlaybackRangeMode mode);
+  PlaybackRangeMode playbackRangeMode() const;
+
   // Audio clock provider (allow external modules to supply a clock)
   void setAudioClockProvider(const std::function<double()> &provider);
   void setAudioMasterVolume(float volume);
@@ -131,7 +137,8 @@ public:
   void clearRamPreviewCache();
   void prewarmRamPreviewAroundCurrentFrame();
   float ramPreviewHitRate() const;
-  int ramPreviewCachedFrameCount() const;
+  int ramPreviewCachedFrameCount() const; // Updated to improve performance
+  std::vector<bool> ramPreviewCacheBitmap() const;
 
   // Marker navigation
   void goToNextMarker();
@@ -148,6 +155,7 @@ public: // signals
   void frameChanged(const FramePosition &position)
       W_SIGNAL(frameChanged, position);
   void playbackSpeedChanged(float speed) W_SIGNAL(playbackSpeedChanged, speed);
+  void playbackRangeModeChanged(PlaybackRangeMode mode) W_SIGNAL(playbackRangeModeChanged, mode);
   void loopingChanged(bool loop) W_SIGNAL(loopingChanged, loop);
   void frameRangeChanged(const FrameRange &range)
       W_SIGNAL(frameRangeChanged, range);

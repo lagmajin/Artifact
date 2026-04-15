@@ -12,6 +12,7 @@ module;
 #include <QComboBox>
 #include <QSpinBox>
 #include <QTime>
+#include <QCheckBox>
 export module Artifact.Widgets.PlaybackControlWidget;
 
 export namespace Artifact

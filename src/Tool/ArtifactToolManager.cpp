@@ -40,6 +40,10 @@ namespace Artifact {
    case ToolType::Pen: return "PenTool";
    case ToolType::Text: return "TextTool";
    case ToolType::Shape: return "ShapeTool";
+   case ToolType::Rectangle: return "RectangleTool";
+   case ToolType::Ellipse: return "EllipseTool";
+   case ToolType::Move: return "MoveTool";
+   case ToolType::Scale: return "ScaleTool";
    case ToolType::Ripple: return "RippleTool";
    case ToolType::Rolling: return "RollingTool";
    case ToolType::Slip: return "SlipTool";

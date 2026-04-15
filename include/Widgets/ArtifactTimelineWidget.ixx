@@ -22,6 +22,7 @@ class ArtifactTimelineWidget :public QWidget {
  private:
  class Impl;
   Impl* impl_;
+  void updateCacheVisuals();
   void syncPlayheadOverlay();
   void syncTimelineViewportFromNavigator();
   void syncTimelineHorizontalOffset(double offset);

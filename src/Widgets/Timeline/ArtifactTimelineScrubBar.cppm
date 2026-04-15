@@ -67,6 +67,7 @@ namespace Artifact
   bool cacheRangeVisible_ = false;
   int cacheRangeStart_ = 0;
   int cacheRangeEnd_ = 0;
+  std::vector<bool> cacheBitmap_;
   int fps_ = 30;
   double rulerPixelsPerFrame_ = 0.0;  // 0 = ruler無効
   double rulerHorizontalOffset_ = 0.0;
@@ -244,6 +245,14 @@ namespace Artifact
   }
  }
 
+ void ArtifactTimelineScrubBar::setCacheBitmap(const std::vector<bool>& bitmap)
+ {
+  if (impl_->cacheBitmap_ != bitmap) {
+   impl_->cacheBitmap_ = bitmap;
+   update();
+  }
+ }
+
  void ArtifactTimelineScrubBar::setInteractiveSeekingEnabled(bool enabled)
  {
   if (impl_->interactiveSeekingEnabled_ == enabled) {
@@ -292,8 +301,6 @@ namespace Artifact
   const int w = r.width();
   const int h = r.height();
   const int currentX = impl_->resolveFrameToX(std::max(0, static_cast<int>(impl_->currentFrame_.framePosition())), w);
-  const int cacheStartX = impl_->resolveFrameToX(impl_->cacheRangeStart_, w);
-  const int cacheEndX = impl_->resolveFrameToX(impl_->cacheRangeEnd_, w);
   const int railHalfH = std::max(3, h / 7);
   const int railBottomInset = std::max(3, h / 10);
   const int centerY = h - railBottomInset - railHalfH;
@@ -304,11 +311,11 @@ namespace Artifact
 
   const QColor bgTop = theme.background.lighter(112);
   const QColor bgBottom = theme.background.darker(116);
- const QColor railColor = theme.surface.darker(108);
- const QColor railBorder = theme.border;
- const QColor cacheBaseColor(84, 198, 120);
- const QColor cacheStrongColor = cacheBaseColor.lighter(118);
- const QColor playheadColor(255, 142, 73);
+  const QColor railColor = theme.surface.darker(108);
+  const QColor railBorder = theme.border;
+  const QColor cacheBaseColor(84, 198, 120);
+  const QColor playheadColor(255, 142, 73);
+  
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
   bgGrad.setColorAt(0.0, bgTop);
   bgGrad.setColorAt(1.0, bgBottom);
@@ -328,11 +335,10 @@ namespace Artifact
   p.setPen(theme.border.lighter(110));
   p.drawRect(r.adjusted(0, 0, -1, -1));
 
-  // ── タイムラインズームに合わせたルーラー描画 ──────────────────────
+  // ── ルーラー描画 ──────────────────────
   if (impl_->rulerPixelsPerFrame_ > 0.001) {
    const double ppf    = impl_->rulerPixelsPerFrame_;
    const double xOff   = impl_->rulerHorizontalOffset_;
-   // ズームに応じてメジャーステップを動的に決定 (ラベル同士が60px以上離れるように)
    constexpr int kMajorStepCandidates[] = {1,2,5,10,15,20,30,50,100,150,200,300,600};
    int majorStep = 10;
    for (int c : kMajorStepCandidates) {
@@ -360,49 +366,68 @@ namespace Artifact
      const QString label = QString::number(f);
      const double labelW = static_cast<double>(QFontMetrics(p.font()).horizontalAdvance(label));
      const double labelX = rx + 3.0;
-     if (labelX <= lastLabelRight + 6.0) {
-      continue;
-     }
+     if (labelX <= lastLabelRight + 6.0) continue;
      p.setPen(playheadColor.lighter(195));
      p.drawText(QRectF(labelX, 0.0, labelW + 6.0, topBandHeight - 2), Qt::AlignLeft | Qt::AlignVCenter, label);
      lastLabelRight = labelX + labelW;
     }
    }
   }
-  // ──────────────────────────────────────────────────────────────────
 
+  // ── レール描画 ──────────────────────
   p.setPen(QPen(railBorder, 1));
   p.setBrush(railColor);
   p.drawRoundedRect(railRect, railHalfH, railHalfH);
 
-  if (impl_->cacheRangeVisible_) {
+  // ── キャッシュ描画 (Bitmap or Range) ──────────────────────
+  if (!impl_->cacheBitmap_.empty()) {
+   p.setPen(Qt::NoPen);
+   p.setBrush(cacheBaseColor);
+   
+   int startF = -1;
+   for (int f = 0; f < static_cast<int>(impl_->cacheBitmap_.size()); ++f) {
+    if (impl_->cacheBitmap_[f]) {
+     if (startF == -1) startF = f;
+    } else {
+     if (startF != -1) {
+      const int x1 = impl_->resolveFrameToX(startF, w);
+      const int x2 = impl_->resolveFrameToX(f, w);
+      p.drawRect(QRect(x1, railRect.top() + 2, std::max(1, x2 - x1), railRect.height() - 4));
+      startF = -1;
+     }
+    }
+   }
+   if (startF != -1) {
+    const int x1 = impl_->resolveFrameToX(startF, w);
+    const int x2 = impl_->resolveFrameToX(static_cast<int>(impl_->cacheBitmap_.size()), w);
+    p.drawRect(QRect(x1, railRect.top() + 2, std::max(1, x2 - x1), railRect.height() - 4));
+   }
+  } else if (impl_->cacheRangeVisible_) {
+   const int cacheStartX = impl_->resolveFrameToX(impl_->cacheRangeStart_, w);
+   const int cacheEndX = impl_->resolveFrameToX(impl_->cacheRangeEnd_, w);
    const int cacheLeft = std::clamp(std::min(cacheStartX, cacheEndX), railRect.left(), railRect.right());
    const int cacheRight = std::clamp(std::max(cacheStartX, cacheEndX), railRect.left(), railRect.right());
    const QRect cacheRect(cacheLeft, railRect.top(), std::max(1, cacheRight - cacheLeft + 1), railRect.height());
    if (cacheRect.width() > 1) {
-    const QColor cacheFill = cacheBaseColor.darker(110);
-    const QColor cacheStroke = cacheBaseColor.lighter(124);
-    p.setPen(QPen(cacheStroke, 1));
-    p.setBrush(cacheFill);
+    p.setPen(QPen(cacheBaseColor.lighter(124), 1));
+    p.setBrush(cacheBaseColor.darker(110));
     p.drawRoundedRect(cacheRect.adjusted(0, 0, -1, 0), railHalfH, railHalfH);
-    p.setPen(QPen(QColor(cacheStroke.red(), cacheStroke.green(), cacheStroke.blue(), 90), 1));
-    p.drawLine(cacheRect.topLeft() + QPoint(0, 1), cacheRect.topRight() + QPoint(0, 1));
    }
   }
 
+  // ── 再生ヘッド描画 ──────────────────────
   const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());
   if (railRect.width() > 0) {
    p.setPen(Qt::NoPen);
-   p.setBrush(QColor(playheadColor.red(), playheadColor.green(), playheadColor.blue(), 180));
-   p.drawRect(QRect(std::clamp(clampedX, railRect.left(), railRect.right()), railRect.top(),
-                    2, railRect.height()));
+   p.setBrush(QColor(playheadColor.red(), playheadColor.green(), playheadColor.blue(), 220));
+   p.drawRect(QRect(clampedX - 1, railRect.top() - 2, 3, railRect.height() + 4));
   }
 
+  // ── 目盛り描画 ──────────────────────
   if (impl_->totalFrames_ > 1 && railRect.width() > 20) {
    const int approxMajorCount = std::clamp(railRect.width() / 90, 6, 16);
    const int majorStepFrames = std::max(1, (impl_->totalFrames_ - 1) / approxMajorCount);
    const int minorStepFrames = std::max(1, majorStepFrames / 5);
-
    p.setPen(QPen(theme.border.darker(110), 1));
    for (int f = 0; f < impl_->totalFrames_; f += minorStepFrames) {
     const int x = impl_->frameToX(f, w);
@@ -413,21 +438,18 @@ namespace Artifact
    }
   }
 
-   const int frame = impl_->currentFrame_.framePosition();
-   const int fps = impl_->fps_ > 0 ? impl_->fps_ : 30;
-   const int totalSeconds = frame / fps;
-   const int ff = frame % fps;
-   const int ss = totalSeconds % 60;
-   const int mm = (totalSeconds / 60) % 60;
-   const int hh = totalSeconds / 3600;
-   const QString leftLabel = impl_->cacheRangeVisible_
-       ? QString("Cache %1-%2").arg(impl_->cacheRangeStart_).arg(impl_->cacheRangeEnd_)
-       : QStringLiteral("Cache");
+  // ── ラベル描画 ──────────────────────
+  const int frame = impl_->currentFrame_.framePosition();
+  const int fps = impl_->fps_ > 0 ? impl_->fps_ : 30;
+  const int totalSeconds = frame / fps;
+  const int ff = frame % fps;
+  const int ss = totalSeconds % 60;
+  const int mm = (totalSeconds / 60) % 60;
+  const int hh = totalSeconds / 3600;
+  const QString leftLabel = QStringLiteral("RAM Cache");
   const QString rightLabel = QString("%1:%2:%3:%4")
-   .arg(hh, 2, 10, QChar('0'))
-   .arg(mm, 2, 10, QChar('0'))
-   .arg(ss, 2, 10, QChar('0'))
-   .arg(ff, 2, 10, QChar('0'));
+   .arg(hh, 2, 10, QChar('0')).arg(mm, 2, 10, QChar('0'))
+   .arg(ss, 2, 10, QChar('0')).arg(ff, 2, 10, QChar('0'));
 
   p.setPen(theme.text);
   p.drawText(QRect(10, 0, 88, h), Qt::AlignVCenter | Qt::AlignLeft, leftLabel);

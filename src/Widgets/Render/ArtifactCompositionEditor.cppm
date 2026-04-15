@@ -51,6 +51,11 @@ module;
 #include <functional>
 #include <utility>
 #include <wobjectimpl.h>
+#ifdef Q_OS_WIN
+#define NOMINMAX
+#include <windows.h>
+#include <windowsx.h>
+#endif
 
 module Artifact.Widgets.CompositionEditor;
 
@@ -394,6 +399,9 @@ public:
   void setPieMenu(ArtifactPieMenuWidget *pieMenu) { pieMenu_ = pieMenu; }
   void setOverlayWidget(QWidget *overlayWidget) {
     overlayWidget_ = overlayWidget;
+    if (overlayWidget_) {
+      overlayWidget_->setAttribute(Qt::WA_TransparentForMouseEvents);
+    }
   }
   void setOverlayVisible(bool visible) {
     if (overlayWidget_) {
@@ -754,6 +762,11 @@ protected:
     if (pieMenu_ && pieMenu_->isVisible())
       return;
 
+    qDebug() << "[VP] mousePressEvent button=" << event->button()
+             << "middle=" << (event->button() == Qt::MiddleButton)
+             << "space=" << spacePressed_
+             << "pos=" << event->position();
+
     if (event->button() == Qt::MiddleButton ||
         (event->button() == Qt::LeftButton && spacePressed_)) {
       isPanning_ = true;
@@ -763,6 +776,7 @@ protected:
         controller_->notifyViewportInteractionActivity();
       }
       setCursor(Qt::ClosedHandCursor);
+      qDebug() << "[VP] panning started, isPanning_=" << isPanning_;
       event->accept();
       return;
     }
@@ -790,6 +804,7 @@ protected:
 
     // Recover isPanning_ state if grabMouse() didn't work on WA_NativeWindow
     if (!isPanning_ && (event->buttons() & Qt::MiddleButton) && controller_) {
+      qDebug() << "[VP] mouseMoveEvent recovering pan, buttons=" << event->buttons();
       isPanning_ = true;
       isPanningWithMiddle_ = true;
       lastMousePos_ = event->position();
@@ -799,6 +814,7 @@ protected:
       lastMousePos_ = event->position();
       controller_->notifyViewportInteractionActivity();
       controller_->panBy(delta);
+      qDebug() << "[VP] panning, delta=" << delta;
       event->accept();
       return;
     }
@@ -881,6 +897,118 @@ protected:
     }
     QWidget::leaveEvent(event);
   }
+
+#ifdef Q_OS_WIN
+  bool nativeEvent(const QByteArray &eventType, void *message,
+                   qintptr *result) override {
+    Q_UNUSED(result);
+    if (eventType != "windows_generic_MSG")
+      return QWidget::nativeEvent(eventType, message, result);
+
+    auto *msg = static_cast<MSG *>(message);
+    // WA_PaintOnScreen + WA_NativeWindow bypasses Qt's mouse event delivery.
+    // All mouse input is therefore handled here via Win32 messages.
+    // SetCapture ensures drag events arrive even when the cursor leaves the
+    // client area.
+    const double dpr = devicePixelRatioF();
+    const QPointF physPos(GET_X_LPARAM(msg->lParam),
+                          GET_Y_LPARAM(msg->lParam));
+    const QPointF logPos = physPos / dpr;
+
+    switch (msg->message) {
+    case WM_LBUTTONDOWN:
+      if (spacePressed_) {
+        isPanning_ = true;
+        isPanningWithMiddle_ = false;
+        lastMousePos_ = logPos;
+        SetCapture(msg->hwnd);
+        setCursor(Qt::ClosedHandCursor);
+        if (controller_)
+          controller_->notifyViewportInteractionActivity();
+      } else if (controller_) {
+        SetCapture(msg->hwnd);
+        QMouseEvent synth(QEvent::MouseButtonPress, logPos,
+                          mapToGlobal(logPos), Qt::LeftButton,
+                          Qt::LeftButton, Qt::NoModifier);
+        controller_->handleMousePress(&synth);
+        if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+          updateViewportCursor(logPos);
+          if (overlayWidget_)
+            overlayWidget_->update();
+        }
+      }
+      return true;
+
+    case WM_LBUTTONUP:
+      ReleaseCapture();
+      if (isPanning_ && !isPanningWithMiddle_) {
+        isPanning_ = false;
+        if (controller_)
+          controller_->finishViewportInteraction();
+        if (!spacePressed_)
+          unsetCursor();
+      } else if (controller_) {
+        controller_->handleMouseRelease();
+        if (overlayWidget_)
+          overlayWidget_->update();
+        controller_->renderOneFrame();
+      }
+      return true;
+
+    case WM_MBUTTONDOWN:
+      isPanning_ = true;
+      isPanningWithMiddle_ = true;
+      lastMousePos_ = logPos;
+      SetCapture(msg->hwnd);
+      setCursor(Qt::ClosedHandCursor);
+      if (controller_)
+        controller_->notifyViewportInteractionActivity();
+      return true;
+
+    case WM_MBUTTONUP:
+      if (isPanning_ && isPanningWithMiddle_) {
+        isPanning_ = false;
+        isPanningWithMiddle_ = false;
+        ReleaseCapture();
+        if (controller_)
+          controller_->finishViewportInteraction();
+        if (!spacePressed_)
+          unsetCursor();
+      }
+      return true;
+
+    case WM_MOUSEMOVE:
+      if (isPanning_ && controller_) {
+        const QPointF delta = logPos - lastMousePos_;
+        lastMousePos_ = logPos;
+        controller_->notifyViewportInteractionActivity();
+        controller_->panBy(delta);
+        return true;
+      }
+      if ((msg->wParam & MK_LBUTTON) && controller_) {
+        controller_->handleMouseMove(logPos);
+        if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
+          if (!pendingGizmoDragRender_) {
+            pendingGizmoDragRender_ = true;
+            QTimer::singleShot(16, this, [this]() {
+              pendingGizmoDragRender_ = false;
+              if (controller_)
+                controller_->renderOneFrame();
+            });
+          }
+          updateViewportCursor(logPos);
+          return true;
+        }
+        updateViewportCursor(logPos);
+      }
+      break;
+
+    default:
+      break;
+    }
+    return QWidget::nativeEvent(eventType, message, result);
+  }
+#endif
 
   void keyPressEvent(QKeyEvent *event) override {
     if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {

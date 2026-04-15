@@ -5,6 +5,7 @@ module;
 
 export module Artifact.Event.Types;
 
+export import Artifact.Tool.Manager;
 
 import Playback.State;
 
@@ -139,6 +140,30 @@ struct RenderQueueLogEvent {
     QString message;
     int sourceIndex = -1;
     bool alsoHistory = true;
+};
+
+enum class PlaybackRangeMode {
+    All,        // 全範囲
+    WorkArea,   // ワークエリア (In-Out)
+    Selection   // 選択範囲
+};
+
+struct PlaybackRangeModeChangedEvent {
+    PlaybackRangeMode mode;
+};
+
+enum class PlaybackSkipMode {
+    None,       // 全フレーム (1)
+    Skip1,      // 1フレームおき (2)
+    Skip3       // 3フレームおき (4)
+};
+
+struct PlaybackSkipModeChangedEvent {
+    PlaybackSkipMode mode;
+};
+
+struct ToolChangedEvent {
+    ToolType toolType;
 };
 
 } // namespace Artifact

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QElapsedTimer>
 #include <QMetaObject>
 #include <QThread>
@@ -76,6 +76,8 @@ public:
   bool ramPreviewEnabled_ = true;
   int ramPreviewRadiusFrames_ = 48;
   FrameRange ramPreviewRange_{FramePosition(0), FramePosition(0)};
+  std::vector<bool> cacheBitmap_;
+  PlaybackRangeMode playbackRangeMode_ = PlaybackRangeMode::All;
   std::atomic<int64_t> pendingCompositionFrame_{0};
   std::atomic_bool compositionFrameSyncQueued_{false};
 
@@ -93,6 +95,8 @@ public:
             } else if (state == PlaybackState::Stopped) {
               stopAudioClock();
             }
+
+
             ArtifactCore::globalEventBus().publish<PlaybackStateChangedEvent>(
                 PlaybackStateChangedEvent{state});
             Q_EMIT owner_->playbackStateChanged(state);
@@ -107,6 +111,13 @@ public:
           const QString compositionId =
               currentComposition_ ? currentComposition_->id().toString()
                                   : QString();
+          
+          // Mark as cached
+          int64_t f = position.framePosition();
+          if (f >= 0 && f < static_cast<int64_t>(cacheBitmap_.size())) {
+              cacheBitmap_[f] = true;
+          }
+
           syncCurrentCompositionFrame(position);
           // FrameCache disabled
           const auto publishFrame = [this, position, compositionId]() {
@@ -307,6 +318,21 @@ public:
     Q_EMIT owner_->ramPreviewStateChanged(ramPreviewEnabled_, ramPreviewRange_);
   }
 
+  // Accessors for ram preview statistics
+  float ramPreviewHitRate() const {
+    const auto &bitmap = cacheBitmap_;
+    if (bitmap.empty()) return 0.0f;
+    size_t hits = 0;
+    for (bool b : bitmap) if (b) ++hits;
+    return static_cast<float>(hits) / static_cast<float>(bitmap.size());
+  }
+
+  int ramPreviewCachedFrameCount() const {
+    return static_cast<int>(std::count(cacheBitmap_.begin(), cacheBitmap_.end(), true));
+  }
+
+  std::vector<bool> ramPreviewCacheBitmap() const { return cacheBitmap_; }
+
   void prewarmRamPreviewRange(const FrameRange &range) {
     if (!ramPreviewEnabled_ || !engine_) {
       return;
@@ -331,18 +357,54 @@ ArtifactPlaybackService *ArtifactPlaybackService::instance() {
   return &service;
 }
 
+void ArtifactPlaybackService::setPlaybackRangeMode(PlaybackRangeMode mode) {
+  if (impl_->playbackRangeMode_ == mode) {
+    return;
+  }
+  impl_->playbackRangeMode_ = mode;
+
+  // 再生範囲を更新
+  if (impl_->currentComposition_) {
+    FrameRange range = impl_->currentComposition_->frameRange();
+    if (mode == PlaybackRangeMode::WorkArea) {
+      range = impl_->currentComposition_->workAreaRange();
+    } else if (mode == PlaybackRangeMode::Selection) {
+      // 選択範囲の実装は将来的に拡張
+    }
+
+    if (impl_->engine_) {
+      impl_->engine_->setFrameRange(range);
+    }
+  }
+
+  ArtifactCore::globalEventBus().publish<PlaybackRangeModeChangedEvent>(
+      PlaybackRangeModeChangedEvent{mode});
+  Q_EMIT playbackRangeModeChanged(mode);
+}
+
+PlaybackRangeMode ArtifactPlaybackService::playbackRangeMode() const {
+  return impl_->playbackRangeMode_;
+}
+
 void ArtifactPlaybackService::play() {
   impl_->startAudioClock();
+  
+  // 再生開始直前に最新の範囲を適用
+  if (impl_->currentComposition_) {
+    FrameRange range = impl_->currentComposition_->frameRange();
+    if (impl_->playbackRangeMode_ == PlaybackRangeMode::WorkArea) {
+      range = impl_->currentComposition_->workAreaRange();
+    }
+    if (impl_->engine_) {
+      impl_->engine_->setFrameRange(range);
+    }
+  }
+
   // 新しいエンジンを使用
   if (impl_->engine_) {
     impl_->engine_->play();
   }
   impl_->prewarmRamPreviewAround(currentFrame());
-  /*
-  if (impl_->controller_) {
-      impl_->controller_->play();
-  }
-  */
 }
 
 void ArtifactPlaybackService::pause() {
@@ -570,7 +632,13 @@ void ArtifactPlaybackService::setCurrentComposition(
     ArtifactCompositionPtr composition) {
   if (impl_->currentComposition_ != composition) {
     impl_->currentComposition_ = composition;
-    // FrameCache disabled: no cache clear on composition change
+    
+    // Clear and resize cache bitmap
+    if (composition) {
+        impl_->cacheBitmap_.assign(composition->frameRange().duration(), false);
+    } else {
+        impl_->cacheBitmap_.clear();
+    }
 
     // エンジンにコンポジションの設定を反映
     if (impl_->engine_ && composition) {
@@ -718,9 +786,17 @@ void ArtifactPlaybackService::prewarmRamPreviewAroundCurrentFrame() {
   impl_->prewarmRamPreviewAround(currentFrame());
 }
 
-float ArtifactPlaybackService::ramPreviewHitRate() const { return 0.0f; }
+std::vector<bool> ArtifactPlaybackService::ramPreviewCacheBitmap() const {
+  return impl_->ramPreviewCacheBitmap();
+}
 
-int ArtifactPlaybackService::ramPreviewCachedFrameCount() const { return 0; }
+float ArtifactPlaybackService::ramPreviewHitRate() const {
+  return impl_ ? impl_->ramPreviewHitRate() : 0.0f;
+}
+
+int ArtifactPlaybackService::ramPreviewCachedFrameCount() const {
+  return impl_ ? impl_->ramPreviewCachedFrameCount() : 0;
+}
 
 ArtifactCompositionPlaybackController *
 ArtifactPlaybackService::controller() const {
