@@ -15,7 +15,7 @@ module;
 module Artifact.Widgets.SnapshotCompareWidget;
 
 import Artifact.Widgets.SnapshotCompareWidget;
-import Artifact.Core.Theme;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 

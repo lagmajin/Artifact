@@ -29,7 +29,7 @@ auto ArtifactMissingFileRule::validate(const void* project) -> std::vector<Artif
     if (!comp) return diagnostics;
 
     // コンポジション内の全レイヤーをチェック
-    for (const auto& layer : comp->allLayer()) {
+    for (const auto& layer : const_cast<ArtifactComposition*>(comp)->allLayer()) {
         if (!layer) continue;
 
         auto json = layer->toJson();
@@ -51,7 +51,7 @@ auto ArtifactMissingFileRule::validate(const void* project) -> std::vector<Artif
             diagnostics.push_back(
                 ArtifactCore::ProjectDiagnostic::createMissingFile(
                     sourcePath,
-                    QString::fromStdString(layer->id().toString()) // IDを文字列に変換して渡す
+                    layer->id().toString() // IDを文字列に変換して渡す
                 )
             );
         }
@@ -74,7 +74,7 @@ auto ArtifactPerformanceRule::validate(const void* project) -> std::vector<Artif
     auto* comp = static_cast<const ArtifactComposition*>(project);
     if (!comp) return diagnostics;
 
-    auto json = comp->toJson();
+    auto json = comp->toJson().object();
     int width = json.value("width").toInt(0);
     int height = json.value("height").toInt(0);
 
@@ -83,7 +83,7 @@ auto ArtifactPerformanceRule::validate(const void* project) -> std::vector<Artif
         diagnostics.push_back(
             ArtifactCore::ProjectDiagnostic::createPerformanceWarning(
                 QString("高解像度コンポジション: %1x%2").arg(width).arg(height),
-                QString::fromStdString(comp->id().toString())
+                comp->id().toString()
             )
         );
     }

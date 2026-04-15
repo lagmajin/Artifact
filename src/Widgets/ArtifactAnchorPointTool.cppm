@@ -13,7 +13,7 @@ module;
 module Artifact.Widgets.AnchorPointTool;
 
 import Artifact.Widgets.AnchorPointTool;
-import Artifact.Core.Theme;
+import Widgets.Utils.CSS;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Artifact.Application.Manager;
@@ -110,7 +110,7 @@ ArtifactAnchorPointTool::ArtifactAnchorPointTool(QWidget* parent)
     root->addWidget(impl_->applyToSelectedButton);
 
     // シグナル接続
-    connect(impl_->buttonGroup, QOverload<int>::of(&QButtonGroup::buttonClicked),
+    connect(impl_->buttonGroup, &QButtonGroup::idClicked,
             this, &ArtifactAnchorPointTool::onAnchorPointClicked);
     connect(impl_->applyToSelectedButton, &QPushButton::clicked,
             this, &ArtifactAnchorPointTool::onApplyToSelected);
@@ -155,6 +155,7 @@ void ArtifactAnchorPointTool::moveAnchorPoint(ArtifactAbstractLayerPtr layer, An
     if (!layer) return;
 
     auto& transform = layer->transform3D();
+    const ArtifactCore::RationalTime time(layer->currentFrame(), 24);
     auto bounds = layer->localBounds();
 
     if (!bounds.isValid() || bounds.isEmpty()) return;
@@ -211,16 +212,11 @@ void ArtifactAnchorPointTool::moveAnchorPoint(ArtifactAbstractLayerPtr layer, An
         float deltaX = newAnchorX - currentAnchorX;
         float deltaY = newAnchorY - currentAnchorY;
 
-        transform.setAnchorX(newAnchorX);
-        transform.setAnchorY(newAnchorY);
-
-        // Positionを補正
-        transform.setPositionX(transform.positionX() + deltaX);
-        transform.setPositionY(transform.positionY() + deltaY);
+        transform.setAnchor(time, newAnchorX, newAnchorY, transform.anchorZ());
+        transform.setPosition(time, transform.positionX() + deltaX, transform.positionY() + deltaY);
     } else {
         // アンカーポイントのみ変更（位置が動く）
-        transform.setAnchorX(newAnchorX);
-        transform.setAnchorY(newAnchorY);
+        transform.setAnchor(time, newAnchorX, newAnchorY, transform.anchorZ());
     }
 
     layer->changed();

@@ -20,6 +20,7 @@ import Artifact.Service.Project;
 import Utils.Path;
 import Utils.Id;
 import Utils.String.UniString;
+import Artifact.Application.Manager;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
@@ -371,6 +372,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     
     // Ungroup: 選択中のレイヤーがグループの場合のみ有効
     bool isGroupSelected = false;
+    auto* app = ArtifactApplicationManager::instance();
     if (app && app->layerSelectionManager()) {
         auto current = app->layerSelectionManager()->currentLayer();
         isGroupSelected = current && current->isGroupLayer();

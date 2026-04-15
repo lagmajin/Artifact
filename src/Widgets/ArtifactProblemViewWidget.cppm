@@ -15,7 +15,7 @@ module;
 module Artifact.Widgets.ProblemViewWidget;
 
 import Artifact.Widgets.ProblemViewWidget;
-import Artifact.Core.Theme;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 
