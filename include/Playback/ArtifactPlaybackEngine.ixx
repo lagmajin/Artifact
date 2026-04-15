@@ -43,13 +43,14 @@ module;
 #include <QAtomicInt>
 export module Artifact.Playback.Engine;
 
-import Frame.Position;
-import Frame.Rate;
-import Frame.Range;
-import Artifact.Composition.Abstract;
-import Artifact.Composition.PlaybackController;
-import Playback.State;
-import Artifact.Composition.InOutPoints;
+ import Frame.Position;
+ import Frame.Rate;
+ import Frame.Range;
+ import Artifact.Event.Types;
+ import Artifact.Composition.Abstract;
+ import Artifact.Composition.PlaybackController;
+ import Playback.State;
+ import Artifact.Composition.InOutPoints;
 
 W_REGISTER_ARGTYPE(QImage)
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
@@ -84,6 +85,9 @@ public:
 
     void setLooping(bool loop);
     bool isLooping() const;
+
+    void setPlaybackSkipMode(PlaybackSkipMode mode);
+    PlaybackSkipMode playbackSkipMode() const;
 
     // 再生制御
     void play();

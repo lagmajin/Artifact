@@ -48,6 +48,7 @@ import Artifact.Event.Types;
 
 W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)
 W_REGISTER_ARGTYPE(Artifact::PlaybackRangeMode)
+W_REGISTER_ARGTYPE(Artifact::PlaybackSkipMode)
 
 export namespace Artifact {
 
@@ -112,6 +113,9 @@ public:
   void setPlaybackRangeMode(PlaybackRangeMode mode);
   PlaybackRangeMode playbackRangeMode() const;
 
+  void setPlaybackSkipMode(PlaybackSkipMode mode);
+  PlaybackSkipMode playbackSkipMode() const;
+
   // Audio clock provider (allow external modules to supply a clock)
   void setAudioClockProvider(const std::function<double()> &provider);
   void setAudioMasterVolume(float volume);
@@ -156,6 +160,7 @@ public: // signals
       W_SIGNAL(frameChanged, position);
   void playbackSpeedChanged(float speed) W_SIGNAL(playbackSpeedChanged, speed);
   void playbackRangeModeChanged(PlaybackRangeMode mode) W_SIGNAL(playbackRangeModeChanged, mode);
+  void playbackSkipModeChanged(PlaybackSkipMode mode) W_SIGNAL(playbackSkipModeChanged, mode);
   void loopingChanged(bool loop) W_SIGNAL(loopingChanged, loop);
   void frameRangeChanged(const FrameRange &range)
       W_SIGNAL(frameRangeChanged, range);

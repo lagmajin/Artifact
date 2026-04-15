@@ -47,6 +47,7 @@ public:
     FrameRate frameRate_{30.0f};
     float playbackSpeed_{1.0f};
     std::atomic<bool> looping_{false};
+    std::atomic<PlaybackSkipMode> skipMode_{PlaybackSkipMode::None};
     
     // In/Out Points
     ArtifactInOutPoints* inOutPoints_ = nullptr;
@@ -202,6 +203,17 @@ public:
             int64_t frameOffset = static_cast<int64_t>(std::round(elapsedSeconds * fps * playbackSpeed_));
             int64_t targetFrame = playbackStartFrame_ + frameOffset;
             
+            // スキップモードに応じた補正
+            int skipStep = 1;
+            switch (skipMode_.load()) {
+                case PlaybackSkipMode::Skip1: skipStep = 2; break;
+                case PlaybackSkipMode::Skip3: skipStep = 4; break;
+                default: skipStep = 1; break;
+            }
+            if (skipStep > 1) {
+                targetFrame = playbackStartFrame_ + (frameOffset / skipStep) * skipStep;
+            }
+
             // ループ・範囲チェック
             FramePosition startPos = effectiveStartFrame();
             FramePosition endPos = effectiveEndFrame();
@@ -577,6 +589,14 @@ void ArtifactPlaybackEngine::setLooping(bool loop) {
 
 bool ArtifactPlaybackEngine::isLooping() const {
     return impl_->looping_;
+}
+
+void ArtifactPlaybackEngine::setPlaybackSkipMode(PlaybackSkipMode mode) {
+    impl_->skipMode_ = mode;
+}
+
+PlaybackSkipMode ArtifactPlaybackEngine::playbackSkipMode() const {
+    return impl_->skipMode_.load();
 }
 
 void ArtifactPlaybackEngine::play() {

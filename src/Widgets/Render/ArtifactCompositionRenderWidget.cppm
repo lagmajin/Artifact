@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #define NOMINMAX
 #include <windows.h>
@@ -16,14 +16,13 @@ module;
 #include <QRectF>
 #include <QTimer>
 #include <QDebug>
+#include <QLoggingCategory>
 #include <atomic>
 #include <cmath>
 #include <algorithm>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.CompositionRenderWidget;
-
-import Artifact.Render.IRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -46,6 +45,7 @@ import Input.Operator;
 namespace Artifact {
 
  using namespace ArtifactCore;
+ Q_LOGGING_CATEGORY(compositionWidgetLog, "artifact.compositionwidget");
 
  W_OBJECT_IMPL(ArtifactCompositionRenderWidget)
 
@@ -488,9 +488,13 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
  }
 
  void ArtifactCompositionRenderWidget::mousePressEvent(QMouseEvent* event) {
+  qCDebug(compositionWidgetLog) << "[MousePress] ENTER pos:" << event->position()
+                                << "button:" << event->button()
+                                << "modifiers:" << event->modifiers();
+
   auto* tm = ArtifactApplicationManager::instance()->toolManager();
   bool isHandShortcut = false; // Space checking needs explicit key tracking
-  
+
   if (event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && (tm->activeTool() == ToolType::Hand || isHandShortcut))) {
    setCursor(Qt::ClosedHandCursor);
    impl_->lastMousePos_ = event->position();
@@ -598,6 +602,9 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
  }
 
  void ArtifactCompositionRenderWidget::mouseReleaseEvent(QMouseEvent* event) {
+  qCDebug(compositionWidgetLog) << "[MouseRelease] ENTER pos:" << event->position()
+                                << "button:" << event->button();
+
   if (impl_->isDraggingLayer_) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
@@ -648,6 +655,9 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
  }
 
  void ArtifactCompositionRenderWidget::mouseMoveEvent(QMouseEvent* event) {
+  qCDebug(compositionWidgetLog) << "[MouseMove] ENTER pos:" << event->position()
+                                << "buttons:" << event->buttons();
+
   if (impl_->isPanningViewport_) {
    QPointF delta = event->position() - impl_->lastMousePos_;
    impl_->lastMousePos_ = event->position();

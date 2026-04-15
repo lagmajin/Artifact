@@ -92,8 +92,9 @@ export namespace Artifact {
   QPointF lastCanvasMousePos_;
   
   static constexpr float HANDLE_SIZE = 10.0f;
-  static constexpr float ROTATE_HANDLE_DISTANCE = 32.0f;
-  static constexpr float ROTATE_HANDLE_RADIUS = 6.0f;
+  // Reduced rotation gizmo size ~30% to improve usability
+  static constexpr float ROTATE_HANDLE_DISTANCE = 22.0f; // was 32.0f
+  static constexpr float ROTATE_HANDLE_RADIUS = 4.0f;   // was 6.0f
   static constexpr float ANCHOR_HANDLE_SIZE = 8.0f;
 
   // 1. ジオメトリキャッシュ: 毎フレームの計算を避けるためのキャッシュ

@@ -332,6 +332,7 @@ public:
     QToolButton* speedOneButton_ = nullptr;
     QCheckBox* ramCacheCheckbox_ = nullptr;
     QComboBox* playbackRangeCombo_ = nullptr;
+    QComboBox* playbackSkipCombo_ = nullptr;
     QSlider* scrubSlider_ = nullptr;
     class PlaybackTimecodeFrame* timecodeFrame_ = nullptr;
     
@@ -500,6 +501,35 @@ public:
 
         optionsRow->addStretch();
         mainLayout->addLayout(optionsRow);
+
+        auto* skipRow = new QHBoxLayout();
+        skipRow->setContentsMargins(4, 0, 4, 0);
+        skipRow->setSpacing(12);
+
+        auto* skipLabel = new QLabel(QStringLiteral("再生モード:"), owner_);
+        {
+            QFont font = skipLabel->font();
+            font.setPointSize(10);
+            skipLabel->setFont(font);
+            applyThemeTextPalette(skipLabel, QColor(ArtifactCore::currentDCCTheme().textColor));
+        }
+        skipRow->addWidget(skipLabel);
+
+        playbackSkipCombo_ = new QComboBox(owner_);
+        playbackSkipCombo_->setFixedWidth(140);
+        playbackSkipCombo_->addItem(QStringLiteral("全フレーム"), QVariant::fromValue(PlaybackSkipMode::None));
+        playbackSkipCombo_->addItem(QStringLiteral("1/2 スキップ"), QVariant::fromValue(PlaybackSkipMode::Skip1));
+        playbackSkipCombo_->addItem(QStringLiteral("1/4 スキップ"), QVariant::fromValue(PlaybackSkipMode::Skip3));
+        {
+            playbackSkipCombo_->setStyleSheet(QStringLiteral(
+                "QComboBox { background-color: #2B3038; color: #E3E7EC; border: 1px solid #404754; border-radius: 3px; padding: 2px 4px; }"
+                "QComboBox::drop-down { border: none; }"
+                "QComboBox QAbstractItemView { background-color: #2B3038; color: #E3E7EC; selection-background-color: #3C5B76; }"
+            ));
+        }
+        skipRow->addWidget(playbackSkipCombo_);
+        skipRow->addStretch();
+        mainLayout->addLayout(skipRow);
 
         scrubSlider_ = new QSlider(Qt::Horizontal, owner_);
         scrubSlider_->setRange(0, 300);
@@ -715,6 +745,13 @@ public:
             }
         });
 
+        QObject::connect(playbackSkipCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), owner_, [this](int index) {
+            if (auto* service = ArtifactPlaybackService::instance()) {
+                PlaybackSkipMode mode = playbackSkipCombo_->itemData(index).value<PlaybackSkipMode>();
+                service->setPlaybackSkipMode(mode);
+            }
+        });
+
         QObject::connect(scrubSlider_, &QSlider::valueChanged, owner_, [this](int value) {
             if (auto* service = ArtifactPlaybackService::instance()) {
                 service->goToFrame(FramePosition(value));
@@ -927,6 +964,13 @@ public:
                     playbackRangeCombo_->setCurrentIndex(index);
                 }
             }
+            if (playbackSkipCombo_) {
+                QSignalBlocker blocker(playbackSkipCombo_);
+                int index = playbackSkipCombo_->findData(QVariant::fromValue(service->playbackSkipMode()));
+                if (index >= 0) {
+                    playbackSkipCombo_->setCurrentIndex(index);
+                }
+            }
         }
     }
 };
@@ -941,7 +985,7 @@ ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this))
 {
     setWindowTitle("Playback Control");
-    setMinimumHeight(135);
+    setMinimumHeight(165);
     setAutoFillBackground(false);
     
     impl_->setupUI();

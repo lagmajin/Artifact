@@ -46,6 +46,7 @@ import Graphics.ParticleRenderer;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentImmediateSubmitter;
 import Artifact.Render.RenderCommandBuffer;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact
 {
@@ -292,11 +293,14 @@ namespace Artifact
 
   void ArtifactIRenderer::Impl::initialize(QWidget* widget)
   {
+   ScopedStartupTimer totalTimer("ArtifactIRenderer::initialize",
+                                  StartupPhase::TotalStartup);
    widget_ = widget;
-   QElapsedTimer timer;
-   timer.start();
-   deviceManager_.initialize(widget);
-   qInfo() << "[ArtifactIRenderer][Init] deviceManager.initialize ms=" << timer.elapsed();
+
+   {
+    ScopedStartupTimer t("DeviceManager::initialize", StartupPhase::DeviceCreation);
+    deviceManager_.initialize(widget);
+   }
 
    if (!deviceManager_.isInitialized()) {
     qWarning() << "[ArtifactIRenderer] initialize() failed: deviceManager not initialized"
@@ -304,35 +308,40 @@ namespace Artifact
     return;
    }
 
-  timer.restart();
   shaderManager_.initialize(deviceManager_.device(), RenderConfig::MainRTVFormat);
   shaderManager_.createShaders();
   shaderManager_.createPSOs();
-  qInfo() << "[ArtifactIRenderer][Init] shaders+psos ms=" << timer.elapsed();
 
-  timer.restart();
-  rayTracingManager_ = ArtifactCore::createRayTracingManager();
-  rayTracingManager_->initialize(deviceManager_.device());
-  qInfo() << "[ArtifactIRenderer][Init] rayTracingManager ms=" << timer.elapsed();
+  {
+   ScopedStartupTimer t("RayTracingManager::initialize", StartupPhase::RayTracingInit);
+   rayTracingManager_ = ArtifactCore::createRayTracingManager();
+   rayTracingManager_->initialize(deviceManager_.device());
+  }
 
-  timer.restart();
-  primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
-  primitiveRenderer_.setPSOs(shaderManager_);
-  primitiveRenderer_.setContext(deviceManager_.immediateContext(),
-                                deviceManager_.swapChain());
-  submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
-  submitter_.setPSOs(shaderManager_);
-  primitiveRenderer_.setCommandBuffer(&cmdBuf_);
-  qInfo() << "[ArtifactIRenderer][Init] primitiveRenderer2D ms=" << timer.elapsed();
+  {
+   ScopedStartupTimer t("PrimitiveRenderer2D::init", StartupPhase::Custom);
+   primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
+   primitiveRenderer_.setPSOs(shaderManager_);
+   primitiveRenderer_.setContext(deviceManager_.immediateContext(),
+                                 deviceManager_.swapChain());
+   submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
+   submitter_.setPSOs(shaderManager_);
+   primitiveRenderer_.setCommandBuffer(&cmdBuf_);
+  }
 
-  timer.restart();
-  primitiveRenderer3D_.createBuffers(deviceManager_.device());
-  primitiveRenderer3D_.setPSOs(shaderManager_);
-  primitiveRenderer3D_.setContext(deviceManager_.immediateContext(),
-                                  deviceManager_.swapChain());
-  qInfo() << "[ArtifactIRenderer][Init] primitiveRenderer3D ms=" << timer.elapsed();
+  {
+   ScopedStartupTimer t("PrimitiveRenderer3D::init", StartupPhase::Custom);
+   primitiveRenderer3D_.createBuffers(deviceManager_.device());
+   primitiveRenderer3D_.setPSOs(shaderManager_);
+   primitiveRenderer3D_.setContext(deviceManager_.immediateContext(),
+                                   deviceManager_.swapChain());
+  }
 
   m_initialized = true;
+
+  // Log startup profile summary
+  qInfo().noquote() << QString::fromStdString(
+      StartupProfiler::instance().generateReport());
  }
 
  void ArtifactIRenderer::Impl::initializeHeadless(int width, int height)

@@ -386,6 +386,19 @@ PlaybackRangeMode ArtifactPlaybackService::playbackRangeMode() const {
   return impl_->playbackRangeMode_;
 }
 
+void ArtifactPlaybackService::setPlaybackSkipMode(PlaybackSkipMode mode) {
+  if (impl_->engine_) {
+    impl_->engine_->setPlaybackSkipMode(mode);
+  }
+  ArtifactCore::globalEventBus().publish<PlaybackSkipModeChangedEvent>(
+      PlaybackSkipModeChangedEvent{mode});
+  Q_EMIT playbackSkipModeChanged(mode);
+}
+
+PlaybackSkipMode ArtifactPlaybackService::playbackSkipMode() const {
+  return impl_->engine_ ? impl_->engine_->playbackSkipMode() : PlaybackSkipMode::None;
+}
+
 void ArtifactPlaybackService::play() {
   impl_->startAudioClock();
   
