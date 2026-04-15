@@ -24,7 +24,7 @@ import Color.Float;
 import Time.Rational;
 import Artifact.Service.Project;
 import Widgets.Utils.CSS;
-import Diagnostics.Profiler;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
 

@@ -37,7 +37,7 @@ module;
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
-import Diagnostics.Profiler;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 import Utils.Path;
 import Artifact.Service.Project;

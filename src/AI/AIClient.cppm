@@ -231,11 +231,9 @@ bool tryHandleToolCallResponse(const QString &responseText,
   }
 
   QJsonObject toolCall;
-  QString parseError;
-  if (!ArtifactCore::ToolBridge::tryParseToolCall(responseText, &toolCall,
-                                                  &parseError)) {
+  if (!ArtifactCore::ToolBridge::tryParseToolCall(responseText, &toolCall)) {
     if (errorOut) {
-      *errorOut = parseError;
+      *errorOut = QStringLiteral("Failed to parse tool call");
     }
     return false;
   }

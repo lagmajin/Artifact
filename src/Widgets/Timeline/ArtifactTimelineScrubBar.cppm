@@ -14,7 +14,7 @@ module;
 module Artifact.Timeline.ScrubBar;
 
 import std;
-import Diagnostics.Profiler;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 import Frame.Position;
 import Widgets.Utils.CSS;

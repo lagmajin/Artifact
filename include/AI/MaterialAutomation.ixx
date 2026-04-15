@@ -1,6 +1,7 @@
 module;
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QColor>
 #include <QString>
 #include <QVariant>
 
@@ -9,7 +10,7 @@ export module Artifact.AI.MaterialAutomation;
 
 import std;
 import Core.AI.Describable;
-import Material.Material3D;
+import Material.Material;
 
 export namespace Artifact {
 
@@ -125,14 +126,14 @@ private:
     QVariantMap properties = args[1].toMap();
 
     // Create material based on properties
-    ArtifactCore::Material3D material;
+    ArtifactCore::Material material = ArtifactCore::Material::makeDefault();
     material.setName(name.toStdString().c_str());
 
     if (properties.contains("diffuseColor")) {
-      material.setDiffuseColor(properties["diffuseColor"].value<QColor>());
+      material.setBaseColor(properties["diffuseColor"].value<QColor>());
     }
     if (properties.contains("specularColor")) {
-      material.setSpecularColor(properties["specularColor"].value<QColor>());
+      material.setEmissionColor(properties["specularColor"].value<QColor>());
     }
     if (properties.contains("roughness")) {
       material.setRoughness(properties["roughness"].toFloat());

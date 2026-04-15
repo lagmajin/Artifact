@@ -260,7 +260,6 @@ public:
 ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
     : QMainWindow(parent), impl_(new Impl()) {
   CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
-  CDockManager::setConfigFlag(CDockManager::UseNativeWindows, true);
   // CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden,
   // true);
   CDockManager::setConfigFlag(CDockManager::FocusHighlighting, false);
