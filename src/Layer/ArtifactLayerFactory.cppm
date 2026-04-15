@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <QJsonObject>
 #include <QList>
@@ -22,6 +22,7 @@ import Artifact.Layer.Camera;
 import Artifact.Layer.Text;
  import Artifact.Layer.Group;
  import Artifact.Layer.Clone;
+import Artifact.Layer.SDF;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -135,8 +136,11 @@ namespace Artifact {
    case LayerType::Clone:
     ptr = std::make_shared<ArtifactCloneLayer>();
     break;
+   case LayerType::SDF:
+    ptr = std::make_shared<ArtifactSDFLayer>();
+    break;
    default:
-   break;
+    break;
   }
 
   result.layer = ptr;

@@ -56,7 +56,8 @@ enum class LayerType {
   Group = 13,
   Folder = 14,
   Particle = 15,   // パーティクルレイヤー
-  Clone = 16       // クローンレイヤー (MoGraph)
+  Clone = 16,      // クローンレイヤー (MoGraph)
+  SDF = 17         // SDFレイマーチングレイヤー
 };
 
 enum class LayerDirtyFlag : uint32_t {
