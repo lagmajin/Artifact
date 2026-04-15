@@ -1,13 +1,13 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <vector>
 #include <wobjectdefs.h>
-
-export module Artifact.Layer.SDF;
 #include <QString>
 #include <QVariant>
 #include <QImage>
+
+export module Artifact.Layer.SDF;
 
 import Artifact.Layer.Abstract;
 import Property.Group;

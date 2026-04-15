@@ -183,9 +183,9 @@ ArtifactCore::FloatColor shade(Vec3 hitPos, Vec3 normal,
 
     // Specular (Blinn-Phong)
     Vec3 viewDir = normalize({-camDir.x, -camDir.y, -camDir.z});
-    Vec3 halfVec = normalize({lightDir.x + viewDir.x,
-                              lightDir.y + viewDir.y,
-                              lightDir.z + viewDir.z} * -1.0f);
+    Vec3 halfVec = normalize({-(lightDir.x + viewDir.x),
+                              -(lightDir.y + viewDir.y),
+                              -(lightDir.z + viewDir.z)});
     float spec = std::pow(clampf(dot(normal, halfVec), 0.0f, 1.0f), 32.0f) * 0.4f;
 
     return ArtifactCore::FloatColor{

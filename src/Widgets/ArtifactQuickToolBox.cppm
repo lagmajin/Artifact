@@ -10,7 +10,7 @@ module;
 module Artifact.Widgets.QuickToolBox;
 
 import Artifact.Widgets.QuickToolBox;
-import Artifact.Core.Theme;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 

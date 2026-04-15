@@ -867,9 +867,8 @@ namespace Artifact
    if (auto sc = deviceManager_.swapChain())
    {
     submitter_.submit(cmdBuf_, deviceManager_.immediateContext());
-    try {
-      primitiveRenderer_.flushGlyphAtlasUpload();
-     sc->Present();
+     try {
+      sc->Present();
     } catch (const std::exception& ex) {
      const QString msg = QString::fromLocal8Bit(ex.what());
      qWarning() << "[ArtifactIRenderer] present() failed:" << msg;
@@ -1061,12 +1060,8 @@ void ArtifactIRenderer::drawDashedLineLocal(Detail::float2 p1, Detail::float2 p2
  { impl_->primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
  void ArtifactIRenderer::drawCrosshair(float x, float y, float size, const FloatColor& color)
  { impl_->primitiveRenderer_.drawCrosshair(x, y, size, color); }
- void ArtifactIRenderer::drawText(float x, float y, const QString& text, const ArtifactCore::TextStyle& style, const FloatColor& color, float opacity, Qt::Alignment align)
- { impl_->primitiveRenderer_.drawText(x, y, text, style, color, opacity, align); }
- void ArtifactIRenderer::drawTextViewport(float vx, float vy, const QString& text, const ArtifactCore::TextStyle& style, const FloatColor& color, float opacity, Qt::Alignment align)
- { impl_->primitiveRenderer_.drawTextViewport(vx, vy, text, style, color, opacity, align); }
 void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h,
-                                         float tileSize, const FloatColor& c1, const FloatColor& c2)
+                                          float tileSize, const FloatColor& c1, const FloatColor& c2)
 { impl_->drawCheckerboard(x, y, w, h, tileSize, c1, c2); }
 void ArtifactIRenderer::drawGrid(float x, float y, float w, float h,
                                  float spacing, float thickness, const FloatColor& color)
@@ -1145,18 +1140,18 @@ void ArtifactIRenderer::setUpscaleConfig(bool, float)    {}
  {
   if (!textureView) return;
   auto* view = static_cast<Diligent::ITextureView*>(textureView);
-  auto* ctx = impl_->deviceManager_.context();
-  if (ctx) {
-   ctx->SetRenderTargets(1, &view, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-  }
+   auto ctx = impl_->deviceManager_.immediateContext();
+   if (ctx) {
+    ctx->SetRenderTargets(1, &view, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   }
  }
 
  void ArtifactIRenderer::popRenderTarget()
  {
-  auto* ctx = impl_->deviceManager_.context();
-  if (ctx && impl_->m_layerRT) {
-   auto* rtv = impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
-   ctx->SetRenderTargets(1, &rtv, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   auto ctx = impl_->deviceManager_.immediateContext();
+   if (ctx && impl_->m_layerRT) {
+    auto* rtv = impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+    ctx->SetRenderTargets(1, &rtv, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   }
  }
 

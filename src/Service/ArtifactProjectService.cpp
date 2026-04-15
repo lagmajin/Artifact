@@ -27,6 +27,7 @@ import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
+import Artifact.Layer.Group;
 import Image.PSDDocument;
 import File.TypeDetector;
 import Artifact.Layers.Selection.Manager;
@@ -693,7 +694,7 @@ bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()
         groupLayer->removeChild(child->id());
 
         // 親のCompositionに直接追加（グループの位置に）
-        comp->insertLayerAtIndex(child, groupIndex);
+        comp->insertLayerAt(child, groupIndex);
     }
 
     // グループを削除
@@ -707,7 +708,12 @@ bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()
             childIds.push_back(child->id());
         }
     }
-    selectionManager->setSelectedLayers(childIds);
+    selectionManager->clearSelection();
+    for (const auto& child : children) {
+        if (child) {
+            selectionManager->addToSelection(child);
+        }
+    }
 
     return true;
 }
