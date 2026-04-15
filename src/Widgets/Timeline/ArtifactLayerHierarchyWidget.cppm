@@ -1,96 +1,76 @@
 module;
-#include <utility>
-#include <QWidget>
 #include <QHeaderView>
 #include <QTreeView>
+#include <QWidget>
+#include <utility>
+
 module Artifact.Widgets.Hierarchy;
 import Artifact.Layers.Hierarchy.Model;
 
-namespace Artifact
-{
- class ArtifactLayerHierarchyHeaderContextMenu::Impl
- {private:
-
-
- public:
-  Impl(ArtifactLayerHierarchyHeaderContextMenu* menu);
+namespace Artifact {
+class ArtifactLayerHierarchyHeaderContextMenu::Impl {
+private:
+public:
+  Impl(ArtifactLayerHierarchyHeaderContextMenu *menu);
   ~Impl();
   void buildMenu();
-  QMenu* visibleMenu = nullptr;
-  void defaultHandleMousePressEvent(QMouseEvent* event);
- };
+  QMenu *visibleMenu = nullptr;
+  void defaultHandleMousePressEvent(QMouseEvent *event);
+};
 
- void ArtifactLayerHierarchyHeaderContextMenu::Impl::buildMenu()
- {
+void ArtifactLayerHierarchyHeaderContextMenu::Impl::buildMenu() {}
 
- }
+void ArtifactLayerHierarchyHeaderContextMenu::Impl::
+    defaultHandleMousePressEvent(QMouseEvent *event) {}
 
- void ArtifactLayerHierarchyHeaderContextMenu::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
- {
- }
-
- ArtifactLayerHierarchyHeaderContextMenu::Impl::Impl(ArtifactLayerHierarchyHeaderContextMenu* menu)
- {
+ArtifactLayerHierarchyHeaderContextMenu::Impl::Impl(
+    ArtifactLayerHierarchyHeaderContextMenu *menu) {
   visibleMenu = new QMenu();
   visibleMenu->setTitle("visible");
   menu->addMenu(visibleMenu);
+}
 
- }
+ArtifactLayerHierarchyHeaderContextMenu::Impl::~Impl() {}
 
- ArtifactLayerHierarchyHeaderContextMenu::Impl::~Impl()
- {
+ArtifactLayerHierarchyHeaderContextMenu::
+    ArtifactLayerHierarchyHeaderContextMenu(QWidget *parent /*= nullptr*/)
+    : QMenu(parent), impl_(new Impl(this)) {}
 
- }
-
- ArtifactLayerHierarchyHeaderContextMenu::ArtifactLayerHierarchyHeaderContextMenu(QWidget* parent /*= nullptr*/):QMenu(parent),impl_(new Impl(this))
- {
-
- }
-
- ArtifactLayerHierarchyHeaderContextMenu::~ArtifactLayerHierarchyHeaderContextMenu()
- {
+ArtifactLayerHierarchyHeaderContextMenu::
+    ~ArtifactLayerHierarchyHeaderContextMenu() {
   delete impl_;
- }
+}
 
-
- class ArtifactLayerHierarchyHeaderView::Impl
- {
- private:
-
-
- public:
+class ArtifactLayerHierarchyHeaderView::Impl {
+private:
+public:
   Impl();
-  Impl(ArtifactLayerHierarchyHeaderView* view);
+  Impl(ArtifactLayerHierarchyHeaderView *view);
   ~Impl();
   void showContextMenu();
-  ArtifactLayerHierarchyHeaderView* view_ = nullptr;
-  ArtifactLayerHierarchyHeaderContextMenu* menu = nullptr;
- };
+  ArtifactLayerHierarchyHeaderView *view_ = nullptr;
+  ArtifactLayerHierarchyHeaderContextMenu *menu = nullptr;
+};
 
- ArtifactLayerHierarchyHeaderView::Impl::Impl()
- {
+ArtifactLayerHierarchyHeaderView::Impl::Impl() {}
 
- }
+ArtifactLayerHierarchyHeaderView::Impl::Impl(
+    ArtifactLayerHierarchyHeaderView *view)
+    : view_(view) {}
 
- ArtifactLayerHierarchyHeaderView::Impl::Impl(ArtifactLayerHierarchyHeaderView* view):view_(view)
- {
+ArtifactLayerHierarchyHeaderView::Impl::~Impl() {
+  // if (view_) view_->deleteLater();
+  if (menu)
+    menu->deleteLater();
+}
 
- }
-
- ArtifactLayerHierarchyHeaderView::Impl::~Impl()
- {
-  //if (view_) view_->deleteLater();
-  if (menu) menu->deleteLater();
-
- }
-
- void ArtifactLayerHierarchyHeaderView::Impl::showContextMenu()
- {
+void ArtifactLayerHierarchyHeaderView::Impl::showContextMenu() {
   qDebug() << "Menu test";
- }
+}
 
- ArtifactLayerHierarchyHeaderView::ArtifactLayerHierarchyHeaderView(QWidget* parent /*= nullptr*/) :QHeaderView(Qt::Horizontal, parent),impl_(new Impl(this))
- {
+ArtifactLayerHierarchyHeaderView::ArtifactLayerHierarchyHeaderView(
+    QWidget *parent /*= nullptr*/)
+    : QHeaderView(Qt::Horizontal, parent), impl_(new Impl(this)) {
   setSectionsMovable(true);
   setDragEnabled(true);
   setAlternatingRowColors(true);
@@ -99,66 +79,55 @@ namespace Artifact
 
   setSectionResizeMode(QHeaderView::Interactive);
 
-  //setSectionResizeMode(0, QHeaderView::Fixed);
-  //setSectionResizeMode(0, QHeaderView::ResizeToContents);
+  // setSectionResizeMode(0, QHeaderView::Fixed);
+  // setSectionResizeMode(0, QHeaderView::ResizeToContents);
 
-  connect(this, &QHeaderView::customContextMenuRequested,
-   this, [this](const QPoint& pos) {
-    impl_->showContextMenu();
-   });
- }
+  connect(this, &QHeaderView::customContextMenuRequested, this,
+          [this](const QPoint &pos) { impl_->showContextMenu(); });
+}
 
- ArtifactLayerHierarchyHeaderView::~ArtifactLayerHierarchyHeaderView()
- {
+ArtifactLayerHierarchyHeaderView::~ArtifactLayerHierarchyHeaderView() {
   delete impl_;
- }
+}
 
- class ArtifactLayerHierarchyView::Impl
- {
- private:
-
- public:
+class ArtifactLayerHierarchyView::Impl {
+private:
+public:
   Impl();
   ~Impl();
- };
+};
 
- ArtifactLayerHierarchyView::Impl::Impl()
- {
+ArtifactLayerHierarchyView::Impl::Impl() {}
 
- }
+ArtifactLayerHierarchyView::Impl::~Impl() {}
 
- ArtifactLayerHierarchyView::Impl::~Impl()
- {
-
- }
-
- ArtifactLayerHierarchyView::ArtifactLayerHierarchyView(QWidget* parent /*= nullptr*/) :QTreeView(parent),impl_(new Impl())
- {
+ArtifactLayerHierarchyView::ArtifactLayerHierarchyView(
+    QWidget *parent /*= nullptr*/)
+    : QTreeView(parent), impl_(new Impl()) {
   auto model = new ArtifactHierarchyModel();
 
   setModel(model);
 
   setHeader(new ArtifactLayerHierarchyHeaderView);
   header()->setSectionResizeMode(0, QHeaderView::Fixed);
-  header()->resizeSection(0, 20);
-  header()->setStretchLastSection(false);
-  //header()->setSectionResizeMode(QHeaderView::Interactive);
+  header()->resizeSection(0, 24); // Visibility
+  header()->setSectionResizeMode(1, QHeaderView::Fixed);
+  header()->resizeSection(1, 24); // Lock
+  header()->setSectionResizeMode(2, QHeaderView::Fixed);
+  header()->resizeSection(2, 24); // Type
+  header()->setSectionResizeMode(3, QHeaderView::Stretch); // Name
+  header()->setStretchLastSection(true);
 
-  setRootIsDecorated(false);
+  setRootIsDecorated(true);
+  setItemsExpandable(true);
+  setExpandsOnDoubleClick(true);
 
- }
+  // Enable drag and drop for layer reordering
+  setDragEnabled(true);
+  setAcceptDrops(true);
+  setDragDropMode(QAbstractItemView::InternalMove);
+}
 
- ArtifactLayerHierarchyView::~ArtifactLayerHierarchyView()
- {
-  delete impl_;
- }
+ArtifactLayerHierarchyView::~ArtifactLayerHierarchyView() { delete impl_; }
 
-
-
-
-
-
-
-
-
-};
+}; // namespace Artifact

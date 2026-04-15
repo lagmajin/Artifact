@@ -1651,6 +1651,17 @@ ArtifactTimelineWidget::Impl::Impl() {}
 
 ArtifactTimelineWidget::Impl::~Impl() {}
 
+void ArtifactTimelineWidget::updateCacheVisuals()
+{
+  if (!impl_ || !impl_->scrubBar_) {
+    return;
+  }
+
+  if (auto* svc = ArtifactPlaybackService::instance()) {
+    impl_->scrubBar_->setCacheBitmap(svc->ramPreviewCacheBitmap());
+  }
+}
+
 void ArtifactTimelineWidget::refreshCurveEditorTracks()
 {
   if (!impl_ || !impl_->curveEditor_ || impl_->curveEditorDragging_) {
@@ -2654,6 +2665,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             syncPlayheadOverlay();
             const QSignalBlocker blocker(scrubBar);
             scrubBar->setCurrentFrame(frame);
+            updateCacheVisuals();
             updateSelectionState();
             // 再生中は毎フレーム全レイヤーをスキャンするコストを避けるため15フレームに1回
             if (frame.framePosition() % 15 == 0) {

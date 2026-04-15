@@ -19,6 +19,10 @@ export namespace Artifact {
   Pen,
   Text,
   Shape,
+  Rectangle,
+  Ellipse,
+  Move,
+  Scale,
   // Advanced Trimming Tools
   Ripple,
   Rolling,

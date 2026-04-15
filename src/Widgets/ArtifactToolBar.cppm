@@ -18,6 +18,8 @@ module Widgets.ToolBar;
 import Utils;
 import Icon.SvgToIcon;
 import Artifact.Tool.Manager;
+import Artifact.Event.Types;
+import Event.Bus;
 import Artifact.Service.Application;
 
 namespace {
@@ -392,28 +394,33 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   // Connect signals
   QObject::connect(impl_->homeAction_, &QAction::triggered, this,
                    [this]() { homeRequested(); });
+  
+  auto publishTool = [](ToolType type) {
+    ArtifactCore::globalEventBus().publish<ToolChangedEvent>(ToolChangedEvent{type});
+  };
+
   QObject::connect(impl_->selectTool_, &QAction::triggered, this,
-                   [this]() { selectToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::Selection); });
   QObject::connect(impl_->handTool_, &QAction::triggered, this,
-                   [this]() { handToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::Hand); });
   QObject::connect(impl_->zoomTool_, &QAction::triggered, this,
-                   [this]() { zoomToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::Zoom); });
   QObject::connect(impl_->moveTool_, &QAction::triggered, this,
-                   [this]() { moveToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::Move); });
   QObject::connect(impl_->rotationTool_, &QAction::triggered, this,
-                   [this]() { rotationToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::Rotation); });
   QObject::connect(impl_->scaleTool_, &QAction::triggered, this,
-                   [this]() { scaleToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::Scale); });
   QObject::connect(impl_->cameraTool_, &QAction::triggered, this,
                    [this]() { cameraToolRequested(); });
   QObject::connect(impl_->panBehindTool_, &QAction::triggered, this,
-                   [this]() { panBehindToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::AnchorPoint); });
   QObject::connect(impl_->shapeTool_, &QAction::triggered, this,
-                   [this]() { shapeToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::Rectangle); });
   QObject::connect(impl_->penTool_, &QAction::triggered, this,
-                   [this]() { penToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::Pen); });
   QObject::connect(impl_->textTool_, &QAction::triggered, this,
-                   [this]() { textToolRequested(); });
+                   [publishTool]() { publishTool(ToolType::Text); });
   QObject::connect(impl_->brushTool_, &QAction::triggered, this,
                    [this]() { brushToolRequested(); });
   QObject::connect(impl_->cloneStampTool_, &QAction::triggered, this,

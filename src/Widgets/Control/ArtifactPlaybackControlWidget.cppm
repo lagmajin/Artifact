@@ -17,6 +17,7 @@ module;
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QSignalBlocker>
+#include <QCheckBox>
 #include <QPainter>
 #include <QPaintEvent>
 #include <QStyle>
@@ -329,6 +330,8 @@ public:
     QToolButton* speedQuarterButton_ = nullptr;
     QToolButton* speedHalfButton_ = nullptr;
     QToolButton* speedOneButton_ = nullptr;
+    QCheckBox* ramCacheCheckbox_ = nullptr;
+    QComboBox* playbackRangeCombo_ = nullptr;
     QSlider* scrubSlider_ = nullptr;
     class PlaybackTimecodeFrame* timecodeFrame_ = nullptr;
     
@@ -454,6 +457,49 @@ public:
         transportRow->addLayout(speedLayout);
 
         mainLayout->addLayout(transportRow);
+
+        auto* optionsRow = new QHBoxLayout();
+        optionsRow->setContentsMargins(4, 0, 4, 0);
+        optionsRow->setSpacing(12);
+
+        ramCacheCheckbox_ = new QCheckBox(QStringLiteral("Ramキャッシュ作成してからプレビュー開始"), owner_);
+        {
+            QFont font = ramCacheCheckbox_->font();
+            font.setPointSize(10);
+            ramCacheCheckbox_->setFont(font);
+            QPalette pal = ramCacheCheckbox_->palette();
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            ramCacheCheckbox_->setPalette(pal);
+        }
+        optionsRow->addWidget(ramCacheCheckbox_);
+
+        optionsRow->addSpacing(16);
+
+        auto* rangeLabel = new QLabel(QStringLiteral("再生範囲:"), owner_);
+        {
+            QFont font = rangeLabel->font();
+            font.setPointSize(10);
+            rangeLabel->setFont(font);
+            applyThemeTextPalette(rangeLabel, QColor(ArtifactCore::currentDCCTheme().textColor));
+        }
+        optionsRow->addWidget(rangeLabel);
+
+        playbackRangeCombo_ = new QComboBox(owner_);
+        playbackRangeCombo_->setFixedWidth(140);
+        playbackRangeCombo_->addItem(QStringLiteral("コンポジション全体"), QVariant::fromValue(PlaybackRangeMode::All));
+        playbackRangeCombo_->addItem(QStringLiteral("ワークエリア"), QVariant::fromValue(PlaybackRangeMode::WorkArea));
+        playbackRangeCombo_->addItem(QStringLiteral("選択範囲"), QVariant::fromValue(PlaybackRangeMode::Selection));
+        {
+            playbackRangeCombo_->setStyleSheet(QStringLiteral(
+                "QComboBox { background-color: #2B3038; color: #E3E7EC; border: 1px solid #404754; border-radius: 3px; padding: 2px 4px; }"
+                "QComboBox::drop-down { border: none; }"
+                "QComboBox QAbstractItemView { background-color: #2B3038; color: #E3E7EC; selection-background-color: #3C5B76; }"
+            ));
+        }
+        optionsRow->addWidget(playbackRangeCombo_);
+
+        optionsRow->addStretch();
+        mainLayout->addLayout(optionsRow);
 
         scrubSlider_ = new QSlider(Qt::Horizontal, owner_);
         scrubSlider_->setRange(0, 300);
@@ -656,6 +702,19 @@ public:
             handleSpeedPresetClicked(1.0f);
         });
 
+        QObject::connect(ramCacheCheckbox_, &QCheckBox::toggled, owner_, [](bool checked) {
+            if (auto* service = ArtifactPlaybackService::instance()) {
+                service->setRamPreviewEnabled(checked);
+            }
+        });
+
+        QObject::connect(playbackRangeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), owner_, [this](int index) {
+            if (auto* service = ArtifactPlaybackService::instance()) {
+                PlaybackRangeMode mode = playbackRangeCombo_->itemData(index).value<PlaybackRangeMode>();
+                service->setPlaybackRangeMode(mode);
+            }
+        });
+
         QObject::connect(scrubSlider_, &QSlider::valueChanged, owner_, [this](int value) {
             if (auto* service = ArtifactPlaybackService::instance()) {
                 service->goToFrame(FramePosition(value));
@@ -693,6 +752,15 @@ public:
             [this](const PlaybackCompositionChangedEvent&) {
                 syncFromService();
             }));
+
+        if (auto* service = ArtifactPlaybackService::instance()) {
+            QObject::connect(service, &ArtifactPlaybackService::ramPreviewStateChanged, owner_, [this](bool enabled, const FrameRange&) {
+                if (ramCacheCheckbox_) {
+                    QSignalBlocker blocker(ramCacheCheckbox_);
+                    ramCacheCheckbox_->setChecked(enabled);
+                }
+            });
+        }
     }
     
     void handlePlayButtonClicked()
@@ -848,6 +916,17 @@ public:
                                        static_cast<int>(std::max(range.start(), range.end())));
                 scrubSlider_->setValue(static_cast<int>(service->currentFrame().framePosition()));
             }
+            if (ramCacheCheckbox_) {
+                QSignalBlocker blocker(ramCacheCheckbox_);
+                ramCacheCheckbox_->setChecked(service->isRamPreviewEnabled());
+            }
+            if (playbackRangeCombo_) {
+                QSignalBlocker blocker(playbackRangeCombo_);
+                int index = playbackRangeCombo_->findData(QVariant::fromValue(service->playbackRangeMode()));
+                if (index >= 0) {
+                    playbackRangeCombo_->setCurrentIndex(index);
+                }
+            }
         }
     }
 };
@@ -862,7 +941,7 @@ ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this))
 {
     setWindowTitle("Playback Control");
-    setMinimumHeight(82);
+    setMinimumHeight(135);
     setAutoFillBackground(false);
     
     impl_->setupUI();

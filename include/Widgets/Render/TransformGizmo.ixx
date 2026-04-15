@@ -28,7 +28,12 @@ export namespace Artifact {
    All,
    Move,
    Rotate,
-   Scale
+   Scale,
+   // Backwards-compatible aliases used across the codebase
+   Translation = Move,
+   Rotation = Rotate,
+   AnchorPoint,
+   None
   };
 
   enum class HandleType {

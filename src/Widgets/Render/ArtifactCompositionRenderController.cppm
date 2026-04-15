@@ -103,24 +103,24 @@ QImage makeSolidColorSprite(const FloatColor &color) {
 QImage makeMayaGradientSprite(const FloatColor &baseColor) {
   Q_UNUSED(baseColor);
   constexpr int kWidth = 4;
-  constexpr int kHeight = 1024;
-  QImage image(kWidth, kHeight, QImage::Format_RGBA8888);
+  constexpr int kHeight = 4096; // 1024→4096 to reduce banding
+  QImage image(kWidth, kHeight, QImage::Format_RGBA64); // 16-bit per channel
   image.fill(Qt::transparent);
 
   QPainter painter(&image);
   QLinearGradient gradient(0.0, 0.0, 0.0, static_cast<qreal>(kHeight));
-  gradient.setColorAt(
-      0.0, QColor::fromRgbF(0.26f, 0.32f, 0.38f, 1.0f));
-  gradient.setColorAt(
-      0.14, QColor::fromRgbF(0.21f, 0.27f, 0.33f, 1.0f));
-  gradient.setColorAt(
-      0.30, QColor::fromRgbF(0.17f, 0.22f, 0.27f, 1.0f));
-  gradient.setColorAt(
-      0.52, QColor::fromRgbF(0.13f, 0.17f, 0.22f, 1.0f));
-  gradient.setColorAt(
-      0.76, QColor::fromRgbF(0.10f, 0.13f, 0.17f, 1.0f));
-  gradient.setColorAt(
-      1.0, QColor::fromRgbF(0.08f, 0.10f, 0.13f, 1.0f));
+  // Use more color stops for smoother transitions
+  gradient.setColorAt(0.00, QColor::fromRgbF(0.26f, 0.32f, 0.38f, 1.0f));
+  gradient.setColorAt(0.07, QColor::fromRgbF(0.24f, 0.30f, 0.36f, 1.0f));
+  gradient.setColorAt(0.14, QColor::fromRgbF(0.21f, 0.27f, 0.33f, 1.0f));
+  gradient.setColorAt(0.22, QColor::fromRgbF(0.19f, 0.25f, 0.30f, 1.0f));
+  gradient.setColorAt(0.30, QColor::fromRgbF(0.17f, 0.22f, 0.27f, 1.0f));
+  gradient.setColorAt(0.41, QColor::fromRgbF(0.15f, 0.20f, 0.25f, 1.0f));
+  gradient.setColorAt(0.52, QColor::fromRgbF(0.13f, 0.17f, 0.22f, 1.0f));
+  gradient.setColorAt(0.64, QColor::fromRgbF(0.12f, 0.15f, 0.20f, 1.0f));
+  gradient.setColorAt(0.76, QColor::fromRgbF(0.10f, 0.13f, 0.17f, 1.0f));
+  gradient.setColorAt(0.88, QColor::fromRgbF(0.09f, 0.12f, 0.15f, 1.0f));
+  gradient.setColorAt(1.00, QColor::fromRgbF(0.08f, 0.10f, 0.13f, 1.0f));
   painter.fillRect(image.rect(), gradient);
   return image;
 }
@@ -1419,12 +1419,11 @@ public:
       renderer_->setCanvasSize(cw, ch);
     }
 
-    // レンダーパイプラインの中間テクスチャを初期化
-    if (auto device = renderer_->device()) {
-        renderPipeline_.initialize(device, static_cast<Uint32>(cw),
-                                   static_cast<Uint32>(ch),
-                                   RenderConfig::MainRTVFormat);
-    }
+    // NOTE: renderPipeline_ は renderOneFrameImpl() でビューポートの実サイズ
+    // (rcw, rch) を使って初期化される。ここでコンポジションサイズ (cw, ch) で
+    // 初期化すると、サイズが異なる場合に未初期化の D3D12 テクスチャが生成され、
+    // 次フレームで再び不一致が起き、ゴミデータが画面に出ることがある。
+    // パイプラインのサイズ管理は renderOneFrameImpl() に一元化する。
   }
 
   void bindCompositionChanged(CompositionRenderController *owner,
@@ -1584,6 +1583,32 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
     // Initial sync
     setPreviewQualityPreset(svc->previewQualityPreset());
   }
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ToolChangedEvent>(
+          [this](const ToolChangedEvent &event) {
+            switch (event.toolType) {
+            case ToolType::Selection:
+              setGizmoMode(TransformGizmo::Mode::All);
+              break;
+            case ToolType::Move:
+              setGizmoMode(TransformGizmo::Mode::Translation);
+              break;
+            case ToolType::Rotation:
+              setGizmoMode(TransformGizmo::Mode::Rotation);
+              break;
+            case ToolType::Scale:
+              setGizmoMode(TransformGizmo::Mode::Scale);
+              break;
+            case ToolType::AnchorPoint:
+              setGizmoMode(TransformGizmo::Mode::AnchorPoint);
+              break;
+            default:
+              // For other tools, we might want to disable the gizmo or use a basic mode
+              setGizmoMode(TransformGizmo::Mode::None);
+              break;
+            }
+          }));
 }
 
 CompositionRenderController::~CompositionRenderController() {
@@ -2772,6 +2797,10 @@ void CompositionRenderController::handleMouseMove(
 
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
+    if (impl_->gizmo_->isDragging()) {
+      renderOneFrame();
+      return;
+    }
   }
 
   if (needsRender) {
@@ -2851,6 +2880,8 @@ void CompositionRenderController::handleMouseRelease() {
 
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseRelease();
+    impl_->invalidateOverlayComposite();
+    renderOneFrame();
   }
 }
 

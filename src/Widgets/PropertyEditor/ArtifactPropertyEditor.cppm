@@ -1459,11 +1459,13 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   label_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
   label_->setMinimumHeight(kPropertyRowLabelMinHeight);
   label_->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
+  label_->setAutoFillBackground(false);
   scrubHandle_->setToolTip(
       QStringLiteral("Drag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
   scrubHandle_->setObjectName(QStringLiteral("propertyScrubHandle"));
   scrubHandle_->setAlignment(Qt::AlignCenter);
   scrubHandle_->setFixedWidth(16);
+  scrubHandle_->setAutoFillBackground(false);
   applyPropertyLabelPalette(label_);
   applyPropertyLabelPalette(scrubHandle_);
 

@@ -461,8 +461,11 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
     currentDevicePixelRatio_ = widget_->devicePixelRatio();
 
     HWND parentHwnd = reinterpret_cast<HWND>(widget_->winId());
+    // WS_EX_TRANSPARENT: mouse hit-testing skips this HWND and falls through to
+    // the parent Qt widget HWND, so nativeEvent() on the viewport receives all
+    // mouse messages.  D3D12/Vulkan presentation is unaffected by this style.
     renderHwnd_ = CreateWindowEx(
-        0, ensureRenderWindowClass(), nullptr,
+        WS_EX_TRANSPARENT, ensureRenderWindowClass(), nullptr,
         WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
         0, 0, (std::max)(currentPhysicalWidth_, 1),
         (std::max)(currentPhysicalHeight_, 1),
@@ -535,7 +538,7 @@ void DiligentDeviceManager::Impl::createSwapChain(QWidget* window)
     if (!renderHwnd_) {
         HWND parentHwnd = reinterpret_cast<HWND>(window->winId());
         renderHwnd_ = CreateWindowEx(
-            0, ensureRenderWindowClass(), nullptr,
+            WS_EX_TRANSPARENT, ensureRenderWindowClass(), nullptr,
             WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
             0, 0, (std::max)(currentPhysicalWidth_, 1),
             (std::max)(currentPhysicalHeight_, 1),
