@@ -473,6 +473,7 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
   impl_->signalsConnected_ = false;
   impl_->currentProjectPtr_ = importResult.project;
   impl_->currentProjectPath_ = fullpath;
+  impl_->projectRootPath_ = QFileInfo(fullpath).absolutePath();
 
  if (impl_->currentProjectPtr_) {
    if (!impl_->signalsConnected_) {
@@ -658,6 +659,7 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
       impl_->signalsConnected_ = false;
       impl_->currentProjectPtr_ = importResult.project;
       impl_->currentProjectPath_ = fullpath;
+      impl_->projectRootPath_ = QFileInfo(fullpath).absolutePath();
 
       if (impl_->currentProjectPtr_) {
         if (!impl_->signalsConnected_) {
@@ -732,6 +734,7 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
     if (result.success) {
       QMetaObject::invokeMethod(this, [this, fullpath]() {
         impl_->currentProjectPath_ = fullpath;
+        impl_->projectRootPath_ = QFileInfo(fullpath).absolutePath();
         runProjectHookScript(QStringLiteral("after_project_export"), fullpath);
       }, Qt::QueuedConnection);
     } else {
@@ -785,6 +788,27 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
  {
   return impl_->currentProjectPath_;
  }
+
+QString ArtifactProjectManager::currentProjectRootPath() const
+{
+ return impl_ ? impl_->projectRootPath_ : QString();
+}
+
+void ArtifactProjectManager::setCurrentProjectPath(const QString& path)
+{
+ if (!impl_) {
+  return;
+ }
+ impl_->currentProjectPath_ = path;
+}
+
+void ArtifactProjectManager::setCurrentProjectRootPath(const QString& path)
+{
+ if (!impl_) {
+  return;
+ }
+ impl_->projectRootPath_ = path;
+}
 
  bool ArtifactProjectManager::isProjectCreated() const
  {

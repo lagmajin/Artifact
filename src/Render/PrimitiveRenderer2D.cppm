@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <array>
 #include <cmath>
@@ -566,7 +566,16 @@ void PrimitiveRenderer2D::drawRectOutlineLocal(float x, float y, float w, float 
 
 void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity)
 {
-    if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) return;
+    qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: enter" << "image.isNull()=" << image.isNull()
+                                      << " pDevice?" << (impl_->pDevice_ != nullptr)
+                                      << " cmdBuf?" << (impl_->cmdBuf_ != nullptr)
+                                      << " overrideRTV?" << (impl_->m_overrideRTV != nullptr);
+    if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) {
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: early return" << "image.isNull()=" << image.isNull()
+                                          << " pDevice?" << (impl_->pDevice_ != nullptr)
+                                          << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+        return;
+    }
 
     impl_->m_frameCount++;
     if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
@@ -578,9 +587,12 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     if (it != impl_->m_spriteTexCache.end()) {
         pTexture = it->second.pTexture;
         it->second.lastUsedFrame = impl_->m_frameCount;
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: cache hit for key" << cacheKey << "-> pTexture=" << (pTexture != nullptr);
     } else {
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: cache miss for key" << cacheKey;
         const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width(), imgH = rgba.height();
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: creating texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
         if (imgW <= 0 || imgH <= 0) return;
         TextureDesc texDesc;
         texDesc.Type = RESOURCE_DIM_TEX_2D;
@@ -598,12 +610,19 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         initData.pSubResources = &subData;
         initData.NumSubresources = 1;
         impl_->pDevice_->CreateTexture(texDesc, &initData, &pTexture);
-        if (!pTexture) return;
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: CreateTexture returned pTexture=" << (pTexture != nullptr);
+        if (!pTexture) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: texture creation failed";
+            return;
+        }
         impl_->m_spriteTexCache[cacheKey] = { pTexture, impl_->m_frameCount };
     }
 
     auto* pSRV = pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
-    if (!pSRV) return;
+    if (!pSRV) {
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: GetDefaultView returned null SRV";
+        return;
+    }
 
     const auto viewportCB = impl_->viewport_.GetViewportCB();
     const float zoom = std::max(viewportCB.zoom, 0.001f);
@@ -634,7 +653,17 @@ void PrimitiveRenderer2D::drawTextureLocal(float x, float y, float w, float h, I
 
 void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity)
 {
-    if (!impl_->cmdBuf_ || !sceneSRV || maskImage.isNull() || !impl_->pDevice_) return;
+    qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: enter" << "maskImage.isNull()=" << maskImage.isNull()
+                                      << " sceneSRV?" << (sceneSRV != nullptr)
+                                      << " pDevice?" << (impl_->pDevice_ != nullptr)
+                                      << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+    if (!impl_->cmdBuf_ || !sceneSRV || maskImage.isNull() || !impl_->pDevice_) {
+        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: early return" << "maskImage.isNull()=" << maskImage.isNull()
+                                          << " sceneSRV?" << (sceneSRV != nullptr)
+                                          << " pDevice?" << (impl_->pDevice_ != nullptr)
+                                          << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+        return;
+    }
 
     impl_->m_frameCount++;
     if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
@@ -646,9 +675,12 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
     if (it != impl_->m_maskTexCache.end()) {
         pMaskTexture = it->second.pTexture;
         it->second.lastUsedFrame = impl_->m_frameCount;
+        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: cache hit for key" << cacheKey << "-> pMaskTexture=" << (pMaskTexture != nullptr);
     } else {
+        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: cache miss for key" << cacheKey;
         const QImage rgba = maskImage.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width(), imgH = rgba.height();
+        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: creating mask texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
         if (imgW <= 0 || imgH <= 0) return;
         TextureDesc texDesc;
         texDesc.Type = RESOURCE_DIM_TEX_2D;
@@ -666,7 +698,11 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
         initData.pSubResources = &subData;
         initData.NumSubresources = 1;
         impl_->pDevice_->CreateTexture(texDesc, &initData, &pMaskTexture);
-        if (!pMaskTexture) return;
+        qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: CreateTexture returned pMaskTexture=" << (pMaskTexture != nullptr);
+        if (!pMaskTexture) {
+            qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: mask texture creation failed";
+            return;
+        }
         impl_->m_maskTexCache[cacheKey] = { pMaskTexture, impl_->m_frameCount };
     }
 
@@ -688,7 +724,15 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
 
 void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
 {
-    if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) return;
+    qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): enter" << "image.isNull()=" << image.isNull()
+                                      << " pDevice?" << (impl_->pDevice_ != nullptr)
+                                      << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+    if (!impl_->cmdBuf_ || image.isNull() || !impl_->pDevice_) {
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): early return" << "image.isNull()=" << image.isNull()
+                                          << " pDevice?" << (impl_->pDevice_ != nullptr)
+                                          << " cmdBuf?" << (impl_->cmdBuf_ != nullptr);
+        return;
+    }
 
     impl_->m_frameCount++;
     if (impl_->m_frameCount % 60 == 0) impl_->pruneCache();
@@ -802,10 +846,13 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     if (it != impl_->m_spriteTexCache.end()) {
         pTexture = it->second.pTexture;
         it->second.lastUsedFrame = impl_->m_frameCount;
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): cache hit for key" << cacheKey << "-> pTexture=" << (pTexture != nullptr);
     } else {
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): cache miss for key" << cacheKey;
         const QImage rgba = (image.format() == QImage::Format_RGBA8888)
                                 ? image : image.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width(), imgH = rgba.height();
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): creating texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
         if (imgW <= 0 || imgH <= 0) return;
         TextureDesc texDesc;
         texDesc.Type = RESOURCE_DIM_TEX_2D;
@@ -824,7 +871,11 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         initData.NumSubresources = 1;
         RefCntAutoPtr<ITexture> newTex;
         impl_->pDevice_->CreateTexture(texDesc, &initData, &newTex);
-        if (!newTex) return;
+        qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): CreateTexture returned newTex=" << (newTex != nullptr);
+        if (!newTex) {
+            qCDebug(primitiveRenderer2DLog) << "drawSpriteTransformed(Tx): texture creation failed";
+            return;
+        }
         impl_->m_spriteTexCache[cacheKey] = { newTex, impl_->m_frameCount };
         pTexture = newTex;
     }

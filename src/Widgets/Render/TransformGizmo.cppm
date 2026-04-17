@@ -418,12 +418,71 @@ void drawMoveArrow(ArtifactIRenderer* renderer,
                          {static_cast<float>(shaftEnd.x()), static_cast<float>(shaftEnd.y())},
                          brighten(color, active ? 1.08f : 0.96f),
                          std::max(1.6f, 1.25f * invZoom));
- renderer->drawSolidLine({static_cast<float>(center.x() - 0.35f * invZoom),
-                          static_cast<float>(center.y() - 0.35f * invZoom)},
-                         {static_cast<float>(shaftEnd.x() - 0.35f * invZoom),
-                          static_cast<float>(shaftEnd.y() - 0.35f * invZoom)},
-                         brighten(color, 1.18f), std::max(1.1f, 0.9f * invZoom));
- drawArrowHead(renderer, tip, dir, color, invZoom);
+  renderer->drawSolidLine({static_cast<float>(center.x() - 0.35f * invZoom),
+                           static_cast<float>(center.y() - 0.35f * invZoom)},
+                          {static_cast<float>(shaftEnd.x() - 0.35f * invZoom),
+                           static_cast<float>(shaftEnd.y() - 0.35f * invZoom)},
+                          brighten(color, 1.18f), std::max(1.1f, 0.9f * invZoom));
+  drawArrowHead(renderer, tip, dir, color, invZoom);
+}
+
+void drawBoxHandle(ArtifactIRenderer* renderer,
+                   const QPointF& center,
+                   float size,
+                   const FloatColor& fill,
+                   const FloatColor& outline,
+                   float invZoom);
+
+void drawScaleCenterHandle(ArtifactIRenderer* renderer,
+                           const QPointF& center,
+                           const QPointF& xAxisDir,
+                           const QPointF& yAxisDir,
+                           float invZoom,
+                           bool active)
+{
+ if (!renderer) {
+  return;
+ }
+
+ const float shaftLen = std::max(14.0f, 16.0f * invZoom);
+ const float handleSize = std::clamp(8.0f + 5.0f * invZoom, 8.0f, 15.0f);
+ const FloatColor xColor = active ? FloatColor{1.0f, 0.38f, 0.15f, 1.0f}
+                                  : FloatColor{0.98f, 0.18f, 0.06f, 1.0f};
+ const FloatColor yColor = active ? FloatColor{0.25f, 1.0f, 0.38f, 1.0f}
+                                  : FloatColor{0.08f, 0.86f, 0.22f, 1.0f};
+ const FloatColor outline = active ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
+                                   : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
+
+ const QPointF xTip = center + xAxisDir * shaftLen;
+ const QPointF yTip = center + yAxisDir * shaftLen;
+ const FloatColor xShadow{0.0f, 0.0f, 0.0f, active ? 0.42f : 0.30f};
+ const FloatColor yShadow{0.0f, 0.0f, 0.0f, active ? 0.42f : 0.30f};
+ const float lineThickness = std::max(1.4f, 1.15f * invZoom);
+
+ renderer->drawSolidLine({static_cast<float>(center.x() + 1.0f * invZoom),
+                          static_cast<float>(center.y() + 1.0f * invZoom)},
+                         {static_cast<float>(xTip.x() + 1.0f * invZoom),
+                          static_cast<float>(xTip.y() + 1.0f * invZoom)},
+                         xShadow, lineThickness);
+ renderer->drawSolidLine({static_cast<float>(center.x()), static_cast<float>(center.y())},
+                         {static_cast<float>(xTip.x()), static_cast<float>(xTip.y())},
+                         brighten(xColor, active ? 1.06f : 0.98f), lineThickness);
+ drawBoxHandle(renderer, xTip, handleSize, brighten(xColor, 1.08f), outline, invZoom);
+
+ renderer->drawSolidLine({static_cast<float>(center.x() + 1.0f * invZoom),
+                          static_cast<float>(center.y() + 1.0f * invZoom)},
+                         {static_cast<float>(yTip.x() + 1.0f * invZoom),
+                          static_cast<float>(yTip.y() + 1.0f * invZoom)},
+                         yShadow, lineThickness);
+ renderer->drawSolidLine({static_cast<float>(center.x()), static_cast<float>(center.y())},
+                         {static_cast<float>(yTip.x()), static_cast<float>(yTip.y())},
+                         brighten(yColor, active ? 1.06f : 0.98f), lineThickness);
+ drawBoxHandle(renderer, yTip, handleSize, brighten(yColor, 1.08f), outline, invZoom);
+
+ drawBoxHandle(renderer, center, std::clamp(handleSize * 1.08f, 8.0f, 16.0f),
+               active ? FloatColor{1.0f, 0.92f, 0.35f, 1.0f}
+                      : FloatColor{0.95f, 0.95f, 0.98f, 0.96f},
+               outline, invZoom);
 }
 
 float distanceToSegment(const QPointF& p, const QPointF& a, const QPointF& b)
@@ -582,21 +641,15 @@ const FloatColor& color,
                         const float invZoom,
                         const bool active)
 {
- const float dx = b.x - a.x;
- const float dy = b.y - a.y;
- const float len = std::sqrt(dx * dx + dy * dy);
- const Detail::float2 norm = len > 0.0001f ? Detail::float2{ -dy / len, dx / len } : Detail::float2{0.0f, 0.0f};
- const float shadowShift = std::max(1.0f, 1.25f * invZoom);
- const float shadowThickness = thickness + std::max(0.8f, 0.7f * invZoom);
- const FloatColor shadow = { 0.0f, 0.0f, 0.0f, active ? 0.42f : 0.30f };
- const FloatColor highlight = brighten(color, active ? 1.18f : 1.08f);
- renderer->drawSolidLine({a.x + shadowShift, a.y + shadowShift},
-                          {b.x + shadowShift, b.y + shadowShift},
-                          shadow, shadowThickness);
- renderer->drawSolidLine(a, b, brighten(color, 0.80f), thickness + std::max(1.25f, 1.0f * invZoom));
- renderer->drawSolidLine({a.x - shadowShift * 0.35f, a.y - shadowShift * 0.35f},
-                          {b.x - shadowShift * 0.35f, b.y - shadowShift * 0.35f},
-                          highlight, std::max(1.5f, thickness * 0.72f));
+ const float shadowShift = std::max(0.7f, 0.65f * invZoom);
+ const float shadowThickness = thickness + std::max(0.55f, 0.45f * invZoom);
+ const float mainThickness = std::max(1.0f, thickness + std::max(0.2f, 0.18f * invZoom));
+ const FloatColor shadow = { 0.0f, 0.0f, 0.0f, active ? 0.30f : 0.18f };
+ const FloatColor mainColor = brighten(color, active ? 1.08f : 1.0f);
+  renderer->drawSolidLine({a.x + shadowShift, a.y + shadowShift},
+                           {b.x + shadowShift, b.y + shadowShift},
+                           shadow, shadowThickness);
+  renderer->drawSolidLine(a, b, mainColor, mainThickness);
 }
 
 void drawEmphasizedRect(ArtifactIRenderer* renderer,
@@ -802,8 +855,8 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
        ? FloatColor{0.68f, 0.96f, 0.82f, 1.0f}
        : FloatColor{0.90f, 0.94f, 0.96f, 0.95f};
    const FloatColor boxOutline = activeHandle_ != HandleType::None
-       ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
-       : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
+        ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
+        : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
 
    const float outward = std::max(4.2f, GizmoVisualStyle::scaleHandleOutset * 0.58f * invZoom);
    drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
@@ -815,15 +868,28 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
    drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, leftPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
    drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, rightPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
 
-  const FloatColor centerMark = activeHandle_ == HandleType::Move
-      ? FloatColor{1.0f, 0.82f, 0.28f, 1.0f}
-      : FloatColor{0.82f, 0.86f, 0.92f, 0.92f};
-  const float centerMarkSize = std::max(4.5f, GizmoVisualStyle::centerMarkRadius * invZoom);
-  renderer->drawCircle(static_cast<float>(centerPoint.x()),
-                       static_cast<float>(centerPoint.y()),
-                       centerMarkSize,
-                       centerMark, std::max(1.0f, 0.9f * invZoom), false);
- }
+  if (mode_ == Mode::Scale) {
+   const QPointF mapOrigin = globalTransform.map(QPointF(0.0, 0.0));
+   QPointF xAxisRaw = globalTransform.map(QPointF(1.0, 0.0)) - mapOrigin;
+   const float xALen = static_cast<float>(
+       std::sqrt(xAxisRaw.x() * xAxisRaw.x() + xAxisRaw.y() * xAxisRaw.y()));
+   const QPointF xAxisDir = xALen > 0.001f ? xAxisRaw / xALen : QPointF(1.0, 0.0);
+   QPointF yAxisRaw = globalTransform.map(QPointF(0.0, -1.0)) - mapOrigin;
+   const float yALen = static_cast<float>(
+       std::sqrt(yAxisRaw.x() * yAxisRaw.x() + yAxisRaw.y() * yAxisRaw.y()));
+   const QPointF yAxisDir = yALen > 0.001f ? yAxisRaw / yALen : QPointF(0.0, -1.0);
+   drawScaleCenterHandle(renderer, centerPoint, xAxisDir, yAxisDir, invZoom, activeHandle_ == HandleType::Scale_Center);
+  } else {
+   const FloatColor centerMark = activeHandle_ == HandleType::Move
+       ? FloatColor{1.0f, 0.82f, 0.28f, 1.0f}
+       : FloatColor{0.82f, 0.86f, 0.92f, 0.92f};
+   const float centerMarkSize = std::max(4.5f, GizmoVisualStyle::centerMarkRadius * invZoom);
+   renderer->drawCircle(static_cast<float>(centerPoint.x()),
+                        static_cast<float>(centerPoint.y()),
+                        centerMarkSize,
+                        centerMark, std::max(1.0f, 0.9f * invZoom), false);
+  }
+  }
 
  // Center points for handles
  const Detail::float2 tc_c((float)globalTransform.map(QPointF(localRect.center().x(), localRect.top())).x(), (float)globalTransform.map(QPointF(localRect.center().x(), localRect.top())).y());
@@ -1091,11 +1157,11 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  if (allowsHandle(HandleType::Scale_L) && checkLocalPoint(leftHit)) return HandleType::Scale_L;
  if (allowsHandle(HandleType::Scale_R) && checkLocalPoint(rightHit)) return HandleType::Scale_R;
  if (allowsHandle(HandleType::Scale_TL) && checkLocalPoint(tlHit)) return HandleType::Scale_TL;
- if (allowsHandle(HandleType::Scale_Center)) {
+ if (mode_ == Mode::Scale && allowsHandle(HandleType::Scale_Center)) {
   const QPointF worldPoint = globalTransform.map(centerPoint);
   const auto vPos = renderer->canvasToViewport({static_cast<float>(worldPoint.x()),
                                                 static_cast<float>(worldPoint.y())});
-  const float centerHandleSize = std::max(8.0f, 8.0f * invZoom);
+  const float centerHandleSize = std::max(20.0f, 22.0f * invZoom);
   if (QRectF(vPos.x - centerHandleSize * 0.5f,
              vPos.y - centerHandleSize * 0.5f,
              centerHandleSize, centerHandleSize).contains(viewportPos)) {

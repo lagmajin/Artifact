@@ -26,6 +26,8 @@ namespace Artifact {
 using namespace Diligent;
 
 namespace {
+    constexpr Uint32 kAsyncShaderCompileThreads = 2;
+
     enum class RenderBackendPreference {
         Auto,
         D3D12,
@@ -217,6 +219,8 @@ namespace {
         EngineD3D12CreateInfo creationAttribs = {};
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        creationAttribs.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
+        creationAttribs.NumAsyncShaderCompilationThreads = kAsyncShaderCompileThreads;
         
         // 1. Try with Ray Tracing enabled
         creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
@@ -249,6 +253,8 @@ namespace {
         EngineVkCreateInfo creationAttribs = {};
         creationAttribs.EnableValidation = true;
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
+        creationAttribs.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
+        creationAttribs.NumAsyncShaderCompilationThreads = kAsyncShaderCompileThreads;
 
         // 1. Try with Ray Tracing enabled
         creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;

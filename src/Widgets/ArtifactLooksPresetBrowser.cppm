@@ -44,77 +44,6 @@ module Artifact.Widgets.LooksPresetBrowser;
 // ---------------------------------------------------------------------------
 namespace {
 
-// Base stylesheet for the whole dialog
-constexpr auto kDialogStyle = R"(
-QDialog {
-    background: #1a1a1a;
-    color: #ffffff;
-}
-QWidget {
-    background: #1a1a1a;
-    color: #ffffff;
-    font-family: "Segoe UI";
-    font-size: 11px;
-}
-QLineEdit {
-    background: #2a2a2a;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
-    padding: 4px 8px;
-    color: #aaaaaa;
-}
-QLineEdit:focus { border-color: #4a8aff; }
-QPushButton {
-    background: #2a2a2a;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
-    padding: 4px 12px;
-    color: #cccccc;
-}
-QPushButton:hover  { background: #383838; }
-QPushButton:pressed{ background: #1e1e1e; }
-QPushButton:checked {
-    background: #2a2a2a;
-    border-color: #4a8aff;
-    color: #4a8aff;
-}
-QScrollArea { border: none; }
-QScrollBar:vertical {
-    background: #1a1a1a;
-    width: 8px;
-    margin: 0;
-}
-QScrollBar::handle:vertical {
-    background: #444;
-    min-height: 24px;
-    border-radius: 4px;
-}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
-QSlider::groove:horizontal {
-    background: #333333;
-    height: 3px;
-    border-radius: 2px;
-}
-QSlider::handle:horizontal {
-    background: #888888;
-    border: none;
-    width: 12px;
-    height: 12px;
-    margin: -5px 0;
-    border-radius: 6px;
-}
-QSlider::sub-page:horizontal { background: #4a8aff; border-radius: 2px; }
-QComboBox {
-    background: #2a2a2a;
-    border: 1px solid #3a3a3a;
-    border-radius: 4px;
-    padding: 4px 8px;
-    color: #cccccc;
-    min-width: 90px;
-}
-QComboBox::drop-down { border: none; width: 20px; }
-)";
-
 // Generates a colored placeholder thumbnail for a preset
 QPixmap makePlaceholderThumbnail(const QString& name, const QColor& tint,
                                   int w = 160, int h = 100)
@@ -368,7 +297,7 @@ public:
     void buildUi() {
         q->setWindowTitle("LOOKS — PRESET BROWSER");
         q->setMinimumSize(900, 700);
-        q->setStyleSheet(kDialogStyle);
+        q->setAutoFillBackground(true);
 
         // Root layout: left sidebar + right content
         auto* rootLayout = new QHBoxLayout(q);
@@ -378,30 +307,13 @@ public:
         // ── Sidebar ──────────────────────────────────────────────────────
         auto* sidebar = new QWidget(q);
         sidebar->setFixedWidth(185);
-        sidebar->setStyleSheet("background:#161616;");
+        sidebar->setAutoFillBackground(true);
 
         auto* sidebarLayout = new QVBoxLayout(sidebar);
         sidebarLayout->setContentsMargins(0, 8, 0, 8);
         sidebarLayout->setSpacing(0);
 
         libraryList_ = new QListWidget(sidebar);
-        libraryList_->setStyleSheet(R"(
-            QListWidget {
-                background: transparent;
-                border: none;
-                outline: none;
-            }
-            QListWidget::item {
-                padding: 5px 12px;
-                color: #aaaaaa;
-            }
-            QListWidget::item:selected {
-                background: #2d5a9e;
-                color: #ffffff;
-                border-radius: 3px;
-            }
-            QListWidget::item:hover:!selected { background: #252525; }
-        )");
         libraryList_->setSelectionMode(QAbstractItemView::SingleSelection);
 
         auto addSectionHeader = [&](const QString& title) {
@@ -420,9 +332,13 @@ public:
             auto* hl = new QHBoxLayout(w);
             hl->setContentsMargins(12, 4, 12, 4);
             auto* lbl = new QLabel(label, w);
-            lbl->setStyleSheet("color:#cccccc;font-size:11px;background:transparent;");
+            QPalette pal = lbl->palette();
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            lbl->setPalette(pal);
             auto* cnt = new QLabel(QString::number(count), w);
-            cnt->setStyleSheet("color:#555555;font-size:11px;background:transparent;");
+            QPalette cntPal = cnt->palette();
+            cntPal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(140));
+            cnt->setPalette(cntPal);
             cnt->setAlignment(Qt::AlignRight);
             hl->addWidget(lbl);
             hl->addStretch();
@@ -478,7 +394,7 @@ public:
         scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 
         gridContainer_ = new QWidget();
-        gridContainer_->setStyleSheet("background:#1a1a1a;");
+        gridContainer_->setAutoFillBackground(true);
         gridLayout_ = new QGridLayout(gridContainer_);
         gridLayout_->setContentsMargins(8, 8, 8, 8);
         gridLayout_->setSpacing(6);
@@ -493,7 +409,7 @@ public:
     QWidget* buildTopBar(QWidget* parent) {
         auto* bar = new QWidget(parent);
         bar->setFixedHeight(48);
-        bar->setStyleSheet("background:#1e1e1e; border-bottom:1px solid #2a2a2a;");
+        bar->setAutoFillBackground(true);
 
         auto* hl = new QHBoxLayout(bar);
         hl->setContentsMargins(10, 0, 10, 0);
@@ -519,17 +435,9 @@ public:
             auto* btn = new QPushButton(cat, bar);
             btn->setCheckable(true);
             btn->setFixedHeight(28);
-            btn->setStyleSheet(R"(
-                QPushButton {
-                    background:#2a2a2a; border:1px solid #3a3a3a;
-                    border-radius:14px; padding:0 14px; color:#aaaaaa; font-size:11px;
-                }
-                QPushButton:hover  { background:#383838; color:#ffffff; }
-                QPushButton:checked {
-                    background:#2a2a2a; border-color:#5588ff;
-                    color:#5588ff; font-weight:bold;
-                }
-            )");
+            QPalette pal = btn->palette();
+            pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            btn->setPalette(pal);
             catGroup_->addButton(btn);
             hl->addWidget(btn);
             if (QString(cat) == "All") btn->setChecked(true);

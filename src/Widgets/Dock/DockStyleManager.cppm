@@ -144,6 +144,7 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
         child->setFont(font);
     };
     applyTextStyle(tab);
+    tab->setAttribute(Qt::WA_StyledBackground, true);
     tab->setAutoFillBackground(true);
     auto tabPalette = tab->palette();
     tabPalette.setColor(QPalette::WindowText, textColor);
@@ -156,9 +157,26 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
     tab->setPalette(tabPalette);
     for (auto* label : tab->findChildren<QLabel*>()) {
         applyTextStyle(label);
+        label->setAutoFillBackground(true);
+        auto labelPalette = label->palette();
+        labelPalette.setColor(QPalette::Window, tabBg);
+        labelPalette.setColor(QPalette::Base, tabBg);
+        labelPalette.setColor(QPalette::Button, tabBg);
+        label->setPalette(labelPalette);
     }
     for (auto* button : tab->findChildren<QAbstractButton*>()) {
         applyTextStyle(button);
+        button->setAttribute(Qt::WA_StyledBackground, true);
+        button->setAutoFillBackground(true);
+        auto buttonPalette = button->palette();
+        buttonPalette.setColor(QPalette::Window, tabBg);
+        buttonPalette.setColor(QPalette::Base, tabBg);
+        buttonPalette.setColor(QPalette::Button, tabBg);
+        buttonPalette.setColor(QPalette::WindowText, textColor);
+        buttonPalette.setColor(QPalette::Text, textColor);
+        buttonPalette.setColor(QPalette::ButtonText, textColor);
+        buttonPalette.setColor(QPalette::Mid, themeBorder);
+        button->setPalette(buttonPalette);
     }
 }
 

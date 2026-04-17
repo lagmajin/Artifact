@@ -33,6 +33,7 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
+#include <QStyleOptionSlider>
 #include <QTextEdit>
 #include <QtSVG/QSvgRenderer>
 
@@ -73,12 +74,93 @@ QColor themeColor(const QString &value, const QColor &fallback) {
   return color.isValid() ? color : fallback;
 }
 
+class PropertySliderWidget final : public QSlider {
+public:
+  explicit PropertySliderWidget(QWidget *parent = nullptr)
+      : QSlider(Qt::Horizontal, parent) {}
+
+protected:
+  void paintEvent(QPaintEvent *event) override {
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QColor surface = palette().color(QPalette::Window);
+    const QColor trackBase = palette().color(QPalette::Base);
+    const QColor trackBorder = palette().color(QPalette::Dark);
+    const QColor trackFill = palette().color(QPalette::Highlight);
+    const QColor handleFill = palette().color(QPalette::Button);
+    const QColor handleBorder = palette().color(QPalette::Mid);
+
+    painter.fillRect(rect(), surface);
+
+    QStyleOptionSlider opt;
+    initStyleOption(&opt);
+
+    const QRect grooveRect =
+        style()->subControlRect(QStyle::CC_Slider, &opt,
+                                QStyle::SC_SliderGroove, this);
+    const QRect handleRect =
+        style()->subControlRect(QStyle::CC_Slider, &opt,
+                                QStyle::SC_SliderHandle, this);
+
+    const int trackThickness = 4;
+    QRect trackRect = grooveRect;
+    trackRect.setHeight(trackThickness);
+    trackRect.moveCenter(QPoint(trackRect.center().x(), grooveRect.center().y()));
+    trackRect = trackRect.adjusted(0, 0, -1, -1);
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(trackBase);
+    painter.drawRoundedRect(trackRect, 2.0, 2.0);
+
+    QRect fillRect = trackRect;
+    const bool reversed =
+        (opt.upsideDown && opt.orientation == Qt::Horizontal) ||
+        (!opt.upsideDown && opt.orientation == Qt::Vertical);
+    if (opt.orientation == Qt::Horizontal) {
+      const int handleCenter = handleRect.center().x();
+      if (reversed) {
+        fillRect.setLeft(handleCenter);
+      } else {
+        fillRect.setRight(handleCenter);
+      }
+    } else {
+      const int handleCenter = handleRect.center().y();
+      if (reversed) {
+        fillRect.setTop(handleCenter);
+      } else {
+        fillRect.setBottom(handleCenter);
+      }
+    }
+
+    painter.setBrush(trackFill);
+    painter.drawRoundedRect(fillRect.intersected(trackRect), 2.0, 2.0);
+    painter.setPen(QPen(trackBorder, 1.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(trackRect, 2.0, 2.0);
+
+    painter.setPen(QPen(handleBorder, 1.0));
+    painter.setBrush(handleFill);
+    painter.drawRoundedRect(handleRect.adjusted(0, 0, -1, -1), 3.0, 3.0);
+  }
+};
+
 QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
   const qreal clamped = std::clamp(t, 0.0, 1.0);
   return QColor::fromRgbF(a.redF() * (1.0 - clamped) + b.redF() * clamped,
                           a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
                           a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
                           a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
+}
+
+QColor propertySurfaceColor(const bool elevated = false) {
+  const auto &theme = ArtifactCore::currentDCCTheme();
+  const QColor background =
+      themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
+  const QColor surface = themeColor(theme.secondaryBackgroundColor,
+                                    QColor(QStringLiteral("#2B3038")));
+  return blendColor(background, surface, elevated ? 0.72 : 0.58);
 }
 
 void applyThemeTextPalette(QWidget *widget, int shade = 100) {
@@ -100,8 +182,6 @@ void applyPropertyFieldPalette(QWidget *widget, const bool elevated = false) {
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor background =
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
-  const QColor surface = themeColor(theme.secondaryBackgroundColor,
-                                    QColor(QStringLiteral("#2B3038")));
   const QColor text =
       themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
   const QColor selection =
@@ -114,18 +194,24 @@ void applyPropertyFieldPalette(QWidget *widget, const bool elevated = false) {
   widget->setAttribute(Qt::WA_StyledBackground, true);
   widget->setAutoFillBackground(true);
   QPalette pal = widget->palette();
-  const QColor window =
-      elevated ? blendColor(surface, background, 0.18) : background;
+  const QColor window = propertySurfaceColor(elevated);
+  const QColor mid = blendColor(window, border, 0.58);
+  const QColor dark = blendColor(window, border, 0.42);
+  const QColor shadow = blendColor(window, background, 0.28);
+  const QColor midlight = blendColor(window, text, 0.06);
   pal.setColor(QPalette::Window, window);
   pal.setColor(QPalette::WindowText, text);
-  pal.setColor(QPalette::Base, surface);
-  pal.setColor(QPalette::AlternateBase, blendColor(surface, background, 0.14));
+  pal.setColor(QPalette::Base, window);
+  pal.setColor(QPalette::AlternateBase, blendColor(window, text, 0.05));
   pal.setColor(QPalette::Text, text);
-  pal.setColor(QPalette::Button, surface);
+  pal.setColor(QPalette::Button, window);
   pal.setColor(QPalette::ButtonText, text);
   pal.setColor(QPalette::Highlight, selection);
   pal.setColor(QPalette::HighlightedText, background);
+  pal.setColor(QPalette::Midlight, midlight);
   pal.setColor(QPalette::Mid, border);
+  pal.setColor(QPalette::Dark, mid);
+  pal.setColor(QPalette::Shadow, shadow);
   pal.setColor(QPalette::Light, accent.lighter(120));
   widget->setPalette(pal);
 }
@@ -138,8 +224,6 @@ void applyPropertyButtonPalette(QAbstractButton *button,
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor background =
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
-  const QColor surface = themeColor(theme.secondaryBackgroundColor,
-                                    QColor(QStringLiteral("#2B3038")));
   const QColor text =
       themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
   const QColor selection =
@@ -148,7 +232,7 @@ void applyPropertyButtonPalette(QAbstractButton *button,
       themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
   const QColor fill =
       accent ? themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")))
-             : surface;
+             : propertySurfaceColor(false);
   const QColor contrast = accent ? background : text;
 
   button->setAttribute(Qt::WA_StyledBackground, true);
@@ -156,7 +240,7 @@ void applyPropertyButtonPalette(QAbstractButton *button,
   QPalette pal = button->palette();
   pal.setColor(QPalette::Button, fill);
   pal.setColor(QPalette::ButtonText, contrast);
-  pal.setColor(QPalette::Window, surface);
+  pal.setColor(QPalette::Window, fill);
   pal.setColor(QPalette::WindowText, text);
   pal.setColor(QPalette::Highlight, selection);
   pal.setColor(QPalette::HighlightedText, background);
@@ -174,17 +258,11 @@ void applyPropertyLabelPalette(QLabel *label, const bool prominent = false) {
   const QColor accent =
       themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
 
-  // Match label background to the property panel background so labels visually
-  // blend with the surrounding widget. Use the theme background color which
-  // is what applyPropertyPanelPalette uses for the widget Window background.
-  const QColor background =
-      themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
-
   QPalette pal = label->palette();
   pal.setColor(QPalette::WindowText, prominent ? accent : text);
-  pal.setColor(QPalette::Window, background);
+  pal.setColor(QPalette::Window, propertySurfaceColor(false));
   // Ensure the label actually paints its background from the palette.
-  label->setAutoFillBackground(true);
+  label->setAutoFillBackground(false);
   label->setPalette(pal);
 }
 } // namespace
@@ -689,10 +767,6 @@ protected:
     const qreal radius = trackRect.height() * 0.5;
 
     const auto &theme = ArtifactCore::currentDCCTheme();
-    const QColor background =
-        themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
-    const QColor surface = themeColor(theme.secondaryBackgroundColor,
-                                      QColor(QStringLiteral("#2B3038")));
     const QColor accent =
         themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
     const QColor selection =
@@ -703,7 +777,7 @@ protected:
         themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
 
     QColor trackColor = isChecked() ? blendColor(selection, accent, 0.44)
-                                    : blendColor(surface, background, 0.22);
+                                    : propertySurfaceColor(false);
     QColor borderColor =
         isChecked() ? blendColor(border, accent, 0.52) : border;
     QColor knobColor = text;
@@ -756,7 +830,8 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   setObjectName(QStringLiteral("propertyFloatEditor"));
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
   if (showSlider) {
-    slider_ = new QSlider(Qt::Horizontal, this);
+    slider_ = new PropertySliderWidget(this);
+    applyPropertyFieldPalette(slider_);
   }
   QPushButton *resetButton = nullptr;
   if (::Artifact::artifactShouldShowPropertyResetButtons()) {
@@ -962,7 +1037,8 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   setObjectName(QStringLiteral("propertyIntEditor"));
   spinBox_ = new ArtifactRelativeSpinBox(this);
   if (showSlider) {
-    slider_ = new QSlider(Qt::Horizontal, this);
+    slider_ = new PropertySliderWidget(this);
+    applyPropertyFieldPalette(slider_);
   }
   QPushButton *resetButton = nullptr;
   if (::Artifact::artifactShouldShowPropertyResetButtons()) {
@@ -1459,7 +1535,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   setMinimumHeight(kPropertyRowMinHeight);
   setAutoFillBackground(false);
   setAttribute(Qt::WA_Hover, true);
-  applyPropertyFieldPalette(this, true);
+  applyPropertyFieldPalette(this, false);
 
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(kPropertyRowMarginH, kPropertyRowMarginV,
@@ -1483,7 +1559,6 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   applyPropertyFieldPalette(editor_);
 
   // Load Icons
-  QIcon keyIcon = cachedKeyframeIcon(QSize(14, 14));
   QIcon prevIcon =
       loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_left.svg"));
   QIcon nextIcon =
@@ -1515,10 +1590,10 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       QStringLiteral("Toggle Keyframe: %1").arg(propertyName));
   keyframeButton_->setFixedSize(kPropertyKeyButtonSize, kPropertyKeyButtonSize);
   keyframeButton_->setCheckable(true);
-  keyframeButton_->setIcon(keyIcon);
   keyframeButton_->setIconSize(QSize(14, 14));
   keyframeButton_->setFlat(true);
   applyPropertyButtonPalette(keyframeButton_, true);
+  updateKeyframeButtonIcon();
 
   keyframeControlLayout->addWidget(prevKeyBtn_);
   keyframeControlLayout->addWidget(keyframeButton_);
@@ -1578,10 +1653,11 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
 
   QObject::connect(keyframeButton_, &QPushButton::toggled, this,
                    [this](bool checked) {
-                     if (keyframeHandler_) {
-                       keyframeHandler_(checked);
-                     }
-                   });
+                      if (keyframeHandler_) {
+                        keyframeHandler_(checked);
+                      }
+                      updateKeyframeButtonIcon();
+                    });
 
   QObject::connect(prevKeyBtn_, &QPushButton::clicked, this, [this]() {
     if (navigationHandler_) {
@@ -1672,13 +1748,28 @@ void ArtifactPropertyEditorRowWidget::setShowResetButton(const bool visible) {
 void ArtifactPropertyEditorRowWidget::setShowKeyframeButton(
     const bool visible) {
   keyframeButton_->setVisible(visible);
+  updateKeyframeButtonIcon();
   updateAuxControlVisibility();
   update();
+}
+
+void ArtifactPropertyEditorRowWidget::updateKeyframeButtonIcon() {
+  if (!keyframeButton_) {
+    return;
+  }
+  const bool checked = keyframeButton_->isChecked();
+  const QColor fillColor = checked ? QColor(QStringLiteral("#FFD84D"))
+                                   : QColor(QStringLiteral("#6E7681"));
+  const QColor outlineColor = checked ? QColor(QStringLiteral("#FFF1A8"))
+                                      : QColor(QStringLiteral("#B6C0CD"));
+  keyframeButton_->setIcon(
+      cachedKeyframeIcon(QSize(14, 14), fillColor, outlineColor));
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked) {
   const QSignalBlocker blocker(keyframeButton_);
   keyframeButton_->setChecked(checked);
+  updateKeyframeButtonIcon();
   update();
 }
 
@@ -1767,10 +1858,6 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   painter.setRenderHint(QPainter::Antialiasing, true);
 
   const auto &theme = ArtifactCore::currentDCCTheme();
-  const QColor background =
-      themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
-  const QColor surface = themeColor(theme.secondaryBackgroundColor,
-                                    QColor(QStringLiteral("#2B3038")));
   const QColor accent =
       themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
   const QColor selection =
@@ -1787,7 +1874,10 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   QPainterPath path;
   path.addRoundedRect(frame, radius, radius);
 
-  QColor fill = blendColor(surface, background, hovered ? 0.08 : 0.16);
+  QColor fill = propertySurfaceColor(false);
+  if (hovered) {
+    fill = blendColor(fill, accent, 0.04);
+  }
   if (focused) {
     fill = blendColor(fill, selection, 0.24);
   }

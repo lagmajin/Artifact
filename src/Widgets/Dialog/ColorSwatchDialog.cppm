@@ -19,6 +19,7 @@ module;
 #include <QGridLayout>
 #include <QToolTip>
 #include <QShowEvent>
+#include <QPalette>
 #include <wobjectimpl.h>
 
 module Artifact.Widgets.ColorSwatchDialog;
@@ -192,14 +193,11 @@ public:
                 .arg(g, 0, 'f', 3)
                 .arg(b, 0, 'f', 3));
 
-        QString bg = QString("background:%1; border:1px solid #555;").arg(c.name());
-        if (c.alpha() < 255) {
-            // Checkerboard-ish fallback for transparent
-            bg = "background: qlineargradient(x1:0,y1:0,x2:1,y2:1,"
-                 "stop:0 #aaa, stop:0.5 #aaa, stop:0.5 #666, stop:1 #666);"
-                 "border:1px solid #555;";
-        }
-        previewSquare->setStyleSheet(bg);
+        previewSquare->setAutoFillBackground(true);
+        QPalette pal = previewSquare->palette();
+        pal.setColor(QPalette::Window, c);
+        pal.setColor(QPalette::Base, c);
+        previewSquare->setPalette(pal);
 
         selectedColor = FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF());
     }
@@ -237,17 +235,13 @@ static QWidget* buildSection(Category& cat,
     // Header button
     cat.headerBtn = new QPushButton(cat.name + " ▼");
     cat.headerBtn->setFlat(true);
-    cat.headerBtn->setStyleSheet(
-        "QPushButton { text-align:left; padding:4px 8px; color:#ccc;"
-        "  background:#333; border-bottom:1px solid #444; }"
-        "QPushButton:hover { background:#3a3a3a; }");
     cat.headerBtn->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     cat.headerBtn->setFixedHeight(26);
     wl->addWidget(cat.headerBtn);
 
     // Content widget
     cat.contentWidget = new QWidget();
-    cat.contentWidget->setStyleSheet("background:#2b2b2b;");
+    cat.contentWidget->setAutoFillBackground(true);
     auto* grid = new QGridLayout(cat.contentWidget);
     grid->setSpacing(4);
     grid->setContentsMargins(8, 6, 8, 6);
@@ -294,15 +288,7 @@ ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
 {
     setWindowTitle("カラースウォッチ");
     setFixedSize(520, 560);
-    setStyleSheet(
-        "QDialog { background:#2b2b2b; }"
-        "QPushButton { background:#3a3a3a; border:1px solid #555; color:#ccc; border-radius:2px; }"
-        "QPushButton:hover { background:#4a4a4a; }"
-        "QLabel { color:#ccc; }"
-        "QScrollArea { border:none; background:#2b2b2b; }"
-        "QScrollBar:vertical { background:#2b2b2b; width:8px; }"
-        "QScrollBar::handle:vertical { background:#555; border-radius:4px; }"
-    );
+    setAutoFillBackground(true);
 
     impl_->categories = {
         { "基本カラー",   kBasicColors,       nullptr, nullptr, true, {} },
@@ -325,14 +311,18 @@ ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
     toolbar->addWidget(makeToolBtn("↓", this));
     toolbar->addStretch();
     auto* libLabel = new QLabel("AE Default Library");
-    libLabel->setStyleSheet("color:#888; font-size:11px;");
+    {
+        QPalette pal = libLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+        libLabel->setPalette(pal);
+    }
     toolbar->addWidget(libLabel);
     mainLayout->addLayout(toolbar);
 
     // ── Scroll area with sections ─────────────────────────────────────────
     auto* scrollArea  = new QScrollArea(this);
     auto* scrollWidget = new QWidget();
-    scrollWidget->setStyleSheet("background:#2b2b2b;");
+    scrollWidget->setAutoFillBackground(true);
     auto* scrollLayout = new QVBoxLayout(scrollWidget);
     scrollLayout->setContentsMargins(0, 0, 0, 0);
     scrollLayout->setSpacing(0);
@@ -387,14 +377,22 @@ ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
 
     impl_->previewSquare = new QFrame();
     impl_->previewSquare->setFixedSize(48, 48);
-    impl_->previewSquare->setStyleSheet("background:#FFFFFF; border:1px solid #555;");
+    impl_->previewSquare->setAutoFillBackground(true);
     infoLayout->addWidget(impl_->previewSquare);
 
     auto* textCol = new QVBoxLayout();
     impl_->colorNameLabel = new QLabel("—");
-    impl_->colorNameLabel->setStyleSheet("color:#ddd; font-size:13px; font-weight:bold;");
+    {
+        QPalette pal = impl_->colorNameLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+        impl_->colorNameLabel->setPalette(pal);
+    }
     impl_->colorInfoLabel = new QLabel("");
-    impl_->colorInfoLabel->setStyleSheet("color:#888; font-size:11px;");
+    {
+        QPalette pal = impl_->colorInfoLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+        impl_->colorInfoLabel->setPalette(pal);
+    }
     textCol->addWidget(impl_->colorNameLabel);
     textCol->addWidget(impl_->colorInfoLabel);
     textCol->addStretch();

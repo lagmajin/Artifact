@@ -27,6 +27,7 @@ module;
 #include <QScrollArea>
 #include <QSet>
 #include <QHash>
+#include <QPalette>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
 import std;
@@ -85,10 +86,13 @@ QWidget* makeSectionHeader(const QString& title, QWidget* parent)
     layout->setContentsMargins(0, 8, 0, 2);
     layout->setSpacing(2);
     auto* label = new QLabel(title, w);
-    label->setStyleSheet("color: #999; font-size: 11px;");
+    {
+        QPalette pal = label->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+        label->setPalette(pal);
+    }
     auto* line = new QFrame(w);
     line->setFrameShape(QFrame::HLine);
-    line->setStyleSheet("color: #3a3a3a;");
     layout->addWidget(label);
     layout->addWidget(line);
     return w;

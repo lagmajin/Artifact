@@ -282,6 +282,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
 
   auto *toolBar = new ArtifactToolBar(this);
   addToolBar(toolBar);
+  toolBar->refreshFromApplicationState();
 
   // Tool signal routing
   QObject::connect(

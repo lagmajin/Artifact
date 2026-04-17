@@ -45,9 +45,6 @@ private:
   void onProviderChanged(int index);
   void refreshModelList();
   void cancelCurrentSend();
-  bool tryHandleToolCallResponse(const QString &responseText,
-                                 QString *toolTraceOut,
-                                 QString *errorOut = nullptr);
   bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
@@ -59,6 +56,10 @@ private:
   void updateMcpPreview();
   void updateTransportPreview();
   void updateConnectionSummary();
+  bool tryHandleToolCallResponse(const QString &responseText,
+                                 QString *toolTraceOut,
+                                 QString *errorOut = nullptr,
+                                 bool *blockedByApprovalOut = nullptr);
   void refreshMcpToolSelector(const QStringList &toolNames = QStringList());
   void applySelectedMcpTool(const QString &toolName);
   void appendToolExecutionLog(const QString &entry);
@@ -91,6 +92,7 @@ private:
   QLabel *connectionApiKeyLabel_ = nullptr;
   QLabel *toolCountLabel_ = nullptr;
   QPushButton *openSettingsButton_ = nullptr;
+  QComboBox *toolApprovalModeCombo_ = nullptr;
   QScrollArea *transcriptScrollArea_ = nullptr;
   QWidget *transcriptContent_ = nullptr;
   QVBoxLayout *transcriptLayout_ = nullptr;

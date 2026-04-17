@@ -255,10 +255,16 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       }
 
       QStyleOptionMenuItem copy(*menuItem);
-      copy.palette.setColor(QPalette::ButtonText, menuText);
-      copy.palette.setColor(QPalette::Text, menuText);
-      copy.palette.setColor(QPalette::HighlightedText, menuText);
-      copy.palette.setColor(QPalette::Highlight, menuHover);
+      const bool enabled = menuItem->state.testFlag(State_Enabled);
+      const QColor disabledText = menuText.darker(155);
+      copy.palette.setColor(QPalette::ButtonText, enabled ? menuText : disabledText);
+      copy.palette.setColor(QPalette::Text, enabled ? menuText : disabledText);
+      copy.palette.setColor(QPalette::WindowText, enabled ? menuText : disabledText);
+      copy.palette.setColor(QPalette::HighlightedText, enabled ? menuText : disabledText);
+      copy.palette.setColor(QPalette::Highlight, enabled ? menuHover : menuSurface);
+      copy.palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabledText);
+      copy.palette.setColor(QPalette::Disabled, QPalette::Text, disabledText);
+      copy.palette.setColor(QPalette::Disabled, QPalette::WindowText, disabledText);
       painter->restore();
       return QProxyStyle::drawControl(element, &copy, painter, widget);
     }
@@ -270,14 +276,16 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       painter->setRenderHint(QPainter::Antialiasing, true);
 
       const QRect itemRect = menuItem->rect.adjusted(2, 2, -2, -2);
-      if (menuItem->state.testFlag(State_Selected) ||
-          menuItem->state.testFlag(State_Sunken)) {
+      const bool enabled = menuItem->state.testFlag(State_Enabled);
+      const QColor disabledText = menuText.darker(145);
+      if (enabled && (menuItem->state.testFlag(State_Selected) ||
+          menuItem->state.testFlag(State_Sunken))) {
         painter->setPen(Qt::NoPen);
         painter->setBrush(menuHover);
         painter->drawRoundedRect(itemRect, 4.0, 4.0);
       }
 
-      painter->setPen(menuText);
+      painter->setPen(enabled ? menuText : disabledText);
       painter->drawText(itemRect, Qt::AlignCenter | Qt::TextShowMnemonic,
                         menuItem->text);
       painter->restore();

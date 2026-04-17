@@ -137,7 +137,12 @@ ArtifactSnapshotCompareWidget::ArtifactSnapshotCompareWidget(QWidget* parent)
     
     // Status bar
     impl_->statusLabel = new QLabel("No snapshots selected", this);
-    impl_->statusLabel->setStyleSheet("color: #888;");
+    {
+        QPalette statusPal = impl_->statusLabel->palette();
+        statusPal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+        statusPal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+        impl_->statusLabel->setPalette(statusPal);
+    }
     root->addWidget(impl_->statusLabel);
     
     // TODO: Connect signals

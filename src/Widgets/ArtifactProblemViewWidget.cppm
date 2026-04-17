@@ -95,7 +95,12 @@ ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
 
     // Summary
     impl_->summaryLabel = new QLabel("0 Errors, 0 Warnings, 0 Info", this);
-    impl_->summaryLabel->setStyleSheet("color: #888;");
+    {
+        QPalette summaryPal = impl_->summaryLabel->palette();
+        summaryPal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+        summaryPal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+        impl_->summaryLabel->setPalette(summaryPal);
+    }
     root->addWidget(impl_->summaryLabel);
 
     // TODO: Connect signals

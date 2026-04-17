@@ -18,6 +18,7 @@ module;
 #include <QApplication>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QPalette>
 #include <wobjectimpl.h>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 
@@ -75,16 +76,28 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     // ── Header ────────────────────────────────────────────────────────────
     auto* header = new QWidget(this);
     header->setFixedHeight(48);
-    header->setStyleSheet("background-color: #2a2a2a;");
+    {
+        QPalette pal = header->palette();
+        pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+        header->setAutoFillBackground(true);
+        header->setPalette(pal);
+    }
     auto* hLay = new QHBoxLayout(header);
     hLay->setContentsMargins(15, 0, 10, 0);
     auto* titleLbl = new QLabel(u8"プリコンポーズ", header);
-    titleLbl->setStyleSheet("color: #e0e0e0; font-size: 13px; font-weight: bold;");
+    {
+        QPalette pal = titleLbl->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+        titleLbl->setPalette(pal);
+    }
     auto* closeBtn = new QPushButton(u8"×", header);
     closeBtn->setFixedSize(30, 30);
-    closeBtn->setStyleSheet(
-        "QPushButton { background: transparent; color: #aaaaaa; border: none; font-size: 18px; }"
-        "QPushButton:hover { color: #ff4444; }");
+    {
+        QPalette pal = closeBtn->palette();
+        pal.setColor(QPalette::Button, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+        pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
+        closeBtn->setPalette(pal);
+    }
     hLay->addWidget(titleLbl);
     hLay->addStretch();
     hLay->addWidget(closeBtn);
@@ -100,7 +113,6 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     const auto makeSeparator = [&]() -> QFrame* {
         auto* sep = new QFrame(body);
         sep->setFrameShape(QFrame::HLine);
-        sep->setStyleSheet("color: #3a3a3a;");
         sep->setFixedHeight(1);
         return sep;
     };
@@ -111,7 +123,11 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         auto* rl  = new QHBoxLayout(row);
         rl->setContentsMargins(0, 0, 0, 0);
         auto* lbl = new QLabel(u8"新規コンポジション名", row);
-        lbl->setStyleSheet("color: #cccccc;");
+        {
+            QPalette pal = lbl->palette();
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            lbl->setPalette(pal);
+        }
         lbl->setFixedWidth(145);
         impl_->nameEdit = new QLineEdit(u8"プリコンプ 1", row);
         rl->addWidget(lbl);
@@ -124,21 +140,33 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     // ── 選択中のレイヤーリスト ────────────────────────────────────────────
     {
         auto* secLbl = new QLabel(u8"選択中のレイヤー", body);
-        secLbl->setStyleSheet("color: #888888; font-size: 11px;");
+        {
+            QPalette pal = secLbl->palette();
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+            secLbl->setPalette(pal);
+        }
         bLay->addWidget(secLbl);
 
         impl_->layerListWidget = new QListWidget(body);
         impl_->layerListWidget->setFixedHeight(110);
-        impl_->layerListWidget->setStyleSheet(
-            "QListWidget { background: #222222; border: 1px solid #3a3a3a; color: #cccccc; }"
-            "QListWidget::item { padding: 3px 6px; }");
+        {
+            QPalette pal = impl_->layerListWidget->palette();
+            pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+            impl_->layerListWidget->setPalette(pal);
+        }
         impl_->layerListWidget->setSelectionMode(QAbstractItemView::NoSelection);
         bLay->addWidget(impl_->layerListWidget);
 
         // Layer count
         impl_->layerCountLabel = new QLabel(body);
         impl_->layerCountLabel->setAlignment(Qt::AlignRight);
-        impl_->layerCountLabel->setStyleSheet("color: #888888; font-size: 11px;");
+        {
+            QPalette pal = impl_->layerCountLabel->palette();
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+            impl_->layerCountLabel->setPalette(pal);
+        }
         impl_->updateLayerCountLabel(0);
         bLay->addWidget(impl_->layerCountLabel);
     }
@@ -148,7 +176,11 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     // ── 配置オプション ────────────────────────────────────────────────────
     {
         auto* secLbl = new QLabel(u8"配置オプション", body);
-        secLbl->setStyleSheet("color: #888888; font-size: 11px;");
+        {
+            QPalette pal = secLbl->palette();
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+            secLbl->setPalette(pal);
+        }
         bLay->addWidget(secLbl);
 
         auto* group = new QButtonGroup(this);
@@ -156,20 +188,25 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         // Radio 1: 選択したレイヤーのみ
         {
             auto* radioWidget = new QWidget(body);
-            radioWidget->setStyleSheet(
-                "QWidget { background-color: #2a3a4a; border: 1px solid #3a5a7a; border-radius: 4px; }");
+            radioWidget->setAutoFillBackground(true);
             auto* rLay = new QVBoxLayout(radioWidget);
             rLay->setContentsMargins(10, 8, 10, 8);
             rLay->setSpacing(2);
             impl_->moveSelectedRadio = new QRadioButton(
                 u8"選択したレイヤーのみを新規コンポジションに移動する", radioWidget);
             impl_->moveSelectedRadio->setChecked(true);
-            impl_->moveSelectedRadio->setStyleSheet(
-                "QRadioButton { color: #e0e0e0; background: transparent; border: none; font-weight: bold; }"
-                "QRadioButton::indicator { width: 14px; height: 14px; }");
+            {
+                QPalette pal = impl_->moveSelectedRadio->palette();
+                pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+                impl_->moveSelectedRadio->setPalette(pal);
+            }
             auto* subLbl = new QLabel(
                 u8"選択レイヤーをプリコンプに移動。他のレイヤーはそのまま残ります。", radioWidget);
-            subLbl->setStyleSheet("color: #888888; font-size: 10px; background: transparent; border: none;");
+            {
+                QPalette pal = subLbl->palette();
+                pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+                subLbl->setPalette(pal);
+            }
             subLbl->setWordWrap(true);
             rLay->addWidget(impl_->moveSelectedRadio);
             rLay->addWidget(subLbl);
@@ -180,19 +217,21 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         // Radio 2: すべての属性
         {
             auto* radioWidget = new QWidget(body);
-            radioWidget->setStyleSheet(
-                "QWidget { background-color: transparent; border: 1px solid #3a3a3a; border-radius: 4px; }");
+            radioWidget->setAutoFillBackground(true);
             auto* rLay = new QVBoxLayout(radioWidget);
             rLay->setContentsMargins(10, 8, 10, 8);
             rLay->setSpacing(2);
             impl_->moveAllAttribsRadio = new QRadioButton(
                 u8"すべての属性を新規コンポジションに移動する", radioWidget);
             impl_->moveAllAttribsRadio->setStyleSheet(
-                "QRadioButton { color: #cccccc; background: transparent; border: none; font-weight: bold; }"
-                "QRadioButton::indicator { width: 14px; height: 14px; }");
+                "");
             auto* subLbl = new QLabel(
                 u8"トランスフォームなどの属性もプリコンプに引き継がれます。", radioWidget);
-            subLbl->setStyleSheet("color: #888888; font-size: 10px; background: transparent; border: none;");
+            {
+                QPalette pal = subLbl->palette();
+                pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+                subLbl->setPalette(pal);
+            }
             subLbl->setWordWrap(true);
             rLay->addWidget(impl_->moveAllAttribsRadio);
             rLay->addWidget(subLbl);

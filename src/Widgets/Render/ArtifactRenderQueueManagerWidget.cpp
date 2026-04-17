@@ -257,10 +257,23 @@ namespace Artifact
     QString statusTag = "WAIT";
     QColor textColor(160, 160, 160);
     QString status = normalizeStatus(job.status);
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor accent(theme.accentColor);
+    const QColor selection(theme.selectionColor);
+    const QColor border(theme.borderColor);
 
-    if (status == "Rendering") { statusTag = "RUN"; textColor = QColor(0, 210, 255); }
-    else if (status == "Completed") { statusTag = "DONE"; textColor = QColor(100, 220, 100); }
-    else if (status == "Failed") { statusTag = "ERROR"; textColor = QColor(255, 80, 80); }
+    if (status == "Rendering") {
+      statusTag = "RUN";
+      textColor = accent;
+    } else if (status == "Completed") {
+      statusTag = "DONE";
+      textColor = selection.lighter(130);
+    } else if (status == "Failed") {
+      statusTag = "ERROR";
+      textColor = border.lighter(160);
+    } else if (status == "Paused") {
+      textColor = QColor(theme.textColor).darker(110);
+    }
 
     QString progressBar = "..........";
     int filled = std::clamp(job.progress / 10, 0, 10);
@@ -504,7 +517,18 @@ namespace Artifact
   // Live preview
   impl_->previewLabel = new QLabel("No preview");
   impl_->previewLabel->setFixedSize(320, 180);
-  impl_->previewLabel->setStyleSheet("QLabel { background: #1a1a1a; border: 1px solid #333; }");
+  {
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    QPalette pal = impl_->previewLabel->palette();
+    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Base, QColor(theme.backgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+    pal.setColor(QPalette::Text, QColor(theme.textColor));
+    pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::Mid, QColor(theme.borderColor));
+    impl_->previewLabel->setAutoFillBackground(true);
+    impl_->previewLabel->setPalette(pal);
+  }
   impl_->previewLabel->setAlignment(Qt::AlignCenter);
   impl_->previewLabel->setScaledContents(false);
   layout->addWidget(impl_->previewLabel);

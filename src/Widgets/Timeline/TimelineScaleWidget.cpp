@@ -2,12 +2,15 @@ module;
 #include <wobjectimpl.h>
 #include <QWidget>
 #include <QPainter>
+#include <QPalette>
+#include <cmath>
 
 module Artifact.Timeline.ScaleWidget;
 
 import std;
 
 import Artifact.Project.Manager;
+import Widgets.Utils.CSS;
 
 
 namespace Artifact
@@ -28,9 +31,16 @@ namespace Artifact
   {
    painter.save();
    painter.setClipRect(rect);
+
+   const auto& theme = ArtifactCore::currentDCCTheme();
+   const QColor background(theme.secondaryBackgroundColor);
+   const QColor border(theme.borderColor);
+   const QColor majorTick(theme.textColor);
+   const QColor minorTick = QColor(theme.textColor).darker(155);
+   const QColor labelColor = QColor(theme.textColor).darker(118);
    
    // Background matching AE timeline headers
-   painter.fillRect(rect, QColor(40, 40, 40));
+   painter.fillRect(rect, background);
 
    QFont font = painter.font();
    font.setFamily("Consolas"); // Use monospace for numbers
@@ -63,11 +73,11 @@ namespace Artifact
     if (f % majorStep == 0)
     {
      // Major tick
-     painter.setPen(QPen(QColor(150, 150, 150), 1));
+     painter.setPen(QPen(majorTick, 1));
      painter.drawLine(x, rect.bottom() - 10, x, rect.bottom()); // Tick from bottom up
 
      // Label
-     painter.setPen(QColor(200, 200, 200));
+     painter.setPen(labelColor);
      QRect textRect(x + 4, rect.bottom() - 22, 50, 14);
      painter.drawText(textRect, Qt::AlignLeft | Qt::AlignBottom, QString("%1f").arg(f));
     }
@@ -76,17 +86,17 @@ namespace Artifact
      // Minor tick
      int minorHalf = majorStep / 2;
      if (f % minorHalf == 0) {
-      painter.setPen(QPen(QColor(110, 110, 110), 1));
+      painter.setPen(QPen(minorTick, 1));
       painter.drawLine(x, rect.bottom() - 6, x, rect.bottom());
      } else {
-      painter.setPen(QPen(QColor(80, 80, 80), 1));
+      painter.setPen(QPen(minorTick.darker(120), 1));
       painter.drawLine(x, rect.bottom() - 3, x, rect.bottom());
      }
     }
    }
 
    // Bottom border
-   painter.setPen(QPen(QColor(20, 20, 20), 1));
+   painter.setPen(QPen(border, 1));
    painter.drawLine(rect.left(), rect.bottom(), rect.right(), rect.bottom());
 
    painter.restore();

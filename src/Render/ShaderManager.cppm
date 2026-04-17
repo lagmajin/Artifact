@@ -6,7 +6,6 @@ module;
 #include <PipelineStateCache.h>
 #include <Sampler.h>
 #include <RefCntAutoPtr.hpp>
-#include <tbb/task_group.h>
 #include <BasicMath.hpp>
 #include <QByteArray>
 #include <QCryptographicHash>
@@ -99,7 +98,7 @@ void ShaderManager::Impl::createShaders()
     }
     ArtifactCore::ScopedStartupTimer shaderTimer(
         "ShaderManager::createShaders", ArtifactCore::StartupPhase::ShaderCompilation,
-        /*threadCount=*/20, /*itemCount=*/20);
+        /*threadCount=*/1, /*itemCount=*/20);
 
     ShaderCreateInfo lineVsInfo;
     lineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
@@ -280,31 +279,29 @@ float4 main(PS_INPUT input) : SV_TARGET
     dotLinePsInfo.Source = g_dotLinePS.constData();
     dotLinePsInfo.SourceLength = g_dotLinePS.length();
 
-    // All CreateShader calls are independent: run them in parallel.
-    // Each writes to a distinct output field; ShaderCreateInfo structs are read-only during
-    // compilation. maskedSpritePsSource is a local QByteArray that outlives tasks.wait().
-    tbb::task_group shaderTasks;
-    shaderTasks.run([&] { device_->CreateShader(lineVsInfo,                &lineShaders_.VS); });
-    shaderTasks.run([&] { device_->CreateShader(linePsInfo,                &lineShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(sprite2DVsInfo,            &spriteShaders_.VS); });
-    shaderTasks.run([&] { device_->CreateShader(sprite2DPsInfo,            &spriteShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(solidRectVsInfo2,          &solidShaders_.VS); });
-    shaderTasks.run([&] { device_->CreateShader(solidRectPsInfo2,          &solidShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(solidRectTransformVsInfo,  &solidRectTransformShaders_.VS); });
-    shaderTasks.run([&] { device_->CreateShader(solidRectPsInfo2,          &solidRectTransformShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(spriteTransformVsInfo,     &spriteTransformShaders_.VS); });
-    shaderTasks.run([&] { device_->CreateShader(spriteTransformVsInfo,     &maskedSpriteShaders_.VS); });
-    shaderTasks.run([&] { device_->CreateShader(maskedSpritePsInfo,        &maskedSpriteShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(checkerboardPsInfo,        &checkerboardShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(gridPsInfo,                &gridShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(drawOutlineRectVsInfo,     &outlineShaders_.VS); });
-    shaderTasks.run([&] { device_->CreateShader(drawOutlineRectPsInfo,     &outlineShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(thickLineVsInfo,           &thickLineShaders_.VS); });
-    shaderTasks.run([&] { device_->CreateShader(thickLinePsInfo,           &thickLineShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(dotLineVsInfo,             &dotLineShaders_.VS); });
-    shaderTasks.run([&] { device_->CreateShader(dotLinePsInfo,             &dotLineShaders_.PS); });
-    shaderTasks.run([&] { device_->CreateShader(gizmo3DVsInfo,             &gizmo3DShaders_.VS); });
-    shaderTasks.wait();
+    // Keep startup predictable: compile shaders on the current thread instead
+    // of fanning out a large temporary task group on top of Diligent's own
+    // async workers.
+    device_->CreateShader(lineVsInfo,                &lineShaders_.VS);
+    device_->CreateShader(linePsInfo,                &lineShaders_.PS);
+    device_->CreateShader(sprite2DVsInfo,            &spriteShaders_.VS);
+    device_->CreateShader(sprite2DPsInfo,            &spriteShaders_.PS);
+    device_->CreateShader(solidRectVsInfo2,          &solidShaders_.VS);
+    device_->CreateShader(solidRectPsInfo2,          &solidShaders_.PS);
+    device_->CreateShader(solidRectTransformVsInfo,  &solidRectTransformShaders_.VS);
+    device_->CreateShader(solidRectPsInfo2,          &solidRectTransformShaders_.PS);
+    device_->CreateShader(spriteTransformVsInfo,     &spriteTransformShaders_.VS);
+    device_->CreateShader(spriteTransformVsInfo,     &maskedSpriteShaders_.VS);
+    device_->CreateShader(maskedSpritePsInfo,        &maskedSpriteShaders_.PS);
+    device_->CreateShader(checkerboardPsInfo,        &checkerboardShaders_.PS);
+    device_->CreateShader(gridPsInfo,                &gridShaders_.PS);
+    device_->CreateShader(drawOutlineRectVsInfo,     &outlineShaders_.VS);
+    device_->CreateShader(drawOutlineRectPsInfo,     &outlineShaders_.PS);
+    device_->CreateShader(thickLineVsInfo,           &thickLineShaders_.VS);
+    device_->CreateShader(thickLinePsInfo,           &thickLineShaders_.PS);
+    device_->CreateShader(dotLineVsInfo,             &dotLineShaders_.VS);
+    device_->CreateShader(dotLinePsInfo,             &dotLineShaders_.PS);
+    device_->CreateShader(gizmo3DVsInfo,             &gizmo3DShaders_.VS);
 
     // Post-parallel pointer assignments (no CreateShader needed, just sharing refs)
     solidTriangleShaders_              = solidShaders_;
@@ -855,13 +852,13 @@ void ShaderManager::Impl::createPSOs()
     }
     ArtifactCore::ScopedStartupTimer psoTimer(
         "ShaderManager::createPSOs", ArtifactCore::StartupPhase::PSOCreation,
-        /*threadCount=*/3, /*itemCount=*/15);
+        /*threadCount=*/1, /*itemCount=*/15);
     createPSOCache();
-    tbb::task_group tasks;
-    tasks.run([this]() { createLineFamilyPSOs(); });
-    tasks.run([this]() { createSpriteFamilyPSOs(); });
-    tasks.run([this]() { createUtilityFamilyPSOs(); });
-    tasks.wait();
+    // Serialize PSO family creation to avoid oversubscribing Diligent's own
+    // async shader/pipeline workers during startup.
+    createLineFamilyPSOs();
+    createSpriteFamilyPSOs();
+    createUtilityFamilyPSOs();
 
     SamplerDesc spriteSamplerDesc;
     spriteSamplerDesc.MinFilter = FILTER_TYPE_LINEAR;
