@@ -102,7 +102,12 @@ ArtifactAnchorPointTool::ArtifactAnchorPointTool(QWidget* parent)
 
     // モード切替
     impl_->modeLabel = new QLabel("Mode: Maintain Visual Position", this);
-    impl_->modeLabel->setStyleSheet("color: #888; font-size: 10px;");
+    {
+        QPalette pal = impl_->modeLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+        pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+        impl_->modeLabel->setPalette(pal);
+    }
     root->addWidget(impl_->modeLabel);
 
     // 適用ボタン

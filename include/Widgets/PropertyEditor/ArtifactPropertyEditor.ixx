@@ -247,6 +247,7 @@ public:
 
 private:
     void finishScrub(bool commitChanges);
+    void updateKeyframeButtonIcon();
 
     QLabel* label_ = nullptr;
     QLabel* scrubHandle_ = nullptr;

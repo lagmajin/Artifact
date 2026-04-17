@@ -106,6 +106,7 @@ public:
     ~Impl() = default;
 
     ArtifactLayerMenu* menu_ = nullptr;
+    QWidget* mainWindow_ = nullptr;
     ArtifactCore::LayerID selectedLayerId_;
 
     QMenu* createMenu = nullptr;
@@ -386,11 +387,12 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
 {
     auto service = ArtifactProjectService::instance();
     if (!ensureCurrentComposition()) {
-        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        QWidget* parentWindow = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
+        QMessageBox::warning(parentWindow, "Layer", "コンポジションが選択されていません。");
         return;
     }
     auto* const menu = menu_;
-    QWidget* parentWindow = menu_ ? menu_->window() : nullptr;
+    QWidget* parentWindow = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
     CreateSolidLayerSettingDialog dialog(parentWindow);
     QObject::connect(&dialog, &CreateSolidLayerSettingDialog::submit, menu, [service, menu](const ArtifactSolidLayerInitParams& params) {
         if (!service) {
@@ -675,7 +677,7 @@ void ArtifactLayerMenu::Impl::handleSplitLayer()
 ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)
     : QMenu(parent), impl_(new Impl(this))
 {
-    Q_UNUSED(mainWindow);
+    impl_->mainWindow_ = mainWindow ? mainWindow->window() : nullptr;
     setTitle("レイヤー(&L)");
 }
 

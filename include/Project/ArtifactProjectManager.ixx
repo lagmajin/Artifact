@@ -71,6 +71,9 @@ export namespace Artifact {
                         ProjectSaveFinishedFn onFinished,
                         ProjectProgressFn onProgress = nullptr);
    QString currentProjectPath() const;
+   QString currentProjectRootPath() const;
+  void setCurrentProjectPath(const QString& path);
+  void setCurrentProjectRootPath(const QString& path);
   QString currentProjectAssetsPath() const;
   QStringList copyFilesToProjectAssets(const QStringList& sourcePaths);
   QString relativeAssetPath(const QString& absoluteAssetPath) const;

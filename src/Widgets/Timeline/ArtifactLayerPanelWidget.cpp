@@ -4,6 +4,7 @@ module;
 #include <QCoreApplication>
 #include <QAction>
 #include <QPainter>
+#include <QPalette>
 #include <QWidget>
 #include <QString>
 #include <QVector>
@@ -25,6 +26,7 @@ module;
 #include <QIcon>
 #include <QtSVG/QSvgRenderer>
 #include <QComboBox>
+#include <QAbstractItemView>
 #include <QMessageBox>
 #include <QPointer>
 #include <QLineEdit>
@@ -56,11 +58,111 @@ import Artifact.Layer.InitParams;
 import File.TypeDetector;
 import Event.Bus;
 import Artifact.Event.Types;
+import Widgets.Utils.CSS;
 
 namespace Artifact
 {
  using namespace ArtifactCore;
 namespace {
+  QColor themeColor(const QString& value, const QColor& fallback)
+  {
+    const QColor color(value);
+    return color.isValid() ? color : fallback;
+  }
+
+  QColor mixColor(const QColor& a, const QColor& b, qreal t)
+  {
+    const qreal clamped = std::clamp(t, 0.0, 1.0);
+    return QColor::fromRgbF(a.redF() * (1.0 - clamped) + b.redF() * clamped,
+                            a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
+                            a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
+                            a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
+  }
+
+  void applyLayerPanelButtonPalette(QPushButton* button, bool accent = false)
+  {
+    if (!button) {
+      return;
+    }
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor background = themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2D2D30")));
+    const QColor surface = themeColor(theme.backgroundColor, QColor(QStringLiteral("#24272D")));
+    const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#CCC")));
+    const QColor border = themeColor(theme.borderColor, QColor(QStringLiteral("#1A1A1A")));
+    const QColor selection = themeColor(theme.selectionColor, QColor(QStringLiteral("#3B3BEF")));
+    const QColor buttonFill = accent ? themeColor(theme.accentColor, QColor(QStringLiteral("#3B3BEF"))) : background;
+
+    button->setAutoFillBackground(true);
+    button->setAttribute(Qt::WA_StyledBackground, true);
+    QPalette pal = button->palette();
+    pal.setColor(QPalette::Window, buttonFill);
+    pal.setColor(QPalette::Button, buttonFill);
+    pal.setColor(QPalette::ButtonText, text);
+    pal.setColor(QPalette::WindowText, text);
+    pal.setColor(QPalette::Text, text);
+    pal.setColor(QPalette::Base, surface);
+    pal.setColor(QPalette::Mid, border);
+    pal.setColor(QPalette::Highlight, selection);
+    pal.setColor(QPalette::HighlightedText, surface);
+    button->setPalette(pal);
+  }
+
+  void applyLayerPanelComboPalette(QComboBox* combo)
+  {
+    if (!combo) {
+      return;
+    }
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor background = themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2D2D30")));
+    const QColor surface = themeColor(theme.backgroundColor, QColor(QStringLiteral("#24272D")));
+    const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#DDD")));
+    const QColor border = themeColor(theme.borderColor, QColor(QStringLiteral("#4A4A4F")));
+    const QColor selection = themeColor(theme.selectionColor, QColor(QStringLiteral("#3B3BEF")));
+
+    combo->setAutoFillBackground(true);
+    QPalette pal = combo->palette();
+    pal.setColor(QPalette::Window, background);
+    pal.setColor(QPalette::Button, background);
+    pal.setColor(QPalette::Base, surface);
+    pal.setColor(QPalette::ButtonText, text);
+    pal.setColor(QPalette::WindowText, text);
+    pal.setColor(QPalette::Text, text);
+    pal.setColor(QPalette::Mid, border);
+    pal.setColor(QPalette::Highlight, selection);
+    pal.setColor(QPalette::HighlightedText, surface);
+    combo->setPalette(pal);
+    if (auto* view = combo->view()) {
+      view->setPalette(pal);
+      if (auto* viewport = view->viewport()) {
+        viewport->setPalette(pal);
+      }
+    }
+  }
+
+  void applyLayerPanelLineEditPalette(QLineEdit* editor)
+  {
+    if (!editor) {
+      return;
+    }
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor background = themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2D2D30")));
+    const QColor surface = themeColor(theme.backgroundColor, QColor(QStringLiteral("#24272D")));
+    const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#F0F0F0")));
+    const QColor border = themeColor(theme.accentColor, QColor(QStringLiteral("#4A8BC2")));
+
+    editor->setAutoFillBackground(true);
+    QPalette pal = editor->palette();
+    pal.setColor(QPalette::Window, background);
+    pal.setColor(QPalette::Base, surface);
+    pal.setColor(QPalette::Button, background);
+    pal.setColor(QPalette::Text, text);
+    pal.setColor(QPalette::WindowText, text);
+    pal.setColor(QPalette::ButtonText, text);
+    pal.setColor(QPalette::Highlight, border);
+    pal.setColor(QPalette::HighlightedText, surface);
+    editor->setPalette(pal);
+  }
+
   constexpr int kLayerRowHeight = 28;
   constexpr int kLayerHeaderHeight = 26;
   constexpr int kLayerHeaderButtonSize = 24;
@@ -456,49 +558,48 @@ namespace {
   auto visButton = impl_->visibilityButton = new QPushButton();
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
-  visButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
   visButton->setFlat(true);
   visButton->setEnabled(false);
+  applyLayerPanelButtonPalette(visButton);
 
   auto lockButton = impl_->lockButton = new QPushButton();
   lockButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
-  lockButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
   lockButton->setEnabled(false);
+  applyLayerPanelButtonPalette(lockButton);
 
   auto soloButton = impl_->soloButton = new QPushButton();
   soloButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
-  soloButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
   soloButton->setEnabled(false);
+  applyLayerPanelButtonPalette(soloButton);
 
   auto audioButton = impl_->audioButton = new QPushButton();
   audioButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->audioIcon.isNull()) audioButton->setIcon(impl_->audioIcon);
-  audioButton->setStyleSheet("background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a;");
   audioButton->setEnabled(false);
+  applyLayerPanelButtonPalette(audioButton);
 
   auto shyButton = impl_->shyButton = new QPushButton;
   shyButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   shyButton->setCheckable(true);
   if (!impl_->shyIcon.isNull()) shyButton->setIcon(impl_->shyIcon);
   shyButton->setToolTip("Master Shy Switch");
-  shyButton->setStyleSheet("QPushButton { background-color: #2D2D30; border: none; border-right: 1px solid #1a1a1a; } QPushButton:checked { background-color: #3b3bef; }");
+  applyLayerPanelButtonPalette(shyButton, true);
 
   auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer Name");
-  QString btnStyle = "QPushButton { background-color: #2D2D30; color: #CCC; border: none; border-right: 1px solid #1a1a1a; font-size: 11px; text-align: left; padding-left: 5px; }";
-  layerNameButton->setStyleSheet(btnStyle);
   layerNameButton->setEnabled(false);
+  applyLayerPanelButtonPalette(layerNameButton);
   
   auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
   parentHeader->setFixedWidth(kInlineParentWidth);
-  parentHeader->setStyleSheet(btnStyle);
   parentHeader->setEnabled(false);
+  applyLayerPanelButtonPalette(parentHeader);
   
   auto blendHeader = impl_->blendHeaderButton = new QPushButton("Blend");
   blendHeader->setFixedWidth(kInlineBlendWidth);
-  blendHeader->setStyleSheet(btnStyle);
   blendHeader->setEnabled(false);
+  applyLayerPanelButtonPalette(blendHeader);
 
   auto* layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -520,7 +621,14 @@ namespace {
     Q_EMIT shyToggled(checked);
   });
 
-  setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
+  setAutoFillBackground(true);
+  {
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    QPalette pal = palette();
+    pal.setColor(QPalette::Window, themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2D2D30"))));
+    pal.setColor(QPalette::WindowText, themeColor(theme.textColor, QColor(QStringLiteral("#CCC"))));
+    setPalette(pal);
+  }
   setFixedHeight(kLayerHeaderHeight);
 }
 
@@ -562,11 +670,7 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
 
 class ArtifactLayerPanelWidget::Impl;
 
-enum class RowKind {
- Layer,
- Group,
- Property
-};
+using RowKind = TimelineRowKind;
 
 struct VisibleRow {
  ArtifactAbstractLayerPtr layer;
@@ -612,7 +716,7 @@ public:
   CompositionID compositionId;
   ArtifactTimelineKeyframeModel* keyframeModel = nullptr;
   RationalTime currentTime{};
-  QString currentPropertyPath = "transform.position.x";
+  QString currentPropertyPath;
 
   QPixmap visibilityIcon;
   QPixmap lockIcon;
@@ -978,7 +1082,13 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
             }
           }
           if (impl_->selectedLayerId != layerId) {
+            const bool layerActuallyChanged = impl_->selectedLayerId != layerId;
             impl_->selectedLayerId = layerId;
+            if (layerActuallyChanged) {
+              impl_->currentPropertyPath.clear();
+              this->propertyFocusChanged(impl_->selectedLayerId,
+                                         impl_->currentPropertyPath);
+            }
             update();
           }
         }));
@@ -1006,6 +1116,8 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 {
   impl_->compositionId = id;
   impl_->selectedLayerId = LayerID();
+  impl_->currentPropertyPath.clear();
+  propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
   updateLayout();
 }
 
@@ -1153,13 +1265,30 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
 QVector<LayerID> ArtifactLayerPanelWidget::visibleTimelineRows() const
 {
   QVector<LayerID> rows;
-  rows.reserve(impl_->visibleRows.size());
-  for (const auto& row : impl_->visibleRows) {
-   if (row.kind == RowKind::Layer && row.layer) {
-    rows.append(row.layer->id());
+  const auto descriptors = visibleTimelineRowDescriptors();
+  rows.reserve(descriptors.size());
+  for (const auto& row : descriptors) {
+   if (row.kind == TimelineRowKind::Layer && !row.layerId.isNil()) {
+    rows.append(row.layerId);
    } else {
     rows.append(LayerID::Nil());
    }
+  }
+  return rows;
+}
+
+QVector<TimelineRowDescriptor>
+ArtifactLayerPanelWidget::visibleTimelineRowDescriptors() const
+{
+  QVector<TimelineRowDescriptor> rows;
+  rows.reserve(impl_->visibleRows.size());
+  for (const auto& row : impl_->visibleRows) {
+   TimelineRowDescriptor descriptor;
+   descriptor.layerId = row.layer ? row.layer->id() : LayerID::Nil();
+   descriptor.kind = row.kind;
+   descriptor.label = row.label;
+   descriptor.propertyPath = row.propertyPath;
+   rows.push_back(std::move(descriptor));
   }
   return rows;
 }
@@ -1206,7 +1335,7 @@ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
     impl_->inlineNameEditor = new QLineEdit(this);
     impl_->inlineNameEditor->setText(l->layerName());
     impl_->inlineNameEditor->selectAll();
-    impl_->inlineNameEditor->setStyleSheet("background-color: #2D2D30; color: white; border: 1px solid #007ACC;");
+    applyLayerPanelLineEditPalette(impl_->inlineNameEditor);
 
     // Position it
     const int rowIndent = impl_->visibleRows[idx].depth * 14;
@@ -1244,6 +1373,14 @@ void ArtifactLayerPanelWidget::scrollToLayer(const LayerID& id)
   const int desiredTop = std::max(0, idx * impl_->rowHeight - (height() / 3));
   impl_->setVerticalOffset(static_cast<double>(desiredTop), this);
   update();
+}
+
+LayerID ArtifactLayerPanelWidget::selectedLayerId() const {
+  return impl_ ? impl_->selectedLayerId : LayerID{};
+}
+
+QString ArtifactLayerPanelWidget::currentPropertyPath() const {
+  return impl_ ? impl_->currentPropertyPath : QString{};
 }
 
  void ArtifactLayerPanelWidget::setLayerNameEditable(bool enabled)
@@ -1302,9 +1439,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
        service->selectLayer(layer->id());
       }
       impl_->selectedLayerId = layer->id();
-      if (!row.propertyPath.trimmed().isEmpty()) {
-       impl_->currentPropertyPath = row.propertyPath;
-      }
+      impl_->currentPropertyPath = row.propertyPath.trimmed();
+      propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
       update();
      }
      event->accept();
@@ -1315,9 +1451,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
      service->selectLayer(layer->id());
     }
     impl_->selectedLayerId = layer->id();
-    if (!row.propertyPath.trimmed().isEmpty()) {
-     impl_->currentPropertyPath = row.propertyPath;
-    }
+    impl_->currentPropertyPath = row.propertyPath.trimmed();
+    propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
     update();
    }
    event->accept();
@@ -1325,15 +1460,18 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   }
   auto* service = ArtifactProjectService::instance();
   if (row.kind != RowKind::Layer) {
-   impl_->clearDragState();
-   if (event->button() == Qt::LeftButton) {
-    if (service) {
-     service->selectLayer(layer->id());
+    impl_->clearDragState();
+    if (event->button() == Qt::LeftButton) {
+      if (service) {
+       service->selectLayer(layer->id());
+      }
+      impl_->selectedLayerId = layer->id();
+      impl_->currentPropertyPath.clear();
+      propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+      update();
     }
-    update();
-   }
-   event->accept();
-   return;
+    event->accept();
+    return;
   }
   
   //名前エリアまたはスイッチ列でドラッグを開始可能にするための準備
@@ -1357,6 +1495,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                   (parentRect.contains(event->pos()) || blendRect.contains(event->pos()));
 
   if (event->button() == Qt::LeftButton) {
+    impl_->selectedLayerId = layer->id();
+    impl_->currentPropertyPath.clear();
+    propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
     if (!clickInInlineCombo) {
       impl_->clearInlineEditors();
     }
@@ -1364,9 +1505,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
       combo->setGeometry(parentRect);
-      combo->setStyleSheet(
-        "QComboBox { background:#2d2d30; color:#ddd; border:1px solid #4a4a4f; padding:1px 6px; }"
-        "QComboBox::drop-down { width:18px; border-left:1px solid #4a4a4f; }");
+      applyLayerPanelComboPalette(combo);
       combo->addItem(QStringLiteral("<None>"), QString());
       if (auto comp = safeCompositionLookup(impl_->compositionId)) {
         for (const auto& candidate : comp->allLayer()) {
@@ -1405,9 +1544,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       impl_->clearInlineEditors();
       auto* combo = new QComboBox(this);
       combo->setGeometry(blendRect);
-      combo->setStyleSheet(
-        "QComboBox { background:#2d2d30; color:#ddd; border:1px solid #4a4a4f; padding:1px 6px; }"
-        "QComboBox::drop-down { width:18px; border-left:1px solid #4a4a4f; }");
+      applyLayerPanelComboPalette(combo);
       const auto items = blendModeItems();
       for (const auto& [name, mode] : items) {
         combo->addItem(name, static_cast<int>(mode));
@@ -1529,8 +1666,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
   impl_->clearInlineEditors();
   auto* editor = new QLineEdit(layer->layerName(), this);
   editor->setGeometry(editRect);
-  editor->setStyleSheet(
-   "QLineEdit { background:#2d2d30; color:#f0f0f0; border:1px solid #4a8bc2; padding:0 4px; }");
+  applyLayerPanelLineEditPalette(editor);
   impl_->inlineNameEditor = editor;
   impl_->editingLayerId = layer->id();
   editor->show();
@@ -1844,6 +1980,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   ArtifactCore::ProfileTimer _profTimer("LayerPanelPaint",
                                         ArtifactCore::ProfileCategory::UI);
   QPainter p(this);
+  p.setRenderHint(QPainter::Antialiasing, true);
   p.setRenderHint(QPainter::SmoothPixmapTransform);
   const int rowH = kLayerRowHeight;
   const int colW = kLayerColumnWidth;
@@ -1854,7 +1991,15 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   const int toggleSize = 10;
   
   const QRect dirtyRect = event->rect();
-  p.fillRect(dirtyRect, QColor(42, 42, 42));
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  const QColor background = themeColor(theme.secondaryBackgroundColor, QColor(QStringLiteral("#2A2A2A")));
+  const QColor surface = themeColor(theme.backgroundColor, QColor(QStringLiteral("#25272D")));
+  const QColor text = themeColor(theme.textColor, QColor(QStringLiteral("#DADADA")));
+  const QColor accent = themeColor(theme.accentColor, QColor(QStringLiteral("#E4B76C")));
+  const QColor selection = themeColor(theme.selectionColor, QColor(QStringLiteral("#4A515C")));
+  const QColor border = themeColor(theme.borderColor, QColor(QStringLiteral("#1A1A1A")));
+
+  p.fillRect(dirtyRect, background);
 
   RationalTime currentTime = impl_->currentTime;
   if (auto comp = safeCompositionLookup(impl_->compositionId)) {
@@ -1865,11 +2010,11 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   if (impl_->visibleRows.isEmpty()) {
     auto comp = safeCompositionLookup(impl_->compositionId);
     if (!comp) {
-      p.setPen(QColor(150, 150, 150));
+      p.setPen(text.darker(120));
       p.drawText(rect(), Qt::AlignCenter, "No composition selected");
       return;
     }
-    p.setPen(QColor(150, 150, 150));
+    p.setPen(text.darker(120));
     p.drawText(rect(), Qt::AlignCenter, "No layers");
     return;
   }
@@ -1901,19 +2046,18 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const bool propertyAnimatable = property && property->isAnimatable();
     const bool propertyKeyframed = propertyAnimatable && property->hasKeyFrameAt(currentTime);
 
-    const QColor rowBase = (i % 2 == 0) ? QColor(42, 42, 42) : QColor(45, 45, 45);
-    const QColor rowHover = QColor(60, 60, 60);
-    const QColor rowSelected = QColor(180, 110, 45);
-    const QColor rowSelectedAccent = QColor(154, 92, 34);
+    const QColor rowBase = (i % 2 == 0) ? background : mixColor(background, surface, 0.25);
+    const QColor rowHover = mixColor(background, text, 0.08);
+    const QColor rowSelected = mixColor(background, accent, 0.34);
     if (propertyFocused) {
-      p.fillRect(0, y, width(), rowH, QColor(52, 52, 58));
+      p.fillRect(0, y, width(), rowH, mixColor(background, selection, 0.32));
     } else if (layerSelected) {
       p.fillRect(0, y, width(), rowH, rowSelected); // Modo-like Amber selection
     }
     else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, rowHover); // Subtle grey hover
     else p.fillRect(0, y, width(), rowH, rowBase);
 
-    p.setPen(QColor(60, 60, 60));
+    p.setPen(border.darker(120));
     p.drawLine(0, y + rowH, width(), y + rowH);
 
     if (isGroupRow) {
@@ -1921,19 +2065,21 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       const int textX = row.hasChildren ? (toggleX + toggleSize + 6) : (nameStartX + row.depth * indent + 4);
       if (row.hasChildren) {
         const int toggleY = y + (rowH - toggleSize) / 2;
-        QPolygon tri;
+        QPolygonF tri;
         if (row.expanded) {
-          tri << QPoint(toggleX, toggleY + 2) << QPoint(toggleX + toggleSize, toggleY + 2)
-              << QPoint(toggleX + toggleSize / 2, toggleY + toggleSize - 1);
+          tri << QPointF(toggleX + 0.5, toggleY + 2.0)
+              << QPointF(toggleX + toggleSize - 0.5, toggleY + 2.0)
+              << QPointF(toggleX + toggleSize / 2.0, toggleY + toggleSize - 1.0);
         } else {
-          tri << QPoint(toggleX + 2, toggleY) << QPoint(toggleX + 2, toggleY + toggleSize)
-              << QPoint(toggleX + toggleSize - 1, toggleY + toggleSize / 2);
+          tri << QPointF(toggleX + 2.0, toggleY + 0.5)
+              << QPointF(toggleX + 2.0, toggleY + toggleSize - 0.5)
+              << QPointF(toggleX + toggleSize - 1.0, toggleY + toggleSize / 2.0);
         }
         p.setPen(Qt::NoPen);
-        p.setBrush(QColor(180, 180, 180));
+        p.setBrush(text.darker(25));
         p.drawPolygon(tri);
       }
-      p.setPen(QColor(196, 196, 196));
+      p.setPen(text);
       p.drawText(textX, y, std::max(20, width() - textX - 8), rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
       continue;
     }
@@ -1996,18 +2142,22 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     if ((row.kind == RowKind::Layer || row.kind == RowKind::Group) && row.hasChildren) {
       const int tx = nameX + 2;
       const int ty = y + (rowH - toggleSize) / 2;
-      QPolygon tri;
+      QPolygonF tri;
       if (row.expanded) {
-        tri << QPoint(tx, ty + 2) << QPoint(tx + toggleSize, ty + 2) << QPoint(tx + toggleSize / 2, ty + toggleSize - 1);
+        tri << QPointF(tx + 0.5, ty + 2.0)
+            << QPointF(tx + toggleSize - 0.5, ty + 2.0)
+            << QPointF(tx + toggleSize / 2.0, ty + toggleSize - 1.0);
       } else {
-        tri << QPoint(tx + 2, ty) << QPoint(tx + 2, ty + toggleSize) << QPoint(tx + toggleSize - 1, ty + toggleSize / 2);
+        tri << QPointF(tx + 2.0, ty + 0.5)
+            << QPointF(tx + 2.0, ty + toggleSize - 0.5)
+            << QPointF(tx + toggleSize - 1.0, ty + toggleSize / 2.0);
       }
       p.setPen(Qt::NoPen);
-      p.setBrush(QColor(180, 180, 180));
+      p.setBrush(text.darker(28));
       p.drawPolygon(tri);
     }
 
-    p.setPen(Qt::white);
+    p.setPen(text);
     const int textX = nameX + ((row.hasChildren && (row.kind == RowKind::Layer || row.kind == RowKind::Group)) ? 16 : 4);
     const bool showInlineCombos = row.kind == RowKind::Layer &&
                                   (width() - (nameX + 8)) >= (kInlineComboReserve + kLayerNameMinWidth);
@@ -2016,16 +2166,16 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const QRect blendRect(parentRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
 
     auto drawInlineCombo = [&](const QRect& r, const QString& label) {
-     p.setPen(layerSelected ? QColor(120, 82, 36) : QColor(80, 80, 86));
-     p.setBrush(layerSelected ? QColor(94, 62, 28) : QColor(38, 38, 42));
+     p.setPen(layerSelected ? accent.darker(180) : border);
+     p.setBrush(layerSelected ? mixColor(background, accent, 0.22) : mixColor(background, surface, 0.28));
      p.drawRoundedRect(r, 3, 3);
-     p.setPen(layerSelected ? QColor(250, 226, 190) : QColor(210, 210, 210));
+     p.setPen(layerSelected ? mixColor(text, accent, 0.42) : text);
      p.drawText(r.adjusted(6, 0, -16, 0), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(label, Qt::ElideRight, r.width() - 20));
      QPolygon arrow;
      const int ax = r.right() - 10;
      const int ay = r.center().y();
      arrow << QPoint(ax - 4, ay - 2) << QPoint(ax + 4, ay - 2) << QPoint(ax, ay + 3);
-     p.setBrush(layerSelected ? QColor(245, 214, 160) : QColor(170, 170, 170));
+     p.setBrush(layerSelected ? accent.lighter(120) : text.darker(25));
      p.setPen(Qt::NoPen);
      p.drawPolygon(arrow);
     };
@@ -2046,33 +2196,32 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      drawInlineCombo(parentRect, QStringLiteral("Parent: %1").arg(parentName));
      drawInlineCombo(blendRect, QStringLiteral("Blend: %1").arg(blendModeToText(l->layerBlendType())));
     }
-    p.setPen(Qt::white);
     if (isPropertyRow) {
      const QRect keyframeRect = propertyKeyframeMarkerRect(width(), y, rowH);
      const int textWidth = std::max(20, keyframeRect.left() - textX - 10);
-     p.setPen(propertyFocused ? QColor(250, 226, 190)
-                              : (layerSelected ? QColor(220, 220, 230) : QColor(210, 210, 210)));
+     p.setPen(propertyFocused ? accent.lighter(130)
+                              : (layerSelected ? text.lighter(112) : text));
      p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
      if (propertyAnimatable) {
-      const QRect marker = keyframeRect.adjusted(1, 1, -1, -1);
-      QPolygon diamond;
-      diamond << QPoint(marker.center().x(), marker.top())
-              << QPoint(marker.right(), marker.center().y())
-              << QPoint(marker.center().x(), marker.bottom())
-              << QPoint(marker.left(), marker.center().y());
-      p.setPen(QPen(propertyKeyframed ? QColor(255, 214, 96) : QColor(110, 110, 116), 1.4));
-      p.setBrush(propertyKeyframed ? QColor(255, 214, 96) : Qt::NoBrush);
+      const QRectF marker = QRectF(keyframeRect).adjusted(2.0, 2.0, -2.0, -2.0);
+      QPolygonF diamond;
+      diamond << QPointF(marker.center().x(), marker.top())
+              << QPointF(marker.right(), marker.center().y())
+              << QPointF(marker.center().x(), marker.bottom())
+              << QPointF(marker.left(), marker.center().y());
+      p.setPen(QPen(propertyKeyframed ? accent.lighter(105) : text.darker(145), 1.4));
+      p.setBrush(propertyKeyframed ? accent.lighter(105) : Qt::NoBrush);
       p.drawPolygon(diamond);
      }
     } else {
      const int textWidth = std::max(20, width() - textX - 8);
+     p.setPen(text);
      p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
     }
    }
 
     if (!impl_->draggedLayerId.isNil() && impl_->dragInsertVisibleRow >= 0) {
      const int lineY = std::clamp(static_cast<int>(std::floor(impl_->dragInsertVisibleRow * rowH - impl_->verticalOffset)), 1, std::max(1, height() - 2));
-    const QColor accent(0, 153, 255);
     QPen pen(accent, 2);
     p.setPen(pen);
     p.drawLine(0, lineY, width(), lineY);
@@ -2345,8 +2494,13 @@ public:
                    });
   QObject::connect(impl_->panel, &ArtifactLayerPanelWidget::verticalOffsetChanged,
                    this, [this](double offset) {
-                     this->verticalOffsetChanged(offset);
-                   });
+                      this->verticalOffsetChanged(offset);
+                    });
+  QObject::connect(
+      impl_->panel, &ArtifactLayerPanelWidget::propertyFocusChanged, this,
+      [this](const LayerID& layerId, const QString& propertyPath) {
+        this->propertyFocusChanged(layerId, propertyPath);
+      });
 }
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent)
@@ -2453,6 +2607,15 @@ public:
   return impl_->panel->visibleTimelineRows();
  }
 
+ QVector<TimelineRowDescriptor>
+ ArtifactLayerTimelinePanelWrapper::visibleTimelineRowDescriptors() const
+ {
+  if (!impl_ || !impl_->panel) {
+   return {};
+  }
+  return impl_->panel->visibleTimelineRowDescriptors();
+ }
+
  QVector<LayerID> ArtifactLayerTimelinePanelWrapper::matchingTimelineRows() const
  {
   if (!impl_ || !impl_->panel) {
@@ -2461,11 +2624,21 @@ public:
   return impl_->panel->matchingTimelineRows();
  }
 
- void ArtifactLayerTimelinePanelWrapper::scrollToLayer(const LayerID& id)
- {
-  if (impl_ && impl_->panel) {
-   impl_->panel->scrollToLayer(id);
+  void ArtifactLayerTimelinePanelWrapper::scrollToLayer(const LayerID& id)
+  {
+   if (impl_ && impl_->panel) {
+    impl_->panel->scrollToLayer(id);
+   }
   }
- }
+
+  LayerID ArtifactLayerTimelinePanelWrapper::selectedLayerId() const
+  {
+   return impl_ && impl_->panel ? impl_->panel->selectedLayerId() : LayerID{};
+  }
+
+  QString ArtifactLayerTimelinePanelWrapper::currentPropertyPath() const
+  {
+   return impl_ && impl_->panel ? impl_->panel->currentPropertyPath() : QString{};
+  }
 
 } // namespace Artifact

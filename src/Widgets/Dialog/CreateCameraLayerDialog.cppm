@@ -24,6 +24,7 @@ module;
 #include <QFont>
 #include <QTimer>
 #include <QSet>
+#include <QPalette>
 #include <wobjectimpl.h>
 #include <cmath>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
@@ -50,7 +51,10 @@ public:
     {
         setMinimumSize(300, 120);
         setMaximumHeight(150);
-        setStyleSheet("background-color: #1a2a3a; border: 1px solid #333;");
+        setAutoFillBackground(true);
+        QPalette pal = palette();
+        pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+        setPalette(pal);
     }
 
     void setFocalLength(float mm) { focalLength_ = mm; update(); }

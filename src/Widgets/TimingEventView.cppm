@@ -4,6 +4,7 @@ module;
 #include <QLinearGradient>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPaintEvent>
 #include <QPen>
 #include <QPolygonF>
@@ -462,15 +463,24 @@ void TimingEventView::paintEvent(QPaintEvent* event)
     const double playheadX = kLeftGutter + (clampedCurrentFrame - visibleStart) * ppf;
     if (playheadX >= kLeftGutter - 2.0 && playheadX <= width() - kRightGutter + 2.0) {
         const QColor playheadColor(255, 106, 71);
-        painter.setPen(QPen(playheadColor, 2));
-        painter.drawLine(QPointF(playheadX, 0.0), QPointF(playheadX, height()));
+        const qreal headTop = 2.0;
+        const qreal headHeight = 10.0;
+        const qreal headWidth = 14.0;
+        const qreal stemTop = headTop + headHeight + 1.0;
+
+        QPainterPath marker;
+        marker.moveTo(playheadX, headTop + headHeight);
+        marker.lineTo(playheadX - headWidth * 0.5, headTop);
+        marker.lineTo(playheadX + headWidth * 0.5, headTop);
+        marker.closeSubpath();
+
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor(18, 18, 18, 140), 1));
         painter.setBrush(playheadColor);
-        painter.setPen(Qt::NoPen);
-        QPolygonF marker;
-        marker << QPointF(playheadX - 6.0, 0.0)
-               << QPointF(playheadX + 6.0, 0.0)
-               << QPointF(playheadX, 10.0);
-        painter.drawPolygon(marker);
+        painter.drawPath(marker);
+
+        painter.setPen(QPen(playheadColor, 2));
+        painter.drawLine(QPointF(playheadX, stemTop), QPointF(playheadX, height()));
     }
 }
 

@@ -60,6 +60,7 @@ public:
   // Tool options bar
   void setToolOptionsBar(ArtifactToolOptionsBar *bar);
   void setCurrentTool(const QString &toolName);
+  void refreshFromApplicationState();
 
 public:
   void homeRequested() W_SIGNAL(homeRequested);

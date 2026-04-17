@@ -10,6 +10,8 @@
 #include <QRectF>
 #include <QtConcurrent>
 #include <QtSvg/QSvgRenderer>
+#include <QFileSystemWatcher>
+#include <QTimer>
 #include <glm/ext/matrix_projection.hpp>
 #include <wobjectimpl.h>
 
@@ -19,6 +21,7 @@ import std;
 
 import Utils.String.UniString;
 import Artifact.Project.Manager;
+import Artifact.Project.RevisionService;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Result;
 import Artifact.Composition.Abstract;
@@ -117,7 +120,59 @@ public:
   void checkImportedAssetCompatibility(const QStringList &importedPaths);
   bool forwardingSelectionChange_ = false;
   LayerID lastForwardedLayerId_;
+
+  QFileSystemWatcher* fileWatcher_ = nullptr;
+  QTimer* statusCheckTimer_ = nullptr;
+  void setupFileWatcher(ArtifactProjectService* owner);
+  void updateAllAssetStatuses();
+  void handleFileChanged(const QString& path);
 };
+
+void ArtifactProjectService::Impl::setupFileWatcher(ArtifactProjectService* owner) {
+  fileWatcher_ = new QFileSystemWatcher(owner);
+  statusCheckTimer_ = new QTimer(owner);
+  statusCheckTimer_->setInterval(2000); // 2秒ごとに存在確認（Watcherが効かない削除等のため）
+
+  QObject::connect(fileWatcher_, &QFileSystemWatcher::fileChanged, owner, [this](const QString& path) {
+    handleFileChanged(path);
+  });
+
+  QObject::connect(statusCheckTimer_, &QTimer::timeout, owner, [this]() {
+    updateAllAssetStatuses();
+  });
+
+  statusCheckTimer_->start();
+}
+
+void ArtifactProjectService::Impl::updateAllAssetStatuses() {
+  auto project = projectManager().getCurrentProjectSharedPtr();
+  if (!project) return;
+
+  const auto items = project->projectItems();
+  std::function<void(ProjectItem*)> checkRecursive = [&](ProjectItem* item) {
+    if (!item) return;
+    if (item->type() == eProjectItemType::Footage) {
+      auto* footage = static_cast<FootageItem*>(item);
+      QFileInfo info(footage->filePath);
+      
+      // 仮の解決策として、ここではステータスを直接判定して更新する
+      // 本来的には Asset オブジェクト側で保持すべきだが、まずはUIに反映させる
+      if (!info.exists()) {
+        // Missing
+        qDebug() << "[AssetMonitor] Missing:" << footage->filePath;
+      }
+    }
+    for (auto* child : item->children) checkRecursive(child);
+  };
+
+  for (auto* root : items) checkRecursive(root);
+}
+
+void ArtifactProjectService::Impl::handleFileChanged(const QString& path) {
+  qDebug() << "[AssetMonitor] File modified:" << path;
+  // ここでキャッシュの破棄やプレビューの更新イベントを飛ばす
+  ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+}
 
 ArtifactProjectService::Impl::Impl() {}
 
@@ -535,6 +590,7 @@ ArtifactProjectService::ArtifactProjectService(QObject *parent)
             impl_->currentCompositionId_ = {};
             ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
                 ProjectChangedEvent{QString(), QString()});
+            ArtifactRevisionService::instance()->noteProjectChanged();
             const QString pname =
                 hasProject() ? impl_->projectName().toQString() : QString();
             ArtifactCore::globalEventBus().publish<ProjectCreatedEvent>(
@@ -563,6 +619,7 @@ ArtifactProjectService::ArtifactProjectService(QObject *parent)
                 hasProject() ? impl_->projectName().toQString() : QString();
             ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
                 ProjectChangedEvent{QString(), pname});
+            ArtifactRevisionService::instance()->noteProjectChanged();
             projectChanged();
           });
   impl_->installSelectionBridge(this);

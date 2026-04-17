@@ -36,6 +36,7 @@ module Artifact.Widgets.SoftwareRenderInspectors;
 
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Service.Project;
+import Artifact.Application.Manager;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -922,6 +923,15 @@ ArtifactAbstractLayerPtr ArtifactSoftwareLayerTestWidget::Impl::selectedLayer() 
     }
     const QString idString = layerCombo_->currentData().toString();
     if (idString.trimmed().isEmpty()) {
+        if (const auto* app = ArtifactApplicationManager::instance()) {
+            if (const auto* selection = app->layerSelectionManager()) {
+                if (const auto current = selection->currentLayer()) {
+                    return composition->containsLayerById(current->id())
+                               ? current
+                               : ArtifactAbstractLayerPtr{};
+                }
+            }
+        }
         return {};
     }
     return composition->layerById(ArtifactCore::LayerID(idString));
@@ -982,6 +992,14 @@ void ArtifactSoftwareLayerTestWidget::Impl::reloadLayers()
     }
     const QString previous = layerCombo_->currentData().toString();
     const ArtifactCompositionPtr composition = selectedComposition();
+    QString preferredSelection = previous;
+    if (const auto* app = ArtifactApplicationManager::instance()) {
+        if (const auto* selection = app->layerSelectionManager()) {
+            if (const auto current = selection->currentLayer()) {
+                preferredSelection = current->id().toString();
+            }
+        }
+    }
     QSignalBlocker blocker(layerCombo_);
     layerCombo_->clear();
     if (!composition) {
@@ -999,8 +1017,14 @@ void ArtifactSoftwareLayerTestWidget::Impl::reloadLayers()
         layerCombo_->addItem(QStringLiteral("(No layer)"), QString());
         return;
     }
-    const int index = layerCombo_->findData(previous);
-    layerCombo_->setCurrentIndex(index >= 0 ? index : 0);
+    int index = layerCombo_->findData(preferredSelection);
+    if (index < 0) {
+        index = layerCombo_->findData(previous);
+    }
+    if (index < 0) {
+        index = 0;
+    }
+    layerCombo_->setCurrentIndex(index);
 }
 
 void ArtifactSoftwareLayerTestWidget::Impl::refreshPreview()
@@ -1275,8 +1299,6 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<ProjectChangedEvent>(
             [this](const ProjectChangedEvent&) {
-                impl_->reloadCompositions();
-                impl_->reloadLayers();
                 impl_->refreshPreview();
             }));
     impl_->eventBusSubscriptions_.push_back(
@@ -1291,7 +1313,6 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<LayerChangedEvent>(
             [this](const LayerChangedEvent&) {
-                impl_->reloadLayers();
                 impl_->refreshPreview();
             }));
     impl_->eventBusSubscriptions_.push_back(

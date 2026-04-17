@@ -2,6 +2,9 @@ module;
 #include <wobjectimpl.h>
 module Artifact.Tool.Manager;
 
+import Artifact.Event.Types;
+import Event.Bus;
+
 namespace Artifact {
 
  class ArtifactToolManager::Impl {
@@ -24,6 +27,7 @@ namespace Artifact {
   if (impl_->activeTool_ == type) return;
   impl_->activeTool_ = type;
   toolChanged(type);
+  ArtifactCore::globalEventBus().publish<ToolChangedEvent>(ToolChangedEvent{type});
  }
 
  ToolType ArtifactToolManager::activeTool() const {

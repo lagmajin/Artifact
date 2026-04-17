@@ -8,6 +8,7 @@ module;
 module Artifact.Layer.Audio;
 
 import std;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 import Property.Abstract;
 import Property.Group;
@@ -148,6 +149,17 @@ void ArtifactAudioLayer::fromJsonProperties(const QJsonObject& obj)
 std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGroups() const
 {
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+  std::vector<ArtifactCore::PropertyGroup> filteredGroups;
+  filteredGroups.reserve(groups.size() + 1);
+  for (const auto& group : groups) {
+    const QString groupName = group.name();
+    if (groupName == QStringLiteral("Transform") ||
+        groupName == QStringLiteral("Physics")) {
+      continue;
+    }
+    filteredGroups.push_back(group);
+  }
+
   ArtifactCore::PropertyGroup audioGroup(QStringLiteral("Audio"));
 
   auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
@@ -166,8 +178,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
   audioGroup.addProperty(makeProp(QStringLiteral("audio.sampleRate"), ArtifactCore::PropertyType::Integer, impl_->sourceSampleRate_, -100));
   audioGroup.addProperty(makeProp(QStringLiteral("audio.channels"), ArtifactCore::PropertyType::Integer, impl_->sourceChannelCount_, -90));
 
-  groups.push_back(audioGroup);
-  return groups;
+  filteredGroups.push_back(audioGroup);
+  return filteredGroups;
 }
 
 bool ArtifactAudioLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
@@ -238,6 +250,7 @@ size_t ArtifactAudioLayer::getCacheMemoryUsage() const
 // フレーム単位のPCMをデコードしてキャッシュに追加
 bool ArtifactAudioLayer::decodeFrameToCache(qint64 frameNumber)
 {
+  ArtifactCore::ScopedPerformanceTimer timer("Audio/Layer/decodeFrameToCache");
   if (frameNumber < 0 || frameNumber >= impl_->totalFrames_) {
     return false;
   }
@@ -279,6 +292,7 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
                                   int frameCount,
                                   int sampleRate)
 {
+  ArtifactCore::ScopedPerformanceTimer timer("Audio/Layer/getAudio");
   if (!hasAudio() || impl_->muted_ || frameCount <= 0 || sampleRate <= 0 ||
       impl_->sourceSampleRate_ <= 0 || impl_->sourceChannelCount_ <= 0) {
     return false;

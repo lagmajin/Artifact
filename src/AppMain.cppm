@@ -1421,12 +1421,101 @@ int main(int argc, char *argv[]) {
     }
 
     if (projectService) {
-      if (auto *selectionManager = ArtifactApplicationManager::instance()
-                                       ? ArtifactApplicationManager::instance()
-                                             ->layerSelectionManager()
-                                       : nullptr) {
-        const auto syncSelectedLayerUi = [layerViewEditor, propertyPanel,
-                                          projectService, selectionManager](
+      auto *selectionManager = ArtifactApplicationManager::instance()
+                                   ? ArtifactApplicationManager::instance()
+                                         ->layerSelectionManager()
+                                   : nullptr;
+      {
+        const auto resolveLayerForUi =
+            [projectService, selectionManager](
+                const LayerID &layerId) -> ArtifactAbstractLayerPtr {
+          auto current = selectionManager ? selectionManager->currentLayer()
+                                          : ArtifactAbstractLayerPtr{};
+          if (current && (layerId.isNil() || current->id() == layerId)) {
+            return current;
+          }
+          if (projectService) {
+            if (const auto comp = projectService->currentComposition().lock()) {
+              if (!layerId.isNil()) {
+                if (auto target = comp->layerById(layerId)) {
+                  return target;
+                }
+              }
+            }
+          }
+          return layerId.isNil() ? current : ArtifactAbstractLayerPtr{};
+        };
+
+        auto retainedPropertyLayerId =
+            std::make_shared<LayerID>(LayerID::Nil());
+        const auto syncPropertyPanelLayer =
+            [mw, propertyPanel, resolveLayerForUi,
+             retainedPropertyLayerId](const LayerID &layerId) {
+              if (!propertyPanel) {
+                return;
+              }
+              const auto applyResolvedLayer =
+                  [propertyPanel,
+                   retainedPropertyLayerId](const ArtifactAbstractLayerPtr &layer) {
+                    propertyPanel->setFocusedEffectId(QString());
+                    if (layer) {
+                      *retainedPropertyLayerId = layer->id();
+                      propertyPanel->setLayer(layer);
+                    } else {
+                      *retainedPropertyLayerId = LayerID::Nil();
+                      propertyPanel->clear();
+                    }
+                  };
+              const auto tryApplyResolvedLayer =
+                  [resolveLayerForUi, applyResolvedLayer](
+                      const LayerID &candidateId) -> bool {
+                    if (const auto resolved = resolveLayerForUi(candidateId)) {
+                      applyResolvedLayer(resolved);
+                      return true;
+                    }
+                    return false;
+                  };
+
+              if (tryApplyResolvedLayer(layerId)) {
+                return;
+              }
+              if (layerId.isNil() && !retainedPropertyLayerId->isNil() &&
+                  tryApplyResolvedLayer(*retainedPropertyLayerId)) {
+                return;
+              }
+
+              QPointer<ArtifactPropertyWidget> safePropertyPanel(propertyPanel);
+              QTimer::singleShot(0, mw,
+                                 [safePropertyPanel, resolveLayerForUi, layerId,
+                                  retainedPropertyLayerId]() {
+                                    if (!safePropertyPanel) {
+                                      return;
+                                    }
+                                    safePropertyPanel->setFocusedEffectId(QString());
+                                    if (const auto resolved =
+                                            resolveLayerForUi(layerId)) {
+                                      safePropertyPanel->setLayer(resolved);
+                                      *retainedPropertyLayerId = resolved->id();
+                                    } else if (
+                                        layerId.isNil() &&
+                                        !retainedPropertyLayerId->isNil()) {
+                                      if (const auto resolved = resolveLayerForUi(
+                                              *retainedPropertyLayerId)) {
+                                        safePropertyPanel->setLayer(resolved);
+                                        *retainedPropertyLayerId =
+                                            resolved->id();
+                                        return;
+                                      }
+                                      *retainedPropertyLayerId = LayerID::Nil();
+                                      safePropertyPanel->clear();
+                                    } else {
+                                      *retainedPropertyLayerId = LayerID::Nil();
+                                      safePropertyPanel->clear();
+                                    }
+                                  });
+            };
+
+        const auto syncSelectedLayerUi = [layerViewEditor, syncPropertyPanelLayer](
                                              const LayerID &layerId) {
           if (layerViewEditor) {
             if (layerId.isNil()) {
@@ -1435,40 +1524,21 @@ int main(int argc, char *argv[]) {
               layerViewEditor->setTargetLayer(layerId);
             }
           }
-          if (propertyPanel) {
-            propertyPanel->setFocusedEffectId(QString());
-            if (layerId.isNil()) {
-              propertyPanel->clear();
-            } else if (projectService) {
-              auto current = selectionManager ? selectionManager->currentLayer()
-                                              : ArtifactAbstractLayerPtr{};
-              if (!current || current->id() != layerId) {
-                const auto comp = projectService->currentComposition().lock();
-                current = comp ? comp->layerById(layerId)
-                               : ArtifactAbstractLayerPtr{};
-              }
-              if (current) {
-                propertyPanel->setLayer(current);
-              } else {
-                propertyPanel->clear();
-              }
-            } else {
-              propertyPanel->clear();
-            }
-          }
+          syncPropertyPanelLayer(layerId);
         };
-        QObject::connect(
-            selectionManager, &ArtifactLayerSelectionManager::selectionChanged,
-            mw, [selectionManager, syncSelectedLayerUi]() {
-              if (!selectionManager) {
-                return;
-              }
-              const ArtifactAbstractLayerPtr current =
-                  selectionManager->currentLayer();
-              syncSelectedLayerUi(current ? current->id() : LayerID::Nil());
-            });
-      }
-      appEventSubscriptions.push_back(
+        if (selectionManager) {
+          QObject::connect(
+              selectionManager, &ArtifactLayerSelectionManager::selectionChanged,
+              mw, [selectionManager, syncSelectedLayerUi]() {
+                if (!selectionManager) {
+                  return;
+                }
+                const ArtifactAbstractLayerPtr current =
+                    selectionManager->currentLayer();
+                syncSelectedLayerUi(current ? current->id() : LayerID::Nil());
+              });
+        }
+        appEventSubscriptions.push_back(
           appEventBus.subscribe<ProjectChangedEvent>(
               [status, autoSaveManager](const ProjectChangedEvent &) {
                 if (status) {
@@ -1480,7 +1550,7 @@ int main(int argc, char *argv[]) {
                   autoSaveManager->markDirty();
                 }
               }));
-      appEventSubscriptions.push_back(appEventBus.subscribe<LayerChangedEvent>(
+        appEventSubscriptions.push_back(appEventBus.subscribe<LayerChangedEvent>(
           [status, autoSaveManager](const LayerChangedEvent &event) {
             if (event.changeType == LayerChangedEvent::ChangeType::Created) {
               if (status) {
@@ -1502,21 +1572,11 @@ int main(int argc, char *argv[]) {
               autoSaveManager->markDirty();
             }
           }));
-      appEventSubscriptions.push_back(
+        appEventSubscriptions.push_back(
           appEventBus.subscribe<LayerSelectionChangedEvent>(
-              [layerViewEditor, propertyPanel, status,
-               projectService](const LayerSelectionChangedEvent &event) {
+              [layerViewEditor, status, projectService,
+               syncPropertyPanelLayer](const LayerSelectionChangedEvent &event) {
                 const LayerID layerId(event.layerId);
-                // Guard: if this is a nil event but the selection manager still
-                // has a valid current layer, skip the clear. Prevents spurious
-                // property-edit notifications from blanking the Inspector.
-                if (layerId.isNil()) {
-                  auto *app = ArtifactApplicationManager::instance();
-                  auto *sel = app ? app->layerSelectionManager() : nullptr;
-                  if (sel && sel->currentLayer()) {
-                    return;
-                  }
-                }
                 if (layerViewEditor) {
                   if (layerId.isNil()) {
                     layerViewEditor->view()->clearTargetLayer();
@@ -1524,55 +1584,44 @@ int main(int argc, char *argv[]) {
                     layerViewEditor->setTargetLayer(layerId);
                   }
                 }
-                if (propertyPanel) {
-                  propertyPanel->setFocusedEffectId(QString());
-                  if (layerId.isNil()) {
-                    propertyPanel->clear();
-                  } else {
-                    ArtifactAbstractLayerPtr current;
-                    if (auto *selectionManager =
-                            ArtifactApplicationManager::instance()
-                                ? ArtifactApplicationManager::instance()
-                                      ->layerSelectionManager()
-                                : nullptr) {
-                      current = selectionManager->currentLayer();
+                syncPropertyPanelLayer(layerId);
+                if (status) {
+                  const auto resolveLayerStatusText =
+                      [projectService](const LayerID &candidateId) -> QString {
+                    if (candidateId.isNil()) {
+                      return QStringLiteral("None");
                     }
-                    if (!current || current->id() != layerId) {
-                      if (auto comp =
-                              projectService
-                                  ? projectService->currentComposition().lock()
-                                  : ArtifactCompositionPtr{}) {
-                        current = comp ? comp->layerById(layerId)
-                                       : ArtifactAbstractLayerPtr{};
+                    if (auto *app = ArtifactApplicationManager::instance()) {
+                      if (auto *selectionManager = app->layerSelectionManager()) {
+                        if (auto current = selectionManager->currentLayer()) {
+                          if (current->id() == candidateId) {
+                            const QString name = current->layerName().trimmed();
+                            return name.isEmpty() ? QStringLiteral("Unnamed Layer")
+                                                  : name;
+                          }
+                        }
                       }
                     }
-                    if (current) {
-                      propertyPanel->setLayer(current);
-                    } else {
-                      propertyPanel->clear();
+                    if (auto comp =
+                            projectService
+                                ? projectService->currentComposition().lock()
+                                : ArtifactCompositionPtr{}) {
+                      if (auto layer = comp->layerById(candidateId)) {
+                        const QString name = layer->layerName().trimmed();
+                        return name.isEmpty() ? QStringLiteral("Unnamed Layer")
+                                              : name;
+                      }
                     }
-                  }
-                }
-                if (status) {
+                    return QStringLiteral("None");
+                  };
                   if (layerId.isNil()) {
                     status->setLayerText("None");
-                  } else if (auto comp =
-                                 projectService
-                                     ? projectService->currentComposition()
-                                           .lock()
-                                     : ArtifactCompositionPtr{}) {
-                    if (auto layer = comp->layerById(layerId)) {
-                      const QString name = layer->layerName().trimmed();
-                      status->setLayerText(name.isEmpty() ? layerId.toString()
-                                                          : name);
-                    } else {
-                      status->setLayerText(layerId.toString());
-                    }
                   } else {
-                    status->setLayerText(layerId.toString());
+                    status->setLayerText(resolveLayerStatusText(layerId));
                   }
                 }
-              }));
+                  }));
+      }
       appEventSubscriptions.push_back(
           appEventBus.subscribe<CurrentCompositionChangedEvent>(
               [compositionEditor, projectService, propertyPanel,
@@ -1607,10 +1656,19 @@ int main(int argc, char *argv[]) {
                                      ? projectService->currentComposition()
                                            .lock()
                                      : ArtifactCompositionPtr{}) {
-                    status->setLayerText(
-                        comp->allLayer().isEmpty()
-                            ? "None"
-                            : QStringLiteral("(composition active)"));
+                    ArtifactAbstractLayerPtr currentLayer;
+                    if (auto *app = ArtifactApplicationManager::instance()) {
+                      if (auto *selectionManager = app->layerSelectionManager()) {
+                        currentLayer = selectionManager->currentLayer();
+                      }
+                    }
+                    if (currentLayer && !currentLayer->layerName().trimmed().isEmpty()) {
+                      status->setLayerText(currentLayer->layerName().trimmed());
+                    } else if (currentLayer) {
+                      status->setLayerText(QStringLiteral("Unnamed Layer"));
+                    } else {
+                      status->setLayerText("None");
+                    }
                     const auto &settings = comp->settings();
                     status->setCompositionInfo(
                         settings.compositionName().toQString(),

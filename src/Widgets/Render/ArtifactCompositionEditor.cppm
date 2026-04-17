@@ -86,6 +86,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Widgets.ProfilerOverlay;
 import Artifact.Widgets.ProfilerPanel;
+import Artifact.Widgets.EventBusDebugger;
 import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
@@ -2006,6 +2007,7 @@ public:
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   ProfilerOverlayWidget *profilerOverlay_ = nullptr;
   ProfilerPanelWidget *profilerPanel_ = nullptr;
+  EventBusDebuggerWidget *eventBusDebugger_ = nullptr;
 
   // 外部 signal から即時に widget を書き換えず、イベントループの次 tick
   // にまとめて反映する。
@@ -2803,6 +2805,25 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           impl_->profilerPanel_->raise();
         }
       });
+
+  // --- EventBus Debugger (Ctrl+Shift+E to toggle) ---
+  impl_->eventBusDebugger_ = new EventBusDebuggerWidget(nullptr);
+  impl_->eventBusDebugger_->hide();
+
+  auto *eventBusDebuggerShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E), this);
+  QObject::connect(
+      eventBusDebuggerShortcut, &QShortcut::activated, this, [this]() {
+        if (!impl_ || !impl_->eventBusDebugger_)
+          return;
+        const bool willShow = !impl_->eventBusDebugger_->isVisible();
+        impl_->eventBusDebugger_->setVisible(willShow);
+        if (willShow) {
+          const QRect geom = frameGeometry();
+          impl_->eventBusDebugger_->move(geom.right() + 8, geom.top() + 60);
+          impl_->eventBusDebugger_->raise();
+        }
+      });
 }
 
 void ArtifactCompositionEditor::resizeEvent(QResizeEvent *event) {
@@ -2840,13 +2861,21 @@ QSize ArtifactCompositionEditor::sizeHint() const { return QSize(1024, 720); }
 
 void ArtifactCompositionEditor::setComposition(
     ArtifactCompositionPtr composition) {
+  const auto previousComposition =
+      impl_->renderController_ ? impl_->renderController_->composition()
+                               : ArtifactCompositionPtr{};
+  const bool sameCompositionPointer = previousComposition == composition;
+  const bool sameCompositionId =
+      previousComposition && composition &&
+      previousComposition->id() == composition->id();
+
   if (impl_->renderController_) {
     impl_->renderController_->setComposition(composition);
   }
   if (auto *playback = ArtifactPlaybackService::instance()) {
     playback->setCurrentComposition(composition);
   }
-  if (impl_->compositionView_) {
+  if (impl_->compositionView_ && !sameCompositionPointer && !sameCompositionId) {
     impl_->compositionView_->requestInitialFit();
   }
   if (impl_) {

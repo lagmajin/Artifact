@@ -15,6 +15,7 @@ module;
 #include <QFrame>
 #include <QFontMetrics>
 #include <QComboBox>
+#include <QAbstractItemView>
 #include <QDoubleSpinBox>
 #include <QSignalBlocker>
 #include <QCheckBox>
@@ -122,18 +123,15 @@ public:
         const QFontMetrics currentMetrics(currentFont);
         const QFontMetrics labelMetrics(labelFont);
         const QFontMetrics valueMetrics(valueFont);
-        const QStringList currentLines = currentText_.isEmpty()
-            ? QStringList{QStringLiteral("F0"), QStringLiteral("00:00:00:00 / 00:00:00:00")}
-            : currentText_.split(u'\n');
+        const QString currentLine = currentText_.isEmpty()
+            ? QStringLiteral("00:00:00:00 / 00:00:00:00")
+            : currentText_;
         const QString inLabel = QStringLiteral("In");
         const QString outLabel = QStringLiteral("Out");
         const QString inValue = inText_.isEmpty() ? QStringLiteral("--:--:--:--") : inText_;
         const QString outValue = outText_.isEmpty() ? QStringLiteral("--:--:--:--") : outText_;
 
-        int width = 0;
-        for (const auto& line : currentLines) {
-            width = std::max(width, currentMetrics.horizontalAdvance(line));
-        }
+        int width = currentMetrics.horizontalAdvance(currentLine);
         const int leftColumnWidth = std::max(labelMetrics.horizontalAdvance(inLabel),
                                              valueMetrics.horizontalAdvance(inValue));
         const int rightColumnWidth = std::max(labelMetrics.horizontalAdvance(outLabel),
@@ -141,7 +139,7 @@ public:
         const int lowerWidth = leftColumnWidth + rightColumnWidth + 22;
         width = std::max(width, lowerWidth);
 
-        const int height = currentMetrics.lineSpacing() * currentLines.size() +
+        const int height = currentMetrics.lineSpacing() +
                            labelMetrics.lineSpacing() + valueMetrics.lineSpacing() + 14;
         return QSize(width + 18, height + 12);
     }
@@ -174,11 +172,11 @@ protected:
         valueFont.setPointSize(11);
         valueFont.setWeight(QFont::DemiBold);
 
-        const QColor goldText(QStringLiteral("#D4AF37"));
-        const QColor mutedGoldText(QStringLiteral("#B8942D"));
-        const QStringList currentLines = currentText_.isEmpty()
-            ? QStringList{QStringLiteral("F0"), QStringLiteral("00:00:00:00 / 00:00:00:00")}
-            : currentText_.split(u'\n');
+        const QColor goldText(QColor(theme.accentColor));
+        const QColor mutedGoldText(QColor(theme.textColor).darker(120));
+        const QString currentLine = currentText_.isEmpty()
+            ? QStringLiteral("00:00:00:00 / 00:00:00:00")
+            : currentText_;
         const QString inLabel = QStringLiteral("In");
         const QString outLabel = QStringLiteral("Out");
         const QString inValue = inText_.isEmpty() ? QStringLiteral("--:--:--:--") : inText_;
@@ -187,13 +185,9 @@ protected:
         painter.setFont(currentFont);
         painter.setPen(goldText);
         int y = content.top() + QFontMetrics(currentFont).ascent();
-        const int currentStep = QFontMetrics(currentFont).lineSpacing();
-        for (const auto& line : currentLines) {
-            painter.drawText(content.left(), y, line);
-            y += currentStep;
-        }
+        painter.drawText(content.left(), y, currentLine);
 
-        y += 6;
+        y += QFontMetrics(currentFont).descent() + 8;
         const int lowerTop = y;
         const int columnGap = 16;
         const int columnWidth = std::max(
@@ -438,14 +432,16 @@ public:
         speedHalfButton_->setProperty("artifactSpeedPresetButton", true);
         speedOneButton_->setProperty("artifactSpeedPresetButton", true);
         {
-            auto applySpeedPalette = [](QToolButton* button) {
+            const auto& theme = ArtifactCore::currentDCCTheme();
+            auto applySpeedPalette = [&theme](QToolButton* button) {
                 if (!button) {
                     return;
                 }
                 QPalette pal = button->palette();
-                pal.setColor(QPalette::WindowText, QColor(QStringLiteral("#5F98C8")));
-                pal.setColor(QPalette::Text, QColor(QStringLiteral("#5F98C8")));
-                pal.setColor(QPalette::ButtonText, QColor(QStringLiteral("#5F98C8")));
+                const QColor accent(theme.accentColor);
+                pal.setColor(QPalette::WindowText, accent);
+                pal.setColor(QPalette::Text, accent);
+                pal.setColor(QPalette::ButtonText, accent);
                 button->setPalette(pal);
             };
             applySpeedPalette(speedQuarterButton_);
@@ -491,11 +487,23 @@ public:
         playbackRangeCombo_->addItem(QStringLiteral("ワークエリア"), QVariant::fromValue(PlaybackRangeMode::WorkArea));
         playbackRangeCombo_->addItem(QStringLiteral("選択範囲"), QVariant::fromValue(PlaybackRangeMode::Selection));
         {
-            playbackRangeCombo_->setStyleSheet(QStringLiteral(
-                "QComboBox { background-color: #2B3038; color: #E3E7EC; border: 1px solid #404754; border-radius: 3px; padding: 2px 4px; }"
-                "QComboBox::drop-down { border: none; }"
-                "QComboBox QAbstractItemView { background-color: #2B3038; color: #E3E7EC; selection-background-color: #3C5B76; }"
-            ));
+            QPalette pal = playbackRangeCombo_->palette();
+            pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            pal.setColor(QPalette::Button, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().selectionColor));
+            pal.setColor(QPalette::HighlightedText, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            playbackRangeCombo_->setPalette(pal);
+            playbackRangeCombo_->setAutoFillBackground(true);
+            if (auto* view = playbackRangeCombo_->view()) {
+                view->setPalette(pal);
+                if (auto* viewport = view->viewport()) {
+                    viewport->setPalette(pal);
+                }
+            }
         }
         optionsRow->addWidget(playbackRangeCombo_);
 
@@ -521,11 +529,23 @@ public:
         playbackSkipCombo_->addItem(QStringLiteral("1/2 スキップ"), QVariant::fromValue(PlaybackSkipMode::Skip1));
         playbackSkipCombo_->addItem(QStringLiteral("1/4 スキップ"), QVariant::fromValue(PlaybackSkipMode::Skip3));
         {
-            playbackSkipCombo_->setStyleSheet(QStringLiteral(
-                "QComboBox { background-color: #2B3038; color: #E3E7EC; border: 1px solid #404754; border-radius: 3px; padding: 2px 4px; }"
-                "QComboBox::drop-down { border: none; }"
-                "QComboBox QAbstractItemView { background-color: #2B3038; color: #E3E7EC; selection-background-color: #3C5B76; }"
-            ));
+            QPalette pal = playbackSkipCombo_->palette();
+            pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            pal.setColor(QPalette::Button, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+            pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+            pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().selectionColor));
+            pal.setColor(QPalette::HighlightedText, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+            playbackSkipCombo_->setPalette(pal);
+            playbackSkipCombo_->setAutoFillBackground(true);
+            if (auto* view = playbackSkipCombo_->view()) {
+                view->setPalette(pal);
+                if (auto* viewport = view->viewport()) {
+                    viewport->setPalette(pal);
+                }
+            }
         }
         skipRow->addWidget(playbackSkipCombo_);
         skipRow->addStretch();
@@ -637,6 +657,7 @@ public:
         if (timecodeFrame_) {
             QString inText = QStringLiteral("--:--:--:--");
             QString outText = QStringLiteral("--:--:--:--");
+            QString currentText = QStringLiteral("00:00:00:00 / 00:00:00:00");
             if (inOutPoints_) {
                 if (const auto inPoint = inOutPoints_->inPoint()) {
                     inText = formatTimecode(inPoint->framePosition(), fps);
@@ -645,10 +666,10 @@ public:
                     outText = formatTimecode(outPoint->framePosition(), fps);
                 }
             }
-            timecodeFrame_->setCurrentFrameText(QStringLiteral("%1\n%2 / %3")
-                                                   .arg(formatFrameCount(clampedCurrent))
-                                                   .arg(formatTimecode(clampedCurrent, fps))
-                                                   .arg(formatTimecode(range.duration(), fps)));
+            currentText = QStringLiteral("%1  %2")
+                              .arg(formatFrameCount(clampedCurrent))
+                              .arg(formatTimecode(clampedCurrent, fps));
+            timecodeFrame_->setCurrentFrameText(currentText);
             timecodeFrame_->setRangeTexts(inText, outText);
         }
     }
@@ -1197,7 +1218,8 @@ void ArtifactPlaybackInfoWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
-    painter.fillRect(rect(), QColor(45, 45, 48));
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    painter.fillRect(rect(), QColor(theme.secondaryBackgroundColor));
 }
 
 void ArtifactPlaybackInfoWidget::setCurrentFrame(int64_t frame)
@@ -1357,7 +1379,8 @@ void ArtifactPlaybackSpeedWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
-    painter.fillRect(rect(), QColor(45, 45, 48));
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    painter.fillRect(rect(), QColor(theme.secondaryBackgroundColor));
 }
 
 float ArtifactPlaybackSpeedWidget::playbackSpeed() const

@@ -50,6 +50,7 @@ import Core.AI.McpBridge;
 import Core.AI.McpTransport;
 import Core.AI.CloudAgent;
 import Core.AI.TieredManager;
+import Widgets.Utils.CSS;
 import Artifact.AI.WorkspaceAutomation;
 import Artifact.Application.Manager;
 import Artifact.Project.Statistics;
@@ -71,7 +72,8 @@ public:
       : QFrame(parent), role_(role), importance_(Importance::Normal) {
     setFrameShape(QFrame::NoFrame);
     setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-    setAttribute(Qt::WA_TranslucentBackground, true);
+    setAttribute(Qt::WA_TranslucentBackground, false);
+    setAttribute(Qt::WA_OpaquePaintEvent, true);
     auto *layout = new QVBoxLayout(this);
     layout->setContentsMargins(14, 10, 14, 10);
     layout->setSpacing(0);
@@ -81,8 +83,8 @@ public:
                                     Qt::TextSelectableByKeyboard);
     label_->setTextFormat(Qt::PlainText);
     label_->setMaximumWidth(580);
-    label_->setAttribute(Qt::WA_TranslucentBackground, false);
-    label_->setAutoFillBackground(true);
+    label_->setAttribute(Qt::WA_TranslucentBackground, true);
+    label_->setAutoFillBackground(false);
     QFont textFont = label_->font();
     textFont.setHintingPreference(QFont::PreferFullHinting);
     label_->setFont(textFont);
@@ -117,35 +119,43 @@ protected:
   void paintEvent(QPaintEvent *event) override {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
-    QRectF r = rect().adjusted(1, 1, -1, -1);
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor surface(theme.secondaryBackgroundColor);
+    const QColor background(theme.backgroundColor);
+    const QColor accent(theme.accentColor);
+    const QColor textColor(theme.textColor);
+    const QColor borderBase(theme.borderColor);
 
     QColor fill;
     QColor border;
     int borderWidth = 1;
     switch (role_) {
     case Role::User:
-      fill = QColor("#1f4e79");
-      border = QColor("#4aa3ff");
+      fill = surface.lighter(108);
+      border = accent;
       break;
     case Role::Assistant:
-      fill = QColor("#23272f");
-      border = QColor("#3b424d");
+      fill = surface;
+      border = borderBase;
       break;
     case Role::System:
-      fill = QColor("#35302a");
-      border = QColor("#6a5d3d");
+      fill = background.lighter(108);
+      border = accent.darker(125);
       break;
     }
 
     // Adjust border based on importance
     if (importance_ == Importance::Important) {
-      border = QColor("#ff6b6b"); // Red border for important
+      border = accent.lighter(140);
       borderWidth = 2;
     } else if (importance_ == Importance::Critical) {
-      border = QColor("#ff0000"); // Bright red for critical
+      border = accent;
       borderWidth = 3;
     }
 
+    painter.fillRect(rect(), fill);
+
+    QRectF r = rect().adjusted(0.5, 0.5, -0.5, -0.5);
     painter.setPen(QPen(border, borderWidth));
     painter.setBrush(fill);
     painter.drawRoundedRect(r, 10.0, 10.0);
@@ -153,21 +163,26 @@ protected:
 
 private:
   void refreshLabelAppearance() {
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor surface(theme.secondaryBackgroundColor);
+    const QColor background(theme.backgroundColor);
+    const QColor accent(theme.accentColor);
+    const QColor text(theme.textColor);
     QColor fill;
     QColor textColor;
     QFont font = label_->font();
     switch (role_) {
     case Role::User:
-      fill = QColor("#1f4e79");
-      textColor = QColor("#f3f8ff");
+      fill = surface.lighter(108);
+      textColor = text;
       break;
     case Role::Assistant:
-      fill = QColor("#23272f");
-      textColor = QColor("#eef2f7");
+      fill = surface;
+      textColor = text;
       break;
     case Role::System:
-      fill = QColor("#35302a");
-      textColor = QColor("#fff2d3");
+      fill = background.lighter(108);
+      textColor = accent.lighter(150);
       break;
     }
 
@@ -176,7 +191,7 @@ private:
       font.setBold(true);
     } else if (importance_ == Importance::Critical) {
       font.setBold(true);
-      textColor = QColor("#ff4444"); // Red text for critical
+      textColor = accent;
     } else {
       font.setBold(false);
     }
@@ -186,6 +201,7 @@ private:
     palette.setColor(QPalette::Window, fill);
     palette.setColor(QPalette::Base, fill);
     palette.setColor(QPalette::Text, textColor);
+    palette.setColor(QPalette::WindowText, textColor);
     label_->setPalette(palette);
   }
 
@@ -693,6 +709,135 @@ bool looksLikeToolCallText(const QString &text) {
          lower.contains(QStringLiteral("workspaceautomation."));
 }
 
+enum class ToolApprovalMode {
+  AskEveryTime = 0,
+  AutoApprove = 1,
+  YOLO = 2,
+};
+
+ToolApprovalMode toolApprovalModeFromIndex(const int index) {
+  switch (std::clamp(index, 0, 2)) {
+  case 1:
+    return ToolApprovalMode::AutoApprove;
+  case 2:
+    return ToolApprovalMode::YOLO;
+  default:
+    return ToolApprovalMode::AskEveryTime;
+  }
+}
+
+int toolApprovalModeToIndex(const ToolApprovalMode mode) {
+  switch (mode) {
+  case ToolApprovalMode::AutoApprove:
+    return 1;
+  case ToolApprovalMode::YOLO:
+    return 2;
+  case ToolApprovalMode::AskEveryTime:
+  default:
+    return 0;
+  }
+}
+
+bool isReadOnlyToolCall(const QJsonObject &toolCall) {
+  const QString method =
+      toolCall.value(QStringLiteral("method")).toString().trimmed().toLower();
+  if (method.isEmpty()) {
+    return false;
+  }
+
+  static const QStringList kReadOnlyPrefixes = {
+      QStringLiteral("get"),      QStringLiteral("list"),
+      QStringLiteral("find"),     QStringLiteral("query"),
+      QStringLiteral("inspect"),  QStringLiteral("preview"),
+      QStringLiteral("describe"), QStringLiteral("check"),
+      QStringLiteral("has"),      QStringLiteral("is"),
+      QStringLiteral("count"),    QStringLiteral("current"),
+      QStringLiteral("read"),     QStringLiteral("fetch"),
+      QStringLiteral("ping")};
+  for (const QString &prefix : kReadOnlyPrefixes) {
+    if (method.startsWith(prefix)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+QString formatToolCallSummary(const QJsonObject &toolCall) {
+  const QString className =
+      toolCall.value(QStringLiteral("class")).toString().trimmed();
+  const QString method =
+      toolCall.value(QStringLiteral("method")).toString().trimmed();
+  const QJsonValue argsValue = toolCall.value(QStringLiteral("arguments"));
+  QString argsText;
+  if (argsValue.isArray()) {
+    argsText = QString::fromUtf8(
+        QJsonDocument(argsValue.toArray()).toJson(QJsonDocument::Compact));
+  } else if (argsValue.isObject()) {
+    argsText = QString::fromUtf8(
+        QJsonDocument(argsValue.toObject()).toJson(QJsonDocument::Compact));
+  } else if (!argsValue.isUndefined() && !argsValue.isNull()) {
+    argsText = argsValue.toVariant().toString();
+  }
+
+  return QStringLiteral("%1.%2(%3)")
+      .arg(className.isEmpty() ? QStringLiteral("(unknown)") : className,
+           method.isEmpty() ? QStringLiteral("(unknown)") : method,
+           argsText.isEmpty() ? QStringLiteral("[]") : argsText);
+}
+
+bool requestToolExecutionApproval(QWidget *parent, const QJsonObject &toolCall,
+                                  const ToolApprovalMode mode) {
+  const bool autoAllowed =
+      mode == ToolApprovalMode::YOLO ||
+      (mode == ToolApprovalMode::AutoApprove && isReadOnlyToolCall(toolCall));
+  if (autoAllowed) {
+    return true;
+  }
+
+  QMessageBox box(parent);
+  box.setIcon(QMessageBox::Question);
+  box.setWindowTitle(QStringLiteral("Approve tool execution"));
+  box.setText(QStringLiteral("Run this tool call?"));
+  box.setInformativeText(formatToolCallSummary(toolCall));
+  box.setDetailedText(QString::fromUtf8(
+      QJsonDocument(toolCall).toJson(QJsonDocument::Indented)));
+  box.setStandardButtons(QMessageBox::NoButton);
+  box.setTextInteractionFlags(Qt::TextSelectableByMouse |
+                              Qt::TextSelectableByKeyboard);
+
+  auto *approveButton = box.addButton(QStringLiteral("Approve once"),
+                                      QMessageBox::AcceptRole);
+  auto *autoApproveButton =
+      box.addButton(QStringLiteral("Auto-Approve"), QMessageBox::ActionRole);
+  auto *yoloButton =
+      box.addButton(QStringLiteral("YOLO"), QMessageBox::DestructiveRole);
+  auto *denyButton =
+      box.addButton(QStringLiteral("Deny"), QMessageBox::RejectRole);
+
+  box.setDefaultButton(approveButton);
+  box.exec();
+
+  if (box.clickedButton() == approveButton) {
+    return true;
+  }
+  if (box.clickedButton() == autoApproveButton) {
+    QSettings settings(QStringLiteral("ArtifactStudio"),
+                       QStringLiteral("AICloud"));
+    settings.setValue(QStringLiteral("toolApprovalMode"),
+                      toolApprovalModeToIndex(ToolApprovalMode::AutoApprove));
+    return true;
+  }
+  if (box.clickedButton() == yoloButton) {
+    QSettings settings(QStringLiteral("ArtifactStudio"),
+                       QStringLiteral("AICloud"));
+    settings.setValue(QStringLiteral("toolApprovalMode"),
+                      toolApprovalModeToIndex(ToolApprovalMode::YOLO));
+    return true;
+  }
+  Q_UNUSED(denyButton);
+  return false;
+}
+
 } // namespace
 
 void Artifact::ArtifactAICloudWidget::startChatRequest(
@@ -763,9 +908,13 @@ void Artifact::ArtifactAICloudWidget::startChatRequest(
 }
 
 bool Artifact::ArtifactAICloudWidget::tryHandleToolCallResponse(
-    const QString &responseText, QString *toolTraceOut, QString *errorOut) {
+    const QString &responseText, QString *toolTraceOut, QString *errorOut,
+    bool *blockedByApprovalOut) {
   if (!toolTraceOut) {
     return false;
+  }
+  if (blockedByApprovalOut) {
+    *blockedByApprovalOut = false;
   }
 
   QJsonObject toolCall;
@@ -774,6 +923,29 @@ bool Artifact::ArtifactAICloudWidget::tryHandleToolCallResponse(
       *errorOut = QStringLiteral("Failed to parse tool call");
     }
     return false;
+  }
+
+  const ToolApprovalMode approvalMode = toolApprovalModeFromIndex(
+      toolApprovalModeCombo_ ? toolApprovalModeCombo_->currentIndex() : 0);
+  if (!requestToolExecutionApproval(this, toolCall, approvalMode)) {
+    *toolTraceOut = QStringLiteral("Tool call denied by user.");
+    if (blockedByApprovalOut) {
+      *blockedByApprovalOut = true;
+    }
+    return true;
+  }
+
+  if (toolApprovalModeCombo_) {
+    QSettings settings(QStringLiteral("ArtifactStudio"),
+                       QStringLiteral("AICloud"));
+    const int savedMode =
+        settings.value(QStringLiteral("toolApprovalMode"),
+                       toolApprovalModeCombo_->currentIndex())
+            .toInt();
+    const int normalized = std::clamp(savedMode, 0, 2);
+    if (toolApprovalModeCombo_->currentIndex() != normalized) {
+      toolApprovalModeCombo_->setCurrentIndex(normalized);
+    }
   }
 
   const auto toolResult = ArtifactCore::ToolBridge::executeToolCall(toolCall);
@@ -883,6 +1055,37 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   advancedLayout->setContentsMargins(0, 0, 0, 0);
   advancedLayout->setSpacing(10);
   advancedPanel->setVisible(false);
+
+  const auto approvalCard = makeSectionCard(
+      leftPanel, QStringLiteral("Command Approval"),
+      QStringLiteral(
+          "Ask before running tool calls, auto-approve read-only calls, or run everything."));
+  auto *approvalForm = new QFormLayout();
+  approvalForm->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  approvalForm->setFormAlignment(Qt::AlignLeft | Qt::AlignTop);
+  approvalForm->setHorizontalSpacing(8);
+  approvalForm->setVerticalSpacing(6);
+  toolApprovalModeCombo_ = new QComboBox(leftPanel);
+  toolApprovalModeCombo_->addItem(QStringLiteral("Ask Every Time"));
+  toolApprovalModeCombo_->addItem(QStringLiteral("Auto-Approve"));
+  toolApprovalModeCombo_->addItem(QStringLiteral("YOLO"));
+  toolApprovalModeCombo_->installEventFilter(this);
+  {
+    QSettings settings(QStringLiteral("ArtifactStudio"),
+                       QStringLiteral("AICloud"));
+    const int savedMode =
+        settings.value(QStringLiteral("toolApprovalMode"), 0).toInt();
+    toolApprovalModeCombo_->setCurrentIndex(std::clamp(savedMode, 0, 2));
+  }
+  approvalForm->addRow(QStringLiteral("Mode"), toolApprovalModeCombo_);
+  approvalCard.body->addLayout(approvalForm);
+  auto *approvalHint = new QLabel(
+      QStringLiteral(
+          "Auto-Approve allows read-only tool calls. YOLO skips confirmation."),
+      leftPanel);
+  approvalHint->setWordWrap(true);
+  approvalCard.body->addWidget(approvalHint);
+  advancedLayout->addWidget(approvalCard.frame);
 
   const auto toolsCard = makeSectionCard(
       leftPanel, QStringLiteral("Tools"),
@@ -2296,6 +2499,16 @@ bool Artifact::ArtifactAICloudWidget::eventFilter(QObject *watched,
     }
   }
 
+  if (watched == toolApprovalModeCombo_ && event &&
+      (event->type() == QEvent::FocusOut || event->type() == QEvent::Hide)) {
+    QSettings settings(QStringLiteral("ArtifactStudio"),
+                       QStringLiteral("AICloud"));
+    settings.setValue(QStringLiteral("toolApprovalMode"),
+                      toolApprovalModeCombo_
+                          ? toolApprovalModeCombo_->currentIndex()
+                          : 0);
+  }
+
   return QWidget::eventFilter(watched, event);
 }
 
@@ -2341,8 +2554,17 @@ void Artifact::ArtifactAICloudWidget::onSendProcessFinished(
 
     QString toolTrace;
     QString toolError;
+    bool toolBlockedByApproval = false;
     if (toolLoopDepth_ < 2 &&
-        tryHandleToolCallResponse(finalContent, &toolTrace, &toolError)) {
+        tryHandleToolCallResponse(finalContent, &toolTrace, &toolError,
+                                  &toolBlockedByApproval)) {
+      if (toolBlockedByApproval) {
+        appendTranscriptMessage(QStringLiteral("system"), toolTrace);
+        appendToolExecutionLog(toolTrace);
+        replaceLastAssistantMessage(QStringLiteral("Tool call denied."));
+        pendingToolTrace_.clear();
+        return;
+      }
       ++toolLoopDepth_;
       pendingToolTrace_ = toolTrace;
       appendTranscriptMessage(QStringLiteral("system"), toolTrace);

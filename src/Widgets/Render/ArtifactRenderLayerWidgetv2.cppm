@@ -12,7 +12,11 @@ module;
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>
+#include <QAction>
 #include <QImage>
+#include <QLinearGradient>
+#include <QMenu>
+#include <QPainter>
 #include <QStandardPaths>
 #include <vector>
 #include <algorithm>
@@ -49,6 +53,55 @@ W_OBJECT_IMPL(ArtifactLayerEditorWidgetV2)
 
 namespace {
 Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
+
+enum class LayerBackgroundMode {
+  Alpha,
+  Solid,
+  MayaGradient
+};
+
+QImage makeMayaGradientSprite(const QSize& size, const FloatColor& bgColor)
+{
+  const int w = std::max(1, size.width());
+  const int h = std::max(1, size.height());
+  QImage image(w, h, QImage::Format_ARGB32_Premultiplied);
+  image.fill(Qt::transparent);
+
+  QPainter painter(&image);
+  QLinearGradient grad(0.0, 0.0, 0.0, static_cast<qreal>(h));
+  grad.setColorAt(0.00, QColor::fromRgbF(0.26f, 0.32f, 0.38f, 1.0f));
+  grad.setColorAt(0.07, QColor::fromRgbF(0.24f, 0.30f, 0.36f, 1.0f));
+  grad.setColorAt(0.14, QColor::fromRgbF(0.21f, 0.27f, 0.33f, 1.0f));
+  grad.setColorAt(0.22, QColor::fromRgbF(0.19f, 0.25f, 0.30f, 1.0f));
+  grad.setColorAt(0.30, QColor::fromRgbF(0.17f, 0.22f, 0.27f, 1.0f));
+  grad.setColorAt(0.41, QColor::fromRgbF(0.15f, 0.20f, 0.25f, 1.0f));
+  grad.setColorAt(0.52, QColor::fromRgbF(0.13f, 0.17f, 0.22f, 1.0f));
+  grad.setColorAt(0.64, QColor::fromRgbF(0.12f, 0.15f, 0.20f, 1.0f));
+  grad.setColorAt(0.76, QColor::fromRgbF(0.10f, 0.13f, 0.17f, 1.0f));
+  grad.setColorAt(0.88, QColor::fromRgbF(0.09f, 0.12f, 0.15f, 1.0f));
+  grad.setColorAt(1.00, QColor::fromRgbF(0.08f, 0.10f, 0.13f, 1.0f));
+  painter.fillRect(image.rect(), grad);
+
+  QLinearGradient glow(0.0, 0.0, static_cast<qreal>(w), static_cast<qreal>(h));
+  QColor tint = QColor::fromRgbF(bgColor.r(), bgColor.g(), bgColor.b(), 1.0f);
+  tint.setAlpha(72);
+  glow.setColorAt(0.0, tint.lighter(112));
+  QColor tintDark = tint.darker(140);
+  tintDark.setAlpha(28);
+  glow.setColorAt(1.0, tintDark);
+  painter.fillRect(image.rect(), glow);
+  return image;
+}
+
+QSize physicalViewportSize(const QWidget* widget)
+{
+ if (!widget) {
+  return {};
+ }
+ const qreal dpr = widget->devicePixelRatio();
+ return QSize(std::max(1, static_cast<int>(std::lround(widget->width() * dpr))),
+              std::max(1, static_cast<int>(std::lround(widget->height() * dpr))));
+}
 }
 
  class ArtifactLayerEditorWidgetV2::Impl {
@@ -77,10 +130,13 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   
   
- bool released = true;
- bool m_initialized;
+  bool released = true;
+  bool m_initialized;
  RefCntAutoPtr<ITexture> m_layerRT;
  RefCntAutoPtr<IFence> m_layer_fence;
+  LayerBackgroundMode backgroundMode_ = LayerBackgroundMode::Alpha;
+  QImage cachedMayaGradientSprite_;
+  QSize cachedMayaGradientSize_;
   LayerID targetLayerId_{};
   FloatColor targetLayerTint_{ 1.0f, 0.5f, 0.5f, 1.0f };
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
@@ -95,6 +151,7 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
   void startRenderLoop();
   void stopRenderLoop();
   void renderOneFrame();
+  void refreshBackgroundCache();
  };
 
  ArtifactLayerEditorWidgetV2::Impl::Impl()
@@ -135,8 +192,9 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
   // Set the actual widget size so ViewportTransformer doesn't stay at the
   // default {1920, 1080} until the first resizeEvent fires.
   if (window && window->width() > 0 && window->height() > 0) {
-   renderer_->setViewportSize(static_cast<float>(window->width()),
-                              static_cast<float>(window->height()));
+   const QSize viewportSize = physicalViewportSize(window);
+   renderer_->setViewportSize(static_cast<float>(viewportSize.width()),
+                              static_cast<float>(viewportSize.height()));
   }
  }
 
@@ -282,23 +340,49 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
   }
  }
 
- void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
- {
+void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
+{
  if (!initialized_ || !renderer_)
   return;
  renderer_->clear();
-  if (compositionRenderer_) {
-   if (auto* service = ArtifactProjectService::instance()) {
-    if (auto composition = service->currentComposition().lock()) {
-     const auto compSize = composition->settings().compositionSize();
-     compositionRenderer_->SetCompositionSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
-    }
-   }
-   compositionRenderer_->ApplyCompositionSpace();
-   compositionRenderer_->DrawCompositionBackground(clearColor_);
-  } else {
-   renderer_->drawRectLocal(-8192, -8192, 16384, 16384, clearColor_);
+ const QSize viewportSize = physicalViewportSize(widget_);
+ const float viewportW = static_cast<float>(std::max(1, viewportSize.width()));
+ const float viewportH = static_cast<float>(std::max(1, viewportSize.height()));
+ const float prevZoom = renderer_->getZoom();
+ float prevPanX = 0.0f;
+ float prevPanY = 0.0f;
+ renderer_->getPan(prevPanX, prevPanY);
+ renderer_->setViewportSize(viewportW, viewportH);
+ renderer_->setCanvasSize(viewportW, viewportH);
+ renderer_->setZoom(1.0f);
+ renderer_->setPan(0.0f, 0.0f);
+ renderer_->setUseExternalMatrices(false);
+ renderer_->resetGizmoCameraMatrices();
+ renderer_->reset3DCameraMatrices();
+ if (backgroundMode_ == LayerBackgroundMode::Alpha) {
+  renderer_->drawCheckerboard(0.0f, 0.0f, viewportW, viewportH, 16.0f,
+                              FloatColor(0.24f, 0.24f, 0.26f, 1.0f),
+                              FloatColor(0.16f, 0.16f, 0.18f, 1.0f));
+ } else if (backgroundMode_ == LayerBackgroundMode::MayaGradient) {
+  refreshBackgroundCache();
+  if (!cachedMayaGradientSprite_.isNull()) {
+   renderer_->drawSprite(0.0f, 0.0f, viewportW, viewportH,
+                         cachedMayaGradientSprite_, 1.0f);
   }
+ } else {
+  renderer_->drawRectLocal(0.0f, 0.0f, viewportW, viewportH, clearColor_);
+ }
+ if (compositionRenderer_) {
+  if (auto* service = ArtifactProjectService::instance()) {
+   if (auto composition = service->currentComposition().lock()) {
+    const auto compSize = composition->settings().compositionSize();
+    compositionRenderer_->SetCompositionSize(static_cast<float>(compSize.width()), static_cast<float>(compSize.height()));
+   }
+  }
+  compositionRenderer_->ApplyCompositionSpace();
+ }
+ renderer_->setZoom(prevZoom);
+ renderer_->setPan(prevPanX, prevPanY);
   if (!targetLayerId_.isNil()) {
    if (auto* service = ArtifactProjectService::instance()) {
     if (auto composition = service->currentComposition().lock()) {
@@ -329,9 +413,36 @@ Q_LOGGING_CATEGORY(layerViewPerfLog, "artifact.layerviewperf")
     }
    }
   }
-  renderer_->flush();
-  renderer_->present();
+ renderer_->flush();
+ renderer_->present();
 }
+
+void ArtifactLayerEditorWidgetV2::Impl::refreshBackgroundCache()
+{
+ if (backgroundMode_ != LayerBackgroundMode::MayaGradient) {
+  cachedMayaGradientSprite_ = QImage();
+  cachedMayaGradientSize_ = QSize();
+  return;
+ }
+ const QSize viewportSize = physicalViewportSize(widget_);
+ if (viewportSize.isEmpty() || cachedMayaGradientSize_ == viewportSize) {
+  return;
+ }
+ cachedMayaGradientSize_ = viewportSize;
+ cachedMayaGradientSprite_ = makeMayaGradientSprite(viewportSize, clearColor_);
+}
+
+ static LayerID currentSelectedLayerId()
+ {
+  if (auto *app = ArtifactApplicationManager::instance()) {
+   if (auto *selectionManager = app->layerSelectionManager()) {
+    if (auto current = selectionManager->currentLayer()) {
+     return current->id();
+    }
+   }
+  }
+  return LayerID();
+ }
 
 void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
  {
@@ -343,7 +454,8 @@ void ArtifactLayerEditorWidgetV2::Impl::recreateSwapChain(QWidget* window)
   }
   std::lock_guard<std::mutex> lock(resizeMutex_);
   renderer_->recreateSwapChain(window);
-  renderer_->setViewportSize(static_cast<float>(window->width()), static_cast<float>(window->height()));
+  const QSize viewportSize = physicalViewportSize(window);
+  renderer_->setViewportSize(static_cast<float>(viewportSize.width()), static_cast<float>(viewportSize.height()));
  }
 
 ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
@@ -420,6 +532,16 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
                   return;
                 }
               }
+            }
+            clearTargetLayer();
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
+          [this](const CurrentCompositionChangedEvent&) {
+            const LayerID selectedId = currentSelectedLayerId();
+            if (!selectedId.isNil()) {
+              setTargetLayer(selectedId);
+              return;
             }
             clearTargetLayer();
           }));
@@ -534,13 +656,55 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
  }
 
- void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
- {
-  QWidget::contextMenuEvent(event);
- }
+void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
+{
+  if (!impl_) {
+   QWidget::contextMenuEvent(event);
+   return;
+  }
 
- void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
- {
+  QMenu menu(this);
+  QAction* alphaAct = menu.addAction(QStringLiteral("Alpha"));
+  QAction* solidAct = menu.addAction(QStringLiteral("Solid"));
+  QAction* mayaAct = menu.addAction(QStringLiteral("Maya Gradient"));
+  alphaAct->setCheckable(true);
+  solidAct->setCheckable(true);
+  mayaAct->setCheckable(true);
+  switch (impl_->backgroundMode_) {
+   case LayerBackgroundMode::Alpha:
+    alphaAct->setChecked(true);
+    break;
+   case LayerBackgroundMode::Solid:
+    solidAct->setChecked(true);
+    break;
+   case LayerBackgroundMode::MayaGradient:
+    mayaAct->setChecked(true);
+    break;
+  }
+
+  QAction* chosen = menu.exec(event->globalPos());
+  if (!chosen) {
+   return;
+  }
+  if (chosen == alphaAct) {
+   impl_->backgroundMode_ = LayerBackgroundMode::Alpha;
+  } else if (chosen == solidAct) {
+   impl_->backgroundMode_ = LayerBackgroundMode::Solid;
+  } else if (chosen == mayaAct) {
+   impl_->backgroundMode_ = LayerBackgroundMode::MayaGradient;
+  } else {
+   return;
+  }
+
+  impl_->refreshBackgroundCache();
+  if (impl_->initialized_ && impl_->renderer_) {
+   std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
+   impl_->renderOneFrame();
+  }
+}
+
+void ArtifactLayerEditorWidgetV2::showEvent(QShowEvent* event)
+{
  QWidget::showEvent(event);
   qCDebug(layerViewPerfLog) << "[LayerView][Show]"
                             << "initialized=" << impl_->initialized_
@@ -552,11 +716,20 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     impl_->initializeSwapChain(this);
     impl_->renderer_->fitToViewport();
     impl_->zoomLevel_ = impl_->renderer_->getZoom();
-    impl_->startRenderLoop();
    }
   }
-  if (impl_->initialized_ && !impl_->targetLayerId_.isNil()) {
-   setTargetLayer(impl_->targetLayerId_);
+  if (impl_->initialized_) {
+    impl_->startRenderLoop();
+  }
+  if (impl_->initialized_) {
+   if (!impl_->targetLayerId_.isNil()) {
+    setTargetLayer(impl_->targetLayerId_);
+   } else {
+    const LayerID selectedId = currentSelectedLayerId();
+    if (!selectedId.isNil()) {
+     setTargetLayer(selectedId);
+    }
+   }
   }
  }
 

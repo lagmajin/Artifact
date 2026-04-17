@@ -676,6 +676,9 @@ void ArtifactFileMenu::projectClosed()
         }
     }
     ArtifactProjectManager::getInstance().closeCurrentProject();
+    if (auto* svc = ArtifactProjectService::instance()) {
+        svc->projectChanged();
+    }
 }
 
 void ArtifactFileMenu::quitApplication()

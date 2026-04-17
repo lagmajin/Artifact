@@ -8,6 +8,8 @@ module Artifact.Tool.Service;
 
 import Tool;
 import Artifact.Tool.Manager;
+import Artifact.Event.Types;
+import Event.Bus;
 
 namespace Artifact {
 
@@ -34,6 +36,8 @@ void ArtifactToolService::setActiveTool(ToolType type)
 {
  if (impl_->toolManager_) {
   impl_->toolManager_->setActiveTool(type);
+ } else {
+  ArtifactCore::globalEventBus().publish<ToolChangedEvent>(ToolChangedEvent{type});
  }
  toolChanged(type);
 }

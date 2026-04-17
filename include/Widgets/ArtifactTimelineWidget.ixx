@@ -28,7 +28,7 @@ class ArtifactTimelineWidget :public QWidget {
   void syncTimelineHorizontalOffset(double offset);
   void syncTimelineVerticalOffset(double offset);
   void syncWorkAreaFromCurrentComposition();
-  void syncPainterSelectionState();
+  void syncPainterSelectionState(bool forceRefresh = false);
   void refreshCurveEditorTracks();
   void updateCurvePropertyList();
   void updateSearchState();

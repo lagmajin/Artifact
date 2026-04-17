@@ -32,6 +32,9 @@ module;
 #include <QImage>
 #include <QImageReader>
 #include <QPainter>
+#include <OpenImageIO/imagebuf.h>
+#include <OpenImageIO/imagebufalgo.h>
+#include <OpenImageIO/imageio.h>
 #include <opencv2/opencv.hpp>
 #include <QSlider>
 #include <QGroupBox>
@@ -71,6 +74,75 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
+constexpr int kAssetThumbnailMinPx = 25;
+constexpr int kAssetThumbnailMaxPx = 256;
+constexpr int kAssetThumbnailDefaultPx = 96;
+
+QImage loadImageThumbnailViaOIIO(const QString& filePath, const QSize& targetSize = QSize(), QString* errorOut = nullptr)
+{
+  try {
+    const QByteArray utf8 = filePath.toUtf8();
+    OIIO::ImageBuf source(utf8.constData());
+    if (!source.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
+      if (errorOut) {
+        *errorOut = QStringLiteral("read failed: %1").arg(QString::fromStdString(source.geterror()));
+      }
+      return {};
+    }
+
+    OIIO::ImageBuf oriented = OIIO::ImageBufAlgo::reorient(source);
+    const OIIO::ImageSpec& spec = oriented.spec();
+    const int width = std::max(1, spec.width);
+    const int height = std::max(1, spec.height);
+
+    QImage image(width, height, QImage::Format_ARGB32_Premultiplied);
+    if (image.isNull()) {
+      if (errorOut) {
+        *errorOut = QStringLiteral("Failed to allocate thumbnail image.");
+      }
+      return {};
+    }
+
+    OIIO::ImageBuf rgba;
+    const int channelCount = spec.nchannels;
+    std::vector<int> channelOrder = {0, 1, 2, 3};
+    std::vector<float> channelValues = {0.0f, 0.0f, 0.0f, 1.0f};
+    if (channelCount == 1) {
+      rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
+    } else if (channelCount == 2) {
+      rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
+    } else if (channelCount == 3) {
+      rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder);
+    } else if (channelCount >= 4) {
+      rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder);
+    } else {
+      rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
+    }
+
+    if (!rgba.get_pixels(OIIO::ROI::All(), OIIO::TypeDesc::UINT8, image.bits())) {
+      if (errorOut) {
+        *errorOut = QStringLiteral("get_pixels failed: %1").arg(QString::fromStdString(rgba.geterror()));
+      }
+      return {};
+    }
+
+    QImage thumb = image;
+    if (targetSize.isValid() && !targetSize.isEmpty()) {
+      thumb = image.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    return thumb;
+  } catch (const std::exception& e) {
+    if (errorOut) {
+      *errorOut = QString::fromUtf8(e.what());
+    }
+  } catch (...) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("Unknown OIIO thumbnail error.");
+    }
+  }
+  return {};
+}
+
 QString normalizeAssetPath(const QString& path)
 {
   if (path.trimmed().isEmpty()) {
@@ -79,6 +151,39 @@ QString normalizeAssetPath(const QString& path)
   const QFileInfo info(path);
   const QString canonical = info.canonicalFilePath();
   return QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
+}
+
+QSize assetGridSizeForThumbnail(const int thumbnailPx)
+{
+  const int clamped = std::clamp(thumbnailPx, kAssetThumbnailMinPx,
+                                 kAssetThumbnailMaxPx);
+  return QSize(clamped + 36, clamped + 36);
+}
+
+void applyAssetBrowserViewMode(QListView* view, const QListView::ViewMode mode,
+                               const int thumbnailPx)
+{
+  if (!view) {
+    return;
+  }
+
+  const int clamped = std::clamp(thumbnailPx, kAssetThumbnailMinPx,
+                                 kAssetThumbnailMaxPx);
+  view->setIconSize(QSize(clamped, clamped));
+  view->setViewMode(mode);
+  if (mode == QListView::ListMode) {
+    view->setFlow(QListView::TopToBottom);
+    view->setWrapping(false);
+    view->setGridSize(QSize());
+    view->setWordWrap(false);
+    view->setSpacing(3);
+  } else {
+    view->setFlow(QListView::LeftToRight);
+    view->setWrapping(true);
+    view->setGridSize(assetGridSizeForThumbnail(clamped));
+    view->setWordWrap(true);
+    view->setSpacing(5);
+  }
 }
 }
 
@@ -107,11 +212,19 @@ void ArtifactBreadcrumbWidget::Impl::rebuild()
   }
   delete item;
  }
- const QString current = currentPath_.isEmpty() ? rootPath_ : currentPath_;
- QStringList parts = current.split(QDir::separator(), Qt::SkipEmptyParts);
+ const QString root = QDir::cleanPath(rootPath_);
+ const QString current = QDir::cleanPath(currentPath_.isEmpty() ? rootPath_ : currentPath_);
+ QStringList parts;
  QString path;
- if (!rootPath_.isEmpty()) {
-  const QString root = QDir::cleanPath(rootPath_);
+ if (!root.isEmpty() && current.startsWith(root, Qt::CaseInsensitive)) {
+  const QString relative = QDir(root).relativeFilePath(current);
+  if (relative != QStringLiteral(".")) {
+   parts = relative.split(QDir::separator(), Qt::SkipEmptyParts);
+  }
+ } else {
+  parts = current.split(QDir::separator(), Qt::SkipEmptyParts);
+ }
+ if (!root.isEmpty()) {
   auto* rootButton = new QToolButton(owner_);
   rootButton->setText(QFileInfo(root).fileName().isEmpty() ? root : QFileInfo(root).fileName());
   QObject::connect(rootButton, &QToolButton::clicked, owner_, [this, root]() {
@@ -183,14 +296,29 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
 
    QElapsedTimer dragTimer;
    dragTimer.start();
-
-   std::unique_ptr<QMimeData> mimeData(model()->mimeData(indexes));
-   if (!mimeData) {
+   auto* mimeData = new QMimeData();
+   QList<QUrl> urls;
+   QSet<QString> seenPaths;
+   const int pathRole = static_cast<int>(AssetMenuRole::Path);
+   for (const QModelIndex& index : indexes) {
+    if (!index.isValid()) {
+     continue;
+    }
+    const QString path = index.data(pathRole).toString();
+    if (path.isEmpty() || seenPaths.contains(path)) {
+     continue;
+    }
+    seenPaths.insert(path);
+    urls.append(QUrl::fromLocalFile(path));
+   }
+   if (urls.isEmpty()) {
+    delete mimeData;
     return;
    }
+   mimeData->setUrls(urls);
 
    auto* drag = new QDrag(this);
-   drag->setMimeData(mimeData.release());
+   drag->setMimeData(mimeData);
 
    QPixmap dragPixmap(160, 28);
    dragPixmap.fill(QColor(32, 32, 32, 220));
@@ -217,19 +345,23 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
 
 
 
- class ArtifactAssetBrowserToolBar::Impl
- {
+class ArtifactAssetBrowserToolBar::Impl
+{
  private:
  public:
   Impl();
   ~Impl();
   QLineEdit* searchWidget = nullptr;
- };
+  QToolButton* gridViewButton = nullptr;
+  QToolButton* listViewButton = nullptr;
+};
 
- ArtifactAssetBrowserToolBar::Impl::Impl()
- {
+ArtifactAssetBrowserToolBar::Impl::Impl()
+{
   searchWidget = new QLineEdit();
- }
+  gridViewButton = new QToolButton();
+  listViewButton = new QToolButton();
+}
 
  ArtifactAssetBrowserToolBar::Impl::~Impl()
  {
@@ -248,11 +380,25 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
   refreshButton->setObjectName(QStringLiteral("assetBrowserRefreshButton"));
   refreshButton->setText(QStringLiteral("Refresh"));
   refreshButton->setToolTip(QStringLiteral("Refresh current folder"));
+  impl_->gridViewButton->setObjectName(QStringLiteral("assetBrowserGridViewButton"));
+  impl_->gridViewButton->setText(QStringLiteral("Grid"));
+  impl_->gridViewButton->setToolTip(QStringLiteral("Show assets in grid view"));
+  impl_->gridViewButton->setCheckable(true);
+  impl_->gridViewButton->setChecked(true);
+  impl_->listViewButton->setObjectName(QStringLiteral("assetBrowserListViewButton"));
+  impl_->listViewButton->setText(QStringLiteral("List"));
+  impl_->listViewButton->setToolTip(QStringLiteral("Show assets in list view"));
+  impl_->listViewButton->setCheckable(true);
   impl_->searchWidget->setPlaceholderText(QStringLiteral("Search assets..."));
   impl_->searchWidget->setClearButtonEnabled(true);
+  impl_->searchWidget->setMinimumWidth(220);
   layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(6);
   layout->addWidget(upButton);
   layout->addWidget(refreshButton);
+  layout->addWidget(impl_->gridViewButton);
+  layout->addWidget(impl_->listViewButton);
+  layout->addStretch(1);
   layout->addWidget(impl_->searchWidget);
   setLayout(layout);
  }
@@ -266,7 +412,7 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
  {
  private:
   QHash<QString, QIcon> thumbnailCache_;  // Cache thumbnails by file path
-  QSize thumbnailSize_{64, 64};
+  QSize thumbnailSize_{kAssetThumbnailDefaultPx, kAssetThumbnailDefaultPx};
   QIcon defaultFileIcon_;
   QIcon defaultImageIcon_;
   QIcon defaultVideoIcon_;
@@ -297,7 +443,8 @@ void ArtifactBreadcrumbWidget::setPath(const QString& path)
   QLabel* syncStateLabel_ = nullptr;
   QLineEdit* searchEdit_ = nullptr;
   QFileSystemModel* fileModel_ = nullptr;
-QButtonGroup* filterButtonGroup_ = nullptr;
+  QButtonGroup* filterButtonGroup_ = nullptr;
+  ArtifactBreadcrumbWidget* breadcrumb_ = nullptr;
    QLabel* currentPathLabel_ = nullptr;
    QLabel* fileInfoLabel_ = nullptr;  // File details display
    QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
@@ -333,7 +480,9 @@ QButtonGroup* filterButtonGroup_ = nullptr;
   void syncDirectorySelection();
   void refreshUnusedAssetCache();
   QString syncStateText() const;
- };
+  int thumbnailSizePx() const;
+  void setThumbnailSizePx(int value);
+  };
 
  ArtifactAssetBrowser::Impl::Impl()
  {
@@ -350,6 +499,17 @@ QButtonGroup* filterButtonGroup_ = nullptr;
 
  ArtifactAssetBrowser::Impl::~Impl()
  {
+ }
+
+ int ArtifactAssetBrowser::Impl::thumbnailSizePx() const
+ {
+  return thumbnailSize_.width();
+ }
+
+ void ArtifactAssetBrowser::Impl::setThumbnailSizePx(int value)
+ {
+  const int clamped = std::clamp(value, kAssetThumbnailMinPx, kAssetThumbnailMaxPx);
+  thumbnailSize_ = QSize(clamped, clamped);
  }
 
  void ArtifactAssetBrowser::Impl::handleDoubleClicked()
@@ -538,12 +698,22 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
 
   // Generate thumbnail for image files
   if (isImageFile(fileInfo.fileName())) {
-   QPixmap pixmap(filePath);
-   if (pixmap.isNull()) {
-    qWarning() << "[AssetBrowser] Failed to load image thumbnail via QPixmap:" << filePath;
-   } else {
-    QPixmap scaled = pixmap.scaled(thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    QIcon icon(scaled);
+   QString error;
+   const QImage image = loadImageThumbnailViaOIIO(filePath, thumbnailSize_, &error);
+   if (!image.isNull()) {
+    QIcon icon(QPixmap::fromImage(image));
+    thumbnailCache_[filePath] = icon;
+    return icon;
+   }
+   qWarning() << "[AssetBrowser] Failed to load image thumbnail via OIIO:" << filePath << error;
+
+   QImageReader reader(filePath);
+   reader.setAutoTransform(true);
+   const QImage fallbackImage = reader.read();
+   if (!fallbackImage.isNull()) {
+    const QPixmap scaled = QPixmap::fromImage(fallbackImage).scaled(
+        thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const QIcon icon(scaled);
     thumbnailCache_[filePath] = icon;
     return icon;
    }
@@ -624,6 +794,11 @@ void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
    currentDirectoryPath_ = previousRoot;
   }
 
+  if (breadcrumb_) {
+   breadcrumb_->setRootPath(assetsPath);
+   breadcrumb_->setPath(currentDirectoryPath_);
+  }
+
   refreshUnusedAssetCache();
   clearThumbnailCache();
   applyFilters();
@@ -695,9 +870,8 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   QDir dir(currentDirectoryPath_);
   if (!dir.exists()) return;
 
-  // Update path label
-  if (currentPathLabel_) {
-   currentPathLabel_->setText(currentDirectoryPath_);
+  if (breadcrumb_) {
+   breadcrumb_->setPath(currentDirectoryPath_);
   }
 
   // Get both files and directories, excluding . and ..
@@ -796,12 +970,9 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    assetModel_->setItems(items);
  }
 
- ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
+  ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
   setWindowTitle("AssetBrowser");
-
-  auto style = getDCCStyleSheetPreset(DccStylePreset::ModoStyle);
-  setStyleSheet(style);
 
   // Enable drag and drop
   setAcceptDrops(true);
@@ -810,6 +981,8 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   impl_->searchEdit_ = assetToolBar->findChild<QLineEdit*>();
   impl_->upButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserUpButton"));
   impl_->refreshButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserRefreshButton"));
+  auto* gridViewButton = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserGridViewButton"));
+  auto* listViewButton = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserListViewButton"));
 
   // File type filter buttons
   auto filterButtonsLayout = new QHBoxLayout();
@@ -958,33 +1131,33 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
   QString desktopPath = assetsPath;
 
-  auto assetPathLabel = new QLabel("Assets");
-  assetPathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-  assetPathLabel->setStyleSheet("font-weight: bold;");
-
-  auto filePathLabel = impl_->currentPathLabel_ = new QLabel(desktopPath);
-  filePathLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-  filePathLabel->setStyleSheet("color: gray; font-size: 10pt;");
-  filePathLabel->setWordWrap(true);
+  auto* breadcrumbBar = impl_->breadcrumb_ = new ArtifactBreadcrumbWidget(this);
+  breadcrumbBar->setRootPath(assetsPath);
+  breadcrumbBar->setPath(desktopPath);
+  breadcrumbBar->setToolTip(QStringLiteral("Current asset folder"));
+  connect(breadcrumbBar, &ArtifactBreadcrumbWidget::pathClicked, this,
+          [this](const QString& path) {
+            navigateToFolder(path);
+          });
 
   impl_->syncStateLabel_ = new QLabel(impl_->syncStateText(), this);
   impl_->syncStateLabel_->setAlignment(Qt::AlignCenter);
-  impl_->syncStateLabel_->setStyleSheet(
-      "font-weight: 700; padding: 3px 8px; border-radius: 10px; "
-      "color: #8fb3ff; background: rgba(60, 70, 96, 0.85);");
+  {
+    QPalette pal = impl_->syncStateLabel_->palette();
+    pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+    pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+    impl_->syncStateLabel_->setAutoFillBackground(true);
+    impl_->syncStateLabel_->setPalette(pal);
+  }
 
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
   auto fileView = impl_->fileView_ = new AssetFileListView();
   fileView->setModel(assetModel);
   impl_->currentDirectoryPath_ = desktopPath;  // Set initial directory
-  fileView->setViewMode(QListView::IconMode);
-  fileView->setIconSize(QSize(64, 64));
-  fileView->setGridSize(QSize(100, 100));  // Fixed grid size for uniform spacing
   fileView->setResizeMode(QListView::Adjust);
-  fileView->setFlow(QListView::LeftToRight);
   fileView->setTextElideMode(Qt::ElideMiddle);  // Show "longfile...name.png"
-  fileView->setWordWrap(true);
-  fileView->setSpacing(5);  // Uniform spacing between items
   fileView->setUniformItemSizes(true);  // Optimize rendering with uniform sizes
   fileView->setDragEnabled(true);
   fileView->setAcceptDrops(true);
@@ -993,6 +1166,21 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   fileView->setDefaultDropAction(Qt::CopyAction);
   fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
   fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu
+  applyAssetBrowserViewMode(fileView, QListView::IconMode,
+                            impl_->thumbnailSizePx());
+
+  auto* viewModeGroup = new QButtonGroup(this);
+  viewModeGroup->setExclusive(true);
+  if (gridViewButton) {
+    viewModeGroup->addButton(gridViewButton, static_cast<int>(QListView::IconMode));
+  }
+  if (listViewButton) {
+    viewModeGroup->addButton(listViewButton, static_cast<int>(QListView::ListMode));
+  }
+  connect(viewModeGroup, &QButtonGroup::idClicked, this, [this, fileView](int id) {
+    applyAssetBrowserViewMode(fileView, static_cast<QListView::ViewMode>(id),
+                              impl_->thumbnailSizePx());
+  });
 
   // Connect search filter
   if (impl_->searchEdit_) {
@@ -1108,21 +1296,22 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   auto thumbnailControlGroup = new QGroupBox("Thumbnail Size");
   auto thumbnailLayout = new QHBoxLayout();
 
-  auto sizeLabel = new QLabel("64px");
+  auto sizeLabel = new QLabel(QStringLiteral("%1px").arg(kAssetThumbnailDefaultPx));
   auto sizeSlider = impl_->thumbnailSizeSlider_ = new QSlider(Qt::Horizontal);
-  sizeSlider->setMinimum(32);  // Min 32px
-  sizeSlider->setMaximum(256);  // Max 256px
-  sizeSlider->setValue(64);  // Default 64px
+  sizeSlider->setMinimum(kAssetThumbnailMinPx);
+  sizeSlider->setMaximum(kAssetThumbnailMaxPx);
+  sizeSlider->setValue(kAssetThumbnailDefaultPx);
   sizeSlider->setTickPosition(QSlider::TicksBelow);
-  sizeSlider->setTickInterval(32);
+  sizeSlider->setTickInterval(25);
 
   connect(sizeSlider, &QSlider::valueChanged, this, [this, sizeLabel, fileView](int value) {
-   sizeLabel->setText(QString("%1px").arg(value));
-
-   // Update icon size and grid size
-   fileView->setIconSize(QSize(value, value));
-   int gridSize = value + 36;  // Add padding for text and spacing
-   fileView->setGridSize(QSize(gridSize, gridSize));
+    sizeLabel->setText(QString("%1px").arg(value));
+    impl_->setThumbnailSizePx(value);
+    applyAssetBrowserViewMode(fileView, fileView->viewMode(), value);
+  });
+  connect(sizeSlider, &QSlider::sliderReleased, this, [this]() {
+    impl_->clearThumbnailCache();
+    impl_->applyFilters();
   });
 
   thumbnailLayout->addWidget(new QLabel("Size:"));
@@ -1137,7 +1326,12 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel("No file selected");
   fileInfoLabel->setWordWrap(true);
   fileInfoLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
-  fileInfoLabel->setStyleSheet("color: gray; font-size: 9pt;");
+  {
+    QPalette pal = fileInfoLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+    pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
+    fileInfoLabel->setPalette(pal);
+  }
 
   fileInfoLayout->addWidget(fileInfoLabel);
   fileInfoGroup->setLayout(fileInfoLayout);
@@ -1163,18 +1357,18 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   }
 
   auto VBoxLayout = new  QVBoxLayout();
-  VBoxLayout->addWidget(assetPathLabel);
-  VBoxLayout->addWidget(filePathLabel);
   VBoxLayout->addWidget(impl_->syncStateLabel_);
-  VBoxLayout->addWidget(thumbnailControlGroup);
   VBoxLayout->addWidget(fileView);
   VBoxLayout->addWidget(fileInfoGroup);
+  VBoxLayout->addWidget(thumbnailControlGroup);
 
+  vLayout->addWidget(breadcrumbBar);
   vLayout->addWidget(assetToolBar);
   vLayout->addLayout(filterButtonsLayout);
   layout->addWidget(directoryView, 1);
   layout->addLayout(VBoxLayout, 3);
-  setLayout(layout);
+  vLayout->addLayout(layout);
+  setLayout(vLayout);
  }
 
  ArtifactAssetBrowser::~ArtifactAssetBrowser()
@@ -1402,13 +1596,16 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   void ArtifactAssetBrowser::navigateToFolder(const QString& folderPath)
   {
-   if (folderPath.isEmpty() || !QDir(folderPath).exists()) return;
-   impl_->currentDirectoryPath_ = folderPath;
-   impl_->clearThumbnailCache();
-   impl_->applyFilters();
-   impl_->syncDirectorySelection();
-   folderChanged(folderPath);
+  if (folderPath.isEmpty() || !QDir(folderPath).exists()) return;
+  impl_->currentDirectoryPath_ = folderPath;
+  impl_->clearThumbnailCache();
+  if (impl_->breadcrumb_) {
+   impl_->breadcrumb_->setPath(folderPath);
   }
+  impl_->applyFilters();
+  impl_->syncDirectorySelection();
+  folderChanged(folderPath);
+ }
 
  void ArtifactAssetBrowser::updateFileInfo(const QString& filePath)
  {
@@ -1452,14 +1649,20 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
        lowerName.endsWith(".jpeg") || lowerName.endsWith(".bmp") ||
        lowerName.endsWith(".gif") || lowerName.endsWith(".tga") ||
        lowerName.endsWith(".tiff") || lowerName.endsWith(".exr")) {
-    QImageReader imageReader(filePath);
-    const QSize imageSize = imageReader.size();
+    QSize imageSize;
+    QString imageError;
+    const QImage imagePreview = loadImageThumbnailViaOIIO(filePath, QSize(), &imageError);
+    if (!imagePreview.isNull()) {
+     imageSize = imagePreview.size();
+    }
     if (imageSize.isValid()) {
      info += QString("Resolution: %1 x %2 px<br>").arg(imageSize.width()).arg(imageSize.height());
-     const QByteArray imageFormat = imageReader.format();
-     if (!imageFormat.isEmpty()) {
-      info += QString("Format: %1<br>").arg(QString::fromLatin1(imageFormat).toUpper());
+     const QString suffix = fileInfo.suffix().toUpper();
+     if (!suffix.isEmpty()) {
+      info += QString("Format: %1<br>").arg(suffix);
      }
+    } else if (!imageError.isEmpty()) {
+     info += QString("Image decode: %1<br>").arg(imageError);
     }
    }
    // Video files

@@ -16,6 +16,7 @@ module;
 export module Artifact.Timeline.TrackPainterView;
 
 import Utils.Id;
+import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Composition.Abstract;
 import Artifact.Layers.Selection.Manager;
 
@@ -88,6 +89,7 @@ export namespace Artifact
 
   void setVerticalOffset(double value);
   double verticalOffset() const;
+  void setKeyframeContext(const LayerID& layerId, const QString& propertyPath);
 
   void setTrackCount(int count);
   int trackCount() const;
@@ -106,7 +108,8 @@ export namespace Artifact
   bool hasSelectedKeyframes() const;
   void syncSelectionState(const ArtifactCompositionPtr& composition,
                           ArtifactLayerSelectionManager* selectionManager,
-                          const QVector<QString>& trackRowKeys);
+                          const QVector<TimelineRowDescriptor>& trackRows,
+                          bool forceRefresh = false);
   QVector<TrackClipVisual> clips() const;
 
  public /*signals*/:

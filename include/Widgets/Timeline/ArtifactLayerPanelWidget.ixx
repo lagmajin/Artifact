@@ -20,17 +20,32 @@ export namespace Artifact
   FilterOnly
  };
 
- enum class TimelineLayerDisplayMode
- {
-  AllLayers,
-  SelectedOnly,
-  AnimatedOnly,
-  ImportantAndKeyframed,
-  AudioOnly,
-  VideoOnly
- };
-	
-   class ArtifactLayerPanelHeaderWidget :public QWidget
+  enum class TimelineLayerDisplayMode
+  {
+   AllLayers,
+   SelectedOnly,
+   AnimatedOnly,
+   ImportantAndKeyframed,
+   AudioOnly,
+   VideoOnly
+  };
+
+  enum class TimelineRowKind
+  {
+   Layer,
+   Group,
+   Property
+  };
+
+  struct TimelineRowDescriptor
+  {
+   LayerID layerId;
+   TimelineRowKind kind = TimelineRowKind::Layer;
+   QString label;
+   QString propertyPath;
+  };
+ 	
+    class ArtifactLayerPanelHeaderWidget :public QWidget
    {
     W_OBJECT(ArtifactLayerPanelHeaderWidget)
    private:
@@ -105,16 +120,21 @@ export namespace Artifact
   void updateLayout();
   QVector<LayerID> matchingTimelineRows() const;
   QVector<LayerID> visibleTimelineRows() const;
+  QVector<TimelineRowDescriptor> visibleTimelineRowDescriptors() const;
   int layerRowIndex(const LayerID& id) const;
   void editLayerName(const LayerID& id);
   void scrollToLayer(const LayerID& id);
+  LayerID selectedLayerId() const;
+  QString currentPropertyPath() const;
 
  private:
   void performUpdateLayout();
 
- public /*signals*/:
+  public /*signals*/:
   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
   void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
+  void propertyFocusChanged(const LayerID& layerId, const QString& propertyPath)
+      W_SIGNAL(propertyFocusChanged, layerId, propertyPath);
 
  };
 
@@ -144,14 +164,19 @@ export namespace Artifact
   double verticalOffset() const;
   QVector<LayerID> matchingTimelineRows() const;
   QVector<LayerID> visibleTimelineRows() const;
+  QVector<TimelineRowDescriptor> visibleTimelineRowDescriptors() const;
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
   void scrollToLayer(const LayerID& id);
+  LayerID selectedLayerId() const;
+  QString currentPropertyPath() const;
 
  public /*signals*/:
   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
   void verticalOffsetChanged(double offset) W_SIGNAL(verticalOffsetChanged, offset);
-	
- };
+  void propertyFocusChanged(const LayerID& layerId, const QString& propertyPath)
+      W_SIGNAL(propertyFocusChanged, layerId, propertyPath);
+ 	
+  };
 
 };

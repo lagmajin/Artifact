@@ -12,11 +12,13 @@ module;
 #include <QStringList>
 #include <QStyle>
 #include <QToolBar>
+#include <vector>
 #include <wobjectimpl.h>
 
 module Widgets.ToolBar;
 import Utils;
 import Icon.SvgToIcon;
+import Widgets.ToolOptionsBar;
 import Artifact.Tool.Manager;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -57,6 +59,25 @@ QString createRichTooltip(const QString &toolName,
                  "<div style='color:#888;font-size:11px;'>%2</div>"
                  "</div>")
       .arg(toolName, shortcutHtml);
+}
+
+QString toolLabelForType(Artifact::ToolType type)
+{
+  switch (type) {
+    case Artifact::ToolType::Selection:   return QStringLiteral("選択");
+    case Artifact::ToolType::Hand:        return QStringLiteral("手のひら");
+    case Artifact::ToolType::Zoom:        return QStringLiteral("ズーム");
+    case Artifact::ToolType::Rotation:    return QStringLiteral("回転");
+    case Artifact::ToolType::AnchorPoint: return QStringLiteral("アンカー");
+    case Artifact::ToolType::Pen:         return QStringLiteral("ペン");
+    case Artifact::ToolType::Text:        return QStringLiteral("テキスト");
+    case Artifact::ToolType::Shape:       return QStringLiteral("シェイプ");
+    case Artifact::ToolType::Rectangle:   return QStringLiteral("シェイプ");
+    case Artifact::ToolType::Ellipse:     return QStringLiteral("シェイプ");
+    case Artifact::ToolType::Move:        return QStringLiteral("移動");
+    case Artifact::ToolType::Scale:       return QStringLiteral("スケール");
+    default:                              return {};
+  }
 }
 
 QIcon loadIconWithFallback(const QString &fileName) {
@@ -162,6 +183,8 @@ public:
   ToolBarDisplayMode displayMode_ = ToolBarDisplayMode::Full;
   WorkspaceMode workspaceMode_ = WorkspaceMode::Default;
   class ArtifactToolOptionsBar *toolOptionsBar_ = nullptr;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   // Tool name to shortcut mapping for rich tooltips
   struct ToolInfo {
@@ -395,32 +418,68 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   QObject::connect(impl_->homeAction_, &QAction::triggered, this,
                    [this]() { homeRequested(); });
   
-  auto publishTool = [](ToolType type) {
+  auto setTool = [](ToolType type) {
+    if (auto *app = Artifact::ApplicationService::instance()) {
+      if (auto *toolService = app->toolService()) {
+        toolService->setActiveTool(type);
+        return;
+      }
+    }
     ArtifactCore::globalEventBus().publish<ToolChangedEvent>(ToolChangedEvent{type});
   };
 
   QObject::connect(impl_->selectTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::Selection); });
+                   [this, setTool]() {
+                     selectToolRequested();
+                     setTool(ToolType::Selection);
+                   });
   QObject::connect(impl_->handTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::Hand); });
+                   [this, setTool]() {
+                     handToolRequested();
+                     setTool(ToolType::Hand);
+                   });
   QObject::connect(impl_->zoomTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::Zoom); });
+                   [this, setTool]() {
+                     zoomToolRequested();
+                     setTool(ToolType::Zoom);
+                   });
   QObject::connect(impl_->moveTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::Move); });
+                   [this, setTool]() {
+                     moveToolRequested();
+                     setTool(ToolType::Move);
+                   });
   QObject::connect(impl_->rotationTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::Rotation); });
+                   [this, setTool]() {
+                     rotationToolRequested();
+                     setTool(ToolType::Rotation);
+                   });
   QObject::connect(impl_->scaleTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::Scale); });
+                   [this, setTool]() {
+                     scaleToolRequested();
+                     setTool(ToolType::Scale);
+                   });
   QObject::connect(impl_->cameraTool_, &QAction::triggered, this,
                    [this]() { cameraToolRequested(); });
   QObject::connect(impl_->panBehindTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::AnchorPoint); });
+                   [this, setTool]() {
+                     panBehindToolRequested();
+                     setTool(ToolType::AnchorPoint);
+                   });
   QObject::connect(impl_->shapeTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::Rectangle); });
+                   [this, setTool]() {
+                     shapeToolRequested();
+                     setTool(ToolType::Rectangle);
+                   });
   QObject::connect(impl_->penTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::Pen); });
+                   [this, setTool]() {
+                     penToolRequested();
+                     setTool(ToolType::Pen);
+                   });
   QObject::connect(impl_->textTool_, &QAction::triggered, this,
-                   [publishTool]() { publishTool(ToolType::Text); });
+                   [this, setTool]() {
+                     textToolRequested();
+                     setTool(ToolType::Text);
+                   });
   QObject::connect(impl_->brushTool_, &QAction::triggered, this,
                    [this]() { brushToolRequested(); });
   QObject::connect(impl_->cloneStampTool_, &QAction::triggered, this,
@@ -457,6 +516,20 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                                  : "Material/visibility_off.svg"));
                      guideToggled(checked);
                    });
+
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ToolChangedEvent>(
+          [this](const ToolChangedEvent &event) {
+            if (!impl_) {
+              return;
+            }
+            const QString toolLabel = toolLabelForType(event.toolType);
+            if (!toolLabel.isEmpty()) {
+              setCurrentTool(toolLabel);
+            }
+          }));
+
+  refreshFromApplicationState();
   setAutoFillBackground(true);
 }
 
@@ -664,7 +737,7 @@ void ArtifactToolBar::setCurrentTool(const QString &toolName) {
 
       // Update tool options bar
       if (impl_->toolOptionsBar_) {
-        // Tool options bar would be updated here
+        impl_->toolOptionsBar_->setCurrentTool(toolName);
       }
       break;
     }
@@ -673,6 +746,22 @@ void ArtifactToolBar::setCurrentTool(const QString &toolName) {
 
 void ArtifactToolBar::setToolOptionsBar(ArtifactToolOptionsBar *bar) {
   impl_->toolOptionsBar_ = bar;
+}
+
+void ArtifactToolBar::refreshFromApplicationState()
+{
+  if (!impl_) {
+    return;
+  }
+
+  if (auto *app = Artifact::ApplicationService::instance()) {
+    if (auto *toolService = app->toolService()) {
+      const QString toolLabel = toolLabelForType(toolService->activeTool());
+      if (!toolLabel.isEmpty()) {
+        setCurrentTool(toolLabel);
+      }
+    }
+  }
 }
 
 } // namespace Artifact

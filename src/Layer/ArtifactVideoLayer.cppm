@@ -13,6 +13,8 @@
 #include <QFuture>
 #include <QFutureWatcher>
 #include <QtConcurrent>
+#include <QMetaObject>
+#include <QPointer>
 #include <mutex>
 #include <unordered_map>
 #include <deque>
@@ -57,6 +59,7 @@ module Artifact.Layer.Video;
 
 
 import Artifact.Layer.Video;
+import Artifact.Composition.Abstract;
 import Artifact.Project.Manager;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -109,7 +112,35 @@ QString decoderBackendName(const ArtifactCore::MediaPlaybackController* controll
 
 int64_t currentSourceFrame(const ArtifactVideoLayer* layer)
 {
-    return layer ? layer->currentFrame() : 0;
+    return layer ? timelineFrameToSourceFrame(layer, layer->currentFrame()) : 0;
+}
+
+void publishVideoLayerModified(ArtifactVideoLayer* layer)
+{
+    if (!layer) {
+        return;
+    }
+
+    if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+    }
+}
+
+void publishVideoLayerModifiedAsync(ArtifactVideoLayer* layer)
+{
+    if (!layer) {
+        return;
+    }
+
+    QPointer<ArtifactVideoLayer> guarded(layer);
+    QMetaObject::invokeMethod(
+        layer,
+        [guarded]() {
+            publishVideoLayerModified(guarded.data());
+        },
+        Qt::QueuedConnection);
 }
 
 QString threadIdTag()
@@ -380,11 +411,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
             qCritical() << "[VideoLayer] openMediaFile FAILED:" << result.normalizedPath
                         << "lastError=" << result.error;
             layer->impl_->isLoaded_ = false;
-            if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
-             ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-                 LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                                   LayerChangedEvent::ChangeType::Modified});
-            }
+            publishVideoLayerModified(layer);
             return;
         }
 
@@ -424,17 +451,16 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         layer->impl_->decodeFuture_ = QtConcurrent::run([ctrl, layer]() -> QImage {
             QImage frame = ctrl->getVideoFrameAtFrameDirect(0);
             layer->impl_->decoding_ = false;
+            if (!frame.isNull()) {
+                publishVideoLayerModifiedAsync(layer);
+            }
             return frame;
         });
 
         qDebug() << "[VideoLayer] Loaded:" << result.normalizedPath
                  << "Duration:" << layer->impl_->streamInfo_.duration << "s"
                  << "Frames:" << layer->impl_->streamInfo_.frameCount;
-        if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
-         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-             LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                               LayerChangedEvent::ChangeType::Modified});
-        }
+        publishVideoLayerModified(layer);
     });
     watcher->setFuture(impl_->openFuture_);
 
@@ -478,7 +504,7 @@ void ArtifactVideoLayer::seekToFrame(int64_t frame)
     }
     
     const int64_t timelineFrame = frame;
-    const int64_t sourceFrame = currentFrame();
+    const int64_t sourceFrame = timelineFrameToSourceFrame(this, timelineFrame);
     const bool hasKnownFrameCount = impl_->streamInfo_.frameCount > 0;
     if (sourceFrame >= 0 && (!hasKnownFrameCount || sourceFrame < impl_->streamInfo_.frameCount)) {
         shouldDecode = true;
@@ -610,6 +636,9 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                        << threadIdTag();
         }
         impl_->decoding_ = false;
+        if (!decoded.isNull()) {
+            publishVideoLayerModifiedAsync(this);
+        }
         return decoded;
     });
 }
@@ -950,7 +979,7 @@ void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
 {
     ArtifactAbstractLayer::goToFrame(frameNumber);
     // 先読みデコード：次の render tick より先にバックグラウンドデコードを起動しておく
-    if (currentFrame() != impl_->lastDecodedFrame_) {
+    if (timelineFrameToSourceFrame(this, currentFrame()) != impl_->lastDecodedFrame_) {
         decodeCurrentFrame();
     }
 }
