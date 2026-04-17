@@ -36,6 +36,7 @@ import Artifact.Event.Types;
 import InputEvent;
 import Input.Operator;
 import Undo.UndoManager;
+import UI.ShortcutBindings;
 import Time.Rational;
 import Utils.Id;
 import Utils.Point.Like;
@@ -777,21 +778,32 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   auto* am = ArtifactApplicationManager::instance();
   auto* tm = am->toolManager();
   auto* ctx = am->activeContextService();
+  auto& shortcuts = ShortcutBindings::instance();
   
   if (!event->isAutoRepeat()) {
-      if (event->key() == Qt::Key_V) tm->setActiveTool(ToolType::Selection);
-      else if (event->key() == Qt::Key_H) tm->setActiveTool(ToolType::Hand);
-      else if (event->key() == Qt::Key_Z) tm->setActiveTool(ToolType::Zoom);
-      else if (event->key() == Qt::Key_W) tm->setActiveTool(ToolType::Rotation);
+      if (shortcuts.matches(event, ShortcutId::Undo)) {
+          if (auto* undo = UndoManager::instance()) {
+              undo->undo();
+          }
+          event->accept();
+          return;
+      }
+      if (shortcuts.matches(event, ShortcutId::Redo)) {
+          if (auto* undo = UndoManager::instance()) {
+              undo->redo();
+          }
+          event->accept();
+          return;
+      }
+      if (shortcuts.matches(event, ShortcutId::SelectionTool)) tm->setActiveTool(ToolType::Selection);
+      else if (shortcuts.matches(event, ShortcutId::HandTool)) tm->setActiveTool(ToolType::Hand);
+      else if (shortcuts.matches(event, ShortcutId::ZoomTool)) tm->setActiveTool(ToolType::Zoom);
+      else if (shortcuts.matches(event, ShortcutId::RotateTool)) tm->setActiveTool(ToolType::Rotation);
       else if (event->key() == Qt::Key_Space) ctx->togglePlayPause();
       else if (event->key() == Qt::Key_Home) ctx->goToStart();
       else if (event->key() == Qt::Key_End) ctx->goToEnd();
       else if (event->key() == Qt::Key_PageUp) ctx->prevFrame();
       else if (event->key() == Qt::Key_PageDown) ctx->nextFrame();
-      else if (event->key() == Qt::Key_Z && event->modifiers() & Qt::ControlModifier) {
-          if (event->modifiers() & Qt::ShiftModifier) UndoManager::instance()->redo();
-          else UndoManager::instance()->undo();
-      }
       else if (event->key() == Qt::Key_BracketLeft) ctx->setLayerInAtCurrentTime();
       else if (event->key() == Qt::Key_BracketRight) ctx->setLayerOutAtCurrentTime();
       
