@@ -51,6 +51,8 @@ module Artifact.Composition.InOutPoints;
 import Frame.Position;
 import Frame.Range;
 import Artifact.Composition.InOutPoints;
+import Event.Bus;
+import Artifact.Event.Types;
 
 namespace Artifact {
 W_OBJECT_IMPL(ArtifactMarker)
@@ -240,12 +242,14 @@ ArtifactInOutPoints::~ArtifactInOutPoints() = default;
 // In Point
 void ArtifactInOutPoints::setInPoint(const FramePosition& frame) {
     impl_->inPoint_ = frame;
-    Q_EMIT inPointChanged(impl_->inPoint_);
+    ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+        PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(), impl_->outPoint_.has_value()});
 }
 
 void ArtifactInOutPoints::clearInPoint() {
     impl_->inPoint_ = std::nullopt;
-    Q_EMIT inPointChanged(impl_->inPoint_);
+    ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+        PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(), impl_->outPoint_.has_value()});
 }
 
 std::optional<FramePosition> ArtifactInOutPoints::inPoint() const {
@@ -263,12 +267,14 @@ void ArtifactInOutPoints::setInPointAtCurrent(const FramePosition& currentFrame)
 // Out Point
 void ArtifactInOutPoints::setOutPoint(const FramePosition& frame) {
     impl_->outPoint_ = frame;
-    Q_EMIT outPointChanged(impl_->outPoint_);
+    ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+        PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(), impl_->outPoint_.has_value()});
 }
 
 void ArtifactInOutPoints::clearOutPoint() {
     impl_->outPoint_ = std::nullopt;
-    Q_EMIT outPointChanged(impl_->outPoint_);
+    ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+        PlaybackInOutPointsChangedEvent{impl_->inPoint_.has_value(), impl_->outPoint_.has_value()});
 }
 
 std::optional<FramePosition> ArtifactInOutPoints::outPoint() const {
@@ -303,7 +309,8 @@ bool ArtifactInOutPoints::isRangeLimited() const {
 void ArtifactInOutPoints::clearAllPoints() {
     impl_->inPoint_ = std::nullopt;
     impl_->outPoint_ = std::nullopt;
-    Q_EMIT pointsCleared();
+    ArtifactCore::globalEventBus().publish<PlaybackInOutPointsChangedEvent>(
+        PlaybackInOutPointsChangedEvent{false, false});
 }
 
 // Markers

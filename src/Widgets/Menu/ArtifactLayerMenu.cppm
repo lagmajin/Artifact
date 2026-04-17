@@ -26,6 +26,7 @@ import Artifact.Layer.Factory;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.CreatePlaneLayerDialog;
 import Artifact.Widgets.AppDialogs;
+import Artifact.Tool.CameraTracker;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -121,6 +122,7 @@ public:
     QAction* createCameraAction = nullptr;
     QAction* createAudioAction = nullptr;
     QAction* createSvgAction = nullptr;
+    QAction* trackCameraAction = nullptr;
 
     QAction* duplicateLayerAction = nullptr;
     QAction* renameLayerAction = nullptr;
@@ -166,6 +168,7 @@ public:
     void handleGroupSelection();
     void handleUngroup();
     void handleSplitLayer();
+    void handleTrackCamera();
 
     bool hasCurrentComposition() const;
     bool ensureCurrentComposition();
@@ -201,6 +204,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createAudioAction->setIcon(QIcon(resolveIconPath("Material/audiotrack.svg")));
 
     createSvgAction = new QAction("SVG シェイプレイヤー(&V)...", createMenu);
+
+    trackCameraAction = new QAction("3Dカメラトラッキング(&T)", menu);
+    trackCameraAction->setIcon(QIcon(resolveIconPath("Material/videocam.svg")));
 
     createMenu->addAction(createSolidAction);
     createMenu->addAction(createNullAction);
@@ -250,6 +256,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     splitAction->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
 
     menu->addMenu(createMenu);
+    menu->addAction(trackCameraAction);
     menu->addSeparator();
     menu->addAction(duplicateLayerAction);
     menu->addAction(renameLayerAction);
@@ -289,6 +296,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     QObject::connect(groupSelectionAction, &QAction::triggered, menu, [this]() { handleGroupSelection(); });
     QObject::connect(ungroupAction, &QAction::triggered, menu, [this]() { handleUngroup(); });
     QObject::connect(splitAction, &QAction::triggered, menu, [this]() { handleSplitLayer(); });
+    QObject::connect(trackCameraAction, &QAction::triggered, menu, [this]() { handleTrackCamera(); });
 
     auto* service = ArtifactProjectService::instance();
     QObject::connect(service, &ArtifactProjectService::layerSelected, menu, [this](const ArtifactCore::LayerID& id) {
@@ -381,6 +389,17 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     ungroupAction->setEnabled(isGroupSelected && hasComp);
     
     splitAction->setEnabled(hasLayer);
+
+    // 3Dカメラトラッキング: 動画レイヤーが選択されている場合のみ有効
+    bool isVideoSelected = false;
+    if (hasLayer && hasComp) {
+        if (auto comp = service->currentComposition().lock()) {
+            if (auto layer = comp->layerById(selectedLayerId_)) {
+                isVideoSelected = layer->hasVideo();
+            }
+        }
+    }
+    trackCameraAction->setEnabled(isVideoSelected);
 }
 
 void ArtifactLayerMenu::Impl::handleCreateSolid()
@@ -672,6 +691,33 @@ void ArtifactLayerMenu::Impl::handleUngroup()
 void ArtifactLayerMenu::Impl::handleSplitLayer()
 {
     QMessageBox::information(menu_->window(), "Layer", "レイヤー分割は次のステップで実装します。");
+}
+
+void ArtifactLayerMenu::Impl::handleTrackCamera()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+
+    auto layer = comp->layerById(selectedLayerId_);
+    if (!layer || !layer->hasVideo()) {
+        QMessageBox::warning(menu_->window(), "3D Tracker", "動画レイヤーを選択してください。");
+        return;
+    }
+
+    // 実行
+    bool success = ArtifactCameraTrackerTool::run(comp.get(), layer, [this](const ArtifactCameraTrackerTool::ProgressUpdate& update) {
+        // TODO: ステータスバーへの表示など
+        qDebug() << "Tracking progress:" << update.currentFrame << "/" << update.totalFrames << update.message;
+    });
+
+    if (success) {
+        QMessageBox::information(menu_->window(), "3D Tracker", "トラッキングが完了しました。カメラと特徴点レイヤーが作成されました。");
+    } else {
+        QMessageBox::warning(menu_->window(), "3D Tracker", "トラッキングに失敗しました。十分な特徴点が見つからなかった可能性があります。");
+    }
 }
 
 ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)

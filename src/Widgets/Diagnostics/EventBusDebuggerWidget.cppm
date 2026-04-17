@@ -29,7 +29,7 @@ module;
 module Artifact.Widgets.EventBusDebugger;
 
 import ArtifactCore.Event.EventBusDebugger;
-import ArtifactCore.Event.Bus;
+import Event.Bus;
 
 namespace Artifact {
 

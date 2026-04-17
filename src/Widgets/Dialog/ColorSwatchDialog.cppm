@@ -26,6 +26,7 @@ module Artifact.Widgets.ColorSwatchDialog;
 
 import std;
 import Color.Float;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 

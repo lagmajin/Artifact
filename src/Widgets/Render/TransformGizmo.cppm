@@ -36,9 +36,9 @@ constexpr float kPi = 3.14159265358979323846f;
 struct GizmoVisualStyle {
  static constexpr float scaleAxisThickness = 1.25f;
  static constexpr float scaleCornerThickness = 1.05f;
- static constexpr float scaleHandleBoost = 0.9f;
- static constexpr float scaleHandleOutset = 7.0f;
- static constexpr float scaleHandleSize = 0.82f;
+ static constexpr float scaleHandleBoost = 1.05f;
+ static constexpr float scaleHandleOutset = 9.0f;
+ static constexpr float scaleHandleSize = 1.18f;
  static constexpr float rotateRingPadding = 18.0f;
  static constexpr float rotateRingThickness = 3.0f;
  static constexpr float rotateRingInnerScale = 1.65f;
@@ -747,7 +747,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  const float zoom = renderer->getZoom();
  const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
  const float lineThickness = std::clamp(3.0f * invZoom, 1.65f, 5.4f);
- const float handleSize = std::clamp(HANDLE_SIZE * 1.62f * invZoom, 9.0f, 21.0f);
+  const float handleSize = std::clamp(HANDLE_SIZE * 1.62f * 1.5f * invZoom, 11.0f, 28.0f);
 
  QRectF localRect = layer_->localBounds();
  if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
@@ -841,7 +841,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
   drawEmphasizedLine(renderer, br_c, bl_c, gizmoColor, lineThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, bl_c, tl_c, gizmoColor, lineThickness, invZoom, isActive);
 
-   const float handleSizeScale = std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize, 7.0f, 16.0f);
+   const float handleSizeScale = std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize, 10.0f, 22.0f);
    const FloatColor cornerFill = activeHandle_ == HandleType::Scale_TL ||
                                  activeHandle_ == HandleType::Scale_TR ||
                                  activeHandle_ == HandleType::Scale_BL ||
@@ -858,7 +858,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
         ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
         : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
 
-   const float outward = std::max(4.2f, GizmoVisualStyle::scaleHandleOutset * 0.58f * invZoom);
+   const float outward = std::max(5.0f, GizmoVisualStyle::scaleHandleOutset * 0.58f * invZoom);
    drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
    drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tr_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
    drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
@@ -906,7 +906,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
       ? FloatColor{0.18f, 1.0f, 0.30f, 1.0f}
       : FloatColor{0.08f, 0.86f, 0.22f, 1.0f};
 
-  const float centerHandleSize = std::max(8.5f, handleSize * GizmoVisualStyle::scaleHandleBoost);
+   const float centerHandleSize = std::max(10.5f, handleSize * GizmoVisualStyle::scaleHandleBoost);
   const QRectF centerRect(center_c.x - centerHandleSize * 0.5f,
                           center_c.y - centerHandleSize * 0.5f,
                           centerHandleSize, centerHandleSize);

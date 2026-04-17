@@ -336,14 +336,6 @@ public:
     QString exportToXML() const;
     
 public: // signals
-    
-    // In/Out point signals
-    void inPointChanged(std::optional<FramePosition> inPoint) 
-        W_SIGNAL(inPointChanged, inPoint);
-    void outPointChanged(std::optional<FramePosition> outPoint) 
-        W_SIGNAL(outPointChanged, outPoint);
-    void pointsCleared() W_SIGNAL(pointsCleared);
-    
     // Marker signals
     void markerAdded(ArtifactMarker* marker) W_SIGNAL(markerAdded, marker);
     void markerRemoved(ArtifactMarker* marker) W_SIGNAL(markerRemoved, marker);

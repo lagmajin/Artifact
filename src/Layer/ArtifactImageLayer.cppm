@@ -19,6 +19,7 @@ module;
 module Artifact.Layer.Image;
 
 import std;
+import Thread.Helper;
 import CvUtils;
 import Artifact.Render.IRenderer;
 import Image.ImageF32x4_RGBA;
@@ -155,7 +156,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
 
     // [Fix 1] OIIO 経由でバックグラウンド先読みし、初回 draw() 呼び出し時の
     // メインスレッドブロックを排除する
-    impl_->prefetchFuture_ = QtConcurrent::run([path]() -> QImage {
+    impl_->prefetchFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [path]() -> QImage {
         return loadImageViaOIIO(path);
     });
     impl_->prefetchWatcher_.setFuture(impl_->prefetchFuture_);

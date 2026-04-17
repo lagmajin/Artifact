@@ -70,6 +70,11 @@ struct PlaybackFrameRangeChangedEvent {
     qint64 endFrame = 0;
 };
 
+struct PlaybackInOutPointsChangedEvent {
+    bool hasInPoint = false;
+    bool hasOutPoint = false;
+};
+
 struct PlaybackCompositionChangedEvent {
     QString compositionId;
 };
