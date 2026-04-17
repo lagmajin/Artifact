@@ -60,6 +60,7 @@ const QColor kCatColors[] = {
     {150, 200,  80},  // IO
     {255, 120, 120},  // Animation
     {160, 160, 160},  // Other
+    { 80, 200, 255},  // Audio
 };
 
 constexpr double k60fps = 16.667;
@@ -93,10 +94,12 @@ void drawMiniBar(QPainter& p, const QRect& r, double fraction,
 // ---------------------------------------------------------------------------
 class ProfilerPanelWidget::Impl {
 public:
-    QTimer* timer      = nullptr;
-    int     histN      = 90;
-    bool    btnHovered = false;
+    QTimer* timer           = nullptr;
+    int     histN           = 90;
+    bool    btnHovered      = false;
+    bool    resetBtnHovered = false;
     QRect   btnRect;
+    QRect   resetBtnRect;
 
     static constexpr int kW         = 520;
     static constexpr int kPad       = 10;
@@ -106,6 +109,7 @@ public:
     static constexpr int kScopeRows = 10;
     static constexpr int kTimerRows = 6;
     static constexpr int kEventRows = 8;
+    static constexpr int kAudioRows = 4;
 
     static constexpr int kColName   = kPad + 8;
     static constexpr int kColLast   = kW - 246;
@@ -125,6 +129,8 @@ public:
              + (kTimerRows + 1) * kRowH         // timer rows + col header
              + kPad + kHdrH                     // events header
              + (kEventRows + 1) * kRowH         // event rows + col header
+             + kPad + kHdrH                     // audio engine header
+             + (kAudioRows + 1) * kRowH         // audio rows + col header
              + kPad * 2;                        // bottom
     }
 };
@@ -163,6 +169,9 @@ void ProfilerPanelWidget::copyReportToClipboard() {
 void ProfilerPanelWidget::mousePressEvent(QMouseEvent* event) {
     if (impl_->btnRect.contains(event->pos())) {
         copyReportToClipboard();
+    }
+    if (impl_->resetBtnRect.contains(event->pos())) {
+        ArtifactCore::AudioEngineProfiler::instance().resetStats();
     }
     QWidget::mousePressEvent(event);
 }
@@ -495,6 +504,123 @@ void ProfilerPanelWidget::paintEvent(QPaintEvent*) {
         if (rows == 0) {
             p.setPen(kTextD);
             p.drawText(pad, curY + fm.ascent(), QStringLiteral("(none this frame)"));
+            curY += Impl::kRowH;
+        }
+    }
+
+    // =======================================================================
+    // Audio Engine
+    // =======================================================================
+    {
+        const auto audio = ArtifactCore::AudioEngineProfiler::instance().snapshot();
+
+        curY += pad;
+        p.fillRect(0, curY, W, Impl::kHdrH, kBgSection);
+        p.setPen(kBorder);
+        p.drawLine(0, curY, W, curY);
+        p.setFont(fontBold);
+        p.setPen(kTextH);
+        p.drawText(pad, curY + fmB.ascent() + 2, QStringLiteral("Audio Engine"));
+
+        // Reset button
+        const QString resetTxt = QStringLiteral("↺ Reset");
+        const int resetBtnW = fmB.horizontalAdvance(resetTxt) + 12;
+        impl_->resetBtnRect = QRect(W - resetBtnW - pad, curY + 3, resetBtnW, Impl::kHdrH - 6);
+        p.fillRect(impl_->resetBtnRect, impl_->resetBtnHovered ? kBgBtnHover : kBgBtn);
+        p.setPen(kBorder);
+        p.drawRect(impl_->resetBtnRect);
+        p.setPen(kTextN);
+        p.setFont(fontMono);
+        p.drawText(impl_->resetBtnRect, Qt::AlignCenter | Qt::AlignVCenter, resetTxt);
+
+        curY += Impl::kHdrH;
+
+        // Column header
+        p.setPen(kTextD);
+        p.setFont(fontMono);
+        p.drawText(Impl::kColName, curY + fm.ascent(), QStringLiteral("Metric"));
+        p.drawText(Impl::kColAvg,  curY + fm.ascent(), QStringLiteral("avg"));
+        p.drawText(Impl::kColP95,  curY + fm.ascent(), QStringLiteral("max"));
+        p.drawText(Impl::kColBar,  curY + fm.ascent(), QStringLiteral("bar"));
+        curY += Impl::kRowH;
+
+        // Helper: draw one audio metric row
+        const auto kAudioColor = kCatColors[7];
+        const auto drawAudioRow = [&](const QString& name, double avgVal, double maxVal,
+                                      const QString& unit, double warnThreshold, double barMax)
+        {
+            const bool warn = avgVal > warnThreshold;
+            p.fillRect(pad, curY + 3, 5, Impl::kRowH - 6, kAudioColor);
+            p.setPen(warn ? kTextW : kTextN);
+            p.setFont(fontMono);
+            p.drawText(Impl::kColName + 8, curY + fm.ascent(), name.left(22));
+            p.drawText(Impl::kColAvg, curY + fm.ascent(),
+                       QString::asprintf("%6.1f", avgVal) + unit);
+            p.setPen(kTextD);
+            p.drawText(Impl::kColP95, curY + fm.ascent(),
+                       QString::asprintf("%6.1f", maxVal) + unit);
+            const QRect barRect(Impl::kColBar, curY + 3, Impl::kBarW, Impl::kRowH - 6);
+            p.fillRect(barRect, QColor(40, 40, 55));
+            drawMiniBar(p, barRect, (barMax > 0.0) ? avgVal / barMax : 0.0,
+                        warn ? QColor(220, 140, 50, 200) : kBarMini);
+            curY += Impl::kRowH;
+        };
+
+        // Row 1: callback duration
+        drawAudioRow(
+            QStringLiteral("Callback"),
+            audio.avgCallbackUs, audio.maxCallbackUs,
+            QStringLiteral("µs"),
+            500.0,   // warn if avg > 500 µs
+            std::max(audio.maxCallbackUs, 1.0));
+
+        // Row 2: fill-loop duration
+        drawAudioRow(
+            QStringLiteral("Fill loop"),
+            audio.avgFillMs, audio.maxFillMs,
+            QStringLiteral("ms"),
+            4.0,     // warn if avg > 4 ms
+            std::max(audio.maxFillMs, 1.0));
+
+        // Row 3: layer decode (from PerformanceRegistry)
+        {
+            const auto decodeHistory = ArtifactCore::PerformanceRegistry::instance()
+                                           .getHistory("Audio/Layer/getAudio");
+            double decodeAvg = 0.0, decodeMax = 0.0;
+            if (!decodeHistory.empty()) {
+                for (double v : decodeHistory) decodeAvg += v;
+                decodeAvg /= static_cast<double>(decodeHistory.size());
+                decodeMax = *std::max_element(decodeHistory.begin(), decodeHistory.end());
+            }
+            drawAudioRow(
+                QStringLiteral("Layer decode"),
+                decodeAvg, decodeMax,
+                QStringLiteral("ms"),
+                2.0,
+                std::max(decodeMax, 1.0));
+        }
+
+        // Row 4: buffer level + underflow count
+        {
+            const double lvl = std::clamp(audio.bufferLevelPct, 0.0, 200.0);
+            const bool lvlWarn = lvl < 50.0 || audio.totalUnderflows > 0;
+            p.fillRect(pad, curY + 3, 5, Impl::kRowH - 6, kAudioColor);
+            p.setPen(lvlWarn ? kTextW : kTextGreen);
+            p.setFont(fontMono);
+            p.drawText(Impl::kColName + 8, curY + fm.ascent(),
+                       QStringLiteral("Buffer level"));
+            p.drawText(Impl::kColAvg, curY + fm.ascent(),
+                       QString::asprintf("%5.0f%%", lvl));
+            p.setPen(audio.totalUnderflows > 0 ? kTextCrit : kTextD);
+            p.drawText(Impl::kColP95, curY + fm.ascent(),
+                       QString::asprintf("U:%lld", static_cast<long long>(audio.totalUnderflows)));
+            // Callbacks / fill loops count
+            p.setPen(kTextD);
+            p.drawText(Impl::kColBar - 20, curY + fm.ascent(),
+                       QString::asprintf("cb:%lld", static_cast<long long>(audio.totalCallbacks)));
+            const QRect barRect(Impl::kColBar, curY + 3, Impl::kBarW, Impl::kRowH - 6);
+            p.fillRect(barRect, QColor(40, 40, 55));
+            drawMiniBar(p, barRect, lvl / 100.0, lvlWarn ? QColor(220, 140, 50, 200) : kBarGreen);
             curY += Impl::kRowH;
         }
     }

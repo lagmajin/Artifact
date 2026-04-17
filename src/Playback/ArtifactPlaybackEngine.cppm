@@ -25,6 +25,7 @@ import Artifact.Composition.InOutPoints;
 import AudioRenderer;
 import Audio.Segment;
 import Playback.State;
+import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
 
@@ -352,6 +353,8 @@ public:
     void updateAudio() {
         if (!composition_ || !audioRenderer_) return;
 
+        const auto fillStart = std::chrono::high_resolution_clock::now();
+
         if (!composition_->hasAudio()) {
             if (audioRenderer_->isActive()) {
                 qDebug() << "[PlaybackEngine][Audio] composition has no audio. Stopping output.";
@@ -457,10 +460,16 @@ public:
                 (audioExhausted && audioRenderer_->bufferedFrames() > 0)) {
                 audioRenderer_->start();
                 if (!audioRenderer_->isActive()) {
+                    ArtifactCore::AudioEngineProfiler::instance().recordFillLoop(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::high_resolution_clock::now() - fillStart).count());
                     return;
                 }
                 audioOpenRetryCount_ = 0;
             } else {
+                ArtifactCore::AudioEngineProfiler::instance().recordFillLoop(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::high_resolution_clock::now() - fillStart).count());
                 return;
             }
         } else if (audioRenderer_->bufferedFrames() < static_cast<size_t>(samplesPerFrame * 2)) {
@@ -468,6 +477,17 @@ public:
                        << "bufferedFrames=" << audioRenderer_->bufferedFrames()
                        << "samplesPerFrame=" << samplesPerFrame
                        << "targetBufferedFrames=" << audioTargetBufferedFrames_;
+        }
+
+        // Record fill-loop timing and buffer level for the profiler
+        const std::int64_t fillNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            std::chrono::high_resolution_clock::now() - fillStart).count();
+        ArtifactCore::AudioEngineProfiler::instance().recordFillLoop(fillNs);
+
+        if (audioTargetBufferedFrames_ > 0) {
+            const double pct = static_cast<double>(audioRenderer_->bufferedFrames()) /
+                               static_cast<double>(audioTargetBufferedFrames_) * 100.0;
+            ArtifactCore::AudioEngineProfiler::instance().setBufferLevel(pct);
         }
     }
     
