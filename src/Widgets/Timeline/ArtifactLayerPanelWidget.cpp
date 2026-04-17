@@ -253,36 +253,82 @@ namespace {
     };
   }
 
+  QString humanizeTimelinePropertyLabel(QString name)
+  {
+   static const QHash<QString, QString> explicitLabels = {
+    { QStringLiteral("transform.position.x"), QStringLiteral("Position X") },
+    { QStringLiteral("transform.position.y"), QStringLiteral("Position Y") },
+    { QStringLiteral("transform.scale.x"),    QStringLiteral("Scale X") },
+    { QStringLiteral("transform.scale.y"),    QStringLiteral("Scale Y") },
+    { QStringLiteral("transform.rotation"),   QStringLiteral("Rotation") },
+    { QStringLiteral("transform.anchor.x"),   QStringLiteral("Anchor X") },
+    { QStringLiteral("transform.anchor.y"),   QStringLiteral("Anchor Y") },
+    { QStringLiteral("layer.opacity"),        QStringLiteral("Opacity") },
+    { QStringLiteral("time.inPoint"),         QStringLiteral("In Point") },
+    { QStringLiteral("time.outPoint"),        QStringLiteral("Out Point") },
+    { QStringLiteral("time.startTime"),       QStringLiteral("Start Time") }
+   };
+   if (const auto it = explicitLabels.constFind(name); it != explicitLabels.constEnd()) {
+    return it.value();
+   }
+
+   const int dot = name.lastIndexOf('.');
+   if (dot >= 0 && dot + 1 < name.size()) {
+    name = name.mid(dot + 1);
+   }
+
+   QString out;
+   out.reserve(name.size() * 2);
+   for (int i = 0; i < name.size(); ++i) {
+    const QChar ch = name.at(i);
+    if (ch == '_' || ch == '-') {
+     out += ' ';
+     continue;
+    }
+    if (i > 0 && ch.isUpper() && name.at(i - 1).isLetterOrNumber()) {
+     out += ' ';
+    }
+    out += ch;
+   }
+
+   bool cap = true;
+   for (int i = 0; i < out.size(); ++i) {
+    if (out.at(i).isSpace()) {
+     cap = true;
+     continue;
+    }
+    if (cap) {
+     out[i] = out.at(i).toUpper();
+     cap = false;
+    }
+   }
+   return out;
+  }
+
   QVector<QString> layerPanelGroupLabels(const ArtifactAbstractLayerPtr& layer)
   {
    QVector<QString> labels;
    if (!layer) {
     return labels;
    }
-
-   auto hasLabel = [&labels](const QString& candidate) -> bool {
-    return std::any_of(labels.cbegin(), labels.cend(), [&candidate](const QString& existing) {
-     return existing.compare(candidate, Qt::CaseInsensitive) == 0;
-    });
-   };
+   QSet<QString> seenPropertyNames;
 
    for (const auto& group : layer->getLayerPropertyGroups()) {
-    const QString groupName = group.name().trimmed();
-    if (groupName.isEmpty()) {
-     continue;
+    for (const auto& property : group.sortedProperties()) {
+     if (!property || !property->isAnimatable()) {
+      continue;
+     }
+     const QString propertyName = property->getName();
+     if (propertyName.isEmpty()) {
+      continue;
+     }
+     if (seenPropertyNames.contains(propertyName)) {
+      continue;
+     }
+     seenPropertyNames.insert(propertyName);
+     const QString label = humanizeTimelinePropertyLabel(propertyName);
+     labels.push_back(label);
     }
-    if (groupName.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
-     continue;
-    }
-    if (!hasLabel(groupName)) {
-     labels.push_back(groupName);
-    }
-   }
-
-   // Fallback for visual/null-style layers that should expose timeline transform controls.
-   const QString transformLabel = QStringLiteral("Transform");
-   if ((layer->isNullLayer() || layer->isAdjustmentLayer() || layer->hasVideo()) && !hasLabel(transformLabel)) {
-    labels.prepend(transformLabel);
    }
 
    return labels;

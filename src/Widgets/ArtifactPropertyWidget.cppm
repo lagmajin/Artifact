@@ -446,6 +446,9 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           } else {
             propertyPtr->removeKeyFrame(nowTime);
           }
+          if (auto *svc = ArtifactProjectService::instance()) {
+            svc->projectChanged();
+          }
           // 状態を再反映
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
           row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
