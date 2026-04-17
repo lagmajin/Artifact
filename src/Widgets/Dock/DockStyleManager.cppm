@@ -98,52 +98,47 @@ ads::CDockWidget* resolveActiveDock(ads::CDockManager* dockManager, ads::CDockWi
     return dockManager->focusedDockWidget();
 }
 
-QString tabTextColor(const bool isActiveDock, const bool /*isFloatingTab*/, const bool /*isCurrentTab*/)
+// Returns the tab label color based only on whether this tab is the currently
+// selected (visible) one in its dock area.  Active-focus differentiation is
+// handled by DockGlowStyle, not by text color.
+QString tabTextColor(const bool isCurrentTab)
 {
-    const QColor themeText = QColor(ArtifactCore::currentDCCTheme().textColor);
-    if (isActiveDock) {
-        return themeText.name(QColor::HexRgb);
+    const QColor text = QColor(ArtifactCore::currentDCCTheme().textColor);
+    if (isCurrentTab) {
+        return text.name(QColor::HexRgb);
     }
-
-    const QColor background = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
-    QColor mutedText = themeText;
-    if (background.lightnessF() < 0.5) {
-        // Dark theme: inactive tabs still need readable contrast.
-        mutedText = themeText.lighter(155);
-    } else {
-        mutedText = themeText.darker(112);
-    }
-    mutedText.setAlpha(230);
-    return mutedText.name(QColor::HexRgb);
+    // Muted but legible color for background tabs: blend 55 % text / 45 % bg.
+    const QColor bg = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
+    const QColor muted(
+        qRound(text.red()   * 0.55 + bg.red()   * 0.45),
+        qRound(text.green() * 0.55 + bg.green() * 0.45),
+        qRound(text.blue()  * 0.55 + bg.blue()  * 0.45)
+    );
+    return muted.name(QColor::HexRgb);
 }
 
-void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const bool emphasize)
+// isCurrentTab  — this tab is the front (visible) tab in its dock area.
+// emphasize      — this tab is also in the active (focused) dock.
+// Tab background uses a "recessed pocket" design:
+//   selected tab  → backgroundColor (#24272D) matches the content area surface
+//   background tabs → secondaryBackgroundColor (#30343B) appear raised/inactive
+void applyTabLabelColors(ads::CDockWidgetTab* tab,
+                         const QString& color,
+                         const bool emphasize,
+                         const bool isCurrentTab)
 {
     if (!tab) {
         return;
     }
 
     const QColor textColor(color);
-    const QColor themeBg = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
     const QColor themeBorder = QColor(ArtifactCore::currentDCCTheme().borderColor);
-    const QColor surface = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
-    const QColor tabBg = emphasize ? surface.lighter(112) : surface.lighter(104);
-    auto applyTextStyle = [&](QWidget* child) {
-        if (!child) {
-            return;
-        }
-        auto pal = child->palette();
-        pal.setColor(QPalette::WindowText, textColor);
-        pal.setColor(QPalette::Text, textColor);
-        pal.setColor(QPalette::ButtonText, textColor);
-        child->setPalette(pal);
-        auto font = child->font();
-        const int pointSize = font.pointSize();
-        font.setPointSize(pointSize > 0 ? qMax(12, pointSize + 1) : 12);
-        font.setBold(emphasize);
-        child->setFont(font);
-    };
-    applyTextStyle(tab);
+    // Selected tab blends with the content area; inactive tabs stand out slightly.
+    const QColor tabBg = isCurrentTab
+        ? QColor(ArtifactCore::currentDCCTheme().backgroundColor)
+        : QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
+
+    // Tab frame itself
     tab->setAttribute(Qt::WA_StyledBackground, true);
     tab->setAutoFillBackground(true);
     auto tabPalette = tab->palette();
@@ -155,28 +150,36 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab, const QString& color, const b
     tabPalette.setColor(QPalette::Base, tabBg);
     tabPalette.setColor(QPalette::Mid, themeBorder);
     tab->setPalette(tabPalette);
+
+    // Labels — transparent so the tab background shows through.
     for (auto* label : tab->findChildren<QLabel*>()) {
-        applyTextStyle(label);
-        label->setAutoFillBackground(true);
-        auto labelPalette = label->palette();
-        labelPalette.setColor(QPalette::Window, tabBg);
-        labelPalette.setColor(QPalette::Base, tabBg);
-        labelPalette.setColor(QPalette::Button, tabBg);
-        label->setPalette(labelPalette);
+        if (!label) continue;
+        label->ensurePolished();  // force style polish before we override
+        label->setAutoFillBackground(false);
+        auto pal = label->palette();
+        pal.setColor(QPalette::WindowText, textColor);
+        pal.setColor(QPalette::Text, textColor);
+        label->setPalette(pal);
+        auto font = label->font();
+        font.setBold(emphasize);
+        label->setFont(font);
     }
+
+    // Buttons (close, tabs-menu etc.) — inherit the tab background color.
     for (auto* button : tab->findChildren<QAbstractButton*>()) {
-        applyTextStyle(button);
+        if (!button) continue;
+        button->ensurePolished();
         button->setAttribute(Qt::WA_StyledBackground, true);
         button->setAutoFillBackground(true);
-        auto buttonPalette = button->palette();
-        buttonPalette.setColor(QPalette::Window, tabBg);
-        buttonPalette.setColor(QPalette::Base, tabBg);
-        buttonPalette.setColor(QPalette::Button, tabBg);
-        buttonPalette.setColor(QPalette::WindowText, textColor);
-        buttonPalette.setColor(QPalette::Text, textColor);
-        buttonPalette.setColor(QPalette::ButtonText, textColor);
-        buttonPalette.setColor(QPalette::Mid, themeBorder);
-        button->setPalette(buttonPalette);
+        auto pal = button->palette();
+        pal.setColor(QPalette::Window,     tabBg);
+        pal.setColor(QPalette::Base,       tabBg);
+        pal.setColor(QPalette::Button,     tabBg);
+        pal.setColor(QPalette::WindowText, textColor);
+        pal.setColor(QPalette::Text,       textColor);
+        pal.setColor(QPalette::ButtonText, textColor);
+        pal.setColor(QPalette::Mid,        themeBorder);
+        button->setPalette(pal);
     }
 }
 
@@ -189,6 +192,8 @@ DockStyleManager::DockStyleManager(ads::CDockManager* dockManager, QObject* pare
 
     impl_->glowStyle_ = new DockGlowStyle(QApplication::style());
     impl_->dockManager_->setStyle(impl_->glowStyle_);
+    // Clear QADS's built-in light-theme stylesheet so QPalette-based styling wins.
+    impl_->dockManager_->setStyleSheet(QString());
 
     qApp->installEventFilter(this);
 
@@ -350,8 +355,10 @@ void DockStyleManager::refreshDockDecorations() {
             tab->setProperty("artifactActiveTab", isActiveTab);
             tab->setProperty("artifactFloatingTab", isFloating);
             tab->setProperty("artifactCurrentTab", isCurrentTab);
-            applyTabLabelColors(tab, tabTextColor(isActiveTab, isFloating, isCurrentTab), isActiveTab);
+            // Repolish FIRST so ArtifactCommonStyle::polish() sets its Window
+            // palette; then applyTabLabelColors() overrides exactly what it needs.
             repolishWidget(tab);
+            applyTabLabelColors(tab, tabTextColor(isCurrentTab), isActiveTab, isCurrentTab);
             anyChanged = true;
         }
     }
