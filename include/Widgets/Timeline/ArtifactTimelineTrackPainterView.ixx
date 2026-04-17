@@ -106,7 +106,7 @@ export namespace Artifact
   bool hasSelectedKeyframes() const;
   void syncSelectionState(const ArtifactCompositionPtr& composition,
                           ArtifactLayerSelectionManager* selectionManager,
-                          const QVector<LayerID>& trackLayerIds);
+                          const QVector<QString>& trackRowKeys);
   QVector<TrackClipVisual> clips() const;
 
  public /*signals*/:
