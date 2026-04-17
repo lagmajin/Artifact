@@ -179,6 +179,11 @@ void applyPropertyFieldPalette(QWidget *widget, const bool elevated = false) {
   if (!widget) {
     return;
   }
+  // Ensure the Qt style polish runs first so our palette takes precedence.
+  // CommonStyle::polish() sets raw Window/Base from the app theme for QSpinBox/QSlider;
+  // calling ensurePolished() here means our blended surface color is set AFTER polish,
+  // not before — preventing polish from silently overwriting property-row colors.
+  widget->ensurePolished();
   const auto &theme = ArtifactCore::currentDCCTheme();
   const QColor background =
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
@@ -1533,9 +1538,12 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   setFocusPolicy(Qt::StrongFocus);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   setMinimumHeight(kPropertyRowMinHeight);
-  setAutoFillBackground(false);
   setAttribute(Qt::WA_Hover, true);
   applyPropertyFieldPalette(this, false);
+  // Custom paintEvent draws a rounded-rect background; disable auto-fill so
+  // setAutoFillBackground(true) inside applyPropertyFieldPalette doesn't paint
+  // square corners on top of the parent container's background.
+  setAutoFillBackground(false);
 
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(kPropertyRowMarginH, kPropertyRowMarginV,
