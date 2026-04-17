@@ -23,6 +23,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Undo.UndoManager;
+import UI.ShortcutBindings;
 import ApplicationSettingDialog;
 import Artifact.Service.Project;
 import Utils.Path;
@@ -80,13 +81,14 @@ private:
  ArtifactEditMenu::Impl::Impl(QMenu* menu, QWidget* mainWindow)
  {
   parentWidget_ = mainWindow ? mainWindow : menu;
+  auto& shortcuts = ShortcutBindings::instance();
   // Basic edit actions
   undoAction = new QAction("元に戻す (&U)");
-  undoAction->setShortcut(QKeySequence::Undo);
+  undoAction->setShortcut(shortcuts.shortcut(ShortcutId::Undo));
   undoAction->setIcon(QIcon(resolveIconPath("Material/undo.svg")));
 
   redoAction = new QAction("やり直し (&R)");
-  redoAction->setShortcut(QKeySequence::Redo);
+  redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
   redoAction->setIcon(QIcon(resolveIconPath("Material/redo.svg")));
 
   duplicateAction = new QAction("複製 (&D)");
@@ -480,10 +482,13 @@ private:
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   dialog->show();
  }
- void ArtifactEditMenu::Impl::rebuildMenu() { 
+void ArtifactEditMenu::Impl::rebuildMenu() { 
   bool hasProject = ArtifactProjectManager::getInstance().isProjectCreated();
   auto mgr = UndoManager::instance();
+  auto& shortcuts = ShortcutBindings::instance();
   
+  undoAction->setShortcut(shortcuts.shortcut(ShortcutId::Undo));
+  redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
   undoAction->setEnabled(hasProject && mgr && mgr->canUndo());
   redoAction->setEnabled(hasProject && mgr && mgr->canRedo());
   
