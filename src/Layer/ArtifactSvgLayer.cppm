@@ -14,6 +14,7 @@ module;
 module Artifact.Layer.Svg;
 
 import std;
+import Thread.Helper;
 import Property.Abstract;
 import Property.Group;
 import Artifact.Render.IRenderer;
@@ -121,7 +122,7 @@ bool ArtifactSvgLayer::loadFromPath(const QString& path)
     impl_->height_ = size.height();
     setSourceSize(Size_2D(size.width(), size.height()));
 
-    impl_->prefetchFuture_ = QtConcurrent::run([trimmed, size]() -> QImage {
+    impl_->prefetchFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [trimmed, size]() -> QImage {
         return renderSvgToImage(trimmed, size);
     });
 

@@ -59,6 +59,7 @@ module Artifact.Layer.Video;
 
 
 import Artifact.Layer.Video;
+import Thread.Helper;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Manager;
 import Event.Bus;
@@ -356,7 +357,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
 
     const int requestId = ++impl_->openRequestId_;
     auto* layer = this;
-    impl_->openFuture_ = QtConcurrent::run([normalizedPath]() -> Impl::AsyncOpenResult {
+    impl_->openFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [normalizedPath]() -> Impl::AsyncOpenResult {
         Impl::AsyncOpenResult result;
         result.normalizedPath = normalizedPath;
 
@@ -448,7 +449,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         layer->impl_->decoding_ = true;
         layer->impl_->decodeTargetFrame_ = 0;
         auto* ctrl = layer->impl_->playbackController_.get();
-        layer->impl_->decodeFuture_ = QtConcurrent::run([ctrl, layer]() -> QImage {
+        layer->impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, layer]() -> QImage {
             QImage frame = ctrl->getVideoFrameAtFrameDirect(0);
             layer->impl_->decoding_ = false;
             if (!frame.isNull()) {
@@ -617,7 +618,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     impl_->decodeTargetFrame_ = sourceFrame;
     auto* ctrl = impl_->playbackController_.get();
     const QString backendName = decoderBackendName(ctrl);
-    impl_->decodeFuture_ = QtConcurrent::run([ctrl, timelineFrame, sourceFrame, backendName, this]() -> QImage {
+    impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, timelineFrame, sourceFrame, backendName, this]() -> QImage {
         QImage decoded = ctrl->getVideoFrameAtFrameDirect(sourceFrame);
         if (!decoded.isNull()) {
             impl_->frameCache_.put(sourceFrame, decoded);

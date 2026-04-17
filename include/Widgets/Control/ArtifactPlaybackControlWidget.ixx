@@ -67,22 +67,6 @@ public:
     void setOutPoint();
     void clearInOutPoints();
 
-public: // signals
-    void playRequested() W_SIGNAL(playRequested)
-    void pauseRequested() W_SIGNAL(pauseRequested)
-    void stopRequested() W_SIGNAL(stopRequested)
-    void stepForwardRequested() W_SIGNAL(stepForwardRequested)
-    void stepBackwardRequested() W_SIGNAL(stepBackwardRequested)
-    void seekStartRequested() W_SIGNAL(seekStartRequested)
-    void seekEndRequested() W_SIGNAL(seekEndRequested)
-    void seekPreviousRequested() W_SIGNAL(seekPreviousRequested)
-    void seekNextRequested() W_SIGNAL(seekNextRequested)
-    void loopToggled(bool enabled) W_SIGNAL(loopToggled, enabled)
-    void playbackSpeedChanged(float speed) W_SIGNAL(playbackSpeedChanged, speed)
-    void inPointSet() W_SIGNAL(inPointSet)
-    void outPointSet() W_SIGNAL(outPointSet)
-    void inoutCleared() W_SIGNAL(inoutCleared)
-
 public: // slots
     W_SLOT(play)
     W_SLOT(pause)

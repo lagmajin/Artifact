@@ -516,7 +516,7 @@ protected:
     if (controller_) {
       const bool needsInitialize = !controller_->isInitialized();
       if (needsInitialize) {
-        QTimer::singleShot(0, this, [this]() {
+        QTimer::singleShot(16, this, [this]() {
           if (!controller_ || !isVisible() || controller_->isInitialized()) {
             return;
           }

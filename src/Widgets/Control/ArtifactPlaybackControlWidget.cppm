@@ -124,7 +124,7 @@ public:
         const QFontMetrics labelMetrics(labelFont);
         const QFontMetrics valueMetrics(valueFont);
         const QString currentLine = currentText_.isEmpty()
-            ? QStringLiteral("00:00:00:00 / 00:00:00:00")
+            ? QStringLiteral("F0")
             : currentText_;
         const QString inLabel = QStringLiteral("In");
         const QString outLabel = QStringLiteral("Out");
@@ -175,7 +175,7 @@ protected:
         const QColor goldText(QColor(theme.accentColor));
         const QColor mutedGoldText(QColor(theme.textColor).darker(120));
         const QString currentLine = currentText_.isEmpty()
-            ? QStringLiteral("00:00:00:00 / 00:00:00:00")
+            ? QStringLiteral("F0")
             : currentText_;
         const QString inLabel = QStringLiteral("In");
         const QString outLabel = QStringLiteral("Out");
@@ -666,9 +666,7 @@ public:
                     outText = formatTimecode(outPoint->framePosition(), fps);
                 }
             }
-            currentText = QStringLiteral("%1  %2")
-                              .arg(formatFrameCount(clampedCurrent))
-                              .arg(formatTimecode(clampedCurrent, fps));
+            currentText = formatFrameCount(clampedCurrent);
             timecodeFrame_->setCurrentFrameText(currentText);
             timecodeFrame_->setRangeTexts(inText, outText);
         }
@@ -679,21 +677,7 @@ public:
         if (inOutPoints_ == points) {
             return;
         }
-        if (inOutPoints_) {
-            QObject::disconnect(inOutPoints_, nullptr, owner_, nullptr);
-        }
         inOutPoints_ = points;
-        if (!inOutPoints_) {
-            updateFrameWidgets();
-            return;
-        }
-
-        QObject::connect(inOutPoints_, &ArtifactInOutPoints::inPointChanged, owner_,
-                         [this](std::optional<FramePosition>) { updateFrameWidgets(); });
-        QObject::connect(inOutPoints_, &ArtifactInOutPoints::outPointChanged, owner_,
-                         [this](std::optional<FramePosition>) { updateFrameWidgets(); });
-        QObject::connect(inOutPoints_, &ArtifactInOutPoints::pointsCleared, owner_,
-                         [this]() { updateFrameWidgets(); });
         updateFrameWidgets();
     }
     
@@ -810,6 +794,10 @@ public:
             [this](const PlaybackCompositionChangedEvent&) {
                 syncFromService();
             }));
+        eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackInOutPointsChangedEvent>(
+            [this](const PlaybackInOutPointsChangedEvent&) {
+                updateFrameWidgets();
+            }));
 
         if (auto* service = ArtifactPlaybackService::instance()) {
             QObject::connect(service, &ArtifactPlaybackService::ramPreviewStateChanged, owner_, [this](bool enabled, const FrameRange&) {
@@ -830,7 +818,6 @@ public:
                 service->play();
             }
         }
-        Q_EMIT owner_->playRequested();
     }
     
     void handlePauseButtonClicked()
@@ -838,7 +825,6 @@ public:
         if (auto* service = ArtifactPlaybackService::instance()) {
             service->pause();
         }
-        Q_EMIT owner_->pauseRequested();
     }
     
     void handleStopButtonClicked()
@@ -846,7 +832,6 @@ public:
         if (auto* service = ArtifactPlaybackService::instance()) {
             service->stop();
         }
-        Q_EMIT owner_->stopRequested();
     }
     
     void handleSeekStartClicked()
@@ -854,7 +839,6 @@ public:
         if (auto* service = ArtifactPlaybackService::instance()) {
             service->goToStartFrame();
         }
-        Q_EMIT owner_->seekStartRequested();
     }
     
     void handleSeekEndClicked()
@@ -862,7 +846,6 @@ public:
         if (auto* service = ArtifactPlaybackService::instance()) {
             service->goToEndFrame();
         }
-        Q_EMIT owner_->seekEndRequested();
     }
     
     void handleSeekPreviousClicked()
@@ -870,7 +853,6 @@ public:
         if (auto* service = ArtifactPlaybackService::instance()) {
             service->goToPreviousMarker();
         }
-        Q_EMIT owner_->seekPreviousRequested();
     }
     
     void handleSeekNextClicked()
@@ -878,7 +860,6 @@ public:
         if (auto* service = ArtifactPlaybackService::instance()) {
             service->goToNextMarker();
         }
-        Q_EMIT owner_->seekNextRequested();
     }
     
     void handleStepBackwardClicked()
@@ -886,7 +867,6 @@ public:
         if (auto* service = ArtifactPlaybackService::instance()) {
             service->goToPreviousFrame();
         }
-        Q_EMIT owner_->stepBackwardRequested();
     }
     
     void handleStepForwardClicked()
@@ -894,7 +874,6 @@ public:
         if (auto* service = ArtifactPlaybackService::instance()) {
             service->goToNextFrame();
         }
-        Q_EMIT owner_->stepForwardRequested();
     }
     
     void handleLoopToggled(bool enabled)
@@ -903,22 +882,33 @@ public:
             service->setLooping(enabled);
         }
         isLooping_ = enabled;
-        Q_EMIT owner_->loopToggled(enabled);
     }
     
     void handleInButtonClicked()
     {
-        Q_EMIT owner_->inPointSet();
+        if (auto* service = ArtifactPlaybackService::instance()) {
+            if (auto* points = service->inOutPoints()) {
+                points->setInPoint(service->currentFrame());
+            }
+        }
     }
     
     void handleOutButtonClicked()
     {
-        Q_EMIT owner_->outPointSet();
+        if (auto* service = ArtifactPlaybackService::instance()) {
+            if (auto* points = service->inOutPoints()) {
+                points->setOutPoint(service->currentFrame());
+            }
+        }
     }
     
     void handleClearInOutClicked()
     {
-        Q_EMIT owner_->inoutCleared();
+        if (auto* service = ArtifactPlaybackService::instance()) {
+            if (auto* points = service->inOutPoints()) {
+                points->clearAllPoints();
+            }
+        }
     }
 
     void handleSpeedPresetClicked(float speed)
@@ -927,7 +917,6 @@ public:
             service->setPlaybackSpeed(speed);
         }
         updateSpeedPresetButtons(speed);
-        Q_EMIT owner_->playbackSpeedChanged(speed);
     }
     
     void updatePlaybackState(PlaybackState state)
@@ -1100,7 +1089,6 @@ void ArtifactPlaybackControlWidget::setPlaybackSpeed(float speed)
     if (auto* service = ArtifactPlaybackService::instance()) {
         service->setPlaybackSpeed(speed);
     }
-    Q_EMIT playbackSpeedChanged(speed);
 }
 
 float ArtifactPlaybackControlWidget::playbackSpeed() const

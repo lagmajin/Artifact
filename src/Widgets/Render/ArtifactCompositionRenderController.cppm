@@ -8,6 +8,7 @@ module;
 #include <QColor>
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QFuture>
 #include <QFontMetrics>
 #include <QHash>
 #include <QImage>
@@ -27,6 +28,7 @@ module;
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <QtConcurrent>
 #include <limits>
 #include <memory>
 #include <opencv2/core.hpp>
@@ -78,6 +80,7 @@ import Widgets.Utils.CSS;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback; // 追加
+import Thread.Helper;
 import Event.Bus;
 import Artifact.Event.Types;
 import Undo.UndoManager;
@@ -93,6 +96,17 @@ W_OBJECT_IMPL(CompositionRenderController)
 
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
+
+bool floatColorEquals(const FloatColor &lhs, const FloatColor &rhs, float epsilon = 0.0f) {
+  if (epsilon <= 0.0f) {
+    return lhs.r() == rhs.r() && lhs.g() == rhs.g() && lhs.b() == rhs.b() &&
+           lhs.a() == rhs.a();
+  }
+  return std::abs(lhs.r() - rhs.r()) <= epsilon &&
+         std::abs(lhs.g() - rhs.g()) <= epsilon &&
+         std::abs(lhs.b() - rhs.b()) <= epsilon &&
+         std::abs(lhs.a() - rhs.a()) <= epsilon;
+}
 
 QImage makeSolidColorSprite(const FloatColor &color) {
   QImage image(1, 1, QImage::Format_RGBA8888);
@@ -1119,7 +1133,9 @@ public:
   bool renderScheduled_ = false;
   bool renderInProgress_ = false;
   bool renderRescheduleRequested_ = false;
+  QElapsedTimer startupTimer_;
   bool blendPipelineReady_ = false;
+  bool blendPipelineInitAttempted_ = false;
   bool gpuBlendEnabled_ =
       !qEnvironmentVariableIsSet("ARTIFACT_COMPOSITION_DISABLE_GPU_BLEND");
   QString lastVideoDebug_;
@@ -1140,6 +1156,9 @@ public:
   // MayaGradient sprite cache — regenerated only when bgColor changes
   QImage cachedMayaGradientSprite_;
   FloatColor cachedMayaGradientBgColor_ = {-1.f, -1.f, -1.f, -1.f};
+  FloatColor cachedMayaGradientWarmupBgColor_ = {-1.f, -1.f, -1.f, -1.f};
+  QFuture<QImage> cachedMayaGradientWarmupFuture_;
+  bool cachedMayaGradientWarmupQueued_ = false;
 
   // Solo layer presence cache — invalidated on any layer solo/visible change
   bool hasSoloLayerCache_ = false;
@@ -1622,6 +1641,7 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   }
 
   impl_->hostWidget_ = hostWidget;
+  impl_->startupTimer_.start();
   impl_->renderer_ = std::make_unique<ArtifactIRenderer>();
   impl_->renderer_->initialize(hostWidget);
 
@@ -1693,33 +1713,6 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
               renderOneFrame();
             });
   }
-  // ブレンドパイプライン初期化
-  if (auto device = impl_->renderer_->device()) {
-    if (auto ctx = impl_->renderer_->immediateContext()) {
-      impl_->gpuContext_ =
-          std::make_unique<ArtifactCore::GpuContext>(device, ctx);
-      impl_->blendPipeline_ =
-          std::make_unique<ArtifactCore::LayerBlendPipeline>(
-              *impl_->gpuContext_);
-      impl_->blendPipelineReady_ = impl_->blendPipeline_->initialize();
-      // [Fix D] qCDebug → qDebug/qWarning に升格（カテゴリ有効化不要）
-      if (impl_->blendPipelineReady_) {
-        qDebug() << "[CompositionView] LayerBlendPipeline initialized OK."
-                 << "executors ready for GPU blend path.";
-      } else {
-        qWarning()
-            << "[CompositionView] LayerBlendPipeline FAILED to initialize."
-            << "Will fall back to CPU compositing path.";
-      }
-    } else {
-      qWarning() << "[CompositionView] immediateContext() is null - blend "
-                    "pipeline skipped.";
-    }
-  } else {
-    qWarning()
-        << "[CompositionView] device() is null - blend pipeline skipped.";
-  }
-
   if (!impl_->gpuTextureCacheManager_) {
     impl_->gpuTextureCacheManager_ = std::make_unique<GPUTextureCacheManager>();
   }
@@ -3098,8 +3091,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   // Update MayaGradient sprite cache once; it is viewport background art and
   // should not be tinted by the composition fill color.
-  if (cachedMayaGradientSprite_.isNull()) {
-    cachedMayaGradientSprite_ = makeMayaGradientSprite(bgColor);
+  if (!floatColorEquals(cachedMayaGradientBgColor_, bgColor)) {
+    cachedMayaGradientBgColor_ = bgColor;
+    cachedMayaGradientSprite_ = QImage();
+  }
+  if (compositionBackgroundMode_ == CompositionBackgroundMode::MayaGradient &&
+      cachedMayaGradientSprite_.isNull() &&
+      !cachedMayaGradientWarmupQueued_ &&
+      !cachedMayaGradientWarmupFuture_.isRunning() &&
+      !cachedMayaGradientWarmupFuture_.isFinished()) {
+    cachedMayaGradientWarmupQueued_ = true;
+    cachedMayaGradientWarmupBgColor_ = bgColor;
+    cachedMayaGradientWarmupFuture_ = QtConcurrent::run(
+        &sharedBackgroundThreadPool(), [bgColor]() { return makeMayaGradientSprite(bgColor); });
+  }
+  if (cachedMayaGradientWarmupQueued_ &&
+      cachedMayaGradientWarmupFuture_.isFinished()) {
+    QImage warmed = cachedMayaGradientWarmupFuture_.result();
+    cachedMayaGradientWarmupQueued_ = false;
+    if (floatColorEquals(cachedMayaGradientWarmupBgColor_, cachedMayaGradientBgColor_)) {
+      cachedMayaGradientSprite_ = std::move(warmed);
+    }
   }
 
   // GPU path should represent the currently visible viewport, not only the
@@ -3228,7 +3240,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
   {
 
-    const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
     const bool hasGpuBlendJustification =
         std::any_of(layers.begin(), layers.end(),
                     [&](const ArtifactAbstractLayerPtr &layer) {
@@ -3245,6 +3256,39 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                       }
                       return layerHasCpuRasterizerWork(layer.get());
                     });
+    if (gpuBlendEnabled_ && hasGpuBlendJustification &&
+        startupTimer_.isValid() && startupTimer_.elapsed() >= 1200 &&
+        !blendPipelineReady_ && !blendPipelineInitAttempted_) {
+      blendPipelineInitAttempted_ = true;
+      if (auto device = renderer_->device()) {
+        if (auto ctx = renderer_->immediateContext()) {
+          if (!gpuContext_) {
+            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device, ctx);
+          }
+          if (gpuContext_ && !blendPipeline_) {
+            blendPipeline_ =
+                std::make_unique<ArtifactCore::LayerBlendPipeline>(*gpuContext_);
+          }
+          if (blendPipeline_) {
+            QElapsedTimer timer;
+            timer.start();
+            blendPipelineReady_ = blendPipeline_->initialize();
+            qInfo() << "[CompositionView][Startup] blend pipeline lazy warmup ms="
+                    << timer.elapsed();
+            if (blendPipelineReady_) {
+              qDebug() << "[CompositionView] LayerBlendPipeline initialized OK."
+                       << "executors ready for GPU blend path.";
+            } else {
+              qWarning()
+                  << "[CompositionView] LayerBlendPipeline FAILED to initialize."
+                  << "Will fall back to CPU compositing path.";
+            }
+          }
+        }
+      }
+    }
+
+    const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
     const bool gpuBlendPathRequested =
         gpuBlendRequested && hasGpuBlendJustification;
 
