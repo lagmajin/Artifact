@@ -101,7 +101,7 @@ export namespace Artifact
   void setKeyframeMarkers(const QVector<KeyframeMarkerVisual>& markers);
   void syncSelectionState(const ArtifactCompositionPtr& composition,
                           ArtifactLayerSelectionManager* selectionManager,
-                          const QVector<LayerID>& trackLayerIds);
+                          const QVector<QString>& trackRowKeys);
   QVector<TrackClipVisual> clips() const;
 
  public /*signals*/:

@@ -286,13 +286,18 @@ QVector<ArtifactAbstractLayerPtr> selectedTimelineLayers()
  return layers;
 }
 
-QHash<LayerID, int> buildTrackIndexByLayerId(const QVector<LayerID>& trackLayerIds)
+QString trackRowKey(const LayerID& layerId, const QString& propertyPath)
 {
- QHash<LayerID, int> map;
- for (int i = 0; i < trackLayerIds.size(); ++i) {
-  const auto& layerId = trackLayerIds[i];
-  if (!layerId.isNil()) {
-   map.insert(layerId, i);
+ return QStringLiteral("%1|%2").arg(layerId.toString(), propertyPath);
+}
+
+QHash<QString, int> buildTrackIndexByRowKey(const QVector<QString>& trackRowKeys)
+{
+ QHash<QString, int> map;
+ for (int i = 0; i < trackRowKeys.size(); ++i) {
+  const auto& key = trackRowKeys[i];
+  if (!key.isEmpty()) {
+   map.insert(key, i);
   }
  }
  return map;
@@ -301,7 +306,8 @@ QHash<LayerID, int> buildTrackIndexByLayerId(const QVector<LayerID>& trackLayerI
 QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeMarkers(
  const ArtifactCompositionPtr& composition,
  const ArtifactLayerSelectionManager* selectionManager,
- const QHash<LayerID, int>& trackIndexByLayerId)
+ const QHash<QString, int>& trackIndexByRowKey,
+ const QVector<QString>& trackRowKeys)
 {
  QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> markers;
  if (!composition) {
@@ -309,15 +315,21 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
  }
 
  QVector<ArtifactAbstractLayerPtr> layers;
- layers.reserve(trackIndexByLayerId.size());
- if (const auto visibleLayerIds = trackIndexByLayerId.keys(); !visibleLayerIds.isEmpty()) {
-  for (const auto& layerId : visibleLayerIds) {
-   if (layerId.isNil()) {
-    continue;
-   }
-   if (auto layer = composition->layerById(layerId)) {
-    layers.push_back(layer);
-   }
+ layers.reserve(trackRowKeys.size());
+ QSet<LayerID> seenLayerIds;
+ for (const auto& rowKey : trackRowKeys) {
+  const int separator = rowKey.indexOf(QLatin1Char('|'));
+  const QString layerIdText = separator >= 0 ? rowKey.left(separator) : rowKey;
+  if (layerIdText.isEmpty()) {
+   continue;
+  }
+  const LayerID layerId(layerIdText);
+  if (layerId.isNil() || seenLayerIds.contains(layerId)) {
+   continue;
+  }
+  if (auto layer = composition->layerById(layerId)) {
+   layers.push_back(layer);
+   seenLayerIds.insert(layerId);
   }
  }
 
@@ -341,11 +353,6 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
   if (!layer) {
    continue;
   }
-  const auto trackIt = trackIndexByLayerId.constFind(layer->id());
-  if (trackIt == trackIndexByLayerId.constEnd()) {
-   continue;
-  }
-  const int trackIndex = trackIt.value();
   const auto groups = layer->getLayerPropertyGroups();
   struct DraftMarker {
    qint64 frame = 0;
@@ -361,19 +368,24 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
     if (!property || !property->isAnimatable()) {
      continue;
     }
+    const QString propertyPath = property->getName();
+    const QString rowKey = trackRowKey(layer->id(), propertyPath);
+    const auto trackIt = trackIndexByRowKey.constFind(rowKey);
+    if (trackIt == trackIndexByRowKey.constEnd()) {
+     continue;
+    }
     const auto keyframes = property->getKeyFrames();
     for (const auto& keyframe : keyframes) {
      const qint64 frame = keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
-     const QString propertyName = property->getName();
      const bool selectedLayer = highlightLayers.contains(layer);
      const bool eased = keyframe.easing != EasingType::Linear &&
                         keyframe.easing != EasingType::Hold;
      QColor color = selectedLayer
                         ? QColor(255, 255, 255)
-                        : (eased ? QColor(82, 208, 255)
-                                 : QColor(247, 204, 83));
+                         : (eased ? QColor(82, 208, 255)
+                                  : QColor(247, 204, 83));
      color.setAlpha(selectedLayer ? 255 : 245);
-     drafts.push_back(DraftMarker{frame, propertyName, propertyName, color, selectedLayer, eased});
+     drafts.push_back(DraftMarker{frame, propertyPath, propertyPath, color, selectedLayer, eased});
     }
    }
   }
@@ -399,7 +411,8 @@ QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> collectKeyframeM
    ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
    marker.layerId = layer->id();
    marker.propertyPath = draft.propertyPath;
-   marker.trackIndex = trackIndex;
+   const QString markerKey = trackRowKey(layer->id(), draft.propertyPath);
+   marker.trackIndex = trackIndexByRowKey.value(markerKey, -1);
    marker.frame = static_cast<double>(draft.frame);
    marker.label = draft.label;
    marker.color = draft.color;
@@ -508,12 +521,12 @@ public:
  int hoverMarkerIndex_ = -1;
  bool panning_ = false;
  QPoint lastPanPoint_;
- QSet<QString> selectedMarkerKeys_;
- QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> keyframeMarkers_;
- bool selectionSyncDirty_ = true;
- const ArtifactAbstractComposition* lastSyncedComposition_ = nullptr;
- QSet<LayerID> lastSyncedSelectedLayerIds_;
- QVector<LayerID> lastSyncedTrackLayerIds_;
+QSet<QString> selectedMarkerKeys_;
+QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> keyframeMarkers_;
+bool selectionSyncDirty_ = true;
+const ArtifactAbstractComposition* lastSyncedComposition_ = nullptr;
+QSet<LayerID> lastSyncedSelectedLayerIds_;
+QVector<QString> lastSyncedTrackRowKeys_;
 };
 
 ArtifactTimelineTrackPainterView::Impl::Impl()
@@ -726,7 +739,7 @@ void ArtifactTimelineTrackPainterView::setKeyframeMarkers(
 void ArtifactTimelineTrackPainterView::syncSelectionState(
  const ArtifactCompositionPtr& composition,
  ArtifactLayerSelectionManager* selectionManager,
- const QVector<LayerID>& trackLayerIds)
+ const QVector<QString>& trackRowKeys)
 {
  QSet<LayerID> selectedLayerIds;
  if (selectionManager) {
@@ -748,7 +761,7 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
  if (!impl_->selectionSyncDirty_ &&
      impl_->lastSyncedComposition_ == compositionPtr &&
      impl_->lastSyncedSelectedLayerIds_ == selectedLayerIds &&
-     impl_->lastSyncedTrackLayerIds_ == trackLayerIds) {
+     impl_->lastSyncedTrackRowKeys_ == trackRowKeys) {
   return;
  }
 
@@ -768,9 +781,9 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
   }
  }
 
-  const auto trackIndexByLayerId = buildTrackIndexByLayerId(trackLayerIds);
+  const auto trackIndexByRowKey = buildTrackIndexByRowKey(trackRowKeys);
   const auto newMarkers =
-      collectKeyframeMarkers(composition, selectionManager, trackIndexByLayerId);
+      collectKeyframeMarkers(composition, selectionManager, trackIndexByRowKey, trackRowKeys);
   if (!sameVisualList(impl_->keyframeMarkers_, newMarkers,
                       sameKeyframeMarkerVisual)) {
    impl_->keyframeMarkers_ = newMarkers;
@@ -784,7 +797,7 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
 
   impl_->lastSyncedComposition_ = compositionPtr;
   impl_->lastSyncedSelectedLayerIds_ = selectedLayerIds;
-  impl_->lastSyncedTrackLayerIds_ = trackLayerIds;
+  impl_->lastSyncedTrackRowKeys_ = trackRowKeys;
   impl_->selectionSyncDirty_ = false;
 }
 

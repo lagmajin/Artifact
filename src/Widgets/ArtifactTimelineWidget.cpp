@@ -3,6 +3,7 @@ module;
 #include <QBoxLayout>
 #include <QBrush>
 #include <QComboBox>
+#include <QHash>
 #include <QEvent>
 #include <QLabel>
 #include <QMenu>
@@ -62,6 +63,7 @@ import Artifact.Layer.Svg;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
 import Artifact.Effect.Abstract;
+import Property.Abstract;
 import Frame.Position;
 import Time.Rational;
 
@@ -116,6 +118,76 @@ layerInsertionIndexForTrackDrop(const QVector<LayerID> &trackLayerIds,
   }
   return targetLayerIndex;
 }
+
+QString humanizeTimelinePropertyLabel(QString name)
+{
+  static const QHash<QString, QString> explicitLabels = {
+      {QStringLiteral("transform.position.x"), QStringLiteral("Position X")},
+      {QStringLiteral("transform.position.y"), QStringLiteral("Position Y")},
+      {QStringLiteral("transform.scale.x"), QStringLiteral("Scale X")},
+      {QStringLiteral("transform.scale.y"), QStringLiteral("Scale Y")},
+      {QStringLiteral("transform.rotation"), QStringLiteral("Rotation")},
+      {QStringLiteral("transform.anchor.x"), QStringLiteral("Anchor X")},
+      {QStringLiteral("transform.anchor.y"), QStringLiteral("Anchor Y")},
+      {QStringLiteral("layer.opacity"), QStringLiteral("Opacity")},
+      {QStringLiteral("time.inPoint"), QStringLiteral("In Point")},
+      {QStringLiteral("time.outPoint"), QStringLiteral("Out Point")},
+      {QStringLiteral("time.startTime"), QStringLiteral("Start Time")}};
+  if (const auto it = explicitLabels.constFind(name); it != explicitLabels.constEnd()) {
+    return it.value();
+  }
+
+  const int dot = name.lastIndexOf('.');
+  if (dot >= 0 && dot + 1 < name.size()) {
+    name = name.mid(dot + 1);
+  }
+
+  QString out;
+  out.reserve(name.size() * 2);
+  for (int i = 0; i < name.size(); ++i) {
+    const QChar ch = name.at(i);
+    if (ch == '_' || ch == '-') {
+      out += ' ';
+      continue;
+    }
+    if (i > 0 && ch.isUpper() && name.at(i - 1).isLetterOrNumber()) {
+      out += ' ';
+    }
+    out += ch;
+  }
+
+  bool cap = true;
+  for (int i = 0; i < out.size(); ++i) {
+    if (out.at(i).isSpace()) {
+      cap = true;
+      continue;
+    }
+    if (cap) {
+      out[i] = out.at(i).toUpper();
+      cap = false;
+    }
+  }
+  return out;
+}
+
+QString timelineRowKey(const LayerID& layerId, const QString& propertyPath)
+{
+  return QStringLiteral("%1|%2").arg(layerId.toString(), propertyPath);
+}
+
+struct TimelineRow
+{
+  enum class Kind
+  {
+    LayerHeader,
+    Property
+  };
+
+  Kind kind = Kind::LayerHeader;
+  LayerID layerId;
+  QString propertyPath;
+  QString label;
+};
 
 QColor layerTimelineColor(const ArtifactAbstractLayerPtr& layer)
 {
@@ -1047,7 +1119,7 @@ public:
   QString filterText_;
   QVector<LayerID> searchResultLayerIds_;
   int searchResultIndex_ = -1;
-  QVector<LayerID> trackLayerIds_;
+  QVector<QString> trackRowKeys_;
   bool syncingLayerSelection_ = false;
   double currentFrame_ = 0.0;
   QMetaObject::Connection compositionChangedConnection_;
@@ -1884,12 +1956,11 @@ void ArtifactTimelineWidget::refreshTracks() {
     }
   }
 
-  QVector<LayerID> timelineRows;
-  timelineRows.reserve(visibleRows.size());
+  QVector<TimelineRow> timelineRows;
+  timelineRows.reserve(std::max(1, static_cast<int>(visibleRows.size()) * 4));
   std::unordered_set<std::string> seenLayerIds;
   for (const auto &rowLayerId : visibleRows) {
     if (rowLayerId.isNil()) {
-      timelineRows.push_back(rowLayerId);
       continue;
     }
 
@@ -1898,10 +1969,37 @@ void ArtifactTimelineWidget::refreshTracks() {
       continue;
     }
 
-    timelineRows.push_back(rowLayerId);
+    const auto layer = composition ? composition->layerById(rowLayerId) : nullptr;
+    if (!layer) {
+      continue;
+    }
+
+    timelineRows.push_back(TimelineRow{
+        TimelineRow::Kind::LayerHeader,
+        rowLayerId,
+        QString(),
+        layer->layerName()});
+
+    for (const auto &group : layer->getLayerPropertyGroups()) {
+      for (const auto &property : group.sortedProperties()) {
+        if (!property || !property->isAnimatable()) {
+          continue;
+        }
+        const QString propertyPath = property->getName();
+        if (propertyPath.isEmpty()) {
+          continue;
+        }
+        timelineRows.push_back(TimelineRow{
+            TimelineRow::Kind::Property,
+            rowLayerId,
+            propertyPath,
+            humanizeTimelinePropertyLabel(propertyPath)});
+      }
+    }
   }
 
-  impl_->trackLayerIds_ = timelineRows;
+  impl_->trackRowKeys_.clear();
+  impl_->trackRowKeys_.reserve(timelineRows.size());
   QVector<int> trackHeights;
   const int trackCount = std::max(1, static_cast<int>(timelineRows.size()));
   trackHeights.reserve(trackCount);
@@ -1914,14 +2012,15 @@ void ArtifactTimelineWidget::refreshTracks() {
     impl_->painterTrackView_->setTrackHeights(trackHeights);
   }
   for (int rowIndex = 0; rowIndex < timelineRows.size(); ++rowIndex) {
-    const auto &rowLayerId = timelineRows[rowIndex];
-    const int trackIndex = rowIndex;
-    if (rowLayerId.isNil()) {
+    const auto &row = timelineRows[rowIndex];
+    impl_->trackRowKeys_.push_back(timelineRowKey(row.layerId, row.propertyPath));
+
+    if (row.kind != TimelineRow::Kind::LayerHeader) {
       continue;
     }
 
     const auto layer =
-        composition ? composition->layerById(rowLayerId) : nullptr;
+        composition ? composition->layerById(row.layerId) : nullptr;
     if (!layer) {
       continue;
     }
@@ -1933,9 +2032,9 @@ void ArtifactTimelineWidget::refreshTracks() {
                                           layer->inPoint().framePosition()));
     if (impl_->painterTrackView_) {
       ArtifactTimelineTrackPainterView::TrackClipVisual visual;
-      visual.clipId = rowLayerId.toString();
-      visual.layerId = rowLayerId;
-      visual.trackIndex = trackIndex;
+      visual.clipId = row.layerId.toString();
+      visual.layerId = row.layerId;
+      visual.trackIndex = rowIndex;
       visual.startFrame = clipStart;
       visual.durationFrame = clipDuration;
       visual.title = layer->layerName();
@@ -2326,7 +2425,7 @@ void ArtifactTimelineWidget::syncPainterSelectionState()
   }
   const auto composition = safeCompositionLookup(impl_->compositionId_);
   impl_->painterTrackView_->syncSelectionState(
-      composition, selection, impl_->trackLayerIds_);
+      composition, selection, impl_->trackRowKeys_);
 }
 
 void ArtifactTimelineWidget::syncTimelineHorizontalOffset(const double offset)
