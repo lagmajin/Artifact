@@ -2340,12 +2340,12 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   // pipeline
   const QPointF viewportPos = event->position() * impl_->devicePixelRatio_;
 
-  // 3D Gizmo hit test (GIZ-2)
+  // 3D Gizmo hit test (GIZ-2) — only for 3D layers
   auto comp = impl_->previewPipeline_.composition();
   auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
                            ? comp->layerById(impl_->selectedLayerId_)
                            : ArtifactAbstractLayerPtr{};
-  if (selectedLayer && impl_->gizmo3D_) {
+  if (selectedLayer && impl_->gizmo3D_ && selectedLayer->is3D()) {
     impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
     Ray ray = createPickingRay(viewportPos);
     GizmoAxis axis =
@@ -2782,47 +2782,53 @@ void CompositionRenderController::handleMouseMove(
     }
   }
 
-  // 3D Gizmo interaction (GIZ-2, GIZ-3)
+  // 3D Gizmo interaction (GIZ-2, GIZ-3) — only for 3D layers
   if (impl_->gizmo3D_) {
-    Ray ray = createPickingRay(viewportPos);
-    if (impl_->gizmo3D_->isDragging()) {
-      impl_->gizmo3D_->updateDrag(ray);
+    auto comp3D = impl_->previewPipeline_.composition();
+    auto sel3DLayer = (!impl_->selectedLayerId_.isNil() && comp3D)
+                          ? comp3D->layerById(impl_->selectedLayerId_)
+                          : ArtifactAbstractLayerPtr{};
+    if (sel3DLayer && sel3DLayer->is3D()) {
+      Ray ray = createPickingRay(viewportPos);
+      if (impl_->gizmo3D_->isDragging()) {
+        impl_->gizmo3D_->updateDrag(ray);
 
-      // Update layer transform from gizmo
-      auto comp = impl_->previewPipeline_.composition();
-      if (comp && !impl_->selectedLayerId_.isNil()) {
-        if (auto layer = comp->layerById(impl_->selectedLayerId_)) {
-          if (impl_->gizmo3D_->mode() == GizmoMode::Scale) {
-            auto &t3 = layer->transform3D();
-            const ArtifactCore::RationalTime time(layer->currentFrame(), 30);
-            const QVector3D scale = impl_->gizmo3D_->scale();
-            t3.setScale(time, scale.x(), scale.y());
-          } else {
-            const QVector3D currentPos = layer->position3D();
-            const QVector3D gizmoPos = impl_->gizmo3D_->position();
-            if (impl_->gizmo3D_->depthEnabled()) {
-              layer->setPosition3D(gizmoPos);
+        // Update layer transform from gizmo
+        auto comp = impl_->previewPipeline_.composition();
+        if (comp && !impl_->selectedLayerId_.isNil()) {
+          if (auto layer = comp->layerById(impl_->selectedLayerId_)) {
+            if (impl_->gizmo3D_->mode() == GizmoMode::Scale) {
+              auto &t3 = layer->transform3D();
+              const ArtifactCore::RationalTime time(layer->currentFrame(), 30);
+              const QVector3D scale = impl_->gizmo3D_->scale();
+              t3.setScale(time, scale.x(), scale.y());
             } else {
-              layer->setPosition3D(
-                  QVector3D(gizmoPos.x(), gizmoPos.y(), currentPos.z()));
+              const QVector3D currentPos = layer->position3D();
+              const QVector3D gizmoPos = impl_->gizmo3D_->position();
+              if (impl_->gizmo3D_->depthEnabled()) {
+                layer->setPosition3D(gizmoPos);
+              } else {
+                layer->setPosition3D(
+                    QVector3D(gizmoPos.x(), gizmoPos.y(), currentPos.z()));
+              }
+              layer->setRotation3D(impl_->gizmo3D_->rotation());
             }
-            layer->setRotation3D(impl_->gizmo3D_->rotation());
+            ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+                comp->id().toString(),
+                layer->id().toString(),
+                LayerChangedEvent::ChangeType::Modified});
           }
-          ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-              comp->id().toString(),
-              layer->id().toString(),
-              LayerChangedEvent::ChangeType::Modified});
         }
-      }
-      return;
-    } else {
-      // Hover highlighting
-      const auto prevHoverAxis = impl_->gizmo3D_->hoverAxis();
-      impl_->gizmo3D_->hitTest(ray, impl_->renderer_->getViewMatrix(),
-                               impl_->renderer_->getProjectionMatrix());
-      if (prevHoverAxis != impl_->gizmo3D_->hoverAxis()) {
-        impl_->invalidateOverlayComposite();
-        needsRender = true;
+        return;
+      } else {
+        // Hover highlighting
+        const auto prevHoverAxis = impl_->gizmo3D_->hoverAxis();
+        impl_->gizmo3D_->hitTest(ray, impl_->renderer_->getViewMatrix(),
+                                 impl_->renderer_->getProjectionMatrix());
+        if (prevHoverAxis != impl_->gizmo3D_->hoverAxis()) {
+          impl_->invalidateOverlayComposite();
+          needsRender = true;
+        }
       }
     }
   }
