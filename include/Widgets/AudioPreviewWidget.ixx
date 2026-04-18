@@ -3,7 +3,9 @@
 
 #include <wobjectdefs.h>
 #include <QWidget>
+#include <QColor>
 #include <QLabel>
+#include <QSizePolicy>
 #include <QSlider>
 #include <QPushButton>
 #include <QHBoxLayout>
@@ -21,6 +23,7 @@
 #include <QTime>
 export module Artifact.Widgets.AudioPreview;
 
+import Artifact.Audio.Waveform;
 
 export namespace Artifact {
 
@@ -28,7 +31,8 @@ export namespace Artifact {
 class AudioWaveformWidget : public QWidget {
     W_OBJECT(AudioWaveformWidget)
 private:
-    QVector<float> samples_;
+    QVector<float> peaks_;
+    QVector<float> rms_;
     int sampleRate_ = 44100;
     int currentPosition_ = 0;
     int totalSamples_ = 0;
@@ -41,6 +45,7 @@ public:
     explicit AudioWaveformWidget(QWidget* parent = nullptr);
 
     void setSamples(const QVector<float>& samples, int sampleRate);
+    void setWaveformData(const WaveformData& data);
     void setPosition(int sampleIndex);
     void clear();
 

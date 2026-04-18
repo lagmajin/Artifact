@@ -7,6 +7,8 @@ module;
 #include <QActionGroup>
 #include <QPointer>
 #include <QApplication>
+#include <QInputDialog>
+#include <QLineEdit>
 
 
 #include <wobjectimpl.h>
@@ -18,7 +20,9 @@ import std;
 
 import Artifact.Service.Project;
 import Artifact.MainWindow;
+import Artifact.Workspace.Manager;
 import Widgets.AssetBrowser;
+import Widgets.ToolBar;
 import Artifact.Widgets.ReactiveEventEditorWindow;
 import Utils.Path;
 import Event.Bus;
@@ -69,17 +73,30 @@ namespace Artifact {
    QAction* qualityDraftAction = nullptr;
    QAction* qualityPreviewAction = nullptr;
    QAction* qualityFinalAction = nullptr;
+   QMenu* workspaceMenu = nullptr;
+   QMenu* workspacePresetMenu = nullptr;
+   QActionGroup* workspaceGroup = nullptr;
+   QAction* workspaceDefaultAction = nullptr;
+   QAction* workspaceAnimationAction = nullptr;
+   QAction* workspaceVfxAction = nullptr;
+   QAction* workspaceCompositingAction = nullptr;
+   QAction* workspaceAudioAction = nullptr;
+   QAction* saveWorkspacePresetAction = nullptr;
+   QAction* restoreWorkspaceSessionAction = nullptr;
    QMenu* windowPanelsMenu = nullptr;
    ArtifactMainWindow* mainWindow = nullptr;
      QPointer<ArtifactReactiveEventEditorWindow> reactiveEventEditorWindow;
      int newBrowserCount_ = 1;
+     QAction* openContentsViewerAction = nullptr;
      QAction* openReactiveEventEditorAction = nullptr;
      QAction* secondaryPreviewAction = nullptr;
      ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
      std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
-    void refreshEnabledState();
-    void rebuildWindowPanelsMenu();
+   void refreshEnabledState();
+   void refreshWorkspaceState();
+   void refreshWorkspacePresetMenu();
+   void rebuildWindowPanelsMenu();
    };
 
   ArtifactViewMenu::Impl::Impl(ArtifactViewMenu* menu)
@@ -192,9 +209,74 @@ namespace Artifact {
          refreshEnabledState();
         }));
    }
+
+   workspaceMenu = new QMenu("ワークスペース(&K)");
+   workspaceGroup = new QActionGroup(menu);
+   workspaceGroup->setExclusive(true);
+
+   workspaceDefaultAction = workspaceMenu->addAction("Default");
+   workspaceAnimationAction = workspaceMenu->addAction("Animation");
+   workspaceVfxAction = workspaceMenu->addAction("VFX");
+   workspaceCompositingAction = workspaceMenu->addAction("Compositing");
+   workspaceAudioAction = workspaceMenu->addAction("Audio");
+
+   for (auto* action : {workspaceDefaultAction, workspaceAnimationAction,
+                        workspaceVfxAction, workspaceCompositingAction,
+                        workspaceAudioAction}) {
+    action->setCheckable(true);
+    workspaceGroup->addAction(action);
+   }
+
+   QObject::connect(workspaceDefaultAction, &QAction::triggered, menu, [this]() {
+    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::Default);
+   });
+   QObject::connect(workspaceAnimationAction, &QAction::triggered, menu, [this]() {
+    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::Animation);
+   });
+   QObject::connect(workspaceVfxAction, &QAction::triggered, menu, [this]() {
+    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::VFX);
+   });
+   QObject::connect(workspaceCompositingAction, &QAction::triggered, menu, [this]() {
+    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::Compositing);
+   });
+   QObject::connect(workspaceAudioAction, &QAction::triggered, menu, [this]() {
+    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::Audio);
+   });
+
+   workspacePresetMenu = new QMenu("プリセット");
+   saveWorkspacePresetAction = workspacePresetMenu->addAction("現在のレイアウトを保存...");
+   restoreWorkspaceSessionAction = workspacePresetMenu->addAction("最後のセッションを復元");
+   QObject::connect(saveWorkspacePresetAction, &QAction::triggered, menu, [this]() {
+    if (!mainWindow) return;
+    const QString defaultName = QStringLiteral("Custom");
+    bool ok = false;
+    const QString presetName = QInputDialog::getText(
+        mainWindow, QStringLiteral("ワークスペースを保存"),
+        QStringLiteral("プリセット名を入力してください"), QLineEdit::Normal,
+        defaultName, &ok)
+                                    .trimmed();
+    if (!ok || presetName.isEmpty()) {
+     return;
+    }
+    ArtifactWorkspaceManager manager;
+    if (!manager.savePreset(presetName, mainWindow)) {
+     QMessageBox::warning(mainWindow, QStringLiteral("ワークスペースを保存"),
+                          QStringLiteral("ワークスペースの保存に失敗しました。"));
+    }
+   });
+   QObject::connect(restoreWorkspaceSessionAction, &QAction::triggered, menu, [this]() {
+    if (!mainWindow) return;
+    ArtifactWorkspaceManager manager;
+    if (!manager.restoreSession(mainWindow)) {
+     QMessageBox::information(mainWindow, QStringLiteral("ワークスペースを復元"),
+                              QStringLiteral("復元できるセッションがありません。"));
+    }
+   });
    
    QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
     refreshEnabledState();
+    refreshWorkspaceState();
+    refreshWorkspacePresetMenu();
    });
 
    menu->addAction(zoomInAction);
@@ -206,6 +288,17 @@ namespace Artifact {
    menu->addMenu(qualityPresetMenu);
    menu->addSeparator();
    menu->addAction(useDisplayColorManagementAction);
+   menu->addSeparator();
+   openContentsViewerAction = menu->addAction("Contents Viewer");
+   QObject::connect(openContentsViewerAction, &QAction::triggered, menu, [this]() {
+    if (!mainWindow) return;
+    mainWindow->setDockVisible(QStringLiteral("Contents Viewer"), true);
+    mainWindow->activateDock(QStringLiteral("Contents Viewer"));
+   });
+
+   menu->addSeparator();
+   menu->addMenu(workspaceMenu);
+   menu->addMenu(workspacePresetMenu);
    menu->addSeparator();
    menu->addAction(showGridAction);
    menu->addAction(snapToGridAction);
@@ -287,8 +380,108 @@ namespace Artifact {
   snapToGuidesAction->setEnabled(hasComp);
   showRulersAction->setEnabled(hasComp);
   useDisplayColorManagementAction->setEnabled(hasComp);
+  if (openContentsViewerAction) {
+   openContentsViewerAction->setEnabled(true);
+  }
   if (openReactiveEventEditorAction) {
    openReactiveEventEditorAction->setEnabled(true);
+  }
+ }
+
+ void ArtifactViewMenu::Impl::refreshWorkspaceState()
+ {
+  if (!workspaceDefaultAction || !workspaceAnimationAction ||
+      !workspaceVfxAction || !workspaceCompositingAction ||
+      !workspaceAudioAction) {
+   return;
+  }
+
+  const WorkspaceMode mode = mainWindow ? mainWindow->workspaceMode()
+                                        : WorkspaceMode::Default;
+  workspaceDefaultAction->setChecked(mode == WorkspaceMode::Default);
+  workspaceAnimationAction->setChecked(mode == WorkspaceMode::Animation);
+  workspaceVfxAction->setChecked(mode == WorkspaceMode::VFX);
+  workspaceCompositingAction->setChecked(mode == WorkspaceMode::Compositing);
+  workspaceAudioAction->setChecked(mode == WorkspaceMode::Audio);
+ }
+
+ void ArtifactViewMenu::Impl::refreshWorkspacePresetMenu()
+ {
+  if (!workspacePresetMenu) {
+   return;
+  }
+
+  workspacePresetMenu->clear();
+  if (!mainWindow) {
+   workspacePresetMenu->setEnabled(false);
+   return;
+  }
+
+  workspacePresetMenu->setEnabled(true);
+  saveWorkspacePresetAction =
+      workspacePresetMenu->addAction("現在のレイアウトを保存...");
+  restoreWorkspaceSessionAction =
+      workspacePresetMenu->addAction("最後のセッションを復元");
+
+  QObject::connect(saveWorkspacePresetAction, &QAction::triggered, mainWindow,
+                   [mw = mainWindow]() {
+                     if (!mw) {
+                       return;
+                     }
+                     const QString defaultName = QStringLiteral("Custom");
+                     bool ok = false;
+                     const QString presetName = QInputDialog::getText(
+                                                    mw,
+                                                    QStringLiteral("ワークスペースを保存"),
+                                                    QStringLiteral("プリセット名を入力してください"),
+                                                    QLineEdit::Normal, defaultName,
+                                                    &ok)
+                                                    .trimmed();
+                     if (!ok || presetName.isEmpty()) {
+                       return;
+                     }
+                     ArtifactWorkspaceManager manager;
+                     if (!manager.savePreset(presetName, mw)) {
+                       QMessageBox::warning(
+                           mw, QStringLiteral("ワークスペースを保存"),
+                           QStringLiteral("ワークスペースの保存に失敗しました。"));
+                     }
+                   });
+
+  QObject::connect(restoreWorkspaceSessionAction, &QAction::triggered,
+                   mainWindow, [mw = mainWindow]() {
+                     if (!mw) {
+                       return;
+                     }
+                     ArtifactWorkspaceManager manager;
+                     if (!manager.restoreSession(mw)) {
+                       QMessageBox::information(
+                           mw, QStringLiteral("ワークスペースを復元"),
+                           QStringLiteral("復元できるセッションがありません。"));
+                     }
+                   });
+
+  workspacePresetMenu->addSeparator();
+
+  ArtifactWorkspaceManager manager;
+  const QStringList presets = manager.presetNames();
+  if (presets.isEmpty()) {
+   QAction* empty = workspacePresetMenu->addAction("(no presets)");
+   empty->setEnabled(false);
+   return;
+  }
+
+  for (const QString& preset : presets) {
+   QAction* action = workspacePresetMenu->addAction(preset);
+   QObject::connect(action, &QAction::triggered, mainWindow,
+                    [mw = mainWindow, preset]() {
+                     ArtifactWorkspaceManager manager;
+                     if (!manager.restorePreset(preset, mw)) {
+                      QMessageBox::warning(mw,
+                                           QStringLiteral("ワークスペース"),
+                                           QStringLiteral("プリセットの復元に失敗しました。"));
+                     }
+                    });
   }
  }
 
@@ -355,6 +548,9 @@ namespace Artifact {
  void ArtifactViewMenu::setMainWindow(ArtifactMainWindow* mw)
  {
   impl_->mainWindow = mw;
+  if (impl_) {
+   impl_->refreshWorkspaceState();
+  }
  }
 
  void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()

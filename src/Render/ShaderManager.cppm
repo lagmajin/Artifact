@@ -49,6 +49,7 @@ public:
     RenderShaderPair gridShaders_;
     RenderShaderPair spriteTransformShaders_;
     RenderShaderPair maskedSpriteShaders_;
+    RenderShaderPair glyphQuadShaders_;
     RenderShaderPair gizmo3DShaders_;
     RenderShaderPair batchSolidRectShaders_;
 
@@ -64,11 +65,13 @@ public:
     PSOAndSRB gridPsoAndSrb_;
     PSOAndSRB spriteTransformPsoAndSrb_;
     PSOAndSRB maskedSpritePsoAndSrb_;
+    PSOAndSRB glyphQuadPsoAndSrb_;
     PSOAndSRB gizmo3DPsoAndSrb_;
     PSOAndSRB gizmo3DTrianglePsoAndSrb_;
     PSOAndSRB batchSolidRectPsoAndSrb_;
 
     RefCntAutoPtr<ISampler> spriteSampler_;
+    RefCntAutoPtr<ISampler> glyphAtlasSampler_;
 
     bool initialized_ = false;
 
@@ -206,6 +209,30 @@ float4 main(PS_INPUT input) : SV_TARGET
     maskedSpritePsInfo.Source = maskedSpritePsSource.constData();
     maskedSpritePsInfo.SourceLength = maskedSpritePsSource.length();
 
+    const QByteArray glyphQuadPsSource = R"(
+struct PS_INPUT
+{
+    float4 Position : SV_POSITION;
+    float2 TexCoord : TEXCOORD0;
+    float4 Color    : COLOR0;
+};
+
+Texture2D g_texture : register(t0);
+SamplerState g_sampler : register(s0);
+
+float4 main(PS_INPUT input) : SV_TARGET
+{
+    const float alpha = g_texture.Sample(g_sampler, input.TexCoord).a;
+    return float4(input.Color.rgb, input.Color.a * alpha);
+}
+)";
+    ShaderCreateInfo glyphQuadPsInfo;
+    glyphQuadPsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    glyphQuadPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+    glyphQuadPsInfo.Desc.Name = "GlyphQuadPixelShader";
+    glyphQuadPsInfo.Source = glyphQuadPsSource.constData();
+    glyphQuadPsInfo.SourceLength = glyphQuadPsSource.length();
+
     ShaderCreateInfo solidRectPsInfo2;
     solidRectPsInfo2.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
     solidRectPsInfo2.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
@@ -293,6 +320,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     device_->CreateShader(spriteTransformVsInfo,     &spriteTransformShaders_.VS);
     device_->CreateShader(spriteTransformVsInfo,     &maskedSpriteShaders_.VS);
     device_->CreateShader(maskedSpritePsInfo,        &maskedSpriteShaders_.PS);
+    device_->CreateShader(glyphQuadPsInfo,           &glyphQuadShaders_.PS);
     device_->CreateShader(checkerboardPsInfo,        &checkerboardShaders_.PS);
     device_->CreateShader(gridPsInfo,                &gridShaders_.PS);
     device_->CreateShader(drawOutlineRectVsInfo,     &outlineShaders_.VS);
@@ -309,6 +337,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     spriteTransformShaders_.PS         = spriteShaders_.PS;
     checkerboardShaders_.VS            = solidShaders_.VS;
     gridShaders_.VS                    = solidShaders_.VS;
+    glyphQuadShaders_.VS               = spriteShaders_.VS;
     gizmo3DShaders_.PS                 = lineShaders_.PS;
 }
 
@@ -694,6 +723,20 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     } else {
         qWarning() << "[ShaderManager] Failed to create PSO:" << "DrawMaskedSprite PSO";
     }
+
+    GraphicsPipelineStateCreateInfo glyphInfo = spriteInfo;
+    glyphInfo.PSODesc.Name = "GlyphQuad PSO";
+    glyphInfo.pPSOCache = psoCache_.RawPtr();
+    glyphInfo.pVS = glyphQuadShaders_.VS;
+    glyphInfo.pPS = glyphQuadShaders_.PS;
+    glyphInfo.PSODesc.ResourceLayout.Variables = spriteVars;
+    glyphInfo.PSODesc.ResourceLayout.NumVariables = _countof(spriteVars);
+    device_->CreateGraphicsPipelineState(glyphInfo, &glyphQuadPsoAndSrb_.pPSO);
+    if (glyphQuadPsoAndSrb_.pPSO) {
+        glyphQuadPsoAndSrb_.pPSO->CreateShaderResourceBinding(&glyphQuadPsoAndSrb_.pSRB, true);
+    } else {
+        qWarning() << "[ShaderManager] Failed to create PSO:" << "GlyphQuad PSO";
+    }
 }
 
 void ShaderManager::Impl::createUtilityFamilyPSOs()
@@ -873,6 +916,7 @@ void ShaderManager::Impl::createPSOs()
     spriteSamplerDesc.MinLOD = 0.0f;
     spriteSamplerDesc.MaxLOD = FLT_MAX;
     device_->CreateSampler(spriteSamplerDesc, &spriteSampler_);
+    device_->CreateSampler(spriteSamplerDesc, &glyphAtlasSampler_);
 
     savePSOCache();
 }
@@ -894,6 +938,7 @@ void ShaderManager::Impl::destroy()
     clearPso(solidRectTransformPsoAndSrb_);
     clearPso(spritePsoAndSrb_);
     clearPso(maskedSpritePsoAndSrb_);
+    clearPso(glyphQuadPsoAndSrb_);
     clearPso(thickLinePsoAndSrb_);
     clearPso(dotLinePsoAndSrb_);
     clearPso(solidTrianglePsoAndSrb_);
@@ -910,6 +955,7 @@ void ShaderManager::Impl::destroy()
     clearShaderPair(spriteShaders_);
     clearShaderPair(spriteTransformShaders_);
     clearShaderPair(maskedSpriteShaders_);
+    clearShaderPair(glyphQuadShaders_);
     clearShaderPair(thickLineShaders_);
     clearShaderPair(dotLineShaders_);
     clearShaderPair(solidTriangleShaders_);
@@ -919,6 +965,7 @@ void ShaderManager::Impl::destroy()
     clearShaderPair(batchSolidRectShaders_);
 
     spriteSampler_ = nullptr;
+    glyphAtlasSampler_ = nullptr;
     psoCache_ = nullptr;
 
     initialized_ = false;
@@ -1071,6 +1118,11 @@ PSOAndSRB ShaderManager::maskedSpritePsoAndSrb() const
     return impl_->maskedSpritePsoAndSrb_;
 }
 
+PSOAndSRB ShaderManager::glyphQuadPsoAndSrb() const
+{
+    return impl_->glyphQuadPsoAndSrb_;
+}
+
 PSOAndSRB ShaderManager::gizmo3DPsoAndSrb() const
 {
     return impl_->gizmo3DPsoAndSrb_;
@@ -1089,6 +1141,11 @@ PSOAndSRB ShaderManager::batchSolidRectPsoAndSrb() const
 RefCntAutoPtr<ISampler> ShaderManager::spriteSampler() const
 {
     return impl_->spriteSampler_;
+}
+
+RefCntAutoPtr<ISampler> ShaderManager::glyphAtlasSampler() const
+{
+    return impl_->glyphAtlasSampler_;
 }
 
 bool ShaderManager::isInitialized() const

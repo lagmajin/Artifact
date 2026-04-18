@@ -73,10 +73,11 @@ RenderTask::~RenderTask() = default;
 
 class RenderScheduler::Impl {
 public:
-    QThreadPool* threadPool_ = nullptr;
+    std::unique_ptr<QThreadPool> threadPool_;
     RenderScheduler* owner_ = nullptr;
     ParallelStrategy strategy_ = ParallelStrategy::Adaptive;
     bool adaptiveEnabled_ = true;
+    int requestedThreadCount_ = 1;
     
     // Task queues
     std::vector<RenderTask*> pendingTasks_;
@@ -104,6 +105,24 @@ public:
     
     // Callbacks
     std::function<void(RenderTask*)> taskExecutor_;
+
+    int defaultThreadCount() const {
+        const int ideal = QThread::idealThreadCount();
+        if (ideal <= 1) {
+            return 1;
+        }
+        return std::max(1, ideal - 1);
+    }
+
+    QThreadPool* ensureThreadPool() {
+        if (!threadPool_) {
+            threadPool_ = std::make_unique<QThreadPool>();
+            threadPool_->setMaxThreadCount(requestedThreadCount_ > 0
+                                               ? requestedThreadCount_
+                                               : defaultThreadCount());
+        }
+        return threadPool_.get();
+    }
 
     // Main-thread slots for signal emission (called via QMetaObject::invokeMethod)
     void onTaskCompleted(RenderTask* task, double elapsedMs) {
@@ -137,14 +156,12 @@ public:
             QString("Frame budget exceeded: %1 ms").arg(elapsedMs, 0, 'f', 2));
     }
     
-    Impl() {
-        threadPool_ = new QThreadPool();
-        threadPool_->setMaxThreadCount(QThread::idealThreadCount());
+    Impl()
+        : requestedThreadCount_(defaultThreadCount())
+    {
     }
-    
-    ~Impl() {
-        delete threadPool_;
-    }
+
+    ~Impl() = default;
     
     bool executeTask(RenderTask* task, QString* outError) {
         if (task->isCancelled() || stopRequested_) {
@@ -178,11 +195,17 @@ RenderScheduler::RenderScheduler(QObject* parent)
 RenderScheduler::~RenderScheduler() = default;
 
 void RenderScheduler::setThreadCount(int count) {
-    impl_->threadPool_->setMaxThreadCount(count);
+    impl_->requestedThreadCount_ = std::max(1, count);
+    if (auto* pool = impl_->ensureThreadPool()) {
+        pool->setMaxThreadCount(impl_->requestedThreadCount_);
+    }
 }
 
 int RenderScheduler::threadCount() const {
-    return impl_->threadPool_->maxThreadCount();
+    if (impl_->threadPool_) {
+        return impl_->threadPool_->maxThreadCount();
+    }
+    return impl_->requestedThreadCount_;
 }
 
 void RenderScheduler::setParallelStrategy(ParallelStrategy strategy) {
@@ -269,6 +292,10 @@ void RenderScheduler::setTaskPriority(RenderTask* task, TaskPriority priority) {
 void RenderScheduler::startExecution() {
     if (impl_->executing_) return;
 
+    if (!impl_->ensureThreadPool()) {
+        return;
+    }
+
     impl_->executing_ = true;
     impl_->paused_ = false;
     impl_->stopRequested_ = false;
@@ -296,7 +323,11 @@ void RenderScheduler::stopExecution() {
 
 void RenderScheduler::processNextTask() {
     // Dispatch tasks to thread pool (parallel execution)
-    const int maxConcurrent = impl_->threadPool_->maxThreadCount();
+    auto* threadPool = impl_->ensureThreadPool();
+    if (!threadPool) {
+        return;
+    }
+    const int maxConcurrent = threadPool->maxThreadCount();
 
     while (impl_->executing_ && !impl_->paused_ && !impl_->stopRequested_) {
         RenderTask* task = nullptr;
@@ -346,7 +377,7 @@ void RenderScheduler::processNextTask() {
 
         // Run task in thread pool
         auto self = this;
-        impl_->threadPool_->start([self, task]() {
+        threadPool->start([self, task]() {
             if (!self || self->impl_->stopRequested_) {
                 return;
             }

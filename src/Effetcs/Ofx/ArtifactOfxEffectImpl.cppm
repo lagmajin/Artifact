@@ -1,124 +1,181 @@
-﻿module;
-// #include <ofxCore.h>
-// #include <ofxImageEffect.h>
-#include <memory>
-#include <iostream>
-
-
-
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
+module;
 #include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
-#include <utility>
-#include <array>
-#include <mutex>
-#include <thread>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <condition_variable>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+#include <memory>
+#include <vector>
+#include <QString>
+#include <QVariant>
+#include <QColor>
+
 export module Artifact.Effect.Ofx.Impl;
-
-
-
 
 import Image.ImageF32x4RGBAWithCache;
 import Artifact.Effect.ImplBase;
-import Artifact.Effect.Context;
+import Artifact.Effect.Abstract;
+import Property.Abstract;
+import Utils.String.UniString;
+import Artifact.Effect.Ofx.Host;
 
 namespace Artifact {
 namespace Ofx {
 
 using namespace ArtifactCore;
 
-// Concrete implementation mapping our core Image processing to OFX's C-actions
-export class ArtifactOfxEffectImpl : public ArtifactEffectImplBase {
-private:
-    // OfxPlugin* plugin_;  // Commented out: OFX headers not available
-    // OfxImageEffectHandle instanceHandle_;  // Commented out: OFX headers not available
-    bool isGPUEnabled_;
-
+class ArtifactOfxEffect final : public ArtifactAbstractEffect {
 public:
-    // Commented out constructor: OFX headers not available
-    // ArtifactOfxEffectImpl(OfxPlugin* plugin) 
-    //     : plugin_(plugin), instanceHandle_(nullptr), isGPUEnabled_(false) {}
+  explicit ArtifactOfxEffect(const OfxPluginDescriptor &descriptor) {
+    setEffectID(UniString::fromQString(QStringLiteral("ofx.%1")
+                                           .arg(descriptor.identifier.toQString())));
+    setDisplayName(QStringLiteral("OFX: %1").arg(descriptor.identifier.toQString()));
+    setPipelineStage(EffectPipelineStage::Rasterizer);
 
-    ArtifactOfxEffectImpl() : isGPUEnabled_(false) {}
+    addMetadataProperties(descriptor);
+    addGenericBridgeParameters();
+    addPreviewProperties(descriptor.previewProperties);
+  }
 
-    virtual ~ArtifactOfxEffectImpl() {
-        release();
+  void apply(const ImageF32x4RGBAWithCache &src,
+             ImageF32x4RGBAWithCache &dst) override {
+    // OFX processing is not wired yet, so keep the effect as a stable passthrough.
+    // The bridge parameters are already stored here and will be used once the
+    // real OFX render path lands.
+    if (bypass_ || mix_ <= 0.0) {
+      dst = src.DeepCopy();
+      return;
     }
+    dst = src.DeepCopy();
+  }
 
-    bool initialize() override {
-        // TODO: Implement after OFX headers are available
-        // // Here we would call plugin_->mainEntry(kOfxActionCreateInstance, 
-        // //  instanceHandle, inArgs, outArgs) to create the instance context
-        // std::cout << "Creating OFX Effect Instance for plugin" << std::endl;
-        return true;
+  std::vector<AbstractProperty> getProperties() const override {
+    return properties_;
+  }
+
+  void setPropertyValue(const UniString &name, const QVariant &value) override {
+    const QString key = name.toQString();
+    for (auto &property : properties_) {
+      if (property.getName().compare(key, Qt::CaseInsensitive) != 0) {
+        continue;
+      }
+      property.setValue(value);
+      syncBridgeState(property);
+      break;
     }
+  }
 
-    void release() override {
-        // TODO: Implement after OFX headers are available
-        // if (instanceHandle_) {
-        //     // plugin_->mainEntry(kOfxActionDestroyInstance, instanceHandle_, nullptr, nullptr)
-        //     instanceHandle_ = nullptr;
-        // }
+  void registerParameter(const AbstractProperty &property) {
+    properties_.push_back(property);
+  }
+
+private:
+  void addMetadataProperties(const OfxPluginDescriptor &descriptor) {
+    AbstractProperty pathProp;
+    pathProp.setName(QStringLiteral("ofx.plugin.path"));
+    pathProp.setDisplayLabel(QStringLiteral("Plugin Path"));
+    pathProp.setType(PropertyType::String);
+    pathProp.setValue(descriptor.pluginPath.toQString());
+    pathProp.setAnimatable(false);
+    properties_.push_back(pathProp);
+
+    AbstractProperty idProp;
+    idProp.setName(QStringLiteral("ofx.plugin.identifier"));
+    idProp.setDisplayLabel(QStringLiteral("Identifier"));
+    idProp.setType(PropertyType::String);
+    idProp.setValue(descriptor.identifier.toQString());
+    idProp.setAnimatable(false);
+    properties_.push_back(idProp);
+
+    AbstractProperty versionProp;
+    versionProp.setName(QStringLiteral("ofx.plugin.version"));
+    versionProp.setDisplayLabel(QStringLiteral("Version"));
+    versionProp.setType(PropertyType::String);
+    versionProp.setValue(descriptor.version.toQString());
+    versionProp.setAnimatable(false);
+    properties_.push_back(versionProp);
+  }
+
+  void addGenericBridgeParameters() {
+    AbstractProperty mixProp;
+    mixProp.setName(QStringLiteral("ofx.mix"));
+    mixProp.setDisplayLabel(QStringLiteral("Mix"));
+    mixProp.setType(PropertyType::Float);
+    mixProp.setDefaultValue(1.0);
+    mixProp.setValue(1.0);
+    mixProp.setMinValue(0.0);
+    mixProp.setMaxValue(1.0);
+    mixProp.setAnimatable(true);
+    properties_.push_back(mixProp);
+
+    AbstractProperty bypassProp;
+    bypassProp.setName(QStringLiteral("ofx.bypass"));
+    bypassProp.setDisplayLabel(QStringLiteral("Bypass"));
+    bypassProp.setType(PropertyType::Boolean);
+    bypassProp.setDefaultValue(false);
+    bypassProp.setValue(false);
+    bypassProp.setAnimatable(true);
+    properties_.push_back(bypassProp);
+  }
+
+  void addPreviewProperties(const std::vector<AbstractProperty> &previewProps) {
+    for (const auto &property : previewProps) {
+      if (property.getName().isEmpty()) {
+        continue;
+      }
+      properties_.push_back(property);
     }
+  }
 
-    void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        // TODO: Implement after OFX headers are available
-        // Ensure our destination receives output properly from the C-API pointer
-        // Here we would set up OfxPropertySetHandle for the clip bounds and buffers
-
-        // Simulated action call
-        // plugin_->mainEntry(kOfxImageEffectActionRender, instanceHandle_, inArgs, outArgs);
-
-        // For the stub: pass-through with a dummy message
-        // if (!src.isReadyToUse()) {
-        //      // Fill dest with error red or something conceptually
-        //      dst = src.DeepCopy();
-        //      return;
-        // }
-
-        std::cout << "[OFX CPU Rendering] Applying generic pass-through..." << std::endl;
-
-        // Actual OFX memory wrapper logic goes here to pass raw pointers and stride info
-        dst = src; // Passthrough for now
+  void syncBridgeState(const AbstractProperty &property) {
+    const QString key = property.getName();
+    if (key.compare(QStringLiteral("ofx.mix"), Qt::CaseInsensitive) == 0) {
+      mix_ = std::clamp(property.getValue().toDouble(), 0.0, 1.0);
+    } else if (key.compare(QStringLiteral("ofx.bypass"), Qt::CaseInsensitive) == 0) {
+      bypass_ = property.getValue().toBool();
     }
+  }
 
-    void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        // If the OFX plugin supports say OpenGL or OpenCL contexts,
-        // we map our internal GPU texture/buffers to the OFX descriptor.
-        // And fire the `kOfxImageEffectActionRender` with GPU context flags active.
-
-        std::cout << "[OFX GPU Rendering] Applying generic hardware pass-through..." << std::endl;
-
-        // Stub implementation: fallback to deep copy (pass-through)
-        dst = src.DeepCopy();
-    }
+  std::vector<AbstractProperty> properties_;
+  double mix_ = 1.0;
+  bool bypass_ = false;
 };
+
+export std::unique_ptr<ArtifactAbstractEffect>
+makeOfxEffect(const OfxPluginDescriptor &descriptor) {
+  return std::make_unique<ArtifactOfxEffect>(descriptor);
+}
+
+export std::vector<AbstractProperty>
+makeOfxBridgePreviewProperties(const OfxPluginDescriptor &descriptor) {
+  std::vector<AbstractProperty> props;
+
+  AbstractProperty mixProp;
+  mixProp.setName(QStringLiteral("ofx.mix"));
+  mixProp.setDisplayLabel(QStringLiteral("Mix"));
+  mixProp.setType(PropertyType::Float);
+  mixProp.setDefaultValue(1.0);
+  mixProp.setValue(1.0);
+  mixProp.setMinValue(0.0);
+  mixProp.setMaxValue(1.0);
+  mixProp.setAnimatable(true);
+  props.push_back(mixProp);
+
+  AbstractProperty bypassProp;
+  bypassProp.setName(QStringLiteral("ofx.bypass"));
+  bypassProp.setDisplayLabel(QStringLiteral("Bypass"));
+  bypassProp.setType(PropertyType::Boolean);
+  bypassProp.setDefaultValue(false);
+  bypassProp.setValue(false);
+  bypassProp.setAnimatable(true);
+  props.push_back(bypassProp);
+
+  AbstractProperty idProp;
+  idProp.setName(QStringLiteral("ofx.plugin.identifier"));
+  idProp.setDisplayLabel(QStringLiteral("Identifier"));
+  idProp.setType(PropertyType::String);
+  idProp.setValue(descriptor.identifier.toQString());
+  idProp.setAnimatable(false);
+  props.push_back(idProp);
+
+  return props;
+}
 
 } // namespace Ofx
 } // namespace Artifact

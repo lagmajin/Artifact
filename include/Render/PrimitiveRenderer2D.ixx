@@ -7,6 +7,9 @@
 #include <RefCntAutoPtr.hpp>
 #include <BasicMath.hpp>
 #include <QImage>
+#include <QFont>
+#include <QRectF>
+#include <QString>
 #include <QTransform>
 #include <QMatrix4x4>
 export module Artifact.Render.PrimitiveRenderer2D;
@@ -79,6 +82,9 @@ public:
     void drawCheckerboard(float x, float y, float w, float h, float tileSize, const FloatColor& c1, const FloatColor& c2);
     void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
     void drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);
+    void drawText(const QRectF& rect, const QString& text, const QFont& font,
+                  const FloatColor& color, Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignTop,
+                  float opacity = 1.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity = 1.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity = 1.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* texture, float opacity = 1.0f);

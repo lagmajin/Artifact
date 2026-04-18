@@ -269,7 +269,7 @@ QRectF markerHitRectFor(
   if (center.isNull()) {
     return {};
   }
-  const qreal size = marker.laneCount > 1 ? 7.0 : 8.0;
+  const qreal size = marker.laneCount > 1 ? 10.0 : 11.0;
   return QRectF(center.x() - size, center.y() - size, size * 2.0, size * 2.0);
 }
 
@@ -304,7 +304,9 @@ MarkerHitResult hitTestMarkers(
     if (center.isNull()) {
       continue;
     }
-    const QRectF hitRect(center.x() - 8.0, center.y() - 8.0, 16.0, 16.0);
+    const qreal hitSize = marker.laneCount > 1 ? 12.0 : 14.0;
+    const QRectF hitRect(center.x() - hitSize, center.y() - hitSize,
+                         hitSize * 2.0, hitSize * 2.0);
     if (hitRect.contains(QPointF(mouseX, mouseY))) {
       return {i};
     }
@@ -1057,13 +1059,13 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
             << QPointF(diamondRect.left(), diamondRect.center().y());
     if (marker.selected) {
       QPolygonF outer = diamond;
-      p.setPen(QPen(theme.accent.lighter(135), 2.0));
+      p.setPen(QPen(theme.accent.lighter(160), 2.0));
       p.setBrush(Qt::NoBrush);
       p.drawPolygon(outer);
       p.setPen(QPen(theme.background.darker(175), 2.0));
       p.drawPolygon(outer);
-      p.setPen(QPen(theme.text.lighter(110), 1.0));
-      p.setBrush(theme.text.lighter(110));
+      p.setPen(QPen(theme.text.lighter(125), 1.0));
+      p.setBrush(theme.accent.lighter(140));
       p.drawPolygon(diamond);
     } else if (marker.selectedLayer) {
       QPolygonF outer = diamond;
@@ -1077,13 +1079,6 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.setPen(QPen(theme.border.darker(160), 1));
       p.setBrush(marker.eased ? marker.color.lighter(102) : marker.color);
       p.drawPolygon(diamond);
-    }
-    if (!marker.label.isEmpty()) {
-      p.setPen(marker.selectedLayer
-                   ? theme.text.lighter(110)
-                   : (isHovered ? theme.accent.lighter(140) : theme.text));
-      p.drawText(QRectF(center.x() + 8.0, center.y() - 8.0, 150.0, 16.0),
-                 Qt::AlignLeft | Qt::AlignVCenter, marker.label);
     }
   }
 
@@ -1127,6 +1122,11 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       applyMarkerSelectionFlags(impl_->keyframeMarkers_,
                                 impl_->selectedMarkerKeys_);
       Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+      Q_EMIT timelineDebugMessage(
+          QStringLiteral("Selected keyframe at F%1 for %2")
+              .arg(QString::number(frame, 'f', 1))
+              .arg(ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
+                  marker.propertyPath)));
       clipSelected(QString(), marker.layerId);
       seekRequested(frame);
       setCurrentFrame(frame);

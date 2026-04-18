@@ -287,9 +287,22 @@ private:
   auto* selMgr = ArtifactApplicationManager::instance()
                      ? ArtifactApplicationManager::instance()->layerSelectionManager()
                      : nullptr;
-  if (selMgr) selMgr->clearSelection();
+  ArtifactAbstractLayerPtr anchorLayer;
+  int anchorIndex = -1;
+  if (selMgr) {
+   anchorLayer = selMgr->currentLayer();
+   if (anchorLayer) {
+    const auto layers = comp->allLayer();
+    for (int i = 0; i < layers.size(); ++i) {
+     if (layers[i] && layers[i]->id() == anchorLayer->id()) {
+      anchorIndex = i;
+      break;
+     }
+    }
+   }
+  }
 
-  auto& pm = ArtifactProjectManager::getInstance();
+  if (selMgr) selMgr->clearSelection();
   int pasted = 0;
 
   for (const auto& val : layersArray) {
@@ -301,6 +314,21 @@ private:
 
    auto result = comp->appendLayerTop(layer);
    if (result.success) {
+    if (anchorIndex >= 0) {
+     const auto layers = comp->allLayer();
+     int pastedIndex = -1;
+     for (int i = 0; i < layers.size(); ++i) {
+      if (layers[i] && layers[i]->id() == layer->id()) {
+       pastedIndex = i;
+       break;
+      }
+     }
+     const int targetIndex = std::clamp(
+         anchorIndex + pasted, 0, std::max(0, static_cast<int>(layers.size()) - 1));
+     if (pastedIndex >= 0 && pastedIndex != targetIndex) {
+      comp->moveLayerToIndex(layer->id(), targetIndex);
+     }
+    }
     if (selMgr) selMgr->addToSelection(layer);
     ++pasted;
    }
