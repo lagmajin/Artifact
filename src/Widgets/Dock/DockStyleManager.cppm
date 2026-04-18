@@ -359,9 +359,13 @@ void DockStyleManager::refreshDockDecorations() {
             // Repolish FIRST so ArtifactCommonStyle::polish() sets its Window
             // palette; then applyTabLabelColors() overrides exactly what it needs.
             repolishWidget(tab);
-            applyTabLabelColors(tab, tabTextColor(isCurrentTab), isActiveTab, isCurrentTab);
             anyChanged = true;
         }
+        // Always re-apply label font/color unconditionally. The style polish
+        // (triggered by repolishWidget or Qt's own StyleChange propagation)
+        // can reset child QLabel fonts asynchronously, so we must not rely on
+        // the tabChanged guard to ensure the correct font size is applied.
+        applyTabLabelColors(tab, tabTextColor(isCurrentTab), isActiveTab, isCurrentTab);
     }
     if (anyChanged) {
         impl_->dockManager_->update();
