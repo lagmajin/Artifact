@@ -12,6 +12,9 @@ module;
 #include <mutex>
 #include <functional>
 #include <QImage>
+#include <QFont>
+#include <QPainter>
+#include <QRectF>
 #include <QElapsedTimer>
 #include <QDebug>
 #include <QtConcurrent>
@@ -79,6 +82,9 @@ namespace Artifact
   RefCntAutoPtr<ITexture> m_layerRT;
   Uint32 m_layerRTWidth = 0;
   Uint32 m_layerRTHeight = 0;
+  bool m_upscaleEnabled = false;
+  float m_upscaleSharpness = 1.0f;
+  float m_upscaleScale = 1.0f;
   mutable RefCntAutoPtr<ITexture> m_readbackStagingTex;
   mutable TEXTURE_FORMAT m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
   mutable RefCntAutoPtr<IFence> m_readbackFence;
@@ -106,6 +112,7 @@ namespace Artifact
 
   void initFrameQueries();
   void createLayerRT(QWidget* window);
+  float upscaleRenderScale() const { return m_upscaleEnabled ? m_upscaleScale : 1.0f; }
 
  public:
   explicit Impl(RefCntAutoPtr<IRenderDevice> device,
@@ -697,7 +704,13 @@ namespace Artifact
 
   const Uint32 newWidth = static_cast<Uint32>(window->width() * window->devicePixelRatio());
   const Uint32 newHeight = static_cast<Uint32>(window->height() * window->devicePixelRatio());
-  if (m_layerRT && m_layerRTWidth == newWidth && m_layerRTHeight == newHeight) {
+  const float upscaleScale = std::clamp(upscaleRenderScale(), 0.25f, 1.0f);
+  const Uint32 targetWidth =
+      std::max<Uint32>(1, static_cast<Uint32>(std::round(static_cast<float>(newWidth) * upscaleScale)));
+  const Uint32 targetHeight =
+      std::max<Uint32>(1, static_cast<Uint32>(std::round(static_cast<float>(newHeight) * upscaleScale)));
+
+  if (m_layerRT && m_layerRTWidth == targetWidth && m_layerRTHeight == targetHeight) {
     return;
   }
 
@@ -706,14 +719,14 @@ namespace Artifact
   TextureDesc TexDesc;
   TexDesc.Name      = "LayerRenderTarget";
   TexDesc.Type      = RESOURCE_DIM_TEX_2D;
-  TexDesc.Width     = newWidth;
-  TexDesc.Height    = newHeight;
+  TexDesc.Width     = targetWidth;
+  TexDesc.Height    = targetHeight;
   TexDesc.MipLevels = 1;
   TexDesc.Format    = TEX_FORMAT_RGBA8_UNORM_SRGB;
   TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
   deviceManager_.device()->CreateTexture(TexDesc, nullptr, &m_layerRT);
-  m_layerRTWidth = newWidth;
-  m_layerRTHeight = newHeight;
+  m_layerRTWidth = targetWidth;
+  m_layerRTHeight = targetHeight;
  }
 
  void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
@@ -1012,8 +1025,12 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
  { impl_->drawSprite(toDiligentFloat2(pos), toDiligentFloat2(size)); }
  void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, Diligent::ITextureView* pSRV, float opacity)
  { impl_->primitiveRenderer_.drawTextureLocal(x, y, w, h, pSRV, opacity); }
- void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QImage& image, float opacity)
+void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QImage& image, float opacity)
  { impl_->drawSpriteLocal(x, y, w, h, image, opacity); }
+ void ArtifactIRenderer::drawText(const QRectF& rect, const QString& text,
+                                  const QFont& font, const FloatColor& color,
+                                  Qt::Alignment alignment, float opacity)
+ { impl_->primitiveRenderer_.drawText(rect, text, font, color, alignment, opacity); }
  void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
  {
   // Direct delegation to primitive renderer for transformed sprite drawing
@@ -1096,7 +1113,17 @@ void ArtifactIRenderer::draw3DCircle(Detail::float3 center, Detail::float3 norma
 { drawGizmoRing(center, normal, radius, color, thickness); }
 void ArtifactIRenderer::draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail::float3 v2, Detail::float3 v3, const FloatColor& color)
 { impl_->primitiveRenderer3D_.draw3DQuad({v0.x, v0.y, v0.z}, {v1.x, v1.y, v1.z}, {v2.x, v2.y, v2.z}, {v3.x, v3.y, v3.z}, color); }
-void ArtifactIRenderer::setUpscaleConfig(bool, float)    {}
+ void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness)
+ {
+  impl_->m_upscaleEnabled = enable;
+  impl_->m_upscaleSharpness = std::clamp(sharpness, 0.0f, 1.0f);
+  // Higher sharpness means we keep a slightly larger internal render target.
+  // 0.0 => 70% scale, 1.0 => 100% scale.
+  impl_->m_upscaleScale = enable ? (0.70f + 0.30f * impl_->m_upscaleSharpness) : 1.0f;
+  if (impl_->widget_) {
+   impl_->createLayerRT(impl_->widget_);
+  }
+ }
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> ArtifactIRenderer::device() const
  { return impl_->deviceManager_.device(); }
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> ArtifactIRenderer::immediateContext() const

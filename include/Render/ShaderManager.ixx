@@ -50,13 +50,12 @@ public:
     PSOAndSRB gridPsoAndSrb() const;
     PSOAndSRB spriteTransformPsoAndSrb() const;
     PSOAndSRB maskedSpritePsoAndSrb() const;
+    PSOAndSRB glyphQuadPsoAndSrb() const;
     PSOAndSRB gizmo3DPsoAndSrb() const;
     PSOAndSRB gizmo3DTrianglePsoAndSrb() const;
     PSOAndSRB batchSolidRectPsoAndSrb() const;
 
     /// Glyph quad PSO for GPU text rendering
-    PSOAndSRB glyphQuadPsoAndSrb() const;
-
     RefCntAutoPtr<ISampler> spriteSampler() const;
     RefCntAutoPtr<ISampler> glyphAtlasSampler() const;
 

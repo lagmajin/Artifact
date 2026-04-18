@@ -2,9 +2,14 @@ module;
 #include <vector>
 #include <variant>
 #include <cstdint>
+#include <QFont>
+#include <QRectF>
+#include <QString>
 #include <Texture.h>
 #include <BasicMath.hpp>
 export module Artifact.Render.RenderCommandBuffer;
+
+import Text.Style;
 
 export namespace Artifact {
 
@@ -113,11 +118,22 @@ struct MaskedSpritePkt {
     float              _pad[3];
 };
 
+struct GlyphTextPkt {
+    QRectF              rect;
+    RenderSolidTransform2D xform;
+    QString             text;
+    QFont               font;
+    float4              color;
+    int                 alignment = 0;
+    float               opacity   = 1.0f;
+};
+
 using DrawPacket = std::variant<
     SolidRectPkt, SolidRectXformPkt,
     LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
-    SpritePkt, SpriteXformPkt, MaskedSpritePkt
+    SpritePkt, SpriteXformPkt, MaskedSpritePkt,
+    GlyphTextPkt
 >;
 
 class RenderCommandBuffer {

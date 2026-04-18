@@ -4,8 +4,13 @@
 #include <cmath>
 #include <cstring>
 #include <QImage>
+#include <QColor>
+#include <QFont>
+#include <QFontMetricsF>
+#include <QPainter>
 #include <QPointF>
 #include <QRectF>
+#include <QSizeF>
 #include <QTransform>
 #include <QDebug>
 #include <QLoggingCategory>
@@ -27,6 +32,8 @@ import Math.Bezier;
 import Render.Shader.ThickLine;
 import Render.Shader.ViewerHelpers;
 import Color.Float;
+import Text.Style;
+import Utils.String.UniString;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.RenderCommandBuffer;
 
@@ -55,6 +62,59 @@ qint64 computeImageContentKey(const QImage& image) {
         h *= 16777619u;
     }
     return static_cast<qint64>(h);
+}
+
+TextStyle textStyleFromQFont(const QFont& font)
+{
+    TextStyle style;
+    style.fontFamily = UniString(font.family());
+
+    const float pointSize = font.pointSizeF() > 0.0f
+                                ? static_cast<float>(font.pointSizeF())
+                                : (font.pixelSize() > 0
+                                       ? static_cast<float>(font.pixelSize())
+                                       : 12.0f);
+    style.fontSize = pointSize;
+    style.pixelSize = pointSize;
+    style.tracking = static_cast<float>(font.letterSpacing());
+    style.fontWeight = font.bold() ? FontWeight::Bold : FontWeight::Normal;
+    style.fontStyle = font.italic() ? FontStyle::Italic : FontStyle::Normal;
+    style.allCaps = font.capitalization() == QFont::AllUppercase;
+    style.underline = font.underline();
+    style.strikethrough = font.strikeOut();
+    return style;
+}
+
+ParagraphStyle paragraphStyleFromRectAndAlignment(const QRectF& rect,
+                                                  Qt::Alignment alignment)
+{
+    ParagraphStyle paragraph;
+    paragraph.boxWidth = static_cast<float>(rect.width());
+    paragraph.boxHeight = static_cast<float>(rect.height());
+
+    if (alignment & Qt::AlignHCenter) {
+        paragraph.horizontalAlignment = TextHorizontalAlignment::Center;
+    } else if (alignment & Qt::AlignRight) {
+        paragraph.horizontalAlignment = TextHorizontalAlignment::Right;
+    } else {
+        paragraph.horizontalAlignment = TextHorizontalAlignment::Left;
+    }
+
+    if (alignment & Qt::AlignVCenter) {
+        paragraph.verticalAlignment = TextVerticalAlignment::Middle;
+    } else if (alignment & Qt::AlignBottom) {
+        paragraph.verticalAlignment = TextVerticalAlignment::Bottom;
+    } else {
+        paragraph.verticalAlignment = TextVerticalAlignment::Top;
+    }
+
+    if ((static_cast<int>(alignment) & static_cast<int>(Qt::TextWordWrap)) != 0) {
+        paragraph.wrapMode = TextWrapMode::WordWrap;
+    } else {
+        paragraph.wrapMode = TextWrapMode::NoWrap;
+    }
+
+    return paragraph;
 }
 } // namespace
 
@@ -633,6 +693,35 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.pSRV             = pSRV;
     pkt.opacity          = opacity;
+    impl_->cmdBuf_->append(pkt);
+}
+
+void PrimitiveRenderer2D::drawText(const QRectF &rect, const QString &text,
+                                   const QFont &font, const FloatColor &color,
+                                   Qt::Alignment alignment, float opacity)
+{
+    if (!impl_->cmdBuf_ || text.isEmpty() || rect.width() <= 0.0 || rect.height() <= 0.0) {
+        return;
+    }
+
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    RenderSolidTransform2D xform{};
+    xform.offset = {
+        static_cast<float>(rect.x()) * zoom + viewportCB.offset.x,
+        static_cast<float>(rect.y()) * zoom + viewportCB.offset.y
+    };
+    xform.scale = { zoom, zoom };
+    xform.screenSize = viewportCB.screenSize;
+
+    GlyphTextPkt pkt;
+    pkt.rect = rect;
+    pkt.xform = xform;
+    pkt.text = text;
+    pkt.font = font;
+    pkt.color = { color.r(), color.g(), color.b(), color.a() };
+    pkt.alignment = static_cast<int>(alignment);
+    pkt.opacity = opacity;
     impl_->cmdBuf_->append(pkt);
 }
 

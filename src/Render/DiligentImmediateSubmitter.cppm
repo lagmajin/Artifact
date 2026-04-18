@@ -1,8 +1,12 @@
 module;
 #include <cmath>
 #include <cstring>
+#include <algorithm>
 #include <vector>
 #include <type_traits>
+#include <QImage>
+#include <QFont>
+#include <QRectF>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
@@ -14,6 +18,11 @@ module Artifact.Render.DiligentImmediateSubmitter;
 import Graphics;
 import std;
 import VertexBuffer;
+import Text.Style;
+import Utils.String.UniString;
+import Text.GlyphLayout;
+import Text.GlyphAtlas;
+import Font.FreeFont;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.RenderCommandBuffer;
 import ArtifactCore.Utils.PerformanceProfiler;
@@ -31,9 +40,95 @@ static void mapWriteDiscard(IDeviceContext* ctx, IBuffer* buf, const void* data,
     ctx->UnmapBuffer(buf, MAP_WRITE);
 }
 
+static TextStyle textStyleFromQFont(const QFont& font)
+{
+    TextStyle style;
+    style.fontFamily = UniString(font.family());
+    const float size = font.pointSizeF() > 0.0f
+                           ? static_cast<float>(font.pointSizeF())
+                           : (font.pixelSize() > 0 ? static_cast<float>(font.pixelSize())
+                                                   : 12.0f);
+    style.fontSize = size;
+    style.pixelSize = size;
+    style.tracking = static_cast<float>(font.letterSpacing());
+    style.fontWeight = font.bold() ? FontWeight::Bold : FontWeight::Normal;
+    style.fontStyle = font.italic() ? FontStyle::Italic : FontStyle::Normal;
+    style.allCaps = font.capitalization() == QFont::AllUppercase;
+    style.underline = font.underline();
+    style.strikethrough = font.strikeOut();
+    return style;
+}
+
+static ParagraphStyle paragraphStyleFromRectAndAlignment(const QRectF& rect,
+                                                          Qt::Alignment alignment)
+{
+    ParagraphStyle paragraph;
+    paragraph.boxWidth = static_cast<float>(rect.width());
+    paragraph.boxHeight = static_cast<float>(rect.height());
+
+    if (alignment & Qt::AlignHCenter) {
+        paragraph.horizontalAlignment = TextHorizontalAlignment::Center;
+    } else if (alignment & Qt::AlignRight) {
+        paragraph.horizontalAlignment = TextHorizontalAlignment::Right;
+    } else {
+        paragraph.horizontalAlignment = TextHorizontalAlignment::Left;
+    }
+
+    if (alignment & Qt::AlignVCenter) {
+        paragraph.verticalAlignment = TextVerticalAlignment::Middle;
+    } else if (alignment & Qt::AlignBottom) {
+        paragraph.verticalAlignment = TextVerticalAlignment::Bottom;
+    } else {
+        paragraph.verticalAlignment = TextVerticalAlignment::Top;
+    }
+
+    paragraph.wrapMode = ((static_cast<int>(alignment) & static_cast<int>(Qt::TextWordWrap)) != 0)
+                             ? TextWrapMode::WordWrap
+                             : TextWrapMode::NoWrap;
+    return paragraph;
+}
+
+static QImage atlasImageToRgba(const QImage& image)
+{
+    return image.isNull() ? QImage{} : image.convertToFormat(QImage::Format_RGBA8888);
+}
+
+static RefCntAutoPtr<ITexture> createAtlasTexture(RefCntAutoPtr<IRenderDevice> device,
+                                                 const QImage& image)
+{
+    if (!device || image.isNull() || image.width() <= 0 || image.height() <= 0) {
+        return {};
+    }
+
+    const QImage rgba = atlasImageToRgba(image);
+    TextureDesc texDesc;
+    texDesc.Name = "GlyphAtlasTexture";
+    texDesc.Type = RESOURCE_DIM_TEX_2D;
+    texDesc.Width = static_cast<Uint32>(rgba.width());
+    texDesc.Height = static_cast<Uint32>(rgba.height());
+    texDesc.MipLevels = 1;
+    texDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+    texDesc.Usage = USAGE_IMMUTABLE;
+    texDesc.BindFlags = BIND_SHADER_RESOURCE;
+    texDesc.CPUAccessFlags = CPU_ACCESS_NONE;
+
+    TextureSubResData subRes;
+    subRes.pData = rgba.constBits();
+    subRes.Stride = static_cast<Uint64>(rgba.bytesPerLine());
+
+    TextureData initData;
+    initData.pSubResources = &subRes;
+    initData.NumSubresources = 1;
+
+    RefCntAutoPtr<ITexture> texture;
+    device->CreateTexture(texDesc, &initData, &texture);
+    return texture;
+}
+
 void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEXTURE_FORMAT /*rtvFormat*/)
 {
     if (!device) return;
+    m_device = device;
 
     {
         BufferDesc desc;
@@ -188,7 +283,9 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
     m_draw_sprite_pso_and_srb               = sm.spritePsoAndSrb();
     m_draw_sprite_transform_pso_and_srb     = sm.spriteTransformPsoAndSrb();
     m_draw_masked_sprite_pso_and_srb        = sm.maskedSpritePsoAndSrb();
+    m_draw_glyph_pso_and_srb                = sm.glyphQuadPsoAndSrb();
     m_sprite_sampler                        = sm.spriteSampler();
+    m_glyph_sampler                         = sm.glyphAtlasSampler();
     m_draw_solid_rect_pso_and_srb           = sm.solidRectPsoAndSrb();
     m_draw_solid_rect_transform_pso_and_srb = sm.solidRectTransformPsoAndSrb();
     m_draw_line_pso_and_srb                 = sm.linePsoAndSrb();
@@ -218,9 +315,14 @@ void DiligentImmediateSubmitter::destroy()
     m_draw_dot_line_cb                      = nullptr;
     m_draw_outline_params_cb                = nullptr;
     m_sprite_sampler                        = nullptr;
+    m_glyph_sampler                         = nullptr;
+    m_glyph_atlas_texture                   = nullptr;
+    m_glyph_atlas_srv                       = nullptr;
+    m_device                                = nullptr;
     m_draw_sprite_pso_and_srb               = {};
     m_draw_sprite_transform_pso_and_srb     = {};
     m_draw_masked_sprite_pso_and_srb        = {};
+    m_draw_glyph_pso_and_srb                = {};
     m_draw_solid_rect_pso_and_srb           = {};
     m_draw_solid_rect_transform_pso_and_srb = {};
     m_draw_line_pso_and_srb                 = {};
@@ -253,6 +355,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             else if constexpr (std::is_same_v<T, SpritePkt>)          submitSprite(p, ctx, pRTV);
             else if constexpr (std::is_same_v<T, SpriteXformPkt>)     submitSpriteXform(p, ctx, pRTV);
             else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    submitMaskedSprite(p, ctx, pRTV);
+            else if constexpr (std::is_same_v<T, GlyphTextPkt>)       submitGlyphText(p, ctx, pRTV);
         }, pkt);
     }
     buf.reset();
@@ -538,32 +641,44 @@ void DiligentImmediateSubmitter::submitGrid(const GridPkt& p, IDeviceContext* ct
 
 void DiligentImmediateSubmitter::submitRectOutline(const RectOutlinePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
-    if (!pRTV || !m_draw_rect_outline_pso_and_srb.pPSO) return;
-    if (!m_draw_solid_rect_vertex_buffer || !m_draw_solid_rect_trnsform_cb || !m_draw_outline_params_cb) return;
+    if (!pRTV || !m_draw_solid_rect_pso_and_srb.pPSO) return;
+    if (!m_draw_solid_rect_vertex_buffer || !m_draw_solid_rect_cb ||
+        !m_draw_solid_rect_trnsform_cb || !m_draw_solid_rect_index_buffer) return;
 
-    RectVertex vertices[4] = {
-        {{0.0f, 0.0f}, p.color}, {{1.0f, 0.0f}, p.color},
-        {{1.0f, 1.0f}, p.color}, {{0.0f, 1.0f}, p.color},
+    const float w = p.xform.scale.x;
+    const float h = p.xform.scale.y;
+    if (w <= 0.0f || h <= 0.0f) {
+        return;
+    }
+
+    const float thickness = std::max(1.0f, std::min({1.0f, w * 0.5f, h * 0.5f}));
+    const float left = p.xform.offset.x;
+    const float top = p.xform.offset.y;
+
+    auto emitStrip = [&](float x, float y, float rw, float rh) {
+        if (rw <= 0.0f || rh <= 0.0f) {
+            return;
+        }
+        SolidRectPkt strip{};
+        strip.xform = p.xform;
+        strip.xform.offset = { x, y };
+        strip.xform.scale = { rw, rh };
+        strip.color = p.color;
+        submitSolidRect(strip, ctx, pRTV);
     };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices));
-    mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,   &p.xform, sizeof(p.xform));
 
-    struct OutlineParamsCB { float outlineThickness; float padding[3]; };
-    OutlineParamsCB params{ 0.08f, {0.0f, 0.0f, 0.0f} };
-    mapWriteDiscard(ctx, m_draw_outline_params_cb, &params, sizeof(params));
+    emitStrip(left, top, w, thickness);
+    if (h > thickness) {
+        emitStrip(left, top + h - thickness, w, thickness);
+    }
 
-    ctx->SetPipelineState(m_draw_rect_outline_pso_and_srb.pPSO);
-    IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
-    Uint64   offs[]  = { 0 };
-    ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-    if (auto* v = m_draw_rect_outline_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "OutlineParams"))
-        v->Set(m_draw_outline_params_cb);
-    ctx->CommitShaderResources(m_draw_rect_outline_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
-    ctx->DrawIndexed(drawAttrs);
+    const float innerH = h - thickness * 2.0f;
+    if (innerH > 0.0f) {
+        emitStrip(left, top + thickness, thickness, innerH);
+        if (w > thickness) {
+            emitStrip(left + w - thickness, top + thickness, thickness, innerH);
+        }
+    }
 }
 
 void DiligentImmediateSubmitter::submitSprite(const SpritePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
@@ -663,6 +778,111 @@ void DiligentImmediateSubmitter::submitMaskedSprite(const MaskedSpritePkt& p, ID
     drawAttrs.NumVertices = 4;
     drawAttrs.Flags       = DRAW_FLAG_NONE;
     ctx->Draw(drawAttrs);
+}
+
+void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    if (!pRTV || !ctx || !m_draw_glyph_pso_and_srb.pPSO || !m_draw_glyph_pso_and_srb.pSRB || !m_device) {
+        return;
+    }
+    if (p.text.isEmpty() || p.rect.width() <= 0.0 || p.rect.height() <= 0.0) {
+        return;
+    }
+
+    const TextStyle style = textStyleFromQFont(p.font);
+    const ParagraphStyle paragraph =
+        paragraphStyleFromRectAndAlignment(p.rect, static_cast<Qt::Alignment>(p.alignment));
+    const auto glyphs = TextLayoutEngine::layout(UniString(p.text), style, paragraph);
+    if (glyphs.empty()) {
+        return;
+    }
+
+    const QFont resolvedFont = FontManager::makeFont(style, p.text);
+    const float zoom = std::max(0.001f, p.xform.scale.x);
+    struct DrawGlyph {
+        GlyphItem item;
+        GlyphRect rect;
+    };
+    std::vector<DrawGlyph> drawGlyphs;
+    drawGlyphs.reserve(glyphs.size());
+
+    for (const auto& glyph : glyphs) {
+        const GlyphKey key{
+            glyph.charCode,
+            style.fontSize,
+            static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
+                                  (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
+            style.fontFamily.toQString().toStdString()
+        };
+        const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);
+        if (glyphRect.valid) {
+            drawGlyphs.push_back({glyph, glyphRect});
+        }
+    }
+
+    if (m_glyph_atlas.isDirty() || !m_glyph_atlas_texture) {
+        m_glyph_atlas_texture = createAtlasTexture(m_device, m_glyph_atlas.atlasImage());
+        m_glyph_atlas_srv = m_glyph_atlas_texture
+                                ? m_glyph_atlas_texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+                                : nullptr;
+        if (m_glyph_atlas_texture) {
+            m_glyph_atlas.clearDirty();
+        }
+    }
+    if (!m_glyph_atlas_srv) {
+        return;
+    }
+
+    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    ctx->SetPipelineState(m_draw_glyph_pso_and_srb.pPSO);
+    if (auto* v = m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture")) {
+        v->Set(m_glyph_atlas_srv);
+    }
+    if (m_glyph_sampler) {
+        if (auto* v = m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
+            v->Set(m_glyph_sampler);
+        }
+    } else if (m_sprite_sampler) {
+        if (auto* v = m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
+            v->Set(m_sprite_sampler);
+        }
+    }
+    if (auto* v = m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+        v->Set(m_draw_sprite_cb);
+    }
+    ctx->CommitShaderResources(m_draw_glyph_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    IBuffer* pBufs[] = { m_draw_sprite_vertex_buffer };
+    Uint64 offs[] = { 0 };
+    ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    for (const auto& glyph : drawGlyphs) {
+        const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX;
+        const float top = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY;
+        const float w = std::max(0.0f, static_cast<float>(glyph.rect.width));
+        const float h = std::max(0.0f, static_cast<float>(glyph.rect.height));
+        if (w <= 0.0f || h <= 0.0f) {
+            continue;
+        }
+
+        const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
+        const float4 color = { p.color.x * alpha, p.color.y * alpha, p.color.z * alpha, p.color.w * alpha };
+        SpriteVertex vertices[4] = {
+            {{0.0f, 0.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
+            {{1.0f, 0.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
+            {{0.0f, 1.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, color},
+            {{1.0f, 1.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, color},
+        };
+
+        RenderSolidTransform2D glyphXform{};
+        glyphXform.offset = { left * zoom + p.xform.offset.x, top * zoom + p.xform.offset.y };
+        glyphXform.scale = { w * zoom, h * zoom };
+        glyphXform.screenSize = p.xform.screenSize;
+
+        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices));
+        mapWriteDiscard(ctx, m_draw_sprite_cb, &glyphXform, sizeof(glyphXform));
+        ctx->DrawIndexed(DrawIndexedAttribs(6, VT_UINT32, DRAW_FLAG_NONE));
+    }
 }
 
 } // namespace Artifact

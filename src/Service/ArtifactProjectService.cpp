@@ -263,12 +263,11 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
 
           if (selectedIndex >= 0 && newLayerIndex >= 0 &&
               newLayerIndex != selectedIndex) {
-            int targetIndex = selectedIndex;
-            if (newLayerIndex < targetIndex) {
-              targetIndex -= 1;
-            }
-            targetIndex =
-                std::clamp(targetIndex, 0,
+            // appendLayerTop() で新規レイヤーは一旦先頭に入る。
+            // その後、元の選択レイヤーの index に戻すと「選択レイヤーの上」
+            // ちょうど 1 枚分に収まる。
+            const int targetIndex =
+                std::clamp(selectedIndex, 0,
                            std::max(0, static_cast<int>(allLayers.size()) - 1));
             comp->moveLayerToIndex(result.layer->id(), targetIndex);
           }
@@ -866,7 +865,31 @@ bool ArtifactProjectService::duplicateLayerInCurrentComposition(
 
   auto result =
       impl_->projectManager().duplicateLayerInComposition(comp->id(), layerId);
-  return result.success;
+  if (!result.success || !result.layer) {
+    return false;
+  }
+
+  const auto layers = comp->allLayer();
+  int sourceIndex = -1;
+  int newIndex = -1;
+  for (int i = 0; i < layers.size(); ++i) {
+    const auto &layer = layers[i];
+    if (!layer) {
+      continue;
+    }
+    if (layer->id() == layerId) {
+      sourceIndex = i;
+    }
+    if (layer->id() == result.layer->id()) {
+      newIndex = i;
+    }
+  }
+
+  if (sourceIndex >= 0 && newIndex >= 0 && newIndex != sourceIndex) {
+    comp->moveLayerToIndex(result.layer->id(), sourceIndex);
+    notifyProjectMutation(impl_->projectManager());
+  }
+  return true;
 }
 
 bool ArtifactProjectService::renameLayerInCurrentComposition(

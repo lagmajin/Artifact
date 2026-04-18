@@ -12,6 +12,7 @@ export module Artifact.MainWindow;
 import Artifact.Widgets.AudioMixer;               // Added
 import Audio.Mixer;                               // Added
 import Artifact.Widgets.AI.ArtifactAICloudWidget; // Added
+import Widgets.ToolBar;
 
 export namespace Artifact {
 
@@ -64,6 +65,8 @@ public /*slots*/:
   void closeAllDocks();
   void showStatusMessage(const QString &message, int timeoutMs = 2000);
   void togglePanelsVisible(bool visible);
+  void setWorkspaceMode(WorkspaceMode mode);
+  WorkspaceMode workspaceMode() const;
 
   // Dock enumeration
   QStringList dockTitles() const;

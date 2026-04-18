@@ -577,6 +577,49 @@ public:
         drawGizmoLineGeometry(vertices, 2);
     }
 
+    void drawGizmoThickLine(const QVector3D& start, const QVector3D& end,
+                            const FloatColor& color, float thickness)
+    {
+        const QVector3D delta = end - start;
+        const float length = delta.length();
+        if (length <= 1e-5f || thickness <= 0.0f) {
+            drawGizmoLine(start, end, color);
+            return;
+        }
+
+        const QVector3D direction = delta / length;
+        QVector3D cameraForward(0.0f, 0.0f, 1.0f);
+        QVector3D cameraRight(1.0f, 0.0f, 0.0f);
+        bool invertible = false;
+        const QMatrix4x4 invView = viewMatrix_.inverted(&invertible);
+        if (invertible) {
+            cameraRight = QVector3D(invView(0, 0), invView(1, 0), invView(2, 0));
+            cameraForward = QVector3D(invView(0, 2), invView(1, 2), invView(2, 2));
+        }
+
+        QVector3D side = QVector3D::crossProduct(cameraForward, direction);
+        if (side.lengthSquared() <= 1e-10f) {
+            side = QVector3D::crossProduct(cameraRight, direction);
+        }
+        side = normalizeOrFallback(side, QVector3D(1.0f, 0.0f, 0.0f));
+
+        const QVector3D offset = side * (thickness * 0.5f);
+        const QVector3D p0 = start - offset;
+        const QVector3D p1 = start + offset;
+        const QVector3D p2 = end + offset;
+        const QVector3D p3 = end - offset;
+
+        const GizmoLineVertex vertices[] = {
+            makeGizmoLineVertex(p0, color),
+            makeGizmoLineVertex(p1, color),
+            makeGizmoLineVertex(p2, color),
+            makeGizmoLineVertex(p0, color),
+            makeGizmoLineVertex(p2, color),
+            makeGizmoLineVertex(p3, color)
+        };
+        drawGizmoTriangleGeometry(vertices, 6);
+    }
+
     void drawGizmoArrow(const QVector3D& start, const QVector3D& end, const FloatColor& color, float size)
     {
         const QVector3D delta = end - start;
@@ -941,7 +984,10 @@ void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVect
 void PrimitiveRenderer3D::draw3DLine(const QVector3D& start, const QVector3D& end,
                                      const FloatColor& color, float thickness)
 {
-    (void)thickness;
+    if (thickness > 1.0f) {
+        impl_->drawGizmoThickLine(start, end, color, thickness);
+        return;
+    }
     impl_->drawGizmoLine(start, end, color);
 }
 

@@ -17,6 +17,7 @@
 #include <QSplitter>
 #include <QListWidget>
 #include <QKeySequence>
+#include <QDebug>
 #include <QSet>
 #include <QShortcut>
 #include <QStandardItem>
@@ -1697,6 +1698,10 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   if (impl_->curveEditorSummaryLabel_) {
     impl_->curveEditorSummaryLabel_->setText(payload.summary);
   }
+  qDebug() << "[CurveEditor] refresh"
+           << "tracks=" << payload.tracks.size()
+           << "bindings=" << payload.bindings.size()
+           << "summary=" << payload.summary;
   impl_->curveEditor_->setTracks(payload.tracks);
   impl_->curveEditor_->setCurrentFrame(
       static_cast<int64_t>(std::llround(std::max(0.0, impl_->currentFrame_))));

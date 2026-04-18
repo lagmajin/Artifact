@@ -14,6 +14,8 @@ import Utils.String.UniString;
 import Utils.Id;
 import Artifact.Effect.Abstract;
 import Artifact.Effects.Manager;
+import Artifact.Effect.Ofx.Host;
+import Artifact.Effect.Ofx.Impl;
 import Artifact.Project.PresetManager;
 import Artifact.Service.Project;
 
@@ -52,6 +54,23 @@ W_OBJECT_IMPL(ArtifactEffectService)
 
  std::unique_ptr<ArtifactAbstractEffect> ArtifactEffectService::createEffect(const EffectID& id) const
  {
+  const QString effectId = id.toString();
+  if (effectId.startsWith(QStringLiteral("ofx."))) {
+   const QString pluginId = effectId.mid(QStringLiteral("ofx.").size());
+   Artifact::Ofx::ArtifactOfxHost::instance().initialize();
+   for (const auto& plugin : Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins()) {
+    if (plugin.identifier.toQString().compare(pluginId, Qt::CaseInsensitive) != 0) {
+     continue;
+    }
+    return Artifact::Ofx::makeOfxEffect(plugin);
+   }
+
+   auto effect = std::make_unique<ArtifactAbstractEffect>();
+   effect->setEffectID(effectId);
+   effect->setDisplayName(QStringLiteral("OFX: %1").arg(pluginId));
+   return effect;
+  }
+
   if (!impl_->effectManager_) return nullptr;
   // Delegate to the global effect manager's factory
   impl_->effectManager_->factoryByID(id);
@@ -78,6 +97,19 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("twist"), "Twist"});
   effects.push_back({EffectID("bend"), "Bend"});
   effects.push_back({EffectID("pbr_material"), "PBR Material"});
+
+  Artifact::Ofx::ArtifactOfxHost::instance().initialize();
+  for (const auto& plugin : Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins()) {
+   const QString pluginId = plugin.identifier.toQString().trimmed();
+   if (pluginId.isEmpty()) {
+    continue;
+   }
+
+   effects.push_back({
+       EffectID(QStringLiteral("ofx.%1").arg(pluginId)),
+       QStringLiteral("OFX: %1").arg(pluginId),
+   });
+  }
   return effects;
  }
 
@@ -96,11 +128,14 @@ W_OBJECT_IMPL(ArtifactEffectService)
   if (!ps) return EffectServiceResult::fail("Project service not available");
 
   // Create the effect through the global manager
-  auto effect = std::make_shared<ArtifactAbstractEffect>();
-  effect->setEffectID(effectId.toString());
-  effect->setDisplayName(effectId.toString());
+  auto effect = createEffect(effectId);
+  if (!effect) {
+   effect = std::make_unique<ArtifactAbstractEffect>();
+   effect->setEffectID(effectId.toString());
+   effect->setDisplayName(effectId.toString());
+  }
 
-  if (ps->addEffectToLayerInCurrentComposition(layerId, effect)) {
+  if (ps->addEffectToLayerInCurrentComposition(layerId, std::shared_ptr<ArtifactAbstractEffect>(effect.release()))) {
    Q_EMIT effectAdded(layerId, effectId.toString());
    return EffectServiceResult::ok(effectId.toString());
   }

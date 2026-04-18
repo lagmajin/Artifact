@@ -16,6 +16,7 @@
 #include <QApplication>
 #include <QCloseEvent>
 #include <QColor>
+#include <QDebug>
 #include <QEvent>
 #include <QHash>
 #include <QHeaderView>
@@ -96,6 +97,99 @@ void applyDarkNativeTitleBar(QWidget *) {}
 #endif
 
 namespace {
+bool isTimelineDockTitle(const QString &title) {
+  return title.startsWith(QStringLiteral("Timeline"), Qt::CaseInsensitive);
+}
+
+void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
+  if (!window) {
+    return;
+  }
+
+  qDebug() << "[MainWindow] applyWorkspaceVisibility mode="
+           << static_cast<int>(mode);
+
+  const QStringList dockTitles = window->dockTitles();
+  const auto setVisible = [window](const QString &title, bool visible) {
+    if (!title.isEmpty()) {
+      window->setDockVisible(title, visible);
+    }
+  };
+
+  QStringList visibleTitles;
+  QStringList hiddenTitles;
+
+  switch (mode) {
+  case WorkspaceMode::Default:
+    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
+                     "Inspector", "Composition Note", "Layer Note",
+                     "Properties", "AI Cloud"};
+    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
+                    "Composition View (Software)", "Layer View (Diligent)",
+                    "Layer View (Software)"};
+    break;
+  case WorkspaceMode::Animation:
+    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
+                     "Inspector", "Composition Note", "Layer Note",
+                     "Properties", "Composition View (Software)",
+                     "Layer View (Diligent)", "Layer View (Software)"};
+    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat"};
+    break;
+  case WorkspaceMode::VFX:
+    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
+                     "Inspector", "Composition Note", "Layer Note",
+                     "Properties", "AI Cloud", "Composition View (Software)",
+                     "Layer View (Diligent)", "Layer View (Software)"};
+    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat"};
+    break;
+  case WorkspaceMode::Compositing:
+    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
+                     "Inspector", "Composition Note", "Layer Note",
+                     "Properties", "Layer View (Diligent)"};
+    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
+                    "Composition View (Software)", "Layer View (Software)"};
+    break;
+  case WorkspaceMode::Audio:
+    visibleTitles = {"Contents Viewer", "Audio Mixer", "Project",
+                     "Asset Browser", "Inspector", "Properties"};
+    hiddenTitles = {"AI Cloud", "AI Chat", "Composition Viewer",
+                    "Composition View (Software)", "Layer View (Diligent)",
+                    "Layer View (Software)"};
+    break;
+  }
+
+  if (mode == WorkspaceMode::Default) {
+    for (const QString &title : dockTitles) {
+      setVisible(title, true);
+    }
+  } else {
+    for (const QString &title : dockTitles) {
+      setVisible(title, false);
+    }
+  }
+
+  for (const QString &title : visibleTitles) {
+    setVisible(title, true);
+  }
+  for (const QString &title : hiddenTitles) {
+    setVisible(title, false);
+  }
+
+  for (const QString &title : dockTitles) {
+    if (isTimelineDockTitle(title)) {
+      setVisible(title, mode == WorkspaceMode::Default ||
+                            mode == WorkspaceMode::Animation);
+    }
+  }
+}
+
+void applyWorkspaceMode(ArtifactMainWindow *window, WorkspaceMode mode) {
+  if (!window) {
+    return;
+  }
+  applyWorkspaceVisibility(window, mode);
+}
+
 void refreshFloatingWidgetTree(QWidget *widget) {
   if (!widget) {
     return;
@@ -244,10 +338,12 @@ class ArtifactMainWindow::Impl {
 public:
   CDockManager *dockManager = nullptr;
   DockStyleManager *dockStyleManager = nullptr;
+  ArtifactToolBar *toolBar = nullptr;
   QWidget *centralWidgetHost = nullptr;
   CDockWidget *primaryCenterDock = nullptr;
   bool primaryCenterDockAssigned = false;
   QList<CDockWidget *> dockWidgets;
+  WorkspaceMode workspaceMode_ = WorkspaceMode::Default;
   bool immersiveMode_ = false;
   Qt::WindowStates immersivePreviousWindowState_ = Qt::WindowNoState;
   QHash<CDockWidget *, bool> immersiveDockVisibility_;
@@ -282,7 +378,14 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
 
   auto *toolBar = new ArtifactToolBar(this);
   addToolBar(toolBar);
+  impl_->toolBar = toolBar;
   toolBar->refreshFromApplicationState();
+  QObject::connect(toolBar, &ArtifactToolBar::workspaceModeChanged, this,
+                   [this](WorkspaceMode mode) {
+                     if (impl_) {
+                       impl_->workspaceMode_ = mode;
+                     }
+                   });
 
   // Tool signal routing
   QObject::connect(
@@ -640,10 +743,14 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
                                         const bool visible) {
   if (!impl_)
     return;
+  qDebug() << "[MainWindow] setDockVisible title=" << title
+           << "visible=" << visible;
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
     if (dock->objectName() == title || dock->windowTitle() == title) {
+      qDebug() << "[MainWindow]   matched dock="
+               << dock->windowTitle() << "objectName=" << dock->objectName();
       dock->toggleView(visible);
     }
   }
@@ -668,10 +775,13 @@ void ArtifactMainWindow::activateDock(const QString &title) {
 bool ArtifactMainWindow::closeDock(const QString &title) {
   if (!impl_ || title.isEmpty())
     return false;
+  qDebug() << "[MainWindow] closeDock title=" << title;
   for (auto *dock : impl_->dockWidgets) {
     if (!dock)
       continue;
     if (dock->objectName() == title || dock->windowTitle() == title) {
+      qDebug() << "[MainWindow]   closing dock="
+               << dock->windowTitle() << "objectName=" << dock->objectName();
       dock->closeDockWidget();
       impl_->dockStyleManager->applyStyle();
       return true;
@@ -790,10 +900,29 @@ void ArtifactMainWindow::showStatusMessage(const QString &message,
 void ArtifactMainWindow::togglePanelsVisible(bool visible) {
   if (!impl_)
     return;
+  qDebug() << "[MainWindow] togglePanelsVisible visible=" << visible;
   for (auto *dock : impl_->dockWidgets) {
     if (dock)
       dock->setVisible(visible);
   }
+}
+
+void ArtifactMainWindow::setWorkspaceMode(WorkspaceMode mode) {
+  if (!impl_) {
+    return;
+  }
+
+  qDebug() << "[MainWindow] setWorkspaceMode mode="
+           << static_cast<int>(mode);
+  impl_->workspaceMode_ = mode;
+  applyWorkspaceMode(this, mode);
+  if (impl_->toolBar && impl_->toolBar->workspaceMode() != mode) {
+    impl_->toolBar->setWorkspaceMode(mode);
+  }
+}
+
+WorkspaceMode ArtifactMainWindow::workspaceMode() const {
+  return impl_ ? impl_->workspaceMode_ : WorkspaceMode::Default;
 }
 
 QStringList ArtifactMainWindow::dockTitles() const {

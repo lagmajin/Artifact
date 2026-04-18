@@ -10,6 +10,7 @@
 #include <QPointF>
 #include <QRectF>
 #include <QColor>
+#include <QDebug>
 #include <QPen>
 #include <QBrush>
 #include <QFont>
@@ -130,12 +131,19 @@ public:
   p.setPen(QPen(QColor(50, 50, 50), 1));
   p.drawRect(pr);
 
-  // Grid lines - horizontal
+ // Grid lines - horizontal
   float yRange = yMax_ - yMin_;
   float yStep = niceStep(yRange, 8);
   float yStart = std::ceil(yMin_ / yStep) * yStep;
   QFont font("Consolas", 8);
   p.setFont(font);
+
+  // Baseline at y=0, if it is in view.
+  if (yMin_ <= 0.0f && yMax_ >= 0.0f) {
+   const QPointF zeroPos = dataToPixel(0.0f, 0.0f);
+   p.setPen(QPen(QColor(120, 120, 140), 1));
+   p.drawLine(QPointF(pr.left(), zeroPos.y()), QPointF(pr.right(), zeroPos.y()));
+  }
 
   for (float y = yStart; y <= yMax_; y += yStep) {
    QPointF pos = dataToPixel(0, y);
@@ -436,12 +444,19 @@ void ArtifactCurveEditorWidget::fitToContent() {
  }
 
  if (!hasKeys) {
+  qDebug() << "[CurveEditor] fitToContent"
+           << "no keys"
+           << "fallbackRange=0..100,-10..110";
   setViewRange(0, 100, -10, 110);
   return;
  }
 
  float marginF = std::max((maxF - minF) * 0.1f, 5.0f);
  float marginV = std::max((maxV - minV) * 0.1f, 5.0f);
+ qDebug() << "[CurveEditor] fitToContent"
+          << "frameRange=" << minF << ".." << maxF
+          << "valueRange=" << minV << ".." << maxV
+          << "margin=" << marginF << marginV;
  setViewRange(minF - marginF, maxF + marginF, minV - marginV, maxV + marginV);
 }
 

@@ -86,6 +86,7 @@ module Artifact.Contents.Viewer;
 
 import Artifact.Preview.Pipeline;
 import MediaPlaybackController;
+import Artifact.Audio.Waveform;
 import Artifact.Widgets.AudioPreview;
 import Artifact.Widgets.PerformanceProfilerWidget;
 import Widgets.Utils.CSS;
@@ -537,9 +538,28 @@ namespace Artifact
     audioWaveformSamples.remove(0, audioWaveformSamples.size() - kMaxSamples);
    }
 
-   audioWaveformWidget->setSamples(audioWaveformSamples, 44100);
+   WaveformData waveform;
+   waveform.peaks = audioWaveformSamples;
+   waveform.rms.resize(audioWaveformSamples.size());
+   for (int i = 0; i < audioWaveformSamples.size(); ++i) {
+    float sum = 0.0f;
+    int count = 0;
+    const int lastIndex = static_cast<int>(audioWaveformSamples.size()) - 1;
+    for (int j = std::max(0, i - 2); j <= std::min(lastIndex, i + 2); ++j) {
+     sum += audioWaveformSamples[j];
+     ++count;
+    }
+    waveform.rms[i] = count > 0 ? sum / static_cast<float>(count) : audioWaveformSamples[i];
+   }
    if (!audioWaveformSamples.isEmpty()) {
-    audioWaveformWidget->setPosition(audioWaveformSamples.size() - 1);
+    waveform.minSample = *std::min_element(audioWaveformSamples.constBegin(), audioWaveformSamples.constEnd());
+    waveform.maxSample = *std::max_element(audioWaveformSamples.constBegin(), audioWaveformSamples.constEnd());
+   }
+   waveform.width = audioWaveformSamples.size();
+   waveform.sampleRate = 44100;
+   audioWaveformWidget->setWaveformData(waveform);
+   if (!audioWaveformSamples.isEmpty()) {
+    audioWaveformWidget->setPosition(static_cast<int>(audioWaveformSamples.size()) - 1);
    }
   }
 

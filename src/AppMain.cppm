@@ -755,7 +755,9 @@ int main(int argc, char *argv[]) {
   qDebug() << "Artifact Debug Console Initialized. Hello ArtifactStudio!";
 
   tbb::global_control c(tbb::global_control::max_allowed_parallelism,
-                        std::thread::hardware_concurrency());
+                        std::max(1u, std::thread::hardware_concurrency() > 1
+                                         ? std::thread::hardware_concurrency() - 1
+                                         : 1u));
 
   AddDllDirectory(L"C:\\Users\\lagma\\Desktop\\Artifact\\Artifact\\App");
   SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |

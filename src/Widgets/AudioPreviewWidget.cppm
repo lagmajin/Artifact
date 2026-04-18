@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <QWidget>
+#include <QSizePolicy>
 #include <QLabel>
 #include <QSlider>
 #include <QPushButton>
@@ -23,11 +24,14 @@ module;
 #include <QThread>
 #include <QElapsedTimer>
 #include <QPalette>
+#include <QColor>
 #include <wobjectimpl.h>
 #include <cmath>
 #include <algorithm>
 
 module Artifact.Widgets.AudioPreview;
+
+import Artifact.Audio.Waveform;
 
 namespace Artifact {
 
@@ -46,20 +50,35 @@ AudioWaveformWidget::AudioWaveformWidget(QWidget* parent)
 }
 
 void AudioWaveformWidget::setSamples(const QVector<float>& samples, int sampleRate) {
-    samples_ = samples;
+    peaks_ = samples;
+    rms_.clear();
     sampleRate_ = sampleRate;
     totalSamples_ = samples.size();
     currentPosition_ = 0;
     update();
 }
 
+void AudioWaveformWidget::setWaveformData(const WaveformData& data) {
+    peaks_ = data.peaks;
+    rms_ = data.rms;
+    sampleRate_ = data.sampleRate;
+    totalSamples_ = peaks_.size();
+    currentPosition_ = 0;
+    update();
+}
+
 void AudioWaveformWidget::setPosition(int sampleIndex) {
+    if (totalSamples_ <= 0) {
+        currentPosition_ = 0;
+        return;
+    }
     currentPosition_ = std::clamp(sampleIndex, 0, totalSamples_ - 1);
     update();
 }
 
 void AudioWaveformWidget::clear() {
-    samples_.clear();
+    peaks_.clear();
+    rms_.clear();
     currentPosition_ = 0;
     totalSamples_ = 0;
     update();
@@ -72,46 +91,59 @@ void AudioWaveformWidget::paintEvent(QPaintEvent* event) {
 
     const int w = width();
     const int h = height();
+    if (w <= 0 || h <= 0) {
+        return;
+    }
     const int centerY = h / 2;
 
     // Background
     painter.fillRect(rect(), bgColor_);
 
-    if (samples_.isEmpty()) {
+    if (peaks_.isEmpty()) {
         painter.setPen(QColor(128, 128, 128));
         painter.drawText(rect(), Qt::AlignCenter, "No audio data");
         return;
     }
 
     // Draw center line
-    painter.setPen(QColor(60, 60, 80));
+    painter.setPen(QPen(QColor(60, 60, 80), 1.0));
     painter.drawLine(0, centerY, w, centerY);
 
     // Calculate samples per pixel
     const int samplesPerPixel = std::max(1, totalSamples_ / w);
 
-    // Draw waveform
-    painter.setPen(QPen(waveColor_, 1.5));
+    // Draw RMS body first so the peak line can sit on top.
     for (int x = 0; x < w; ++x) {
         const int startSample = x * samplesPerPixel;
         const int endSample = std::min(startSample + samplesPerPixel, totalSamples_);
 
-        float minVal = 0.0f, maxVal = 0.0f;
+        float peakMax = 0.0f;
         for (int s = startSample; s < endSample; ++s) {
-            if (samples_[s] < minVal) minVal = samples_[s];
-            if (samples_[s] > maxVal) maxVal = samples_[s];
+            if (peaks_[s] > peakMax) peakMax = peaks_[s];
         }
 
-        const int yMin = centerY - static_cast<int>(maxVal * centerY * 0.9f);
-        const int yMax = centerY - static_cast<int>(minVal * centerY * 0.9f);
+        const int yMin = centerY - static_cast<int>(peakMax * centerY * 0.9f);
+        const int yMax = centerY + static_cast<int>(peakMax * centerY * 0.9f);
 
+        if (!rms_.isEmpty()) {
+            float rmsPeak = 0.0f;
+            for (int s = startSample; s < endSample && s < rms_.size(); ++s) {
+                rmsPeak = std::max(rmsPeak, rms_[s]);
+            }
+            const int rmsTop = centerY - static_cast<int>(rmsPeak * centerY * 0.75f);
+            const int rmsBottom = centerY + static_cast<int>(rmsPeak * centerY * 0.75f);
+            painter.setPen(QPen(QColor(82, 130, 220, 120), 1.0));
+            painter.drawLine(x, rmsTop, x, rmsBottom);
+        }
+
+        painter.setPen(QPen(waveColor_, 1.5));
         painter.drawLine(x, yMin, x, yMax);
     }
 
     // Draw playhead
     if (totalSamples_ > 0) {
         const int playheadX = static_cast<int>(
-            static_cast<double>(currentPosition_) / totalSamples_ * w);
+            static_cast<double>(currentPosition_) / std::max(totalSamples_, 1) * w);
         painter.setPen(QPen(playheadColor_, 2));
         painter.drawLine(playheadX, 0, playheadX, h);
     }
@@ -138,6 +170,7 @@ void AudioWaveformWidget::mouseReleaseEvent(QMouseEvent* event) {
 
 void AudioWaveformWidget::updatePositionFromMouse(const QPoint& pos) {
     if (totalSamples_ <= 0) return;
+    if (width() <= 0) return;
     const int x = std::clamp(pos.x(), 0, width());
     const int sampleIndex = static_cast<int>(
         static_cast<double>(x) / width() * totalSamples_);

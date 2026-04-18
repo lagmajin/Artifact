@@ -4,6 +4,7 @@
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QColor>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
@@ -2301,7 +2302,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->editTextAction_->setShortcut(QKeySequence(Qt::Key_F2));
   impl_->motionPathAction_ = impl_->topToolbar_->addAction("Motion Path");
   impl_->motionPathAction_->setCheckable(true);
-  impl_->motionPathAction_->setChecked(true);
+  impl_->motionPathAction_->setChecked(false);
   impl_->motionPathAction_->setToolTip(
       QStringLiteral("Show motion path overlay for the selected layer"));
 
@@ -2543,6 +2544,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   auto *displayMenu = new QMenu(this);
   QAction *solidBgAct = displayMenu->addAction("Solid");
+  QAction *solidColorAct = displayMenu->addAction("Solid Color...");
   QAction *checkerboardAct = displayMenu->addAction("Checkerboard");
   QAction *mayaBgAct = displayMenu->addAction("Maya Gradient");
   auto *bgGroup = new QActionGroup(displayMenu);
@@ -2568,6 +2570,30 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       impl_->renderController_->setCompositionBackgroundMode(
           CompositionBackgroundMode::Solid);
     }
+  });
+  QObject::connect(solidColorAct, &QAction::triggered, this, [this]() {
+    if (!impl_->renderController_) {
+      return;
+    }
+    auto comp = impl_->renderController_->composition();
+    const QColor initial = comp
+                               ? QColor::fromRgbF(comp->backgroundColor().r(),
+                                                  comp->backgroundColor().g(),
+                                                  comp->backgroundColor().b(),
+                                                  comp->backgroundColor().a())
+                               : QColor(28, 40, 56);
+    const QColor chosen = QColorDialog::getColor(
+        initial, this, QStringLiteral("Choose Solid Background Color"),
+        QColorDialog::ShowAlphaChannel);
+    if (!chosen.isValid()) {
+      return;
+    }
+    if (comp) {
+      comp->setBackGroundColor(FloatColor(chosen.redF(), chosen.greenF(),
+                                          chosen.blueF(), chosen.alphaF()));
+    }
+    impl_->renderController_->setCompositionBackgroundMode(
+        CompositionBackgroundMode::Solid);
   });
   QObject::connect(checkerboardAct, &QAction::triggered, this, [this]() {
     if (impl_->renderController_) {

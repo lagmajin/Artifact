@@ -5,11 +5,15 @@ module;
 #include <Sampler.h>
 #include <RefCntAutoPtr.hpp>
 #include <BasicMath.hpp>
+#include <QFont>
 export module Artifact.Render.DiligentImmediateSubmitter;
 
 import Artifact.Render.IRenderSubmitter;
 import Artifact.Render.RenderCommandBuffer;
 import Artifact.Render.ShaderManager;
+import Text.GlyphAtlas;
+import Text.GlyphLayout;
+import Font.FreeFont;
 import Graphics;
 
 export namespace Artifact {
@@ -29,6 +33,8 @@ public:
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
 
 private:
+    RefCntAutoPtr<IRenderDevice> m_device;
+
     // ---- Vertex Buffers ----
     RefCntAutoPtr<IBuffer> m_draw_sprite_vertex_buffer;
     RefCntAutoPtr<IBuffer> m_draw_solid_rect_vertex_buffer;
@@ -52,11 +58,16 @@ private:
 
     // ---- Sampler ----
     RefCntAutoPtr<ISampler> m_sprite_sampler;
+    RefCntAutoPtr<ISampler> m_glyph_sampler;
+    RefCntAutoPtr<ITexture> m_glyph_atlas_texture;
+    RefCntAutoPtr<ITextureView> m_glyph_atlas_srv;
+    GlyphAtlas m_glyph_atlas;
 
     // ---- PSOs ----
     PSOAndSRB m_draw_sprite_pso_and_srb;
     PSOAndSRB m_draw_sprite_transform_pso_and_srb;
     PSOAndSRB m_draw_masked_sprite_pso_and_srb;
+    PSOAndSRB m_draw_glyph_pso_and_srb;
     PSOAndSRB m_draw_solid_rect_pso_and_srb;
     PSOAndSRB m_draw_solid_rect_transform_pso_and_srb;
     PSOAndSRB m_draw_line_pso_and_srb;
@@ -81,6 +92,7 @@ private:
     void submitSprite        (const SpritePkt&,         IDeviceContext*, ITextureView*);
     void submitSpriteXform   (const SpriteXformPkt&,    IDeviceContext*, ITextureView*);
     void submitMaskedSprite  (const MaskedSpritePkt&,   IDeviceContext*, ITextureView*);
+    void submitGlyphText     (const GlyphTextPkt&,      IDeviceContext*, ITextureView*);
 };
 
 } // namespace Artifact
