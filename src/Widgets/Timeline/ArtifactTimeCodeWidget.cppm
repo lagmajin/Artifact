@@ -42,45 +42,53 @@ namespace Artifact
 
  ArtifactTimeCodeWidget::ArtifactTimeCodeWidget(QWidget* parent /*= nullptr*/) : QWidget(parent), impl_(new Impl())
  {
-  auto layout = new QHBoxLayout();
-  layout->setSpacing(0);
-  layout->setContentsMargins(10, 0, 8, 0);
-  layout->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  // Vertical layout: timecode row on top, frame number row below.
+  auto layout = new QVBoxLayout();
+  layout->setSpacing(1);
+  layout->setContentsMargins(10, 5, 8, 5);
 
   impl_->timecodeLabel_->setObjectName("timeLabel");
   impl_->frameNumberLabel_->setObjectName("frameLabel");
   impl_->timecodeLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   impl_->frameNumberLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+
+  setAttribute(Qt::WA_StyledBackground, false);
+  setAutoFillBackground(true);
+  const QColor widgetBg = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
+  {
+   QPalette pal = palette();
+   pal.setColor(QPalette::Window, widgetBg);
+   setPalette(pal);
+  }
+
   {
    const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
-   const QColor mutedTextColor = textColor.darker(125);
+   const QColor mutedTextColor = textColor.darker(150);
+
+   // Set Window/Base in label palettes to match the widget background;
+   // this prevents any style-driven background mismatch on the labels.
    QPalette timePal = impl_->timecodeLabel_->palette();
    timePal.setColor(QPalette::WindowText, textColor);
    timePal.setColor(QPalette::Text, textColor);
+   timePal.setColor(QPalette::Window, widgetBg);
+   timePal.setColor(QPalette::Base, widgetBg);
    impl_->timecodeLabel_->setPalette(timePal);
    impl_->timecodeLabel_->setAutoFillBackground(false);
+
    QPalette framePal = impl_->frameNumberLabel_->palette();
    framePal.setColor(QPalette::WindowText, mutedTextColor);
    framePal.setColor(QPalette::Text, mutedTextColor);
+   framePal.setColor(QPalette::Window, widgetBg);
+   framePal.setColor(QPalette::Base, widgetBg);
    impl_->frameNumberLabel_->setPalette(framePal);
    impl_->frameNumberLabel_->setAutoFillBackground(false);
   }
 
   layout->addWidget(impl_->timecodeLabel_);
-  layout->addSpacing(8);
   layout->addWidget(impl_->frameNumberLabel_);
-  layout->addStretch();
 
   setLayout(layout);
-  setFixedHeight(42);
-
-  setAttribute(Qt::WA_StyledBackground, false);
-
-  const QPalette pal = palette();
-  setAutoFillBackground(true);
-  QPalette localPal = pal;
-  localPal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
-  setPalette(localPal);
+  setFixedHeight(54);
 
   QFont timeFont(QStringLiteral("Consolas"));
   timeFont.setStyleHint(QFont::Monospace);
@@ -90,17 +98,12 @@ namespace Artifact
 
   QFont frameFont(QStringLiteral("Consolas"));
   frameFont.setStyleHint(QFont::Monospace);
-  frameFont.setBold(true);
-  frameFont.setPointSize(16);
+  frameFont.setBold(false);
+  frameFont.setPointSize(10);
   impl_->frameNumberLabel_->setFont(frameFont);
 
-  // The header layout can get crowded, so keep the time readout from being
-  // squeezed into unreadable widths.
   const QFontMetrics timeMetrics(timeFont);
-  const QFontMetrics frameMetrics(frameFont);
-  const int minimumWidth =
-      10 + timeMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) +
-      8 + frameMetrics.horizontalAdvance(QStringLiteral("999999 f")) + 8;
+  const int minimumWidth = 10 + timeMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 8;
   setMinimumWidth(minimumWidth);
   setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
  }

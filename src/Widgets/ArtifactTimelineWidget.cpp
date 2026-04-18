@@ -1650,6 +1650,9 @@ public:
   QTimer* curveEditorRefreshTimer_ = nullptr;
   bool graphEditorVisible_ = false;
   bool graphEditorNeedsFit_ = false;
+  // Last playhead x-position in parent (rightPanel) coordinates, used to
+  // dirty the correct strip when the playhead moves.
+  int lastPlayheadParentX_ = -9999;
 };
 
 ArtifactTimelineWidget::Impl::Impl() {}
@@ -3514,7 +3517,33 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
     return;
   }
   impl_->playheadOverlay_->raise();
-  impl_->playheadOverlay_->update();
+
+  // Updating only the overlay would leave stale pixels in the backing store
+  // because WA_NoSystemBackground prevents Qt from clearing the overlay region
+  // before paintEvent.  By updating the parent widget instead, Qt re-composites
+  // the full z-stack in that region (parent → siblings → overlay), so old
+  // playhead pixels are overwritten before the overlay draws the new position.
+  QWidget *parent = impl_->playheadOverlay_->parentWidget();
+  if (parent && impl_->painterTrackView_) {
+    const double ppf    = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
+    const double xOff   = impl_->painterTrackView_->horizontalOffset();
+    const double frame  = impl_->painterTrackView_->currentFrame();
+    const QPoint origin = impl_->painterTrackView_->mapTo(parent, QPoint(0, 0));
+    const int newX      = origin.x() + static_cast<int>(frame * ppf - xOff);
+
+    // headWidth is 16 px; add a few pixels for the line and anti-aliasing.
+    constexpr int kMargin = 12;
+    const int oldX = impl_->lastPlayheadParentX_;
+    impl_->lastPlayheadParentX_ = newX;
+
+    // Dirty a strip that covers both the previous and current playhead positions
+    // so the old ghost is cleared and the new line is drawn.
+    const int left  = std::min(oldX, newX) - kMargin;
+    const int right = std::max(oldX, newX) + kMargin + 1;
+    parent->update(QRect(left, 0, right - left, parent->height()));
+  } else if (parent) {
+    parent->update(impl_->playheadOverlay_->geometry());
+  }
 }
 
  void ArtifactTimelineWidget::jumpToSearchHit(int step)
