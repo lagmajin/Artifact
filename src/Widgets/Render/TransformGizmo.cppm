@@ -770,6 +770,8 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  const bool showScale = mode_ == Mode::All || mode_ == Mode::Scale;
  const bool showRotate = mode_ == Mode::Rotate;
  const bool showAnchor = mode_ == Mode::All;
+ // Bounding box outline is drawn for all modes except None (provides selection feedback)
+ const bool showBBox = showScale || mode_ == Mode::None;
 
  // 1. ジオメトリキャッシュ: 毎フレーム再生成していた計算結果をキャッシュ
  // ズーム値やレイヤー変更に伴ってキャッシュを更新
@@ -833,14 +835,17 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
                        0.0f, true);
  }
 
- if (showScale) {
+ // Bounding box edges — always draw when showBBox (selection feedback even with no-tool mode)
+ if (showBBox) {
   ArtifactCore::ProfileScope _profScale(
       "TransformGizmoScale", ArtifactCore::ProfileCategory::Render);
   drawEmphasizedLine(renderer, tl_c, tr_c, gizmoColor, lineThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, tr_c, br_c, gizmoColor, lineThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, br_c, bl_c, gizmoColor, lineThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, bl_c, tl_c, gizmoColor, lineThickness, invZoom, isActive);
+ }
 
+ if (showScale) {
    const float handleSizeScale = std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize, 10.0f, 22.0f);
    const FloatColor cornerFill = activeHandle_ == HandleType::Scale_TL ||
                                  activeHandle_ == HandleType::Scale_TR ||

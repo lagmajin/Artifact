@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <QApplication>
 #include <QComboBox>
+#include <QDialog>
 #include <QFrame>
 #include <QGroupBox>
 #include <QHeaderView>
@@ -188,8 +189,18 @@ void ArtifactCommonStyle::polish(QWidget* widget)
   }
 
   if (qobject_cast<QMenu*>(widget)) {
-    widget->setAttribute(Qt::WA_TranslucentBackground, true);
-    widget->setAttribute(Qt::WA_NoSystemBackground, true);
+    auto* menu = static_cast<QMenu*>(widget);
+    menu->setWindowFlag(Qt::NoDropShadowWindowHint, true);
+    menu->setAttribute(Qt::WA_TranslucentBackground, true);
+    menu->setAttribute(Qt::WA_NoSystemBackground, true);
+  }
+
+  if (auto* dlg = qobject_cast<QDialog*>(widget)) {
+    if (dlg->windowFlags().testFlag(Qt::FramelessWindowHint)) {
+      dlg->setAttribute(Qt::WA_TranslucentBackground, true);
+      dlg->setAttribute(Qt::WA_NoSystemBackground, true);
+      dlg->setAutoFillBackground(false);
+    }
   }
 
   QProxyStyle::polish(widget);
@@ -338,6 +349,21 @@ void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOp
       painter->drawRoundedRect(QRectF(option->rect), 4.0, 4.0);
       painter->restore();
       return;
+    }
+    if (const auto* dlg = qobject_cast<const QDialog*>(widget)) {
+      if (dlg->windowFlags().testFlag(Qt::FramelessWindowHint) && option && painter) {
+        const auto& theme = ArtifactCore::currentDCCTheme();
+        painter->save();
+        painter->setRenderHint(QPainter::Antialiasing, true);
+        painter->setPen(Qt::NoPen);
+        painter->setBrush(QColor(theme.backgroundColor));
+        painter->drawRoundedRect(QRectF(option->rect), 8.0, 8.0);
+        painter->setPen(QPen(QColor(theme.borderColor), 1.0));
+        painter->setBrush(Qt::NoBrush);
+        painter->drawRoundedRect(QRectF(option->rect).adjusted(0.5, 0.5, -0.5, -0.5), 8.0, 8.0);
+        painter->restore();
+        return;
+      }
     }
   }
   if (element == PE_PanelButtonTool) {
