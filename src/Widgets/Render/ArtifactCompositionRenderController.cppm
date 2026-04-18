@@ -1179,7 +1179,7 @@ public:
       CompositionBackgroundMode::Checkerboard;
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
-  bool showMotionPathOverlay_ = true;
+  bool showMotionPathOverlay_ = false;
   bool showFrameInfo_ = false; // Changed to false by default
   bool showGizmoOverlay_ = true;
   bool showCompositionRegionOverlay_ = false; // Temporarily disable the blue frame.
@@ -1222,6 +1222,7 @@ public:
     bool operator!=(const RenderKeyState &o) const { return !(*this == o); }
   };
   RenderKeyState lastRenderKeyState_{};
+  QString lastOverlayDebugSummary_;
   quint64 baseInvalidationSerial_ = 1;
   quint64 overlayInvalidationSerial_ = 1;
 
@@ -3373,6 +3374,39 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const bool hasSelection = !selectedIds.isEmpty();
     constexpr float kGhostOpacityScale = 0.22f;
 
+    if (compositionViewLog().isDebugEnabled()) {
+      const ArtifactAbstractLayerPtr overlaySelectedLayer =
+          (!selectedLayerId_.isNil() && comp)
+              ? comp->layerById(selectedLayerId_)
+              : ArtifactAbstractLayerPtr{};
+      const int overlayMaskCount =
+          overlaySelectedLayer ? overlaySelectedLayer->maskCount() : 0;
+      const int overlayActiveHandle =
+          gizmo_ ? static_cast<int>(gizmo_->activeHandle()) : -1;
+      const QString overlaySummary =
+          QStringLiteral("frame=%1 selCount=%2 selectedLayer=%3 gizmo=%4 "
+                         "gizmoMode=%5 gizmoDragging=%6 activeHandle=%7 "
+                         "motionPath=%8 masks=%9 region=%10")
+              .arg(currentFrame.framePosition())
+              .arg(selectedIds.size())
+              .arg(selectedLayerId_.isNil()
+                       ? QStringLiteral("<none>")
+                       : selectedLayerId_.toString())
+              .arg(showGizmoOverlay_ ? 1 : 0)
+              .arg(static_cast<int>(gizmoMode_))
+              .arg(gizmo_ && gizmo_->isDragging() ? 1 : 0)
+              .arg(overlayActiveHandle)
+              .arg(showMotionPathOverlay_ ? 1 : 0)
+              .arg(overlayMaskCount)
+              .arg(showCompositionRegionOverlay_ ? 1 : 0);
+      if (overlaySummary != lastOverlayDebugSummary_ ||
+          (renderFrameCounter_ % 120u) == 0u) {
+        lastOverlayDebugSummary_ = overlaySummary;
+        qCDebug(compositionViewLog) << "[CompositionView][OverlayState]"
+                                    << overlaySummary;
+      }
+    }
+
     // ============================================================
     // GPU パイプライン: レイヤー 0 枚でも frameOutOfRange でも常に描画
     // ============================================================
@@ -3854,7 +3888,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
         }
 
-        if (gizmo3D_) {
+        if (gizmo3D_ && selectedLayer->is3D()) {
           ArtifactCore::ProfileScope _profG3D("Gizmo3D",
               ArtifactCore::ProfileCategory::Render);
           syncGizmo3DFromLayer(selectedLayer);
@@ -4243,33 +4277,25 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         if (!renderer) {
           return;
         }
-        renderer->drawSolidLine({x1, y1}, {x2, y1}, outlineColor, 3.0f);
-        renderer->drawSolidLine({x2, y1}, {x2, y2}, outlineColor, 3.0f);
-        renderer->drawSolidLine({x2, y2}, {x1, y2}, outlineColor, 3.0f);
-        renderer->drawSolidLine({x1, y2}, {x1, y1}, outlineColor, 3.0f);
+        const float w = x2 - x1;
+        const float h = y2 - y1;
+        if (w <= 0.0f || h <= 0.0f) {
+          return;
+        }
 
-        renderer->drawSolidLine({x1, y1}, {x2, y1}, innerColor, 1.25f);
-        renderer->drawSolidLine({x2, y1}, {x2, y2}, innerColor, 1.25f);
-        renderer->drawSolidLine({x2, y2}, {x1, y2}, innerColor, 1.25f);
-        renderer->drawSolidLine({x1, y2}, {x1, y1}, innerColor, 1.25f);
+        renderer->drawRectOutline(x1, y1, w, h, outlineColor);
+        if (w > 4.0f && h > 4.0f) {
+          renderer->drawRectOutline(x1 + 1.0f, y1 + 1.0f, w - 2.0f, h - 2.0f,
+                                    innerColor);
+        }
       };
 
       drawSafeRect(actionX, actionY, actionX2, actionY2);
       drawSafeRect(titleX, titleY, titleX2, titleY2);
 
-      const float crossSize = 20.0f;
-      renderer_->drawSolidLine({snap(cw * 0.5f - crossSize), snap(ch * 0.5f)},
-                               {snap(cw * 0.5f + crossSize), snap(ch * 0.5f)},
-                               outlineColor, 3.0f);
-      renderer_->drawSolidLine({snap(cw * 0.5f - crossSize), snap(ch * 0.5f)},
-                               {snap(cw * 0.5f + crossSize), snap(ch * 0.5f)},
-                               innerColor, 1.25f);
-      renderer_->drawSolidLine({snap(cw * 0.5f), snap(ch * 0.5f - crossSize)},
-                               {snap(cw * 0.5f), snap(ch * 0.5f + crossSize)},
-                               outlineColor, 3.0f);
-      renderer_->drawSolidLine({snap(cw * 0.5f), snap(ch * 0.5f - crossSize)},
-                               {snap(cw * 0.5f), snap(ch * 0.5f + crossSize)},
-                               innerColor, 1.25f);
+      const float crossSize = std::max(20.0f, std::min(cw, ch) * 0.05f);
+      renderer_->drawCrosshair(snap(cw * 0.5f), snap(ch * 0.5f), crossSize,
+                               innerColor);
     }
 
     if (showGuides_) {
@@ -4376,6 +4402,14 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
   const bool dropActive = dropGhostVisible_ && !dropGhostRect_.isNull();
   if (!scaleActive && !dropActive) {
     return;
+  }
+
+  if (compositionViewLog().isDebugEnabled()) {
+    qCDebug(compositionViewLog) << "[CompositionView][ViewportGhost]"
+                                << "scaleActive=" << scaleActive
+                                << "dropActive=" << dropActive
+                                << "rect=" << dropGhostRect_
+                                << "title=" << dropGhostTitle_;
   }
 
   const float overlayWf = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
