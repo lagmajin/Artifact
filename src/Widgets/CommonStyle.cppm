@@ -187,6 +187,11 @@ void ArtifactCommonStyle::polish(QWidget* widget)
     widget->setPalette(pal);
   }
 
+  if (qobject_cast<QMenu*>(widget)) {
+    widget->setAttribute(Qt::WA_TranslucentBackground, true);
+    widget->setAttribute(Qt::WA_NoSystemBackground, true);
+  }
+
   QProxyStyle::polish(widget);
 }
 
@@ -299,6 +304,42 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
 void ArtifactCommonStyle::drawPrimitive(PrimitiveElement element, const QStyleOption* option,
                                         QPainter* painter, const QWidget* widget) const
 {
+  if (element == PE_PanelMenu) {
+    if (!option || !painter) {
+      return QProxyStyle::drawPrimitive(element, option, painter, widget);
+    }
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    const QColor menuSurface(theme.secondaryBackgroundColor);
+    const QColor menuBorder(theme.borderColor);
+    painter->save();
+    painter->setRenderHint(QPainter::Antialiasing, true);
+    painter->setPen(Qt::NoPen);
+    painter->setBrush(menuSurface);
+    painter->drawRoundedRect(QRectF(option->rect), 6.0, 6.0);
+    painter->setPen(QPen(menuBorder, 1.0));
+    painter->setBrush(Qt::NoBrush);
+    painter->drawRoundedRect(QRectF(option->rect).adjusted(0.5, 0.5, -0.5, -0.5), 6.0, 6.0);
+    painter->restore();
+    return;
+  }
+  if (element == PE_FrameMenu) {
+    // Background + border already handled in PE_PanelMenu
+    return;
+  }
+  if (element == PE_Widget) {
+    if (widget && widget->property("artifactDockTab").toBool()) {
+      if (!option || !painter) {
+        return QProxyStyle::drawPrimitive(element, option, painter, widget);
+      }
+      painter->save();
+      painter->setRenderHint(QPainter::Antialiasing, true);
+      painter->setPen(Qt::NoPen);
+      painter->setBrush(option->palette.color(QPalette::Window));
+      painter->drawRoundedRect(QRectF(option->rect), 4.0, 4.0);
+      painter->restore();
+      return;
+    }
+  }
   if (element == PE_PanelButtonTool) {
     drawFramedToolButtonSurface(option, painter, widget);
     return;

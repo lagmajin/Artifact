@@ -140,6 +140,7 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab,
 
     // Tab frame itself
     tab->setAttribute(Qt::WA_StyledBackground, true);
+    tab->setProperty("artifactDockTab", true);
     tab->setAutoFillBackground(true);
     auto tabPalette = tab->palette();
     tabPalette.setColor(QPalette::WindowText, textColor);
