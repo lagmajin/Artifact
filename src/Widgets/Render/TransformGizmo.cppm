@@ -1338,6 +1338,8 @@ case Mode::Scale:
          handle == HandleType::Scale_T || handle == HandleType::Scale_B ||
          handle == HandleType::Scale_L || handle == HandleType::Scale_R ||
          handle == HandleType::Scale_Center;
+ case Mode::None:
+  return handle == HandleType::Move;
  }
  return false;
 }
