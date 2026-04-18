@@ -1490,34 +1490,52 @@ int main(int argc, char *argv[]) {
               }
 
               QPointer<ArtifactPropertyWidget> safePropertyPanel(propertyPanel);
-              QTimer::singleShot(0, mw,
-                                 [safePropertyPanel, resolveLayerForUi, layerId,
-                                  retainedPropertyLayerId]() {
-                                    if (!safePropertyPanel) {
-                                      return;
-                                    }
-                                    safePropertyPanel->setFocusedEffectId(QString());
-                                    if (const auto resolved =
-                                            resolveLayerForUi(layerId)) {
-                                      safePropertyPanel->setLayer(resolved);
-                                      *retainedPropertyLayerId = resolved->id();
-                                    } else if (
-                                        layerId.isNil() &&
-                                        !retainedPropertyLayerId->isNil()) {
-                                      if (const auto resolved = resolveLayerForUi(
-                                              *retainedPropertyLayerId)) {
-                                        safePropertyPanel->setLayer(resolved);
-                                        *retainedPropertyLayerId =
-                                            resolved->id();
-                                        return;
-                                      }
-                                      *retainedPropertyLayerId = LayerID::Nil();
-                                      safePropertyPanel->clear();
-                                    } else {
-                                      *retainedPropertyLayerId = LayerID::Nil();
-                                      safePropertyPanel->clear();
-                                    }
-                                  });
+              QPointer<QWidget> safeMw(mw);
+              const auto deferredResolve =
+                  [safePropertyPanel, safeMw, resolveLayerForUi, layerId,
+                   retainedPropertyLayerId](int retryMs) {
+                    if (!safePropertyPanel) {
+                      return;
+                    }
+                    safePropertyPanel->setFocusedEffectId(QString());
+                    if (const auto resolved = resolveLayerForUi(layerId)) {
+                      safePropertyPanel->setLayer(resolved);
+                      *retainedPropertyLayerId = resolved->id();
+                    } else if (layerId.isNil() &&
+                               !retainedPropertyLayerId->isNil()) {
+                      if (const auto resolved =
+                              resolveLayerForUi(*retainedPropertyLayerId)) {
+                        safePropertyPanel->setLayer(resolved);
+                        *retainedPropertyLayerId = resolved->id();
+                        return;
+                      }
+                      *retainedPropertyLayerId = LayerID::Nil();
+                      safePropertyPanel->clear();
+                    } else if (retryMs > 0 && safeMw) {
+                      // Secondary retry — layer may not be fully wired yet
+                      QTimer::singleShot(
+                          retryMs, safeMw.data(),
+                          [safePropertyPanel, resolveLayerForUi, layerId,
+                           retainedPropertyLayerId]() {
+                            if (!safePropertyPanel)
+                              return;
+                            safePropertyPanel->setFocusedEffectId(QString());
+                            if (const auto resolved =
+                                    resolveLayerForUi(layerId)) {
+                              safePropertyPanel->setLayer(resolved);
+                              *retainedPropertyLayerId = resolved->id();
+                            } else {
+                              *retainedPropertyLayerId = LayerID::Nil();
+                              safePropertyPanel->clear();
+                            }
+                          });
+                    } else {
+                      *retainedPropertyLayerId = LayerID::Nil();
+                      safePropertyPanel->clear();
+                    }
+                  };
+              QTimer::singleShot(
+                  0, mw, [deferredResolve]() { deferredResolve(100); });
             };
 
         const auto syncSelectedLayerUi = [layerViewEditor, syncPropertyPanelLayer](
