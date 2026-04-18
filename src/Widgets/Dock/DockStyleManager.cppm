@@ -162,7 +162,7 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab,
         label->setPalette(pal);
         auto font = label->font();
         font.setBold(emphasize);
-        font.setPointSize(12);
+        font.setPointSize(16);
         label->setFont(font);
     }
 

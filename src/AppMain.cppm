@@ -131,6 +131,7 @@ import Artifact.Widgets.DebugConsoleWidget;
 import Widgets.AIChatWidget;
 import Event.Bus;
 import Artifact.Event.Types;
+import Artifact.Workspace.Manager;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -1000,6 +1001,7 @@ int main(int argc, char *argv[]) {
   QApplication::setWindowIcon(appIcon);
   using namespace Artifact;
   auto *mw = new ArtifactMainWindow();
+  ArtifactWorkspaceManager workspaceManager;
   mw->setObjectName("ArtifactMainWindow");
   mw->setWindowTitle(buildWindowTitle());
   mw->setWindowIcon(appIcon);
@@ -1036,7 +1038,20 @@ int main(int argc, char *argv[]) {
   const QString recoveryDir =
       QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
           .filePath("Recovery");
-  QTimer::singleShot(0, mw, [=, &renderCenterWindow]() {
+  // Create the composition editor synchronously so its native HWND exists when
+  // mw->show() fires. Deferring this inside singleShot(0) caused the widget to
+  // miss its showEvent and never initialize the Diligent renderer.
+  auto *compositionEditor = new ArtifactCompositionEditor(mw);
+  compositionEditor->setSizePolicy(QSizePolicy::Expanding,
+                                   QSizePolicy::Expanding);
+  suppressScrollBarsForViewportWidget(compositionEditor);
+  mw->addDockedWidget(QStringLiteral("Composition Viewer"),
+                      ads::CenterDockWidgetArea, compositionEditor);
+  QObject::connect(compositionEditor,
+                   &ArtifactCompositionEditor::videoDebugMessage, status,
+                   &ArtifactStatusBar::setTimelineDebugText);
+
+  QTimer::singleShot(0, mw, [=, &renderCenterWindow, &workspaceManager]() {
     QSettings aiSettings;
     const QString aiProvider =
         aiSettings.value(QStringLiteral("AI/Provider"), QStringLiteral("local"))
@@ -1059,16 +1074,6 @@ int main(int argc, char *argv[]) {
         },
         QRect(1040, 200, 760, 520));
     mw->setDockVisible(QStringLiteral("AI Chat"), false);
-    auto *compositionEditor = new ArtifactCompositionEditor(mw);
-    compositionEditor->setSizePolicy(QSizePolicy::Expanding,
-                                     QSizePolicy::Expanding);
-    suppressScrollBarsForViewportWidget(compositionEditor);
-    mw->addDockedWidget(QStringLiteral("Composition Viewer"),
-                        ads::CenterDockWidgetArea, compositionEditor);
-
-    QObject::connect(compositionEditor,
-                     &ArtifactCompositionEditor::videoDebugMessage, status,
-                     &ArtifactStatusBar::setTimelineDebugText);
 
     // Update StatusBar console summary
     auto updateStatusConsole = [status, mw]() {
@@ -1866,6 +1871,7 @@ int main(int argc, char *argv[]) {
       if (!layoutState.state.isEmpty()) {
         stateRestored = mw->restoreState(layoutState.state);
       }
+      workspaceManager.restoreSession(mw);
       bool resetApplied = false;
       if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
           (!layoutState.state.isEmpty() && !stateRestored)) {
@@ -1877,15 +1883,17 @@ int main(int argc, char *argv[]) {
         layoutStore.sync();
         mw->resize(1600, 900);
         resetApplied = true;
-      }
+    }
       recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored,
                                 stateRestored, resetApplied);
     }
+    mw->setDockVisible(QStringLiteral("Composition Viewer"), true);
+    mw->activateDock(QStringLiteral("Composition Viewer"));
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
     mw->activateDock(QStringLiteral("Layer View (Diligent)"));
   });
 
-  QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw]() {
+  QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw, &workspaceManager]() {
     const QString appDataDir =
         QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QDir dataDir(appDataDir);
@@ -1900,6 +1908,7 @@ int main(int argc, char *argv[]) {
     layoutState.state = mw->saveState();
     layoutState.saveToStore(layoutStore, "MainWindow");
     layoutStore.sync();
+    workspaceManager.saveSession(mw);
   });
   QObject::connect(&a, &QCoreApplication::aboutToQuit, [&renderCenterWindow]() {
     if (renderCenterWindow) {
