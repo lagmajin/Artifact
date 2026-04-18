@@ -519,8 +519,6 @@ DialogChrome buildDialogChrome(QDialog* dlg)
     DialogChrome chrome;
 
     dlg->setWindowFlags(dlg->windowFlags() | Qt::Dialog | Qt::FramelessWindowHint);
-    dlg->setAttribute(Qt::WA_TranslucentBackground, true);
-    dlg->setAttribute(Qt::WA_NoSystemBackground, true);
     dlg->setAttribute(Qt::WA_NoChildEventsForParent);
 
     chrome.mainLayout = new QVBoxLayout(dlg);

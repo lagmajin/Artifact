@@ -132,11 +132,15 @@ void drawFramedToolButtonSurface(const QStyleOption* option, QPainter* painter, 
 
 class RoundedWindowMaskFilter : public QObject {
   int radius_;
+  bool onlyIfFrameless_;
 public:
-  explicit RoundedWindowMaskFilter(QObject* parent, int r) : QObject(parent), radius_(r) {}
+  explicit RoundedWindowMaskFilter(QObject* parent, int r, bool onlyIfFrameless = false)
+    : QObject(parent), radius_(r), onlyIfFrameless_(onlyIfFrameless) {}
   bool eventFilter(QObject* watched, QEvent* event) override {
     if (event->type() == QEvent::Show || event->type() == QEvent::Resize) {
       if (auto* w = qobject_cast<QWidget*>(watched)) {
+        if (onlyIfFrameless_ && !(w->windowFlags() & Qt::FramelessWindowHint))
+          return false;
         if (!w->size().isEmpty()) {
           QBitmap bm(w->size());
           bm.fill(Qt::color0);
@@ -216,6 +220,11 @@ void ArtifactCommonStyle::polish(QWidget* widget)
   if (qobject_cast<QMenu*>(widget) && !widget->property("artifactMenuMaskInstalled").toBool()) {
     widget->setProperty("artifactMenuMaskInstalled", true);
     widget->installEventFilter(new RoundedWindowMaskFilter(widget, 6));
+  }
+
+  if (qobject_cast<QDialog*>(widget) && !widget->property("artifactDialogMaskInstalled").toBool()) {
+    widget->setProperty("artifactDialogMaskInstalled", true);
+    widget->installEventFilter(new RoundedWindowMaskFilter(widget, 8, true));
   }
 
   QProxyStyle::polish(widget);
