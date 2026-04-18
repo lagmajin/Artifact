@@ -408,6 +408,8 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
  {
   setWindowTitle("Composition Settings");
   setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
+  setAttribute(Qt::WA_TranslucentBackground, true);
+  setAttribute(Qt::WA_NoSystemBackground, true);
   setFixedSize(500, 520);
   
   auto mainLayout = new QVBoxLayout(this);

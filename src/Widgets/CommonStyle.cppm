@@ -24,6 +24,8 @@ module;
 #include <QStyleOptionMenuItem>
 #include <QStyleOptionToolButton>
 #include <QStyleFactory>
+#include <QBitmap>
+#include <QEvent>
 
 module Widgets.CommonStyle;
 
@@ -127,6 +129,29 @@ void drawFramedToolButtonSurface(const QStyleOption* option, QPainter* painter, 
   }
   painter->restore();
 }
+
+class RoundedWindowMaskFilter : public QObject {
+  int radius_;
+public:
+  explicit RoundedWindowMaskFilter(QObject* parent, int r) : QObject(parent), radius_(r) {}
+  bool eventFilter(QObject* watched, QEvent* event) override {
+    if (event->type() == QEvent::Show || event->type() == QEvent::Resize) {
+      if (auto* w = qobject_cast<QWidget*>(watched)) {
+        if (!w->size().isEmpty()) {
+          QBitmap bm(w->size());
+          bm.fill(Qt::color0);
+          QPainter p(&bm);
+          p.setRenderHint(QPainter::Antialiasing);
+          p.setBrush(Qt::color1);
+          p.setPen(Qt::NoPen);
+          p.drawRoundedRect(QRectF(w->rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius_, radius_);
+          w->setMask(bm);
+        }
+      }
+    }
+    return false;
+  }
+};
 } // namespace
 
 void ArtifactCommonStyle::polish(QWidget* widget)
@@ -188,19 +213,9 @@ void ArtifactCommonStyle::polish(QWidget* widget)
     widget->setPalette(pal);
   }
 
-  if (qobject_cast<QMenu*>(widget)) {
-    auto* menu = static_cast<QMenu*>(widget);
-    menu->setWindowFlag(Qt::NoDropShadowWindowHint, true);
-    menu->setAttribute(Qt::WA_TranslucentBackground, true);
-    menu->setAttribute(Qt::WA_NoSystemBackground, true);
-  }
-
-  if (auto* dlg = qobject_cast<QDialog*>(widget)) {
-    if (dlg->windowFlags().testFlag(Qt::FramelessWindowHint)) {
-      dlg->setAttribute(Qt::WA_TranslucentBackground, true);
-      dlg->setAttribute(Qt::WA_NoSystemBackground, true);
-      dlg->setAutoFillBackground(false);
-    }
+  if (qobject_cast<QMenu*>(widget) && !widget->property("artifactMenuMaskInstalled").toBool()) {
+    widget->setProperty("artifactMenuMaskInstalled", true);
+    widget->installEventFilter(new RoundedWindowMaskFilter(widget, 6));
   }
 
   QProxyStyle::polish(widget);
