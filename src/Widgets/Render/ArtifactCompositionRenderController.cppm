@@ -1723,6 +1723,36 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   }
 
   impl_->initialized_ = true;
+
+  // Schedule blend pipeline initialization off the hot render path.
+  // blendPipeline_->initialize() compiles GPU shaders (slow); running it
+  // inside renderOneFrameImpl would stall the render timer for hundreds of ms.
+  if (impl_->gpuBlendEnabled_) {
+    QTimer::singleShot(1500, this, [this]() {
+      if (!impl_ || !impl_->initialized_) return;
+      if (impl_->blendPipelineReady_ || impl_->blendPipelineInitAttempted_) return;
+      impl_->blendPipelineInitAttempted_ = true;
+      auto *renderer = impl_->renderer_.get();
+      if (!renderer) return;
+      auto device = renderer->device();
+      auto ctx = renderer->immediateContext();
+      if (!device || !ctx) return;
+      if (!impl_->gpuContext_)
+        impl_->gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device, ctx);
+      if (impl_->gpuContext_ && !impl_->blendPipeline_)
+        impl_->blendPipeline_ = std::make_unique<ArtifactCore::LayerBlendPipeline>(*impl_->gpuContext_);
+      if (impl_->blendPipeline_) {
+        QElapsedTimer t;
+        t.start();
+        impl_->blendPipelineReady_ = impl_->blendPipeline_->initialize();
+        if (impl_->blendPipelineReady_) {
+          qInfo() << "[CompositionView][Startup] blend pipeline lazy init ms=" << t.elapsed();
+        } else {
+          qWarning() << "[CompositionView] LayerBlendPipeline FAILED to initialize.";
+        }
+      }
+    });
+  }
 }
 
 void CompositionRenderController::destroy() {
@@ -3256,38 +3286,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                       }
                       return layerHasCpuRasterizerWork(layer.get());
                     });
-    if (gpuBlendEnabled_ && hasGpuBlendJustification &&
-        startupTimer_.isValid() && startupTimer_.elapsed() >= 1200 &&
-        !blendPipelineReady_ && !blendPipelineInitAttempted_) {
-      blendPipelineInitAttempted_ = true;
-      if (auto device = renderer_->device()) {
-        if (auto ctx = renderer_->immediateContext()) {
-          if (!gpuContext_) {
-            gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(device, ctx);
-          }
-          if (gpuContext_ && !blendPipeline_) {
-            blendPipeline_ =
-                std::make_unique<ArtifactCore::LayerBlendPipeline>(*gpuContext_);
-          }
-          if (blendPipeline_) {
-            QElapsedTimer timer;
-            timer.start();
-            blendPipelineReady_ = blendPipeline_->initialize();
-            qInfo() << "[CompositionView][Startup] blend pipeline lazy warmup ms="
-                    << timer.elapsed();
-            if (blendPipelineReady_) {
-              qDebug() << "[CompositionView] LayerBlendPipeline initialized OK."
-                       << "executors ready for GPU blend path.";
-            } else {
-              qWarning()
-                  << "[CompositionView] LayerBlendPipeline FAILED to initialize."
-                  << "Will fall back to CPU compositing path.";
-            }
-          }
-        }
-      }
-    }
-
     const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
     const bool gpuBlendPathRequested =
         gpuBlendRequested && hasGpuBlendJustification;
@@ -4223,45 +4221,55 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       const float actionSafeH = ch * 0.9f;
       const float titleSafeW = cw * 0.8f;
       const float titleSafeH = ch * 0.8f;
-      const FloatColor marginColor = {0.5f, 0.5f, 0.5f, 0.6f};
+      const FloatColor outlineColor = {0.0f, 0.0f, 0.0f, 0.72f};
+      const FloatColor innerColor = {0.95f, 0.97f, 1.0f, 0.94f};
+      const auto snap = [](float value) {
+        return std::round(value) + 0.5f;
+      };
 
-      const float actionX = (cw - actionSafeW) * 0.5f;
-      const float actionY = (ch - actionSafeH) * 0.5f;
-      const float titleX = (cw - titleSafeW) * 0.5f;
-      const float titleY = (ch - titleSafeH) * 0.5f;
-      renderer_->drawSolidLine({actionX, actionY},
-                               {actionX + actionSafeW, actionY}, marginColor,
-                               1.0f);
-      renderer_->drawSolidLine({actionX + actionSafeW, actionY},
-                               {actionX + actionSafeW,
-                                actionY + actionSafeH},
-                               marginColor, 1.0f);
-      renderer_->drawSolidLine({actionX + actionSafeW,
-                                actionY + actionSafeH},
-                               {actionX, actionY + actionSafeH}, marginColor,
-                               1.0f);
-      renderer_->drawSolidLine({actionX, actionY + actionSafeH},
-                               {actionX, actionY}, marginColor, 1.0f);
-      renderer_->drawSolidLine({titleX, titleY},
-                               {titleX + titleSafeW, titleY}, marginColor,
-                               1.0f);
-      renderer_->drawSolidLine({titleX + titleSafeW, titleY},
-                               {titleX + titleSafeW, titleY + titleSafeH},
-                               marginColor, 1.0f);
-      renderer_->drawSolidLine({titleX + titleSafeW,
-                                titleY + titleSafeH},
-                               {titleX, titleY + titleSafeH}, marginColor,
-                               1.0f);
-      renderer_->drawSolidLine({titleX, titleY + titleSafeH},
-                               {titleX, titleY}, marginColor, 1.0f);
+      const float actionX = snap((cw - actionSafeW) * 0.5f);
+      const float actionY = snap((ch - actionSafeH) * 0.5f);
+      const float actionX2 = snap(actionX + actionSafeW);
+      const float actionY2 = snap(actionY + actionSafeH);
+      const float titleX = snap((cw - titleSafeW) * 0.5f);
+      const float titleY = snap((ch - titleSafeH) * 0.5f);
+      const float titleX2 = snap(titleX + titleSafeW);
+      const float titleY2 = snap(titleY + titleSafeH);
+      auto *const renderer = renderer_.get();
+
+      auto drawSafeRect =
+          [renderer, outlineColor, innerColor](float x1, float y1, float x2,
+                                               float y2) {
+        if (!renderer) {
+          return;
+        }
+        renderer->drawSolidLine({x1, y1}, {x2, y1}, outlineColor, 3.0f);
+        renderer->drawSolidLine({x2, y1}, {x2, y2}, outlineColor, 3.0f);
+        renderer->drawSolidLine({x2, y2}, {x1, y2}, outlineColor, 3.0f);
+        renderer->drawSolidLine({x1, y2}, {x1, y1}, outlineColor, 3.0f);
+
+        renderer->drawSolidLine({x1, y1}, {x2, y1}, innerColor, 1.25f);
+        renderer->drawSolidLine({x2, y1}, {x2, y2}, innerColor, 1.25f);
+        renderer->drawSolidLine({x2, y2}, {x1, y2}, innerColor, 1.25f);
+        renderer->drawSolidLine({x1, y2}, {x1, y1}, innerColor, 1.25f);
+      };
+
+      drawSafeRect(actionX, actionY, actionX2, actionY2);
+      drawSafeRect(titleX, titleY, titleX2, titleY2);
 
       const float crossSize = 20.0f;
-      renderer_->drawSolidLine({cw * 0.5f - crossSize, ch * 0.5f},
-                               {cw * 0.5f + crossSize, ch * 0.5f}, marginColor,
-                               1.0f);
-      renderer_->drawSolidLine({cw * 0.5f, ch * 0.5f - crossSize},
-                               {cw * 0.5f, ch * 0.5f + crossSize}, marginColor,
-                               1.0f);
+      renderer_->drawSolidLine({snap(cw * 0.5f - crossSize), snap(ch * 0.5f)},
+                               {snap(cw * 0.5f + crossSize), snap(ch * 0.5f)},
+                               outlineColor, 3.0f);
+      renderer_->drawSolidLine({snap(cw * 0.5f - crossSize), snap(ch * 0.5f)},
+                               {snap(cw * 0.5f + crossSize), snap(ch * 0.5f)},
+                               innerColor, 1.25f);
+      renderer_->drawSolidLine({snap(cw * 0.5f), snap(ch * 0.5f - crossSize)},
+                               {snap(cw * 0.5f), snap(ch * 0.5f + crossSize)},
+                               outlineColor, 3.0f);
+      renderer_->drawSolidLine({snap(cw * 0.5f), snap(ch * 0.5f - crossSize)},
+                               {snap(cw * 0.5f), snap(ch * 0.5f + crossSize)},
+                               innerColor, 1.25f);
     }
 
     if (showGuides_) {
