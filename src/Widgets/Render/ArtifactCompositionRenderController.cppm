@@ -1528,7 +1528,13 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
         impl_->eventBus_.subscribe<LayerChangedEvent>(
             [this](const LayerChangedEvent &event) {
               auto comp = impl_->previewPipeline_.composition();
-              if (!comp || event.compositionId.isEmpty() ||
+              if (!comp) {
+                return;
+              }
+              // Accept events with empty compositionId (layer may not have
+              // its composition pointer set yet, e.g. during creation) as
+              // well as events matching the current composition.
+              if (!event.compositionId.isEmpty() &&
                   comp->id().toString() != event.compositionId) {
                 return;
               }

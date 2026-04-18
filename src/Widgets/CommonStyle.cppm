@@ -26,6 +26,9 @@ module;
 #include <QStyleFactory>
 #include <QBitmap>
 #include <QEvent>
+#ifdef _WIN32
+#include <qt_windows.h>
+#endif
 
 module Widgets.CommonStyle;
 
@@ -130,9 +133,27 @@ void drawFramedToolButtonSurface(const QStyleOption* option, QPainter* painter, 
   painter->restore();
 }
 
+#ifdef _WIN32
+using DwmSetWindowAttributeFn = HRESULT(WINAPI*)(HWND, DWORD, LPCVOID, DWORD);
+
+static bool tryApplyDwmRoundCorners(QWidget* w) {
+  static HMODULE dwmModule = ::LoadLibraryW(L"dwmapi.dll");
+  if (!dwmModule) return false;
+  static const auto setAttr = reinterpret_cast<DwmSetWindowAttributeFn>(
+      ::GetProcAddress(dwmModule, "DwmSetWindowAttribute"));
+  if (!setAttr) return false;
+  HWND hwnd = reinterpret_cast<HWND>(w->winId());
+  if (!hwnd) return false;
+  // DWMWA_WINDOW_CORNER_PREFERENCE = 33, DWMWCP_ROUNDSMALL = 3
+  DWORD pref = 3;
+  return SUCCEEDED(setAttr(hwnd, 33, &pref, sizeof(pref)));
+}
+#endif
+
 class RoundedWindowMaskFilter : public QObject {
   int radius_;
   bool onlyIfFrameless_;
+  bool dwmApplied_ = false;
 public:
   explicit RoundedWindowMaskFilter(QObject* parent, int r, bool onlyIfFrameless = false)
     : QObject(parent), radius_(r), onlyIfFrameless_(onlyIfFrameless) {}
@@ -141,6 +162,14 @@ public:
       if (auto* w = qobject_cast<QWidget*>(watched)) {
         if (onlyIfFrameless_ && !(w->windowFlags() & Qt::FramelessWindowHint))
           return false;
+        if (dwmApplied_) return false;
+#ifdef _WIN32
+        if (event->type() == QEvent::Show && tryApplyDwmRoundCorners(w)) {
+          dwmApplied_ = true;
+          w->clearMask();
+          return false;
+        }
+#endif
         if (!w->size().isEmpty()) {
           QBitmap bm(w->size());
           bm.fill(Qt::color0);
