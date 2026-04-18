@@ -399,6 +399,48 @@ public:
     scheduleInitialFit();
   }
 
+  bool syncPreferredComposition() {
+    if (!controller_) {
+      return false;
+    }
+
+    const auto comp = resolvePreferredComposition();
+    if (!comp) {
+      return false;
+    }
+
+    // Only request an initial fit when the composition actually changes.
+    // syncPreferredComposition() is called on every showEvent (including
+    // QADS focus cycles) — always fitting would reset the user's zoom.
+    const bool compositionChanged = (controller_->composition() != comp);
+    controller_->setComposition(comp);
+    controller_->start();
+    if (compositionChanged) {
+      autoStartPending_ = true;
+      requestInitialFit();
+    }
+    return true;
+  }
+
+  void schedulePreferredCompositionRetry() {
+    const int retryCount =
+        property("artifactStartupCompositionRetry").toInt();
+    if (retryCount >= 20) {
+      return;
+    }
+    setProperty("artifactStartupCompositionRetry", retryCount + 1);
+    QTimer::singleShot(250, this, [this]() {
+      if (!controller_ || !isVisible() || window()->isMinimized()) {
+        return;
+      }
+      if (syncPreferredComposition()) {
+        setProperty("artifactStartupCompositionRetry", 0);
+        return;
+      }
+      schedulePreferredCompositionRetry();
+    });
+  }
+
   void setPieMenu(ArtifactPieMenuWidget *pieMenu) { pieMenu_ = pieMenu; }
   void setOverlayWidget(QWidget *overlayWidget) {
     overlayWidget_ = overlayWidget;
@@ -537,19 +579,17 @@ protected:
           // 250ms
           // 待つことでウィンドウ表示アニメーションやドライバ初期化と競合しない
           QTimer::singleShot(250, this, [this]() {
-            if (!controller_ || !isVisible() || window()->isMinimized())
+            if (!controller_ || !isVisible() || window()->isMinimized()) {
               return;
-            controller_->setComposition(resolvePreferredComposition());
-            pendingInitialFit_ = true;
-            autoStartPending_ = true;
-            scheduleInitialFit();
+            }
+            if (syncPreferredComposition()) {
+              return;
+            }
+            schedulePreferredCompositionRetry();
           });
         });
       } else {
-        controller_->setComposition(resolvePreferredComposition());
-        pendingInitialFit_ = true;
-        autoStartPending_ = true;
-        scheduleInitialFit();
+        syncPreferredComposition();
       }
     }
   }
@@ -2008,6 +2048,7 @@ public:
   ProfilerOverlayWidget *profilerOverlay_ = nullptr;
   ProfilerPanelWidget *profilerPanel_ = nullptr;
   EventBusDebuggerWidget *eventBusDebugger_ = nullptr;
+  int startupCompositionRetryCount_ = 0;
 
   // 外部 signal から即時に widget を書き換えず、イベントループの次 tick
   // にまとめて反映する。
@@ -2105,6 +2146,25 @@ public:
       toolModeButton_->setText(QStringLiteral("Tool"));
       break;
     }
+  }
+
+  bool syncPreferredComposition(ArtifactCompositionEditor *owner) {
+    if (!owner || !renderController_) {
+      return false;
+    }
+
+    const auto comp = resolvePreferredComposition();
+    if (!comp) {
+      return false;
+    }
+
+    renderController_->setComposition(comp);
+    if (compositionView_) {
+      compositionView_->requestInitialFit();
+    }
+    renderController_->renderOneFrame();
+    startupCompositionRetryCount_ = 0;
+    return true;
   }
 
   void syncOverlayGeometry(ArtifactCompositionEditor *owner) {
@@ -2245,7 +2305,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->motionPathAction_->setToolTip(
       QStringLiteral("Show motion path overlay for the selected layer"));
 
-  auto *toolMenu = new QMenu(impl_->topToolbar_);
+  auto *toolMenu = new QMenu(this);
   auto *toolGroup = new QActionGroup(this);
   toolGroup->setExclusive(true);
   const auto addToolAction = [&](const QString &text, const QString &iconName,
@@ -2281,7 +2341,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->toolModeButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->topToolbar_->addWidget(impl_->toolModeButton_);
 
-  auto *gizmoMenu = new QMenu(impl_->topToolbar_);
+  auto *gizmoMenu = new QMenu(this);
   gizmoMenu->setIcon(
       loadEditorMenuIcon(QStringLiteral("MaterialVS/neutral/transform.svg")));
   auto *gizmoGroup = new QActionGroup(this);
@@ -2321,7 +2381,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->gizmoModeButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->topToolbar_->addWidget(impl_->gizmoModeButton_);
 
-  auto *pivotMenu = new QMenu(impl_->topToolbar_);
+  auto *pivotMenu = new QMenu(this);
   auto *pivotGroup = new QActionGroup(this);
   pivotGroup->setExclusive(true);
   const auto applyPivotPreset = [this](const bool useCenter) {
@@ -2440,7 +2500,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     impl_->fastPreviewBtn_->setPalette(pal);
   }
 
-  auto *fastPreviewMenu = new QMenu(impl_->fastPreviewBtn_);
+  auto *fastPreviewMenu = new QMenu(this);
   QAction *fpOff = fastPreviewMenu->addAction("Off");
   QAction *fpAdaptive = fastPreviewMenu->addAction("Adaptive Resolution");
   QAction *fpDraft = fastPreviewMenu->addAction("Fast Draft");
@@ -2481,7 +2541,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     impl_->displayOptionsBtn_->setPalette(pal);
   }
 
-  auto *displayMenu = new QMenu(impl_->displayOptionsBtn_);
+  auto *displayMenu = new QMenu(this);
   QAction *solidBgAct = displayMenu->addAction("Solid");
   QAction *checkerboardAct = displayMenu->addAction("Checkerboard");
   QAction *mayaBgAct = displayMenu->addAction("Maya Gradient");

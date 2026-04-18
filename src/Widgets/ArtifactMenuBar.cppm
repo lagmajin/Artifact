@@ -163,7 +163,7 @@ ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)
  // Scale menu bar and all popup menus by 20% without QSS
  QFont f = font();
  const qreal sz = f.pointSizeF() > 0 ? f.pointSizeF() : 10.0;
- f.setPointSizeF(sz * 1.2);
+ f.setPointSizeF(sz * 1.32);
  setFont(f);
  for (auto *menu : findChildren<QMenu *>()) {
   menu->setFont(f);
