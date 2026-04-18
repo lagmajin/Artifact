@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <QLabel>
 #include <QBoxLayout>
@@ -53,33 +53,21 @@ namespace Artifact
   impl_->frameNumberLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
   setAttribute(Qt::WA_StyledBackground, false);
-  setAutoFillBackground(true);
-  const QColor widgetBg = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
-  {
-   QPalette pal = palette();
-   pal.setColor(QPalette::Window, widgetBg);
-   setPalette(pal);
-  }
+  setAutoFillBackground(false);
 
   {
    const QColor textColor = QColor(ArtifactCore::currentDCCTheme().textColor);
    const QColor mutedTextColor = textColor.darker(150);
 
-   // Set Window/Base in label palettes to match the widget background;
-   // this prevents any style-driven background mismatch on the labels.
    QPalette timePal = impl_->timecodeLabel_->palette();
    timePal.setColor(QPalette::WindowText, textColor);
    timePal.setColor(QPalette::Text, textColor);
-   timePal.setColor(QPalette::Window, widgetBg);
-   timePal.setColor(QPalette::Base, widgetBg);
    impl_->timecodeLabel_->setPalette(timePal);
    impl_->timecodeLabel_->setAutoFillBackground(false);
 
    QPalette framePal = impl_->frameNumberLabel_->palette();
    framePal.setColor(QPalette::WindowText, mutedTextColor);
    framePal.setColor(QPalette::Text, mutedTextColor);
-   framePal.setColor(QPalette::Window, widgetBg);
-   framePal.setColor(QPalette::Base, widgetBg);
    impl_->frameNumberLabel_->setPalette(framePal);
    impl_->frameNumberLabel_->setAutoFillBackground(false);
   }

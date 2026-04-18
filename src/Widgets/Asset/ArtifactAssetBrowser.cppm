@@ -95,7 +95,7 @@ QImage loadImageThumbnailViaOIIO(const QString& filePath, const QSize& targetSiz
     const int width = std::max(1, spec.width);
     const int height = std::max(1, spec.height);
 
-    QImage image(width, height, QImage::Format_ARGB32_Premultiplied);
+    QImage image(width, height, QImage::Format_RGBA8888);
     if (image.isNull()) {
       if (errorOut) {
         *errorOut = QStringLiteral("Failed to allocate thumbnail image.");
@@ -108,6 +108,9 @@ QImage loadImageThumbnailViaOIIO(const QString& filePath, const QSize& targetSiz
     std::vector<int> channelOrder = {0, 1, 2, 3};
     std::vector<float> channelValues = {0.0f, 0.0f, 0.0f, 1.0f};
     if (channelCount == 1) {
+      // Grayscale: replicate R channel into G and B, set A=1
+      channelOrder = {0, 0, 0, -1};
+      channelValues = {0.0f, 0.0f, 0.0f, 1.0f};
       rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
     } else if (channelCount == 2) {
       rgba = OIIO::ImageBufAlgo::channels(oriented, 4, channelOrder, channelValues);
@@ -698,14 +701,18 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
 
   // Generate thumbnail for image files
   if (isImageFile(fileInfo.fileName())) {
-   QString error;
-   const QImage image = loadImageThumbnailViaOIIO(filePath, thumbnailSize_, &error);
+   QString oiioError;
+   const bool preferQtReaderFirst =
+       fileInfo.suffix().compare(QStringLiteral("webp"), Qt::CaseInsensitive) == 0;
+   QImage image;
+   if (!preferQtReaderFirst) {
+    image = loadImageThumbnailViaOIIO(filePath, thumbnailSize_, &oiioError);
+   }
    if (!image.isNull()) {
     QIcon icon(QPixmap::fromImage(image));
     thumbnailCache_[filePath] = icon;
     return icon;
    }
-   qWarning() << "[AssetBrowser] Failed to load image thumbnail via OIIO:" << filePath << error;
 
    QImageReader reader(filePath);
    reader.setAutoTransform(true);
@@ -716,6 +723,14 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
     const QIcon icon(scaled);
     thumbnailCache_[filePath] = icon;
     return icon;
+   }
+   const QString fallbackError = reader.errorString();
+   if (oiioError.isEmpty()) {
+    qWarning() << "[AssetBrowser] Failed to load image thumbnail:" << filePath
+               << "QImageReader:" << fallbackError;
+   } else {
+    qWarning() << "[AssetBrowser] Failed to load image thumbnail via OIIO:"
+               << filePath << oiioError << "QImageReader:" << fallbackError;
    }
   }
 
