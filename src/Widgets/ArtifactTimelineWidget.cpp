@@ -3540,9 +3540,14 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
     // so the old ghost is cleared and the new line is drawn.
     const int left  = std::min(oldX, newX) - kMargin;
     const int right = std::max(oldX, newX) + kMargin + 1;
-    parent->update(QRect(left, 0, right - left, parent->height()));
+    const QRect strip(left, 0, right - left, parent->height());
+    // Parent must repaint first (clears the old playhead from the backing store),
+    // then the overlay repaints on top to draw the new position.
+    parent->update(strip);
+    impl_->playheadOverlay_->update(strip);
   } else if (parent) {
     parent->update(impl_->playheadOverlay_->geometry());
+    impl_->playheadOverlay_->update();
   }
 }
 
