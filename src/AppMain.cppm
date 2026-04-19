@@ -116,6 +116,7 @@ import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.MarkdownNoteEditorWidget;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Widgets.RenderCenterWindow;
+import Artifact.Render.Scheduler;
 import Artifact.Contents.Viewer;
 import Widgets.Inspector;
 import Widgets.AssetBrowser;
@@ -754,10 +755,12 @@ int main(int argc, char *argv[]) {
 
   qDebug() << "Artifact Debug Console Initialized. Hello ArtifactStudio!";
 
-  tbb::global_control c(tbb::global_control::max_allowed_parallelism,
-                        std::max(1u, std::thread::hardware_concurrency() > 1
-                                         ? std::thread::hardware_concurrency() - 1
-                                         : 1u));
+  const unsigned int startupParallelism =
+      std::max(1u, std::thread::hardware_concurrency() > 1
+                       ? std::thread::hardware_concurrency() - 1
+                       : 1u);
+  auto parallelismControl = std::make_unique<tbb::global_control>(
+      tbb::global_control::max_allowed_parallelism, 1u);
 
   AddDllDirectory(L"C:\\Users\\lagma\\Desktop\\Artifact\\Artifact\\App");
   SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS |
@@ -1949,6 +1952,15 @@ int main(int argc, char *argv[]) {
       delete autoSaveManager;
     }
     markSessionEndClean();
+  });
+
+  QTimer::singleShot(2000, mw, [startupParallelism, &parallelismControl]() {
+    parallelismControl.reset();
+    parallelismControl = std::make_unique<tbb::global_control>(
+        tbb::global_control::max_allowed_parallelism, startupParallelism);
+    setRenderSchedulerStartupWarmupComplete(true);
+    qDebug() << "[AppMain] startup parallelism restored to"
+             << startupParallelism;
   });
 
   mw->show();

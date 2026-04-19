@@ -2,11 +2,13 @@ module;
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <array>
 #include <vector>
 #include <type_traits>
 #include <QImage>
 #include <QFont>
 #include <QRectF>
+#include <QMatrix4x4>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
@@ -284,6 +286,7 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
     m_draw_sprite_transform_pso_and_srb     = sm.spriteTransformPsoAndSrb();
     m_draw_masked_sprite_pso_and_srb        = sm.maskedSpritePsoAndSrb();
     m_draw_glyph_pso_and_srb                = sm.glyphQuadPsoAndSrb();
+    m_draw_glyph_transform_pso_and_srb      = sm.glyphQuadTransformPsoAndSrb();
     m_sprite_sampler                        = sm.spriteSampler();
     m_glyph_sampler                         = sm.glyphAtlasSampler();
     m_draw_solid_rect_pso_and_srb           = sm.solidRectPsoAndSrb();
@@ -323,6 +326,7 @@ void DiligentImmediateSubmitter::destroy()
     m_draw_sprite_transform_pso_and_srb     = {};
     m_draw_masked_sprite_pso_and_srb        = {};
     m_draw_glyph_pso_and_srb                = {};
+    m_draw_glyph_transform_pso_and_srb      = {};
     m_draw_solid_rect_pso_and_srb           = {};
     m_draw_solid_rect_transform_pso_and_srb = {};
     m_draw_line_pso_and_srb                 = {};
@@ -356,6 +360,7 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
             else if constexpr (std::is_same_v<T, SpriteXformPkt>)     submitSpriteXform(p, ctx, pRTV);
             else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    submitMaskedSprite(p, ctx, pRTV);
             else if constexpr (std::is_same_v<T, GlyphTextPkt>)       submitGlyphText(p, ctx, pRTV);
+            else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  submitGlyphTextTransformed(p, ctx, pRTV);
         }, pkt);
     }
     buf.reset();
@@ -881,6 +886,116 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
 
         mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices));
         mapWriteDiscard(ctx, m_draw_sprite_cb, &glyphXform, sizeof(glyphXform));
+        ctx->DrawIndexed(DrawIndexedAttribs(6, VT_UINT32, DRAW_FLAG_NONE));
+    }
+}
+
+void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXformPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    if (!pRTV || !ctx || !m_draw_glyph_transform_pso_and_srb.pPSO || !m_draw_glyph_transform_pso_and_srb.pSRB || !m_device) {
+        return;
+    }
+    if (p.text.isEmpty() || p.rect.width() <= 0.0 || p.rect.height() <= 0.0) {
+        return;
+    }
+
+    const TextStyle style = textStyleFromQFont(p.font);
+    const ParagraphStyle paragraph =
+        paragraphStyleFromRectAndAlignment(p.rect, static_cast<Qt::Alignment>(p.alignment));
+    const auto glyphs = TextLayoutEngine::layout(UniString(p.text), style, paragraph);
+    if (glyphs.empty()) {
+        return;
+    }
+
+    const QFont resolvedFont = FontManager::makeFont(style, p.text);
+    struct DrawGlyph {
+        GlyphItem item;
+        GlyphRect rect;
+    };
+    std::vector<DrawGlyph> drawGlyphs;
+    drawGlyphs.reserve(glyphs.size());
+
+    for (const auto& glyph : glyphs) {
+        const GlyphKey key{
+            glyph.charCode,
+            style.fontSize,
+            static_cast<uint32_t>((style.fontWeight == FontWeight::Bold ? 0x1u : 0u) |
+                                  (style.fontStyle == FontStyle::Italic ? 0x2u : 0u)),
+            style.fontFamily.toQString().toStdString()
+        };
+        const GlyphRect glyphRect = m_glyph_atlas.acquire(key, resolvedFont);
+        if (glyphRect.valid) {
+            drawGlyphs.push_back({glyph, glyphRect});
+        }
+    }
+
+    if (m_glyph_atlas.isDirty() || !m_glyph_atlas_texture) {
+        m_glyph_atlas_texture = createAtlasTexture(m_device, m_glyph_atlas.atlasImage());
+        m_glyph_atlas_srv = m_glyph_atlas_texture
+                                ? m_glyph_atlas_texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
+                                : nullptr;
+        if (m_glyph_atlas_texture) {
+            m_glyph_atlas.clearDirty();
+        }
+    }
+    if (!m_glyph_atlas_srv) {
+        return;
+    }
+
+    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    ctx->SetPipelineState(m_draw_glyph_transform_pso_and_srb.pPSO);
+    if (auto* v = m_draw_glyph_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture")) {
+        v->Set(m_glyph_atlas_srv);
+    }
+    if (m_glyph_sampler) {
+        if (auto* v = m_draw_glyph_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
+            v->Set(m_glyph_sampler);
+        }
+    } else if (m_sprite_sampler) {
+        if (auto* v = m_draw_glyph_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
+            v->Set(m_sprite_sampler);
+        }
+    }
+    // Use m_draw_sprite_transform_matrix_cb (64-byte QMatrix4x4 buffer) — NOT the 16-byte sprite CB
+    if (auto* v = m_draw_glyph_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
+        v->Set(m_draw_sprite_transform_matrix_cb);
+    }
+    ctx->CommitShaderResources(m_draw_glyph_transform_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    IBuffer* pBufs[] = { m_draw_sprite_vertex_buffer };
+    Uint64 offs[] = { 0 };
+    ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+    for (const auto& glyph : drawGlyphs) {
+        const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX;
+        const float top = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY;
+        const float w = std::max(0.0f, static_cast<float>(glyph.rect.width));
+        const float h = std::max(0.0f, static_cast<float>(glyph.rect.height));
+        if (w <= 0.0f || h <= 0.0f) {
+            continue;
+        }
+
+        const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
+        const float4 color = { p.color.x * alpha, p.color.y * alpha, p.color.z * alpha, p.color.w * alpha };
+        SpriteVertex vertices[4] = {
+            {{0.0f, 0.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
+            {{1.0f, 0.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, color},
+            {{0.0f, 1.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, color},
+            {{1.0f, 1.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, color},
+        };
+
+        QMatrix4x4 glyphMat = p.transform;
+        glyphMat.translate(left, top, 0.0f);
+        glyphMat.scale(w, h, 1.0f);
+
+        // Pack rows explicitly: QMatrix4x4 data() is column-major, shader expects row-major
+        RenderSolidRectTransform2D mat;
+        mat.row0 = { glyphMat.row(0).x(), glyphMat.row(0).y(), glyphMat.row(0).z(), glyphMat.row(0).w() };
+        mat.row1 = { glyphMat.row(1).x(), glyphMat.row(1).y(), glyphMat.row(1).z(), glyphMat.row(1).w() };
+        mat.row2 = { glyphMat.row(2).x(), glyphMat.row(2).y(), glyphMat.row(2).z(), glyphMat.row(2).w() };
+        mat.row3 = { glyphMat.row(3).x(), glyphMat.row(3).y(), glyphMat.row(3).z(), glyphMat.row(3).w() };
+        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices));
+        mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &mat, sizeof(mat));
         ctx->DrawIndexed(DrawIndexedAttribs(6, VT_UINT32, DRAW_FLAG_NONE));
     }
 }

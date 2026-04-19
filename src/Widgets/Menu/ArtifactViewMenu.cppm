@@ -21,6 +21,7 @@ import std;
 import Artifact.Service.Project;
 import Artifact.MainWindow;
 import Artifact.Workspace.Manager;
+import Artifact.Widgets.ColorPaletteWidget;
 import Widgets.AssetBrowser;
 import Widgets.ToolBar;
 import Artifact.Widgets.ReactiveEventEditorWindow;
@@ -85,9 +86,10 @@ namespace Artifact {
    QAction* restoreWorkspaceSessionAction = nullptr;
    QMenu* windowPanelsMenu = nullptr;
    ArtifactMainWindow* mainWindow = nullptr;
-     QPointer<ArtifactReactiveEventEditorWindow> reactiveEventEditorWindow;
+   QPointer<ArtifactReactiveEventEditorWindow> reactiveEventEditorWindow;
      int newBrowserCount_ = 1;
      QAction* openContentsViewerAction = nullptr;
+     QAction* openColorPaletteAction = nullptr;
      QAction* openReactiveEventEditorAction = nullptr;
      QAction* secondaryPreviewAction = nullptr;
      ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
@@ -296,6 +298,23 @@ namespace Artifact {
     mainWindow->activateDock(QStringLiteral("Contents Viewer"));
    });
 
+   openColorPaletteAction = menu->addAction("カラーパレット(&P)");
+   QObject::connect(openColorPaletteAction, &QAction::triggered, menu, [this]() {
+    if (!mainWindow) return;
+    const QString dockTitle = QStringLiteral("Color Palette");
+    if (mainWindow->hasDock(dockTitle)) {
+     mainWindow->setDockVisible(dockTitle, true);
+     mainWindow->activateDock(dockTitle);
+     return;
+    }
+    auto* paletteWidget = new ArtifactColorPaletteWidget(mainWindow);
+    mainWindow->addDockedWidgetFloating(
+        dockTitle,
+        QStringLiteral("color_palette_dock"),
+        paletteWidget,
+        QRect(120, 120, 560, 640));
+   });
+
    menu->addSeparator();
    menu->addMenu(workspaceMenu);
    menu->addMenu(workspacePresetMenu);
@@ -382,6 +401,9 @@ namespace Artifact {
   useDisplayColorManagementAction->setEnabled(hasComp);
   if (openContentsViewerAction) {
    openContentsViewerAction->setEnabled(true);
+  }
+  if (openColorPaletteAction) {
+   openColorPaletteAction->setEnabled(true);
   }
   if (openReactiveEventEditorAction) {
    openReactiveEventEditorAction->setEnabled(true);

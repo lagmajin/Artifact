@@ -650,7 +650,7 @@ bool DiligentDeviceManager::Impl::createSwapChainForBackend(HWND hwnd, int width
     SCDesc.Width = width;
     SCDesc.Height = height;
     SCDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM_SRGB;
-    SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
+    SCDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
     SCDesc.BufferCount = 2;
     SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
 
@@ -756,7 +756,7 @@ bool DiligentDeviceManager::createSwapChainForCurrentBackend(QWidget* widget, HW
     SCDesc.Width = width;
     SCDesc.Height = height;
     SCDesc.ColorBufferFormat = TEX_FORMAT_RGBA8_UNORM_SRGB;
-    SCDesc.DepthBufferFormat = TEX_FORMAT_UNKNOWN;
+    SCDesc.DepthBufferFormat = TEX_FORMAT_D32_FLOAT;
     SCDesc.BufferCount = 2;
     SCDesc.Usage = SWAP_CHAIN_USAGE_RENDER_TARGET;
 

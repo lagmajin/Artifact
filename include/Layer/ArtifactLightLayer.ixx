@@ -1,10 +1,10 @@
-module;
+﻿module;
 #include <utility>
 #include <memory>
 #include <wobjectdefs.h>
-
-export module Artifact.Layer.Light;
 #include <QString>
+export module Artifact.Layer.Light;
+
 
 import Artifact.Layer.Abstract;
 import Property.Group;

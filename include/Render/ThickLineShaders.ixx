@@ -90,6 +90,41 @@ PSInput main(VSInput input)
 }
 )HLSL";
 
+ // Glyph transform vertex shader: full 4x4 matrix transform + per-vertex color passthrough
+ inline const QByteArray g_2DSpriteTransformColorVS = R"HLSL(
+cbuffer TransformCB : register(b0)
+{
+    float4 row0;
+    float4 row1;
+    float4 row2;
+    float4 row3;
+};
+
+struct VSInput
+{
+    float2 pos   : ATTRIB0;
+    float2 uv    : ATTRIB1;
+    float4 color : ATTRIB2;
+};
+
+struct PSInput
+{
+    float4 pos   : SV_POSITION;
+    float2 uv    : TEXCOORD0;
+    float4 color : COLOR0;
+};
+
+PSInput main(VSInput input)
+{
+    PSInput output;
+    float4 pos4 = float4(input.pos.xy, 0.0f, 1.0f);
+    output.pos   = float4(dot(pos4, row0), dot(pos4, row1), dot(pos4, row2), dot(pos4, row3));
+    output.uv    = input.uv;
+    output.color = input.color;
+    return output;
+}
+)HLSL";
+
  // Dotted Line shaders (Task 3)
  inline const QByteArray g_dotLineVS = R"HLSL(
 cbuffer TransformCB : register(b0)

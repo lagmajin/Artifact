@@ -2575,23 +2575,20 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     if (!impl_->renderController_) {
       return;
     }
-    auto comp = impl_->renderController_->composition();
-    const QColor initial = comp
-                               ? QColor::fromRgbF(comp->backgroundColor().r(),
-                                                  comp->backgroundColor().g(),
-                                                  comp->backgroundColor().b(),
-                                                  comp->backgroundColor().a())
-                               : QColor(28, 40, 56);
+    const QColor initial = QColor::fromRgbF(
+        impl_->renderController_->clearColor().r(),
+        impl_->renderController_->clearColor().g(),
+        impl_->renderController_->clearColor().b(),
+        impl_->renderController_->clearColor().a());
     const QColor chosen = QColorDialog::getColor(
         initial, this, QStringLiteral("Choose Solid Background Color"),
         QColorDialog::ShowAlphaChannel);
     if (!chosen.isValid()) {
       return;
     }
-    if (comp) {
-      comp->setBackGroundColor(FloatColor(chosen.redF(), chosen.greenF(),
-                                          chosen.blueF(), chosen.alphaF()));
-    }
+    impl_->renderController_->setClearColor(
+        FloatColor(chosen.redF(), chosen.greenF(), chosen.blueF(),
+                   chosen.alphaF()));
     impl_->renderController_->setCompositionBackgroundMode(
         CompositionBackgroundMode::Solid);
   });

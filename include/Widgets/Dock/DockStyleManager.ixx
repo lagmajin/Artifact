@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include "DockManager.h"
 
 #include <iostream>
@@ -32,12 +32,13 @@ module;
 #include <regex>
 #include <random>
 #include <wobjectdefs.h>
-export module Widgets.Dock.StyleManager;
 #include <QObject>
 #include <QColor>
 #include <QEvent>
 
+export module Widgets.Dock.StyleManager;
 
+import std;
 
 
 

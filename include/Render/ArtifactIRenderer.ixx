@@ -21,6 +21,7 @@ module;
 export module Artifact.Render.IRenderer;
 
 import Color.Float;
+export import Image.MultiChannelImage;
 import Graphics.RayTracingManager;
 import Graphics.ParticleData;
 import Core.Light;
@@ -81,6 +82,8 @@ public:
   bool hasSwapChain() const;
 
   QImage readbackToImage() const;
+  QImage readbackDepthToImage() const;
+  ArtifactCore::MultiChannelImage readbackToMultiChannelImage() const;
 
   // Async readback: returns immediately, calls callback when ready
   using ReadbackCallback = std::function<void(const QImage &)>;
@@ -167,6 +170,11 @@ public:
                 const FloatColor &color,
                 Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignTop,
                 float opacity = 1.0f);
+  void drawTextTransformed(const QRectF &rect, const QString &text,
+                           const QFont &font, const FloatColor &color,
+                           const QMatrix4x4 &transform,
+                           Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignTop,
+                           float opacity = 1.0f);
   void drawSpriteTransformed(float x, float y, float w, float h,
                              const QTransform &transform, const QImage &image,
                              float opacity = 1.0f);

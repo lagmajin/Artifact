@@ -4,6 +4,7 @@ module;
 #include <QFrame>
 #include <QComboBox>
 #include <QStackedWidget>
+#include <QTabWidget>
 #include <QHBoxLayout>
 #include <QEvent>
 #include <QLabel>
@@ -87,8 +88,11 @@ module Artifact.Contents.Viewer;
 import Artifact.Preview.Pipeline;
 import MediaPlaybackController;
 import Artifact.Audio.Waveform;
+import Audio.Analyze;
+import Audio.Segment;
 import Artifact.Widgets.AudioPreview;
 import Artifact.Widgets.PerformanceProfilerWidget;
+import ParadeScopeWidget;
 import Widgets.Utils.CSS;
 import File.TypeDetector;
 import Artifact.Widgets.ModelViewer;
@@ -126,9 +130,12 @@ namespace Artifact
    void ensureVideoWidgets();
    void ensureAudioWidgets();
    void ensureAudioController();
+   void ensureImageWidgets();
    void releaseAudioPlayback();
    void resetAudioWaveform();
    void appendAudioWaveformSamples(const QByteArray& pcmData);
+   void updateAudioAnalysis(const QByteArray& pcmData);
+   void syncParadeScopeFrame();
    void activateAudio(const QString& filepath);
    void pumpAudioPlayback();
    void ensureModelViewer();
@@ -184,6 +191,9 @@ namespace Artifact
    QStackedWidget* stackedWidget = nullptr;
    QScrollArea* imageScrollArea = nullptr;
    QLabel* imageLabel = nullptr;
+   QTabWidget* imageTabs = nullptr;
+   QWidget* imagePreviewPage = nullptr;
+   ArtifactWidgets::ParadeScopeWidget* paradeScopeWidget = nullptr;
    QVideoWidget* videoWidget = nullptr;
    QMediaPlayer* mediaPlayer = nullptr;
    QAudioOutput* audioOutput = nullptr;
@@ -194,8 +204,10 @@ namespace Artifact
    QWidget* audioPage = nullptr;
    AudioWaveformWidget* audioWaveformWidget = nullptr;
    QLabel* audioWaveformLabel = nullptr;
+   QLabel* audioAnalysisLabel = nullptr;
    ArtifactPerformanceProfilerWidget* audioProfilerWidget = nullptr;
    QVector<float> audioWaveformSamples;
+   std::unique_ptr<ArtifactCore::AudioAnalyzer> audioAnalyzer_;
    QWidget* comparePage = nullptr;
    QLabel* compareSourceLabel = nullptr;
    QLabel* compareFinalLabel = nullptr;
@@ -485,8 +497,19 @@ namespace Artifact
   audioWaveformWidget = new AudioWaveformWidget(audioPage);
   audioWaveformWidget->setMinimumHeight(180);
 
+  audioAnalysisLabel = new QLabel(QStringLiteral("Audio analysis: ready"), audioPage);
+   {
+    QFont labelFont = audioAnalysisLabel->font();
+    labelFont.setPointSize(10);
+    audioAnalysisLabel->setFont(labelFont);
+    QPalette pal = audioAnalysisLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(115));
+    audioAnalysisLabel->setPalette(pal);
+   }
+
   layout->addWidget(audioWaveformLabel);
   layout->addWidget(audioWaveformWidget, 1);
+  layout->addWidget(audioAnalysisLabel);
 
    audioProfilerWidget = new ArtifactPerformanceProfilerWidget(audioPage);
    audioProfilerWidget->setTitleText(QStringLiteral("Audio Playback Profiler"));
@@ -501,6 +524,9 @@ namespace Artifact
    audioWaveformSamples.clear();
    if (audioWaveformWidget) {
     audioWaveformWidget->clear();
+   }
+   if (audioAnalysisLabel) {
+    audioAnalysisLabel->setText(QStringLiteral("Audio analysis: idle"));
    }
   }
 
@@ -561,6 +587,77 @@ namespace Artifact
    if (!audioWaveformSamples.isEmpty()) {
     audioWaveformWidget->setPosition(static_cast<int>(audioWaveformSamples.size()) - 1);
    }
+  }
+
+  void ArtifactContentsViewer::Impl::updateAudioAnalysis(const QByteArray& pcmData)
+  {
+   if (!audioAnalysisLabel || pcmData.size() < 4) {
+    return;
+   }
+
+   if (!audioAnalyzer_) {
+    audioAnalyzer_ = std::make_unique<ArtifactCore::AudioAnalyzer>(1024);
+   }
+
+   constexpr int kBytesPerSample = 2;
+   constexpr int kChannels = 2;
+   constexpr int kBytesPerFrame = kBytesPerSample * kChannels;
+   const int frameCount = pcmData.size() / kBytesPerFrame;
+   if (frameCount <= 0) {
+    return;
+   }
+
+   ArtifactCore::AudioSegment segment;
+   segment.sampleRate = 44100;
+   segment.layout = ArtifactCore::AudioChannelLayout::Stereo;
+   segment.channelData.resize(2);
+   segment.channelData[0].resize(frameCount);
+   segment.channelData[1].resize(frameCount);
+
+   const char* raw = pcmData.constData();
+   for (int i = 0; i < frameCount; ++i) {
+    const auto* sample = reinterpret_cast<const qint16*>(raw + i * kBytesPerFrame);
+    segment.channelData[0][i] = static_cast<float>(sample[0]) / 32768.0f;
+    segment.channelData[1][i] = static_cast<float>(sample[1]) / 32768.0f;
+   }
+
+   const auto result = audioAnalyzer_->analyze(segment);
+   const auto toPct = [](float value) {
+    return static_cast<int>(std::round(std::clamp(value, 0.0f, 1.0f) * 100.0f));
+   };
+
+   QStringList spectrumBins;
+   const int spectrumCount = static_cast<int>(result.spectrum.size());
+   if (spectrumCount > 0) {
+    const int sampleRate = segment.sampleRate;
+    const int fftSize = audioAnalyzer_->getFFTSize();
+    const float binHz = fftSize > 0 ? static_cast<float>(sampleRate) / static_cast<float>(fftSize) : 0.0f;
+    const auto binLabel = [binHz, spectrumCount](int index) {
+     const float hz = static_cast<float>(index) * binHz;
+     if (hz < 1000.0f) {
+      return QStringLiteral("%1Hz").arg(static_cast<int>(std::round(hz)));
+     }
+     return QStringLiteral("%1kHz").arg(hz / 1000.0f, 0, 'f', hz < 10000.0f ? 1 : 0);
+    };
+
+    const int lowIdx = std::min(spectrumCount - 1, std::max(0, spectrumCount / 16));
+    const int midIdx = std::min(spectrumCount - 1, std::max(0, spectrumCount / 8));
+    const int highIdx = std::min(spectrumCount - 1, std::max(0, spectrumCount / 4));
+    spectrumBins << QStringLiteral("Spectrum %1 / %2 / %3")
+                        .arg(binLabel(lowIdx))
+                        .arg(binLabel(midIdx))
+                        .arg(binLabel(highIdx));
+   }
+
+   const QString analysisText = QStringLiteral("Audio analysis: RMS %1%  Peak %2%  Low %3%  Mid %4%  High %5%")
+                                    .arg(toPct(result.rms))
+                                    .arg(toPct(result.peak))
+                                    .arg(toPct(result.lowIntensity))
+                                    .arg(toPct(result.midIntensity))
+                                    .arg(toPct(result.highIntensity));
+   audioAnalysisLabel->setText(spectrumBins.isEmpty()
+                                   ? analysisText
+                                   : analysisText + QStringLiteral("  •  ") + spectrumBins.join(QStringLiteral("  •  ")));
   }
 
   void ArtifactContentsViewer::Impl::releaseAudioPlayback()
@@ -710,6 +807,7 @@ namespace Artifact
     {
      ArtifactCore::ScopedPerformanceTimer waveformTimer("Audio/Viewer/waveformAppend");
      appendAudioWaveformSamples(writtenChunk);
+     updateAudioAnalysis(writtenChunk);
     }
     if (seekSlider && !seekSlider->isSliderDown()) {
      QSignalBlocker blocker(seekSlider);
@@ -734,11 +832,12 @@ namespace Artifact
     mediaPlayer->setSource(QUrl());
    }
 
-   if (imageLabel) {
-    imageLabel->clear();
-    imageLabel->setFixedSize(QSize(0, 0));
-   }
-   originalImage = QPixmap();
+  if (imageLabel) {
+   imageLabel->clear();
+   imageLabel->setFixedSize(QSize(0, 0));
+  }
+  originalImage = QPixmap();
+  syncParadeScopeFrame();
 
    if (modelViewer) {
     modelViewer->clearModel();
@@ -819,6 +918,71 @@ namespace Artifact
 
    stackedWidget->addWidget(videoWidget);
    videoWidgetsReady = true;
+  }
+
+  void ArtifactContentsViewer::Impl::ensureImageWidgets()
+  {
+   if (imageTabs) {
+    return;
+   }
+
+   imageTabs = new QTabWidget(owner_);
+   imageTabs->setDocumentMode(true);
+   imageTabs->setUsesScrollButtons(false);
+
+   imagePreviewPage = new QWidget(imageTabs);
+   auto* previewLayout = new QVBoxLayout(imagePreviewPage);
+   previewLayout->setContentsMargins(0, 0, 0, 0);
+   previewLayout->setSpacing(0);
+
+   imageScrollArea = new QScrollArea(imagePreviewPage);
+   imageLabel = new QLabel();
+   imageLabel->setAlignment(Qt::AlignCenter);
+   imageLabel->setScaledContents(true);
+
+   imageScrollArea->setWidget(imageLabel);
+   imageScrollArea->setWidgetResizable(false);
+   imageScrollArea->setAlignment(Qt::AlignCenter);
+   imageScrollArea->viewport()->setMouseTracking(true);
+   imageLabel->setMouseTracking(true);
+   {
+    QPalette scrollPalette = imageScrollArea->palette();
+    scrollPalette.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
+    scrollPalette.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+   imageScrollArea->setPalette(scrollPalette);
+   }
+   imageScrollArea->setAutoFillBackground(true);
+   if (owner_) {
+    imageScrollArea->viewport()->installEventFilter(owner_);
+    imageLabel->installEventFilter(owner_);
+   }
+
+   paradeScopeWidget = new ArtifactWidgets::ParadeScopeWidget(imageTabs);
+   paradeScopeWidget->setMinimumHeight(180);
+   paradeScopeWidget->setMode(ArtifactWidgets::ParadeMode::RGB);
+
+   previewLayout->addWidget(imageScrollArea, 1);
+   imagePreviewPage->setLayout(previewLayout);
+
+   imageTabs->addTab(imagePreviewPage, QStringLiteral("Preview"));
+   imageTabs->addTab(paradeScopeWidget, QStringLiteral("Parade"));
+   stackedWidget->addWidget(imageTabs);
+  }
+
+  void ArtifactContentsViewer::Impl::syncParadeScopeFrame()
+  {
+   if (!paradeScopeWidget) {
+    return;
+   }
+
+   const QPixmap currentPixmap = imageLabel && !imageLabel->pixmap().isNull()
+                                     ? imageLabel->pixmap()
+                                     : originalImage;
+   if (currentPixmap.isNull()) {
+    paradeScopeWidget->updateFrame(QImage());
+    return;
+   }
+   paradeScopeWidget->updateFrame(currentPixmap.toImage());
   }
 
   void ArtifactContentsViewer::Impl::ensureModelViewer()
@@ -1111,17 +1275,19 @@ namespace Artifact
     return;
    }
 
-  if (currentMode == ContentsViewerMode::Compare && comparePage) {
-   stackedWidget->setCurrentWidget(comparePage);
-   updateCompareSurface();
+   if (currentMode == ContentsViewerMode::Compare && comparePage) {
+    stackedWidget->setCurrentWidget(comparePage);
+    updateCompareSurface();
     updateCompareWipe();
-   return;
-  }
+    return;
+   }
 
    switch (currentFileType) {
    case ArtifactCore::FileType::Image:
-    if (imageScrollArea) {
-     stackedWidget->setCurrentWidget(imageScrollArea);
+    ensureImageWidgets();
+    if (imageTabs) {
+     stackedWidget->setCurrentWidget(imageTabs);
+     syncParadeScopeFrame();
     }
     break;
    case ArtifactCore::FileType::Video:
@@ -1166,9 +1332,14 @@ namespace Artifact
    rotationDegrees = 0.0;
    zoomLevel = 1.0;
    imageFitMode = true;
+   ensureImageWidgets();
+   if (imageTabs) {
+    imageTabs->setCurrentIndex(0);
+   }
    imageLabel->setPixmap(pixmap);
    imageLabel->setFixedSize(pixmap.size());
    imageScrollArea->setWidgetResizable(false);
+   syncParadeScopeFrame();
    updateDisplayedPage();
    fitImageToWindow();
    if (currentMode == ContentsViewerMode::Compare) {
@@ -1261,6 +1432,7 @@ namespace Artifact
 
    imageLabel->setPixmap(transformed);
    imageLabel->setFixedSize(transformed.size());
+   syncParadeScopeFrame();
    if (currentMode == ContentsViewerMode::Compare) {
     updateCompareSurface();
    }
@@ -2040,6 +2212,7 @@ namespace Artifact
      if (imageLabel && !originalImage.isNull()) {
       imageLabel->setPixmap(originalImage);
       imageLabel->setFixedSize(originalImage.size());
+      syncParadeScopeFrame();
      }
      if (imageScrollArea) {
       if (auto* hBar = imageScrollArea->horizontalScrollBar()) {
@@ -2251,25 +2424,6 @@ namespace Artifact
     updatePlaybackState();
    });
 
-   // Image Viewer Setup
-   imageScrollArea = new QScrollArea();
-   imageLabel = new QLabel();
-   imageLabel->setAlignment(Qt::AlignCenter);
-   imageLabel->setScaledContents(true); // Allow manual scaling via setFixedSize
-   
-   imageScrollArea->setWidget(imageLabel);
-   imageScrollArea->setWidgetResizable(false); // We want to control sizing based on zoom
-   imageScrollArea->setAlignment(Qt::AlignCenter);
-   imageScrollArea->viewport()->setMouseTracking(true);
-   imageLabel->setMouseTracking(true);
-   {
-    QPalette scrollPalette = imageScrollArea->palette();
-    scrollPalette.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
-    scrollPalette.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
-    imageScrollArea->setPalette(scrollPalette);
-   }
-   imageScrollArea->setAutoFillBackground(true);
-
    // Info/Message View Setup
    infoLabel = new QLabel();
    infoLabel->setAlignment(Qt::AlignCenter);
@@ -2283,7 +2437,6 @@ namespace Artifact
     infoLabel->setPalette(pal);
    }
 
-   stackedWidget->addWidget(imageScrollArea);
    stackedWidget->addWidget(infoLabel);
    ensureCompareWidgets();
    loadRecentSources();
@@ -2534,7 +2687,8 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
   void ArtifactContentsViewer::wheelEvent(QWheelEvent* event)
   {
       if (impl_->currentFileType == ArtifactCore::FileType::Image &&
-          impl_->stackedWidget->currentWidget() == impl_->imageScrollArea &&
+          impl_->stackedWidget->currentWidget() == impl_->imageTabs &&
+          impl_->imageTabs && impl_->imageTabs->currentIndex() == 0 &&
           !impl_->originalImage.isNull()) {
           const double scaleFactor = 1.15;
           if (event->angleDelta().y() > 0) {
@@ -2558,7 +2712,7 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
           if (impl_->currentMode == ContentsViewerMode::Compare) {
               impl_->fitImageToWindow();
               impl_->updateCompareSurface();
-          } else if (impl_->stackedWidget && impl_->stackedWidget->currentWidget() == impl_->imageScrollArea) {
+          } else if (impl_->stackedWidget && impl_->stackedWidget->currentWidget() == impl_->imageTabs) {
               impl_->fitImageToWindow();
           }
       }
@@ -2569,7 +2723,8 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
   {
       setFocus(Qt::MouseFocusReason);
       if (impl_->currentFileType == ArtifactCore::FileType::Image &&
-          impl_->stackedWidget->currentWidget() == impl_->imageScrollArea &&
+          impl_->stackedWidget->currentWidget() == impl_->imageTabs &&
+          impl_->imageTabs && impl_->imageTabs->currentIndex() == 0 &&
           (event->button() == Qt::LeftButton || event->button() == Qt::MiddleButton)) {
           impl_->lastMousePos = event->pos();
           setCursor(Qt::ClosedHandCursor);
@@ -2582,7 +2737,8 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
   void ArtifactContentsViewer::mouseMoveEvent(QMouseEvent* event)
   {
       if (impl_->currentFileType == ArtifactCore::FileType::Image &&
-          impl_->stackedWidget->currentWidget() == impl_->imageScrollArea &&
+          impl_->stackedWidget->currentWidget() == impl_->imageTabs &&
+          impl_->imageTabs && impl_->imageTabs->currentIndex() == 0 &&
           (event->buttons() & Qt::LeftButton || event->buttons() & Qt::MiddleButton)) {
           QPoint delta = event->pos() - impl_->lastMousePos;
           impl_->lastMousePos = event->pos();
@@ -2784,6 +2940,7 @@ void ArtifactContentsViewer::rotateLeft()
  const QPixmap rotated = impl_->originalImage.transformed(transform, Qt::SmoothTransformation);
  impl_->imageLabel->setPixmap(rotated);
  impl_->imageLabel->setFixedSize(rotated.size() * impl_->zoomLevel);
+ impl_->syncParadeScopeFrame();
  impl_->updateHeader();
  if (impl_->currentMode == ContentsViewerMode::Compare) {
   impl_->updateCompareSurface();
@@ -2803,6 +2960,7 @@ void ArtifactContentsViewer::rotateRight()
  const QPixmap rotated = impl_->originalImage.transformed(transform, Qt::SmoothTransformation);
  impl_->imageLabel->setPixmap(rotated);
  impl_->imageLabel->setFixedSize(rotated.size() * impl_->zoomLevel);
+ impl_->syncParadeScopeFrame();
  impl_->updateHeader();
  if (impl_->currentMode == ContentsViewerMode::Compare) {
   impl_->updateCompareSurface();
@@ -2820,6 +2978,7 @@ void ArtifactContentsViewer::resetView()
  impl_->imageFitMode = true;
  impl_->imageLabel->setPixmap(impl_->originalImage);
  impl_->imageLabel->setFixedSize(impl_->originalImage.size());
+ impl_->syncParadeScopeFrame();
  impl_->updateHeader();
  if (impl_->currentMode == ContentsViewerMode::Compare) {
   impl_->updateCompareSurface();

@@ -37,7 +37,7 @@ export module Artifact.Layer.Text;
 
 import Artifact.Layer.Abstract;
 import Utils.String.UniString;
-import FloatRGBA;
+import Color.Float;
 import Text.Style;
 import Artifact.Layers;
 
@@ -61,20 +61,20 @@ public:
     void setFontFamily(const UniString& family);
     UniString fontFamily() const;
 
-    void setTextColor(const FloatRGBA& color);
-    FloatRGBA textColor() const;
+    void setTextColor(const ArtifactCore::FloatColor& color);
+    ArtifactCore::FloatColor textColor() const;
 
     void setStrokeEnabled(bool enabled);
     bool isStrokeEnabled() const;
-    void setStrokeColor(const FloatRGBA& color);
-    FloatRGBA strokeColor() const;
+    void setStrokeColor(const ArtifactCore::FloatColor& color);
+    ArtifactCore::FloatColor strokeColor() const;
     void setStrokeWidth(float width);
     float strokeWidth() const;
 
     void setShadowEnabled(bool enabled);
     bool isShadowEnabled() const;
-    void setShadowColor(const FloatRGBA& color);
-    FloatRGBA shadowColor() const;
+    void setShadowColor(const ArtifactCore::FloatColor& color);
+    ArtifactCore::FloatColor shadowColor() const;
     void setShadowOffset(float x, float y);
     float shadowOffsetX() const;
     float shadowOffsetY() const;

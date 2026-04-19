@@ -35,6 +35,7 @@ public:
   void setContext(IDeviceContext *ctx);
   void setContext(IDeviceContext *ctx, ISwapChain *swapChain);
   void setOverrideRTV(ITextureView *rtv);
+  void setOverrideDSV(ITextureView *dsv);
   void destroy();
 
   void setViewMatrix(const QMatrix4x4 &view);

@@ -52,6 +52,18 @@ import Frame.Range;
 
 namespace Artifact {
 
+namespace {
+std::atomic<bool> g_renderSchedulerStartupWarmupComplete{false};
+}
+
+void setRenderSchedulerStartupWarmupComplete(bool ready) {
+    g_renderSchedulerStartupWarmupComplete.store(ready, std::memory_order_release);
+}
+
+bool isRenderSchedulerStartupWarmupComplete() {
+    return g_renderSchedulerStartupWarmupComplete.load(std::memory_order_acquire);
+}
+
 W_OBJECT_IMPL(RenderTask)
 W_OBJECT_IMPL(RenderScheduler)
 W_OBJECT_IMPL(BatchRenderer)
@@ -78,6 +90,7 @@ public:
     ParallelStrategy strategy_ = ParallelStrategy::Adaptive;
     bool adaptiveEnabled_ = true;
     int requestedThreadCount_ = 1;
+    bool requestedThreadCountExplicit_ = false;
     
     // Task queues
     std::vector<RenderTask*> pendingTasks_;
@@ -107,6 +120,9 @@ public:
     std::function<void(RenderTask*)> taskExecutor_;
 
     int defaultThreadCount() const {
+        if (!isRenderSchedulerStartupWarmupComplete()) {
+            return 1;
+        }
         const int ideal = QThread::idealThreadCount();
         if (ideal <= 1) {
             return 1;
@@ -115,11 +131,17 @@ public:
     }
 
     QThreadPool* ensureThreadPool() {
+        const bool explicitThreadCount = requestedThreadCountExplicit_;
+        const int desiredThreadCount =
+            explicitThreadCount ? requestedThreadCount_ : defaultThreadCount();
         if (!threadPool_) {
             threadPool_ = std::make_unique<QThreadPool>();
-            threadPool_->setMaxThreadCount(requestedThreadCount_ > 0
-                                               ? requestedThreadCount_
-                                               : defaultThreadCount());
+            threadPool_->setMaxThreadCount(desiredThreadCount);
+            requestedThreadCount_ = desiredThreadCount;
+        } else if (!explicitThreadCount &&
+                   threadPool_->maxThreadCount() != desiredThreadCount) {
+            threadPool_->setMaxThreadCount(desiredThreadCount);
+            requestedThreadCount_ = desiredThreadCount;
         }
         return threadPool_.get();
     }
@@ -157,7 +179,7 @@ public:
     }
     
     Impl()
-        : requestedThreadCount_(defaultThreadCount())
+        : requestedThreadCount_(1)
     {
     }
 
@@ -196,6 +218,7 @@ RenderScheduler::~RenderScheduler() = default;
 
 void RenderScheduler::setThreadCount(int count) {
     impl_->requestedThreadCount_ = std::max(1, count);
+    impl_->requestedThreadCountExplicit_ = true;
     if (auto* pool = impl_->ensureThreadPool()) {
         pool->setMaxThreadCount(impl_->requestedThreadCount_);
     }
@@ -204,6 +227,11 @@ void RenderScheduler::setThreadCount(int count) {
 int RenderScheduler::threadCount() const {
     if (impl_->threadPool_) {
         return impl_->threadPool_->maxThreadCount();
+    }
+    if (!impl_->requestedThreadCountExplicit_) {
+        return isRenderSchedulerStartupWarmupComplete()
+                   ? std::max(1, QThread::idealThreadCount() - 1)
+                   : 1;
     }
     return impl_->requestedThreadCount_;
 }

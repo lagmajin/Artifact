@@ -57,6 +57,9 @@ export namespace Artifact {
 
 using namespace ArtifactCore;
 
+void setRenderSchedulerStartupWarmupComplete(bool ready);
+bool isRenderSchedulerStartupWarmupComplete();
+
 /**
  * @brief Task priority levels
  */

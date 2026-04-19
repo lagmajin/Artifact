@@ -147,6 +147,7 @@ public:
     IDeviceContext* ctx_ = nullptr;
     ISwapChain* swapChain_ = nullptr;
     ITextureView* overrideRTV_ = nullptr;
+    ITextureView* overrideDSV_ = nullptr;
     RefCntAutoPtr<IRenderDevice> device_;
 
     RefCntAutoPtr<IShader> vs_;
@@ -203,6 +204,14 @@ public:
             return overrideRTV_;
         }
         return swapChain_ ? swapChain_->GetCurrentBackBufferRTV() : nullptr;
+    }
+
+    ITextureView* currentDSV() const
+    {
+        if (overrideDSV_) {
+            return overrideDSV_;
+        }
+        return swapChain_ ? swapChain_->GetDepthBufferDSV() : nullptr;
     }
 
     bool hasRenderTarget() const
@@ -343,6 +352,7 @@ public:
         auto& gp = psoCI.GraphicsPipeline;
         gp.NumRenderTargets = 1;
         gp.RTVFormats[0] = rtvFormat_;
+        gp.DSVFormat = TEX_FORMAT_D32_FLOAT;
         gp.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
         gp.RasterizerDesc.CullMode = CULL_MODE_NONE;
         gp.DepthStencilDesc.DepthEnable = False;
@@ -531,7 +541,8 @@ public:
             ctx_->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
 
             auto* rtv = currentRTV();
-            ctx_->SetRenderTargets(1, &rtv, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            auto* dsv = currentDSV();
+            ctx_->SetRenderTargets(1, &rtv, dsv, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
             ctx_->SetPipelineState(psoAndSrb.pPSO);
 
             IBuffer* buffers[] = { gizmoLineVertexBuffer_ };
@@ -840,7 +851,8 @@ public:
         ctx_->UnmapBuffer(constantBuffer_, MAP_WRITE);
 
         auto* rtv = currentRTV();
-        ctx_->SetRenderTargets(1, &rtv, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        auto* dsv = currentDSV();
+        ctx_->SetRenderTargets(1, &rtv, dsv, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         ctx_->SetPipelineState(pso_);
 
         if (auto* texVar = srb_->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture")) {
@@ -910,6 +922,11 @@ void PrimitiveRenderer3D::setOverrideRTV(ITextureView* rtv)
     impl_->overrideRTV_ = rtv;
 }
 
+void PrimitiveRenderer3D::setOverrideDSV(ITextureView* dsv)
+{
+    impl_->overrideDSV_ = dsv;
+}
+
 void PrimitiveRenderer3D::destroy()
 {
     impl_->textureCache_.clear();
@@ -933,6 +950,7 @@ void PrimitiveRenderer3D::destroy()
     impl_->ctx_ = nullptr;
     impl_->swapChain_ = nullptr;
     impl_->overrideRTV_ = nullptr;
+    impl_->overrideDSV_ = nullptr;
     impl_->device_ = nullptr;
 }
 

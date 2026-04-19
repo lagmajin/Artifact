@@ -2383,6 +2383,10 @@ namespace Artifact
                     job.startFrame = 0;
                     job.endFrame = 100;
                 }
+                // 音声ありコンポジションは音声統合レンダーをデフォルトで有効化
+                if (comp->hasAudio()) {
+                    job.integratedRenderEnabled = true;
+                }
             }
         }
 

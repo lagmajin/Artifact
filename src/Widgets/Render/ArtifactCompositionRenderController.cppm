@@ -917,10 +917,13 @@ void drawLayerForCompositionView(
   }
 
   if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
-    const QImage textImage = textLayer->toQImage();
-    if (!textImage.isNull()) {
-      applySurfaceAndDraw(textImage, localRect,
-                          hasRasterizerEffectsOrMasks(layer));
+    if (!hasRasterizerEffectsOrMasks(layer)) {
+      textLayer->draw(renderer);
+    } else {
+      const QImage textImage = textLayer->toQImage();
+      if (!textImage.isNull()) {
+        applySurfaceAndDraw(textImage, localRect, true);
+      }
     }
     return;
   }
@@ -2055,6 +2058,10 @@ void CompositionRenderController::setClearColor(const FloatColor &color) {
   }
   impl_->invalidateBaseComposite();
   renderOneFrame();
+}
+
+FloatColor CompositionRenderController::clearColor() const {
+  return impl_->viewportClearColor_;
 }
 
 void CompositionRenderController::setShowGrid(bool show) {
@@ -3887,66 +3894,68 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       layerPassMs = markPhaseMs();
     }
 
-    if (renderer_ && showMotionPathOverlay_ && comp &&
-        !selectedLayerId_.isNil()) {
-      ArtifactCore::ProfileScope _profMotion1(
-          "MotionPath1", ArtifactCore::ProfileCategory::Render);
-      if (auto selectedLayer = comp->layerById(selectedLayerId_)) {
-        const auto motionPath = buildMotionPathSamples(selectedLayer, comp);
-        QVector<MotionPathSample> keyframes;
-        keyframes.reserve(motionPath.size());
-        const MotionPathSample *currentSample = nullptr;
-        for (const auto &sample : motionPath) {
-          if (sample.kind == MotionPathSampleKind::Current) {
-            currentSample = &sample;
-          } else {
-            keyframes.push_back(sample);
-          }
-        }
-
-        auto samePoint = [](const QPointF &a, const QPointF &b) {
-          return qFuzzyCompare(a.x(), b.x()) && qFuzzyCompare(a.y(), b.y());
-        };
-
-        const bool currentMatchesKeyframe =
-            currentSample &&
-            std::any_of(keyframes.begin(), keyframes.end(),
-                        [&](const MotionPathSample &sample) {
-                          return samePoint(sample.position,
-                                           currentSample->position);
-                        });
-
-        const bool hasMotion = keyframes.size() >= 2 ||
-                               (currentSample != nullptr &&
-                                !keyframes.empty() && !currentMatchesKeyframe);
-
-        if (hasMotion) {
-          const FloatColor pathColor{0.95f, 0.65f, 0.22f, 0.85f};
-          const FloatColor keyColor{1.0f, 0.92f, 0.28f, 1.0f};
-          const FloatColor currentColor{0.28f, 0.9f, 1.0f, 1.0f};
-          QPointF prev = keyframes[0].position;
-          for (int i = 1; i < keyframes.size(); ++i) {
-            const QPointF cur = keyframes[i].position;
-            renderer_->drawSolidLine(
-                {static_cast<float>(prev.x()), static_cast<float>(prev.y())},
-                {static_cast<float>(cur.x()), static_cast<float>(cur.y())},
-                pathColor, 1.2f);
-            prev = cur;
-          }
-          for (const auto &sample : keyframes) {
-            renderer_->drawPoint(static_cast<float>(sample.position.x()),
-                                 static_cast<float>(sample.position.y()), 6.0f,
-                                 keyColor);
-          }
-          if (currentSample && !currentMatchesKeyframe) {
-            renderer_->drawPoint(
-                static_cast<float>(currentSample->position.x()),
-                static_cast<float>(currentSample->position.y()), 4.0f,
-                currentColor);
-          }
-        }
-      }
-    }
+    // Temporarily disable motion path overlay while debugging stray
+    // frame-like rectangles in the viewport.
+    // if (renderer_ && showMotionPathOverlay_ && comp &&
+    //     !selectedLayerId_.isNil()) {
+    //   ArtifactCore::ProfileScope _profMotion1(
+    //       "MotionPath1", ArtifactCore::ProfileCategory::Render);
+    //   if (auto selectedLayer = comp->layerById(selectedLayerId_)) {
+    //     const auto motionPath = buildMotionPathSamples(selectedLayer, comp);
+    //     QVector<MotionPathSample> keyframes;
+    //     keyframes.reserve(motionPath.size());
+    //     const MotionPathSample *currentSample = nullptr;
+    //     for (const auto &sample : motionPath) {
+    //       if (sample.kind == MotionPathSampleKind::Current) {
+    //         currentSample = &sample;
+    //       } else {
+    //         keyframes.push_back(sample);
+    //       }
+    //     }
+    //
+    //     auto samePoint = [](const QPointF &a, const QPointF &b) {
+    //       return qFuzzyCompare(a.x(), b.x()) && qFuzzyCompare(a.y(), b.y());
+    //     };
+    //
+    //     const bool currentMatchesKeyframe =
+    //         currentSample &&
+    //         std::any_of(keyframes.begin(), keyframes.end(),
+    //                     [&](const MotionPathSample &sample) {
+    //                       return samePoint(sample.position,
+    //                                        currentSample->position);
+    //                     });
+    //
+    //     const bool hasMotion = keyframes.size() >= 2 ||
+    //                            (currentSample != nullptr &&
+    //                             !keyframes.empty() && !currentMatchesKeyframe);
+    //
+    //     if (hasMotion) {
+    //       const FloatColor pathColor{0.95f, 0.65f, 0.22f, 0.85f};
+    //       const FloatColor keyColor{1.0f, 0.92f, 0.28f, 1.0f};
+    //       const FloatColor currentColor{0.28f, 0.9f, 1.0f, 1.0f};
+    //       QPointF prev = keyframes[0].position;
+    //       for (int i = 1; i < keyframes.size(); ++i) {
+    //         const QPointF cur = keyframes[i].position;
+    //         renderer_->drawSolidLine(
+    //             {static_cast<float>(prev.x()), static_cast<float>(prev.y())},
+    //             {static_cast<float>(cur.x()), static_cast<float>(cur.y())},
+    //             pathColor, 1.2f);
+    //         prev = cur;
+    //       }
+    //       for (const auto &sample : keyframes) {
+    //         renderer_->drawPoint(static_cast<float>(sample.position.x()),
+    //                              static_cast<float>(sample.position.y()), 6.0f,
+    //                              keyColor);
+    //       }
+    //       if (currentSample && !currentMatchesKeyframe) {
+    //         renderer_->drawPoint(
+    //             static_cast<float>(currentSample->position.x()),
+    //             static_cast<float>(currentSample->position.y()), 4.0f,
+    //             currentColor);
+    //       }
+    //     }
+    //   }
+    // }
 
     if (showGizmoOverlay_ && gizmo_) {
       ArtifactCore::ProfileScope _profGizmo(
@@ -4247,14 +4256,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             hasLastPos = true;
           }
           for (const auto &pt : motionPathCache_.keyPoints) {
-            renderer_->drawSolidRect(pt.x - dotRadius, pt.y - dotRadius,
-                                     dotRadius * 2, dotRadius * 2,
-                                     (pt.frame == currentFrameNum)
-                                         ? FloatColor{1.0f, 1.0f, 0.0f, 1.0f}
-                                         : FloatColor{1.0f, 1.0f, 1.0f, 1.0f});
-            renderer_->drawRectOutline(pt.x - dotRadius, pt.y - dotRadius,
-                                       dotRadius * 2, dotRadius * 2,
-                                       {0.0f, 0.0f, 0.0f, 1.0f});
+            // Temporarily disable square key markers in the viewport overlay.
+            // The motion path line remains, but the small frame-only squares were
+            // visually confusing during Shape Layer debugging.
+            // renderer_->drawSolidRect(pt.x - dotRadius, pt.y - dotRadius,
+            //                          dotRadius * 2, dotRadius * 2,
+            //                          (pt.frame == currentFrameNum)
+            //                              ? FloatColor{1.0f, 1.0f, 0.0f, 1.0f}
+            //                              : FloatColor{1.0f, 1.0f, 1.0f, 1.0f});
+            // renderer_->drawRectOutline(pt.x - dotRadius, pt.y - dotRadius,
+            //                            dotRadius * 2, dotRadius * 2,
+            //                            {0.0f, 0.0f, 0.0f, 1.0f});
           }
         }
       }
@@ -4416,12 +4428,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->resetGizmoCameraMatrices();
       renderer_->reset3DCameraMatrices();
       renderer_->setCanvasSize(cw, ch);
-      if (showCompositionRegionOverlay_) {
-        drawCompositionRegionOverlay(renderer_.get(), comp);
-      }
-      if (showCompositionRegionOverlay_) {
-        drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
-      }
+      // Temporarily disable composition-region and viewport-ghost overlays
+      // while debugging stray frame-like rectangles in the viewport.
+      // if (showCompositionRegionOverlay_) {
+      //   drawCompositionRegionOverlay(renderer_.get(), comp);
+      // }
+      // if (showCompositionRegionOverlay_) {
+      //   drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
+      // }
     }
     overlayMs = markPhaseMs();
 

@@ -13,6 +13,7 @@ module;
 #include <QLabel>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QCheckBox>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStringList>
@@ -52,6 +53,9 @@ namespace Artifact
   QSpinBox* heightSpin = nullptr;
   QDoubleSpinBox* fpsSpin = nullptr;
   QSpinBox* bitrateSpin = nullptr;
+  QCheckBox* includeAudioCheck = nullptr;
+  QComboBox* audioCodecCombo = nullptr;
+  QSpinBox* audioBitrateSpin = nullptr;
   QWidget* buttonRow = nullptr;
   QPushButton* okButton = nullptr;
   QPushButton* cancelButton = nullptr;
@@ -446,7 +450,33 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->bitrateSpin->setValue(8000);
     impl_->bitrateSpin->setSuffix(" kbps");
     formLayout->addRow("Bitrate:", impl_->bitrateSpin);
-    
+
+    // Audio settings
+    impl_->includeAudioCheck = new QCheckBox("Include audio in output");
+    formLayout->addRow("Audio:", impl_->includeAudioCheck);
+
+    impl_->audioCodecCombo = new QComboBox();
+    impl_->audioCodecCombo->addItems(QStringList{"AAC", "MP3", "FLAC", "Opus"});
+    formLayout->addRow("Audio Codec:", impl_->audioCodecCombo);
+
+    impl_->audioBitrateSpin = new QSpinBox();
+    impl_->audioBitrateSpin->setRange(32, 512);
+    impl_->audioBitrateSpin->setSingleStep(32);
+    impl_->audioBitrateSpin->setValue(128);
+    impl_->audioBitrateSpin->setSuffix(" kbps");
+    formLayout->addRow("Audio Bitrate:", impl_->audioBitrateSpin);
+
+    // Enable/disable audio codec and bitrate based on checkbox
+    const auto updateAudioEnabled = [this]() {
+        const bool on = impl_->includeAudioCheck->isChecked();
+        if (impl_->audioCodecCombo) impl_->audioCodecCombo->setEnabled(on);
+        if (impl_->audioBitrateSpin) impl_->audioBitrateSpin->setEnabled(on);
+    };
+    updateAudioEnabled();
+    QObject::connect(impl_->includeAudioCheck, &QCheckBox::toggled, [updateAudioEnabled](bool) {
+        updateAudioEnabled();
+    });
+
     // OK/Cancel buttons
     const DialogButtonRow buttons = createWindowsDialogButtonRow(this);
     impl_->buttonRow = buttons.widget;
@@ -697,6 +727,57 @@ QString ArtifactRenderOutputSettingDialog::renderBackend() const
  int ArtifactRenderOutputSettingDialog::bitrateKbps() const
  {
    return impl_->bitrateSpin ? impl_->bitrateSpin->value() : 8000;
+ }
+
+ void ArtifactRenderOutputSettingDialog::setIncludeAudio(bool include)
+ {
+   if (impl_->includeAudioCheck) {
+     const QSignalBlocker blocker(impl_->includeAudioCheck);
+     impl_->includeAudioCheck->setChecked(include);
+     if (impl_->audioCodecCombo) impl_->audioCodecCombo->setEnabled(include);
+     if (impl_->audioBitrateSpin) impl_->audioBitrateSpin->setEnabled(include);
+   }
+ }
+
+ bool ArtifactRenderOutputSettingDialog::includeAudio() const
+ {
+   return impl_->includeAudioCheck ? impl_->includeAudioCheck->isChecked() : false;
+ }
+
+ void ArtifactRenderOutputSettingDialog::setAudioCodec(const QString& codec)
+ {
+   if (!impl_->audioCodecCombo) return;
+   const QString lower = codec.trimmed().toLower();
+   QString display;
+   if (lower == QStringLiteral("aac") || lower.isEmpty()) display = QStringLiteral("AAC");
+   else if (lower == QStringLiteral("mp3")) display = QStringLiteral("MP3");
+   else if (lower == QStringLiteral("flac")) display = QStringLiteral("FLAC");
+   else if (lower == QStringLiteral("opus")) display = QStringLiteral("Opus");
+   else display = codec;
+   const int idx = impl_->audioCodecCombo->findText(display);
+   impl_->audioCodecCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+ }
+
+ QString ArtifactRenderOutputSettingDialog::audioCodec() const
+ {
+   if (!impl_->audioCodecCombo) return QStringLiteral("aac");
+   const QString text = impl_->audioCodecCombo->currentText().toLower();
+   if (text == QStringLiteral("mp3")) return QStringLiteral("mp3");
+   if (text == QStringLiteral("flac")) return QStringLiteral("flac");
+   if (text == QStringLiteral("opus")) return QStringLiteral("opus");
+   return QStringLiteral("aac");
+ }
+
+ void ArtifactRenderOutputSettingDialog::setAudioBitrateKbps(int bitrateKbps)
+ {
+   if (impl_->audioBitrateSpin) {
+     impl_->audioBitrateSpin->setValue(std::max(32, bitrateKbps));
+   }
+ }
+
+ int ArtifactRenderOutputSettingDialog::audioBitrateKbps() const
+ {
+   return impl_->audioBitrateSpin ? impl_->audioBitrateSpin->value() : 128;
  }
 
 };

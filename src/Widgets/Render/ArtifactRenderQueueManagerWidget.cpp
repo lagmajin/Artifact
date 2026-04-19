@@ -388,13 +388,18 @@ namespace Artifact
       service->jobOutputSettingsAt(index, &outputFormat, &codec, &codecProfile, &width, &height, &fps, &bitrateKbps);
       const QString renderBackend = service->jobRenderBackendAt(index);
       const QString encoderBackend = service->jobEncoderBackendAt(index);
+      const bool audioEnabled = service->jobIntegratedRenderEnabledAt(index);
+      const QString audioInfo = audioEnabled
+          ? QStringLiteral(" | Audio: %1@%2kbps").arg(service->jobAudioCodecAt(index)).arg(service->jobAudioBitrateKbpsAt(index))
+          : QStringLiteral(" | Audio: off");
       outputSettingsSummaryLabel->setText(
-          QString("Format: %1 | Codec: %2%3 | Encode: %4 | Render: %5")
+          QString("Format: %1 | Codec: %2%3 | Encode: %4 | Render: %5%6")
               .arg(outputFormat.isEmpty() ? QStringLiteral("MP4") : outputFormat)
               .arg(codec.isEmpty() ? QStringLiteral("H.264") : codec)
               .arg(codecProfile.trimmed().isEmpty() ? QString() : QStringLiteral(" (%1)").arg(codecProfile))
               .arg(encoderBackend)
-              .arg(renderBackend));
+              .arg(renderBackend)
+              .arg(audioInfo));
     }
 
     int startFrame = 0;
@@ -608,6 +613,9 @@ namespace Artifact
     dialog.setResolution(width, height);
     dialog.setFrameRate(fps);
     dialog.setBitrateKbps(bitrateKbps);
+    dialog.setIncludeAudio(impl_->service->jobIntegratedRenderEnabledAt(index));
+    dialog.setAudioCodec(impl_->service->jobAudioCodecAt(index));
+    dialog.setAudioBitrateKbps(impl_->service->jobAudioBitrateKbpsAt(index));
 
     if (dialog.exec() == QDialog::Accepted) {
       impl_->service->setJobOutputPathAt(index, dialog.outputPath());
@@ -622,6 +630,9 @@ namespace Artifact
           dialog.bitrateKbps());
       impl_->service->setJobEncoderBackendAt(index, dialog.encoderBackend());
       impl_->service->setJobRenderBackendAt(index, dialog.renderBackend());
+      impl_->service->setJobIntegratedRenderEnabledAt(index, dialog.includeAudio());
+      impl_->service->setJobAudioCodecAt(index, dialog.audioCodec());
+      impl_->service->setJobAudioBitrateKbpsAt(index, dialog.audioBitrateKbps());
       impl_->syncJobsFromService();
       impl_->syncDetailEditorsFromJob(index);
     }

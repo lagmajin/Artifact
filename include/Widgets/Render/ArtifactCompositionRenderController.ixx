@@ -62,9 +62,10 @@ void finishViewportInteraction();
 
   void setComposition(ArtifactCompositionPtr composition);
   ArtifactCompositionPtr composition() const;
-void setSelectedLayerId(const LayerID& id);
+  void setSelectedLayerId(const LayerID& id);
 LayerID selectedLayerId() const;
 void setClearColor(const FloatColor& color);
+FloatColor clearColor() const;
 void setCompositionBackgroundMode(CompositionBackgroundMode mode);
 CompositionBackgroundMode compositionBackgroundMode() const;
 
