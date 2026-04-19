@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
@@ -40,6 +40,7 @@ public:
     void clear(IDeviceContext* ctx, const FloatColor& color);
 
     void setViewportSize(float w, float h);
+    void setDevicePixelRatio(float dpr);
     void setCanvasSize(float w, float h);
     void setPan(float x, float y);
     void getPan(float& x, float& y) const;
@@ -83,12 +84,17 @@ public:
     void drawGrid(float x, float y, float w, float h, float spacing, float thickness, const FloatColor& color);
     void drawSpriteLocal(float x, float y, float w, float h, const QImage& image, float opacity = 1.0f);
     void drawText(const QRectF& rect, const QString& text, const QFont& font,
-                  const FloatColor& color, Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignTop,
-                  float opacity = 1.0f);
+                  const FloatColor& color,
+                  Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignTop,
+                  float opacity = 1.0f,
+                  const FloatColor& outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
+                  float outlineThickness = 0.0f);
     void drawTextTransformed(const QRectF& rect, const QString& text, const QFont& font,
                              const FloatColor& color, const QMatrix4x4& transform,
                              Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignTop,
-                             float opacity = 1.0f);
+                             float opacity = 1.0f,
+                             const FloatColor& outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
+                             float outlineThickness = 0.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity = 1.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity = 1.0f);
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* texture, float opacity = 1.0f);

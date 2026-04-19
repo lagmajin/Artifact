@@ -159,6 +159,7 @@ namespace Artifact {
     renderer_->recreateSwapChain(widget_);
     renderer_->setViewportSize(static_cast<float>(pendingSize.width()),
                                static_cast<float>(pendingSize.height()));
+    renderer_->setDevicePixelRatio(static_cast<float>(widget_->devicePixelRatioF()));
     requestRender();
    });
    wheelRenderTimer_ = new QTimer(widget_);
@@ -386,8 +387,9 @@ namespace Artifact {
     const float cw  = static_cast<float>(size.width());
     const float ch  = static_cast<float>(size.height());
     const float dpr = static_cast<float>(devicePixelRatioF());
-    const float panX = (width()  * dpr - cw) * 0.5f;
-    const float panY = (height() * dpr - ch) * 0.5f;
+    const float panX = (width()  - cw) * 0.5f;
+    const float panY = (height() - ch) * 0.5f;
+    impl_->renderer_->setDevicePixelRatio(dpr);
     impl_->renderer_->setPan(panX, panY);
    }
    impl_->requestRender();
@@ -417,6 +419,7 @@ namespace Artifact {
     }
     impl_->initialize(this);
     impl_->renderer_->setViewportSize((float)width(), (float)height());
+    impl_->renderer_->setDevicePixelRatio((float)devicePixelRatioF());
 
     connect(ArtifactApplicationManager::instance()->layerSelectionManager(), &ArtifactLayerSelectionManager::selectionChanged, this, [this]() {
      auto* selection = ArtifactApplicationManager::instance()->layerSelectionManager();

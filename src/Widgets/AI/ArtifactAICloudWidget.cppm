@@ -1313,6 +1313,12 @@ Artifact::ArtifactAICloudWidget::ArtifactAICloudWidget(QWidget *parent)
   transcriptScrollArea_->setFrameShape(QFrame::StyledPanel);
   transcriptScrollArea_->setFrameShadow(QFrame::Plain);
   transcriptContent_ = new QWidget(transcriptScrollArea_);
+  transcriptContent_->setAutoFillBackground(true);
+  {
+    QPalette tp = transcriptContent_->palette();
+    tp.setColor(QPalette::Window, palette().color(QPalette::Window));
+    transcriptContent_->setPalette(tp);
+  }
   transcriptLayout_ = new QVBoxLayout(transcriptContent_);
   transcriptLayout_->setContentsMargins(8, 8, 8, 8);
   transcriptLayout_->setSpacing(8);

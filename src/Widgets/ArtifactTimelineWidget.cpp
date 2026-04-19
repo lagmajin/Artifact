@@ -1478,18 +1478,12 @@ public:
       : QWidget(parent), trackView_(trackView)
   {
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
-    setAttribute(Qt::WA_NoSystemBackground, true);
   }
 
   protected:
-  void paintEvent(QPaintEvent *event) override
+  void paintEvent(QPaintEvent * /*event*/) override
   {
     QPainter p(this);
-    // Clear the dirty region first so stale pixels from the previous playhead
-    // position don't persist (WA_NoSystemBackground prevents auto-clearing).
-    p.setCompositionMode(QPainter::CompositionMode_Clear);
-    p.fillRect(event->rect(), Qt::transparent);
-    p.setCompositionMode(QPainter::CompositionMode_SourceOver);
 
     if (!trackView_) {
       return;
@@ -3528,11 +3522,9 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
   }
   impl_->playheadOverlay_->raise();
 
-  // Updating only the overlay would leave stale pixels in the backing store
-  // because WA_NoSystemBackground prevents Qt from clearing the overlay region
-  // before paintEvent.  By updating the parent widget instead, Qt re-composites
-  // the full z-stack in that region (parent → siblings → overlay), so old
-  // playhead pixels are overwritten before the overlay draws the new position.
+  // Update the parent strip so Qt re-composites the full z-stack in that region
+  // (parent → track view → overlay).  The opaque track view paints over the old
+  // playhead ghost before the overlay draws the new position on top.
   QWidget *parent = impl_->playheadOverlay_->parentWidget();
   if (parent && impl_->painterTrackView_) {
     const double ppf    = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
