@@ -67,10 +67,27 @@ public:
 
     // レイヤー変更イベントの購読
     subscriptions_.push_back(bus.subscribe<LayerChangedEvent>([this](const LayerChangedEvent &event) {
-      if (CompositionID(Id(event.compositionId)) == currentCompositionId_) {
-        owner_->beginResetModel();
-        owner_->endResetModel();
+      if (CompositionID(Id(event.compositionId)) != currentCompositionId_)
+        return;
+      if (event.changeType == LayerChangedEvent::ChangeType::Modified) {
+        // Property-only change: emit dataChanged for the affected row only.
+        // This updates name/visibility icons without resetting the model (which clears selection).
+        auto comp = currentComposition();
+        if (!comp) return;
+        const LayerID lid(event.layerId);
+        auto layer = comp->layerById(lid);
+        if (!layer) return;
+
+        const QModelIndex idx = layerModelIndex(layer);
+        if (!idx.isValid()) return;
+        const QModelIndex left  = idx.sibling(idx.row(), 0);
+        const QModelIndex right = idx.sibling(idx.row(), owner_->columnCount({}) - 1);
+        emit owner_->dataChanged(left, right);
+        return;
       }
+      // Structural change (Created/Removed): full model reset
+      owner_->beginResetModel();
+      owner_->endResetModel();
     }));
   }
 
@@ -95,6 +112,36 @@ public:
       }
     }
     return result;
+  }
+
+  // Returns the QModelIndex for any layer (root or child).
+  QModelIndex layerModelIndex(const ArtifactAbstractLayerPtr &layer) const {
+    if (!layer) return {};
+    const auto parentId = layer->parentLayerId();
+    if (parentId.isNil()) {
+      // Root layer: row is its index in the root list
+      auto roots = rootLayers();
+      for (int row = 0; row < (int)roots.size(); ++row) {
+        if (roots[row]->id() == layer->id()) {
+          return owner_->createIndex(row, 0, layer.get());
+        }
+      }
+    } else {
+      // Child layer: row is its index within the parent group's children
+      auto comp = currentComposition();
+      if (!comp) return {};
+      auto parentLayer = comp->layerById(parentId);
+      if (!parentLayer || !parentLayer->isGroupLayer()) return {};
+      auto *group = dynamic_cast<ArtifactGroupLayer *>(parentLayer.get());
+      if (!group) return {};
+      const auto &children = group->children();
+      for (int row = 0; row < (int)children.size(); ++row) {
+        if (children[row] && children[row]->id() == layer->id()) {
+          return owner_->createIndex(row, 0, layer.get());
+        }
+      }
+    }
+    return {};
   }
 };
 
