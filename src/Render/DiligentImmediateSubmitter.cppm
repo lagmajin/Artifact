@@ -507,7 +507,7 @@ void DiligentImmediateSubmitter::submitDotLine(const DotLinePkt& p, IDeviceConte
 void DiligentImmediateSubmitter::submitSolidTri(const SolidTriPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
     if (!pRTV || !m_draw_solid_triangle_pso_and_srb.pPSO) return;
-    if (!m_draw_solid_triangle_vertex_buffer || !m_draw_solid_rect_cb || !m_draw_solid_rect_trnsform_cb) return;
+    if (!m_draw_solid_triangle_vertex_buffer || !m_draw_solid_rect_trnsform_cb) return;
 
     RectVertex vertices[3] = {
         { p.p0, p.color }, { p.p1, p.color }, { p.p2, p.color },
@@ -515,14 +515,12 @@ void DiligentImmediateSubmitter::submitSolidTri(const SolidTriPkt& p, IDeviceCon
     ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_solid_triangle_vertex_buffer, vertices, sizeof(vertices));
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,       &p.xform, sizeof(p.xform));
-    mapWriteDiscard(ctx, m_draw_solid_rect_cb,                &p.color, sizeof(p.color));
 
     ctx->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
     IBuffer* pBufs[] = { m_draw_solid_triangle_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-    m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL,  "ColorBuffer")->Set(m_draw_solid_rect_cb);
     ctx->CommitShaderResources(m_draw_solid_triangle_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawAttribs drawAttrs;
     drawAttrs.NumVertices = 3;
@@ -533,7 +531,7 @@ void DiligentImmediateSubmitter::submitSolidTri(const SolidTriPkt& p, IDeviceCon
 void DiligentImmediateSubmitter::submitSolidCircle(const SolidCirclePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
     if (!pRTV || !m_draw_solid_triangle_pso_and_srb.pPSO) return;
-    if (!m_draw_solid_circle_vertex_buffer || !m_draw_solid_rect_cb || !m_draw_solid_rect_trnsform_cb) return;
+    if (!m_draw_solid_circle_vertex_buffer || !m_draw_solid_rect_trnsform_cb) return;
 
     constexpr int segments   = 32;
     const int     vertexCount = segments * 3;
@@ -551,14 +549,12 @@ void DiligentImmediateSubmitter::submitSolidCircle(const SolidCirclePkt& p, IDev
     ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_solid_circle_vertex_buffer, vertices.data(), sizeof(RectVertex) * vertexCount);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,     &p.xform,        sizeof(p.xform));
-    mapWriteDiscard(ctx, m_draw_solid_rect_cb,              &p.color,        sizeof(p.color));
 
     ctx->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
     IBuffer* pBufs[] = { m_draw_solid_circle_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-    m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL,  "ColorBuffer")->Set(m_draw_solid_rect_cb);
     ctx->CommitShaderResources(m_draw_solid_triangle_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawAttribs drawAttrs;
     drawAttrs.NumVertices = static_cast<Uint32>(vertexCount);

@@ -361,6 +361,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   CDockManager::setConfigFlag(CDockManager::FocusHighlighting, false);
   CDockManager::setConfigFlag(CDockManager::TabCloseButtonIsToolButton, true);
   CDockManager::setConfigFlag(CDockManager::AllTabsHaveCloseButton, true);
+  CDockManager::setConfigFlag(CDockManager::AlwaysShowTabs, true);
 
   QTimer::singleShot(0, this, [this]() {
     if (!impl_ || impl_->menuBarInitialized)
