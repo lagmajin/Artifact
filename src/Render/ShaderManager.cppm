@@ -541,10 +541,19 @@ void ShaderManager::Impl::createLineFamilyPSOs()
         solidRectTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidRectTransformPsoAndSrb_.pSRB, true);
     }
 
+    // SolidTriangle PSO uses thickLine shaders (pos+color per vertex) so that canvas-space
+    // vertex positions are not misinterpreted as UV [0,1] by the edge-antialias PS logic.
+    static const ShaderResourceVariableDesc triVars[] = {
+        { SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC }
+    };
     GraphicsPipelineStateCreateInfo triangleInfo = solidInfo;
     triangleInfo.PSODesc.Name = "DrawSolidTriangle PSO";
     triangleInfo.pPSOCache = psoCache_.RawPtr();
+    triangleInfo.pVS = thickLineShaders_.VS;
+    triangleInfo.pPS = thickLineShaders_.PS;
     triangleInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    triangleInfo.PSODesc.ResourceLayout.Variables    = triVars;
+    triangleInfo.PSODesc.ResourceLayout.NumVariables = _countof(triVars);
     device_->CreateGraphicsPipelineState(triangleInfo, &solidTrianglePsoAndSrb_.pPSO);
     if (solidTrianglePsoAndSrb_.pPSO) {
         solidTrianglePsoAndSrb_.pPSO->CreateShaderResourceBinding(&solidTrianglePsoAndSrb_.pSRB, true);
