@@ -360,7 +360,9 @@ namespace {
                 float spacing, float thickness, const FloatColor& color)
   { primitiveRenderer_.drawGrid(x, y, w, h, spacing, thickness, color); }
 
-  void drawParticles(const Artifact::ParticleRenderData& data) {
+  void drawParticles(const ArtifactCore::ParticleRenderData& data) {
+    if (data.particles.empty()) return;
+
     if (!particleRenderer_) {
       if (!deviceManager_.device()) return;
       // Lazy initialization of particle renderer
@@ -369,12 +371,27 @@ namespace {
       }
       particleRenderer_ = std::make_unique<ArtifactCore::ParticleRenderer>(*gpuContext_);
       particleRenderer_->initialize(100000); // Support up to 100k particles
+      qDebug() << "[ParticleRenderer] Initialized (max 100k particles)";
     }
 
     auto ctx = deviceManager_.immediateContext();
     if (!ctx) return;
 
     if (m_viewportWidth <= 0.0f || m_viewportHeight <= 0.0f) return;
+
+    // Flush any pending primitive draw calls before issuing direct GPU draw calls.
+    // This ensures draw ordering is preserved (background/underlays are rendered first).
+    submitter_.submit(cmdBuf_, ctx);
+
+    // Re-bind the render target. clear() leaves the device context with no color RT
+    // (it calls SetRenderTargets(0, nullptr, dsv, ...) to clear depth). Every direct
+    // Diligent draw that bypasses the submitter must re-set the RT explicitly.
+    auto* pRTV = primitiveRenderer_.currentRTV();
+    if (!pRTV) {
+      qWarning() << "[ParticleRenderer] No active RTV — skipping particle draw";
+      return;
+    }
+    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     // Build an orthographic View + Projection that replicates PrimitiveRenderer2D's
     // internal pan/zoom/viewport transform.
@@ -388,6 +405,10 @@ namespace {
     float panX = 0.0f, panY = 0.0f;
     primitiveRenderer_.getPan(panX, panY);
     const float zoom = primitiveRenderer_.getZoom();
+
+    qDebug() << "[ParticleRenderer] Drawing" << data.particles.size()
+             << "particles zoom=" << zoom << "pan=(" << panX << "," << panY << ")"
+             << "viewport=(" << m_viewportWidth << "x" << m_viewportHeight << ")";
 
     // View: canvas space → viewport pixel space  (translate then scale)
     QMatrix4x4 view;
@@ -1322,6 +1343,7 @@ namespace {
  bool ArtifactIRenderer::isChannelEnabled(ArtifactIRenderer::ChannelType channel) const { return impl_->isChannelEnabled(channel); }
  FloatColor ArtifactIRenderer::getClearColor() const { return impl_->getClearColor(); }
  void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
+ void ArtifactIRenderer::setDevicePixelRatio(float dpr) { impl_->primitiveRenderer_.setDevicePixelRatio(dpr); }
  void ArtifactIRenderer::setCanvasSize(float w, float h)        { impl_->setCanvasSize(w, h); }
  void ArtifactIRenderer::setPan(float x, float y)               { impl_->setPan(x, y); }
  void ArtifactIRenderer::getPan(float& x, float& y) const       { impl_->getPan(x, y); }
@@ -1461,7 +1483,7 @@ void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h,
 void ArtifactIRenderer::drawGrid(float x, float y, float w, float h,
                                  float spacing, float thickness, const FloatColor& color)
 { impl_->drawGrid(x, y, w, h, spacing, thickness, color); }
-void ArtifactIRenderer::drawParticles(const Artifact::ParticleRenderData& data) { impl_->drawParticles(data); }
+void ArtifactIRenderer::drawParticles(const ArtifactCore::ParticleRenderData& data) { impl_->drawParticles(data); }
 void ArtifactIRenderer::drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
 { impl_->primitiveRenderer3D_.draw3DLine({start.x, start.y, start.z}, {end.x, end.y, end.z}, color, thickness); }
 void ArtifactIRenderer::drawGizmoArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size)
