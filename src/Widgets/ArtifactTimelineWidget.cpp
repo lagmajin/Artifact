@@ -1484,7 +1484,13 @@ public:
   protected:
   void paintEvent(QPaintEvent *event) override
   {
-    Q_UNUSED(event);
+    QPainter p(this);
+    // Clear the dirty region first so stale pixels from the previous playhead
+    // position don't persist (WA_NoSystemBackground prevents auto-clearing).
+    p.setCompositionMode(QPainter::CompositionMode_Clear);
+    p.fillRect(event->rect(), Qt::transparent);
+    p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+
     if (!trackView_) {
       return;
     }
@@ -1497,7 +1503,6 @@ public:
       return;
     }
 
-    QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
 
     const QColor playheadColor(255, 106, 71);
