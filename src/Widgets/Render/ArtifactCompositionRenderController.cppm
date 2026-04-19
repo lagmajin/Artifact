@@ -3268,7 +3268,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   for (const auto &l : layers) {
     auto layerCopy = l;
     if (auto cam = dynamic_cast<ArtifactCameraLayer *>(layerCopy.get())) {
-      if (isLayerEffectivelyVisible(cam) && cam->isActiveAt(currentFrame)) {
+      if (isLayerEffectivelyVisible(layerCopy) && cam->isActiveAt(currentFrame)) {
         activeCamera = cam;
         break; // Use first visible camera
       }
@@ -4779,7 +4779,7 @@ void CompositionRenderController::Impl::drawGpuTextDebugOverlay() {
                              FloatColor(0.85f, 0.72f, 0.28f, 1.0f));
 
   QFont font = QApplication::font();
-  font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
+  font.setPointSizeF(std::max(14.0, static_cast<double>(font.pointSizeF())));
 
   QMatrix4x4 textMat;
   textMat.setToIdentity();

@@ -398,12 +398,17 @@ void PrimitiveRenderer2D::drawThickLineLocal(float2 p1, float2 p2, float thickne
 {
     if (thickness <= 0.0f) return;
 
+    // Clamp to at least 1 screen pixel so lines remain visible when zoomed out.
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const float effectiveThickness = std::max(thickness, 1.0f / zoom);
+
     float2 d   = { p2.x - p1.x, p2.y - p1.y };
     float  len = std::sqrt(d.x * d.x + d.y * d.y);
     if (len < 1e-5f) return;
 
     float2 nd   = { d.x / len, d.y / len };
-    float  half = thickness * 0.5f;
+    float  half = effectiveThickness * 0.5f;
     float2 n    = { -nd.y * half, nd.x * half };
 
     drawQuadLocal({ p1.x + n.x, p1.y + n.y },
@@ -599,12 +604,17 @@ void PrimitiveRenderer2D::drawGrid(float x, float y, float w, float h,
     const auto viewportCB = impl_->viewport_.GetViewportCB();
     const float zoom = std::max(viewportCB.zoom, 0.001f);
 
+    // Grid thickness must cover at least 1 screen pixel at the current zoom.
+    const float effectiveThickness = std::max(thickness, 1.0f / zoom);
+
     GridPkt pkt;
     pkt.xform.offset     = { x * zoom + viewportCB.offset.x, y * zoom + viewportCB.offset.y };
     pkt.xform.scale      = { w * zoom, h * zoom };
     pkt.xform.screenSize = viewportCB.screenSize;
     pkt.helper.param0    = spacing;
-    pkt.helper.param1    = thickness;
+    pkt.helper.param1    = effectiveThickness;
+    pkt.helper._pad[0]   = w;   // canvasSize.x (composition width)
+    pkt.helper._pad[1]   = h;   // canvasSize.y (composition height)
     pkt.helper.color1    = { color.r(), color.g(), color.b(), 1.0f };
     pkt.helper.color2    = {};
     pkt.baseColor        = { color.r(), color.g(), color.b(), 1.0f };
