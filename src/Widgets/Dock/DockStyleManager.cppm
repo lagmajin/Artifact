@@ -18,6 +18,7 @@ module;
 
 module Widgets.Dock.StyleManager;
 
+import Application.AppSettings;
 import Widgets.Dock.GlowStyle;
 import Widgets.Utils.CSS;
 
@@ -163,7 +164,8 @@ void applyTabLabelColors(ads::CDockWidgetTab* tab,
         label->setPalette(pal);
         auto font = label->font();
         font.setBold(emphasize);
-        font.setPointSize(16);
+        const auto* settings = ArtifactCore::ArtifactAppSettings::instance();
+        font.setPointSize(settings ? settings->dockTabFontPointSize() : 16);
         label->setFont(font);
     }
 

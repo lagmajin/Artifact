@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <QDebug>
 #include <QPointF>
@@ -140,6 +140,10 @@ public:
   // Time remap
   std::unique_ptr<ArtifactCore::TimeRemapEffect> timeRemapEffect_;
 
+  // Variants
+  std::vector<std::unique_ptr<LayerVariant>> variants_;
+  size_t activeVariantIndex_ = 0;
+
 public:
   Impl();
   ~Impl();
@@ -192,6 +196,8 @@ bool ArtifactAbstractLayer::Impl::is3D() const { return is3D_; }
 
 ArtifactAbstractLayer::ArtifactAbstractLayer() : impl_(new Impl()) {
   impl_->id = Id(); // Generate new ID
+  impl_->variants_.push_back(std::make_unique<LayerVariant>(this, "A"));
+  impl_->activeVariantIndex_ = 0;
 }
 
 ArtifactAbstractLayer::~ArtifactAbstractLayer() { delete impl_; }
@@ -209,10 +215,26 @@ void ArtifactAbstractLayer::Show() { setVisible(true); }
 void ArtifactAbstractLayer::Hide() { setVisible(false); }
 
 LAYER_BLEND_TYPE ArtifactAbstractLayer::layerBlendType() const {
+  const auto* var = getActiveVariant();
+  if (var && HasFlag(var->overrideFlags_, VariantOverrideFlags::BlendMode) && var->blendModeOverride.has_value()) {
+      return var->blendModeOverride.value();
+  }
   return impl_->blendMode_;
 }
 
 void ArtifactAbstractLayer::setBlendMode(LAYER_BLEND_TYPE type) {
+  if (impl_->activeVariantIndex_ != 0) {
+      auto* var = getActiveVariant();
+      if (var) {
+          var->blendModeOverride = type;
+          SetFlag(var->overrideFlags_, VariantOverrideFlags::BlendMode);
+          setDirty(LayerDirtyFlag::Effect);
+          addDirtyReason(LayerDirtyReason::PropertyChanged);
+          Q_EMIT changed();
+          return;
+      }
+  }
+
   if (impl_->blendMode_ == type) {
     return;
   }
@@ -369,6 +391,109 @@ void ArtifactAbstractLayer::clearDirtyReasons() {
   impl_->dirtyReasonMask_ = static_cast<uint64_t>(LayerDirtyReason::None);
 }
 
+// ============================================================================
+// Variants Management
+// ============================================================================
+
+size_t ArtifactAbstractLayer::getActiveVariantIndex() const {
+    return impl_->activeVariantIndex_;
+}
+
+void ArtifactAbstractLayer::setActiveVariant(size_t index) {
+    if (index < impl_->variants_.size() && impl_->activeVariantIndex_ != index) {
+        impl_->activeVariantIndex_ = index;
+        notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
+    }
+}
+
+LayerVariant* ArtifactAbstractLayer::getActiveVariant() const {
+    if (impl_->activeVariantIndex_ < impl_->variants_.size()) {
+        return impl_->variants_[impl_->activeVariantIndex_].get();
+    }
+    return nullptr;
+}
+
+LayerVariant* ArtifactAbstractLayer::createVariantFromCurrent(const std::string& newName) {
+    auto newVariant = std::make_unique<LayerVariant>(this, newName);
+    
+    if (impl_->activeVariantIndex_ < impl_->variants_.size()) {
+        auto* current = impl_->variants_[impl_->activeVariantIndex_].get();
+        newVariant->overrideFlags_ = current->overrideFlags_;
+        newVariant->transform2DOverride = current->transform2DOverride;
+        newVariant->transform3DOverride = current->transform3DOverride;
+        newVariant->opacityOverride = current->opacityOverride;
+        newVariant->blendModeOverride = current->blendModeOverride;
+    }
+    
+    impl_->variants_.push_back(std::move(newVariant));
+    notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
+    return impl_->variants_.back().get();
+}
+
+void ArtifactAbstractLayer::resetVariantOverride(VariantOverrideFlags specificFlag) {
+    if (impl_->activeVariantIndex_ == 0) return; // Base (A) はリセット不可
+
+    auto* var = getActiveVariant();
+    if (!var) return;
+
+    if (specificFlag == VariantOverrideFlags::None) {
+        var->overrideFlags_ = VariantOverrideFlags::None;
+        var->transform2DOverride.reset();
+        var->transform3DOverride.reset();
+        var->opacityOverride.reset();
+        var->blendModeOverride.reset();
+    } else {
+        ClearFlag(var->overrideFlags_, specificFlag);
+        
+        if (HasFlag(specificFlag, VariantOverrideFlags::Transform)) {
+            var->transform2DOverride.reset();
+            var->transform3DOverride.reset();
+        }
+        if (HasFlag(specificFlag, VariantOverrideFlags::Opacity)) {
+            var->opacityOverride.reset();
+        }
+        if (HasFlag(specificFlag, VariantOverrideFlags::BlendMode)) {
+            var->blendModeOverride.reset();
+        }
+    }
+    
+    notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
+}
+
+std::vector<LayerVariant*> ArtifactAbstractLayer::getVariants() const {
+    std::vector<LayerVariant*> result;
+    result.reserve(impl_->variants_.size());
+    for(auto& v : impl_->variants_) {
+        result.push_back(v.get());
+    }
+    return result;
+}
+
+std::unique_ptr<LayerVariant> ArtifactAbstractLayer::extractVariant(size_t index) {
+    if (index < impl_->variants_.size()) {
+       auto var = std::move(impl_->variants_[index]);
+       impl_->variants_.erase(impl_->variants_.begin() + index);
+       if (impl_->activeVariantIndex_ >= impl_->variants_.size()) {
+           impl_->activeVariantIndex_ = impl_->variants_.empty() ? 0 : impl_->variants_.size() - 1;
+       } else if (impl_->activeVariantIndex_ >= index && impl_->activeVariantIndex_ > 0) {
+           impl_->activeVariantIndex_--;
+       }
+       notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
+       return var;
+    }
+    return nullptr;
+}
+
+void ArtifactAbstractLayer::insertVariant(size_t index, std::unique_ptr<LayerVariant> variant) {
+    if (!variant) return;
+    if (index > impl_->variants_.size()) index = impl_->variants_.size();
+    impl_->variants_.insert(impl_->variants_.begin() + index, std::move(variant));
+    if (impl_->activeVariantIndex_ >= index) {
+        impl_->activeVariantIndex_++;
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
+}
+
 void ArtifactAbstractLayer::setComposition(void *comp) {
   impl_->composition_ = static_cast<ArtifactAbstractComposition *>(comp);
 }
@@ -384,8 +509,12 @@ ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
 QTransform ArtifactAbstractLayer::getLocalTransform() const {
   const auto &t = transform3D();
   const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
-  auto evaluateDouble = [this, &time](const QString &propertyPath,
+  const auto* var = getActiveVariant();
+  bool hasTransVar = var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform3DOverride.has_value();
+
+  auto evaluateDouble = [this, &time, hasTransVar](const QString &propertyPath,
                                       double fallback) {
+    if (hasTransVar) return fallback;
     const auto it = impl_->propertyCache_.constFind(propertyPath);
     if (it == impl_->propertyCache_.constEnd() || !it.value()) {
       return fallback;
@@ -522,7 +651,11 @@ QTransform ArtifactAbstractLayer::getGlobalTransform() const {
 QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const {
   const auto &t = transform3D();
   const RationalTime time(frameNumber, effectiveLayerFrameRate(this));
-  auto evaluateDouble = [this, &time](const QString &propertyPath, double fallback) {
+  const auto* var = getActiveVariant();
+  bool hasTransVar = var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform3DOverride.has_value();
+
+  auto evaluateDouble = [this, &time, hasTransVar](const QString &propertyPath, double fallback) {
+    if (hasTransVar) return fallback;
     const auto it = impl_->propertyCache_.constFind(propertyPath);
     if (it == impl_->propertyCache_.constEnd() || !it.value()) {
       return fallback;
@@ -799,18 +932,34 @@ QRectF ArtifactAbstractLayer::transformedBoundingBox() const {
 }
 
 AnimatableTransform2D &ArtifactAbstractLayer::transform2D() {
+  auto* var = getActiveVariant();
+  if (var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform2DOverride.has_value()) {
+    return var->transform2DOverride.value();
+  }
   return impl_->transform2d_;
 }
 
 const AnimatableTransform2D &ArtifactAbstractLayer::transform2D() const {
+  const auto* var = getActiveVariant();
+  if (var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform2DOverride.has_value()) {
+    return var->transform2DOverride.value();
+  }
   return impl_->transform2d_;
 }
 
 AnimatableTransform3D &ArtifactAbstractLayer::transform3D() {
+  auto* var = getActiveVariant();
+  if (var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform3DOverride.has_value()) {
+    return var->transform3DOverride.value();
+  }
   return impl_->transform_;
 }
 
 const AnimatableTransform3D &ArtifactAbstractLayer::transform3D() const {
+  const auto* var = getActiveVariant();
+  if (var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform3DOverride.has_value()) {
+    return var->transform3DOverride.value();
+  }
   return impl_->transform_;
 }
 
@@ -928,6 +1077,38 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   }
   obj["effects"] = effectsArr;
   obj["isAdjustment"] = impl_->isAdjustmentLayer_;
+
+  QJsonArray variantsArr;
+  for (const auto& varPtr : impl_->variants_) {
+      if (!varPtr) continue;
+      QJsonObject varObj;
+      varObj["name"] = QString::fromStdString(varPtr->name_);
+      varObj["flags"] = static_cast<int>(varPtr->overrideFlags_);
+      
+      if (HasFlag(varPtr->overrideFlags_, VariantOverrideFlags::Opacity) && varPtr->opacityOverride.has_value()) {
+          varObj["opacity"] = static_cast<double>(varPtr->opacityOverride.value());
+      }
+      if (HasFlag(varPtr->overrideFlags_, VariantOverrideFlags::BlendMode) && varPtr->blendModeOverride.has_value()) {
+          varObj["blendMode"] = static_cast<int>(varPtr->blendModeOverride.value());
+      }
+      if (HasFlag(varPtr->overrideFlags_, VariantOverrideFlags::Transform) && varPtr->transform3DOverride.has_value()) {
+          QJsonObject vtrans;
+          const auto& vt3 = varPtr->transform3DOverride.value();
+          vtrans["px"] = vt3.positionX();
+          vtrans["py"] = vt3.positionY();
+          vtrans["pz"] = vt3.positionZ();
+          vtrans["rx"] = vt3.rotation();
+          vtrans["sx"] = vt3.scaleX();
+          vtrans["sy"] = vt3.scaleY();
+          vtrans["ax"] = vt3.anchorX();
+          vtrans["ay"] = vt3.anchorY();
+          vtrans["az"] = vt3.anchorZ();
+          varObj["transform"] = vtrans;
+      }
+      variantsArr.append(varObj);
+  }
+  obj["variants"] = variantsArr;
+  obj["activeVariantIndex"] = static_cast<int>(impl_->activeVariantIndex_);
 
   return obj;
 }
@@ -1078,6 +1259,45 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         impl_->mattes_.push_back(matte);
       }
     }
+  }
+
+  if (obj.contains("variants") && obj["variants"].isArray()) {
+      impl_->variants_.clear();
+      QJsonArray arr = obj["variants"].toArray();
+      for (int i = 0; i < arr.size(); ++i) {
+          QJsonObject varObj = arr[i].toObject();
+          auto newVariant = std::make_unique<LayerVariant>(this, varObj["name"].toString("A").toStdString());
+          newVariant->overrideFlags_ = static_cast<VariantOverrideFlags>(varObj["flags"].toInt(0));
+          
+          if (varObj.contains("opacity")) {
+              newVariant->opacityOverride = static_cast<float>(varObj["opacity"].toDouble(1.0));
+          }
+          if (varObj.contains("blendMode")) {
+              newVariant->blendModeOverride = static_cast<LAYER_BLEND_TYPE>(varObj["blendMode"].toInt());
+          }
+          if (varObj.contains("transform") && varObj["transform"].isObject()) {
+              QJsonObject vtrans = varObj["transform"].toObject();
+              AnimatableTransform3D vt3;
+              RationalTime t0(0, 30000);
+              if (vtrans.contains("px")) vt3.setPosition(t0, vtrans["px"].toDouble(), vtrans["py"].toDouble(0));
+              if (vtrans.contains("pz")) vt3.setPositionZ(t0, vtrans["pz"].toDouble());
+              if (vtrans.contains("rx")) vt3.setRotation(t0, vtrans["rx"].toDouble());
+              if (vtrans.contains("sx")) vt3.setScale(t0, vtrans["sx"].toDouble(), vtrans["sy"].toDouble(1.0));
+              if (vtrans.contains("ax")) vt3.setAnchor(t0, vtrans["ax"].toDouble(), vtrans["ay"].toDouble(), vtrans["az"].toDouble());
+              newVariant->transform3DOverride = vt3;
+          }
+          
+          impl_->variants_.push_back(std::move(newVariant));
+      }
+  } else if (impl_->variants_.empty()) {
+      impl_->variants_.push_back(std::make_unique<LayerVariant>(this, "A"));
+  }
+  
+  if (obj.contains("activeVariantIndex")) {
+      impl_->activeVariantIndex_ = obj["activeVariantIndex"].toInt(0);
+      if (impl_->activeVariantIndex_ >= impl_->variants_.size()) {
+          impl_->activeVariantIndex_ = 0;
+      }
   }
 
   applyPropertiesFromJson(obj);
@@ -1416,6 +1636,16 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
 
   // トランスフォームのプロパティ
+  if (propertyPath.startsWith(QStringLiteral("transform."))) {
+      if (impl_->activeVariantIndex_ != 0) {
+          auto* var = getActiveVariant();
+          if (var && !var->transform3DOverride.has_value()) {
+              var->transform3DOverride = impl_->transform_;
+              SetFlag(var->overrideFlags_, VariantOverrideFlags::Transform);
+          }
+      }
+  }
+
   auto &t3 = transform3D();
   RationalTime t0(0, 30000); // 0s
 
@@ -1566,6 +1796,11 @@ bool ArtifactAbstractLayer::hasMasks() const { return impl_->maskCount() > 0; }
 
 // Opacity
 float ArtifactAbstractLayer::opacity() const {
+  const auto* var = getActiveVariant();
+  if (var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Opacity) && var->opacityOverride.has_value()) {
+      return var->opacityOverride.value();
+  }
+
   const auto it =
       impl_->propertyCache_.constFind(QStringLiteral("layer.opacity"));
   if (it == impl_->propertyCache_.constEnd() || !it.value()) {
@@ -1583,6 +1818,18 @@ float ArtifactAbstractLayer::opacity() const {
 
 void ArtifactAbstractLayer::setOpacity(float value) {
   const float clamped = std::clamp(value, 0.0f, 1.0f);
+  
+  if (impl_->activeVariantIndex_ != 0) {
+      auto* var = getActiveVariant();
+      if (var) {
+          var->opacityOverride = clamped;
+          SetFlag(var->overrideFlags_, VariantOverrideFlags::Opacity);
+          notifyLayerMutation(this, LayerDirtyFlag::Property,
+                              LayerDirtyReason::PropertyChanged);
+          return;
+      }
+  }
+
   if (impl_->opacity_ != clamped) {
     impl_->opacity_ = clamped;
     if (auto it = impl_->propertyCache_.find(QStringLiteral("layer.opacity"));

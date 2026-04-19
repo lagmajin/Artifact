@@ -9,6 +9,7 @@
 #include <QLayout>
 #include <QLineEdit>
 #include <QMenu>
+#include <QMetaObject>
 #include <QPalette>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -59,6 +60,7 @@ import Property.Abstract;
 import Property.Group;
 import Undo.UndoManager;
 import Artifact.Effect.Abstract;
+import Artifact.Application.Manager;
 import Utils.String.UniString;
 import Widgets.Utils.CSS;
 import Artifact.Widgets.ExpressionCopilotWidget;
@@ -513,9 +515,6 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
             propertyPtr->addKeyFrame(nowTime, editor->value());
           } else {
             propertyPtr->removeKeyFrame(nowTime);
-          }
-          if (auto *svc = ArtifactProjectService::instance()) {
-            svc->projectChanged();
           }
           // 状態を再反映
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
@@ -1098,13 +1097,27 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       "transform.scale.x", "transform.scale.y",    "transform.rotation",
       "layer.opacity"};
 
-  const auto notifyLayerKeyframeChanged = [this](const QString &) {
-    if (currentLayer) {
-      notifyLayerPropertyAnimationChanged(currentLayer);
+  const ArtifactAbstractLayerPtr layer = currentLayer;
+
+  const auto notifyLayerKeyframeChanged = [this, layer](const QString &) {
+    if (layer) {
+      notifyLayerPropertyAnimationChanged(layer);
+      if (auto *app = ArtifactApplicationManager::instance()) {
+        if (auto *selection = app->layerSelectionManager()) {
+          QMetaObject::invokeMethod(
+              selection,
+              [selection, layer]() {
+                if (selection && layer) {
+                  selection->selectLayer(layer);
+                }
+              },
+              Qt::QueuedConnection);
+        }
+      }
     }
   };
 
-  const auto layerGroups = currentLayer->getLayerPropertyGroups();
+  const auto layerGroups = layer->getLayerPropertyGroups();
   std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
       layerSummaryProperties;
   for (const auto &groupDef : layerGroups) {
@@ -1139,10 +1152,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           removePropertyByName(QStringLiteral("layer.name"))) {
     if (auto *row = createPropertyRow(
             summaryGroup, layerNameProperty,
-            [this](const QString &name, const QVariant &value) {
-              if (currentLayer) {
+            [this, layer](const QString &name, const QVariant &value) {
+              if (layer) {
                 ScopedPropertyEditGuard guard(localPropertyEditDepth);
-                currentLayer->setLayerPropertyValue(name, value);
+                layer->setLayerPropertyValue(name, value);
                 notifyProjectIfLayerNameChanged(name);
                 notifyProjectIfTimelinePropertyChanged(name);
               }
@@ -1157,40 +1170,40 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   auto summaryPreviewOpacity = std::make_shared<std::optional<float>>();
   addRowsFromProperties(
       summaryGroup, summaryLayout, layerSummaryProperties, filterText,
-      [this, summaryPreviewOpacity](const QString &name, const QVariant &value) {
-        if (currentLayer) {
+      [this, layer, summaryPreviewOpacity](const QString &name, const QVariant &value) {
+        if (layer) {
           ScopedPropertyEditGuard guard(localPropertyEditDepth);
           if (name.compare(QStringLiteral("layer.opacity"),
                            Qt::CaseInsensitive) == 0) {
             const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
             const float oldOpacity =
-                summaryPreviewOpacity->value_or(currentLayer->opacity());
+                summaryPreviewOpacity->value_or(layer->opacity());
             summaryPreviewOpacity->reset();
             if (std::abs(oldOpacity - newOpacity) > 0.0001f) {
-              auto *cmd = new ChangeLayerOpacityCommand(currentLayer, oldOpacity,
+              auto *cmd = new ChangeLayerOpacityCommand(layer, oldOpacity,
                                                         newOpacity);
               UndoManager::instance()->push(
                   std::unique_ptr<ChangeLayerOpacityCommand>(cmd));
             }
           } else {
-            currentLayer->setLayerPropertyValue(name, value);
+            layer->setLayerPropertyValue(name, value);
           }
           notifyProjectIfLayerNameChanged(name);
           notifyProjectIfTimelinePropertyChanged(name);
         }
       },
-      [this, summaryPreviewOpacity](const QString &name, const QVariant &value) {
-        if (currentLayer) {
+      [this, layer, summaryPreviewOpacity](const QString &name, const QVariant &value) {
+        if (layer) {
           ScopedPropertyEditGuard guard(localPropertyEditDepth);
           if (name.compare(QStringLiteral("layer.opacity"),
                            Qt::CaseInsensitive) == 0) {
             const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
             if (!summaryPreviewOpacity->has_value()) {
-              *summaryPreviewOpacity = currentLayer->opacity();
+              *summaryPreviewOpacity = layer->opacity();
             }
-            currentLayer->setOpacity(newOpacity);
+            layer->setOpacity(newOpacity);
           } else {
-            currentLayer->setLayerPropertyValue(name, value);
+            layer->setLayerPropertyValue(name, value);
           }
           notifyProjectIfLayerNameChanged(name);
           notifyProjectIfTimelinePropertyChanged(name);
@@ -1199,7 +1212,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       notifyLayerKeyframeChanged,
       &hasSummaryProperties, &propertyEditors, &summaryRows);
 
-  const auto effects = currentLayer->getEffects();
+  const auto effects = layer->getEffects();
   const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
   for (const auto &effect : effects) {
     if (!effect) {
@@ -1264,40 +1277,40 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     auto groupPreviewOpacity = std::make_shared<std::optional<float>>();
     addRowsFromProperties(
         group, groupLayout, sortedProps, filterText,
-        [this, groupPreviewOpacity](const QString &name, const QVariant &value) {
-          if (currentLayer) {
+        [this, layer, groupPreviewOpacity](const QString &name, const QVariant &value) {
+          if (layer) {
             ScopedPropertyEditGuard guard(localPropertyEditDepth);
             if (name.compare(QStringLiteral("layer.opacity"),
                              Qt::CaseInsensitive) == 0) {
               const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
               const float oldOpacity =
-                  groupPreviewOpacity->value_or(currentLayer->opacity());
+                  groupPreviewOpacity->value_or(layer->opacity());
               groupPreviewOpacity->reset();
               if (std::abs(oldOpacity - newOpacity) > 0.0001f) {
-                auto *cmd = new ChangeLayerOpacityCommand(currentLayer,
+                auto *cmd = new ChangeLayerOpacityCommand(layer,
                                                           oldOpacity, newOpacity);
                 UndoManager::instance()->push(
                     std::unique_ptr<ChangeLayerOpacityCommand>(cmd));
               }
             } else {
-              currentLayer->setLayerPropertyValue(name, value);
+              layer->setLayerPropertyValue(name, value);
             }
             notifyProjectIfLayerNameChanged(name);
             notifyProjectIfTimelinePropertyChanged(name);
           }
         },
-        [this, groupPreviewOpacity](const QString &name, const QVariant &value) {
-          if (currentLayer) {
+        [this, layer, groupPreviewOpacity](const QString &name, const QVariant &value) {
+          if (layer) {
             ScopedPropertyEditGuard guard(localPropertyEditDepth);
             if (name.compare(QStringLiteral("layer.opacity"),
                              Qt::CaseInsensitive) == 0) {
               const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
               if (!groupPreviewOpacity->has_value()) {
-                *groupPreviewOpacity = currentLayer->opacity();
+                *groupPreviewOpacity = layer->opacity();
               }
-              currentLayer->setOpacity(newOpacity);
+              layer->setOpacity(newOpacity);
             } else {
-              currentLayer->setLayerPropertyValue(name, value);
+              layer->setLayerPropertyValue(name, value);
             }
             notifyProjectIfLayerNameChanged(name);
             notifyProjectIfTimelinePropertyChanged(name);

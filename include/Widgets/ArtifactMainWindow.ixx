@@ -67,6 +67,7 @@ public /*slots*/:
   void togglePanelsVisible(bool visible);
   void setWorkspaceMode(WorkspaceMode mode);
   WorkspaceMode workspaceMode() const;
+  void applyUiFontSettings();
 
   // Dock enumeration
   QStringList dockTitles() const;

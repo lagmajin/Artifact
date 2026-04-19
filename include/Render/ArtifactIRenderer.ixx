@@ -169,12 +169,16 @@ public:
   void drawText(const QRectF &rect, const QString &text, const QFont &font,
                 const FloatColor &color,
                 Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignTop,
-                float opacity = 1.0f);
+                float opacity = 1.0f,
+                const FloatColor &outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
+                float outlineThickness = 0.0f);
   void drawTextTransformed(const QRectF &rect, const QString &text,
                            const QFont &font, const FloatColor &color,
                            const QMatrix4x4 &transform,
                            Qt::Alignment alignment = Qt::AlignLeft | Qt::AlignTop,
-                           float opacity = 1.0f);
+                           float opacity = 1.0f,
+                           const FloatColor &outlineColor = FloatColor{0.0f, 0.0f, 0.0f, 0.0f},
+                           float outlineThickness = 0.0f);
   void drawSpriteTransformed(float x, float y, float w, float h,
                              const QTransform &transform, const QImage &image,
                              float opacity = 1.0f);
@@ -214,6 +218,8 @@ public:
                        const FloatColor &color);
   void drawSolidTriangleLocal(Detail::float2 p0, Detail::float2 p1,
                               Detail::float2 p2, const FloatColor &color);
+  void drawSolidPolygonLocal(const std::vector<Detail::float2> &points,
+                             const FloatColor &color);
 
   // Gizmo specialized APIs
   void drawCircle(float x, float y, float radius, const FloatColor &color,

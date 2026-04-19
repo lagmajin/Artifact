@@ -1599,12 +1599,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (!variants.empty() && clickX >= vx && clickX < vx + variantAreaW) {
           int clickedIdx = (clickX - vx) / 22;
           if (clickedIdx >= 0 && clickedIdx < variants.size()) {
-              layer->setActiveVariant(clickedIdx);
+              auto* cmd = new ChangeActiveVariantCommand(layer, layer->getActiveVariantIndex(), clickedIdx);
+              UndoManager::instance()->push(std::unique_ptr<ChangeActiveVariantCommand>(cmd));
               update();
               event->accept();
               return;
           } else if (clickX >= vx + variants.size() * 22) {
-              layer->createVariantFromCurrent(std::string(1, (char)('A' + layer->getVariants().size())));
+              auto* cmd = new CreateVariantCommand(layer, std::string(1, (char)('A' + layer->getVariants().size())));
+              UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
               update();
               event->accept();
               return;
@@ -1634,11 +1636,13 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (!variants.empty() && clickX >= vx && clickX < vx + variantAreaW) {
         QMenu menu(this);
         menu.addAction("Create Variant B from A", [this, layer]() {
-            layer->createVariantFromCurrent("B");
+            auto* cmd = new CreateVariantCommand(layer, "B");
+            UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
             update();
         });
         menu.addAction("Create Variant C from current", [this, layer]() {
-            layer->createVariantFromCurrent(std::string(1, (char)('A' + layer->getVariants().size())));
+            auto* cmd = new CreateVariantCommand(layer, std::string(1, (char)('A' + layer->getVariants().size())));
+            UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
             update();
         });
         menu.exec(event->globalPos());

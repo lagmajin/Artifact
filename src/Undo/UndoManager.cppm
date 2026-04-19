@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <vector>
 #include <stack>
 #include <memory>
@@ -403,6 +403,59 @@ void ChangeLayerOpacityCommand::redo() {
 
 QString ChangeLayerOpacityCommand::label() const {
     return QStringLiteral("Change Opacity: %1% → %2%").arg(oldOpacity_ * 100).arg(newOpacity_ * 100);
+}
+
+// --- ChangeActiveVariantCommand ---
+ChangeActiveVariantCommand::ChangeActiveVariantCommand(ArtifactAbstractLayerPtr layer, size_t oldIndex, size_t newIndex)
+    : layer_(layer), oldIndex_(oldIndex), newIndex_(newIndex) {}
+
+void ChangeActiveVariantCommand::undo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setActiveVariant(oldIndex_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+void ChangeActiveVariantCommand::redo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setActiveVariant(newIndex_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+QString ChangeActiveVariantCommand::label() const {
+    return QStringLiteral("Change Layer Variant");
+}
+
+// --- CreateVariantCommand ---
+CreateVariantCommand::CreateVariantCommand(ArtifactAbstractLayerPtr layer, const std::string& name)
+    : layer_(layer), name_(name), index_(0) {}
+
+void CreateVariantCommand::undo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        extracted_ = layer->extractVariant(index_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+void CreateVariantCommand::redo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        if (extracted_) {
+            layer->insertVariant(index_, std::move(extracted_));
+        } else {
+            layer->createVariantFromCurrent(name_);
+            index_ = layer->getVariants().size() - 1;
+        }
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+QString CreateVariantCommand::label() const {
+    return QStringLiteral("Create Layer Variant");
 }
 
 }

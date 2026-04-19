@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <QFile>
+#include <QDebug>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -54,6 +55,12 @@ namespace Artifact
    return result;
   }
   if (outputPath_.isEmpty()) {
+   return result;
+  }
+
+  QString treeError;
+  if (!projectPtr_->validateProjectTree(&treeError)) {
+   qWarning() << "[Exporter] Project tree validation failed:" << treeError;
    return result;
   }
 

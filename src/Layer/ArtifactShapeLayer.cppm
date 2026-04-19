@@ -30,89 +30,37 @@ QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
  return QPointF(v.x(), v.y());
 }
 
-float polygonSignedArea(const std::vector<QPointF>& points) {
- if (points.size() < 3) {
-  return 0.0f;
+void appendArcPoints(std::vector<QPointF>& points,
+                     const QPointF& center,
+                     float radiusX,
+                     float radiusY,
+                     float startAngleDeg,
+                     float endAngleDeg,
+                     int segments) {
+ const float startRad = startAngleDeg * static_cast<float>(M_PI) / 180.0f;
+ const float endRad = endAngleDeg * static_cast<float>(M_PI) / 180.0f;
+ const float step = (endRad - startRad) / static_cast<float>(std::max(1, segments));
+ for (int i = 0; i <= segments; ++i) {
+  const float angle = startRad + step * static_cast<float>(i);
+  points.push_back(QPointF(center.x() + std::cos(angle) * radiusX,
+                           center.y() + std::sin(angle) * radiusY));
  }
- double area = 0.0;
- for (size_t i = 0; i < points.size(); ++i) {
-  const QPointF& a = points[i];
-  const QPointF& b = points[(i + 1) % points.size()];
-  area += (a.x() * b.y()) - (b.x() * a.y());
- }
- return static_cast<float>(area * 0.5);
 }
 
-float cross2d(const QPointF& a, const QPointF& b, const QPointF& c) {
- return static_cast<float>((b.x() - a.x()) * (c.y() - a.y()) -
-                           (b.y() - a.y()) * (c.x() - a.x()));
-}
-
-bool pointInTriangle(const QPointF& p, const QPointF& a, const QPointF& b,
-                     const QPointF& c) {
- const float area1 = cross2d(p, a, b);
- const float area2 = cross2d(p, b, c);
- const float area3 = cross2d(p, c, a);
- const bool hasNeg = (area1 < 0.0f) || (area2 < 0.0f) || (area3 < 0.0f);
- const bool hasPos = (area1 > 0.0f) || (area2 > 0.0f) || (area3 > 0.0f);
- return !(hasNeg && hasPos);
-}
-
-std::vector<std::array<int, 3>> triangulatePolygon(const std::vector<QPointF>& points) {
- std::vector<std::array<int, 3>> triangles;
- if (points.size() < 3) {
-  return triangles;
+std::vector<QPointF> buildRoundedRectPoints(float x, float y, float w, float h, float radius) {
+ const float r = std::clamp(radius, 0.0f, std::min(w, h) * 0.5f);
+ if (r <= 0.0f) {
+  return {QPointF(x, y), QPointF(x + w, y), QPointF(x + w, y + h), QPointF(x, y + h)};
  }
 
- std::vector<int> indices(points.size());
- std::iota(indices.begin(), indices.end(), 0);
- const bool ccw = polygonSignedArea(points) >= 0.0f;
- int guard = 0;
- while (indices.size() > 2 && guard < 4096) {
-  ++guard;
-  bool earFound = false;
-  const int m = static_cast<int>(indices.size());
-  for (int i = 0; i < m; ++i) {
-   const int i0 = indices[(i + m - 1) % m];
-   const int i1 = indices[i];
-   const int i2 = indices[(i + 1) % m];
-   const QPointF& a = points[static_cast<size_t>(i0)];
-   const QPointF& b = points[static_cast<size_t>(i1)];
-   const QPointF& c = points[static_cast<size_t>(i2)];
-   const float cross = cross2d(a, b, c);
-   if (ccw ? (cross <= 1e-6f) : (cross >= -1e-6f)) {
-    continue;
-   }
-   bool containsPoint = false;
-   for (int j = 0; j < m; ++j) {
-    const int idx = indices[j];
-    if (idx == i0 || idx == i1 || idx == i2) {
-     continue;
-    }
-    if (pointInTriangle(points[static_cast<size_t>(idx)], a, b, c)) {
-     containsPoint = true;
-     break;
-    }
-   }
-   if (containsPoint) {
-    continue;
-   }
-   triangles.push_back({i0, i1, i2});
-   indices.erase(indices.begin() + i);
-   earFound = true;
-   break;
-  }
-  if (!earFound) {
-   break;
-  }
- }
-
- if (triangles.empty()) {
-  for (size_t i = 1; i + 1 < points.size(); ++i) {
-   triangles.push_back({0, static_cast<int>(i), static_cast<int>(i + 1)});
-  }
- }
- return triangles;
+ std::vector<QPointF> points;
+ points.reserve(36);
+ const int cornerSegments = 6;
+ appendArcPoints(points, QPointF(x + w - r, y + r), r, r, -90.0f, 0.0f, cornerSegments);
+ appendArcPoints(points, QPointF(x + w - r, y + h - r), r, r, 0.0f, 90.0f, cornerSegments);
+ appendArcPoints(points, QPointF(x + r, y + h - r), r, r, 90.0f, 180.0f, cornerSegments);
+ appendArcPoints(points, QPointF(x + r, y + r), r, r, 180.0f, 270.0f, cornerSegments);
+ return points;
 }
 
 std::vector<QPointF> buildRenderablePoints(Artifact::ShapeType shapeType,
@@ -134,13 +82,12 @@ std::vector<QPointF> buildRenderablePoints(Artifact::ShapeType shapeType,
 
  switch (shapeType) {
  case Artifact::ShapeType::Rect:
-  return {QPointF(0.0f, 0.0f), QPointF(w, 0.0f), QPointF(w, h), QPointF(0.0f, h)};
+  return buildRoundedRectPoints(0.0f, 0.0f, w, h, cornerRadius);
  case Artifact::ShapeType::Square: {
   const float side = std::min(w, h);
   const float left = (w - side) * 0.5f;
   const float top = (h - side) * 0.5f;
-  return {QPointF(left, top), QPointF(left + side, top),
-          QPointF(left + side, top + side), QPointF(left, top + side)};
+  return buildRoundedRectPoints(left, top, side, side, cornerRadius);
  }
  case Artifact::ShapeType::Triangle:
   return {QPointF(cx, 0.0f), QPointF(w, h), QPointF(0.0f, h)};
@@ -450,6 +397,48 @@ QImage ArtifactShapeLayer::toQImage() const {
  return impl_->cachedImage_;
 }
 
+QRectF ArtifactShapeLayer::localBounds() const
+{
+ const auto boundsOfPoints = [](const std::vector<QPointF>& points) -> QRectF {
+  if (points.empty()) {
+   return QRectF();
+  }
+  qreal minX = points.front().x();
+  qreal minY = points.front().y();
+  qreal maxX = points.front().x();
+  qreal maxY = points.front().y();
+  for (const auto& point : points) {
+   minX = std::min(minX, point.x());
+   minY = std::min(minY, point.y());
+   maxX = std::max(maxX, point.x());
+   maxY = std::max(maxY, point.y());
+  }
+  return QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
+ };
+
+ QRectF bounds;
+ if (impl_->shapeType_ == Artifact::ShapeType::Polygon && impl_->customPolygonPoints_.size() >= 2) {
+  bounds = boundsOfPoints(impl_->customPolygonPoints_);
+ } else {
+  const QPainterPath path = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
+                                          impl_->cornerRadius_, impl_->starPoints_,
+                                          impl_->starInnerRadius_, impl_->polygonSides_)
+                               .toPainterPath();
+  bounds = path.boundingRect();
+ }
+
+ if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+  const auto size = sourceSize();
+  if (size.width <= 0 || size.height <= 0) {
+   return QRectF();
+  }
+  bounds = QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
+ }
+
+ const qreal pad = std::max<qreal>(0.5, static_cast<qreal>(impl_->strokeWidth_) * 0.5);
+ return bounds.adjusted(-pad, -pad, pad, pad);
+}
+
 // ============================================================
 // draw (GPU rendering)
 // ============================================================
@@ -490,19 +479,13 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
 
    if (impl->fillEnabled_ && closed &&
        mapped.size() >= 3) {
-    const auto triangles = triangulatePolygon(mapped);
-    if (!triangles.empty()) {
-     for (const auto& tri : triangles) {
-      renderer->drawSolidTriangleLocal(
-          {static_cast<float>(mapped[static_cast<size_t>(tri[0])].x()),
-           static_cast<float>(mapped[static_cast<size_t>(tri[0])].y())},
-          {static_cast<float>(mapped[static_cast<size_t>(tri[1])].x()),
-           static_cast<float>(mapped[static_cast<size_t>(tri[1])].y())},
-          {static_cast<float>(mapped[static_cast<size_t>(tri[2])].x()),
-           static_cast<float>(mapped[static_cast<size_t>(tri[2])].y())},
-          fill);
-     }
+    std::vector<Detail::float2> polygon;
+    polygon.reserve(mapped.size());
+    for (const auto& point : mapped) {
+     polygon.push_back({static_cast<float>(point.x()),
+                        static_cast<float>(point.y())});
     }
+    renderer->drawSolidPolygonLocal(polygon, fill);
    }
 
    if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f && mapped.size() >= 2) {
@@ -527,36 +510,44 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGroups() const {
  std::vector<ArtifactCore::PropertyGroup> groups;
+ auto makeProp = [this](const QString& name,
+                        ArtifactCore::PropertyType type,
+                        const QVariant& value,
+                        int priority,
+                        bool animatable = true) {
+  auto prop = persistentLayerProperty(name, type, value, priority);
+  prop->setAnimatable(animatable);
+  return prop;
+ };
 
  // Shape Type Group
  ArtifactCore::PropertyGroup shapeGroup;
  shapeGroup.setName("Shape");
 
- auto shapeTypeProp = std::make_shared<ArtifactCore::AbstractProperty>();
- shapeTypeProp->setName(QStringLiteral("shape.type"));
-  shapeTypeProp->setType(ArtifactCore::PropertyType::Integer);
-  shapeTypeProp->setValue(static_cast<int>(impl_->shapeType_));
+ auto shapeTypeProp = makeProp(QStringLiteral("shape.type"),
+                               ArtifactCore::PropertyType::Integer,
+                               static_cast<int>(impl_->shapeType_),
+                               -220);
  shapeTypeProp->setDisplayLabel(QStringLiteral("Type"));
-  QString shapeTypeTooltip = QStringLiteral("0=Rect, 1=Ellipse, 2=Star, 3=Polygon, 4=Line, 5=Triangle, 6=Square");
-  shapeTypeTooltip += QStringLiteral(" (current: ");
-  shapeTypeTooltip += shapeTypeName(static_cast<int>(impl_->shapeType_));
-  shapeTypeTooltip += QStringLiteral(")");
-  shapeTypeProp->setTooltip(shapeTypeTooltip);
-  shapeGroup.addProperty(shapeTypeProp);
+ QString shapeTypeTooltip = QStringLiteral(
+     "0=Rect, 1=Ellipse, 2=Star, 3=Polygon, 4=Line, 5=Triangle, 6=Square");
+ shapeTypeTooltip += QStringLiteral(" (current: ");
+ shapeTypeTooltip += shapeTypeName(static_cast<int>(impl_->shapeType_));
+ shapeTypeTooltip += QStringLiteral(")");
+ shapeTypeProp->setTooltip(shapeTypeTooltip);
+ shapeGroup.addProperty(shapeTypeProp);
 
- auto widthProp = std::make_shared<ArtifactCore::AbstractProperty>();
- widthProp->setName(QStringLiteral("shape.width"));
-  widthProp->setType(ArtifactCore::PropertyType::Integer);
-  widthProp->setValue(impl_->width_);
+ auto widthProp = makeProp(QStringLiteral("shape.width"),
+                           ArtifactCore::PropertyType::Integer, impl_->width_,
+                           -219);
  widthProp->setDisplayLabel(QStringLiteral("Width"));
-  shapeGroup.addProperty(widthProp);
+ shapeGroup.addProperty(widthProp);
 
- auto heightProp = std::make_shared<ArtifactCore::AbstractProperty>();
- heightProp->setName(QStringLiteral("shape.height"));
-  heightProp->setType(ArtifactCore::PropertyType::Integer);
-  heightProp->setValue(impl_->height_);
+ auto heightProp = makeProp(QStringLiteral("shape.height"),
+                            ArtifactCore::PropertyType::Integer,
+                            impl_->height_, -218);
  heightProp->setDisplayLabel(QStringLiteral("Height"));
-  shapeGroup.addProperty(heightProp);
+ shapeGroup.addProperty(heightProp);
 
  groups.push_back(shapeGroup);
 
@@ -564,48 +555,45 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  ArtifactCore::PropertyGroup appearanceGroup;
  appearanceGroup.setName("Appearance");
 
- auto fillColorProp = std::make_shared<ArtifactCore::AbstractProperty>();
- fillColorProp->setName(QStringLiteral("shape.fillColor"));
-  fillColorProp->setType(ArtifactCore::PropertyType::Color);
-  fillColorProp->setValue(QColor(
+ auto fillColorProp = makeProp(QStringLiteral("shape.fillColor"),
+                               ArtifactCore::PropertyType::Color,
+                               QColor(
   static_cast<int>(impl_->fillColor_.r() * 255),
   static_cast<int>(impl_->fillColor_.g() * 255),
   static_cast<int>(impl_->fillColor_.b() * 255),
   static_cast<int>(impl_->fillColor_.a() * 255)
-  ));
+  ),
+  -210);
  fillColorProp->setDisplayLabel(QStringLiteral("Fill Color"));
   appearanceGroup.addProperty(fillColorProp);
 
- auto fillEnabledProp = std::make_shared<ArtifactCore::AbstractProperty>();
- fillEnabledProp->setName(QStringLiteral("shape.fillEnabled"));
-  fillEnabledProp->setType(ArtifactCore::PropertyType::Boolean);
-  fillEnabledProp->setValue(impl_->fillEnabled_);
+ auto fillEnabledProp = makeProp(QStringLiteral("shape.fillEnabled"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 impl_->fillEnabled_, -209);
  fillEnabledProp->setDisplayLabel(QStringLiteral("Fill Enabled"));
   appearanceGroup.addProperty(fillEnabledProp);
 
- auto strokeColorProp = std::make_shared<ArtifactCore::AbstractProperty>();
- strokeColorProp->setName(QStringLiteral("shape.strokeColor"));
-  strokeColorProp->setType(ArtifactCore::PropertyType::Color);
-  strokeColorProp->setValue(QColor(
+ auto strokeColorProp = makeProp(QStringLiteral("shape.strokeColor"),
+                                 ArtifactCore::PropertyType::Color,
+                                 QColor(
   static_cast<int>(impl_->strokeColor_.r() * 255),
   static_cast<int>(impl_->strokeColor_.g() * 255),
   static_cast<int>(impl_->strokeColor_.b() * 255),
   static_cast<int>(impl_->strokeColor_.a() * 255)
-  ));
+  ),
+  -208);
  strokeColorProp->setDisplayLabel(QStringLiteral("Stroke Color"));
   appearanceGroup.addProperty(strokeColorProp);
 
- auto strokeWidthProp = std::make_shared<ArtifactCore::AbstractProperty>();
- strokeWidthProp->setName(QStringLiteral("shape.strokeWidth"));
-  strokeWidthProp->setType(ArtifactCore::PropertyType::Float);
-  strokeWidthProp->setValue(impl_->strokeWidth_);
+ auto strokeWidthProp = makeProp(QStringLiteral("shape.strokeWidth"),
+                                 ArtifactCore::PropertyType::Float,
+                                 impl_->strokeWidth_, -207);
  strokeWidthProp->setDisplayLabel(QStringLiteral("Stroke Width"));
   appearanceGroup.addProperty(strokeWidthProp);
 
- auto strokeEnabledProp = std::make_shared<ArtifactCore::AbstractProperty>();
- strokeEnabledProp->setName(QStringLiteral("shape.strokeEnabled"));
-  strokeEnabledProp->setType(ArtifactCore::PropertyType::Boolean);
-  strokeEnabledProp->setValue(impl_->strokeEnabled_);
+ auto strokeEnabledProp = makeProp(QStringLiteral("shape.strokeEnabled"),
+                                   ArtifactCore::PropertyType::Boolean,
+                                   impl_->strokeEnabled_, -206);
  strokeEnabledProp->setDisplayLabel(QStringLiteral("Stroke Enabled"));
   appearanceGroup.addProperty(strokeEnabledProp);
 
@@ -615,29 +603,25 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  ArtifactCore::PropertyGroup paramsGroup;
  paramsGroup.setName("Shape Parameters");
 
- auto cornerProp = std::make_shared<ArtifactCore::AbstractProperty>();
- cornerProp->setName(QStringLiteral("shape.cornerRadius"));
-  cornerProp->setType(ArtifactCore::PropertyType::Float);
-  cornerProp->setValue(impl_->cornerRadius_);
+ auto cornerProp = makeProp(QStringLiteral("shape.cornerRadius"),
+                            ArtifactCore::PropertyType::Float,
+                            impl_->cornerRadius_, -200);
  cornerProp->setDisplayLabel(QStringLiteral("Corner Radius"));
   paramsGroup.addProperty(cornerProp);
- auto pointsProp = std::make_shared<ArtifactCore::AbstractProperty>();
- pointsProp->setName(QStringLiteral("shape.starPoints"));
-  pointsProp->setType(ArtifactCore::PropertyType::Integer);
-  pointsProp->setValue(impl_->starPoints_);
+ auto pointsProp = makeProp(QStringLiteral("shape.starPoints"),
+                            ArtifactCore::PropertyType::Integer,
+                            impl_->starPoints_, -199);
  pointsProp->setDisplayLabel(QStringLiteral("Points"));
   paramsGroup.addProperty(pointsProp);
 
- auto innerProp = std::make_shared<ArtifactCore::AbstractProperty>();
- innerProp->setName(QStringLiteral("shape.starInnerRadius"));
-  innerProp->setType(ArtifactCore::PropertyType::Float);
-  innerProp->setValue(impl_->starInnerRadius_);
+ auto innerProp = makeProp(QStringLiteral("shape.starInnerRadius"),
+                           ArtifactCore::PropertyType::Float,
+                           impl_->starInnerRadius_, -198);
  innerProp->setDisplayLabel(QStringLiteral("Inner Radius"));
   paramsGroup.addProperty(innerProp);
- auto sidesProp = std::make_shared<ArtifactCore::AbstractProperty>();
- sidesProp->setName(QStringLiteral("shape.polygonSides"));
-  sidesProp->setType(ArtifactCore::PropertyType::Integer);
-  sidesProp->setValue(impl_->polygonSides_);
+ auto sidesProp = makeProp(QStringLiteral("shape.polygonSides"),
+                           ArtifactCore::PropertyType::Integer,
+                           impl_->polygonSides_, -197);
  sidesProp->setDisplayLabel(QStringLiteral("Sides"));
   paramsGroup.addProperty(sidesProp);
 

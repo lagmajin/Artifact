@@ -93,7 +93,7 @@ namespace Artifact {
   };
   addEditAction(QStringLiteral("View"), EditMode::View, true);
   addEditAction(QStringLiteral("Transform"), EditMode::Transform, false);
-  addEditAction(QStringLiteral("Shape"), EditMode::Paint, false);
+  addEditAction(QStringLiteral("Path"), EditMode::Paint, false);
   addEditAction(QStringLiteral("Mask"), EditMode::Mask, false);
   impl_->editModeButton = new QToolButton(this);
   impl_->editModeButton->setText(QStringLiteral("Edit Mode"));

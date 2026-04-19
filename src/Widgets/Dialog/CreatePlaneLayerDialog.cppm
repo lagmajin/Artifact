@@ -40,7 +40,6 @@ import DragSpinBox;
 import Utils.String.UniString;
 import Color.Float;
 import FloatColorPickerDialog;
-import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
@@ -418,9 +417,8 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
 
     QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
         FloatColorPicker picker(this);
-        Artifact::installFloatColorPickerSliderJump(&picker);
         picker.setWindowTitle(QStringLiteral("平面のカラーを選択"));
-        picker.setColor(FloatColor(
+        picker.setInitialColor(FloatColor(
             impl_->bgColor.redF(),
             impl_->bgColor.greenF(),
             impl_->bgColor.blueF(),

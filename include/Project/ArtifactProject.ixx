@@ -91,6 +91,8 @@ export namespace Artifact {
   QVector<ProjectItem*> projectItems() const;
   bool isNull() const;
   bool hasComposition(const CompositionID& id) const;
+  CompositionID currentCompositionId() const;
+  void setCurrentCompositionId(const CompositionID& id, bool markDirty = true);
   bool removeCompositionById(const CompositionID& id);
   void removeAllCompositions();
   void createFolder(const QString& name);

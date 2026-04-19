@@ -126,7 +126,7 @@ public:
  }
 
  QString label() const override {
-  return QStringLiteral("Edit Shape");
+  return QStringLiteral("Edit Path");
  }
 
 private:
@@ -238,6 +238,9 @@ private:
   bool hitTestShapeVertex(const ArtifactAbstractLayerPtr& layer,
                           const QPointF& canvasPos,
                           int& vertexIndex) const;
+  bool hitTestShapeSegment(const ArtifactAbstractLayerPtr& layer,
+                           const QPointF& canvasPos,
+                           int& insertIndex) const;
   void updateShapeHover(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos);
   void drawShapeOverlay(const ArtifactAbstractLayerPtr& layer);
   bool deleteHoveredShapeVertex(const ArtifactAbstractLayerPtr& layer);
@@ -552,6 +555,63 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestShapeVertex(const ArtifactAbstrac
    vertexIndex = i;
    return true;
   }
+ }
+ return false;
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::hitTestShapeSegment(const ArtifactAbstractLayerPtr& layer,
+                                                           const QPointF& canvasPos,
+                                                           int& insertIndex) const
+{
+ if (!renderer_ || !layer) {
+  return false;
+ }
+ const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ if (!shape || shape->shapeType() != ShapeType::Polygon || !shape->hasCustomPolygon()) {
+  return false;
+ }
+ const auto points = shape->customPolygonPoints();
+ if (points.size() < 2) {
+  return false;
+ }
+ const QTransform globalTransform = layer->getGlobalTransform();
+ bool invertible = false;
+ const QTransform invTransform = globalTransform.inverted(&invertible);
+ if (!invertible) {
+  return false;
+ }
+ const QPointF localPos = invTransform.map(canvasPos);
+ const float threshold = 10.0f / std::max(0.1f, renderer_->getZoom());
+ const auto distanceToSegment = [](const QPointF& p, const QPointF& a, const QPointF& b) -> double {
+  const QPointF ab = b - a;
+  const double abLenSq = ab.x() * ab.x() + ab.y() * ab.y();
+  if (abLenSq <= std::numeric_limits<double>::epsilon()) {
+   return std::hypot(p.x() - a.x(), p.y() - a.y());
+  }
+  const QPointF ap = p - a;
+  const double t = std::clamp((ap.x() * ab.x() + ap.y() * ab.y()) / abLenSq, 0.0, 1.0);
+  const QPointF proj = a + ab * t;
+  return std::hypot(p.x() - proj.x(), p.y() - proj.y());
+ };
+
+ const bool closed = shape->customPolygonClosed();
+ const int segmentCount = closed ? static_cast<int>(points.size())
+                                 : static_cast<int>(points.size()) - 1;
+ double bestDistance = std::numeric_limits<double>::max();
+ int bestIndex = -1;
+ for (int i = 0; i < segmentCount; ++i) {
+  const int next = (i + 1) % static_cast<int>(points.size());
+  const double distance = distanceToSegment(localPos,
+                                            points[static_cast<size_t>(i)],
+                                            points[static_cast<size_t>(next)]);
+  if (distance < bestDistance) {
+   bestDistance = distance;
+   bestIndex = i;
+  }
+ }
+ if (bestIndex >= 0 && bestDistance <= threshold) {
+  insertIndex = bestIndex + 1;
+  return true;
  }
  return false;
 }
@@ -1135,6 +1195,32 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      setCursor(Qt::ClosedHandCursor);
      event->accept();
      return;
+    }
+
+    int insertIndex = -1;
+    if (impl_->hitTestShapeSegment(layer, canvasPoint, insertIndex)) {
+     impl_->beginShapeEditTransaction(layer);
+     std::vector<QPointF> points = shape->customPolygonPoints();
+     const QTransform globalTransform = layer->getGlobalTransform();
+     bool invertible = false;
+     const QTransform invTransform = globalTransform.inverted(&invertible);
+     if (invertible) {
+      const QPointF rawLocalPos = invTransform.map(canvasPoint);
+      const QPointF localPos(
+          std::clamp(rawLocalPos.x(), 0.0, static_cast<double>(shape->shapeWidth())),
+          std::clamp(rawLocalPos.y(), 0.0, static_cast<double>(shape->shapeHeight())));
+      const auto clampedInsertIndex = std::clamp(insertIndex, 0, static_cast<int>(points.size()));
+      points.insert(points.begin() + clampedInsertIndex, localPos);
+      shape->setCustomPolygonPoints(points, true);
+      impl_->markShapeEditDirty();
+      impl_->hoveredShapeVertexIndex_ = clampedInsertIndex;
+      impl_->isDraggingShapeVertex_ = true;
+      impl_->draggingShapeVertexIndex_ = clampedInsertIndex;
+      setCursor(Qt::ClosedHandCursor);
+      impl_->renderOneFrame();
+      event->accept();
+      return;
+     }
     }
 
     impl_->beginShapeEditTransaction(layer);

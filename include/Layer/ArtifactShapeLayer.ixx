@@ -71,6 +71,7 @@ public:
   bool customPolygonClosed() const;
 
   // Layer interface
+  QRectF localBounds() const override;
   std::vector<ArtifactCore::PropertyGroup>
   getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString &propertyPath,
