@@ -23,6 +23,7 @@ import Utils.String.UniString;
 import Artifact.Application.Manager;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
+import Artifact.Layer.Shape;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.CreatePlaneLayerDialog;
 import Artifact.Widgets.AppDialogs;
@@ -111,6 +112,7 @@ public:
     ArtifactCore::LayerID selectedLayerId_;
 
     QMenu* createMenu = nullptr;
+    QMenu* createShapeMenu = nullptr;
     QMenu* switchMenu = nullptr;
     QMenu* selectMenu = nullptr;
 
@@ -122,6 +124,12 @@ public:
     QAction* createCameraAction = nullptr;
     QAction* createAudioAction = nullptr;
     QAction* createSvgAction = nullptr;
+    QAction* createShapeRectAction = nullptr;
+    QAction* createShapeSquareAction = nullptr;
+    QAction* createShapePolygonAction = nullptr;
+    QAction* createShapeTriangleAction = nullptr;
+    QAction* createShapeEllipseAction = nullptr;
+    QAction* createShapeStarAction = nullptr;
     QAction* trackCameraAction = nullptr;
 
     QAction* duplicateLayerAction = nullptr;
@@ -150,6 +158,7 @@ public:
     void handleCreateCamera();
     void handleCreateAudio();
     void handleCreateSvg();
+    void handleCreateShape(ShapeType type, const QString& nameBase);
 
     void handleDuplicateLayer();
     void handleRenameLayer();
@@ -205,6 +214,20 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     createSvgAction = new QAction("SVG シェイプレイヤー(&V)...", createMenu);
 
+    createShapeMenu = new QMenu("シェイプ(&S)", createMenu);
+    createShapeRectAction = new QAction("四角形", createShapeMenu);
+    createShapeSquareAction = new QAction("正方形", createShapeMenu);
+    createShapePolygonAction = new QAction("多角形", createShapeMenu);
+    createShapeTriangleAction = new QAction("三角形", createShapeMenu);
+    createShapeEllipseAction = new QAction("楕円", createShapeMenu);
+    createShapeStarAction = new QAction("星形", createShapeMenu);
+    createShapeMenu->addAction(createShapeRectAction);
+    createShapeMenu->addAction(createShapeSquareAction);
+    createShapeMenu->addAction(createShapePolygonAction);
+    createShapeMenu->addAction(createShapeTriangleAction);
+    createShapeMenu->addAction(createShapeEllipseAction);
+    createShapeMenu->addAction(createShapeStarAction);
+
     trackCameraAction = new QAction("3Dカメラトラッキング(&T)", menu);
     trackCameraAction->setIcon(QIcon(resolveIconPath("Material/videocam.svg")));
 
@@ -216,6 +239,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createCameraAction);
     createMenu->addAction(createAudioAction);
     createMenu->addAction(createSvgAction);
+    createMenu->addMenu(createShapeMenu);
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
     duplicateLayerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
@@ -278,6 +302,12 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     QObject::connect(createCameraAction, &QAction::triggered, menu, [this]() { handleCreateCamera(); });
     QObject::connect(createAudioAction, &QAction::triggered, menu, [this]() { handleCreateAudio(); });
     QObject::connect(createSvgAction, &QAction::triggered, menu, [this]() { handleCreateSvg(); });
+    QObject::connect(createShapeRectAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Rect, QStringLiteral("Shape 1")); });
+    QObject::connect(createShapeSquareAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Square, QStringLiteral("Square 1")); });
+    QObject::connect(createShapePolygonAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Polygon, QStringLiteral("Polygon 1")); });
+    QObject::connect(createShapeTriangleAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Triangle, QStringLiteral("Triangle 1")); });
+    QObject::connect(createShapeEllipseAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Ellipse, QStringLiteral("Ellipse 1")); });
+    QObject::connect(createShapeStarAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); });
 
     QObject::connect(duplicateLayerAction, &QAction::triggered, menu, [this]() { handleDuplicateLayer(); });
     QObject::connect(renameLayerAction, &QAction::triggered, menu, [this]() { handleRenameLayer(); });
@@ -365,6 +395,12 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createCameraAction->setEnabled(hasProject);
     createAudioAction->setEnabled(hasProject);
     createSvgAction->setEnabled(hasProject);
+    createShapeRectAction->setEnabled(hasProject);
+    createShapeSquareAction->setEnabled(hasProject);
+    createShapePolygonAction->setEnabled(hasProject);
+    createShapeTriangleAction->setEnabled(hasProject);
+    createShapeEllipseAction->setEnabled(hasProject);
+    createShapeStarAction->setEnabled(hasProject);
 
     duplicateLayerAction->setEnabled(hasLayer);
     renameLayerAction->setEnabled(hasLayer);
@@ -546,6 +582,31 @@ void ArtifactLayerMenu::Impl::handleCreateSvg()
         params.setSvgPath(importedPaths.first());
         service->addLayerToCurrentComposition(params);
     });
+}
+
+void ArtifactLayerMenu::Impl::handleCreateShape(ShapeType type, const QString& nameBase)
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    if (!service) {
+        return;
+    }
+
+    ArtifactLayerInitParams params(uniqueLayerName(nameBase), LayerType::Shape);
+    service->addLayerToCurrentComposition(params);
+
+    if (auto* app = ArtifactApplicationManager::instance()) {
+        if (auto* selectionManager = app->layerSelectionManager()) {
+            if (auto current = selectionManager->currentLayer()) {
+                if (auto shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(current)) {
+                    shapeLayer->setShapeType(type);
+                }
+            }
+        }
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleDuplicateLayer()

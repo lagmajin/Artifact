@@ -3,6 +3,7 @@ module;
 #include <variant>
 #include <cstdint>
 #include <QFont>
+#include <QMatrix4x4>
 #include <QRectF>
 #include <QString>
 #include <Texture.h>
@@ -128,12 +129,22 @@ struct GlyphTextPkt {
     float               opacity   = 1.0f;
 };
 
+struct GlyphTextXformPkt {
+    QRectF              rect;
+    QMatrix4x4          transform;
+    QString             text;
+    QFont               font;
+    float4              color;
+    int                 alignment = 0;
+    float               opacity   = 1.0f;
+};
+
 using DrawPacket = std::variant<
     SolidRectPkt, SolidRectXformPkt,
     LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
     SpritePkt, SpriteXformPkt, MaskedSpritePkt,
-    GlyphTextPkt
+    GlyphTextPkt, GlyphTextXformPkt
 >;
 
 class RenderCommandBuffer {

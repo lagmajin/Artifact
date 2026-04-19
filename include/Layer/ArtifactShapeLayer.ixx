@@ -14,7 +14,7 @@ import Artifact.Render.IRenderer;
 export namespace Artifact {
 using namespace ArtifactCore;
 
-enum class ShapeType { Rect = 0, Ellipse = 1, Star = 2, Polygon = 3, Line = 4 };
+enum class ShapeType { Rect = 0, Ellipse = 1, Star = 2, Polygon = 3, Line = 4, Triangle = 5, Square = 6 };
 
 class ArtifactShapeLayer : public ArtifactAbstractLayer {
 private:
@@ -62,6 +62,13 @@ public:
   // Polygon params
   void setPolygonSides(int sides);
   int polygonSides() const;
+
+  // Editable polygon override
+  bool hasCustomPolygon() const;
+  void setCustomPolygonPoints(const std::vector<QPointF>& points, bool closed = true);
+  void clearCustomPolygonPoints();
+  std::vector<QPointF> customPolygonPoints() const;
+  bool customPolygonClosed() const;
 
   // Layer interface
   std::vector<ArtifactCore::PropertyGroup>

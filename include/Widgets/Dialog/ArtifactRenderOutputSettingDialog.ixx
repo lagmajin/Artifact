@@ -37,6 +37,12 @@ export namespace Artifact
   [[nodiscard]] double frameRate() const;
   void setBitrateKbps(int bitrateKbps);
   [[nodiscard]] int bitrateKbps() const;
+  void setIncludeAudio(bool include);
+  [[nodiscard]] bool includeAudio() const;
+  void setAudioCodec(const QString& codec);
+  [[nodiscard]] QString audioCodec() const;
+  void setAudioBitrateKbps(int bitrateKbps);
+  [[nodiscard]] int audioBitrateKbps() const;
  };
 
 };

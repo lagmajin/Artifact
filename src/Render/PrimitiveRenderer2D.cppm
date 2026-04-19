@@ -725,6 +725,50 @@ void PrimitiveRenderer2D::drawText(const QRectF &rect, const QString &text,
     impl_->cmdBuf_->append(pkt);
 }
 
+void PrimitiveRenderer2D::drawTextTransformed(const QRectF &rect, const QString &text,
+                                              const QFont &font, const FloatColor &color,
+                                              const QMatrix4x4 &transform,
+                                              Qt::Alignment alignment, float opacity)
+{
+    if (!impl_->cmdBuf_ || text.isEmpty() || rect.width() <= 0.0 || rect.height() <= 0.0) {
+        return;
+    }
+
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+    const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const float panX = viewportCB.offset.x, panY = viewportCB.offset.y;
+
+    QMatrix4x4 finalMat;
+    if (impl_->useExternalMatrices_) {
+        QMatrix4x4 model = transform;
+        model.translate(static_cast<float>(rect.x()), static_cast<float>(rect.y()), 0);
+        finalMat = impl_->externalProjMatrix_ * impl_->externalViewMatrix_ * model;
+    } else {
+        QMatrix4x4 combined = transform;
+        combined.translate(static_cast<float>(rect.x()), static_cast<float>(rect.y()), 0);
+        QMatrix4x4 canvasToNdc;
+        canvasToNdc.setToIdentity();
+        canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+        canvasToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+        canvasToNdc.scale(zoom, zoom, 1.0f);
+        canvasToNdc.translate(panX / zoom, panY / zoom, 0.0f);
+        finalMat = canvasToNdc * combined;
+    }
+
+    GlyphTextXformPkt pkt;
+    pkt.rect = QRectF(0.0, 0.0, rect.width(), rect.height());
+    pkt.transform.setToIdentity();
+    pkt.transform = finalMat;
+    pkt.text = text;
+    pkt.font = font;
+    pkt.color = { color.r(), color.g(), color.b(), color.a() };
+    pkt.alignment = static_cast<int>(alignment);
+    pkt.opacity = opacity;
+    impl_->cmdBuf_->append(pkt);
+}
+
 void PrimitiveRenderer2D::drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity)
 {
     if (!impl_->cmdBuf_ || !pSRV) return;

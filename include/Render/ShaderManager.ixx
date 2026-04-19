@@ -51,6 +51,7 @@ public:
     PSOAndSRB spriteTransformPsoAndSrb() const;
     PSOAndSRB maskedSpritePsoAndSrb() const;
     PSOAndSRB glyphQuadPsoAndSrb() const;
+    PSOAndSRB glyphQuadTransformPsoAndSrb() const;
     PSOAndSRB gizmo3DPsoAndSrb() const;
     PSOAndSRB gizmo3DTrianglePsoAndSrb() const;
     PSOAndSRB batchSolidRectPsoAndSrb() const;

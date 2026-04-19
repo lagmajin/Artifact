@@ -209,6 +209,10 @@ namespace Artifact
    }
 
    if (const auto textLayer = dynamic_cast<ArtifactTextLayer*>(layerPtr)) {
+    if (!hasRasterizerEffects(layerPtr) && !layerPtr->hasMasks()) {
+     textLayer->draw(renderer);
+     return;
+    }
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();

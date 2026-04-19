@@ -55,6 +55,46 @@ struct OfxPropertySetStruct {
   std::unordered_map<std::string, Entry> entries;
 };
 
+struct ParamState {
+  OfxPropertySetStruct properties;
+  QString paramType;
+  std::vector<QVariant> currentValues;
+  QString currentStringValue;
+  std::string currentUtf8Value;
+};
+
+struct ParamSetState {
+  OfxPropertySetStruct properties;
+  std::unordered_map<std::string, std::unique_ptr<ParamState>> params;
+  std::vector<std::string> paramOrder;
+};
+
+struct ClipState {
+  OfxPropertySetStruct properties;
+};
+
+struct ImageMemoryState {
+  std::vector<unsigned char> bytes;
+  int lockCount = 0;
+};
+
+struct ImageEffectState {
+  OfxPropertySetStruct properties;
+  ParamSetState paramSet;
+  std::unordered_map<std::string, std::unique_ptr<ClipState>> clips;
+  bool abortRequested = false;
+};
+
+export struct OfxPluginDescriptor {
+  UniString pluginPath;
+  UniString identifier;
+  UniString version;
+  QStringList supportedContexts;
+  std::vector<AbstractProperty> previewProperties;
+  std::shared_ptr<ImageEffectState> descriptorState;
+  HMODULE libraryHandle = nullptr;
+};
+
 namespace {
 
 using PropertySet = OfxPropertySetStruct;
@@ -64,35 +104,9 @@ using PropertyKind = OfxPropertySetStruct::Kind;
 using OfxGetNumberOfPluginsFn = int (*)();
 using OfxGetPluginFn = OfxPlugin *(*)(int);
 
-struct ParamState {
-  PropertySet properties;
-  QString paramType;
-  std::vector<QVariant> currentValues;
-  QString currentStringValue;
-  std::string currentUtf8Value;
-};
-
-struct ParamSetState {
-  PropertySet properties;
-  std::unordered_map<std::string, std::unique_ptr<ParamState>> params;
-  std::vector<std::string> paramOrder;
-};
-
-struct ClipState {
-  PropertySet properties;
-};
-
-struct ImageMemoryState {
-  std::vector<unsigned char> bytes;
-  int lockCount = 0;
-};
-
-struct ImageEffectState {
-  PropertySet properties;
-  ParamSetState paramSet;
-  std::unordered_map<std::string, std::unique_ptr<ClipState>> clips;
-  bool abortRequested = false;
-};
+std::vector<QVariant> defaultValuesForOfxParamType(const QString &paramType);
+OfxStatus paramGetValueImpl(OfxParamHandle paramHandle, va_list args);
+OfxStatus paramSetValueImpl(OfxParamHandle paramHandle, va_list args);
 
 QString toQString(const char *value) {
   return value ? QString::fromUtf8(value) : QString();
@@ -1357,16 +1371,6 @@ QString stripBundleSuffix(QString name) {
 }
 
 } // namespace
-
-export struct OfxPluginDescriptor {
-  UniString pluginPath;
-  UniString identifier;
-  UniString version;
-  QStringList supportedContexts;
-  std::vector<AbstractProperty> previewProperties;
-  std::shared_ptr<ImageEffectState> descriptorState;
-  HMODULE libraryHandle = nullptr;
-};
 
 export class ArtifactOfxHost {
 public:

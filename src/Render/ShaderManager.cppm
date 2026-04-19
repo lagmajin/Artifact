@@ -50,6 +50,7 @@ public:
     RenderShaderPair spriteTransformShaders_;
     RenderShaderPair maskedSpriteShaders_;
     RenderShaderPair glyphQuadShaders_;
+    RenderShaderPair glyphQuadTransformShaders_;
     RenderShaderPair gizmo3DShaders_;
     RenderShaderPair batchSolidRectShaders_;
 
@@ -66,6 +67,7 @@ public:
     PSOAndSRB spriteTransformPsoAndSrb_;
     PSOAndSRB maskedSpritePsoAndSrb_;
     PSOAndSRB glyphQuadPsoAndSrb_;
+    PSOAndSRB glyphQuadTransformPsoAndSrb_;
     PSOAndSRB gizmo3DPsoAndSrb_;
     PSOAndSRB gizmo3DTrianglePsoAndSrb_;
     PSOAndSRB batchSolidRectPsoAndSrb_;
@@ -180,6 +182,13 @@ void ShaderManager::Impl::createShaders()
     spriteTransformVsInfo.Desc.Name = "SpriteTransformVertexShader";
     spriteTransformVsInfo.Source = ArtifactCore::drawSpriteTransformVSSource.constData();
     spriteTransformVsInfo.SourceLength = ArtifactCore::drawSpriteTransformVSSource.length();
+
+    ShaderCreateInfo glyphTransformVsInfo;
+    glyphTransformVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    glyphTransformVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+    glyphTransformVsInfo.Desc.Name = "GlyphTransformVertexShader";
+    glyphTransformVsInfo.Source = g_2DSpriteTransformColorVS.constData();
+    glyphTransformVsInfo.SourceLength = g_2DSpriteTransformColorVS.length();
 
     const QByteArray maskedSpritePsSource = R"(
 struct PS_INPUT
@@ -330,6 +339,10 @@ float4 main(PS_INPUT input) : SV_TARGET
     device_->CreateShader(dotLineVsInfo,             &dotLineShaders_.VS);
     device_->CreateShader(dotLinePsInfo,             &dotLineShaders_.PS);
     device_->CreateShader(gizmo3DVsInfo,             &gizmo3DShaders_.VS);
+
+    // Glyph transform VS: separate from glyphQuadShaders_.VS (matrix CB + per-vertex color)
+    device_->CreateShader(glyphTransformVsInfo, &glyphQuadTransformShaders_.VS);
+    glyphQuadTransformShaders_.PS = glyphQuadShaders_.PS; // reuse the same glyph PS
 
     // Post-parallel pointer assignments (no CreateShader needed, just sharing refs)
     solidTriangleShaders_              = solidShaders_;
@@ -737,6 +750,19 @@ void ShaderManager::Impl::createSpriteFamilyPSOs()
     } else {
         qWarning() << "[ShaderManager] Failed to create PSO:" << "GlyphQuad PSO";
     }
+
+    // Glyph transform PSO: matrix transform CB (64 bytes) + per-vertex color passthrough
+    GraphicsPipelineStateCreateInfo glyphTransformInfo = glyphInfo;
+    glyphTransformInfo.PSODesc.Name = "GlyphQuadTransform PSO";
+    glyphTransformInfo.pVS = glyphQuadTransformShaders_.VS;
+    glyphTransformInfo.pPS = glyphQuadTransformShaders_.PS;
+    glyphTransformInfo.GraphicsPipeline.PrimitiveTopology = PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP;
+    device_->CreateGraphicsPipelineState(glyphTransformInfo, &glyphQuadTransformPsoAndSrb_.pPSO);
+    if (glyphQuadTransformPsoAndSrb_.pPSO) {
+        glyphQuadTransformPsoAndSrb_.pPSO->CreateShaderResourceBinding(&glyphQuadTransformPsoAndSrb_.pSRB, true);
+    } else {
+        qWarning() << "[ShaderManager] Failed to create PSO:" << "GlyphQuadTransform PSO";
+    }
 }
 
 void ShaderManager::Impl::createUtilityFamilyPSOs()
@@ -862,6 +888,7 @@ void ShaderManager::Impl::createUtilityFamilyPSOs()
     auto& gizmoGP = gizmoInfo.GraphicsPipeline;
     gizmoGP.NumRenderTargets = 1;
     gizmoGP.RTVFormats[0] = rtvFormat_;
+    gizmoGP.DSVFormat = TEX_FORMAT_D32_FLOAT;
     gizmoGP.PrimitiveTopology = PRIMITIVE_TOPOLOGY_LINE_LIST;
     gizmoGP.RasterizerDesc.CullMode = CULL_MODE_NONE;
     gizmoGP.DepthStencilDesc.DepthEnable = True;
@@ -939,6 +966,7 @@ void ShaderManager::Impl::destroy()
     clearPso(spritePsoAndSrb_);
     clearPso(maskedSpritePsoAndSrb_);
     clearPso(glyphQuadPsoAndSrb_);
+    clearPso(glyphQuadTransformPsoAndSrb_);
     clearPso(thickLinePsoAndSrb_);
     clearPso(dotLinePsoAndSrb_);
     clearPso(solidTrianglePsoAndSrb_);
@@ -956,6 +984,7 @@ void ShaderManager::Impl::destroy()
     clearShaderPair(spriteTransformShaders_);
     clearShaderPair(maskedSpriteShaders_);
     clearShaderPair(glyphQuadShaders_);
+    clearShaderPair(glyphQuadTransformShaders_);
     clearShaderPair(thickLineShaders_);
     clearShaderPair(dotLineShaders_);
     clearShaderPair(solidTriangleShaders_);
@@ -1121,6 +1150,11 @@ PSOAndSRB ShaderManager::maskedSpritePsoAndSrb() const
 PSOAndSRB ShaderManager::glyphQuadPsoAndSrb() const
 {
     return impl_->glyphQuadPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::glyphQuadTransformPsoAndSrb() const
+{
+    return impl_->glyphQuadTransformPsoAndSrb_;
 }
 
 PSOAndSRB ShaderManager::gizmo3DPsoAndSrb() const

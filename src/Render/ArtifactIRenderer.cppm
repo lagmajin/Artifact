@@ -40,6 +40,7 @@ import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
 import Core.Scale.Zoom;
+import Image.MultiChannelImage;
 import Artifact.Render.DiligentDeviceManager;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.PrimitiveRenderer2D;
@@ -57,9 +58,30 @@ namespace Artifact
  using namespace ArtifactCore;
  using float2 = Diligent::float2;
 
- namespace {
+namespace {
   Diligent::float2 toDiligentFloat2(Detail::float2 value) { return { value.x, value.y }; }
   Detail::float2 toDetailFloat2(Diligent::float2 value)   { return { value.x, value.y }; }
+
+  constexpr size_t kArtifactChannelCount =
+      static_cast<size_t>(ArtifactIRenderer::ChannelType::Custom) + 1;
+
+  constexpr bool isBaseRgbaChannel(ArtifactIRenderer::ChannelType type)
+  {
+    return type == ArtifactIRenderer::ChannelType::Red ||
+           type == ArtifactIRenderer::ChannelType::Green ||
+           type == ArtifactIRenderer::ChannelType::Blue ||
+           type == ArtifactIRenderer::ChannelType::Alpha;
+  }
+
+  constexpr std::array<bool, kArtifactChannelCount> makeDefaultChannelFlags()
+  {
+    std::array<bool, kArtifactChannelCount> flags{};
+    flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Red)] = true;
+    flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Green)] = true;
+    flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Blue)] = true;
+    flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Alpha)] = true;
+    return flags;
+  }
  }
 
  // ---------------------------------------------------------------------------
@@ -80,6 +102,7 @@ namespace Artifact
   mutable RenderCommandBuffer cmdBuf_;
 
   RefCntAutoPtr<ITexture> m_layerRT;
+  RefCntAutoPtr<ITexture> m_layerDepthTex;
   Uint32 m_layerRTWidth = 0;
   Uint32 m_layerRTHeight = 0;
   bool m_upscaleEnabled = false;
@@ -106,12 +129,15 @@ namespace Artifact
   float m_viewportHeight = 0.0f;
 
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
+  bool m_multiChannelEnabled = false;
+  std::array<bool, kArtifactChannelCount> m_channelEnabled = makeDefaultChannelFlags();
   std::vector<ArtifactCore::Light> m_sceneLights;
   LODManager::DetailLevel detailLevel_ = LODManager::DetailLevel::High;
 
 
   void initFrameQueries();
   void createLayerRT(QWidget* window);
+  ITextureView* activeDepthView() const;
   float upscaleRenderScale() const { return m_upscaleEnabled ? m_upscaleScale : 1.0f; }
 
  public:
@@ -124,6 +150,7 @@ namespace Artifact
   void initialize(QWidget* parent);
   void initializeHeadless(int width, int height);
   QImage readbackToImage() const;
+  QImage readbackDepthToImage() const;
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
   void beginFrameGpuProfiling();
@@ -134,6 +161,10 @@ namespace Artifact
 
    void clear();
   void setClearColor(const FloatColor& color);
+  void setMultiChannelEnabled(bool enabled);
+  bool isMultiChannelEnabled() const { return m_multiChannelEnabled; }
+  void setChannelEnabled(ArtifactIRenderer::ChannelType channel, bool enabled);
+  bool isChannelEnabled(ArtifactIRenderer::ChannelType channel) const;
   FloatColor getClearColor() const { return clearColor_; }
   void flushAndWait();
   void flush();
@@ -219,6 +250,8 @@ namespace Artifact
   { primitiveRenderer_.drawBezierLocal(p0, p1, p2, p3, thickness, color); }
   void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
   { primitiveRenderer_.drawSolidTriangleLocal(p0, p1, p2, color); }
+  void drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
+  { primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
   void drawCheckerboard(float x, float y, float w, float h,
                         float tileSize, const FloatColor& c1, const FloatColor& c2)
   { primitiveRenderer_.drawCheckerboard(x, y, w, h, tileSize, c1, c2); }
@@ -385,9 +418,20 @@ namespace Artifact
   TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
   deviceManager_.device()->CreateTexture(TexDesc, nullptr, &m_layerRT);
 
+  TextureDesc depthDesc;
+  depthDesc.Name      = "OfflineDepthTarget";
+  depthDesc.Type      = RESOURCE_DIM_TEX_2D;
+  depthDesc.Width     = static_cast<Uint32>(width);
+  depthDesc.Height    = static_cast<Uint32>(height);
+  depthDesc.MipLevels = 1;
+  depthDesc.Format    = TEX_FORMAT_D32_FLOAT;
+  depthDesc.BindFlags = BIND_DEPTH_STENCIL;
+  deviceManager_.device()->CreateTexture(depthDesc, nullptr, &m_layerDepthTex);
+
   auto* rtv = m_layerRT ? m_layerRT->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET) : nullptr;
   primitiveRenderer_.setOverrideRTV(rtv);
   primitiveRenderer3D_.setOverrideRTV(rtv);
+  primitiveRenderer3D_.setOverrideDSV(m_layerDepthTex ? m_layerDepthTex->GetDefaultView(Diligent::TEXTURE_VIEW_DEPTH_STENCIL) : nullptr);
   primitiveRenderer_.setContext(deviceManager_.immediateContext(), nullptr);
   primitiveRenderer3D_.setContext(deviceManager_.immediateContext());
   primitiveRenderer_.setViewportSize(float(width), float(height));
@@ -548,6 +592,101 @@ namespace Artifact
   return result;
  }
 
+ QImage ArtifactIRenderer::Impl::readbackDepthToImage() const
+ {
+  std::lock_guard<std::mutex> guard(m_readbackMutex);
+
+  auto ctx = deviceManager_.immediateContext();
+  auto device = deviceManager_.device();
+  if (!ctx || !device) return {};
+
+  ITexture* srcTex = nullptr;
+  Uint32 srcWidth = 0;
+  Uint32 srcHeight = 0;
+
+  if (m_layerDepthTex && m_offlineWidth > 0 && m_offlineHeight > 0) {
+   srcTex = m_layerDepthTex;
+   srcWidth = static_cast<Uint32>(m_offlineWidth);
+   srcHeight = static_cast<Uint32>(m_offlineHeight);
+  } else if (m_layerDepthTex) {
+   const auto& desc = m_layerDepthTex->GetDesc();
+   srcTex = m_layerDepthTex;
+   srcWidth = desc.Width;
+   srcHeight = desc.Height;
+  } else if (auto sc = deviceManager_.swapChain()) {
+   if (auto* dsv = sc->GetDepthBufferDSV()) {
+    srcTex = dsv->GetTexture();
+    if (srcTex) {
+     const auto& desc = srcTex->GetDesc();
+     srcWidth = desc.Width;
+     srcHeight = desc.Height;
+    }
+   }
+  }
+
+  if (!srcTex || srcWidth == 0 || srcHeight == 0) return {};
+
+  TextureDesc stagDesc;
+  stagDesc.Name           = "DepthReadbackStagingTexture";
+  stagDesc.Type           = RESOURCE_DIM_TEX_2D;
+  stagDesc.Width          = srcWidth;
+  stagDesc.Height         = srcHeight;
+  stagDesc.MipLevels      = 1;
+  stagDesc.Format         = TEX_FORMAT_D32_FLOAT;
+  stagDesc.Usage          = USAGE_STAGING;
+  stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
+  stagDesc.BindFlags      = BIND_NONE;
+
+  RefCntAutoPtr<ITexture> stagingTex;
+  device->CreateTexture(stagDesc, nullptr, &stagingTex);
+  if (!stagingTex) return {};
+
+  RefCntAutoPtr<IFence> fence;
+  FenceDesc fenceDesc;
+  fenceDesc.Name = "DepthReadbackFence";
+  fenceDesc.Type = FENCE_TYPE_GENERAL;
+  device->CreateFence(fenceDesc, &fence);
+  if (!fence) return {};
+
+  submitter_.submit(cmdBuf_, ctx);
+  ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
+
+  CopyTextureAttribs copyAttribs;
+  copyAttribs.pSrcTexture = srcTex;
+  copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  copyAttribs.pDstTexture = stagingTex;
+  copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
+  ctx->CopyTexture(copyAttribs);
+  const Uint64 fenceValue = 1;
+  ctx->EnqueueSignal(fence, fenceValue);
+  ctx->Flush();
+  fence->Wait(fenceValue);
+
+  MappedTextureSubresource mapped = {};
+  ctx->MapTextureSubresource(stagingTex, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
+  if (!mapped.pData) return {};
+
+  QImage result(static_cast<int>(srcWidth), static_cast<int>(srcHeight), QImage::Format_Grayscale8);
+  if (mapped.Stride < static_cast<size_t>(srcWidth) * sizeof(float)) {
+   ctx->UnmapTextureSubresource(stagingTex, 0, 0);
+   return {};
+  }
+
+  const auto* srcRow = static_cast<const float*>(mapped.pData);
+  for (Uint32 row = 0; row < srcHeight; ++row) {
+   auto* dst = result.scanLine(static_cast<int>(row));
+   const auto* rowPtr = srcRow;
+   for (Uint32 x = 0; x < srcWidth; ++x) {
+    const float depth = std::clamp(rowPtr[x], 0.0f, 1.0f);
+    dst[x] = static_cast<uint8_t>((1.0f - depth) * 255.0f + 0.5f);
+   }
+   srcRow = reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
+  }
+
+  ctx->UnmapTextureSubresource(stagingTex, 0, 0);
+  return result;
+ }
+
  void ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
  {
   if (!deviceManager_.device() || !deviceManager_.immediateContext()) {
@@ -637,7 +776,7 @@ namespace Artifact
   const bool floatReadback = useFloatReadback;
 
   // Run fence wait + pixel conversion in background thread
-  QtConcurrent::run([fence, stagingTex, ctx, w, h, floatReadback, cb = std::move(callback)]() mutable {
+    [[maybe_unused]] auto future = QtConcurrent::run([fence, stagingTex, ctx, w, h, floatReadback, cb = std::move(callback)]() mutable {
     // Wait for GPU copy to complete
     fence->Wait(waitValue);
 
@@ -715,6 +854,7 @@ namespace Artifact
   }
 
   if (m_layerRT) m_layerRT.Release();
+  if (m_layerDepthTex) m_layerDepthTex.Release();
 
   TextureDesc TexDesc;
   TexDesc.Name      = "LayerRenderTarget";
@@ -725,8 +865,29 @@ namespace Artifact
   TexDesc.Format    = TEX_FORMAT_RGBA8_UNORM_SRGB;
   TexDesc.BindFlags = BIND_RENDER_TARGET | BIND_SHADER_RESOURCE;
   deviceManager_.device()->CreateTexture(TexDesc, nullptr, &m_layerRT);
+
+  TextureDesc depthDesc;
+  depthDesc.Name      = "LayerDepthTarget";
+  depthDesc.Type      = RESOURCE_DIM_TEX_2D;
+  depthDesc.Width     = targetWidth;
+  depthDesc.Height    = targetHeight;
+  depthDesc.MipLevels = 1;
+  depthDesc.Format    = TEX_FORMAT_D32_FLOAT;
+  depthDesc.BindFlags = BIND_DEPTH_STENCIL;
+  deviceManager_.device()->CreateTexture(depthDesc, nullptr, &m_layerDepthTex);
   m_layerRTWidth = targetWidth;
   m_layerRTHeight = targetHeight;
+ }
+
+ Diligent::ITextureView* ArtifactIRenderer::Impl::activeDepthView() const
+ {
+  if (m_layerDepthTex) {
+   return m_layerDepthTex->GetDefaultView(Diligent::TEXTURE_VIEW_DEPTH_STENCIL);
+  }
+  if (auto sc = deviceManager_.swapChain()) {
+   return sc->GetDepthBufferDSV();
+  }
+  return nullptr;
  }
 
  void ArtifactIRenderer::Impl::createSwapChain(QWidget* window)
@@ -754,6 +915,7 @@ namespace Artifact
                                  deviceManager_.swapChain());
   primitiveRenderer3D_.setContext(deviceManager_.immediateContext(),
                                   deviceManager_.swapChain());
+  primitiveRenderer3D_.setOverrideDSV(nullptr);
   createLayerRT(window);
  }
 
@@ -777,6 +939,7 @@ namespace Artifact
                                  deviceManager_.swapChain());
   primitiveRenderer3D_.setContext(deviceManager_.immediateContext(),
                                   deviceManager_.swapChain());
+  primitiveRenderer3D_.setOverrideDSV(nullptr);
   createLayerRT(widget);
  }
 
@@ -833,11 +996,45 @@ namespace Artifact
  void ArtifactIRenderer::Impl::clear()
  {
   primitiveRenderer_.clear(deviceManager_.immediateContext(), clearColor_);
+  if (auto ctx = deviceManager_.immediateContext()) {
+   if (auto* dsv = activeDepthView()) {
+    ctx->SetRenderTargets(0, nullptr, dsv,
+                          Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    ctx->ClearDepthStencil(dsv, Diligent::CLEAR_DEPTH_FLAG, 1.0f, 0,
+                           Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+   }
+  }
  }
 
  void ArtifactIRenderer::Impl::setClearColor(const FloatColor& color)
  {
   clearColor_ = color;
+ }
+
+ void ArtifactIRenderer::Impl::setMultiChannelEnabled(bool enabled)
+ {
+  m_multiChannelEnabled = enabled;
+ }
+
+ void ArtifactIRenderer::Impl::setChannelEnabled(ArtifactIRenderer::ChannelType channel, bool enabled)
+ {
+  const auto index = static_cast<size_t>(channel);
+  if (index >= m_channelEnabled.size()) {
+   return;
+  }
+  m_channelEnabled[index] = enabled;
+ }
+
+ bool ArtifactIRenderer::Impl::isChannelEnabled(ArtifactIRenderer::ChannelType channel) const
+ {
+  if (!m_multiChannelEnabled) {
+   return isBaseRgbaChannel(channel);
+  }
+  const auto index = static_cast<size_t>(channel);
+  if (index >= m_channelEnabled.size()) {
+   return false;
+  }
+  return m_channelEnabled[index];
  }
 
  void ArtifactIRenderer::Impl::flush()
@@ -874,6 +1071,7 @@ namespace Artifact
   m_readbackStagingHeight = 0;
   m_readbackFenceValue = 0;
   m_layerRT = nullptr;
+  m_layerDepthTex = nullptr;
   for (auto& query : m_frameQueries) query = nullptr;
   primitiveRenderer_.destroy();
   primitiveRenderer3D_.destroy();
@@ -951,6 +1149,62 @@ namespace Artifact
   bool ArtifactIRenderer::hasSwapChain() const { return impl_->deviceManager_.swapChain() != nullptr; }
 
  QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
+ QImage ArtifactIRenderer::readbackDepthToImage() const { return impl_->readbackDepthToImage(); }
+ ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage() const
+ {
+  const QImage color = impl_->readbackToImage();
+  if (color.isNull()) {
+   return {};
+  }
+
+  const QImage rgba = (color.format() == QImage::Format_RGBA8888)
+                          ? color
+                          : color.convertToFormat(QImage::Format_RGBA8888);
+  ArtifactCore::MultiChannelImage image(rgba.width(), rgba.height());
+
+  auto writeChannel = [&](ArtifactCore::ChannelType type, int offset) {
+   auto channel = image.getChannel(type);
+   if (!channel) {
+    image.addChannel(type);
+    channel = image.getChannel(type);
+   }
+   if (!channel) {
+    return;
+   }
+   for (int y = 0; y < rgba.height(); ++y) {
+    const auto* src = rgba.constScanLine(y);
+    auto* dst = channel->data() + static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
+    for (int x = 0; x < rgba.width(); ++x) {
+     dst[x] = static_cast<float>(src[x * 4 + offset]) / 255.0f;
+    }
+   }
+  };
+
+  writeChannel(ArtifactCore::ChannelType::Red, 0);
+  writeChannel(ArtifactCore::ChannelType::Green, 1);
+  writeChannel(ArtifactCore::ChannelType::Blue, 2);
+  writeChannel(ArtifactCore::ChannelType::Alpha, 3);
+
+  const QImage depth = impl_->readbackDepthToImage();
+  if (!depth.isNull() && depth.size() == rgba.size()) {
+   auto depthChannel = image.getChannel(ArtifactCore::ChannelType::Depth);
+   if (!depthChannel) {
+    image.addChannel(ArtifactCore::ChannelType::Depth);
+    depthChannel = image.getChannel(ArtifactCore::ChannelType::Depth);
+   }
+   if (depthChannel) {
+    for (int y = 0; y < depth.height(); ++y) {
+     const auto* src = depth.constScanLine(y);
+     auto* dst = depthChannel->data() + static_cast<size_t>(y) * static_cast<size_t>(depth.width());
+     for (int x = 0; x < depth.width(); ++x) {
+      dst[x] = 1.0f - (static_cast<float>(src[x]) / 255.0f);
+     }
+    }
+   }
+  }
+
+  return image;
+ }
  void ArtifactIRenderer::readbackToImageAsync(ReadbackCallback callback) const {
   impl_->readbackToImageAsync(std::move(callback));
  }
@@ -961,6 +1215,10 @@ namespace Artifact
  }
 
  void ArtifactIRenderer::setClearColor(const FloatColor& color) { impl_->setClearColor(color); }
+ void ArtifactIRenderer::setMultiChannelEnabled(bool enabled) { impl_->setMultiChannelEnabled(enabled); }
+ bool ArtifactIRenderer::isMultiChannelEnabled() const { return impl_->isMultiChannelEnabled(); }
+ void ArtifactIRenderer::setChannelEnabled(ArtifactIRenderer::ChannelType channel, bool enabled) { impl_->setChannelEnabled(channel, enabled); }
+ bool ArtifactIRenderer::isChannelEnabled(ArtifactIRenderer::ChannelType channel) const { return impl_->isChannelEnabled(channel); }
  FloatColor ArtifactIRenderer::getClearColor() const { return impl_->getClearColor(); }
  void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
  void ArtifactIRenderer::setCanvasSize(float w, float h)        { impl_->setCanvasSize(w, h); }
@@ -1031,6 +1289,11 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
                                   const QFont& font, const FloatColor& color,
                                   Qt::Alignment alignment, float opacity)
  { impl_->primitiveRenderer_.drawText(rect, text, font, color, alignment, opacity); }
+ void ArtifactIRenderer::drawTextTransformed(const QRectF& rect, const QString& text,
+                                             const QFont& font, const FloatColor& color,
+                                             const QMatrix4x4& transform,
+                                             Qt::Alignment alignment, float opacity)
+ { impl_->primitiveRenderer_.drawTextTransformed(rect, text, font, color, transform, alignment, opacity); }
  void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
  {
   // Direct delegation to primitive renderer for transformed sprite drawing

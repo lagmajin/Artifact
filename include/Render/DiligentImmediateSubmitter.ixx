@@ -68,6 +68,7 @@ private:
     PSOAndSRB m_draw_sprite_transform_pso_and_srb;
     PSOAndSRB m_draw_masked_sprite_pso_and_srb;
     PSOAndSRB m_draw_glyph_pso_and_srb;
+    PSOAndSRB m_draw_glyph_transform_pso_and_srb;
     PSOAndSRB m_draw_solid_rect_pso_and_srb;
     PSOAndSRB m_draw_solid_rect_transform_pso_and_srb;
     PSOAndSRB m_draw_line_pso_and_srb;
@@ -93,6 +94,7 @@ private:
     void submitSpriteXform   (const SpriteXformPkt&,    IDeviceContext*, ITextureView*);
     void submitMaskedSprite  (const MaskedSpritePkt&,   IDeviceContext*, ITextureView*);
     void submitGlyphText     (const GlyphTextPkt&,      IDeviceContext*, ITextureView*);
+    void submitGlyphTextTransformed(const GlyphTextXformPkt&, IDeviceContext*, ITextureView*);
 };
 
 } // namespace Artifact
