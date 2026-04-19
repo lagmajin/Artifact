@@ -371,6 +371,19 @@ bool isLayerSelected(const QStringList &selectedIds,
   return false;
 }
 
+bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer) {
+  ArtifactAbstractLayerPtr current = layer;
+  int guard = 0;
+  while (current && guard < 64) {
+    if (!current->isVisible()) {
+      return false;
+    }
+    current = current->parentLayer();
+    ++guard;
+  }
+  return static_cast<bool>(layer);
+}
+
 enum class MotionPathSampleKind { Keyframe, Current };
 
 struct MotionPathSample {
@@ -565,7 +578,7 @@ LayerDragMode hitTestLayerDragMode(const ArtifactAbstractLayerPtr &layer,
 bool layerIntersectsCanvasRect(const ArtifactAbstractLayerPtr &layer,
                                const QRectF &rect,
                                const FramePosition &currentFrame) {
-  if (!layer || !rect.isValid() || !layer->isVisible() ||
+  if (!layer || !rect.isValid() || !isLayerEffectivelyVisible(layer) ||
       !layer->isActiveAt(currentFrame)) {
     return false;
   }
@@ -635,7 +648,7 @@ hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr &comp,
   const auto layers = comp->allLayer();
   for (int i = static_cast<int>(layers.size()) - 1; i >= 0; --i) {
     const auto &layer = layers[static_cast<size_t>(i)];
-    if (!layer || !layer->isVisible() || !layer->isActiveAt(currentFrame)) {
+    if (!isLayerEffectivelyVisible(layer) || !layer->isActiveAt(currentFrame)) {
       continue;
     }
 
@@ -1281,7 +1294,7 @@ public:
 
   // Resolution scaling
   int previewDownsample_ = 1;
-  int interactivePreviewDownsampleFloor_ = 2;
+  int interactivePreviewDownsampleFloor_ = 4;
   float hostWidth_ = 0.0f;
   float hostHeight_ = 0.0f;
   QPointer<QWidget> hostWidget_;
@@ -1502,6 +1515,7 @@ public:
                                 const ArtifactCompositionPtr &comp,
                                 const ArtifactAbstractLayerPtr &selectedLayer,
                                 const FramePosition &currentFrame);
+  void drawGpuTextDebugOverlay();
 
   // 変更検出器へのアクセス (デバッグ用)
   const CompositionChangeDetector &changeDetector() const {
@@ -2538,7 +2552,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       // Collect all layers at this position
       for (int i = (int)layers.size() - 1; i >= 0; --i) {
         auto &layer = layers[i];
-        if (!layer || !layer->isVisible())
+        if (!isLayerEffectivelyVisible(layer))
           continue;
         if (layer->isLocked() && !ignoreLocked)
           continue;
@@ -3254,7 +3268,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   for (const auto &l : layers) {
     auto layerCopy = l;
     if (auto cam = dynamic_cast<ArtifactCameraLayer *>(layerCopy.get())) {
-      if (cam->isVisible() && cam->isActiveAt(currentFrame)) {
+      if (isLayerEffectivelyVisible(cam) && cam->isActiveAt(currentFrame)) {
         activeCamera = cam;
         break; // Use first visible camera
       }
@@ -3348,7 +3362,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const bool hasGpuBlendJustification =
         std::any_of(layers.begin(), layers.end(),
                     [&](const ArtifactAbstractLayerPtr &layer) {
-                      if (!layer || !layer->isVisible() ||
+                      if (!isLayerEffectivelyVisible(layer) ||
                           !layer->isActiveAt(currentFrame)) {
                         return false;
                       }
@@ -3572,7 +3586,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->setDetailLevel(static_cast<LODManager::DetailLevel>(
             lod)); // Pass LOD to renderer/effects
         for (const auto &layer : layers) {
-          if (!layer || !layer->isVisible())
+          if (!isLayerEffectivelyVisible(layer))
             continue;
           if (hasSoloLayer && !layer->isSolo())
             continue;
@@ -3823,7 +3837,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             lod)); // Pass LOD to renderer/effects
 
         for (const auto &layer : layers) {
-          if (!layer || !layer->isVisible())
+          if (!isLayerEffectivelyVisible(layer))
             continue;
           if (hasSoloLayer && !layer->isSolo())
             continue;
@@ -3963,7 +3977,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       auto selectedLayer = (!selectedLayerId_.isNil() && comp)
                                ? comp->layerById(selectedLayerId_)
                                : ArtifactAbstractLayerPtr{};
-      if (selectedLayer && selectedLayer->isVisible()) {
+      if (selectedLayer && isLayerEffectivelyVisible(selectedLayer)) {
         gizmo_->setMode(gizmoMode_);
         {
           ArtifactCore::ProfileScope _profG2D(
@@ -4276,7 +4290,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         const FloatColor primaryColor{1.0f, 0.72f, 0.22f, 1.0f};
         const FloatColor secondaryColor{0.28f, 0.74f, 1.0f, 0.85f};
         for (const auto &layer : layersForOverlay) {
-          if (!layer || !layer->isVisible() ||
+          if (!isLayerEffectivelyVisible(layer) ||
               !layer->isActiveAt(currentFrame)) {
             continue;
           }
@@ -4428,14 +4442,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->resetGizmoCameraMatrices();
       renderer_->reset3DCameraMatrices();
       renderer_->setCanvasSize(cw, ch);
-      // Temporarily disable composition-region and viewport-ghost overlays
-      // while debugging stray frame-like rectangles in the viewport.
-      // if (showCompositionRegionOverlay_) {
-      //   drawCompositionRegionOverlay(renderer_.get(), comp);
-      // }
-      // if (showCompositionRegionOverlay_) {
-      //   drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
-      // }
+      if (showCompositionRegionOverlay_) {
+        drawCompositionRegionOverlay(renderer_.get(), comp);
+      }
+      drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
+      drawGpuTextDebugOverlay();
     }
     overlayMs = markPhaseMs();
 
@@ -4730,14 +4741,6 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
   renderer_->setZoom(1.0f);
   renderer_->setPan(0.0f, 0.0f);
   renderer_->drawSprite(0.0f, 0.0f, drawW, drawH, overlayImage, 1.0f);
-  renderer_->drawSolidRect(16.0f, 16.0f, 240.0f, 34.0f,
-                           FloatColor(0.04f, 0.06f, 0.08f, 0.82f), 1.0f);
-  renderer_->drawRectOutline(16.0f, 16.0f, 240.0f, 34.0f,
-                             FloatColor(0.85f, 0.72f, 0.28f, 1.0f));
-  renderer_->drawText(QRectF(28.0f, 18.0f, 216.0f, 28.0f),
-                      QStringLiteral("GPU TEXT TEST"), font,
-                      FloatColor(1.0f, 0.95f, 0.70f, 1.0f),
-                      Qt::AlignLeft | Qt::AlignVCenter, 1.0f);
   renderer_->setZoom(prevZoom);
   renderer_->setPan(prevPanX, prevPanY);
   if (comp) {
@@ -4748,6 +4751,49 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
         static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
     renderer_->setCanvasSize(cw, ch);
   }
+}
+
+void CompositionRenderController::Impl::drawGpuTextDebugOverlay() {
+  if (!renderer_) {
+    return;
+  }
+  const float drawW = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
+  const float drawH = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
+  if (drawW <= 0.0f || drawH <= 0.0f) {
+    return;
+  }
+
+  const auto prevZoom = renderer_->getZoom();
+  float prevPanX = 0.0f;
+  float prevPanY = 0.0f;
+  renderer_->getPan(prevPanX, prevPanY);
+  renderer_->setCanvasSize(drawW, drawH);
+  renderer_->setZoom(1.0f);
+  renderer_->setPan(0.0f, 0.0f);
+
+  renderer_->drawSolidRect(drawW * 0.5f - 180.0f, drawH * 0.5f - 36.0f,
+                           360.0f, 72.0f,
+                           FloatColor(0.04f, 0.06f, 0.08f, 0.82f), 1.0f);
+  renderer_->drawRectOutline(drawW * 0.5f - 180.0f, drawH * 0.5f - 36.0f,
+                             360.0f, 72.0f,
+                             FloatColor(0.85f, 0.72f, 0.28f, 1.0f));
+
+  QFont font = QApplication::font();
+  font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
+
+  QMatrix4x4 textMat;
+  textMat.setToIdentity();
+  textMat.translate(drawW * 0.5f - 220.0f, drawH * 0.5f - 70.0f, 0.0f);
+  textMat.scale(1.0f, 1.0f, 1.0f);
+  renderer_->drawTextTransformed(QRectF(0.0f, 0.0f, 440.0f, 140.0f),
+                                 QStringLiteral("GPU TEXT TEST"), font,
+                                 FloatColor(1.0f, 0.95f, 0.70f, 1.0f),
+                                 textMat, Qt::AlignLeft | Qt::AlignVCenter,
+                                 1.0f);
+
+  renderer_->setZoom(prevZoom);
+  renderer_->setPan(prevPanX, prevPanY);
+  renderer_->setCanvasSize(lastCanvasWidth_, lastCanvasHeight_);
 }
 
 void CompositionRenderController::setRenderQueueActive(bool active) {
