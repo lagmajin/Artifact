@@ -34,6 +34,7 @@ public:
  explicit ArtifactMenuBar(QWidget* mainWindow, QWidget* parent = nullptr);
  ~ArtifactMenuBar();
  void setMainWindow(QWidget* window);
+ void refreshFontFromSettings();
 };
 
 }

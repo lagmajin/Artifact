@@ -4510,19 +4510,16 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     return;
   }
 
-  const bool scaleActive = gizmo_ && gizmo_->isDragging() && selectedLayer &&
-                           selectedLayer->isVisible() &&
-                           isScaleHandle(gizmo_->activeHandle());
   const bool dropActive = dropGhostVisible_ && !dropGhostRect_.isNull();
-  if (!scaleActive && !dropActive) {
+  if (!dropActive) {
     return;
   }
 
   if (compositionViewLog().isDebugEnabled()) {
     qCDebug(compositionViewLog)
         << "[CompositionView][ViewportGhost]"
-        << "scaleActive=" << scaleActive << "dropActive=" << dropActive
-        << "rect=" << dropGhostRect_ << "title=" << dropGhostTitle_;
+        << "dropActive=" << dropActive << "rect=" << dropGhostRect_
+        << "title=" << dropGhostTitle_;
   }
 
   const float overlayWf = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
@@ -4606,58 +4603,6 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
       p.drawText(labelRect, Qt::AlignCenter,
                  fm.elidedText(dropCandidateLabel_, Qt::ElideMiddle,
                                labelRect.width() - 16));
-    }
-  }
-
-  if (scaleActive) {
-    const QRectF bbox = selectedLayer->transformedBoundingBox();
-    if (bbox.isValid() && renderer_) {
-      const auto tl = renderer_->canvasToViewport(
-          {static_cast<float>(bbox.left()), static_cast<float>(bbox.top())});
-      const auto tr = renderer_->canvasToViewport(
-          {static_cast<float>(bbox.right()), static_cast<float>(bbox.top())});
-      const auto bl = renderer_->canvasToViewport(
-          {static_cast<float>(bbox.left()), static_cast<float>(bbox.bottom())});
-      const auto br =
-          renderer_->canvasToViewport({static_cast<float>(bbox.right()),
-                                       static_cast<float>(bbox.bottom())});
-      const QRectF viewRect(QPointF(std::min({tl.x, tr.x, bl.x, br.x}),
-                                    std::min({tl.y, tr.y, bl.y, br.y})),
-                            QPointF(std::max({tl.x, tr.x, bl.x, br.x}),
-                                    std::max({tl.y, tr.y, bl.y, br.y})));
-
-      p.setPen(QPen(QColor(0, 0, 0, 120), 6.0, Qt::DashLine));
-      p.setBrush(Qt::NoBrush);
-      p.drawRoundedRect(viewRect.adjusted(-6.0, -6.0, 6.0, 6.0), 4.0, 4.0);
-      p.setPen(QPen(QColor(255, 200, 72, 220), 2.0, Qt::DashLine));
-      p.drawRoundedRect(viewRect.adjusted(-4.0, -4.0, 4.0, 4.0), 4.0, 4.0);
-
-      const auto &t3 = selectedLayer->transform3D();
-      const QString text =
-          QStringLiteral("Scale  %1%%  x  %2%%")
-              .arg(QString::number(t3.scaleX() * 100.0f, 'f', 0))
-              .arg(QString::number(t3.scaleY() * 100.0f, 'f', 0));
-      const QFontMetrics fm(p.font());
-      const QSize textSize = fm.size(Qt::TextSingleLine, text);
-      QRect labelRect(static_cast<int>(viewRect.right()) + 12,
-                      static_cast<int>(viewRect.top()) - textSize.height() - 14,
-                      textSize.width() + 22, textSize.height() + 12);
-      if (labelRect.right() > overlayW - 8) {
-        labelRect.moveRight(overlayW - 8);
-      }
-      if (labelRect.left() < 8) {
-        labelRect.moveLeft(8);
-      }
-      if (labelRect.top() < 8) {
-        labelRect.moveTop(8);
-      }
-      p.setPen(Qt::NoPen);
-      p.setBrush(QColor(12, 14, 17, 220));
-      p.drawRoundedRect(labelRect, 6, 6);
-      p.setPen(QColor(230, 235, 240));
-      p.drawText(labelRect.adjusted(10, 6, -10, -6),
-                 Qt::AlignLeft | Qt::AlignVCenter,
-                 fm.elidedText(text, Qt::ElideRight, labelRect.width() - 20));
     }
   }
 

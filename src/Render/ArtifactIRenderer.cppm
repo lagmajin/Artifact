@@ -9,6 +9,7 @@ module;
 #include <cstdint>
 #include <cmath>
 #include <algorithm>
+#include <numeric>
 #include <mutex>
 #include <functional>
 #include <QImage>
@@ -81,6 +82,95 @@ namespace {
     flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Blue)] = true;
     flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Alpha)] = true;
     return flags;
+  }
+
+  float polygonSignedArea(const std::vector<Detail::float2>& points)
+  {
+    if (points.size() < 3) {
+      return 0.0f;
+    }
+    double area = 0.0;
+    for (size_t i = 0; i < points.size(); ++i) {
+      const auto& a = points[i];
+      const auto& b = points[(i + 1) % points.size()];
+      area += (static_cast<double>(a.x) * static_cast<double>(b.y)) -
+              (static_cast<double>(b.x) * static_cast<double>(a.y));
+    }
+    return static_cast<float>(area * 0.5);
+  }
+
+  float cross2d(const Detail::float2& a, const Detail::float2& b, const Detail::float2& c)
+  {
+    return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+  }
+
+  bool pointInTriangle(const Detail::float2& p, const Detail::float2& a,
+                       const Detail::float2& b, const Detail::float2& c)
+  {
+    const float area1 = cross2d(p, a, b);
+    const float area2 = cross2d(p, b, c);
+    const float area3 = cross2d(p, c, a);
+    const bool hasNeg = (area1 < 0.0f) || (area2 < 0.0f) || (area3 < 0.0f);
+    const bool hasPos = (area1 > 0.0f) || (area2 > 0.0f) || (area3 > 0.0f);
+    return !(hasNeg && hasPos);
+  }
+
+  std::vector<std::array<int, 3>> triangulatePolygon(const std::vector<Detail::float2>& points)
+  {
+    std::vector<std::array<int, 3>> triangles;
+    if (points.size() < 3) {
+      return triangles;
+    }
+
+    std::vector<int> indices(points.size());
+    std::iota(indices.begin(), indices.end(), 0);
+    const bool ccw = polygonSignedArea(points) >= 0.0f;
+    int guard = 0;
+    while (indices.size() > 2 && guard < 4096) {
+      ++guard;
+      bool earFound = false;
+      const int m = static_cast<int>(indices.size());
+      for (int i = 0; i < m; ++i) {
+        const int i0 = indices[(i + m - 1) % m];
+        const int i1 = indices[i];
+        const int i2 = indices[(i + 1) % m];
+        const Detail::float2& a = points[static_cast<size_t>(i0)];
+        const Detail::float2& b = points[static_cast<size_t>(i1)];
+        const Detail::float2& c = points[static_cast<size_t>(i2)];
+        const float cross = cross2d(a, b, c);
+        if (ccw ? (cross <= 1e-6f) : (cross >= -1e-6f)) {
+          continue;
+        }
+        bool containsPoint = false;
+        for (int j = 0; j < m; ++j) {
+          const int idx = indices[j];
+          if (idx == i0 || idx == i1 || idx == i2) {
+            continue;
+          }
+          if (pointInTriangle(points[static_cast<size_t>(idx)], a, b, c)) {
+            containsPoint = true;
+            break;
+          }
+        }
+        if (containsPoint) {
+          continue;
+        }
+        triangles.push_back({i0, i1, i2});
+        indices.erase(indices.begin() + i);
+        earFound = true;
+        break;
+      }
+      if (!earFound) {
+        break;
+      }
+    }
+
+    if (triangles.empty()) {
+      for (size_t i = 1; i + 1 < points.size(); ++i) {
+        triangles.push_back({0, static_cast<int>(i), static_cast<int>(i + 1)});
+      }
+    }
+    return triangles;
   }
  }
 
@@ -250,6 +340,17 @@ namespace {
   { primitiveRenderer_.drawBezierLocal(p0, p1, p2, p3, thickness, color); }
   void drawSolidTriangleLocal(float2 p0, float2 p1, float2 p2, const FloatColor& color)
   { primitiveRenderer_.drawSolidTriangleLocal(p0, p1, p2, color); }
+  void drawSolidPolygonLocal(const std::vector<Detail::float2>& points, const FloatColor& color)
+  {
+    const auto triangles = triangulatePolygon(points);
+    for (const auto& tri : triangles) {
+      primitiveRenderer_.drawSolidTriangleLocal(
+          toDiligentFloat2(points[static_cast<size_t>(tri[0])]),
+          toDiligentFloat2(points[static_cast<size_t>(tri[1])]),
+          toDiligentFloat2(points[static_cast<size_t>(tri[2])]),
+          color);
+    }
+  }
   void drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
   { primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
   void drawCheckerboard(float x, float y, float w, float h,
@@ -1287,13 +1388,15 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
  { impl_->drawSpriteLocal(x, y, w, h, image, opacity); }
  void ArtifactIRenderer::drawText(const QRectF& rect, const QString& text,
                                   const QFont& font, const FloatColor& color,
-                                  Qt::Alignment alignment, float opacity)
- { impl_->primitiveRenderer_.drawText(rect, text, font, color, alignment, opacity); }
+                                  Qt::Alignment alignment, float opacity,
+                                  const FloatColor& outlineColor, float outlineThickness)
+ { impl_->primitiveRenderer_.drawText(rect, text, font, color, alignment, opacity, outlineColor, outlineThickness); }
  void ArtifactIRenderer::drawTextTransformed(const QRectF& rect, const QString& text,
                                              const QFont& font, const FloatColor& color,
                                              const QMatrix4x4& transform,
-                                             Qt::Alignment alignment, float opacity)
- { impl_->primitiveRenderer_.drawTextTransformed(rect, text, font, color, transform, alignment, opacity); }
+                                             Qt::Alignment alignment, float opacity,
+                                             const FloatColor& outlineColor, float outlineThickness)
+ { impl_->primitiveRenderer_.drawTextTransformed(rect, text, font, color, transform, alignment, opacity, outlineColor, outlineThickness); }
  void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QTransform& transform, const QImage& image, float opacity)
  {
   // Direct delegation to primitive renderer for transformed sprite drawing
@@ -1341,12 +1444,15 @@ void ArtifactIRenderer::drawDashedLineLocal(Detail::float2 p1, Detail::float2 p2
                                          float thickness, const FloatColor& color)
  { impl_->drawBezierLocal(toDiligentFloat2(p0), toDiligentFloat2(p1),
                           toDiligentFloat2(p2), toDiligentFloat2(p3), thickness, color); }
- void ArtifactIRenderer::drawSolidTriangleLocal(Detail::float2 p0, Detail::float2 p1,
+void ArtifactIRenderer::drawSolidTriangleLocal(Detail::float2 p0, Detail::float2 p1,
                                                 Detail::float2 p2, const FloatColor& color)
- { impl_->drawSolidTriangleLocal(toDiligentFloat2(p0), toDiligentFloat2(p1),
+{ impl_->drawSolidTriangleLocal(toDiligentFloat2(p0), toDiligentFloat2(p1),
                                  toDiligentFloat2(p2), color); }
- void ArtifactIRenderer::drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
- { impl_->primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
+void ArtifactIRenderer::drawSolidPolygonLocal(const std::vector<Detail::float2>& points,
+                                              const FloatColor& color)
+{ impl_->drawSolidPolygonLocal(points, color); }
+void ArtifactIRenderer::drawCircle(float x, float y, float radius, const FloatColor& color, float thickness, bool fill)
+{ impl_->primitiveRenderer_.drawCircle(x, y, radius, color, thickness, fill); }
  void ArtifactIRenderer::drawCrosshair(float x, float y, float size, const FloatColor& color)
  { impl_->primitiveRenderer_.drawCrosshair(x, y, size, color); }
 void ArtifactIRenderer::drawCheckerboard(float x, float y, float w, float h,

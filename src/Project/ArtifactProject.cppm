@@ -62,6 +62,7 @@ namespace Artifact {
    ArtifactProjectSettings projectSettings_;
    ArtifactLayerFactory layerFactory_;
    bool isDirty_; // ダーティ状態フラグ
+   CompositionID currentCompositionId_;
 
    // AI向けメタデータ
    QString aiDescription_;
@@ -105,6 +106,8 @@ namespace Artifact {
    void setDirty(bool dirty);
 
    QJsonObject toJson() const;
+   CompositionID currentCompositionId() const;
+   void setCurrentCompositionId(const CompositionID& id, bool markDirty = true);
   AssetMultiIndexContainer assetContainer_;
   ArtifactCompositionMultiIndexContainer container_;
   std::vector<std::unique_ptr<ProjectItem>> ownedItems_; // owns all allocated items
@@ -234,6 +237,7 @@ CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactC
  CreateCompositionResult result;
  result.id = id;
  result.success = true;
+ currentCompositionId_ = id;
  qDebug() << "Impl::createComposition: created composition id=" << id.toString();
  return result;
  }
@@ -297,6 +301,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
    projectRoot->children.append(raw);
   }
   ownedItems_.push_back(std::move(compItemUp));
+  if (currentCompositionId_.isNil()) {
+    currentCompositionId_ = id;
+  }
   return true;
  }
 
@@ -334,6 +341,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
        }
        it = ownedItems_.erase(it);
        qDebug() << "removeById succeeded: id=" << id.toString();
+       if (currentCompositionId_ == id) {
+         currentCompositionId_ = CompositionID();
+       }
        setDirty(true);
        return true;
      } else {
@@ -341,9 +351,12 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
      }
    }
 
-   qDebug() << "removeById: composition removed from container but item not found in ownedItems: id=" << id.toString();
-   setDirty(true);
-   return true;
+  qDebug() << "removeById: composition removed from container but item not found in ownedItems: id=" << id.toString();
+   if (currentCompositionId_ == id) {
+     currentCompositionId_ = CompositionID();
+   }
+  setDirty(true);
+  return true;
   }
 
  bool ArtifactProject::Impl::isDirty() const
@@ -478,6 +491,9 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   result["version"] = "1.1";
   result["minVersion"] = "1.0";
   result["savedAt"] = QDateTime::currentDateTime().toString(Qt::ISODate);
+  if (!currentCompositionId_.isNil()) {
+   result["currentCompositionId"] = currentCompositionId_.toString();
+  }
 
   // AI向けメタデータを追加
   if (!aiDescription_.isEmpty()) {
@@ -560,6 +576,19 @@ QJsonArray compsArray;
 
    return result;
   }
+
+ CompositionID ArtifactProject::Impl::currentCompositionId() const
+ {
+  return currentCompositionId_;
+ }
+
+ void ArtifactProject::Impl::setCurrentCompositionId(const CompositionID& id, bool markDirty)
+ {
+  currentCompositionId_ = id;
+  if (markDirty) {
+   setDirty(true);
+  }
+ }
 
  bool ArtifactProject::validateProjectTree(QString* errorMessage) const
  {
@@ -1064,6 +1093,22 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
   return findResult.success && !findResult.ptr.expired();
  }
 
+ CompositionID ArtifactProject::currentCompositionId() const
+ {
+  if (!impl_) {
+   return CompositionID();
+  }
+  return impl_->currentCompositionId();
+ }
+
+ void ArtifactProject::setCurrentCompositionId(const CompositionID& id, bool markDirty)
+ {
+  if (!impl_) {
+   return;
+  }
+  impl_->setCurrentCompositionId(id, markDirty);
+ }
+
  void ArtifactProject::addAssetFile()
  {
   // Open file dialog would be handled by UI layer
@@ -1362,6 +1407,15 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
     root = impl_->ownedItems_.front().get();
   }
   if (!root || root->type() != eProjectItemType::Folder) return;
+
+  // Drop all existing items except the root placeholder to avoid orphaned
+  // pointers and duplicate tree entries on repeated load.
+  if (!impl_->ownedItems_.empty()) {
+    auto rootHolder = std::move(impl_->ownedItems_.front());
+    impl_->ownedItems_.clear();
+    impl_->ownedItems_.push_back(std::move(rootHolder));
+    root = impl_->ownedItems_.front().get();
+  }
 
   // Clear existing children
   root->children.clear();

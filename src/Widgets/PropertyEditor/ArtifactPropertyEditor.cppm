@@ -1476,7 +1476,6 @@ ArtifactColorPropertyEditor::ArtifactColorPropertyEditor(
   applyColor(currentColor_);
   QObject::connect(button_, &QPushButton::clicked, this, [this]() {
     ArtifactWidgets::FloatColorPicker picker(button_);
-    Artifact::installFloatColorPickerSliderJump(&picker);
     picker.setWindowTitle(QStringLiteral("Select Color"));
     picker.setInitialColor(ArtifactCore::FloatColor(
         currentColor_.redF(), currentColor_.greenF(), currentColor_.blueF(),

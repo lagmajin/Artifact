@@ -440,6 +440,18 @@ ArtifactMainWindow::~ArtifactMainWindow() {
 
 void ArtifactMainWindow::addWidget() {}
 
+void ArtifactMainWindow::applyUiFontSettings() {
+  if (!impl_) {
+    return;
+  }
+  if (auto* bar = qobject_cast<ArtifactMenuBar*>(menuBar())) {
+    bar->refreshFontFromSettings();
+  }
+  if (impl_->dockStyleManager) {
+    impl_->dockStyleManager->applyStyle();
+  }
+}
+
 void ArtifactMainWindow::addDockedWidget(const QString &title,
                                          ads::DockWidgetArea area,
                                          QWidget *widget) {

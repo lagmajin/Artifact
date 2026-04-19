@@ -1,5 +1,6 @@
 ﻿module;
 #include <utility>
+#include <QFont>
 #include <QSize>
 #include <QMenuBar>
 #include <QMenu>
@@ -8,6 +9,7 @@
 module Menu.MenuBar;
 
 
+import Application.AppSettings;
 import Artifact.Menu.File;
 import Artifact.Menu.Edit;
 import Menu.Composition;
@@ -26,6 +28,17 @@ import Artifact.Widgets.Timeline;
 namespace Artifact {
 
 namespace {
+QFont scaledMenuFont(const QFont& baseFont)
+{
+ const auto* settings = ArtifactCore::ArtifactAppSettings::instance();
+ const int scalePercent = settings ? settings->menuBarFontScalePercent() : 132;
+ const qreal factor = qBound(0.5, static_cast<qreal>(scalePercent) / 100.0, 2.0);
+ QFont font = baseFont;
+ const qreal pointSize = font.pointSizeF() > 0 ? font.pointSizeF() : 10.0;
+ font.setPointSizeF(pointSize * factor);
+ return font;
+}
+
 ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
 {
  if (!root) {
@@ -56,6 +69,7 @@ public:
 
  QWidget* mainWindow_ = nullptr;
  ArtifactMenuBar* menuBar_ = nullptr;
+ QFont baseFont_;
 
  ArtifactFileMenu* fileMenu = nullptr;
  ArtifactEditMenu* editMenu = nullptr;
@@ -160,14 +174,8 @@ ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)
  : QMenuBar(parent), impl_(new Impl(mainWindow, this))
 {
  setAutoFillBackground(true);
- // Scale menu bar and all popup menus by 20% without QSS
- QFont f = font();
- const qreal sz = f.pointSizeF() > 0 ? f.pointSizeF() : 10.0;
- f.setPointSizeF(sz * 1.32);
- setFont(f);
- for (auto *menu : findChildren<QMenu *>()) {
-  menu->setFont(f);
- }
+ impl_->baseFont_ = font();
+ refreshFontFromSettings();
 }
 
 ArtifactMenuBar::~ArtifactMenuBar()
@@ -179,6 +187,18 @@ void ArtifactMenuBar::setMainWindow(QWidget* window)
 {
  if (!impl_) return;
  impl_->mainWindow_ = window;
+}
+
+void ArtifactMenuBar::refreshFontFromSettings()
+{
+ if (!impl_) return;
+ const QFont f = scaledMenuFont(impl_->baseFont_);
+ setFont(f);
+ for (auto* menu : findChildren<QMenu*>()) {
+  if (menu) {
+   menu->setFont(f);
+  }
+ }
 }
 
 }

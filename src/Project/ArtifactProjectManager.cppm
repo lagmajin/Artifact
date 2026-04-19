@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <QDir>
+#include <QColor>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonObject>
@@ -20,6 +21,7 @@ import std;
 
 import Utils;
 import Artifact.Project;
+import Application.AppSettings;
 import Artifact.Project.Exporter;
 import Artifact.Project.Importer;
 import Artifact.Project.Health;
@@ -101,6 +103,22 @@ namespace Artifact {
   void runProjectHookScript(const QString& hookName, const QString& path)
   {
     ArtifactPythonHookManager::runHook(hookName, QStringList() << path);
+  }
+
+  ArtifactCompositionInitParams defaultCompositionParamsFromSettings()
+  {
+    ArtifactCompositionInitParams params;
+    if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      params.setResolution(settings->projectDefaultCompositionWidth(),
+                           settings->projectDefaultCompositionHeight());
+      params.setFrameRate(settings->projectDefaultCompositionFrameRate());
+      const QColor bg(settings->projectDefaultCompositionBackgroundColor());
+      if (bg.isValid()) {
+        params.setBackgroundColor(ArtifactCore::FloatColor(
+            bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF()));
+      }
+    }
+    return params;
   }
  }
 
@@ -327,7 +345,7 @@ QString ArtifactProjectManager::Impl::makeUniqueAssetPath(const QString& directo
   {
     return true;
    }
-
+  return false;
  }
 
  ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :QObject(parent), impl_(new Impl())
@@ -341,13 +359,15 @@ QString ArtifactProjectManager::Impl::makeUniqueAssetPath(const QString& directo
   delete impl_;
  }
 
- bool ArtifactProjectManager::closeCurrentProject()
- {
-  impl_->currentProjectPtr_.reset();
-  impl_->currentProjectPath_.clear();
-  impl_->signalsConnected_ = false;
-  return true;
- }
+bool ArtifactProjectManager::closeCurrentProject()
+{
+ impl_->currentProjectPtr_.reset();
+ impl_->currentProjectPath_.clear();
+ impl_->projectRootPath_.clear();
+ impl_->signalsConnected_ = false;
+ impl_->isCreated_ = false;
+ return true;
+}
 
 void ArtifactProjectManager::createProject()
 {
@@ -629,9 +649,32 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
    runProjectHookScript(QStringLiteral("after_project_export"), fullpath);
   } else {
    runProjectHookScript(QStringLiteral("on_project_save_failed"), fullpath);
-   }
+  }
+  return result;
+}
+
+ArtifactProjectExporterResult ArtifactProjectManager::saveIncremental(const QString& fullpath)
+{
+  if (!impl_) {
+    ArtifactProjectExporterResult result;
+    result.success = false;
     return result;
-   }
+  }
+
+  QString targetPath = fullpath.trimmed();
+  if (targetPath.isEmpty()) {
+    targetPath = impl_->currentProjectPath_.trimmed();
+  }
+
+  if (targetPath.isEmpty()) {
+    ArtifactProjectExporterResult result;
+    result.success = false;
+    qWarning() << "[saveIncremental] No target path available";
+    return result;
+  }
+
+  return saveToFile(targetPath);
+}
 
 // ─────────────────────────────────────────────
 // Async load/save implementations
@@ -839,7 +882,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   }
 
   // Create a composition using default init params and emit the created ID
-  ArtifactCompositionInitParams params;
+  ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings();
   // Ensure a project exists so UI/model get updated and signals are wired
   if (!impl_->currentProjectPtr_) {
    createProject();
@@ -855,12 +898,12 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   }
  }
 
- void ArtifactProjectManager::createComposition(const QString name, const QSize& size)
- {
-  ArtifactCompositionInitParams params;
-  if (!name.isEmpty()) {
-    params.setCompositionName(UniString(name));
-  }
+  void ArtifactProjectManager::createComposition(const QString name, const QSize& size)
+  {
+   ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings();
+   if (!name.isEmpty()) {
+     params.setCompositionName(UniString(name));
+   }
   if (size.isValid() && size.width() > 0 && size.height() > 0) {
     params.setResolution(size.width(), size.height());
   }
@@ -906,7 +949,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   }
   impl_->creatingComposition_ = true;
 
-  ArtifactCompositionInitParams params;
+  ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings();
   // try to set a name if provided
   try {
    params.setCompositionName(str);
@@ -952,30 +995,47 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   projectChanged();
  }
 
- ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
- {
+ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
+{
   if (!impl_->currentProjectPtr_) return nullptr;
-  
-  auto projectItems = impl_->currentProjectPtr_->projectItems();
-  CompositionID firstCompId;
-  
-  // Find the first composition item
-  for (auto item : projectItems) {
-    if (!item) continue;
-    for (auto child : item->children) {
-      if (child && child->type() == eProjectItemType::Composition) {
-        CompositionItem* compItem = static_cast<CompositionItem*>(child);
-        firstCompId = compItem->compositionId;
-        break;
+
+  auto findFirstCompositionId = [&]() -> CompositionID {
+    auto projectItems = impl_->currentProjectPtr_->projectItems();
+    for (auto item : projectItems) {
+      if (!item) continue;
+      for (auto child : item->children) {
+        if (child && child->type() == eProjectItemType::Composition) {
+          auto* compItem = static_cast<CompositionItem*>(child);
+          return compItem->compositionId;
+        }
       }
     }
-    if (!firstCompId.isNil()) break;
+    return CompositionID();
+  };
+
+  CompositionID targetCompId = impl_->currentProjectPtr_->currentCompositionId();
+  if (targetCompId.isNil()) {
+    targetCompId = findFirstCompositionId();
+    if (!targetCompId.isNil()) {
+      impl_->currentProjectPtr_->setCurrentCompositionId(targetCompId, false);
+    }
   }
-  
-  if (firstCompId.isNil()) return nullptr;
-  
-  auto findResult = impl_->currentProjectPtr_->findComposition(firstCompId);
+
+  if (targetCompId.isNil()) return nullptr;
+
+  auto findResult = impl_->currentProjectPtr_->findComposition(targetCompId);
   if (findResult.success && !findResult.ptr.expired()) {
+    return findResult.ptr.lock();
+  }
+
+  targetCompId = findFirstCompositionId();
+  if (targetCompId.isNil()) {
+    return nullptr;
+  }
+
+  findResult = impl_->currentProjectPtr_->findComposition(targetCompId);
+  if (findResult.success && !findResult.ptr.expired()) {
+    impl_->currentProjectPtr_->setCurrentCompositionId(targetCompId, false);
     return findResult.ptr.lock();
   }
   

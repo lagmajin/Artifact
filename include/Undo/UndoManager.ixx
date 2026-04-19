@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -159,6 +159,33 @@ private:
     ArtifactAbstractLayerWeak layer_;
     float oldOpacity_;
     float newOpacity_;
+};
+
+// 新規コマンド：Variant 切り替え
+class ChangeActiveVariantCommand : public UndoCommand {
+public:
+    ChangeActiveVariantCommand(ArtifactAbstractLayerPtr layer, size_t oldIndex, size_t newIndex);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    size_t oldIndex_;
+    size_t newIndex_;
+};
+
+// 新規コマンド：Variant 作成
+class CreateVariantCommand : public UndoCommand {
+public:
+    CreateVariantCommand(ArtifactAbstractLayerPtr layer, const std::string& name);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    std::string name_;
+    size_t index_;
+    std::unique_ptr<LayerVariant> extracted_;
 };
 
 class UndoManager : public QObject {

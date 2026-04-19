@@ -118,6 +118,7 @@ import Artifact.Widgets.Render.QueueManager;
 import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Render.Scheduler;
 import Artifact.Contents.Viewer;
+import Widgets.ToolBar;
 import Widgets.Inspector;
 import Widgets.AssetBrowser;
 import Artifact.Widgets.ArtifactPropertyWidget;
@@ -921,6 +922,37 @@ int main(int argc, char *argv[]) {
       }
     }
   };
+  auto applyPreviewPresetFromSettings = [settings]() {
+    const QString quality = settings ? settings->previewQualityText().trimmed().toLower()
+                                     : QString();
+    if (quality.contains(QStringLiteral("draft")) ||
+        quality.contains(QStringLiteral("fast"))) {
+      return PreviewQualityPreset::Draft;
+    }
+    if (quality.contains(QStringLiteral("final"))) {
+      return PreviewQualityPreset::Final;
+    }
+    return PreviewQualityPreset::Preview;
+  };
+  auto workspaceModeFromSettings = [settings]() {
+    const QString mode = settings
+                             ? settings->projectDefaultWorkspaceModeText().trimmed()
+                             : QString();
+    const QString normalized = mode.toLower();
+    if (normalized == QStringLiteral("animation")) {
+      return Artifact::WorkspaceMode::Animation;
+    }
+    if (normalized == QStringLiteral("vfx")) {
+      return Artifact::WorkspaceMode::VFX;
+    }
+    if (normalized == QStringLiteral("compositing")) {
+      return Artifact::WorkspaceMode::Compositing;
+    }
+    if (normalized == QStringLiteral("audio")) {
+      return Artifact::WorkspaceMode::Audio;
+    }
+    return Artifact::WorkspaceMode::Default;
+  };
   applyThemeFromSettings();
   QApplication::setStyle(
       new ArtifactCommonStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
@@ -996,8 +1028,9 @@ int main(int argc, char *argv[]) {
   }
 
   auto pool = QThreadPool::globalInstance();
-
-  pool->setMaxThreadCount(10);
+  const int configuredRenderThreads =
+      std::max(1, settings ? settings->renderThreadCount() : 10);
+  pool->setMaxThreadCount(configuredRenderThreads);
 
   bootstrapPythonScripts();
   ArtifactPythonHookManager::runHook(QStringLiteral("on_startup"));
@@ -1010,11 +1043,32 @@ int main(int argc, char *argv[]) {
   mw->setObjectName("ArtifactMainWindow");
   mw->setWindowTitle(buildWindowTitle());
   mw->setWindowIcon(appIcon);
+  QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
+                   mw, [mw]() { mw->applyUiFontSettings(); });
   auto *status = new ArtifactStatusBar(mw);
   mw->setStatusBar(status);
   status->showReadyMessage();
   status->setProjectText("Loaded");
   auto *projectService = ArtifactProjectService::instance();
+  if (projectService) {
+    projectService->setPreviewQualityPreset(applyPreviewPresetFromSettings());
+  }
+  QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
+                   mw, [projectService, applyPreviewPresetFromSettings]() {
+                     if (projectService) {
+                       projectService->setPreviewQualityPreset(
+                           applyPreviewPresetFromSettings());
+                     }
+                   });
+  QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
+                   mw, [pool, settings]() {
+                     if (!pool || !settings) {
+                       return;
+                     }
+                     const int configuredRenderThreads =
+                         std::max(1, settings->renderThreadCount());
+                     pool->setMaxThreadCount(configuredRenderThreads);
+                   });
   auto *playbackService = ArtifactPlaybackService::instance();
   // Enable output monitoring for debugging
   if (playbackService->controller()) {
@@ -1412,6 +1466,7 @@ int main(int argc, char *argv[]) {
     mw->addDockedWidget(QStringLiteral("AI Cloud"), ads::RightDockWidgetArea,
                         new ArtifactAICloudWidget(mw));
     renderCenterWindow = new ArtifactRenderCenterWindow();
+    renderCenterWindow->present();
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
     mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), false);
@@ -1784,9 +1839,16 @@ int main(int argc, char *argv[]) {
               }));
       appEventSubscriptions.push_back(
           appEventBus.subscribe<ProjectCreatedEvent>(
-              [](const ProjectCreatedEvent &) {
+              [mw, workspaceModeFromSettings](const ProjectCreatedEvent &) {
                 ArtifactPythonHookManager::runHook(
                     QStringLiteral("project_opened"));
+                const QString projectPath =
+                    ArtifactProjectManager::getInstance().currentProjectPath();
+                if (QFileInfo(projectPath).isDir()) {
+                  if (mw) {
+                    mw->setWorkspaceMode(workspaceModeFromSettings());
+                  }
+                }
               }));
     }
 
@@ -1894,7 +1956,10 @@ int main(int argc, char *argv[]) {
       if (!layoutState.state.isEmpty()) {
         stateRestored = mw->restoreState(layoutState.state);
       }
-      workspaceManager.restoreSession(mw);
+      const bool workspaceRestored = workspaceManager.restoreSession(mw);
+      if (!workspaceRestored) {
+        mw->setWorkspaceMode(workspaceModeFromSettings());
+      }
       bool resetApplied = false;
       if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
           (!layoutState.state.isEmpty() && !stateRestored)) {

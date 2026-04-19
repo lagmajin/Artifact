@@ -24,6 +24,17 @@ namespace Artifact
 
 namespace
 {
+struct QObjectDeleteLaterDeleter
+{
+    template <class T>
+    void operator()(T* object) const
+    {
+        if (object) {
+            object->deleteLater();
+        }
+    }
+};
+
 float readLayerVolume(const ArtifactAbstractLayerPtr& layer)
 {
     if (!layer) {
@@ -346,8 +357,8 @@ void AudioMixerMasterBus::updateLevels(float left, float right)
 class AudioMixer::Impl
 {
 public:
-    std::map<LayerID, std::unique_ptr<AudioMixerChannelStrip>> channelStrips_;
-    std::unique_ptr<AudioMixerMasterBus> masterBus_;
+    std::map<LayerID, std::unique_ptr<AudioMixerChannelStrip, QObjectDeleteLaterDeleter>> channelStrips_;
+    std::unique_ptr<AudioMixerMasterBus, QObjectDeleteLaterDeleter> masterBus_;
     ArtifactCompositionPtr composition_;
     int sampleRate_ = 44100;
     int bufferSize_ = 512;
@@ -415,7 +426,7 @@ AudioMixer::AudioMixer(QObject* parent)
     : QObject(parent)
     , impl_(new Impl())
 {
-    impl_->masterBus_ = std::make_unique<AudioMixerMasterBus>(this);
+    impl_->masterBus_ = std::unique_ptr<AudioMixerMasterBus, QObjectDeleteLaterDeleter>(new AudioMixerMasterBus());
     QObject::connect(impl_->masterBus_.get(), &AudioMixerMasterBus::volumeChanged, this,
         [this](const float) {
             impl_->refreshDerivedLevels();
@@ -438,7 +449,7 @@ AudioMixerChannelStrip* AudioMixer::addChannelStrip(LayerID layerId)
         return it->second.get();
     }
 
-    auto strip = std::make_unique<AudioMixerChannelStrip>(this);
+    auto strip = std::unique_ptr<AudioMixerChannelStrip, QObjectDeleteLaterDeleter>(new AudioMixerChannelStrip());
     strip->setLayerId(layerId);
     AudioMixerChannelStrip* ptr = strip.get();
     impl_->channelStrips_[layerId] = std::move(strip);

@@ -35,13 +35,13 @@ module Dialog.Composition;
 import Widgets.Utils.CSS;
 import Widgets.EditableLabel;
 import DragSpinBox;
+import Application.AppSettings;
 import Color.Float;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Service.Project;
 import Utils.String.UniString;
 import FloatColorPickerDialog;
-import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 
 namespace Artifact {
 
@@ -49,6 +49,33 @@ namespace Artifact {
  using namespace ArtifactWidgets;
 
 namespace {
+
+int indexForFrameRate(QComboBox *combo, double fps)
+{
+  if (!combo) {
+    return -1;
+  }
+  for (int i = 0; i < combo->count(); ++i) {
+    if (std::abs(combo->itemData(i).toDouble() - fps) < 0.001) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int indexForSize(QComboBox *combo, const QSize &size)
+{
+  if (!combo || !size.isValid()) {
+    return -1;
+  }
+  for (int i = 0; i < combo->count(); ++i) {
+    const QSize itemSize = combo->itemData(i).toSize();
+    if (itemSize == size) {
+      return i;
+    }
+  }
+  return -1;
+}
 
 void collectCompositionNames(ProjectItem* item, QSet<QString>& names)
 {
@@ -324,12 +351,11 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
 
   QObject::connect(impl_->bgColorButton, &QPushButton::clicked, this, [this]() {
       ArtifactWidgets::FloatColorPicker picker(this);
-      Artifact::installFloatColorPickerSliderJump(&picker);
       picker.setWindowTitle(QStringLiteral("Background Color"));
-      picker.setColor(FloatColor(impl_->bgColor.redF(),
-                                 impl_->bgColor.greenF(),
-                                 impl_->bgColor.blueF(),
-                                 impl_->bgColor.alphaF()));
+      picker.setInitialColor(FloatColor(impl_->bgColor.redF(),
+                                        impl_->bgColor.greenF(),
+                                        impl_->bgColor.blueF(),
+                                        impl_->bgColor.alphaF()));
       if (picker.exec() != QDialog::Accepted) {
           return;
       }
@@ -341,6 +367,33 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
           updateColorButtonPreview(impl_->bgColorButton, c);
       }
   });
+
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    const int defaultWidth = settings->projectDefaultCompositionWidth();
+    const int defaultHeight = settings->projectDefaultCompositionHeight();
+    const QSize defaultSize(defaultWidth, defaultHeight);
+    const int presetIndex = indexForSize(impl_->resolutionCombobox_, defaultSize);
+    if (presetIndex >= 0) {
+      impl_->resolutionCombobox_->setCurrentIndex(presetIndex);
+    }
+    if (defaultWidth > 0) {
+      impl_->widthSpinBox->setValue(defaultWidth);
+    }
+    if (defaultHeight > 0) {
+      impl_->heightSpinBox->setValue(defaultHeight);
+    }
+    const int fpsIndex =
+        indexForFrameRate(impl_->fpsCombo_, settings->projectDefaultCompositionFrameRate());
+    if (fpsIndex >= 0) {
+      impl_->fpsCombo_->setCurrentIndex(fpsIndex);
+    }
+    const QColor defaultBg(
+        settings->projectDefaultCompositionBackgroundColor());
+    if (defaultBg.isValid()) {
+      impl_->bgColor = defaultBg;
+      updateColorButtonPreview(impl_->bgColorButton, defaultBg);
+    }
+  }
 
  }
 

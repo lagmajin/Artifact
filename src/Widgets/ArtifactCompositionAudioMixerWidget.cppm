@@ -8,6 +8,7 @@ module;
 #include <QLabel>
 #include <QLayoutItem>
 #include <QLinearGradient>
+#include <QMetaObject>
 #include <QPainter>
 #include <QPalette>
 #include <QPushButton>
@@ -32,6 +33,21 @@ import std;
 namespace Artifact {
 
 namespace {
+void queueMixerRefresh(Artifact::ArtifactCompositionAudioMixerWidget* widget)
+{
+  if (!widget) {
+    return;
+  }
+  QMetaObject::invokeMethod(
+      widget,
+      [widget]() {
+        if (widget) {
+          widget->refreshFromCurrentComposition();
+        }
+      },
+      Qt::QueuedConnection);
+}
+
 float sliderValueToVolume(const int value) {
   return std::clamp(static_cast<float>(value) / 100.0f, 0.0f, 2.0f);
 }
@@ -613,17 +629,17 @@ ArtifactCompositionAudioMixerWidget::ArtifactCompositionAudioMixerWidget(
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<ProjectChangedEvent>(
           [this](const ProjectChangedEvent &) {
-            refreshFromCurrentComposition();
+            queueMixerRefresh(this);
           }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>(
           [this](const CurrentCompositionChangedEvent &) {
-            refreshFromCurrentComposition();
+            queueMixerRefresh(this);
           }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerChangedEvent>(
           [this](const LayerChangedEvent &) {
-            refreshFromCurrentComposition();
+            queueMixerRefresh(this);
           }));
 
   refreshFromCurrentComposition();

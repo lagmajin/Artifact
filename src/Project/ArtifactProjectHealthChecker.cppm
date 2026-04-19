@@ -38,8 +38,6 @@ ProjectHealthReport ArtifactProjectHealthChecker::check(ArtifactProject* project
     checkBrokenReferences(project, report);
     checkNamingIssues(project, report);
     checkSpellingIssues(project, report);
-    checkSpellingIssues(project, report);
-    checkSpellingIssues(project, report);
 
     for (const auto& issue : report.issues) {
         if (issue.severity == HealthIssueSeverity::Error) {

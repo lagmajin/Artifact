@@ -304,6 +304,15 @@ namespace Artifact
    qDebug() << "[Importer] Project items restored:" << projectItemsArray.size() << "top-level items";
   }
 
+  // 現在選択中のコンポジションを復元
+  if (root.contains("currentCompositionId") && root["currentCompositionId"].isString()) {
+   const QString currentCompositionIdStr = root["currentCompositionId"].toString().trimmed();
+   if (!currentCompositionIdStr.isEmpty()) {
+    projectPtr->setCurrentCompositionId(CompositionID(currentCompositionIdStr), false);
+    qDebug() << "[Importer] Current composition restored:" << currentCompositionIdStr;
+   }
+  }
+
   // 健康状態のチェックと自動修復の実行
   ArtifactProjectHealthChecker::checkAndRepair(projectPtr.get(), AutoRepairOptions{
       true, // repairFrameRanges

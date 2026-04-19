@@ -5,6 +5,7 @@ module;
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QColorDialog>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -31,6 +32,7 @@ module;
 #include <QUrl>
 #include <QVBoxLayout>
 #include <utility>
+#include <cmath>
 
 #ifdef Q_OS_WIN
 #ifndef NOMINMAX
@@ -66,6 +68,8 @@ public:
   QSpinBox *autoSaveIntervalSpinBox_;
   QCheckBox *showStartupDialogCheckBox_;
   QCheckBox *showPropertyResetButtonsCheckBox_;
+  QSpinBox *menuBarFontScaleSpinBox_;
+  QSpinBox *dockTabFontSizeSpinBox_;
 };
 
 GeneralSettingPage::Impl::Impl() {}
@@ -112,6 +116,24 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
       new QCheckBox("Show reset buttons in property panels", this);
   uiLayout->addWidget(impl_->showPropertyResetButtonsCheckBox_);
 
+  auto *menuFontLayout = new QHBoxLayout();
+  menuFontLayout->addWidget(new QLabel("Menu bar font scale:", this));
+  impl_->menuBarFontScaleSpinBox_ = new QSpinBox(this);
+  impl_->menuBarFontScaleSpinBox_->setRange(50, 200);
+  impl_->menuBarFontScaleSpinBox_->setSuffix(" %");
+  menuFontLayout->addWidget(impl_->menuBarFontScaleSpinBox_);
+  menuFontLayout->addStretch();
+  uiLayout->addLayout(menuFontLayout);
+
+  auto *dockTabFontLayout = new QHBoxLayout();
+  dockTabFontLayout->addWidget(new QLabel("Dock tab font size:", this));
+  impl_->dockTabFontSizeSpinBox_ = new QSpinBox(this);
+  impl_->dockTabFontSizeSpinBox_->setRange(8, 30);
+  impl_->dockTabFontSizeSpinBox_->setSuffix(" pt");
+  dockTabFontLayout->addWidget(impl_->dockTabFontSizeSpinBox_);
+  dockTabFontLayout->addStretch();
+  uiLayout->addLayout(dockTabFontLayout);
+
   mainLayout->addWidget(uiGroup);
 
   mainLayout->addStretch();
@@ -127,6 +149,9 @@ void GeneralSettingPage::loadSettings() {
       settings->loadLastProjectOnStartup());
   impl_->showPropertyResetButtonsCheckBox_->setChecked(
       Artifact::artifactShouldShowPropertyResetButtons());
+  impl_->menuBarFontScaleSpinBox_->setValue(
+      settings->menuBarFontScalePercent());
+  impl_->dockTabFontSizeSpinBox_->setValue(settings->dockTabFontPointSize());
   // autoSaveEnabled の項目が AppSettings にまだないので、将来的に追加が必要
 }
 
@@ -138,6 +163,10 @@ void GeneralSettingPage::saveSettings() {
       impl_->showStartupDialogCheckBox_->isChecked());
   Artifact::artifactSetShowPropertyResetButtons(
       impl_->showPropertyResetButtonsCheckBox_->isChecked());
+  settings->setMenuBarFontScalePercent(
+      impl_->menuBarFontScaleSpinBox_->value());
+  settings->setDockTabFontPointSize(
+      impl_->dockTabFontSizeSpinBox_->value());
 }
 
 QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {
@@ -186,7 +215,6 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
   impl_->defaultFrameRateCombo_->addItems({"23.976 fps", "24 fps", "25 fps",
                                            "29.97 fps", "30 fps", "50 fps",
                                            "59.94 fps", "60 fps"});
-  impl_->defaultFrameRateCombo_->setCurrentText("30 fps");
   frameRateLayout->addWidget(impl_->defaultFrameRateCombo_);
   frameRateLayout->addStretch();
   mediaImportLayout->addLayout(frameRateLayout);
@@ -197,7 +225,6 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
   impl_->colorSpaceCombo_ = new QComboBox(this);
   impl_->colorSpaceCombo_->addItems(
       {"sRGB", "Linear", "Rec.709", "Rec.2020", "DCI-P3", "Adobe RGB"});
-  impl_->colorSpaceCombo_->setCurrentText("sRGB");
   colorSpaceLayout->addWidget(impl_->colorSpaceCombo_);
   colorSpaceLayout->addStretch();
   mediaImportLayout->addLayout(colorSpaceLayout);
@@ -208,7 +235,6 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
   impl_->audioSampleRateCombo_ = new QComboBox(this);
   impl_->audioSampleRateCombo_->addItems(
       {"44100 Hz", "48000 Hz", "96000 Hz", "192000 Hz"});
-  impl_->audioSampleRateCombo_->setCurrentText("48000 Hz");
   audioSampleLayout->addWidget(impl_->audioSampleRateCombo_);
   audioSampleLayout->addStretch();
   mediaImportLayout->addLayout(audioSampleLayout);
@@ -221,12 +247,10 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
 
   impl_->autoDetectAlphaCheckBox_ =
       new QCheckBox("Auto-detect alpha channel", this);
-  impl_->autoDetectAlphaCheckBox_->setChecked(true);
   footageLayout->addWidget(impl_->autoDetectAlphaCheckBox_);
 
   impl_->interpretFootageCheckBox_ =
       new QCheckBox("Interpret footage on import", this);
-  impl_->interpretFootageCheckBox_->setChecked(true);
   footageLayout->addWidget(impl_->interpretFootageCheckBox_);
 
   // Field Order
@@ -235,7 +259,6 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
   impl_->fieldOrderCombo_ = new QComboBox(this);
   impl_->fieldOrderCombo_->addItems(
       {"Progressive", "Upper Field First", "Lower Field First"});
-  impl_->fieldOrderCombo_->setCurrentText("Progressive");
   fieldOrderLayout->addWidget(impl_->fieldOrderCombo_);
   fieldOrderLayout->addStretch();
   footageLayout->addLayout(fieldOrderLayout);
@@ -251,7 +274,6 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
   durationLayout->addWidget(new QLabel("Still Image Duration:", this));
   impl_->stillDurationSpinBox_ = new QSpinBox(this);
   impl_->stillDurationSpinBox_->setRange(1, 3600);
-  impl_->stillDurationSpinBox_->setValue(5);
   impl_->stillDurationSpinBox_->setSuffix(" seconds");
   durationLayout->addWidget(impl_->stillDurationSpinBox_);
   durationLayout->addStretch();
@@ -259,7 +281,6 @@ ImportSettingPage::ImportSettingPage(QWidget *parent)
 
   impl_->createCompositionCheckBox_ =
       new QCheckBox("Create composition when importing sequences", this);
-  impl_->createCompositionCheckBox_->setChecked(true);
   sequenceLayout->addWidget(impl_->createCompositionCheckBox_);
 
   mainLayout->addWidget(sequenceGroup);
@@ -411,6 +432,237 @@ PreviewSettingPage::PreviewSettingPage(QWidget *parent)
 }
 
 PreviewSettingPage::~PreviewSettingPage() { delete impl_; }
+
+namespace {
+static QString frameRateLabelFor(double fps) {
+  struct Pair {
+    double value;
+    const char *label;
+  };
+  static const Pair presets[] = {
+      {23.976, "23.976 fps"}, {24.0, "24 fps"},   {25.0, "25 fps"},
+      {29.97, "29.97 fps"},   {30.0, "30 fps"},   {50.0, "50 fps"},
+      {59.94, "59.94 fps"},   {60.0, "60 fps"}};
+  for (const auto &preset : presets) {
+    if (std::abs(preset.value - fps) < 0.001) {
+      return QString::fromLatin1(preset.label);
+    }
+  }
+  return QStringLiteral("%1 fps").arg(fps, 0, 'f', 3);
+}
+
+static double frameRateValueForLabel(const QString &label, double fallback) {
+  QString trimmed = label.trimmed().toLower();
+  struct Pair {
+    double value;
+    const char *label;
+  };
+  static const Pair presets[] = {
+      {23.976, "23.976 fps"}, {24.0, "24 fps"},   {25.0, "25 fps"},
+      {29.97, "29.97 fps"},   {30.0, "30 fps"},   {50.0, "50 fps"},
+      {59.94, "59.94 fps"},   {60.0, "60 fps"}};
+  for (const auto &preset : presets) {
+    if (trimmed == QString::fromLatin1(preset.label).toLower()) {
+      return preset.value;
+    }
+  }
+  bool ok = false;
+  const double parsed = trimmed.remove(QStringLiteral("fps")).trimmed().toDouble(&ok);
+  return ok ? parsed : fallback;
+}
+
+static QString workspaceModeLabelFor(const QString &mode) {
+  const QString normalized = mode.trimmed();
+  if (normalized.compare(QStringLiteral("Animation"), Qt::CaseInsensitive) == 0) {
+    return QStringLiteral("Animation");
+  }
+  if (normalized.compare(QStringLiteral("VFX"), Qt::CaseInsensitive) == 0) {
+    return QStringLiteral("VFX");
+  }
+  if (normalized.compare(QStringLiteral("Compositing"), Qt::CaseInsensitive) == 0) {
+    return QStringLiteral("Compositing");
+  }
+  if (normalized.compare(QStringLiteral("Audio"), Qt::CaseInsensitive) == 0) {
+    return QStringLiteral("Audio");
+  }
+  return QStringLiteral("Default");
+}
+
+static QString workspaceModeValueForLabel(const QString &label,
+                                          const QString &fallback) {
+  const QString normalized = label.trimmed();
+  if (!normalized.isEmpty()) {
+    return workspaceModeLabelFor(normalized);
+  }
+  return workspaceModeLabelFor(fallback);
+}
+
+static void setButtonColor(QPushButton *button, const QColor &color) {
+  if (!button) {
+    return;
+  }
+  QPalette pal = button->palette();
+  pal.setColor(QPalette::Button, color);
+  const QColor text =
+      color.lightnessF() < 0.45f ? QColor(Qt::white) : QColor(Qt::black);
+  pal.setColor(QPalette::ButtonText, text);
+  button->setPalette(pal);
+  button->setAutoFillBackground(true);
+  button->setText(color.name(QColor::HexArgb));
+}
+} // namespace
+
+// ProjectDefaultsSettingPage Implementation
+class ProjectDefaultsSettingPage::Impl {
+public:
+  Impl();
+  ~Impl();
+
+  QSpinBox *widthSpinBox_;
+  QSpinBox *heightSpinBox_;
+  QComboBox *frameRateCombo_;
+  QComboBox *workspaceModeCombo_;
+  QPushButton *backgroundColorButton_;
+  QColor backgroundColor_;
+};
+
+ProjectDefaultsSettingPage::Impl::Impl() {}
+
+ProjectDefaultsSettingPage::Impl::~Impl() {}
+
+ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  auto *mainLayout = new QVBoxLayout(this);
+
+  auto *group = new QGroupBox("Project Defaults", this);
+  auto *groupLayout = new QVBoxLayout(group);
+
+  auto *sizeLayout = new QHBoxLayout();
+  sizeLayout->addWidget(new QLabel("Default Composition Size:", this));
+  impl_->widthSpinBox_ = new QSpinBox(this);
+  impl_->widthSpinBox_->setRange(1, 16384);
+  impl_->widthSpinBox_->setSuffix(" px");
+  impl_->widthSpinBox_->setValue(1920);
+  sizeLayout->addWidget(impl_->widthSpinBox_);
+  sizeLayout->addWidget(new QLabel("x", this));
+  impl_->heightSpinBox_ = new QSpinBox(this);
+  impl_->heightSpinBox_->setRange(1, 16384);
+  impl_->heightSpinBox_->setSuffix(" px");
+  impl_->heightSpinBox_->setValue(1080);
+  sizeLayout->addWidget(impl_->heightSpinBox_);
+  sizeLayout->addStretch();
+  groupLayout->addLayout(sizeLayout);
+
+  auto *fpsLayout = new QHBoxLayout();
+  fpsLayout->addWidget(new QLabel("Default Frame Rate:", this));
+  impl_->frameRateCombo_ = new QComboBox(this);
+  impl_->frameRateCombo_->addItem("23.976 fps", 23.976);
+  impl_->frameRateCombo_->addItem("24 fps", 24.0);
+  impl_->frameRateCombo_->addItem("25 fps", 25.0);
+  impl_->frameRateCombo_->addItem("29.97 fps", 29.97);
+  impl_->frameRateCombo_->addItem("30 fps", 30.0);
+  impl_->frameRateCombo_->addItem("50 fps", 50.0);
+  impl_->frameRateCombo_->addItem("59.94 fps", 59.94);
+  impl_->frameRateCombo_->addItem("60 fps", 60.0);
+  fpsLayout->addWidget(impl_->frameRateCombo_);
+  fpsLayout->addStretch();
+  groupLayout->addLayout(fpsLayout);
+
+  auto *workspaceLayout = new QHBoxLayout();
+  workspaceLayout->addWidget(new QLabel("Default Workspace:", this));
+  impl_->workspaceModeCombo_ = new QComboBox(this);
+  impl_->workspaceModeCombo_->addItem("Default");
+  impl_->workspaceModeCombo_->addItem("Animation");
+  impl_->workspaceModeCombo_->addItem("VFX");
+  impl_->workspaceModeCombo_->addItem("Compositing");
+  impl_->workspaceModeCombo_->addItem("Audio");
+  workspaceLayout->addWidget(impl_->workspaceModeCombo_);
+  workspaceLayout->addStretch();
+  groupLayout->addLayout(workspaceLayout);
+
+  auto *bgLayout = new QHBoxLayout();
+  bgLayout->addWidget(new QLabel("Default Background Color:", this));
+  impl_->backgroundColorButton_ = new QPushButton(this);
+  bgLayout->addWidget(impl_->backgroundColorButton_);
+  bgLayout->addStretch();
+  groupLayout->addLayout(bgLayout);
+
+  mainLayout->addWidget(group);
+  mainLayout->addStretch();
+
+  QObject::connect(impl_->backgroundColorButton_, &QPushButton::clicked, this,
+                   [this]() {
+                     const QColor picked = QColorDialog::getColor(
+                         impl_->backgroundColor_, this,
+                         QStringLiteral("Select Default Background Color"));
+                     if (!picked.isValid()) {
+                       return;
+                     }
+                     impl_->backgroundColor_ = picked;
+                     setButtonColor(impl_->backgroundColorButton_, picked);
+                   });
+
+  loadSettings();
+}
+
+void ProjectDefaultsSettingPage::loadSettings() {
+  auto *settings = ArtifactAppSettings::instance();
+  if (!settings || !impl_) {
+    return;
+  }
+  impl_->widthSpinBox_->setValue(settings->projectDefaultCompositionWidth());
+  impl_->heightSpinBox_->setValue(settings->projectDefaultCompositionHeight());
+  impl_->frameRateCombo_->setCurrentText(
+      frameRateLabelFor(settings->projectDefaultCompositionFrameRate()));
+  impl_->workspaceModeCombo_->setCurrentText(
+      workspaceModeLabelFor(settings->projectDefaultWorkspaceModeText()));
+  impl_->backgroundColor_ =
+      QColor(settings->projectDefaultCompositionBackgroundColor());
+  if (!impl_->backgroundColor_.isValid()) {
+    impl_->backgroundColor_ = QColor(0, 0, 0);
+  }
+  setButtonColor(impl_->backgroundColorButton_, impl_->backgroundColor_);
+}
+
+void ProjectDefaultsSettingPage::saveSettings() {
+  auto *settings = ArtifactAppSettings::instance();
+  if (!settings || !impl_) {
+    return;
+  }
+  settings->setProjectDefaultCompositionWidth(impl_->widthSpinBox_->value());
+  settings->setProjectDefaultCompositionHeight(impl_->heightSpinBox_->value());
+  settings->setProjectDefaultCompositionFrameRate(frameRateValueForLabel(
+      impl_->frameRateCombo_->currentText(),
+      settings->projectDefaultCompositionFrameRate()));
+  settings->setProjectDefaultWorkspaceModeText(workspaceModeValueForLabel(
+      impl_->workspaceModeCombo_->currentText(),
+      settings->projectDefaultWorkspaceModeText()));
+  settings->setProjectDefaultCompositionBackgroundColor(
+      impl_->backgroundColor_.name(QColor::HexArgb));
+}
+
+QList<SettingItemInfo> ProjectDefaultsSettingPage::searchableItems() const {
+  QList<SettingItemInfo> items;
+  if (!impl_) {
+    return items;
+  }
+
+  items.push_back({"Default Composition Size",
+                   "Default width and height for new compositions",
+                   "Project Defaults", impl_->widthSpinBox_});
+  items.push_back({"Default Frame Rate",
+                   "Default frame rate for new compositions",
+                   "Project Defaults", impl_->frameRateCombo_});
+  items.push_back({"Default Workspace",
+                   "Initial workspace mode used for new projects",
+                   "Project Defaults", impl_->workspaceModeCombo_});
+  items.push_back({"Default Background Color",
+                   "Default background color for new compositions",
+                   "Project Defaults", impl_->backgroundColorButton_});
+  return items;
+}
+
+ProjectDefaultsSettingPage::~ProjectDefaultsSettingPage() { delete impl_; }
 
 LabelColorSettingWidget::LabelColorSettingWidget(const QString &labelname,
                                                  const QColor &color,
@@ -714,11 +966,67 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage() {
 }
 
 // Add loadSettings/saveSettings stubs for other pages if not yet implemented
-void ImportSettingPage::loadSettings() {}
-void ImportSettingPage::saveSettings() {}
+void ImportSettingPage::loadSettings() {
+  auto *settings = ArtifactAppSettings::instance();
+  if (!settings || !impl_) {
+    return;
+  }
+  impl_->defaultFrameRateCombo_->setCurrentText(settings->importDefaultFrameRateText());
+  impl_->colorSpaceCombo_->setCurrentText(settings->importColorSpaceText());
+  impl_->audioSampleRateCombo_->setCurrentText(settings->importAudioSampleRateText());
+  impl_->autoDetectAlphaCheckBox_->setChecked(settings->importAutoDetectAlpha());
+  impl_->interpretFootageCheckBox_->setChecked(settings->importInterpretFootage());
+  impl_->fieldOrderCombo_->setCurrentText(settings->importFieldOrderText());
+  impl_->stillDurationSpinBox_->setValue(settings->importStillImageDurationSeconds());
+  impl_->createCompositionCheckBox_->setChecked(settings->importCreateCompositionOnImport());
+}
+
+void ImportSettingPage::saveSettings() {
+  auto *settings = ArtifactAppSettings::instance();
+  if (!settings || !impl_) {
+    return;
+  }
+  settings->setImportDefaultFrameRateText(impl_->defaultFrameRateCombo_->currentText());
+  settings->setImportColorSpaceText(impl_->colorSpaceCombo_->currentText());
+  settings->setImportAudioSampleRateText(impl_->audioSampleRateCombo_->currentText());
+  settings->setImportAutoDetectAlpha(impl_->autoDetectAlphaCheckBox_->isChecked());
+  settings->setImportInterpretFootage(impl_->interpretFootageCheckBox_->isChecked());
+  settings->setImportFieldOrderText(impl_->fieldOrderCombo_->currentText());
+  settings->setImportStillImageDurationSeconds(impl_->stillDurationSpinBox_->value());
+  settings->setImportCreateCompositionOnImport(impl_->createCompositionCheckBox_->isChecked());
+}
 QList<SettingItemInfo> ImportSettingPage::searchableItems() const { return {}; }
-void PreviewSettingPage::loadSettings() {}
-void PreviewSettingPage::saveSettings() {}
+void PreviewSettingPage::loadSettings() {
+  auto *settings = ArtifactAppSettings::instance();
+  if (!settings || !impl_) {
+    return;
+  }
+  impl_->previewQualityCombo_->setCurrentText(settings->previewQualityText());
+  impl_->previewResolutionSlider_->setValue(settings->previewResolutionPercent());
+  impl_->enableCacheCheckBox_->setChecked(settings->previewEnableRamCache());
+  impl_->cacheSizeSpinBox_->setValue(settings->previewCacheSizeMB());
+  impl_->enableDiskCacheCheckBox_->setChecked(settings->previewEnableDiskCache());
+  impl_->generateThumbnailsCheckBox_->setChecked(settings->previewGenerateThumbnails());
+  impl_->thumbnailQualityCombo_->setCurrentText(settings->previewThumbnailQualityText());
+  impl_->enableGPUCheckBox_->setChecked(settings->previewEnableGpuAcceleration());
+  impl_->gpuDeviceCombo_->setCurrentText(settings->previewGpuDeviceText());
+}
+
+void PreviewSettingPage::saveSettings() {
+  auto *settings = ArtifactAppSettings::instance();
+  if (!settings || !impl_) {
+    return;
+  }
+  settings->setPreviewQualityText(impl_->previewQualityCombo_->currentText());
+  settings->setPreviewResolutionPercent(impl_->previewResolutionSlider_->value());
+  settings->setPreviewEnableRamCache(impl_->enableCacheCheckBox_->isChecked());
+  settings->setPreviewCacheSizeMB(impl_->cacheSizeSpinBox_->value());
+  settings->setPreviewEnableDiskCache(impl_->enableDiskCacheCheckBox_->isChecked());
+  settings->setPreviewGenerateThumbnails(impl_->generateThumbnailsCheckBox_->isChecked());
+  settings->setPreviewThumbnailQualityText(impl_->thumbnailQualityCombo_->currentText());
+  settings->setPreviewEnableGpuAcceleration(impl_->enableGPUCheckBox_->isChecked());
+  settings->setPreviewGpuDeviceText(impl_->gpuDeviceCombo_->currentText());
+}
 QList<SettingItemInfo> PreviewSettingPage::searchableItems() const {
   return {};
 }
@@ -740,6 +1048,7 @@ public:
   GeneralSettingPage *generalPage_;
   ImportSettingPage *importPage_;
   PreviewSettingPage *previewPage_;
+  ProjectDefaultsSettingPage *projectPage_;
   MemoryAndCpuSettingPage *memoryPage_;
   PluginSettingPage *pluginPage_;
 
@@ -750,7 +1059,7 @@ public:
 ApplicationSettingDialog::Impl::Impl()
     : categoryList_(nullptr), settingPages_(nullptr), buttonBox_(nullptr),
       generalPage_(nullptr), importPage_(nullptr), previewPage_(nullptr),
-      memoryPage_(nullptr), pluginPage_(nullptr) {}
+      projectPage_(nullptr), memoryPage_(nullptr), pluginPage_(nullptr) {}
 
 ApplicationSettingDialog::Impl::~Impl() {}
 
@@ -767,6 +1076,7 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   categoryList_->addItem("General");
   categoryList_->addItem("Import");
   categoryList_->addItem("Preview");
+  categoryList_->addItem("Project Defaults");
   categoryList_->addItem("Memory & Performance");
   categoryList_->addItem("Shortcuts");
   categoryList_->addItem("Plugins");
@@ -780,11 +1090,13 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   generalPage_ = new GeneralSettingPage(dialog);
   importPage_ = new ImportSettingPage(dialog);
   previewPage_ = new PreviewSettingPage(dialog);
+  projectPage_ = new ProjectDefaultsSettingPage(dialog);
   memoryPage_ = new MemoryAndCpuSettingPage(dialog);
 
   settingPages_->addWidget(generalPage_);
   settingPages_->addWidget(importPage_);
   settingPages_->addWidget(previewPage_);
+  settingPages_->addWidget(projectPage_);
   settingPages_->addWidget(memoryPage_);
   settingPages_->addWidget(new QWidget(dialog)); // Shortcuts placeholder
   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
@@ -830,6 +1142,7 @@ void ApplicationSettingDialog::loadSettings() {
   impl_->generalPage_->loadSettings();
   impl_->importPage_->loadSettings();
   impl_->previewPage_->loadSettings();
+  impl_->projectPage_->loadSettings();
   impl_->memoryPage_->loadSettings();
 }
 
@@ -837,6 +1150,7 @@ void ApplicationSettingDialog::saveSettings() {
   impl_->generalPage_->saveSettings();
   impl_->importPage_->saveSettings();
   impl_->previewPage_->saveSettings();
+  impl_->projectPage_->saveSettings();
   impl_->memoryPage_->saveSettings();
 
   ArtifactAppSettings::instance()->sync();

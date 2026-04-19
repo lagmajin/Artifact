@@ -1,5 +1,6 @@
 ﻿module;
 #include <QContextMenuEvent>
+#include <QApplication>
 #include <QCursor>
 #include <QFontMetrics>
 #include <QKeyEvent>
@@ -548,6 +549,10 @@ public:
   int hoverClipIndex_ = -1;
   DragMode hoverEdge_ = DragMode::None;
   int hoverMarkerIndex_ = -1;
+  int dragMarkerIndex_ = -1;
+  QPoint dragMarkerStartPoint_;
+  double dragMarkerOrigFrame_ = 0.0;
+  bool draggingMarker_ = false;
   bool panning_ = false;
   QPoint lastPanPoint_;
   QSet<QString> selectedMarkerKeys_;
@@ -1048,8 +1053,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       continue;
     }
     const bool isHovered = markerIndex == impl_->hoverMarkerIndex_;
-    const int size =
-        marker.laneCount > 1 ? (isHovered ? 6 : 5) : (isHovered ? 7 : 6);
+    const int size = marker.laneCount > 1 ? 5 : 6;
     const QRectF diamondRect(center.x() - size, center.y() - size, size * 2.0,
                              size * 2.0);
     QPolygonF diamond;
@@ -1059,13 +1063,14 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
             << QPointF(diamondRect.left(), diamondRect.center().y());
     if (marker.selected) {
       QPolygonF outer = diamond;
-      p.setPen(QPen(theme.accent.lighter(160), 2.0));
+      p.setPen(QPen(theme.accent.lighter(isHovered ? 175 : 160),
+                    isHovered ? 2.5 : 2.0));
       p.setBrush(Qt::NoBrush);
       p.drawPolygon(outer);
       p.setPen(QPen(theme.background.darker(175), 2.0));
       p.drawPolygon(outer);
       p.setPen(QPen(theme.text.lighter(125), 1.0));
-      p.setBrush(theme.accent.lighter(140));
+      p.setBrush(theme.accent.lighter(isHovered ? 150 : 140));
       p.drawPolygon(diamond);
     } else if (marker.selectedLayer) {
       QPolygonF outer = diamond;
@@ -1073,11 +1078,15 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.setBrush(Qt::NoBrush);
       p.drawPolygon(outer);
       p.setPen(QPen(theme.text.lighter(110), 1.0));
-      p.setBrush(theme.text.lighter(110));
+      p.setBrush(isHovered ? theme.text.lighter(125) : theme.text.lighter(110));
       p.drawPolygon(diamond);
     } else {
-      p.setPen(QPen(theme.border.darker(160), 1));
-      p.setBrush(marker.eased ? marker.color.lighter(102) : marker.color);
+      p.setPen(QPen(isHovered ? theme.text.lighter(145)
+                               : theme.border.darker(160),
+                    isHovered ? 1.5 : 1.0));
+      p.setBrush(isHovered ? marker.color.lighter(115)
+                           : (marker.eased ? marker.color.lighter(102)
+                                           : marker.color));
       p.drawPolygon(diamond);
     }
   }
@@ -1130,9 +1139,15 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       clipSelected(QString(), marker.layerId);
       seekRequested(frame);
       setCurrentFrame(frame);
+      impl_->dragMarkerIndex_ = markerHit.markerIndex;
+      impl_->dragMarkerStartPoint_ = event->position().toPoint();
+      impl_->dragMarkerOrigFrame_ = marker.frame;
+      impl_->draggingMarker_ = false;
       event->accept();
       return;
     }
+    impl_->draggingMarker_ = false;
+    impl_->dragMarkerIndex_ = -1;
     const auto hit =
         hitTestClips(impl_->clips_, impl_->trackHeights_, mouseX, mouseY,
                      impl_->pixelsPerFrame_, impl_->horizontalOffset_,
@@ -1178,6 +1193,21 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
   const auto markerHit = hitTestMarkers(
       impl_->keyframeMarkers_, impl_->trackHeights_, mouseX, mouseY, ppf,
       impl_->horizontalOffset_, impl_->verticalOffset_);
+
+  if ((event->buttons() & Qt::LeftButton) && impl_->dragMarkerIndex_ >= 0) {
+    const QPoint currentPos = event->position().toPoint();
+    const int dragDistance =
+        (currentPos - impl_->dragMarkerStartPoint_).manhattanLength();
+    if (!impl_->draggingMarker_ &&
+        dragDistance >= QApplication::startDragDistance()) {
+      impl_->draggingMarker_ = true;
+      setCursor(Qt::ClosedHandCursor);
+    }
+    if (impl_->draggingMarker_) {
+      event->accept();
+      return;
+    }
+  }
 
   if (impl_->dragMode_ != DragMode::None && impl_->dragClipIndex_ >= 0) {
     const auto oldClip = impl_->clips_[impl_->dragClipIndex_];
@@ -1330,6 +1360,57 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
   if (event->button() == Qt::MiddleButton && impl_->panning_) {
     impl_->panning_ = false;
     setCursor(Qt::ArrowCursor);
+    event->accept();
+    return;
+  }
+
+  if (event->button() == Qt::LeftButton && impl_->dragMarkerIndex_ >= 0 &&
+      !impl_->draggingMarker_) {
+    impl_->dragMarkerIndex_ = -1;
+  }
+
+  if (event->button() == Qt::LeftButton && impl_->draggingMarker_ &&
+      impl_->dragMarkerIndex_ >= 0 &&
+      impl_->dragMarkerIndex_ < impl_->keyframeMarkers_.size()) {
+    const auto &marker = impl_->keyframeMarkers_[impl_->dragMarkerIndex_];
+    const double deltaFrames =
+        (event->position().x() - impl_->dragMarkerStartPoint_.x()) /
+        std::max(0.001, impl_->pixelsPerFrame_);
+    const double newFrame = std::clamp(
+        impl_->dragMarkerOrigFrame_ + deltaFrames, 0.0, impl_->durationFrames_);
+    const qint64 fromFrame =
+        static_cast<qint64>(std::llround(impl_->dragMarkerOrigFrame_));
+    const qint64 toFrame = static_cast<qint64>(std::llround(newFrame));
+    if (fromFrame != toFrame) {
+      const QString oldKey = keyframeSelectionKey(
+          marker.layerId, marker.propertyPath, fromFrame);
+      const QString newKey =
+          keyframeSelectionKey(marker.layerId, marker.propertyPath, toFrame);
+      if (impl_->selectedMarkerKeys_.remove(oldKey)) {
+        impl_->selectedMarkerKeys_.insert(newKey);
+        applyMarkerSelectionFlags(impl_->keyframeMarkers_,
+                                  impl_->selectedMarkerKeys_);
+        Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+      }
+      Q_EMIT keyframeMoveRequested(marker.layerId, marker.propertyPath,
+                                   fromFrame, toFrame);
+      Q_EMIT timelineDebugMessage(
+          QStringLiteral("Dragged keyframe %1 -> %2 for %3")
+              .arg(fromFrame)
+              .arg(toFrame)
+              .arg(ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
+                  marker.propertyPath)));
+      seekRequested(newFrame);
+      setCurrentFrame(newFrame);
+    }
+    impl_->draggingMarker_ = false;
+    impl_->dragMarkerIndex_ = -1;
+    if (impl_->hoverMarkerIndex_ >= 0) {
+      setCursor(Qt::PointingHandCursor);
+    } else {
+      setCursor(Qt::ArrowCursor);
+    }
+    update();
     event->accept();
     return;
   }
@@ -1766,6 +1847,8 @@ void ArtifactTimelineTrackPainterView::leaveEvent(QEvent *event) {
   impl_->hoverClipIndex_ = -1;
   impl_->hoverEdge_ = DragMode::None;
   impl_->hoverMarkerIndex_ = -1;
+  impl_->draggingMarker_ = false;
+  impl_->dragMarkerIndex_ = -1;
   impl_->hoverToolTipText_.clear();
   QToolTip::hideText();
 
