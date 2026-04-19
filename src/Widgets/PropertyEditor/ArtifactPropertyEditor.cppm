@@ -1606,7 +1606,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   keyframeButton_->setIconSize(QSize(14, 14));
   keyframeButton_->setFlat(true);
   keyframeButton_->setFocusPolicy(Qt::NoFocus);
-  applyPropertyButtonPalette(keyframeButton_, true);
+  applyPropertyButtonPalette(keyframeButton_);
   updateKeyframeButtonIcon();
 
   resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
@@ -1630,7 +1630,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   expressionButton_->setFlat(true);
   expressionButton_->setVisible(false);
   expressionButton_->setFocusPolicy(Qt::NoFocus);
-  applyPropertyButtonPalette(expressionButton_, true);
+  applyPropertyButtonPalette(expressionButton_);
 
   // Fixed-width container that always reserves the same horizontal space.
   auto *auxContainer = new QWidget(this);
