@@ -125,8 +125,10 @@ struct GlyphTextPkt {
     QString             text;
     QFont               font;
     float4              color;
-    int                 alignment = 0;
-    float               opacity   = 1.0f;
+    float4              outlineColor     = { 0.0f, 0.0f, 0.0f, 0.0f };
+    int                 alignment        = 0;
+    float               opacity          = 1.0f;
+    float               outlineThickness = 0.0f;  // canvas-space pixels; 0 = no outline
 };
 
 struct GlyphTextXformPkt {
@@ -135,8 +137,11 @@ struct GlyphTextXformPkt {
     QString             text;
     QFont               font;
     float4              color;
-    int                 alignment = 0;
-    float               opacity   = 1.0f;
+    float4              outlineColor     = { 0.0f, 0.0f, 0.0f, 0.0f };
+    int                 alignment        = 0;
+    float               opacity          = 1.0f;
+    float               outlineThickness = 0.0f;
+    float               devicePixelRatio = 1.0f;
 };
 
 using DrawPacket = std::variant<

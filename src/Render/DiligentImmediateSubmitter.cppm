@@ -857,6 +857,46 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
+    // ---- Outline pass (8-direction offset): drawn first, behind the fill ----
+    if (p.outlineThickness > 0.0f && p.outlineColor.w > 0.0f) {
+        const float th = p.outlineThickness;
+        // Diagonal directions use th * ~0.707 for uniform perceived thickness
+        constexpr float K = 0.7071067811865476f;
+        const float2 dirs[8] = {
+            { th,    0.0f }, { -th,   0.0f },
+            { 0.0f,  th   }, { 0.0f, -th   },
+            { th*K,  th*K }, { -th*K, th*K },
+            { th*K, -th*K }, { -th*K,-th*K },
+        };
+        for (const auto& glyph : drawGlyphs) {
+            const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX;
+            const float top  = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY;
+            const float w = std::max(0.0f, static_cast<float>(glyph.rect.width));
+            const float h = std::max(0.0f, static_cast<float>(glyph.rect.height));
+            if (w <= 0.0f || h <= 0.0f) continue;
+
+            const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
+            const float4 oc  = { p.outlineColor.x * alpha, p.outlineColor.y * alpha,
+                                  p.outlineColor.z * alpha, p.outlineColor.w * alpha };
+            SpriteVertex ov[4] = {
+                {{0.0f, 0.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, oc},
+                {{1.0f, 0.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, oc},
+                {{0.0f, 1.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
+                {{1.0f, 1.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
+            };
+            mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, ov, sizeof(ov));
+            for (const auto& d : dirs) {
+                RenderSolidTransform2D ox{};
+                ox.offset = { (left + d.x) * zoom + p.xform.offset.x,
+                               (top  + d.y) * zoom + p.xform.offset.y };
+                ox.scale     = { w * zoom, h * zoom };
+                ox.screenSize = p.xform.screenSize;
+                mapWriteDiscard(ctx, m_draw_sprite_cb, &ox, sizeof(ox));
+                ctx->DrawIndexed(DrawIndexedAttribs(6, VT_UINT32, DRAW_FLAG_NONE));
+            }
+        }
+    }
+    // ---- Fill pass (original) ----
     for (const auto& glyph : drawGlyphs) {
         const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX;
         const float top = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY;
@@ -962,11 +1002,54 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
+    // ---- Outline pass (8-direction offset) for transformed text ----
+    const float invDpr = (p.devicePixelRatio > 0.0f) ? (1.0f / p.devicePixelRatio) : 1.0f;
+    if (p.outlineThickness > 0.0f && p.outlineColor.w > 0.0f) {
+        const float th = p.outlineThickness;
+        constexpr float K = 0.7071067811865476f;
+        const float2 dirs[8] = {
+            { th,    0.0f }, { -th,   0.0f },
+            { 0.0f,  th   }, { 0.0f, -th   },
+            { th*K,  th*K }, { -th*K, th*K },
+            { th*K, -th*K }, { -th*K,-th*K },
+        };
+        for (const auto& glyph : drawGlyphs) {
+            const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX * invDpr;
+            const float top  = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY * invDpr;
+            const float w = std::max(0.0f, static_cast<float>(glyph.rect.width)  * invDpr);
+            const float h = std::max(0.0f, static_cast<float>(glyph.rect.height) * invDpr);
+            if (w <= 0.0f || h <= 0.0f) continue;
+
+            const float alpha = std::clamp(p.opacity * static_cast<float>(glyph.item.offsetOpacity), 0.0f, 1.0f);
+            const float4 oc = { p.outlineColor.x * alpha, p.outlineColor.y * alpha,
+                                 p.outlineColor.z * alpha, p.outlineColor.w * alpha };
+            SpriteVertex ov[4] = {
+                {{0.0f, 0.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, oc},
+                {{1.0f, 0.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v0(m_glyph_atlas.height())}, oc},
+                {{0.0f, 1.0f}, {glyph.rect.u0(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
+                {{1.0f, 1.0f}, {glyph.rect.u1(m_glyph_atlas.width()), glyph.rect.v1(m_glyph_atlas.height())}, oc},
+            };
+            mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, ov, sizeof(ov));
+            for (const auto& d : dirs) {
+                QMatrix4x4 om = p.transform;
+                om.translate(left + d.x, top + d.y, 0.0f);
+                om.scale(w, h, 1.0f);
+                RenderSolidRectTransform2D omat;
+                omat.row0 = { om.row(0).x(), om.row(0).y(), om.row(0).z(), om.row(0).w() };
+                omat.row1 = { om.row(1).x(), om.row(1).y(), om.row(1).z(), om.row(1).w() };
+                omat.row2 = { om.row(2).x(), om.row(2).y(), om.row(2).z(), om.row(2).w() };
+                omat.row3 = { om.row(3).x(), om.row(3).y(), om.row(3).z(), om.row(3).w() };
+                mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &omat, sizeof(omat));
+                ctx->DrawIndexed(DrawIndexedAttribs(6, VT_UINT32, DRAW_FLAG_NONE));
+            }
+        }
+    }
+    // ---- Fill pass (original) ----
     for (const auto& glyph : drawGlyphs) {
-        const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX;
-        const float top = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY;
-        const float w = std::max(0.0f, static_cast<float>(glyph.rect.width));
-        const float h = std::max(0.0f, static_cast<float>(glyph.rect.height));
+        const float left = static_cast<float>(glyph.item.basePosition.x() + glyph.item.offsetPosition.x()) + glyph.rect.bearingX * invDpr;
+        const float top = static_cast<float>(glyph.item.basePosition.y() + glyph.item.offsetPosition.y()) - glyph.rect.bearingY * invDpr;
+        const float w = std::max(0.0f, static_cast<float>(glyph.rect.width)  * invDpr);
+        const float h = std::max(0.0f, static_cast<float>(glyph.rect.height) * invDpr);
         if (w <= 0.0f || h <= 0.0f) {
             continue;
         }

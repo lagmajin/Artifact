@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <array>
 #include <cmath>
@@ -156,6 +156,7 @@ public:
     }
 
     ViewportTransformer viewport_;
+    float devicePixelRatio_ = 1.0f;
 
     QMatrix4x4 externalViewMatrix_;
     QMatrix4x4 externalProjMatrix_;
@@ -210,6 +211,7 @@ void PrimitiveRenderer2D::destroy()
 }
 
 void PrimitiveRenderer2D::setViewportSize(float w, float h)  { impl_->viewport_.SetViewportSize(w, h); }
+void PrimitiveRenderer2D::setDevicePixelRatio(float dpr)     { impl_->devicePixelRatio_ = dpr > 0.0f ? dpr : 1.0f; }
 void PrimitiveRenderer2D::setCanvasSize(float w, float h)    { impl_->viewport_.SetCanvasSize(w, h); }
 void PrimitiveRenderer2D::setPan(float x, float y)           { impl_->viewport_.SetPan(x, y); }
 void PrimitiveRenderer2D::getPan(float& x, float& y) const
@@ -708,7 +710,8 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
 
 void PrimitiveRenderer2D::drawText(const QRectF &rect, const QString &text,
                                    const QFont &font, const FloatColor &color,
-                                   Qt::Alignment alignment, float opacity)
+                                   Qt::Alignment alignment, float opacity,
+                                   const FloatColor &outlineColor, float outlineThickness)
 {
     if (!impl_->cmdBuf_ || text.isEmpty() || rect.width() <= 0.0 || rect.height() <= 0.0) {
         return;
@@ -725,20 +728,23 @@ void PrimitiveRenderer2D::drawText(const QRectF &rect, const QString &text,
     xform.screenSize = viewportCB.screenSize;
 
     GlyphTextPkt pkt;
-    pkt.rect = rect;
-    pkt.xform = xform;
-    pkt.text = text;
-    pkt.font = font;
-    pkt.color = { color.r(), color.g(), color.b(), color.a() };
-    pkt.alignment = static_cast<int>(alignment);
-    pkt.opacity = opacity;
+    pkt.rect             = rect;
+    pkt.xform            = xform;
+    pkt.text             = text;
+    pkt.font             = font;
+    pkt.color            = { color.r(), color.g(), color.b(), color.a() };
+    pkt.outlineColor     = { outlineColor.r(), outlineColor.g(), outlineColor.b(), outlineColor.a() };
+    pkt.alignment        = static_cast<int>(alignment);
+    pkt.opacity          = opacity;
+    pkt.outlineThickness = outlineThickness;
     impl_->cmdBuf_->append(pkt);
 }
 
 void PrimitiveRenderer2D::drawTextTransformed(const QRectF &rect, const QString &text,
                                               const QFont &font, const FloatColor &color,
                                               const QMatrix4x4 &transform,
-                                              Qt::Alignment alignment, float opacity)
+                                              Qt::Alignment alignment, float opacity,
+                                              const FloatColor &outlineColor, float outlineThickness)
 {
     if (!impl_->cmdBuf_ || text.isEmpty() || rect.width() <= 0.0 || rect.height() <= 0.0) {
         return;
@@ -768,14 +774,17 @@ void PrimitiveRenderer2D::drawTextTransformed(const QRectF &rect, const QString 
     }
 
     GlyphTextXformPkt pkt;
-    pkt.rect = QRectF(0.0, 0.0, rect.width(), rect.height());
+    pkt.rect             = QRectF(0.0, 0.0, rect.width(), rect.height());
     pkt.transform.setToIdentity();
-    pkt.transform = finalMat;
-    pkt.text = text;
-    pkt.font = font;
-    pkt.color = { color.r(), color.g(), color.b(), color.a() };
-    pkt.alignment = static_cast<int>(alignment);
-    pkt.opacity = opacity;
+    pkt.transform        = finalMat;
+    pkt.text             = text;
+    pkt.font             = font;
+    pkt.color            = { color.r(), color.g(), color.b(), color.a() };
+    pkt.outlineColor     = { outlineColor.r(), outlineColor.g(), outlineColor.b(), outlineColor.a() };
+    pkt.alignment        = static_cast<int>(alignment);
+    pkt.opacity          = opacity;
+    pkt.outlineThickness = outlineThickness;
+    pkt.devicePixelRatio = impl_->devicePixelRatio_;
     impl_->cmdBuf_->append(pkt);
 }
 
