@@ -1,9 +1,12 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <typeindex>
 #include <vector>
 #include <functional>
+#include <optional>
+#include <cstdint>
+#include <string>
 
 #include <qtypes.h>
 #include <wobjectdefs.h>
@@ -38,6 +41,55 @@ import Artifact.Render.IRenderer;
 export namespace Artifact {
 
 using namespace ArtifactCore;
+
+// VariantOverrideFlags and LayerVariant live here to avoid a circular
+// module-import chain (Artifact.Layer.Variant used to forward-declare
+// ArtifactAbstractLayer, which caused MSVC to tag the type as
+// [Artifact.Layer.Variant] instead of [Artifact.Layer.Abstract]).
+enum class VariantOverrideFlags : std::uint32_t {
+    None        = 0,
+    Transform   = 1 << 0,
+    Opacity     = 1 << 1,
+    BlendMode   = 1 << 2,
+    EffectStack = 1 << 3,
+    Source      = 1 << 4,
+};
+
+inline VariantOverrideFlags operator|(VariantOverrideFlags a, VariantOverrideFlags b) {
+    return static_cast<VariantOverrideFlags>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
+}
+inline VariantOverrideFlags operator&(VariantOverrideFlags a, VariantOverrideFlags b) {
+    return static_cast<VariantOverrideFlags>(static_cast<std::uint32_t>(a) & static_cast<std::uint32_t>(b));
+}
+inline VariantOverrideFlags operator~(VariantOverrideFlags a) {
+    return static_cast<VariantOverrideFlags>(~static_cast<std::uint32_t>(a));
+}
+inline void SetFlag(VariantOverrideFlags& flags, VariantOverrideFlags flag) { flags = flags | flag; }
+inline void ClearFlag(VariantOverrideFlags& flags, VariantOverrideFlags flag) { flags = flags & ~flag; }
+inline bool HasFlag(VariantOverrideFlags flags, VariantOverrideFlags flag) {
+    return (flags & flag) != VariantOverrideFlags::None;
+}
+
+class ArtifactAbstractLayer;  // forward-declared within the same module – no tag mismatch
+
+class LayerVariant {
+public:
+    LayerVariant(ArtifactAbstractLayer* parentLayer, const std::string& name)
+        : parentLayer_(parentLayer), name_(name) {}
+
+    std::string GetName() const { return name_; }
+    void SetName(const std::string& name) { name_ = name; }
+
+    VariantOverrideFlags overrideFlags_ = VariantOverrideFlags::None;
+
+    std::optional<AnimatableTransform2D> transform2DOverride;
+    std::optional<AnimatableTransform3D> transform3DOverride;
+    std::optional<float> opacityOverride;
+    std::optional<LAYER_BLEND_TYPE> blendModeOverride;
+
+    ArtifactAbstractLayer* parentLayer_ = nullptr;
+    std::string name_;
+};
 
 enum class LayerType {
   Unknown = 0,
@@ -242,6 +294,17 @@ public:
   bool hasDirtyReason(LayerDirtyReason reason) const;
   uint64_t dirtyReasonMask() const;
    void clearDirtyReasons();
+
+   /* Variants */
+   size_t getActiveVariantIndex() const;
+   void setActiveVariant(size_t index);
+   LayerVariant* getActiveVariant() const;
+   LayerVariant* createVariantFromCurrent(const std::string& newName);
+   void resetVariantOverride(VariantOverrideFlags specificFlag = VariantOverrideFlags::None);
+   std::vector<LayerVariant*> getVariants() const;
+   std::unique_ptr<LayerVariant> extractVariant(size_t index);
+   void insertVariant(size_t index, std::unique_ptr<LayerVariant> variant);
+   /* Variants */
 
    /*Effects*/
 public:

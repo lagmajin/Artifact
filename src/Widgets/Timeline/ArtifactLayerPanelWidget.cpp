@@ -36,6 +36,7 @@ module;
 #include <QFileDialog>
 #include <QTimer>
 #include <QDrag>
+#include <QMenu>
 module Artifact.Widgets.LayerPanelWidget;
 
 import std;
@@ -1591,6 +1592,24 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         event->accept();
         return;
       }
+      
+      const auto variants = layer->getVariants();
+      int variantAreaW = variants.empty() ? 0 : (variants.size() * 22 + 20);
+      int vx = width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - 6;
+      if (!variants.empty() && clickX >= vx && clickX < vx + variantAreaW) {
+          int clickedIdx = (clickX - vx) / 22;
+          if (clickedIdx >= 0 && clickedIdx < variants.size()) {
+              layer->setActiveVariant(clickedIdx);
+              update();
+              event->accept();
+              return;
+          } else if (clickX >= vx + variants.size() * 22) {
+              layer->createVariantFromCurrent(std::string(1, (char)('A' + layer->getVariants().size())));
+              update();
+              event->accept();
+              return;
+          }
+      }
     }
     // 名前エリアまたはスイッチ列でドラッグを開始可能に
     if (service) {
@@ -1603,6 +1622,30 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (service) {
       service->selectLayer(layer->id());
     }
+    
+    // Variant Context Menu
+    const int nameStartX = colW * kLayerPropertyColumnCount;
+    const int nameX = nameStartX + row.depth * 14;
+    const bool showInlineCombos = width() - (nameX + 8) >= (kInlineComboReserve + kLayerNameMinWidth);
+    const auto variants = layer->getVariants();
+    int variantAreaW = variants.empty() ? 0 : (variants.size() * 22 + 20);
+    int vx = width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - 6;
+
+    if (!variants.empty() && clickX >= vx && clickX < vx + variantAreaW) {
+        QMenu menu(this);
+        menu.addAction("Create Variant B from A", [this, layer]() {
+            layer->createVariantFromCurrent("B");
+            update();
+        });
+        menu.addAction("Create Variant C from current", [this, layer]() {
+            layer->createVariantFromCurrent(std::string(1, (char)('A' + layer->getVariants().size())));
+            update();
+        });
+        menu.exec(event->globalPos());
+        event->accept();
+        return;
+    }
+
     event->accept();
     return;
   }
@@ -2214,9 +2257,42 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.drawPolygon(diamond);
      }
     } else {
-     const int textWidth = std::max(20, width() - textX - 8);
+     const auto variants = l->getVariants();
+     const int activeIdx = static_cast<int>(l->getActiveVariantIndex());
+     const int variantAreaW = variants.empty() ? 0 : (variants.size() * 22 + 20);
+     const int textWidth = std::max(20, width() - textX - 8 - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW);
      p.setPen(text);
      p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
+
+     if (!variants.empty()) {
+       int vx = width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - 6;
+       p.save();
+       p.setFont(QFont("Inter", 8, QFont::Bold));
+       for (size_t vIdx = 0; vIdx < variants.size(); ++vIdx) {
+           QRect vRect(vx, y + (rowH - 16)/2, 18, 16);
+           if (static_cast<int>(vIdx) == activeIdx) {
+               p.setBrush(accent);
+               p.setPen(Qt::NoPen);
+               p.drawRoundedRect(vRect, 3, 3);
+               p.setPen(background); // dark text
+           } else {
+               p.setBrush(surface);
+               p.setPen(border);
+               p.drawRoundedRect(vRect, 3, 3);
+               p.setPen(text.darker(150));
+           }
+           const auto n = variants[vIdx]->GetName();
+           p.drawText(vRect, Qt::AlignCenter, QString::fromStdString(n.empty() ? "V" : n.substr(0, 1)));
+           vx += 22;
+       }
+       QRect plusRect(vx, y + (rowH - 16)/2, 18, 16);
+       p.setBrush(surface);
+       p.setPen(border);
+       p.drawRoundedRect(plusRect, 3, 3);
+       p.setPen(text);
+       p.drawText(plusRect, Qt::AlignCenter, "+");
+       p.restore();
+     }
     }
    }
 
