@@ -68,6 +68,13 @@ constexpr int kPropertyKeyButtonSize = 22;
 constexpr int kPropertyResetButtonSize = 24;
 constexpr int kPropertyExprButtonWidth = 26;
 constexpr int kPropertyExprButtonHeight = 24;
+// Fixed width for the aux-button container so the row doesn't resize on hover.
+constexpr int kAuxButtonAreaWidth =
+    kPropertyNavButtonWidth + kPropertyActionSpacing +
+    kPropertyKeyButtonSize  + kPropertyActionSpacing +
+    kPropertyNavButtonWidth + kPropertyActionSpacing +
+    kPropertyResetButtonSize + kPropertyActionSpacing +
+    kPropertyExprButtonWidth; // 14+4+22+4+14+4+24+4+26 = 116
 
 QColor themeColor(const QString &value, const QColor &fallback) {
   const QColor color(value);
@@ -1575,11 +1582,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       loadPropertyIcon(QStringLiteral("MaterialVS/neutral/undo.svg"));
   QIcon exprIcon = loadPropertyIcon(QStringLiteral("MaterialVS/blue/code.svg"));
 
-  // Keyframe Controls
-  auto *keyframeControlLayout = new QHBoxLayout();
-  keyframeControlLayout->setContentsMargins(0, 0, 0, 0);
-  keyframeControlLayout->setSpacing(kPropertyActionSpacing);
-
+  // Aux button setup — all buttons share a fixed-width container so that
+  // showing/hiding buttons on hover does NOT change the row's total width.
   prevKeyBtn_->setFixedSize(kPropertyNavButtonWidth, kPropertyNavButtonHeight);
   nextKeyBtn_->setFixedSize(kPropertyNavButtonWidth, kPropertyNavButtonHeight);
   prevKeyBtn_->setIcon(prevIcon);
@@ -1590,6 +1594,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   nextKeyBtn_->setFlat(true);
   prevKeyBtn_->setVisible(false);
   nextKeyBtn_->setVisible(false);
+  prevKeyBtn_->setFocusPolicy(Qt::NoFocus);
+  nextKeyBtn_->setFocusPolicy(Qt::NoFocus);
   applyPropertyButtonPalette(prevKeyBtn_);
   applyPropertyButtonPalette(nextKeyBtn_);
 
@@ -1600,12 +1606,9 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   keyframeButton_->setCheckable(true);
   keyframeButton_->setIconSize(QSize(14, 14));
   keyframeButton_->setFlat(true);
+  keyframeButton_->setFocusPolicy(Qt::NoFocus);
   applyPropertyButtonPalette(keyframeButton_, true);
   updateKeyframeButtonIcon();
-
-  keyframeControlLayout->addWidget(prevKeyBtn_);
-  keyframeControlLayout->addWidget(keyframeButton_);
-  keyframeControlLayout->addWidget(nextKeyBtn_);
 
   resetButton_->setObjectName(QStringLiteral("propertyResetButton"));
   resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName));
@@ -1615,6 +1618,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   resetButton_->setIconSize(QSize(14, 14));
   resetButton_->setFlat(true);
   resetButton_->setVisible(false);
+  resetButton_->setFocusPolicy(Qt::NoFocus);
   applyPropertyButtonPalette(resetButton_);
 
   expressionButton_->setObjectName(QStringLiteral("propertyExprButton"));
@@ -1626,7 +1630,22 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   expressionButton_->setIconSize(QSize(14, 14));
   expressionButton_->setFlat(true);
   expressionButton_->setVisible(false);
+  expressionButton_->setFocusPolicy(Qt::NoFocus);
   applyPropertyButtonPalette(expressionButton_, true);
+
+  // Fixed-width container that always reserves the same horizontal space.
+  auto *auxContainer = new QWidget(this);
+  auxContainer->setFixedWidth(kAuxButtonAreaWidth);
+  auxContainer->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  auxContainer->setAutoFillBackground(false);
+  auto *auxLayout = new QHBoxLayout(auxContainer);
+  auxLayout->setContentsMargins(0, 0, 0, 0);
+  auxLayout->setSpacing(kPropertyActionSpacing);
+  auxLayout->addWidget(prevKeyBtn_);
+  auxLayout->addWidget(keyframeButton_);
+  auxLayout->addWidget(nextKeyBtn_);
+  auxLayout->addWidget(resetButton_);
+  auxLayout->addWidget(expressionButton_);
 
   scrubHandle_->installEventFilter(this);
   label_->setCursor(Qt::ArrowCursor);
@@ -1644,9 +1663,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     layout->addWidget(scrubHandle_);
     layout->addWidget(editor_, 1);
   }
-  layout->addLayout(keyframeControlLayout);
-  layout->addWidget(resetButton_);
-  layout->addWidget(expressionButton_);
+  layout->addWidget(auxContainer);
 
   QObject::connect(resetButton_, &QPushButton::clicked, this, [this]() {
     if (resetHandler_) {
