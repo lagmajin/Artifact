@@ -101,6 +101,10 @@ public:
     void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
     void drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity = 1.0f);
 
+    // Returns the currently active render target view (override or swapchain back-buffer).
+    // Used by direct-draw code paths (e.g. particle renderer) that bypass the command buffer.
+    ITextureView* currentRTV() const;
+
 private:
     class Impl;
     Impl* impl_;

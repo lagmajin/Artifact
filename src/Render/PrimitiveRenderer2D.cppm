@@ -260,6 +260,11 @@ void PrimitiveRenderer2D::setCommandBuffer(RenderCommandBuffer* cmdBuf)
     impl_->cmdBuf_ = cmdBuf;
 }
 
+ITextureView* PrimitiveRenderer2D::currentRTV() const
+{
+    return impl_->getCurrentRTV();
+}
+
 void PrimitiveRenderer2D::clear(IDeviceContext* ctx, const FloatColor& color)
 {
     if (!ctx) return;

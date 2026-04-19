@@ -1,6 +1,7 @@
 ﻿module;
 #include <QObject>
 #include <QImage>
+#include <QDebug>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QPainter>
@@ -48,6 +49,7 @@ module Artifact.Layer.Particle;
 
 import Artifact.Layer.Abstract;
 import Artifact.Generator.Particle;
+import Graphics.ParticleData;
 import Animation.Transform2D;
 import Animation.Transform3D;
 import Size;
@@ -57,6 +59,50 @@ import Property.Abstract;
 import Property.Group;
 
 namespace Artifact {
+
+namespace {
+
+ArtifactCore::ParticleRenderData transformParticleRenderData(
+    const ParticleRenderData& source,
+    const QTransform& transform,
+    float opacity)
+{
+    ArtifactCore::ParticleRenderData transformed;
+    transformed.frameNumber = source.frameNumber;
+    transformed.particles.reserve(source.particles.size());
+
+    const float scaleX = std::hypot(transform.m11(), transform.m21());
+    const float scaleY = std::hypot(transform.m12(), transform.m22());
+    const float scale = std::max(0.001f, (scaleX + scaleY) * 0.5f);
+
+    for (const auto& src : source.particles) {
+        ArtifactCore::ParticleVertex v;
+        v.px = src.px;
+        v.py = src.py;
+        v.pz = src.pz;
+        v.vx = src.vx;
+        v.vy = src.vy;
+        v.vz = src.vz;
+        v.r = src.r;
+        v.g = src.g;
+        v.b = src.b;
+        v.a = src.a;
+        v.size = src.size;
+        v.rotation = src.rotation;
+        v.age = src.age;
+        v.lifetime = src.lifetime;
+        const QPointF mapped = transform.map(QPointF(src.px, src.py));
+        v.px = static_cast<float>(mapped.x());
+        v.py = static_cast<float>(mapped.y());
+        v.a = std::clamp(v.a * opacity, 0.0f, 1.0f);
+        v.size = src.size * scale;
+        transformed.particles.push_back(v);
+    }
+
+    return transformed;
+}
+
+} // namespace
 
 // ==================== ArtifactParticleLayer::Impl ====================
 
@@ -110,24 +156,13 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
     if (renderer->isInitialized()) {
         const auto sourceData = impl_->particleSystem->captureRenderData();
+        qDebug() << "[ParticleLayer]" << name()
+                 << "frame=" << frameNumber
+                 << "alive particles=" << sourceData.particles.size()
+                 << "renderer initialized=" << renderer->isInitialized();
         if (!sourceData.particles.empty()) {
-            // Core 側の ParticleRenderData に変換 (型不整合を避けるため明示的に)
-            ArtifactCore::ParticleRenderData renderData;
-            renderData.frameNumber = sourceData.frameNumber;
-            renderData.particles.reserve(sourceData.particles.size());
-            
-            for (const auto& src : sourceData.particles) {
-                ArtifactCore::ParticleVertex v;
-                v.px = src.px; v.py = src.py; v.pz = src.pz;
-                v.vx = src.vx; v.vy = src.vy; v.vz = src.vz;
-                v.r = src.r; v.g = src.g; v.b = src.b; v.a = src.a;
-                v.size = src.size;
-                v.rotation = src.rotation;
-                v.age = src.age;
-                v.lifetime = src.lifetime;
-                renderData.particles.push_back(v);
-            }
-            
+            const ArtifactCore::ParticleRenderData renderData =
+                transformParticleRenderData(sourceData, getGlobalTransform(), opacity());
             renderer->drawParticles(renderData);
         }
         return;
@@ -158,6 +193,19 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         static_cast<float>(impl_->cachedFrame.height()),
         impl_->cachedFrame,
         opacity());
+}
+
+QRectF ArtifactParticleLayer::localBounds() const
+{
+    if (!impl_) {
+        return QRectF();
+    }
+    const int width = std::max(0, impl_->width);
+    const int height = std::max(0, impl_->height);
+    if (width <= 0 || height <= 0) {
+        return QRectF();
+    }
+    return QRectF(0.0, 0.0, static_cast<qreal>(width), static_cast<qreal>(height));
 }
 
 QJsonObject ArtifactParticleLayer::toJson() const
@@ -664,13 +712,11 @@ void ArtifactParticleLayer::renderToImage(QImage& target, float time)
     // Clear target
     target.fill(Qt::transparent);
     
-    // Get transform from layer
-    const QTransform transform = getLocalTransform();
-
-    // Render particles
+    // Render in layer-local space. The composition renderer applies the
+    // layer's transform again when it composites the returned image.
     QPainter painter(&target);
     painter.setRenderHint(QPainter::SmoothPixmapTransform);
-    impl_->particleSystem->render(painter, transform);
+    impl_->particleSystem->render(painter, QTransform());
     
     float fps = 30.0f;
     if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
