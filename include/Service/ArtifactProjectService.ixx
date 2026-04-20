@@ -141,8 +141,6 @@ export namespace Artifact {
 
   void projectChanged()
    W_SIGNAL(projectChanged);
-  void layerSelected(const LayerID& id)
-   W_SIGNAL(layerSelected, id);
   void previewQualityPresetChanged(PreviewQualityPreset preset)
    W_SIGNAL(previewQualityPresetChanged, preset);
   public:

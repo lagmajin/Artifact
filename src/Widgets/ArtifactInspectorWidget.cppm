@@ -327,7 +327,7 @@ public:
   void handleProjectClosed();
   void handleCompositionCreated(const CompositionID &id);
   void handleCompositionChanged(const CompositionID &id);
-  void handleLayerSelected(const LayerID &id);
+  void handleLayerSelected(const LayerSelectionChangedEvent &event);
   void updateCompositionNote();
   void updateLayerNote();
   void updateLayerInfo();
@@ -780,8 +780,12 @@ void ArtifactInspectorWidget::Impl::handleCompositionChanged(
                   EffectsDirty);
 }
 
-void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID &id) {
-  qDebug() << "[Inspector] Layer selected:" << id.toString();
+void ArtifactInspectorWidget::Impl::handleLayerSelected(
+    const LayerSelectionChangedEvent &event) {
+  const LayerID id(event.layerId);
+  qDebug() << "[Inspector] Layer selected:" << id.toString()
+           << "reason="
+           << layerSelectionChangeReasonToString(event.reason);
   if (id.isNil()) {
     auto projectService = ArtifactProjectService::instance();
     if (projectService && !currentCompositionId_.isNil() &&
@@ -796,6 +800,8 @@ void ArtifactInspectorWidget::Impl::handleLayerSelected(const LayerID &id) {
         }
       }
     }
+    qDebug() << "[Inspector] NoLayer reason="
+             << layerSelectionChangeReasonToString(event.reason);
     setNoLayerState();
     scheduleRefresh(LayerNoteDirty | LayerInfoDirty | EffectsDirty);
     return;
@@ -1873,7 +1879,6 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
               return;
             }
             const CompositionID cid(event.compositionId);
-            const LayerID lid(event.layerId);
             // compositionId が nil の場合は既存の currentCompositionId_
             // を上書きしない。 nil を代入すると updateLayerInfo の nil
             // チェックで即 return してしまう。
@@ -1887,7 +1892,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                 }
               }
             }
-            impl_->handleLayerSelected(lid);
+            impl_->handleLayerSelected(event);
           }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerChangedEvent>(
@@ -1904,7 +1909,10 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
             const bool cidMatches = !impl_->currentCompositionId_.isNil() &&
                                     cid == impl_->currentCompositionId_;
             if (cidMatches) {
-              impl_->handleLayerSelected(lid);
+              impl_->handleLayerSelected(LayerSelectionChangedEvent{
+                  event.compositionId,
+                  event.layerId,
+                  LayerSelectionChangeReason::SelectionBridgeSync});
             }
           }));
   impl_->refreshRackButtons();

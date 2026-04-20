@@ -39,7 +39,6 @@ void ArtifactToolService::setActiveTool(ToolType type)
  } else {
   ArtifactCore::globalEventBus().publish<ToolChangedEvent>(ToolChangedEvent{type});
  }
- toolChanged(type);
 }
 
 ToolType ArtifactToolService::activeTool() const
@@ -117,18 +116,7 @@ bool ArtifactToolService::isAlphaView() const
 void ArtifactToolService::setToolManager(ArtifactToolManager* manager)
 {
  if (impl_->toolManager_ == manager) return;
-
- if (impl_->toolManager_) {
-  disconnect(impl_->toolManager_, &ArtifactToolManager::toolChanged,
-             this, &ArtifactToolService::toolChanged);
- }
-
  impl_->toolManager_ = manager;
-
- if (impl_->toolManager_) {
-  connect(impl_->toolManager_, &ArtifactToolManager::toolChanged,
-          this, &ArtifactToolService::toolChanged);
- }
 }
 
 ArtifactToolManager* ArtifactToolService::toolManager() const

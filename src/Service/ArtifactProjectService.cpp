@@ -7,6 +7,7 @@
 #include <QImage>
 #include <QImageReader>
 #include <QList>
+#include <QPointer>
 #include <QRectF>
 #include <QtConcurrent>
 #include <QtSvg/QSvgRenderer>
@@ -188,9 +189,26 @@ void ArtifactProjectService::Impl::installSelectionBridge(
   }
   if (auto *app = ArtifactApplicationManager::instance()) {
     if (auto *selectionManager = app->layerSelectionManager()) {
+      auto publishSelectionChanged =
+          [this](ArtifactProjectService *targetOwner, const LayerID &layerId,
+                 LayerSelectionChangeReason reason) {
+            if (!targetOwner) {
+              return;
+            }
+            if (layerId == lastForwardedLayerId_) {
+              return;
+            }
+            lastForwardedLayerId_ = layerId;
+            ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
+                LayerSelectionChangedEvent{
+                    targetOwner->currentComposition().lock()
+                        ? targetOwner->currentComposition().lock()->id().toString()
+                        : QString(),
+                    layerId.toString(), reason});
+          };
       QObject::connect(
           selectionManager, &ArtifactLayerSelectionManager::selectionChanged,
-          owner, [this, owner, selectionManager]() {
+          owner, [this, owner, selectionManager, publishSelectionChanged]() {
             if (forwardingSelectionChange_) {
               return;
             }
@@ -198,17 +216,37 @@ void ArtifactProjectService::Impl::installSelectionBridge(
                                      ? selectionManager->currentLayer()
                                      : ArtifactAbstractLayerPtr{};
             const LayerID nextId = current ? current->id() : LayerID();
-            if (nextId == lastForwardedLayerId_) {
+            if (!nextId.isNil()) {
+              publishSelectionChanged(owner, nextId,
+                                      LayerSelectionChangeReason::SelectionBridgeSync);
               return;
             }
-            lastForwardedLayerId_ = nextId;
-            // Qt signal は廃止 — EventBus で Inspector に通知する
-            ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
-                LayerSelectionChangedEvent{
-                    owner->currentComposition().lock()
-                        ? owner->currentComposition().lock()->id().toString()
-                        : QString(),
-                    nextId.toString()});
+            if (lastForwardedLayerId_.isNil()) {
+              return;
+            }
+
+            // Property edits can momentarily disturb selection ordering.
+            // Re-check once on the next event loop turn before forwarding
+            // a nil selection event to the rest of the UI.
+            QPointer<ArtifactProjectService> safeOwner(owner);
+            QPointer<ArtifactLayerSelectionManager> safeSelectionManager(
+                selectionManager);
+            QTimer::singleShot(
+                0, owner,
+                [this, safeOwner, safeSelectionManager,
+                 publishSelectionChanged]() {
+                  if (!safeOwner || !safeSelectionManager ||
+                      forwardingSelectionChange_) {
+                    return;
+                  }
+                  const auto resolvedCurrent =
+                      safeSelectionManager->currentLayer();
+                  const LayerID resolvedId =
+                      resolvedCurrent ? resolvedCurrent->id() : LayerID();
+                  publishSelectionChanged(
+                      safeOwner.data(), resolvedId,
+                      LayerSelectionChangeReason::TransientSync);
+                });
           });
     }
   }
@@ -645,13 +683,13 @@ void ArtifactProjectService::selectLayer(const LayerID &id) {
       if (current && current->id() == id) {
         selectionManager->setActiveComposition(currentComposition().lock());
         // 同レイヤー再選択でも Inspector を確実に更新する
-        // Qt signal layerSelected() は廃止 — EventBus に一本化
         ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
             LayerSelectionChangedEvent{
                 currentComposition().lock()
                     ? currentComposition().lock()->id().toString()
                     : QString(),
-                id.toString()});
+                id.toString(),
+                LayerSelectionChangeReason::ProgrammaticReselect});
         return;
       }
       impl_->forwardingSelectionChange_ = true;
@@ -671,8 +709,9 @@ void ArtifactProjectService::selectLayer(const LayerID &id) {
           currentComposition().lock()
               ? currentComposition().lock()->id().toString()
               : QString(),
-          id.toString()});
-  layerSelected(id);
+          id.toString(),
+          id.isNil() ? LayerSelectionChangeReason::UserCleared
+                     : LayerSelectionChangeReason::SelectionBridgeSync});
 }
 
 void ArtifactProjectService::addLayer(const CompositionID &id,

@@ -56,6 +56,7 @@ module Artifact.Widgets.ArtifactPropertyWidget;
 
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Property;
 import Property.Abstract;
 import Property.Group;
 import Undo.UndoManager;
@@ -138,6 +139,56 @@ void applyPropertyPanelPalette(QWidget *widget, const bool elevated = false) {
   pal.setColor(QPalette::Mid, border);
   pal.setColor(QPalette::Light, accent.lighter(120));
   widget->setPalette(pal);
+}
+
+void registerCurrentLayerPropertySnapshot(const ArtifactAbstractLayerPtr& layer,
+                                          const QString& focusedEffectId)
+{
+  auto& registry = ArtifactCore::globalPropertyRegistry();
+  registry.clear();
+
+  if (!layer) {
+    return;
+  }
+
+  const QString layerOwnerPath = QStringLiteral("layer:%1").arg(layer->id().toString());
+  const auto layerGroups = layer->getLayerPropertyGroups();
+  for (const auto& groupDef : layerGroups) {
+    const QString groupName = groupDef.name().trimmed().isEmpty()
+        ? QStringLiteral("Layer")
+        : groupDef.name().trimmed();
+    const QString ownerPath = ArtifactCore::propertyPathJoin(layerOwnerPath, groupName);
+    registry.registerOwnerSnapshot(ownerPath,
+                                   groupName,
+                                   QStringLiteral("LayerGroup"),
+                                   groupDef,
+                                   true);
+  }
+
+  const auto effects = layer->getEffects();
+  for (const auto& effect : effects) {
+    if (!effect) {
+      continue;
+    }
+    if (!focusedEffectId.trimmed().isEmpty() &&
+        effect->effectID().toQString() != focusedEffectId.trimmed()) {
+      continue;
+    }
+
+    ArtifactCore::PropertyGroup effectGroup(effect->displayName().toQString());
+    for (const auto& property : effect->getProperties()) {
+      effectGroup.addProperty(std::make_shared<ArtifactCore::AbstractProperty>(property));
+    }
+
+    const QString ownerPath = ArtifactCore::propertyPathJoin(
+        layerOwnerPath,
+        QStringLiteral("effect:%1").arg(effect->effectID().toQString()));
+    registry.registerOwnerSnapshot(ownerPath,
+                                   effect->displayName().toQString(),
+                                   QStringLiteral("EffectGroup"),
+                                   effectGroup,
+                                   true);
+  }
 }
 
 void applyPropertySearchPalette(QLineEdit *edit) {
@@ -336,17 +387,17 @@ bool propertyMatchesFilter(const ArtifactCore::AbstractProperty &property,
          friendly.contains(query, Qt::CaseInsensitive);
 }
 
-void notifyProjectIfLayerNameChanged(const QString &propertyName) {
+void notifyProjectIfLayerNameChanged(const ArtifactAbstractLayerPtr &layer,
+                                     const QString &propertyName) {
   if (propertyName.compare(QStringLiteral("layer.name"), Qt::CaseInsensitive) !=
       0) {
     return;
   }
-  if (auto *service = ArtifactProjectService::instance()) {
-    service->projectChanged();
-  }
+  notifyLayerPropertyAnimationChanged(layer);
 }
 
-void notifyProjectIfTimelinePropertyChanged(const QString &propertyName) {
+void notifyProjectIfTimelinePropertyChanged(const ArtifactAbstractLayerPtr &layer,
+                                            const QString &propertyName) {
   const bool isTimelineProperty =
       propertyName.compare(QStringLiteral("time.inPoint"),
                            Qt::CaseInsensitive) == 0 ||
@@ -357,9 +408,7 @@ void notifyProjectIfTimelinePropertyChanged(const QString &propertyName) {
   if (!isTimelineProperty) {
     return;
   }
-  if (auto *service = ArtifactProjectService::instance()) {
-    service->projectChanged();
-  }
+  notifyLayerPropertyAnimationChanged(layer);
 }
 
 bool shouldHideInspectorProperty(const QString &propertyName) {
@@ -1098,26 +1147,26 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       "layer.opacity"};
 
   const ArtifactAbstractLayerPtr layer = currentLayer;
+  registerCurrentLayerPropertySnapshot(layer, focusedEffectId);
 
   const auto notifyLayerKeyframeChanged = [this, layer](const QString &) {
     if (layer) {
       notifyLayerPropertyAnimationChanged(layer);
-      if (auto *app = ArtifactApplicationManager::instance()) {
-        if (auto *selection = app->layerSelectionManager()) {
-          QMetaObject::invokeMethod(
-              selection,
-              [selection, layer]() {
-                if (selection && layer) {
-                  selection->selectLayer(layer);
-                }
-              },
-              Qt::QueuedConnection);
-        }
+      if (auto *projectService = ArtifactProjectService::instance()) {
+        QMetaObject::invokeMethod(
+            projectService,
+            [projectService, layer]() {
+              if (projectService && layer) {
+                projectService->selectLayer(layer->id());
+              }
+            },
+            Qt::QueuedConnection);
       }
     }
   };
 
-  const auto layerGroups = layer->getLayerPropertyGroups();
+  const auto layerGroups = layer ? layer->getLayerPropertyGroups()
+                                 : std::vector<ArtifactCore::PropertyGroup>{};
   std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
       layerSummaryProperties;
   for (const auto &groupDef : layerGroups) {
@@ -1156,8 +1205,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
               if (layer) {
                 ScopedPropertyEditGuard guard(localPropertyEditDepth);
                 layer->setLayerPropertyValue(name, value);
-                notifyProjectIfLayerNameChanged(name);
-                notifyProjectIfTimelinePropertyChanged(name);
+                notifyProjectIfLayerNameChanged(layer, name);
+                notifyProjectIfTimelinePropertyChanged(layer, name);
               }
             })) {
       summaryLayout->addWidget(row);
@@ -1188,8 +1237,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           } else {
             layer->setLayerPropertyValue(name, value);
           }
-          notifyProjectIfLayerNameChanged(name);
-          notifyProjectIfTimelinePropertyChanged(name);
+          notifyProjectIfLayerNameChanged(layer, name);
+          notifyProjectIfTimelinePropertyChanged(layer, name);
         }
       },
       [this, layer, summaryPreviewOpacity](const QString &name, const QVariant &value) {
@@ -1205,8 +1254,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           } else {
             layer->setLayerPropertyValue(name, value);
           }
-          notifyProjectIfLayerNameChanged(name);
-          notifyProjectIfTimelinePropertyChanged(name);
+          notifyProjectIfLayerNameChanged(layer, name);
+          notifyProjectIfTimelinePropertyChanged(layer, name);
         }
       },
       notifyLayerKeyframeChanged,
@@ -1295,8 +1344,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             } else {
               layer->setLayerPropertyValue(name, value);
             }
-            notifyProjectIfLayerNameChanged(name);
-            notifyProjectIfTimelinePropertyChanged(name);
+            notifyProjectIfLayerNameChanged(layer, name);
+            notifyProjectIfTimelinePropertyChanged(layer, name);
           }
         },
         [this, layer, groupPreviewOpacity](const QString &name, const QVariant &value) {
@@ -1312,8 +1361,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             } else {
               layer->setLayerPropertyValue(name, value);
             }
-            notifyProjectIfLayerNameChanged(name);
-            notifyProjectIfTimelinePropertyChanged(name);
+            notifyProjectIfLayerNameChanged(layer, name);
+            notifyProjectIfTimelinePropertyChanged(layer, name);
           }
         },
         notifyLayerKeyframeChanged,

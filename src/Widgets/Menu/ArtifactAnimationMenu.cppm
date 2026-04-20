@@ -9,6 +9,8 @@ module;
 module Menu.Animation;
 import std;
 
+import Event.Bus;
+import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Utils.Id;
 import Utils.Path;
@@ -31,6 +33,7 @@ QIcon menuIcon(const QString& path)
 
   ArtifactAnimationMenu* menu_ = nullptr;
   ArtifactCore::LayerID selectedLayerId_;
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   // ---- キーフレーム操作アクション ----
   QAction* addKeyframeAction = nullptr;
@@ -97,22 +100,48 @@ QIcon menuIcon(const QString& path)
 
  ArtifactAnimationMenu::Impl::Impl(ArtifactAnimationMenu* menu) : menu_(menu)
  {
-  auto* service = ArtifactProjectService::instance();
-  if (service) {
-   QObject::connect(service, &ArtifactProjectService::layerSelected, menu, [this](const ArtifactCore::LayerID& id) {
-    selectedLayerId_ = id;
-    refreshEnabledState();
-   });
-   QObject::connect(service, &ArtifactProjectService::layerRemoved, menu, [this](const ArtifactCore::CompositionID&, const ArtifactCore::LayerID& id) {
-    if (selectedLayerId_ == id) {
-     selectedLayerId_ = {};
-    }
-    refreshEnabledState();
-   });
-   QObject::connect(service, &ArtifactProjectService::projectChanged, menu, [this]() {
-    refreshEnabledState();
-   });
-  }
+  auto& eventBus = ArtifactCore::globalEventBus();
+  eventBusSubscriptions_.push_back(
+      eventBus.subscribe<LayerSelectionChangedEvent>(
+          [this](const LayerSelectionChangedEvent& event) {
+            const ArtifactCore::LayerID layerId(event.layerId);
+            if (!event.compositionId.isEmpty()) {
+              auto* service = ArtifactProjectService::instance();
+              if (service) {
+                if (const auto comp = service->currentComposition().lock()) {
+                  if (comp->id().toString() != event.compositionId) {
+                    return;
+                  }
+                }
+              }
+            }
+            selectedLayerId_ = layerId;
+            refreshEnabledState();
+          }));
+  eventBusSubscriptions_.push_back(
+      eventBus.subscribe<LayerChangedEvent>(
+          [this](const LayerChangedEvent& event) {
+            if (!event.compositionId.isEmpty()) {
+              auto* service = ArtifactProjectService::instance();
+              if (service) {
+                if (const auto comp = service->currentComposition().lock()) {
+                  if (comp->id().toString() != event.compositionId) {
+                    return;
+                  }
+                }
+              }
+            }
+            if (event.changeType == LayerChangedEvent::ChangeType::Removed &&
+                selectedLayerId_ == ArtifactCore::LayerID(event.layerId)) {
+              selectedLayerId_ = {};
+            }
+            refreshEnabledState();
+          }));
+  eventBusSubscriptions_.push_back(
+      eventBus.subscribe<ProjectChangedEvent>(
+          [this](const ProjectChangedEvent&) {
+            refreshEnabledState();
+          }));
   QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() {
    refreshEnabledState();
   });

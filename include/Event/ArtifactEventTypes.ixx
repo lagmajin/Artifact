@@ -124,9 +124,49 @@ struct ColorSwatchSelectedEvent {
 struct ColorSwatchChangedEvent {
 };
 
+enum class LayerSelectionChangeReason {
+    Unknown,
+    UserCleared,
+    LayerDeleted,
+    CompositionChanged,
+    ProjectChanged,
+    ProjectClosed,
+    InvalidSelection,
+    TransientSync,
+    ProgrammaticReselect,
+    SelectionBridgeSync
+};
+
+inline QString layerSelectionChangeReasonToString(LayerSelectionChangeReason reason) {
+    switch (reason) {
+    case LayerSelectionChangeReason::UserCleared:
+        return QStringLiteral("UserCleared");
+    case LayerSelectionChangeReason::LayerDeleted:
+        return QStringLiteral("LayerDeleted");
+    case LayerSelectionChangeReason::CompositionChanged:
+        return QStringLiteral("CompositionChanged");
+    case LayerSelectionChangeReason::ProjectChanged:
+        return QStringLiteral("ProjectChanged");
+    case LayerSelectionChangeReason::ProjectClosed:
+        return QStringLiteral("ProjectClosed");
+    case LayerSelectionChangeReason::InvalidSelection:
+        return QStringLiteral("InvalidSelection");
+    case LayerSelectionChangeReason::TransientSync:
+        return QStringLiteral("TransientSync");
+    case LayerSelectionChangeReason::ProgrammaticReselect:
+        return QStringLiteral("ProgrammaticReselect");
+    case LayerSelectionChangeReason::SelectionBridgeSync:
+        return QStringLiteral("SelectionBridgeSync");
+    case LayerSelectionChangeReason::Unknown:
+    default:
+        return QStringLiteral("Unknown");
+    }
+}
+
 struct LayerSelectionChangedEvent {
     QString compositionId;
     QString layerId;
+    LayerSelectionChangeReason reason = LayerSelectionChangeReason::Unknown;
 };
 
 struct LayerChangedEvent {

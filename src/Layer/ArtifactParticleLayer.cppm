@@ -155,11 +155,25 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // 2. GPU レンダリングパス
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
     if (renderer->isInitialized()) {
+        const int emitterCount = impl_->particleSystem->emitterCount();
         const auto sourceData = impl_->particleSystem->captureRenderData();
         qDebug() << "[ParticleLayer]" << layerName()
                  << "frame=" << frameNumber
+                 << "emitters=" << emitterCount
                  << "alive particles=" << sourceData.particles.size()
                  << "renderer initialized=" << renderer->isInitialized();
+        if (emitterCount > 0) {
+            const auto& params = impl_->particleSystem->emitters().front()->params();
+            qDebug() << "[ParticleLayer]"
+                     << "mode=" << static_cast<int>(params.mode)
+                     << "rate=" << params.rate
+                     << "burstCount=" << params.burstCount
+                     << "burstInterval=" << params.burstInterval
+                     << "maxParticles=" << params.maxParticles
+                     << "lifeMin=" << params.lifeMin
+                     << "lifeMax=" << params.lifeMax
+                     << "randomSeed=" << params.randomSeed;
+        }
         if (!sourceData.particles.empty()) {
             const ArtifactCore::ParticleRenderData renderData =
                 transformParticleRenderData(sourceData, getGlobalTransform(), opacity());

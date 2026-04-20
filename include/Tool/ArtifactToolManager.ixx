@@ -42,8 +42,6 @@ export namespace Artifact {
   void setActiveTool(ToolType type);
   ToolType activeTool() const;
   QString toolName(ToolType type) const;
-
-  void toolChanged(ToolType type) W_SIGNAL(toolChanged, type);
  };
 
 }

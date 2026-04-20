@@ -8,6 +8,7 @@ module;
 #include <QMatrix4x4>
 #include <QRectF>
 #include <QSize>
+#include <QSizeF>
 #include <QString>
 
 #include <algorithm>
@@ -21,6 +22,7 @@ module;
 export module Artifact.Render.CompositionViewDrawing;
 
 import Artifact.Render.IRenderer;
+import Artifact.Render.Context;
 import Artifact.Render.GPUTextureCacheManager;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
@@ -68,6 +70,52 @@ export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
 namespace {
 
+float lodScale(DetailLevel lod)
+{
+  switch (lod) {
+  case DetailLevel::Low:
+    return 0.5f;
+  case DetailLevel::Medium:
+    return 0.75f;
+  case DetailLevel::High:
+  default:
+    return 1.0f;
+  }
+}
+
+void registerCompositionViewContextSnapshot(ArtifactAbstractLayer* layer,
+                                            bool offlineRender,
+                                            DetailLevel lod)
+{
+  if (!layer) {
+    return;
+  }
+  RenderContext ctx;
+  ctx.setMode(offlineRender ? RenderMode::Final : RenderMode::Preview);
+  ctx.setCurrentFrame(layer->currentFrame());
+  ctx.setInteractive(!offlineRender);
+  ctx.setResolutionScale(lodScale(lod));
+  ctx.setColorSpace(ArtifactCore::ColorSpace::sRGB);
+  const auto sourceSize = layer->sourceSize();
+  const int sourceWidth = std::max(1, sourceSize.width);
+  const int sourceHeight = std::max(1, sourceSize.height);
+  ctx.canvasSize = QSizeF(sourceWidth, sourceHeight);
+  ctx.viewportSize = QSize(sourceWidth, sourceHeight);
+  ctx.setROI(RenderROI(0.0f, 0.0f,
+                       static_cast<float>(sourceWidth),
+                       static_cast<float>(sourceHeight)));
+
+  const QString key = RenderContextRegistry::instance().makeKey(
+      offlineRender ? RenderPurpose::FinalExport : RenderPurpose::EditorPreview,
+      layer->id().toString(),
+      layer->currentFrame(),
+      ctx.resolutionScale);
+  auto snapshot = createRenderContextSnapshot(ctx,
+                                              offlineRender ? RenderPurpose::FinalExport : RenderPurpose::EditorPreview,
+                                              key);
+  RenderContextRegistry::instance().registerSnapshot(snapshot);
+}
+
 QColor toQColor(const FloatColor& color)
 {
   return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
@@ -85,19 +133,6 @@ QString rgbaKey(float r, float g, float b, float a)
       .arg(g, 0, 'f', 4)
       .arg(b, 0, 'f', 4)
       .arg(a, 0, 'f', 4);
-}
-
-float lodScale(DetailLevel lod)
-{
-  switch (lod) {
-  case DetailLevel::Low:
-    return 0.5f;
-  case DetailLevel::Medium:
-    return 0.75f;
-  case DetailLevel::High:
-  default:
-    return 1.0f;
-  }
 }
 
 QImage downsampleForLOD(const QImage& image, DetailLevel lod)
@@ -365,6 +400,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     return;
   }
 
+  registerCompositionViewContextSnapshot(layer, offlineRender, lod);
+
   const QMatrix4x4 globalTransform4x4 = layer->getGlobalTransform4x4();
 
   auto applySurfaceAndDraw = [&](QImage surface, const QRectF& rect, bool allowSurfaceCache) {
@@ -572,9 +609,13 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer)) {
+    if (!hasRasterizerEffectsOrMasks(layer)) {
+      textLayer->draw(renderer);
+      return;
+    }
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
-      applySurfaceAndDraw(textImage, localRect, hasRasterizerEffectsOrMasks(layer));
+      applySurfaceAndDraw(textImage, localRect, true);
     }
     return;
   }

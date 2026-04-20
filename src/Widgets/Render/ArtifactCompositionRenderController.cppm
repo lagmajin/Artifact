@@ -1259,6 +1259,13 @@ public:
 
   LayerID selectedLayerId_;
   bool isDraggingLayer_ = false;
+  bool pendingMaskCreation_ = false;
+  LayerID pendingMaskLayerId_;
+  MaskPath pendingMaskPath_;
+  void clearPendingMaskCreation();
+  void beginPendingMaskCreation(const ArtifactAbstractLayerPtr &layer,
+                                const QPointF &localPos);
+  bool finalizePendingMaskCreation(const ArtifactAbstractLayerPtr &layer);
 
   // MayaGradient sprite cache — regenerated only when bgColor changes
   QImage cachedMayaGradientSprite_;
@@ -2141,6 +2148,7 @@ void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
   if (impl_->selectedLayerId_ == id) {
     return;
   }
+  impl_->clearPendingMaskCreation();
   impl_->selectedLayerId_ = id;
   impl_->invalidateOverlayComposite();
   impl_->syncSelectedLayerOverlayState(impl_->previewPipeline_.composition());
@@ -2542,6 +2550,11 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
           impl_->beginMaskEditTransaction(selectedLayer);
           const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
 
+          if (impl_->pendingMaskCreation_ &&
+              impl_->pendingMaskLayerId_ != selectedLayer->id()) {
+            impl_->clearPendingMaskCreation();
+          }
+
           const float handleThreshold = 10.0f / impl_->renderer_->getZoom();
           int handleMaskIndex = -1;
           int handlePathIndex = -1;
@@ -2608,42 +2621,40 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
             }
           }
 
-          // 2. Add new vertex if no existing vertex was hit
-          if (selectedLayer->maskCount() == 0) {
-            LayerMask newMask;
-            MaskPath newPath;
-            newMask.addMaskPath(newPath);
-            selectedLayer->addMask(newMask);
+          // 2. Build a pending mask path first. We only materialize a
+          //    LayerMask once the path is ready to close, so the first click
+          //    does not immediately alter the layer's mask stack.
+          if (impl_->pendingMaskCreation_ &&
+              impl_->pendingMaskLayerId_ == selectedLayer->id() &&
+              impl_->pendingMaskPath_.vertexCount() >= 3) {
+            const float closeThreshold =
+                8.0f / impl_->renderer_->getZoom();
+            const MaskVertex firstVertex = impl_->pendingMaskPath_.vertex(0);
+            if (QVector2D(firstVertex.position - localPos).length() <
+                closeThreshold) {
+              if (impl_->finalizePendingMaskCreation(selectedLayer)) {
+                impl_->markMaskEditDirty();
+                qDebug() << "[PenTool] Finalized pending mask path"
+                         << "layer:" << selectedLayer->id().toString();
+                ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+                    comp->id().toString(), selectedLayer->id().toString(),
+                    LayerChangedEvent::ChangeType::Modified});
+              }
+              return;
+            }
           }
 
-          LayerMask mask = selectedLayer->mask(0);
-          if (mask.maskPathCount() == 0) {
-            mask.addMaskPath(MaskPath());
+          if (!impl_->pendingMaskCreation_ ||
+              impl_->pendingMaskLayerId_ != selectedLayer->id()) {
+            impl_->beginPendingMaskCreation(selectedLayer, localPos);
+          } else {
+            impl_->beginPendingMaskCreation(selectedLayer, localPos);
           }
 
-          MaskPath path = mask.maskPath(0);
-          // Don't add more vertices if already closed
-          if (path.isClosed()) {
-            // TODO: Logic to start a new path or insert vertex into existing
-            // edge
-            return;
-          }
-
-          MaskVertex vertex;
-          vertex.position = localPos;
-          vertex.inTangent = QPointF(0, 0);
-          vertex.outTangent = QPointF(0, 0);
-
-          path.addVertex(vertex);
-          mask.setMaskPath(0, path);
-          selectedLayer->setMask(0, mask);
-          impl_->markMaskEditDirty();
-
-          qDebug() << "[PenTool] Added vertex at local:" << localPos
-                   << "layer:" << selectedLayer->id().toString();
-          ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-              comp->id().toString(), selectedLayer->id().toString(),
-              LayerChangedEvent::ChangeType::Modified});
+          qDebug() << "[PenTool] Added pending mask vertex at local:"
+                   << localPos << "layer:" << selectedLayer->id().toString()
+                   << "pendingVertices:"
+                   << impl_->pendingMaskPath_.vertexCount();
           return; // Handled
         }
       }
@@ -3219,6 +3230,56 @@ void CompositionRenderController::renderOneFrame() {
       renderOneFrame();
     }
   });
+}
+
+void CompositionRenderController::Impl::clearPendingMaskCreation() {
+  pendingMaskCreation_ = false;
+  pendingMaskLayerId_ = LayerID();
+  pendingMaskPath_.clearVertices();
+  pendingMaskPath_.setClosed(false);
+}
+
+void CompositionRenderController::Impl::beginPendingMaskCreation(
+    const ArtifactAbstractLayerPtr &layer, const QPointF &localPos) {
+  if (!layer) {
+    return;
+  }
+
+  if (!pendingMaskCreation_ || pendingMaskLayerId_ != layer->id()) {
+    clearPendingMaskCreation();
+    pendingMaskCreation_ = true;
+    pendingMaskLayerId_ = layer->id();
+  }
+
+  MaskVertex vertex;
+  vertex.position = localPos;
+  vertex.inTangent = QPointF(0, 0);
+  vertex.outTangent = QPointF(0, 0);
+  pendingMaskPath_.addVertex(vertex);
+}
+
+bool CompositionRenderController::Impl::finalizePendingMaskCreation(
+    const ArtifactAbstractLayerPtr &layer) {
+  if (!layer || !pendingMaskCreation_ || pendingMaskLayerId_ != layer->id()) {
+    return false;
+  }
+
+  if (pendingMaskPath_.vertexCount() < 3) {
+    return false;
+  }
+
+  MaskPath path = pendingMaskPath_;
+  path.setClosed(true);
+
+  beginMaskEditTransaction(layer);
+
+  LayerMask newMask;
+  newMask.addMaskPath(path);
+  layer->addMask(newMask);
+  markMaskEditDirty();
+
+  clearPendingMaskCreation();
+  return true;
 }
 
 void CompositionRenderController::Impl::renderOneFrameImpl(
@@ -4299,13 +4360,46 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                        marker.radius, marker.color);
                 }
               }
+              }
             }
           }
+
+        } else {
+          gizmo_->setLayer(nullptr);
         }
-      } else {
-        gizmo_->setLayer(nullptr);
+
+        if (pendingMaskCreation_ &&
+            pendingMaskLayerId_ == selectedLayer->id() &&
+            pendingMaskPath_.vertexCount() > 0) {
+          const MaskPath &path = pendingMaskPath_;
+          const int vertexCount = path.vertexCount();
+          const FloatColor pendingLineShadowColor = {0.0f, 0.0f, 0.0f, 0.24f};
+          const FloatColor pendingLineColor = {0.40f, 0.92f, 0.98f, 0.70f};
+          const FloatColor pendingPointShadowColor = {0.0f, 0.0f, 0.0f, 0.36f};
+          const FloatColor pendingPointColor = {0.84f, 0.98f, 1.0f, 0.88f};
+          const QTransform globalTransform = selectedLayer->getGlobalTransform();
+
+          Detail::float2 lastCanvasPos;
+          for (int v = 0; v < vertexCount; ++v) {
+            const MaskVertex vertex = path.vertex(v);
+            const QPointF canvasPos = globalTransform.map(vertex.position);
+            const Detail::float2 currentCanvasPos = {
+                static_cast<float>(canvasPos.x()),
+                static_cast<float>(canvasPos.y())};
+            if (v > 0) {
+              renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
+                                            5.0f, pendingLineShadowColor);
+              renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
+                                            2.5f, pendingLineColor);
+            }
+            renderer_->drawPoint(currentCanvasPos.x, currentCanvasPos.y, 11.0f,
+                                 pendingPointShadowColor);
+            renderer_->drawPoint(currentCanvasPos.x, currentCanvasPos.y, 7.0f,
+                                 pendingPointColor);
+            lastCanvasPos = currentCanvasPos;
+          }
+        }
       }
-    }
 
     // M-CE Phase 2: ピクセルグリッド自動表示 (ズーム 800% 以上でフェードイン)
     if (renderer_ && renderer_->getZoom() >= 8.0f) {

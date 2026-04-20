@@ -1510,9 +1510,14 @@ int main(int argc, char *argv[]) {
 
         auto retainedPropertyLayerId =
             std::make_shared<LayerID>(LayerID::Nil());
+        const auto selectionReasonToString =
+            [](LayerSelectionChangeReason reason) -> QString {
+          return layerSelectionChangeReasonToString(reason);
+        };
         const auto syncPropertyPanelLayer =
-            [mw, propertyPanel, resolveLayerForUi,
-             retainedPropertyLayerId](const LayerID &layerId) {
+            [mw, propertyPanel, resolveLayerForUi, retainedPropertyLayerId,
+             selectionReasonToString](const LayerSelectionChangedEvent &event) {
+              const LayerID layerId(event.layerId);
               if (!propertyPanel) {
                 return;
               }
@@ -1541,16 +1546,18 @@ int main(int argc, char *argv[]) {
               if (tryApplyResolvedLayer(layerId)) {
                 return;
               }
-              if (layerId.isNil() && !retainedPropertyLayerId->isNil() &&
-                  tryApplyResolvedLayer(*retainedPropertyLayerId)) {
-                return;
-              }
+
+              qDebug() << "[PropertyPanel] NoLayer"
+                       << "reason="
+                       << selectionReasonToString(event.reason)
+                       << "layerId=" << layerId.toString();
 
               QPointer<ArtifactPropertyWidget> safePropertyPanel(propertyPanel);
               QPointer<QWidget> safeMw(mw);
               const auto deferredResolve =
                   [safePropertyPanel, safeMw, resolveLayerForUi, layerId,
-                   retainedPropertyLayerId](int retryMs) {
+                   retainedPropertyLayerId, selectionReasonToString,
+                   reason = event.reason](int retryMs) {
                     if (!safePropertyPanel) {
                       return;
                     }
@@ -1558,22 +1565,14 @@ int main(int argc, char *argv[]) {
                     if (const auto resolved = resolveLayerForUi(layerId)) {
                       safePropertyPanel->setLayer(resolved);
                       *retainedPropertyLayerId = resolved->id();
-                    } else if (layerId.isNil() &&
-                               !retainedPropertyLayerId->isNil()) {
-                      if (const auto resolved =
-                              resolveLayerForUi(*retainedPropertyLayerId)) {
-                        safePropertyPanel->setLayer(resolved);
-                        *retainedPropertyLayerId = resolved->id();
-                        return;
-                      }
-                      *retainedPropertyLayerId = LayerID::Nil();
-                      safePropertyPanel->clear();
                     } else if (retryMs > 0 && safeMw) {
                       // Secondary retry — layer may not be fully wired yet
+                      const auto retryReason = reason;
                       QTimer::singleShot(
                           retryMs, safeMw.data(),
                           [safePropertyPanel, resolveLayerForUi, layerId,
-                           retainedPropertyLayerId]() {
+                           retainedPropertyLayerId, retryReason,
+                           selectionReasonToString]() {
                             if (!safePropertyPanel)
                               return;
                             safePropertyPanel->setFocusedEffectId(QString());
@@ -1583,11 +1582,19 @@ int main(int argc, char *argv[]) {
                               *retainedPropertyLayerId = resolved->id();
                             } else {
                               *retainedPropertyLayerId = LayerID::Nil();
+                              qDebug() << "[PropertyPanel] NoLayer retry"
+                                       << "reason="
+                                       << selectionReasonToString(retryReason)
+                                       << "layerId=" << layerId.toString();
                               safePropertyPanel->clear();
                             }
                           });
                     } else {
                       *retainedPropertyLayerId = LayerID::Nil();
+                      qDebug() << "[PropertyPanel] NoLayer final"
+                               << "reason="
+                               << selectionReasonToString(reason)
+                               << "layerId=" << layerId.toString();
                       safePropertyPanel->clear();
                     }
                   };
@@ -1595,29 +1602,6 @@ int main(int argc, char *argv[]) {
                   0, mw, [deferredResolve]() { deferredResolve(100); });
             };
 
-        const auto syncSelectedLayerUi = [layerViewEditor, syncPropertyPanelLayer](
-                                             const LayerID &layerId) {
-          if (layerViewEditor) {
-            if (layerId.isNil()) {
-              layerViewEditor->view()->clearTargetLayer();
-            } else {
-              layerViewEditor->setTargetLayer(layerId);
-            }
-          }
-          syncPropertyPanelLayer(layerId);
-        };
-        if (selectionManager) {
-          QObject::connect(
-              selectionManager, &ArtifactLayerSelectionManager::selectionChanged,
-              mw, [selectionManager, syncSelectedLayerUi]() {
-                if (!selectionManager) {
-                  return;
-                }
-                const ArtifactAbstractLayerPtr current =
-                    selectionManager->currentLayer();
-                syncSelectedLayerUi(current ? current->id() : LayerID::Nil());
-              });
-        }
         appEventSubscriptions.push_back(
           appEventBus.subscribe<ProjectChangedEvent>(
               [status, autoSaveManager](const ProjectChangedEvent &) {
@@ -1654,9 +1638,15 @@ int main(int argc, char *argv[]) {
           }));
         appEventSubscriptions.push_back(
           appEventBus.subscribe<LayerSelectionChangedEvent>(
-              [layerViewEditor, status, projectService,
+              [layerViewEditor, status, projectService, resolveLayerForUi,
                syncPropertyPanelLayer](const LayerSelectionChangedEvent &event) {
-                const LayerID layerId(event.layerId);
+                const LayerID incomingLayerId(event.layerId);
+                LayerID layerId = incomingLayerId;
+                if (layerId.isNil()) {
+                  if (const auto resolved = resolveLayerForUi(layerId)) {
+                    layerId = resolved->id();
+                  }
+                }
                 if (layerViewEditor) {
                   if (layerId.isNil()) {
                     layerViewEditor->view()->clearTargetLayer();
@@ -1664,7 +1654,7 @@ int main(int argc, char *argv[]) {
                     layerViewEditor->setTargetLayer(layerId);
                   }
                 }
-                syncPropertyPanelLayer(layerId);
+                syncPropertyPanelLayer(event);
                 if (status) {
                   const auto resolveLayerStatusText =
                       [projectService](const LayerID &candidateId) -> QString {

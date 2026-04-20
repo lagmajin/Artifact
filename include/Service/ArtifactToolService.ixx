@@ -47,7 +47,6 @@ export namespace Artifact {
 
   void editModeChanged(EditMode mode) W_SIGNAL(editModeChanged, mode);
   void displayModeChanged(DisplayMode mode) W_SIGNAL(displayModeChanged, mode);
-  void toolChanged(ToolType type) W_SIGNAL(toolChanged, type);
  };
 
 }

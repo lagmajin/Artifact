@@ -2700,15 +2700,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   }
 
   if (auto *app = ArtifactApplicationManager::instance()) {
-    if (auto *toolManager = app->toolManager()) {
-      QObject::connect(toolManager, &ArtifactToolManager::toolChanged, this,
-                       [this](ToolType) {
-                         if (impl_) {
-                           impl_->queueToolLabelSync(this);
-                         }
-                       });
-    }
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<ToolChangedEvent>(
+            [this](const ToolChangedEvent &) {
+              if (impl_) {
+                impl_->queueToolLabelSync(this);
+              }
+            }));
     if (impl_) {
+      impl_->queueToolLabelSync(this);
       impl_->queueSelectionSync(this);
     }
   }
