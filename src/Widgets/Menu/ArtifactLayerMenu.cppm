@@ -294,39 +294,46 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addAction(ungroupAction);
     menu->addAction(splitAction);
 
-    QObject::connect(createSolidAction, &QAction::triggered, menu, [this]() { handleCreateSolid(); });
-    QObject::connect(createNullAction, &QAction::triggered, menu, [this]() { handleCreateNull(); });
-    QObject::connect(createAdjustAction, &QAction::triggered, menu, [this]() { handleCreateAdjust(); });
-    QObject::connect(createTextAction, &QAction::triggered, menu, [this]() { handleCreateText(); });
-    QObject::connect(createParticleAction, &QAction::triggered, menu, [this]() { handleCreateParticle(); });
-    QObject::connect(createCameraAction, &QAction::triggered, menu, [this]() { handleCreateCamera(); });
-    QObject::connect(createAudioAction, &QAction::triggered, menu, [this]() { handleCreateAudio(); });
-    QObject::connect(createSvgAction, &QAction::triggered, menu, [this]() { handleCreateSvg(); });
-    QObject::connect(createShapeRectAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Rect, QStringLiteral("Shape 1")); });
-    QObject::connect(createShapeSquareAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Square, QStringLiteral("Square 1")); });
-    QObject::connect(createShapePolygonAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Polygon, QStringLiteral("Polygon 1")); });
-    QObject::connect(createShapeTriangleAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Triangle, QStringLiteral("Triangle 1")); });
-    QObject::connect(createShapeEllipseAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Ellipse, QStringLiteral("Ellipse 1")); });
-    QObject::connect(createShapeStarAction, &QAction::triggered, menu, [this]() { handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); });
+    auto dispatchAction = [this](QAction* action) {
+        if (!action) {
+            return;
+        }
+        if (action == createSolidAction) { handleCreateSolid(); return; }
+        if (action == createNullAction) { handleCreateNull(); return; }
+        if (action == createAdjustAction) { handleCreateAdjust(); return; }
+        if (action == createTextAction) { handleCreateText(); return; }
+        if (action == createParticleAction) { handleCreateParticle(); return; }
+        if (action == createCameraAction) { handleCreateCamera(); return; }
+        if (action == createAudioAction) { handleCreateAudio(); return; }
+        if (action == createSvgAction) { handleCreateSvg(); return; }
+        if (action == createShapeRectAction) { handleCreateShape(ShapeType::Rect, QStringLiteral("Shape 1")); return; }
+        if (action == createShapeSquareAction) { handleCreateShape(ShapeType::Square, QStringLiteral("Square 1")); return; }
+        if (action == createShapePolygonAction) { handleCreateShape(ShapeType::Polygon, QStringLiteral("Polygon 1")); return; }
+        if (action == createShapeTriangleAction) { handleCreateShape(ShapeType::Triangle, QStringLiteral("Triangle 1")); return; }
+        if (action == createShapeEllipseAction) { handleCreateShape(ShapeType::Ellipse, QStringLiteral("Ellipse 1")); return; }
+        if (action == createShapeStarAction) { handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); return; }
+        if (action == duplicateLayerAction) { handleDuplicateLayer(); return; }
+        if (action == renameLayerAction) { handleRenameLayer(); return; }
+        if (action == deleteLayerAction) { handleDeleteLayer(); return; }
+        if (action == toggleVisibleAction) { handleToggleVisible(); return; }
+        if (action == toggleLockAction) { handleToggleLock(); return; }
+        if (action == toggleSoloAction) { handleToggleSolo(); return; }
+        if (action == toggleShyAction) { handleToggleShy(); return; }
+        if (action == soloOnlyAction) { handleSoloOnlySelected(); return; }
+        if (action == selectParentAction) { handleSelectParent(); return; }
+        if (action == clearParentAction) { handleClearParent(); return; }
+        if (action == precomposeAction) { handlePrecompose(); return; }
+        if (action == groupSelectionAction) { handleGroupSelection(); return; }
+        if (action == ungroupAction) { handleUngroup(); return; }
+        if (action == splitAction) { handleSplitLayer(); return; }
+        if (action == trackCameraAction) { handleTrackCamera(); return; }
+    };
 
-    QObject::connect(duplicateLayerAction, &QAction::triggered, menu, [this]() { handleDuplicateLayer(); });
-    QObject::connect(renameLayerAction, &QAction::triggered, menu, [this]() { handleRenameLayer(); });
-    QObject::connect(deleteLayerAction, &QAction::triggered, menu, [this]() { handleDeleteLayer(); });
-
-    QObject::connect(toggleVisibleAction, &QAction::triggered, menu, [this]() { handleToggleVisible(); });
-    QObject::connect(toggleLockAction, &QAction::triggered, menu, [this]() { handleToggleLock(); });
-    QObject::connect(toggleSoloAction, &QAction::triggered, menu, [this]() { handleToggleSolo(); });
-    QObject::connect(toggleShyAction, &QAction::triggered, menu, [this]() { handleToggleShy(); });
-    QObject::connect(soloOnlyAction, &QAction::triggered, menu, [this]() { handleSoloOnlySelected(); });
-
-    QObject::connect(selectParentAction, &QAction::triggered, menu, [this]() { handleSelectParent(); });
-    QObject::connect(clearParentAction, &QAction::triggered, menu, [this]() { handleClearParent(); });
-
-    QObject::connect(precomposeAction, &QAction::triggered, menu, [this]() { handlePrecompose(); });
-    QObject::connect(groupSelectionAction, &QAction::triggered, menu, [this]() { handleGroupSelection(); });
-    QObject::connect(ungroupAction, &QAction::triggered, menu, [this]() { handleUngroup(); });
-    QObject::connect(splitAction, &QAction::triggered, menu, [this]() { handleSplitLayer(); });
-    QObject::connect(trackCameraAction, &QAction::triggered, menu, [this]() { handleTrackCamera(); });
+    QObject::connect(menu, &QMenu::triggered, menu, dispatchAction);
+    QObject::connect(createMenu, &QMenu::triggered, menu, dispatchAction);
+    QObject::connect(createShapeMenu, &QMenu::triggered, menu, dispatchAction);
+    QObject::connect(switchMenu, &QMenu::triggered, menu, dispatchAction);
+    QObject::connect(selectMenu, &QMenu::triggered, menu, dispatchAction);
 
     auto* service = ArtifactProjectService::instance();
     QObject::connect(service, &ArtifactProjectService::layerSelected, menu, [this](const ArtifactCore::LayerID& id) {

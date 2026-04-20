@@ -15,6 +15,7 @@
 #include <QtConcurrent>
 #include <QMetaObject>
 #include <QPointer>
+#include <opencv2/opencv.hpp>
 #include <mutex>
 #include <unordered_map>
 #include <deque>
@@ -64,6 +65,8 @@ import Artifact.Composition.Abstract;
 import Artifact.Project.Manager;
 import Event.Bus;
 import Artifact.Event.Types;
+import CvUtils;
+import Image.ImageF32x4_RGBA;
 import Utils.String.UniString;
 import Utils.Id;
 import Property.Group;
@@ -114,6 +117,28 @@ QString decoderBackendName(const ArtifactCore::MediaPlaybackController* controll
 int64_t currentSourceFrame(const ArtifactVideoLayer* layer)
 {
     return layer ? timelineFrameToSourceFrame(layer, layer->currentFrame()) : 0;
+}
+
+ArtifactCore::ImageF32x4_RGBA toFrameBuffer(const QImage& frame)
+{
+    ArtifactCore::ImageF32x4_RGBA buffer;
+    if (frame.isNull()) {
+        return buffer;
+    }
+
+    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(frame, true);
+    if (mat.empty()) {
+        return buffer;
+    }
+
+    if (mat.type() == CV_8UC4) {
+        cv::Mat converted;
+        cv::cvtColor(mat, converted, cv::COLOR_BGRA2RGBA);
+        mat = std::move(converted);
+    }
+
+    buffer.setFromCVMat(mat);
+    return buffer;
 }
 
 void publishVideoLayerModified(ArtifactVideoLayer* layer)
@@ -252,6 +277,8 @@ public:
     bool videoEnabled_ = true;
     
     QImage currentQImage_;
+    ArtifactCore::ImageF32x4_RGBA currentFrameBuffer_;
+    bool hasCurrentFrameBuffer_ = false;
     int64_t lastDecodedFrame_ = -1;
     bool debugFrameSaved_ = false;
     
@@ -346,6 +373,8 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     impl_->sourcePath_ = normalizedPath;
     impl_->streamInfo_ = VideoStreamInfo{};
     impl_->currentQImage_ = QImage();
+    impl_->currentFrameBuffer_ = ArtifactCore::ImageF32x4_RGBA();
+    impl_->hasCurrentFrameBuffer_ = false;
     impl_->lastDecodedFrame_ = -1;
     impl_->decodeTargetFrame_ = -1;
     impl_->decoding_ = false;
@@ -421,6 +450,8 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         layer->impl_->streamInfo_ = result.streamInfo;
         layer->impl_->isLoaded_ = true;
         layer->impl_->currentQImage_ = QImage();
+        layer->impl_->currentFrameBuffer_ = ArtifactCore::ImageF32x4_RGBA();
+        layer->impl_->hasCurrentFrameBuffer_ = false;
         layer->impl_->lastDecodedFrame_ = -1;
         layer->impl_->decodeTargetFrame_ = -1;
         layer->impl_->decoding_ = false;
@@ -566,6 +597,16 @@ VideoFrameInfo ArtifactVideoLayer::currentFrameInfo() const
     return info;
 }
 
+const ArtifactCore::ImageF32x4_RGBA& ArtifactVideoLayer::currentFrameBuffer() const
+{
+    return impl_->currentFrameBuffer_;
+}
+
+bool ArtifactVideoLayer::hasCurrentFrameBuffer() const
+{
+    return impl_->hasCurrentFrameBuffer_;
+}
+
 // === Frame Decoding ===
 void ArtifactVideoLayer::decodeCurrentFrame()
 {
@@ -608,6 +649,8 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     QImage cachedFrame;
     if (impl_->frameCache_.get(sourceFrame, cachedFrame)) {
         impl_->currentQImage_ = cachedFrame;
+        impl_->currentFrameBuffer_ = toFrameBuffer(cachedFrame);
+        impl_->hasCurrentFrameBuffer_ = true;
         impl_->lastDecodedFrame_ = sourceFrame;
         return;
     }
@@ -622,6 +665,10 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         QImage decoded = ctrl->getVideoFrameAtFrameDirect(sourceFrame);
         if (!decoded.isNull()) {
             impl_->frameCache_.put(sourceFrame, decoded);
+            impl_->currentQImage_ = decoded;
+            impl_->currentFrameBuffer_ = toFrameBuffer(decoded);
+            impl_->hasCurrentFrameBuffer_ = true;
+            impl_->lastDecodedFrame_ = sourceFrame;
             impl_->saveDebugFrame(decoded, sourceFrame);
             qCDebug(videoLayerLog) << "[VideoLayer] bg decoded frame"
                                    << "timeline=" << timelineFrame
@@ -662,6 +709,8 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
         if (!loaded.isNull()) {
             if (impl_->decodeTargetFrame_ != impl_->lastDecodedFrame_) {
                 impl_->currentQImage_ = loaded;
+                impl_->currentFrameBuffer_ = toFrameBuffer(loaded);
+                impl_->hasCurrentFrameBuffer_ = true;
                 impl_->lastDecodedFrame_ = impl_->decodeTargetFrame_;
                 if (impl_->streamInfo_.width <= 0 || impl_->streamInfo_.height <= 0) {
                     impl_->streamInfo_.width  = loaded.width();
@@ -950,10 +999,8 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     const int64_t sourceFrame = currentSourceFrame(this);
     const int64_t timelineFrame = sourceFrameToTimelineFrame(this, sourceFrame);
 
-    // currentFrameToQImage() が取り込みとデコード起動を担うが、
-    // draw() が直接呼ばれる経路に備えてフォールバックを残す
-    if (impl_->currentQImage_.isNull() && !impl_->decoding_.load()
-        && impl_->decodeFuture_.isFinished()) {
+    if (!impl_->hasCurrentFrameBuffer_ && impl_->currentQImage_.isNull()
+        && !impl_->decoding_.load() && impl_->decodeFuture_.isFinished()) {
         qCDebug(videoLayerLog) << "[VideoLayer] draw fallback decode"
                                << "timeline=" << timelineFrame
                                << "source=" << sourceFrame
@@ -963,15 +1010,25 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
         decodeCurrentFrame();
     }
 
-    if (impl_->currentQImage_.isNull()) return;
+    if (!impl_->hasCurrentFrameBuffer_) {
+        if (!impl_->currentQImage_.isNull()) {
+            impl_->currentFrameBuffer_ = toFrameBuffer(impl_->currentQImage_);
+            impl_->hasCurrentFrameBuffer_ = true;
+        }
+    }
+
+    if (!impl_->hasCurrentFrameBuffer_) return;
 
     auto size = sourceSize();
+    if (size.width <= 0 || size.height <= 0) {
+        size = Size_2D(impl_->currentFrameBuffer_.width(), impl_->currentFrameBuffer_.height());
+    }
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
     drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
         renderer->drawSpriteTransformed(0.0f, 0.0f,
                                         static_cast<float>(size.width),
                                         static_cast<float>(size.height),
-                                        transform, impl_->currentQImage_,
+                                        transform, impl_->currentFrameBuffer_,
                                         this->opacity() * weight);
     });
 }

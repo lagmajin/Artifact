@@ -40,6 +40,7 @@ export module Artifact.Layer.Video;
 
 
 import Artifact.Layer.Abstract;
+import Image.ImageF32x4_RGBA;
 
 
 export namespace Artifact {
@@ -131,6 +132,10 @@ public:
     
     /// Get current frame info
     VideoFrameInfo currentFrameInfo() const;
+
+    /// Get the current GPU-friendly frame buffer, if available
+    const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
+    bool hasCurrentFrameBuffer() const;
 
     // === Frame Decoding ===
     

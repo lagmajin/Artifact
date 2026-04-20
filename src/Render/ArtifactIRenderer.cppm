@@ -42,6 +42,7 @@ import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
 import Core.Scale.Zoom;
 import Image.MultiChannelImage;
+import Image.ImageF32x4_RGBA;
 import Artifact.Render.DiligentDeviceManager;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.PrimitiveRenderer2D;
@@ -1425,6 +1426,10 @@ void ArtifactIRenderer::drawSprite(float x, float y, float w, float h, const QIm
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
  }
  void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const QImage& image, float opacity)
+ {
+  impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
+ }
+ void ArtifactIRenderer::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity)
  {
   impl_->primitiveRenderer_.drawSpriteTransformed(x, y, w, h, transform, image, opacity);
  }

@@ -69,6 +69,7 @@ public:
     
     // Layer interface
     void draw(ArtifactIRenderer* renderer) override;
+    QRectF localBounds() const override;
     QJsonObject toJson() const;
     static ArtifactAbstractLayerPtr fromJson(const QJsonObject& obj);
     

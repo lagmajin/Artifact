@@ -13,6 +13,7 @@ module;
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imageio.h>
+#include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 
@@ -28,6 +29,26 @@ import Size;
 namespace Artifact {
 namespace
 {
+ArtifactCore::ImageF32x4_RGBA toFrameBuffer(const QImage& image)
+{
+    ArtifactCore::ImageF32x4_RGBA buffer;
+    if (image.isNull()) {
+        return buffer;
+    }
+
+    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(image, true);
+    if (mat.empty()) {
+        return buffer;
+    }
+
+    if (mat.type() != CV_32FC4) {
+        mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
+    }
+
+    buffer.setFromCVMat(mat);
+    return buffer;
+}
+
 QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* errorOut = nullptr)
 {
     const std::string utf8Path = path.toUtf8().toStdString();
@@ -100,6 +121,7 @@ public:
     int height_ = 0;
     QString sourcePath_;
     mutable std::shared_ptr<QImage> cache_;
+    mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
     // [Fix 1] バックグラウンド先読み用
     mutable QFuture<QImage> prefetchFuture_;
     mutable QFutureWatcher<QImage> prefetchWatcher_;
@@ -117,6 +139,7 @@ ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
         QImage loaded = impl_->prefetchWatcher_.result();
         if (!loaded.isNull()) {
             impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
+            impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
             impl_->width_ = impl_->cache_->width();
             impl_->height_ = impl_->cache_->height();
             setSourceSize(Size_2D(impl_->width_, impl_->height_));
@@ -148,6 +171,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
 
     impl_->sourcePath_ = path;
     impl_->cache_.reset();
+    impl_->cacheBuffer_.reset();
     impl_->prefetchDone_ = false;
     impl_->hasImage_ = true;
     impl_->width_ = spec.width;
@@ -210,6 +234,7 @@ void ArtifactImageLayer::setFromCvMat(const cv::Mat& mat)
     if (mat.empty()) {
         impl_->hasImage_ = false;
         impl_->cache_.reset();
+        impl_->cacheBuffer_.reset();
         return;
     }
 
@@ -227,15 +252,27 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!renderer) return;
 
-    QImage img = toQImage();
-    if (img.isNull()) return;
-
     auto size = sourceSize();
     if (!impl_->fitToLayer_) {
         size = Size_2D(impl_->width_, impl_->height_);
     }
 
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
+    if (hasCurrentFrameBuffer()) {
+        const ArtifactCore::ImageF32x4_RGBA& buffer = currentFrameBuffer();
+        drawWithClonerEffect(this, baseTransform, [renderer, &buffer, size, this](const QMatrix4x4& transform, float weight) {
+            renderer->drawSpriteTransformed(0.0f, 0.0f,
+                                            static_cast<float>(size.width),
+                                            static_cast<float>(size.height),
+                                            transform, buffer,
+                                            this->opacity() * weight);
+        });
+        return;
+    }
+
+    QImage img = toQImage();
+    if (img.isNull()) return;
+
     drawWithClonerEffect(this, baseTransform, [renderer, &img, size, this](const QMatrix4x4& transform, float weight) {
         renderer->drawSpriteTransformed(0.0f, 0.0f,
                                         static_cast<float>(size.width),
@@ -259,6 +296,7 @@ QImage ArtifactImageLayer::toQImage() const
         QImage loaded = impl_->prefetchFuture_.result();
         if (!loaded.isNull()) {
             impl_->cache_ = std::make_shared<QImage>(std::move(loaded));
+            impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
             impl_->width_  = impl_->cache_->width();
             impl_->height_ = impl_->cache_->height();
         }
@@ -293,6 +331,7 @@ QImage ArtifactImageLayer::toQImage() const
             QImage loaded = loadImageViaOIIO(impl_->sourcePath_, &size, &errorString);
             if (!loaded.isNull()) {
                 impl_->cache_ = std::make_shared<QImage>(loaded);
+                impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(loaded));
                 if (size.isValid()) {
                     impl_->width_  = size.width();
                     impl_->height_ = size.height();
@@ -312,17 +351,36 @@ QImage ArtifactImageLayer::toQImage() const
     return *impl_->cache_;
 }
 
+const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() const
+{
+    static ArtifactCore::ImageF32x4_RGBA empty;
+    if (impl_ && !impl_->cacheBuffer_ && impl_->cache_) {
+        impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
+    }
+    if (impl_ && impl_->cacheBuffer_) {
+        return *impl_->cacheBuffer_;
+    }
+    return empty;
+}
+
+bool ArtifactImageLayer::hasCurrentFrameBuffer() const
+{
+    return impl_ && ((impl_->cacheBuffer_ && !impl_->cacheBuffer_->isNull()) || impl_->cache_);
+}
+
 void ArtifactImageLayer::setFromQImage(const QImage& image)
 {
     if (image.isNull()) {
         impl_->hasImage_ = false;
         impl_->cache_ = nullptr;
+        impl_->cacheBuffer_.reset();
         return;
     }
 
     impl_->width_ = image.width();
     impl_->height_ = image.height();
     impl_->cache_ = std::make_shared<QImage>(image);
+    impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(image));
     impl_->hasImage_ = true;
 
     setSourceSize(Size_2D(image.width(), image.height()));

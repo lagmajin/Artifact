@@ -156,7 +156,7 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
     if (renderer->isInitialized()) {
         const auto sourceData = impl_->particleSystem->captureRenderData();
-        qDebug() << "[ParticleLayer]" << name()
+        qDebug() << "[ParticleLayer]" << layerName()
                  << "frame=" << frameNumber
                  << "alive particles=" << sourceData.particles.size()
                  << "renderer initialized=" << renderer->isInitialized();

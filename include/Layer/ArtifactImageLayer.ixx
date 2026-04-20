@@ -9,6 +9,7 @@ export module Artifact.Layer.Image;
 import Artifact.Layers;
 
 import Image;
+import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
 
@@ -21,6 +22,8 @@ export namespace Artifact {
   ArtifactImageLayer();
   ~ArtifactImageLayer();
   QImage toQImage() const;
+  const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
+  bool hasCurrentFrameBuffer() const;
   bool loadFromPath(const QString& path);
   QString sourcePath() const;
   void setFromQImage(const QImage& image);

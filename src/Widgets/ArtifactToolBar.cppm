@@ -417,7 +417,7 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   // Connect signals
   QObject::connect(impl_->homeAction_, &QAction::triggered, this,
                    [this]() { homeRequested(); });
-  
+
   auto setTool = [](ToolType type) {
     if (auto *app = Artifact::ApplicationService::instance()) {
       if (auto *toolService = app->toolService()) {
@@ -428,66 +428,53 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
     ArtifactCore::globalEventBus().publish<ToolChangedEvent>(ToolChangedEvent{type});
   };
 
-  QObject::connect(impl_->selectTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     selectToolRequested();
-                     setTool(ToolType::Selection);
+  QObject::connect(impl_->toolsGroup_, &QActionGroup::triggered, this,
+                   [this, setTool](QAction *action) {
+                     if (!action) {
+                       return;
+                     }
+                     if (action == impl_->selectTool_) {
+                       selectToolRequested();
+                       setTool(ToolType::Selection);
+                     } else if (action == impl_->handTool_) {
+                       handToolRequested();
+                       setTool(ToolType::Hand);
+                     } else if (action == impl_->zoomTool_) {
+                       zoomToolRequested();
+                       setTool(ToolType::Zoom);
+                     } else if (action == impl_->moveTool_) {
+                       moveToolRequested();
+                       setTool(ToolType::Move);
+                     } else if (action == impl_->rotationTool_) {
+                       rotationToolRequested();
+                       setTool(ToolType::Rotation);
+                     } else if (action == impl_->scaleTool_) {
+                       scaleToolRequested();
+                       setTool(ToolType::Scale);
+                     } else if (action == impl_->cameraTool_) {
+                       cameraToolRequested();
+                     } else if (action == impl_->panBehindTool_) {
+                       panBehindToolRequested();
+                       setTool(ToolType::AnchorPoint);
+                     } else if (action == impl_->shapeTool_) {
+                       shapeToolRequested();
+                       setTool(ToolType::Rectangle);
+                     } else if (action == impl_->penTool_) {
+                       penToolRequested();
+                       setTool(ToolType::Pen);
+                     } else if (action == impl_->textTool_) {
+                       textToolRequested();
+                       setTool(ToolType::Text);
+                     } else if (action == impl_->brushTool_) {
+                       brushToolRequested();
+                     } else if (action == impl_->cloneStampTool_) {
+                       cloneStampToolRequested();
+                     } else if (action == impl_->eraserTool_) {
+                       eraserToolRequested();
+                     } else if (action == impl_->puppetTool_) {
+                       puppetToolRequested();
+                     }
                    });
-  QObject::connect(impl_->handTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     handToolRequested();
-                     setTool(ToolType::Hand);
-                   });
-  QObject::connect(impl_->zoomTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     zoomToolRequested();
-                     setTool(ToolType::Zoom);
-                   });
-  QObject::connect(impl_->moveTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     moveToolRequested();
-                     setTool(ToolType::Move);
-                   });
-  QObject::connect(impl_->rotationTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     rotationToolRequested();
-                     setTool(ToolType::Rotation);
-                   });
-  QObject::connect(impl_->scaleTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     scaleToolRequested();
-                     setTool(ToolType::Scale);
-                   });
-  QObject::connect(impl_->cameraTool_, &QAction::triggered, this,
-                   [this]() { cameraToolRequested(); });
-  QObject::connect(impl_->panBehindTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     panBehindToolRequested();
-                     setTool(ToolType::AnchorPoint);
-                   });
-  QObject::connect(impl_->shapeTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     shapeToolRequested();
-                     setTool(ToolType::Rectangle);
-                   });
-  QObject::connect(impl_->penTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     penToolRequested();
-                     setTool(ToolType::Pen);
-                   });
-  QObject::connect(impl_->textTool_, &QAction::triggered, this,
-                   [this, setTool]() {
-                     textToolRequested();
-                     setTool(ToolType::Text);
-                   });
-  QObject::connect(impl_->brushTool_, &QAction::triggered, this,
-                   [this]() { brushToolRequested(); });
-  QObject::connect(impl_->cloneStampTool_, &QAction::triggered, this,
-                   [this]() { cloneStampToolRequested(); });
-  QObject::connect(impl_->eraserTool_, &QAction::triggered, this,
-                   [this]() { eraserToolRequested(); });
-  QObject::connect(impl_->puppetTool_, &QAction::triggered, this,
-                   [this]() { puppetToolRequested(); });
 
   QObject::connect(impl_->zoomInAction_, &QAction::triggered, this,
                    [this]() { zoomInRequested(); });

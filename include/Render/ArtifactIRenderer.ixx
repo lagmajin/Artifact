@@ -21,6 +21,7 @@ module;
 export module Artifact.Render.IRenderer;
 
 import Color.Float;
+import Image.ImageF32x4_RGBA;
 export import Image.MultiChannelImage;
 import Graphics.RayTracingManager;
 import Graphics.ParticleData;
@@ -92,6 +93,7 @@ public:
   void setClearColor(const FloatColor &color);
   FloatColor getClearColor() const;
   void setViewportSize(float w, float h);
+  void setDevicePixelRatio(float dpr);
 
   // ==== マルチチャンネルレンダリング ====
   void setMultiChannelEnabled(bool enabled);
@@ -186,6 +188,10 @@ public:
                          const QImage &image, float opacity = 1.0f);
   void drawSpriteTransformed(float x, float y, float w, float h,
                              const QMatrix4x4 &transform, const QImage &image,
+                             float opacity = 1.0f);
+  void drawSpriteTransformed(float x, float y, float w, float h,
+                             const QMatrix4x4 &transform,
+                             const ArtifactCore::ImageF32x4_RGBA &image,
                              float opacity = 1.0f);
   void drawSpriteTransformed(float x, float y, float w, float h,
                              const QMatrix4x4 &transform,

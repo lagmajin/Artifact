@@ -153,6 +153,67 @@ private:
  std::vector<QPointF> beforePoints_;
  std::vector<QPointF> afterPoints_;
 };
+
+enum class MaskHandleType { None, InTangent, OutTangent };
+
+QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType handleType)
+{
+ const MaskVertex vertex = path.vertex(vertexIndex);
+ switch (handleType) {
+  case MaskHandleType::InTangent:
+   return vertex.position + vertex.inTangent;
+  case MaskHandleType::OutTangent:
+   return vertex.position + vertex.outTangent;
+  case MaskHandleType::None:
+   break;
+ }
+ return vertex.position;
+}
+
+bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos,
+                       float threshold, int& maskIndex, int& pathIndex, int& vertexIndex,
+                       MaskHandleType& handleType)
+{
+ if (!layer) {
+  return false;
+ }
+ const QTransform globalTransform = layer->getGlobalTransform();
+ bool invertible = false;
+ const QTransform invTransform = globalTransform.inverted(&invertible);
+ if (!invertible) {
+  return false;
+ }
+ const QPointF localPos = invTransform.map(canvasPos);
+ const float thresholdSq = threshold * threshold;
+ for (int m = 0; m < layer->maskCount(); ++m) {
+  const LayerMask mask = layer->mask(m);
+  if (!mask.isEnabled()) {
+   continue;
+  }
+  for (int p = 0; p < mask.maskPathCount(); ++p) {
+   const MaskPath path = mask.maskPath(p);
+   for (int v = 0; v < path.vertexCount(); ++v) {
+    const MaskVertex vertex = path.vertex(v);
+    for (MaskHandleType candidate : {MaskHandleType::InTangent, MaskHandleType::OutTangent}) {
+     if ((candidate == MaskHandleType::InTangent && vertex.inTangent == QPointF(0, 0)) ||
+         (candidate == MaskHandleType::OutTangent && vertex.outTangent == QPointF(0, 0))) {
+      continue;
+     }
+     const QPointF handlePos = maskHandlePosition(path, v, candidate);
+     const QPointF delta = handlePos - localPos;
+     if (QPointF::dotProduct(delta, delta) <= thresholdSq) {
+      maskIndex = m;
+      pathIndex = p;
+      vertexIndex = v;
+      handleType = candidate;
+      return true;
+     }
+    }
+   }
+  }
+ }
+ return false;
+}
 }
 
  class ArtifactLayerEditorWidgetV2::Impl {
@@ -197,14 +258,17 @@ private:
   int draggingMaskIndex_ = -1;
   int draggingPathIndex_ = -1;
   int draggingVertexIndex_ = -1;
+  int draggingMaskHandleType_ = -1;
   int hoveredMaskIndex_ = -1;
   int hoveredPathIndex_ = -1;
   int hoveredVertexIndex_ = -1;
+  int hoveredMaskHandleType_ = -1;
   bool maskEditPending_ = false;
   bool maskEditDirty_ = false;
   ArtifactAbstractLayerWeak maskEditLayer_;
   std::vector<LayerMask> maskEditBefore_;
 
+  bool isDraggingMaskHandle_ = false;
   bool isDraggingShapeVertex_ = false;
   int draggingShapeVertexIndex_ = -1;
   int hoveredShapeVertexIndex_ = -1;
@@ -749,18 +813,27 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
  void ArtifactLayerEditorWidgetV2::Impl::updateMaskHover(const ArtifactAbstractLayerPtr& layer,
                                                          const QPointF& canvasPos)
  {
-  hoveredMaskIndex_ = -1;
-  hoveredPathIndex_ = -1;
-  hoveredVertexIndex_ = -1;
-  int maskIndex = -1;
-  int pathIndex = -1;
-  int vertexIndex = -1;
-  if (hitTestMaskVertex(layer, canvasPos, maskIndex, pathIndex, vertexIndex)) {
-   hoveredMaskIndex_ = maskIndex;
-   hoveredPathIndex_ = pathIndex;
-   hoveredVertexIndex_ = vertexIndex;
-  }
+ hoveredMaskIndex_ = -1;
+ hoveredPathIndex_ = -1;
+ hoveredVertexIndex_ = -1;
+ hoveredMaskHandleType_ = -1;
+ int maskIndex = -1;
+ int pathIndex = -1;
+ int vertexIndex = -1;
+ MaskHandleType handleType = MaskHandleType::None;
+ const float handleThreshold = 10.0f / std::max(0.1f, renderer_->getZoom());
+ if (hitTestMaskHandle(layer, canvasPos, handleThreshold,
+                       maskIndex, pathIndex, vertexIndex, handleType)) {
+  hoveredMaskIndex_ = maskIndex;
+  hoveredPathIndex_ = pathIndex;
+  hoveredVertexIndex_ = vertexIndex;
+  hoveredMaskHandleType_ = static_cast<int>(handleType);
+ } else if (hitTestMaskVertex(layer, canvasPos, maskIndex, pathIndex, vertexIndex)) {
+  hoveredMaskIndex_ = maskIndex;
+  hoveredPathIndex_ = pathIndex;
+  hoveredVertexIndex_ = vertexIndex;
  }
+}
 
  void ArtifactLayerEditorWidgetV2::Impl::drawMaskOverlay(const ArtifactAbstractLayerPtr& layer)
  {
@@ -775,6 +848,10 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
   const FloatColor maskPointColor = {0.97f, 0.99f, 1.0f, 1.0f};
   const FloatColor hoverColor = {1.0f, 0.76f, 0.28f, 1.0f};
   const FloatColor dragColor = {1.0f, 0.40f, 0.24f, 1.0f};
+  const FloatColor handleLineColor = {0.74f, 0.82f, 0.92f, 0.55f};
+  const FloatColor handlePointColor = {0.70f, 0.90f, 1.0f, 0.95f};
+  const FloatColor handleHoverColor = {1.0f, 0.78f, 0.32f, 1.0f};
+  const FloatColor handleDragColor = {1.0f, 0.44f, 0.24f, 1.0f};
 
   for (int m = 0; m < layer->maskCount(); ++m) {
    LayerMask mask = layer->mask(m);
@@ -793,6 +870,39 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
      MaskVertex vertex = path.vertex(v);
      QPointF canvasPos = globalTransform.map(vertex.position);
      Detail::float2 currentCanvasPos = {(float)canvasPos.x(), (float)canvasPos.y()};
+     const QPointF inHandlePos = globalTransform.map(vertex.position + vertex.inTangent);
+     const QPointF outHandlePos = globalTransform.map(vertex.position + vertex.outTangent);
+     const Detail::float2 inHandleCanvas = {(float)inHandlePos.x(), (float)inHandlePos.y()};
+     const Detail::float2 outHandleCanvas = {(float)outHandlePos.x(), (float)outHandlePos.y()};
+
+     if (vertex.inTangent != QPointF(0, 0)) {
+      renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, 4.0f, maskLineShadowColor);
+      renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, 2.0f, handleLineColor);
+      FloatColor handleColor = handlePointColor;
+      if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
+          draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+       handleColor = handleDragColor;
+      } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
+                 hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+       handleColor = handleHoverColor;
+      }
+      renderer_->drawPoint(inHandleCanvas.x, inHandleCanvas.y, 10.0f, maskPointShadowColor);
+      renderer_->drawPoint(inHandleCanvas.x, inHandleCanvas.y, 6.5f, handleColor);
+     }
+     if (vertex.outTangent != QPointF(0, 0)) {
+      renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, 4.0f, maskLineShadowColor);
+      renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, 2.0f, handleLineColor);
+      FloatColor handleColor = handlePointColor;
+      if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
+          draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
+       handleColor = handleDragColor;
+      } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
+                 hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
+       handleColor = handleHoverColor;
+      }
+      renderer_->drawPoint(outHandleCanvas.x, outHandleCanvas.y, 10.0f, maskPointShadowColor);
+      renderer_->drawPoint(outHandleCanvas.x, outHandleCanvas.y, 6.5f, handleColor);
+     }
      if (v > 0) {
       renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos, 6.0f, maskLineShadowColor);
       renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos, 3.5f, maskLineColor);
@@ -1257,13 +1367,37 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    }
   }
 
-  if (impl_->editMode_ == EditMode::Mask && event->button() == Qt::LeftButton && impl_->renderer_) {
+    if (impl_->editMode_ == EditMode::Mask && event->button() == Qt::LeftButton && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    if (layer) {
      const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
          {(float)event->position().x(), (float)event->position().y()});
      const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
                                static_cast<qreal>(canvasPos.y));
+
+    int handleMaskIndex = -1;
+    int handlePathIndex = -1;
+    int handleVertexIndex = -1;
+    MaskHandleType handleType = MaskHandleType::None;
+    const float handleThreshold = 10.0f / std::max(0.1f, impl_->renderer_->getZoom());
+    if (hitTestMaskHandle(layer, canvasPoint, handleThreshold,
+                          handleMaskIndex, handlePathIndex, handleVertexIndex,
+                          handleType)) {
+      impl_->beginMaskEditTransaction(layer);
+      impl_->isDraggingMaskVertex_ = false;
+      impl_->isDraggingMaskHandle_ = true;
+      impl_->draggingMaskIndex_ = handleMaskIndex;
+      impl_->draggingPathIndex_ = handlePathIndex;
+      impl_->draggingVertexIndex_ = handleVertexIndex;
+      impl_->draggingMaskHandleType_ = static_cast<int>(handleType);
+      impl_->hoveredMaskIndex_ = handleMaskIndex;
+      impl_->hoveredPathIndex_ = handlePathIndex;
+      impl_->hoveredVertexIndex_ = handleVertexIndex;
+      impl_->hoveredMaskHandleType_ = static_cast<int>(handleType);
+      setCursor(Qt::ClosedHandCursor);
+      event->accept();
+      return;
+    }
 
     int maskIndex = -1;
     int pathIndex = -1;
@@ -1343,6 +1477,17 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   }
 
   if (impl_->editMode_ == EditMode::Mask && event->button() == Qt::LeftButton) {
+   if (impl_->isDraggingMaskHandle_) {
+    impl_->isDraggingMaskHandle_ = false;
+    impl_->draggingMaskIndex_ = -1;
+    impl_->draggingPathIndex_ = -1;
+    impl_->draggingVertexIndex_ = -1;
+    impl_->draggingMaskHandleType_ = -1;
+    impl_->commitMaskEditTransaction();
+    unsetCursor();
+    event->accept();
+    return;
+   }
    if (impl_->isDraggingMaskVertex_) {
     impl_->isDraggingMaskVertex_ = false;
     impl_->draggingMaskIndex_ = -1;
@@ -1421,6 +1566,30 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
          {(float)event->position().x(), (float)event->position().y()});
      const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
                                static_cast<qreal>(canvasPos.y));
+    if (impl_->isDraggingMaskHandle_) {
+     const QTransform globalTransform = layer->getGlobalTransform();
+     bool invertible = false;
+     const QTransform invTransform = globalTransform.inverted(&invertible);
+     if (invertible) {
+      LayerMask mask = layer->mask(impl_->draggingMaskIndex_);
+      MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
+      MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
+      const QPointF localPos = invTransform.map(canvasPoint);
+      const QPointF delta = localPos - vertex.position;
+      if (impl_->draggingMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+       vertex.inTangent = delta;
+      } else if (impl_->draggingMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
+       vertex.outTangent = delta;
+      }
+      path.setVertex(impl_->draggingVertexIndex_, vertex);
+      mask.setMaskPath(impl_->draggingPathIndex_, path);
+      layer->setMask(impl_->draggingMaskIndex_, mask);
+      impl_->markMaskEditDirty();
+      impl_->renderOneFrame();
+      event->accept();
+      return;
+     }
+    }
     if (impl_->isDraggingMaskVertex_) {
      const QTransform globalTransform = layer->getGlobalTransform();
      bool invertible = false;
@@ -1442,10 +1611,12 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      const int beforeMask = impl_->hoveredMaskIndex_;
      const int beforePath = impl_->hoveredPathIndex_;
      const int beforeVertex = impl_->hoveredVertexIndex_;
+     const int beforeHandleType = impl_->hoveredMaskHandleType_;
       impl_->updateMaskHover(layer, canvasPoint);
-     if (beforeMask != impl_->hoveredMaskIndex_ ||
+      if (beforeMask != impl_->hoveredMaskIndex_ ||
          beforePath != impl_->hoveredPathIndex_ ||
-         beforeVertex != impl_->hoveredVertexIndex_) {
+         beforeVertex != impl_->hoveredVertexIndex_ ||
+         beforeHandleType != impl_->hoveredMaskHandleType_) {
       impl_->renderOneFrame();
      }
      if (impl_->hoveredVertexIndex_ >= 0) {
@@ -1744,9 +1915,12 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
    impl_->draggingMaskIndex_ = -1;
    impl_->draggingPathIndex_ = -1;
    impl_->draggingVertexIndex_ = -1;
+   impl_->isDraggingMaskHandle_ = false;
+   impl_->draggingMaskHandleType_ = -1;
    impl_->isDraggingShapeVertex_ = false;
    impl_->draggingShapeVertexIndex_ = -1;
    impl_->hoveredShapeVertexIndex_ = -1;
+   impl_->hoveredMaskHandleType_ = -1;
    if (impl_->shapeEditPending_) {
     impl_->commitShapeEditTransaction();
    }

@@ -122,9 +122,9 @@ void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
   switch (mode) {
   case WorkspaceMode::Default:
     visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "AI Cloud"};
+                     "Inspector", "Properties", "AI Cloud"};
     hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
+                    "Composition Note", "Layer Note",
                     "Composition View (Software)", "Layer View (Diligent)",
                     "Layer View (Software)"};
     break;

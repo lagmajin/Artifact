@@ -157,11 +157,7 @@ public:
   TextOverlayFilter(QPlainTextEdit *editor,
                     std::shared_ptr<ArtifactTextLayer> layer,
                     CompositionRenderController *ctrl)
-      : QObject(editor), editor_(editor), layer_(layer), ctrl_(ctrl) {
-    // Connect to layer changed signal to sync properties
-    connect(layer.get(), &ArtifactAbstractLayer::changed, this,
-            &TextOverlayFilter::onLayerChanged);
-  }
+      : QObject(editor), editor_(editor), layer_(layer), ctrl_(ctrl) {}
 
   bool eventFilter(QObject *obj, QEvent *event) override {
     if (event->type() == QEvent::KeyPress) {
@@ -179,34 +175,6 @@ public:
       return false;
     }
     return QObject::eventFilter(obj, event);
-  }
-
-private slots:
-  void onLayerChanged() {
-    if (!editor_ || !layer_)
-      return;
-    // Update editor text if layer text changed externally (e.g., from property
-    // panel)
-    QString currentText = editor_->toPlainText();
-    QString layerText = layer_->text().toQString();
-    if (currentText != layerText) {
-      editor_->setPlainText(layerText);
-    }
-    // Update font properties
-    const float size = std::max(10.0f, layer_->fontSize());
-    const int pointSize = static_cast<int>(size * 0.75f);
-    const auto theme = ArtifactCore::currentDCCTheme();
-    QFont editorFont = editor_->font();
-    editorFont.setFamily(layer_->fontFamily().toQString());
-    editorFont.setPointSize(pointSize);
-    editor_->setFont(editorFont);
-    QPalette editorPalette = editor_->palette();
-    editorPalette.setColor(QPalette::Base,
-                           QColor(theme.secondaryBackgroundColor));
-    editorPalette.setColor(QPalette::Text, QColor(theme.textColor));
-    editorPalette.setColor(QPalette::Window,
-                           QColor(theme.secondaryBackgroundColor));
-    editor_->setPalette(editorPalette);
   }
 
 private:
@@ -2248,18 +2216,6 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    &CompositionRenderController::videoDebugMessage, this,
                    &ArtifactCompositionEditor::videoDebugMessage);
 
-  // Keep clear color in sync with the active theme.
-  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    QObject::connect(settings,
-                     &ArtifactCore::ArtifactAppSettings::settingsChanged, this,
-                     [this]() {
-                       const QColor clear(28, 40, 56);
-                       impl_->renderController_->setClearColor(
-                           {static_cast<float>(clear.redF()),
-                            static_cast<float>(clear.greenF()),
-                            static_cast<float>(clear.blueF()), 1.0f});
-                     });
-  }
   impl_->compositionView_ =
       new CompositionViewport(impl_->renderController_, this);
   impl_->overlayView_ =
