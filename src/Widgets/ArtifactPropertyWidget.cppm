@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QColor>
 #include <QCursor>
@@ -387,6 +387,8 @@ bool propertyMatchesFilter(const ArtifactCore::AbstractProperty &property,
          friendly.contains(query, Qt::CaseInsensitive);
 }
 
+void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer);
+
 void notifyProjectIfLayerNameChanged(const ArtifactAbstractLayerPtr &layer,
                                      const QString &propertyName) {
   if (propertyName.compare(QStringLiteral("layer.name"), Qt::CaseInsensitive) !=
@@ -561,6 +563,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           const auto nowTime = RationalTime(nowPos.framePosition(), fps_val);
 
           if (checked) {
+            propertyPtr->setAnimatable(true);
             propertyPtr->addKeyFrame(nowTime, editor->value());
           } else {
             propertyPtr->removeKeyFrame(nowTime);
@@ -1152,16 +1155,6 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   const auto notifyLayerKeyframeChanged = [this, layer](const QString &) {
     if (layer) {
       notifyLayerPropertyAnimationChanged(layer);
-      if (auto *projectService = ArtifactProjectService::instance()) {
-        QMetaObject::invokeMethod(
-            projectService,
-            [projectService, layer]() {
-              if (projectService && layer) {
-                projectService->selectLayer(layer->id());
-              }
-            },
-            Qt::QueuedConnection);
-      }
     }
   };
 

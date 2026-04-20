@@ -63,12 +63,14 @@ public:
     void setEnabled(bool enabled);
 
     /// 全マスクパスを合成して単一アルファマスク (CV_32FC1) を生成
-    /// outMat は cv::Mat* を void* として渡す
-    void compositeAlphaMask(int width, int height, void* outMat) const;
+    /// offsetX/offsetY: レイヤーローカル空間→ピクセル空間変換オフセット
+    void compositeAlphaMask(int width, int height, void* outMat,
+                            float offsetX = 0.0f, float offsetY = 0.0f) const;
 
     /// RGBA画像のアルファチャンネルにマスクを乗算適用
-    /// imageMat は CV_32FC4 の cv::Mat* を void* として渡す
-    void applyToImage(int width, int height, void* imageMat) const;
+    /// offsetX/offsetY: レイヤーローカル空間→ピクセル空間変換オフセット
+    void applyToImage(int width, int height, void* imageMat,
+                      float offsetX = 0.0f, float offsetY = 0.0f) const;
 };
 
 }

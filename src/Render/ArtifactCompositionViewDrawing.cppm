@@ -37,6 +37,7 @@ import Artifact.Layer.AdjustableLayer;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Matte;
 import Image.ImageF32x4_RGBA;
 import CvUtils;
 import Color.Float;
@@ -260,6 +261,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
   }
 
   const bool hasMasks = targetLayer->hasMasks();
+  const bool hasMattes = !targetLayer->matteReferences().empty();
   const auto effects = targetLayer->getEffects();
   bool hasRasterizerEffect = false;
   for (const auto& effect : effects) {
@@ -270,7 +272,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
     }
   }
 
-  if (!hasRasterizerEffect && !hasMasks) {
+  if (!hasRasterizerEffect && !hasMasks && !hasMattes) {
     return false;
   }
 
@@ -290,6 +292,14 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
         continue;
       }
 
+      const EffectROIHint hint = effect->roiHint();
+      if (!hint.isEmpty()) {
+        qDebug() << "[Rasterizer] effect" << effect->displayName().toQString()
+                 << "roiHint: kind=" << static_cast<int>(hint.kind)
+                 << "expansionPx=" << hint.expansionPixels
+                 << "fullFrame=" << hint.requiresFullFrame;
+      }
+
       ArtifactCore::ImageF32x4RGBAWithCache next;
       effect->applyCPUOnly(current, next);
       current = next;
@@ -298,9 +308,14 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
   }
 
   if (hasMasks) {
+    // Mask vertices are stored in layer-local space (centered at 0,0).
+    // Translate to pixel space: pixel = localPos - localBounds.topLeft()
+    const QRectF lb = targetLayer->localBounds();
+    const float maskOffsetX = static_cast<float>(-lb.x());
+    const float maskOffsetY = static_cast<float>(-lb.y());
     for (int m = 0; m < targetLayer->maskCount(); ++m) {
       LayerMask mask = targetLayer->mask(m);
-      mask.applyToImage(mat.cols, mat.rows, &mat);
+      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY);
     }
   }
 
@@ -338,6 +353,99 @@ bool hasRasterizerEffectsOrMasks(ArtifactAbstractLayer* targetLayer)
     }
   }
   return false;
+}
+
+QImage applyMatteStackToSurface(const QImage& surface,
+                                const ArtifactCore::MatteStack& matteStack,
+                                const std::vector<QImage>& sourceImages)
+{
+  if (matteStack.isEmpty() || surface.isNull()) {
+    return surface;
+  }
+
+  const int w = surface.width();
+  const int h = surface.height();
+  if (w <= 0 || h <= 0) {
+    return surface;
+  }
+
+  const size_t pixelCount = static_cast<size_t>(w) * h;
+  std::vector<float> combinedMask(pixelCount, 0.0f);
+
+  const auto& nodes = matteStack.nodes();
+  int sourceIndex = 0;
+
+  for (const auto& node : nodes) {
+    if (!node.isEnabled()) {
+      continue;
+    }
+    if (sourceIndex >= static_cast<int>(sourceImages.size())) {
+      break;
+    }
+
+    const QImage& srcImg = sourceImages[sourceIndex];
+    ++sourceIndex;
+
+    if (srcImg.isNull()) {
+      continue;
+    }
+
+    const int srcW = srcImg.width();
+    const int srcH = srcImg.height();
+    if (srcW <= 0 || srcH <= 0) {
+      continue;
+    }
+
+    std::vector<float> matteMask(pixelCount, 0.0f);
+    for (int y = 0; y < h; ++y) {
+      for (int x = 0; x < w; ++x) {
+        const int sx = std::min(x * srcW / w, srcW - 1);
+        const int sy = std::min(y * srcH / h, srcH - 1);
+        const QRgb pixel = srcImg.pixel(sx, sy);
+
+        float v = 0.0f;
+        if (ArtifactCore::MatteModeUtils::isLuminance(node.mode())) {
+          v = (qRed(pixel) * 0.299f + qGreen(pixel) * 0.587f + qBlue(pixel) * 0.114f) / 255.0f;
+        } else {
+          v = qAlpha(pixel) / 255.0f;
+        }
+
+        if (ArtifactCore::MatteModeUtils::isInverted(node.mode())) {
+          v = 1.0f - v;
+        }
+        matteMask[static_cast<size_t>(y) * w + x] = std::clamp(v, 0.0f, 1.0f);
+      }
+    }
+
+    switch (matteStack.stackMode()) {
+    case ArtifactCore::MatteStackMode::Add:
+      for (size_t i = 0; i < pixelCount; ++i) {
+        combinedMask[i] = std::min(1.0f, combinedMask[i] + matteMask[i]);
+      }
+      break;
+    case ArtifactCore::MatteStackMode::Common:
+      for (size_t i = 0; i < pixelCount; ++i) {
+        combinedMask[i] = std::min(combinedMask[i], matteMask[i]);
+      }
+      break;
+    case ArtifactCore::MatteStackMode::Subtract:
+      for (size_t i = 0; i < pixelCount; ++i) {
+        combinedMask[i] = std::max(0.0f, combinedMask[i] - matteMask[i]);
+      }
+      break;
+    }
+  }
+
+  QImage result = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) {
+      const size_t idx = static_cast<size_t>(y) * w + x;
+      QRgb pixel = result.pixel(x, y);
+      int a = static_cast<int>(qAlpha(pixel) * combinedMask[idx]);
+      result.setPixel(x, y, qRgba(qRed(pixel), qGreen(pixel), qBlue(pixel), a));
+    }
+  }
+  return result;
 }
 
 } // namespace
@@ -501,7 +609,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       surface.fill(toQColor(color));
-      applySurfaceAndDraw(surface, localRect, false);
+      applySurfaceAndDraw(surface, localRect, true);
     } else {
       renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
                               static_cast<float>(localRect.y()),
@@ -521,7 +629,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       surface.fill(toQColor(color));
-      applySurfaceAndDraw(surface, localRect, false);
+      applySurfaceAndDraw(surface, localRect, true);
     } else {
       renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
                               static_cast<float>(localRect.y()),
