@@ -956,9 +956,6 @@ int main(int argc, char *argv[]) {
   applyThemeFromSettings();
   QApplication::setStyle(
       new ArtifactCommonStyle(QStyleFactory::create(QStringLiteral("Fusion"))));
-  QObject::connect(settings,
-                   &ArtifactCore::ArtifactAppSettings::settingsChanged, &a,
-                   applyThemeFromSettings);
 
   {
     QSettings aiSettings;
@@ -1043,8 +1040,6 @@ int main(int argc, char *argv[]) {
   mw->setObjectName("ArtifactMainWindow");
   mw->setWindowTitle(buildWindowTitle());
   mw->setWindowIcon(appIcon);
-  QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
-                   mw, [mw]() { mw->applyUiFontSettings(); });
   auto *status = new ArtifactStatusBar(mw);
   mw->setStatusBar(status);
   status->showReadyMessage();
@@ -1054,20 +1049,22 @@ int main(int argc, char *argv[]) {
     projectService->setPreviewQualityPreset(applyPreviewPresetFromSettings());
   }
   QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
-                   mw, [projectService, applyPreviewPresetFromSettings]() {
+                   mw,
+                   [mw, projectService, pool, settings,
+                    applyThemeFromSettings, applyPreviewPresetFromSettings]() {
+                     applyThemeFromSettings();
+                     if (mw) {
+                       mw->applyUiFontSettings();
+                     }
                      if (projectService) {
                        projectService->setPreviewQualityPreset(
                            applyPreviewPresetFromSettings());
                      }
-                   });
-  QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
-                   mw, [pool, settings]() {
-                     if (!pool || !settings) {
-                       return;
+                     if (pool && settings) {
+                       const int configuredRenderThreads =
+                           std::max(1, settings->renderThreadCount());
+                       pool->setMaxThreadCount(configuredRenderThreads);
                      }
-                     const int configuredRenderThreads =
-                         std::max(1, settings->renderThreadCount());
-                     pool->setMaxThreadCount(configuredRenderThreads);
                    });
   auto *playbackService = ArtifactPlaybackService::instance();
   // Enable output monitoring for debugging

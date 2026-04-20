@@ -207,6 +207,12 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
     return key;
   }
 
+  if (dynamic_cast<ArtifactParticleLayer*>(layer)) {
+    // Particle layers are time-dependent and can change every frame even when
+    // their size stays the same, so we avoid the generic surface cache.
+    return QString();
+  }
+
   return QString();
 }
 
@@ -319,8 +325,7 @@ bool layerUsesSurfaceUploadForCompositionView(ArtifactAbstractLayer* layer)
          dynamic_cast<ArtifactVideoLayer*>(layer) != nullptr ||
          dynamic_cast<ArtifactTextLayer*>(layer) != nullptr ||
          dynamic_cast<ArtifactSolid2DLayer*>(layer) != nullptr ||
-         dynamic_cast<ArtifactSolidImageLayer*>(layer) != nullptr ||
-         dynamic_cast<ArtifactParticleLayer*>(layer) != nullptr;
+         dynamic_cast<ArtifactSolidImageLayer*>(layer) != nullptr;
 }
 
 bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer)
@@ -334,8 +339,7 @@ bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer)
          dynamic_cast<ArtifactVideoLayer*>(layer) != nullptr ||
          dynamic_cast<ArtifactTextLayer*>(layer) != nullptr ||
          dynamic_cast<ArtifactSolid2DLayer*>(layer) != nullptr ||
-         dynamic_cast<ArtifactSolidImageLayer*>(layer) != nullptr ||
-         dynamic_cast<ArtifactParticleLayer*>(layer) != nullptr;
+         dynamic_cast<ArtifactSolidImageLayer*>(layer) != nullptr;
 }
 
 void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
@@ -493,6 +497,22 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
+    if (!hasRasterizerEffectsOrMasks(layer) && imageLayer->hasCurrentFrameBuffer()) {
+      const ArtifactCore::ImageF32x4_RGBA& buffer = imageLayer->currentFrameBuffer();
+      const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(layer, globalTransform4x4,
+        [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+          renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                               static_cast<float>(localRect.y()),
+                               static_cast<float>(localRect.width()),
+                               static_cast<float>(localRect.height()),
+                               instanceTransform,
+                               buffer,
+                               baseOpacity * instanceWeight);
+        });
+      return;
+    }
+
     const QImage img = downsampleForLOD(imageLayer->toQImage(), lod);
     if (!img.isNull()) {
       applySurfaceAndDraw(img, localRect, hasRasterizerEffectsOrMasks(layer));
@@ -513,24 +533,40 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
-    const QImage frame = downsampleForLOD(offlineRender
-        ? videoLayer->decodeFrameToQImage(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
-        : videoLayer->currentFrameToQImage(), lod);
     if (videoDebugOut) {
       const bool loaded = videoLayer->isLoaded();
       const int64_t cf = layer->currentFrame();
       const FramePosition ip = layer->inPoint();
       const FramePosition op = layer->outPoint();
       const bool active = layer->isActiveAt(FramePosition(static_cast<int>(cf)));
-      *videoDebugOut = QString("[Video] loaded=%1 frame.isNull=%2 size=%3x%4 active=%5 range=[%6,%7] curFrame=%8")
-        .arg(loaded).arg(frame.isNull())
-        .arg(frame.isNull() ? 0 : frame.width())
-        .arg(frame.isNull() ? 0 : frame.height())
+      const QSize source = QSize(std::max(0, layer->sourceSize().width), std::max(0, layer->sourceSize().height));
+      *videoDebugOut = QString("[Video] loaded=%1 size=%2x%3 active=%4 range=[%5,%6] curFrame=%7")
+        .arg(loaded)
+        .arg(source.width())
+        .arg(source.height())
         .arg(active)
         .arg(ip.framePosition()).arg(op.framePosition()).arg(cf);
     }
+    if (!offlineRender && !hasRasterizerEffectsOrMasks(layer) && videoLayer->hasCurrentFrameBuffer()) {
+      const ArtifactCore::ImageF32x4_RGBA& frameBuffer = videoLayer->currentFrameBuffer();
+      const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(layer, globalTransform4x4,
+        [&frameBuffer, renderer, localRect, baseOpacity](const QMatrix4x4& instanceTransform, float instanceWeight) {
+          renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                               static_cast<float>(localRect.y()),
+                               static_cast<float>(localRect.width()),
+                               static_cast<float>(localRect.height()),
+                               instanceTransform,
+                               frameBuffer,
+                               baseOpacity * instanceWeight);
+        });
+      return;
+    }
+    const QImage frame = downsampleForLOD(offlineRender
+        ? videoLayer->decodeFrameToQImage(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
+        : videoLayer->currentFrameToQImage(), lod);
     if (!frame.isNull()) {
-      applySurfaceAndDraw(frame, localRect, hasRasterizerEffectsOrMasks(layer));
+      applySurfaceAndDraw(frame, localRect, true);
       return;
     }
   }
@@ -558,18 +594,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* particleLayer = dynamic_cast<ArtifactParticleLayer*>(layer)) {
-    const QSize surfaceSize(
-        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-    QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-    surface.fill(Qt::transparent);
-
-    // Render particles to surface
-    particleLayer->renderToImage(surface, cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame());
-
-    if (!surface.isNull()) {
-      applySurfaceAndDraw(surface, localRect, hasRasterizerEffectsOrMasks(layer));
-    }
+    particleLayer->draw(renderer);
     return;
   }
 

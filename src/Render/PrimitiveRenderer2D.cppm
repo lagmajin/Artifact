@@ -14,6 +14,7 @@ module;
 #include <QTransform>
 #include <QDebug>
 #include <QLoggingCategory>
+#include <opencv2/opencv.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
@@ -31,6 +32,7 @@ import Core.Transform.Viewport;
 import Math.Bezier;
 import Render.Shader.ThickLine;
 import Render.Shader.ViewerHelpers;
+import Image.ImageF32x4_RGBA;
 import Color.Float;
 import Text.Style;
 import Utils.String.UniString;
@@ -62,6 +64,34 @@ qint64 computeImageContentKey(const QImage& image) {
         h *= 16777619u;
     }
     return static_cast<qint64>(h);
+}
+
+qint64 computeImageContentKey(const ArtifactCore::ImageF32x4_RGBA& image)
+{
+    const cv::Mat mat = image.toCVMat();
+    if (mat.empty()) {
+        return 0;
+    }
+
+    const size_t totalBytes = static_cast<size_t>(mat.total()) * static_cast<size_t>(mat.elemSize());
+    const size_t sampleBytes = std::min<size_t>(totalBytes, 4096u);
+    quint32 h = qHashMulti(0, mat.cols, mat.rows, mat.type(), mat.channels(),
+                           static_cast<quint32>(mat.step));
+    const uchar* data = mat.ptr<uchar>(0);
+    for (size_t i = 0; i < sampleBytes; ++i) {
+        h ^= data[i];
+        h *= 16777619u;
+    }
+    if (sampleBytes > 0) {
+        h ^= data[sampleBytes - 1];
+        h *= 16777619u;
+    }
+    return static_cast<qint64>(h);
+}
+
+QImage imageToQImageAdapter(const ArtifactCore::ImageF32x4_RGBA& image)
+{
+    return image.toQImage();
 }
 
 TextStyle textStyleFromQFont(const QFont& font)
@@ -1072,6 +1102,123 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     pkt.mat.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
     pkt.pSRV     = pSRV;
     pkt.opacity  = opacity;
+    impl_->cmdBuf_->append(pkt);
+}
+
+void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, const ArtifactCore::ImageF32x4_RGBA& image, float opacity)
+{
+    if (!impl_->cmdBuf_ || image.isEmpty() || !impl_->pDevice_) {
+        return;
+    }
+
+    impl_->m_frameCount++;
+    if (impl_->m_frameCount % 60 == 0) {
+        impl_->pruneCache();
+    }
+
+    const qint64 cacheKey = computeImageContentKey(image);
+    RefCntAutoPtr<ITexture> pTexture;
+
+    auto it = impl_->m_spriteTexCache.find(cacheKey);
+    if (it != impl_->m_spriteTexCache.end()) {
+        pTexture = it->second.pTexture;
+        it->second.lastUsedFrame = impl_->m_frameCount;
+    } else {
+        cv::Mat rgba = image.toCVMat();
+        if (rgba.empty()) {
+            return;
+        }
+
+        if (rgba.type() != CV_8UC4) {
+            cv::Mat rgba8;
+            if (rgba.type() == CV_32FC4) {
+                rgba.convertTo(rgba8, CV_8UC4, 255.0);
+            } else if (rgba.channels() == 4) {
+                rgba.convertTo(rgba8, CV_8UC4);
+            } else {
+                cv::Mat normalized;
+                rgba.convertTo(normalized, CV_32F, 1.0 / 255.0);
+                if (normalized.channels() == 3) {
+                    cv::cvtColor(normalized, rgba8, cv::COLOR_BGR2RGBA);
+                    rgba8.convertTo(rgba8, CV_8UC4, 255.0);
+                } else if (normalized.channels() == 1) {
+                    cv::cvtColor(normalized, rgba8, cv::COLOR_GRAY2RGBA);
+                    rgba8.convertTo(rgba8, CV_8UC4, 255.0);
+                } else {
+                    return;
+                }
+            }
+            rgba = rgba8;
+        }
+
+        if (rgba.channels() != 4) {
+            return;
+        }
+
+        TextureDesc texDesc;
+        texDesc.Type = RESOURCE_DIM_TEX_2D;
+        texDesc.Width = static_cast<Uint32>(rgba.cols);
+        texDesc.Height = static_cast<Uint32>(rgba.rows);
+        texDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
+        texDesc.MipLevels = 1;
+        texDesc.Usage = USAGE_IMMUTABLE;
+        texDesc.BindFlags = BIND_SHADER_RESOURCE;
+        texDesc.CPUAccessFlags = CPU_ACCESS_NONE;
+
+        TextureSubResData subData;
+        subData.pData = rgba.data;
+        subData.Stride = static_cast<Uint64>(rgba.step);
+        TextureData initData;
+        initData.pSubResources = &subData;
+        initData.NumSubresources = 1;
+
+        RefCntAutoPtr<ITexture> newTex;
+        impl_->pDevice_->CreateTexture(texDesc, &initData, &newTex);
+        if (!newTex) {
+            return;
+        }
+        impl_->m_spriteTexCache[cacheKey] = { newTex, impl_->m_frameCount };
+        pTexture = newTex;
+    }
+
+    auto* pSRV = pTexture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!pSRV) {
+        return;
+    }
+
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float screenW = std::max(viewportCB.screenSize.x, 0.001f);
+    const float screenH = std::max(viewportCB.screenSize.y, 0.001f);
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const float panX = viewportCB.offset.x;
+    const float panY = viewportCB.offset.y;
+
+    QMatrix4x4 finalMat;
+    if (impl_->useExternalMatrices_) {
+        QMatrix4x4 model = transform;
+        model.translate(x, y, 0);
+        model.scale(w, h, 1.0f);
+        finalMat = impl_->externalProjMatrix_ * impl_->externalViewMatrix_ * model;
+    } else {
+        QMatrix4x4 combined = transform;
+        combined.translate(x, y, 0);
+        combined.scale(w, h, 1.0f);
+        QMatrix4x4 canvasToNdc;
+        canvasToNdc.setToIdentity();
+        canvasToNdc.translate(-1.0f, 1.0f, 0.0f);
+        canvasToNdc.scale(2.0f / screenW, -2.0f / screenH, 1.0f);
+        canvasToNdc.scale(zoom, zoom, 1.0f);
+        canvasToNdc.translate(panX / zoom, panY / zoom, 0.0f);
+        finalMat = canvasToNdc * combined;
+    }
+
+    SpriteXformPkt pkt;
+    pkt.mat.row0 = { finalMat.row(0).x(), finalMat.row(0).y(), finalMat.row(0).z(), finalMat.row(0).w() };
+    pkt.mat.row1 = { finalMat.row(1).x(), finalMat.row(1).y(), finalMat.row(1).z(), finalMat.row(1).w() };
+    pkt.mat.row2 = { finalMat.row(2).x(), finalMat.row(2).y(), finalMat.row(2).z(), finalMat.row(2).w() };
+    pkt.mat.row3 = { finalMat.row(3).x(), finalMat.row(3).y(), finalMat.row(3).z(), finalMat.row(3).w() };
+    pkt.pSRV = pSRV;
+    pkt.opacity = opacity;
     impl_->cmdBuf_->append(pkt);
 }
 

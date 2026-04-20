@@ -61,6 +61,7 @@ import Artifact.Layer.Text;
 import Artifact.Layer.Composition;
 import Artifact.Layers.Model3D;
 import Artifact.Render.Offscreen;
+import Image.ImageF32x4_RGBA;
 import Frame.Position;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
@@ -152,6 +153,8 @@ enum class SelectionMode { Replace, Add, Toggle };
 
 enum class LayerDragMode { None, Move, ScaleTL, ScaleTR, ScaleBL, ScaleBR };
 
+enum class MaskHandleType { None, InTangent, OutTangent };
+
 QColor toQColor(const FloatColor &color) {
   return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
 }
@@ -210,6 +213,72 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
 
   outBuffer->setFromCVMat(mat);
   return true;
+}
+
+QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType handleType)
+{
+  const MaskVertex vertex = path.vertex(vertexIndex);
+  switch (handleType) {
+  case MaskHandleType::InTangent:
+    return vertex.position + vertex.inTangent;
+  case MaskHandleType::OutTangent:
+    return vertex.position + vertex.outTangent;
+  case MaskHandleType::None:
+    break;
+  }
+  return vertex.position;
+}
+
+bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer,
+                       const QPointF& canvasPos,
+                       float threshold,
+                       int& outMaskIndex,
+                       int& outPathIndex,
+                       int& outVertexIndex,
+                       MaskHandleType& outHandleType)
+{
+  if (!layer) {
+    return false;
+  }
+
+  const QTransform globalTransform = layer->getGlobalTransform();
+  bool invertible = false;
+  const QTransform invTransform = globalTransform.inverted(&invertible);
+  if (!invertible) {
+    return false;
+  }
+
+  const QPointF localPos = invTransform.map(canvasPos);
+  const float thresholdSq = threshold * threshold;
+  for (int m = 0; m < layer->maskCount(); ++m) {
+    const LayerMask mask = layer->mask(m);
+    if (!mask.isEnabled()) {
+      continue;
+    }
+    for (int p = 0; p < mask.maskPathCount(); ++p) {
+      const MaskPath path = mask.maskPath(p);
+      for (int v = 0; v < path.vertexCount(); ++v) {
+        const MaskVertex vertex = path.vertex(v);
+        for (MaskHandleType handleType : {MaskHandleType::InTangent, MaskHandleType::OutTangent}) {
+          if ((handleType == MaskHandleType::InTangent && vertex.inTangent == QPointF(0, 0)) ||
+              (handleType == MaskHandleType::OutTangent && vertex.outTangent == QPointF(0, 0))) {
+            continue;
+          }
+          const QPointF handlePos = maskHandlePosition(path, v, handleType);
+          const QPointF delta = handlePos - localPos;
+          if (QPointF::dotProduct(delta, delta) <= thresholdSq) {
+            outMaskIndex = m;
+            outPathIndex = p;
+            outVertexIndex = v;
+            outHandleType = handleType;
+            return true;
+          }
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 bool isScaleHandle(TransformGizmo::HandleType handle) {
@@ -902,7 +971,6 @@ void drawLayerForCompositionView(
   }
 
   if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
-    const QImage frame = videoLayer->currentFrameToQImage();
     // デバッグ文字列生成は
     // デバッグカテゴリ有効時のみ実行（毎フレームのコスト削減）
     if (videoDebugOut) {
@@ -912,19 +980,34 @@ void drawLayerForCompositionView(
       const FramePosition op = layer->outPoint();
       const bool active =
           layer->isActiveAt(FramePosition(static_cast<int>(cf)));
-      *videoDebugOut = QString("[Video] loaded=%1 frame.isNull=%2 size=%3x%4 "
-                               "active=%5 range=[%6,%7] curFrame=%8")
+      const QSize source = QSize(std::max(0, layer->sourceSize().width), std::max(0, layer->sourceSize().height));
+      *videoDebugOut = QString("[Video] loaded=%1 size=%2x%3 active=%4 range=[%5,%6] curFrame=%7")
                            .arg(loaded)
-                           .arg(frame.isNull())
-                           .arg(frame.isNull() ? 0 : frame.width())
-                           .arg(frame.isNull() ? 0 : frame.height())
+                           .arg(source.width())
+                           .arg(source.height())
                            .arg(active)
                            .arg(ip.framePosition())
                            .arg(op.framePosition())
                            .arg(cf);
     }
+    if (!hasRasterizerEffectsOrMasks(layer) && videoLayer->hasCurrentFrameBuffer()) {
+      const ArtifactCore::ImageF32x4_RGBA& frameBuffer = videoLayer->currentFrameBuffer();
+      const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(layer, globalTransform4x4,
+        [&frameBuffer, renderer, localRect, baseOpacity](const QMatrix4x4& instanceTransform, float instanceWeight) {
+          renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                               static_cast<float>(localRect.y()),
+                               static_cast<float>(localRect.width()),
+                               static_cast<float>(localRect.height()),
+                               instanceTransform,
+                               frameBuffer,
+                               baseOpacity * instanceWeight);
+        });
+      return;
+    }
+    const QImage frame = videoLayer->currentFrameToQImage();
     if (!frame.isNull()) {
-      applySurfaceAndDraw(frame, localRect, hasRasterizerEffectsOrMasks(layer));
+      applySurfaceAndDraw(frame, localRect, true);
       return;
     }
   }
@@ -1316,10 +1399,13 @@ public:
   int hoveredMaskIndex_ = -1;
   int hoveredPathIndex_ = -1;
   int hoveredVertexIndex_ = -1;
+  int hoveredMaskHandleType_ = -1;
   int draggingMaskIndex_ = -1;
   int draggingPathIndex_ = -1;
   int draggingVertexIndex_ = -1;
+  int draggingMaskHandleType_ = -1;
   bool isDraggingVertex_ = false;
+  bool isDraggingMaskHandle_ = false;
   bool maskEditPending_ = false;
   bool maskEditDirty_ = false;
   ArtifactAbstractLayerWeak maskEditLayer_;
@@ -1515,7 +1601,6 @@ public:
                                 const ArtifactCompositionPtr &comp,
                                 const ArtifactAbstractLayerPtr &selectedLayer,
                                 const FramePosition &currentFrame);
-  void drawGpuTextDebugOverlay();
 
   // 変更検出器へのアクセス (デバッグ用)
   const CompositionChangeDetector &changeDetector() const {
@@ -2457,6 +2542,27 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
           impl_->beginMaskEditTransaction(selectedLayer);
           const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
 
+          const float handleThreshold = 10.0f / impl_->renderer_->getZoom();
+          int handleMaskIndex = -1;
+          int handlePathIndex = -1;
+          int handleVertexIndex = -1;
+          MaskHandleType handleType = MaskHandleType::None;
+          if (hitTestMaskHandle(selectedLayer, QPointF(cPos.x, cPos.y), handleThreshold,
+                                handleMaskIndex, handlePathIndex, handleVertexIndex,
+                                handleType)) {
+            impl_->isDraggingVertex_ = false;
+            impl_->isDraggingMaskHandle_ = true;
+            impl_->draggingMaskIndex_ = handleMaskIndex;
+            impl_->draggingPathIndex_ = handlePathIndex;
+            impl_->draggingVertexIndex_ = handleVertexIndex;
+            impl_->draggingMaskHandleType_ = static_cast<int>(handleType);
+            impl_->hoveredMaskIndex_ = handleMaskIndex;
+            impl_->hoveredPathIndex_ = handlePathIndex;
+            impl_->hoveredVertexIndex_ = handleVertexIndex;
+            impl_->hoveredMaskHandleType_ = static_cast<int>(handleType);
+            return;
+          }
+
           // 1. Hit test existing vertices for dragging or closing path
           const float hitThreshold =
               8.0f / impl_->renderer_->getZoom(); // 8px in viewport space
@@ -2791,9 +2897,11 @@ void CompositionRenderController::handleMouseMove(
     const int prevHoveredMaskIndex = impl_->hoveredMaskIndex_;
     const int prevHoveredPathIndex = impl_->hoveredPathIndex_;
     const int prevHoveredVertexIndex = impl_->hoveredVertexIndex_;
+    const int prevHoveredMaskHandleType = impl_->hoveredMaskHandleType_;
     impl_->hoveredMaskIndex_ = -1;
     impl_->hoveredPathIndex_ = -1;
     impl_->hoveredVertexIndex_ = -1;
+    impl_->hoveredMaskHandleType_ = -1;
 
     auto comp = impl_->previewPipeline_.composition();
     if (comp && impl_->renderer_) {
@@ -2809,32 +2917,46 @@ void CompositionRenderController::handleMouseMove(
           const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
           const float hitThreshold = 8.0f / impl_->renderer_->getZoom();
 
-          for (int m = 0; m < selectedLayer->maskCount(); ++m) {
-            LayerMask mask = selectedLayer->mask(m);
-            for (int p = 0; p < mask.maskPathCount(); ++p) {
-              MaskPath path = mask.maskPath(p);
-              for (int v = 0; v < path.vertexCount(); ++v) {
-                MaskVertex vertex = path.vertex(v);
-                if (QVector2D(vertex.position - localPos).length() <
-                    hitThreshold) {
-                  impl_->hoveredMaskIndex_ = m;
-                  impl_->hoveredPathIndex_ = p;
-                  impl_->hoveredVertexIndex_ = v;
-                  break;
+          int handleMaskIndex = -1;
+          int handlePathIndex = -1;
+          int handleVertexIndex = -1;
+          MaskHandleType handleType = MaskHandleType::None;
+          if (hitTestMaskHandle(selectedLayer, QPointF(cPos.x, cPos.y),
+                                hitThreshold, handleMaskIndex, handlePathIndex,
+                                handleVertexIndex, handleType)) {
+            impl_->hoveredMaskIndex_ = handleMaskIndex;
+            impl_->hoveredPathIndex_ = handlePathIndex;
+            impl_->hoveredVertexIndex_ = handleVertexIndex;
+            impl_->hoveredMaskHandleType_ = static_cast<int>(handleType);
+          } else {
+            for (int m = 0; m < selectedLayer->maskCount(); ++m) {
+              LayerMask mask = selectedLayer->mask(m);
+              for (int p = 0; p < mask.maskPathCount(); ++p) {
+                MaskPath path = mask.maskPath(p);
+                for (int v = 0; v < path.vertexCount(); ++v) {
+                  MaskVertex vertex = path.vertex(v);
+                  if (QVector2D(vertex.position - localPos).length() <
+                      hitThreshold) {
+                    impl_->hoveredMaskIndex_ = m;
+                    impl_->hoveredPathIndex_ = p;
+                    impl_->hoveredVertexIndex_ = v;
+                    break;
+                  }
                 }
+                if (impl_->hoveredVertexIndex_ != -1)
+                  break;
               }
               if (impl_->hoveredVertexIndex_ != -1)
                 break;
             }
-            if (impl_->hoveredVertexIndex_ != -1)
-              break;
           }
         }
       }
     }
     if (prevHoveredMaskIndex != impl_->hoveredMaskIndex_ ||
         prevHoveredPathIndex != impl_->hoveredPathIndex_ ||
-        prevHoveredVertexIndex != impl_->hoveredVertexIndex_) {
+        prevHoveredVertexIndex != impl_->hoveredVertexIndex_ ||
+        prevHoveredMaskHandleType != impl_->hoveredMaskHandleType_) {
       impl_->invalidateOverlayComposite();
       needsRender = true;
     }
@@ -2964,9 +3086,11 @@ void CompositionRenderController::handleMouseRelease() {
   }
 
   impl_->isDraggingVertex_ = false;
+  impl_->isDraggingMaskHandle_ = false;
   impl_->draggingMaskIndex_ = -1;
   impl_->draggingPathIndex_ = -1;
   impl_->draggingVertexIndex_ = -1;
+  impl_->draggingMaskHandleType_ = -1;
   impl_->commitMaskEditTransaction();
 
   if (impl_->gizmo3D_) {
@@ -4055,6 +4179,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const FloatColor maskPointColor = {0.97f, 0.99f, 1.0f, 1.0f};
           const FloatColor hoverColor = {1.0f, 0.76f, 0.28f, 1.0f};
           const FloatColor dragColor = {1.0f, 0.40f, 0.24f, 1.0f};
+          const FloatColor handleLineColor = {0.74f, 0.82f, 0.92f, 0.55f};
+          const FloatColor handlePointColor = {0.70f, 0.90f, 1.0f, 0.95f};
+          const FloatColor handleHoverColor = {1.0f, 0.78f, 0.32f, 1.0f};
+          const FloatColor handleDragColor = {1.0f, 0.44f, 0.24f, 1.0f};
 
           for (int m = 0; m < maskCount; ++m) {
             LayerMask mask = selectedLayer->mask(m);
@@ -4084,6 +4212,40 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   QPointF canvasPos = globalTransform.map(vertex.position);
                   Detail::float2 currentCanvasPos = {(float)canvasPos.x(),
                                                      (float)canvasPos.y()};
+
+                  const QPointF inHandlePos = globalTransform.map(vertex.position + vertex.inTangent);
+                  const QPointF outHandlePos = globalTransform.map(vertex.position + vertex.outTangent);
+                  const Detail::float2 inHandleCanvas = {(float)inHandlePos.x(), (float)inHandlePos.y()};
+                  const Detail::float2 outHandleCanvas = {(float)outHandlePos.x(), (float)outHandlePos.y()};
+
+                  if (vertex.inTangent != QPointF(0, 0)) {
+                    renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, 4.0f, maskLineShadowColor);
+                    renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, 2.0f, handleLineColor);
+                    FloatColor handleColor = handlePointColor;
+                    if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
+                        draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+                      handleColor = handleDragColor;
+                    } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
+                               hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+                      handleColor = handleHoverColor;
+                    }
+                    renderer_->drawPoint(inHandleCanvas.x, inHandleCanvas.y, 10.0f, maskPointShadowColor);
+                    renderer_->drawPoint(inHandleCanvas.x, inHandleCanvas.y, 6.5f, handleColor);
+                  }
+                  if (vertex.outTangent != QPointF(0, 0)) {
+                    renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, 4.0f, maskLineShadowColor);
+                    renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, 2.0f, handleLineColor);
+                    FloatColor handleColor = handlePointColor;
+                    if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
+                        draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
+                      handleColor = handleDragColor;
+                    } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
+                               hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
+                      handleColor = handleHoverColor;
+                    }
+                    renderer_->drawPoint(outHandleCanvas.x, outHandleCanvas.y, 10.0f, maskPointShadowColor);
+                    renderer_->drawPoint(outHandleCanvas.x, outHandleCanvas.y, 6.5f, handleColor);
+                  }
 
                   if (v > 0) {
                     renderer_->drawThickLineLocal(lastCanvasPos,
@@ -4446,7 +4608,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         drawCompositionRegionOverlay(renderer_.get(), comp);
       }
       drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
-      drawGpuTextDebugOverlay();
     }
     overlayMs = markPhaseMs();
 
@@ -4696,49 +4857,6 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
         static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
     renderer_->setCanvasSize(cw, ch);
   }
-}
-
-void CompositionRenderController::Impl::drawGpuTextDebugOverlay() {
-  if (!renderer_) {
-    return;
-  }
-  const float drawW = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
-  const float drawH = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
-  if (drawW <= 0.0f || drawH <= 0.0f) {
-    return;
-  }
-
-  const auto prevZoom = renderer_->getZoom();
-  float prevPanX = 0.0f;
-  float prevPanY = 0.0f;
-  renderer_->getPan(prevPanX, prevPanY);
-  renderer_->setCanvasSize(drawW, drawH);
-  renderer_->setZoom(1.0f);
-  renderer_->setPan(0.0f, 0.0f);
-
-  renderer_->drawSolidRect(drawW * 0.5f - 180.0f, drawH * 0.5f - 36.0f,
-                           360.0f, 72.0f,
-                           FloatColor(0.04f, 0.06f, 0.08f, 0.82f), 1.0f);
-  renderer_->drawRectOutline(drawW * 0.5f - 180.0f, drawH * 0.5f - 36.0f,
-                             360.0f, 72.0f,
-                             FloatColor(0.85f, 0.72f, 0.28f, 1.0f));
-
-  QFont font = QApplication::font();
-  font.setPointSizeF(std::max(14.0, static_cast<double>(font.pointSizeF())));
-
-  QMatrix4x4 textMat;
-  textMat.setToIdentity();
-  textMat.translate(drawW * 0.5f - 220.0f, drawH * 0.5f - 70.0f, 0.0f);
-  textMat.scale(1.0f, 1.0f, 1.0f);
-  renderer_->drawTextTransformed(QRectF(0.0f, 0.0f, 440.0f, 140.0f),
-                                 QStringLiteral("GPU TEXT TEST"), font,
-                                 FloatColor(1.0f, 0.95f, 0.70f, 1.0f),
-                                 textMat, Qt::AlignLeft | Qt::AlignVCenter,
-                                 1.0f);
-
-  renderer_->setZoom(prevZoom);
-  renderer_->setPan(prevPanX, prevPanY);
-  renderer_->setCanvasSize(lastCanvasWidth_, lastCanvasHeight_);
 }
 
 void CompositionRenderController::setRenderQueueActive(bool active) {

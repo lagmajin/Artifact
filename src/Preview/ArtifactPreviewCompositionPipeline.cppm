@@ -35,6 +35,7 @@ module;
 #include <random>
 #include <QImage>
 #include <QColor>
+#include <QPainter>
 #include <QPointF>
 #include <QMatrix4x4>
 #include <QSize>
@@ -56,6 +57,8 @@ import Artifact.Layer.Svg;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
+import Artifact.Layer.Particle;
+import Image.ImageF32x4_RGBA;
 import Artifact.Layers.SolidImage;
 import Artifact.Render.IRenderer;
 import Color.Float;
@@ -192,6 +195,20 @@ namespace Artifact
    }
 
    if (const auto videoLayer = dynamic_cast<ArtifactVideoLayer*>(layerPtr)) {
+    if (!hasRasterizerEffects(layerPtr) && !layerPtr->hasMasks() && videoLayer->hasCurrentFrameBuffer()) {
+     const ArtifactCore::ImageF32x4_RGBA& frameBuffer = videoLayer->currentFrameBuffer();
+     const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
+     drawWithClonerEffect(layerPtr, baseTransform, [&frameBuffer, renderer, worldRect, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
+      const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
+      renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
+                                      static_cast<float>(worldRect.y()),
+                                      static_cast<float>(worldRect.width()),
+                                      static_cast<float>(worldRect.height()),
+                                      transform, frameBuffer,
+                                      opacity * weight);
+     });
+     return;
+    }
     const QImage frame = videoLayer->currentFrameToQImage();
     if (!frame.isNull()) {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
@@ -227,6 +244,11 @@ namespace Artifact
      });
      return;
     }
+   }
+
+   if (const auto particleLayer = dynamic_cast<ArtifactParticleLayer*>(layerPtr)) {
+    particleLayer->draw(renderer);
+    return;
    }
 
    layerPtr->draw(renderer);

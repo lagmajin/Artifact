@@ -99,11 +99,16 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat) const
         return;
     }
 
-    // Start with all zeros (transparent); first Add mask will define visibility
+    // Start with all zeros (transparent); first valid Add mask will define visibility
     dst = cv::Mat::zeros(height, width, CV_32FC1);
     bool firstAdd = true;
+    bool hasEffectivePath = false;
 
     for (const auto& path : impl_->paths) {
+        if (!path.isClosed() || path.vertexCount() < 3) {
+            continue;
+        }
+        hasEffectivePath = true;
         cv::Mat pathMask;
         path.rasterizeToAlpha(width, height, &pathMask);
 
@@ -132,6 +137,11 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat) const
                 cv::absdiff(dst, pathMask, dst);
                 break;
         }
+    }
+
+    if (!hasEffectivePath) {
+        dst = cv::Mat::ones(height, width, CV_32FC1);
+        return;
     }
 
     // Clamp 0~1
