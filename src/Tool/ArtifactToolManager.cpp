@@ -23,12 +23,11 @@ namespace Artifact {
   delete impl_;
  }
 
- void ArtifactToolManager::setActiveTool(ToolType type) {
+void ArtifactToolManager::setActiveTool(ToolType type) {
   if (impl_->activeTool_ == type) return;
   impl_->activeTool_ = type;
-  toolChanged(type);
   ArtifactCore::globalEventBus().publish<ToolChangedEvent>(ToolChangedEvent{type});
- }
+}
 
  ToolType ArtifactToolManager::activeTool() const {
   return impl_->activeTool_;

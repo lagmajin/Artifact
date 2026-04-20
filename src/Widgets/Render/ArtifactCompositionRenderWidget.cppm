@@ -17,6 +17,7 @@
 #include <QTimer>
 #include <QDebug>
 #include <QLoggingCategory>
+#include <vector>
 #include <atomic>
 #include <cmath>
 #include <algorithm>
@@ -128,6 +129,8 @@ namespace Artifact {
   QTimer* resizeDebounceTimer_ = nullptr;
   QTimer* wheelRenderTimer_ = nullptr;
   QSize pendingResizeSize_;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   
   QPointF lastMousePos_;
   ArtifactCore::LayerID selectedLayerId_ = ArtifactCore::LayerID::Nil();
@@ -430,11 +433,16 @@ namespace Artifact {
      impl_->requestRender();
     });
 
-    connect(ArtifactApplicationManager::instance()->toolManager(), &ArtifactToolManager::toolChanged, this, [this](ToolType tool) {
-        if (tool == ToolType::Hand) setCursor(Qt::OpenHandCursor);
-        else setCursor(Qt::ArrowCursor);
-        impl_->requestRender();
-    });
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<ToolChangedEvent>(
+            [this](const ToolChangedEvent &event) {
+              if (event.toolType == ToolType::Hand) {
+                setCursor(Qt::OpenHandCursor);
+              } else {
+                unsetCursor();
+              }
+              impl_->requestRender();
+            }));
 
     impl_->requestRender();
     impl_->startRenderLoop();

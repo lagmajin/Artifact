@@ -9,6 +9,8 @@ module;
 #include <QImage>
 #include <QPainter>
 #include <QFont>
+#include <QSize>
+#include <QSizeF>
 #include <QFile>
 #include <QDataStream>
 #include <QTextOption>
@@ -78,6 +80,7 @@ import Utils.Id;
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Render.IRenderer;
 import Artifact.Render.CompositionViewDrawing;
+import Artifact.Render.Context;
 import Artifact.Render.GPUTextureCacheManager;
 import Encoder.FFmpegEncoder;
 import Media.Encoder.FFmpegAudioEncoder;
@@ -370,6 +373,45 @@ namespace Artifact
     };
 
     namespace {
+    static QString registerRenderQueueContextSnapshot(const ArtifactRenderJob& job,
+                                                      const ArtifactCompositionPtr& composition,
+                                                      int frameNumber)
+    {
+        RenderContext ctx;
+        ctx.setMode(RenderMode::Final);
+        ctx.setCurrentFrame(frameNumber);
+        ctx.frameRate = static_cast<float>(job.frameRate > 0.0 ? job.frameRate : 30.0);
+        ctx.setInteractive(false);
+        ctx.setColorSpace(ArtifactCore::ColorSpace::sRGB);
+
+        const QSize outputSize(std::max(1, job.resolutionWidth), std::max(1, job.resolutionHeight));
+        const QSize compSize = composition
+            ? composition->settings().compositionSize()
+            : outputSize;
+        const int canvasW = std::max(1, compSize.width());
+        const int canvasH = std::max(1, compSize.height());
+        const float resolutionScale = canvasW > 0
+            ? static_cast<float>(outputSize.width()) / static_cast<float>(canvasW)
+            : 1.0f;
+
+        ctx.setViewportSize(outputSize.width(), outputSize.height());
+        ctx.canvasSize = QSizeF(canvasW, canvasH);
+        ctx.setResolutionScale(resolutionScale);
+        ctx.setROI(RenderROI(0.0f,
+                             0.0f,
+                             static_cast<float>(canvasW),
+                             static_cast<float>(canvasH)));
+
+        const QString key = RenderContextRegistry::instance().makeKey(
+            RenderPurpose::FinalExport,
+            job.compositionId.toString(),
+            frameNumber,
+            ctx.resolutionScale);
+        auto snapshot = createRenderContextSnapshot(ctx, RenderPurpose::FinalExport, key);
+        RenderContextRegistry::instance().registerSnapshot(snapshot);
+        return key;
+    }
+
     enum class VideoEncodeBackendKind {
         Auto,
         Pipe,
@@ -2918,6 +2960,10 @@ namespace Artifact
                     if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
                         success.store(false, std::memory_order_relaxed);
                         break;
+                    }
+
+                    if (*compositionForRender) {
+                        registerRenderQueueContextSnapshot(job, *compositionForRender, f);
                     }
 
                     QImage qimg;

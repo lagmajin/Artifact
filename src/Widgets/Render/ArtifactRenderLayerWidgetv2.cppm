@@ -1425,41 +1425,10 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      return;
     }
 
-    impl_->beginMaskEditTransaction(layer);
-    if (layer->maskCount() == 0) {
-     LayerMask newMask;
-     newMask.addMaskPath(MaskPath());
-     layer->addMask(newMask);
-    }
-
-    LayerMask mask = layer->mask(0);
-    if (mask.maskPathCount() == 0) {
-     mask.addMaskPath(MaskPath());
-    }
-
-    MaskPath path = mask.maskPath(0);
-    if (!path.isClosed()) {
-     const QTransform globalTransform = layer->getGlobalTransform();
-     bool invertible = false;
-     const QTransform invTransform = globalTransform.inverted(&invertible);
-     if (invertible) {
-      const QPointF localPos = invTransform.map(canvasPoint);
-      MaskVertex vertex;
-      vertex.position = localPos;
-      vertex.inTangent = QPointF(0, 0);
-      vertex.outTangent = QPointF(0, 0);
-      path.addVertex(vertex);
-      mask.setMaskPath(0, path);
-      layer->setMask(0, mask);
-      impl_->markMaskEditDirty();
-      impl_->hoveredMaskIndex_ = 0;
-      impl_->hoveredPathIndex_ = 0;
-      impl_->hoveredVertexIndex_ = path.vertexCount() - 1;
-      impl_->renderOneFrame();
-      event->accept();
-      return;
-     }
-    }
+    // 空クリックでは新規マスクを自動生成しない。
+    // 既存の頂点・ハンドル編集だけを行い、作成は別の明示操作に寄せる。
+    event->accept();
+    return;
    }
   }
 

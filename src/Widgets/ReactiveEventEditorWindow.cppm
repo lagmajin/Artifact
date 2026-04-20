@@ -834,20 +834,6 @@ connect(impl_->ruleTree, &QTreeWidget::currentItemChanged, this,
     impl_->eventBus_.drain();
    }
   });
-  connect(svc, &ArtifactProjectService::layerSelected, this, [this, svc](const LayerID& layerId) {
-   if (!impl_) {
-    return;
-   }
-   QString compositionId;
-   if (svc) {
-    const auto current = svc->currentComposition();
-    if (!current.expired()) {
-     compositionId = current.lock()->id().toString();
-    }
-   }
-   impl_->eventBus_.post<LayerSelectionChangedEvent>(LayerSelectionChangedEvent{compositionId, layerId.toString()});
-   impl_->eventBus_.drain();
-  });
 
   impl_->eventBusSubscriptions_.push_back(
    impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {

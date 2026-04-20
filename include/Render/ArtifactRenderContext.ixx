@@ -2,15 +2,36 @@
 #include <utility>
 #include <memory>
 #include <vector>
+#include <QHash>
+#include <QPointF>
 #include <QRectF>
 #include <QSize>
+#include <QSizeF>
 #include <QColor>
 export module Artifact.Render.Context;
 
 
 import Artifact.Render.ROI;
+import Color.ColorSpace;
 
 export namespace Artifact {
+
+/**
+ * @brief レンダリング用途
+ */
+enum class RenderPurpose {
+    EditorInteractive,
+    EditorPreview,
+    FinalExport,
+    ProxyBuild,
+    Thumbnail
+};
+
+inline bool isInteractiveRenderPurpose(RenderPurpose purpose)
+{
+    return purpose == RenderPurpose::EditorInteractive ||
+           purpose == RenderPurpose::EditorPreview;
+}
 
 /**
  * @brief レンダリングコンテキスト
@@ -36,6 +57,15 @@ struct RenderContext {
     
     /// ズーム倍率
     float zoom = 1.0f;
+
+    /// 解像度スケール
+    float resolutionScale = 1.0f;
+
+    /// インタラクティブ用途かどうか
+    bool interactive = true;
+
+    /// カラースペース
+    ArtifactCore::ColorSpace colorSpace = ArtifactCore::ColorSpace::sRGB;
     
     /// パンオフセット（ビューポート座標系）
     QPointF pan = QPointF(0, 0);
@@ -121,6 +151,9 @@ struct RenderContext {
         viewportSize = QSize(1920, 1080);
         canvasSize = QSizeF(1920, 1080);
         zoom = 1.0f;
+        resolutionScale = modeSettings.resolutionScale;
+        interactive = true;
+        colorSpace = ArtifactCore::ColorSpace::sRGB;
         pan = QPointF(0, 0);
         currentFrame = 0;
         frameRate = 30.0f;
@@ -152,6 +185,8 @@ struct RenderContext {
         modeSettings = getModeSettings(newMode);
         sampleCount = modeSettings.sampleCount;
         useROICache = modeSettings.useROICache;
+        resolutionScale = modeSettings.resolutionScale;
+        interactive = (newMode != RenderMode::Final);
     }
     
     /**
@@ -169,6 +204,30 @@ struct RenderContext {
     void setZoom(float newZoom)
     {
         zoom = std::max(0.01f, newZoom);
+    }
+
+    /**
+     * @brief 解像度スケールを設定
+     */
+    void setResolutionScale(float newResolutionScale)
+    {
+        resolutionScale = std::max(0.01f, newResolutionScale);
+    }
+
+    /**
+     * @brief インタラクティブ用途かどうかを設定
+     */
+    void setInteractive(bool isInteractive)
+    {
+        interactive = isInteractive;
+    }
+
+    /**
+     * @brief カラースペースを設定
+     */
+    void setColorSpace(ArtifactCore::ColorSpace newColorSpace)
+    {
+        colorSpace = newColorSpace;
     }
     
     /**
@@ -277,9 +336,170 @@ struct RenderContext {
 };
 
 /**
+ * @brief レンダリングコンテキストの snapshot
+ */
+struct RenderContextSnapshot {
+    QString key;
+    RenderPurpose purpose = RenderPurpose::EditorPreview;
+    RenderMode mode = RenderMode::Preview;
+    float time = 0.0f;
+    float resolutionScale = 1.0f;
+    bool interactive = true;
+    ArtifactCore::ColorSpace colorSpace = ArtifactCore::ColorSpace::sRGB;
+    QSize viewportSize = QSize(1920, 1080);
+    QSizeF canvasSize = QSizeF(1920, 1080);
+    float zoom = 1.0f;
+    QPointF pan = QPointF(0, 0);
+    int64_t currentFrame = 0;
+    float frameRate = 30.0f;
+    int64_t startFrame = 0;
+    int64_t endFrame = 299;
+    RenderROI roi;
+    RenderROI viewportROI;
+    RenderROI scissorROI;
+    QColor clearColor = QColor(0, 0, 0, 0);
+    bool drawBackground = true;
+    bool drawCheckerboard = false;
+    bool drawGrid = false;
+    int sampleCount = 1;
+    int textureFilterQuality = 2;
+    int colorDepth = 8;
+    bool useROICache = true;
+    bool useTextureCache = true;
+    bool debugMode = false;
+    bool visualizeROI = false;
+    bool showRenderTime = false;
+};
+
+/**
  * @brief レンダリングコンテキストポインタ
  */
 using RenderContextPtr = std::shared_ptr<RenderContext>;
+
+inline RenderContextSnapshot createRenderContextSnapshot(const RenderContext& ctx,
+                                                         RenderPurpose purpose = RenderPurpose::EditorPreview,
+                                                         const QString& key = QString())
+{
+    RenderContextSnapshot snapshot;
+    snapshot.key = key;
+    snapshot.purpose = purpose;
+    snapshot.mode = ctx.mode;
+    snapshot.time = static_cast<float>(ctx.currentFrame) / std::max(1.0f, ctx.frameRate);
+    snapshot.resolutionScale = ctx.resolutionScale;
+    snapshot.interactive = ctx.interactive;
+    snapshot.colorSpace = ctx.colorSpace;
+    snapshot.viewportSize = ctx.viewportSize;
+    snapshot.canvasSize = ctx.canvasSize;
+    snapshot.zoom = ctx.zoom;
+    snapshot.pan = ctx.pan;
+    snapshot.currentFrame = ctx.currentFrame;
+    snapshot.frameRate = ctx.frameRate;
+    snapshot.startFrame = ctx.startFrame;
+    snapshot.endFrame = ctx.endFrame;
+    snapshot.roi = ctx.roi;
+    snapshot.viewportROI = ctx.viewportROI;
+    snapshot.scissorROI = ctx.scissorROI;
+    snapshot.clearColor = ctx.clearColor;
+    snapshot.drawBackground = ctx.drawBackground;
+    snapshot.drawCheckerboard = ctx.drawCheckerboard;
+    snapshot.drawGrid = ctx.drawGrid;
+    snapshot.sampleCount = ctx.sampleCount;
+    snapshot.textureFilterQuality = ctx.textureFilterQuality;
+    snapshot.colorDepth = ctx.colorDepth;
+    snapshot.useROICache = ctx.useROICache;
+    snapshot.useTextureCache = ctx.useTextureCache;
+    snapshot.debugMode = ctx.debugMode;
+    snapshot.visualizeROI = ctx.visualizeROI;
+    snapshot.showRenderTime = ctx.showRenderTime;
+    return snapshot;
+}
+
+inline RenderContextPtr restoreRenderContext(const RenderContextSnapshot& snapshot)
+{
+    auto ctx = std::make_shared<RenderContext>();
+    ctx->setMode(snapshot.mode);
+    ctx->currentFrame = snapshot.currentFrame;
+    ctx->frameRate = snapshot.frameRate;
+    ctx->setResolutionScale(snapshot.resolutionScale);
+    ctx->setInteractive(snapshot.interactive);
+    ctx->setColorSpace(snapshot.colorSpace);
+    ctx->viewportSize = snapshot.viewportSize;
+    ctx->canvasSize = snapshot.canvasSize;
+    ctx->zoom = snapshot.zoom;
+    ctx->pan = snapshot.pan;
+    ctx->startFrame = snapshot.startFrame;
+    ctx->endFrame = snapshot.endFrame;
+    ctx->roi = snapshot.roi;
+    ctx->viewportROI = snapshot.viewportROI;
+    ctx->scissorROI = snapshot.scissorROI;
+    ctx->clearColor = snapshot.clearColor;
+    ctx->drawBackground = snapshot.drawBackground;
+    ctx->drawCheckerboard = snapshot.drawCheckerboard;
+    ctx->drawGrid = snapshot.drawGrid;
+    ctx->sampleCount = snapshot.sampleCount;
+    ctx->textureFilterQuality = snapshot.textureFilterQuality;
+    ctx->colorDepth = snapshot.colorDepth;
+    ctx->useROICache = snapshot.useROICache;
+    ctx->useTextureCache = snapshot.useTextureCache;
+    ctx->debugMode = snapshot.debugMode;
+    ctx->visualizeROI = snapshot.visualizeROI;
+    ctx->showRenderTime = snapshot.showRenderTime;
+    return ctx;
+}
+
+class RenderContextRegistry {
+public:
+    static RenderContextRegistry& instance()
+    {
+        static RenderContextRegistry registry;
+        return registry;
+    }
+
+    QString makeKey(RenderPurpose purpose,
+                    const QString& ownerId = QString(),
+                    int64_t frameNumber = 0,
+                    float resolutionScale = 1.0f) const
+    {
+        return QStringLiteral("%1|%2|%3|%4")
+            .arg(static_cast<int>(purpose))
+            .arg(ownerId)
+            .arg(frameNumber)
+            .arg(QString::number(resolutionScale, 'f', 3));
+    }
+
+    QString registerSnapshot(const RenderContextSnapshot& snapshot)
+    {
+        const QString key = snapshot.key.isEmpty()
+            ? makeKey(snapshot.purpose, QString(), snapshot.currentFrame, snapshot.resolutionScale)
+            : snapshot.key;
+        snapshots_[key] = snapshot;
+        return key;
+    }
+
+    bool contains(const QString& key) const
+    {
+        return snapshots_.contains(key);
+    }
+
+    RenderContextSnapshot snapshot(const QString& key) const
+    {
+        return snapshots_.value(key);
+    }
+
+    RenderContextSnapshot snapshotOrDefault(const QString& key,
+                                            const RenderContextSnapshot& fallback = RenderContextSnapshot()) const
+    {
+        return snapshots_.contains(key) ? snapshots_.value(key) : fallback;
+    }
+
+    void clear()
+    {
+        snapshots_.clear();
+    }
+
+private:
+    QHash<QString, RenderContextSnapshot> snapshots_;
+};
 
 /**
  * @brief レンダリングコンテキストを作成
@@ -288,6 +508,8 @@ inline RenderContextPtr createRenderContext(RenderMode mode = RenderMode::Previe
 {
     auto ctx = std::make_shared<RenderContext>();
     ctx->setMode(mode);
+    ctx->setInteractive(mode != RenderMode::Final);
+    ctx->setResolutionScale(ctx->modeSettings.resolutionScale);
     return ctx;
 }
 

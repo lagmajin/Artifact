@@ -39,10 +39,12 @@ module;
 #include <QPointF>
 #include <QMatrix4x4>
 #include <QSize>
+#include <QSizeF>
 #include <QRectF>
 #include <QTransform>
 #include <QDebug>
 #include <QLoggingCategory>
+#include <QString>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 module Artifact.Preview.Pipeline;
 
@@ -61,6 +63,7 @@ import Artifact.Layer.Particle;
 import Image.ImageF32x4_RGBA;
 import Artifact.Layers.SolidImage;
 import Artifact.Render.IRenderer;
+import Artifact.Render.Context;
 import Color.Float;
 import Frame.Position;
 
@@ -75,7 +78,7 @@ namespace Artifact
    return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
   }
 
-  void drawLayerForPreviewView(const ArtifactAbstractLayerPtr& layer,
+ void drawLayerForPreviewView(const ArtifactAbstractLayerPtr& layer,
                                ArtifactIRenderer* renderer,
                                const ArtifactCore::LayerID& selectedLayerId)
   {
@@ -251,7 +254,40 @@ namespace Artifact
     return;
    }
 
-   layerPtr->draw(renderer);
+  layerPtr->draw(renderer);
+  }
+
+  void registerPreviewContextSnapshot(const ArtifactCompositionPtr& composition,
+                                      int64_t currentFrame)
+  {
+   if (!composition) {
+    return;
+   }
+
+   RenderContext ctx;
+   ctx.setMode(RenderMode::Preview);
+   ctx.setCurrentFrame(currentFrame);
+   ctx.setInteractive(true);
+   ctx.setResolutionScale(1.0f);
+   ctx.setColorSpace(ArtifactCore::ColorSpace::sRGB);
+
+   const QSize compSize = composition->settings().compositionSize();
+   const int compW = std::max(1, compSize.width());
+   const int compH = std::max(1, compSize.height());
+   ctx.viewportSize = QSize(compW, compH);
+   ctx.canvasSize = QSizeF(compW, compH);
+   ctx.setROI(RenderROI(0.0f,
+                        0.0f,
+                        static_cast<float>(compW),
+                        static_cast<float>(compH)));
+
+   const QString key = RenderContextRegistry::instance().makeKey(
+       RenderPurpose::EditorPreview,
+       composition->id().toString(),
+       currentFrame,
+       ctx.resolutionScale);
+   auto snapshot = createRenderContextSnapshot(ctx, RenderPurpose::EditorPreview, key);
+   RenderContextRegistry::instance().registerSnapshot(snapshot);
   }
  } // namespace
 
@@ -269,6 +305,8 @@ namespace Artifact
   void render(Artifact::ArtifactIRenderer* renderer)
   {
    if (!composition_ || !renderer) return;
+
+   registerPreviewContextSnapshot(composition_, currentFrame_);
 
    auto size = composition_->settings().compositionSize();
    float compW = (float)size.width();

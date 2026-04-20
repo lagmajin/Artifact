@@ -131,15 +131,7 @@ bool ApplicationService::isProjectOpen() const
 
 void ApplicationService::connectServices()
 {
- // Wire tool manager signals through tool service if available
- if (auto* app = ArtifactApplicationManager::instance()) {
-  if (auto* toolMgr = app->toolManager()) {
-   connect(toolMgr, &ArtifactToolManager::toolChanged,
-           impl_->toolService_.get(), [this](ToolType type) {
-            emit impl_->toolService_->toolChanged(type);
-           });
-  }
- }
+ // Tool changes now flow through EventBus directly from ArtifactToolManager.
 }
 
 }

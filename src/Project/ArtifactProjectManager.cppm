@@ -1217,25 +1217,7 @@ ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
   {
    auto result = impl_->addLayerToCurrentComposition(params);
    if (result.success && result.layer) {
-    // Retrieve the first composition ID from project items to include in the signal
-    CompositionID firstCompId;
-    if (impl_->currentProjectPtr_) {
-     auto items = impl_->currentProjectPtr_->projectItems();
-     for (auto item : items) {
-      if (!item) continue;
-      for (auto child : item->children) {
-       if (child && child->type() == eProjectItemType::Composition) {
-        firstCompId = static_cast<CompositionItem*>(child)->compositionId;
-        break;
-       }
-      }
-      if (!firstCompId.isNil()) break;
-     }
-    }
-    if (!firstCompId.isNil()) {
-     layerCreated(firstCompId, result.layer->id());
-    }
-    projectChanged();
+     projectChanged();
    }
    return result;
   }
@@ -1252,8 +1234,7 @@ ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
   {
    auto result = impl_->duplicateLayerInComposition(compositionId, layerId);
    if (result.success && result.layer) {
-    layerCreated(compositionId, result.layer->id());
-    projectChanged();
+     projectChanged();
    }
    return result;
   }
@@ -1271,13 +1252,10 @@ ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
    return result;
   }
 
-   ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
+  ArtifactLayerResult ArtifactProjectManager::addLayerToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
    {
    auto result = impl_->addLayerToComposition(compositionId, params);
-   if (result.success && result.layer) {
-     layerCreated(compositionId, result.layer->id());
-    }
-    return result;
+   return result;
   }
 
 } // namespace Artifact

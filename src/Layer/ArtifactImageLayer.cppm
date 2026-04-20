@@ -365,7 +365,7 @@ const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() co
 
 bool ArtifactImageLayer::hasCurrentFrameBuffer() const
 {
-    return impl_ && ((impl_->cacheBuffer_ && !impl_->cacheBuffer_->isNull()) || impl_->cache_);
+    return impl_ && ((impl_->cacheBuffer_ && !impl_->cacheBuffer_->isEmpty()) || impl_->cache_);
 }
 
 void ArtifactImageLayer::setFromQImage(const QImage& image)
