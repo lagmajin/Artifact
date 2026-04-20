@@ -9,6 +9,7 @@
 #include <QWidget>
 export module Artifact.Widgets.Timeline;
 
+import Event.Bus;
 import std;
 import Utils.Id;
 
@@ -53,14 +54,8 @@ class ArtifactTimelineWidget :public QWidget {
   bool isLayerNameEditable() const;
   void jumpToSearchHit(int step);
   void jumpToKeyframeHit(int step);
-
-  /*signals:*/
- public:
-  void zoomLevelChanged(double zoomPercent) W_SIGNAL(zoomLevelChanged, zoomPercent);
-  void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
-  
- public slots:
   void onSearchTextChanged(const QString& text);
+  ArtifactCore::EventBus* eventBus() const;
  };
 
 };

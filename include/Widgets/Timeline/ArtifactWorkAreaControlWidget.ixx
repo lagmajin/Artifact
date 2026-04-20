@@ -5,6 +5,8 @@ module;
 #include <wobjectdefs.h>
 export module Artifact.Widget.WorkAreaControlWidget;
 
+import Event.Bus;
+
 
 export namespace Artifact
 {
@@ -33,8 +35,7 @@ export namespace Artifact
   void setEnd(float e);
 
  public:
-   void startChanged(float value) W_SIGNAL(startChanged, value)
-   void endChanged(float value) W_SIGNAL(endChanged, value)
+  void setEventBus(ArtifactCore::EventBus* eventBus);
 
  public: 
  

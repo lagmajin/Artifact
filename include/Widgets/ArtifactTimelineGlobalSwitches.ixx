@@ -5,6 +5,8 @@ module;
 #include <QWidget>
 export module Artifact.Widgets.Timeline.GlobalSwitches;
 
+import Event.Bus;
+
 export namespace Artifact {
     class ArtifactTimelineGlobalSwitches final : public QWidget {
         W_OBJECT(ArtifactTimelineGlobalSwitches)
@@ -19,11 +21,6 @@ export namespace Artifact {
         void setMotionBlurActive(bool active);
         void setFrameBlendingActive(bool active);
         void setGraphEditorActive(bool active);
-
-        // Verdigris Signals
-        void shyChanged(bool active) W_SIGNAL(shyChanged, active);
-        void motionBlurChanged(bool active) W_SIGNAL(motionBlurChanged, active);
-        void frameBlendingChanged(bool active) W_SIGNAL(frameBlendingChanged, active);
-        void graphEditorToggled(bool active) W_SIGNAL(graphEditorToggled, active);
+        void setEventBus(ArtifactCore::EventBus* eventBus);
     };
 }

@@ -13,6 +13,8 @@ module;
 
 module Artifact.Timeline.ScrubBar;
 
+import Artifact.Event.Types;
+import Event.Bus;
 import std;
 
 import Frame.Position;
@@ -50,7 +52,7 @@ namespace Artifact
 
  class ArtifactTimelineScrubBar::Impl
  {
- public:
+public:
   Impl();
   ~Impl();
 
@@ -65,6 +67,7 @@ namespace Artifact
   int fps_ = 30;
   double rulerPixelsPerFrame_ = 0.0;  // 0 = ruler無効
   double rulerHorizontalOffset_ = 0.0;
+  ArtifactCore::EventBus* eventBus_ = nullptr;
 
   int trackLeft(int width) const
   {
@@ -168,7 +171,9 @@ namespace Artifact
   if (impl_->currentFrame_.framePosition() != frameValue) {
    impl_->currentFrame_ = FramePosition(frameValue);
    update();
-   Q_EMIT frameChanged(impl_->currentFrame_);
+   const auto event = TimelineScrubFrameChangedEvent{impl_->currentFrame_.framePosition()};
+   if (impl_->eventBus_) impl_->eventBus_->post<TimelineScrubFrameChangedEvent>(event);
+   else ArtifactCore::globalEventBus().post<TimelineScrubFrameChangedEvent>(event);
   }
  }
 
@@ -388,7 +393,9 @@ namespace Artifact
    if (impl_->currentFrame_.framePosition() != newFrame) {
     impl_->currentFrame_ = FramePosition(newFrame);
     update();
-    Q_EMIT frameChanged(impl_->currentFrame_);
+    const auto evt = TimelineScrubFrameChangedEvent{impl_->currentFrame_.framePosition()};
+    if (impl_->eventBus_) impl_->eventBus_->post<TimelineScrubFrameChangedEvent>(evt);
+    else ArtifactCore::globalEventBus().post<TimelineScrubFrameChangedEvent>(evt);
    }
 
    const int currentX = impl_->resolveFrameToX(impl_->currentFrame_.framePosition(), width());
@@ -397,7 +404,8 @@ namespace Artifact
     event->pos().y() >= 0 && event->pos().y() <= impl_->handleHeight_ + 4;
    if (onHandle) {
     impl_->dragging_ = true;
-    Q_EMIT frameDragStarted();
+    if (impl_->eventBus_) impl_->eventBus_->post<TimelineScrubFrameDragStartedEvent>(TimelineScrubFrameDragStartedEvent{});
+    else ArtifactCore::globalEventBus().post<TimelineScrubFrameDragStartedEvent>(TimelineScrubFrameDragStartedEvent{});
    } else {
     impl_->dragging_ = false;
    }
@@ -414,7 +422,9 @@ namespace Artifact
    if (impl_->currentFrame_.framePosition() != newFrame) {
     impl_->currentFrame_ = FramePosition(newFrame);
     update();
-    Q_EMIT frameChanged(impl_->currentFrame_);
+    const auto evt = TimelineScrubFrameChangedEvent{impl_->currentFrame_.framePosition()};
+    if (impl_->eventBus_) impl_->eventBus_->post<TimelineScrubFrameChangedEvent>(evt);
+    else ArtifactCore::globalEventBus().post<TimelineScrubFrameChangedEvent>(evt);
    }
    event->accept();
   } else {
@@ -438,9 +448,17 @@ namespace Artifact
   if (event->button() == Qt::LeftButton && impl_->dragging_) {
    impl_->dragging_ = false;
    impl_->hover_ = false;
-   Q_EMIT frameDragFinished();
+   if (impl_->eventBus_) impl_->eventBus_->post<TimelineScrubFrameDragFinishedEvent>(TimelineScrubFrameDragFinishedEvent{});
+   else ArtifactCore::globalEventBus().post<TimelineScrubFrameDragFinishedEvent>(TimelineScrubFrameDragFinishedEvent{});
    event->accept();
    update();
+  }
+ }
+
+ void ArtifactTimelineScrubBar::setEventBus(ArtifactCore::EventBus* eventBus)
+ {
+  if (impl_) {
+   impl_->eventBus_ = eventBus;
   }
  }
 }

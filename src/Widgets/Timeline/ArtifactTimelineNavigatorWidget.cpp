@@ -7,6 +7,8 @@ module;
 
 module Artifact.Timeline.NavigatorWidget;
 
+import Artifact.Event.Types;
+import Event.Bus;
 import std;
 import Widgets.Utils.CSS;
 
@@ -46,11 +48,12 @@ namespace Artifact
  public:
   Impl();
   ~Impl();
-  int totalFrames_ = 300;
-  bool draggingLeft{ false };
-  bool draggingRight{ false };
-  bool draggingRange{ false };
-  float dragGrabRatio{ 0.0f };
+ int totalFrames_ = 300;
+ bool draggingLeft{ false };
+ bool draggingRight{ false };
+ bool draggingRange{ false };
+ float dragGrabRatio{ 0.0f };
+  ArtifactCore::EventBus* eventBus_ = nullptr;
  };
 
  ArtifactTimelineNavigatorWidget::Impl::Impl()
@@ -82,7 +85,9 @@ namespace Artifact
  {
   if (start != s) {
    start = s;
-   startChanged(s);
+   const auto event = TimelineNavigatorStartChangedEvent{s};
+   if (impl_ && impl_->eventBus_) impl_->eventBus_->post<TimelineNavigatorStartChangedEvent>(event);
+   else ArtifactCore::globalEventBus().post<TimelineNavigatorStartChangedEvent>(event);
    update();
   }
  }
@@ -91,8 +96,17 @@ namespace Artifact
  {
   if (end != e) {
    end = e;
-   endChanged(e);
+   const auto event = TimelineNavigatorEndChangedEvent{e};
+   if (impl_ && impl_->eventBus_) impl_->eventBus_->post<TimelineNavigatorEndChangedEvent>(event);
+   else ArtifactCore::globalEventBus().post<TimelineNavigatorEndChangedEvent>(event);
    update();
+  }
+ }
+
+ void ArtifactTimelineNavigatorWidget::setEventBus(ArtifactCore::EventBus* eventBus)
+ {
+  if (impl_) {
+   impl_->eventBus_ = eventBus;
   }
  }
 

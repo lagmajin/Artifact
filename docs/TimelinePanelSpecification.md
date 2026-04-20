@@ -29,10 +29,12 @@
 - Layer Name
 - Parent
 - Blend
+- Type Badge: `IMG` / `VID` / `AUD` / `TXT` / `SHP` / `SVG` / `SOL` / `ADJ` / `NUL` / `GRP` / `CAM` / `LGT` / `CLN` / `PRT` を補助表示して、レイヤー種別を見分けやすくする
 
 ### Row Types
 - Layer Row: 実レイヤーを表す行
 - Group Row: 展開時の下位カテゴリ行（例: `Transform`）
+- Structural Row: `Null` / `Group` / `Camera` / `Light` / `Adjustment` / `Clone` のような構造・制御寄りの行
 
 ### Interaction Rules
 - 単クリック:
@@ -43,6 +45,7 @@
 - ツリー操作:
   - 展開トグルは `hasChildren=true` の行のみ表示
   - Group Row にはレイヤースイッチ操作を適用しない
+  - Structural Row は背景色と型バッジで控えめに見せ、ソース系レイヤーと視覚的に分離する
 - コンテキストメニュー:
   - 選択レイヤーに対する操作を提供
   - 条件に合わない項目は disabled

@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <wobjectdefs.h>
 #include <QLabel>
+#include <QString>
 export module Artifact.Widgets.Timeline.Label;
 
 
@@ -16,6 +17,7 @@ export namespace Artifact
  public:
   explicit ArtifactTimelineBottomLabel(QWidget* parent = nullptr);
   ~ArtifactTimelineBottomLabel();
+  void setText(const QString& text);
  };
 
 	

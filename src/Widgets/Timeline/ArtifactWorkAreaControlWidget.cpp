@@ -8,6 +8,8 @@ module;
 #include <wobjectimpl.h>
 module Artifact.Widget.WorkAreaControlWidget;
 
+import Artifact.Event.Types;
+import Event.Bus;
 import Widgets.Utils.CSS;
 
 namespace Artifact
@@ -38,14 +40,15 @@ namespace Artifact
 	
  class WorkAreaControl::Impl
  {
- public:
+public:
   bool draggingLeft{ false };
   bool draggingRight{ false };
-  bool draggingRange{ false };
-  float dragGrabRatio{ 0.0f };
+ bool draggingRange{ false };
+ float dragGrabRatio{ 0.0f };
   bool hoveringLeft{ false };
   bool hoveringRight{ false };
   bool hoveringRange{ false };
+  ArtifactCore::EventBus* eventBus_ = nullptr;
  };
 
  
@@ -64,7 +67,9 @@ namespace Artifact
  void WorkAreaControl::setStart(float s) {
   if (start != s) {
     start = s;
-    startChanged(s);
+    const auto event = TimelineWorkAreaStartChangedEvent{s};
+    if (impl_ && impl_->eventBus_) impl_->eventBus_->post<TimelineWorkAreaStartChangedEvent>(event);
+    else ArtifactCore::globalEventBus().post<TimelineWorkAreaStartChangedEvent>(event);
     update();
   }
  }
@@ -72,8 +77,16 @@ namespace Artifact
  void WorkAreaControl::setEnd(float e) {
   if (end != e) {
     end = e;
-    endChanged(e);
+    const auto event = TimelineWorkAreaEndChangedEvent{e};
+    if (impl_ && impl_->eventBus_) impl_->eventBus_->post<TimelineWorkAreaEndChangedEvent>(event);
+    else ArtifactCore::globalEventBus().post<TimelineWorkAreaEndChangedEvent>(event);
     update();
+  }
+ }
+
+ void WorkAreaControl::setEventBus(ArtifactCore::EventBus* eventBus) {
+  if (impl_) {
+    impl_->eventBus_ = eventBus;
   }
  }
 

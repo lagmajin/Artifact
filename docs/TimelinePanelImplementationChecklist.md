@@ -12,6 +12,7 @@
 ## 2. Left Panel (Layer Panel)
 - [ ] 列構成（Switches / Name / Parent / Blend）が表示される。
 - [ ] Layer Row と Group Row が区別される。
+- [ ] Structural Row や Source Row が型バッジで見分けやすい。
 - [ ] NullLayer 展開時に `Transform` グループ行が表示される。
 - [ ] Group Row はレイヤースイッチ対象にならない。
 - [ ] 名前ダブルクリック編集（F2含む）が動作する。

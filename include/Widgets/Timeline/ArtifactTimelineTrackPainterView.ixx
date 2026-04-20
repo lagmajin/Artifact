@@ -15,6 +15,7 @@ module;
 #include <wobjectdefs.h>
 export module Artifact.Timeline.TrackPainterView;
 
+import Event.Bus;
 import Utils.Id;
 import Artifact.Composition.Abstract;
 import Artifact.Layers.Selection.Manager;
@@ -103,15 +104,6 @@ export namespace Artifact
                           ArtifactLayerSelectionManager* selectionManager,
                           const QVector<QString>& trackRowKeys);
   QVector<TrackClipVisual> clips() const;
-
- public /*signals*/:
-  void seekRequested(double frame) W_SIGNAL(seekRequested, frame);
-  void clipSelected(const QString& clipId, const LayerID& layerId) W_SIGNAL(clipSelected, clipId, layerId);
-  void clipDeselected() W_SIGNAL(clipDeselected);
-  void clipMoved(const QString& clipId, double startFrame) W_SIGNAL(clipMoved, clipId, startFrame);
-  void clipResized(const QString& clipId, double startFrame, double durationFrame) W_SIGNAL(clipResized, clipId, startFrame, durationFrame);
-  void keyframeMoveRequested(const LayerID& layerId, const QString& propertyPath, qint64 fromFrame, qint64 toFrame) W_SIGNAL(keyframeMoveRequested, layerId, propertyPath, fromFrame, toFrame);
-  void keyframeSelectionChanged(int selectedCount) W_SIGNAL(keyframeSelectionChanged, selectedCount);
-  void timelineDebugMessage(const QString& message) W_SIGNAL(timelineDebugMessage, message);
+  void setEventBus(ArtifactCore::EventBus* eventBus);
  };
 }

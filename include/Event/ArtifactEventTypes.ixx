@@ -95,6 +95,90 @@ struct TimelineGraphEditorToggledEvent {
     bool enabled = false;
 };
 
+struct TimelineSearchTextChangedEvent {
+    QString text;
+};
+
+struct TimelineSearchNextRequestedEvent {
+};
+
+struct TimelineSearchPrevRequestedEvent {
+};
+
+struct TimelineSearchClearedEvent {
+};
+
+struct TimelineNavigatorStartChangedEvent {
+    float value = 0.0f;
+};
+
+struct TimelineNavigatorEndChangedEvent {
+    float value = 0.0f;
+};
+
+struct TimelineWorkAreaStartChangedEvent {
+    float value = 0.0f;
+};
+
+struct TimelineWorkAreaEndChangedEvent {
+    float value = 0.0f;
+};
+
+struct TimelineScrubFrameChangedEvent {
+    qint64 frame = 0;
+};
+
+struct TimelineScrubFrameDragStartedEvent {
+};
+
+struct TimelineScrubFrameDragFinishedEvent {
+};
+
+struct TimelineSeekRequestedEvent {
+    double frame = 0.0;
+};
+
+struct TimelineClipSelectedEvent {
+    QString clipId;
+    QString layerId;
+};
+
+struct TimelineClipDeselectedEvent {
+};
+
+struct TimelineClipMovedEvent {
+    QString clipId;
+    double startFrame = 0.0;
+};
+
+struct TimelineClipResizedEvent {
+    QString clipId;
+    double startFrame = 0.0;
+    double durationFrame = 1.0;
+};
+
+struct TimelineKeyframeSelectionChangedEvent {
+    int selectedCount = 0;
+};
+
+struct TimelineKeyframeMoveRequestedEvent {
+    QString layerId;
+    QString propertyPath;
+    qint64 fromFrame = 0;
+    qint64 toFrame = 0;
+};
+
+struct TimelineDebugMessageEvent {
+    QString message;
+};
+
+struct TimelineZoomLevelChangedEvent {
+    double zoomPercent = 100.0;
+};
+
+struct TimelineVisibleRowsChangedEvent {
+};
+
 struct FontChangedEvent {
     QString fontName;
 };

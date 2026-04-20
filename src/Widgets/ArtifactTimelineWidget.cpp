@@ -467,12 +467,9 @@ class HeaderSeekFilter final : public QObject {
 public:
   HeaderSeekFilter(ArtifactTimelineTrackPainterView *trackView,
                    ArtifactTimelineScrubBar *scrubBar,
+                   ArtifactCore::EventBus *eventBus,
                    QObject *parent = nullptr)
-      : QObject(parent), trackView_(trackView), scrubBar_(scrubBar) {}
-
-  void setDebugCallback(std::function<void(const QString&)> callback) {
-    debugCallback_ = std::move(callback);
-  }
+      : QObject(parent), trackView_(trackView), scrubBar_(scrubBar), eventBus_(eventBus) {}
 
 protected:
   bool eventFilter(QObject *watched, QEvent *event) override {
@@ -552,10 +549,10 @@ protected:
         const int frame = static_cast<int>(std::round(clamped));
         trackView_->setCurrentFrame(clamped);
         scrubBar_->setCurrentFrame(FramePosition(frame));
-        
-        if (debugCallback_) {
-          debugCallback_(QStringLiteral("Playhead: %1 (Seek)").arg(frame));
-        }
+        const auto debugEvent = TimelineDebugMessageEvent{
+            QStringLiteral("Playhead: %1 (Seek)").arg(frame)};
+        if (eventBus_) eventBus_->post<TimelineDebugMessageEvent>(debugEvent);
+        else ArtifactCore::globalEventBus().post<TimelineDebugMessageEvent>(debugEvent);
 
         event->accept();
         return true;
@@ -602,9 +599,10 @@ protected:
     trackView_->setCurrentFrame(clamped);
     scrubBar_->setCurrentFrame(FramePosition(frame));
 
-    if (debugCallback_) {
-      debugCallback_(QStringLiteral("Playhead: %1 (Scrubbing)").arg(frame));
-    }
+    const auto debugEvent = TimelineDebugMessageEvent{
+        QStringLiteral("Playhead: %1 (Scrubbing)").arg(frame)};
+    if (eventBus_) eventBus_->post<TimelineDebugMessageEvent>(debugEvent);
+    else ArtifactCore::globalEventBus().post<TimelineDebugMessageEvent>(debugEvent);
 
     event->accept();
     return true;
@@ -659,7 +657,7 @@ private:
   bool reservedClickCandidate_ = false;
   QWidget *reservedClickSource_ = nullptr;
   QPoint reservedPressGlobalPos_;
-  std::function<void(const QString&)> debugCallback_;
+  ArtifactCore::EventBus *eventBus_ = nullptr;
   static constexpr int kReservedClickDragThresholdPx = 4;
 };
 
@@ -1123,7 +1121,7 @@ public:
   bool syncingLayerSelection_ = false;
   double currentFrame_ = 0.0;
   QMetaObject::Connection compositionChangedConnection_;
-  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  ArtifactCore::EventBus eventBus_;
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   // refreshTracks() の重複キューイング防止フラグ。
   // ProjectChangedEvent と LayerChangedEvent が同一フレームで両方発火した場合に
@@ -1183,14 +1181,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->frameSummaryLabel_ = frameSummaryLabel;
   impl_->selectionSummaryLabel_ = selectionSummaryLabel;
 
-  QObject::connect(searchBar, &ArtifactTimelineSearchBarWidget::searchTextChanged,
-                   this, &ArtifactTimelineWidget::onSearchTextChanged);
-  QObject::connect(searchBar, &ArtifactTimelineSearchBarWidget::searchNextRequested,
-                   this, [this]() { jumpToSearchHit(+1); });
-  QObject::connect(searchBar, &ArtifactTimelineSearchBarWidget::searchPrevRequested,
-                   this, [this]() { jumpToSearchHit(-1); });
-  QObject::connect(searchBar, &ArtifactTimelineSearchBarWidget::searchCleared,
-                   this, [this]() { onSearchTextChanged(QString()); });
+  searchBar->setEventBus(&impl_->eventBus_);
   auto *focusSearchShortcut = new QShortcut(QKeySequence::Find, this);
   QObject::connect(focusSearchShortcut, &QShortcut::activated, this, [searchBar]() {
     if (searchBar) {
@@ -1347,23 +1338,44 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setStretch(9, 0);
   searchBarLayout->setStretch(10, 0);
   searchBarLayout->setStretch(11, 1);
+  globalSwitches->setEventBus(&impl_->eventBus_);
+  layerTreeView->setEventBus(&impl_->eventBus_);
+  timeNavigatorWidget->setEventBus(&impl_->eventBus_);
+  workAreaWidget->setEventBus(&impl_->eventBus_);
+  scrubBar->setEventBus(&impl_->eventBus_);
+  painterTrackView->setEventBus(&impl_->eventBus_);
 
-  // legacy direct signal connection disabled — prefer EventBus
-  if (false) QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
-                   this, &ArtifactTimelineWidget::onShyChanged);
-
-  // Subscribe to global timeline switches via EventBus
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineSearchTextChangedEvent>(
+          [this](const TimelineSearchTextChangedEvent& event) {
+            onSearchTextChanged(event.text);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineSearchNextRequestedEvent>(
+          [this](const TimelineSearchNextRequestedEvent&) {
+            jumpToSearchHit(+1);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineSearchPrevRequestedEvent>(
+          [this](const TimelineSearchPrevRequestedEvent&) {
+            jumpToSearchHit(-1);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineSearchClearedEvent>(
+          [this](const TimelineSearchClearedEvent&) {
+            onSearchTextChanged(QString());
+          }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<TimelineShyChangedEvent>([this](const TimelineShyChangedEvent& e) {
         QMetaObject::invokeMethod(this, [this, e]() { onShyChanged(e.shy); }, Qt::QueuedConnection);
       }));
-    QObject::connect(layerTreeView,
-                   &ArtifactLayerTimelinePanelWrapper::visibleRowsChanged, this,
-                   [this]() {
-                    refreshTracks();
-                    updateSelectionState();
-                    updateSearchState();
-                   });
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineVisibleRowsChangedEvent>(
+          [this](const TimelineVisibleRowsChangedEvent&) {
+            refreshTracks();
+            updateSelectionState();
+            updateSearchState();
+          }));
 
   auto headerWidget = new QWidget();
   headerWidget->setLayout(searchBarLayout);
@@ -1504,94 +1516,105 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   syncWorkAreaFromCurrentComposition();
 
-  QObject::connect(timeNavigatorWidget,
-                   &ArtifactTimelineNavigatorWidget::startChanged, this,
-                   updateZoom);
-  QObject::connect(timeNavigatorWidget,
-                   &ArtifactTimelineNavigatorWidget::endChanged, this,
-                   updateZoom);
-  QObject::connect(
-      workAreaWidget, &WorkAreaControl::startChanged, this,
-      [this, workAreaWidget](float) {
-        const auto comp = safeCompositionLookup(impl_->compositionId_);
-        if (!comp) {
-          return;
-        }
-        const int64_t totalFrames =
-            std::max<int64_t>(1, comp->frameRange().duration());
-        const int64_t startFrame = std::clamp<int64_t>(
-            static_cast<int64_t>(
-                std::llround(workAreaWidget->startValue() * totalFrames)),
-            0, totalFrames);
-        const int64_t endFrame =
-            std::clamp<int64_t>(static_cast<int64_t>(std::llround(
-                                    workAreaWidget->endValue() * totalFrames)),
-                                startFrame, totalFrames);
-        comp->setWorkAreaRange(FrameRange(
-            startFrame, std::max<int64_t>(startFrame + 1, endFrame)));
-      });
-  QObject::connect(
-      workAreaWidget, &WorkAreaControl::endChanged, this,
-      [this, workAreaWidget](float) {
-        const auto comp = safeCompositionLookup(impl_->compositionId_);
-        if (!comp) {
-          return;
-        }
-        const int64_t totalFrames =
-            std::max<int64_t>(1, comp->frameRange().duration());
-        const int64_t startFrame = std::clamp<int64_t>(
-            static_cast<int64_t>(
-                std::llround(workAreaWidget->startValue() * totalFrames)),
-            0, totalFrames);
-        const int64_t endFrame =
-            std::clamp<int64_t>(static_cast<int64_t>(std::llround(
-                                    workAreaWidget->endValue() * totalFrames)),
-                                startFrame, totalFrames);
-        comp->setWorkAreaRange(FrameRange(
-            startFrame, std::max<int64_t>(startFrame + 1, endFrame)));
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::seekRequested, this,
-      [this, scrubBar](double frame) {
-        const int clampedFrame =
-            std::clamp(static_cast<int>(std::llround(frame)), 0,
-                       std::max(0, scrubBar->totalFrames() - 1));
-        scrubBar->setCurrentFrame(FramePosition(clampedFrame));
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::clipSelected, this,
-      [this](const QString& clipId, const ArtifactCore::LayerID& layerId) {
-        Q_UNUSED(clipId);
-        if (impl_->syncingLayerSelection_) {
-          return;
-        }
-        if (auto* svc = ArtifactProjectService::instance()) {
-          svc->selectLayer(layerId);
-        }
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::clipDeselected, this,
-      [this]() {
-        if (impl_->syncingLayerSelection_) {
-          return;
-        }
-        if (auto* svc = ArtifactProjectService::instance()) {
-          svc->selectLayer(LayerID());
-        }
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::clipMoved, this,
-      [this](const QString &clipId, const double startFrame) {
-        applyTimelineLayerMove(impl_->compositionId_, clipId, startFrame, 0.0);
-      });
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::clipResized, this,
-      [this](const QString &clipId, const double startFrame,
-             const double durationFrame) {
-        applyTimelineLayerTrim(impl_->compositionId_, clipId, startFrame,
-                               durationFrame);
-      });
-  QObject::connect(painterTrackView, &ArtifactTimelineTrackPainterView::timelineDebugMessage, this, &ArtifactTimelineWidget::timelineDebugMessage);
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineNavigatorStartChangedEvent>(
+          [updateZoom](const TimelineNavigatorStartChangedEvent&) { updateZoom(); }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineNavigatorEndChangedEvent>(
+          [updateZoom](const TimelineNavigatorEndChangedEvent&) { updateZoom(); }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineWorkAreaStartChangedEvent>(
+          [this, workAreaWidget](const TimelineWorkAreaStartChangedEvent&) {
+            const auto comp = safeCompositionLookup(impl_->compositionId_);
+            if (!comp) {
+              return;
+            }
+            const int64_t totalFrames =
+                std::max<int64_t>(1, comp->frameRange().duration());
+            const int64_t startFrame = std::clamp<int64_t>(
+                static_cast<int64_t>(
+                    std::llround(workAreaWidget->startValue() * totalFrames)),
+                0, totalFrames);
+            const int64_t endFrame =
+                std::clamp<int64_t>(static_cast<int64_t>(std::llround(
+                                        workAreaWidget->endValue() * totalFrames)),
+                                    startFrame, totalFrames);
+            comp->setWorkAreaRange(FrameRange(
+                startFrame, std::max<int64_t>(startFrame + 1, endFrame)));
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineWorkAreaEndChangedEvent>(
+          [this, workAreaWidget](const TimelineWorkAreaEndChangedEvent&) {
+            const auto comp = safeCompositionLookup(impl_->compositionId_);
+            if (!comp) {
+              return;
+            }
+            const int64_t totalFrames =
+                std::max<int64_t>(1, comp->frameRange().duration());
+            const int64_t startFrame = std::clamp<int64_t>(
+                static_cast<int64_t>(
+                    std::llround(workAreaWidget->startValue() * totalFrames)),
+                0, totalFrames);
+            const int64_t endFrame =
+                std::clamp<int64_t>(static_cast<int64_t>(std::llround(
+                                        workAreaWidget->endValue() * totalFrames)),
+                                    startFrame, totalFrames);
+            comp->setWorkAreaRange(FrameRange(
+                startFrame, std::max<int64_t>(startFrame + 1, endFrame)));
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineSeekRequestedEvent>(
+          [this, scrubBar](const TimelineSeekRequestedEvent& event) {
+            const int clampedFrame =
+                std::clamp(static_cast<int>(std::llround(event.frame)), 0,
+                           std::max(0, scrubBar->totalFrames() - 1));
+            scrubBar->setCurrentFrame(FramePosition(clampedFrame));
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineClipSelectedEvent>(
+          [this](const TimelineClipSelectedEvent& event) {
+            if (impl_->syncingLayerSelection_) {
+              return;
+            }
+            if (auto* svc = ArtifactProjectService::instance()) {
+              svc->selectLayer(LayerID(event.layerId));
+            }
+            Q_UNUSED(event);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineClipDeselectedEvent>(
+          [this](const TimelineClipDeselectedEvent&) {
+            if (impl_->syncingLayerSelection_) {
+              return;
+            }
+            if (auto* svc = ArtifactProjectService::instance()) {
+              svc->selectLayer(LayerID());
+            }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineClipMovedEvent>(
+          [this](const TimelineClipMovedEvent& event) {
+            applyTimelineLayerMove(impl_->compositionId_, event.clipId, event.startFrame, 0.0);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineClipResizedEvent>(
+          [this](const TimelineClipResizedEvent& event) {
+            applyTimelineLayerTrim(impl_->compositionId_, event.clipId, event.startFrame,
+                                   event.durationFrame);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineDebugMessageEvent>(
+          [this](const TimelineDebugMessageEvent& event) {
+            if (impl_ && impl_->timelineLabel_) {
+              impl_->timelineLabel_->setText(event.message);
+            }
+            ArtifactCore::globalEventBus().post<TimelineDebugMessageEvent>(event);
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineKeyframeSelectionChangedEvent>(
+          [this](const TimelineKeyframeSelectionChangedEvent&) {
+            updateKeyframeState();
+          }));
   // auto layerTimelinePanel = new ArtifactLayerTimelinePanelWrapper();
   // layerTimelinePanel->setMinimumWidth(220);
   // layerTimelinePanel->setMaximumWidth(320);
@@ -1608,10 +1631,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   rightPanel->setPlayheadOverlay(impl_->playheadOverlay_);
 
   auto *headerSeekFilter =
-      new HeaderSeekFilter(painterTrackView, scrubBar, rightPanel);
-  headerSeekFilter->setDebugCallback([this](const QString &msg) {
-    Q_EMIT timelineDebugMessage(msg);
-  });
+      new HeaderSeekFilter(painterTrackView, scrubBar, &impl_->eventBus_, rightPanel);
   timeNavigatorWidget->installEventFilter(headerSeekFilter);
   workAreaWidget->installEventFilter(headerSeekFilter);
   scrubBar->installEventFilter(headerSeekFilter); // Install on scrub bar
@@ -1634,28 +1654,33 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     painterTrackView->installEventFilter(viewResizeFilter);
   }
 
-  QObject::connect(scrubBar, &ArtifactTimelineScrubBar::frameChanged, this,
-                   [this](const auto &frame) {
-                     impl_->currentFrame_ = static_cast<double>(frame.framePosition());
-                     // Emit debug message for any playhead change (playback, scroll, scrub)
-                     Q_EMIT timelineDebugMessage(QStringLiteral("Playhead: %1").arg(frame.framePosition()));
-                     if (impl_->painterTrackView_) {
-                       impl_->painterTrackView_->setCurrentFrame(
-                           static_cast<double>(frame.framePosition()));
-                     }
-                     syncPlayheadOverlay();
-                     updateSelectionState();
-                     updateKeyframeState();
-                     if (auto *app = ArtifactApplicationManager::instance()) {
-                       if (auto *ctx = app->activeContextService()) {
-                         ctx->seekToFrame(frame.framePosition());
-                         return;
-                       }
-                     }
-                     if (auto *playback = ArtifactPlaybackService::instance()) {
-                       playback->goToFrame(frame);
-                     }
-                   });
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineScrubFrameChangedEvent>(
+          [this, scrubBar](const TimelineScrubFrameChangedEvent& event) {
+            const FramePosition frame(event.frame);
+            impl_->currentFrame_ = static_cast<double>(frame.framePosition());
+            if (impl_ && impl_->timelineLabel_) {
+              impl_->timelineLabel_->setText(
+                  QStringLiteral("Playhead: %1").arg(frame.framePosition()));
+            }
+            if (impl_->painterTrackView_) {
+              impl_->painterTrackView_->setCurrentFrame(
+                  static_cast<double>(frame.framePosition()));
+            }
+            syncPlayheadOverlay();
+            updateSelectionState();
+            updateKeyframeState();
+            if (auto *app = ArtifactApplicationManager::instance()) {
+              if (auto *ctx = app->activeContextService()) {
+                ctx->seekToFrame(frame.framePosition());
+                return;
+              }
+            }
+            if (auto *playback = ArtifactPlaybackService::instance()) {
+              playback->goToFrame(frame);
+            }
+            Q_UNUSED(scrubBar);
+          }));
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<FrameChangedEvent>(
           [this, scrubBar](const FrameChangedEvent &event) {
@@ -2115,8 +2140,11 @@ void ArtifactTimelineWidget::wheelEvent(QWheelEvent *event) {
     double newPos = impl_->painterTrackView_->currentFrame() + frameDelta;
     impl_->painterTrackView_->setCurrentFrame(std::max(0.0, newPos));
     syncPlayheadOverlay();
-    impl_->painterTrackView_->seekRequested(
-        std::clamp(newPos, 0.0, impl_->painterTrackView_->durationFrames()));
+    if (impl_->painterTrackView_->durationFrames() > 0.0) {
+      const double targetFrame =
+          std::clamp(newPos, 0.0, impl_->painterTrackView_->durationFrames());
+      impl_->painterTrackView_->setCurrentFrame(targetFrame);
+    }
   }
   event->accept();
 }
@@ -2293,8 +2321,8 @@ void ArtifactTimelineWidget::keyReleaseEvent(QKeyEvent *event) {
 
   QWidget::keyReleaseEvent(event);
 }
- void ArtifactTimelineWidget::onSearchTextChanged(const QString& text)
- {
+void ArtifactTimelineWidget::onSearchTextChanged(const QString& text)
+{
   impl_->filterText_ = text;
   if (impl_->layerTimelinePanel_) {
    impl_->layerTimelinePanel_->setFilterText(text);
@@ -2302,7 +2330,12 @@ void ArtifactTimelineWidget::keyReleaseEvent(QKeyEvent *event) {
    refreshTracks();
   }
   updateSearchState();
- }
+}
+
+ArtifactCore::EventBus* ArtifactTimelineWidget::eventBus() const
+{
+  return impl_ ? &impl_->eventBus_ : nullptr;
+}
 
  void ArtifactTimelineWidget::updateSearchState()
  {
@@ -2465,7 +2498,9 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
     impl_->scrubBar_->setRulerPixelsPerFrame(newZoom);
   }
 
-  Q_EMIT zoomLevelChanged(newZoom * 100.0);
+  const auto zoomEvent = TimelineZoomLevelChangedEvent{newZoom * 100.0};
+  impl_->eventBus_.post<TimelineZoomLevelChangedEvent>(zoomEvent);
+  ArtifactCore::globalEventBus().post<TimelineZoomLevelChangedEvent>(zoomEvent);
 
   const double offset =
       impl_->navigator_->startValue() * duration * newZoom;

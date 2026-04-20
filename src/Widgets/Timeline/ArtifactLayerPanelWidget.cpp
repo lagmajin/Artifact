@@ -44,8 +44,19 @@ import Artifact.Project.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Audio;
+import Artifact.Layer.Text;
+import Artifact.Layer.Shape;
+import Artifact.Layer.Null;
+import Artifact.Layer.AdjustableLayer;
+import Artifact.Layer.Group;
+import Artifact.Layer.Clone;
+import Artifact.Layer.Camera;
+import Artifact.Layer.Light;
+import Artifact.Layer.Particle;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
+import Artifact.Layers.SolidImage;
 import Layer.Blend;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
@@ -375,6 +386,107 @@ namespace {
    return out;
   }
 
+  enum class LayerPanelRole
+  {
+   Source,
+   Structural,
+   Utility
+  };
+
+  LayerPanelRole layerPanelRoleFor(const ArtifactAbstractLayerPtr& layer)
+  {
+   if (!layer) {
+    return LayerPanelRole::Source;
+   }
+
+   const QString className = layer->className().toQString();
+   if (layer->isGroupLayer() || layer->isNullLayer() || layer->isAdjustmentLayer() ||
+       layer->isCloneLayer() || className == QStringLiteral("ArtifactCameraLayer") ||
+       className == QStringLiteral("ArtifactLightLayer")) {
+    return LayerPanelRole::Structural;
+   }
+
+   if (layer->hasAudio()) {
+    return LayerPanelRole::Source;
+   }
+
+   if (layer->hasVideo()) {
+    return LayerPanelRole::Source;
+   }
+
+   return LayerPanelRole::Utility;
+  }
+
+  QString layerPanelTypeLabel(const ArtifactAbstractLayerPtr& layer)
+  {
+   if (!layer) {
+    return QStringLiteral("SRC");
+   }
+
+   if (dynamic_cast<ArtifactGroupLayer*>(layer.get())) {
+    return QStringLiteral("GRP");
+   }
+   if (dynamic_cast<ArtifactNullLayer*>(layer.get())) {
+    return QStringLiteral("NUL");
+   }
+   if (dynamic_cast<ArtifactAdjustableLayer*>(layer.get())) {
+    return QStringLiteral("ADJ");
+   }
+   if (dynamic_cast<ArtifactCloneLayer*>(layer.get())) {
+    return QStringLiteral("CLN");
+   }
+   if (dynamic_cast<ArtifactCameraLayer*>(layer.get())) {
+    return QStringLiteral("CAM");
+   }
+   if (dynamic_cast<ArtifactLightLayer*>(layer.get())) {
+    return QStringLiteral("LGT");
+   }
+   if (dynamic_cast<ArtifactAudioLayer*>(layer.get())) {
+    return QStringLiteral("AUD");
+   }
+   if (dynamic_cast<ArtifactVideoLayer*>(layer.get())) {
+    return QStringLiteral("VID");
+   }
+   if (dynamic_cast<ArtifactImageLayer*>(layer.get())) {
+    return QStringLiteral("IMG");
+   }
+   if (dynamic_cast<ArtifactSolidImageLayer*>(layer.get())) {
+    return QStringLiteral("SOL");
+   }
+   if (dynamic_cast<ArtifactSvgLayer*>(layer.get())) {
+    return QStringLiteral("SVG");
+   }
+   if (dynamic_cast<ArtifactShapeLayer*>(layer.get())) {
+    return QStringLiteral("SHP");
+   }
+   if (dynamic_cast<ArtifactParticleLayer*>(layer.get())) {
+    return QStringLiteral("PRT");
+   }
+
+   switch (layerPanelRoleFor(layer)) {
+   case LayerPanelRole::Structural:
+    return QStringLiteral("CTRL");
+   case LayerPanelRole::Utility:
+    return QStringLiteral("UTIL");
+   case LayerPanelRole::Source:
+   default:
+    return QStringLiteral("SRC");
+   }
+  }
+
+  QColor layerPanelRoleColor(const ArtifactAbstractLayerPtr& layer)
+  {
+   switch (layerPanelRoleFor(layer)) {
+   case LayerPanelRole::Structural:
+    return QColor(118, 170, 255);
+   case LayerPanelRole::Utility:
+    return QColor(192, 160, 255);
+   case LayerPanelRole::Source:
+   default:
+    return QColor(98, 208, 163);
+   }
+  }
+
   QVector<QString> layerPanelGroupLabels(const ArtifactAbstractLayerPtr& layer)
   {
    QVector<QString> labels;
@@ -436,6 +548,7 @@ namespace {
   QPushButton* shyButton = nullptr;
   QPushButton* parentHeaderButton = nullptr;
   QPushButton* blendHeaderButton = nullptr;
+  std::function<void(bool)> shyToggledHandler_;
  };
 
  W_OBJECT_IMPL(ArtifactLayerPanelHeaderWidget)
@@ -514,7 +627,9 @@ namespace {
   layout->addSpacing(10); // Right margin in paintEvent logic
 
   QObject::connect(shyButton, &QPushButton::toggled, this, [this](bool checked) {
-    Q_EMIT shyToggled(checked);
+    if (impl_->shyToggledHandler_) {
+      impl_->shyToggledHandler_(checked);
+    }
   });
 
   setStyleSheet("background-color: #2D2D30; border-bottom: 1px solid #1a1a1a;");
@@ -536,6 +651,11 @@ int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 void ArtifactLayerPanelHeaderWidget::mousePressEvent(QMouseEvent* event)
 {
  QWidget::mousePressEvent(event);
+}
+
+void ArtifactLayerPanelHeaderWidget::setShyToggledHandler(std::function<void(bool)> handler)
+{
+  impl_->shyToggledHandler_ = std::move(handler);
 }
 
 void ArtifactLayerPanelHeaderWidget::mouseMoveEvent(QMouseEvent* event)
@@ -639,7 +759,7 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
   QHash<QString, QMetaObject::Connection> layerChangedConnections;
   int lastContentHeight = -1;
   // EventBus 購読リスト。Qt シグナル接続は廃止し全て EventBus 経由で受け取る。
-  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  ArtifactCore::EventBus* eventBus_ = nullptr;
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   
   void clearInlineEditors()
@@ -915,7 +1035,6 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
             if (impl_->layerNameEditable) {
               editLayerName(layerId);
             }
-            Q_EMIT visibleRowsChanged();
           }, Qt::QueuedConnection);
         }
       } else if (event.changeType == LayerChangedEvent::ChangeType::Removed) {
@@ -1028,6 +1147,16 @@ void ArtifactLayerPanelWidget::setPropertyColumnWidth(int width)
   updateLayout();
 }
 
+void ArtifactLayerPanelWidget::setEventBus(ArtifactCore::EventBus* eventBus)
+{
+  impl_->eventBus_ = eventBus;
+}
+
+void ArtifactLayerPanelWidget::setVisibleRowsChangedHandler(std::function<void()> handler)
+{
+  impl_->visibleRowsChangedHandler_ = std::move(handler);
+}
+
 int ArtifactLayerPanelWidget::propertyColumnWidth() const
 {
   return impl_->propertyColumnWidth;
@@ -1087,7 +1216,15 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
   }
   update();
   if (structureChanged) {
-    Q_EMIT visibleRowsChanged();
+    const auto event = TimelineVisibleRowsChangedEvent{};
+    if (impl_->eventBus_) {
+      impl_->eventBus_->post<TimelineVisibleRowsChangedEvent>(event);
+    } else {
+      ArtifactCore::globalEventBus().post<TimelineVisibleRowsChangedEvent>(event);
+    }
+    if (impl_->visibleRowsChangedHandler_) {
+      impl_->visibleRowsChangedHandler_();
+    }
   }
   
   impl_->updatingLayout = false;
@@ -1989,13 +2126,17 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 {
   QPainter p(this);
   p.setRenderHint(QPainter::SmoothPixmapTransform);
+  const QFont baseFont = p.font();
   const int rowH = kLayerRowHeight;
-  const int colW = kLayerColumnWidth;
-  const int iconSize = 16;
-  const int offset = (colW - iconSize) / 2;
-  const int nameStartX = colW * kLayerPropertyColumnCount;
-  const int indent = 14;
-  const int toggleSize = 10;
+    const int colW = kLayerColumnWidth;
+    const int iconSize = 16;
+    const int offset = (colW - iconSize) / 2;
+    const int nameStartX = colW * kLayerPropertyColumnCount;
+    const int indent = 14;
+    const int toggleSize = 10;
+    const int roleBadgeWidth = 46;
+    const int roleBadgeHeight = 18;
+    const int roleBadgeMargin = 6;
   
   const QRect dirtyRect = event->rect();
   p.fillRect(dirtyRect, QColor(42, 42, 42));
@@ -2023,10 +2164,20 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     if (!l) continue;
     const bool isGroupRow = (row.kind == Impl::RowKind::Group);
     bool sel = (l->id() == impl_->selectedLayerId);
+    const auto role = layerPanelRoleFor(l);
 
-    if (sel && !isGroupRow) p.fillRect(0, y, width(), rowH, QColor(180, 110, 45)); // Modo-like Amber selection
-    else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, QColor(60, 60, 60)); // Subtle grey hover
-    else p.fillRect(0, y, width(), rowH, (i % 2 == 0) ? QColor(42, 42, 42) : QColor(45, 45, 45));
+    QColor rowBase = (i % 2 == 0) ? QColor(42, 42, 42) : QColor(45, 45, 45);
+    if (role == LayerPanelRole::Structural && !isGroupRow) {
+      rowBase = QColor(39, 42, 48);
+    } else if (role == LayerPanelRole::Utility) {
+      rowBase = QColor(43, 40, 49);
+    }
+    if (sel && !isGroupRow) {
+      rowBase = QColor(180, 110, 45);
+    } else if (i == impl_->hoveredLayerIndex) {
+      rowBase = rowBase.lighter(112);
+    }
+    p.fillRect(0, y, width(), rowH, rowBase);
 
     p.setPen(QColor(60, 60, 60));
     p.drawLine(0, y + rowH, width(), y + rowH);
@@ -2105,10 +2256,16 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
     p.setPen(Qt::white);
     const int textX = nameX + (row.hasChildren ? 16 : 4);
+    const bool showRoleBadge = !isGroupRow && (width() - textX) >= (roleBadgeWidth + kLayerNameMinWidth + 16);
     const bool showInlineCombos = (width() - (nameX + 8)) >= (kInlineComboReserve + kLayerNameMinWidth);
     const int parentRectX = width() - kInlineComboReserve;
     const QRect parentRect(parentRectX, y + kInlineComboMarginY, kInlineParentWidth, kInlineComboHeight);
     const QRect blendRect(parentRect.right() + kInlineComboGap, y + kInlineComboMarginY, kInlineBlendWidth, kInlineComboHeight);
+    const int roleBadgeX = showInlineCombos
+      ? parentRect.left() - roleBadgeWidth - 8
+      : width() - roleBadgeWidth - roleBadgeMargin;
+    const QRect roleRect(roleBadgeX, y + (rowH - roleBadgeHeight) / 2, roleBadgeWidth, roleBadgeHeight);
+    const bool canShowRoleBadge = showRoleBadge && roleBadgeX > textX + 40;
 
     auto drawInlineCombo = [&](const QRect& r, const QString& label) {
       p.setPen(QColor(80, 80, 86));
@@ -2125,6 +2282,23 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.drawPolygon(arrow);
     };
 
+    auto drawRoleBadge = [&](const QRect& r, const QString& label, const QColor& accent) {
+      QColor fill = accent;
+      fill.setAlpha(45);
+      QColor border = accent;
+      border.setAlpha(160);
+      p.setPen(border);
+      p.setBrush(fill);
+      p.drawRoundedRect(r, 9, 9);
+      p.setPen(accent.lighter(185));
+      QFont badgeFont = p.font();
+      badgeFont.setPointSizeF(std::max(7.0, badgeFont.pointSizeF() - 1.0));
+      badgeFont.setBold(true);
+      p.setFont(badgeFont);
+      p.drawText(r.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignHCenter, label);
+      p.setFont(baseFont);
+    };
+
     const QString parentId = l->parentLayerId().toString();
     QString parentName = QStringLiteral("<None>");
     if (!parentId.isEmpty()) {
@@ -2138,12 +2312,18 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       }
     }
 
+    if (canShowRoleBadge) {
+      drawRoleBadge(roleRect, layerPanelTypeLabel(l), layerPanelRoleColor(l));
+    }
+
     if (showInlineCombos) {
       drawInlineCombo(parentRect, QStringLiteral("Parent: %1").arg(parentName));
       drawInlineCombo(blendRect, QStringLiteral("Blend: %1").arg(blendModeToText(l->layerBlendType())));
     }
     p.setPen(Qt::white);
-    const int textWidth = showInlineCombos ? std::max(20, parentRect.left() - textX - 8) : std::max(20, width() - textX - 8);
+    const int rightLimit = showInlineCombos ? (canShowRoleBadge ? roleRect.left() : parentRect.left())
+                                            : (canShowRoleBadge ? roleRect.left() : width());
+    const int textWidth = std::max(20, rightLimit - textX - 8);
     p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
   }
 
@@ -2388,6 +2568,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   ArtifactLayerPanelHeaderWidget* header = nullptr;
   ArtifactLayerPanelWidget* panel = nullptr;
   CompositionID id;
+  std::function<void()> visibleRowsChangedHandler_;
  };
 
  W_OBJECT_IMPL(ArtifactLayerTimelinePanelWrapper)
@@ -2409,7 +2590,22 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
    impl_->scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
    impl_->scroll->setFrameShape(QFrame::NoFrame);
    impl_->scroll->viewport()->setAcceptDrops(true);
-   impl_->panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  impl_->panel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+  impl_->panel->setVisibleRowsChangedHandler([this]() {
+    const bool isEmpty = impl_->panel->visibleTimelineRows().isEmpty();
+    impl_->scroll->setAlignment(isEmpty ? (Qt::AlignHCenter | Qt::AlignVCenter)
+                                        : (Qt::AlignLeft | Qt::AlignTop));
+    if (impl_->visibleRowsChangedHandler_) {
+      impl_->visibleRowsChangedHandler_();
+    }
+  });
+
+  impl_->header->setShyToggledHandler([panel = impl_->panel](bool hidden) {
+    if (panel) {
+      panel->setShyHidden(hidden);
+    }
+  });
 
    auto* wheelFilter = new LayerPanelWheelFilter(impl_->scroll, this);
    this->installEventFilter(wheelFilter);
@@ -2423,15 +2619,6 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   layout->addWidget(impl_->header);
   layout->addWidget(impl_->scroll, 1);
 
-  QObject::connect(impl_->header, &ArtifactLayerPanelHeaderWidget::shyToggled,
-                   impl_->panel, &ArtifactLayerPanelWidget::setShyHidden);
-  QObject::connect(impl_->panel, &ArtifactLayerPanelWidget::visibleRowsChanged,
-                   this, [this]() {
-                    const bool isEmpty = impl_->panel->visibleTimelineRows().isEmpty();
-                    impl_->scroll->setAlignment(isEmpty ? (Qt::AlignHCenter | Qt::AlignVCenter)
-                                                        : (Qt::AlignLeft | Qt::AlignTop));
-                    Q_EMIT visibleRowsChanged();
-                   });
 }
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent)
@@ -2539,11 +2726,39 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
   return impl_->panel->matchingTimelineRows();
  }
 
- void ArtifactLayerTimelinePanelWrapper::scrollToLayer(const LayerID& id)
- {
+  void ArtifactLayerTimelinePanelWrapper::scrollToLayer(const LayerID& id)
+  {
   if (impl_ && impl_->panel) {
-   impl_->panel->scrollToLayer(id);
+    impl_->panel->scrollToLayer(id);
   }
- }
+  }
+
+void ArtifactLayerTimelinePanelWrapper::setEventBus(ArtifactCore::EventBus* eventBus)
+{
+  if (!impl_) {
+    return;
+  }
+  if (impl_->panel) {
+    impl_->panel->setEventBus(eventBus);
+  }
+}
+
+void ArtifactLayerTimelinePanelWrapper::setVisibleRowsChangedHandler(std::function<void()> handler)
+{
+  if (!impl_) {
+    return;
+  }
+  impl_->visibleRowsChangedHandler_ = std::move(handler);
+  if (impl_->panel) {
+    impl_->panel->setVisibleRowsChangedHandler([this]() {
+      const bool isEmpty = impl_->panel->visibleTimelineRows().isEmpty();
+      impl_->scroll->setAlignment(isEmpty ? (Qt::AlignHCenter | Qt::AlignVCenter)
+                                          : (Qt::AlignLeft | Qt::AlignTop));
+      if (impl_->visibleRowsChangedHandler_) {
+        impl_->visibleRowsChangedHandler_();
+      }
+    });
+  }
+}
 
 } // namespace Artifact

@@ -40,7 +40,7 @@ public:
     QPushButton* motionBlurBtn = nullptr;
     QPushButton* frameBlendBtn = nullptr;
     QPushButton* graphEditorBtn = nullptr;
-    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    ArtifactCore::EventBus* eventBus_ = nullptr;
 
     void setupUi(QWidget* parent) {
         auto layout = new QHBoxLayout(parent);
@@ -88,10 +88,26 @@ ArtifactTimelineGlobalSwitches::ArtifactTimelineGlobalSwitches(QWidget* parent)
     : QWidget(parent), impl_(new Impl()) {
     impl_->setupUi(this);
 
-    connect(impl_->shyBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT shyChanged(v); impl_->eventBus_.post<TimelineShyChangedEvent>(TimelineShyChangedEvent{v}); });
-    connect(impl_->motionBlurBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT motionBlurChanged(v); impl_->eventBus_.post<TimelineMotionBlurChangedEvent>(TimelineMotionBlurChangedEvent{v}); });
-    connect(impl_->frameBlendBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT frameBlendingChanged(v); impl_->eventBus_.post<TimelineFrameBlendingChangedEvent>(TimelineFrameBlendingChangedEvent{v}); });
-    connect(impl_->graphEditorBtn, &QPushButton::toggled, this, [this](bool v){ Q_EMIT graphEditorToggled(v); impl_->eventBus_.post<TimelineGraphEditorToggledEvent>(TimelineGraphEditorToggledEvent{v}); });
+    connect(impl_->shyBtn, &QPushButton::toggled, this, [this](bool v){
+        const auto event = TimelineShyChangedEvent{v};
+        if (impl_->eventBus_) impl_->eventBus_->post<TimelineShyChangedEvent>(event);
+        else ArtifactCore::globalEventBus().post<TimelineShyChangedEvent>(event);
+    });
+    connect(impl_->motionBlurBtn, &QPushButton::toggled, this, [this](bool v){
+        const auto event = TimelineMotionBlurChangedEvent{v};
+        if (impl_->eventBus_) impl_->eventBus_->post<TimelineMotionBlurChangedEvent>(event);
+        else ArtifactCore::globalEventBus().post<TimelineMotionBlurChangedEvent>(event);
+    });
+    connect(impl_->frameBlendBtn, &QPushButton::toggled, this, [this](bool v){
+        const auto event = TimelineFrameBlendingChangedEvent{v};
+        if (impl_->eventBus_) impl_->eventBus_->post<TimelineFrameBlendingChangedEvent>(event);
+        else ArtifactCore::globalEventBus().post<TimelineFrameBlendingChangedEvent>(event);
+    });
+    connect(impl_->graphEditorBtn, &QPushButton::toggled, this, [this](bool v){
+        const auto event = TimelineGraphEditorToggledEvent{v};
+        if (impl_->eventBus_) impl_->eventBus_->post<TimelineGraphEditorToggledEvent>(event);
+        else ArtifactCore::globalEventBus().post<TimelineGraphEditorToggledEvent>(event);
+    });
 }
 
 ArtifactTimelineGlobalSwitches::~ArtifactTimelineGlobalSwitches() {
@@ -104,5 +120,11 @@ void ArtifactTimelineGlobalSwitches::setShyActive(bool active) {
 
 void ArtifactTimelineGlobalSwitches::setMotionBlurActive(bool active) {
     impl_->motionBlurBtn->setChecked(active);
+}
+
+void ArtifactTimelineGlobalSwitches::setEventBus(ArtifactCore::EventBus* eventBus) {
+    if (impl_) {
+        impl_->eventBus_ = eventBus;
+    }
 }
 } // namespace Artifact

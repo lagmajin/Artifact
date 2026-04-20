@@ -7,6 +7,8 @@ module;
 #include <wobjectdefs.h>
 export module Artifact.Timeline.NavigatorWidget;
 
+import Event.Bus;
+
 
 export namespace Artifact
 {
@@ -36,8 +38,6 @@ export namespace Artifact
   void setStart(float s);
   void setEnd(float e);
   void setTotalFrames(int totalFrames);
-
-  void startChanged(float value) W_SIGNAL(startChanged, value)
-  void endChanged(float value) W_SIGNAL(endChanged, value)
+  void setEventBus(ArtifactCore::EventBus* eventBus);
  };
 }

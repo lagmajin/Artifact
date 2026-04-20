@@ -1613,12 +1613,24 @@ int main(int argc, char *argv[]) {
                       panel->setComposition(compId);
                       panel->setWindowTitle(dockTitle);
 
-                      QObject::connect(
-                          panel, &ArtifactTimelineWidget::zoomLevelChanged,
-                          status, &ArtifactStatusBar::setZoomPercent);
-                      QObject::connect(
-                          panel, &ArtifactTimelineWidget::timelineDebugMessage,
-                          status, &ArtifactStatusBar::setTimelineDebugText);
+                      static bool timelineStatusSubscriptionsInstalled = false;
+                      if (!timelineStatusSubscriptionsInstalled) {
+                        appEventSubscriptions.push_back(
+                            appEventBus.subscribe<TimelineZoomLevelChangedEvent>(
+                                [status](const TimelineZoomLevelChangedEvent& event) {
+                                  if (status) {
+                                    status->setZoomPercent(event.zoomPercent);
+                                  }
+                                }));
+                        appEventSubscriptions.push_back(
+                            appEventBus.subscribe<TimelineDebugMessageEvent>(
+                                [status](const TimelineDebugMessageEvent& event) {
+                                  if (status) {
+                                    status->setTimelineDebugText(event.message);
+                                  }
+                                }));
+                        timelineStatusSubscriptionsInstalled = true;
+                      }
 
                       mw->addDockedWidgetTabbedWithId(
                           dockTitle, dockId, ads::BottomDockWidgetArea, panel,

@@ -10,6 +10,7 @@ export module Artifact.Timeline.ScrubBar;
 
 
 import Frame.Position;
+import Event.Bus;
 
 W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
 
@@ -56,8 +57,6 @@ export namespace Artifact
   void setFps(int fps);
   int fps() const;
 
-  void frameChanged(const FramePosition& frame) W_SIGNAL(frameChanged, frame);
-  void frameDragStarted() W_SIGNAL(frameDragStarted);
-  void frameDragFinished() W_SIGNAL(frameDragFinished);
+  void setEventBus(ArtifactCore::EventBus* eventBus);
  };
 }

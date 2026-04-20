@@ -7,6 +7,8 @@ module;
 
 export module Artifact.Timeline.TimeCodeWidget;
 
+import Event.Bus;
+
 export namespace Artifact
 {
  class ArtifactTimeCodeWidget :public QWidget {
@@ -43,10 +45,7 @@ export namespace Artifact
   bool eventFilter(QObject* watched, QEvent* event) override;
 
  public:
-  void searchTextChanged(const QString& text) W_SIGNAL(searchTextChanged, text);
-  void searchNextRequested() W_SIGNAL(searchNextRequested);
-  void searchPrevRequested() W_SIGNAL(searchPrevRequested);
-  void searchCleared() W_SIGNAL(searchCleared);
+  void setEventBus(ArtifactCore::EventBus* eventBus);
  };
 
 };

@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <functional>
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QScrollBar>
@@ -8,10 +9,13 @@ module;
 
 export module Artifact.Widgets.LayerPanelWidget;
 
+import std;
 import Utils.Id;
 
 export namespace Artifact
 {
+ using namespace ArtifactCore;
+
  using namespace ArtifactCore;
 
  enum class SearchMatchMode
@@ -49,17 +53,12 @@ export namespace Artifact
 
     void setPropertyColumnWidth(int width);
     int propertyColumnWidth() const;
+    void setShyToggledHandler(std::function<void(bool)> handler);
 
     // Get button dimensions for layout synchronization
     int buttonSize() const;  // Returns fixed button size (e.g., 28)
     int iconSize() const;    // Returns icon size used in buttons (e.g., 16)
     int totalHeaderHeight() const;  // Returns total header height
-
-   public /*signals*/:
-   void lockClicked() W_SIGNAL(lockClicked);
-   void soloClicked() W_SIGNAL(soloClicked);
-   void shyToggled(bool hidden) W_SIGNAL(shyToggled, hidden);
-   void propertyColumnWidthChanged(int width) W_SIGNAL(propertyColumnWidthChanged, width);
    };
 
 
@@ -102,6 +101,8 @@ export namespace Artifact
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
   void updateLayout();
+  void setVisibleRowsChangedHandler(std::function<void()> handler);
+  void setEventBus(ArtifactCore::EventBus* eventBus);
   QVector<LayerID> matchingTimelineRows() const;
   QVector<LayerID> visibleTimelineRows() const;
   int layerRowIndex(const LayerID& id) const;
@@ -110,10 +111,6 @@ export namespace Artifact
 
  private:
   void performUpdateLayout();
-
-  public /*signals*/:
-   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged);
-
  };
 
  class ArtifactLayerTimelinePanelWrapper :public QWidget
@@ -144,10 +141,8 @@ export namespace Artifact
   void setLayerNameEditable(bool enabled);
   bool isLayerNameEditable() const;
   void scrollToLayer(const LayerID& id);
-
-  public /*signals*/:
-   void visibleRowsChanged() W_SIGNAL(visibleRowsChanged)
- 	
+  void setVisibleRowsChangedHandler(std::function<void()> handler);
+  void setEventBus(ArtifactCore::EventBus* eventBus);
  };
 
 };

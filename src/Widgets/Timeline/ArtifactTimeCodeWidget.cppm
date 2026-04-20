@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <functional>
 #include <QLabel>
 #include <QBoxLayout>
 #include <QVBoxLayout>
@@ -19,6 +20,8 @@ module;
 
 module Artifact.Timeline.TimeCodeWidget;
 
+import Artifact.Event.Types;
+import Event.Bus;
 import Time.Rational;
 import Widgets.Utils.CSS;
 
@@ -150,10 +153,11 @@ namespace Artifact
 
  W_OBJECT_IMPL(ArtifactTimelineSearchBarWidget)
 
- class ArtifactTimelineSearchBarWidget::Impl {
- public:
+class ArtifactTimelineSearchBarWidget::Impl {
+public:
   Impl();
   QLineEdit* searchLineEdit_ = nullptr;
+  ArtifactCore::EventBus* eventBus_ = nullptr;
  };
 
 ArtifactTimelineSearchBarWidget::Impl::Impl()
@@ -192,7 +196,12 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
   setAutoFillBackground(false);
 
  QObject::connect(impl_->searchLineEdit_, &QLineEdit::textChanged, this, [this](const QString& text) {
-   searchTextChanged(text);
+   const auto event = TimelineSearchTextChangedEvent{text};
+   if (impl_ && impl_->eventBus_) {
+    impl_->eventBus_->post<TimelineSearchTextChangedEvent>(event);
+   } else {
+    ArtifactCore::globalEventBus().post<TimelineSearchTextChangedEvent>(event);
+   }
   });
  }
 
@@ -207,10 +216,22 @@ void ArtifactTimelineSearchBarWidget::focusSearch()
 void ArtifactTimelineSearchBarWidget::clearSearch()
 {
  if (impl_ && impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty()) {
-  impl_->searchLineEdit_->blockSignals(true);
-  impl_->searchLineEdit_->clear();
-  impl_->searchLineEdit_->blockSignals(false);
-  searchCleared();
+   impl_->searchLineEdit_->blockSignals(true);
+   impl_->searchLineEdit_->clear();
+   impl_->searchLineEdit_->blockSignals(false);
+   const auto event = TimelineSearchClearedEvent{};
+   if (impl_->eventBus_) {
+    impl_->eventBus_->post<TimelineSearchClearedEvent>(event);
+   } else {
+    ArtifactCore::globalEventBus().post<TimelineSearchClearedEvent>(event);
+   }
+  }
+}
+
+void ArtifactTimelineSearchBarWidget::setEventBus(ArtifactCore::EventBus* eventBus)
+{
+ if (impl_) {
+  impl_->eventBus_ = eventBus;
  }
 }
 
@@ -225,16 +246,20 @@ bool ArtifactTimelineSearchBarWidget::hasSearchText() const
    auto* keyEvent = static_cast<QKeyEvent*>(event);
    if (keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) {
     if (keyEvent->modifiers() & Qt::ShiftModifier) {
-     searchPrevRequested();
+     const auto event = TimelineSearchPrevRequestedEvent{};
+     if (impl_->eventBus_) impl_->eventBus_->post<TimelineSearchPrevRequestedEvent>(event);
+     else ArtifactCore::globalEventBus().post<TimelineSearchPrevRequestedEvent>(event);
     } else {
-     searchNextRequested();
+     const auto event = TimelineSearchNextRequestedEvent{};
+     if (impl_->eventBus_) impl_->eventBus_->post<TimelineSearchNextRequestedEvent>(event);
+     else ArtifactCore::globalEventBus().post<TimelineSearchNextRequestedEvent>(event);
     }
     return true;
    }
    if (keyEvent->key() == Qt::Key_Escape) {
     if (impl_->searchLineEdit_ && !impl_->searchLineEdit_->text().isEmpty()) {
      clearSearch();
-     return true;
+      return true;
     }
    }
   }

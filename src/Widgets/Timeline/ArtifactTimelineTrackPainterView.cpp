@@ -14,6 +14,8 @@
 
 module Artifact.Timeline.TrackPainterView;
 
+import Artifact.Event.Types;
+import Event.Bus;
 import std;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
@@ -527,6 +529,7 @@ bool selectionSyncDirty_ = true;
 const ArtifactAbstractComposition* lastSyncedComposition_ = nullptr;
 QSet<LayerID> lastSyncedSelectedLayerIds_;
 QVector<QString> lastSyncedTrackRowKeys_;
+ArtifactCore::EventBus* eventBus_ = nullptr;
 };
 
 ArtifactTimelineTrackPainterView::Impl::Impl()
@@ -551,6 +554,11 @@ ArtifactTimelineTrackPainterView::ArtifactTimelineTrackPainterView(QWidget* pare
 ArtifactTimelineTrackPainterView::~ArtifactTimelineTrackPainterView()
 {
  delete impl_;
+}
+
+void ArtifactTimelineTrackPainterView::setEventBus(ArtifactCore::EventBus* eventBus)
+{
+ impl_->eventBus_ = eventBus;
 }
 
 void ArtifactTimelineTrackPainterView::setDurationFrames(const double frames)
@@ -1035,8 +1043,13 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
        keyframeSelectionKey(marker.layerId, marker.propertyPath,
                             static_cast<qint64>(std::llround(marker.frame))));
    applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
-   Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
-   seekRequested(frame);
+   const auto selectionEvent =
+       TimelineKeyframeSelectionChangedEvent{static_cast<int>(impl_->selectedMarkerKeys_.size())};
+   if (impl_->eventBus_) impl_->eventBus_->post<TimelineKeyframeSelectionChangedEvent>(selectionEvent);
+   else ArtifactCore::globalEventBus().post<TimelineKeyframeSelectionChangedEvent>(selectionEvent);
+   const auto seekEvent = TimelineSeekRequestedEvent{frame};
+   if (impl_->eventBus_) impl_->eventBus_->post<TimelineSeekRequestedEvent>(seekEvent);
+   else ArtifactCore::globalEventBus().post<TimelineSeekRequestedEvent>(seekEvent);
    setCurrentFrame(frame);
    event->accept();
    return;
@@ -1052,21 +1065,29 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent* event)
    impl_->dragOrigStartFrame_ = impl_->clips_[hit.clipIndex].startFrame;
    impl_->dragOrigDuration_   = impl_->clips_[hit.clipIndex].durationFrame;
    const auto& clip = impl_->clips_[hit.clipIndex];
-   clipSelected(clip.clipId, clip.layerId);
+   const auto clipSelectedEvent =
+       TimelineClipSelectedEvent{clip.clipId, clip.layerId.toString()};
+   if (impl_->eventBus_) impl_->eventBus_->post<TimelineClipSelectedEvent>(clipSelectedEvent);
+   else ArtifactCore::globalEventBus().post<TimelineClipSelectedEvent>(clipSelectedEvent);
    if (hit.mode == DragMode::MoveBody) setCursor(Qt::ClosedHandCursor);
    event->accept();
    return;
   }
-  clipDeselected();
+  if (impl_->eventBus_) impl_->eventBus_->post<TimelineClipDeselectedEvent>(TimelineClipDeselectedEvent{});
+  else ArtifactCore::globalEventBus().post<TimelineClipDeselectedEvent>(TimelineClipDeselectedEvent{});
   if (!impl_->selectedMarkerKeys_.isEmpty()) {
    impl_->selectedMarkerKeys_.clear();
    applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
-   Q_EMIT keyframeSelectionChanged(0);
+   const auto selectionEvent = TimelineKeyframeSelectionChangedEvent{0};
+   if (impl_->eventBus_) impl_->eventBus_->post<TimelineKeyframeSelectionChangedEvent>(selectionEvent);
+   else ArtifactCore::globalEventBus().post<TimelineKeyframeSelectionChangedEvent>(selectionEvent);
    update();
   }
   const double clickedFrame = (mouseX + impl_->horizontalOffset_) / std::max(0.001, impl_->pixelsPerFrame_);
   const double clamped = std::clamp(clickedFrame, 0.0, impl_->durationFrames_);
-  seekRequested(clamped);
+  const auto seekEvent = TimelineSeekRequestedEvent{clamped};
+  if (impl_->eventBus_) impl_->eventBus_->post<TimelineSeekRequestedEvent>(seekEvent);
+  else ArtifactCore::globalEventBus().post<TimelineSeekRequestedEvent>(seekEvent);
   setCurrentFrame(clamped);
   event->accept();
   return;
@@ -1108,7 +1129,9 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent* event)
       .arg(clip.title.isEmpty() ? clip.clipId : clip.title)
       .arg(QString::number(clip.startFrame, 'f', 1))
       .arg(QString::number(clip.durationFrame, 'f', 1));
-  Q_EMIT timelineDebugMessage(status);
+  const auto debugEvent = TimelineDebugMessageEvent{status};
+  if (impl_->eventBus_) impl_->eventBus_->post<TimelineDebugMessageEvent>(debugEvent);
+  else ArtifactCore::globalEventBus().post<TimelineDebugMessageEvent>(debugEvent);
 
   const QRectF dirtyRect =
       clipRectFor(oldClip, impl_->trackHeights_, ppf, impl_->horizontalOffset_, impl_->verticalOffset_)
@@ -1208,9 +1231,17 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent* event)
   if (idx >= 0 && idx < impl_->clips_.size()) {
    const auto& clip = impl_->clips_[idx];
    if (impl_->dragMode_ == DragMode::MoveBody)
-    clipMoved(clip.clipId, clip.startFrame);
+    {
+     const auto event = TimelineClipMovedEvent{clip.clipId, clip.startFrame};
+     if (impl_->eventBus_) impl_->eventBus_->post<TimelineClipMovedEvent>(event);
+     else ArtifactCore::globalEventBus().post<TimelineClipMovedEvent>(event);
+    }
    else
-    clipResized(clip.clipId, clip.startFrame, clip.durationFrame);
+    {
+     const auto event = TimelineClipResizedEvent{clip.clipId, clip.startFrame, clip.durationFrame};
+     if (impl_->eventBus_) impl_->eventBus_->post<TimelineClipResizedEvent>(event);
+     else ArtifactCore::globalEventBus().post<TimelineClipResizedEvent>(event);
+    }
   }
   impl_->dragMode_      = DragMode::None;
   impl_->dragClipIndex_ = -1;
@@ -1303,14 +1334,16 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(QContextMenuEvent* event
   return;
  }
 
- if (chosen == jumpToMarkerAct) {
-  const double targetFrame =
-      std::clamp(static_cast<double>(markerFrame), 0.0, impl_->durationFrames_);
-  setCurrentFrame(targetFrame);
-  seekRequested(targetFrame);
-  if (auto *svc = ArtifactProjectService::instance()) {
-   if (auto comp = svc->currentComposition().lock()) {
-    comp->goToFrame(static_cast<int64_t>(std::llround(targetFrame)));
+  if (chosen == jumpToMarkerAct) {
+   const double targetFrame =
+       std::clamp(static_cast<double>(markerFrame), 0.0, impl_->durationFrames_);
+   setCurrentFrame(targetFrame);
+   const auto seekEvent = TimelineSeekRequestedEvent{targetFrame};
+   if (impl_->eventBus_) impl_->eventBus_->post<TimelineSeekRequestedEvent>(seekEvent);
+   else ArtifactCore::globalEventBus().post<TimelineSeekRequestedEvent>(seekEvent);
+   if (auto *svc = ArtifactProjectService::instance()) {
+    if (auto comp = svc->currentComposition().lock()) {
+     comp->goToFrame(static_cast<int64_t>(std::llround(targetFrame)));
    }
   }
   event->accept();
@@ -1362,13 +1395,15 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(QContextMenuEvent* event
     // This view only emits projectChanged after a local edit has already been applied.
     // Do not add ArtifactProjectService signal/slot wiring here; keep refresh
     // propagation on the service side or via the local EventBus in higher-level widgets.
-    if (auto *svc = ArtifactProjectService::instance()) {
-     svc->projectChanged();
-    }
-    Q_EMIT timelineDebugMessage(
+   if (auto *svc = ArtifactProjectService::instance()) {
+    svc->projectChanged();
+   }
+    const auto debugEvent = TimelineDebugMessageEvent{
         QStringLiteral("Edited %1 at F%2")
             .arg(clip.title.isEmpty() ? clip.clipId : clip.title)
-            .arg(currentFrame));
+            .arg(currentFrame)};
+    if (impl_->eventBus_) impl_->eventBus_->post<TimelineDebugMessageEvent>(debugEvent);
+    else ArtifactCore::globalEventBus().post<TimelineDebugMessageEvent>(debugEvent);
    }
    event->accept();
    return;
@@ -1390,11 +1425,13 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(QContextMenuEvent* event
    svc->projectChanged();
   }
   const QString actionText = removeKeyframes ? QStringLiteral("Removed") : QStringLiteral("Added");
-  Q_EMIT timelineDebugMessage(
+  const auto debugEvent = TimelineDebugMessageEvent{
       QStringLiteral("%1 keyframe at F%2 for %3 layer(s)")
           .arg(actionText)
           .arg(editFrame)
-          .arg(layers.size()));
+          .arg(layers.size())};
+  if (impl_->eventBus_) impl_->eventBus_->post<TimelineDebugMessageEvent>(debugEvent);
+  else ArtifactCore::globalEventBus().post<TimelineDebugMessageEvent>(debugEvent);
   update();
  }
 
@@ -1495,16 +1532,23 @@ void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent* event)
   impl_->selectedMarkerKeys_.remove(request.oldKey);
   impl_->selectedMarkerKeys_.insert(request.newKey);
   applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
-  Q_EMIT keyframeMoveRequested(request.layerId, request.propertyPath, request.fromFrame,
-                               request.toFrame);
- }
+  const auto moveEvent = TimelineKeyframeMoveRequestedEvent{
+      request.layerId.toString(), request.propertyPath, request.fromFrame, request.toFrame};
+  if (impl_->eventBus_) impl_->eventBus_->post<TimelineKeyframeMoveRequestedEvent>(moveEvent);
+  else ArtifactCore::globalEventBus().post<TimelineKeyframeMoveRequestedEvent>(moveEvent);
+}
 
- applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
- Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
- Q_EMIT timelineDebugMessage(
-     QStringLiteral("Moved %1 keyframe(s) by %2 frame(s)")
-         .arg(requests.size())
-         .arg(deltaFrames));
+applyMarkerSelectionFlags(impl_->keyframeMarkers_, impl_->selectedMarkerKeys_);
+const auto selectionEvent =
+    TimelineKeyframeSelectionChangedEvent{static_cast<int>(impl_->selectedMarkerKeys_.size())};
+if (impl_->eventBus_) impl_->eventBus_->post<TimelineKeyframeSelectionChangedEvent>(selectionEvent);
+else ArtifactCore::globalEventBus().post<TimelineKeyframeSelectionChangedEvent>(selectionEvent);
+const auto debugEvent = TimelineDebugMessageEvent{
+    QStringLiteral("Moved %1 keyframe(s) by %2 frame(s)")
+        .arg(requests.size())
+        .arg(deltaFrames)};
+if (impl_->eventBus_) impl_->eventBus_->post<TimelineDebugMessageEvent>(debugEvent);
+else ArtifactCore::globalEventBus().post<TimelineDebugMessageEvent>(debugEvent);
  update();
  event->accept();
 }

@@ -1,6 +1,7 @@
 module;
 #include <QLabel>
 #include <QHBoxLayout>
+#include <QString>
 #include <wobjectimpl.h>
 #include <iostream>
 #include <vector>
@@ -55,11 +56,14 @@ namespace Artifact
 
  ArtifactTimelineBottomLabel::ArtifactTimelineBottomLabel(QWidget* parent /*= nullptr*/) :QWidget(parent)
  {
-
-
   auto layout = new QHBoxLayout();
-
-
+  layout->setContentsMargins(10, 0, 10, 0);
+  layout->setSpacing(0);
+  impl_ = new Impl();
+  impl_->frameRenderingLabel = new QLabel(this);
+  impl_->frameRenderingLabel->setText(QStringLiteral(""));
+  layout->addWidget(impl_->frameRenderingLabel);
+  layout->addStretch();
   setLayout(layout);
 
   setFixedHeight(28);
@@ -67,7 +71,14 @@ namespace Artifact
 
  ArtifactTimelineBottomLabel::~ArtifactTimelineBottomLabel()
  {
+  delete impl_;
+ }
 
+ void ArtifactTimelineBottomLabel::setText(const QString& text)
+ {
+  if (impl_ && impl_->frameRenderingLabel) {
+   impl_->frameRenderingLabel->setText(text);
+  }
  }
 	
 }
