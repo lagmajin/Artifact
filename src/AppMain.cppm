@@ -1,4 +1,4 @@
-﻿
+
 module;
 
 #define _CRT_SECURE_NO_WARNINGS
@@ -111,10 +111,13 @@ import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Widgets.CompositionEditor;
+import Artifact.Widgets.CompositionRenderController;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.MarkdownNoteEditorWidget;
 import Artifact.Widgets.Render.QueueManager;
+import Artifact.Render.Queue.Service;
+import Core.Diagnostics.SessionLedger;
 import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Render.Scheduler;
 import Artifact.Contents.Viewer;
@@ -130,6 +133,7 @@ import Artifact.Widgets.Test.ScrollPoC;
 
 import Diagnostics.Logger;
 import Artifact.Widgets.DebugConsoleWidget;
+import Artifact.Widgets.FrameDebugViewWidget;
 import Widgets.AIChatWidget;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -752,6 +756,12 @@ static int runMcpServerMode() {
 int main(int argc, char *argv[]) {
   configureWindowsUtf8Console();
   ArtifactCore::CrashHandler::install();
+  ArtifactCore::CrashHandler::setCrashCallback([](const QString& crashReportPath) {
+    if (auto *rq = Artifact::ArtifactRenderQueueService::instance()) {
+      rq->sessionLedger().recordCrash(
+          QStringLiteral("Crash report: %1").arg(crashReportPath));
+    }
+  });
   ArtifactCore::Logger::instance()->install();
 
   qDebug() << "Artifact Debug Console Initialized. Hello ArtifactStudio!";
@@ -1119,8 +1129,28 @@ int main(int argc, char *argv[]) {
         QRect(120, 828, 720, 96));
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Debug Console"), QStringLiteral("DebugConsole"),
-        [mw]() -> QWidget * { return new ArtifactDebugConsoleWidget(mw); },
+        [mw, compositionEditor]() -> QWidget * {
+          auto* widget = new ArtifactDebugConsoleWidget(mw);
+          if (compositionEditor) {
+            if (auto* controller = compositionEditor->renderController()) {
+              widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
+            }
+          }
+          return widget;
+        },
         QRect(200, 200, 800, 400));
+    mw->addLazyDockedWidgetFloating(
+        QStringLiteral("Frame Debug"), QStringLiteral("FrameDebug"),
+        [mw, compositionEditor]() -> QWidget * {
+          auto* widget = new FrameDebugViewWidget(mw);
+          if (compositionEditor) {
+            if (auto* controller = compositionEditor->renderController()) {
+              widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
+            }
+          }
+          return widget;
+        },
+        QRect(220, 240, 900, 520));
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("AI Chat"), QStringLiteral("AIChat"),
         [mw, aiProvider]() -> QWidget * {
@@ -1695,8 +1725,8 @@ int main(int argc, char *argv[]) {
       appEventSubscriptions.push_back(
           appEventBus.subscribe<CurrentCompositionChangedEvent>(
               [compositionEditor, projectService, propertyPanel,
-               layerViewEditor,
-               status](const CurrentCompositionChangedEvent &event) {
+               layerViewEditor, status,
+               retainedPropertyLayerId](const CurrentCompositionChangedEvent &event) {
                 const CompositionID compId(event.compositionId);
                 if (compositionEditor && projectService) {
                   const auto found = projectService->findComposition(compId);
@@ -1712,7 +1742,27 @@ int main(int argc, char *argv[]) {
                 }
                 if (propertyPanel) {
                   propertyPanel->setFocusedEffectId(QString());
-                  propertyPanel->clear();
+                  // Only clear the property panel when the composition change
+                  // is to a different composition than the one the currently-
+                  // displayed layer belongs to. This prevents spurious clears
+                  // when an internal call triggers a composition-changed event
+                  // for the same composition (e.g., from timeline or property
+                  // animation notifications).
+                  bool shouldClear = true;
+                  if (retainedPropertyLayerId &&
+                      !retainedPropertyLayerId->isNil() && projectService) {
+                    const auto found2 = projectService->findComposition(compId);
+                    if (found2.success && !found2.ptr.expired()) {
+                      if (auto comp = found2.ptr.lock()) {
+                        if (comp->layerById(*retainedPropertyLayerId)) {
+                          shouldClear = false;
+                        }
+                      }
+                    }
+                  }
+                  if (shouldClear) {
+                    propertyPanel->clear();
+                  }
                 }
                 if (layerViewEditor) {
                   layerViewEditor->view()->clearTargetLayer();

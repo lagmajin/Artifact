@@ -28,6 +28,7 @@ module;
 #include <QtConcurrent>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <memory>
@@ -42,10 +43,12 @@ import Artifact.Render.IRenderer;
 import Artifact.Render.GPUTextureCacheManager;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Render.CompositionRenderer;
+import Artifact.Render.Queue.Service;
 import Artifact.Render.Config;
 import Artifact.Render.ROI;
 import Artifact.Render.Context;
 import Artifact.Preview.Pipeline;
+import Frame.Debug;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.CloneEffectSupport;
@@ -81,6 +84,7 @@ import Widgets.Utils.CSS;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback; // 追加
+import Playback.State;
 import Thread.Helper;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -97,6 +101,32 @@ W_OBJECT_IMPL(CompositionRenderController)
 
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
+
+QString renderBackendToString(ArtifactRenderQueueService::RenderBackend backend)
+{
+  switch (backend) {
+  case ArtifactRenderQueueService::RenderBackend::CPU:
+    return QStringLiteral("cpu");
+  case ArtifactRenderQueueService::RenderBackend::GPU:
+    return QStringLiteral("gpu");
+  case ArtifactRenderQueueService::RenderBackend::Auto:
+  default:
+    return QStringLiteral("auto");
+  }
+}
+
+QString playbackStateToString(PlaybackState state)
+{
+  switch (state) {
+  case PlaybackState::Playing:
+    return QStringLiteral("playing");
+  case PlaybackState::Paused:
+    return QStringLiteral("paused");
+  case PlaybackState::Stopped:
+  default:
+    return QStringLiteral("stopped");
+  }
+}
 
 bool floatColorEquals(const FloatColor &lhs, const FloatColor &rhs,
                       float epsilon = 0.0f) {
@@ -205,9 +235,14 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
   }
 
   if (hasMasks) {
+    // Mask vertices are in layer-local space (centered at 0,0).
+    // Translate to pixel space: pixel = localPos - localBounds.topLeft()
+    const QRectF lb = targetLayer->localBounds();
+    const float maskOffsetX = static_cast<float>(-lb.x());
+    const float maskOffsetY = static_cast<float>(-lb.y());
     for (int m = 0; m < targetLayer->maskCount(); ++m) {
       LayerMask mask = targetLayer->mask(m);
-      mask.applyToImage(mat.cols, mat.rows, &mat);
+      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY);
     }
   }
 
@@ -921,7 +956,7 @@ void drawLayerForCompositionView(
           std::max(1, static_cast<int>(std::ceil(localRect.height()))));
       QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
       surface.fill(toQColor(color));
-      applySurfaceAndDraw(surface, localRect, false);
+      applySurfaceAndDraw(surface, localRect, true);
     } else {
       renderer->drawSolidRectTransformed(
           static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
@@ -1345,6 +1380,7 @@ public:
   QString lastOverlayDebugSummary_;
   quint64 baseInvalidationSerial_ = 1;
   quint64 overlayInvalidationSerial_ = 1;
+  RenderDamageTracker damageTracker_;
 
   // Motion path cache: avoids 300x getGlobalTransformAt() calls per frame.
   // Invalidated when layer, frame position, or overlay serial changes.
@@ -1592,17 +1628,24 @@ public:
     if (gpuTextureCacheManager_) {
       gpuTextureCacheManager_->invalidateOwner(ownerId);
     }
+    LayerInvalidationRegion region;
+    region.source = LayerInvalidationRegion::Source::Content;
+    region.layerId = ownerId;
+    damageTracker_.markDirty(ownerId, region);
   }
 
   void invalidateBaseComposite() {
     ++baseInvalidationSerial_;
     lastRenderKeyState_ = {};
+    damageTracker_.clearAll();
   }
 
   void invalidateOverlayComposite() {
     ++overlayInvalidationSerial_;
     lastRenderKeyState_ = {};
   }
+
+  RenderDamageTracker& damageTracker() { return damageTracker_; }
 
   void drawViewportGhostOverlay(CompositionRenderController *owner,
                                 const ArtifactCompositionPtr &comp,
@@ -2152,6 +2195,20 @@ void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
   impl_->selectedLayerId_ = id;
   impl_->invalidateOverlayComposite();
   impl_->syncSelectedLayerOverlayState(impl_->previewPipeline_.composition());
+
+  auto* sel = ArtifactLayerSelectionManager::instance();
+  if (sel) {
+    auto comp = impl_->previewPipeline_.composition();
+    if (!id.isNil() && comp) {
+      auto layer = comp->layerById(id);
+      if (layer) {
+        sel->selectLayer(layer);
+      }
+    } else {
+      sel->clearSelection();
+    }
+  }
+
   renderOneFrame();
 }
 
@@ -2196,18 +2253,17 @@ bool CompositionRenderController::isShowCheckerboard() const {
   return impl_->compositionBackgroundMode_ ==
          CompositionBackgroundMode::Checkerboard;
 }
-void CompositionRenderController::setCompositionBackgroundMode(
-    CompositionBackgroundMode mode) {
-  if (impl_->compositionBackgroundMode_ == mode) {
+void CompositionRenderController::setCompositionBackgroundMode(int mode) {
+  const auto backgroundMode = static_cast<CompositionBackgroundMode>(mode);
+  if (impl_->compositionBackgroundMode_ == backgroundMode) {
     return;
   }
-  impl_->compositionBackgroundMode_ = mode;
+  impl_->compositionBackgroundMode_ = backgroundMode;
   impl_->invalidateBaseComposite();
   renderOneFrame();
 }
-CompositionBackgroundMode
-CompositionRenderController::compositionBackgroundMode() const {
-  return impl_->compositionBackgroundMode_;
+int CompositionRenderController::compositionBackgroundMode() const {
+  return static_cast<int>(impl_->compositionBackgroundMode_);
 }
 void CompositionRenderController::setShowGuides(bool show) {
   if (impl_->showGuides_ == show) {
@@ -2410,6 +2466,96 @@ void CompositionRenderController::zoom100() {
 
 ArtifactIRenderer *CompositionRenderController::renderer() const {
   return impl_->renderer_.get();
+}
+
+ArtifactCore::FrameDebugSnapshot
+CompositionRenderController::frameDebugSnapshot() const {
+  ArtifactCore::FrameDebugSnapshot snapshot;
+  const auto comp = impl_->previewPipeline_.composition();
+  const auto selectedLayerId = impl_->selectedLayerId_;
+  auto *playback = ArtifactPlaybackService::instance();
+  auto *queue = ArtifactRenderQueueService::instance();
+
+  if (playback) {
+    const auto playbackComp = playback->currentComposition();
+    if (!playbackComp || !comp || playbackComp->id() == comp->id()) {
+      snapshot.frame = playback->currentFrame();
+      snapshot.playbackState = playbackStateToString(playback->state());
+    } else {
+      snapshot.frame = comp ? comp->framePosition() : FramePosition(0);
+      snapshot.playbackState = QStringLiteral("stopped");
+    }
+  } else {
+    snapshot.frame = comp ? comp->framePosition() : FramePosition(0);
+    snapshot.playbackState = QStringLiteral("stopped");
+  }
+
+  snapshot.timestampMs =
+      static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    std::chrono::system_clock::now().time_since_epoch())
+                                    .count());
+
+  if (comp) {
+    snapshot.compositionName = comp->settings().compositionName().toQString();
+  } else {
+    snapshot.compositionName = QStringLiteral("<none>");
+  }
+
+  snapshot.selectedLayerName = QStringLiteral("<none>");
+  if (comp && !selectedLayerId.isNil()) {
+    if (auto layer = comp->layerById(selectedLayerId)) {
+      snapshot.selectedLayerName = layer->layerName();
+    }
+  }
+
+  snapshot.renderBackend = QStringLiteral("unknown");
+  if (queue) {
+    snapshot.renderBackend = renderBackendToString(queue->renderBackend());
+    const int jobCount = queue->jobCount();
+    for (int i = 0; i < jobCount; ++i) {
+      const QString status = queue->jobStatusAt(i);
+      if (status.contains(QStringLiteral("fail"), Qt::CaseInsensitive) ||
+          status.contains(QStringLiteral("error"), Qt::CaseInsensitive)) {
+        snapshot.failed = true;
+        snapshot.failureReason = queue->jobErrorMessageAt(i);
+        break;
+      }
+    }
+  }
+
+  snapshot.compareMode = ArtifactCore::FrameDebugCompareMode::Disabled;
+  snapshot.compareTargetId = QString();
+
+  if (comp) {
+    ArtifactCore::FrameDebugPassRecord pass;
+    pass.name = QStringLiteral("composition");
+    pass.kind = ArtifactCore::FrameDebugPassKind::Composite;
+    pass.status = snapshot.failed ? ArtifactCore::FrameDebugPassStatus::Failed
+                                  : ArtifactCore::FrameDebugPassStatus::Success;
+    pass.note = QStringLiteral("summary-only");
+
+    ArtifactCore::FrameDebugAttachmentRecord outputAttachment;
+    outputAttachment.name = QStringLiteral("viewport");
+    outputAttachment.role = QStringLiteral("output");
+    outputAttachment.readOnly = true;
+    pass.outputs.push_back(outputAttachment);
+
+    snapshot.attachments.push_back(outputAttachment);
+
+    if (!snapshot.selectedLayerName.isEmpty() &&
+        snapshot.selectedLayerName != QStringLiteral("<none>")) {
+      ArtifactCore::FrameDebugResourceRecord selectedResource;
+      selectedResource.label = snapshot.selectedLayerName;
+      selectedResource.type = QStringLiteral("layer");
+      selectedResource.relation = QStringLiteral("selected");
+      selectedResource.cacheHit = true;
+      snapshot.resources.push_back(selectedResource);
+    }
+
+    snapshot.passes.push_back(pass);
+  }
+
+  return snapshot;
 }
 
 void CompositionRenderController::focusSelectedLayer() {

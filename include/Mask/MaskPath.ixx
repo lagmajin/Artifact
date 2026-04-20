@@ -100,8 +100,11 @@ public:
     void setName(const UniString& name);
 
     /// ベジェパスからアルファマスクをラスタライズ (0.0~1.0 single channel)
+    /// offsetX/offsetY: レイヤーローカル空間からピクセル空間への変換オフセット
+    ///   (通常は -localBounds.x(), -localBounds.y() を渡す)
     /// 戻り値は CV_32FC1 の cv::Mat
-    void rasterizeToAlpha(int width, int height, void* outMat) const;
+    void rasterizeToAlpha(int width, int height, void* outMat,
+                          float offsetX = 0.0f, float offsetY = 0.0f) const;
 };
 
 }

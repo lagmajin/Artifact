@@ -167,7 +167,8 @@ void MaskPath::setMode(MaskMode mode) { impl_->mode = mode; }
 UniString MaskPath::name() const { return impl_->name; }
 void MaskPath::setName(const UniString& name) { impl_->name = name; }
 
-void MaskPath::rasterizeToAlpha(int width, int height, void* outMat) const
+void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
+                                float offsetX, float offsetY) const
 {
     cv::Mat& dst = *static_cast<cv::Mat*>(outMat);
     dst = cv::Mat::zeros(height, width, CV_32FC1);
@@ -176,11 +177,12 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat) const
     if (poly.isEmpty()) return;
 
     // QPolygonF -> cv::Point array for fillPoly
+    // offsetX/offsetY translates from layer-local space to image pixel space
     std::vector<cv::Point> pts;
     pts.reserve(poly.size());
     for (const auto& p : poly) {
-        pts.emplace_back(static_cast<int>(std::round(p.x())),
-                         static_cast<int>(std::round(p.y())));
+        pts.emplace_back(static_cast<int>(std::round(p.x() + offsetX)),
+                         static_cast<int>(std::round(p.y() + offsetY)));
     }
 
     // fillPoly on 8-bit image, then convert to float

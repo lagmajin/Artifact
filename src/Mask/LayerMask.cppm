@@ -89,7 +89,8 @@ void LayerMask::clearMaskPaths() { impl_->paths.clear(); }
 bool LayerMask::isEnabled() const { return impl_->enabled; }
 void LayerMask::setEnabled(bool enabled) { impl_->enabled = enabled; }
 
-void LayerMask::compositeAlphaMask(int width, int height, void* outMat) const
+void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
+                                   float offsetX, float offsetY) const
 {
     cv::Mat& dst = *static_cast<cv::Mat*>(outMat);
 
@@ -110,7 +111,7 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat) const
         }
         hasEffectivePath = true;
         cv::Mat pathMask;
-        path.rasterizeToAlpha(width, height, &pathMask);
+        path.rasterizeToAlpha(width, height, &pathMask, offsetX, offsetY);
 
         switch (path.mode()) {
             case MaskMode::Add:
@@ -149,14 +150,15 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat) const
     cv::max(dst, 0.0f, dst);
 }
 
-void LayerMask::applyToImage(int width, int height, void* imageMat) const
+void LayerMask::applyToImage(int width, int height, void* imageMat,
+                             float offsetX, float offsetY) const
 {
     cv::Mat& img = *static_cast<cv::Mat*>(imageMat);
     if (img.empty() || img.type() != CV_32FC4) return;
     if (!impl_->enabled || impl_->paths.empty()) return;
 
     cv::Mat alphaMask;
-    compositeAlphaMask(width, height, &alphaMask);
+    compositeAlphaMask(width, height, &alphaMask, offsetX, offsetY);
 
     // Split channels, multiply alpha by mask, merge back
     std::vector<cv::Mat> channels(4);
