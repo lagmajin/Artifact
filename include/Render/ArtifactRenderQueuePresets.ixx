@@ -3,7 +3,6 @@
 #include <QString>
 #include <QStringList>
 #include <QVector>
-#include <QIcon>
 
 export module Artifact.Render.Queue.Presets;
 
@@ -24,7 +23,6 @@ struct ArtifactRenderFormatPreset {
     QString description;  // 説明
     bool isAnimatedImage = false; // GIF / APNG / Animated WebP などの単一ファイルアニメ
     bool isImageSequence = false; // 連番画像出力かどうか
-    QIcon icon;           // アイコン（オプション）
 
     // プリセットファクトリ
     static QVector<ArtifactRenderFormatPreset> getStandardPresets();

@@ -4,7 +4,6 @@ module;
 #include <QVector>
 #include <QMap>
 #include <QMutex>
-#include <QIcon>
 
 module Artifact.Render.Queue.Presets;
 
