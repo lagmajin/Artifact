@@ -12,9 +12,7 @@ import Artifact.Widgets.CompositionRenderController;
 
 export namespace Artifact {
 
-class CompositionRenderController;
-
-class ArtifactCompositionEditor : public QWidget {
+class ArtifactCompositionEditor: public QWidget {
  W_OBJECT(ArtifactCompositionEditor)
 private:
  class Impl;
