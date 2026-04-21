@@ -22,6 +22,7 @@ module;
 #include <QFileInfo>
 #include <QHash>
 #include <QSet>
+#include <QStringList>
 #include <QPolygon>
 #include <QIcon>
 #include <QtSVG/QSvgRenderer>
@@ -49,8 +50,11 @@ import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
+import Layer.Matte;
 import Artifact.Timeline.KeyframeModel;
 import Undo.UndoManager;
 import Artifact.Service.Playback;
@@ -684,6 +688,92 @@ struct VisibleRow {
  QString groupKey;
 };
 
+QString matteTypeToText(MatteType type)
+{
+ switch (type) {
+ case MatteType::Alpha:
+  return QStringLiteral("Alpha");
+ case MatteType::Luma:
+  return QStringLiteral("Luma");
+ case MatteType::InverseAlpha:
+  return QStringLiteral("Inv Alpha");
+ case MatteType::InverseLuma:
+  return QStringLiteral("Inv Luma");
+ }
+ return QStringLiteral("Matte");
+}
+
+QString matteBlendModeToText(MatteBlendMode mode)
+{
+ switch (mode) {
+ case MatteBlendMode::Add:
+  return QStringLiteral("Add");
+ case MatteBlendMode::Subtract:
+  return QStringLiteral("Sub");
+ case MatteBlendMode::Intersect:
+  return QStringLiteral("Int");
+ case MatteBlendMode::Difference:
+  return QStringLiteral("Diff");
+ }
+ return QStringLiteral("Blend");
+}
+
+QString maskModeToText(MaskMode mode)
+{
+ switch (mode) {
+ case MaskMode::Add:
+  return QStringLiteral("Add");
+ case MaskMode::Subtract:
+  return QStringLiteral("Sub");
+ case MaskMode::Intersect:
+  return QStringLiteral("Int");
+ case MaskMode::Difference:
+  return QStringLiteral("Diff");
+ }
+ return QStringLiteral("Mask");
+}
+
+QString matteSummaryLabel(const LayerMatteReference& ref, int index)
+{
+ const QString base = QStringLiteral("Matte %1").arg(index + 1);
+ QStringList tags;
+ tags << matteTypeToText(ref.type);
+ tags << QStringLiteral("Blend %1").arg(matteBlendModeToText(ref.blendMode));
+  if (ref.invert) {
+  tags << QStringLiteral("Inverted");
+ }
+ if (!ref.enabled) {
+  tags << QStringLiteral("Off");
+ }
+ if (ref.opacity < 0.999f) {
+  tags << QStringLiteral("Opacity %1").arg(QString::number(ref.opacity, 'f', 2));
+ }
+ return tags.isEmpty() ? base : base + QStringLiteral("  ") + tags.join(QStringLiteral(" / "));
+}
+
+QString maskSummaryLabel(const LayerMask& mask, int index)
+{
+ const QString base = QStringLiteral("Mask %1").arg(index + 1);
+ QStringList tags;
+ const int pathCount = mask.maskPathCount();
+ tags << QStringLiteral("%1 path%2").arg(pathCount).arg(pathCount == 1 ? QString() : QStringLiteral("s"));
+ QStringList modeTags;
+ const int limit = std::min(pathCount, 3);
+ for (int i = 0; i < limit; ++i) {
+  modeTags << maskModeToText(mask.maskPath(i).mode());
+ }
+ if (!modeTags.isEmpty()) {
+  tags << QStringLiteral("Modes %1").arg(modeTags.join(QStringLiteral(",")));
+ }
+ if (pathCount > 3) {
+  tags << QStringLiteral("+%1 more").arg(pathCount - 3);
+ }
+ if (!mask.isEnabled()) {
+  tags << QStringLiteral("Off");
+ }
+ return base + QStringLiteral("  ") + tags.join(QStringLiteral(" / "));
+}
+
 class ArtifactLayerPanelWidget::Impl
 {
 public:
@@ -941,7 +1031,10 @@ public:
 
      const auto nodeChildren = children.value(nodeId);
    const auto panelGroups = layerPanelPropertyGroups(node);
-   const bool hasChildren = !nodeChildren.isEmpty() || !panelGroups.empty();
+   const auto matteRefs = node->matteReferences();
+   const bool hasMaskStack = node->hasMasks();
+   const bool hasMatteStack = !matteRefs.empty();
+   const bool hasChildren = !nodeChildren.isEmpty() || !panelGroups.empty() || hasMaskStack || hasMatteStack;
    const bool expanded = expandedByLayerId.value(nodeId, true);
    visibleRows.push_back(VisibleRow{ node, depth, hasChildren, expanded, RowKind::Layer, QString(), QString() });
    emitted.insert(nodeId);
@@ -980,9 +1073,69 @@ public:
          property->getName(),
          QString()
         });
-       }
       }
      }
+    }
+
+    if (hasMaskStack) {
+      const QString maskGroupKey = nodeId + QStringLiteral("::masks");
+      const bool maskExpanded = expandedByGroupKey.value(maskGroupKey, true);
+      visibleRows.push_back(VisibleRow{
+       node,
+       depth + 1,
+       node->maskCount() > 0,
+       maskExpanded,
+       RowKind::MaskStack,
+       QStringLiteral("Masks"),
+       QString(),
+       maskGroupKey
+      });
+      if (maskExpanded) {
+       for (int maskIndex = 0; maskIndex < node->maskCount(); ++maskIndex) {
+        const LayerMask mask = node->mask(maskIndex);
+        visibleRows.push_back(VisibleRow{
+         node,
+         depth + 2,
+         false,
+         false,
+         RowKind::Mask,
+         maskSummaryLabel(mask, maskIndex),
+         QString::number(maskIndex),
+         QString()
+        });
+       }
+      }
+    }
+
+    if (hasMatteStack) {
+      const QString matteGroupKey = nodeId + QStringLiteral("::mattes");
+      const bool matteExpanded = expandedByGroupKey.value(matteGroupKey, true);
+      visibleRows.push_back(VisibleRow{
+       node,
+       depth + 1,
+       !matteRefs.empty(),
+       matteExpanded,
+       RowKind::MatteStack,
+       QStringLiteral("Track Mattes"),
+       QString(),
+       matteGroupKey
+      });
+      if (matteExpanded) {
+       for (size_t matteIndex = 0; matteIndex < matteRefs.size(); ++matteIndex) {
+        const LayerMatteReference& ref = matteRefs[matteIndex];
+        visibleRows.push_back(VisibleRow{
+         node,
+         depth + 2,
+         false,
+         false,
+         RowKind::Matte,
+         matteSummaryLabel(ref, static_cast<int>(matteIndex)),
+         QString::number(static_cast<int>(matteIndex)),
+         QString()
+        });
+       }
+      }
+    }
 
      stack.insert(nodeId);
      for (const auto& child : nodeChildren) {
@@ -1259,6 +1412,7 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
   update();
   if (structureChanged) {
     ArtifactCore::globalEventBus().publish<TimelineVisibleRowsChangedEvent>({});
+    visibleRowsChanged();
   }
   
   impl_->updatingLayout = false;
@@ -1290,6 +1444,11 @@ ArtifactLayerPanelWidget::visibleTimelineRowDescriptors() const
    descriptor.kind = row.kind;
    descriptor.label = row.label;
    descriptor.propertyPath = row.propertyPath;
+   if (row.kind == RowKind::Mask || row.kind == RowKind::Matte) {
+    descriptor.auxiliaryText = row.label;
+   } else if (row.kind == RowKind::MaskStack || row.kind == RowKind::MatteStack) {
+    descriptor.auxiliaryText = row.label;
+   }
    rows.push_back(std::move(descriptor));
   }
   return rows;
@@ -1414,7 +1573,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     impl_->clearDragState();
     return;
   }
-  if (row.kind == RowKind::Group) {
+  if (row.kind == RowKind::Group ||
+      row.kind == RowKind::MaskStack ||
+      row.kind == RowKind::MatteStack) {
    if (event->button() == Qt::LeftButton) {
     if (!row.groupKey.trimmed().isEmpty()) {
       impl_->expandedByGroupKey[row.groupKey] = !impl_->expandedByGroupKey.value(row.groupKey, true);
@@ -1459,6 +1620,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
    }
    event->accept();
    return;
+  }
+  if (row.kind == RowKind::Mask || row.kind == RowKind::Matte) {
+    impl_->clearDragState();
+    event->accept();
+    return;
   }
   auto* service = ArtifactProjectService::instance();
   if (row.kind != RowKind::Layer) {
@@ -2080,8 +2246,11 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const auto& row = impl_->visibleRows[i];
     auto l = row.layer;
     if (!l) continue;
-    const bool isGroupRow = (row.kind == RowKind::Group);
+    const bool isGroupRow = (row.kind == RowKind::Group ||
+                            row.kind == RowKind::MaskStack ||
+                            row.kind == RowKind::MatteStack);
     const bool isPropertyRow = (row.kind == RowKind::Property);
+    const bool isDisplayLeafRow = (row.kind == RowKind::Mask || row.kind == RowKind::Matte);
     const bool sel = (l->id() == impl_->selectedLayerId);
     const bool layerSelected = sel && row.kind == RowKind::Layer;
     const QString propertyPath =
@@ -2133,7 +2302,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     }
 
     int curX = 0;
-    if (!isPropertyRow) {
+    if (!isPropertyRow && !isDisplayLeafRow) {
       // Visibility
       p.setOpacity(l->isVisible() ? 1.0 : 0.3);
       if (!impl_->visibilityIcon.isNull()) {
@@ -2187,7 +2356,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
     // Name
     const int nameX = nameStartX + row.depth * indent;
-    if ((row.kind == RowKind::Layer || row.kind == RowKind::Group) && row.hasChildren) {
+    if ((row.kind == RowKind::Layer || isGroupRow) && row.hasChildren) {
       const int tx = nameX + 2;
       const int ty = y + (rowH - toggleSize) / 2;
       QPolygonF tri;
@@ -2206,7 +2375,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     }
 
     p.setPen(text);
-    const int textX = nameX + ((row.hasChildren && (row.kind == RowKind::Layer || row.kind == RowKind::Group)) ? 16 : 4);
+    const int textX = nameX + ((row.hasChildren && (row.kind == RowKind::Layer || isGroupRow)) ? 16 : 4);
     const bool showInlineCombos = row.kind == RowKind::Layer &&
                                   (width() - (nameX + 8)) >= (kInlineComboReserve + kLayerNameMinWidth);
     const int parentRectX = width() - kInlineComboReserve;
@@ -2261,6 +2430,18 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.setBrush(propertyKeyframed ? accent.lighter(105) : Qt::NoBrush);
       p.drawPolygon(diamond);
      }
+    } else if (isDisplayLeafRow) {
+     const int leafBadgeW = 84;
+     const QRect badgeRect(width() - leafBadgeW - 8, y + 5, leafBadgeW, rowH - 10);
+     p.setPen(layerSelected ? accent.darker(180) : border);
+     p.setBrush(mixColor(background, surface, 0.30));
+     p.drawRoundedRect(badgeRect, 4, 4);
+     p.setPen(text.darker(120));
+     p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                row.kind == RowKind::Mask ? QStringLiteral("Mask") : QStringLiteral("Track Matte"));
+     const int labelWidth = std::max(20, badgeRect.left() - textX - 10);
+     p.setPen(text);
+     p.drawText(textX + 4, y, labelWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
     } else {
      const auto variants = l->getVariants();
      const int activeIdx = static_cast<int>(l->getActiveVariantIndex());
@@ -2301,7 +2482,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     }
    }
 
-    if (!impl_->draggedLayerId.isNil() && impl_->dragInsertVisibleRow >= 0) {
+   if (!impl_->draggedLayerId.isNil() && impl_->dragInsertVisibleRow >= 0) {
      const int lineY = std::clamp(static_cast<int>(std::floor(impl_->dragInsertVisibleRow * rowH - impl_->verticalOffset)), 1, std::max(1, height() - 2));
     QPen pen(accent, 2);
     p.setPen(pen);

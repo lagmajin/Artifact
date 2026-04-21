@@ -55,6 +55,7 @@ module;
 #include <ads_globals.h>
 #include <filesystem>
 #include <qthreadpool.h>
+#include <QtConcurrent/QtConcurrent>
 
 #include <QByteArray>
 #include <opencv2/opencv.hpp>
@@ -1072,6 +1073,10 @@ int main(int argc, char *argv[]) {
   const int configuredRenderThreads =
       std::max(1, settings ? settings->renderThreadCount() : 10);
   pool->setMaxThreadCount(configuredRenderThreads);
+  // Pre-warm the thread pool to avoid burst thread creation on first render
+  for (int i = 0; i < configuredRenderThreads; ++i) {
+    QtConcurrent::run(pool, [] {});
+  }
 
   bootstrapPythonScripts();
   ArtifactPythonHookManager::runHook(QStringLiteral("on_startup"));
