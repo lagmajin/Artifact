@@ -37,6 +37,9 @@ bool ArtifactTimelineKeyframeModel::isTransformPropertyPath(
 
 QString ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
     const QString& propertyPath) {
+  if (propertyPath.isNull() || propertyPath.isEmpty()) {
+    return QStringLiteral("Property");
+  }
   if (propertyPath == QStringLiteral("transform.position.x")) {
     return QStringLiteral("Transform / Position X");
   }

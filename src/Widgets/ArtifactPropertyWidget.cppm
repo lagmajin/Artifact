@@ -434,8 +434,50 @@ void applyInspectorPropertyPresentation(
                            Qt::CaseInsensitive) == 0 ||
       propertyName.compare(QStringLiteral("transform.scale.y"),
                            Qt::CaseInsensitive) == 0) {
-    property->setUnit(QStringLiteral("px"));
+    property->setUnit(QStringLiteral("x"));
   }
+}
+
+QString scaleSupplementaryText(const ArtifactAbstractLayerPtr &layer,
+                               const QString &propertyName,
+                               const QVariant &value) {
+  if (!layer) {
+    return {};
+  }
+
+  const auto sourceSize = layer->sourceSize();
+  const bool isScaleX =
+      propertyName.compare(QStringLiteral("transform.scale.x"),
+                           Qt::CaseInsensitive) == 0;
+  const bool isScaleY =
+      propertyName.compare(QStringLiteral("transform.scale.y"),
+                           Qt::CaseInsensitive) == 0;
+  if (!isScaleX && !isScaleY) {
+    return {};
+  }
+
+  const int baseSize = isScaleX ? sourceSize.width : sourceSize.height;
+  if (baseSize <= 0) {
+    return {};
+  }
+
+  const double scale = value.toDouble();
+  const int actualSize = std::max(0, static_cast<int>(std::lround(
+                                    static_cast<double>(baseSize) * scale)));
+  return QStringLiteral("%1 px → %2 px")
+      .arg(baseSize)
+      .arg(actualSize);
+}
+
+void updateScaleSupplementaryText(
+    ArtifactPropertyEditorRowWidget *row, const ArtifactAbstractLayerPtr &layer,
+    const std::shared_ptr<ArtifactCore::AbstractProperty> &property,
+    const QVariant &value) {
+  if (!row || !property) {
+    return;
+  }
+  row->setSupplementaryText(
+      scaleSupplementaryText(layer, property->getName(), value));
 }
 
 std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
@@ -472,7 +514,11 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
     const std::function<void(const QString &, const QVariant &)> &commitValue,
     const std::function<void(const QString &, const QVariant &)> &previewValue =
         {},
-    const std::function<void(const QString &)> &keyframeChanged = {}) {
+    const std::function<void(const QString &)> &keyframeChanged = {},
+    const std::function<void(
+        ArtifactPropertyEditorRowWidget *,
+        const std::shared_ptr<ArtifactCore::AbstractProperty> &,
+        const QVariant &)> &rowValueChanged = {}) {
   if (!propertyPtr)
     return nullptr;
   const auto &property = *propertyPtr;
@@ -491,17 +537,23 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
 
   const auto applyPreviewValue =
       [handler = previewValue ? previewValue : commitValue, propertyPtr,
-        propertyName = property.getName()](const QVariant &value) {
+        propertyName = property.getName(), row, rowValueChanged](const QVariant &value) {
          if (propertyPtr) {
            propertyPtr->setValue(value);
+         }
+         if (rowValueChanged) {
+           rowValueChanged(row, propertyPtr, value);
          }
         handler(propertyName, value);
       };
   const auto applyCommitValue =
       [commitValue, propertyPtr,
-       propertyName = property.getName()](const QVariant &value) {
+       propertyName = property.getName(), row, rowValueChanged](const QVariant &value) {
         if (propertyPtr) {
           propertyPtr->setValue(value);
+        }
+        if (rowValueChanged) {
+          rowValueChanged(row, propertyPtr, value);
         }
         commitValue(propertyName, value);
       };
@@ -662,14 +714,24 @@ void addRowsFromProperties(
     const std::function<void(const QString &)> &keyframeChanged,
     bool *addedAny,
     QHash<QString, ArtifactPropertyEditorRowWidget *> *registry = nullptr,
-    std::vector<ArtifactPropertyEditorRowWidget *> *collectedRows = nullptr) {
+    std::vector<ArtifactPropertyEditorRowWidget *> *collectedRows = nullptr,
+    const std::function<void(ArtifactPropertyEditorRowWidget *,
+                             const std::shared_ptr<ArtifactCore::AbstractProperty> &)>
+        &decorateRow = {},
+    const std::function<void(
+        ArtifactPropertyEditorRowWidget *,
+        const std::shared_ptr<ArtifactCore::AbstractProperty> &,
+        const QVariant &)> &rowValueChanged = {}) {
   for (const auto &ptr : properties) {
     if (!ptr || !propertyMatchesFilter(*ptr, filterText)) {
       continue;
     }
     if (auto *row =
             createPropertyRow(parent, ptr, commitValue, previewValue,
-                              keyframeChanged)) {
+                              keyframeChanged, rowValueChanged)) {
+      if (decorateRow) {
+        decorateRow(row, ptr);
+      }
       layout->addWidget(row);
       if (registry) {
         registry->insert(ptr->getName(), row);
@@ -1039,6 +1101,10 @@ void ArtifactPropertyWidget::Impl::updatePropertyValues() {
       editor->setValueFromVariant(animatedValue);
     }
 
+    updateScaleSupplementaryText(row, currentLayer, propertyPtr,
+                                 animatedValue.isValid() ? animatedValue
+                                                         : propertyPtr->getValue());
+
     // キーフレーム状態（◆ボタン）の更新
     row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
     row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
@@ -1210,6 +1276,21 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   }
 
   auto summaryPreviewOpacity = std::make_shared<std::optional<float>>();
+  const auto decorateLayerRow =
+      [layer](ArtifactPropertyEditorRowWidget *row,
+              const std::shared_ptr<ArtifactCore::AbstractProperty> &property) {
+        if (!row || !property) {
+          return;
+        }
+        updateScaleSupplementaryText(row, layer, property,
+                                     property->getValue());
+      };
+  const auto updateLayerRowValue =
+      [layer](ArtifactPropertyEditorRowWidget *row,
+              const std::shared_ptr<ArtifactCore::AbstractProperty> &property,
+              const QVariant &value) {
+        updateScaleSupplementaryText(row, layer, property, value);
+      };
   addRowsFromProperties(
       summaryGroup, summaryLayout, layerSummaryProperties, filterText,
       [this, layer, summaryPreviewOpacity](const QString &name, const QVariant &value) {
@@ -1252,7 +1333,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         }
       },
       notifyLayerKeyframeChanged,
-      &hasSummaryProperties, &propertyEditors, &summaryRows);
+      &hasSummaryProperties, &propertyEditors, &summaryRows,
+      decorateLayerRow, updateLayerRowValue);
 
   const auto effects = layer->getEffects();
   const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
@@ -1292,7 +1374,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         },
         {},
         {},
-        &hasSummaryProperties, &propertyEditors, &effectSummaryRows);
+        &hasSummaryProperties, &propertyEditors, &effectSummaryRows,
+        {});
     alignPropertyRowLabels(effectSummaryRows, 132, 176);
   }
 
@@ -1359,7 +1442,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
           }
         },
         notifyLayerKeyframeChanged,
-        &addedGroupProperties, &propertyEditors, &groupRows);
+        &addedGroupProperties, &propertyEditors, &groupRows,
+        decorateLayerRow, updateLayerRowValue);
     if (addedGroupProperties) {
       alignPropertyRowLabels(groupRows, 132, 184);
       mainLayout->addWidget(group);

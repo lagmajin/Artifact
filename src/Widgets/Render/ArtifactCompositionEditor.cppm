@@ -2511,13 +2511,17 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *gridAct = displayMenu->addAction("Grid");
   QAction *guidesAct = displayMenu->addAction("Guides");
   QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
+  QAction *anchorCenterAct = displayMenu->addAction("Anchor / Center");
   displayMenu->addSeparator();
   QAction *gpuBlendAct = displayMenu->addAction("GPU Blend (CS)");
   checkerboardAct->setCheckable(true);
   gridAct->setCheckable(true);
   guidesAct->setCheckable(true);
   safeMarginsAct->setCheckable(true);
+  anchorCenterAct->setCheckable(true);
   gpuBlendAct->setCheckable(true);
+  anchorCenterAct->setToolTip(
+      QStringLiteral("Show the selected layer anchor point and center point"));
   impl_->displayOptionsBtn_->setMenu(displayMenu);
 
   // Connect actions
@@ -2573,6 +2577,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      if (impl_->renderController_)
                        impl_->renderController_->setShowSafeMargins(checked);
                    });
+  QObject::connect(anchorCenterAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (impl_->renderController_)
+                       impl_->renderController_->setShowAnchorCenterOverlay(checked);
+                   });
   QObject::connect(gpuBlendAct, &QAction::toggled, this, [this](bool checked) {
     if (impl_->renderController_) {
       impl_->renderController_->setGpuBlendEnabled(checked);
@@ -2596,6 +2605,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     gridAct->setChecked(impl_->renderController_->isShowGrid());
     guidesAct->setChecked(impl_->renderController_->isShowGuides());
     safeMarginsAct->setChecked(impl_->renderController_->isShowSafeMargins());
+    anchorCenterAct->setChecked(impl_->renderController_->isShowAnchorCenterOverlay());
     gpuBlendAct->setChecked(impl_->renderController_->isGpuBlendEnabled());
   }
 

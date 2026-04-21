@@ -282,7 +282,7 @@ public:
 
  QPainterPath path = buildShapePath(shapeType_, width_, height_, cornerRadius_,
                                       starPoints_, starInnerRadius_, polygonSides_).toPainterPath();
-   if (shapeType_ == Artifact::ShapeType::Polygon && customPolygonPoints_.size() >= 3) {
+   if (customPolygonPoints_.size() >= 3) {
     ShapePath customPath;
     customPath.setPolygon(customPolygonPoints_, customPolygonClosed_);
     path = customPath.toPainterPath();
@@ -382,7 +382,7 @@ void ArtifactShapeLayer::setStarInnerRadius(float r) { impl_->starInnerRadius_ =
 float ArtifactShapeLayer::starInnerRadius() const { return impl_->starInnerRadius_; }
 void ArtifactShapeLayer::setPolygonSides(int s) { impl_->polygonSides_ = std::max(3, s); impl_->markDirty(); Q_EMIT changed(); }
 int ArtifactShapeLayer::polygonSides() const { return impl_->polygonSides_; }
-bool ArtifactShapeLayer::hasCustomPolygon() const { return impl_->shapeType_ == Artifact::ShapeType::Polygon && impl_->customPolygonPoints_.size() >= 3; }
+bool ArtifactShapeLayer::hasCustomPolygon() const { return impl_->customPolygonPoints_.size() >= 3; }
 void ArtifactShapeLayer::setCustomPolygonPoints(const std::vector<QPointF>& points, bool closed) { impl_->customPolygonPoints_ = points; impl_->customPolygonClosed_ = closed; impl_->markDirty(); Q_EMIT changed(); }
 void ArtifactShapeLayer::clearCustomPolygonPoints() { if (impl_->customPolygonPoints_.empty()) return; impl_->customPolygonPoints_.clear(); impl_->customPolygonClosed_ = true; impl_->markDirty(); Q_EMIT changed(); }
 std::vector<QPointF> ArtifactShapeLayer::customPolygonPoints() const { return impl_->customPolygonPoints_; }
@@ -417,7 +417,7 @@ QRectF ArtifactShapeLayer::localBounds() const
  };
 
  QRectF bounds;
- if (impl_->shapeType_ == Artifact::ShapeType::Polygon && impl_->customPolygonPoints_.size() >= 2) {
+ if (impl_->customPolygonPoints_.size() >= 2) {
   bounds = boundsOfPoints(impl_->customPolygonPoints_);
  } else {
   const QPainterPath path = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
@@ -751,10 +751,6 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
  for (const auto& value : customPolygonPoints) {
   const QJsonObject p = value.toObject();
   layer->impl_->customPolygonPoints_.push_back(QPointF(p["x"].toDouble(), p["y"].toDouble()));
- }
- if (layer->impl_->shapeType_ != Artifact::ShapeType::Polygon) {
-  layer->impl_->customPolygonPoints_.clear();
-  layer->impl_->customPolygonClosed_ = true;
  }
  layer->impl_->markDirty();
  return layer;

@@ -487,7 +487,7 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
     const FrameRange workArea = comp->workAreaRange();
     const int64_t startFrame = workArea.start();
     const int64_t endFrame = workArea.end();
-    const int64_t totalFrames = endFrame - startFrame + 1;
+    const int64_t totalFrames = std::max<int64_t>(1, endFrame - startFrame);
     const QSize compSize = comp->settings().compositionSize();
     const auto layers = comp->allLayer();
 
@@ -526,7 +526,7 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
     watcher->setFuture(QtConcurrent::run([startFrame, endFrame, compSize, layers, filePath, cancelFlag, totalFrames]() -> int {
         int renderedCount = 0;
 
-        for (int64_t frame = startFrame; frame <= endFrame; ++frame) {
+        for (int64_t frame = startFrame; frame < endFrame; ++frame) {
             if (*cancelFlag) break;
 
             // キャンバスをクリア

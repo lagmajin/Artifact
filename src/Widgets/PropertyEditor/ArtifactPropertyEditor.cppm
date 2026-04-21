@@ -1569,6 +1569,16 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   applyPropertyLabelPalette(label_);
   applyPropertyLabelPalette(scrubHandle_);
 
+  supplementaryLabel_ = new QLabel(this);
+  supplementaryLabel_->setObjectName(
+      QStringLiteral("propertySupplementaryLabel"));
+  supplementaryLabel_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+  supplementaryLabel_->setAutoFillBackground(false);
+  supplementaryLabel_->setVisible(false);
+  supplementaryLabel_->setSizePolicy(QSizePolicy::Minimum,
+                                     QSizePolicy::Fixed);
+  applyPropertyLabelPalette(supplementaryLabel_, 135);
+
   editor_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   applyPropertyFieldPalette(editor_);
 
@@ -1662,6 +1672,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     layout->addWidget(scrubHandle_);
     layout->addWidget(editor_, 1);
   }
+  layout->addWidget(supplementaryLabel_, 0);
   layout->addWidget(auxContainer);
 
   QObject::connect(resetButton_, &QPushButton::clicked, this, [this]() {
@@ -1749,11 +1760,24 @@ void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString &tooltip) {
       tooltip +
       QStringLiteral("\nDrag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
   editor_->setToolTip(tooltip);
+  if (supplementaryLabel_) {
+    supplementaryLabel_->setToolTip(tooltip);
+  }
   keyframeButton_->setToolTip(tooltip);
   prevKeyBtn_->setToolTip(tooltip);
   nextKeyBtn_->setToolTip(tooltip);
   resetButton_->setToolTip(tooltip);
   expressionButton_->setToolTip(tooltip);
+}
+
+void ArtifactPropertyEditorRowWidget::setSupplementaryText(
+    const QString &text) {
+  if (!supplementaryLabel_) {
+    return;
+  }
+  const QString trimmed = text.trimmed();
+  supplementaryLabel_->setText(trimmed);
+  supplementaryLabel_->setVisible(!trimmed.isEmpty());
 }
 
 void ArtifactPropertyEditorRowWidget::setShowExpressionButton(

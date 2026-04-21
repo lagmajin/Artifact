@@ -52,6 +52,10 @@ static QString interpolationLabelForCandidate(const ArtifactCore::EasingCandidat
         return QStringLiteral("maps to back-out");
     case ArtifactCore::InterpolationType::Exponential:
         return QStringLiteral("maps to expo");
+    case ArtifactCore::InterpolationType::BackIn:
+        return QStringLiteral("maps to back-in");
+    case ArtifactCore::InterpolationType::BackInOut:
+        return QStringLiteral("maps to back-in-out");
     default:
         return QStringLiteral("maps to interpolation");
     }
