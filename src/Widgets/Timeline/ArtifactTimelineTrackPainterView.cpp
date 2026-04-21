@@ -6,6 +6,7 @@ module;
 #include <QKeyEvent>
 #include <QMenu>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPen>
 #include <QPolygonF>
 #include <QRectF>
@@ -74,6 +75,17 @@ int trackTopAt(const QVector<int> &heights, const int trackIndex) {
     y += heights[i] + kTrackSpacing;
   }
   return y;
+}
+
+int totalTrackContentHeight(const QVector<int> &heights) {
+  int h = 0;
+  for (int i = 0; i < heights.size(); ++i) {
+    h += heights[i];
+    if (i + 1 < heights.size()) {
+      h += kTrackSpacing;
+    }
+  }
+  return h;
 }
 
 constexpr int kEdgeHitZone = 6;
@@ -612,8 +624,8 @@ void ArtifactTimelineTrackPainterView::setCurrentFrame(const double frame) {
   const double newX =
       impl_->currentFrame_ * impl_->pixelsPerFrame_ - impl_->horizontalOffset_;
   const QRect dirtyRect =
-      QRect(static_cast<int>(std::floor(std::min(oldX, newX))) - 4, 0,
-            static_cast<int>(std::ceil(std::abs(newX - oldX))) + 8, height());
+      QRect(static_cast<int>(std::floor(std::min(oldX, newX))) - 10, 0,
+            static_cast<int>(std::ceil(std::abs(newX - oldX))) + 20, height());
   update(dirtyRect);
 }
 
@@ -647,10 +659,14 @@ double ArtifactTimelineTrackPainterView::horizontalOffset() const {
 }
 
 void ArtifactTimelineTrackPainterView::setVerticalOffset(const double value) {
-  if (std::abs(impl_->verticalOffset_ - value) < 0.0001) {
+  const double maxOffset = std::max(
+      0.0, static_cast<double>(totalTrackContentHeight(impl_->trackHeights_) -
+                               height()));
+  const double clamped = std::clamp(value, 0.0, maxOffset);
+  if (std::abs(impl_->verticalOffset_ - clamped) < 0.0001) {
     return;
   }
-  impl_->verticalOffset_ = std::max(0.0, value);
+  impl_->verticalOffset_ = clamped;
   Q_EMIT verticalOffsetChanged(impl_->verticalOffset_);
   update();
 }
@@ -673,6 +689,7 @@ void ArtifactTimelineTrackPainterView::setKeyframeContext(
 void ArtifactTimelineTrackPainterView::setTrackCount(const int count) {
   const int sanitized = std::max(kMinTrackCount, count);
   if (impl_->trackHeights_.size() == sanitized) {
+    setVerticalOffset(impl_->verticalOffset_);
     return;
   }
   impl_->selectionSyncDirty_ = true;
@@ -682,6 +699,7 @@ void ArtifactTimelineTrackPainterView::setTrackCount(const int count) {
     impl_->trackHeights_[i] = kDefaultTrackHeight;
   }
   updateGeometry();
+  setVerticalOffset(impl_->verticalOffset_);
   update();
 }
 
@@ -715,6 +733,7 @@ void ArtifactTimelineTrackPainterView::setTrackHeights(
         std::max(16, static_cast<int>(heights.value(i, kDefaultTrackHeight)));
   }
   updateGeometry();
+  setVerticalOffset(impl_->verticalOffset_);
   update();
 }
 
@@ -1091,8 +1110,39 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     }
   }
 
-  // Current frame is now drawn by the parent overlay so it can span the
-  // navigator, scrub bar, work area, and track area as a single marker.
+  drawPlayhead(p);
+}
+
+void ArtifactTimelineTrackPainterView::drawPlayhead(QPainter& p) const {
+  const double ppf = impl_->pixelsPerFrame_;
+  const double xOffset = impl_->horizontalOffset_;
+  const double frame = impl_->currentFrame_;
+  const qreal playheadX = static_cast<qreal>(frame * ppf - xOffset);
+  if (playheadX < -12.0 || playheadX > width() + 12.0) {
+    return;
+  }
+
+  p.setRenderHint(QPainter::Antialiasing, true);
+
+  const QColor playheadColor = timelineThemeColors().accent;
+  const qreal headTop = 1.5;
+  const qreal headHeight = 13.0;
+  const qreal headWidth = 16.0;
+  const qreal stemTop = headTop + headHeight + 2.0;
+  const qreal stemBottom = static_cast<qreal>(height()) - 1.0;
+
+  QPainterPath headPath;
+  headPath.moveTo(playheadX, headTop + headHeight);
+  headPath.lineTo(playheadX - headWidth * 0.5, headTop);
+  headPath.lineTo(playheadX + headWidth * 0.5, headTop);
+  headPath.closeSubpath();
+
+  p.setPen(QPen(QColor(18, 18, 18, 150), 1));
+  p.setBrush(playheadColor);
+  p.drawPath(headPath);
+
+  p.setPen(QPen(playheadColor, 2, Qt::SolidLine, Qt::FlatCap));
+  p.drawLine(QPointF(playheadX, stemTop), QPointF(playheadX, stemBottom));
 }
 
 void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {

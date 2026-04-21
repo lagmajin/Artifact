@@ -11,7 +11,6 @@ module;
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QPainterPath>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSplitter>
@@ -27,7 +26,6 @@ module;
 #include <QWheelEvent>
 #include <QWidget>
 #include <QPaintEvent>
-#include <QPointer>
 #include <QPolygonF>
 #include <QStackedWidget>
 #include <limits>
@@ -76,6 +74,7 @@ import Artifact.Layer.Video;
 import Property.Abstract;
 import Artifact.Effect.Abstract;
 import Frame.Position;
+import Undo.UndoManager;
 import Time.Rational;
 
 namespace Artifact {
@@ -701,6 +700,163 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
                           LayerChangedEvent::ChangeType::Modified});
   }
   return changed;
+}
+
+QString interpolationTypeLabel(const ArtifactCore::InterpolationType type)
+{
+  switch (type) {
+  case ArtifactCore::InterpolationType::Constant:
+    return QStringLiteral("hold");
+  case ArtifactCore::InterpolationType::Linear:
+    return QStringLiteral("linear");
+  case ArtifactCore::InterpolationType::EaseIn:
+    return QStringLiteral("ease-in");
+  case ArtifactCore::InterpolationType::EaseOut:
+    return QStringLiteral("ease-out");
+  case ArtifactCore::InterpolationType::EaseInOut:
+    return QStringLiteral("ease-in-out");
+  case ArtifactCore::InterpolationType::Bezier:
+    return QStringLiteral("bezier");
+  default:
+    return QStringLiteral("interpolation");
+  }
+}
+
+std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+    const ArtifactAbstractLayerPtr& layer,
+    const QString& propertyPath);
+
+struct InterpolationChangeRecord {
+  ArtifactAbstractLayerWeak layer;
+  QString propertyPath;
+  RationalTime time;
+  ArtifactCore::KeyFrame before;
+  ArtifactCore::KeyFrame after;
+};
+
+class ApplyInterpolationCommand final : public UndoCommand {
+public:
+  explicit ApplyInterpolationCommand(QVector<InterpolationChangeRecord> records)
+      : records_(std::move(records)) {}
+
+  void undo() override { apply(false); }
+  void redo() override { apply(true); }
+  QString label() const override { return QStringLiteral("Apply Interpolation"); }
+
+private:
+  void apply(const bool useAfter)
+  {
+    QSet<QString> changedLayerIds;
+    for (const auto& record : records_) {
+      auto layer = record.layer.lock();
+      if (!layer) {
+        continue;
+      }
+      const auto property = findLayerPropertyByPath(layer, record.propertyPath);
+      if (!property) {
+        continue;
+      }
+      const auto& keyframe = useAfter ? record.after : record.before;
+      property->addKeyFrame(keyframe.time,
+                            keyframe.value.isValid() ? keyframe.value : property->getValue(),
+                            keyframe.interpolation,
+                            keyframe.cp1_x,
+                            keyframe.cp1_y,
+                            keyframe.cp2_x,
+                            keyframe.cp2_y);
+      layer->changed();
+      changedLayerIds.insert(layer->id().toString());
+    }
+
+    for (const auto& record : records_) {
+      auto layer = record.layer.lock();
+      if (!layer) {
+        continue;
+      }
+      const QString layerKey = layer->id().toString();
+      if (!changedLayerIds.contains(layerKey)) {
+        continue;
+      }
+      if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+      }
+    }
+
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QVector<InterpolationChangeRecord> records_;
+};
+
+int applyInterpolationToSelectedKeyframesImpl(
+    const ArtifactCompositionPtr& composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers,
+    const ArtifactCore::InterpolationType interpolationType)
+{
+  if (!composition || markers.isEmpty()) {
+    return 0;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  QSet<QString> seen;
+  QVector<InterpolationChangeRecord> records;
+
+  for (const auto& marker : markers) {
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    const QString dedupeKey =
+        QStringLiteral("%1|%2|%3").arg(marker.layerId.toString(), marker.propertyPath,
+                                        QString::number(frame));
+    if (seen.contains(dedupeKey)) {
+      continue;
+    }
+    seen.insert(dedupeKey);
+
+    const auto layer = composition->layerById(marker.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property || !property->isAnimatable()) {
+      continue;
+    }
+
+    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const auto keyframes = property->getKeyFrames();
+    const auto it = std::find_if(keyframes.cbegin(), keyframes.cend(),
+                                 [&time](const ArtifactCore::KeyFrame& keyframe) {
+                                   return keyframe.time == time;
+                                 });
+    if (it == keyframes.cend()) {
+      continue;
+    }
+
+    const ArtifactCore::KeyFrame before = *it;
+    ArtifactCore::KeyFrame after = before;
+    after.interpolation = interpolationType;
+    records.push_back(InterpolationChangeRecord{
+        layer,
+        marker.propertyPath,
+        time,
+        before,
+        after,
+    });
+  }
+
+  if (records.isEmpty()) {
+    return 0;
+  }
+
+  const int appliedCount = static_cast<int>(records.size());
+  if (auto* mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<ApplyInterpolationCommand>(std::move(records)));
+    return appliedCount;
+  }
+  return 0;
 }
 
 bool moveTimelineKeyframe(const ArtifactCompositionPtr& composition,
@@ -1430,28 +1586,10 @@ public:
     setAttribute(Qt::WA_NoSystemBackground, true);
   }
 
-  void setPlayheadOverlay(QWidget *overlay)
-  {
-    if (playheadOverlay_ == overlay) {
-      return;
-    }
-    playheadOverlay_ = overlay;
-    if (playheadOverlay_) {
-      playheadOverlay_->setParent(this);
-      playheadOverlay_->setGeometry(rect());
-      playheadOverlay_->raise();
-      playheadOverlay_->show();
-    }
-  }
-
 protected:
   void resizeEvent(QResizeEvent *event) override
   {
     QWidget::resizeEvent(event);
-    if (playheadOverlay_) {
-      playheadOverlay_->setGeometry(rect());
-      playheadOverlay_->raise();
-    }
   }
 
   void paintEvent(QPaintEvent *event) override {
@@ -1474,62 +1612,6 @@ protected:
     painter.fillRect(QRect(bounds.left(), bounds.top(), bounds.width(), 1),
                      accent);
   }
-
-private:
-  QPointer<QWidget> playheadOverlay_;
-};
-
-class TimelinePlayheadOverlayWidget final : public QWidget {
-public:
-  explicit TimelinePlayheadOverlayWidget(ArtifactTimelineTrackPainterView *trackView,
-                                        QWidget *parent = nullptr)
-      : QWidget(parent), trackView_(trackView)
-  {
-    setAttribute(Qt::WA_TransparentForMouseEvents, true);
-  }
-
-  protected:
-  void paintEvent(QPaintEvent * /*event*/) override
-  {
-    QPainter p(this);
-
-    if (!trackView_) {
-      return;
-    }
-
-    const double ppf = std::max(0.01, trackView_->pixelsPerFrame());
-    const double xOffset = trackView_->horizontalOffset();
-    const double frame = trackView_->currentFrame();
-    const qreal playheadX = static_cast<qreal>(frame * ppf - xOffset);
-    if (playheadX < -12.0 || playheadX > width() + 12.0) {
-      return;
-    }
-
-    p.setRenderHint(QPainter::Antialiasing, true);
-
-    const QColor playheadColor(255, 106, 71);
-    const qreal headTop = 1.5;
-    const qreal headHeight = 13.0;
-    const qreal headWidth = 16.0;
-    const qreal stemTop = headTop + headHeight + 2.0;
-    const qreal stemBottom = static_cast<qreal>(height()) - 1.0;
-
-    QPainterPath headPath;
-    headPath.moveTo(playheadX, headTop + headHeight);
-    headPath.lineTo(playheadX - headWidth * 0.5, headTop);
-    headPath.lineTo(playheadX + headWidth * 0.5, headTop);
-    headPath.closeSubpath();
-
-    p.setPen(QPen(QColor(18, 18, 18, 150), 1));
-    p.setBrush(playheadColor);
-    p.drawPath(headPath);
-
-    p.setPen(QPen(playheadColor, 2, Qt::SolidLine, Qt::FlatCap));
-    p.drawLine(QPointF(playheadX, stemTop), QPointF(playheadX, stemBottom));
-  }
-
-private:
-  ArtifactTimelineTrackPainterView *trackView_ = nullptr;
 };
 
 class TimelineStatusClickFilter final : public QObject {
@@ -1629,7 +1711,6 @@ public:
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   WorkAreaControl *workArea_ = nullptr;
   ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
-  TimelinePlayheadOverlayWidget *playheadOverlay_ = nullptr;
   ArtifactTimelineGlobalSwitches *globalSwitches_ = nullptr;
   CompositionID compositionId_;
   bool shyActive_ = false;
@@ -1658,9 +1739,9 @@ public:
   QTimer* curveEditorRefreshTimer_ = nullptr;
   bool graphEditorVisible_ = false;
   bool graphEditorNeedsFit_ = false;
-  // Last playhead x-position in parent (rightPanel) coordinates, used to
-  // dirty the correct strip when the playhead moves.
-  int lastPlayheadParentX_ = -9999;
+  // Last playhead x-position in track-view coordinates, used to dirty the
+  // correct strip when the playhead moves.
+  int lastPlayheadTrackX_ = -9999;
 };
 
 ArtifactTimelineWidget::Impl::Impl() {}
@@ -2640,10 +2721,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   rightPanelLayout->addWidget(impl_->timelineModeStack_, 1);
   rightPanel->setLayout(rightPanelLayout);
 
-  impl_->playheadOverlay_ =
-      new TimelinePlayheadOverlayWidget(painterTrackView, rightPanel);
-  rightPanel->setPlayheadOverlay(impl_->playheadOverlay_);
-
   auto *headerSeekFilter =
       new HeaderSeekFilter(painterTrackView, scrubBar, rightPanel);
   headerSeekFilter->setDebugCallback([this](const QString &msg) {
@@ -2876,7 +2953,6 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
 
   if (impl_->painterTrackView_) {
     if (auto svc = ArtifactProjectService::instance()) {
-      svc->changeCurrentComposition(id);
       auto res = svc->findComposition(id);
       if (res.success && !res.ptr.expired()) {
         auto comp = res.ptr.lock();
@@ -3018,7 +3094,7 @@ void ArtifactTimelineWidget::refreshTracks() {
   const int trackCount = std::max(1, static_cast<int>(visibleRows.size()));
   trackHeights.reserve(trackCount);
   for (int i = 0; i < trackCount; ++i) {
-    trackHeights.push_back(static_cast<int>(kTimelineRowHeight));
+    trackHeights.push_back(impl_->layerTimelinePanel_ ? impl_->layerTimelinePanel_->rowHeight() : static_cast<int>(kTimelineRowHeight));
   }
   QVector<ArtifactTimelineTrackPainterView::TrackClipVisual> painterClips;
   painterClips.reserve(visibleRows.size());
@@ -3065,7 +3141,10 @@ void ArtifactTimelineWidget::refreshTracks() {
     impl_->painterTrackView_->setCurrentFrame(impl_->currentFrame_);
     syncPlayheadOverlay();
     impl_->painterTrackView_->setClips(painterClips);
-    syncTimelineVerticalOffset(impl_->painterTrackView_->verticalOffset());
+    const double syncedOffset = impl_->layerTimelinePanel_
+        ? impl_->layerTimelinePanel_->verticalOffset()
+        : impl_->painterTrackView_->verticalOffset();
+    syncTimelineVerticalOffset(syncedOffset);
     syncPainterSelectionState();
   }
   if (impl_->curveEditor_ && impl_->graphEditorVisible_) {
@@ -3525,40 +3604,23 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
 
 void ArtifactTimelineWidget::syncPlayheadOverlay()
 {
-  if (!impl_ || !impl_->playheadOverlay_) {
+  if (!impl_ || !impl_->painterTrackView_) {
     return;
   }
-  impl_->playheadOverlay_->raise();
+  const double ppf = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
+  const double xOff = impl_->painterTrackView_->horizontalOffset();
+  const double frame = impl_->painterTrackView_->currentFrame();
+  const int newX = static_cast<int>(frame * ppf - xOff);
 
-  // Update the parent strip so Qt re-composites the full z-stack in that region
-  // (parent → track view → overlay).  The opaque track view paints over the old
-  // playhead ghost before the overlay draws the new position on top.
-  QWidget *parent = impl_->playheadOverlay_->parentWidget();
-  if (parent && impl_->painterTrackView_) {
-    const double ppf    = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
-    const double xOff   = impl_->painterTrackView_->horizontalOffset();
-    const double frame  = impl_->painterTrackView_->currentFrame();
-    const QPoint origin = impl_->painterTrackView_->mapTo(parent, QPoint(0, 0));
-    const int newX      = origin.x() + static_cast<int>(frame * ppf - xOff);
+  constexpr int kMargin = 12;
+  const int oldX = impl_->lastPlayheadTrackX_;
+  impl_->lastPlayheadTrackX_ = newX;
 
-    // headWidth is 16 px; add a few pixels for the line and anti-aliasing.
-    constexpr int kMargin = 12;
-    const int oldX = impl_->lastPlayheadParentX_;
-    impl_->lastPlayheadParentX_ = newX;
-
-    // Dirty a strip that covers both the previous and current playhead positions
-    // so the old ghost is cleared and the new line is drawn.
-    const int left  = std::min(oldX, newX) - kMargin;
-    const int right = std::max(oldX, newX) + kMargin + 1;
-    const QRect strip(left, 0, right - left, parent->height());
-    // Parent must repaint first (clears the old playhead from the backing store),
-    // then the overlay repaints on top to draw the new position.
-    parent->update(strip);
-    impl_->playheadOverlay_->update(strip);
-  } else if (parent) {
-    parent->update(impl_->playheadOverlay_->geometry());
-    impl_->playheadOverlay_->update();
-  }
+  const int left = std::min(oldX, newX) - kMargin;
+  const int right = std::max(oldX, newX) + kMargin + 1;
+  const QRect strip(left, 0, right - left,
+                    impl_->painterTrackView_->height());
+  impl_->painterTrackView_->update(strip);
 }
 
  void ArtifactTimelineWidget::jumpToSearchHit(int step)
@@ -3813,6 +3875,39 @@ void ArtifactTimelineWidget::removeKeyframeAtPlayhead()
             .arg(frame)
             .arg(layers.size()));
   }
+}
+
+void ArtifactTimelineWidget::applyInterpolationToSelectedKeyframes(
+    const ArtifactCore::InterpolationType type)
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+
+  const auto markers = impl_->painterTrackView_->selectedKeyframeMarkers();
+  if (markers.isEmpty()) {
+    return;
+  }
+
+  const int applied = applyInterpolationToSelectedKeyframesImpl(composition, markers, type);
+  if (applied <= 0) {
+    return;
+  }
+
+  refreshTracks();
+  updateKeyframeState();
+  Q_EMIT timelineDebugMessage(
+      QStringLiteral("Applied %1 interpolation to %2 keyframe(s)")
+          .arg(interpolationTypeLabel(type))
+          .arg(applied));
 }
 
 void ArtifactTimelineWidget::selectAllKeyframes()

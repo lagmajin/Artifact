@@ -314,7 +314,7 @@ namespace Artifact
   const QColor railColor = theme.surface.darker(108);
   const QColor railBorder = theme.border;
   const QColor cacheBaseColor(84, 198, 120);
-  const QColor playheadColor(255, 142, 73);
+  const QColor playheadColor = theme.accent;
   
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
   bgGrad.setColorAt(0.0, bgTop);
@@ -367,7 +367,7 @@ namespace Artifact
      const double labelW = static_cast<double>(QFontMetrics(p.font()).horizontalAdvance(label));
      const double labelX = rx + 3.0;
      if (labelX <= lastLabelRight + 6.0) continue;
-     p.setPen(playheadColor.lighter(195));
+     p.setPen(theme.text.darker(130));
      p.drawText(QRectF(labelX, 0.0, labelW + 6.0, topBandHeight - 2), Qt::AlignLeft | Qt::AlignVCenter, label);
      lastLabelRight = labelX + labelW;
     }
