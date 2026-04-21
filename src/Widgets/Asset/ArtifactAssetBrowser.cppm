@@ -32,6 +32,10 @@ module;
 #include <QImage>
 #include <QImageReader>
 #include <QPainter>
+#include <QMessageBox>
+#include <QInputDialog>
+#include <QFileSystemWatcher>
+#include <QTimer>
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imageio.h>
@@ -483,9 +487,21 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   void syncDirectorySelection();
   void refreshUnusedAssetCache();
   QString syncStateText() const;
-  int thumbnailSizePx() const;
-  void setThumbnailSizePx(int value);
-  };
+   int thumbnailSizePx() const;
+   void setThumbnailSizePx(int value);
+   QFileSystemWatcher* fsWatcher_ = nullptr;
+   bool watchScheduled_ = false;
+   void setupFileSystemWatcher();
+   void watchCurrentDirectory();
+   void handleFileRenamed(const QString& oldPath, const QString& newPath);
+   void handleFileDeleted(const QString& path);
+   void createNewFolder();
+   void renameSelected();
+   void deleteSelected();
+   QString promptNewName(const QString& currentName) const;
+   QString promptNewFolderName() const;
+   bool confirmDelete(const QStringList& paths) const;
+   };
 
  ArtifactAssetBrowser::Impl::Impl()
  {
@@ -1250,13 +1266,14 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    QString path = directoryModel->pathFromIndex(index);
 
    if (!path.isEmpty()) {
-    impl_->currentDirectoryPath_ = path;
-    impl_->clearThumbnailCache();
-    impl_->applyFilters();
-    impl_->syncDirectorySelection();
-    folderChanged(path);
-   }
-  });
+     impl_->currentDirectoryPath_ = path;
+     impl_->watchCurrentDirectory();
+     impl_->clearThumbnailCache();
+     impl_->applyFilters();
+     impl_->syncDirectorySelection();
+     folderChanged(path);
+    }
+   });
 
   // Connect file double-click to add to project or navigate into folder
   connect(fileView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
@@ -1269,6 +1286,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    // If it's a folder, navigate into it
    if (item.isFolder) {
     impl_->currentDirectoryPath_ = filePath;
+    impl_->watchCurrentDirectory();
     impl_->clearThumbnailCache();
     impl_->applyFilters();
     impl_->syncDirectorySelection();
@@ -1384,6 +1402,8 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   layout->addLayout(VBoxLayout, 3);
   vLayout->addLayout(layout);
   setLayout(vLayout);
+
+  impl_->setupFileSystemWatcher();
  }
 
  ArtifactAssetBrowser::~ArtifactAssetBrowser()
@@ -1445,17 +1465,25 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    return;
   }
 
-  // Delete — 選択ファイルをプロジェクトから削除
+  // Delete — 選択ファイルをプロジェクトから削除 + 物理ファイル削除
   if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
-   QStringList paths = impl_->selectedAssetPaths();
-   if (!paths.isEmpty()) {
-    auto* svc = ArtifactProjectService::instance();
-    if (svc) {
-     // 個別削除APIが未実装のため、removeAllAssets() は呼ばない
-     // TODO: removeAssetFromProject(path) API 追加後に差し替え
-     qWarning() << "[AssetBrowser] Delete requested for" << paths.size() << "items (individual removal not yet implemented)";
-    }
+   if (!(event->modifiers() & Qt::ControlModifier) && !(event->modifiers() & Qt::ShiftModifier)) {
+    impl_->deleteSelected();
+    event->accept();
+    return;
    }
+  }
+
+  // F2 — リネーム
+  if (event->key() == Qt::Key_F2) {
+   impl_->renameSelected();
+   event->accept();
+   return;
+  }
+
+  // Ctrl+Shift+N — 新規フォルダ作成
+  if (event->key() == Qt::Key_N && (event->modifiers() & Qt::ControlModifier) && (event->modifiers() & Qt::ShiftModifier)) {
+   impl_->createNewFolder();
    event->accept();
    return;
   }
@@ -1613,6 +1641,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   {
   if (folderPath.isEmpty() || !QDir(folderPath).exists()) return;
   impl_->currentDirectoryPath_ = folderPath;
+  impl_->watchCurrentDirectory();
   impl_->clearThumbnailCache();
   if (impl_->breadcrumb_) {
    impl_->breadcrumb_->setPath(folderPath);
@@ -1727,6 +1756,16 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   // Create context menu
   QMenu contextMenu;
 
+  // New Folder action (always available)
+  QAction* newFolderAction = contextMenu.addAction("New Folder (Ctrl+Shift+N)");
+  connect(newFolderAction, &QAction::triggered, this, [this]() {
+   if (impl_) {
+    impl_->createNewFolder();
+   }
+  });
+
+  contextMenu.addSeparator();
+
   const QStringList selectedAssetPaths = impl_->selectedAssetPaths();
   const QStringList importTargets = selectedAssetPaths.isEmpty() ? QStringList{filePath} : selectedAssetPaths;
 
@@ -1787,7 +1826,7 @@ if (!item.isFolder) {
   });
 }
 
-   // Open in File Explorer action
+  // Open in File Explorer action
    QAction* openInExplorerAction = contextMenu.addAction("Open in File Explorer");
    connect(openInExplorerAction, &QAction::triggered, this, [filePath]() {
     QFileInfo fileInfo(filePath);
@@ -1799,6 +1838,27 @@ if (!item.isFolder) {
   QAction* copyPathAction = contextMenu.addAction("Copy File Path");
   connect(copyPathAction, &QAction::triggered, this, [filePath]() {
    QApplication::clipboard()->setText(filePath);
+  });
+
+  contextMenu.addSeparator();
+
+  // Rename action (F2)
+  QAction* renameAction = contextMenu.addAction("Rename (F2)");
+  connect(renameAction, &QAction::triggered, this, [this]() {
+   if (impl_) {
+    impl_->renameSelected();
+   }
+  });
+
+  // Delete action (Del)
+  const QString deleteLabel = selectedAssetPaths.size() > 1
+   ? QStringLiteral("Delete %1 Items (Del)").arg(selectedAssetPaths.size())
+   : QStringLiteral("Delete (Del)");
+  QAction* deleteAction = contextMenu.addAction(deleteLabel);
+  connect(deleteAction, &QAction::triggered, this, [this]() {
+   if (impl_) {
+    impl_->deleteSelected();
+   }
   });
 
   contextMenu.addSeparator();
@@ -1978,6 +2038,176 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
 
     watcher->setFuture(future);
     pendingWaveJobs_[audioFilePath] = {audioFilePath, watcher};
+}
+
+// ─────────────────────────────────────────────
+// File Operations: Delete / Rename / New Folder / FileSystemWatcher
+// ─────────────────────────────────────────────
+
+void ArtifactAssetBrowser::Impl::setupFileSystemWatcher()
+{
+  if (fsWatcher_) return;
+  fsWatcher_ = new QFileSystemWatcher();
+  QObject::connect(fsWatcher_, &QFileSystemWatcher::directoryChanged,
+                   QCoreApplication::instance(), [this](const QString& path) {
+    Q_UNUSED(path);
+    if (!watchScheduled_) {
+      watchScheduled_ = true;
+      QTimer::singleShot(500, [this]() {
+        watchScheduled_ = false;
+        clearThumbnailCache();
+        applyFilters();
+      });
+    }
+  });
+  QObject::connect(fsWatcher_, &QFileSystemWatcher::fileChanged,
+                   QCoreApplication::instance(), [this](const QString& path) {
+    Q_UNUSED(path);
+    if (!watchScheduled_) {
+      watchScheduled_ = true;
+      QTimer::singleShot(500, [this]() {
+        watchScheduled_ = false;
+        clearThumbnailCache();
+        applyFilters();
+      });
+    }
+  });
+}
+
+void ArtifactAssetBrowser::Impl::watchCurrentDirectory()
+{
+  if (!fsWatcher_) return;
+  if (!currentDirectoryPath_.isEmpty() && QDir(currentDirectoryPath_).exists()) {
+    if (!fsWatcher_->directories().contains(currentDirectoryPath_)) {
+      fsWatcher_->addPath(currentDirectoryPath_);
+    }
+  }
+}
+
+void ArtifactAssetBrowser::Impl::handleFileRenamed(const QString& oldPath, const QString& newPath)
+{
+  Q_UNUSED(oldPath);
+  Q_UNUSED(newPath);
+  clearThumbnailCache();
+  applyFilters();
+}
+
+void ArtifactAssetBrowser::Impl::handleFileDeleted(const QString& path)
+{
+  Q_UNUSED(path);
+  clearThumbnailCache();
+  applyFilters();
+}
+
+void ArtifactAssetBrowser::Impl::createNewFolder()
+{
+  QString folderName = promptNewFolderName();
+  if (folderName.isEmpty()) return;
+
+  QString parentDir = currentDirectoryPath_;
+  if (parentDir.isEmpty()) {
+    parentDir = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
+  }
+  if (parentDir.isEmpty()) {
+    parentDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation) + "/Assets";
+  }
+  if (parentDir.isEmpty()) return;
+
+  QString newPath = QDir(parentDir).filePath(folderName);
+  if (QDir().mkpath(newPath)) {
+    clearThumbnailCache();
+    applyFilters();
+  }
+}
+
+void ArtifactAssetBrowser::Impl::renameSelected()
+{
+  QStringList paths = selectedAssetPaths();
+  if (paths.isEmpty()) return;
+
+  QString oldPath = paths.first();
+  QFileInfo fi(oldPath);
+  QString newName = promptNewName(fi.fileName());
+  if (newName.isEmpty() || newName == fi.fileName()) return;
+
+  QString newPath = fi.absolutePath() + "/" + newName;
+  if (QFile::rename(oldPath, newPath)) {
+    clearThumbnailCache();
+    applyFilters();
+  }
+}
+
+void ArtifactAssetBrowser::Impl::deleteSelected()
+{
+  QStringList paths = selectedAssetPaths();
+  if (paths.isEmpty()) return;
+
+  if (!confirmDelete(paths)) return;
+
+  int deletedCount = 0;
+  for (const QString& path : paths) {
+    QFileInfo fi(path);
+    if (fi.isDir()) {
+      if (QDir(path).removeRecursively()) {
+        ++deletedCount;
+      }
+    } else {
+      if (QFile::remove(path)) {
+        ++deletedCount;
+      }
+    }
+  }
+
+  if (deletedCount > 0) {
+    auto* svc = ArtifactProjectService::instance();
+    if (svc) {
+      svc->removeAllAssets();
+      for (const QString& path : paths) {
+        if (QFileInfo::exists(path)) {
+          svc->importAssetsFromPaths(QStringList() << path);
+        }
+      }
+    }
+    clearThumbnailCache();
+    applyFilters();
+  }
+}
+
+QString ArtifactAssetBrowser::Impl::promptNewName(const QString& currentName) const
+{
+  bool ok = false;
+  QString newName = QInputDialog::getText(nullptr, "Rename", "New name:",
+                                           QLineEdit::Normal, currentName, &ok);
+  if (!ok || newName.isEmpty()) return "";
+  return newName;
+}
+
+QString ArtifactAssetBrowser::Impl::promptNewFolderName() const
+{
+  bool ok = false;
+  QString name = QInputDialog::getText(nullptr, "New Folder", "Folder name:",
+                                        QLineEdit::Normal, "New Folder", &ok);
+  if (!ok || name.isEmpty()) return "";
+  return name;
+}
+
+bool ArtifactAssetBrowser::Impl::confirmDelete(const QStringList& paths) const
+{
+  QString message;
+  if (paths.size() == 1) {
+    QFileInfo fi(paths.first());
+    message = QStringLiteral("Are you sure you want to delete '%1'?<br>This will permanently remove the file from disk.").arg(fi.fileName());
+  } else {
+    message = QStringLiteral("Are you sure you want to delete %1 items?<br>This will permanently remove the files from disk.").arg(paths.size());
+  }
+
+  QMessageBox msgBox;
+  msgBox.setWindowTitle("Confirm Delete");
+  msgBox.setText(message);
+  msgBox.setIcon(QMessageBox::Warning);
+  msgBox.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+  msgBox.setDefaultButton(QMessageBox::No);
+  return msgBox.exec() == QMessageBox::Yes;
 }
 
 } // namespace Artifact

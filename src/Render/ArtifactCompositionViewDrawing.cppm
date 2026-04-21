@@ -692,24 +692,12 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         .arg(active)
         .arg(ip.framePosition()).arg(op.framePosition()).arg(cf);
     }
-    if (!offlineRender && !hasRasterizerEffectsOrMasks(layer) && videoLayer->hasCurrentFrameBuffer()) {
-      const ArtifactCore::ImageF32x4_RGBA& frameBuffer = videoLayer->currentFrameBuffer();
-      const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
-      drawWithClonerEffect(layer, globalTransform4x4,
-        [&frameBuffer, renderer, localRect, baseOpacity](const QMatrix4x4& instanceTransform, float instanceWeight) {
-          renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
-                               static_cast<float>(localRect.y()),
-                               static_cast<float>(localRect.width()),
-                               static_cast<float>(localRect.height()),
-                               instanceTransform,
-                               frameBuffer,
-                               baseOpacity * instanceWeight);
-        });
-      return;
-    }
-    const QImage frame = downsampleForLOD(offlineRender
+    QImage frame = downsampleForLOD(offlineRender
         ? videoLayer->decodeFrameToQImage(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
         : videoLayer->currentFrameToQImage(), lod);
+    if (frame.isNull() && videoLayer->hasCurrentFrameBuffer()) {
+      frame = downsampleForLOD(videoLayer->currentFrameBuffer().toQImage(), lod);
+    }
     if (!frame.isNull()) {
       applySurfaceAndDraw(frame, localRect, true);
       return;

@@ -12,6 +12,8 @@ import std;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Service.Project;
+import Artifact.Widgets.Timeline;
+import Artifact.Widgets.Timeline.EasingLab;
 import Utils.Id;
 import Utils.Path;
 import Math.Interpolate;
@@ -24,6 +26,26 @@ namespace {
 QIcon menuIcon(const QString& path)
 {
   return QIcon(resolveIconPath(path));
+}
+
+ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
+{
+ if (!root) {
+  return nullptr;
+ }
+
+ const auto widgets = root->findChildren<ArtifactTimelineWidget*>();
+ for (auto* widget : widgets) {
+  if (widget && widget->hasFocus()) {
+   return widget;
+  }
+ }
+ for (auto* widget : widgets) {
+  if (widget && widget->isVisible()) {
+   return widget;
+  }
+ }
+ return widgets.isEmpty() ? nullptr : widgets.front();
 }
 }
 
@@ -52,6 +74,7 @@ QIcon menuIcon(const QString& path)
   QAction* toggleVelocityGraphAction = nullptr;
   QAction* toggleValueGraphAction = nullptr;
   QAction* showGraphEditorAction = nullptr;
+  QAction* easingLabAction = nullptr;
 
   QAction* goToNextKeyframeAction = nullptr;
   QAction* goToPreviousKeyframeAction = nullptr;
@@ -207,6 +230,8 @@ QIcon menuIcon(const QString& path)
   impl_->showGraphEditorAction = impl_->graphEditorMenu->addAction("カーブエディタを表示");
   impl_->showGraphEditorAction->setIcon(menuIcon(QStringLiteral("Material/query_stats.svg")));
   impl_->showGraphEditorAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3));
+  impl_->easingLabAction = impl_->graphEditorMenu->addAction("EasingLab を開く");
+  impl_->easingLabAction->setIcon(menuIcon(QStringLiteral("Material/tune.svg")));
   impl_->graphEditorMenu->addSeparator();
 
   impl_->toggleVelocityGraphAction = impl_->graphEditorMenu->addAction("速度グラフ");
@@ -293,6 +318,17 @@ QIcon menuIcon(const QString& path)
    if (action == impl_->holdInterpolationAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::Constant); return; }
    if (action == impl_->bezierInterpolationAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::Bezier); return; }
    if (action == impl_->showGraphEditorAction) { Q_EMIT showGraphEditorRequested(); return; }
+   if (action == impl_->easingLabAction) {
+    EasingLabDialog dialog(
+        this,
+        [this](ArtifactCore::InterpolationType type) {
+          if (auto* timeline = activeTimelineWidget(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr)) {
+            timeline->applyInterpolationToSelectedKeyframes(type);
+          }
+        });
+    dialog.exec();
+    return;
+   }
    if (action == impl_->toggleVelocityGraphAction) { Q_EMIT toggleVelocityGraphRequested(); return; }
    if (action == impl_->toggleValueGraphAction) { Q_EMIT toggleValueGraphRequested(); return; }
    if (action == impl_->goToNextKeyframeAction) { Q_EMIT goToNextKeyframeRequested(); return; }

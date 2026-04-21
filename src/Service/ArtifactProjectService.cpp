@@ -640,9 +640,6 @@ ArtifactProjectService::ArtifactProjectService(QObject *parent)
           });
   connect(&impl_->projectManager(), &ArtifactProjectManager::compositionCreated,
           this, [this](const CompositionID &id) {
-            if (impl_->currentCompositionId_.isNil()) {
-              changeCurrentComposition(id);
-            }
             ArtifactCore::globalEventBus().publish<CompositionCreatedEvent>(
                 CompositionCreatedEvent{id.toString(), QString()});
             compositionCreated(id);
@@ -1586,9 +1583,11 @@ ChangeCompositionResult
 ArtifactProjectService::changeCurrentComposition(const CompositionID &id) {
   auto result = impl_->changeCurrentComposition(id);
   if (result.success) {
-    ArtifactCore::globalEventBus().publish<CurrentCompositionChangedEvent>(
-        CurrentCompositionChangedEvent{id.toString()});
-    currentCompositionChanged(id);
+    QTimer::singleShot(0, this, [this, id]() {
+      ArtifactCore::globalEventBus().publish<CurrentCompositionChangedEvent>(
+          CurrentCompositionChangedEvent{id.toString()});
+      currentCompositionChanged(id);
+    });
   }
   return result;
 }

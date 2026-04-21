@@ -59,6 +59,7 @@ export namespace Artifact
  private:
   class Impl;
   Impl* impl_ = nullptr;
+  void drawPlayhead(QPainter& painter) const;
 
  protected:
  void paintEvent(QPaintEvent* event) override;

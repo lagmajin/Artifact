@@ -34,7 +34,11 @@ export namespace Artifact
   {
    Layer,
    Group,
-   Property
+   Property,
+   MaskStack,
+   Mask,
+   MatteStack,
+   Matte
   };
 
   struct TimelineRowDescriptor
@@ -43,6 +47,7 @@ export namespace Artifact
    TimelineRowKind kind = TimelineRowKind::Layer;
    QString label;
    QString propertyPath;
+   QString auxiliaryText;
   };
  	
     class ArtifactLayerPanelHeaderWidget :public QWidget
