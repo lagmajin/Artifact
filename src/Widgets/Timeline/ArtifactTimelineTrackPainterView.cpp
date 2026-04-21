@@ -668,6 +668,8 @@ void ArtifactTimelineTrackPainterView::setVerticalOffset(const double value) {
   }
   impl_->verticalOffset_ = clamped;
   Q_EMIT verticalOffsetChanged(impl_->verticalOffset_);
+  ArtifactCore::globalEventBus().publish<TimelineVerticalScrollEvent>(
+      {impl_->verticalOffset_, QStringLiteral("TrackPainterView")});
   update();
 }
 

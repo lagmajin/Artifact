@@ -5,7 +5,6 @@ module;
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
-#include <QColorDialog>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -55,6 +54,7 @@ import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.Widgets.PropertyEditor;
 import Application.AppSettings;
+import FloatColorPickerDialog;
 
 namespace ArtifactCore {
 
@@ -592,14 +592,25 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
 
   QObject::connect(impl_->backgroundColorButton_, &QPushButton::clicked, this,
                    [this]() {
-                     const QColor picked = QColorDialog::getColor(
-                         impl_->backgroundColor_, this,
+                     ArtifactWidgets::FloatColorPicker picker(this);
+                     picker.setWindowTitle(
                          QStringLiteral("Select Default Background Color"));
-                     if (!picked.isValid()) {
+                     picker.setInitialColor(ArtifactCore::FloatColor(
+                         impl_->backgroundColor_.redF(),
+                         impl_->backgroundColor_.greenF(),
+                         impl_->backgroundColor_.blueF(),
+                         impl_->backgroundColor_.alphaF()));
+                     if (picker.exec() != QDialog::Accepted) {
                        return;
                      }
-                     impl_->backgroundColor_ = picked;
-                     setButtonColor(impl_->backgroundColorButton_, picked);
+                     const ArtifactCore::FloatColor picked = picker.getColor();
+                     const QColor color = QColor::fromRgbF(
+                         picked.r(), picked.g(), picked.b(), picked.a());
+                     if (!color.isValid()) {
+                       return;
+                     }
+                     impl_->backgroundColor_ = color;
+                     setButtonColor(impl_->backgroundColorButton_, color);
                    });
 
   loadSettings();

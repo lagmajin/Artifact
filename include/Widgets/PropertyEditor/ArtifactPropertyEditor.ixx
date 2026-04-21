@@ -235,6 +235,7 @@ public:
     void setNavigationHandler(NavigationHandler handler);
     
     void setEditorToolTip(const QString& tooltip);
+    void setSupplementaryText(const QString& text);
     void setShowExpressionButton(bool visible);
     void setShowResetButton(bool visible);
     void setShowKeyframeButton(bool visible);
@@ -251,6 +252,7 @@ private:
 
     QLabel* label_ = nullptr;
     QLabel* scrubHandle_ = nullptr;
+    QLabel* supplementaryLabel_ = nullptr;
     ArtifactAbstractPropertyEditor* editor_ = nullptr;
     QPushButton* keyframeButton_ = nullptr;
     QPushButton* resetButton_ = nullptr;

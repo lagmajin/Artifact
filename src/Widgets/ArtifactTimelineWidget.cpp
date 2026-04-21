@@ -50,6 +50,7 @@ import Artifact.Widgets.Timeline.Label;
 import Artifact.Timeline.NavigatorWidget;
 import Artifact.Timeline.TrackPainterView;
 import Artifact.Timeline.TimeCodeWidget;
+import Artifact.Widgets.Timeline.EasingLab;
 import Artifact.Layers.Selection.Manager;
 import Panel.DraggableSplitter;
 import Artifact.Widgets.Timeline.GlobalSwitches;
@@ -1692,6 +1693,7 @@ public:
   ArtifactTimelineSearchBarWidget *searchBar_ = nullptr;
   QLabel *searchStatusLabel_ = nullptr;
   QLabel *keyframeStatusLabel_ = nullptr;
+  QToolButton *easingLabButton_ = nullptr;
   QLabel *currentLayerLabel_ = nullptr;
   QLabel *frameSummaryLabel_ = nullptr;
   QLabel *zoomSummaryLabel_ = nullptr;
@@ -1722,6 +1724,7 @@ public:
   QVector<CurveTrackBinding> curveBindings_;
   QString curveEditorSignature_;
   bool syncingLayerSelection_ = false;
+  bool syncingVerticalOffset_ = false;
   double currentFrame_ = 0.0;
   bool curveEditorDragging_ = false;
   QMetaObject::Connection compositionChangedConnection_;
@@ -1886,6 +1889,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto globalSwitches = new ArtifactTimelineGlobalSwitches(); // AE Switches
   auto searchStatusLabel = new QLabel();
   auto keyframeStatusLabel = new QLabel();
+  auto easingLabButton = new QToolButton();
+  easingLabButton->setText(QStringLiteral("Ease+"));
+  easingLabButton->setToolTip(QStringLiteral("Open Easing Lab (Comparison Tool)"));
+  easingLabButton->setAutoRaise(true);
+  easingLabButton->setVisible(false);
   auto currentLayerLabel = new QLabel();
   auto frameSummaryLabel = new QLabel();
   auto zoomSummaryLabel = new QLabel();
@@ -1894,6 +1902,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->searchBar_ = searchBar;
   impl_->searchStatusLabel_ = searchStatusLabel;
   impl_->keyframeStatusLabel_ = keyframeStatusLabel;
+  impl_->easingLabButton_ = easingLabButton;
   impl_->currentLayerLabel_ = currentLayerLabel;
   impl_->frameSummaryLabel_ = frameSummaryLabel;
   impl_->zoomSummaryLabel_ = zoomSummaryLabel;
@@ -2098,6 +2107,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->addWidget(densityCombo);
   searchBarLayout->addWidget(searchStatusLabel);
   searchBarLayout->addWidget(keyframeStatusLabel);
+  searchBarLayout->addWidget(easingLabButton);
   searchBarLayout->addWidget(currentLayerLabel);
   searchBarLayout->addWidget(frameSummaryLabel);
   searchBarLayout->addWidget(zoomSummaryLabel);
@@ -2126,13 +2136,18 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       impl_->eventBus_.subscribe<TimelineShyChangedEvent>([this](const TimelineShyChangedEvent& e) {
         QMetaObject::invokeMethod(this, [this, e]() { onShyChanged(e.shy); }, Qt::QueuedConnection);
       }));
-    QObject::connect(layerTreeView,
-                   &ArtifactLayerTimelinePanelWrapper::visibleRowsChanged, this,
-                   [this]() {
-                    refreshTracks();
-                    updateSelectionState();
-                    updateSearchState();
-                   });
+  // Migrated to EventBus — subscribe to TimelineVisibleRowsChangedEvent instead
+  // of the Qt visibleRowsChanged signal, so the connection survives widget
+  // identity changes and avoids Qt signal cross-threading issues.
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineVisibleRowsChangedEvent>(
+          [this](const TimelineVisibleRowsChangedEvent &) {
+            QMetaObject::invokeMethod(this, [this]() {
+              refreshTracks();
+              updateSelectionState();
+              updateSearchState();
+            }, Qt::QueuedConnection);
+          }));
 
   auto headerWidget = new QWidget();
   headerWidget->setLayout(searchBarLayout);
@@ -2226,6 +2241,27 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       searchStatusLabel, [this]() { jumpToSearchHit(+1); },
       [this]() { jumpToSearchHit(-1); }, headerWidget);
   searchStatusLabel->installEventFilter(searchStatusClickFilter);
+
+  QObject::connect(easingLabButton, &QToolButton::clicked, this, [this]() {
+    if (!impl_ || !impl_->painterTrackView_) {
+      return;
+    }
+    const auto markers = impl_->painterTrackView_->selectedKeyframeMarkers();
+    if (markers.isEmpty()) {
+      return;
+    }
+    
+    auto comp = safeCompositionLookup(impl_->compositionId_);
+    if (!comp) return;
+
+    auto *dialog = new EasingLabDialog(this, [this, markers, comp](ArtifactCore::InterpolationType type) {
+       applyInterpolationToSelectedKeyframesImpl(comp, markers, type);
+       refreshTracks();
+       updateKeyframeState();
+    });
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    dialog->show();
+  });
 
   auto leftTopSpacer = new QWidget();
   leftTopSpacer->setFixedHeight(kTimelineTopRowHeight);
@@ -2433,6 +2469,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             std::clamp(static_cast<int>(std::llround(frame)), 0,
                        std::max(0, scrubBar->totalFrames() - 1));
         scrubBar->setCurrentFrame(FramePosition(clampedFrame));
+        if (auto *app = ArtifactApplicationManager::instance()) {
+          if (auto *ctx = app->activeContextService()) {
+            ctx->seekToFrame(clampedFrame);
+          }
+        }
       });
   QObject::connect(
       painterTrackView, &ArtifactTimelineTrackPainterView::clipSelected, this,
@@ -2742,18 +2783,15 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   scrubBar->installEventFilter(headerScrollFilter);
   workAreaWidget->installEventFilter(headerScrollFilter);
 
-  QObject::connect(
-      painterTrackView, &ArtifactTimelineTrackPainterView::verticalOffsetChanged,
-      this,
-      [this](double offset) {
-        syncTimelineVerticalOffset(offset);
-      });
-  QObject::connect(
-      impl_->layerTimelinePanel_, &ArtifactLayerTimelinePanelWrapper::verticalOffsetChanged,
-      this,
-      [this](double offset) {
-        syncTimelineVerticalOffset(offset);
-      });
+  // Migrated from Qt signal connections for verticalOffsetChanged to a single
+  // EventBus subscription. Both panels (TrackPainterView and LayerPanel) publish
+  // TimelineVerticalScrollEvent; we sync the other panel via
+  // syncTimelineVerticalOffset() with a re-entry guard to prevent feedback.
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<TimelineVerticalScrollEvent>(
+          [this](const TimelineVerticalScrollEvent &e) {
+            syncTimelineVerticalOffset(e.offset);
+          }));
 
   if (painterTrackView) {
     auto *viewResizeFilter =
@@ -3464,6 +3502,15 @@ void ArtifactTimelineWidget::updateKeyframeState()
       composition, selectionManager,
       static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_))));
   impl_->keyframeStatusLabel_->setText(formatKeyframeNavigationText(state));
+  if (impl_->easingLabButton_) {
+    impl_->easingLabButton_->setVisible(!state.totalFrames == 0 && state.totalFrames > 0); 
+    // Wait, state.totalFrames is the total frames with keyframes in selected layers.
+    // Actually, I should check if there are SELECTED markers.
+    if (impl_->painterTrackView_) {
+      const bool hasSelection = !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
+      impl_->easingLabButton_->setVisible(hasSelection);
+    }
+  }
 }
 
 void ArtifactTimelineWidget::updateSelectionState()
@@ -3557,6 +3604,13 @@ void ArtifactTimelineWidget::syncTimelineVerticalOffset(const double offset)
   if (!impl_) {
     return;
   }
+  // Re-entry guard: setting verticalOffset on one panel triggers its EventBus
+  // publish (for ArtifactLayerPanelWidget) which would re-fire this subscription.
+  // The guard ensures only the first call runs to completion.
+  if (impl_->syncingVerticalOffset_) {
+    return;
+  }
+  impl_->syncingVerticalOffset_ = true;
   if (impl_->painterTrackView_) {
     const QSignalBlocker blocker(impl_->painterTrackView_);
     if (std::abs(impl_->painterTrackView_->verticalOffset() - offset) > 0.0001) {
@@ -3569,6 +3623,7 @@ void ArtifactTimelineWidget::syncTimelineVerticalOffset(const double offset)
       impl_->layerTimelinePanel_->setVerticalOffset(offset);
     }
   }
+  impl_->syncingVerticalOffset_ = false;
 }
 
 void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()

@@ -81,8 +81,10 @@ void setShowSafeMargins(bool show);
 bool isShowSafeMargins() const;
 void setGpuBlendEnabled(bool enabled);
 bool isGpuBlendEnabled() const;
-   void setShowMotionPathOverlay(bool show);
-   bool isShowMotionPathOverlay() const;
+void setShowMotionPathOverlay(bool show);
+bool isShowMotionPathOverlay() const;
+void setShowAnchorCenterOverlay(bool show);
+bool isShowAnchorCenterOverlay() const;
 
    // Render Queue support: when active, composition changed signals do not invalidate caches
    void setRenderQueueActive(bool active);

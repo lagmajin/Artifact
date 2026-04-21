@@ -126,7 +126,7 @@ public:
  }
 
  QString label() const override {
-  return QStringLiteral("Edit Path");
+  return QStringLiteral("Edit Shape");
  }
 
 private:
@@ -168,6 +168,71 @@ QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType
    break;
  }
  return vertex.position;
+}
+
+std::vector<QPointF> buildShapeEditSeedPoints(const ArtifactShapeLayer& shape)
+{
+ const float w = static_cast<float>(std::max(1, shape.shapeWidth()));
+ const float h = static_cast<float>(std::max(1, shape.shapeHeight()));
+ const float cx = w * 0.5f;
+ const float cy = h * 0.5f;
+
+ switch (shape.shapeType()) {
+ case ShapeType::Rect:
+  return {QPointF(0.0, 0.0), QPointF(w, 0.0), QPointF(w, h), QPointF(0.0, h)};
+ case ShapeType::Square: {
+  const float side = std::min(w, h);
+  const float left = (w - side) * 0.5f;
+  const float top = (h - side) * 0.5f;
+  return {QPointF(left, top), QPointF(left + side, top),
+          QPointF(left + side, top + side), QPointF(left, top + side)};
+ }
+ case ShapeType::Triangle:
+  return {QPointF(cx, 0.0f), QPointF(w, h), QPointF(0.0f, h)};
+ case ShapeType::Ellipse: {
+  const int segments = 16;
+  std::vector<QPointF> points;
+  points.reserve(static_cast<size_t>(segments));
+  for (int i = 0; i < segments; ++i) {
+   const float angle = static_cast<float>(i) * 2.0f * static_cast<float>(M_PI) /
+                       static_cast<float>(segments);
+   points.push_back(QPointF(cx + std::cos(angle) * cx,
+                            cy + std::sin(angle) * cy));
+  }
+  return points;
+ }
+ case ShapeType::Star: {
+  const int pts = std::max(3, shape.starPoints());
+  const float outerR = std::min(cx, cy);
+  const float innerR = outerR * std::clamp(shape.starInnerRadius(), 0.0f, 1.0f);
+  std::vector<QPointF> points;
+  points.reserve(static_cast<size_t>(pts * 2));
+  for (int i = 0; i < pts * 2; ++i) {
+   const float angle = static_cast<float>(i) * static_cast<float>(M_PI) /
+                       static_cast<float>(pts) - static_cast<float>(M_PI) * 0.5f;
+   const float r = (i % 2 == 0) ? outerR : innerR;
+   points.push_back(QPointF(cx + r * std::cos(angle),
+                            cy + r * std::sin(angle)));
+  }
+  return points;
+ }
+ case ShapeType::Polygon: {
+  const int sides = std::max(3, shape.polygonSides());
+  const float r = std::min(cx, cy);
+  std::vector<QPointF> points;
+  points.reserve(static_cast<size_t>(sides));
+  for (int i = 0; i < sides; ++i) {
+   const float angle = static_cast<float>(i) * 2.0f * static_cast<float>(M_PI) /
+                       static_cast<float>(sides) - static_cast<float>(M_PI) * 0.5f;
+   points.push_back(QPointF(cx + r * std::cos(angle),
+                            cy + r * std::sin(angle)));
+  }
+  return points;
+ }
+ case ShapeType::Line:
+  break;
+ }
+ return {};
 }
 
 bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos,
@@ -598,7 +663,7 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestShapeVertex(const ArtifactAbstrac
   return false;
  }
  const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape || shape->shapeType() != ShapeType::Polygon || !shape->hasCustomPolygon()) {
+ if (!shape || !shape->hasCustomPolygon()) {
   return false;
  }
  const auto points = shape->customPolygonPoints();
@@ -631,7 +696,7 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestShapeSegment(const ArtifactAbstra
   return false;
  }
  const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape || shape->shapeType() != ShapeType::Polygon || !shape->hasCustomPolygon()) {
+ if (!shape || !shape->hasCustomPolygon()) {
   return false;
  }
  const auto points = shape->customPolygonPoints();
@@ -696,7 +761,7 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
   return;
  }
  const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape || shape->shapeType() != ShapeType::Polygon || !shape->hasCustomPolygon()) {
+ if (!shape || !shape->hasCustomPolygon()) {
   return;
  }
  const auto points = shape->customPolygonPoints();
@@ -756,7 +821,7 @@ bool ArtifactLayerEditorWidgetV2::Impl::deleteHoveredShapeVertex(const ArtifactA
   return false;
  }
  auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape || shape->shapeType() != ShapeType::Polygon || !shape->hasCustomPolygon()) {
+ if (!shape || !shape->hasCustomPolygon()) {
   return false;
  }
  auto points = shape->customPolygonPoints();
@@ -1291,7 +1356,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   if (impl_->editMode_ == EditMode::Paint && event->button() == Qt::LeftButton && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
-   if (shape && shape->shapeType() == ShapeType::Polygon) {
+   if (shape && shape->shapeType() != ShapeType::Line) {
     const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
         {(float)event->position().x(), (float)event->position().y()});
     const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
@@ -1599,7 +1664,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   if (impl_->editMode_ == EditMode::Paint && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
-   if (shape && shape->shapeType() == ShapeType::Polygon && shape->hasCustomPolygon()) {
+   if (shape && shape->hasCustomPolygon()) {
     const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
         {(float)event->position().x(), (float)event->position().y()});
     const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
@@ -1821,19 +1886,11 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
      }
      if (impl_->editMode_ == EditMode::Paint) {
       if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
-       if (shape->shapeType() == ShapeType::Polygon && !shape->hasCustomPolygon()) {
-        const int sides = std::max(3, shape->polygonSides());
-        const double width = std::max(1, shape->shapeWidth());
-        const double height = std::max(1, shape->shapeHeight());
-        const QPointF center(width * 0.5, height * 0.5);
-        const double radius = std::min(width, height) * 0.45;
-        std::vector<QPointF> points;
-        points.reserve(static_cast<size_t>(sides));
-        for (int i = 0; i < sides; ++i) {
-         const double angle = static_cast<double>(i) * 2.0 * M_PI / static_cast<double>(sides) - M_PI * 0.5;
-         points.push_back(center + QPointF(std::cos(angle) * radius, std::sin(angle) * radius));
+       if (!shape->hasCustomPolygon()) {
+        const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
+        if (points.size() >= 3) {
+         shape->setCustomPolygonPoints(points, true);
         }
-        shape->setCustomPolygonPoints(points, true);
        }
       }
      }
@@ -1892,6 +1949,22 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
    impl_->hoveredMaskHandleType_ = -1;
    if (impl_->shapeEditPending_) {
     impl_->commitShapeEditTransaction();
+   }
+  }
+  if (mode == EditMode::Paint && !impl_->targetLayerId_.isNil()) {
+   if (auto* service = ArtifactProjectService::instance()) {
+    if (auto composition = service->currentComposition().lock()) {
+     if (auto layer = composition->layerById(impl_->targetLayerId_)) {
+      if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+       if (!shape->hasCustomPolygon()) {
+        const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
+        if (points.size() >= 3) {
+         shape->setCustomPolygonPoints(points, true);
+        }
+       }
+      }
+     }
+    }
    }
   }
   if (impl_->initialized_ && impl_->renderer_) {

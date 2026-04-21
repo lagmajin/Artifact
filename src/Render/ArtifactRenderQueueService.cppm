@@ -296,7 +296,7 @@ namespace Artifact
             const double fps = composition->frameRate().framerate() > 0.0
                 ? composition->frameRate().framerate()
                 : 30.0;
-            const int frameCount = std::max(1, endFrame - startFrame + 1);
+            const int frameCount = std::max(1, endFrame - startFrame);
             const int sampleRate = 48000;
             const int sampleCount = std::max(1, static_cast<int>(std::ceil((static_cast<double>(frameCount) / fps) * sampleRate)));
 
@@ -1188,7 +1188,7 @@ namespace Artifact
                 
                 if (isSequence) {
                     // シーケンスの場合、各フレームの存在をチェック
-                    for (int f = startFrame; f <= endFrame; ++f) {
+                    for (int f = startFrame; f < endFrame; ++f) {
                         QString framePath = generateFramePath(outputPath, f);
                         if (!QFile::exists(framePath)) {
                             failedFrames.append(FailedFrameInfo{jobId, f, QStringLiteral("Frame not found"), QDateTime::currentMSecsSinceEpoch()});
@@ -2857,7 +2857,7 @@ namespace Artifact
 
                 const int startF = job.startFrame;
                 const int endF = job.endFrame;
-                const int totalFrames = std::max(1, endF - startF + 1);
+                const int totalFrames = std::max(1, endF - startF);
 
                 std::atomic<bool> success = true;
                 std::atomic<int> framesRendered = 0;
@@ -2957,7 +2957,7 @@ namespace Artifact
                     audioSourcePathForMux = job.audioSourcePath.trimmed();
                 }
 
-                for (int f = startF; f <= endF; ++f) {
+                for (int f = startF; f < endF; ++f) {
                     if (!success.load(std::memory_order_relaxed)) {
                         break;
                     }

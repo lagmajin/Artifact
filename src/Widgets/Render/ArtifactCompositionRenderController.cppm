@@ -1105,6 +1105,46 @@ void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
   renderer->drawSolidLine({0.0f, ch}, {0.0f, 0.0f}, lightColor, 1.0f);
 }
 
+void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
+                             const ArtifactAbstractLayerPtr &layer) {
+  if (!renderer || !layer) {
+    return;
+  }
+
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+      localBounds.height() <= 0.0) {
+    return;
+  }
+
+  const QTransform globalTransform = layer->getGlobalTransform();
+  const auto &t3d = layer->transform3D();
+  const QPointF anchorLocal(t3d.anchorX(), t3d.anchorY());
+  const QPointF centerLocal = localBounds.center();
+  const QPointF anchorCanvas = globalTransform.map(anchorLocal);
+  const QPointF centerCanvas = globalTransform.map(centerLocal);
+
+  const float zoom = std::max(0.001f, renderer->getZoom());
+  const float pointSize = std::max(6.0f, 10.0f / zoom);
+  const float crossSize = std::max(10.0f, 18.0f / zoom);
+  const FloatColor anchorColor{1.0f, 0.64f, 0.18f, 0.98f};
+  const FloatColor centerColor{0.28f, 0.82f, 1.0f, 0.98f};
+
+  renderer->drawPoint(static_cast<float>(anchorCanvas.x()),
+                      static_cast<float>(anchorCanvas.y()), pointSize,
+                      anchorColor);
+  renderer->drawCrosshair(static_cast<float>(anchorCanvas.x()),
+                          static_cast<float>(anchorCanvas.y()), crossSize,
+                          anchorColor);
+
+  renderer->drawPoint(static_cast<float>(centerCanvas.x()),
+                      static_cast<float>(centerCanvas.y()), pointSize,
+                      centerColor);
+  renderer->drawCrosshair(static_cast<float>(centerCanvas.x()),
+                          static_cast<float>(centerCanvas.y()), crossSize,
+                          centerColor);
+}
+
 // Draws checkerboard in Viewport Space so transparent regions of the
 // composition reveal the pattern against the viewport background.
 // This should be called before blitting the composition result to the
@@ -1321,6 +1361,7 @@ public:
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
   bool showMotionPathOverlay_ = false;
+  bool showAnchorCenterOverlay_ = false;
   bool showFrameInfo_ = false; // Changed to false by default
   bool showGizmoOverlay_ = true;
   bool showCompositionRegionOverlay_ =
@@ -1347,7 +1388,7 @@ public:
     int32_t bgMode = 0;
     int32_t gizmoMode = -1, gizmoHover = -1, gizmoActive = -1;
     uint8_t gpuBlend = 0, showGrid = 0, showGuides = 0, showSafeMargins = 0,
-            viewportInteracting = 0;
+            showAnchorCenter = 0, viewportInteracting = 0;
     LayerID selectedLayerId;
 
     bool operator==(const RenderKeyState &o) const {
@@ -1361,6 +1402,7 @@ public:
              gpuBlend == o.gpuBlend && showGrid == o.showGrid &&
              showGuides == o.showGuides &&
              showSafeMargins == o.showSafeMargins &&
+             showAnchorCenter == o.showAnchorCenter &&
              viewportInteracting == o.viewportInteracting &&
              selectedLayerId == o.selectedLayerId;
     }
@@ -2276,6 +2318,19 @@ void CompositionRenderController::setShowSafeMargins(bool show) {
 }
 bool CompositionRenderController::isShowSafeMargins() const {
   return impl_->showSafeMargins_;
+}
+
+void CompositionRenderController::setShowAnchorCenterOverlay(bool show) {
+  if (impl_->showAnchorCenterOverlay_ == show) {
+    return;
+  }
+  impl_->showAnchorCenterOverlay_ = show;
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+
+bool CompositionRenderController::isShowAnchorCenterOverlay() const {
+  return impl_ ? impl_->showAnchorCenterOverlay_ : false;
 }
 
 void CompositionRenderController::setShowMotionPathOverlay(bool show) {
@@ -3729,6 +3784,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       static_cast<uint8_t>(showGrid_ ? 1 : 0),
       static_cast<uint8_t>(showGuides_ ? 1 : 0),
       static_cast<uint8_t>(showSafeMargins_ ? 1 : 0),
+      static_cast<uint8_t>(showAnchorCenterOverlay_ ? 1 : 0),
       static_cast<uint8_t>(viewportInteracting_ ? 1 : 0),
       selectedLayerId_};
   if (currentKey == lastRenderKeyState_) {
@@ -3855,7 +3911,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       const QString overlaySummary =
           QStringLiteral("frame=%1 selCount=%2 selectedLayer=%3 gizmo=%4 "
                          "gizmoMode=%5 gizmoDragging=%6 activeHandle=%7 "
-                         "motionPath=%8 masks=%9 region=%10")
+                         "motionPath=%8 anchorCenter=%9 masks=%10 region=%11")
               .arg(currentFrame.framePosition())
               .arg(selectedIds.size())
               .arg(selectedLayerId_.isNil() ? QStringLiteral("<none>")
@@ -3865,6 +3921,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               .arg(gizmo_ && gizmo_->isDragging() ? 1 : 0)
               .arg(overlayActiveHandle)
               .arg(showMotionPathOverlay_ ? 1 : 0)
+              .arg(showAnchorCenterOverlay_ ? 1 : 0)
               .arg(overlayMaskCount)
               .arg(showCompositionRegionOverlay_ ? 1 : 0);
       if (overlaySummary != lastOverlayDebugSummary_ ||
@@ -4896,6 +4953,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setCanvasSize(cw, ch);
       if (showCompositionRegionOverlay_) {
         drawCompositionRegionOverlay(renderer_.get(), comp);
+      }
+      if (showAnchorCenterOverlay_ && selectedLayer) {
+        drawAnchorCenterOverlay(renderer_.get(), selectedLayer);
       }
       drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
     }
