@@ -32,7 +32,7 @@ public:
   ~ArtifactTimelineKeyframeModel();
 
   static QStringList transformPropertyPaths();
-  static QString displayLabelForPropertyPath(const QString& propertyPath);
+  static QString displayLabelForPropertyPath(QString propertyPath);
   static bool isTransformPropertyPath(const QString& propertyPath);
 
   std::vector<KeyFrame> getKeyframesFor(const CompositionID& compId,

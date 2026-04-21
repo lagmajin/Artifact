@@ -1127,21 +1127,8 @@ void ArtifactTimelineTrackPainterView::drawPlayhead(QPainter& p) const {
   p.setRenderHint(QPainter::Antialiasing, true);
 
   const QColor playheadColor = timelineThemeColors().accent;
-  const qreal headTop = 1.5;
-  const qreal headHeight = 13.0;
-  const qreal headWidth = 16.0;
-  const qreal stemTop = headTop + headHeight + 2.0;
+  const qreal stemTop = 0.0;
   const qreal stemBottom = static_cast<qreal>(height()) - 1.0;
-
-  QPainterPath headPath;
-  headPath.moveTo(playheadX, headTop + headHeight);
-  headPath.lineTo(playheadX - headWidth * 0.5, headTop);
-  headPath.lineTo(playheadX + headWidth * 0.5, headTop);
-  headPath.closeSubpath();
-
-  p.setPen(QPen(QColor(18, 18, 18, 150), 1));
-  p.setBrush(playheadColor);
-  p.drawPath(headPath);
 
   p.setPen(QPen(playheadColor, 2, Qt::SolidLine, Qt::FlatCap));
   p.drawLine(QPointF(playheadX, stemTop), QPointF(playheadX, stemBottom));
@@ -1186,11 +1173,8 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       Q_EMIT timelineDebugMessage(
           QStringLiteral("Selected keyframe at F%1 for %2")
               .arg(QString::number(frame, 'f', 1))
-              .arg(ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
-                  marker.propertyPath)));
+              .arg(marker.label));
       clipSelected(QString(), marker.layerId);
-      seekRequested(frame);
-      setCurrentFrame(frame);
       impl_->dragMarkerIndex_ = markerHit.markerIndex;
       impl_->dragMarkerStartPoint_ = event->position().toPoint();
       impl_->dragMarkerOrigFrame_ = marker.frame;
@@ -1424,7 +1408,7 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
   if (event->button() == Qt::LeftButton && impl_->draggingMarker_ &&
       impl_->dragMarkerIndex_ >= 0 &&
       impl_->dragMarkerIndex_ < impl_->keyframeMarkers_.size()) {
-    const auto &marker = impl_->keyframeMarkers_[impl_->dragMarkerIndex_];
+    const auto marker = impl_->keyframeMarkers_[impl_->dragMarkerIndex_];
     const double deltaFrames =
         (event->position().x() - impl_->dragMarkerStartPoint_.x()) /
         std::max(0.001, impl_->pixelsPerFrame_);
@@ -1434,26 +1418,26 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
         static_cast<qint64>(std::llround(impl_->dragMarkerOrigFrame_));
     const qint64 toFrame = static_cast<qint64>(std::llround(newFrame));
     if (fromFrame != toFrame) {
+      const LayerID markerLayerId = marker.layerId;
+      const QString markerPropertyPath = marker.propertyPath;
+      const QString markerLabel =
+          marker.label.isNull() ? QStringLiteral("<null>") : marker.label;
       const QString oldKey = keyframeSelectionKey(
-          marker.layerId, marker.propertyPath, fromFrame);
+          markerLayerId, markerPropertyPath, fromFrame);
       const QString newKey =
-          keyframeSelectionKey(marker.layerId, marker.propertyPath, toFrame);
+          keyframeSelectionKey(markerLayerId, markerPropertyPath, toFrame);
       if (impl_->selectedMarkerKeys_.remove(oldKey)) {
         impl_->selectedMarkerKeys_.insert(newKey);
         applyMarkerSelectionFlags(impl_->keyframeMarkers_,
                                   impl_->selectedMarkerKeys_);
         Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
       }
-      Q_EMIT keyframeMoveRequested(marker.layerId, marker.propertyPath,
+      Q_EMIT keyframeMoveRequested(markerLayerId, markerPropertyPath,
                                    fromFrame, toFrame);
       Q_EMIT timelineDebugMessage(
-          QStringLiteral("Dragged keyframe %1 -> %2 for %3")
-              .arg(fromFrame)
-              .arg(toFrame)
-              .arg(ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
-                  marker.propertyPath)));
-      seekRequested(newFrame);
-      setCurrentFrame(newFrame);
+          QStringLiteral("Dragged keyframe ") + QString::number(fromFrame) +
+          QStringLiteral(" -> ") + QString::number(toFrame) +
+          QStringLiteral(" for ") + markerLabel);
     }
     impl_->draggingMarker_ = false;
     impl_->dragMarkerIndex_ = -1;
@@ -1727,8 +1711,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         QStringLiteral("%1 keyframe at F%2 for %3")
             .arg(actionText)
             .arg(editFrame)
-            .arg(ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
-                targetPropertyPath)));
+            .arg(targetPropertyPath));
     update();
   }
 

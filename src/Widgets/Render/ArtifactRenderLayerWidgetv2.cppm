@@ -1273,6 +1273,16 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
               setTargetLayer(selectedId);
               return;
             }
+            if (!impl_->targetLayerId_.isNil()) {
+              if (auto* service = ArtifactProjectService::instance()) {
+                if (auto composition = service->currentComposition().lock()) {
+                  if (composition->containsLayerById(impl_->targetLayerId_)) {
+                    setTargetLayer(impl_->targetLayerId_);
+                    return;
+                  }
+                }
+              }
+            }
             clearTargetLayer();
           }));
  }

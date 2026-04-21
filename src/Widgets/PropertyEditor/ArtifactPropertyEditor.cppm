@@ -1827,6 +1827,8 @@ void ArtifactPropertyEditorRowWidget::setKeyframeEnabled(const bool enabled) {
 }
 
 void ArtifactPropertyEditorRowWidget::setNavigationEnabled(const bool enabled) {
+  prevKeyBtn_->setProperty("baseVisible", enabled);
+  nextKeyBtn_->setProperty("baseVisible", enabled);
   prevKeyBtn_->setEnabled(enabled);
   nextKeyBtn_->setEnabled(enabled);
   updateAuxControlVisibility();
@@ -1838,12 +1840,18 @@ void ArtifactPropertyEditorRowWidget::updateAuxControlVisibility() {
   const bool keyVisible = keyframeButton_->isVisible();
   const bool resetVisible = resetButton_->property("baseVisible").toBool();
   const bool exprVisible = expressionButton_->property("baseVisible").toBool();
-  const bool navVisible = prevKeyBtn_->isEnabled() && nextKeyBtn_->isEnabled();
+  const bool navVisible = prevKeyBtn_->property("baseVisible").toBool() &&
+                          nextKeyBtn_->property("baseVisible").toBool();
 
-  resetButton_->setVisible(resetVisible && hover);
-  expressionButton_->setVisible(exprVisible && hover);
-  prevKeyBtn_->setVisible(keyVisible && navVisible && hover);
-  nextKeyBtn_->setVisible(keyVisible && navVisible && hover);
+  resetButton_->setVisible(resetVisible);
+  expressionButton_->setVisible(exprVisible);
+  prevKeyBtn_->setVisible(keyVisible && navVisible);
+  nextKeyBtn_->setVisible(keyVisible && navVisible);
+
+  resetButton_->setEnabled(resetVisible && hover);
+  expressionButton_->setEnabled(exprVisible && hover);
+  prevKeyBtn_->setEnabled(keyVisible && navVisible && hover);
+  nextKeyBtn_->setEnabled(keyVisible && navVisible && hover);
 }
 
 void ArtifactPropertyEditorRowWidget::enterEvent(QEnterEvent *event) {

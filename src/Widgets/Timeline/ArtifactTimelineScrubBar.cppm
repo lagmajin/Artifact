@@ -418,9 +418,13 @@ namespace Artifact
   // ── 再生ヘッド描画 ──────────────────────
   const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());
   if (railRect.width() > 0) {
-   p.setPen(Qt::NoPen);
-   p.setBrush(QColor(playheadColor.red(), playheadColor.green(), playheadColor.blue(), 220));
-   p.drawRect(QRect(clampedX - 1, railRect.top() - 2, 3, railRect.height() + 4));
+   const QColor stemColor(playheadColor.red(), playheadColor.green(),
+                          playheadColor.blue(), 220);
+   const qreal stemTop = 0.0;
+   const qreal stemBottom = static_cast<qreal>(h) - 1.0;
+
+   p.setPen(QPen(stemColor, 2, Qt::SolidLine, Qt::FlatCap));
+   p.drawLine(QPointF(clampedX, stemTop), QPointF(clampedX, stemBottom));
   }
 
   // ── 目盛り描画 ──────────────────────

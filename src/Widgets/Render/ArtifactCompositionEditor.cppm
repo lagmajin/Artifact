@@ -2513,7 +2513,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
   QAction *anchorCenterAct = displayMenu->addAction("Anchor / Center");
   displayMenu->addSeparator();
-  QAction *gpuBlendAct = displayMenu->addAction("GPU Blend (CS)");
+  QAction *gpuBlendAct = displayMenu->addAction("GPU Blend Path");
   checkerboardAct->setCheckable(true);
   gridAct->setCheckable(true);
   guidesAct->setCheckable(true);
@@ -2522,6 +2522,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   gpuBlendAct->setCheckable(true);
   anchorCenterAct->setToolTip(
       QStringLiteral("Show the selected layer anchor point and center point"));
+  gpuBlendAct->setToolTip(
+      QStringLiteral("Enable the compute-shader blend path when the composition needs masks, non-normal blending, or rasterizer effects"));
+  gpuBlendAct->setStatusTip(
+      QStringLiteral("Toggle the experimental GPU blend path"));
   impl_->displayOptionsBtn_->setMenu(displayMenu);
 
   // Connect actions

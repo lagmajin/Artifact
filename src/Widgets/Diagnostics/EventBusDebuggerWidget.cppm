@@ -18,6 +18,7 @@ module;
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenu>
 #include <QPainter>
 #include <QPen>
 #include <QPushButton>
@@ -64,6 +65,45 @@ const QColor kTextD     {120, 120, 140};
 const QColor kTextBadge {240, 80,  80};
 const QColor kTagHigh   {220, 60,  60,  200};
 const QColor kTagNormal {55,  130, 55,  200};
+
+QString shortSourceFile(const char* fileName)
+{
+    if (!fileName || !*fileName) {
+        return QStringLiteral("(unknown)");
+    }
+    QString path = QString::fromUtf8(fileName);
+    const int slash = path.lastIndexOf('/');
+    const int backslash = path.lastIndexOf('\\');
+    const int pos = std::max(slash, backslash);
+    return pos >= 0 ? path.mid(pos + 1) : path;
+}
+
+QString fireFlagsText(const ArtifactCore::FireEntry& entry)
+{
+    QString flags;
+    if (entry.isDuplicate) flags += "D";
+    if (entry.isSlow)  { if (!flags.isEmpty()) flags += "|"; flags += "S"; }
+    if (entry.isBurst) { if (!flags.isEmpty()) flags += "|"; flags += "B"; }
+    return flags;
+}
+
+QString fireSourceText(const ArtifactCore::FireEntry& entry)
+{
+    return QString("%1:%2")
+        .arg(shortSourceFile(entry.origin.file_name()))
+        .arg(static_cast<qulonglong>(entry.origin.line()));
+}
+
+QString fireSourceTooltip(const ArtifactCore::FireEntry& entry)
+{
+    const QString file = QString::fromUtf8(entry.origin.file_name() ? entry.origin.file_name() : "");
+    const QString func = QString::fromUtf8(entry.origin.function_name() ? entry.origin.function_name() : "");
+    return QString("%1\n%2:%3:%4")
+        .arg(func.isEmpty() ? QStringLiteral("(unknown)") : func)
+        .arg(file.isEmpty() ? QStringLiteral("(unknown)") : file)
+        .arg(static_cast<qulonglong>(entry.origin.line()))
+        .arg(static_cast<qulonglong>(entry.origin.column()));
+}
 
 } // namespace
 
@@ -243,6 +283,9 @@ private:
 // ===========================================================================
 class EventBusDebuggerWidget::Impl {
 public:
+    QLabel*        overviewBar   = nullptr;
+    QLabel*        legendBar     = nullptr;
+
     // Tab 1 — Fire Log
     QTableWidget*  logTable      = nullptr;
     QLineEdit*     nameFilter    = nullptr;
@@ -269,6 +312,9 @@ public:
 
     QTabWidget* tabs    = nullptr;
     int         timerId = 0;
+    std::vector<ArtifactCore::FireEntry> visibleLogEntries;
+
+    void copySelectedLogRowsToClipboard() const;
 };
 
 // ---------------------------------------------------------------------------
@@ -287,12 +333,13 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
     // ---------- Tab 1: Fire Log ----------
     auto* tab1 = new QWidget(this);
     {
-        impl_->logTable = new QTableWidget(0, 5, tab1);
+        impl_->logTable = new QTableWidget(0, 6, tab1);
         impl_->logTable->setHorizontalHeaderLabels(
-            {"Time (ms)", "Event", "Subs", "Dur µs", "Flags"});
+            {"Time (ms)", "Event", "Subs", "Dur µs", "Flags", "Source"});
         impl_->logTable->horizontalHeader()->setStretchLastSection(false);
         impl_->logTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
         impl_->logTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+        impl_->logTable->setSelectionMode(QAbstractItemView::ExtendedSelection);
         impl_->logTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
         impl_->logTable->setAlternatingRowColors(true);
         impl_->logTable->verticalHeader()->hide();
@@ -300,16 +347,18 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
         impl_->logTable->setColumnWidth(2, 40);
         impl_->logTable->setColumnWidth(3, 65);
         impl_->logTable->setColumnWidth(4, 58);
+        impl_->logTable->setColumnWidth(5, 180);
+        impl_->logTable->setContextMenuPolicy(Qt::CustomContextMenu);
 
         impl_->nameFilter   = new QLineEdit(tab1);
         impl_->nameFilter->setPlaceholderText("Filter event name…");
         impl_->nameFilter->setFixedHeight(24);
 
-        impl_->dupesOnly    = new QCheckBox("Dupes",       tab1);
-        impl_->slowOnly     = new QCheckBox("Slow",        tab1);
-        impl_->burstOnly    = new QCheckBox("Burst",       tab1);
-        impl_->pauseCk      = new QCheckBox("Pause",       tab1);
-        impl_->scrollLockCk = new QCheckBox("Lock Scroll", tab1);
+        impl_->dupesOnly    = new QCheckBox("Dupes only",  tab1);
+        impl_->slowOnly     = new QCheckBox("Slow only",   tab1);
+        impl_->burstOnly    = new QCheckBox("Burst only",  tab1);
+        impl_->pauseCk      = new QCheckBox("Pause",      tab1);
+        impl_->scrollLockCk = new QCheckBox("Lock scroll", tab1);
 
         impl_->clearBtn   = new QPushButton("Clear",   tab1);
         impl_->copyBtn    = new QPushButton("Copy",    tab1);
@@ -335,7 +384,17 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
         auto* layout = new QVBoxLayout(tab1);
         layout->setContentsMargins(4, 4, 4, 4);
         layout->setSpacing(4);
+        impl_->overviewBar = new QLabel(tab1);
+        impl_->overviewBar->setWordWrap(true);
+        impl_->overviewBar->setText(
+            "Overview: waiting for event data");
+        impl_->legendBar = new QLabel(tab1);
+        impl_->legendBar->setWordWrap(true);
+        impl_->legendBar->setText(
+            "Legend: D=duplicate S=slow B=burst  |  red border = never fired");
         layout->addLayout(toolbar);
+        layout->addWidget(impl_->overviewBar);
+        layout->addWidget(impl_->legendBar);
         layout->addWidget(impl_->logTable, 1);
 
         QObject::connect(impl_->pauseCk, &QCheckBox::toggled, tab1, [](bool checked) {
@@ -344,23 +403,48 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
         QObject::connect(impl_->clearBtn, &QPushButton::clicked, tab1, []() {
             ArtifactCore::EventBusDebugger::instance().clearLog();
         });
-        QObject::connect(impl_->copyBtn, &QPushButton::clicked, tab1, []() {
-            const auto entries = ArtifactCore::EventBusDebugger::instance().fireLog();
-            QString text = "Time(ms)\tEvent\tSubs\tDur µs\tFlags\n";
+        QObject::connect(impl_->copyBtn, &QPushButton::clicked, tab1, [this]() {
+            const auto& entries = (!impl_->visibleLogEntries.empty())
+                ? impl_->visibleLogEntries
+                : ArtifactCore::EventBusDebugger::instance().fireLog();
+            QString text = "Time(ms)\tEvent\tSubs\tDur µs\tFlags\tSource\n";
             for (const auto& e : entries) {
-                QString flags;
-                if (e.isDuplicate) flags += "D";
-                if (e.isSlow)  { if (!flags.isEmpty()) flags += "|"; flags += "S"; }
-                if (e.isBurst) { if (!flags.isEmpty()) flags += "|"; flags += "B"; }
-                text += QString("%1\t%2\t%3\t%4\t%5\n")
+                text += QString("%1\t%2\t%3\t%4\t%5\t%6\n")
                     .arg(QString::number(e.timestampMs, 'f', 1))
                     .arg(QString::fromStdString(e.eventName))
                     .arg(static_cast<int>(e.subscriberCount))
                     .arg(e.durationUs)
-                    .arg(flags);
+                    .arg(fireFlagsText(e))
+                    .arg(fireSourceText(e));
             }
             QApplication::clipboard()->setText(text);
         });
+        QObject::connect(impl_->logTable, &QTableWidget::customContextMenuRequested, tab1,
+                         [this](const QPoint& pos) {
+                             if (!impl_ || !impl_->logTable) {
+                                 return;
+                             }
+                             QMenu menu(impl_->logTable);
+                             QAction* copySelected = menu.addAction(QStringLiteral("Copy selected rows"));
+                             QAction* copyAll = menu.addAction(QStringLiteral("Copy all rows"));
+                             QAction* chosen = menu.exec(impl_->logTable->viewport()->mapToGlobal(pos));
+                             if (chosen == copySelected) {
+                                impl_->copySelectedLogRowsToClipboard();
+                            } else if (chosen == copyAll) {
+                                const auto entries = ArtifactCore::EventBusDebugger::instance().fireLog();
+                                QString text = "Time(ms)\tEvent\tSubs\tDur µs\tFlags\tSource\n";
+                                for (const auto& e : entries) {
+                                    text += QString("%1\t%2\t%3\t%4\t%5\t%6\n")
+                                                .arg(QString::number(e.timestampMs, 'f', 1))
+                                                .arg(QString::fromStdString(e.eventName))
+                                                .arg(static_cast<int>(e.subscriberCount))
+                                                .arg(e.durationUs)
+                                                .arg(fireFlagsText(e))
+                                                .arg(fireSourceText(e));
+                                }
+                                QApplication::clipboard()->setText(text);
+                            }
+                         });
         QObject::connect(impl_->saveCsvBtn, &QPushButton::clicked, this, [this]() {
             const QString path = QFileDialog::getSaveFileName(
                 this, "Save Fire Log", QString(), "CSV files (*.csv);;All files (*)");
@@ -368,18 +452,15 @@ EventBusDebuggerWidget::EventBusDebuggerWidget(QWidget* parent)
             QFile file(path);
             if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) return;
             QTextStream out(&file);
-            out << "Time(ms),Event,Subscribers,Duration_us,Flags\n";
+            out << "Time(ms),Event,Subscribers,Duration_us,Flags,Source\n";
             const auto entries = ArtifactCore::EventBusDebugger::instance().fireLog();
             for (const auto& e : entries) {
-                QString flags;
-                if (e.isDuplicate) flags += "D";
-                if (e.isSlow)  { if (!flags.isEmpty()) flags += "|"; flags += "S"; }
-                if (e.isBurst) { if (!flags.isEmpty()) flags += "|"; flags += "B"; }
                 out << QString::number(e.timestampMs, 'f', 1) << ','
                     << QString::fromStdString(e.eventName) << ','
                     << static_cast<int>(e.subscriberCount) << ','
                     << e.durationUs << ','
-                    << flags << '\n';
+                    << fireFlagsText(e) << ','
+                    << fireSourceText(e) << '\n';
             }
         });
     }
@@ -480,16 +561,38 @@ void EventBusDebuggerWidget::timerEvent(QTimerEvent*)
     // Always refresh the status bar
     {
         const auto gs = ArtifactCore::EventBusDebugger::instance().globalStats();
-        QString st = QString("Captured: %1  |  Rate: %2/s  |  Uptime: %3s")
+        QString overview = QString("Events: %1  |  Rate: %2/s  |  Uptime: %3s")
             .arg(static_cast<qulonglong>(gs.totalEventsFired))
             .arg(gs.overallEventsPerSec, 0, 'f', 1)
             .arg(gs.uptimeSec, 0, 'f', 1);
         if (!gs.slowestEventName.empty()) {
-            st += QString("  |  Slowest: %1 (%2 µs)")
+            overview += QString("  |  Slowest: %1 (%2 µs)")
                 .arg(QString::fromStdString(gs.slowestEventName))
                 .arg(gs.slowestMaxUs);
         }
-        impl_->statusBar->setText(st);
+        if (impl_->overviewBar) {
+            impl_->overviewBar->setText(overview);
+        }
+
+        if (impl_->legendBar) {
+            const auto subs = ArtifactCore::EventBusDebugger::instance().subscriberSnapshot();
+            std::size_t neverFired = 0;
+            for (const auto& s : subs) {
+                if (s.neverFired) {
+                    ++neverFired;
+                }
+            }
+            const auto freq = ArtifactCore::EventBusDebugger::instance().frequencySnapshot();
+            std::size_t highFreq = 0;
+            for (const auto& f : freq) {
+                if (f.isHighFreq) {
+                    ++highFreq;
+                }
+            }
+            impl_->legendBar->setText(QString("Never fired: %1  |  High freq: %2")
+                                          .arg(static_cast<qulonglong>(neverFired))
+                                          .arg(static_cast<qulonglong>(highFreq)));
+        }
     }
 
     const int tab = impl_->tabs->currentIndex();
@@ -518,6 +621,8 @@ void EventBusDebuggerWidget::timerEvent(QTimerEvent*)
                 }), entries.end());
         }
 
+        impl_->visibleLogEntries = entries;
+
         const int rowCount = static_cast<int>(entries.size());
         impl_->logTable->setRowCount(rowCount);
         for (int i = 0; i < rowCount; ++i) {
@@ -537,6 +642,9 @@ void EventBusDebuggerWidget::timerEvent(QTimerEvent*)
             impl_->logTable->setItem(i, 3, new QTableWidgetItem(
                 QString::number(e.durationUs)));
             impl_->logTable->setItem(i, 4, new QTableWidgetItem(flags));
+            auto* sourceItem = new QTableWidgetItem(fireSourceText(e));
+            sourceItem->setToolTip(fireSourceTooltip(e));
+            impl_->logTable->setItem(i, 5, sourceItem);
 
             // Row color: burst > dup > slow
             const bool hasBgColor = e.isBurst || e.isDuplicate || e.isSlow;
@@ -544,7 +652,7 @@ void EventBusDebuggerWidget::timerEvent(QTimerEvent*)
                 const QColor& bg = e.isBurst ? kBgBurst
                                  : e.isDuplicate ? kBgDup
                                  : kBgSlow;
-                for (int c = 0; c < 5; ++c) {
+                for (int c = 0; c < 6; ++c) {
                     if (auto* item = impl_->logTable->item(i, c))
                         item->setBackground(bg);
                 }
@@ -593,6 +701,46 @@ void EventBusDebuggerWidget::timerEvent(QTimerEvent*)
 void EventBusDebuggerWidget::closeEvent(QCloseEvent* event)
 {
     QWidget::closeEvent(event);
+}
+
+void EventBusDebuggerWidget::Impl::copySelectedLogRowsToClipboard() const
+{
+    if (!logTable) {
+        return;
+    }
+
+    const auto selected = logTable->selectionModel()
+                              ? logTable->selectionModel()->selectedRows()
+                              : QList<QModelIndex>{};
+    if (selected.isEmpty()) {
+        return;
+    }
+
+    std::vector<int> rows;
+    rows.reserve(selected.size());
+    for (const auto& index : selected) {
+        rows.push_back(index.row());
+    }
+    std::sort(rows.begin(), rows.end());
+
+    const auto& entries = visibleLogEntries.empty()
+        ? ArtifactCore::EventBusDebugger::instance().fireLog()
+        : visibleLogEntries;
+    QString text = "Time(ms)\tEvent\tSubs\tDur µs\tFlags\tSource\n";
+    for (int row : rows) {
+        if (row < 0 || row >= static_cast<int>(entries.size())) {
+            continue;
+        }
+        const auto& e = entries[static_cast<std::size_t>(row)];
+        text += QString("%1\t%2\t%3\t%4\t%5\t%6\n")
+                    .arg(QString::number(e.timestampMs, 'f', 1))
+                    .arg(QString::fromStdString(e.eventName))
+                    .arg(static_cast<int>(e.subscriberCount))
+                    .arg(e.durationUs)
+                    .arg(fireFlagsText(e))
+                    .arg(fireSourceText(e));
+    }
+    QApplication::clipboard()->setText(text);
 }
 
 } // namespace Artifact

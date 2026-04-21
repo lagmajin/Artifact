@@ -1535,8 +1535,11 @@ int main(int argc, char *argv[]) {
                               QStringLiteral("Inspector"));
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea,
                         new ArtifactCompositionAudioMixerWidget(mw));
-    mw->addDockedWidget(QStringLiteral("AI Cloud"), ads::RightDockWidgetArea,
-                        new ArtifactAICloudWidget(mw));
+    mw->addLazyDockedWidgetTabbedWithId(
+        QStringLiteral("AI Cloud"), QStringLiteral("AI Cloud"),
+        ads::RightDockWidgetArea,
+        [mw]() -> QWidget * { return new ArtifactAICloudWidget(mw); },
+        QString());
     renderCenterWindow = new ArtifactRenderCenterWindow();
     renderCenterWindow->present();
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
@@ -1942,15 +1945,28 @@ int main(int argc, char *argv[]) {
     auto *statsTimer = new QTimer(mw);
     statsTimer->setInterval(500);
     auto fpsElapsed = std::make_shared<QElapsedTimer>();
+    auto smoothedFps = std::make_shared<double>(0.0);
     fpsElapsed->start();
     QObject::connect(
-        statsTimer, &QTimer::timeout, mw, [status, fpsElapsed, frameCounter]() {
+        statsTimer, &QTimer::timeout, mw,
+        [status, fpsElapsed, frameCounter, smoothedFps]() {
           status->setMemoryMB(processWorkingSetMB());
           const qint64 elapsedMs = fpsElapsed->elapsed();
           if (elapsedMs > 0) {
             const int frames = frameCounter->exchange(0);
-            const double fps = frames * 1000.0 / static_cast<double>(elapsedMs);
-            status->setFPS(fps);
+            if (frames > 0) {
+              const double sampleFps =
+                  frames * 1000.0 / static_cast<double>(elapsedMs);
+              if (*smoothedFps <= 0.0) {
+                *smoothedFps = sampleFps;
+              } else {
+                // Half-second sampling is noisy, so soften display swings a bit.
+                *smoothedFps = (*smoothedFps * 0.75) + (sampleFps * 0.25);
+              }
+            }
+            if (*smoothedFps > 0.0) {
+              status->setFPS(*smoothedFps);
+            }
           }
           fpsElapsed->restart();
         });

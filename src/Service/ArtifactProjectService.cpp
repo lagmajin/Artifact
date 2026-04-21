@@ -1581,8 +1581,10 @@ ArtifactProjectService::getCurrentProjectSharedPtr() const {
 
 ChangeCompositionResult
 ArtifactProjectService::changeCurrentComposition(const CompositionID &id) {
+  const auto previousCompositionId =
+      impl_ ? impl_->currentCompositionId_ : CompositionID{};
   auto result = impl_->changeCurrentComposition(id);
-  if (result.success) {
+  if (result.success && previousCompositionId != id) {
     QTimer::singleShot(0, this, [this, id]() {
       ArtifactCore::globalEventBus().publish<CurrentCompositionChangedEvent>(
           CurrentCompositionChangedEvent{id.toString()});

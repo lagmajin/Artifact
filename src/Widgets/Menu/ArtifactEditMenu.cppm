@@ -215,12 +215,6 @@ private:
  
  void ArtifactEditMenu::Impl::syncUIState() {
   // Undo/Redo 後に UI 状態を同期
-  if (auto* svc = ArtifactProjectService::instance()) {
-    auto currentComp = svc->currentComposition();
-    if (auto comp = currentComp.lock()) {
-     emit svc->currentCompositionChanged(comp->id());
-    }
-  }
   if (auto* selMgr = ArtifactApplicationManager::instance()
                           ? ArtifactApplicationManager::instance()->layerSelectionManager()
                           : nullptr) {
