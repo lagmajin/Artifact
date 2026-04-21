@@ -5,6 +5,8 @@ module;
 #include <QWidget>
 export module Artifact.Widgets.DebugConsoleWidget;
 
+import Frame.Debug;
+
 export namespace Artifact {
 
 class ArtifactDebugConsoleWidget : public QWidget {
@@ -14,6 +16,7 @@ public:
     ~ArtifactDebugConsoleWidget() override;
     int debugConsoleFontPointSize() const;
     void setDebugConsoleFontPointSize(int pointSize);
+    void setFrameDebugSnapshot(const ArtifactCore::FrameDebugSnapshot& snapshot);
 
 private:
     class Impl;

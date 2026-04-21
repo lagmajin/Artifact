@@ -217,7 +217,7 @@ namespace Artifact
     jobs.clear();
     for (int i = 0; i < service->jobCount(); ++i) {
       JobEntry e;
-      e.name = service->jobCompositionNameAt(i);
+      e.name = service->jobNameAt(i);
       e.status = service->jobStatusAt(i);
       e.progress = service->jobProgressAt(i);
       e.errorMessage = service->jobErrorMessageAt(i);
@@ -294,6 +294,9 @@ namespace Artifact
         .arg(outputPath.isEmpty() ? QStringLiteral("(auto)") : outputPath)
         .arg(job.encoderBackend.isEmpty() ? QStringLiteral("auto") : job.encoderBackend)
         .arg(job.renderBackend.isEmpty() ? QStringLiteral("auto") : job.renderBackend);
+    if (!job.errorMessage.isEmpty()) {
+      tooltip += QString("\nError: %1").arg(job.errorMessage);
+    }
     return {line, textColor, tooltip};
   }
 

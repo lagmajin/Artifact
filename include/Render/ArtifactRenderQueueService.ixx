@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QJsonArray>
 #include <QJsonObject>
@@ -39,7 +39,9 @@
 export module Artifact.Render.Queue.Service;
 
 import Utils.Id;
+import Core.Diagnostics.SessionLedger;
 import Artifact.Render.Queue.Presets;
+import Frame.Debug;
 
 export namespace Artifact {
 // Forward declarations
@@ -195,6 +197,19 @@ public:
   enum class RenderBackend { Auto, CPU, GPU };
   void setRenderBackend(RenderBackend backend);
   RenderBackend renderBackend() const;
+
+  // Tile render mode (Phase 6: Tiled ROI Engine)
+  enum class TileRenderMode { FullFrame, Tiled };
+  void setTileRenderMode(TileRenderMode mode);
+  TileRenderMode tileRenderMode() const;
+  void setTileSize(int pixels);
+  int tileSize() const;
+
+  ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
+
+  // Session Ledger access
+  ArtifactCore::SessionLedger& sessionLedger();
+  const ArtifactCore::SessionLedger& sessionLedger() const;
 };
 
 }; // namespace Artifact

@@ -49,6 +49,7 @@ import Artifact.Render.ROI;
 import Artifact.Render.Context;
 import Artifact.Preview.Pipeline;
 import Frame.Debug;
+import Core.Diagnostics.Trace;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.CloneEffectSupport;
@@ -81,6 +82,7 @@ import Artifact.Render.Pipeline;
 import Graphics.LayerBlendPipeline;
 import Graphics.GPUcomputeContext;
 import Widgets.Utils.CSS;
+import Core.Diagnostics.Trace;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback; // 追加
@@ -2470,6 +2472,23 @@ ArtifactIRenderer *CompositionRenderController::renderer() const {
 
 ArtifactCore::FrameDebugSnapshot
 CompositionRenderController::frameDebugSnapshot() const {
+  struct TraceScopeGuard {
+    ArtifactCore::TraceScopeRecord scope;
+    QElapsedTimer timer;
+    TraceScopeGuard() {
+      scope.name = QStringLiteral("CompositionRenderController::frameDebugSnapshot");
+      scope.domain = ArtifactCore::TraceDomain::Render;
+      timer.start();
+    }
+    ~TraceScopeGuard() {
+      scope.endNs = timer.nsecsElapsed();
+      if (scope.endNs <= scope.startNs) {
+        scope.endNs = scope.startNs + 1;
+      }
+      ArtifactCore::TraceRecorder::instance().recordScope(scope);
+    }
+  } traceGuard;
+
   ArtifactCore::FrameDebugSnapshot snapshot;
   const auto comp = impl_->previewPipeline_.composition();
   const auto selectedLayerId = impl_->selectedLayerId_;
@@ -2537,6 +2556,18 @@ CompositionRenderController::frameDebugSnapshot() const {
     ArtifactCore::FrameDebugAttachmentRecord outputAttachment;
     outputAttachment.name = QStringLiteral("viewport");
     outputAttachment.role = QStringLiteral("output");
+    outputAttachment.texture.valid = true;
+    outputAttachment.texture.name = QStringLiteral("viewport");
+    outputAttachment.texture.format = snapshot.renderBackend.isEmpty() ? QStringLiteral("viewport") : snapshot.renderBackend;
+    outputAttachment.texture.width = std::max(1, static_cast<int>(std::lround(impl_->hostWidth_)));
+    outputAttachment.texture.height = std::max(1, static_cast<int>(std::lround(impl_->hostHeight_)));
+    outputAttachment.texture.mipLevel = 0;
+    outputAttachment.texture.mipLevels = std::max(1, 1 + static_cast<int>(std::floor(std::log2(
+        static_cast<double>(std::max(outputAttachment.texture.width, outputAttachment.texture.height))))));
+    outputAttachment.texture.sliceIndex = 0;
+    outputAttachment.texture.arrayLayers = 1;
+    outputAttachment.texture.sampleCount = 1;
+    outputAttachment.texture.srgb = false;
     outputAttachment.readOnly = true;
     pass.outputs.push_back(outputAttachment);
 
@@ -2549,12 +2580,25 @@ CompositionRenderController::frameDebugSnapshot() const {
       selectedResource.type = QStringLiteral("layer");
       selectedResource.relation = QStringLiteral("selected");
       selectedResource.cacheHit = true;
+      selectedResource.texture.valid = true;
+      selectedResource.texture.name = snapshot.selectedLayerName;
+      selectedResource.texture.format = QStringLiteral("layer-proxy");
+      selectedResource.texture.width = std::max(1, static_cast<int>(std::lround(impl_->lastCanvasWidth_)));
+      selectedResource.texture.height = std::max(1, static_cast<int>(std::lround(impl_->lastCanvasHeight_)));
+      selectedResource.texture.mipLevel = 0;
+      selectedResource.texture.mipLevels = std::max(1, 1 + static_cast<int>(std::floor(std::log2(
+          static_cast<double>(std::max(selectedResource.texture.width, selectedResource.texture.height))))));
+      selectedResource.texture.sliceIndex = 0;
+      selectedResource.texture.arrayLayers = 1;
+      selectedResource.texture.sampleCount = 1;
+      selectedResource.texture.srgb = false;
       snapshot.resources.push_back(selectedResource);
     }
 
     snapshot.passes.push_back(pass);
   }
 
+  ArtifactCore::TraceRecorder::instance().recordFrameDebugSnapshot(snapshot);
   return snapshot;
 }
 
@@ -3478,6 +3522,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     phaseNs = nowNs;
     return phaseMs;
   };
+
+  struct TraceScopeGuard {
+    ArtifactCore::TraceScopeRecord scope;
+    QElapsedTimer timer;
+    TraceScopeGuard() {
+      scope.name = QStringLiteral("CompositionRenderController::renderOneFrameImpl");
+      scope.domain = ArtifactCore::TraceDomain::Render;
+      scope.startNs = 0;
+      timer.start();
+    }
+    ~TraceScopeGuard() {
+      scope.endNs = timer.nsecsElapsed();
+      if (scope.endNs <= scope.startNs) {
+        scope.endNs = scope.startNs + 1;
+      }
+      ArtifactCore::TraceRecorder::instance().recordScope(scope);
+    }
+  } traceGuard;
 
   auto comp = previewPipeline_.composition();
   if (auto *service = ArtifactProjectService::instance()) {

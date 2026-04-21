@@ -49,6 +49,7 @@ module;
 #include <QStandardPaths>
 #include <QStyleFactory>
 #include <QTimer>
+#include <QThread>
 #include <QUrl>
 #include <QtCore/QtGlobal>
 #include <ads_globals.h>
@@ -118,6 +119,7 @@ import Artifact.Widgets.MarkdownNoteEditorWidget;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Render.Queue.Service;
 import Core.Diagnostics.SessionLedger;
+import Core.Diagnostics.Trace;
 import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Render.Scheduler;
 import Artifact.Contents.Viewer;
@@ -134,6 +136,7 @@ import Artifact.Widgets.Test.ScrollPoC;
 import Diagnostics.Logger;
 import Artifact.Widgets.DebugConsoleWidget;
 import Artifact.Widgets.FrameDebugViewWidget;
+import Artifact.Widgets.AppDebuggerWidget;
 import Widgets.AIChatWidget;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -144,6 +147,36 @@ using namespace ArtifactCore;
 
 namespace {
 constexpr int kMainWindowLayoutVersion = 8;
+
+ArtifactCore::TraceCrashRecord traceCrashFromReportPath(const QString& crashReportPath)
+{
+  ArtifactCore::TraceCrashRecord record;
+  record.summary = QStringLiteral("Crash report: %1").arg(crashReportPath);
+  record.threadName = QThread::currentThread()
+                          ? QThread::currentThread()->objectName()
+                          : QStringLiteral("main-thread");
+  record.timestampMs = QDateTime::currentMSecsSinceEpoch();
+
+  QFile file(crashReportPath);
+  if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    record.stack = QStringLiteral("<unable to read crash report>");
+    return record;
+  }
+
+  const QString report = QString::fromUtf8(file.readAll());
+  const QString stackStart = QStringLiteral("--- Stack Trace ---");
+  const QString systemStart = QStringLiteral("--- System Info ---");
+  const int start = report.indexOf(stackStart);
+  const int end = report.indexOf(systemStart);
+  if (start >= 0) {
+    const int stackBegin = start + stackStart.size();
+    const int stackEnd = end > stackBegin ? end : report.size();
+    record.stack = report.mid(stackBegin, stackEnd - stackBegin).trimmed();
+  } else {
+    record.stack = report.left(1200);
+  }
+  return record;
+}
 
 void suppressScrollBarsForViewportWidget(QWidget *widget) {
   if (!widget) {
@@ -761,6 +794,7 @@ int main(int argc, char *argv[]) {
       rq->sessionLedger().recordCrash(
           QStringLiteral("Crash report: %1").arg(crashReportPath));
     }
+    ArtifactCore::TraceRecorder::instance().recordCrash(traceCrashFromReportPath(crashReportPath));
   });
   ArtifactCore::Logger::instance()->install();
 
@@ -1151,6 +1185,13 @@ int main(int argc, char *argv[]) {
           return widget;
         },
         QRect(220, 240, 900, 520));
+    mw->addLazyDockedWidgetFloating(
+        QStringLiteral("App Debugger"), QStringLiteral("AppDebugger"),
+        [mw, compositionEditor]() -> QWidget * {
+          auto* controller = compositionEditor ? compositionEditor->renderController() : nullptr;
+          return new AppDebuggerWidget(controller, mw);
+        },
+        QRect(140, 140, 1080, 640));
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("AI Chat"), QStringLiteral("AIChat"),
         [mw, aiProvider]() -> QWidget * {
@@ -1722,12 +1763,11 @@ int main(int argc, char *argv[]) {
                 }
                   }));
       }
-      appEventSubscriptions.push_back(
-          appEventBus.subscribe<CurrentCompositionChangedEvent>(
-              [compositionEditor, projectService, propertyPanel,
-               layerViewEditor, status,
-               retainedPropertyLayerId](const CurrentCompositionChangedEvent &event) {
-                const CompositionID compId(event.compositionId);
+        appEventSubscriptions.push_back(
+           appEventBus.subscribe<CurrentCompositionChangedEvent>(
+                [compositionEditor, projectService, propertyPanel,
+                 layerViewEditor, status](const CurrentCompositionChangedEvent &event) {
+                 const CompositionID compId(event.compositionId);
                 if (compositionEditor && projectService) {
                   const auto found = projectService->findComposition(compId);
                   if (found.success && !found.ptr.expired()) {
@@ -1748,21 +1788,7 @@ int main(int argc, char *argv[]) {
                   // when an internal call triggers a composition-changed event
                   // for the same composition (e.g., from timeline or property
                   // animation notifications).
-                  bool shouldClear = true;
-                  if (retainedPropertyLayerId &&
-                      !retainedPropertyLayerId->isNil() && projectService) {
-                    const auto found2 = projectService->findComposition(compId);
-                    if (found2.success && !found2.ptr.expired()) {
-                      if (auto comp = found2.ptr.lock()) {
-                        if (comp->layerById(*retainedPropertyLayerId)) {
-                          shouldClear = false;
-                        }
-                      }
-                    }
-                  }
-                  if (shouldClear) {
-                    propertyPanel->clear();
-                  }
+                  propertyPanel->clear();
                 }
                 if (layerViewEditor) {
                   layerViewEditor->view()->clearTargetLayer();

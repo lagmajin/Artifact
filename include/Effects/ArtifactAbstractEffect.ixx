@@ -42,6 +42,7 @@ import Artifact.Effect.Context;
 import Image.ImageF32x4RGBAWithCache;
 import Artifact.Effect.ImplBase;
 import Property.Abstract;
+import Artifact.Render.ROI;
 
 export namespace Artifact {
 
@@ -117,6 +118,9 @@ public:
     // Property interface (use ArtifactCore::AbstractProperty)
     virtual std::vector<ArtifactCore::AbstractProperty> getProperties() const;
     virtual void setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value);
+
+    // ROI hint for partial evaluation
+    virtual EffectROIHint roiHint() const { return EffectROIHint{}; }
 };
 
 typedef std::shared_ptr<ArtifactAbstractEffect> ArtifactAbstractEffectPtr;

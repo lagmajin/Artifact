@@ -14,6 +14,7 @@ import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Property.Abstract;
+import Math.Interpolate;
 import Time.Rational;
 import Frame.Position;
 import Utils.Id;
@@ -43,7 +44,14 @@ public:
                    const QString& propertyPath,
                    const RationalTime& time,
                    const QVariant& value,
-                   EasingType easing = EasingType::Linear);
+                   InterpolationType interpolation = InterpolationType::Linear);
+
+  bool addKeyframeWithBezier(const CompositionID& compId,
+                             const LayerID& layerId,
+                             const QString& propertyPath,
+                             const RationalTime& time,
+                             const QVariant& value,
+                             float cp1_x, float cp1_y, float cp2_x, float cp2_y);
 
   bool moveKeyframe(const CompositionID& compId,
                     const LayerID& layerId,

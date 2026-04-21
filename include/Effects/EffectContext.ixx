@@ -1,7 +1,10 @@
 module;
 #include <utility>
+#include <QRectF>
 #include <DeviceContext.h>
 export module Artifact.Effect.Context;
+
+import Artifact.Render.ROI;
 
 export namespace Artifact
 {
@@ -10,9 +13,7 @@ export namespace Artifact
  struct EffectContext
  {
   IDeviceContext* pDeviceContext = nullptr;
+  QRectF roi;
+  bool isInteractive = true;
  };
-	
-	
-	
-	
 };

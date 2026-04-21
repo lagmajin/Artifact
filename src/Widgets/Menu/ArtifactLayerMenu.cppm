@@ -333,10 +333,6 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     };
 
     QObject::connect(menu, &QMenu::triggered, menu, dispatchAction);
-    QObject::connect(createMenu, &QMenu::triggered, menu, dispatchAction);
-    QObject::connect(createShapeMenu, &QMenu::triggered, menu, dispatchAction);
-    QObject::connect(switchMenu, &QMenu::triggered, menu, dispatchAction);
-    QObject::connect(selectMenu, &QMenu::triggered, menu, dispatchAction);
 
     auto& eventBus = ArtifactCore::globalEventBus();
     eventBusSubscriptions_.push_back(

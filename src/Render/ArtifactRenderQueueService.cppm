@@ -15,6 +15,7 @@ module;
 #include <QDataStream>
 #include <QTextOption>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFileInfo>
 #include <QStandardPaths>
 #include <QStringList>
@@ -69,6 +70,8 @@ module Artifact.Render.Queue.Service;
 
 import Render.Queue.Manager;
 import Frame.Range;
+import Frame.Debug;
+import Core.Diagnostics.Trace;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Service.Project;
@@ -81,7 +84,9 @@ import Artifact.Render.SoftwareCompositor;
 import Artifact.Render.IRenderer;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Render.Context;
+import Artifact.Render.ROI;
 import Artifact.Render.GPUTextureCacheManager;
+import Core.Diagnostics.SessionLedger;
 import Encoder.FFmpegEncoder;
 import Media.Encoder.FFmpegAudioEncoder;
 import IO.ImageExporter;
@@ -1306,14 +1311,14 @@ namespace Artifact
 
         void setJobCompleted(int index) {
             if (index < 0 || index >= jobs.size()) return;
-            jobs[index].progress = 100;  // progress を先に設定（100% 表示を確実にする）
+            jobs[index].progress = 100;
             jobs[index].status = ArtifactRenderJob::Status::Completed;
             if (jobProgressChanged) jobProgressChanged(index, jobs[index].progress);
             if (jobStatusChanged) jobStatusChanged(index, jobs[index].status);
             if (jobUpdated) jobUpdated(index);
         }
 
-        void setJobFailed(int index, const QString& message) {
+        void markJobFailed(int index, const QString& message) {
             if (index < 0 || index >= jobs.size()) return;
             jobs[index].status = ArtifactRenderJob::Status::Failed;
             jobs[index].progress = 0;  // 失敗時に進捗率をリセット（再実行時に分かりやすくする）
@@ -1776,6 +1781,13 @@ namespace Artifact
         // Render backend selection
         enum class RenderBackend { Auto, CPU, GPU };
         RenderBackend renderBackend_ = RenderBackend::Auto;
+
+        // Tile render mode (Phase 6: Tiled ROI Engine)
+        ArtifactRenderQueueService::TileRenderMode tileRenderMode_ = ArtifactRenderQueueService::TileRenderMode::FullFrame;
+        int tileSize_ = 256;
+
+        // Session Ledger (1-4 Recovery / Diagnostics)
+        ArtifactCore::SessionLedger sessionLedger_;
 
         static RenderBackend parseRenderBackend(const QString& backend)
         {
@@ -2978,6 +2990,16 @@ namespace Artifact
                             (*compositionForRender)->backgroundColor().b(),
                             1.0f
                         };
+
+                        const TileRenderMode tileMode = impl_->tileRenderMode_;
+                        const int tileSz = impl_->tileSize_;
+                        if (tileMode == TileRenderMode::Tiled) {
+                            TileGrid grid(compSize.width(), compSize.height(), tileSz);
+                            qInfo() << "[RenderQueue] Tile path active: grid="
+                                    << grid.gridWidth << "x" << grid.gridHeight
+                                    << " tileSize=" << tileSz;
+                        }
+
                         impl_->gpuRenderer_->setClearColor(bgColor);
                         impl_->gpuRenderer_->clear();
                         impl_->gpuRenderer_->drawRectLocal(0.0f, 0.0f,
@@ -3009,6 +3031,7 @@ namespace Artifact
 
                     // Live preview update
                     {
+                        ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
                         std::lock_guard<std::mutex> lock(impl_->previewMutex_);
                         impl_->lastPreviewFrame_ = qimg.scaled(320, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation);
                         impl_->lastPreviewFrameNumber_ = f;
@@ -3082,7 +3105,7 @@ namespace Artifact
                             ? QStringLiteral("Render interrupted or failed")
                             : failureReason;
                         anyFailure->store(true, std::memory_order_release);
-                        impl_->queueManager.setJobFailed(i, reason);
+                        impl_->queueManager.markJobFailed(i, reason);
                     }
                 }, Qt::QueuedConnection);
             }
@@ -3326,16 +3349,19 @@ namespace Artifact
     }
 
     QImage ArtifactRenderQueueService::lastRenderedFrame() const {
+        ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
         std::lock_guard<std::mutex> lock(impl_->previewMutex_);
         return impl_->lastPreviewFrame_;
     }
 
     int ArtifactRenderQueueService::lastRenderedFrameNumber() const {
+        ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
         std::lock_guard<std::mutex> lock(impl_->previewMutex_);
         return impl_->lastPreviewFrameNumber_;
     }
 
     int ArtifactRenderQueueService::lastRenderedJobIndex() const {
+        ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
         std::lock_guard<std::mutex> lock(impl_->previewMutex_);
         return impl_->lastPreviewJobIndex_;
     }
@@ -3346,6 +3372,81 @@ namespace Artifact
 
     ArtifactRenderQueueService::RenderBackend ArtifactRenderQueueService::renderBackend() const {
         return static_cast<RenderBackend>(impl_->renderBackend_);
+    }
+
+    void ArtifactRenderQueueService::setTileRenderMode(TileRenderMode mode) {
+        impl_->tileRenderMode_ = mode;
+    }
+
+    ArtifactRenderQueueService::TileRenderMode ArtifactRenderQueueService::tileRenderMode() const {
+        return impl_->tileRenderMode_;
+    }
+
+    void ArtifactRenderQueueService::setTileSize(int pixels) {
+        impl_->tileSize_ = std::max(64, pixels);
+    }
+
+    int ArtifactRenderQueueService::tileSize() const {
+        return impl_->tileSize_;
+    }
+
+    ArtifactCore::FrameDebugSnapshot ArtifactRenderQueueService::frameDebugSnapshot() const {
+        struct TraceScopeGuard {
+            ArtifactCore::TraceScopeRecord scope;
+            QElapsedTimer timer;
+            TraceScopeGuard() {
+                scope.name = QStringLiteral("ArtifactRenderQueueService::frameDebugSnapshot");
+                scope.domain = ArtifactCore::TraceDomain::Event;
+                timer.start();
+            }
+            ~TraceScopeGuard() {
+                scope.endNs = timer.nsecsElapsed();
+                if (scope.endNs <= scope.startNs) {
+                    scope.endNs = scope.startNs + 1;
+                }
+                ArtifactCore::TraceRecorder::instance().recordScope(scope);
+            }
+        } traceGuard;
+
+        ArtifactCore::FrameDebugSnapshot snapshot;
+        snapshot.frame = ArtifactCore::FramePosition(lastRenderedFrameNumber());
+        snapshot.timestampMs = static_cast<std::int64_t>(
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                .count());
+        snapshot.compositionName = QStringLiteral("<render-queue>");
+        snapshot.selectedLayerName = QStringLiteral("<none>");
+        snapshot.renderBackend = [this]() {
+            switch (renderBackend()) {
+            case RenderBackend::CPU: return QStringLiteral("cpu");
+            case RenderBackend::GPU: return QStringLiteral("gpu");
+            case RenderBackend::Auto:
+            default: return QStringLiteral("auto");
+            }
+        }();
+        snapshot.playbackState = QStringLiteral("stopped");
+        snapshot.compareMode = ArtifactCore::FrameDebugCompareMode::Disabled;
+
+        const int totalJobs = jobCount();
+        for (int i = 0; i < totalJobs; ++i) {
+            const QString status = jobStatusAt(i);
+            if (status.contains(QStringLiteral("fail"), Qt::CaseInsensitive) ||
+                status.contains(QStringLiteral("error"), Qt::CaseInsensitive)) {
+                snapshot.failed = true;
+                snapshot.failureReason = jobErrorMessageAt(i);
+                break;
+            }
+        }
+        ArtifactCore::TraceRecorder::instance().recordFrameDebugSnapshot(snapshot);
+        return snapshot;
+    }
+
+    const ArtifactCore::SessionLedger& ArtifactRenderQueueService::sessionLedger() const {
+        return impl_->sessionLedger_;
+    }
+
+    ArtifactCore::SessionLedger& ArtifactRenderQueueService::sessionLedger() {
+        return impl_->sessionLedger_;
     }
 
 };

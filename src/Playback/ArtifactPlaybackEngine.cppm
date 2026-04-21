@@ -25,6 +25,7 @@ import Artifact.Composition.InOutPoints;
 import AudioRenderer;
 import Audio.Segment;
 import Playback.State;
+import Core.Diagnostics.Trace;
 import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
@@ -185,6 +186,7 @@ public:
         
         while (state_ != PlaybackState::Stopped) {
             if (state_ == PlaybackState::Paused) {
+                ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactPlaybackEngine::mutex_"));
                 std::unique_lock<std::mutex> lock(mutex_);
                 condition_.wait(lock, [this]() { return state_ != PlaybackState::Paused; });
                 if (state_ == PlaybackState::Stopped) break;

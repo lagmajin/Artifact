@@ -105,6 +105,13 @@ foreach(file_path ${POTENTIAL_SOURCES})
     endif()
 endforeach()
 
+# CMake の module 自動分類で AppDebuggerWidget.cppm が link 対象から漏れるケースがあるため、
+# 明示的に private source として固定する。
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Diagnostics/AppDebuggerWidget.cppm" _app_debugger_widget_idx)
+if(_app_debugger_widget_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Diagnostics/AppDebuggerWidget.cppm")
+endif()
+
 # ---------------------------------------------------------------------------
 # ターゲット定義
 # ---------------------------------------------------------------------------

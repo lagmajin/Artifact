@@ -17,6 +17,7 @@ module;
 #include <QDateTime>
 #include <QDateTimeEdit>
 #include <QComboBox>
+#include <QStringList>
 #include <QIcon>
 #include <QColor>
 #include <QPalette>
@@ -39,6 +40,8 @@ module;
 module Artifact.Widgets.DebugConsoleWidget;
 
 import Diagnostics.Logger;
+import Core.Diagnostics.Trace;
+import Frame.Debug;
 import Utils;
 import Widgets.Utils.CSS;
 import Artifact.Service.Playback;
@@ -1056,6 +1059,101 @@ public:
         detailView_->setPlainText(item->data(Qt::UserRole + 5).toString());
     }
 
+    void showFrameDebugSnapshot(const ArtifactCore::FrameDebugSnapshot& snapshot) {
+        if (!detailView_) {
+            return;
+        }
+
+        QStringList lines;
+        lines << QStringLiteral("Frame Debug Snapshot");
+        lines << QStringLiteral("frame: %1").arg(snapshot.frame.framePosition());
+        lines << QStringLiteral("timestampMs: %1").arg(snapshot.timestampMs);
+        lines << QStringLiteral("composition: %1").arg(snapshot.compositionName);
+        lines << QStringLiteral("selectedLayer: %1").arg(snapshot.selectedLayerName);
+        lines << QStringLiteral("playbackState: %1").arg(snapshot.playbackState);
+        lines << QStringLiteral("renderBackend: %1").arg(snapshot.renderBackend);
+        lines << QStringLiteral("failed: %1").arg(snapshot.failed ? QStringLiteral("true") : QStringLiteral("false"));
+        if (!snapshot.failureReason.isEmpty()) {
+            lines << QStringLiteral("failureReason: %1").arg(snapshot.failureReason);
+        }
+        lines << QStringLiteral("compareMode: %1").arg(ArtifactCore::toString(snapshot.compareMode));
+        if (!snapshot.compareTargetId.isEmpty()) {
+            lines << QStringLiteral("compareTarget: %1").arg(snapshot.compareTargetId);
+        }
+
+        lines << QString();
+        lines << QStringLiteral("Passes:");
+        if (snapshot.passes.empty()) {
+            lines << QStringLiteral("  <none>");
+        } else {
+            for (const auto& pass : snapshot.passes) {
+                lines << QStringLiteral("  - %1 [%2/%3] inputs=%4 outputs=%5 note=%6")
+                              .arg(pass.name,
+                                   ArtifactCore::toString(pass.kind),
+                                   ArtifactCore::toString(pass.status))
+                              .arg(pass.inputs.size())
+                              .arg(pass.outputs.size())
+                              .arg(pass.note);
+            }
+        }
+
+        lines << QString();
+        lines << QStringLiteral("Resources:");
+        if (snapshot.resources.empty()) {
+            lines << QStringLiteral("  <none>");
+        } else {
+            for (const auto& resource : snapshot.resources) {
+                lines << QStringLiteral("  - %1 [%2] relation=%3 cacheHit=%4 stale=%5")
+                              .arg(resource.label, resource.type, resource.relation)
+                              .arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
+                              .arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"));
+            }
+        }
+
+        lines << QString();
+        lines << QStringLiteral("Attachments:");
+        if (snapshot.attachments.empty()) {
+            lines << QStringLiteral("  <none>");
+        } else {
+            for (const auto& attachment : snapshot.attachments) {
+                lines << QStringLiteral("  - %1 [%2] readOnly=%3 texture=%4x%5")
+                              .arg(attachment.name, attachment.role)
+                              .arg(attachment.readOnly ? QStringLiteral("true") : QStringLiteral("false"))
+                              .arg(attachment.texture.width)
+                              .arg(attachment.texture.height);
+            }
+        }
+
+        const auto trace = ArtifactCore::TraceRecorder::instance().snapshot();
+        lines << QString();
+        lines << QStringLiteral("Trace:");
+        lines << QStringLiteral("  frames=%1 scopes=%2 locks=%3 crashes=%4")
+                      .arg(static_cast<int>(trace.frames.size()))
+                      .arg(static_cast<int>(trace.scopes.size()))
+                      .arg(static_cast<int>(trace.locks.size()))
+                      .arg(static_cast<int>(trace.crashes.size()));
+        if (!trace.frames.empty()) {
+            const auto& frame = trace.frames.back();
+            lines << QStringLiteral("  lastFrame=%1 lanes=%2 spanNs=%3")
+                          .arg(frame.frameIndex)
+                          .arg(static_cast<int>(frame.lanes.size()))
+                          .arg(frame.frameEndNs - frame.frameStartNs);
+        }
+        lines << QStringLiteral("  threads=%1").arg(static_cast<int>(trace.threads.size()));
+        const int threadRows = std::min(static_cast<int>(trace.threads.size()), 4);
+        for (int i = 0; i < threadRows; ++i) {
+            const auto& thread = trace.threads[i];
+            lines << QStringLiteral("    - %1 [0x%2] sc=%3 lk=%4 cr=%5")
+                          .arg(thread.threadName)
+                          .arg(QString::number(static_cast<unsigned long long>(thread.threadId), 16))
+                          .arg(thread.scopeCount)
+                          .arg(thread.lockCount)
+                          .arg(thread.crashCount);
+        }
+
+        detailView_->setPlainText(lines.join(QStringLiteral("\n")));
+    }
+
     void updateStatus() {
         if (!statusLabel_) {
             return;
@@ -1153,6 +1251,13 @@ void ArtifactDebugConsoleWidget::setDebugConsoleFontPointSize(int pointSize) {
         return;
     }
     impl_->applyFontPointSize(pointSize, true);
+}
+
+void ArtifactDebugConsoleWidget::setFrameDebugSnapshot(const ArtifactCore::FrameDebugSnapshot& snapshot) {
+    if (!impl_) {
+        return;
+    }
+    impl_->showFrameDebugSnapshot(snapshot);
 }
 
 } // namespace Artifact

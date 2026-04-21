@@ -21,6 +21,8 @@ module Artifact.Project.RevisionService;
 
 import std;
 import Artifact.Project;
+import Artifact.Render.Queue.Service;
+import Core.Diagnostics.SessionLedger;
 
 namespace Artifact {
 namespace {
@@ -495,6 +497,18 @@ bool ArtifactRevisionService::commitCurrentProject(const QString &message,
   impl_->headRevisionId_ = record.id;
   impl_->lastCommittedSnapshotHash_ = snapshotHash;
   impl_->dirtySinceLastCommit_ = false;
+
+  if (auto *rq = ArtifactRenderQueueService::instance()) {
+    ArtifactCore::RecoveryPoint rp;
+    rp.id = record.id;
+    rp.timestampMs = record.timestampUtc.toMSecsSinceEpoch();
+    rp.projectId = impl_->activeProjectKey_;
+    rp.projectName = record.projectName;
+    rp.snapshotPath = record.snapshotFile;
+    rp.isAutosave = message.contains(QStringLiteral("Auto"), Qt::CaseInsensitive);
+    rq->sessionLedger().addRecoveryPoint(rp);
+  }
+
   return impl_->saveLedger();
 }
 

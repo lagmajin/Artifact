@@ -2524,7 +2524,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QObject::connect(solidBgAct, &QAction::triggered, this, [this]() {
     if (impl_->renderController_) {
       impl_->renderController_->setCompositionBackgroundMode(
-          CompositionBackgroundMode::Solid);
+          static_cast<int>(CompositionBackgroundMode::Solid));
     }
   });
   QObject::connect(solidColorAct, &QAction::triggered, this, [this]() {
@@ -2546,18 +2546,18 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         FloatColor(chosen.redF(), chosen.greenF(), chosen.blueF(),
                    chosen.alphaF()));
     impl_->renderController_->setCompositionBackgroundMode(
-        CompositionBackgroundMode::Solid);
+        static_cast<int>(CompositionBackgroundMode::Solid));
   });
   QObject::connect(checkerboardAct, &QAction::triggered, this, [this]() {
     if (impl_->renderController_) {
       impl_->renderController_->setCompositionBackgroundMode(
-          CompositionBackgroundMode::Checkerboard);
+          static_cast<int>(CompositionBackgroundMode::Checkerboard));
     }
   });
   QObject::connect(mayaBgAct, &QAction::triggered, this, [this]() {
     if (impl_->renderController_) {
       impl_->renderController_->setCompositionBackgroundMode(
-          CompositionBackgroundMode::MayaGradient);
+          static_cast<int>(CompositionBackgroundMode::MayaGradient));
     }
   });
   QObject::connect(gridAct, &QAction::toggled, this, [this](bool checked) {
@@ -2581,7 +2581,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   // Initialize checked state
   if (impl_->renderController_) {
-    switch (impl_->renderController_->compositionBackgroundMode()) {
+    switch (static_cast<CompositionBackgroundMode>(
+        impl_->renderController_->compositionBackgroundMode())) {
     case CompositionBackgroundMode::Solid:
       solidBgAct->setChecked(true);
       break;
@@ -2926,6 +2927,10 @@ void ArtifactCompositionEditor::setClearColor(const FloatColor &color) {
   if (impl_->renderController_) {
     impl_->renderController_->setClearColor(color);
   }
+}
+
+CompositionRenderController* ArtifactCompositionEditor::renderController() const {
+  return impl_ ? impl_->renderController_ : nullptr;
 }
 
 void ArtifactCompositionEditor::play() {

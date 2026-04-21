@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QBoxLayout>
 #include <QBrush>
@@ -444,7 +444,7 @@ CurveEditorSnapshot buildCurveEditorSnapshot(
           ArtifactCore::CurveKey curveKey;
           curveKey.frame = static_cast<int64_t>(std::llround(frame));
           curveKey.value = static_cast<float>(value);
-          if (keyframes[i].easing != ArtifactCore::EasingType::Hold) {
+           if (keyframes[i].interpolation != ArtifactCore::InterpolationType::Constant) {
             const double inFrameSpan = std::max(1.0, (frame - prevFrame) / 3.0);
             const double outFrameSpan = std::max(1.0, (nextFrame - frame) / 3.0);
             const double inSlope = (frame > prevFrame) ? ((value - prevValue) / (frame - prevFrame)) : 0.0;
@@ -576,7 +576,11 @@ QJsonArray serializeSelectedKeyframes(
     record.insert(QStringLiteral("propertyPath"), marker.propertyPath);
     record.insert(QStringLiteral("frame"), static_cast<qint64>(frame));
     record.insert(QStringLiteral("value"), QJsonValue::fromVariant(it->value));
-    record.insert(QStringLiteral("easing"), static_cast<int>(it->easing));
+    record.insert(QStringLiteral("interpolation"), static_cast<int>(it->interpolation));
+    record.insert(QStringLiteral("cp1_x"), it->cp1_x);
+    record.insert(QStringLiteral("cp1_y"), it->cp1_y);
+    record.insert(QStringLiteral("cp2_x"), it->cp2_x);
+    record.insert(QStringLiteral("cp2_y"), it->cp2_y);
     keyframes.append(record);
   }
 
@@ -633,12 +637,16 @@ bool pasteKeyframesToLayers(
       const qint64 offset = sourceFrame - minFrame;
       const qint64 newFrame = std::max<qint64>(0, targetFrame + offset);
       const RationalTime time(newFrame, static_cast<int64_t>(std::llround(fps)));
-      const QVariant value = record.value(QStringLiteral("value")).toVariant();
-      const auto easingValue =
-          static_cast<ArtifactCore::EasingType>(record.value(QStringLiteral("easing")).toInt(
-              static_cast<int>(ArtifactCore::EasingType::Linear)));
+        const QVariant value = record.value(QStringLiteral("value")).toVariant();
+        const auto interpolationValue =
+            static_cast<ArtifactCore::InterpolationType>(record.value(QStringLiteral("interpolation")).toInt(
+                static_cast<int>(ArtifactCore::InterpolationType::Linear)));
+        const float cp1_x = static_cast<float>(record.value(QStringLiteral("cp1_x")).toDouble(0.42));
+        const float cp1_y = static_cast<float>(record.value(QStringLiteral("cp1_y")).toDouble(0.0));
+        const float cp2_x = static_cast<float>(record.value(QStringLiteral("cp2_x")).toDouble(0.58));
+        const float cp2_y = static_cast<float>(record.value(QStringLiteral("cp2_y")).toDouble(1.0));
 
-      property->addKeyFrame(time, value.isValid() ? value : property->getValue(), easingValue);
+       property->addKeyFrame(time, value.isValid() ? value : property->getValue(), interpolationValue, cp1_x, cp1_y, cp2_x, cp2_y);
       layerChanged = true;
     }
     if (layerChanged) {
@@ -855,10 +863,10 @@ CurveEditorPayload collectCurveEditorPayload(
 
         QVector<qint64> frames;
         QVector<double> values;
-        QVector<EasingType> easings;
+        QVector<ArtifactCore::InterpolationType> interpolations;
         frames.reserve(static_cast<int>(keyframes.size()));
         values.reserve(static_cast<int>(keyframes.size()));
-        easings.reserve(static_cast<int>(keyframes.size()));
+        interpolations.reserve(static_cast<int>(keyframes.size()));
 
         bool anyNumeric = false;
         for (const auto& keyframe : keyframes) {
@@ -870,7 +878,7 @@ CurveEditorPayload collectCurveEditorPayload(
 
           frames.push_back(frame);
           values.push_back(value.toDouble());
-          easings.push_back(keyframe.easing);
+          interpolations.push_back(keyframe.interpolation);
           anyNumeric = true;
         }
 
@@ -882,9 +890,9 @@ CurveEditorPayload collectCurveEditorPayload(
           CurveKey curveKey;
           curveKey.frame = frames[i];
           curveKey.value = static_cast<float>(values[i]);
-          curveKey.smooth = easings[i] == EasingType::Bezier;
+          curveKey.smooth = interpolations[i] == ArtifactCore::InterpolationType::Bezier;
 
-          if (easings[i] != EasingType::Hold) {
+          if (interpolations[i] != ArtifactCore::InterpolationType::Constant) {
             const double prevFrame = (i > 0) ? static_cast<double>(frames[i - 1])
                                              : static_cast<double>(frames[i]);
             const double nextFrame =
@@ -958,7 +966,7 @@ bool applyCurveEditorMove(
     property->removeKeyFrame(oldTime);
   }
   property->addKeyFrame(newTime, QVariant(newValue),
-                        oldKey.smooth ? EasingType::Bezier : EasingType::Linear);
+                        oldKey.smooth ? ArtifactCore::InterpolationType::Bezier : ArtifactCore::InterpolationType::Linear);
   return true;
 }
 

@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QContextMenuEvent>
 #include <QApplication>
 #include <QCursor>
@@ -55,8 +55,8 @@ TimelineThemeColors timelineThemeColors() {
   };
 }
 
-constexpr int kDefaultTrackHeight = 30;
-constexpr int kTrackSpacing = 1;
+constexpr int kDefaultTrackHeight = 28;
+constexpr int kTrackSpacing = 0;
 constexpr int kClipCorner = 4;
 constexpr int kClipPadding = 6;
 constexpr int kMinTrackCount = 1;
@@ -397,8 +397,8 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
     for (const auto &keyframe : keyframes) {
       const qint64 frame =
           keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
-      const bool eased = keyframe.easing != EasingType::Linear &&
-                         keyframe.easing != EasingType::Hold;
+      const bool eased = keyframe.interpolation != InterpolationType::Linear &&
+                         keyframe.interpolation != InterpolationType::Constant;
       QColor color = selectedLayer ? QColor(255, 255, 255)
                                    : (eased ? QColor(82, 208, 255)
                                             : QColor(247, 204, 83));

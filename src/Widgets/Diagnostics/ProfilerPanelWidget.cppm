@@ -1,6 +1,7 @@
 module;
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <string>
 #include <utility>
 #include <vector>
@@ -8,6 +9,7 @@ module;
 
 #include <QClipboard>
 #include <QColor>
+#include <QHash>
 #include <QFont>
 #include <QFontMetrics>
 #include <QGuiApplication>
@@ -22,6 +24,7 @@ module;
 module Artifact.Widgets.ProfilerPanel;
 
 import ArtifactCore.Utils.PerformanceProfiler;
+import Core.Diagnostics.Trace;
 
 namespace Artifact {
 
@@ -110,6 +113,7 @@ public:
     static constexpr int kTimerRows = 6;
     static constexpr int kEventRows = 8;
     static constexpr int kAudioRows = 4;
+    static constexpr int kTraceRows = 10;
 
     static constexpr int kColName   = kPad + 8;
     static constexpr int kColLast   = kW - 246;
@@ -131,6 +135,8 @@ public:
              + (kEventRows + 1) * kRowH         // event rows + col header
              + kPad + kHdrH                     // audio engine header
              + (kAudioRows + 1) * kRowH         // audio rows + col header
+             + kPad + kHdrH                     // trace timeline header
+             + (kTraceRows + 1) * kRowH         // trace rows + col header
              + kPad * 2;                        // bottom
     }
 };
@@ -621,6 +627,241 @@ void ProfilerPanelWidget::paintEvent(QPaintEvent*) {
             const QRect barRect(Impl::kColBar, curY + 3, Impl::kBarW, Impl::kRowH - 6);
             p.fillRect(barRect, QColor(40, 40, 55));
             drawMiniBar(p, barRect, lvl / 100.0, lvlWarn ? QColor(220, 140, 50, 200) : kBarGreen);
+            curY += Impl::kRowH;
+        }
+    }
+
+    // =======================================================================
+    // Trace Timeline
+    // =======================================================================
+    {
+        const auto trace = ArtifactCore::TraceRecorder::instance().snapshot();
+
+        curY += pad;
+        p.fillRect(0, curY, W, Impl::kHdrH, kBgSection);
+        p.setPen(kBorder);
+        p.drawLine(0, curY, W, curY);
+        p.setFont(fontBold);
+        p.setPen(kTextH);
+        p.drawText(
+            pad, curY + fmB.ascent() + 2,
+            QStringLiteral("Trace Timeline  (frames=%1 scopes=%2 locks=%3 crashes=%4 threads=%5)")
+                .arg(static_cast<int>(trace.frames.size()))
+                .arg(static_cast<int>(trace.scopes.size()))
+                .arg(static_cast<int>(trace.locks.size()))
+                .arg(static_cast<int>(trace.crashes.size()))
+                .arg(static_cast<int>(trace.threads.size())));
+        curY += Impl::kHdrH;
+
+        p.setPen(kTextD);
+        p.setFont(fontMono);
+        p.drawText(Impl::kColName, curY + fm.ascent(), QStringLiteral("Lane"));
+        p.drawText(Impl::kColAvg,  curY + fm.ascent(), QStringLiteral("scopes"));
+        p.drawText(Impl::kColP95,  curY + fm.ascent(), QStringLiteral("frame"));
+        p.drawText(Impl::kColBar,  curY + fm.ascent(), QStringLiteral("span"));
+        curY += Impl::kRowH;
+
+        if (trace.frames.isEmpty()) {
+            p.setPen(kTextD);
+            p.drawText(pad, curY + fm.ascent(),
+                       QStringLiteral("No trace frames yet — capture a frame snapshot to seed the tracer"));
+            curY += Impl::kRowH;
+        } else {
+            const auto& frame = trace.frames.back();
+            const int lanes = std::min(static_cast<int>(frame.lanes.size()), Impl::kTraceRows);
+            const int maxScopes = [&]() {
+                int value = 1;
+                for (const auto& lane : frame.lanes) {
+                    value = std::max(value, static_cast<int>(lane.scopes.size()));
+                }
+                return value;
+            }();
+
+            for (int i = 0; i < lanes; ++i, curY += Impl::kRowH) {
+                const auto& lane = frame.lanes[i];
+                const int scopeCount = static_cast<int>(lane.scopes.size());
+                const bool busy = scopeCount > 0;
+
+                p.fillRect(pad, curY + 3, 5, Impl::kRowH - 6, kCatColors[3]);
+                p.setPen(busy ? kTextN : kTextD);
+                p.setFont(fontMono);
+                p.drawText(Impl::kColName + 8, curY + fm.ascent(),
+                           lane.laneName.left(24));
+                p.drawText(Impl::kColAvg, curY + fm.ascent(),
+                           QString::number(scopeCount));
+                p.setPen(kTextD);
+                p.drawText(Impl::kColP95, curY + fm.ascent(),
+                           QString::number(frame.frameIndex));
+
+                const QRect barRect(Impl::kColBar, curY + 3, Impl::kBarW, Impl::kRowH - 6);
+                p.fillRect(barRect, QColor(40, 40, 55));
+                drawMiniBar(p, barRect, static_cast<double>(scopeCount) / static_cast<double>(std::max(maxScopes, 1)),
+                            busy ? QColor(120, 170, 255, 200) : kBarMini);
+            }
+        }
+
+        curY += pad;
+        p.setPen(kTextD);
+        p.setFont(fontMono);
+        p.drawText(pad, curY + fm.ascent(),
+                   QStringLiteral("Threads: %1").arg(static_cast<int>(trace.threads.size())));
+        curY += Impl::kRowH;
+        const int threadRows = std::min(static_cast<int>(trace.threads.size()), 4);
+        for (int i = 0; i < threadRows; ++i, curY += Impl::kRowH) {
+            const auto& thread = trace.threads[i];
+            p.setPen(kTextN);
+            p.drawText(Impl::kColName, curY + fm.ascent(),
+                       thread.threadName.left(24));
+            p.setPen(kTextD);
+            p.drawText(Impl::kColAvg, curY + fm.ascent(),
+                       QStringLiteral("sc:%1 lk:%2 cr:%3")
+                           .arg(thread.scopeCount)
+                           .arg(thread.lockCount)
+                           .arg(thread.crashCount));
+            p.drawText(Impl::kColP95, curY + fm.ascent(),
+                       QString::asprintf("0x%llx", static_cast<unsigned long long>(thread.threadId)));
+        }
+    }
+
+    // =======================================================================
+    // Trace Hotspots
+    // =======================================================================
+    {
+        const auto trace = ArtifactCore::TraceRecorder::instance().snapshot();
+
+        curY += pad;
+        p.fillRect(0, curY, W, Impl::kHdrH, kBgSection);
+        p.setPen(kBorder);
+        p.drawLine(0, curY, W, curY);
+        p.setFont(fontBold);
+        p.setPen(kTextH);
+        p.drawText(
+            pad, curY + fmB.ascent() + 2,
+            QStringLiteral("Trace Hotspots  (hot threads and lock depth)"));
+        curY += Impl::kHdrH;
+
+        p.setPen(kTextD);
+        p.setFont(fontMono);
+        p.drawText(Impl::kColName, curY + fm.ascent(), QStringLiteral("Thread"));
+        p.drawText(Impl::kColAvg,  curY + fm.ascent(), QStringLiteral("depth"));
+        p.drawText(Impl::kColP95,  curY + fm.ascent(), QStringLiteral("locks"));
+        p.drawText(Impl::kColBar,  curY + fm.ascent(), QStringLiteral("last"));
+        curY += Impl::kRowH;
+
+        QVector<ArtifactCore::TraceThreadRecord> hotThreads = trace.threads;
+        std::sort(hotThreads.begin(), hotThreads.end(), [](const auto& a, const auto& b) {
+            if (a.lockDepth == b.lockDepth) {
+                if (a.lockCount == b.lockCount) {
+                    return a.scopeCount > b.scopeCount;
+                }
+                return a.lockCount > b.lockCount;
+            }
+            return a.lockDepth > b.lockDepth;
+        });
+
+        const int rows = std::min(static_cast<int>(hotThreads.size()), 6);
+        for (int i = 0; i < rows; ++i, curY += Impl::kRowH) {
+            const auto& thread = hotThreads[static_cast<std::size_t>(i)];
+            const bool risky = thread.lockDepth > 0 || thread.lockCount > thread.scopeCount;
+            p.fillRect(pad, curY + 3, 5, Impl::kRowH - 6, risky ? kBarRed : kBarMini);
+            p.setPen(risky ? kTextW : kTextN);
+            p.setFont(fontMono);
+            p.drawText(Impl::kColName, curY + fm.ascent(),
+                       thread.threadName.left(24));
+            p.drawText(Impl::kColAvg, curY + fm.ascent(),
+                       QString::number(thread.lockDepth));
+            p.setPen(kTextD);
+            p.drawText(Impl::kColP95, curY + fm.ascent(),
+                       QString::number(thread.lockCount));
+            p.drawText(Impl::kColBar, curY + fm.ascent(),
+                       thread.lastMutexName.isEmpty() ? QStringLiteral("<none>")
+                                                      : thread.lastMutexName.left(24));
+        }
+        if (rows == 0) {
+            p.setPen(kTextD);
+            p.drawText(pad, curY + fm.ascent(),
+                       QStringLiteral("No thread hotspots yet"));
+            curY += Impl::kRowH;
+        }
+    }
+
+    // =======================================================================
+    // Mutex Chains
+    // =======================================================================
+    {
+        const auto trace = ArtifactCore::TraceRecorder::instance().snapshot();
+
+        curY += pad;
+        p.fillRect(0, curY, W, Impl::kHdrH, kBgSection);
+        p.setPen(kBorder);
+        p.drawLine(0, curY, W, curY);
+        p.setFont(fontBold);
+        p.setPen(kTextH);
+        p.drawText(pad, curY + fmB.ascent() + 2,
+                   QStringLiteral("Mutex Chains  (open balance and last owner)"));
+        curY += Impl::kHdrH;
+
+        p.setPen(kTextD);
+        p.setFont(fontMono);
+        p.drawText(Impl::kColName, curY + fm.ascent(), QStringLiteral("Mutex"));
+        p.drawText(Impl::kColAvg,  curY + fm.ascent(), QStringLiteral("bal"));
+        p.drawText(Impl::kColP95,  curY + fm.ascent(), QStringLiteral("last"));
+        p.drawText(Impl::kColBar,  curY + fm.ascent(), QStringLiteral("owner"));
+        curY += Impl::kRowH;
+
+        struct MutexChainRow {
+            QString name;
+            int balance = 0;
+            std::uint64_t lastThreadId = 0;
+            qint64 lastNs = 0;
+            bool lastAcquire = false;
+        };
+
+        QHash<QString, MutexChainRow> mutexChains;
+        for (const auto& lock : trace.locks) {
+            const QString key = lock.mutexName.isEmpty() ? QStringLiteral("<unnamed-mutex>") : lock.mutexName;
+            auto& row = mutexChains[key];
+            row.name = key;
+            row.lastThreadId = lock.threadId;
+            row.lastNs = lock.timestampNs;
+            row.lastAcquire = lock.acquired;
+            if (lock.acquired) {
+                ++row.balance;
+            } else if (row.balance > 0) {
+                --row.balance;
+            }
+        }
+
+        std::vector<MutexChainRow> rowsVec;
+        rowsVec.reserve(mutexChains.size());
+        for (auto it = mutexChains.cbegin(); it != mutexChains.cend(); ++it) {
+            rowsVec.push_back(it.value());
+        }
+        std::sort(rowsVec.begin(), rowsVec.end(), [](const auto& a, const auto& b) {
+            if (a.balance == b.balance) {
+                return a.lastNs > b.lastNs;
+            }
+            return a.balance > b.balance;
+        });
+
+        const int rows = std::min(static_cast<int>(rowsVec.size()), 6);
+        for (int i = 0; i < rows; ++i, curY += Impl::kRowH) {
+            const auto& row = rowsVec[static_cast<std::size_t>(i)];
+            const bool risky = row.balance > 0;
+            p.fillRect(pad, curY + 3, 5, Impl::kRowH - 6, risky ? kBarRed : kBarMini);
+            p.setPen(risky ? kTextW : kTextN);
+            p.setFont(fontMono);
+            p.drawText(Impl::kColName, curY + fm.ascent(), row.name.left(24));
+            p.drawText(Impl::kColAvg, curY + fm.ascent(), QString::number(row.balance));
+            p.drawText(Impl::kColP95, curY + fm.ascent(), row.lastAcquire ? QStringLiteral("acq") : QStringLiteral("rel"));
+            p.drawText(Impl::kColBar, curY + fm.ascent(),
+                       QStringLiteral("0x%1")
+                           .arg(QString::number(static_cast<unsigned long long>(row.lastThreadId), 16)));
+        }
+        if (rows == 0) {
+            p.setPen(kTextD);
+            p.drawText(pad, curY + fm.ascent(),
+                       QStringLiteral("No mutex chains yet"));
             curY += Impl::kRowH;
         }
     }

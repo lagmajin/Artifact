@@ -821,11 +821,12 @@ public:
     return;
    }
    verticalOffset = clamped;
+   if (owner) {
+    Q_EMIT owner->verticalOffsetChanged(verticalOffset);
+    owner->update();
+   }
    if (emitSignal) {
     ArtifactCore::globalEventBus().publish<TimelineVerticalScrollEvent>({verticalOffset, "ArtifactLayerPanelWidget"});
-   }
-   if (owner) {
-    owner->update();
    }
   }
 

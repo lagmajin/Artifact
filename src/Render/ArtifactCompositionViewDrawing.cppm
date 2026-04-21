@@ -37,7 +37,7 @@ import Artifact.Layer.AdjustableLayer;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
-import Artifact.Layer.Matte;
+import Layer.Matte;
 import Image.ImageF32x4_RGBA;
 import CvUtils;
 import Color.Float;
