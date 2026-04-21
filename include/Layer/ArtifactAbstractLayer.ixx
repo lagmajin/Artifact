@@ -31,6 +31,7 @@ import Animation.Transform2D;
 import Animation.Transform3D;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
+import Artifact.Layer.Matte;
 import Frame.Position;
 import Audio.Segment;
 export import Property.Abstract;
@@ -337,6 +338,13 @@ public:
   void clearMasks();
   bool hasMasks() const;
   /*Masks*/
+
+  /*Mattes*/
+  std::vector<LayerMatteReference> matteReferences() const;
+  void setMatteReferences(const std::vector<LayerMatteReference>& refs);
+  void addMatteReference(const LayerMatteReference& ref);
+  void clearMatteReferences();
+  /*Mattes*/
 
   // LOD (Level of Detail) rendering
   virtual void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod);

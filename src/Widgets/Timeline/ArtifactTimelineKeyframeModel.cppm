@@ -91,7 +91,7 @@ bool ArtifactTimelineKeyframeModel::addKeyframe(const CompositionID& compId,
                                                 const QString& propertyPath,
                                                 const RationalTime& time,
                                                 const QVariant& value,
-                                                EasingType easing) {
+                                                InterpolationType interpolation) {
   auto* svc = ArtifactProjectService::instance();
   if (!svc) return false;
   auto result = svc->findComposition(compId);
@@ -103,11 +103,37 @@ bool ArtifactTimelineKeyframeModel::addKeyframe(const CompositionID& compId,
   auto prop = layer->getProperty(propertyPath);
   if (!prop) return false;
 
-  // Ensure property is animatable
   prop->setAnimatable(true);
-  prop->addKeyFrame(time, value, easing);
+  prop->addKeyFrame(time, value, interpolation);
 
-  // Notify layer/timeline
+  layer->setDirty();
+  layer->changed();
+  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+      LayerChangedEvent{compId.toString(), layerId.toString(),
+                        LayerChangedEvent::ChangeType::Modified});
+  return true;
+}
+
+bool ArtifactTimelineKeyframeModel::addKeyframeWithBezier(const CompositionID& compId,
+                                                          const LayerID& layerId,
+                                                          const QString& propertyPath,
+                                                          const RationalTime& time,
+                                                          const QVariant& value,
+                                                          float cp1_x, float cp1_y, float cp2_x, float cp2_y) {
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) return false;
+  auto result = svc->findComposition(compId);
+  if (!result.success) return false;
+  auto comp = result.ptr.lock();
+  if (!comp) return false;
+  auto layer = comp->layerById(layerId);
+  if (!layer) return false;
+  auto prop = layer->getProperty(propertyPath);
+  if (!prop) return false;
+
+  prop->setAnimatable(true);
+  prop->addKeyFrame(time, value, InterpolationType::Bezier, cp1_x, cp1_y, cp2_x, cp2_y);
+
   layer->setDirty();
   layer->changed();
   ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
@@ -143,9 +169,13 @@ bool ArtifactTimelineKeyframeModel::moveKeyframe(const CompositionID& compId,
   }
 
   const QVariant value = it->value;
-  const EasingType easing = it->easing;
+  const InterpolationType interpolation = it->interpolation;
+  const float cp1_x = it->cp1_x;
+  const float cp1_y = it->cp1_y;
+  const float cp2_x = it->cp2_x;
+  const float cp2_y = it->cp2_y;
   prop->removeKeyFrame(fromTime);
-  prop->addKeyFrame(toTime, value, easing);
+  prop->addKeyFrame(toTime, value, interpolation, cp1_x, cp1_y, cp2_x, cp2_y);
 
   layer->setDirty();
   layer->changed();

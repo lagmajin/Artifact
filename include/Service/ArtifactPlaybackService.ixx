@@ -39,6 +39,7 @@ export module Artifact.Service.Playback;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
+import Frame.Debug;
 import Playback.State;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
@@ -126,6 +127,7 @@ public:
   // Composition management
   void setCurrentComposition(ArtifactCompositionPtr composition);
   ArtifactCompositionPtr currentComposition() const;
+  ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
 
   // In/Out Points
   void setInOutPoints(ArtifactInOutPoints *inOutPoints);

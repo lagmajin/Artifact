@@ -81,6 +81,7 @@ import Undo.UndoManager;
 import Generator.Effector;
 import Artifact.Effect.Generator.Cloner;
 import Artifact.Effect.Generator.FractalNoise;
+import Artifact.Effect.Generator.ProceduralTexture;
 import Artifact.Effect.Transform.Twist;
 import Artifact.Effect.Transform.Bend;
 import Artifact.Effect.Render.PBRMaterial;
@@ -1415,6 +1416,9 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
     });
     effectMenu.addAction("Fractal Noise", [addAndRefresh]() {
       addAndRefresh(std::make_shared<FractalNoiseGenerator>());
+    });
+    effectMenu.addAction("Procedural Texture", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<ProceduralTextureGeneratorEffect>());
     });
     break;
   case EffectPipelineStage::GeometryTransform:

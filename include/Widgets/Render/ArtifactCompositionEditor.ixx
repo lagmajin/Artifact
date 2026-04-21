@@ -8,8 +8,11 @@ export module Artifact.Widgets.CompositionEditor;
 
 import Color.Float;
 import Artifact.Composition.Abstract;
+import Artifact.Widgets.CompositionRenderController;
 
 export namespace Artifact {
+
+class CompositionRenderController;
 
 class ArtifactCompositionEditor : public QWidget {
  W_OBJECT(ArtifactCompositionEditor)
@@ -23,6 +26,7 @@ public:
 
  void setComposition(ArtifactCompositionPtr composition);
  void setClearColor(const FloatColor& color);
+ CompositionRenderController* renderController() const;
 
  QSize sizeHint() const override;
   void resizeEvent(QResizeEvent* event) override;

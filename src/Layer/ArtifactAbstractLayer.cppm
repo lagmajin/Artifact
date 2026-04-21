@@ -1794,6 +1794,22 @@ void ArtifactAbstractLayer::clearMasks() { impl_->clearMasks(); }
 
 bool ArtifactAbstractLayer::hasMasks() const { return impl_->maskCount() > 0; }
 
+std::vector<LayerMatteReference> ArtifactAbstractLayer::matteReferences() const {
+  return impl_->mattes_;
+}
+
+void ArtifactAbstractLayer::setMatteReferences(const std::vector<LayerMatteReference>& refs) {
+  impl_->mattes_ = refs;
+}
+
+void ArtifactAbstractLayer::addMatteReference(const LayerMatteReference& ref) {
+  impl_->mattes_.push_back(ref);
+}
+
+void ArtifactAbstractLayer::clearMatteReferences() {
+  impl_->mattes_.clear();
+}
+
 // Opacity
 float ArtifactAbstractLayer::opacity() const {
   const auto* var = getActiveVariant();
@@ -1830,12 +1846,29 @@ void ArtifactAbstractLayer::setOpacity(float value) {
       }
   }
 
-  if (impl_->opacity_ != clamped) {
-    impl_->opacity_ = clamped;
-    if (auto it = impl_->propertyCache_.find(QStringLiteral("layer.opacity"));
-        it != impl_->propertyCache_.end() && it.value()) {
-      it.value()->setValue(clamped);
+  bool changed = false;
+  if (auto it = impl_->propertyCache_.find(QStringLiteral("layer.opacity"));
+      it != impl_->propertyCache_.end() && it.value()) {
+    auto& prop = *it.value();
+    if (prop.isAnimatable() && !prop.getKeyFrames().empty()) {
+        const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+        prop.addKeyFrame(time, clamped);
+        changed = true;
+    } else {
+        if (impl_->opacity_ != clamped) {
+            impl_->opacity_ = clamped;
+            prop.setValue(clamped);
+            changed = true;
+        }
     }
+  } else {
+    if (impl_->opacity_ != clamped) {
+      impl_->opacity_ = clamped;
+      changed = true;
+    }
+  }
+
+  if (changed) {
     notifyLayerMutation(this, LayerDirtyFlag::Property,
                         LayerDirtyReason::PropertyChanged);
   }

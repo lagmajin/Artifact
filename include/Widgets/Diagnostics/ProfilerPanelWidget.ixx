@@ -4,6 +4,8 @@ module;
 
 export module Artifact.Widgets.ProfilerPanel;
 
+import Core.Diagnostics.Trace;
+
 export namespace Artifact {
 
 // Full-featured performance profiler panel.

@@ -48,7 +48,7 @@ v0.4 は「編集できる」状態から「制作パイプラインとして回
 - 対象:
   - `src/Widgets/Render/ArtifactSoftwareRenderTestWidget.cppm`
   - `src/Render/Software/ArtifactSoftwareImageCompositor.cppm`
-  - `src/Effetcs/*`
+  - `src/Effects/*`
 - 完了条件:
   - テストウィジェットで再現した設定を本線へ移植しやすいデータ形式に統一
   - 最低3つのブレンド/エフェクトで比較確認可能

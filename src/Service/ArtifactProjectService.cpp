@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -39,6 +39,7 @@ import Artifact.Application.Manager;
 import Artifact.Render.Queue.Service;
 import Event.Bus;
 import Artifact.Event.Types;
+import Core.Diagnostics.SessionLedger;
 // import Artifact.Render.FrameCache;
 
 namespace Artifact {
@@ -225,9 +226,6 @@ void ArtifactProjectService::Impl::installSelectionBridge(
               return;
             }
 
-            // Property edits can momentarily disturb selection ordering.
-            // Re-check once on the next event loop turn before forwarding
-            // a nil selection event to the rest of the UI.
             QPointer<ArtifactProjectService> safeOwner(owner);
             QPointer<ArtifactLayerSelectionManager> safeSelectionManager(
                 selectionManager);
@@ -558,11 +556,17 @@ ArtifactProjectService::Impl::previewQualityPreset() const {
 }
 
 UniString ArtifactProjectService::Impl::projectName() const {
-
+  if (auto project = projectManager().getCurrentProjectSharedPtr()) {
+    return UniString(project->settings().projectName());
+  }
   return UniString();
 }
 
-void ArtifactProjectService::Impl::changeProjectName(const UniString &name) {}
+void ArtifactProjectService::Impl::changeProjectName(const UniString &name) {
+  if (auto project = projectManager().getCurrentProjectSharedPtr()) {
+    project->settings().setProjectName(name.toQString());
+  }
+}
 
 ChangeCompositionResult ArtifactProjectService::Impl::changeCurrentComposition(
     const CompositionID &id) {
@@ -682,7 +686,6 @@ void ArtifactProjectService::selectLayer(const LayerID &id) {
       const auto current = selectionManager->currentLayer();
       if (current && current->id() == id) {
         selectionManager->setActiveComposition(currentComposition().lock());
-        // 同レイヤー再選択でも Inspector を確実に更新する
         ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
             LayerSelectionChangedEvent{
                 currentComposition().lock()
@@ -702,16 +705,18 @@ void ArtifactProjectService::selectLayer(const LayerID &id) {
         selectionManager->clearSelection();
       }
       impl_->forwardingSelectionChange_ = false;
+
+      const LayerID nextId = id.isNil() ? LayerID() : id;
+      ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
+          LayerSelectionChangedEvent{
+              currentComposition().lock()
+                  ? currentComposition().lock()->id().toString()
+                  : QString(),
+              nextId.toString(),
+              id.isNil() ? LayerSelectionChangeReason::UserCleared
+                         : LayerSelectionChangeReason::SelectionBridgeSync});
     }
   }
-  ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
-      LayerSelectionChangedEvent{
-          currentComposition().lock()
-              ? currentComposition().lock()->id().toString()
-              : QString(),
-          id.toString(),
-          id.isNil() ? LayerSelectionChangeReason::UserCleared
-                     : LayerSelectionChangeReason::SelectionBridgeSync});
 }
 
 void ArtifactProjectService::addLayer(const CompositionID &id,
@@ -1640,7 +1645,13 @@ void ArtifactProjectService::createProject(
   manager.createProject(setting.projectName());
   ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
       ProjectChangedEvent{QString(), setting.projectName()});
-}
+    if (auto project = manager.getCurrentProjectSharedPtr()) {
+      if (auto *rq = ArtifactRenderQueueService::instance()) {
+      rq->sessionLedger().recordProjectOpened(
+          project->settings().projectName(), setting.projectName());
+      }
+    }
+  }
 
 void ArtifactProjectService::removeAllAssets() {
   // removeall assets via projectmanager instance

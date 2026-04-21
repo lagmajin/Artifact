@@ -46,6 +46,8 @@ module Artifact.Service.Playback;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
+import Frame.Debug;
+import Core.Diagnostics.Trace;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
 import Event.Bus;
@@ -681,6 +683,47 @@ void ArtifactPlaybackService::setCurrentComposition(
 
 ArtifactCompositionPtr ArtifactPlaybackService::currentComposition() const {
   return impl_->currentComposition_;
+}
+
+ArtifactCore::FrameDebugSnapshot ArtifactPlaybackService::frameDebugSnapshot() const {
+  struct TraceScopeGuard {
+    ArtifactCore::TraceScopeRecord scope;
+    QElapsedTimer timer;
+    TraceScopeGuard() {
+      scope.name = QStringLiteral("ArtifactPlaybackService::frameDebugSnapshot");
+      scope.domain = ArtifactCore::TraceDomain::UI;
+      timer.start();
+    }
+    ~TraceScopeGuard() {
+      scope.endNs = timer.nsecsElapsed();
+      if (scope.endNs <= scope.startNs) {
+        scope.endNs = scope.startNs + 1;
+      }
+      ArtifactCore::TraceRecorder::instance().recordScope(scope);
+    }
+  } traceGuard;
+
+  ArtifactCore::FrameDebugSnapshot snapshot;
+  snapshot.frame = currentFrame();
+  snapshot.playbackState = state() == PlaybackState::Playing
+                               ? QStringLiteral("playing")
+                               : (state() == PlaybackState::Paused
+                                      ? QStringLiteral("paused")
+                                      : QStringLiteral("stopped"));
+  snapshot.timestampMs = static_cast<std::int64_t>(
+      std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
+  if (const auto comp = currentComposition()) {
+    snapshot.compositionName = comp->settings().compositionName().toQString();
+  } else {
+    snapshot.compositionName = QStringLiteral("<none>");
+  }
+  snapshot.selectedLayerName = QStringLiteral("<none>");
+  snapshot.renderBackend = QStringLiteral("playback");
+  snapshot.compareMode = ArtifactCore::FrameDebugCompareMode::Disabled;
+  ArtifactCore::TraceRecorder::instance().recordFrameDebugSnapshot(snapshot);
+  return snapshot;
 }
 
 // ==================== In/Out Points ====================
