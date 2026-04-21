@@ -55,7 +55,6 @@ module;
 #include <ads_globals.h>
 #include <filesystem>
 #include <qthreadpool.h>
-#include <QtConcurrent/QtConcurrent>
 
 #include <QByteArray>
 #include <opencv2/opencv.hpp>
@@ -1075,7 +1074,7 @@ int main(int argc, char *argv[]) {
   pool->setMaxThreadCount(configuredRenderThreads);
   // Pre-warm the thread pool to avoid burst thread creation on first render
   for (int i = 0; i < configuredRenderThreads; ++i) {
-    QtConcurrent::run(pool, [] {});
+    pool->start([] {});
   }
 
   bootstrapPythonScripts();
