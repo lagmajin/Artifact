@@ -2,6 +2,9 @@
 
 `ArtifactIRenderer` を「一応描ける薄い wrapper」から、backend 差し替えと editor 描画の基盤として使える段階へ持っていくためのマイルストーン。
 
+後続の renderer boundary 整理として、`ImmediateContext` の直叩きを外側から減らす更新は
+`docs/planned/MILESTONE_IMMEDIATE_CONTEXT_BOUNDARY_2026-04-21.md` を参照。
+
 ## M-IR-1 API Surface Cleanup
 
 - 目標:

@@ -24,6 +24,7 @@ import Menu.Option;
 import Menu.Test;
 import Menu.Help;
 import Artifact.Widgets.Timeline;
+import Math.Interpolate;
 
 namespace Artifact {
 
@@ -128,6 +129,12 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
    timeline->addKeyframeAtPlayhead();
   }
  });
+ connect(animationMenu, &ArtifactAnimationMenu::applyInterpolationRequested, menuBar,
+         [this](const ArtifactCore::InterpolationType type) {
+          if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+           timeline->applyInterpolationToSelectedKeyframes(type);
+          }
+         });
  connect(animationMenu, &ArtifactAnimationMenu::removeKeyframeRequested, menuBar, [this]() {
   if (auto* timeline = activeTimelineWidget(mainWindow_)) {
    timeline->removeKeyframeAtPlayhead();

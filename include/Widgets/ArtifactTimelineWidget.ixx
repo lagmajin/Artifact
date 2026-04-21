@@ -11,6 +11,7 @@ export module Artifact.Widgets.Timeline;
 
 import std;
 import Utils.Id;
+import Math.Interpolate;
 
 W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
@@ -57,6 +58,7 @@ class ArtifactTimelineWidget :public QWidget {
   bool isLayerNameEditable() const;
   void addKeyframeAtPlayhead();
   void removeKeyframeAtPlayhead();
+  void applyInterpolationToSelectedKeyframes(ArtifactCore::InterpolationType type);
   void selectAllKeyframes();
   void copySelectedKeyframes();
   void pasteKeyframesAtPlayhead();
