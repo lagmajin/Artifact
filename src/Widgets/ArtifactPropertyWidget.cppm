@@ -535,6 +535,11 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   auto *row = new ArtifactPropertyEditorRowWidget(labelText, editor,
                                                   property.getName(), parent);
 
+  auto *playback = ArtifactPlaybackService::instance();
+  const auto frameRate = playback ? playback->frameRate() : FrameRate(30.0f);
+  const int64_t fps_val =
+      static_cast<int64_t>(std::round(frameRate.framerate()));
+
   const auto applyPreviewValue =
       [handler = previewValue ? previewValue : commitValue, propertyPtr,
         propertyName = property.getName(), row, rowValueChanged](const QVariant &value) {
@@ -545,15 +550,30 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
            rowValueChanged(row, propertyPtr, value);
          }
         handler(propertyName, value);
-      };
+  };
   const auto applyCommitValue =
-      [commitValue, propertyPtr,
-       propertyName = property.getName(), row, rowValueChanged](const QVariant &value) {
+      [commitValue, propertyPtr, playback, fps_val,
+       propertyName = property.getName(), row, rowValueChanged,
+       keyframeChanged](const QVariant &value) {
         if (propertyPtr) {
           propertyPtr->setValue(value);
         }
         if (rowValueChanged) {
           rowValueChanged(row, propertyPtr, value);
+        }
+        if (propertyPtr && playback) {
+          const auto nowPos = playback->currentFrame();
+          const auto nowTime = RationalTime(nowPos.framePosition(), fps_val);
+          const bool hasAnyKeyframes = !propertyPtr->getKeyFrames().empty();
+          if (hasAnyKeyframes || propertyPtr->hasKeyFrameAt(nowTime)) {
+            propertyPtr->setAnimatable(true);
+            propertyPtr->addKeyFrame(nowTime, value);
+            row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
+            row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+            if (keyframeChanged) {
+              keyframeChanged(propertyName);
+            }
+          }
         }
         commitValue(propertyName, value);
       };
@@ -572,13 +592,9 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
       defaultValue.isValid();
   row->setShowResetButton(showResetButton);
   if (defaultValue.isValid()) {
-    row->setResetHandler([editor, propertyPtr, commitValue,
-                          propertyName = property.getName(), defaultValue]() {
+    row->setResetHandler([editor, defaultValue]() {
       editor->setValueFromVariant(defaultValue);
-      if (propertyPtr) {
-        propertyPtr->setValue(defaultValue);
-      }
-      commitValue(propertyName, defaultValue);
+      editor->commitCurrentValue();
     });
   }
 
@@ -587,10 +603,6 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   row->setNavigationEnabled(false);
   if (animatable) {
     const QString propertyName = property.getName();
-    auto *playback = ArtifactPlaybackService::instance();
-    const auto frameRate = playback ? playback->frameRate() : FrameRate(30.0f);
-    const int64_t fps_val =
-        static_cast<int64_t>(std::round(frameRate.framerate()));
     const auto track = propertyPtr->getKeyFrames();
     row->setNavigationEnabled(!track.empty());
 

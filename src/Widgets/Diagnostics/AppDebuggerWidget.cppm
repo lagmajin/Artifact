@@ -4,6 +4,7 @@ module;
 #include <QHBoxLayout>
 #include <QHash>
 #include <QJsonDocument>
+#include <QLabel>
 #include <QPlainTextEdit>
 #include <QTabWidget>
 #include <QVBoxLayout>
@@ -35,14 +36,34 @@ class AppDebuggerWidget::Impl {
 public:
     AppDebuggerWidget* owner_ = nullptr;
     QTabWidget* tabs_ = nullptr;
+    QWidget* overviewPage_ = nullptr;
+    QLabel* overviewSummary_ = nullptr;
+    QWidget* statePage_ = nullptr;
+    QLabel* stateSummary_ = nullptr;
     QPlainTextEdit* stateText_ = nullptr;
+    QWidget* tracePage_ = nullptr;
+    QLabel* traceSummary_ = nullptr;
     QPlainTextEdit* traceText_ = nullptr;
+    QWidget* pipelinePage_ = nullptr;
+    QLabel* pipelineSummary_ = nullptr;
     FramePipelineViewWidget* pipelineView_ = nullptr;
+    QWidget* resourcePage_ = nullptr;
+    QLabel* resourceSummary_ = nullptr;
     FrameResourceInspectorWidget* resourceView_ = nullptr;
+    QWidget* diffPage_ = nullptr;
+    QLabel* diffSummary_ = nullptr;
     FrameStateDiffWidget* diffView_ = nullptr;
+    QWidget* traceTimelinePage_ = nullptr;
+    QLabel* traceTimelineSummary_ = nullptr;
     TraceTimelineWidget* traceTimelineView_ = nullptr;
+    QWidget* framePage_ = nullptr;
+    QLabel* frameSummary_ = nullptr;
     QPlainTextEdit* frameText_ = nullptr;
+    QWidget* diagnosticsPage_ = nullptr;
+    QLabel* diagnosticsSummary_ = nullptr;
     QPlainTextEdit* diagnosticsText_ = nullptr;
+    QWidget* exportPage_ = nullptr;
+    QLabel* exportSummary_ = nullptr;
     QPlainTextEdit* exportText_ = nullptr;
     CompositionRenderController* controller_ = nullptr;
     int timerId_ = 0;
@@ -57,26 +78,137 @@ public:
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
 
-        tabs_ = new QTabWidget(owner_);
-        stateText_ = createPage(QStringLiteral("State"));
-        traceText_ = createPage(QStringLiteral("Trace"));
-        pipelineView_ = new FramePipelineViewWidget(tabs_);
-        resourceView_ = new FrameResourceInspectorWidget(tabs_);
-        diffView_ = new FrameStateDiffWidget(tabs_);
-        traceTimelineView_ = new TraceTimelineWidget(tabs_);
-        frameText_ = createPage(QStringLiteral("Frame"));
-        diagnosticsText_ = createPage(QStringLiteral("Diagnostics"));
-        exportText_ = createPage(QStringLiteral("Export"));
+        overviewPage_ = new QWidget(owner_);
+        auto* overviewLayout = new QVBoxLayout(overviewPage_);
+        overviewLayout->setContentsMargins(0, 0, 0, 0);
+        overviewLayout->setSpacing(0);
+        overviewSummary_ = new QLabel(overviewPage_);
+        overviewSummary_->setTextFormat(Qt::PlainText);
+        overviewSummary_->setWordWrap(true);
+        overviewSummary_->setMinimumHeight(56);
+        overviewLayout->addWidget(overviewSummary_);
+        layout->addWidget(overviewPage_);
 
-        tabs_->addTab(stateText_, QStringLiteral("State"));
-        tabs_->addTab(traceText_, QStringLiteral("Trace"));
-        tabs_->addTab(pipelineView_, QStringLiteral("Pipeline"));
-        tabs_->addTab(resourceView_, QStringLiteral("Resource"));
-        tabs_->addTab(diffView_, QStringLiteral("State Diff"));
-        tabs_->addTab(traceTimelineView_, QStringLiteral("Trace Timeline"));
-        tabs_->addTab(frameText_, QStringLiteral("Frame"));
-        tabs_->addTab(diagnosticsText_, QStringLiteral("Diagnostics"));
-        tabs_->addTab(exportText_, QStringLiteral("Export"));
+        tabs_ = new QTabWidget(owner_);
+        statePage_ = new QWidget(tabs_);
+        auto* stateLayout = new QVBoxLayout(statePage_);
+        stateLayout->setContentsMargins(0, 0, 0, 0);
+        stateLayout->setSpacing(0);
+        stateSummary_ = new QLabel(statePage_);
+        stateSummary_->setTextFormat(Qt::PlainText);
+        stateSummary_->setWordWrap(true);
+        stateSummary_->setMinimumHeight(56);
+        stateLayout->addWidget(stateSummary_);
+        stateText_ = new QPlainTextEdit(statePage_);
+        stateText_->setReadOnly(true);
+        stateText_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        stateLayout->addWidget(stateText_);
+        tracePage_ = new QWidget(tabs_);
+        auto* traceLayout = new QVBoxLayout(tracePage_);
+        traceLayout->setContentsMargins(0, 0, 0, 0);
+        traceLayout->setSpacing(0);
+        traceSummary_ = new QLabel(tracePage_);
+        traceSummary_->setTextFormat(Qt::PlainText);
+        traceSummary_->setWordWrap(true);
+        traceSummary_->setMinimumHeight(56);
+        traceLayout->addWidget(traceSummary_);
+        traceText_ = new QPlainTextEdit(tracePage_);
+        traceText_->setReadOnly(true);
+        traceText_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        traceLayout->addWidget(traceText_);
+        pipelinePage_ = new QWidget(tabs_);
+        auto* pipelineLayout = new QVBoxLayout(pipelinePage_);
+        pipelineLayout->setContentsMargins(0, 0, 0, 0);
+        pipelineLayout->setSpacing(0);
+        pipelineSummary_ = new QLabel(pipelinePage_);
+        pipelineSummary_->setTextFormat(Qt::PlainText);
+        pipelineSummary_->setWordWrap(true);
+        pipelineSummary_->setMinimumHeight(56);
+        pipelineLayout->addWidget(pipelineSummary_);
+        pipelineView_ = new FramePipelineViewWidget(pipelinePage_);
+        pipelineLayout->addWidget(pipelineView_);
+        resourcePage_ = new QWidget(tabs_);
+        auto* resourceLayout = new QVBoxLayout(resourcePage_);
+        resourceLayout->setContentsMargins(0, 0, 0, 0);
+        resourceLayout->setSpacing(0);
+        resourceSummary_ = new QLabel(resourcePage_);
+        resourceSummary_->setTextFormat(Qt::PlainText);
+        resourceSummary_->setWordWrap(true);
+        resourceSummary_->setMinimumHeight(56);
+        resourceLayout->addWidget(resourceSummary_);
+        resourceView_ = new FrameResourceInspectorWidget(resourcePage_);
+        resourceLayout->addWidget(resourceView_);
+        diffPage_ = new QWidget(tabs_);
+        auto* diffLayout = new QVBoxLayout(diffPage_);
+        diffLayout->setContentsMargins(0, 0, 0, 0);
+        diffLayout->setSpacing(0);
+        diffSummary_ = new QLabel(diffPage_);
+        diffSummary_->setTextFormat(Qt::PlainText);
+        diffSummary_->setWordWrap(true);
+        diffSummary_->setMinimumHeight(56);
+        diffLayout->addWidget(diffSummary_);
+        diffView_ = new FrameStateDiffWidget(diffPage_);
+        diffLayout->addWidget(diffView_);
+        traceTimelinePage_ = new QWidget(tabs_);
+        auto* traceTimelineLayout = new QVBoxLayout(traceTimelinePage_);
+        traceTimelineLayout->setContentsMargins(0, 0, 0, 0);
+        traceTimelineLayout->setSpacing(0);
+        traceTimelineSummary_ = new QLabel(traceTimelinePage_);
+        traceTimelineSummary_->setTextFormat(Qt::PlainText);
+        traceTimelineSummary_->setWordWrap(true);
+        traceTimelineSummary_->setMinimumHeight(56);
+        traceTimelineLayout->addWidget(traceTimelineSummary_);
+        traceTimelineView_ = new TraceTimelineWidget(traceTimelinePage_);
+        traceTimelineLayout->addWidget(traceTimelineView_);
+        framePage_ = new QWidget(tabs_);
+        auto* frameLayout = new QVBoxLayout(framePage_);
+        frameLayout->setContentsMargins(0, 0, 0, 0);
+        frameLayout->setSpacing(0);
+        frameSummary_ = new QLabel(framePage_);
+        frameSummary_->setTextFormat(Qt::PlainText);
+        frameSummary_->setWordWrap(true);
+        frameSummary_->setMinimumHeight(56);
+        frameLayout->addWidget(frameSummary_);
+        frameText_ = new QPlainTextEdit(framePage_);
+        frameText_->setReadOnly(true);
+        frameText_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        frameLayout->addWidget(frameText_);
+        diagnosticsPage_ = new QWidget(tabs_);
+        auto* diagnosticsLayout = new QVBoxLayout(diagnosticsPage_);
+        diagnosticsLayout->setContentsMargins(0, 0, 0, 0);
+        diagnosticsLayout->setSpacing(0);
+        diagnosticsSummary_ = new QLabel(diagnosticsPage_);
+        diagnosticsSummary_->setTextFormat(Qt::PlainText);
+        diagnosticsSummary_->setWordWrap(true);
+        diagnosticsSummary_->setMinimumHeight(56);
+        diagnosticsLayout->addWidget(diagnosticsSummary_);
+        diagnosticsText_ = new QPlainTextEdit(diagnosticsPage_);
+        diagnosticsText_->setReadOnly(true);
+        diagnosticsText_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        diagnosticsLayout->addWidget(diagnosticsText_);
+        exportPage_ = new QWidget(tabs_);
+        auto* exportLayout = new QVBoxLayout(exportPage_);
+        exportLayout->setContentsMargins(0, 0, 0, 0);
+        exportLayout->setSpacing(0);
+        exportSummary_ = new QLabel(exportPage_);
+        exportSummary_->setTextFormat(Qt::PlainText);
+        exportSummary_->setWordWrap(true);
+        exportSummary_->setMinimumHeight(56);
+        exportLayout->addWidget(exportSummary_);
+        exportText_ = new QPlainTextEdit(exportPage_);
+        exportText_->setReadOnly(true);
+        exportText_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        exportLayout->addWidget(exportText_);
+
+        tabs_->addTab(statePage_, QStringLiteral("State"));
+        tabs_->addTab(tracePage_, QStringLiteral("Trace"));
+        tabs_->addTab(pipelinePage_, QStringLiteral("Pipeline"));
+        tabs_->addTab(resourcePage_, QStringLiteral("Resource"));
+        tabs_->addTab(diffPage_, QStringLiteral("State Diff"));
+        tabs_->addTab(traceTimelinePage_, QStringLiteral("Trace Timeline"));
+        tabs_->addTab(framePage_, QStringLiteral("Frame"));
+        tabs_->addTab(diagnosticsPage_, QStringLiteral("Diagnostics"));
+        tabs_->addTab(exportPage_, QStringLiteral("Export"));
 
         layout->addWidget(tabs_);
 
@@ -155,6 +287,97 @@ public:
             lines << QStringLiteral("controller: %1")
                           .arg(controller_ ? QStringLiteral("available") : QStringLiteral("none"));
             stateText_->setPlainText(lines.join(QStringLiteral("\n")));
+        }
+
+        if (stateSummary_) {
+            const QString compositionText = controllerSnapshot.compositionName.isEmpty()
+                                                ? QStringLiteral("<none>")
+                                                : controllerSnapshot.compositionName;
+            const QString layerText = controllerSnapshot.selectedLayerName.isEmpty()
+                                            ? QStringLiteral("<none>")
+                                            : controllerSnapshot.selectedLayerName;
+            const QString backendText = controllerSnapshot.renderBackend.isEmpty()
+                                            ? QStringLiteral("<none>")
+                                            : controllerSnapshot.renderBackend;
+            const QString playbackText = playbackSvc ? playbackStateText(playbackSvc->state())
+                                                     : QStringLiteral("<no service>");
+            const QString queueText = queueSvc ? QString::number(queueSvc->jobCount())
+                                               : QStringLiteral("<no service>");
+            const QString projectText = projectSvc ? projectSvc->projectName().toQString()
+                                                   : QStringLiteral("<no service>");
+
+            stateSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  backend=%6  queueJobs=%7")
+                                       .arg(projectText,
+                                            compositionText,
+                                            layerText)
+                                       .arg(controllerSnapshot.frame.framePosition())
+                                       .arg(playbackText)
+                                       .arg(backendText)
+                                       .arg(queueText));
+        }
+
+        if (overviewSummary_) {
+            const QString projectText = projectSvc ? projectSvc->projectName().toQString()
+                                                   : QStringLiteral("<no service>");
+            const QString compositionText = controllerSnapshot.compositionName.isEmpty()
+                                                ? QStringLiteral("<none>")
+                                                : controllerSnapshot.compositionName;
+            const QString layerText = controllerSnapshot.selectedLayerName.isEmpty()
+                                            ? QStringLiteral("<none>")
+                                            : controllerSnapshot.selectedLayerName;
+            const QString playbackText = playbackSvc ? playbackStateText(playbackSvc->state())
+                                                     : QStringLiteral("<no service>");
+            const QString backendText = controllerSnapshot.renderBackend.isEmpty()
+                                            ? QStringLiteral("<none>")
+                                            : controllerSnapshot.renderBackend;
+            QString hotThreadText = QStringLiteral("<none>");
+            int hotThreadDepth = 0;
+            for (const auto& thread : trace.threads) {
+                if (thread.lockDepth > hotThreadDepth) {
+                    hotThreadDepth = thread.lockDepth;
+                    hotThreadText = thread.threadName.isEmpty() ? QStringLiteral("<unnamed>") : thread.threadName;
+                }
+            }
+            QString lastCrashText = QStringLiteral("<none>");
+            if (!trace.crashes.isEmpty()) {
+                lastCrashText = trace.crashes.back().summary.isEmpty()
+                                    ? QStringLiteral("<no-summary>")
+                                    : trace.crashes.back().summary.left(48);
+            }
+            int failedPasses = 0;
+            qint64 totalPassUs = 0;
+            for (const auto& pass : controllerSnapshot.passes) {
+                totalPassUs += pass.durationUs;
+                if (pass.status == ArtifactCore::FrameDebugPassStatus::Failed) {
+                    ++failedPasses;
+                }
+            }
+            const QString healthText = controllerSnapshot.failed
+                                           ? QStringLiteral("failed")
+                                           : (failedPasses > 0 ? QStringLiteral("pass failed") : QStringLiteral("ok"));
+            const QString compareText = controllerSnapshot.compareMode == ArtifactCore::FrameDebugCompareMode::Disabled
+                                            ? QStringLiteral("off")
+                                            : ArtifactCore::toString(controllerSnapshot.compareMode);
+            overviewSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  backend=%6  health=%7  compare=%8  passes=%9  crashes=%10  traceEvents=%11  hotThread=%12(%13)  lastCrash=%14")
+                                          .arg(projectText,
+                                               compositionText,
+                                               layerText)
+                                          .arg(controllerSnapshot.frame.framePosition())
+                                          .arg(playbackText)
+                                          .arg(backendText)
+                                          .arg(healthText)
+                                          .arg(compareText)
+                                          .arg(static_cast<int>(controllerSnapshot.passes.size()))
+                                          .arg(static_cast<int>(trace.crashes.size()))
+                                          .arg(static_cast<int>(trace.events.size()))
+                                          .arg(hotThreadText)
+                                          .arg(hotThreadDepth)
+                                          .arg(lastCrashText));
+            overviewSummary_->setToolTip(QStringLiteral("failedPasses=%1 totalPassUs=%2 queueJobs=%3 traceThreads=%4")
+                                             .arg(failedPasses)
+                                             .arg(totalPassUs)
+                                             .arg(queueSvc ? queueSvc->jobCount() : 0)
+                                             .arg(static_cast<int>(trace.threads.size())));
         }
 
         if (traceText_) {
@@ -297,6 +520,32 @@ public:
             traceText_->setPlainText(lines.join(QStringLiteral("\n")));
         }
 
+        if (traceSummary_) {
+            int lockDepthTotal = 0;
+            QString hotThreadName = QStringLiteral("<none>");
+            int hotThreadDepth = 0;
+            for (const auto& thread : trace.threads) {
+                lockDepthTotal += std::max(0, thread.lockDepth);
+                if (thread.lockDepth > hotThreadDepth) {
+                    hotThreadDepth = thread.lockDepth;
+                    hotThreadName = thread.threadName.isEmpty() ? QStringLiteral("<unnamed>") : thread.threadName;
+                }
+            }
+            const auto lastFrameIndex = trace.frames.empty() ? -1 : trace.frames.back().frameIndex;
+            const auto lastSpanNs = trace.frames.empty() ? 0 : (trace.frames.back().frameEndNs - trace.frames.back().frameStartNs);
+            traceSummary_->setText(QStringLiteral("frames=%1  events=%2  scopes=%3  locks=%4  crashes=%5  hotThread=%6(%7)  lastFrame=%8 spanNs=%9")
+                                       .arg(static_cast<int>(trace.frames.size()))
+                                       .arg(static_cast<int>(trace.events.size()))
+                                       .arg(static_cast<int>(trace.scopes.size()))
+                                       .arg(static_cast<int>(trace.locks.size()))
+                                       .arg(static_cast<int>(trace.crashes.size()))
+                                       .arg(hotThreadName)
+                                       .arg(hotThreadDepth)
+                                       .arg(lastFrameIndex)
+                                       .arg(lastSpanNs));
+            traceSummary_->setToolTip(QStringLiteral("openLockDepth=%1").arg(lockDepthTotal));
+        }
+
         if (frameText_) {
             QStringList lines;
             lines << QStringLiteral("Frame");
@@ -320,16 +569,112 @@ public:
             frameText_->setPlainText(lines.join(QStringLiteral("\n")));
         }
 
+        if (frameSummary_) {
+            const auto frameIndex = controllerSnapshot.frame.framePosition();
+            const auto passCount = static_cast<int>(controllerSnapshot.passes.size());
+            const auto resourceCount = static_cast<int>(controllerSnapshot.resources.size());
+            const auto attachmentCount = static_cast<int>(controllerSnapshot.attachments.size());
+            const auto compareText = controllerSnapshot.compareMode == ArtifactCore::FrameDebugCompareMode::Disabled
+                                           ? QStringLiteral("compare: off")
+                                           : QStringLiteral("compare: %1%2")
+                                                 .arg(ArtifactCore::toString(controllerSnapshot.compareMode))
+                                                 .arg(controllerSnapshot.compareTargetId.isEmpty()
+                                                         ? QString()
+                                                         : QStringLiteral(" -> %1").arg(controllerSnapshot.compareTargetId));
+
+            int failedPasses = 0;
+            qint64 totalPassUs = 0;
+            QString lastFailedPass;
+            for (const auto& pass : controllerSnapshot.passes) {
+                totalPassUs += pass.durationUs;
+                if (pass.status == ArtifactCore::FrameDebugPassStatus::Failed) {
+                    ++failedPasses;
+                    lastFailedPass = pass.name.isEmpty() ? QStringLiteral("<unnamed>") : pass.name;
+                }
+            }
+
+            QString hint;
+            if (controllerSnapshot.failed) {
+                hint = controllerSnapshot.failureReason.isEmpty()
+                        ? QStringLiteral("frame failed")
+                        : QStringLiteral("frame failed: %1").arg(controllerSnapshot.failureReason);
+            } else if (failedPasses > 0) {
+                hint = lastFailedPass.isEmpty()
+                        ? QStringLiteral("failed pass present")
+                        : QStringLiteral("failed pass: %1").arg(lastFailedPass);
+            } else if (controllerSnapshot.compareMode != ArtifactCore::FrameDebugCompareMode::Disabled) {
+                hint = QStringLiteral("compare is enabled");
+            } else {
+                hint = QStringLiteral("frame looks stable");
+            }
+
+            frameSummary_->setText(QStringLiteral("Frame %1 | %2 | %3 | passes=%4 resources=%5 attachments=%6 totalPassUs=%7")
+                                       .arg(frameIndex)
+                                       .arg(controllerSnapshot.compositionName.isEmpty()
+                                                ? QStringLiteral("<no composition>")
+                                                : controllerSnapshot.compositionName)
+                                       .arg(compareText)
+                                       .arg(passCount)
+                                       .arg(resourceCount)
+                                       .arg(attachmentCount)
+                                       .arg(totalPassUs));
+            frameSummary_->setToolTip(QStringLiteral("%1\nfailedPasses=%2").arg(hint).arg(failedPasses));
+        }
+
         if (pipelineView_) {
             pipelineView_->setFrameDebugSnapshot(controllerSnapshot, trace);
+        }
+        if (pipelineSummary_) {
+            int failedPasses = 0;
+            qint64 totalPassUs = 0;
+            for (const auto& pass : controllerSnapshot.passes) {
+                totalPassUs += pass.durationUs;
+                if (pass.status == ArtifactCore::FrameDebugPassStatus::Failed) {
+                    ++failedPasses;
+                }
+            }
+            pipelineSummary_->setText(QStringLiteral("passes=%1  failed=%2  resources=%3  attachments=%4  totalPassUs=%5  compare=%6")
+                                           .arg(static_cast<int>(controllerSnapshot.passes.size()))
+                                           .arg(failedPasses)
+                                           .arg(static_cast<int>(controllerSnapshot.resources.size()))
+                                           .arg(static_cast<int>(controllerSnapshot.attachments.size()))
+                                           .arg(totalPassUs)
+                                           .arg(ArtifactCore::toString(controllerSnapshot.compareMode)));
         }
 
         if (resourceView_) {
             resourceView_->setFrameDebugSnapshot(controllerSnapshot, trace);
         }
+        if (resourceSummary_) {
+            int textureViews = 0;
+            for (const auto& resource : controllerSnapshot.resources) {
+                textureViews += resource.texture.valid ? 1 : 0;
+            }
+            for (const auto& attachment : controllerSnapshot.attachments) {
+                textureViews += attachment.texture.valid ? 1 : 0;
+            }
+            resourceSummary_->setText(QStringLiteral("resources=%1  attachments=%2  textureViews=%3  frame=%4")
+                                          .arg(static_cast<int>(controllerSnapshot.resources.size()))
+                                          .arg(static_cast<int>(controllerSnapshot.attachments.size()))
+                                          .arg(textureViews)
+                                          .arg(controllerSnapshot.frame.framePosition()));
+        }
 
         if (diffView_) {
             diffView_->setFrameDebugSnapshot(controllerSnapshot, trace);
+        }
+        if (diffSummary_) {
+            const auto changedKey = QStringLiteral("%1|%2|%3|%4")
+                                        .arg(controllerSnapshot.compositionName,
+                                             controllerSnapshot.renderBackend,
+                                             controllerSnapshot.playbackState,
+                                             controllerSnapshot.selectedLayerName);
+            diffSummary_->setText(QStringLiteral("compare=%1  target=%2  failed=%3  key=%4")
+                                      .arg(ArtifactCore::toString(controllerSnapshot.compareMode))
+                                      .arg(controllerSnapshot.compareTargetId.isEmpty() ? QStringLiteral("<none>")
+                                                                                       : controllerSnapshot.compareTargetId)
+                                      .arg(controllerSnapshot.failed ? QStringLiteral("true") : QStringLiteral("false"))
+                                      .arg(changedKey));
         }
 
         if (traceTimelineView_) {
@@ -382,6 +727,23 @@ public:
             traceTimelineView_->setFocusedMutexName(focusMutexName);
             traceTimelineView_->setTraceSnapshot(trace);
         }
+        if (traceTimelineSummary_) {
+            int lockDepthTotal = 0;
+            int hotThreadCount = 0;
+            for (const auto& thread : trace.threads) {
+                lockDepthTotal += std::max(0, thread.lockDepth);
+                if (thread.lockDepth > 0) {
+                    ++hotThreadCount;
+                }
+            }
+            traceTimelineSummary_->setText(QStringLiteral("lanes=%1  scopes=%2  locks=%3  crashes=%4  hotThreads=%5  lockDepth=%6")
+                                               .arg(trace.frames.empty() ? 0 : static_cast<int>(trace.frames.back().lanes.size()))
+                                               .arg(static_cast<int>(trace.scopes.size()))
+                                               .arg(static_cast<int>(trace.locks.size()))
+                                               .arg(static_cast<int>(trace.crashes.size()))
+                                               .arg(hotThreadCount)
+                                               .arg(lockDepthTotal));
+        }
 
         if (diagnosticsText_) {
             QStringList lines;
@@ -389,6 +751,8 @@ public:
             lines << QStringLiteral("frameSummary: %1").arg(hasControllerSnapshot ? QStringLiteral("available") : QStringLiteral("none"));
             lines << QStringLiteral("traceFrames: %1").arg(static_cast<int>(trace.frames.size()));
             lines << QStringLiteral("traceThreads: %1").arg(static_cast<int>(trace.threads.size()));
+            lines << QStringLiteral("traceEvents: %1").arg(static_cast<int>(trace.events.size()));
+            lines << QStringLiteral("traceCrashes: %1").arg(static_cast<int>(trace.crashes.size()));
             int openLocks = 0;
             for (const auto& thread : trace.threads) {
                 openLocks += std::max(0, thread.lockDepth);
@@ -403,15 +767,61 @@ public:
             diagnosticsText_->setPlainText(lines.join(QStringLiteral("\n")));
         }
 
+        if (diagnosticsSummary_) {
+            QString lastCrashText = QStringLiteral("<none>");
+            if (!trace.crashes.isEmpty()) {
+                const auto& crash = trace.crashes.back();
+                lastCrashText = crash.summary.isEmpty() ? QStringLiteral("<no-summary>") : crash.summary.left(48);
+            }
+            diagnosticsSummary_->setText(QStringLiteral("traceFrames=%1  traceEvents=%2  crashes=%3  openLocks=%4  queueJobs=%5  playback=%6")
+                                             .arg(static_cast<int>(trace.frames.size()))
+                                             .arg(static_cast<int>(trace.events.size()))
+                                             .arg(static_cast<int>(trace.crashes.size()))
+                                             .arg([&trace]() {
+                                                 int total = 0;
+                                                 for (const auto& thread : trace.threads) {
+                                                     total += std::max(0, thread.lockDepth);
+                                                 }
+                                                 return total;
+                                             }())
+                                             .arg(queueSvc ? queueSvc->jobCount() : 0)
+                                             .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>")));
+            diagnosticsSummary_->setToolTip(QStringLiteral("lastCrash=%1").arg(lastCrashText));
+        }
+
         if (exportText_) {
             QStringList lines;
             lines << QStringLiteral("App Debug Export");
+            lines << QStringLiteral("summary:");
+            lines << QStringLiteral("  frame: %1").arg(controllerSnapshot.frame.framePosition());
+            lines << QStringLiteral("  composition: %1")
+                          .arg(controllerSnapshot.compositionName.isEmpty() ? QStringLiteral("<none>")
+                                                                            : controllerSnapshot.compositionName);
+            lines << QStringLiteral("  playback: %1")
+                          .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
+            lines << QStringLiteral("  traceFrames: %1").arg(static_cast<int>(trace.frames.size()));
+            lines << QStringLiteral("  traceEvents: %1").arg(static_cast<int>(trace.events.size()));
+            lines << QStringLiteral("  crashes: %1").arg(static_cast<int>(trace.crashes.size()));
             lines << QStringLiteral("FrameDebugSnapshot JSON:");
             lines << QString::fromUtf8(QJsonDocument(controllerSnapshot.toJson()).toJson(QJsonDocument::Indented));
             lines << QString();
             lines << QStringLiteral("TraceSnapshot JSON:");
             lines << QString::fromUtf8(QJsonDocument(ArtifactCore::toJson(trace)).toJson(QJsonDocument::Indented));
             exportText_->setPlainText(lines.join(QStringLiteral("\n")));
+        }
+
+        if (exportSummary_) {
+            QString crashText = QStringLiteral("<none>");
+            if (!trace.crashes.isEmpty()) {
+                crashText = trace.crashes.back().summary.isEmpty() ? QStringLiteral("<no-summary>")
+                                                                  : trace.crashes.back().summary.left(48);
+            }
+            exportSummary_->setText(QStringLiteral("ready to copy: frame=%1  traceEvents=%2  crashes=%3  compare=%4")
+                                        .arg(controllerSnapshot.frame.framePosition())
+                                        .arg(static_cast<int>(trace.events.size()))
+                                        .arg(static_cast<int>(trace.crashes.size()))
+                                        .arg(ArtifactCore::toString(controllerSnapshot.compareMode)));
+            exportSummary_->setToolTip(QStringLiteral("latestCrash=%1").arg(crashText));
         }
     }
 };

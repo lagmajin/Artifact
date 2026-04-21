@@ -122,7 +122,7 @@ void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
   switch (mode) {
   case WorkspaceMode::Default:
     visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Properties", "AI Cloud"};
+                     "Inspector", "Properties"};
     hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
                     "Composition Note", "Layer Note",
                     "Composition View (Software)", "Layer View (Diligent)",
@@ -138,7 +138,7 @@ void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
   case WorkspaceMode::VFX:
     visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
                      "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "AI Cloud", "Composition View (Software)",
+                     "Properties", "Composition View (Software)",
                      "Layer View (Diligent)", "Layer View (Software)"};
     hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat"};
     break;
@@ -612,7 +612,7 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
 
   QObject::connect(
       dock, &ads::CDockWidget::visibilityChanged, this,
-      [dock, placeholder, factory = std::move(factory)](bool visible) mutable {
+      [this, title, dock, placeholder, factory = std::move(factory)](bool visible) mutable {
         if (!visible || dock->property("artifactLazyWidgetCreated").toBool()) {
           return;
         }
@@ -624,6 +624,9 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
 
         dock->setProperty("artifactLazyWidgetCreated", true);
         dock->setWidget(widget);
+        if (title == QStringLiteral("AI Cloud")) {
+          impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
+        }
         if (placeholder) {
           placeholder->deleteLater();
         }
@@ -668,7 +671,7 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
 
   QObject::connect(
       dock, &ads::CDockWidget::visibilityChanged, this,
-      [dock, placeholder, factory = std::move(factory)](bool visible) mutable {
+      [this, title, dock, placeholder, factory = std::move(factory)](bool visible) mutable {
         if (!visible || dock->property("artifactLazyWidgetCreated").toBool()) {
           return;
         }
@@ -680,6 +683,9 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
 
         dock->setProperty("artifactLazyWidgetCreated", true);
         dock->setWidget(widget);
+        if (title == QStringLiteral("AI Cloud")) {
+          impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
+        }
         if (placeholder) {
           placeholder->deleteLater();
         }

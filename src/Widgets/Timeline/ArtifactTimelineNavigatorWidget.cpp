@@ -1,6 +1,7 @@
 module;
 #include <QMouseEvent>
 #include <QLinearGradient>
+#include <QPainterPath>
 #include <QPainter>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -96,6 +97,15 @@ namespace Artifact
   }
  }
 
+ void ArtifactTimelineNavigatorWidget::setCurrentFrame(double frame)
+ {
+  const double sanitized = std::max(0.0, frame);
+  if (std::abs(currentFrame_ - sanitized) > 0.0001) {
+   currentFrame_ = sanitized;
+   update();
+  }
+ }
+
  void ArtifactTimelineNavigatorWidget::setTotalFrames(const int totalFrames)
  {
   const int sanitized = std::max(1, totalFrames);
@@ -181,8 +191,28 @@ namespace Artifact
   p.drawRoundedRect(leftHandleRect, 2, 2);
   p.drawRoundedRect(rightHandleRect, 2, 2);
 
-  p.setPen(playheadColor);
-  p.drawLine(rangeRect.left(), outer.bottom() - 1, rangeRect.right(), outer.bottom() - 1);
+  if (impl_->currentFrame_ >= 0.0 && impl_->totalFrames_ > 1) {
+   const double ratio = std::clamp(impl_->currentFrame_ /
+                                       std::max(1.0, static_cast<double>(impl_->totalFrames_ - 1)),
+                                   0.0, 1.0);
+   const int currentX = kHandleHalfW + static_cast<int>(std::lround(ratio * usableWidth));
+   const int clampedCurrentX = std::clamp(currentX, trackRect.left(), trackRect.right());
+   const qreal headTop = 1.0;
+   const qreal headHeight = std::min<qreal>(10.0, static_cast<qreal>(trackRect.height() - 3));
+   const qreal headWidth = 12.0;
+   const qreal stemTop = headTop + headHeight + 1.0;
+   const qreal stemBottom = static_cast<qreal>(outer.bottom()) - 1.0;
+   QPainterPath headPath;
+   headPath.moveTo(clampedCurrentX, headTop + headHeight);
+   headPath.lineTo(clampedCurrentX - headWidth * 0.5, headTop);
+   headPath.lineTo(clampedCurrentX + headWidth * 0.5, headTop);
+   headPath.closeSubpath();
+   p.setPen(QPen(QColor(18, 18, 18, 150), 1));
+   p.setBrush(playheadColor);
+   p.drawPath(headPath);
+   p.setPen(QPen(playheadColor, 2, Qt::SolidLine, Qt::FlatCap));
+   p.drawLine(QPointF(clampedCurrentX, stemTop), QPointF(clampedCurrentX, stemBottom));
+  }
  }
 
  void ArtifactTimelineNavigatorWidget::mousePressEvent(QMouseEvent* ev)

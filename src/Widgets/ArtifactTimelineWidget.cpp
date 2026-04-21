@@ -218,6 +218,38 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
   if (!preserveExistingDuration && inPointDelta != 0) {
     layer->setStartTime(FramePosition(oldStartTime + inPointDelta));
   }
+
+  if (preserveExistingDuration && inPointDelta != 0) {
+    const double fps = std::max(
+        1.0, static_cast<double>(comp->frameRate().framerate()));
+    const int64_t frameScale = static_cast<int64_t>(std::llround(fps));
+    for (const auto &group : layer->getLayerPropertyGroups()) {
+      for (const auto &property : group.sortedProperties()) {
+        if (!property || !property->isAnimatable()) {
+          continue;
+        }
+
+        const auto keyframes = property->getKeyFrames();
+        if (keyframes.empty()) {
+          continue;
+        }
+
+        property->clearKeyFrames();
+        for (const auto &keyframe : keyframes) {
+          const int64_t oldFrame = keyframe.time.rescaledTo(frameScale);
+          const int64_t newFrame =
+              std::max<int64_t>(0, oldFrame + inPointDelta);
+          property->addKeyFrame(
+              RationalTime(newFrame, frameScale),
+              keyframe.value.isValid() ? keyframe.value : property->getValue(),
+              keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
+              keyframe.cp2_x, keyframe.cp2_y);
+        }
+      }
+    }
+  }
+
+  layer->changed();
   
   // layer::changed() でレンダラーとタイムライン Track ビューに通知する。
   ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
@@ -2516,16 +2548,18 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         if (!layer) {
           return;
         }
+        const QString safePropertyPath =
+            propertyPath.isNull() ? QStringLiteral("<null>") : propertyPath;
         if (moveTimelineKeyframe(composition, layer, propertyPath, fromFrame,
                                  toFrame)) {
           refreshTracks();
           updateKeyframeState();
+          const QString safeFrom = QString::number(fromFrame);
+          const QString safeTo = QString::number(toFrame);
           Q_EMIT timelineDebugMessage(
-              QStringLiteral("Moved keyframe %1 -> %2 for %3")
-                  .arg(fromFrame)
-                  .arg(toFrame)
-                  .arg(ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
-                      propertyPath)));
+              QStringLiteral("Moved keyframe ") + safeFrom +
+              QStringLiteral(" -> ") + safeTo +
+              QStringLiteral(" for ") + safePropertyPath);
         }
       });
   QObject::connect(
@@ -3666,6 +3700,10 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
   const double xOff = impl_->painterTrackView_->horizontalOffset();
   const double frame = impl_->painterTrackView_->currentFrame();
   const int newX = static_cast<int>(frame * ppf - xOff);
+
+  if (impl_->navigator_) {
+    impl_->navigator_->setCurrentFrame(frame);
+  }
 
   constexpr int kMargin = 12;
   const int oldX = impl_->lastPlayheadTrackX_;

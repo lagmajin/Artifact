@@ -19,6 +19,7 @@ export namespace Artifact
   Impl* impl_;
   float start{ 0.0f };
   float end{ 1.0f };
+  double currentFrame_{ -1.0 };
 
  protected:
   void paintEvent(QPaintEvent*) override;
@@ -35,6 +36,7 @@ export namespace Artifact
   int totalFrames() const;
   void setStart(float s);
   void setEnd(float e);
+  void setCurrentFrame(double frame);
   void setTotalFrames(int totalFrames);
 
   void startChanged(float value) W_SIGNAL(startChanged, value)

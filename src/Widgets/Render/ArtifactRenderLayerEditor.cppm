@@ -80,10 +80,17 @@ namespace Artifact {
   auto* editMenu = new QMenu(impl_->toolbar);
   auto* editGroup = new QActionGroup(this);
   editGroup->setExclusive(true);
-  const auto addEditAction = [&](const QString& text, EditMode mode, bool checked) {
+  const auto addEditAction = [&](const QString& text,
+                                 EditMode mode,
+                                 bool checked,
+                                 const QKeySequence& shortcut = QKeySequence()) {
    QAction* action = editMenu->addAction(text);
    action->setCheckable(true);
    action->setChecked(checked);
+   if (!shortcut.isEmpty()) {
+    action->setShortcut(shortcut);
+    action->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+   }
    editGroup->addAction(action);
    connect(action, &QAction::triggered, this, [this, mode]() {
     if (impl_ && impl_->view) {
@@ -93,12 +100,14 @@ namespace Artifact {
   };
   addEditAction(QStringLiteral("View"), EditMode::View, true);
   addEditAction(QStringLiteral("Transform"), EditMode::Transform, false);
-  addEditAction(QStringLiteral("Shape"), EditMode::Paint, false);
+  addEditAction(QStringLiteral("Shape"), EditMode::Paint, false,
+                QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_P));
   addEditAction(QStringLiteral("Mask"), EditMode::Mask, false);
   impl_->editModeButton = new QToolButton(this);
   impl_->editModeButton->setText(QStringLiteral("Edit Mode"));
   impl_->editModeButton->setMenu(editMenu);
   impl_->editModeButton->setPopupMode(QToolButton::InstantPopup);
+  impl_->editModeButton->setToolTip(QStringLiteral("Edit Mode (Ctrl+Alt+P = Shape)"));
   impl_->toolbar->addWidget(impl_->editModeButton);
 
   auto* displayMenu = new QMenu(impl_->toolbar);
