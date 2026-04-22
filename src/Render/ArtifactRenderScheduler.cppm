@@ -1,4 +1,4 @@
-
+﻿
 module;
 #include <QThreadPool>
 #include <QtConcurrent>
@@ -410,8 +410,8 @@ void RenderScheduler::processNextTask() {
         const QString taskName = !task->description().trimmed().isEmpty()
                                      ? task->description().trimmed()
                                      : QStringLiteral("frames:%1-%2")
-                                           .arg(task->range().start().framePosition())
-                                           .arg(task->range().end().framePosition());
+                                            .arg(task->range().start())
+                                            .arg(task->range().end());
         threadPool->start([self, task, taskName]() {
             if (!self || self->impl_->stopRequested_) {
                 return;

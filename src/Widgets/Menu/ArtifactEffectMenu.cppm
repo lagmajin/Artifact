@@ -132,6 +132,7 @@ QIcon menuIcon(const QString& path)
   distortMenu_->addAction(menuIcon(QStringLiteral("Material/tornado.svg")), "トワール");
   distortMenu_->addAction(menuIcon(QStringLiteral("Material/warp.svg")), "ワープ");
   distortMenu_->addAction(menuIcon(QStringLiteral("Material/waves.svg")), "波形ワープ");
+  distortMenu_->addAction(menuIcon(QStringLiteral("Material/camera.svg")), "レンズディストーション");
 
   // Blur & Sharpen submenu
   blurSharpenMenu_ = new QMenu("ブラー＆シャープ(&B)", menu);

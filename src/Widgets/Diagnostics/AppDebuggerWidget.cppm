@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <algorithm>
 #include <cmath>
 #include <QDateTime>
@@ -467,7 +467,23 @@ public:
         if (!hasCaptureBundle_) {
             captureHistoryText_->setPlainText(QStringLiteral("No capture yet."));
             if (captureDetailView_) {
-                captureDetailView_->setFrameDebugSnapshot(ArtifactCore::FrameDebugSnapshot{});
+                captureDetailView_->setFrameDebugSnapshot(ArtifactCore::FrameDebugSnapshot{
+                    ArtifactCore::FramePosition(0),
+                    0,
+                    QString(),
+                    QString(),
+                    QString(),
+                    QString(),
+                    0.0,
+                    0.0,
+                    ArtifactCore::FrameDebugCompareMode::Disabled,
+                    QString(),
+                    {},
+                    {},
+                    {},
+                    false,
+                    QString()
+                });
             }
             return;
         }

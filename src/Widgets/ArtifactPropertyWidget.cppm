@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #include <QColor>
 #include <QCursor>
@@ -1504,9 +1504,9 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       continue;
     }
 
-    auto *effectLabel = new QLabel(presentation.headingText, summaryGroup);
+    auto *effectLabel = new QLabel(effect->displayName().toQString(), summaryGroup);
     effectLabel->setObjectName(QStringLiteral("propertySectionLabel"));
-    applyPresentationToneLabel(effectLabel, presentation.badgeTone, true);
+    applyPropertySectionLabel(effectLabel, false);
     summaryLayout->addWidget(effectLabel);
 
     std::vector<ArtifactPropertyEditorRowWidget *> effectSummaryRows;

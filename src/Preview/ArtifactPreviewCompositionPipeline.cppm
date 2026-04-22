@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QVector>
 #include <iostream>
 #include <vector>
@@ -275,12 +275,12 @@ namespace Artifact
                                                    static_cast<float>(compW),
                                                    static_cast<float>(compH)));
 
-   const QString key = RenderContextRegistry::instance().makeKey(
-       RenderPurpose::EditorPreview,
-       composition->id().toString(),
-       currentFrame,
-       ctx.resolutionScale);
-   auto snapshot = createRenderContextSnapshot(ctx, RenderPurpose::EditorPreview, key);
+    const QString key = RenderContextRegistry::instance().makeKey(
+        RenderPurpose::EditorPreview,
+        composition->id().toString(),
+        currentFrame,
+        ctx->resolutionScale);
+    auto snapshot = createRenderContextSnapshot(*ctx, RenderPurpose::EditorPreview, key);
    RenderContextRegistry::instance().registerSnapshot(snapshot);
   }
  } // namespace
