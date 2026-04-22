@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QMouseEvent>
 #include <QLinearGradient>
 #include <QPainterPath>
@@ -191,8 +191,8 @@ namespace Artifact
   p.drawRoundedRect(leftHandleRect, 2, 2);
   p.drawRoundedRect(rightHandleRect, 2, 2);
 
-  if (impl_->currentFrame_ >= 0.0 && impl_->totalFrames_ > 1) {
-   const double ratio = std::clamp(impl_->currentFrame_ /
+  if (currentFrame_ >= 0.0 && impl_->totalFrames_ > 1) {
+   const double ratio = std::clamp(currentFrame_ /
                                        std::max(1.0, static_cast<double>(impl_->totalFrames_ - 1)),
                                    0.0, 1.0);
    const int currentX = kHandleHalfW + static_cast<int>(std::lround(ratio * usableWidth));

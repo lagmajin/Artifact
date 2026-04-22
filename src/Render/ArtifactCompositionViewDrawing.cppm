@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 
@@ -116,8 +116,8 @@ void registerCompositionViewContextSnapshot(ArtifactAbstractLayer* layer,
       offlineRender ? RenderPurpose::FinalExport : RenderPurpose::EditorPreview,
       layer->id().toString(),
       layer->currentFrame(),
-      ctx.resolutionScale);
-  auto snapshot = createRenderContextSnapshot(ctx,
+      ctx->resolutionScale);
+  auto snapshot = createRenderContextSnapshot(*ctx,
                                               offlineRender ? RenderPurpose::FinalExport : RenderPurpose::EditorPreview,
                                               key);
   RenderContextRegistry::instance().registerSnapshot(snapshot);

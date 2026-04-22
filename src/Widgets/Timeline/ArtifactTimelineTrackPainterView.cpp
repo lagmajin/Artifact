@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <QContextMenuEvent>
 #include <QApplication>
 #include <QCursor>
@@ -1677,8 +1677,11 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         currentComposition = svc->currentComposition().lock();
       }
     }
-    const int applied = applyInterpolationToSelectedKeyframesImpl(
-        currentComposition, interpolationTargets, type);
+    int applied = 0;
+    if (currentComposition) {
+      applied = ArtifactTimelineWidget::applyInterpolationToSelectedKeyframesImpl(
+          currentComposition, interpolationTargets, type);
+    }
     if (applied > 0) {
       const QString typeLabel =
           (type == ArtifactCore::InterpolationType::Linear)
