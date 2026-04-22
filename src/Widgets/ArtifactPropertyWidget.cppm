@@ -64,6 +64,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Application.Manager;
 import Utils.String.UniString;
 import Widgets.Utils.CSS;
+import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Widgets.PropertyEditor;
 import Artifact.Service.Playback;
@@ -215,6 +216,41 @@ void applyPropertySectionLabel(QLabel *label, const bool prominent = false) {
   label->setPalette(pal);
 }
 
+void applyPresentationToneLabel(QLabel *label,
+                                LayerPresentationBadgeTone tone,
+                                const bool prominent = false) {
+  if (!label) {
+    return;
+  }
+  const auto &theme = ArtifactCore::currentDCCTheme();
+  const QColor text =
+      themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
+  const QColor accent =
+      themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+  QColor toneColor = text;
+  switch (tone) {
+  case LayerPresentationBadgeTone::Container:
+    toneColor = accent;
+    break;
+  case LayerPresentationBadgeTone::Media:
+    toneColor = blendColor(text, accent, 0.22);
+    break;
+  case LayerPresentationBadgeTone::Motion:
+    toneColor = accent.lighter(115);
+    break;
+  case LayerPresentationBadgeTone::Special:
+    toneColor = accent.darker(110);
+    break;
+  case LayerPresentationBadgeTone::Neutral:
+  default:
+    toneColor = text;
+    break;
+  }
+  QPalette pal = label->palette();
+  pal.setColor(QPalette::WindowText, prominent ? toneColor : toneColor.darker(110));
+  label->setPalette(pal);
+}
+
 void applyPropertySectionBox(QGroupBox *box) {
   if (!box) {
     return;
@@ -225,6 +261,64 @@ void applyPropertySectionBox(QGroupBox *box) {
   font.setWeight(QFont::DemiBold);
   box->setFont(font);
   box->setFlat(false);
+}
+
+struct EffectPresentationDescriptor {
+  QString stageText;
+  QString headingText;
+  QString stageNoteText;
+  LayerPresentationBadgeTone badgeTone = LayerPresentationBadgeTone::Neutral;
+};
+
+template <typename EffectPtr>
+EffectPresentationDescriptor describeEffectPresentation(const EffectPtr &effect) {
+  EffectPresentationDescriptor descriptor;
+  descriptor.stageText = QStringLiteral("Effect");
+  descriptor.headingText = QStringLiteral("Effect");
+  descriptor.stageNoteText = QStringLiteral("Stage: Unknown");
+  descriptor.badgeTone = LayerPresentationBadgeTone::Neutral;
+  if (!effect) {
+    return descriptor;
+  }
+
+  switch (effect->pipelineStage()) {
+  case EffectPipelineStage::Generator:
+    descriptor.stageText = QStringLiteral("Generator");
+    descriptor.stageNoteText = QStringLiteral("Stage: Generator");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    break;
+  case EffectPipelineStage::GeometryTransform:
+    descriptor.stageText = QStringLiteral("Geo Transform");
+    descriptor.stageNoteText = QStringLiteral("Stage: Geometry Transform");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    break;
+  case EffectPipelineStage::MaterialRender:
+    descriptor.stageText = QStringLiteral("Material");
+    descriptor.stageNoteText = QStringLiteral("Stage: Material Render");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    break;
+  case EffectPipelineStage::Rasterizer:
+    descriptor.stageText = QStringLiteral("Rasterizer");
+    descriptor.stageNoteText = QStringLiteral("Stage: Rasterizer");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    break;
+  case EffectPipelineStage::LayerTransform:
+    descriptor.stageText = QStringLiteral("Layer Transform");
+    descriptor.stageNoteText = QStringLiteral("Stage: Layer Transform");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
+    break;
+  default:
+    descriptor.stageText = QStringLiteral("Effect");
+    descriptor.stageNoteText = QStringLiteral("Stage: Unknown");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Neutral;
+    break;
+  }
+
+  descriptor.headingText =
+      QStringLiteral("%1 · %2")
+          .arg(descriptor.stageText,
+               effect->displayName().toQString());
+  return descriptor;
 }
 
 void clearLayoutRecursive(QLayout *layout) {
@@ -1238,6 +1332,19 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
   const auto layerGroups = layer ? layer->getLayerPropertyGroups()
                                  : std::vector<ArtifactCore::PropertyGroup>{};
+  if (layer) {
+    const auto presentation = describeLayerPresentation(layer);
+    summaryGroup->setTitle(presentation.propertySummaryTitle);
+    if (!presentation.capabilitySummaryText.isEmpty()) {
+      auto *capabilityLabel = new QLabel(
+          QStringLiteral("Capability: %1").arg(presentation.capabilitySummaryText),
+          summaryGroup);
+      capabilityLabel->setObjectName(QStringLiteral("propertySectionNote"));
+      capabilityLabel->setWordWrap(true);
+      applyPresentationToneLabel(capabilityLabel, presentation.badgeTone, false);
+      summaryLayout->addWidget(capabilityLabel);
+    }
+  }
   const auto ownerSnapshots =
       ArtifactCore::PropertyRegistryReadOnlyAdapter::queryAllOwners();
   if (!ownerSnapshots.isEmpty()) {
@@ -1397,11 +1504,9 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       continue;
     }
 
-    auto *effectLabel = new QLabel(
-        QStringLiteral("Effect: %1").arg(effect->displayName().toQString()),
-        summaryGroup);
+    auto *effectLabel = new QLabel(presentation.headingText, summaryGroup);
     effectLabel->setObjectName(QStringLiteral("propertySectionLabel"));
-    applyPropertySectionLabel(effectLabel, true);
+    applyPresentationToneLabel(effectLabel, presentation.badgeTone, true);
     summaryLayout->addWidget(effectLabel);
 
     std::vector<ArtifactPropertyEditorRowWidget *> effectSummaryRows;
@@ -1511,32 +1616,19 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       continue;
     }
 
-    QString stageName = "Unknown";
-    switch (effect->pipelineStage()) {
-    case EffectPipelineStage::Generator:
-      stageName = "[Generator]";
-      break;
-    case EffectPipelineStage::GeometryTransform:
-      stageName = "[Geo Transform]";
-      break;
-    case EffectPipelineStage::MaterialRender:
-      stageName = "[Material]";
-      break;
-    case EffectPipelineStage::Rasterizer:
-      stageName = "[Rasterizer]";
-      break;
-    case EffectPipelineStage::LayerTransform:
-      stageName = "[Layer Transform]";
-      break;
-    }
-
-    QGroupBox *group = new QGroupBox(
-        QString("%1 %2").arg(stageName).arg(effect->displayName().toQString()));
+    const auto presentation = describeEffectPresentation(effect);
+    QGroupBox *group = new QGroupBox(presentation.headingText);
     auto *groupLayout = new QVBoxLayout(group);
     groupLayout->setContentsMargins(10, 8, 10, 8);
     groupLayout->setSpacing(5);
     applyPropertySectionBox(group);
     applyThemeTextPalette(group, 120);
+
+    auto *stageLabel = new QLabel(presentation.stageNoteText, group);
+    stageLabel->setObjectName(QStringLiteral("propertySectionNote"));
+    stageLabel->setWordWrap(true);
+    applyPresentationToneLabel(stageLabel, presentation.badgeTone, false);
+    groupLayout->addWidget(stageLabel);
 
     ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
     for (const auto &p : effect->getProperties()) {

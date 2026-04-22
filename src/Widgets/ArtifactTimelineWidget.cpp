@@ -3154,8 +3154,11 @@ void ArtifactTimelineWidget::refreshTracks() {
         if (impl_->shyActive_ && layer->isShy())
           continue;
         TimelineRowDescriptor descriptor;
+        const auto presentation = describeLayerPresentation(layer);
         descriptor.layerId = layer->id();
         descriptor.kind = TimelineRowKind::Layer;
+        descriptor.auxiliaryText = presentation.timelineBadgeText;
+        descriptor.auxiliaryTone = presentation.badgeTone;
         visibleRows.push_back(std::move(descriptor));
       }
     }

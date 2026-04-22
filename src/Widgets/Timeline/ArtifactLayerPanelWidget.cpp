@@ -4,6 +4,7 @@ module;
 #include <QCoreApplication>
 #include <QAction>
 #include <QPainter>
+#include <QFontMetrics>
 #include <QPalette>
 #include <QWidget>
 #include <QString>
@@ -68,6 +69,99 @@ import Widgets.Utils.CSS;
 namespace Artifact
 {
  using namespace ArtifactCore;
+
+LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLayerPtr& layer)
+{
+  LayerPresentationDescriptor descriptor;
+  descriptor.typeText = QStringLiteral("Layer");
+  descriptor.timelineBadgeText = QStringLiteral("Layer");
+  descriptor.propertySummaryTitle = QStringLiteral("Summary");
+  descriptor.inspectorTypeLabel = QStringLiteral("Type: N/A");
+  descriptor.capabilitySummaryText = QString();
+  descriptor.badgeTone = LayerPresentationBadgeTone::Neutral;
+
+  if (!layer) {
+    return descriptor;
+  }
+  if (layer->isNullLayer()) {
+    descriptor.typeText = QStringLiteral("Null Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Null");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Null Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Null Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Specialized");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    return descriptor;
+  }
+  if (layer->isAdjustmentLayer()) {
+    descriptor.typeText = QStringLiteral("Adjustment Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Adjust");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Adjustment Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Adjustment Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Specialized");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    return descriptor;
+  }
+  if (layer->isGroupLayer()) {
+    descriptor.typeText = QStringLiteral("Group Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Group");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Group Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Group Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Container");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
+    return descriptor;
+  }
+  if (layer->isCloneLayer()) {
+    descriptor.typeText = QStringLiteral("Clone Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Clone");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Clone Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Clone Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Instanced");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    return descriptor;
+  }
+  if (layer->is3D()) {
+    descriptor.typeText = QStringLiteral("3D Layer");
+    descriptor.timelineBadgeText = QStringLiteral("3D");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · 3D Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: 3D Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("3D Space");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    return descriptor;
+  }
+  if (layer->hasAudio() && layer->hasVideo()) {
+    descriptor.typeText = QStringLiteral("Audio-Video Layer");
+    descriptor.timelineBadgeText = QStringLiteral("A/V");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Audio-Video Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio-Video Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Audio + Video");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  if (layer->hasAudio()) {
+    descriptor.typeText = QStringLiteral("Audio Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Audio");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Audio Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Audio");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  if (layer->hasVideo()) {
+    descriptor.typeText = QStringLiteral("Video Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Video");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Video Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Video Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Video");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  return descriptor;
+}
+
+QString describeLayerType(const ArtifactAbstractLayerPtr& layer)
+{
+  return describeLayerPresentation(layer).typeText;
+}
 namespace {
   QColor themeColor(const QString& value, const QColor& fallback)
   {
@@ -82,6 +176,45 @@ namespace {
                             a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
                             a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
                             a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
+  }
+
+  QColor toneBadgeFill(LayerPresentationBadgeTone tone,
+                       const QColor& background,
+                       const QColor& surface,
+                       const QColor& accent)
+  {
+    switch (tone) {
+    case LayerPresentationBadgeTone::Container:
+      return mixColor(background, accent, 0.22);
+    case LayerPresentationBadgeTone::Media:
+      return mixColor(background, surface, 0.34);
+    case LayerPresentationBadgeTone::Motion:
+      return mixColor(background, accent, 0.16);
+    case LayerPresentationBadgeTone::Special:
+      return mixColor(background, accent, 0.30);
+    case LayerPresentationBadgeTone::Neutral:
+    default:
+      return mixColor(background, surface, 0.28);
+    }
+  }
+
+  QColor toneBadgeText(LayerPresentationBadgeTone tone,
+                       const QColor& text,
+                       const QColor& accent)
+  {
+    switch (tone) {
+    case LayerPresentationBadgeTone::Container:
+      return mixColor(text, accent, 0.28);
+    case LayerPresentationBadgeTone::Media:
+      return text.darker(115);
+    case LayerPresentationBadgeTone::Motion:
+      return mixColor(text, accent, 0.34);
+    case LayerPresentationBadgeTone::Special:
+      return mixColor(text, accent, 0.22);
+    case LayerPresentationBadgeTone::Neutral:
+    default:
+      return text.darker(120);
+    }
   }
 
   void applyLayerPanelButtonPalette(QPushButton* button, bool accent = false)
@@ -686,6 +819,8 @@ struct VisibleRow {
  QString label;
  QString propertyPath;
  QString groupKey;
+ QString auxiliaryText;
+ LayerPresentationBadgeTone auxiliaryTone = LayerPresentationBadgeTone::Neutral;
 };
 
 QString matteTypeToText(MatteType type)
@@ -1036,7 +1171,19 @@ public:
    const bool hasMatteStack = !matteRefs.empty();
    const bool hasChildren = !nodeChildren.isEmpty() || !panelGroups.empty() || hasMaskStack || hasMatteStack;
    const bool expanded = expandedByLayerId.value(nodeId, true);
-   visibleRows.push_back(VisibleRow{ node, depth, hasChildren, expanded, RowKind::Layer, QString(), QString() });
+   const auto presentation = describeLayerPresentation(node);
+   visibleRows.push_back(VisibleRow{
+    node,
+    depth,
+    hasChildren,
+    expanded,
+    RowKind::Layer,
+    QString(),
+    QString(),
+    QString(),
+    presentation.timelineBadgeText,
+    presentation.badgeTone
+   });
    emitted.insert(nodeId);
 
    if (!hasChildren || !expanded) return;
@@ -1052,10 +1199,12 @@ public:
        depth + 1,
        !groupDef.sortedProperties().empty(),
        groupExpanded,
-       RowKind::Group,
-       groupName,
-       QString(),
-       groupKey
+      RowKind::Group,
+      groupName,
+      QString(),
+      groupKey,
+       QStringLiteral("Grp"),
+       LayerPresentationBadgeTone::Container
       });
 
       if (groupExpanded) {
@@ -1071,7 +1220,9 @@ public:
          RowKind::Property,
          compactPropertyRowLabel(property->getName()),
          property->getName(),
-         QString()
+         QString(),
+         QStringLiteral("Prp"),
+         LayerPresentationBadgeTone::Neutral
         });
       }
      }
@@ -1088,7 +1239,9 @@ public:
        RowKind::MaskStack,
        QStringLiteral("Masks"),
        QString(),
-       maskGroupKey
+       maskGroupKey,
+       QStringLiteral("Msk"),
+       LayerPresentationBadgeTone::Special
       });
       if (maskExpanded) {
        for (int maskIndex = 0; maskIndex < node->maskCount(); ++maskIndex) {
@@ -1101,7 +1254,9 @@ public:
          RowKind::Mask,
          maskSummaryLabel(mask, maskIndex),
          QString::number(maskIndex),
-         QString()
+         QString(),
+         QStringLiteral("Msk"),
+         LayerPresentationBadgeTone::Special
         });
        }
       }
@@ -1118,7 +1273,9 @@ public:
        RowKind::MatteStack,
        QStringLiteral("Track Mattes"),
        QString(),
-       matteGroupKey
+       matteGroupKey,
+       QStringLiteral("Mat"),
+       LayerPresentationBadgeTone::Special
       });
       if (matteExpanded) {
        for (size_t matteIndex = 0; matteIndex < matteRefs.size(); ++matteIndex) {
@@ -1131,7 +1288,9 @@ public:
          RowKind::Matte,
          matteSummaryLabel(ref, static_cast<int>(matteIndex)),
          QString::number(static_cast<int>(matteIndex)),
-         QString()
+         QString(),
+         QStringLiteral("Mat"),
+         LayerPresentationBadgeTone::Special
         });
        }
       }
@@ -1389,7 +1548,9 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
           a.kind != b.kind ||
           a.label != b.label ||
           a.propertyPath != b.propertyPath ||
-          a.groupKey != b.groupKey) {
+          a.groupKey != b.groupKey ||
+          a.auxiliaryText != b.auxiliaryText ||
+          a.auxiliaryTone != b.auxiliaryTone) {
         return false;
       }
     }
@@ -1444,9 +1605,13 @@ ArtifactLayerPanelWidget::visibleTimelineRowDescriptors() const
    descriptor.kind = row.kind;
    descriptor.label = row.label;
    descriptor.propertyPath = row.propertyPath;
-   if (row.kind == RowKind::Mask || row.kind == RowKind::Matte) {
+   descriptor.auxiliaryText = row.auxiliaryText;
+   descriptor.auxiliaryTone = row.auxiliaryTone;
+   if (descriptor.auxiliaryText.isEmpty() &&
+       (row.kind == RowKind::Mask || row.kind == RowKind::Matte)) {
     descriptor.auxiliaryText = row.label;
-   } else if (row.kind == RowKind::MaskStack || row.kind == RowKind::MatteStack) {
+   } else if (descriptor.auxiliaryText.isEmpty() &&
+              (row.kind == RowKind::MaskStack || row.kind == RowKind::MatteStack)) {
     descriptor.auxiliaryText = row.label;
    }
    rows.push_back(std::move(descriptor));
@@ -2296,8 +2461,21 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         p.setBrush(text.darker(25));
         p.drawPolygon(tri);
       }
+      const QString groupAux = row.auxiliaryText.trimmed();
+      if (!groupAux.isEmpty()) {
+        const QFontMetrics fm(p.font());
+        const int badgeW = std::min(96, std::max(54, fm.horizontalAdvance(groupAux) + 16));
+        const QRect badgeRect(width() - badgeW - 8, y + 5, badgeW, rowH - 10);
+        p.setPen(layerSelected ? accent.darker(180) : border);
+        p.setBrush(toneBadgeFill(row.auxiliaryTone, background, surface, accent));
+        p.drawRoundedRect(badgeRect, 4, 4);
+        p.setPen(toneBadgeText(row.auxiliaryTone, text, accent));
+        p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                   fm.elidedText(groupAux, Qt::ElideRight, badgeRect.width() - 16));
+      }
       p.setPen(text);
-      p.drawText(textX, y, std::max(20, width() - textX - 8), rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
+      const int groupTextWidth = std::max(20, width() - textX - 8 - (groupAux.isEmpty() ? 0 : 100));
+      p.drawText(textX, y, groupTextWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
       continue;
     }
 
@@ -2438,17 +2616,40 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      p.drawRoundedRect(badgeRect, 4, 4);
      p.setPen(text.darker(120));
      p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
-                row.kind == RowKind::Mask ? QStringLiteral("Mask") : QStringLiteral("Track Matte"));
-     const int labelWidth = std::max(20, badgeRect.left() - textX - 10);
-     p.setPen(text);
-     p.drawText(textX + 4, y, labelWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
+                row.auxiliaryText.isEmpty()
+                    ? (row.kind == RowKind::Mask ? QStringLiteral("Mask")
+                                                 : QStringLiteral("Matte"))
+                    : row.auxiliaryText);
+      const int labelWidth = std::max(20, badgeRect.left() - textX - 10);
+      p.setPen(text);
+      p.drawText(textX + 4, y, labelWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
     } else {
      const auto variants = l->getVariants();
      const int activeIdx = static_cast<int>(l->getActiveVariantIndex());
      const int variantAreaW = variants.empty() ? 0 : (variants.size() * 22 + 20);
      const int textWidth = std::max(20, width() - textX - 8 - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW);
-     p.setPen(text);
-     p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, l->layerName());
+     const QString layerName = l->layerName();
+     const QString layerAux = row.auxiliaryText.trimmed();
+     if (!layerAux.isEmpty()) {
+      const QFontMetrics fm(p.font());
+      const int badgeTextWidth = fm.horizontalAdvance(layerAux) + 16;
+      const int badgeWidth = std::min(120, std::max(52, badgeTextWidth));
+      const int badgeX = std::max(textX + 4, width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - badgeWidth - 10);
+      const QRect badgeRect(badgeX, y + 5, badgeWidth, rowH - 10);
+      const int nameWidth = std::max(20, badgeRect.left() - (textX + 8));
+      const QString elidedName = fm.elidedText(layerName, Qt::ElideRight, nameWidth);
+      p.setPen(text);
+      p.drawText(textX + 4, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, elidedName);
+      p.setPen(layerSelected ? accent.darker(180) : border);
+      p.setBrush(toneBadgeFill(row.auxiliaryTone, background, surface, accent));
+      p.drawRoundedRect(badgeRect, 4, 4);
+      p.setPen(toneBadgeText(row.auxiliaryTone, text, accent));
+      p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                 fm.elidedText(layerAux, Qt::ElideRight, badgeRect.width() - 16));
+     } else {
+      p.setPen(text);
+      p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, layerName);
+     }
 
      if (!variants.empty()) {
        int vx = width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - 6;

@@ -155,7 +155,9 @@ bool sameKeyframeMarkerVisual(
 bool sameTimelineRowDescriptor(const TimelineRowDescriptor &lhs,
                                const TimelineRowDescriptor &rhs) {
   return lhs.layerId == rhs.layerId && lhs.kind == rhs.kind &&
-         lhs.label == rhs.label && lhs.propertyPath == rhs.propertyPath;
+         lhs.label == rhs.label && lhs.propertyPath == rhs.propertyPath &&
+         lhs.auxiliaryText == rhs.auxiliaryText &&
+         lhs.auxiliaryTone == rhs.auxiliaryTone;
 }
 
 template <typename T>

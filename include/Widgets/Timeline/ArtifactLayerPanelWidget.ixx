@@ -8,6 +8,7 @@ module;
 export module Artifact.Widgets.LayerPanelWidget;
 
 import Utils.Id;
+import Artifact.Layer.Abstract;
 
 export namespace Artifact
 {
@@ -41,6 +42,15 @@ export namespace Artifact
    Matte
   };
 
+  enum class LayerPresentationBadgeTone
+  {
+   Neutral,
+   Container,
+   Media,
+   Motion,
+   Special
+  };
+
   struct TimelineRowDescriptor
   {
    LayerID layerId;
@@ -48,7 +58,21 @@ export namespace Artifact
    QString label;
    QString propertyPath;
    QString auxiliaryText;
+   LayerPresentationBadgeTone auxiliaryTone = LayerPresentationBadgeTone::Neutral;
   };
+
+  struct LayerPresentationDescriptor
+  {
+   QString typeText;
+   QString timelineBadgeText;
+   QString propertySummaryTitle;
+   QString inspectorTypeLabel;
+   QString capabilitySummaryText;
+   LayerPresentationBadgeTone badgeTone = LayerPresentationBadgeTone::Neutral;
+  };
+
+  LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLayerPtr& layer);
+  QString describeLayerType(const ArtifactAbstractLayerPtr& layer);
  	
     class ArtifactLayerPanelHeaderWidget :public QWidget
    {

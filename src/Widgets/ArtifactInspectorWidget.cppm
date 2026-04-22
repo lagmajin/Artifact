@@ -96,6 +96,7 @@ import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Wave;
 import Artifact.Effect.Spherize;
+import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.ArtifactPropertyWidget;
 import Artifact.Widgets.AppDialogs;
 
@@ -242,35 +243,21 @@ void applyInspectorButton(QPushButton *button, const bool accent = false) {
   button->setPalette(pal);
 }
 
-QString describeLayerType(const ArtifactAbstractLayerPtr &layer) {
-  if (!layer) {
-    return QStringLiteral("Layer");
+QColor toneColor(LayerPresentationBadgeTone tone, const QColor &base,
+                 const QColor &accent) {
+  switch (tone) {
+  case LayerPresentationBadgeTone::Container:
+    return accent;
+  case LayerPresentationBadgeTone::Media:
+    return blendColor(base, accent, 0.22);
+  case LayerPresentationBadgeTone::Motion:
+    return accent.lighter(112);
+  case LayerPresentationBadgeTone::Special:
+    return accent.darker(112);
+  case LayerPresentationBadgeTone::Neutral:
+  default:
+    return base;
   }
-  if (layer->isNullLayer()) {
-    return QStringLiteral("Null Layer");
-  }
-  if (layer->isAdjustmentLayer()) {
-    return QStringLiteral("Adjustment Layer");
-  }
-  if (layer->isGroupLayer()) {
-    return QStringLiteral("Group Layer");
-  }
-  if (layer->isCloneLayer()) {
-    return QStringLiteral("Clone Layer");
-  }
-  if (layer->is3D()) {
-    return QStringLiteral("3D Layer");
-  }
-  if (layer->hasAudio() && layer->hasVideo()) {
-    return QStringLiteral("Audio-Video Layer");
-  }
-  if (layer->hasAudio()) {
-    return QStringLiteral("Audio Layer");
-  }
-  if (layer->hasVideo()) {
-    return QStringLiteral("Video Layer");
-  }
-  return QStringLiteral("Layer");
 }
 
 int rackIndexFromStage(EffectPipelineStage stage) {
@@ -284,6 +271,22 @@ int rackIndexFromStage(EffectPipelineStage stage) {
 
 EffectPipelineStage stageFromRackIndex(int rackIndex) {
   return static_cast<EffectPipelineStage>(rackIndex + 1);
+}
+
+LayerPresentationBadgeTone toneFromRackIndex(int rackIndex) {
+  switch (stageFromRackIndex(rackIndex)) {
+  case EffectPipelineStage::Generator:
+  case EffectPipelineStage::GeometryTransform:
+    return LayerPresentationBadgeTone::Motion;
+  case EffectPipelineStage::MaterialRender:
+    return LayerPresentationBadgeTone::Media;
+  case EffectPipelineStage::Rasterizer:
+    return LayerPresentationBadgeTone::Special;
+  case EffectPipelineStage::LayerTransform:
+    return LayerPresentationBadgeTone::Container;
+  default:
+    return LayerPresentationBadgeTone::Neutral;
+  }
 }
 } // namespace
 
@@ -537,7 +540,7 @@ QString ArtifactInspectorWidget::Impl::computeLayerInfoSignature(
   signature += QLatin1Char('|');
   signature += layer->layerName();
   signature += QLatin1Char('|');
-  signature += describeLayerType(layer);
+  signature += describeLayerPresentation(layer).typeText;
   signature += QLatin1Char('|');
   signature += QString::number(layer->maskCount());
   signature += QLatin1Char('|');
@@ -1097,15 +1100,18 @@ void ArtifactInspectorWidget::Impl::updateLayerInfo() {
   }
 
   // レイヤータイプを実態に寄せて表示する
-  const QString layerType = describeLayerType(layer);
-  layerTypeLabel->setText(QString("Type: %1").arg(layerType));
+  const auto presentation = describeLayerPresentation(layer);
+  layerTypeLabel->setText(presentation.inspectorTypeLabel);
 
   const int maskCount = layer->maskCount();
   const QString maskText = maskCount > 0
                                ? QStringLiteral("Masks: %1").arg(maskCount)
                                : QStringLiteral("Masks: none");
-  statusLabel->setText(QString("Status: Layer selected - ID: %1 | %2")
-                           .arg(currentLayerId_.toString(), maskText));
+  const QString capabilityText = presentation.capabilitySummaryText.isEmpty()
+                                     ? QString()
+                                     : QStringLiteral(" | %1").arg(presentation.capabilitySummaryText);
+  statusLabel->setText(QString("Status: Layer selected - ID: %1 | %2%3")
+                           .arg(currentLayerId_.toString(), maskText, capabilityText));
   {
     const auto theme = ArtifactCore::currentDCCTheme();
     applyInspectorLabelPalette(statusLabel, true);
@@ -1118,7 +1124,7 @@ void ArtifactInspectorWidget::Impl::updateLayerInfo() {
       true);
 
   qDebug() << "[Inspector] Updated layer info:" << layerName
-           << "Type:" << layerType;
+           << "Type:" << presentation.typeText;
 }
 
 void ArtifactInspectorWidget::Impl::setNoProjectState() {
@@ -1343,15 +1349,26 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
       racks[i].listWidget->addItem(item);
       continue;
     }
+    const auto &theme = ArtifactCore::currentDCCTheme();
+    const QColor textColor = QColor(theme.textColor.isEmpty()
+                                        ? QStringLiteral("#E3E7EC")
+                                        : theme.textColor);
+    const QColor accentColor = QColor(theme.accentColor.isEmpty()
+                                          ? QStringLiteral("#5E94C7")
+                                          : theme.accentColor);
+    const auto rackTone = toneFromRackIndex(i);
+    const QColor rackColor = toneColor(rackTone, textColor, accentColor);
     for (const auto &effect : rackEffects[i]) {
       if (!effect) {
         continue;
       }
       QString effectName = effect->displayName().toQString();
-      QString effectStatus = effect->isEnabled() ? "✓" : "✗";
-      QString itemText = QString("[%1] %2").arg(effectStatus, effectName);
+      QString effectStatus = effect->isEnabled() ? QStringLiteral("On")
+                                                 : QStringLiteral("Off");
+      QString itemText = QStringLiteral("%1 %2").arg(effectStatus, effectName);
       auto *item = new QListWidgetItem(itemText);
       item->setData(Qt::UserRole, effect->effectID().toQString());
+      item->setForeground(effect->isEnabled() ? rackColor : rackColor.darker(140));
       racks[i].listWidget->addItem(item);
     }
   }
@@ -1709,9 +1726,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectPropertyWidget->setMinimumHeight(220);
   effectsLayout->addWidget(impl_->effectPropertyWidget);
 
-  QString rackNames[5] = {"1. Generator", "2. Geometry Transform",
-                          "3. Material & Render", "4. Rasterizer",
-                          "5. Layer Transform"};
+  QString rackNames[5] = {"Generator", "Geo Transform", "Material",
+                          "Rasterizer", "Layer Transform"};
 
   for (int i = 0; i < 5; ++i) {
     auto rackGroup = new QGroupBox(rackNames[i]);
