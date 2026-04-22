@@ -4,6 +4,7 @@ module;
 #include <QDebug>
 #include <QPainter>
 #include <QRectF>
+#include <QFileInfo>
 #include <QMatrix4x4>
 #include <QSvgRenderer>
 #include <QFuture>
@@ -123,6 +124,8 @@ bool ArtifactSvgLayer::loadFromPath(const QString& path)
     setSourceSize(Size_2D(size.width(), size.height()));
 
     impl_->prefetchFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [trimmed, size]() -> QImage {
+        ArtifactCore::ScopedThreadName threadName(
+            QStringLiteral("SvgLayer/prefetch:%1").arg(QFileInfo(trimmed).fileName()));
         return renderSvgToImage(trimmed, size);
     });
 

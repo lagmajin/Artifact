@@ -1020,13 +1020,17 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
 
     const bool isHovered = (i == impl_->hoverClipIndex_);
     const bool isSelected = clip.selected;
-    const QColor fill = clip.selected ? clip.fillColor.lighter(110)
-                                      : (isHovered ? clip.fillColor.lighter(105)
-                                                   : clip.fillColor);
-    p.setPen(QPen(clip.selected ? theme.accent.lighter(130)
-                                : theme.border.darker(160),
-                  clip.selected ? 2 : 1));
-    p.setBrush(fill);
+    QColor fill = clip.fillColor;
+    fill.setAlpha(255);
+    if (isHovered && !isSelected) {
+      fill = fill.lighter(108);
+    }
+    QColor selectedFill = clip.fillColor;
+    selectedFill.setAlpha(36);
+    const QColor border = isSelected ? theme.accent.lighter(130)
+                                     : theme.border.darker(160);
+    p.setPen(QPen(border, isSelected ? 2 : 1));
+    p.setBrush(isSelected ? selectedFill : fill);
     p.drawRoundedRect(clipRect, kClipCorner, kClipCorner);
 
     if (isSelected || isHovered) {
@@ -1582,6 +1586,28 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     removeKeyframeAct =
         menu.addAction(QStringLiteral("Remove Keyframe at Playhead"));
   }
+
+  QVector<KeyframeMarkerVisual> interpolationTargets = selectedKeyframeMarkers();
+  if (interpolationTargets.isEmpty() && markerUnderCursor) {
+    interpolationTargets.push_back(impl_->keyframeMarkers_[markerHit.markerIndex]);
+  }
+  QAction *interpLinearAct = nullptr;
+  QAction *interpEaseInAct = nullptr;
+  QAction *interpEaseOutAct = nullptr;
+  QAction *interpEaseInOutAct = nullptr;
+  QAction *interpHoldAct = nullptr;
+  QAction *interpBezierAct = nullptr;
+  QMenu *interpolationMenu = nullptr;
+  if (!interpolationTargets.isEmpty()) {
+    menu.addSeparator();
+    interpolationMenu = menu.addMenu(QStringLiteral("Interpolation"));
+    interpLinearAct = interpolationMenu->addAction(QStringLiteral("Linear"));
+    interpEaseInAct = interpolationMenu->addAction(QStringLiteral("Ease In"));
+    interpEaseOutAct = interpolationMenu->addAction(QStringLiteral("Ease Out"));
+    interpEaseInOutAct = interpolationMenu->addAction(QStringLiteral("Ease In/Out"));
+    interpHoldAct = interpolationMenu->addAction(QStringLiteral("Hold"));
+    interpBezierAct = interpolationMenu->addAction(QStringLiteral("Bezier"));
+  }
   QAction *addMarkerFrameAct = nullptr;
   QAction *removeMarkerFrameAct = nullptr;
   if (markerUnderCursor && canEditFocusedProperty) {
@@ -1625,6 +1651,50 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       if (auto comp = svc->currentComposition().lock()) {
         comp->goToFrame(static_cast<int64_t>(std::llround(targetFrame)));
       }
+    }
+    event->accept();
+    return;
+  }
+
+  if (interpolationMenu &&
+      (chosen == interpLinearAct || chosen == interpEaseInAct ||
+       chosen == interpEaseOutAct || chosen == interpEaseInOutAct ||
+       chosen == interpHoldAct || chosen == interpBezierAct)) {
+    const ArtifactCore::InterpolationType type =
+        (chosen == interpLinearAct)   ? ArtifactCore::InterpolationType::Linear
+        : (chosen == interpEaseInAct) ? ArtifactCore::InterpolationType::EaseIn
+        : (chosen == interpEaseOutAct) ? ArtifactCore::InterpolationType::EaseOut
+        : (chosen == interpEaseInOutAct)
+            ? ArtifactCore::InterpolationType::EaseInOut
+        : (chosen == interpHoldAct)   ? ArtifactCore::InterpolationType::Constant
+                                      : ArtifactCore::InterpolationType::Bezier;
+
+    ArtifactCompositionPtr currentComposition = composition;
+    if (!currentComposition) {
+      if (auto *svc = ArtifactProjectService::instance()) {
+        currentComposition = svc->currentComposition().lock();
+      }
+    }
+    const int applied = applyInterpolationToSelectedKeyframesImpl(
+        currentComposition, interpolationTargets, type);
+    if (applied > 0) {
+      const QString typeLabel =
+          (type == ArtifactCore::InterpolationType::Linear)
+              ? QStringLiteral("Linear")
+              : (type == ArtifactCore::InterpolationType::EaseIn)
+                    ? QStringLiteral("Ease In")
+                    : (type == ArtifactCore::InterpolationType::EaseOut)
+                          ? QStringLiteral("Ease Out")
+                          : (type == ArtifactCore::InterpolationType::EaseInOut)
+                                ? QStringLiteral("Ease In/Out")
+                                : (type == ArtifactCore::InterpolationType::Constant)
+                                      ? QStringLiteral("Hold")
+                                      : QStringLiteral("Bezier");
+      Q_EMIT timelineDebugMessage(
+          QStringLiteral("Applied %1 interpolation to %2 keyframe(s)")
+              .arg(typeLabel)
+              .arg(applied));
+      update();
     }
     event->accept();
     return;

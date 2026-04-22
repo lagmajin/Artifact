@@ -107,6 +107,9 @@ public:
         lines << QStringLiteral("composition: %1").arg(snapshot.compositionName.isEmpty()
                                                             ? QStringLiteral("<none>")
                                                             : snapshot.compositionName);
+        lines << QStringLiteral("renderTiming: last=%1ms avg=%2ms")
+                      .arg(QString::number(snapshot.renderLastFrameMs, 'f', 1))
+                      .arg(QString::number(snapshot.renderAverageFrameMs, 'f', 1));
         lines << QStringLiteral("resourceCount: %1").arg(static_cast<int>(snapshot.resources.size()));
         lines << QStringLiteral("attachmentCount: %1").arg(static_cast<int>(snapshot.attachments.size()));
         int textureViews = 0;
@@ -118,8 +121,10 @@ public:
         }
         lines << QStringLiteral("textureViews: %1").arg(textureViews);
         if (summary_) {
-            summary_->setText(QStringLiteral("frame=%1  resources=%2  attachments=%3  traces=%4")
+            summary_->setText(QStringLiteral("frame=%1  render=%2ms/%3ms  resources=%4  attachments=%5  traces=%6")
                                   .arg(snapshot.frame.framePosition())
+                                  .arg(QString::number(snapshot.renderLastFrameMs, 'f', 1))
+                                  .arg(QString::number(snapshot.renderAverageFrameMs, 'f', 1))
                                   .arg(static_cast<int>(snapshot.resources.size()))
                                   .arg(static_cast<int>(snapshot.attachments.size()))
                                   .arg(static_cast<int>(trace.frames.size())));

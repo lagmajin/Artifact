@@ -1072,6 +1072,9 @@ public:
         lines << QStringLiteral("selectedLayer: %1").arg(snapshot.selectedLayerName);
         lines << QStringLiteral("playbackState: %1").arg(snapshot.playbackState);
         lines << QStringLiteral("renderBackend: %1").arg(snapshot.renderBackend);
+        lines << QStringLiteral("renderTiming: last=%1ms avg=%2ms")
+                      .arg(QString::number(snapshot.renderLastFrameMs, 'f', 1))
+                      .arg(QString::number(snapshot.renderAverageFrameMs, 'f', 1));
         lines << QStringLiteral("failed: %1").arg(snapshot.failed ? QStringLiteral("true") : QStringLiteral("false"));
         if (!snapshot.failureReason.isEmpty()) {
             lines << QStringLiteral("failureReason: %1").arg(snapshot.failureReason);

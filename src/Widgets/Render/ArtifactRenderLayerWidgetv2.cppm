@@ -19,6 +19,7 @@ module;
 #include <QPainter>
 #include <QStandardPaths>
 #include <QTransform>
+#include <memory>
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -49,6 +50,7 @@ import Artifact.Render.IRenderer;
 import Artifact.Render.CompositionRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.Layer.Image;
+import Artifact.Widgets.TransformGizmo;
 
 namespace Artifact {
 
@@ -308,7 +310,8 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& can
   
   
  bool released = true;
- bool m_initialized;
+  bool m_initialized;
+  std::unique_ptr<TransformGizmo> transformGizmo_;
  RefCntAutoPtr<ITexture> m_layerRT;
  RefCntAutoPtr<IFence> m_layer_fence;
   LayerBackgroundMode backgroundMode_ = LayerBackgroundMode::Alpha;
@@ -372,7 +375,9 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& can
                            int& insertIndex) const;
   void updateShapeHover(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos);
   void drawShapeOverlay(const ArtifactAbstractLayerPtr& layer);
+  void drawTransformOverlay(const ArtifactAbstractLayerPtr& layer);
   bool deleteHoveredShapeVertex(const ArtifactAbstractLayerPtr& layer);
+  void syncTransformGizmo(const ArtifactAbstractLayerPtr& layer);
   
   void startRenderLoop();
   void stopRenderLoop();
@@ -380,10 +385,11 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& can
   void refreshBackgroundCache();
  };
 
- ArtifactLayerEditorWidgetV2::Impl::Impl()
- {
+ArtifactLayerEditorWidgetV2::Impl::Impl()
+{
+ transformGizmo_ = std::make_unique<TransformGizmo>();
 
- }
+}
 
  ArtifactLayerEditorWidgetV2::Impl::~Impl()
  {
@@ -424,9 +430,12 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& can
   }
  }
 
- void ArtifactLayerEditorWidgetV2::Impl::destroy()
- {
+void ArtifactLayerEditorWidgetV2::Impl::destroy()
+{
   stopRenderLoop();
+  if (transformGizmo_) {
+   transformGizmo_->setLayer(nullptr);
+  }
   if (renderer_) {
    renderer_->destroy();
    renderer_.reset();
@@ -808,11 +817,38 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
                         static_cast<float>(canvasPos.y()),
                         currentRadius + 4.0f,
                         pointShadowColor, 1.0f, true);
-  renderer_->drawCircle(static_cast<float>(canvasPos.x()),
+ renderer_->drawCircle(static_cast<float>(canvasPos.x()),
                         static_cast<float>(canvasPos.y()),
                         currentRadius,
                         currentColor, 1.0f, true);
  }
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::drawTransformOverlay(const ArtifactAbstractLayerPtr& layer)
+{
+ if (!renderer_ || !transformGizmo_ || !layer) {
+  return;
+ }
+ if (displayMode_ == DisplayMode::Mask || editMode_ == EditMode::Mask || editMode_ == EditMode::Paint) {
+  return;
+ }
+ transformGizmo_->setLayer(layer);
+ transformGizmo_->setMode(TransformGizmo::Mode::All);
+ transformGizmo_->draw(renderer_.get());
+}
+
+void ArtifactLayerEditorWidgetV2::Impl::syncTransformGizmo(const ArtifactAbstractLayerPtr& layer)
+{
+ if (!transformGizmo_) {
+  return;
+ }
+ if (!layer || !layer->isVisible() || displayMode_ == DisplayMode::Mask ||
+     editMode_ == EditMode::Mask || editMode_ == EditMode::Paint) {
+  transformGizmo_->setLayer(nullptr);
+  return;
+ }
+ transformGizmo_->setLayer(layer);
+ transformGizmo_->setMode(TransformGizmo::Mode::All);
 }
 
 bool ArtifactLayerEditorWidgetV2::Impl::deleteHoveredShapeVertex(const ArtifactAbstractLayerPtr& layer)
@@ -1137,12 +1173,21 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
         drawMaskOverlay(layer);
        } else if (editMode_ == EditMode::Paint) {
         drawShapeOverlay(layer);
+       } else {
+        drawTransformOverlay(layer);
        }
       }
      }
     }
    }
   }
+ if (!targetLayerId_.isNil()) {
+  if (auto layer = targetLayer()) {
+   syncTransformGizmo(layer);
+  } else if (transformGizmo_) {
+   transformGizmo_->setLayer(nullptr);
+  }
+ }
  renderer_->flush();
  renderer_->present();
 }
@@ -1297,12 +1342,15 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   impl_->isDraggingShapeVertex_ = false;
   impl_->draggingShapeVertexIndex_ = -1;
   impl_->hoveredShapeVertexIndex_ = -1;
-  if (impl_->renderer_) {
-   impl_->renderer_->clear();
-   impl_->renderer_->flush();
-   impl_->renderer_->present();
-  }
+ if (impl_->renderer_) {
+  impl_->renderer_->clear();
+  impl_->renderer_->flush();
+  impl_->renderer_->present();
  }
+ if (impl_->transformGizmo_) {
+  impl_->transformGizmo_->setLayer(nullptr);
+ }
+}
 
  ArtifactLayerEditorWidgetV2::~ArtifactLayerEditorWidgetV2()
  {
@@ -1361,6 +1409,22 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    setCursor(Qt::ClosedHandCursor);
    event->accept();
    return;
+  }
+
+  if (impl_->transformGizmo_ && impl_->renderer_ &&
+      impl_->editMode_ != EditMode::Mask &&
+      impl_->editMode_ != EditMode::Paint &&
+      event->button() == Qt::LeftButton) {
+   auto layer = impl_->targetLayer();
+   if (layer && impl_->transformGizmo_->handleMousePress(
+                      {event->position().x(), event->position().y()},
+                      impl_->renderer_.get())) {
+    setCursor(impl_->transformGizmo_->cursorShapeForViewportPos(
+        {event->position().x(), event->position().y()}, impl_->renderer_.get()));
+    impl_->renderOneFrame();
+    event->accept();
+    return;
+   }
   }
 
   if (impl_->editMode_ == EditMode::Paint && event->button() == Qt::LeftButton && impl_->renderer_) {
@@ -1558,6 +1622,13 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     return;
    }
   }
+  if (impl_->transformGizmo_ && event->button() == Qt::LeftButton && impl_->transformGizmo_->isDragging()) {
+   impl_->transformGizmo_->handleMouseRelease();
+   impl_->renderOneFrame();
+   unsetCursor();
+   event->accept();
+   return;
+  }
   QWidget::mouseReleaseEvent(event);
  }
 
@@ -1601,6 +1672,29 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    panBy(delta);
    event->accept();
    return;
+  }
+
+  if (impl_->transformGizmo_ && impl_->renderer_ &&
+      impl_->editMode_ != EditMode::Mask &&
+      impl_->editMode_ != EditMode::Paint) {
+   auto layer = impl_->targetLayer();
+   if (layer) {
+    if (impl_->transformGizmo_->isDragging()) {
+     if (impl_->transformGizmo_->handleMouseMove(
+             {event->position().x(), event->position().y()}, impl_->renderer_.get())) {
+      impl_->renderOneFrame();
+      setCursor(impl_->transformGizmo_->cursorShapeForViewportPos(
+          {event->position().x(), event->position().y()}, impl_->renderer_.get()));
+      event->accept();
+      return;
+     }
+    } else {
+     setCursor(impl_->transformGizmo_->cursorShapeForViewportPos(
+         {event->position().x(), event->position().y()}, impl_->renderer_.get()));
+    }
+   } else {
+    unsetCursor();
+   }
   }
 
   if (impl_->editMode_ == EditMode::Mask && impl_->renderer_) {
@@ -1901,14 +1995,18 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
         if (points.size() >= 3) {
          shape->setCustomPolygonPoints(points, true);
         }
+        }
        }
       }
-     }
+      impl_->syncTransformGizmo(layer);
       impl_->renderer_->fitToViewport();
       impl_->zoomLevel_ = impl_->renderer_->getZoom();
       return;
      }
    }
+  }
+  if (impl_->transformGizmo_) {
+   impl_->transformGizmo_->setLayer(nullptr);
   }
   impl_->renderer_->resetView();
  }
@@ -1943,7 +2041,7 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
  void ArtifactLayerEditorWidgetV2::setEditMode(EditMode mode)
  {
   impl_->editMode_ = mode;
-  if (mode == EditMode::Mask || mode == EditMode::Paint) {
+ if (mode == EditMode::Mask || mode == EditMode::Paint) {
    setCursor(Qt::CrossCursor);
   } else {
    unsetCursor();
@@ -1959,6 +2057,13 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
    impl_->hoveredMaskHandleType_ = -1;
    if (impl_->shapeEditPending_) {
     impl_->commitShapeEditTransaction();
+   }
+  }
+  if (impl_->transformGizmo_) {
+   if (mode == EditMode::Mask || mode == EditMode::Paint) {
+    impl_->transformGizmo_->setLayer(nullptr);
+   } else {
+    impl_->syncTransformGizmo(impl_->targetLayer());
    }
   }
   if (mode == EditMode::Paint && !impl_->targetLayerId_.isNil()) {
@@ -1986,6 +2091,9 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
  void ArtifactLayerEditorWidgetV2::setDisplayMode(DisplayMode mode)
  {
   impl_->displayMode_ = mode;
+  if (impl_->transformGizmo_) {
+   impl_->syncTransformGizmo(impl_->targetLayer());
+  }
   if (impl_->initialized_ && impl_->renderer_) {
    std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
    impl_->renderOneFrame();

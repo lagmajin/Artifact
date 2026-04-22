@@ -116,12 +116,14 @@ void zoomOutAt(const QPointF& viewportPos);
 void zoomFit();
 void zoomFill();
   void zoom100();
-void focusSelectedLayer();
-void setGizmoMode(TransformGizmo::Mode mode);
-TransformGizmo::Mode gizmoMode() const;
+  void focusSelectedLayer();
+  void setGizmoMode(TransformGizmo::Mode mode);
+  TransformGizmo::Mode gizmoMode() const;
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;
   ArtifactIRenderer* renderer() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
+  double lastFrameTimeMs() const;
+  double averageFrameTimeMs() const;
 
 void handleMousePress(QMouseEvent* event);
 void handleMouseMove(const QPointF& viewportPos);

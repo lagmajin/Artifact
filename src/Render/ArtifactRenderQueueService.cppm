@@ -382,13 +382,6 @@ namespace Artifact
                                                       const ArtifactCompositionPtr& composition,
                                                       int frameNumber)
     {
-        RenderContext ctx;
-        ctx.setMode(RenderMode::Final);
-        ctx.setCurrentFrame(frameNumber);
-        ctx.frameRate = static_cast<float>(job.frameRate > 0.0 ? job.frameRate : 30.0);
-        ctx.setInteractive(false);
-        ctx.setColorSpace(ArtifactCore::ColorSpace::sRGB);
-
         const QSize outputSize(std::max(1, job.resolutionWidth), std::max(1, job.resolutionHeight));
         const QSize compSize = composition
             ? composition->settings().compositionSize()
@@ -398,14 +391,15 @@ namespace Artifact
         const float resolutionScale = canvasW > 0
             ? static_cast<float>(outputSize.width()) / static_cast<float>(canvasW)
             : 1.0f;
-
-        ctx.setViewportSize(outputSize.width(), outputSize.height());
-        ctx.canvasSize = QSizeF(canvasW, canvasH);
-        ctx.setResolutionScale(resolutionScale);
-        ctx.setROI(RenderROI(0.0f,
-                             0.0f,
-                             static_cast<float>(canvasW),
-                             static_cast<float>(canvasH)));
+        auto ctx = createFinalExportContext(frameNumber,
+                                            outputSize,
+                                            QSizeF(canvasW, canvasH),
+                                            RenderROI(0.0f,
+                                                      0.0f,
+                                                      static_cast<float>(canvasW),
+                                                      static_cast<float>(canvasH)),
+                                            resolutionScale);
+        ctx->frameRate = static_cast<float>(job.frameRate > 0.0 ? job.frameRate : 30.0);
 
         const QString key = RenderContextRegistry::instance().makeKey(
             RenderPurpose::FinalExport,
@@ -3416,6 +3410,8 @@ namespace Artifact
                 .count());
         snapshot.compositionName = QStringLiteral("<render-queue>");
         snapshot.selectedLayerName = QStringLiteral("<none>");
+        snapshot.renderLastFrameMs = 0.0;
+        snapshot.renderAverageFrameMs = 0.0;
         snapshot.renderBackend = [this]() {
             switch (renderBackend()) {
             case RenderBackend::CPU: return QStringLiteral("cpu");

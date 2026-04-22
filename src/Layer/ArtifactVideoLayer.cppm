@@ -387,6 +387,8 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     const int requestId = ++impl_->openRequestId_;
     auto* layer = this;
     impl_->openFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [normalizedPath]() -> Impl::AsyncOpenResult {
+        ArtifactCore::ScopedThreadName threadName(
+            QStringLiteral("VideoLayer/open:%1").arg(QFileInfo(normalizedPath).fileName()));
         Impl::AsyncOpenResult result;
         result.normalizedPath = normalizedPath;
 
@@ -481,6 +483,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         layer->impl_->decodeTargetFrame_ = 0;
         auto* ctrl = layer->impl_->playbackController_.get();
         layer->impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, layer]() -> QImage {
+            ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
             QImage frame = ctrl->getVideoFrameAtFrameDirect(0);
             layer->impl_->decoding_ = false;
             if (!frame.isNull()) {
@@ -662,6 +665,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     auto* ctrl = impl_->playbackController_.get();
     const QString backendName = decoderBackendName(ctrl);
     impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, timelineFrame, sourceFrame, backendName, this]() -> QImage {
+        ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
         QImage decoded = ctrl->getVideoFrameAtFrameDirect(sourceFrame);
         if (!decoded.isNull()) {
             impl_->frameCache_.put(sourceFrame, decoded);

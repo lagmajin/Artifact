@@ -33,6 +33,23 @@ inline bool isInteractiveRenderPurpose(RenderPurpose purpose)
            purpose == RenderPurpose::EditorPreview;
 }
 
+inline QString renderPurposeToString(RenderPurpose purpose)
+{
+    switch (purpose) {
+    case RenderPurpose::EditorInteractive:
+        return QStringLiteral("editor-interactive");
+    case RenderPurpose::EditorPreview:
+        return QStringLiteral("editor-preview");
+    case RenderPurpose::FinalExport:
+        return QStringLiteral("final-export");
+    case RenderPurpose::ProxyBuild:
+        return QStringLiteral("proxy-build");
+    case RenderPurpose::Thumbnail:
+        return QStringLiteral("thumbnail");
+    }
+    return QStringLiteral("unknown");
+}
+
 /**
  * @brief レンダリングコンテキスト
  * 
@@ -461,7 +478,7 @@ public:
                     float resolutionScale = 1.0f) const
     {
         return QStringLiteral("%1|%2|%3|%4")
-            .arg(static_cast<int>(purpose))
+            .arg(renderPurposeToString(purpose))
             .arg(ownerId)
             .arg(frameNumber)
             .arg(QString::number(resolutionScale, 'f', 3));
@@ -511,6 +528,86 @@ inline RenderContextPtr createRenderContext(RenderMode mode = RenderMode::Previe
     ctx->setInteractive(mode != RenderMode::Final);
     ctx->setResolutionScale(ctx->modeSettings.resolutionScale);
     return ctx;
+}
+
+inline RenderContextPtr createRenderContextForPurpose(RenderPurpose purpose,
+                                                      RenderMode mode,
+                                                      int64_t currentFrame,
+                                                      const QSize& viewportSize,
+                                                      const QSizeF& canvasSize,
+                                                      const RenderROI& roi,
+                                                      float resolutionScale = 1.0f,
+                                                      bool interactive = true,
+                                                      ArtifactCore::ColorSpace colorSpace = ArtifactCore::ColorSpace::sRGB,
+                                                      const QPointF& pan = QPointF(0, 0))
+{
+    auto ctx = createRenderContext(mode);
+    ctx->currentFrame = currentFrame;
+    ctx->setInteractive(interactive && isInteractiveRenderPurpose(purpose));
+    ctx->setResolutionScale(resolutionScale);
+    ctx->setColorSpace(colorSpace);
+    ctx->viewportSize = viewportSize;
+    ctx->canvasSize = canvasSize;
+    ctx->pan = pan;
+    ctx->setROI(roi);
+    return ctx;
+}
+
+inline RenderContextPtr createEditorPreviewContext(int64_t currentFrame,
+                                                   const QSize& viewportSize,
+                                                   const QSizeF& canvasSize,
+                                                   const RenderROI& roi,
+                                                   float resolutionScale = 1.0f,
+                                                   const QPointF& pan = QPointF(0, 0))
+{
+    return createRenderContextForPurpose(RenderPurpose::EditorPreview,
+                                         RenderMode::Preview,
+                                         currentFrame,
+                                         viewportSize,
+                                         canvasSize,
+                                         roi,
+                                         resolutionScale,
+                                         true,
+                                         ArtifactCore::ColorSpace::sRGB,
+                                         pan);
+}
+
+inline RenderContextPtr createFinalExportContext(int64_t currentFrame,
+                                                 const QSize& viewportSize,
+                                                 const QSizeF& canvasSize,
+                                                 const RenderROI& roi,
+                                                 float resolutionScale = 1.0f,
+                                                 const QPointF& pan = QPointF(0, 0))
+{
+    return createRenderContextForPurpose(RenderPurpose::FinalExport,
+                                         RenderMode::Final,
+                                         currentFrame,
+                                         viewportSize,
+                                         canvasSize,
+                                         roi,
+                                         resolutionScale,
+                                         false,
+                                         ArtifactCore::ColorSpace::sRGB,
+                                         pan);
+}
+
+inline RenderContextPtr createProxyBuildContext(int64_t currentFrame,
+                                                const QSize& viewportSize,
+                                                const QSizeF& canvasSize,
+                                                const RenderROI& roi,
+                                                float resolutionScale = 1.0f,
+                                                const QPointF& pan = QPointF(0, 0))
+{
+    return createRenderContextForPurpose(RenderPurpose::ProxyBuild,
+                                         RenderMode::Preview,
+                                         currentFrame,
+                                         viewportSize,
+                                         canvasSize,
+                                         roi,
+                                         resolutionScale,
+                                         false,
+                                         ArtifactCore::ColorSpace::sRGB,
+                                         pan);
 }
 
 } // namespace Artifact

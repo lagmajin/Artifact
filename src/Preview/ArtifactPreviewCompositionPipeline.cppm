@@ -264,22 +264,16 @@ namespace Artifact
     return;
    }
 
-   RenderContext ctx;
-   ctx.setMode(RenderMode::Preview);
-   ctx.setCurrentFrame(currentFrame);
-   ctx.setInteractive(true);
-   ctx.setResolutionScale(1.0f);
-   ctx.setColorSpace(ArtifactCore::ColorSpace::sRGB);
-
    const QSize compSize = composition->settings().compositionSize();
    const int compW = std::max(1, compSize.width());
    const int compH = std::max(1, compSize.height());
-   ctx.viewportSize = QSize(compW, compH);
-   ctx.canvasSize = QSizeF(compW, compH);
-   ctx.setROI(RenderROI(0.0f,
-                        0.0f,
-                        static_cast<float>(compW),
-                        static_cast<float>(compH)));
+   auto ctx = createEditorPreviewContext(currentFrame,
+                                         QSize(compW, compH),
+                                         QSizeF(compW, compH),
+                                         RenderROI(0.0f,
+                                                   0.0f,
+                                                   static_cast<float>(compW),
+                                                   static_cast<float>(compH)));
 
    const QString key = RenderContextRegistry::instance().makeKey(
        RenderPurpose::EditorPreview,

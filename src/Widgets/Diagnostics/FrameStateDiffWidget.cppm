@@ -39,11 +39,13 @@ public:
 
     static QString snapshotKey(const ArtifactCore::FrameDebugSnapshot& snapshot)
     {
-        return QStringLiteral("%1|%2|%3|%4")
+        return QStringLiteral("%1|%2|%3|%4|%5|%6")
                 .arg(snapshot.compositionName,
                      snapshot.renderBackend,
                      snapshot.playbackState,
-                     snapshot.selectedLayerName);
+                     snapshot.selectedLayerName,
+                     QString::number(snapshot.renderLastFrameMs, 'f', 1),
+                     QString::number(snapshot.renderAverageFrameMs, 'f', 1));
     }
 
     void showFrameDebugSnapshot(const ArtifactCore::FrameDebugSnapshot& snapshot,
@@ -79,6 +81,14 @@ public:
                 lines << QStringLiteral("selectedLayerChanged: %1 -> %2")
                               .arg(previous_.selectedLayerName.isEmpty() ? QStringLiteral("<none>") : previous_.selectedLayerName,
                                    snapshot.selectedLayerName.isEmpty() ? QStringLiteral("<none>") : snapshot.selectedLayerName);
+            }
+            if (snapshot.renderLastFrameMs != previous_.renderLastFrameMs ||
+                snapshot.renderAverageFrameMs != previous_.renderAverageFrameMs) {
+                lines << QStringLiteral("renderTimingChanged: last %1ms/%2ms avg %3ms/%4ms")
+                              .arg(QString::number(previous_.renderLastFrameMs, 'f', 1))
+                              .arg(QString::number(snapshot.renderLastFrameMs, 'f', 1))
+                              .arg(QString::number(previous_.renderAverageFrameMs, 'f', 1))
+                              .arg(QString::number(snapshot.renderAverageFrameMs, 'f', 1));
             }
             if (snapshot.compareMode != previous_.compareMode) {
                 lines << QStringLiteral("compareModeChanged: %1 -> %2")

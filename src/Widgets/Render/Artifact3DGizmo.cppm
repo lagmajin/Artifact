@@ -525,7 +525,11 @@ void Artifact3DGizmo::draw(ArtifactIRenderer* renderer, const QMatrix4x4& view, 
 
     QVector4D viewPos = view * QVector4D(impl_->position, 1.0f);
     const float distance = std::abs(viewPos.z());
-    impl_->currentScale = std::max(distance * 0.63f, 126.0f);
+    const float baseScale = std::max(distance * 0.63f, 126.0f);
+    const float modeScaleFactor = mode_ == GizmoMode::Scale ? 2.0f
+                               : mode_ == GizmoMode::Rotate ? 0.5f
+                               : 1.0f;
+    impl_->currentScale = baseScale * modeScaleFactor;
 
     Detail::float3 center = { impl_->position.x(), impl_->position.y(), impl_->position.z() };
     float s = impl_->currentScale;

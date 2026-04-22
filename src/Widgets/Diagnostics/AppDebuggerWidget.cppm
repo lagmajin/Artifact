@@ -1,11 +1,15 @@
 module;
 #include <algorithm>
+#include <cmath>
 #include <QDateTime>
+#include <QAbstractItemView>
 #include <QHBoxLayout>
 #include <QHash>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QListWidget>
 #include <QPlainTextEdit>
+#include <QSplitter>
 #include <QTabWidget>
 #include <QVBoxLayout>
 #include <QTimerEvent>
@@ -17,14 +21,17 @@ module;
 module Artifact.Widgets.AppDebuggerWidget;
 
 import Core.Diagnostics.Trace;
+import Application.AppSettings;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
 import Artifact.Render.Queue.Service;
 import Artifact.Widgets.CompositionRenderController;
 import Artifact.Widgets.FramePipelineViewWidget;
+import Artifact.Widgets.FrameDebugViewWidget;
 import Artifact.Widgets.FrameResourceInspectorWidget;
 import Artifact.Widgets.FrameStateDiffWidget;
 import Artifact.Widgets.TraceTimelineWidget;
+import Frame.Debug;
 import Playback.State;
 import Utils.String.UniString;
 
@@ -34,10 +41,40 @@ W_OBJECT_IMPL(AppDebuggerWidget)
 
 class AppDebuggerWidget::Impl {
 public:
+    class CaptureHistoryListWidget : public QListWidget {
+    public:
+        explicit CaptureHistoryListWidget(Impl* impl, QWidget* parent = nullptr)
+            : QListWidget(parent), impl_(impl)
+        {}
+
+    protected:
+        void currentChanged(const QModelIndex& current, const QModelIndex& previous) override
+        {
+            QListWidget::currentChanged(current, previous);
+            if (impl_) {
+                impl_->updateCaptureHistorySelection(current.row());
+            }
+        }
+
+    private:
+        Impl* impl_ = nullptr;
+    };
+
     AppDebuggerWidget* owner_ = nullptr;
     QTabWidget* tabs_ = nullptr;
     QWidget* overviewPage_ = nullptr;
     QLabel* overviewSummary_ = nullptr;
+    QWidget* capturePage_ = nullptr;
+    QLabel* captureSummary_ = nullptr;
+    FramePipelineViewWidget* capturePipelineView_ = nullptr;
+    FrameResourceInspectorWidget* captureResourceView_ = nullptr;
+    TraceTimelineWidget* captureTraceTimelineView_ = nullptr;
+    CaptureHistoryListWidget* captureHistoryList_ = nullptr;
+    QPlainTextEdit* captureHistoryText_ = nullptr;
+    FrameDebugViewWidget* captureDetailView_ = nullptr;
+    ArtifactCore::FrameDebugBundle captureBundle_;
+    bool hasCaptureBundle_ = false;
+    int captureSelectedRow_ = -1;
     QWidget* statePage_ = nullptr;
     QLabel* stateSummary_ = nullptr;
     QPlainTextEdit* stateText_ = nullptr;
@@ -90,6 +127,49 @@ public:
         layout->addWidget(overviewPage_);
 
         tabs_ = new QTabWidget(owner_);
+        capturePage_ = new QWidget(tabs_);
+        auto* captureLayout = new QVBoxLayout(capturePage_);
+        captureLayout->setContentsMargins(0, 0, 0, 0);
+        captureLayout->setSpacing(0);
+        captureSummary_ = new QLabel(capturePage_);
+        captureSummary_->setTextFormat(Qt::PlainText);
+        captureSummary_->setWordWrap(true);
+        captureSummary_->setMinimumHeight(56);
+        captureLayout->addWidget(captureSummary_);
+
+        auto* captureSplitter = new QSplitter(Qt::Horizontal, capturePage_);
+        auto* captureLeftSplitter = new QSplitter(Qt::Vertical, captureSplitter);
+        capturePipelineView_ = new FramePipelineViewWidget(captureLeftSplitter);
+        captureTraceTimelineView_ = new TraceTimelineWidget(captureLeftSplitter);
+        captureLeftSplitter->addWidget(capturePipelineView_);
+        captureLeftSplitter->addWidget(captureTraceTimelineView_);
+        captureLeftSplitter->setStretchFactor(0, 3);
+        captureLeftSplitter->setStretchFactor(1, 2);
+        captureResourceView_ = new FrameResourceInspectorWidget(captureSplitter);
+        captureSplitter->addWidget(captureLeftSplitter);
+        captureSplitter->addWidget(captureResourceView_);
+        captureSplitter->setStretchFactor(0, 3);
+        captureSplitter->setStretchFactor(1, 2);
+        captureLayout->addWidget(captureSplitter);
+        auto* captureHistorySplitter = new QSplitter(Qt::Horizontal, capturePage_);
+        captureHistoryList_ = new CaptureHistoryListWidget(this, captureHistorySplitter);
+        captureHistoryList_->setSelectionMode(QAbstractItemView::SingleSelection);
+        captureHistoryList_->setMinimumWidth(280);
+        auto* captureHistoryRightSplitter = new QSplitter(Qt::Vertical, captureHistorySplitter);
+        captureHistoryText_ = new QPlainTextEdit(captureHistoryRightSplitter);
+        captureHistoryText_->setReadOnly(true);
+        captureHistoryText_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        captureDetailView_ = new FrameDebugViewWidget(captureHistoryRightSplitter);
+        captureHistoryRightSplitter->addWidget(captureHistoryText_);
+        captureHistoryRightSplitter->addWidget(captureDetailView_);
+        captureHistoryRightSplitter->setStretchFactor(0, 1);
+        captureHistoryRightSplitter->setStretchFactor(1, 2);
+        captureHistorySplitter->addWidget(captureHistoryList_);
+        captureHistorySplitter->addWidget(captureHistoryRightSplitter);
+        captureHistorySplitter->setStretchFactor(0, 1);
+        captureHistorySplitter->setStretchFactor(1, 3);
+        captureLayout->addWidget(captureHistorySplitter);
+
         statePage_ = new QWidget(tabs_);
         auto* stateLayout = new QVBoxLayout(statePage_);
         stateLayout->setContentsMargins(0, 0, 0, 0);
@@ -200,6 +280,7 @@ public:
         exportText_->setLineWrapMode(QPlainTextEdit::NoWrap);
         exportLayout->addWidget(exportText_);
 
+        tabs_->addTab(capturePage_, QStringLiteral("Capture"));
         tabs_->addTab(statePage_, QStringLiteral("State"));
         tabs_->addTab(tracePage_, QStringLiteral("Trace"));
         tabs_->addTab(pipelinePage_, QStringLiteral("Pipeline"));
@@ -232,6 +313,302 @@ public:
         case ArtifactCore::PlaybackState::Stopped: return QStringLiteral("stopped");
         }
         return QStringLiteral("unknown");
+    }
+
+    static QString previewQualityText()
+    {
+        const auto* settings = ArtifactCore::ArtifactAppSettings::instance();
+        if (!settings) {
+            return QStringLiteral("<no settings>");
+        }
+        const QString quality = settings->previewQualityText().trimmed();
+        return quality.isEmpty() ? QStringLiteral("<default>") : quality;
+    }
+
+    static QString cacheHealthText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    {
+        if (snapshot.resources.empty()) {
+            return QStringLiteral("cache=unknown");
+        }
+        int hitCount = 0;
+        int staleCount = 0;
+        for (const auto& resource : snapshot.resources) {
+            if (resource.cacheHit) {
+                ++hitCount;
+            }
+            if (resource.stale) {
+                ++staleCount;
+            }
+        }
+        const int total = static_cast<int>(snapshot.resources.size());
+        const int hitPercent = total > 0 ? static_cast<int>(std::lround((hitCount * 100.0) / total)) : 0;
+        return QStringLiteral("cache=%1/%2 hit (%3%%) stale=%4")
+                .arg(hitCount)
+                .arg(total)
+                .arg(hitPercent)
+                .arg(staleCount);
+    }
+
+    static QString ramPreviewText(ArtifactPlaybackService* playbackSvc)
+    {
+        if (!playbackSvc) {
+            return QStringLiteral("ramPreview=<no service>");
+        }
+        const int cachedFrames = playbackSvc->ramPreviewCachedFrameCount();
+        const float hitRate = playbackSvc->ramPreviewHitRate() * 100.0f;
+        const auto range = playbackSvc->ramPreviewRange();
+        return QStringLiteral("ramPreview=%1 frames hit=%2%% range=%3-%4")
+                .arg(cachedFrames)
+                .arg(QString::number(hitRate, 'f', 1))
+                .arg(range.start())
+                .arg(range.end());
+    }
+
+    static QString renderTimingText(CompositionRenderController* controller)
+    {
+        if (!controller) {
+            return QStringLiteral("renderTiming=<no controller>");
+        }
+        const double lastMs = controller->lastFrameTimeMs();
+        const double avgMs = controller->averageFrameTimeMs();
+        const double lastFps = lastMs > 0.0 ? 1000.0 / lastMs : 0.0;
+        const double avgFps = avgMs > 0.0 ? 1000.0 / avgMs : 0.0;
+        return QStringLiteral("renderTiming=last %1ms (%2fps) avg %3ms (%4fps)")
+                .arg(QString::number(lastMs, 'f', 1))
+                .arg(QString::number(lastFps, 'f', 1))
+                .arg(QString::number(avgMs, 'f', 1))
+                .arg(QString::number(avgFps, 'f', 1));
+    }
+
+    static QString playbackQualityText(ArtifactPlaybackService* playbackSvc,
+                                       const ArtifactCore::FrameDebugSnapshot& snapshot,
+                                       CompositionRenderController* controller)
+    {
+        const QString previewQuality = previewQualityText();
+        const QString cacheHealth = cacheHealthText(snapshot);
+        const QString ramPreview = ramPreviewText(playbackSvc);
+        const QString renderTiming = renderTimingText(controller);
+        const QString audioOffset = playbackSvc
+                                        ? QStringLiteral("audioOffset=%1s")
+                                              .arg(QString::number(playbackSvc->audioOffsetSeconds(), 'f', 3))
+                                        : QStringLiteral("audioOffset=<no service>");
+        const QString droppedFrames = playbackSvc
+                                          ? QStringLiteral("droppedFrames=%1")
+                                                .arg(playbackSvc->droppedFrameCount())
+                                          : QStringLiteral("droppedFrames=<no service>");
+        return QStringLiteral("preview=%1  %2  %3  %4  %5  %6")
+                .arg(previewQuality, cacheHealth, ramPreview, renderTiming, audioOffset, droppedFrames);
+    }
+
+    static QString captureEntryLabel(const ArtifactCore::FrameDebugCapture& capture, bool isCurrent)
+    {
+        const auto& snapshot = capture.snapshot;
+        return QStringLiteral("%1 frame=%2  comp=%3  layer=%4  backend=%5  passes=%6  res=%7  att=%8")
+                .arg(isCurrent ? QStringLiteral("[current]") : (capture.pinned ? QStringLiteral("[pinned]") : QStringLiteral("[history]")))
+                .arg(snapshot.frame.framePosition())
+                .arg(snapshot.compositionName.isEmpty() ? QStringLiteral("<none>") : snapshot.compositionName)
+                .arg(snapshot.selectedLayerName.isEmpty() ? QStringLiteral("<none>") : snapshot.selectedLayerName)
+                .arg(snapshot.renderBackend.isEmpty() ? QStringLiteral("<none>") : snapshot.renderBackend)
+                .arg(static_cast<int>(snapshot.passes.size()))
+                .arg(static_cast<int>(snapshot.resources.size()))
+                .arg(static_cast<int>(snapshot.attachments.size()));
+    }
+
+    void updateCaptureHistorySelection(int row)
+    {
+        captureSelectedRow_ = row;
+        updateCaptureHistoryText();
+    }
+
+    [[nodiscard]] bool captureAtRow(int row, ArtifactCore::FrameDebugCapture& out) const
+    {
+        if (!hasCaptureBundle_ || row < 0) {
+            return false;
+        }
+        if (row == 0) {
+            out = captureBundle_.capture;
+            return true;
+        }
+        const int historyIndex = static_cast<int>(captureBundle_.history.size()) - row;
+        if (historyIndex < 0 || historyIndex >= static_cast<int>(captureBundle_.history.size())) {
+            return false;
+        }
+        out = captureBundle_.history[static_cast<std::size_t>(historyIndex)];
+        return true;
+    }
+
+    void syncCaptureHistoryList()
+    {
+        if (!captureHistoryList_) {
+            return;
+        }
+
+        const int desiredRow = captureSelectedRow_ < 0 ? 0 : std::min(captureSelectedRow_, static_cast<int>(captureBundle_.history.size()));
+        captureHistoryList_->clear();
+        if (!hasCaptureBundle_) {
+            captureHistoryList_->addItem(QStringLiteral("<no capture yet>"));
+            captureHistoryList_->setCurrentRow(0);
+            return;
+        }
+
+        captureHistoryList_->addItem(captureEntryLabel(captureBundle_.capture, true));
+        for (int i = static_cast<int>(captureBundle_.history.size()) - 1; i >= 0; --i) {
+            captureHistoryList_->addItem(captureEntryLabel(captureBundle_.history[static_cast<std::size_t>(i)], false));
+        }
+        captureHistoryList_->setCurrentRow(std::min(desiredRow, captureHistoryList_->count() - 1));
+    }
+
+    void updateCaptureHistoryText()
+    {
+        if (!captureHistoryText_) {
+            return;
+        }
+
+        if (!hasCaptureBundle_) {
+            captureHistoryText_->setPlainText(QStringLiteral("No capture yet."));
+            if (captureDetailView_) {
+                captureDetailView_->setFrameDebugSnapshot(ArtifactCore::FrameDebugSnapshot{});
+            }
+            return;
+        }
+
+        ArtifactCore::FrameDebugCapture selectedCapture;
+        if (!captureAtRow(captureSelectedRow_ < 0 ? 0 : captureSelectedRow_, selectedCapture)) {
+            selectedCapture = captureBundle_.capture;
+        }
+        const auto& current = captureBundle_.capture.snapshot;
+        const auto& baseline = selectedCapture.snapshot;
+
+        QStringList lines;
+        lines << QStringLiteral("Capture Details");
+        lines << QStringLiteral("selected: %1").arg(captureEntryLabel(selectedCapture, captureSelectedRow_ <= 0));
+        lines << QStringLiteral("current: %1").arg(captureEntryLabel(captureBundle_.capture, true));
+        lines << QStringLiteral("bundle: %1").arg(captureBundle_.label.isEmpty() ? QStringLiteral("<unnamed>") : captureBundle_.label);
+        lines << QStringLiteral("createdAtMs: %1").arg(captureBundle_.createdAtMs);
+
+        if (captureSelectedRow_ <= 0) {
+            lines << QStringLiteral("comparison: current capture");
+        } else {
+            lines << QString();
+            lines << QStringLiteral("Baseline vs current:");
+            lines << QStringLiteral("  frame: %1 -> %2")
+                          .arg(baseline.frame.framePosition())
+                          .arg(current.frame.framePosition());
+            lines << QStringLiteral("  composition: %1 -> %2")
+                          .arg(baseline.compositionName.isEmpty() ? QStringLiteral("<none>") : baseline.compositionName,
+                               current.compositionName.isEmpty() ? QStringLiteral("<none>") : current.compositionName);
+            lines << QStringLiteral("  layer: %1 -> %2")
+                          .arg(baseline.selectedLayerName.isEmpty() ? QStringLiteral("<none>") : baseline.selectedLayerName,
+                               current.selectedLayerName.isEmpty() ? QStringLiteral("<none>") : current.selectedLayerName);
+            lines << QStringLiteral("  backend: %1 -> %2")
+                          .arg(baseline.renderBackend.isEmpty() ? QStringLiteral("<none>") : baseline.renderBackend,
+                               current.renderBackend.isEmpty() ? QStringLiteral("<none>") : current.renderBackend);
+            lines << QStringLiteral("  compareMode: %1 -> %2")
+                          .arg(ArtifactCore::toString(baseline.compareMode),
+                               ArtifactCore::toString(current.compareMode));
+            lines << QStringLiteral("  compareTarget: %1 -> %2")
+                          .arg(baseline.compareTargetId.isEmpty() ? QStringLiteral("<none>") : baseline.compareTargetId,
+                               current.compareTargetId.isEmpty() ? QStringLiteral("<none>") : current.compareTargetId);
+            lines << QStringLiteral("  passes: %1 -> %2")
+                          .arg(static_cast<int>(baseline.passes.size()))
+                          .arg(static_cast<int>(current.passes.size()));
+            lines << QStringLiteral("  resources: %1 -> %2")
+                          .arg(static_cast<int>(baseline.resources.size()))
+                          .arg(static_cast<int>(current.resources.size()));
+            lines << QStringLiteral("  attachments: %1 -> %2")
+                          .arg(static_cast<int>(baseline.attachments.size()))
+                          .arg(static_cast<int>(current.attachments.size()));
+            lines << QStringLiteral("  failed: %1 -> %2")
+                          .arg(baseline.failed ? QStringLiteral("true") : QStringLiteral("false"),
+                               current.failed ? QStringLiteral("true") : QStringLiteral("false"));
+            if (!baseline.failureReason.isEmpty() || !current.failureReason.isEmpty()) {
+                lines << QStringLiteral("  failureReason: %1 -> %2")
+                              .arg(baseline.failureReason.isEmpty() ? QStringLiteral("<none>") : baseline.failureReason,
+                                   current.failureReason.isEmpty() ? QStringLiteral("<none>") : current.failureReason);
+            }
+        }
+
+        auto appendPassPreview = [&lines](const QString& title, const ArtifactCore::FrameDebugSnapshot& snapshot) {
+            lines << QString();
+            lines << title;
+            if (snapshot.passes.empty()) {
+                lines << QStringLiteral("  <none>");
+                return;
+            }
+            const int rows = std::min(static_cast<int>(snapshot.passes.size()), 6);
+            for (int i = 0; i < rows; ++i) {
+                const auto& pass = snapshot.passes[static_cast<std::size_t>(i)];
+                lines << QStringLiteral("  #%1 %2 [%3/%4] us=%5 in=%6 out=%7")
+                              .arg(i)
+                              .arg(pass.name.isEmpty() ? QStringLiteral("<unnamed>") : pass.name,
+                                   ArtifactCore::toString(pass.kind),
+                                   ArtifactCore::toString(pass.status))
+                              .arg(pass.durationUs)
+                              .arg(static_cast<int>(pass.inputs.size()))
+                              .arg(static_cast<int>(pass.outputs.size()));
+            }
+        };
+
+        auto appendResourcePreview = [&lines](const QString& title, const ArtifactCore::FrameDebugSnapshot& snapshot) {
+            lines << QString();
+            lines << title;
+            if (snapshot.resources.empty()) {
+                lines << QStringLiteral("  <none>");
+                return;
+            }
+            const int rows = std::min(static_cast<int>(snapshot.resources.size()), 6);
+            for (int i = 0; i < rows; ++i) {
+                const auto& resource = snapshot.resources[static_cast<std::size_t>(i)];
+                lines << QStringLiteral("  #%1 %2 [%3] rel=%4 hit=%5 stale=%6")
+                              .arg(i)
+                              .arg(resource.label.isEmpty() ? QStringLiteral("<unnamed>") : resource.label,
+                                   resource.type.isEmpty() ? QStringLiteral("<type?>") : resource.type)
+                              .arg(resource.relation.isEmpty() ? QStringLiteral("<none>") : resource.relation)
+                              .arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
+                              .arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"));
+            }
+        };
+
+        auto appendAttachmentPreview = [&lines](const QString& title, const ArtifactCore::FrameDebugSnapshot& snapshot) {
+            lines << QString();
+            lines << title;
+            if (snapshot.attachments.empty()) {
+                lines << QStringLiteral("  <none>");
+                return;
+            }
+            const int rows = std::min(static_cast<int>(snapshot.attachments.size()), 6);
+            for (int i = 0; i < rows; ++i) {
+                const auto& attachment = snapshot.attachments[static_cast<std::size_t>(i)];
+                lines << QStringLiteral("  #%1 %2 [%3] readOnly=%4 tex=%5x%6")
+                              .arg(i)
+                              .arg(attachment.name.isEmpty() ? QStringLiteral("<unnamed>") : attachment.name,
+                                   attachment.role.isEmpty() ? QStringLiteral("<none>") : attachment.role)
+                              .arg(attachment.readOnly ? QStringLiteral("true") : QStringLiteral("false"))
+                              .arg(attachment.texture.width)
+                              .arg(attachment.texture.height);
+            }
+        };
+
+        appendPassPreview(QStringLiteral("Selected capture passes:"), baseline);
+        appendResourcePreview(QStringLiteral("Selected capture resources:"), baseline);
+        appendAttachmentPreview(QStringLiteral("Selected capture attachments:"), baseline);
+
+        lines << QString();
+        lines << QStringLiteral("Recent captures:");
+        if (!captureBundle_.history.empty()) {
+            const int historyRows = std::min(static_cast<int>(captureBundle_.history.size()), 6);
+            for (int i = 0; i < historyRows; ++i) {
+                const auto& entry = captureBundle_.history[static_cast<std::size_t>(captureBundle_.history.size() - 1 - i)];
+                lines << QStringLiteral("  - %1").arg(captureEntryLabel(entry, false));
+            }
+        } else {
+            lines << QStringLiteral("  <none>");
+        }
+
+        captureHistoryText_->setPlainText(lines.join(QStringLiteral("\n")));
+        if (captureDetailView_) {
+            captureDetailView_->setFrameDebugSnapshot(selectedCapture.snapshot);
+        }
     }
 
     void refresh()
@@ -272,6 +649,20 @@ public:
                           .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
             lines << QStringLiteral("currentFrame: %1")
                           .arg(controllerSnapshot.frame.framePosition());
+            lines << QString();
+            lines << QStringLiteral("Playback Quality");
+            lines << QStringLiteral("previewQuality: %1").arg(previewQualityText());
+            lines << QStringLiteral("cacheHealth: %1").arg(cacheHealthText(controllerSnapshot));
+            lines << QStringLiteral("ramPreview: %1").arg(ramPreviewText(playbackSvc));
+            lines << QStringLiteral("audioOffsetSeconds: %1")
+                          .arg(playbackSvc ? QString::number(playbackSvc->audioOffsetSeconds(), 'f', 3)
+                                           : QStringLiteral("<no service>"));
+            lines << QStringLiteral("droppedFrames: %1")
+                          .arg(playbackSvc ? QString::number(playbackSvc->droppedFrameCount())
+                                           : QStringLiteral("<no service>"));
+            lines << QStringLiteral("renderTiming: %1")
+                          .arg(controller_ ? renderTimingText(controller_)
+                                           : QStringLiteral("<no controller>"));
             lines << QStringLiteral("renderBackend: %1")
                           .arg(controllerSnapshot.renderBackend.isEmpty() ? QStringLiteral("<none>")
                                                                           : controllerSnapshot.renderBackend);
@@ -301,17 +692,19 @@ public:
                                             : controllerSnapshot.renderBackend;
             const QString playbackText = playbackSvc ? playbackStateText(playbackSvc->state())
                                                      : QStringLiteral("<no service>");
+            const QString qualityText = playbackQualityText(playbackSvc, controllerSnapshot, controller_);
             const QString queueText = queueSvc ? QString::number(queueSvc->jobCount())
                                                : QStringLiteral("<no service>");
             const QString projectText = projectSvc ? projectSvc->projectName().toQString()
                                                    : QStringLiteral("<no service>");
 
-            stateSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  backend=%6  queueJobs=%7")
+            stateSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  quality=%6  backend=%7  queueJobs=%8")
                                        .arg(projectText,
                                             compositionText,
                                             layerText)
                                        .arg(controllerSnapshot.frame.framePosition())
                                        .arg(playbackText)
+                                       .arg(qualityText)
                                        .arg(backendText)
                                        .arg(queueText));
         }
@@ -379,6 +772,60 @@ public:
                                              .arg(queueSvc ? queueSvc->jobCount() : 0)
                                              .arg(static_cast<int>(trace.threads.size())));
         }
+
+        if (captureSummary_) {
+            const QString compositionText = controllerSnapshot.compositionName.isEmpty()
+                                                ? QStringLiteral("<none>")
+                                                : controllerSnapshot.compositionName;
+            const QString backendText = controllerSnapshot.renderBackend.isEmpty()
+                                            ? QStringLiteral("<none>")
+                                            : controllerSnapshot.renderBackend;
+            const QString layerText = controllerSnapshot.selectedLayerName.isEmpty()
+                                            ? QStringLiteral("<none>")
+                                            : controllerSnapshot.selectedLayerName;
+            captureSummary_->setText(QStringLiteral("frame=%1  composition=%2  layer=%3  backend=%4  passes=%5  resources=%6  attachments=%7  traceEvents=%8")
+                                         .arg(controllerSnapshot.frame.framePosition())
+                                         .arg(compositionText)
+                                         .arg(layerText)
+                                         .arg(backendText)
+                                         .arg(static_cast<int>(controllerSnapshot.passes.size()))
+                                         .arg(static_cast<int>(controllerSnapshot.resources.size()))
+                                         .arg(static_cast<int>(controllerSnapshot.attachments.size()))
+                                         .arg(static_cast<int>(trace.events.size())));
+            captureSummary_->setToolTip(QStringLiteral("RenderDoc-like capture overview"));
+        }
+
+        if (hasControllerSnapshot) {
+            ArtifactCore::FrameDebugCapture currentCapture;
+            currentCapture.captureId = QStringLiteral("frame-%1").arg(controllerSnapshot.frame.framePosition());
+            currentCapture.snapshot = controllerSnapshot;
+            currentCapture.sourceFrameId = QStringLiteral("frame-%1").arg(controllerSnapshot.frame.framePosition());
+            currentCapture.targetFrameId = currentCapture.sourceFrameId;
+            currentCapture.pinned = controllerSnapshot.compareMode != ArtifactCore::FrameDebugCompareMode::Disabled;
+
+            const QString currentFrameId = currentCapture.sourceFrameId;
+            const QString lastFrameId = hasCaptureBundle_ ? captureBundle_.capture.sourceFrameId : QString();
+            if (!hasCaptureBundle_ || lastFrameId != currentFrameId) {
+                if (hasCaptureBundle_) {
+                    captureBundle_.history.push_back(captureBundle_.capture);
+                    while (captureBundle_.history.size() > 8) {
+                        captureBundle_.history.erase(captureBundle_.history.begin());
+                    }
+                }
+                captureBundle_.bundleId = QStringLiteral("app-debugger");
+                captureBundle_.label = controllerSnapshot.compositionName.isEmpty()
+                        ? QStringLiteral("App Debugger Capture")
+                        : controllerSnapshot.compositionName;
+                captureBundle_.createdAtMs = controllerSnapshot.timestampMs;
+                captureBundle_.capture = currentCapture;
+                hasCaptureBundle_ = true;
+            } else {
+                captureBundle_.capture = currentCapture;
+            }
+        }
+
+        syncCaptureHistoryList();
+        updateCaptureHistoryText();
 
         if (traceText_) {
             QStringList lines;
@@ -642,6 +1089,10 @@ public:
                                            .arg(ArtifactCore::toString(controllerSnapshot.compareMode)));
         }
 
+        if (capturePipelineView_) {
+            capturePipelineView_->setFrameDebugSnapshot(controllerSnapshot, trace);
+        }
+
         if (resourceView_) {
             resourceView_->setFrameDebugSnapshot(controllerSnapshot, trace);
         }
@@ -660,6 +1111,10 @@ public:
                                           .arg(controllerSnapshot.frame.framePosition()));
         }
 
+        if (captureResourceView_) {
+            captureResourceView_->setFrameDebugSnapshot(controllerSnapshot, trace);
+        }
+
         if (diffView_) {
             diffView_->setFrameDebugSnapshot(controllerSnapshot, trace);
         }
@@ -675,6 +1130,57 @@ public:
                                                                                        : controllerSnapshot.compareTargetId)
                                       .arg(controllerSnapshot.failed ? QStringLiteral("true") : QStringLiteral("false"))
                                       .arg(changedKey));
+        }
+
+        if (captureTraceTimelineView_) {
+            std::uint64_t focusThreadId = 0;
+            QString focusMutexName;
+            if (!trace.threads.isEmpty()) {
+                auto hotThreads = trace.threads;
+                std::sort(hotThreads.begin(), hotThreads.end(), [](const auto& a, const auto& b) {
+                    if (a.lockDepth == b.lockDepth) {
+                        return a.lockCount > b.lockCount;
+                    }
+                    return a.lockDepth > b.lockDepth;
+                });
+                focusThreadId = hotThreads.first().threadId;
+            }
+            if (!trace.locks.isEmpty()) {
+                struct MutexChainRow {
+                    QString name;
+                    int balance = 0;
+                    qint64 lastNs = 0;
+                };
+                QHash<QString, MutexChainRow> mutexChains;
+                for (const auto& lock : trace.locks) {
+                    const QString key = lock.mutexName.isEmpty() ? QStringLiteral("<unnamed-mutex>") : lock.mutexName;
+                    auto& row = mutexChains[key];
+                    row.name = key;
+                    row.lastNs = lock.timestampNs;
+                    if (lock.acquired) {
+                        ++row.balance;
+                    } else if (row.balance > 0) {
+                        --row.balance;
+                    }
+                }
+                QVector<MutexChainRow> rows;
+                rows.reserve(mutexChains.size());
+                for (auto it = mutexChains.cbegin(); it != mutexChains.cend(); ++it) {
+                    rows.push_back(it.value());
+                }
+                std::sort(rows.begin(), rows.end(), [](const auto& a, const auto& b) {
+                    if (a.balance == b.balance) {
+                        return a.lastNs > b.lastNs;
+                    }
+                    return a.balance > b.balance;
+                });
+                if (!rows.isEmpty()) {
+                    focusMutexName = rows.first().name;
+                }
+            }
+            captureTraceTimelineView_->setFocusedThreadId(focusThreadId);
+            captureTraceTimelineView_->setFocusedMutexName(focusMutexName);
+            captureTraceTimelineView_->setTraceSnapshot(trace);
         }
 
         if (traceTimelineView_) {

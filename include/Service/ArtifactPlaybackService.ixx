@@ -128,6 +128,8 @@ public:
   void setCurrentComposition(ArtifactCompositionPtr composition);
   ArtifactCompositionPtr currentComposition() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
+  double audioOffsetSeconds() const;
+  std::int64_t droppedFrameCount() const;
 
   // In/Out Points
   void setInOutPoints(ArtifactInOutPoints *inOutPoints);

@@ -242,6 +242,37 @@ void applyInspectorButton(QPushButton *button, const bool accent = false) {
   button->setPalette(pal);
 }
 
+QString describeLayerType(const ArtifactAbstractLayerPtr &layer) {
+  if (!layer) {
+    return QStringLiteral("Layer");
+  }
+  if (layer->isNullLayer()) {
+    return QStringLiteral("Null Layer");
+  }
+  if (layer->isAdjustmentLayer()) {
+    return QStringLiteral("Adjustment Layer");
+  }
+  if (layer->isGroupLayer()) {
+    return QStringLiteral("Group Layer");
+  }
+  if (layer->isCloneLayer()) {
+    return QStringLiteral("Clone Layer");
+  }
+  if (layer->is3D()) {
+    return QStringLiteral("3D Layer");
+  }
+  if (layer->hasAudio() && layer->hasVideo()) {
+    return QStringLiteral("Audio-Video Layer");
+  }
+  if (layer->hasAudio()) {
+    return QStringLiteral("Audio Layer");
+  }
+  if (layer->hasVideo()) {
+    return QStringLiteral("Video Layer");
+  }
+  return QStringLiteral("Layer");
+}
+
 int rackIndexFromStage(EffectPipelineStage stage) {
   const int stageIndex = static_cast<int>(stage);
   if (stageIndex <= static_cast<int>(EffectPipelineStage::PreProcess)) {
@@ -506,14 +537,7 @@ QString ArtifactInspectorWidget::Impl::computeLayerInfoSignature(
   signature += QLatin1Char('|');
   signature += layer->layerName();
   signature += QLatin1Char('|');
-
-  QString layerType = QStringLiteral("Layer");
-  if (layer->isNullLayer()) {
-    layerType = QStringLiteral("Null Layer");
-  } else if (layer->isAdjustmentLayer()) {
-    layerType = QStringLiteral("Adjustment Layer");
-  }
-  signature += layerType;
+  signature += describeLayerType(layer);
   signature += QLatin1Char('|');
   signature += QString::number(layer->maskCount());
   signature += QLatin1Char('|');
@@ -802,7 +826,10 @@ void ArtifactInspectorWidget::Impl::handleLayerSelected(
       }
     }
     qDebug() << "[Inspector] NoLayer reason="
-             << layerSelectionChangeReasonToString(event.reason);
+             << layerSelectionChangeReasonToString(event.reason)
+             << "composition=" << currentCompositionId_.toString()
+             << "layer=" << currentLayerId_.toString()
+             << "projectService=" << static_cast<bool>(projectService);
     setNoLayerState();
     scheduleRefresh(LayerNoteDirty | LayerInfoDirty | EffectsDirty);
     return;
@@ -1069,16 +1096,8 @@ void ArtifactInspectorWidget::Impl::updateLayerInfo() {
     applyInspectorLabelPalette(layerTypeLabel, false);
   }
 
-  // レイヤータイプを判定
-  QString layerType = "Unknown";
-  if (layer->isNullLayer()) {
-    layerType = "Null Layer";
-  } else if (layer->isAdjustmentLayer()) {
-    layerType = "Adjustment Layer";
-  } else {
-    // TODO: 他のレイヤータイプも判定
-    layerType = "Layer";
-  }
+  // レイヤータイプを実態に寄せて表示する
+  const QString layerType = describeLayerType(layer);
   layerTypeLabel->setText(QString("Type: %1").arg(layerType));
 
   const int maskCount = layer->maskCount();

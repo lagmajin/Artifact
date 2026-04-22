@@ -207,8 +207,10 @@ public:
         const int laneCount = trace_.frames.empty() ? 0 : static_cast<int>(trace_.frames.back().lanes.size());
         const qint64 spanNs = trace_.frames.empty() ? 0 : (trace_.frames.back().frameEndNs - trace_.frames.back().frameStartNs);
 
-        summary_->setText(QStringLiteral("frame=%1  passes=%2  resources=%3  attachments=%4  lanes=%5  traceSpanNs=%6")
+        summary_->setText(QStringLiteral("frame=%1  render=%2ms/%3ms  passes=%4  resources=%5  attachments=%6  lanes=%7  traceSpanNs=%8")
                               .arg(QString::number(frameIndex))
+                              .arg(QString::number(snapshot_.renderLastFrameMs, 'f', 1))
+                              .arg(QString::number(snapshot_.renderAverageFrameMs, 'f', 1))
                               .arg(passCount)
                               .arg(resourceCount)
                               .arg(attachmentCount)
@@ -232,6 +234,9 @@ public:
                      .arg(snapshot_.compositionName.isEmpty() ? QStringLiteral("<none>") : snapshot_.compositionName);
         lines << QStringLiteral("renderBackend: %1")
                      .arg(snapshot_.renderBackend.isEmpty() ? QStringLiteral("<none>") : snapshot_.renderBackend);
+        lines << QStringLiteral("renderTiming: last=%1ms avg=%2ms")
+                     .arg(QString::number(snapshot_.renderLastFrameMs, 'f', 1))
+                     .arg(QString::number(snapshot_.renderAverageFrameMs, 'f', 1));
         lines << QStringLiteral("playback: %1")
                      .arg(snapshot_.playbackState.isEmpty() ? QStringLiteral("<none>") : snapshot_.playbackState);
         lines << QStringLiteral("selectedLayer: %1")

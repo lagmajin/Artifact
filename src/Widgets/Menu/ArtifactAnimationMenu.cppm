@@ -207,16 +207,22 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
 
   impl_->linearInterpolationAction = impl_->interpolationMenu->addAction("リニア");
   impl_->linearInterpolationAction->setIcon(menuIcon(QStringLiteral("Material/straighten.svg")));
+  impl_->linearInterpolationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_1));
   impl_->easeInAction = impl_->interpolationMenu->addAction("イージーイーズイン");
   impl_->easeInAction->setIcon(menuIcon(QStringLiteral("Material/trending_up.svg")));
+  impl_->easeInAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_2));
   impl_->easeOutAction = impl_->interpolationMenu->addAction("イージーイーズアウト");
   impl_->easeOutAction->setIcon(menuIcon(QStringLiteral("Material/trending_down.svg")));
+  impl_->easeOutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_3));
   impl_->easeInOutAction = impl_->interpolationMenu->addAction("イージーイーズ");
   impl_->easeInOutAction->setIcon(menuIcon(QStringLiteral("Material/show_chart.svg")));
+  impl_->easeInOutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_4));
   impl_->holdInterpolationAction = impl_->interpolationMenu->addAction("停止");
   impl_->holdInterpolationAction->setIcon(menuIcon(QStringLiteral("Material/pause.svg")));
+  impl_->holdInterpolationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_5));
   impl_->bezierInterpolationAction = impl_->interpolationMenu->addAction("ベジェ");
   impl_->bezierInterpolationAction->setIcon(menuIcon(QStringLiteral("Material/edit.svg")));
+  impl_->bezierInterpolationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_6));
 
   impl_->linearInterpolationAction->setCheckable(true);
   impl_->bezierInterpolationAction->setCheckable(true);
