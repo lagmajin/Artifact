@@ -70,6 +70,7 @@ public:
   // std::unique_ptr<FrameCache> frameCache_;  // FrameCache module is disabled
   QElapsedTimer audioTimer_;
   double audioOffsetSeconds_ = 0.0;
+  std::int64_t droppedFrameCount_ = 0;
   std::atomic_bool audioRunning_{false};
   std::function<double()> externalAudioClockProvider_;
   std::function<double()> playbackClockProvider_;
@@ -162,7 +163,9 @@ public:
 
     QObject::connect(engine_, &ArtifactPlaybackEngine::droppedFrameDetected,
                      owner_, [this](int64_t count) {
-                       qDebug() << "[PlaybackService] Dropped frames:" << count;
+                       droppedFrameCount_ += count;
+                       qDebug() << "[PlaybackService] Dropped frames:" << count
+                                << "total=" << droppedFrameCount_;
                      });
 
     QObject::connect(
@@ -720,6 +723,8 @@ ArtifactCore::FrameDebugSnapshot ArtifactPlaybackService::frameDebugSnapshot() c
     snapshot.compositionName = QStringLiteral("<none>");
   }
   snapshot.selectedLayerName = QStringLiteral("<none>");
+  snapshot.renderLastFrameMs = 0.0;
+  snapshot.renderAverageFrameMs = 0.0;
   snapshot.renderBackend = QStringLiteral("playback");
   snapshot.compareMode = ArtifactCore::FrameDebugCompareMode::Disabled;
   ArtifactCore::TraceRecorder::instance().recordFrameDebugSnapshot(snapshot);
@@ -852,6 +857,14 @@ float ArtifactPlaybackService::ramPreviewHitRate() const {
 
 int ArtifactPlaybackService::ramPreviewCachedFrameCount() const {
   return impl_ ? impl_->ramPreviewCachedFrameCount() : 0;
+}
+
+double ArtifactPlaybackService::audioOffsetSeconds() const {
+  return impl_ ? impl_->audioOffsetSeconds_ : 0.0;
+}
+
+std::int64_t ArtifactPlaybackService::droppedFrameCount() const {
+  return impl_ ? impl_->droppedFrameCount_ : 0;
 }
 
 ArtifactCompositionPlaybackController *

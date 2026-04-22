@@ -181,6 +181,8 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     // [Fix 1] OIIO 経由でバックグラウンド先読みし、初回 draw() 呼び出し時の
     // メインスレッドブロックを排除する
     impl_->prefetchFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [path]() -> QImage {
+        ArtifactCore::ScopedThreadName threadName(
+            QStringLiteral("ImageLayer/prefetch:%1").arg(QFileInfo(path).fileName()));
         return loadImageViaOIIO(path);
     });
     impl_->prefetchWatcher_.setFuture(impl_->prefetchFuture_);

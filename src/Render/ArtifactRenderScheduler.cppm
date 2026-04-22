@@ -47,6 +47,7 @@ module Artifact.Render.Scheduler;
 
 
 import Artifact.Render.Scheduler;
+import Thread.Helper;
 import Frame.Position;
 import Frame.Range;
 
@@ -136,6 +137,7 @@ public:
             explicitThreadCount ? requestedThreadCount_ : defaultThreadCount();
         if (!threadPool_) {
             threadPool_ = std::make_unique<QThreadPool>();
+            threadPool_->setObjectName(QStringLiteral("ArtifactRenderSchedulerPool"));
             threadPool_->setMaxThreadCount(desiredThreadCount);
             requestedThreadCount_ = desiredThreadCount;
         } else if (!explicitThreadCount &&
@@ -405,11 +407,19 @@ void RenderScheduler::processNextTask() {
 
         // Run task in thread pool
         auto self = this;
-        threadPool->start([self, task]() {
+        const QString taskName = !task->description().trimmed().isEmpty()
+                                     ? task->description().trimmed()
+                                     : QStringLiteral("frames:%1-%2")
+                                           .arg(task->range().start().framePosition())
+                                           .arg(task->range().end().framePosition());
+        threadPool->start([self, task, taskName]() {
             if (!self || self->impl_->stopRequested_) {
                 return;
             }
 
+            const QString threadName =
+                QStringLiteral("RenderScheduler/%1").arg(taskName);
+            ArtifactCore::ScopedThreadName threadScope(threadName);
             const auto startNs = std::chrono::steady_clock::now().time_since_epoch().count();
             QString execError;
             const bool ok = self->impl_->executeTask(task, &execError);

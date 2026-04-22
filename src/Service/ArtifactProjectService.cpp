@@ -226,6 +226,13 @@ void ArtifactProjectService::Impl::installSelectionBridge(
               return;
             }
 
+            const auto currentComp = owner->currentComposition().lock();
+            qDebug() << "[ProjectService] selection bridge cleared"
+                     << "composition="
+                     << (currentComp ? currentComp->id().toString() : QString())
+                     << "lastForwarded="
+                     << lastForwardedLayerId_.toString();
+
             QPointer<ArtifactProjectService> safeOwner(owner);
             QPointer<ArtifactLayerSelectionManager> safeSelectionManager(
                 selectionManager);
@@ -680,38 +687,58 @@ void ArtifactProjectService::projectSettingChanged(
 void ArtifactProjectService::selectLayer(const LayerID &id) {
   if (auto *app = ArtifactApplicationManager::instance()) {
     if (auto *selectionManager = app->layerSelectionManager()) {
+      const auto currentComp = currentComposition().lock();
       const auto current = selectionManager->currentLayer();
       if (current && current->id() == id) {
-        selectionManager->setActiveComposition(currentComposition().lock());
+        selectionManager->setActiveComposition(currentComp);
         ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
             LayerSelectionChangedEvent{
-                currentComposition().lock()
-                    ? currentComposition().lock()->id().toString()
-                    : QString(),
+                currentComp ? currentComp->id().toString() : QString(),
                 id.toString(),
                 LayerSelectionChangeReason::ProgrammaticReselect});
         return;
       }
+
+      if (!id.isNil() && (!currentComp || !currentComp->layerById(id))) {
+        qDebug() << "[ProjectService] selectLayer rejected"
+                 << "composition="
+                 << (currentComp ? currentComp->id().toString() : QString())
+                 << "layer=" << id.toString()
+                 << "reason=" << layerSelectionChangeReasonToString(
+                        currentComp ? LayerSelectionChangeReason::InvalidSelection
+                                    : LayerSelectionChangeReason::ProjectChanged);
+      }
+
       impl_->forwardingSelectionChange_ = true;
-      selectionManager->setActiveComposition(currentComposition().lock());
+      selectionManager->setActiveComposition(currentComp);
       if (id.isNil()) {
         selectionManager->clearSelection();
-      } else if (auto comp = currentComposition().lock()) {
-        selectionManager->selectLayer(comp->layerById(id));
+      } else if (currentComp) {
+        selectionManager->selectLayer(currentComp->layerById(id));
       } else {
         selectionManager->clearSelection();
       }
       impl_->forwardingSelectionChange_ = false;
 
-      const LayerID nextId = id.isNil() ? LayerID() : id;
+      const auto resolvedCurrent = selectionManager->currentLayer();
+      const LayerID nextId = resolvedCurrent ? resolvedCurrent->id()
+                                             : (id.isNil() ? LayerID() : id);
+      const auto reason = id.isNil()
+                              ? LayerSelectionChangeReason::UserCleared
+                              : (resolvedCurrent
+                                     ? LayerSelectionChangeReason::SelectionBridgeSync
+                                     : LayerSelectionChangeReason::InvalidSelection);
       ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
           LayerSelectionChangedEvent{
-              currentComposition().lock()
-                  ? currentComposition().lock()->id().toString()
-                  : QString(),
+              currentComp ? currentComp->id().toString() : QString(),
               nextId.toString(),
-              id.isNil() ? LayerSelectionChangeReason::UserCleared
-                         : LayerSelectionChangeReason::SelectionBridgeSync});
+              reason});
+      qDebug() << "[ProjectService] selectLayer"
+               << "composition="
+               << (currentComp ? currentComp->id().toString() : QString())
+               << "requested=" << id.toString()
+               << "resolved=" << nextId.toString()
+               << "reason=" << layerSelectionChangeReasonToString(reason);
     }
   }
 }

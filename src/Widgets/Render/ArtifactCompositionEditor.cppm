@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QAction>
 #include <QActionGroup>
 #include <QClipboard>
@@ -49,8 +49,10 @@
 #include <QWheelEvent>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <deque>
 #include <functional>
+#include <thread>
 #include <utility>
 #include <wobjectimpl.h>
 #ifdef Q_OS_WIN
@@ -89,6 +91,7 @@ import Artifact.Widgets.ProfilerOverlay;
 import Artifact.Widgets.ProfilerPanel;
 import Artifact.Widgets.EventBusDebugger;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Codec.Thumbnail.FFmpeg;
 
 namespace Artifact {
 
@@ -1545,6 +1548,10 @@ protected:
   std::deque<PendingDroppedAsset> pendingDroppedAssets_;
   bool processingDroppedAssets_ = false;
   QWidget *overlayWidget_ = nullptr;
+  // 動画ファイルのキャンバスサイズキャッシュ（非同期取得）
+  QHash<QString, QSize> videoDimensionCache_;
+  QString lastDragPath_;
+  QPointF lastDragPos_;
 
   static QString kindLabelForFileType(ArtifactCore::FileType type) {
     switch (type) {
@@ -1561,32 +1568,82 @@ protected:
     }
   }
 
+  // キャンバス座標系でのゴーストサイズ（コンポジションピクセル単位）を返す。
+  // updateDropPreview 内で renderer->canvasToViewport を通してビューポート座標に変換する。
   QSizeF ghostSizeForFile(const QString &path,
                           ArtifactCore::FileType type) const {
+    // コンポジションサイズをフォールバックに使用
+    const auto comp = currentComposition();
+    const QSize compSz = comp ? comp->settings().compositionSize()
+                              : QSize(1920, 1080);
+    const double cw = compSz.width() > 0 ? compSz.width() : 1920.0;
+    const double ch = compSz.height() > 0 ? compSz.height() : 1080.0;
+
     if (isSvgShapeFile(path)) {
-      return QSizeF(220.0, 140.0);
+      return QSizeF(cw * 0.3, ch * 0.3);
     }
     switch (type) {
     case ArtifactCore::FileType::Image: {
       QImageReader reader(path);
       const QSize imageSize = reader.size();
       if (imageSize.isValid()) {
-        const QSize scaled =
-            imageSize.scaled(QSize(280, 180), Qt::KeepAspectRatio);
-        return QSizeF(std::max(120, scaled.width()),
-                      std::max(80, scaled.height()));
+        return QSizeF(imageSize.width(), imageSize.height());
       }
-      return QSizeF(220.0, 140.0);
+      return QSizeF(cw, ch);
     }
-    case ArtifactCore::FileType::Video:
-      return QSizeF(300.0, 170.0);
+    case ArtifactCore::FileType::Video: {
+      // キャッシュがあればそのまま使用
+      auto it = videoDimensionCache_.find(path);
+      if (it != videoDimensionCache_.end() && it.value().isValid()) {
+        return QSizeF(it.value().width(), it.value().height());
+      }
+      // コンポジションサイズをフォールバックとして返す（非同期で実寸を取得）
+      return QSizeF(cw, ch);
+    }
     case ArtifactCore::FileType::Audio:
-      return QSizeF(280.0, 110.0);
+      return QSizeF(cw, ch * 0.08);
     case ArtifactCore::FileType::Model3D:
-      return QSizeF(220.0, 180.0);
+      return QSizeF(cw * 0.5, ch * 0.5);
     default:
-      return QSizeF(220.0, 140.0);
+      return QSizeF(cw * 0.4, ch * 0.4);
     }
+  }
+
+  // 動画ファイルの実寸を非同期で取得してキャッシュに登録する
+  void startVideoDimensionLoad(const QString &path) {
+    if (videoDimensionCache_.contains(path)) {
+      return; // already cached or loading
+    }
+    // placeholder to prevent double-launch
+    videoDimensionCache_[path] = QSize();
+    const QString capturePath = path;
+    QPointer<CompositionViewport> self = this;
+    std::thread([capturePath, self]() {
+      ArtifactCore::FFmpegThumbnailExtractor extractor;
+      const auto result =
+          extractor.extractThumbnail(ArtifactCore::UniString(capturePath));
+      if (!result.success || result.image.isNull()) {
+        return;
+      }
+      const QSize dims = result.image.size();
+      // メインスレッドへのコールバックは qApp 経由で安全にポスト
+      QMetaObject::invokeMethod(
+          qApp,
+          [self, capturePath, dims]() {
+            if (!self) {
+              return;
+            }
+            self->videoDimensionCache_[capturePath] = dims;
+            // ドラッグ中なら即座にゴースト更新
+            if (self->lastDragPath_ == capturePath &&
+                !self->lastDragPos_.isNull()) {
+              self->updateDropPreview(
+                  {QUrl::fromLocalFile(capturePath)},
+                  self->lastDragPos_);
+            }
+          },
+          Qt::QueuedConnection);
+    }).detach();
   }
 
   void clearDropPreview() {
@@ -1595,6 +1652,8 @@ protected:
     dropGhostRect_ = QRectF();
     dropGhostTitle_.clear();
     dropGhostHint_.clear();
+    lastDragPath_.clear();
+    lastDragPos_ = QPointF();
     if (controller_) {
       controller_->clearDropGhostPreview();
     }
@@ -1716,19 +1775,48 @@ protected:
       return;
     }
 
+    lastDragPath_ = path;
+    lastDragPos_ = pos;
+
     QFileInfo fi(path);
     ArtifactCore::FileTypeDetector detector;
     const bool svgShapeFile = isSvgShapeFile(path);
     const auto fileType =
         svgShapeFile ? ArtifactCore::FileType::Image : detector.detect(path);
-    const QSizeF ghostSize = ghostSizeForFile(path, fileType);
-    dropGhostRect_ = QRectF(pos.x() - ghostSize.width() * 0.5,
-                            pos.y() - ghostSize.height() * 0.5,
-                            ghostSize.width(), ghostSize.height());
+
+    if (fileType == ArtifactCore::FileType::Video) {
+      startVideoDimensionLoad(path);
+    }
+
+    const QSizeF canvasSize = ghostSizeForFile(path, fileType);
+
+    const auto *renderer =
+        (controller_ && controller_->renderer()) ? controller_->renderer()
+                                                  : nullptr;
+    if (renderer) {
+      const auto cc = renderer->viewportToCanvas(
+          {static_cast<float>(pos.x()), static_cast<float>(pos.y())});
+      const float hw = static_cast<float>(canvasSize.width() * 0.5);
+      const float hh = static_cast<float>(canvasSize.height() * 0.5);
+      const auto vpTL = renderer->canvasToViewport({cc.x - hw, cc.y - hh});
+      const auto vpBR = renderer->canvasToViewport({cc.x + hw, cc.y + hh});
+      const float vpW = std::max(40.0f, vpBR.x - vpTL.x);
+      const float vpH = std::max(40.0f, vpBR.y - vpTL.y);
+      const float vpCx = (vpTL.x + vpBR.x) * 0.5f;
+      const float vpCy = (vpTL.y + vpBR.y) * 0.5f;
+      dropGhostRect_ = QRectF(vpCx - vpW * 0.5f, vpCy - vpH * 0.5f,
+                               vpW, vpH);
+    } else {
+      constexpr double kFallbackW = 220.0, kFallbackH = 140.0;
+      dropGhostRect_ =
+          QRectF(pos.x() - kFallbackW * 0.5, pos.y() - kFallbackH * 0.5,
+                 kFallbackW, kFallbackH);
+    }
+
     dropGhostTitle_ =
         fi.fileName().isEmpty() ? fi.completeBaseName() : fi.fileName();
     dropGhostHint_ = svgShapeFile ? QStringLiteral("Shape layer")
-                                  : kindLabelForFileType(fileType);
+                                   : kindLabelForFileType(fileType);
     if (controller_) {
       controller_->setDropGhostPreview(dropGhostRect_, dropGhostTitle_,
                                        dropGhostHint_, dropCandidateLabel_);

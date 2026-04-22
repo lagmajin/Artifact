@@ -6,6 +6,9 @@ module;
 export module Artifact.Widgets.AppDebuggerWidget;
 
 import Artifact.Widgets.CompositionRenderController;
+import Artifact.Widgets.FramePipelineViewWidget;
+import Artifact.Widgets.FrameDebugViewWidget;
+import Artifact.Widgets.FrameResourceInspectorWidget;
 import Artifact.Widgets.TraceTimelineWidget;
 
 export namespace Artifact {

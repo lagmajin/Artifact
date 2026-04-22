@@ -1238,6 +1238,33 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
   const auto layerGroups = layer ? layer->getLayerPropertyGroups()
                                  : std::vector<ArtifactCore::PropertyGroup>{};
+  const auto ownerSnapshots =
+      ArtifactCore::PropertyRegistryReadOnlyAdapter::queryAllOwners();
+  if (!ownerSnapshots.isEmpty()) {
+    QString ownerSummaryText = QStringLiteral("Snapshot owners:");
+    int validOwnerCount = 0;
+    for (const auto &ownerSnapshot : ownerSnapshots) {
+      if (!ownerSnapshot.isValid) {
+        continue;
+      }
+      ++validOwnerCount;
+      ownerSummaryText += QLatin1Char('\n');
+      ownerSummaryText += QStringLiteral("* ");
+      ownerSummaryText += ownerSnapshot.displayName.isEmpty()
+                              ? ownerSnapshot.ownerPath
+                              : ownerSnapshot.displayName;
+      ownerSummaryText += QStringLiteral(" (");
+      ownerSummaryText += QString::number(ownerSnapshot.propertyCount);
+      ownerSummaryText += QStringLiteral(" properties)");
+    }
+    if (validOwnerCount > 0) {
+      auto *ownerLabel = new QLabel(ownerSummaryText, summaryGroup);
+      ownerLabel->setObjectName(QStringLiteral("propertySectionNote"));
+      ownerLabel->setWordWrap(true);
+      applyPropertySectionLabel(ownerLabel, false);
+      summaryLayout->addWidget(ownerLabel);
+    }
+  }
   std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
       layerSummaryProperties;
   for (const auto &groupDef : layerGroups) {

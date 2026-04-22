@@ -91,20 +91,26 @@ void registerCompositionViewContextSnapshot(ArtifactAbstractLayer* layer,
   if (!layer) {
     return;
   }
-  RenderContext ctx;
-  ctx.setMode(offlineRender ? RenderMode::Final : RenderMode::Preview);
-  ctx.setCurrentFrame(layer->currentFrame());
-  ctx.setInteractive(!offlineRender);
-  ctx.setResolutionScale(lodScale(lod));
-  ctx.setColorSpace(ArtifactCore::ColorSpace::sRGB);
   const auto sourceSize = layer->sourceSize();
   const int sourceWidth = std::max(1, sourceSize.width);
   const int sourceHeight = std::max(1, sourceSize.height);
-  ctx.canvasSize = QSizeF(sourceWidth, sourceHeight);
-  ctx.viewportSize = QSize(sourceWidth, sourceHeight);
-  ctx.setROI(RenderROI(0.0f, 0.0f,
-                       static_cast<float>(sourceWidth),
-                       static_cast<float>(sourceHeight)));
+  auto ctx = offlineRender
+      ? createFinalExportContext(layer->currentFrame(),
+                                 QSize(sourceWidth, sourceHeight),
+                                 QSizeF(sourceWidth, sourceHeight),
+                                 RenderROI(0.0f,
+                                           0.0f,
+                                           static_cast<float>(sourceWidth),
+                                           static_cast<float>(sourceHeight)),
+                                 lodScale(lod))
+      : createEditorPreviewContext(layer->currentFrame(),
+                                   QSize(sourceWidth, sourceHeight),
+                                   QSizeF(sourceWidth, sourceHeight),
+                                   RenderROI(0.0f,
+                                             0.0f,
+                                             static_cast<float>(sourceWidth),
+                                             static_cast<float>(sourceHeight)),
+                                   lodScale(lod));
 
   const QString key = RenderContextRegistry::instance().makeKey(
       offlineRender ? RenderPurpose::FinalExport : RenderPurpose::EditorPreview,

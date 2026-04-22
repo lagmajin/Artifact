@@ -25,6 +25,7 @@ module;
 #include <QVector3D>
 #include <QVector4D>
 #include <QVector>
+#include <deque>
 #include <QtConcurrent>
 #include <algorithm>
 #include <cmath>
@@ -1370,6 +1371,10 @@ public:
   bool viewportOrientationActive_ = false;
   int currentFrameForOverlay_ = 0;
   quint64 renderFrameCounter_ = 0;
+  std::deque<double> recentFrameTimesMs_;
+  double recentFrameTimeSumMs_ = 0.0;
+  double lastFrameTimeMs_ = 0.0;
+  double averageFrameTimeMs_ = 0.0;
   bool renderQueueActive_ =
       false; // When true, suppress cache invalidation during Render Queue
   int lastPipelineStateMask_ = -1;
@@ -2551,6 +2556,8 @@ CompositionRenderController::frameDebugSnapshot() const {
     snapshot.frame = comp ? comp->framePosition() : FramePosition(0);
     snapshot.playbackState = QStringLiteral("stopped");
   }
+  snapshot.renderLastFrameMs = lastFrameTimeMs();
+  snapshot.renderAverageFrameMs = averageFrameTimeMs();
 
   snapshot.timestampMs =
       static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -2643,6 +2650,14 @@ CompositionRenderController::frameDebugSnapshot() const {
 
   ArtifactCore::TraceRecorder::instance().recordFrameDebugSnapshot(snapshot);
   return snapshot;
+}
+
+double CompositionRenderController::lastFrameTimeMs() const {
+  return impl_ ? impl_->lastFrameTimeMs_ : 0.0;
+}
+
+double CompositionRenderController::averageFrameTimeMs() const {
+  return impl_ ? impl_->averageFrameTimeMs_ : 0.0;
 }
 
 void CompositionRenderController::focusSelectedLayer() {
@@ -4328,8 +4343,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               QLoggingCategory::defaultCategory()->isDebugEnabled()
                   ? &lastVideoDebug_
                   : nullptr;
+          // GPU blend path applies layer opacity in the blend step below, so
+          // the layer source itself stays at full strength here.
           drawLayerForCompositionView(
-              layer.get(), renderer_.get(), opacity, dbgOut, &surfaceCache_,
+              layer.get(), renderer_.get(), 1.0f, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(),
               false, lod, has3DCamera ? &cameraViewMatrix : nullptr,
               has3DCamera ? &cameraProjMatrix : nullptr);
@@ -4979,6 +4996,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     ++renderFrameCounter_;
     const qint64 frameMs = frameTimer.elapsed();
+    impl_->lastFrameTimeMs_ = static_cast<double>(frameMs);
+    impl_->recentFrameTimesMs_.push_back(impl_->lastFrameTimeMs_);
+    impl_->recentFrameTimeSumMs_ += impl_->lastFrameTimeMs_;
+    constexpr std::size_t kRecentFrameTimeHistory = 120;
+    while (impl_->recentFrameTimesMs_.size() > kRecentFrameTimeHistory) {
+      impl_->recentFrameTimeSumMs_ -= impl_->recentFrameTimesMs_.front();
+      impl_->recentFrameTimesMs_.pop_front();
+    }
+    if (!impl_->recentFrameTimesMs_.empty()) {
+      impl_->averageFrameTimeMs_ =
+          impl_->recentFrameTimeSumMs_ /
+          static_cast<double>(impl_->recentFrameTimesMs_.size());
+    } else {
+      impl_->averageFrameTimeMs_ = 0.0;
+    }
     if (compositionViewLog().isDebugEnabled()) {
       if (frameMs >= 16) {
         qCDebug(compositionViewLog)
