@@ -12,6 +12,7 @@ module;
 #include <QPalette>
 #include <QPainter>
 #include <QPushButton>
+#include <QSize>
 #include <QScrollArea>
 #include <QSlider>
 #include <QSpinBox>
@@ -154,6 +155,7 @@ class RoundedWindowMaskFilter : public QObject {
   int radius_;
   bool onlyIfFrameless_;
   bool dwmApplied_ = false;
+  QSize lastMaskedSize_;
 public:
   explicit RoundedWindowMaskFilter(QObject* parent, int r, bool onlyIfFrameless = false)
     : QObject(parent), radius_(r), onlyIfFrameless_(onlyIfFrameless) {}
@@ -170,8 +172,10 @@ public:
           return false;
         }
 #endif
-        if (!w->size().isEmpty()) {
-          QBitmap bm(w->size());
+        const QSize size = w->size();
+        if (!size.isEmpty() && size != lastMaskedSize_) {
+          lastMaskedSize_ = size;
+          QBitmap bm(size);
           bm.fill(Qt::color0);
           QPainter p(&bm);
           p.setRenderHint(QPainter::Antialiasing);

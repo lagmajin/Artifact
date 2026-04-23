@@ -18,6 +18,8 @@ import Artifact.Effect.Ofx.Host;
 import Artifact.Effect.Ofx.Impl;
 import Artifact.Project.PresetManager;
 import Artifact.Service.Project;
+import ColorWheelsEffect;
+import CurvesEffect;
 
 namespace Artifact
 {
@@ -55,6 +57,12 @@ W_OBJECT_IMPL(ArtifactEffectService)
  std::unique_ptr<ArtifactAbstractEffect> ArtifactEffectService::createEffect(const EffectID& id) const
  {
   const QString effectId = id.toString();
+  if (effectId == QStringLiteral("effect.colorcorrection.colorwheels")) {
+   return std::make_unique<ColorWheelsEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.curves")) {
+   return std::make_unique<CurvesEffect>();
+  }
   if (effectId.startsWith(QStringLiteral("ofx."))) {
    const QString pluginId = effectId.mid(QStringLiteral("ofx.").size());
    Artifact::Ofx::ArtifactOfxHost::instance().initialize();
@@ -86,6 +94,8 @@ W_OBJECT_IMPL(ArtifactEffectService)
   std::vector<EffectInfo> effects;
   effects.push_back({EffectID("brightness"), "Brightness"});
   effects.push_back({EffectID("hue_saturation"), "Hue & Saturation"});
+  effects.push_back({EffectID("effect.colorcorrection.colorwheels"), "Color Wheels"});
+  effects.push_back({EffectID("effect.colorcorrection.curves"), "Curves"});
   effects.push_back({EffectID("exposure"), "Exposure"});
   effects.push_back({EffectID("chroma_key"), "Chroma Key"});
   effects.push_back({EffectID("drop_shadow"), "Drop Shadow"});

@@ -1009,28 +1009,24 @@ void drawLayerForCompositionView(
   }
 
   if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
-    // デバッグ文字列生成は
-    // デバッグカテゴリ有効時のみ実行（毎フレームのコスト削減）
-    if (videoDebugOut) {
-      const bool loaded = videoLayer->isLoaded();
-      const int64_t cf = layer->currentFrame();
-      const FramePosition ip = layer->inPoint();
-      const FramePosition op = layer->outPoint();
-      const bool active =
-          layer->isActiveAt(FramePosition(static_cast<int>(cf)));
-      const QSize source = QSize(std::max(0, layer->sourceSize().width), std::max(0, layer->sourceSize().height));
-      *videoDebugOut = QString("[Video] loaded=%1 size=%2x%3 active=%4 range=[%5,%6] curFrame=%7")
-                           .arg(loaded)
-                           .arg(source.width())
-                           .arg(source.height())
-                           .arg(active)
-                           .arg(ip.framePosition())
-                           .arg(op.framePosition())
-                           .arg(cf);
-    }
     QImage frame = videoLayer->currentFrameToQImage();
+    bool usedSyncFallback = false;
     if (frame.isNull() && videoLayer->hasCurrentFrameBuffer()) {
       frame = videoLayer->currentFrameBuffer().toQImage();
+    }
+    if (frame.isNull()) {
+      frame = videoLayer->decodeFrameToQImage(layer->currentFrame());
+      usedSyncFallback = !frame.isNull();
+    }
+    if (videoDebugOut) {
+      const bool active =
+          layer->isActiveAt(FramePosition(static_cast<int>(layer->currentFrame())));
+      *videoDebugOut =
+          QStringLiteral("[Video] %1 active=%2 syncFallback=%3")
+              .arg(videoLayer->debugState())
+              .arg(active)
+              .arg(usedSyncFallback ? QStringLiteral("hit")
+                                    : QStringLiteral("miss"));
     }
     if (!frame.isNull()) {
       applySurfaceAndDraw(frame, localRect, true);
@@ -1313,6 +1309,13 @@ public:
       !qEnvironmentVariableIsSet("ARTIFACT_COMPOSITION_DISABLE_GPU_BLEND");
   QString lastVideoDebug_;
   QString lastEmittedVideoDebug_;
+  QString lastRenderPathSummary_;
+  qint64 lastSetupMs_ = 0;
+  qint64 lastBasePassMs_ = 0;
+  qint64 lastLayerPassMs_ = 0;
+  qint64 lastOverlayMs_ = 0;
+  qint64 lastFlushMs_ = 0;
+  qint64 lastPresentMs_ = 0;
   QVector<QMetaObject::Connection> layerChangedConnections_;
   QMetaObject::Connection compositionChangedConnection_;
 
@@ -2597,13 +2600,96 @@ CompositionRenderController::frameDebugSnapshot() const {
   snapshot.compareMode = ArtifactCore::FrameDebugCompareMode::Disabled;
   snapshot.compareTargetId = QString();
 
+  if (playback) {
+    ArtifactCore::FrameDebugResourceRecord playbackResource;
+    playbackResource.label = QStringLiteral("Playback");
+    playbackResource.type = QStringLiteral("timeline");
+    playbackResource.relation = QStringLiteral("service");
+    playbackResource.cacheHit = playback->droppedFrameCount() == 0;
+    playbackResource.stale = false;
+    playbackResource.note =
+        QStringLiteral("state=%1 droppedFrames=%2")
+            .arg(snapshot.playbackState)
+            .arg(playback->droppedFrameCount());
+    snapshot.resources.push_back(playbackResource);
+  }
+
+  if (!impl_->lastRenderPathSummary_.isEmpty()) {
+    ArtifactCore::FrameDebugResourceRecord renderPathResource;
+    renderPathResource.label = QStringLiteral("Render Path");
+    renderPathResource.type = QStringLiteral("composition");
+    renderPathResource.relation = QStringLiteral("path");
+    renderPathResource.cacheHit = impl_->blendPipelineReady_;
+    renderPathResource.stale = false;
+    renderPathResource.note = impl_->lastRenderPathSummary_;
+    snapshot.resources.push_back(renderPathResource);
+  }
+
+  if (!impl_->lastVideoDebug_.isEmpty()) {
+    ArtifactCore::FrameDebugResourceRecord videoResource;
+    videoResource.label = QStringLiteral("Video Decode");
+    videoResource.type = QStringLiteral("video");
+    videoResource.relation = QStringLiteral("decode");
+    videoResource.cacheHit =
+        !impl_->lastVideoDebug_.contains(QStringLiteral("syncFallback=miss"));
+    videoResource.stale =
+        impl_->lastVideoDebug_.contains(QStringLiteral("decoding=true"));
+    videoResource.note = impl_->lastVideoDebug_;
+    snapshot.resources.push_back(videoResource);
+  }
+
+  if (impl_->gpuTextureCacheManager_) {
+    const auto stats = impl_->gpuTextureCacheManager_->stats();
+    ArtifactCore::FrameDebugResourceRecord textureCacheResource;
+    textureCacheResource.label = QStringLiteral("GPU Texture Cache");
+    textureCacheResource.type = QStringLiteral("cache");
+    textureCacheResource.relation = QStringLiteral("upload");
+    textureCacheResource.cacheHit = stats.hitCount >= stats.missCount;
+    textureCacheResource.stale = false;
+    textureCacheResource.note =
+        QStringLiteral("entries=%1 bytes=%2 hits=%3 misses=%4")
+            .arg(stats.entryCount)
+            .arg(static_cast<qulonglong>(stats.memoryBytes))
+            .arg(static_cast<qulonglong>(stats.hitCount))
+            .arg(static_cast<qulonglong>(stats.missCount));
+    snapshot.resources.push_back(textureCacheResource);
+  }
+
   if (comp) {
-    ArtifactCore::FrameDebugPassRecord pass;
-    pass.name = QStringLiteral("composition");
-    pass.kind = ArtifactCore::FrameDebugPassKind::Composite;
-    pass.status = snapshot.failed ? ArtifactCore::FrameDebugPassStatus::Failed
-                                  : ArtifactCore::FrameDebugPassStatus::Success;
-    pass.note = QStringLiteral("summary-only");
+    auto makePass = [&](const QString &name, ArtifactCore::FrameDebugPassKind kind,
+                        qint64 durationMs, const QString &note = QString()) {
+      ArtifactCore::FrameDebugPassRecord pass;
+      pass.name = name;
+      pass.kind = kind;
+      pass.status =
+          snapshot.failed ? ArtifactCore::FrameDebugPassStatus::Failed
+                          : ArtifactCore::FrameDebugPassStatus::Success;
+      pass.durationUs = std::max<qint64>(0, durationMs) * 1000;
+      pass.note = note;
+      return pass;
+    };
+
+    ArtifactCore::FrameDebugPassRecord setupPass =
+        makePass(QStringLiteral("setup"), ArtifactCore::FrameDebugPassKind::Clear,
+                 impl_->lastSetupMs_);
+    ArtifactCore::FrameDebugPassRecord basePass =
+        makePass(QStringLiteral("base"), ArtifactCore::FrameDebugPassKind::Clear,
+                 impl_->lastBasePassMs_);
+    ArtifactCore::FrameDebugPassRecord layerPass =
+        makePass(QStringLiteral("layer"), ArtifactCore::FrameDebugPassKind::Draw,
+                 impl_->lastLayerPassMs_, impl_->lastRenderPathSummary_);
+    ArtifactCore::FrameDebugPassRecord overlayPass =
+        makePass(QStringLiteral("overlay"),
+                 ArtifactCore::FrameDebugPassKind::Composite,
+                 impl_->lastOverlayMs_);
+    ArtifactCore::FrameDebugPassRecord flushPass =
+        makePass(QStringLiteral("flush"),
+                 ArtifactCore::FrameDebugPassKind::Resolve,
+                 impl_->lastFlushMs_);
+    ArtifactCore::FrameDebugPassRecord presentPass =
+        makePass(QStringLiteral("present"),
+                 ArtifactCore::FrameDebugPassKind::Readback,
+                 impl_->lastPresentMs_);
 
     ArtifactCore::FrameDebugAttachmentRecord outputAttachment;
     outputAttachment.name = QStringLiteral("viewport");
@@ -2621,7 +2707,7 @@ CompositionRenderController::frameDebugSnapshot() const {
     outputAttachment.texture.sampleCount = 1;
     outputAttachment.texture.srgb = false;
     outputAttachment.readOnly = true;
-    pass.outputs.push_back(outputAttachment);
+    presentPass.outputs.push_back(outputAttachment);
 
     snapshot.attachments.push_back(outputAttachment);
 
@@ -2644,10 +2730,16 @@ CompositionRenderController::frameDebugSnapshot() const {
       selectedResource.texture.arrayLayers = 1;
       selectedResource.texture.sampleCount = 1;
       selectedResource.texture.srgb = false;
+      selectedResource.note = impl_->lastVideoDebug_;
       snapshot.resources.push_back(selectedResource);
     }
 
-    snapshot.passes.push_back(pass);
+    snapshot.passes.push_back(setupPass);
+    snapshot.passes.push_back(basePass);
+    snapshot.passes.push_back(layerPass);
+    snapshot.passes.push_back(overlayPass);
+    snapshot.passes.push_back(flushPass);
+    snapshot.passes.push_back(presentPass);
   }
 
   ArtifactCore::TraceRecorder::instance().recordFrameDebugSnapshot(snapshot);
@@ -4349,14 +4441,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               ((hasSelection && !isLayerSelected(selectedIds, layer))
                    ? kGhostOpacityScale
                    : 1.0f);
+          if (opacity <= 0.0f) {
+            continue;
+          }
           QString *dbgOut =
               QLoggingCategory::defaultCategory()->isDebugEnabled()
                   ? &lastVideoDebug_
                   : nullptr;
-          // GPU blend path applies layer opacity in the blend step below, so
-          // the layer source itself stays at full strength here.
           drawLayerForCompositionView(
-              layer.get(), renderer_.get(), 1.0f, dbgOut, &surfaceCache_,
+              layer.get(), renderer_.get(), opacity, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(),
               false, lod, has3DCamera ? &cameraViewMatrix : nullptr,
               has3DCamera ? &cameraProjMatrix : nullptr);
@@ -5021,6 +5114,35 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     } else {
       averageFrameTimeMs_ = 0.0;
     }
+    lastSetupMs_ = setupMs;
+    lastBasePassMs_ = basePassMs;
+    lastLayerPassMs_ = layerPassMs;
+    lastOverlayMs_ = overlayMs;
+    lastFlushMs_ = flushMs;
+    lastPresentMs_ = presentMs;
+    const auto textureCacheStats = gpuTextureCacheManager_
+                                       ? gpuTextureCacheManager_->stats()
+                                       : GPUTextureCacheStats{};
+    lastRenderPathSummary_ =
+        QStringLiteral(
+            "path=%1 gpuBlendEnabled=%2 gpuBlendReady=%3 layersTotal=%4 "
+            "layersDrawn=%5 surfaceUploadLayers=%6 cpuRasterLayers=%7 "
+            "frameOutOfRange=%8 previewDownsample=%9 effectiveDownsample=%10 "
+            "viewportInteracting=%11 cacheEntries=%12 cacheBytes=%13")
+            .arg(pipelineEnabled ? QStringLiteral("gpu-blend")
+                                 : QStringLiteral("fallback"))
+            .arg(gpuBlendEnabled_)
+            .arg(blendPipelineReady_)
+            .arg(layers.size())
+            .arg(drawnLayerCount)
+            .arg(surfaceUploadLayerCount)
+            .arg(cpuRasterLayerCount)
+            .arg(frameOutOfRange)
+            .arg(previewDownsample_)
+            .arg(effectivePreviewDownsample)
+            .arg(viewportInteracting_)
+            .arg(textureCacheStats.entryCount)
+            .arg(static_cast<qulonglong>(textureCacheStats.memoryBytes));
     if (compositionViewLog().isDebugEnabled()) {
       if (frameMs >= 16) {
         qCDebug(compositionViewLog)

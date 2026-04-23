@@ -31,6 +31,7 @@ import Artifact.Widgets.FrameDebugViewWidget;
 import Artifact.Widgets.FrameResourceInspectorWidget;
 import Artifact.Widgets.FrameStateDiffWidget;
 import Artifact.Widgets.TraceTimelineWidget;
+import Thread.Helper;
 import Frame.Debug;
 import Playback.State;
 import Utils.String.UniString;
@@ -78,6 +79,9 @@ public:
     QWidget* statePage_ = nullptr;
     QLabel* stateSummary_ = nullptr;
     QPlainTextEdit* stateText_ = nullptr;
+    QWidget* playbackPage_ = nullptr;
+    QLabel* playbackSummary_ = nullptr;
+    QPlainTextEdit* playbackText_ = nullptr;
     QWidget* tracePage_ = nullptr;
     QLabel* traceSummary_ = nullptr;
     QPlainTextEdit* traceText_ = nullptr;
@@ -183,6 +187,19 @@ public:
         stateText_->setReadOnly(true);
         stateText_->setLineWrapMode(QPlainTextEdit::NoWrap);
         stateLayout->addWidget(stateText_);
+        playbackPage_ = new QWidget(tabs_);
+        auto* playbackLayout = new QVBoxLayout(playbackPage_);
+        playbackLayout->setContentsMargins(0, 0, 0, 0);
+        playbackLayout->setSpacing(0);
+        playbackSummary_ = new QLabel(playbackPage_);
+        playbackSummary_->setTextFormat(Qt::PlainText);
+        playbackSummary_->setWordWrap(true);
+        playbackSummary_->setMinimumHeight(56);
+        playbackLayout->addWidget(playbackSummary_);
+        playbackText_ = new QPlainTextEdit(playbackPage_);
+        playbackText_->setReadOnly(true);
+        playbackText_->setLineWrapMode(QPlainTextEdit::NoWrap);
+        playbackLayout->addWidget(playbackText_);
         tracePage_ = new QWidget(tabs_);
         auto* traceLayout = new QVBoxLayout(tracePage_);
         traceLayout->setContentsMargins(0, 0, 0, 0);
@@ -282,6 +299,7 @@ public:
 
         tabs_->addTab(capturePage_, QStringLiteral("Capture"));
         tabs_->addTab(statePage_, QStringLiteral("State"));
+        tabs_->addTab(playbackPage_, QStringLiteral("Playback"));
         tabs_->addTab(tracePage_, QStringLiteral("Trace"));
         tabs_->addTab(pipelinePage_, QStringLiteral("Pipeline"));
         tabs_->addTab(resourcePage_, QStringLiteral("Resource"));
@@ -398,6 +416,114 @@ public:
                                           : QStringLiteral("droppedFrames=<no service>");
         return QStringLiteral("preview=%1  %2  %3  %4  %5  %6")
                 .arg(previewQuality, cacheHealth, ramPreview, renderTiming, audioOffset, droppedFrames);
+    }
+
+    static QString sharedThreadPoolText()
+    {
+        const auto snapshot = ArtifactCore::sharedBackgroundThreadPoolSnapshot();
+        return QStringLiteral("pool=%1 active=%2/%3 expiry=%4ms")
+                .arg(snapshot.poolName.isEmpty() ? QStringLiteral("<unnamed>")
+                                                 : snapshot.poolName)
+                .arg(snapshot.activeThreadCount)
+                .arg(snapshot.maxThreadCount)
+                .arg(snapshot.expiryTimeoutMs);
+    }
+
+    static QString playbackDiagnosticsText(ArtifactPlaybackService* playbackSvc,
+                                           const ArtifactCore::FrameDebugSnapshot& snapshot,
+                                           CompositionRenderController* controller)
+    {
+        QStringList parts;
+        parts << QStringLiteral("state=%1")
+                     .arg(playbackSvc ? playbackStateText(playbackSvc->state())
+                                      : QStringLiteral("<no service>"));
+        parts << QStringLiteral("frame=%1").arg(snapshot.frame.framePosition());
+        parts << QStringLiteral("renderLast=%1ms")
+                     .arg(QString::number(snapshot.renderLastFrameMs, 'f', 2));
+        parts << QStringLiteral("renderAvg=%1ms")
+                     .arg(QString::number(snapshot.renderAverageFrameMs, 'f', 2));
+        parts << (controller ? renderTimingText(controller)
+                             : QStringLiteral("renderTiming=<no controller>"));
+        parts << sharedThreadPoolText();
+        parts << QStringLiteral("audioOffset=%1s")
+                     .arg(playbackSvc ? QString::number(playbackSvc->audioOffsetSeconds(), 'f', 3)
+                                      : QStringLiteral("<no service>"));
+        parts << QStringLiteral("dropped=%1")
+                     .arg(playbackSvc ? QString::number(playbackSvc->droppedFrameCount())
+                                      : QStringLiteral("<no service>"));
+        return parts.join(QStringLiteral("  "));
+    }
+
+    static QString passSummaryText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    {
+        int failed = 0;
+        int pending = 0;
+        qint64 totalUs = 0;
+        int draw = 0;
+        int composite = 0;
+        int upload = 0;
+        for (const auto& pass : snapshot.passes) {
+            totalUs += pass.durationUs;
+            switch (pass.status) {
+            case ArtifactCore::FrameDebugPassStatus::Failed:
+                ++failed;
+                break;
+            case ArtifactCore::FrameDebugPassStatus::Pending:
+                ++pending;
+                break;
+            default:
+                break;
+            }
+            switch (pass.kind) {
+            case ArtifactCore::FrameDebugPassKind::Draw:
+                ++draw;
+                break;
+            case ArtifactCore::FrameDebugPassKind::Composite:
+                ++composite;
+                break;
+            case ArtifactCore::FrameDebugPassKind::Upload:
+                ++upload;
+                break;
+            default:
+                break;
+            }
+        }
+        return QStringLiteral("passes=%1 failed=%2 pending=%3 draw=%4 upload=%5 composite=%6 totalUs=%7")
+                .arg(static_cast<int>(snapshot.passes.size()))
+                .arg(failed)
+                .arg(pending)
+                .arg(draw)
+                .arg(upload)
+                .arg(composite)
+                .arg(totalUs);
+    }
+
+    static QString topPassesText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    {
+        if (snapshot.passes.empty()) {
+            return QStringLiteral("topPasses=<none>");
+        }
+
+        std::vector<ArtifactCore::FrameDebugPassRecord> passes = snapshot.passes;
+        std::sort(passes.begin(), passes.end(), [](const auto& a, const auto& b) {
+            if (a.durationUs == b.durationUs) {
+                return a.name < b.name;
+            }
+            return a.durationUs > b.durationUs;
+        });
+
+        const int rows = std::min<int>(3, static_cast<int>(passes.size()));
+        QStringList items;
+        items.reserve(rows);
+        for (int i = 0; i < rows; ++i) {
+            const auto& pass = passes[static_cast<std::size_t>(i)];
+            items << QStringLiteral("%1:%2us[%3/%4]")
+                          .arg(pass.name.isEmpty() ? QStringLiteral("<unnamed>") : pass.name)
+                          .arg(pass.durationUs)
+                          .arg(ArtifactCore::toString(pass.kind))
+                          .arg(ArtifactCore::toString(pass.status));
+        }
+        return QStringLiteral("topPasses=%1").arg(items.join(QStringLiteral(" | ")));
     }
 
     static QString captureEntryLabel(const ArtifactCore::FrameDebugCapture& capture, bool isCurrent)
@@ -723,6 +849,56 @@ public:
                                        .arg(qualityText)
                                        .arg(backendText)
                                        .arg(queueText));
+        }
+
+        if (playbackText_ || playbackSummary_) {
+            const QString poolText = sharedThreadPoolText();
+            const QString playbackText = playbackSvc ? playbackStateText(playbackSvc->state())
+                                                     : QStringLiteral("<no service>");
+            const QString renderTiming = playbackSvc
+                                            ? QStringLiteral("renderLast=%1ms  renderAvg=%2ms")
+                                                  .arg(QString::number(controllerSnapshot.renderLastFrameMs, 'f', 2))
+                                                  .arg(QString::number(controllerSnapshot.renderAverageFrameMs, 'f', 2))
+                                            : QStringLiteral("renderLast=<no service>  renderAvg=<no service>");
+            const QString playbackQuality = playbackQualityText(playbackSvc, controllerSnapshot, controller_);
+
+            if (playbackSummary_) {
+                playbackSummary_->setText(QStringLiteral("playback=%1  frame=%2  %3  pool=%4  queueJobs=%5")
+                                              .arg(playbackText)
+                                              .arg(controllerSnapshot.frame.framePosition())
+                                              .arg(renderTiming)
+                                              .arg(poolText)
+                                              .arg(queueSvc ? queueSvc->jobCount() : 0));
+                playbackSummary_->setToolTip(QStringLiteral("%1  %2")
+                                                 .arg(playbackQuality, playbackDiagnosticsText(playbackSvc, controllerSnapshot, controller_)));
+            }
+
+            if (playbackText_) {
+                QStringList lines;
+                lines << QStringLiteral("Playback");
+                lines << QStringLiteral("state: %1").arg(playbackText);
+                lines << QStringLiteral("frame: %1").arg(controllerSnapshot.frame.framePosition());
+                lines << QStringLiteral("passSummary: %1").arg(passSummaryText(controllerSnapshot));
+                lines << QStringLiteral("topPasses: %1").arg(topPassesText(controllerSnapshot));
+                lines << QStringLiteral("renderLastFrameMs: %1").arg(QString::number(controllerSnapshot.renderLastFrameMs, 'f', 2));
+                lines << QStringLiteral("renderAverageFrameMs: %1").arg(QString::number(controllerSnapshot.renderAverageFrameMs, 'f', 2));
+                lines << QStringLiteral("renderBackend: %1")
+                              .arg(controllerSnapshot.renderBackend.isEmpty() ? QStringLiteral("<none>")
+                                                                              : controllerSnapshot.renderBackend);
+                lines << QStringLiteral("audioOffsetSeconds: %1")
+                              .arg(playbackSvc ? QString::number(playbackSvc->audioOffsetSeconds(), 'f', 3)
+                                               : QStringLiteral("<no service>"));
+                lines << QStringLiteral("droppedFrames: %1")
+                              .arg(playbackSvc ? QString::number(playbackSvc->droppedFrameCount())
+                                               : QStringLiteral("<no service>"));
+                lines << QStringLiteral("ramPreview: %1").arg(ramPreviewText(playbackSvc));
+                lines << QStringLiteral("previewQuality: %1").arg(previewQualityText());
+                lines << QStringLiteral("threadPool: %1").arg(poolText);
+                lines << QStringLiteral("renderTiming: %1")
+                              .arg(controller_ ? renderTimingText(controller_)
+                                               : QStringLiteral("<no controller>"));
+                playbackText_->setPlainText(lines.join(QStringLiteral("\n")));
+            }
         }
 
         if (overviewSummary_) {

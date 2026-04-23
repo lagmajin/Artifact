@@ -91,6 +91,8 @@ import Artifact.Effect.Rasterizer.DropShadow;
 import BrightnessEffect;
 import ExposureEffect;
 import HueAndSaturation;
+import ColorWheelsEffect;
+import CurvesEffect;
 import Artifact.Effect.Glow;
 import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Keying.ChromaKey;
@@ -1492,6 +1494,12 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
     });
     effectMenu.addAction("Hue / Saturation", [addAndRefresh]() {
       addAndRefresh(std::make_shared<HueAndSaturation>());
+    });
+    effectMenu.addAction("Color Wheels", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<ColorWheelsEffect>());
+    });
+    effectMenu.addAction("Curves", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<CurvesEffect>());
     });
     effectMenu.addSeparator();
     effectMenu.addAction("Chroma Key", [addAndRefresh]() {

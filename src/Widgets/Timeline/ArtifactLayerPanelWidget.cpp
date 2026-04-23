@@ -823,6 +823,28 @@ struct VisibleRow {
  LayerPresentationBadgeTone auxiliaryTone = LayerPresentationBadgeTone::Neutral;
 };
 
+bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
+                             const TimelineLayerDisplayMode mode,
+                             const LayerID& selectedLayerId)
+{
+ if (!layer) {
+  return false;
+ }
+ switch (mode) {
+ case TimelineLayerDisplayMode::AudioOnly:
+  return layer->hasAudio();
+ case TimelineLayerDisplayMode::VideoOnly:
+  return layer->hasVideo();
+ case TimelineLayerDisplayMode::SelectedOnly:
+  return !selectedLayerId.isNil() && layer->id() == selectedLayerId;
+ case TimelineLayerDisplayMode::AllLayers:
+ case TimelineLayerDisplayMode::AnimatedOnly:
+ case TimelineLayerDisplayMode::ImportantAndKeyframed:
+ default:
+  return true;
+ }
+}
+
 QString matteTypeToText(MatteType type)
 {
  switch (type) {
@@ -1164,13 +1186,16 @@ public:
      if (stack.contains(nodeId)) return; // cycle guard
      if (emitted.contains(nodeId)) return;
 
-     const auto nodeChildren = children.value(nodeId);
+   const auto nodeChildren = children.value(nodeId);
    const auto panelGroups = layerPanelPropertyGroups(node);
    const auto matteRefs = node->matteReferences();
    const bool hasMaskStack = node->hasMasks();
    const bool hasMatteStack = !matteRefs.empty();
    const bool hasChildren = !nodeChildren.isEmpty() || !panelGroups.empty() || hasMaskStack || hasMatteStack;
    const bool expanded = expandedByLayerId.value(nodeId, true);
+   if (!layerMatchesDisplayMode(node, displayMode, selectedLayerId)) {
+    return;
+   }
    const auto presentation = describeLayerPresentation(node);
    visibleRows.push_back(VisibleRow{
     node,

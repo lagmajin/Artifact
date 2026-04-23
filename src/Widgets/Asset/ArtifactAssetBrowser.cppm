@@ -47,6 +47,8 @@ module;
 #include <QHBoxLayout>
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <cstdint>
+#include <atomic>
 #include <algorithm>
 #include <wobjectimpl.h>
 
@@ -69,6 +71,7 @@ import AssetMenuModel;
 import AssetDirectoryModel;
 import Utils.String.UniString;
 import File.TypeDetector;
+import Codec.Thumbnail.FFmpeg;
 import Artifact.Audio.Waveform;
 import Audio.Segment;
 import Audio.SimpleWav;
@@ -418,7 +421,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
  class ArtifactAssetBrowser::Impl
  {
  private:
-  QHash<QString, QIcon> thumbnailCache_;  // Cache thumbnails by file path
+ QHash<QString, QIcon> thumbnailCache_;  // Cache thumbnails by file path
   QSize thumbnailSize_{kAssetThumbnailDefaultPx, kAssetThumbnailDefaultPx};
   QIcon defaultFileIcon_;
   QIcon defaultImageIcon_;
@@ -426,11 +429,22 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   QIcon defaultAudioIcon_;
   QIcon defaultFontIcon_;
   QSet<QString> unusedAssetPaths_;
+  std::atomic<std::uint64_t> thumbnailGeneration_{0};
+
+  // Async preview thumbnail generation for image / video files
+  struct PendingPreviewJob {
+    QString filePath;
+    QFutureWatcher<QImage>* watcher = nullptr;
+    std::uint64_t generation = 0;
+  };
+  QHash<QString, PendingPreviewJob> pendingPreviewJobs_;
+  QSet<QString> failedPreviewPaths_;
 
   // Async waveform thumbnail generation
   struct PendingWaveJob {
     QString filePath;
     QFutureWatcher<QIcon>* watcher = nullptr;
+    std::uint64_t generation = 0;
   };
   QHash<QString, PendingWaveJob> pendingWaveJobs_;
   QSet<QString> failedWavePaths_;  // Don't retry failed loads
@@ -471,6 +485,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   QIcon generateThumbnail(const QString& filePath);
   QIcon getFileIcon(const QString& fileName, const QString& filePath);
   void clearThumbnailCache();
+  void startAsyncPreviewThumbnailGeneration(const QString& filePath);
    bool isImageFile(const QString& fileName) const;
    bool isVideoFile(const QString& fileName) const;
    bool isAudioFile(const QString& fileName) const;
@@ -516,9 +531,30 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   }
  }
 
- ArtifactAssetBrowser::Impl::~Impl()
- {
- }
+ArtifactAssetBrowser::Impl::~Impl()
+{
+  thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
+
+  for (auto it = pendingPreviewJobs_.begin(); it != pendingPreviewJobs_.end(); ++it) {
+    if (auto* watcher = it.value().watcher) {
+      QObject::disconnect(watcher, nullptr, nullptr, nullptr);
+      watcher->cancel();
+      watcher->waitForFinished();
+      delete watcher;
+    }
+  }
+  pendingPreviewJobs_.clear();
+
+  for (auto it = pendingWaveJobs_.begin(); it != pendingWaveJobs_.end(); ++it) {
+    if (auto* watcher = it.value().watcher) {
+      QObject::disconnect(watcher, nullptr, nullptr, nullptr);
+      watcher->cancel();
+      watcher->waitForFinished();
+      delete watcher;
+    }
+  }
+  pendingWaveJobs_.clear();
+}
 
  int ArtifactAssetBrowser::Impl::thumbnailSizePx() const
  {
@@ -702,6 +738,8 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
    return thumbnailCache_[filePath];
   }
 
+  const std::uint64_t currentGeneration = thumbnailGeneration_.load(std::memory_order_relaxed);
+
   QFileInfo fileInfo(filePath);
 
   // For folders, use folder icon
@@ -717,56 +755,31 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
 
   // Generate thumbnail for image files
   if (isImageFile(fileInfo.fileName())) {
-   QString oiioError;
-   const bool preferQtReaderFirst =
-       fileInfo.suffix().compare(QStringLiteral("webp"), Qt::CaseInsensitive) == 0;
-   QImage image;
-   if (!preferQtReaderFirst) {
-    image = loadImageThumbnailViaOIIO(filePath, thumbnailSize_, &oiioError);
+   if (auto it = pendingPreviewJobs_.find(filePath); it != pendingPreviewJobs_.end()) {
+    if (it.value().generation == currentGeneration) {
+     return defaultImageIcon_;
+    }
+    pendingPreviewJobs_.erase(it);
    }
-   if (!image.isNull()) {
-    QIcon icon(QPixmap::fromImage(image));
-    thumbnailCache_[filePath] = icon;
-    return icon;
+   if (failedPreviewPaths_.contains(filePath)) {
+    return defaultImageIcon_;
    }
-
-   QImageReader reader(filePath);
-   reader.setAutoTransform(true);
-   const QImage fallbackImage = reader.read();
-   if (!fallbackImage.isNull()) {
-    const QPixmap scaled = QPixmap::fromImage(fallbackImage).scaled(
-        thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    const QIcon icon(scaled);
-    thumbnailCache_[filePath] = icon;
-    return icon;
-   }
-   const QString fallbackError = reader.errorString();
-   if (oiioError.isEmpty()) {
-    qWarning() << "[AssetBrowser] Failed to load image thumbnail:" << filePath
-               << "QImageReader:" << fallbackError;
-   } else {
-    qWarning() << "[AssetBrowser] Failed to load image thumbnail via OIIO:"
-               << filePath << oiioError << "QImageReader:" << fallbackError;
-   }
+   startAsyncPreviewThumbnailGeneration(filePath);
+   return defaultImageIcon_;
   }
 
   // Extract first frame as thumbnail for video files
   if (isVideoFile(fileInfo.fileName())) {
-      cv::VideoCapture cap(filePath.toLocal8Bit().constData());
-      if (cap.isOpened()) {
-          cv::Mat frame;
-          if (cap.read(frame) && !frame.empty()) {
-              cv::Mat rgb;
-              cv::cvtColor(frame, rgb, cv::COLOR_BGR2RGB);
-              QImage qimg(rgb.data, rgb.cols, rgb.rows, rgb.step, QImage::Format_RGB888);
-              QPixmap pixmap = QPixmap::fromImage(qimg).scaled(thumbnailSize_, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-              QIcon icon(pixmap);
-              thumbnailCache_[filePath] = icon;
-              return icon;
-          }
+      if (auto it = pendingPreviewJobs_.find(filePath); it != pendingPreviewJobs_.end()) {
+       if (it.value().generation == currentGeneration) {
+        return defaultVideoIcon_;
+       }
+       pendingPreviewJobs_.erase(it);
       }
-      // Fallback
-      thumbnailCache_[filePath] = defaultVideoIcon_;
+      if (failedPreviewPaths_.contains(filePath)) {
+       return defaultVideoIcon_;
+      }
+      startAsyncPreviewThumbnailGeneration(filePath);
       return defaultVideoIcon_;
   }
 
@@ -799,7 +812,105 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
 
  void ArtifactAssetBrowser::Impl::clearThumbnailCache()
  {
+  thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
   thumbnailCache_.clear();
+  failedPreviewPaths_.clear();
+  failedWavePaths_.clear();
+  if (fileView_) {
+    fileView_->update();
+  }
+ }
+
+void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QString& filePath)
+{
+  if (pendingPreviewJobs_.contains(filePath)) {
+    const auto existing = pendingPreviewJobs_.value(filePath);
+    if (existing.generation == thumbnailGeneration_.load(std::memory_order_relaxed)) {
+      return;
+    }
+    pendingPreviewJobs_.remove(filePath);
+  }
+  const quint64 jobGeneration = thumbnailGeneration_.load(std::memory_order_relaxed);
+  auto* watcher = new QFutureWatcher<QImage>();
+  QObject::connect(watcher, &QFutureWatcher<QImage>::finished, [this, watcher, filePath, jobGeneration]() {
+    const QImage image = watcher->result();
+    pendingPreviewJobs_.remove(filePath);
+    if (jobGeneration != thumbnailGeneration_.load(std::memory_order_relaxed)) {
+      watcher->deleteLater();
+      return;
+    }
+    if (!image.isNull()) {
+      const QIcon icon(QPixmap::fromImage(image));
+      thumbnailCache_[filePath] = icon;
+      if (assetModel_ && assetModel_->updateItemIconByPath(filePath, icon)) {
+        // model updated via dataChanged
+      } else if (fileView_) {
+        fileView_->update();
+      }
+    } else {
+      failedPreviewPaths_.insert(filePath);
+    }
+    watcher->deleteLater();
+  });
+
+  const QSize thumbSize = thumbnailSize_;
+  QFuture<QImage> future = QtConcurrent::run([filePath, thumbSize]() -> QImage {
+    const QFileInfo fileInfo(filePath);
+    const QString suffix = fileInfo.suffix().toLower();
+    const auto isImageExt = [&]() {
+      return suffix == QStringLiteral("png")
+          || suffix == QStringLiteral("jpg")
+          || suffix == QStringLiteral("jpeg")
+          || suffix == QStringLiteral("bmp")
+          || suffix == QStringLiteral("gif")
+          || suffix == QStringLiteral("tga")
+          || suffix == QStringLiteral("tiff")
+          || suffix == QStringLiteral("exr")
+          || suffix == QStringLiteral("webp");
+    };
+    const auto isVideoExt = [&]() {
+      return suffix == QStringLiteral("mp4")
+          || suffix == QStringLiteral("mov")
+          || suffix == QStringLiteral("avi")
+          || suffix == QStringLiteral("mkv")
+          || suffix == QStringLiteral("webm")
+          || suffix == QStringLiteral("flv");
+    };
+
+    if (isImageExt()) {
+      QString oiioError;
+      const bool preferQtReaderFirst = suffix == QStringLiteral("webp");
+      QImage image;
+      if (!preferQtReaderFirst) {
+        image = loadImageThumbnailViaOIIO(filePath, thumbSize, &oiioError);
+      }
+      if (!image.isNull()) {
+        return image;
+      }
+
+      QImageReader reader(filePath);
+      reader.setAutoTransform(true);
+      const QImage fallbackImage = reader.read();
+      if (!fallbackImage.isNull()) {
+        return fallbackImage.scaled(thumbSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+      }
+      return {};
+    }
+
+    if (isVideoExt()) {
+      FFmpegThumbnailExtractor extractor;
+      const auto result = extractor.extractThumbnail(UniString::fromQString(filePath));
+      if (result.success && !result.image.isNull()) {
+        return result.image.scaled(thumbSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+      }
+      return {};
+    }
+
+    return {};
+  });
+
+  watcher->setFuture(future);
+  pendingPreviewJobs_[filePath] = {filePath, watcher, jobGeneration};
  }
 
 void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
@@ -1911,8 +2022,12 @@ ArtifactCore::AudioSegment ArtifactAssetBrowser::Impl::loadAudioFile(const QStri
 QIcon ArtifactAssetBrowser::Impl::generateAudioWaveformThumbnail(const QString& audioFilePath)
 {
     // Check if we already have a pending job for this file
-    if (pendingWaveJobs_.contains(audioFilePath)) {
-        return defaultAudioIcon_;  // Return placeholder while generating
+    const std::uint64_t currentGeneration = thumbnailGeneration_.load(std::memory_order_relaxed);
+    if (auto it = pendingWaveJobs_.find(audioFilePath); it != pendingWaveJobs_.end()) {
+        if (it.value().generation == currentGeneration) {
+            return defaultAudioIcon_;  // Return placeholder while generating
+        }
+        pendingWaveJobs_.erase(it);
     }
 
     // Check if this file previously failed
@@ -1935,26 +2050,35 @@ QIcon ArtifactAssetBrowser::Impl::generateAudioWaveformThumbnail(const QString& 
 void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& audioFilePath)
 {
     if (pendingWaveJobs_.contains(audioFilePath)) {
-        return;  // Already pending
+        const auto existing = pendingWaveJobs_.value(audioFilePath);
+        if (existing.generation == thumbnailGeneration_.load(std::memory_order_relaxed)) {
+            return;  // Already pending
+        }
+        pendingWaveJobs_.remove(audioFilePath);
     }
 
+    const quint64 jobGeneration = thumbnailGeneration_.load(std::memory_order_relaxed);
     auto* watcher = new QFutureWatcher<QIcon>();
 
     // Connect finished signal
-    QObject::connect(watcher, &QFutureWatcher<QIcon>::finished, [this, watcher, audioFilePath]() {
+    QObject::connect(watcher, &QFutureWatcher<QIcon>::finished, [this, watcher, audioFilePath, jobGeneration]() {
         const QIcon icon = watcher->result();
+        pendingWaveJobs_.remove(audioFilePath);
+        if (jobGeneration != thumbnailGeneration_.load(std::memory_order_relaxed)) {
+            watcher->deleteLater();
+            return;
+        }
         if (!icon.isNull()) {
             thumbnailCache_[audioFilePath] = icon;
-            pendingWaveJobs_.remove(audioFilePath);
-
-            // Trigger view update for this item
-            if (fileView_) {
+            if (assetModel_ && assetModel_->updateItemIconByPath(audioFilePath, icon)) {
+                // model updated via dataChanged
+            } else if (fileView_) {
                 fileView_->update();
             }
+
         } else {
             // Mark as failed to avoid retry
             failedWavePaths_.insert(audioFilePath);
-            pendingWaveJobs_.remove(audioFilePath);
         }
         watcher->deleteLater();
     });
@@ -2037,7 +2161,7 @@ void ArtifactAssetBrowser::Impl::startAsyncWaveformGeneration(const QString& aud
     });
 
     watcher->setFuture(future);
-    pendingWaveJobs_[audioFilePath] = {audioFilePath, watcher};
+    pendingWaveJobs_[audioFilePath] = {audioFilePath, watcher, jobGeneration};
 }
 
 // ─────────────────────────────────────────────

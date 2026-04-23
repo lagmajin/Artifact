@@ -85,6 +85,8 @@ namespace Artifact {
    QAction* saveWorkspacePresetAction = nullptr;
    QAction* restoreWorkspaceSessionAction = nullptr;
    QMenu* windowPanelsMenu = nullptr;
+   QStringList cachedWorkspacePresetNames_;
+   QStringList cachedDockTitles_;
    ArtifactMainWindow* mainWindow = nullptr;
    QPointer<ArtifactReactiveEventEditorWindow> reactiveEventEditorWindow;
      int newBrowserCount_ = 1;
@@ -429,17 +431,27 @@ namespace Artifact {
 
  void ArtifactViewMenu::Impl::refreshWorkspacePresetMenu()
  {
-  if (!workspacePresetMenu) {
+ if (!workspacePresetMenu) {
    return;
   }
 
-  workspacePresetMenu->clear();
   if (!mainWindow) {
+   workspacePresetMenu->clear();
    workspacePresetMenu->setEnabled(false);
+   cachedWorkspacePresetNames_.clear();
    return;
   }
 
+  ArtifactWorkspaceManager manager;
+  const QStringList presets = manager.presetNames();
   workspacePresetMenu->setEnabled(true);
+
+  if (presets == cachedWorkspacePresetNames_ && !workspacePresetMenu->actions().isEmpty()) {
+   return;
+  }
+
+  cachedWorkspacePresetNames_ = presets;
+  workspacePresetMenu->clear();
   saveWorkspacePresetAction =
       workspacePresetMenu->addAction("現在のレイアウトを保存...");
   restoreWorkspaceSessionAction =
@@ -485,8 +497,6 @@ namespace Artifact {
 
   workspacePresetMenu->addSeparator();
 
-  ArtifactWorkspaceManager manager;
-  const QStringList presets = manager.presetNames();
   if (presets.isEmpty()) {
    QAction* empty = workspacePresetMenu->addAction("(no presets)");
    empty->setEnabled(false);
@@ -571,17 +581,31 @@ namespace Artifact {
  {
   impl_->mainWindow = mw;
   if (impl_) {
+   impl_->cachedWorkspacePresetNames_.clear();
+   impl_->cachedDockTitles_.clear();
    impl_->refreshWorkspaceState();
   }
  }
 
- void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
- {
+void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
+{
   if (!windowPanelsMenu || !mainWindow) return;
 
+  const QStringList titles = mainWindow->dockTitles();
+  if (titles == cachedDockTitles_) {
+   for (QAction* action : windowPanelsMenu->actions()) {
+    if (!action || !action->isCheckable()) {
+     continue;
+    }
+    const QString title = action->text();
+    action->setChecked(mainWindow->isDockVisible(title));
+   }
+   return;
+  }
+
+  cachedDockTitles_ = titles;
   windowPanelsMenu->clear();
 
-  const QStringList titles = mainWindow->dockTitles();
   for (const QString& title : titles) {
    QAction* action = windowPanelsMenu->addAction(title);
    action->setCheckable(true);
@@ -599,7 +623,7 @@ namespace Artifact {
    QAction* none = windowPanelsMenu->addAction("(no panels)");
    none->setEnabled(false);
   }
- }
+}
 
 };
 

@@ -214,6 +214,12 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const
     RefCntAutoPtr<ITexture> texture;
     device_->CreateTexture(texDesc, &initData, &texture);
     if (!texture) {
+        qWarning() << "[GPUTextureCache] CreateTexture failed"
+                   << "owner=" << ownerId
+                   << "cacheKey=" << cacheKey
+                   << "size=" << width << "x" << height
+                   << "stride=" << stride
+                   << "bytes=" << static_cast<qulonglong>(memoryBytes);
         ++missCount_;
         return {};
     }
