@@ -224,6 +224,9 @@ namespace {
   std::array<bool, kArtifactChannelCount> m_channelEnabled = makeDefaultChannelFlags();
   std::vector<ArtifactCore::Light> m_sceneLights;
   LODManager::DetailLevel detailLevel_ = LODManager::DetailLevel::High;
+  bool particle3DCameraActive_ = false;
+  QMatrix4x4 particleViewMatrix_;
+  QMatrix4x4 particleProjMatrix_;
 
 
   void initFrameQueries();
@@ -281,8 +284,18 @@ namespace {
   void setUseExternalMatrices(bool use)  { primitiveRenderer_.setUseExternalMatrices(use); }
   void setGizmoCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj) { primitiveRenderer3D_.setCameraMatrices(view, proj); }
   void resetGizmoCameraMatrices() { primitiveRenderer3D_.resetMatrices(); }
-  void set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj) { primitiveRenderer3D_.setCameraMatrices(view, proj); }
-  void reset3DCameraMatrices() { primitiveRenderer3D_.resetMatrices(); }
+  void set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj) {
+    primitiveRenderer3D_.setCameraMatrices(view, proj);
+    particle3DCameraActive_ = true;
+    particleViewMatrix_ = view;
+    particleProjMatrix_ = proj;
+  }
+  void reset3DCameraMatrices() {
+    primitiveRenderer3D_.resetMatrices();
+    particle3DCameraActive_ = false;
+    particleViewMatrix_.setToIdentity();
+    particleProjMatrix_.setToIdentity();
+  }
   void zoomAroundViewportPoint(Detail::float2 pos, float newZoom)
   {
    primitiveRenderer_.zoomAroundViewportPoint(toDiligentFloat2(pos), newZoom);
@@ -394,33 +407,30 @@ namespace {
     }
     ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
-    // Build an orthographic View + Projection that replicates PrimitiveRenderer2D's
-    // internal pan/zoom/viewport transform.
-    //
-    // The particle VS uses  mul(pos, ViewMatrix)  and  mul(viewPos, ProjMatrix),
-    // which is the HLSL row-vector convention with a column_major cbuffer.
-    // QMatrix4x4 stores data in column-major (column-vector convention), so
-    // passing constData() directly means the HLSL matrix equals M_qt, and
-    //   mul(v, M_qt)  ≡  v * M_qt  ≠  M_qt * v
-    // Every matrix must therefore be transposed before upload.
-    float panX = 0.0f, panY = 0.0f;
+    // The particle VS uses mul(pos, Matrix) row-vector convention, so Qt matrices
+    // must be transposed before upload.
+    float panX = 0.0f;
+    float panY = 0.0f;
     primitiveRenderer_.getPan(panX, panY);
     const float zoom = primitiveRenderer_.getZoom();
 
     qDebug() << "[ParticleRenderer] Drawing" << data.particles.size()
-             << "particles zoom=" << zoom << "pan=(" << panX << "," << panY << ")"
+             << "particles camera3D=" << particle3DCameraActive_
+             << "zoom=" << zoom << "pan=(" << panX << "," << panY << ")"
              << "viewport=(" << m_viewportWidth << "x" << m_viewportHeight << ")";
 
-    // View: canvas space → viewport pixel space  (translate then scale)
     QMatrix4x4 view;
-    view.translate(panX, panY, 0.0f);
-    view.scale(zoom, zoom, 1.0f);
-
-    // Proj: orthographic, viewport pixels → NDC, Y-axis flipped (screen Y-down)
     QMatrix4x4 proj;
-    proj.ortho(0.0f, m_viewportWidth, m_viewportHeight, 0.0f, -1.0f, 1.0f);
+    if (particle3DCameraActive_) {
+      view = particleViewMatrix_;
+      proj = particleProjMatrix_;
+    } else {
+      // 2D fallback: replicate PrimitiveRenderer2D's internal pan/zoom transform.
+      view.translate(panX, panY, 0.0f);
+      view.scale(zoom, zoom, 1.0f);
+      proj.ortho(0.0f, m_viewportWidth, m_viewportHeight, 0.0f, -1.0f, 1.0f);
+    }
 
-    // Transpose for HLSL  mul(vector, matrix)  row-vector convention
     const QMatrix4x4 viewT = view.transposed();
     const QMatrix4x4 projT = proj.transposed();
     particleRenderer_->setViewMatrix(viewT.constData());

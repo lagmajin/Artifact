@@ -149,6 +149,7 @@ bool sameTrackClipVisual(
          std::abs(lhs.startFrame - rhs.startFrame) < 0.0001 &&
          std::abs(lhs.durationFrame - rhs.durationFrame) < 0.0001 &&
          lhs.title == rhs.title && lhs.fillColor == rhs.fillColor &&
+         lhs.kind == rhs.kind &&
          lhs.selected == rhs.selected;
 }
 
@@ -340,6 +341,17 @@ bool sameVisualList(const QVector<T> &lhs, const QVector<T> &rhs,
 QString formatClipTooltip(
     const ArtifactTimelineTrackPainterView::TrackClipVisual &clip) {
   const QString title = clip.title.isEmpty() ? clip.clipId : clip.title;
+  const QString kindText = [&]() {
+    switch (clip.kind) {
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio:
+      return QStringLiteral("Kind: Audio");
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video:
+      return QStringLiteral("Kind: Video");
+    case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Generic:
+    default:
+      return QStringLiteral("Kind: Generic");
+    }
+  }();
   const QString startText = QStringLiteral("Start: F%1")
                                 .arg(QString::number(clip.startFrame, 'f', 1));
   const QString endText =
@@ -352,7 +364,7 @@ QString formatClipTooltip(
                                           : QStringLiteral("State: Idle");
   return title + QStringLiteral("\n") + startText + QStringLiteral("\n") +
          endText + QStringLiteral("\n") + durationText + QStringLiteral("\n") +
-         stateText;
+         stateText + QStringLiteral("\n") + kindText;
 }
 
 QString formatMarkerTooltip(
@@ -1278,6 +1290,31 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.drawLine(QPointF(clipRect.right() - 4.0, gripY1),
                  QPointF(clipRect.right() - 4.0, gripY2));
     }
+
+    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio &&
+        clipRect.width() > 20.0 && clipRect.height() > 10.0) {
+      const QColor waveformColor = isSelected ? theme.background.darker(140)
+                                              : theme.text.lighter(110);
+      QColor waveformSoft = waveformColor;
+      waveformSoft.setAlpha(90);
+      const int barCount = std::max(8, static_cast<int>(clipRect.width() / 10.0));
+      const qreal innerTop = clipRect.top() + 5.0;
+      const qreal innerBottom = clipRect.bottom() - 5.0;
+      const qreal centerY = (innerTop + innerBottom) * 0.5;
+      const qreal halfSpan = std::max<qreal>(2.0, (innerBottom - innerTop) * 0.42);
+      const quint32 hashSeed = qHash(clip.clipId) ^ qHash(clip.title) ^
+                               static_cast<quint32>(clip.trackIndex * 131);
+      for (int bar = 0; bar < barCount; ++bar) {
+        const qreal t = barCount > 1 ? static_cast<qreal>(bar) / static_cast<qreal>(barCount - 1) : 0.0;
+        const qreal x = clipRect.left() + 4.0 + t * (clipRect.width() - 8.0);
+        const quint32 sample = (hashSeed >> (bar % 16)) ^ static_cast<quint32>(bar * 2654435761u);
+        const qreal amplitude = 0.25 + 0.75 * (static_cast<qreal>(sample & 0xFFu) / 255.0);
+        const qreal top = centerY - halfSpan * amplitude;
+        const qreal bottom = centerY + halfSpan * amplitude;
+        p.setPen(QPen((bar % 3 == 0) ? waveformColor : waveformSoft, 1.0));
+        p.drawLine(QPointF(x, top), QPointF(x, bottom));
+      }
+    }
   }
 
   // Keyframe markers.
@@ -1471,14 +1508,8 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
       const qreal oldX = impl_->dragMarkerOrigFrame_ * impl_->pixelsPerFrame_ -
                          impl_->horizontalOffset_;
       const qreal newX = newFrame * impl_->pixelsPerFrame_ - impl_->horizontalOffset_;
-      const QPointF oldCenter = markerCenterFor(
-          marker, impl_->trackHeights_, impl_->trackTops_, impl_->pixelsPerFrame_,
-          impl_->horizontalOffset_, impl_->verticalOffset_);
       auto &mutableMarker = impl_->keyframeMarkers_[impl_->dragMarkerIndex_];
       mutableMarker.frame = newFrame;
-      const QPointF newCenter = markerCenterFor(
-          mutableMarker, impl_->trackHeights_, impl_->trackTops_,
-          impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
       QRectF dirtyRect = markerHitRectFor(
           marker, impl_->trackHeights_, impl_->trackTops_, impl_->pixelsPerFrame_,
           impl_->horizontalOffset_, impl_->verticalOffset_);

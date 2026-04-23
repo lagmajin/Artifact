@@ -176,6 +176,9 @@ public:
                            .arg(resource.buffer.name.isEmpty() ? QStringLiteral("<buffer?>") : resource.buffer.name)
                            .arg(resource.buffer.byteSize);
         }
+        if (!resource.note.isEmpty()) {
+            details << QStringLiteral("note=%1").arg(resource.note);
+        }
         details << QStringLiteral("cacheHit=%1").arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"));
         details << QStringLiteral("stale=%1").arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"));
         return details.join(QStringLiteral(" | "));

@@ -114,6 +114,9 @@ public:
     /// Get source stream information
     const VideoStreamInfo& streamInfo() const;
 
+    /// Lightweight diagnostics for the internal debugger
+    QString debugState() const;
+
     // === Playback Control ===
     
     /// Seek to specific frame

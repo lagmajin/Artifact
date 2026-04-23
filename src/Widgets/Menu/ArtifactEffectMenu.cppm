@@ -114,6 +114,8 @@ QIcon menuIcon(const QString& path)
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/brightness_6.svg")), "輝度＆コントラスト");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/show_chart.svg")), "トーンカーブ");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/hdr_on.svg")), "色相/彩度");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/color_lens.svg")), "Color Wheels");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/show_chart.svg")), "Curves");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "レベル補正");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/color_lens.svg")), "カラーバランス");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/filter.svg")), "写真フィルター");

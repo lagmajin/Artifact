@@ -82,6 +82,9 @@ public:
                               .arg(resource.label, resource.type, resource.relation)
                               .arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
                               .arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"));
+                if (!resource.note.isEmpty()) {
+                    lines << QStringLiteral("    note: %1").arg(resource.note);
+                }
             }
         }
 

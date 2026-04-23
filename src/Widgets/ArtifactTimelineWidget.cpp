@@ -3229,6 +3229,11 @@ void ArtifactTimelineWidget::refreshTracks() {
       visual.durationFrame = clipDuration;
       visual.title = layer->layerName();
       visual.fillColor = layerTimelineColor(layer);
+      if (std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+        visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio;
+      } else if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+        visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video;
+      }
       painterClips.push_back(std::move(visual));
     }
   }

@@ -5,6 +5,7 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QCursor>
+#include <QFont>
 #include <QTransform>
 #include <QString>
 #include <algorithm>
@@ -406,27 +407,59 @@ void drawMoveArrow(ArtifactIRenderer* renderer,
   return;
  }
 
- const QPointF dir = tip - center;
- const float len = std::max(1.0f, static_cast<float>(std::sqrt(dir.x() * dir.x() + dir.y() * dir.y())));
- const QPointF n(dir.x() / len, dir.y() / len);
- const float arrowLen = std::max(12.0f * invZoom, 8.0f);
- const QPointF shaftEnd = tip - n * arrowLen;
- const FloatColor shadow{0.0f, 0.0f, 0.0f, active ? 0.42f : 0.30f};
- renderer->drawSolidLine({static_cast<float>(center.x() + 1.0f * invZoom),
-                          static_cast<float>(center.y() + 1.0f * invZoom)},
-                         {static_cast<float>(shaftEnd.x() + 1.0f * invZoom),
-                          static_cast<float>(shaftEnd.y() + 1.0f * invZoom)},
-                         shadow, std::max(1.6f, 1.25f * invZoom));
- renderer->drawSolidLine({static_cast<float>(center.x()), static_cast<float>(center.y())},
-                         {static_cast<float>(shaftEnd.x()), static_cast<float>(shaftEnd.y())},
-                         brighten(color, active ? 1.08f : 0.96f),
-                         std::max(1.6f, 1.25f * invZoom));
-  renderer->drawSolidLine({static_cast<float>(center.x() - 0.35f * invZoom),
-                           static_cast<float>(center.y() - 0.35f * invZoom)},
-                          {static_cast<float>(shaftEnd.x() - 0.35f * invZoom),
-                           static_cast<float>(shaftEnd.y() - 0.35f * invZoom)},
-                          brighten(color, 1.18f), std::max(1.1f, 0.9f * invZoom));
-  drawArrowHead(renderer, tip, dir, color, invZoom);
+  const QPointF dir = tip - center;
+  const float len = std::max(1.0f, static_cast<float>(std::sqrt(dir.x() * dir.x() + dir.y() * dir.y())));
+  const QPointF n(dir.x() / len, dir.y() / len);
+  const float arrowLen = std::max(13.5f * invZoom, 9.0f);
+  const QPointF shaftEnd = tip - n * arrowLen;
+  const FloatColor shadow{0.0f, 0.0f, 0.0f, active ? 0.42f : 0.30f};
+  renderer->drawSolidLine({static_cast<float>(center.x() + 1.0f * invZoom),
+                           static_cast<float>(center.y() + 1.0f * invZoom)},
+                          {static_cast<float>(shaftEnd.x() + 1.0f * invZoom),
+                           static_cast<float>(shaftEnd.y() + 1.0f * invZoom)},
+                          shadow, std::max(1.75f, 1.40f * invZoom));
+  renderer->drawSolidLine({static_cast<float>(center.x()), static_cast<float>(center.y())},
+                          {static_cast<float>(shaftEnd.x()), static_cast<float>(shaftEnd.y())},
+                          brighten(color, active ? 1.08f : 0.96f),
+                          std::max(1.75f, 1.40f * invZoom));
+   renderer->drawSolidLine({static_cast<float>(center.x() - 0.35f * invZoom),
+                            static_cast<float>(center.y() - 0.35f * invZoom)},
+                           {static_cast<float>(shaftEnd.x() - 0.35f * invZoom),
+                            static_cast<float>(shaftEnd.y() - 0.35f * invZoom)},
+                           brighten(color, 1.18f), std::max(1.2f, 1.0f * invZoom));
+   drawArrowHead(renderer, tip, dir, color, invZoom);
+}
+
+void drawAxisLabel(ArtifactIRenderer* renderer,
+                   const QPointF& tip,
+                   const QPointF& dir,
+                   const QString& text,
+                   const FloatColor& color,
+                   bool active)
+{
+ if (!renderer || text.isEmpty()) {
+  return;
+ }
+
+ const float dirLen = static_cast<float>(std::sqrt(dir.x() * dir.x() + dir.y() * dir.y()));
+ const QPointF n = dirLen > 0.001f ? QPointF(dir.x() / dirLen, dir.y() / dirLen) : QPointF(1.0, 0.0);
+ const QPointF perp(-n.y(), n.x());
+ const QPointF labelPos = tip + n * 13.0f + perp * 4.0f;
+
+ QFont font = QGuiApplication::font();
+ font.setBold(true);
+ const float baseSize = font.pointSizeF() > 0.0f ? font.pointSizeF() : 9.0f;
+ font.setPointSizeF(std::clamp(baseSize * 0.82f, 7.0f, 10.0f));
+
+ const QRectF rect(labelPos.x() - 9.0f, labelPos.y() - 7.0f, 18.0f, 14.0f);
+ renderer->drawText(rect,
+                    text,
+                    font,
+                    brighten(color, active ? 1.20f : 1.05f),
+                    Qt::AlignCenter,
+                    1.0f,
+                    FloatColor{0.0f, 0.0f, 0.0f, active ? 0.78f : 0.62f},
+                    1.2f);
 }
 
 void drawBoxHandle(ArtifactIRenderer* renderer,
@@ -826,6 +859,8 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
                                        : FloatColor{0.08f, 0.86f, 0.22f, 1.0f};
   drawMoveArrow(renderer, moveCenterW, xTip, xColor, invZoom, moveActive);
   drawMoveArrow(renderer, moveCenterW, yTip, yColor, invZoom, moveActive);
+  drawAxisLabel(renderer, xTip, xAxisDir, QStringLiteral("X"), xColor, moveActive);
+  drawAxisLabel(renderer, yTip, yAxisDir, QStringLiteral("Y"), yColor, moveActive);
 
   // Dark filled dot at origin
   const float dotRadius = std::max(4.5f, 4.0f * invZoom);
