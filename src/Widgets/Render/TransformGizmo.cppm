@@ -380,15 +380,19 @@ void drawArrowHead(ArtifactIRenderer* renderer,
  const QPointF n(dir.x() / len, dir.y() / len);
  const QPointF t(-n.y(), n.x());
  const float arrowLen = std::max(12.0f * invZoom, 8.0f);
+ const float arrowHalf = arrowLen * 0.50f;
  const QPointF base = tip - n * arrowLen;
- renderer->drawSolidLine({static_cast<float>(base.x() + t.x() * arrowLen * 0.55f),
-                          static_cast<float>(base.y() + t.y() * arrowLen * 0.55f)},
-                         {static_cast<float>(tip.x()), static_cast<float>(tip.y())},
-                         color, std::max(1.6f, 1.25f * invZoom));
- renderer->drawSolidLine({static_cast<float>(base.x() - t.x() * arrowLen * 0.55f),
-                          static_cast<float>(base.y() - t.y() * arrowLen * 0.55f)},
-                         {static_cast<float>(tip.x()), static_cast<float>(tip.y())},
-                         color, std::max(1.6f, 1.25f * invZoom));
+ const QPointF p0{static_cast<float>(tip.x()), static_cast<float>(tip.y())};
+ const QPointF pL{static_cast<float>(base.x() + t.x() * arrowHalf),
+                  static_cast<float>(base.y() + t.y() * arrowHalf)};
+ const QPointF pR{static_cast<float>(base.x() - t.x() * arrowHalf),
+                  static_cast<float>(base.y() - t.y() * arrowHalf)};
+ // 塗り潰し三角形で矢印を描画
+ renderer->drawSolidTriangleLocal(
+     {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+     {static_cast<float>(pL.x()), static_cast<float>(pL.y())},
+     {static_cast<float>(pR.x()), static_cast<float>(pR.y())},
+     color);
 }
 
 void drawMoveArrow(ArtifactIRenderer* renderer,
@@ -1187,7 +1191,7 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
   const bool hitGrip =
       pointDistance(mousePos, idleGripCenter) <= rotateGeo.gripSize * 1.8f;
   const bool hitRing = distToRing <= rotateGeo.hitThickness;
-  if (allowsHandle(HandleType::Rotate) && mode_ == Mode::Rotate && (hitRing || hitGrip)) {
+  if (allowsHandle(HandleType::Rotate) && (hitRing || hitGrip)) {
    return HandleType::Rotate;
   }
  }
