@@ -29,6 +29,7 @@ module;
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileOpenEvent>
 #include <QFileInfo>
 #include <QFileInfoList>
 #include <QFont>
@@ -44,6 +45,7 @@ module;
 #include <QPixmap>
 #include <QPushButton>
 #include <QRectF>
+#include <QEvent>
 #include <QSettings>
 #include <QSortFilterProxyModel>
 #include <QStandardPaths>
@@ -147,6 +149,121 @@ using namespace ArtifactCore;
 
 namespace {
 constexpr int kMainWindowLayoutVersion = 8;
+
+bool isArtifactProjectLaunchPath(const QString& filePath)
+{
+  if (filePath.isEmpty()) {
+    return false;
+  }
+
+  const QFileInfo info(filePath);
+  if (!info.exists() || !info.isFile()) {
+    return false;
+  }
+
+  const QString lowerName = info.fileName().toLower();
+  return lowerName.endsWith(QStringLiteral(".artifact")) ||
+         lowerName.endsWith(QStringLiteral(".artifact.json"));
+}
+
+QString normalizeLaunchPath(const QString& filePath)
+{
+  if (filePath.isEmpty()) {
+    return QString();
+  }
+
+  const QFileInfo info(filePath);
+  if (!info.exists()) {
+    return QString();
+  }
+
+  return info.absoluteFilePath();
+}
+
+QStringList collectLaunchProjectPaths(const QStringList& appArgs)
+{
+  QStringList projectPaths;
+  projectPaths.reserve(appArgs.size());
+
+  for (int i = 1; i < appArgs.size(); ++i) {
+    const QString arg = appArgs[i];
+    if (arg == QStringLiteral("--lang")) {
+      ++i;
+      continue;
+    }
+    if (arg.startsWith(QStringLiteral("--"))) {
+      continue;
+    }
+    if (!isArtifactProjectLaunchPath(arg)) {
+      continue;
+    }
+
+    const QString normalizedPath = normalizeLaunchPath(arg);
+    if (!normalizedPath.isEmpty()) {
+      projectPaths.append(normalizedPath);
+    }
+  }
+
+  projectPaths.removeDuplicates();
+  return projectPaths;
+}
+
+class LaunchOpenRequestFilter final : public QObject {
+public:
+  explicit LaunchOpenRequestFilter(QObject* parent = nullptr)
+      : QObject(parent) {}
+
+  void setProjectOpenHandler(std::function<void(const QString&)> handler)
+  {
+    projectOpenHandler_ = std::move(handler);
+    flushPendingRequests();
+  }
+
+  void enqueueLaunchPath(const QString& filePath)
+  {
+    const QString normalizedPath = normalizeLaunchPath(filePath);
+    if (!isArtifactProjectLaunchPath(normalizedPath)) {
+      return;
+    }
+
+    if (projectOpenHandler_) {
+      projectOpenHandler_(normalizedPath);
+      return;
+    }
+
+    pendingProjectPaths_.append(normalizedPath);
+    pendingProjectPaths_.removeDuplicates();
+  }
+
+  bool eventFilter(QObject* watched, QEvent* event) override
+  {
+    if (event && event->type() == QEvent::FileOpen) {
+      auto* fileEvent = static_cast<QFileOpenEvent*>(event);
+      if (fileEvent && isArtifactProjectLaunchPath(fileEvent->file())) {
+        enqueueLaunchPath(fileEvent->file());
+        return true;
+      }
+    }
+
+    return QObject::eventFilter(watched, event);
+  }
+
+private:
+  void flushPendingRequests()
+  {
+    if (!projectOpenHandler_ || pendingProjectPaths_.isEmpty()) {
+      return;
+    }
+
+    const QStringList pending = std::exchange(pendingProjectPaths_, {});
+    for (const QString& path : pending) {
+      projectOpenHandler_(path);
+    }
+  }
+
+  QStringList pendingProjectPaths_;
+  std::function<void(const QString&)> projectOpenHandler_;
+};
 
 ArtifactCore::TraceCrashRecord traceCrashFromReportPath(const QString& crashReportPath)
 {
@@ -827,6 +944,7 @@ int main(int argc, char *argv[]) {
   if (appArgs.contains(QStringLiteral("--mcp-server"))) {
     return runMcpServerMode();
   }
+  const QStringList launchProjectPaths = collectLaunchProjectPaths(appArgs);
 
   // ============================================================
   // 起動言語オプションの処理
@@ -863,6 +981,8 @@ int main(int argc, char *argv[]) {
   QApplication a(argc, argv);
   configureQtPaths();
   Artifact::WorkspaceAutomation::ensureRegistered();
+  auto* launchOpenFilter = new LaunchOpenRequestFilter(&a);
+  a.installEventFilter(launchOpenFilter);
 
   // ============================================================
   // 翻訳システムの初期化 (LocalizationManager へ統合)
@@ -1114,6 +1234,24 @@ int main(int argc, char *argv[]) {
                        pool->setMaxThreadCount(configuredRenderThreads);
                      }
                    });
+  launchOpenFilter->setProjectOpenHandler(
+      [mw](const QString& filePath) {
+        if (!mw || filePath.isEmpty()) {
+          return;
+        }
+        QTimer::singleShot(0, mw, [filePath]() {
+          if (!QFileInfo(filePath).isFile()) {
+            qWarning() << "[AppMain] Launch project file no longer exists:"
+                       << filePath;
+            return;
+          }
+          qInfo() << "[AppMain] Opening launch project file:" << filePath;
+          ArtifactProjectManager::getInstance().loadFromFile(filePath);
+        });
+      });
+  for (const QString& filePath : launchProjectPaths) {
+    launchOpenFilter->enqueueLaunchPath(filePath);
+  }
   auto *playbackService = ArtifactPlaybackService::instance();
   // Enable output monitoring for debugging
   if (playbackService->controller()) {
