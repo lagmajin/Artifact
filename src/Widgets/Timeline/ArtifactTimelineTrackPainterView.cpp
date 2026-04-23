@@ -1462,6 +1462,34 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
       setCursor(Qt::ClosedHandCursor);
     }
     if (impl_->draggingMarker_) {
+      const auto &marker = impl_->keyframeMarkers_[impl_->dragMarkerIndex_];
+      const double deltaFrames =
+          (event->position().x() - impl_->dragMarkerStartPoint_.x()) /
+          std::max(0.001, impl_->pixelsPerFrame_);
+      const double newFrame = std::clamp(
+          impl_->dragMarkerOrigFrame_ + deltaFrames, 0.0, impl_->durationFrames_);
+      const qreal oldX = impl_->dragMarkerOrigFrame_ * impl_->pixelsPerFrame_ -
+                         impl_->horizontalOffset_;
+      const qreal newX = newFrame * impl_->pixelsPerFrame_ - impl_->horizontalOffset_;
+      const QPointF oldCenter = markerCenterFor(
+          marker, impl_->trackHeights_, impl_->trackTops_, impl_->pixelsPerFrame_,
+          impl_->horizontalOffset_, impl_->verticalOffset_);
+      auto &mutableMarker = impl_->keyframeMarkers_[impl_->dragMarkerIndex_];
+      mutableMarker.frame = newFrame;
+      const QPointF newCenter = markerCenterFor(
+          mutableMarker, impl_->trackHeights_, impl_->trackTops_,
+          impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
+      QRectF dirtyRect = markerHitRectFor(
+          marker, impl_->trackHeights_, impl_->trackTops_, impl_->pixelsPerFrame_,
+          impl_->horizontalOffset_, impl_->verticalOffset_);
+      dirtyRect = dirtyRect.united(markerHitRectFor(
+          mutableMarker, impl_->trackHeights_, impl_->trackTops_,
+          impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_));
+      if (!dirtyRect.isValid()) {
+        dirtyRect = QRectF(QPointF(std::min(oldX, newX) - 12.0, 0.0),
+                           QPointF(std::max(oldX, newX) + 12.0, height()));
+      }
+      update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
       event->accept();
       return;
     }

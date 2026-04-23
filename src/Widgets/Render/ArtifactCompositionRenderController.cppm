@@ -1325,6 +1325,9 @@ public:
 
   LayerID selectedLayerId_;
   bool isDraggingLayer_ = false;
+  // ギズモドラッグ時のレンダリングを≈60fps にスロットル
+  QElapsedTimer gizmoDragRenderTimer_;
+  static constexpr qint64 kGizmoDragRenderIntervalMs = 14; // ~70fps cap
   bool pendingMaskCreation_ = false;
   LayerID pendingMaskLayerId_;
   MaskPath pendingMaskPath_;
@@ -2764,6 +2767,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
     if (impl_->gizmo_->isDragging()) {
+      impl_->gizmoDragRenderTimer_.restart();
       return;
     }
   }
@@ -3274,7 +3278,14 @@ void CompositionRenderController::handleMouseMove(
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
     if (impl_->gizmo_->isDragging()) {
-      renderOneFrame();
+      // ギズモドラッグ時はスロットルして過剰な全フレームレンダーを防ぐ
+      const qint64 elapsed = impl_->gizmoDragRenderTimer_.isValid()
+                                 ? impl_->gizmoDragRenderTimer_.elapsed()
+                                 : Impl::kGizmoDragRenderIntervalMs;
+      if (elapsed >= Impl::kGizmoDragRenderIntervalMs) {
+        impl_->gizmoDragRenderTimer_.restart();
+        renderOneFrame();
+      }
       return;
     }
   }

@@ -479,13 +479,19 @@ ArtifactProjectManager& ArtifactProjectManager::getInstance()
   return instance;
  }
 
- void ArtifactProjectManager::loadFromFile(const QString& fullpath)
+void ArtifactProjectManager::loadFromFile(const QString& fullpath)
  {
   ArtifactProjectImporter importer;
   importer.setInputPath(fullpath);
   auto importResult = importer.importProject();
 
   if (!importResult.success || !importResult.project) {
+   if (!importResult.errorMessage.toQString().isEmpty()) {
+    qWarning() << "[loadFromFile] Failed to open project file:" << fullpath
+               << importResult.errorMessage.toQString();
+   } else {
+    qWarning() << "[loadFromFile] Failed to open project file:" << fullpath;
+   }
    return;
   }
 

@@ -270,6 +270,11 @@ private:
     int scrubStartX_ = 0;
     int scrubThreshold_ = 4;
     QVariant scrubStartValue_;
+    bool editorScrubbing_ = false;
+    bool editorScrubStarted_ = false;
+    int editorScrubStartX_ = 0;
+    int editorScrubThreshold_ = 4;
+    QVariant editorScrubStartValue_;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

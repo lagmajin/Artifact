@@ -1664,10 +1664,13 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   auxLayout->addWidget(expressionButton_);
 
   scrubHandle_->installEventFilter(this);
+  editor_->installEventFilter(this);
   label_->setCursor(Qt::ArrowCursor);
   scrubHandle_->setVisible(editor_->supportsScrub());
   scrubHandle_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
                                                    : Qt::ArrowCursor);
+  editor_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
+                                              : Qt::ArrowCursor);
 
   if (g_propertyRowLayoutMode ==
       ArtifactPropertyRowLayoutMode::EditorThenLabel) {
@@ -1967,7 +1970,7 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
 
 bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
                                                   QEvent *event) {
-  if (watched != scrubHandle_ || !editor_ || !editor_->supportsScrub()) {
+  if (!editor_ || !editor_->supportsScrub()) {
     return QWidget::eventFilter(watched, event);
   }
 
@@ -1977,36 +1980,78 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
     if (mouseEvent->button() != Qt::LeftButton) {
       break;
     }
-    scrubbing_ = true;
-    scrubStarted_ = false;
-    scrubStartX_ = mouseEvent->globalPosition().toPoint().x();
-    scrubStartValue_ = editor_->value();
-    scrubHandle_->grabMouse();
-    grabKeyboard();
-    setFocus(Qt::MouseFocusReason);
-    scrubHandle_->setCursor(Qt::SizeHorCursor);
-    return true;
-  }
-  case QEvent::MouseMove: {
-    if (!scrubbing_) {
-      break;
-    }
-    auto *mouseEvent = static_cast<QMouseEvent *>(event);
-    const int currentX = mouseEvent->globalPosition().toPoint().x();
-    const int deltaPixels = currentX - scrubStartX_;
-    if (!scrubStarted_ && std::abs(deltaPixels) < scrubThreshold_) {
+    if (watched == scrubHandle_) {
+      scrubbing_ = true;
+      scrubStarted_ = false;
+      scrubStartX_ = mouseEvent->globalPosition().toPoint().x();
+      scrubStartValue_ = editor_->value();
+      scrubHandle_->grabMouse();
+      grabKeyboard();
+      setFocus(Qt::MouseFocusReason);
+      scrubHandle_->setCursor(Qt::SizeHorCursor);
       return true;
     }
-    scrubStarted_ = true;
-    editor_->setValueFromVariant(scrubStartValue_);
-    editor_->scrubByPixels(deltaPixels, mouseEvent->modifiers());
-    editor_->previewCurrentValue();
-    return true;
+    if (watched == editor_) {
+      editorScrubbing_ = true;
+      editorScrubStarted_ = false;
+      editorScrubStartX_ = mouseEvent->globalPosition().toPoint().x();
+      editorScrubStartValue_ = editor_->value();
+      setFocus(Qt::MouseFocusReason);
+      editor_->setCursor(Qt::SizeHorCursor);
+    }
+    break;
+  }
+  case QEvent::MouseMove: {
+    auto *mouseEvent = static_cast<QMouseEvent *>(event);
+    if (watched == scrubHandle_) {
+      if (!scrubbing_) {
+        break;
+      }
+      const int currentX = mouseEvent->globalPosition().toPoint().x();
+      const int deltaPixels = currentX - scrubStartX_;
+      if (!scrubStarted_ && std::abs(deltaPixels) < scrubThreshold_) {
+        return true;
+      }
+      scrubStarted_ = true;
+      editor_->setValueFromVariant(scrubStartValue_);
+      editor_->scrubByPixels(deltaPixels, mouseEvent->modifiers());
+      editor_->previewCurrentValue();
+      return true;
+    }
+    if (watched == editor_) {
+      if (!editorScrubbing_) {
+        break;
+      }
+      const int currentX = mouseEvent->globalPosition().toPoint().x();
+      const int deltaPixels = currentX - editorScrubStartX_;
+      if (!editorScrubStarted_ && std::abs(deltaPixels) < editorScrubThreshold_) {
+        return true;
+      }
+      editorScrubStarted_ = true;
+      editor_->setValueFromVariant(editorScrubStartValue_);
+      editor_->scrubByPixels(deltaPixels, mouseEvent->modifiers());
+      editor_->previewCurrentValue();
+      return true;
+    }
   }
   case QEvent::MouseButtonRelease: {
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
-    if (scrubbing_ && mouseEvent->button() == Qt::LeftButton) {
+    if (watched == scrubHandle_ && scrubbing_ && mouseEvent->button() == Qt::LeftButton) {
       finishScrub(scrubStarted_);
+      return true;
+    }
+    if (watched == editor_ && editorScrubbing_ && mouseEvent->button() == Qt::LeftButton) {
+      const bool commitChanges = editorScrubStarted_;
+      editorScrubbing_ = false;
+      editorScrubStarted_ = false;
+      editor_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
+                                                  : Qt::ArrowCursor);
+      if (commitChanges) {
+        editor_->commitCurrentValue();
+      } else {
+        editor_->setValueFromVariant(editorScrubStartValue_);
+        editor_->previewValueFromVariant(editorScrubStartValue_);
+      }
       return true;
     }
     break;
@@ -2019,8 +2064,14 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
 }
 
 void ArtifactPropertyEditorRowWidget::keyPressEvent(QKeyEvent *event) {
-  if (scrubbing_ && event->key() == Qt::Key_Escape) {
+  if ((scrubbing_ || editorScrubbing_) && event->key() == Qt::Key_Escape) {
     finishScrub(false);
+    editorScrubbing_ = false;
+    editorScrubStarted_ = false;
+    if (editor_) {
+      editor_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
+                                                  : Qt::ArrowCursor);
+    }
     event->accept();
     return;
   }

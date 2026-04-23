@@ -73,6 +73,9 @@ export namespace Artifact {
   HandleType activeHandle_ = HandleType::None;
   bool isDragging_ = false;
   std::vector<SnapLine> activeSnapLines_;
+  // ドラッグ開始時に一度だけ計算するスナップラインキャッシュ
+  std::vector<float> cachedSnapVLines_;
+  std::vector<float> cachedSnapHLines_;
   QPointF dragStartCanvasPos_;
   QPointF dragStartLayerPos_;
   float dragStartScaleX_ = 1.0f;

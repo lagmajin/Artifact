@@ -95,6 +95,8 @@ import Artifact.Widgets.PerformanceProfilerWidget;
 import ParadeScopeWidget;
 import Widgets.Utils.CSS;
 import File.TypeDetector;
+import File.Preview;
+import Platform.QuickLook;
 import Artifact.Widgets.ModelViewer;
 import Utils.Path;
 import Utils.String.UniString;
@@ -179,6 +181,7 @@ namespace Artifact
    QToolButton* stopButton = nullptr;
    QToolButton* copyPathButton = nullptr;
    QToolButton* revealButton = nullptr;
+   QToolButton* previewButton = nullptr;
    QToolButton* sourceButton = nullptr;
    QToolButton* finalButton = nullptr;
    QToolButton* compareButton = nullptr;
@@ -217,8 +220,9 @@ namespace Artifact
    Artifact3DModelViewer* modelViewer = nullptr;
    bool videoWidgetsReady = false;
    bool modelViewerReady = false;
-   bool audioWidgetsReady = false;
+  bool audioWidgetsReady = false;
   QString currentFilePath;
+  ArtifactCore::PreviewDescriptor currentPreviewDescriptor;
   ArtifactCore::FileType currentFileType = ArtifactCore::FileType::Unknown;
   ContentsViewerMode currentMode = ContentsViewerMode::Source;
   QStringList recentSourcePaths;
@@ -1875,8 +1879,12 @@ namespace Artifact
    if (copyPathButton) {
     copyPathButton->setEnabled(!currentFilePath.isEmpty());
    }
-   if (revealButton) {
+  if (revealButton) {
     revealButton->setEnabled(!currentFilePath.isEmpty());
+   }
+   if (previewButton) {
+    previewButton->setVisible(currentPreviewDescriptor.canPreviewWithSystem);
+    previewButton->setEnabled(currentPreviewDescriptor.canPreviewWithSystem);
    }
    if (seekSlider) {
     const bool isSeekable = isVideo || audioReady;
@@ -2118,6 +2126,9 @@ namespace Artifact
    stopButton = createButton(QStringLiteral("Stop"), QStringLiteral("Stop media"));
    copyPathButton = createButton(QStringLiteral("Copy"), QStringLiteral("Copy file path"));
    revealButton = createButton(QStringLiteral("Open"), QStringLiteral("Open containing folder"));
+#if defined(Q_OS_MACOS)
+   previewButton = createButton(QStringLiteral("Quick Look"), QStringLiteral("Open system preview"));
+#endif
    sourceButton = createButton(QStringLiteral("Source"), QStringLiteral("Show source view"));
    finalButton = createButton(QStringLiteral("Final"), QStringLiteral("Show final output view"));
    compareButton = createButton(QStringLiteral("Compare"), QStringLiteral("Show compare view"));
@@ -2144,6 +2155,9 @@ namespace Artifact
    buttonRow->addSpacing(4);
    buttonRow->addWidget(copyPathButton);
    buttonRow->addWidget(revealButton);
+#if defined(Q_OS_MACOS)
+   buttonRow->addWidget(previewButton);
+#endif
    buttonRow->addSpacing(4);
    buttonRow->addWidget(sourceButton);
    buttonRow->addWidget(finalButton);
@@ -2281,6 +2295,16 @@ namespace Artifact
     QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
     updateActionAvailability();
    });
+
+#if defined(Q_OS_MACOS)
+   QObject::connect(previewButton, &QToolButton::clicked, parent, [this]() {
+    if (!currentPreviewDescriptor.canPreviewWithSystem) {
+     return;
+    }
+    ArtifactWidgets::showQuickLookPreview(currentPreviewDescriptor);
+    updateActionAvailability();
+   });
+#endif
 
    QObject::connect(recentSourceCombo, qOverload<int>(&QComboBox::activated), parent,
                     [this](int index) {
@@ -2594,6 +2618,7 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
    impl_->rememberRecentSource(filepath);
    ArtifactCore::FileTypeDetector detector;
    impl_->currentFileType = detector.detect(filepath);
+   impl_->currentPreviewDescriptor = ArtifactCore::makePreviewDescriptor(filepath);
    impl_->hoverProbeValid = false;
    impl_->resetCurrentMode();
 

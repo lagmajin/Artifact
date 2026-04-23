@@ -258,23 +258,22 @@ void drawArc(ArtifactIRenderer* renderer,
  }
 
  const int segments = std::max(12, static_cast<int>(std::ceil(std::abs(sweepDegrees) / GizmoVisualStyle::rotateArcStep)));
- 
- // Optimization: Pre-calculate geometry to reduce per-iteration overhead
- QVector<Detail::float2> points(segments + 1);
+
+ // thread_local バッファを再利用してヒープアロケーションを排除
+ static thread_local std::vector<Detail::float2> points;
+ points.resize(segments + 1);
+
  const float angleStep = sweepDegrees / segments;
  const float radStep = angleStep * (kPi / 180.0f);
  const float radStart = startAngleDegrees * (kPi / 180.0f);
 
- // Calculate points
  for (int i = 0; i <= segments; ++i) {
   const float angle = radStart + i * radStep;
   points[i] = { static_cast<float>(center.x() + std::cos(angle) * radius),
                 static_cast<float>(center.y() + std::sin(angle) * radius) };
  }
 
-  // Draw segments as a single polyline
-  std::vector<Detail::float2> vecPoints(points.begin(), points.end());
-  renderer->drawPolyline(vecPoints, color, thickness);
+ renderer->drawPolyline(points, color, thickness);
 }
 
 void drawRotateTickMarks(ArtifactIRenderer* renderer,
@@ -923,13 +922,14 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  }
 
  const auto& t3d = layer_->transform3D();
- const RotateRingGeometry rotateGeo =
-     computeRotateRingGeometry(localRect, globalTransform, invZoom);
- const RotateRingGeometry visualRotateGeo = makeVisualRotateRingGeometry(rotateGeo);
 
  if (showRotate) {
   ArtifactCore::ProfileScope _profRotate(
       "TransformGizmoRotate", ArtifactCore::ProfileCategory::Render);
+  // showRotate が false の場合は計算コストを完全にスキップ
+  const RotateRingGeometry rotateGeo =
+      computeRotateRingGeometry(localRect, globalTransform, invZoom);
+  const RotateRingGeometry visualRotateGeo = makeVisualRotateRingGeometry(rotateGeo);
   const bool rotateActive = activeHandle_ == HandleType::Rotate;
   const bool rotateModeSelected = mode_ == Mode::Rotate;
   const bool rotateEmphasis = rotateActive || rotateModeSelected;
@@ -1319,6 +1319,29 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
    const QPointF pivotWorld = dragStartGlobalTransform_.map(dragStartLocalBounds_.center());
    dragStartPointerAngle_ = angleDegreesAround(pivotWorld, dragStartCanvasPos_);
   }
+  // スナップラインをドラッグ開始時に1回だけ計算してキャッシュ（毎マウスムーブのO(n)コストを排除）
+  cachedSnapVLines_.clear();
+  cachedSnapHLines_.clear();
+  if (activeHandle_ == HandleType::Move) {
+   auto comp = ArtifactProjectService::instance()->currentComposition().lock();
+   if (comp) {
+    const auto sz = comp->settings().compositionSize();
+    cachedSnapVLines_ = {0.0f, sz.width() / 2.0f, (float)sz.width()};
+    cachedSnapHLines_ = {0.0f, sz.height() / 2.0f, (float)sz.height()};
+    for (const auto& other : comp->allLayer()) {
+     if (!other || !other->isVisible() || other->id() == layer_->id() || other->isLocked()) continue;
+     const QRectF bounds = other->transformedBoundingBox();
+     if (bounds.isValid() && bounds.width() > 0) {
+      cachedSnapVLines_.push_back(static_cast<float>(bounds.left()));
+      cachedSnapVLines_.push_back(static_cast<float>(bounds.center().x()));
+      cachedSnapVLines_.push_back(static_cast<float>(bounds.right()));
+      cachedSnapHLines_.push_back(static_cast<float>(bounds.top()));
+      cachedSnapHLines_.push_back(static_cast<float>(bounds.center().y()));
+      cachedSnapHLines_.push_back(static_cast<float>(bounds.bottom()));
+     }
+    }
+   }
+  }
   return true;
  }
  return false;
@@ -1360,72 +1383,44 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    activeSnapLines_.clear();
    const bool enableSnapping = !(QGuiApplication::keyboardModifiers() & Qt::AltModifier);
 
-   if (enableSnapping) {
-    auto comp = ArtifactProjectService::instance()->currentComposition().lock();
-    if (comp) {
-     const float SNAP_DIST = 10.0f / (renderer->getZoom() > 0.001f ? renderer->getZoom() : 1.0f);
-     std::vector<float> vLines;
-     std::vector<float> hLines;
+   if (enableSnapping && !cachedSnapVLines_.empty()) {
+    const float SNAP_DIST = 10.0f / (renderer->getZoom() > 0.001f ? renderer->getZoom() : 1.0f);
 
-     // Composition bounds/center
-     const auto size = comp->settings().compositionSize();
-     vLines.push_back(size.width() / 2.0f);
-     hLines.push_back(size.height() / 2.0f);
-     vLines.push_back(0.0f);
-     vLines.push_back(size.width());
-     hLines.push_back(0.0f);
-     hLines.push_back(size.height());
+    QRectF currentBBox = dragStartBoundingBox_;
+    currentBBox.translate(delta);
 
-     // Other layers' bounds/center
-     for (const auto& other : comp->allLayer()) {
-      if (!other || !other->isVisible() || other->id() == layer_->id() || other->isLocked()) continue;
-      QRectF bounds = other->transformedBoundingBox();
-      if (bounds.isValid() && bounds.width() > 0) {
-       vLines.push_back(bounds.left());
-       vLines.push_back(bounds.center().x());
-       vLines.push_back(bounds.right());
-       hLines.push_back(bounds.top());
-       hLines.push_back(bounds.center().y());
-       hLines.push_back(bounds.bottom());
-      }
+    // Snap X (center horizontal axis) — キャッシュ済みラインを再利用
+    float centerV = currentBBox.center().x();
+    float bestVDist = SNAP_DIST;
+    float bestVLine = 0.0f;
+    bool snappedV = false;
+    for (float vl : cachedSnapVLines_) {
+     if (std::abs(centerV - vl) < bestVDist) {
+      bestVDist = std::abs(centerV - vl);
+      bestVLine = vl;
+      snappedV = true;
      }
+    }
+    if (snappedV) {
+     newX += (bestVLine - centerV);
+     activeSnapLines_.push_back({true, bestVLine});
+    }
 
-     QRectF currentBBox = dragStartBoundingBox_;
-     currentBBox.translate(delta);
-
-     // Snap X (center horizontal axis)
-     float centerV = currentBBox.center().x();
-     float bestVDist = SNAP_DIST;
-     float bestVLine = 0.0f;
-     bool snappedV = false;
-     for (float vl : vLines) {
-      if (std::abs(centerV - vl) < bestVDist) {
-       bestVDist = std::abs(centerV - vl);
-       bestVLine = vl;
-       snappedV = true;
-      }
+    // Snap Y (center vertical axis)
+    float centerH = currentBBox.center().y();
+    float bestHDist = SNAP_DIST;
+    float bestHLine = 0.0f;
+    bool snappedH = false;
+    for (float hl : cachedSnapHLines_) {
+     if (std::abs(centerH - hl) < bestHDist) {
+      bestHDist = std::abs(centerH - hl);
+      bestHLine = hl;
+      snappedH = true;
      }
-     if (snappedV) {
-      newX += (bestVLine - centerV);
-      activeSnapLines_.push_back({true, bestVLine});
-     }
-
-     // Snap Y (center vertical axis)
-     float centerH = currentBBox.center().y();
-     float bestHDist = SNAP_DIST;
-     float bestHLine = 0.0f;
-     bool snappedH = false;
-     for (float hl : hLines) {
-      if (std::abs(centerH - hl) < bestHDist) {
-       bestHDist = std::abs(centerH - hl);
-       bestHLine = hl;
-       snappedH = true;
-      }
-     }
-     if (snappedH) {
-      newY += (bestHLine - centerH);
-      activeSnapLines_.push_back({false, bestHLine});
-     }
+    }
+    if (snappedH) {
+     newY += (bestHLine - centerH);
+     activeSnapLines_.push_back({false, bestHLine});
     }
    }
 
