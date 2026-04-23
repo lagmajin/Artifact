@@ -1919,16 +1919,15 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   if (auto *playback = ArtifactPlaybackService::instance()) {
     connect(playback, &ArtifactPlaybackService::frameChanged, this,
             [this](const FramePosition &position) {
-              // 1. 可視性チェック: 非表示（他タブの裏など）なら描画しない
+              // 可視性チェック: 非表示（他タブの裏など）なら描画しない
               if (auto *owner = qobject_cast<QWidget *>(parent())) {
                 if (!owner->isVisible())
                   return;
               }
-              if (auto comp = impl_->previewPipeline_.composition()) {
-                comp->goToFrame(position.framePosition());
-              }
+              // comp->goToFrame() は ArtifactPlaybackService::syncCurrentCompositionFrame()
+              // が publishFrame より先に投入済みのため、ここで重複呼び出しは不要。
               impl_->invalidateOverlayComposite();
-              // 2. 更新要求を集約（Coalescing）
+              // 更新要求を集約（Coalescing）
               renderOneFrame();
             });
   }

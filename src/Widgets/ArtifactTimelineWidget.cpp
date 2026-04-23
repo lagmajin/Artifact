@@ -2854,11 +2854,25 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             syncPlayheadOverlay();
             const QSignalBlocker blocker(scrubBar);
             scrubBar->setCurrentFrame(frame);
-            updateCacheVisuals();
-            updateSelectionState();
-            // 再生中は毎フレーム全レイヤーをスキャンするコストを避けるため15フレームに1回
-            if (frame.framePosition() % 15 == 0) {
-              updateKeyframeState();
+
+            // 再生中の per-frame コスト削減:
+            // updateCacheVisuals() / updateSelectionState() を毎フレーム呼ぶと
+            // QListWidget の clear+rebuild などで非常に重くなるためスキップ。
+            // 停止・一時停止時は PlaybackStateChangedEvent で更新される。
+            const bool isPlaying = ArtifactPlaybackService::instance() &&
+                                   ArtifactPlaybackService::instance()->isPlaying();
+            if (!isPlaying) {
+              updateCacheVisuals();
+              updateSelectionState();
+              if (frame.framePosition() % 15 == 0) {
+                updateKeyframeState();
+              }
+            } else {
+              // 再生中: 30フレームに1回だけ重い更新を実行
+              if (frame.framePosition() % 30 == 0) {
+                updateSelectionState();
+                updateKeyframeState();
+              }
             }
           }));
   QTimer::singleShot(0, this, [updateZoom]() { updateZoom(); });
@@ -3011,6 +3025,17 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                   setComposition(compositionId);
                 },
                 Qt::QueuedConnection);
+          }));
+  // 再生停止/一時停止時に、再生中スキップしていたUI更新を実行する
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<PlaybackStateChangedEvent>(
+          [this](const PlaybackStateChangedEvent &event) {
+            if (event.state == ArtifactCore::PlaybackState::Stopped ||
+                event.state == ArtifactCore::PlaybackState::Paused) {
+              updateCacheVisuals();
+              updateSelectionState();
+              updateKeyframeState();
+            }
           }));
 }
 

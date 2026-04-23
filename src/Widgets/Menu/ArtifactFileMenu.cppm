@@ -182,6 +182,7 @@ public:
     QAction* exportWorkAreaAction = nullptr;
     QAction* exportProjectPackageAction = nullptr;
     QMenu* recentProjectsMenu = nullptr;
+    QStringList cachedRecentProjects_; // 変更がない場合にメニューを再構築しないためのキャッシュ
     ArtifactFileMenu* menu_ = nullptr;
 
     void rebuildMenu();
@@ -614,31 +615,35 @@ void ArtifactFileMenu::Impl::rebuildMenu()
 
     // 最近使ったプロジェクトメニューを更新
     if (recentProjectsMenu) {
-        recentProjectsMenu->clear();
         auto recent = readRecentProjects();
-        if (recent.isEmpty()) {
-            auto* noRecent = recentProjectsMenu->addAction("なし");
-            noRecent->setEnabled(false);
-        } else {
-            for (const auto& path : recent) {
-                QFileInfo fi(path);
-                QString displayName = fi.fileName();
-                QString displayPath = fi.absolutePath();
+        // リストが変わっていなければ再構築しない
+        if (recent != cachedRecentProjects_) {
+            cachedRecentProjects_ = recent;
+            recentProjectsMenu->clear();
+            if (recent.isEmpty()) {
+                auto* noRecent = recentProjectsMenu->addAction("なし");
+                noRecent->setEnabled(false);
+            } else {
+                for (const auto& path : recent) {
+                    QFileInfo fi(path);
+                    QString displayName = fi.fileName();
+                    QString displayPath = fi.absolutePath();
 
-                // P0-1: Show full path in submenu for clarity
-                auto* fileAction = recentProjectsMenu->addAction(displayName);
-                fileAction->setData(path);
-                fileAction->setStatusTip(path);
-                fileAction->setToolTip(path);
+                    // P0-1: Show full path in submenu for clarity
+                    auto* fileAction = recentProjectsMenu->addAction(displayName);
+                    fileAction->setData(path);
+                    fileAction->setStatusTip(path);
+                    fileAction->setToolTip(path);
 
-                // P0-1: Add path as a disabled sub-item for visual clarity
-                auto* pathAction = recentProjectsMenu->addAction(QStringLiteral("  %1").arg(displayPath));
-                pathAction->setEnabled(false);
-                pathAction->setToolTip(path);
+                    // P0-1: Add path as a disabled sub-item for visual clarity
+                    auto* pathAction = recentProjectsMenu->addAction(QStringLiteral("  %1").arg(displayPath));
+                    pathAction->setEnabled(false);
+                    pathAction->setToolTip(path);
 
-                QObject::connect(fileAction, &QAction::triggered, menu_, [path]() {
-                    ArtifactProjectManager::getInstance().loadFromFile(path);
-                });
+                    QObject::connect(fileAction, &QAction::triggered, menu_, [path]() {
+                        ArtifactProjectManager::getInstance().loadFromFile(path);
+                    });
+                }
             }
         }
     }
