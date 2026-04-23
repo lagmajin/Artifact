@@ -4996,20 +4996,20 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     ++renderFrameCounter_;
     const qint64 frameMs = frameTimer.elapsed();
-    impl_->lastFrameTimeMs_ = static_cast<double>(frameMs);
-    impl_->recentFrameTimesMs_.push_back(impl_->lastFrameTimeMs_);
-    impl_->recentFrameTimeSumMs_ += impl_->lastFrameTimeMs_;
+    lastFrameTimeMs_ = static_cast<double>(frameMs);
+    recentFrameTimesMs_.push_back(lastFrameTimeMs_);
+    recentFrameTimeSumMs_ += lastFrameTimeMs_;
     constexpr std::size_t kRecentFrameTimeHistory = 120;
-    while (impl_->recentFrameTimesMs_.size() > kRecentFrameTimeHistory) {
-      impl_->recentFrameTimeSumMs_ -= impl_->recentFrameTimesMs_.front();
-      impl_->recentFrameTimesMs_.pop_front();
+    while (recentFrameTimesMs_.size() > kRecentFrameTimeHistory) {
+      recentFrameTimeSumMs_ -= recentFrameTimesMs_.front();
+      recentFrameTimesMs_.pop_front();
     }
-    if (!impl_->recentFrameTimesMs_.empty()) {
-      impl_->averageFrameTimeMs_ =
-          impl_->recentFrameTimeSumMs_ /
-          static_cast<double>(impl_->recentFrameTimesMs_.size());
+    if (!recentFrameTimesMs_.empty()) {
+      averageFrameTimeMs_ =
+          recentFrameTimeSumMs_ /
+          static_cast<double>(recentFrameTimesMs_.size());
     } else {
-      impl_->averageFrameTimeMs_ = 0.0;
+      averageFrameTimeMs_ = 0.0;
     }
     if (compositionViewLog().isDebugEnabled()) {
       if (frameMs >= 16) {

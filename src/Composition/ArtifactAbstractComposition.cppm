@@ -114,12 +114,12 @@ namespace Artifact {
   
   // Newly created layers often have a default duration. 
   // If it's a solid/plane layer and hasn't been configured yet, match composition duration.
-  // We use a more robust check than just '300'.
   const int64_t currentOut = layer->outPoint().framePosition();
   const int64_t currentIn = layer->inPoint().framePosition();
+  const int64_t currentStart = layer->startTime().framePosition();
   const int64_t compEnd = frameRange_.end();
   
-  if (currentOut == 300 && currentIn == 0 && compEnd > 300) {
+  if (currentOut == 300 && currentIn == 0 && currentStart == 0 && compEnd > 0) {
     layer->setOutPoint(FramePosition(compEnd));
   }
   
@@ -235,9 +235,10 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       
       const int64_t currentOut = layer->outPoint().framePosition();
       const int64_t currentIn = layer->inPoint().framePosition();
+      const int64_t currentStart = layer->startTime().framePosition();
       const int64_t compEnd = frameRange_.end();
       
-      if (currentOut == 300 && currentIn == 0 && compEnd > 300) {
+      if (currentOut == 300 && currentIn == 0 && currentStart == 0 && compEnd > 0) {
           layer->setOutPoint(FramePosition(compEnd));
       }
       

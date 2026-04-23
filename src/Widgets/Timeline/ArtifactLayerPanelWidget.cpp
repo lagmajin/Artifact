@@ -1956,7 +1956,41 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (service) {
       service->selectLayer(layer->id());
     }
-    
+
+    auto triggerDeleteLayer = [this, layer]() {
+      if (!layer) {
+        return;
+      }
+      const auto response = QMessageBox::question(
+          this, QStringLiteral("Delete Layer"),
+          QStringLiteral("Delete layer \"%1\"?").arg(layer->layerName()),
+          QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+      if (response != QMessageBox::Yes) {
+        return;
+      }
+      if (auto *svc = ArtifactProjectService::instance()) {
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+        if (!compId.isNil()) {
+          svc->removeLayerFromComposition(compId, layer->id());
+          impl_->selectedLayerId = LayerID();
+          impl_->currentPropertyPath.clear();
+          updateLayout();
+        }
+      }
+    };
+
+    auto triggerDuplicateLayer = [this, layer]() {
+      if (!layer) {
+        return;
+      }
+      if (auto *svc = ArtifactProjectService::instance()) {
+        if (svc->duplicateLayerInCurrentComposition(layer->id())) {
+          updateLayout();
+        }
+      }
+    };
+
     // Variant Context Menu
     const int nameStartX = colW * kLayerPropertyColumnCount;
     const int nameX = nameStartX + row.depth * 14;
@@ -1977,10 +2011,39 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
             update();
         });
+        menu.addSeparator();
+        menu.addAction("Duplicate Layer", [triggerDuplicateLayer]() {
+          triggerDuplicateLayer();
+        });
+        menu.addAction("Delete Layer", [triggerDeleteLayer]() {
+          triggerDeleteLayer();
+        });
         menu.exec(event->globalPos());
         event->accept();
         return;
     }
+
+    QMenu menu(this);
+    if (!variants.empty()) {
+      menu.addAction("Create Variant B from A", [this, layer]() {
+        auto* cmd = new CreateVariantCommand(layer, "B");
+        UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
+        update();
+      });
+      menu.addAction("Create Variant C from current", [this, layer]() {
+        auto* cmd = new CreateVariantCommand(layer, std::string(1, (char)('A' + layer->getVariants().size())));
+        UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
+        update();
+      });
+      menu.addSeparator();
+    }
+    menu.addAction("Duplicate Layer", [triggerDuplicateLayer]() {
+      triggerDuplicateLayer();
+    });
+    menu.addAction("Delete Layer", [triggerDeleteLayer]() {
+      triggerDeleteLayer();
+    });
+    menu.exec(event->globalPos());
 
     event->accept();
     return;

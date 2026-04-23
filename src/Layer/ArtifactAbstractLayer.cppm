@@ -85,6 +85,22 @@ double effectiveLayerFrameRate(const ArtifactAbstractLayer *layer) {
   const double fps = composition->frameRate().framerate();
   return fps > 0.0 ? fps : 30.0;
 }
+
+int64_t currentTimelineFrame(const ArtifactAbstractLayer *layer) {
+  if (!layer) {
+    return 0;
+  }
+  auto *composition =
+      static_cast<ArtifactAbstractComposition *>(layer->composition());
+  if (!composition) {
+    return layer->currentFrame();
+  }
+  return composition->framePosition().framePosition();
+}
+
+RationalTime currentTimelineTime(const ArtifactAbstractLayer *layer) {
+  return RationalTime(currentTimelineFrame(layer), effectiveLayerFrameRate(layer));
+}
 } // namespace
 
 class ArtifactAbstractLayer::Impl {
@@ -508,7 +524,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
 
 QTransform ArtifactAbstractLayer::getLocalTransform() const {
   const auto &t = transform3D();
-  const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+  const RationalTime time = currentTimelineTime(this);
   const auto* var = getActiveVariant();
   bool hasTransVar = var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform3DOverride.has_value();
 
@@ -538,7 +554,7 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
   if (impl_->physics_.enabled) {
     const double fps = effectiveLayerFrameRate(this);
     const float dt = 1.0f / static_cast<float>(fps);
-    const int64_t curFrame = currentFrame();
+    const int64_t curFrame = currentTimelineFrame(this);
 
     // スクラブや逆再生、初回起動時のリセット
     if (impl_->lastPhysicsFrame_ == -1 ||
@@ -693,7 +709,7 @@ QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) cons
 
 QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const auto &t = transform3D();
-  const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+  const RationalTime time = currentTimelineTime(this);
   auto evaluateDouble = [this, &time](const QString &propertyPath,
                                       double fallback) {
     const auto it = impl_->propertyCache_.constFind(propertyPath);
@@ -964,28 +980,27 @@ const AnimatableTransform3D &ArtifactAbstractLayer::transform3D() const {
 }
 
 QVector3D ArtifactAbstractLayer::position3D() const {
-  const auto time =
-      RationalTime(currentFrame(), 30); // Use composition FPS if possible
+  const auto time = currentTimelineTime(this);
   return QVector3D(impl_->transform_.positionXAt(time),
                    impl_->transform_.positionYAt(time),
                    impl_->transform_.positionZAt(time));
 }
 
 void ArtifactAbstractLayer::setPosition3D(const QVector3D &pos) {
-  const auto time = RationalTime(currentFrame(), 30);
+  const auto time = currentTimelineTime(this);
   impl_->transform_.setPosition(time, pos.x(), pos.y());
   impl_->transform_.setPositionZ(time, pos.z());
   changed();
 }
 
 QVector3D ArtifactAbstractLayer::rotation3D() const {
-  const auto time = RationalTime(currentFrame(), 30);
+  const auto time = currentTimelineTime(this);
   return QVector3D(impl_->transform_.rotationAt(time), 0,
                    0); // Only X rotation for now
 }
 
 void ArtifactAbstractLayer::setRotation3D(const QVector3D &rot) {
-  const auto time = RationalTime(currentFrame(), 30);
+  const auto time = currentTimelineTime(this);
   impl_->transform_.setRotation(time, rot.x());
   changed();
 }
@@ -1647,46 +1662,48 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
 
   auto &t3 = transform3D();
-  RationalTime t0(0, 30000); // 0s
+  const RationalTime currentTime = currentTimelineTime(this);
 
   if (propertyPath == QStringLiteral("transform.position.x")) {
-    t3.setPosition(t0, value.toDouble(), t3.positionY());
+    t3.setPosition(currentTime, value.toDouble(), t3.positionYAt(currentTime));
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.position.y")) {
-    t3.setPosition(t0, t3.positionX(), value.toDouble());
+    t3.setPosition(currentTime, t3.positionXAt(currentTime), value.toDouble());
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.scale.x")) {
-    t3.setScale(t0, value.toDouble(), t3.scaleY());
+    t3.setScale(currentTime, value.toDouble(), t3.scaleYAt(currentTime));
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.scale.y")) {
-    t3.setScale(t0, t3.scaleX(), value.toDouble());
+    t3.setScale(currentTime, t3.scaleXAt(currentTime), value.toDouble());
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.rotation")) {
-    t3.setRotation(t0, value.toDouble());
+    t3.setRotation(currentTime, value.toDouble());
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.anchor.x")) {
-    t3.setAnchor(t0, value.toDouble(), t3.anchorY(), t3.anchorZ());
+    t3.setAnchor(currentTime, value.toDouble(), t3.anchorYAt(currentTime),
+                 t3.anchorZAt(currentTime));
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.anchor.y")) {
-    t3.setAnchor(t0, t3.anchorX(), value.toDouble(), t3.anchorZ());
+    t3.setAnchor(currentTime, t3.anchorXAt(currentTime), value.toDouble(),
+                 t3.anchorZAt(currentTime));
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
@@ -1826,7 +1843,7 @@ float ArtifactAbstractLayer::opacity() const {
   if (!property.isAnimatable() || property.getKeyFrames().empty()) {
     return impl_->opacity_;
   }
-  const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+  const RationalTime time = currentTimelineTime(this);
   const QVariant animatedValue = property.interpolateValue(time);
   return animatedValue.isValid() ? static_cast<float>(animatedValue.toDouble())
                                  : impl_->opacity_;
@@ -1851,7 +1868,7 @@ void ArtifactAbstractLayer::setOpacity(float value) {
       it != impl_->propertyCache_.end() && it.value()) {
     auto& prop = *it.value();
     if (prop.isAnimatable() && !prop.getKeyFrames().empty()) {
-        const RationalTime time(currentFrame(), effectiveLayerFrameRate(this));
+        const RationalTime time = currentTimelineTime(this);
         prop.addKeyFrame(time, clamped);
         changed = true;
     } else {

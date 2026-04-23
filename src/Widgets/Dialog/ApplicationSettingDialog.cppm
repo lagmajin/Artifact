@@ -1,11 +1,16 @@
 module;
 #include <QCheckBox>
+#include <QAbstractItemView>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QKeyEvent>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFileInfoList>
@@ -19,6 +24,8 @@ module;
 #include <QPluginLoader>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QMouseEvent>
+#include <QKeySequenceEdit>
 #include <QShowEvent>
 #include <QSlider>
 #include <QSpinBox>
@@ -55,6 +62,7 @@ import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.Widgets.PropertyEditor;
 import Application.AppSettings;
 import FloatColorPickerDialog;
+import UI.ShortcutBindings;
 
 namespace ArtifactCore {
 
@@ -1041,10 +1049,275 @@ void PreviewSettingPage::saveSettings() {
 QList<SettingItemInfo> PreviewSettingPage::searchableItems() const {
   return {};
 }
-void ShortcutSettingPage::loadSettings() {}
-void ShortcutSettingPage::saveSettings() {}
+class ShortcutSettingPage::Impl {
+public:
+  Impl();
+  ~Impl();
+
+  QVBoxLayout *layout_ = nullptr;
+  QLabel *descriptionLabel_ = nullptr;
+  QTableWidget *table_ = nullptr;
+  QPushButton *importPresetButton_ = nullptr;
+  QPushButton *exportPresetButton_ = nullptr;
+  QPushButton *resetDefaultsButton_ = nullptr;
+};
+
+ShortcutSettingPage::Impl::Impl() = default;
+ShortcutSettingPage::Impl::~Impl() = default;
+
+ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  impl_->layout_ = new QVBoxLayout(this);
+  impl_->layout_->setContentsMargins(12, 12, 12, 12);
+  impl_->layout_->setSpacing(10);
+
+  impl_->descriptionLabel_ = new QLabel(this);
+  impl_->descriptionLabel_->setWordWrap(true);
+  impl_->descriptionLabel_->setText(
+      QStringLiteral("Shared shortcut bindings used by timeline and app-level commands."));
+  impl_->layout_->addWidget(impl_->descriptionLabel_);
+
+  impl_->table_ = new QTableWidget(this);
+  impl_->table_->setColumnCount(4);
+  impl_->table_->setHorizontalHeaderLabels({
+      QStringLiteral("Category"),
+      QStringLiteral("Action"),
+      QStringLiteral("Default"),
+      QStringLiteral("Current"),
+  });
+  impl_->table_->horizontalHeader()->setStretchLastSection(true);
+  impl_->table_->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+  impl_->table_->verticalHeader()->setVisible(false);
+  impl_->table_->setEditTriggers(QAbstractItemView::NoEditTriggers);
+  impl_->table_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  impl_->table_->setSelectionMode(QAbstractItemView::SingleSelection);
+  impl_->layout_->addWidget(impl_->table_, 1);
+
+  auto *footerLayout = new QHBoxLayout();
+  footerLayout->addWidget(impl_->importPresetButton_ = new QPushButton(QStringLiteral("Import Preset"), this));
+  footerLayout->addWidget(impl_->exportPresetButton_ = new QPushButton(QStringLiteral("Export Preset"), this));
+  footerLayout->addWidget(impl_->resetDefaultsButton_ = new QPushButton(QStringLiteral("Reset to Defaults"), this));
+  footerLayout->addStretch();
+  impl_->importPresetButton_->installEventFilter(this);
+  impl_->exportPresetButton_->installEventFilter(this);
+  impl_->resetDefaultsButton_->installEventFilter(this);
+  impl_->layout_->addLayout(footerLayout);
+
+  loadSettings();
+}
+
+ShortcutSettingPage::~ShortcutSettingPage() { delete impl_; }
+
+QVector<QWidget *> ShortcutSettingPage::settingWidgets() const {
+  return {impl_ ? impl_->table_ : nullptr};
+}
+
+void ShortcutSettingPage::resetToDefaults() {
+  if (!impl_ || !impl_->table_) {
+    return;
+  }
+
+  const auto ids = ArtifactCore::allShortcutIds();
+  const auto &bindings = ArtifactCore::ShortcutBindings::instance();
+  for (int row = 0; row < static_cast<int>(ids.size()); ++row) {
+    const auto id = ids[static_cast<std::size_t>(row)];
+    if (auto *editor = qobject_cast<QKeySequenceEdit *>(impl_->table_->cellWidget(row, 3))) {
+      editor->setKeySequence(bindings.defaultShortcut(id));
+    }
+  }
+}
+
+void ShortcutSettingPage::applyTableToBindings() {
+  if (!impl_ || !impl_->table_) {
+    return;
+  }
+
+  const auto ids = ArtifactCore::allShortcutIds();
+  auto &bindings = ArtifactCore::ShortcutBindings::instance();
+  for (int row = 0; row < static_cast<int>(ids.size()); ++row) {
+    const auto id = ids[static_cast<std::size_t>(row)];
+    if (auto *editor = qobject_cast<QKeySequenceEdit *>(impl_->table_->cellWidget(row, 3))) {
+      bindings.setShortcut(id, editor->keySequence());
+    }
+  }
+}
+
+void ShortcutSettingPage::exportPreset() {
+  if (!impl_) {
+    return;
+  }
+
+  const QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+  const QString defaultPath = defaultDir.isEmpty()
+                                  ? QStringLiteral("shortcut-preset.json")
+                                  : QDir(defaultDir).filePath(QStringLiteral("shortcut-preset.json"));
+  const QString path = QFileDialog::getSaveFileName(
+      this, QStringLiteral("Export Shortcut Preset"), defaultPath,
+      QStringLiteral("Shortcut Preset (*.json)"));
+  if (path.isEmpty()) {
+    return;
+  }
+
+  QFile file(path);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    QMessageBox::warning(this, QStringLiteral("Export Shortcut Preset"),
+                         QStringLiteral("Could not open the preset file for writing."));
+    return;
+  }
+
+  applyTableToBindings();
+  const QJsonDocument doc(ArtifactCore::ShortcutBindings::instance().toJson());
+  file.write(doc.toJson(QJsonDocument::Indented));
+}
+
+void ShortcutSettingPage::importPreset() {
+  if (!impl_) {
+    return;
+  }
+
+  const QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+  const QString defaultPath = defaultDir.isEmpty()
+                                  ? QString()
+                                  : QDir(defaultDir).filePath(QStringLiteral("shortcut-preset.json"));
+  const QString path = QFileDialog::getOpenFileName(
+      this, QStringLiteral("Import Shortcut Preset"), defaultPath,
+      QStringLiteral("Shortcut Preset (*.json)"));
+  if (path.isEmpty()) {
+    return;
+  }
+
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) {
+    QMessageBox::warning(this, QStringLiteral("Import Shortcut Preset"),
+                         QStringLiteral("Could not open the preset file for reading."));
+    return;
+  }
+
+  const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+  if (!doc.isObject()) {
+    QMessageBox::warning(this, QStringLiteral("Import Shortcut Preset"),
+                         QStringLiteral("The preset file does not contain a valid JSON object."));
+    return;
+  }
+
+  auto &bindings = ArtifactCore::ShortcutBindings::instance();
+  if (!bindings.loadFromJson(doc.object())) {
+    QMessageBox::warning(this, QStringLiteral("Import Shortcut Preset"),
+                         QStringLiteral("The preset file did not contain any recognized shortcuts."));
+    return;
+  }
+
+  loadSettings();
+}
+
+void ShortcutSettingPage::loadSettings() {
+  if (!impl_ || !impl_->table_) {
+    return;
+  }
+
+  const auto ids = ArtifactCore::allShortcutIds();
+  const auto &bindings = ArtifactCore::ShortcutBindings::instance();
+  impl_->table_->setRowCount(static_cast<int>(ids.size()));
+
+  for (int row = 0; row < static_cast<int>(ids.size()); ++row) {
+    const auto id = ids[static_cast<std::size_t>(row)];
+    const bool isTimeline = static_cast<int>(id) >= static_cast<int>(ArtifactCore::ShortcutId::TimelineCopySelectedKeyframes);
+    const QString category = isTimeline ? QStringLiteral("Timeline") : QStringLiteral("Core");
+    const QString actionLabel = ArtifactCore::shortcutDisplayName(id);
+    const QString defaultShortcut = bindings.defaultShortcut(id).toString(QKeySequence::NativeText);
+
+    impl_->table_->setItem(row, 0, new QTableWidgetItem(category));
+    impl_->table_->setItem(row, 1, new QTableWidgetItem(actionLabel));
+    impl_->table_->setItem(row, 2, new QTableWidgetItem(defaultShortcut));
+    auto *editor = new QKeySequenceEdit(impl_->table_);
+    editor->setKeySequence(bindings.shortcut(id));
+    editor->setMaximumWidth(240);
+    impl_->table_->setCellWidget(row, 3, editor);
+  }
+  impl_->table_->resizeColumnsToContents();
+}
+
+void ShortcutSettingPage::saveSettings() {
+  if (!impl_ || !impl_->table_) {
+    return;
+  }
+
+  applyTableToBindings();
+}
+
+bool ShortcutSettingPage::eventFilter(QObject *watched, QEvent *event) {
+  if (impl_ && watched && event) {
+    if (watched == impl_->importPresetButton_) {
+      const auto type = event->type();
+      if (type == QEvent::MouseButtonRelease) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent && mouseEvent->button() == Qt::LeftButton) {
+          importPreset();
+          return true;
+        }
+      } else if (type == QEvent::KeyRelease) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent && (keyEvent->key() == Qt::Key_Return ||
+                         keyEvent->key() == Qt::Key_Enter ||
+                         keyEvent->key() == Qt::Key_Space)) {
+          importPreset();
+          return true;
+        }
+      }
+    } else if (watched == impl_->exportPresetButton_) {
+      const auto type = event->type();
+      if (type == QEvent::MouseButtonRelease) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent && mouseEvent->button() == Qt::LeftButton) {
+          exportPreset();
+          return true;
+        }
+      } else if (type == QEvent::KeyRelease) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent && (keyEvent->key() == Qt::Key_Return ||
+                         keyEvent->key() == Qt::Key_Enter ||
+                         keyEvent->key() == Qt::Key_Space)) {
+          exportPreset();
+          return true;
+        }
+      }
+    } else if (watched == impl_->resetDefaultsButton_) {
+      const auto type = event->type();
+      if (type == QEvent::MouseButtonRelease) {
+        auto *mouseEvent = static_cast<QMouseEvent *>(event);
+        if (mouseEvent && mouseEvent->button() == Qt::LeftButton) {
+          resetToDefaults();
+          return true;
+        }
+      } else if (type == QEvent::KeyRelease) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if (keyEvent && (keyEvent->key() == Qt::Key_Return ||
+                         keyEvent->key() == Qt::Key_Enter ||
+                         keyEvent->key() == Qt::Key_Space)) {
+          resetToDefaults();
+          return true;
+        }
+      }
+    }
+  }
+
+  return QObject::eventFilter(watched, event);
+}
+
 QList<SettingItemInfo> ShortcutSettingPage::searchableItems() const {
-  return {};
+  QList<SettingItemInfo> items;
+  const auto ids = ArtifactCore::allShortcutIds();
+  const auto &bindings = ArtifactCore::ShortcutBindings::instance();
+  for (const auto id : ids) {
+    const bool isTimeline = static_cast<int>(id) >= static_cast<int>(ArtifactCore::ShortcutId::TimelineCopySelectedKeyframes);
+    items.push_back({
+        ArtifactCore::shortcutDisplayName(id),
+        bindings.shortcutText(id),
+        isTimeline ? QStringLiteral("Timeline") : QStringLiteral("Core"),
+        nullptr,
+    });
+  }
+  return items;
 }
 
 class ApplicationSettingDialog::Impl {
@@ -1061,6 +1334,7 @@ public:
   PreviewSettingPage *previewPage_;
   ProjectDefaultsSettingPage *projectPage_;
   MemoryAndCpuSettingPage *memoryPage_;
+  ShortcutSettingPage *shortcutPage_;
   PluginSettingPage *pluginPage_;
 
   void setupUI(ApplicationSettingDialog *dialog);
@@ -1070,7 +1344,8 @@ public:
 ApplicationSettingDialog::Impl::Impl()
     : categoryList_(nullptr), settingPages_(nullptr), buttonBox_(nullptr),
       generalPage_(nullptr), importPage_(nullptr), previewPage_(nullptr),
-      projectPage_(nullptr), memoryPage_(nullptr), pluginPage_(nullptr) {}
+      projectPage_(nullptr), memoryPage_(nullptr), shortcutPage_(nullptr),
+      pluginPage_(nullptr) {}
 
 ApplicationSettingDialog::Impl::~Impl() {}
 
@@ -1103,13 +1378,14 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   previewPage_ = new PreviewSettingPage(dialog);
   projectPage_ = new ProjectDefaultsSettingPage(dialog);
   memoryPage_ = new MemoryAndCpuSettingPage(dialog);
+  shortcutPage_ = new ShortcutSettingPage(dialog);
 
   settingPages_->addWidget(generalPage_);
   settingPages_->addWidget(importPage_);
   settingPages_->addWidget(previewPage_);
   settingPages_->addWidget(projectPage_);
   settingPages_->addWidget(memoryPage_);
-  settingPages_->addWidget(new QWidget(dialog)); // Shortcuts placeholder
+  settingPages_->addWidget(shortcutPage_);
   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
 
   contentLayout->addWidget(settingPages_, 1);
@@ -1155,6 +1431,9 @@ void ApplicationSettingDialog::loadSettings() {
   impl_->previewPage_->loadSettings();
   impl_->projectPage_->loadSettings();
   impl_->memoryPage_->loadSettings();
+  if (impl_->shortcutPage_) {
+    impl_->shortcutPage_->loadSettings();
+  }
 }
 
 void ApplicationSettingDialog::saveSettings() {
@@ -1163,6 +1442,9 @@ void ApplicationSettingDialog::saveSettings() {
   impl_->previewPage_->saveSettings();
   impl_->projectPage_->saveSettings();
   impl_->memoryPage_->saveSettings();
+  if (impl_->shortcutPage_) {
+    impl_->shortcutPage_->saveSettings();
+  }
 
   ArtifactAppSettings::instance()->sync();
 }

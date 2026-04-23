@@ -14,14 +14,54 @@ module;
 module Artifact.Layers.SolidImage;
 
 import std;
+import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Property.Abstract;
 import Property.Group;
 import Animation.Value;
+import Time.Rational;
 
 namespace Artifact {
 namespace {
 Q_LOGGING_CATEGORY(solidImageLayerLog, "artifact.solidimagelayer")
+
+int64_t effectiveSolidTimelineFrame(const ArtifactSolidImageLayer *layer) {
+  if (!layer) {
+    return 0;
+  }
+  if (auto *composition = static_cast<ArtifactAbstractComposition *>(
+          layer->composition())) {
+    return composition->framePosition().framePosition();
+  }
+  return layer->currentFrame();
+}
+
+int64_t effectiveSolidTimelineFps(const ArtifactSolidImageLayer *layer) {
+  if (!layer) {
+    return 30;
+  }
+  if (auto *composition = static_cast<ArtifactAbstractComposition *>(
+          layer->composition())) {
+    return std::max<int64_t>(
+        1, static_cast<int64_t>(
+               std::llround(composition->frameRate().framerate())));
+  }
+  return 30;
+}
+
+FramePosition effectiveSolidTimelineFramePosition(
+    const ArtifactSolidImageLayer *layer) {
+  return FramePosition(static_cast<int>(effectiveSolidTimelineFrame(layer)));
+}
+
+RationalTime effectiveSolidTimelineTime(const ArtifactSolidImageLayer *layer) {
+  return RationalTime(effectiveSolidTimelineFrame(layer),
+                      effectiveSolidTimelineFps(layer));
+}
+
+FloatColor toFloatColor(const QColor &color) {
+  return FloatColor(color.redF(), color.greenF(), color.blueF(), color.alphaF());
+}
 }
 
 ArtifactSolidImageLayerSettings::ArtifactSolidImageLayerSettings() = default;
@@ -44,9 +84,17 @@ ArtifactSolidImageLayer::ArtifactSolidImageLayer() : impl_(new Impl()) {}
 ArtifactSolidImageLayer::~ArtifactSolidImageLayer() { delete impl_; }
 
 FloatColor ArtifactSolidImageLayer::color() const {
-  // 現在のフレーム位置に基づく補間値を返す
-  auto frame = FramePosition(currentFrame());
-  // キーフレームが存在しない場合はデフォルト値を返す
+  if (const auto property = getProperty(QStringLiteral("solid.color"))) {
+    const QVariant value =
+        property->getKeyFrames().empty()
+            ? property->getValue()
+            : property->interpolateValue(effectiveSolidTimelineTime(this));
+    if (value.canConvert<QColor>()) {
+      return toFloatColor(value.value<QColor>());
+    }
+  }
+
+  const auto frame = effectiveSolidTimelineFramePosition(this);
   if (impl_->color_.getKeyFrameCount() == 0) {
     return impl_->defaultColor_;
   }
@@ -54,13 +102,24 @@ FloatColor ArtifactSolidImageLayer::color() const {
 }
 
 void ArtifactSolidImageLayer::setColor(const FloatColor &color) {
-  // 現在のフレーム位置にキーフレームを追加または更新
-  auto frame = FramePosition(currentFrame());
-  // 既存のキーフレームを削除してから新しいキーフレームを追加
+  const auto frame = effectiveSolidTimelineFramePosition(this);
   if (impl_->color_.hasKeyFrameAt(frame)) {
     impl_->color_.removeKeyFrameAt(frame);
   }
   impl_->color_.addKeyFrame(frame, color);
+
+  if (const auto property = getProperty(QStringLiteral("solid.color"))) {
+    const QColor nextColor = QColor::fromRgbF(color.r(), color.g(), color.b(),
+                                              color.a());
+    property->setAnimatable(true);
+    if (!property->getKeyFrames().empty()) {
+      property->addKeyFrame(effectiveSolidTimelineTime(this),
+                            QVariant::fromValue(nextColor));
+    } else {
+      property->setColorValue(nextColor);
+      property->setValue(QVariant::fromValue(nextColor));
+    }
+  }
 }
 
 void ArtifactSolidImageLayer::setSize(const int width, const int height) {
@@ -129,9 +188,7 @@ bool ArtifactSolidImageLayer::setLayerPropertyValue(const QString &propertyPath,
 
 void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
   const auto size = sourceSize();
-  // 現在のフレーム位置に基づく補間値を取得
-  auto frame = FramePosition(currentFrame());
-  auto color = impl_->color_.at(frame);
+  const auto color = this->color();
 
   static int drawLogSamples = 0;
   if (drawLogSamples < 5) {
@@ -161,8 +218,7 @@ QImage ArtifactSolidImageLayer::toQImage() const {
   if (size.width <= 0 || size.height <= 0) {
     return QImage();
   }
-  auto frame = FramePosition(currentFrame());
-  auto color = impl_->color_.at(frame);
+  const auto color = this->color();
   const auto c = QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
   QImage image(size.width, size.height, QImage::Format_ARGB32_Premultiplied);
   image.fill(c);

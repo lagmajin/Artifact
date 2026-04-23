@@ -45,6 +45,7 @@ import Artifact.Widget.WorkAreaControlWidget;
 import Artifact.Widgets.LayerPanelWidget;
 import Widget.CurveEditor;
 import Artifact.Timeline.ScrubBar;
+import Artifact.Timeline.KeyBinding;
 import Artifact.Timeline.KeyframeModel;
 import Artifact.Widgets.Timeline.Label;
 import Artifact.Timeline.NavigatorWidget;
@@ -3313,9 +3314,8 @@ void ArtifactTimelineWidget::syncWorkAreaFromCurrentComposition() {
 }
 
 void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
-  if (event && (event->modifiers() & Qt::ControlModifier) &&
-      (event->key() == Qt::Key_PageUp || event->key() == Qt::Key_PageDown)) {
-    jumpToKeyframeHit(event->key() == Qt::Key_PageUp ? -1 : +1);
+  const ArtifactTimelineAction action = resolveTimelineAction(event);
+  if (action != ArtifactTimelineAction::None && handleTimelineAction(action)) {
     event->accept();
     return;
   }
@@ -3448,6 +3448,42 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
   QWidget::keyPressEvent(event);
 }
 
+bool ArtifactTimelineWidget::handleTimelineAction(const ArtifactTimelineAction action)
+{
+  switch (action) {
+  case ArtifactTimelineAction::CopySelectedKeyframes:
+    copySelectedKeyframes();
+    return true;
+  case ArtifactTimelineAction::PasteKeyframesAtPlayhead:
+    pasteKeyframesAtPlayhead();
+    return true;
+  case ArtifactTimelineAction::SelectAllKeyframes:
+    selectAllKeyframes();
+    return true;
+  case ArtifactTimelineAction::AddKeyframeAtPlayhead:
+    addKeyframeAtPlayhead();
+    return true;
+  case ArtifactTimelineAction::RemoveKeyframeAtPlayhead:
+    removeKeyframeAtPlayhead();
+    return true;
+  case ArtifactTimelineAction::JumpToFirstKeyframe:
+    jumpToFirstKeyframe();
+    return true;
+  case ArtifactTimelineAction::JumpToLastKeyframe:
+    jumpToLastKeyframe();
+    return true;
+  case ArtifactTimelineAction::JumpToNextKeyframe:
+    jumpToKeyframeHit(+1);
+    return true;
+  case ArtifactTimelineAction::JumpToPreviousKeyframe:
+    jumpToKeyframeHit(-1);
+    return true;
+  case ArtifactTimelineAction::None:
+    return false;
+  }
+  return false;
+}
+
 void ArtifactTimelineWidget::keyReleaseEvent(QKeyEvent *event) {
   if (!event || event->isAutoRepeat()) {
     return;
@@ -3540,13 +3576,10 @@ void ArtifactTimelineWidget::updateKeyframeState()
       static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_))));
   impl_->keyframeStatusLabel_->setText(formatKeyframeNavigationText(state));
   if (impl_->easingLabButton_) {
-    impl_->easingLabButton_->setVisible(!state.totalFrames == 0 && state.totalFrames > 0); 
-    // Wait, state.totalFrames is the total frames with keyframes in selected layers.
-    // Actually, I should check if there are SELECTED markers.
-    if (impl_->painterTrackView_) {
-      const bool hasSelection = !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
-      impl_->easingLabButton_->setVisible(hasSelection);
-    }
+    const bool hasSelection =
+        impl_->painterTrackView_ &&
+        !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
+    impl_->easingLabButton_->setVisible(hasSelection);
   }
 }
 

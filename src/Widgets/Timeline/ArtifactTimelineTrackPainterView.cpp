@@ -33,6 +33,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Frame.Position;
 import Property.Abstract;
+import Undo.UndoManager;
 import Time.Rational;
 
 namespace Artifact {
@@ -75,6 +76,17 @@ int trackTopAt(const QVector<int> &heights, const int trackIndex) {
     y += heights[i] + kTrackSpacing;
   }
   return y;
+}
+
+int trackTopAt(const QVector<int> &trackTops, const QVector<int> &heights,
+               const int trackIndex) {
+  if (trackIndex < 0 || trackIndex >= heights.size()) {
+    return 0;
+  }
+  if (trackIndex < trackTops.size()) {
+    return trackTops[trackIndex];
+  }
+  return trackTopAt(heights, trackIndex);
 }
 
 int totalTrackContentHeight(const QVector<int> &heights) {
@@ -150,6 +162,157 @@ bool sameKeyframeMarkerVisual(
          lhs.selectedLayer == rhs.selectedLayer &&
          lhs.selected == rhs.selected && lhs.eased == rhs.eased &&
          lhs.color == rhs.color && lhs.label == rhs.label;
+}
+
+std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+    const ArtifactAbstractLayerPtr &layer, const QString &propertyPath) {
+  if (!layer || propertyPath.trimmed().isEmpty()) {
+    return {};
+  }
+
+  const auto groups = layer->getLayerPropertyGroups();
+  for (const auto &group : groups) {
+    for (const auto &property : group.sortedProperties()) {
+      if (!property) {
+        continue;
+      }
+      if (property->getName() == propertyPath) {
+        return property;
+      }
+    }
+  }
+  return {};
+}
+
+struct InterpolationChangeRecord {
+  ArtifactAbstractLayerWeak layer;
+  QString propertyPath;
+  RationalTime time;
+  ArtifactCore::KeyFrame before;
+  ArtifactCore::KeyFrame after;
+};
+
+class ApplyInterpolationCommand final : public UndoCommand {
+public:
+  explicit ApplyInterpolationCommand(QVector<InterpolationChangeRecord> records)
+      : records_(std::move(records)) {}
+
+  void undo() override { apply(false); }
+  void redo() override { apply(true); }
+  QString label() const override { return QStringLiteral("Apply Interpolation"); }
+
+private:
+  void apply(const bool useAfter) {
+    QSet<QString> changedLayerIds;
+    for (const auto &record : records_) {
+      auto layer = record.layer.lock();
+      if (!layer) {
+        continue;
+      }
+      const auto property = findLayerPropertyByPath(layer, record.propertyPath);
+      if (!property) {
+        continue;
+      }
+      const auto &keyframe = useAfter ? record.after : record.before;
+      property->addKeyFrame(keyframe.time,
+                            keyframe.value.isValid() ? keyframe.value : property->getValue(),
+                            keyframe.interpolation,
+                            keyframe.cp1_x,
+                            keyframe.cp1_y,
+                            keyframe.cp2_x,
+                            keyframe.cp2_y);
+      layer->changed();
+      changedLayerIds.insert(layer->id().toString());
+    }
+
+    for (const auto &record : records_) {
+      auto layer = record.layer.lock();
+      if (!layer) {
+        continue;
+      }
+      const QString layerKey = layer->id().toString();
+      if (!changedLayerIds.contains(layerKey)) {
+        continue;
+      }
+      if (auto *comp = static_cast<ArtifactAbstractComposition *>(layer->composition())) {
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+      }
+    }
+
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QVector<InterpolationChangeRecord> records_;
+};
+
+int applyInterpolationToSelectedKeyframesImpl(
+    const ArtifactCompositionPtr &composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
+    const ArtifactCore::InterpolationType interpolationType) {
+  if (!composition || markers.isEmpty()) {
+    return 0;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  QSet<QString> seen;
+  QVector<InterpolationChangeRecord> records;
+
+  for (const auto &marker : markers) {
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    const QString dedupeKey =
+        QStringLiteral("%1|%2|%3").arg(marker.layerId.toString(), marker.propertyPath,
+                                        QString::number(frame));
+    if (seen.contains(dedupeKey)) {
+      continue;
+    }
+    seen.insert(dedupeKey);
+
+    const auto layer = composition->layerById(marker.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property || !property->isAnimatable()) {
+      continue;
+    }
+
+    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const auto keyframes = property->getKeyFrames();
+    const auto it = std::find_if(keyframes.cbegin(), keyframes.cend(),
+                                 [&time](const ArtifactCore::KeyFrame &keyframe) {
+                                   return keyframe.time == time;
+                                 });
+    if (it == keyframes.cend()) {
+      continue;
+    }
+
+    const ArtifactCore::KeyFrame before = *it;
+    ArtifactCore::KeyFrame after = before;
+    after.interpolation = interpolationType;
+    records.push_back(InterpolationChangeRecord{
+        layer,
+        marker.propertyPath,
+        time,
+        before,
+        after,
+    });
+  }
+
+  if (records.isEmpty()) {
+    return 0;
+  }
+
+  const int appliedCount = static_cast<int>(records.size());
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<ApplyInterpolationCommand>(std::move(records)));
+    return appliedCount;
+  }
+  return 0;
 }
 
 bool sameTimelineRowDescriptor(const TimelineRowDescriptor &lhs,
@@ -234,14 +397,15 @@ void updateHoverToolTip(QWidget *widget, const QPoint &globalPos,
 
 HitResult hitTestClips(
     const QVector<ArtifactTimelineTrackPainterView::TrackClipVisual> &clips,
-    const QVector<int> &heights, const double mouseX, const double mouseY,
-    const double ppf, const double xOffset, const double yOffset) {
+    const QVector<int> &heights, const QVector<int> &trackTops,
+    const double mouseX, const double mouseY, const double ppf,
+    const double xOffset, const double yOffset) {
   const double localMouseY = mouseY + yOffset;
   for (int i = 0; i < clips.size(); ++i) {
     const auto &clip = clips[i];
     if (clip.trackIndex < 0 || clip.trackIndex >= heights.size())
       continue;
-    const int trackTop = trackTopAt(heights, clip.trackIndex);
+    const int trackTop = trackTopAt(trackTops, heights, clip.trackIndex);
     const int trackH = heights[clip.trackIndex];
     if (localMouseY < trackTop || localMouseY > trackTop + trackH)
       continue;
@@ -260,12 +424,12 @@ HitResult hitTestClips(
 
 QPointF markerCenterFor(
     const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual &marker,
-    const QVector<int> &heights, const double ppf, const double xOffset,
-    const double yOffset) {
+    const QVector<int> &heights, const QVector<int> &trackTops,
+    const double ppf, const double xOffset, const double yOffset) {
   if (marker.trackIndex < 0 || marker.trackIndex >= heights.size()) {
     return {};
   }
-  const int trackTop = trackTopAt(heights, marker.trackIndex);
+  const int trackTop = trackTopAt(trackTops, heights, marker.trackIndex);
   const int trackH = heights[marker.trackIndex];
   const int laneCount = std::max(1, marker.laneCount);
   const int laneIndex = std::clamp(marker.laneIndex, 0, laneCount - 1);
@@ -277,10 +441,10 @@ QPointF markerCenterFor(
 
 QRectF markerHitRectFor(
     const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual &marker,
-    const QVector<int> &heights, const double ppf, const double xOffset,
-    const double yOffset) {
+    const QVector<int> &heights, const QVector<int> &trackTops,
+    const double ppf, const double xOffset, const double yOffset) {
   const QPointF center =
-      markerCenterFor(marker, heights, ppf, xOffset, yOffset);
+      markerCenterFor(marker, heights, trackTops, ppf, xOffset, yOffset);
   if (center.isNull()) {
     return {};
   }
@@ -290,13 +454,13 @@ QRectF markerHitRectFor(
 
 QRectF
 clipRectFor(const ArtifactTimelineTrackPainterView::TrackClipVisual &clip,
-            const QVector<int> &heights, const double ppf, const double xOffset,
-            const double yOffset) {
+            const QVector<int> &heights, const QVector<int> &trackTops,
+            const double ppf, const double xOffset, const double yOffset) {
   if (clip.trackIndex < 0 || clip.trackIndex >= heights.size()) {
     return {};
   }
 
-  const int trackTop = trackTopAt(heights, clip.trackIndex);
+  const int trackTop = trackTopAt(trackTops, heights, clip.trackIndex);
   const int trackH = heights[clip.trackIndex];
   const double clipX = clip.startFrame * ppf - xOffset;
   const double clipW = std::max(2.0, clip.durationFrame * ppf);
@@ -307,15 +471,16 @@ clipRectFor(const ArtifactTimelineTrackPainterView::TrackClipVisual &clip,
 MarkerHitResult hitTestMarkers(
     const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
         &markers,
-    const QVector<int> &heights, const double mouseX, const double mouseY,
-    const double ppf, const double xOffset, const double yOffset) {
+    const QVector<int> &heights, const QVector<int> &trackTops,
+    const double mouseX, const double mouseY, const double ppf,
+    const double xOffset, const double yOffset) {
   for (int i = 0; i < markers.size(); ++i) {
     const auto &marker = markers[i];
     if (marker.trackIndex < 0 || marker.trackIndex >= heights.size()) {
       continue;
     }
     const QPointF center =
-        markerCenterFor(marker, heights, ppf, xOffset, yOffset);
+        markerCenterFor(marker, heights, trackTops, ppf, xOffset, yOffset);
     if (center.isNull()) {
       continue;
     }
@@ -349,16 +514,16 @@ QVector<ArtifactAbstractLayerPtr> selectedTimelineLayers() {
 }
 
 std::optional<int> trackIndexAt(const QVector<int> &heights,
+                                const QVector<int> &trackTops,
                                 const double mouseY,
                                 const double yOffset) {
   const double localMouseY = mouseY + yOffset;
-  int trackTop = 0;
   for (int i = 0; i < heights.size(); ++i) {
+    const int trackTop = trackTopAt(trackTops, heights, i);
     const int trackHeight = heights[i];
     if (localMouseY >= trackTop && localMouseY <= trackTop + trackHeight) {
       return i;
     }
-    trackTop += trackHeight + kTrackSpacing;
   }
   return std::nullopt;
 }
@@ -533,6 +698,40 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
     layer->setStartTime(FramePosition(oldStartTime + inPointDelta));
   }
 
+  if (preserveExistingDuration && inPointDelta != 0) {
+    auto *composition =
+        static_cast<ArtifactAbstractComposition *>(layer->composition());
+    const double fps = composition
+                           ? std::max(1.0, static_cast<double>(
+                                              composition->frameRate().framerate()))
+                           : 30.0;
+    const int64_t frameScale = static_cast<int64_t>(std::llround(fps));
+    for (const auto &group : layer->getLayerPropertyGroups()) {
+      for (const auto &property : group.sortedProperties()) {
+        if (!property || !property->isAnimatable()) {
+          continue;
+        }
+
+        const auto keyframes = property->getKeyFrames();
+        if (keyframes.empty()) {
+          continue;
+        }
+
+        property->clearKeyFrames();
+        for (const auto &keyframe : keyframes) {
+          const int64_t oldFrame = keyframe.time.rescaledTo(frameScale);
+          const int64_t newFrame =
+              std::max<int64_t>(0, oldFrame + inPointDelta);
+          property->addKeyFrame(
+              RationalTime(newFrame, frameScale),
+              keyframe.value.isValid() ? keyframe.value : property->getValue(),
+              keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
+              keyframe.cp2_x, keyframe.cp2_y);
+        }
+      }
+    }
+  }
+
   return oldInPoint != inPoint || oldOutPoint != outPoint ||
          oldStartTime != layer->startTime().framePosition();
 }
@@ -551,6 +750,7 @@ public:
   double horizontalOffset_ = 0.0;
   double verticalOffset_ = 0.0;
   QVector<int> trackHeights_;
+  QVector<int> trackTops_;
   QVector<TrackClipVisual> clips_;
   QVector<TimelineRowDescriptor> trackRows_;
 
@@ -577,14 +777,26 @@ public:
   const ArtifactAbstractComposition *lastSyncedComposition_ = nullptr;
   QSet<LayerID> lastSyncedSelectedLayerIds_;
   QVector<TimelineRowDescriptor> lastSyncedTrackRows_;
+
+  void rebuildTrackTopCache();
 };
 
 ArtifactTimelineTrackPainterView::Impl::Impl() {
   trackHeights_.resize(kMinTrackCount);
   trackHeights_.fill(kDefaultTrackHeight);
+  rebuildTrackTopCache();
 }
 
 ArtifactTimelineTrackPainterView::Impl::~Impl() = default;
+
+void ArtifactTimelineTrackPainterView::Impl::rebuildTrackTopCache() {
+  trackTops_.resize(trackHeights_.size());
+  int currentY = 0;
+  for (int i = 0; i < trackHeights_.size(); ++i) {
+    trackTops_[i] = currentY;
+    currentY += trackHeights_[i] + kTrackSpacing;
+  }
+}
 
 ArtifactTimelineTrackPainterView::ArtifactTimelineTrackPainterView(
     QWidget *parent)
@@ -702,6 +914,7 @@ void ArtifactTimelineTrackPainterView::setTrackCount(const int count) {
   for (int i = oldSize; i < sanitized; ++i) {
     impl_->trackHeights_[i] = kDefaultTrackHeight;
   }
+  impl_->rebuildTrackTopCache();
   updateGeometry();
   setVerticalOffset(impl_->verticalOffset_);
   update();
@@ -736,6 +949,7 @@ void ArtifactTimelineTrackPainterView::setTrackHeights(
     impl_->trackHeights_[i] =
         std::max(16, static_cast<int>(heights.value(i, kDefaultTrackHeight)));
   }
+  impl_->rebuildTrackTopCache();
   updateGeometry();
   setVerticalOffset(impl_->verticalOffset_);
   update();
@@ -752,6 +966,7 @@ void ArtifactTimelineTrackPainterView::setTrackHeight(const int trackIndex,
   }
   impl_->selectionSyncDirty_ = true;
   impl_->trackHeights_[trackIndex] = sanitized;
+  impl_->rebuildTrackTopCache();
   updateGeometry();
   update();
 }
@@ -881,7 +1096,8 @@ void ArtifactTimelineTrackPainterView::syncSelectionState(
     const bool selected = selectedLayerIds.contains(clip.layerId);
     if (clip.selected != selected) {
       const QRectF rect =
-          clipRectFor(clip, impl_->trackHeights_, impl_->pixelsPerFrame_,
+          clipRectFor(clip, impl_->trackHeights_, impl_->trackTops_,
+                      impl_->pixelsPerFrame_,
                       impl_->horizontalOffset_, impl_->verticalOffset_);
       clip.selected = selected;
       if (rect.isValid()) {
@@ -934,7 +1150,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   ArtifactCore::ProfileTimer _profTimer("TimelineTrackPaint",
                                         ArtifactCore::ProfileCategory::UI);
   QPainter p(this);
-  p.setRenderHint(QPainter::Antialiasing, true);
+  p.setRenderHint(QPainter::Antialiasing, false);
   const TimelineThemeColors theme = timelineThemeColors();
 
   const QRect dirtyRect = event->rect();
@@ -946,10 +1162,10 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   const double yOffset = impl_->verticalOffset_;
 
   // Track rows (Virtualization)
-  int currentY = 0;
   for (int i = 0; i < impl_->trackHeights_.size(); ++i) {
     const int rowH = impl_->trackHeights_[i];
-    const double rowTop = currentY - yOffset;
+    const double rowTop =
+        trackTopAt(impl_->trackTops_, impl_->trackHeights_, i) - yOffset;
 
     // 画面外（dirtyRect外）の行は描画をスキップ
     if (rowTop + rowH >= dirtyRect.top() && rowTop <= dirtyRect.bottom()) {
@@ -959,8 +1175,6 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.setPen(QPen(theme.border.darker(160), 1));
       p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
     }
-
-    currentY += rowH + kTrackSpacing;
   }
 
   // Vertical frame grid (tick lines only, no labels).
@@ -983,6 +1197,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   }
 
   // Clips.
+  p.setRenderHint(QPainter::Antialiasing, true);
+  const QFontMetrics metrics = p.fontMetrics();
   for (int i = 0; i < impl_->clips_.size(); ++i) {
     const auto &clip = impl_->clips_[i];
 
@@ -991,12 +1207,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     const double clipW = clip.durationFrame * ppf;
 
     // Y座標を特定するために再度ループ（キャッシュしておくと高速だが、まずは単純に）
-    int clipY = 0;
-    for (int t = 0; t < clip.trackIndex && t < impl_->trackHeights_.size();
-         ++t) {
-      clipY += impl_->trackHeights_[t] + kTrackSpacing;
-    }
-    clipY -= static_cast<int>(std::round(yOffset));
+    const int clipY =
+        trackTopAt(impl_->trackTops_, impl_->trackHeights_, clip.trackIndex) -
+        static_cast<int>(std::round(yOffset));
     const int clipH =
         (clip.trackIndex >= 0 && clip.trackIndex < impl_->trackHeights_.size())
             ? impl_->trackHeights_[clip.trackIndex]
@@ -1011,7 +1224,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     if (clip.trackIndex < 0 || clip.trackIndex >= impl_->trackHeights_.size()) {
       continue;
     }
-    const int trackTop = trackTopAt(impl_->trackHeights_, clip.trackIndex);
+    const int trackTop =
+        trackTopAt(impl_->trackTops_, impl_->trackHeights_, clip.trackIndex);
     const int trackH = impl_->trackHeights_[clip.trackIndex];
     const double x = clip.startFrame * ppf - xOffset;
     const double w = std::max(2.0, clip.durationFrame * ppf);
@@ -1046,7 +1260,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
 
     if (!clip.title.isEmpty() && clipRect.width() > 28.0) {
       p.setPen(clip.selected ? theme.background : theme.text);
-      const QString text = QFontMetrics(p.font()).elidedText(
+      const QString text = metrics.elidedText(
           clip.title, Qt::ElideRight,
           static_cast<int>(clipRect.width()) - (kClipPadding * 2));
       p.drawText(clipRect.adjusted(kClipPadding, 0, -kClipPadding, 0),
@@ -1075,7 +1289,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       continue;
     }
     const QPointF center =
-        markerCenterFor(marker, impl_->trackHeights_, ppf, xOffset, yOffset);
+        markerCenterFor(marker, impl_->trackHeights_, impl_->trackTops_, ppf,
+                        xOffset, yOffset);
     if (!dirtyRect.adjusted(-8, -8, 8, 8).contains(center.toPoint())) {
       continue;
     }
@@ -1153,8 +1368,9 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
     const double mouseX = event->position().x();
     const double mouseY = event->position().y();
     const auto markerHit =
-        hitTestMarkers(impl_->keyframeMarkers_, impl_->trackHeights_, mouseX,
-                       mouseY, impl_->pixelsPerFrame_, impl_->horizontalOffset_,
+        hitTestMarkers(impl_->keyframeMarkers_, impl_->trackHeights_,
+                       impl_->trackTops_, mouseX, mouseY,
+                       impl_->pixelsPerFrame_, impl_->horizontalOffset_,
                        impl_->verticalOffset_);
     if (markerHit.markerIndex >= 0) {
       const auto &marker = impl_->keyframeMarkers_[markerHit.markerIndex];
@@ -1191,9 +1407,9 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
     impl_->draggingMarker_ = false;
     impl_->dragMarkerIndex_ = -1;
     const auto hit =
-        hitTestClips(impl_->clips_, impl_->trackHeights_, mouseX, mouseY,
-                     impl_->pixelsPerFrame_, impl_->horizontalOffset_,
-                     impl_->verticalOffset_);
+        hitTestClips(impl_->clips_, impl_->trackHeights_, impl_->trackTops_,
+                     mouseX, mouseY, impl_->pixelsPerFrame_,
+                     impl_->horizontalOffset_, impl_->verticalOffset_);
     if (hit.mode != DragMode::None) {
       impl_->dragMode_ = hit.mode;
       impl_->dragClipIndex_ = hit.clipIndex;
@@ -1233,8 +1449,8 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
   const double mouseY = event->position().y();
   const double ppf = impl_->pixelsPerFrame_;
   const auto markerHit = hitTestMarkers(
-      impl_->keyframeMarkers_, impl_->trackHeights_, mouseX, mouseY, ppf,
-      impl_->horizontalOffset_, impl_->verticalOffset_);
+      impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, mouseX,
+      mouseY, ppf, impl_->horizontalOffset_, impl_->verticalOffset_);
 
   if ((event->buttons() & Qt::LeftButton) && impl_->dragMarkerIndex_ >= 0) {
     const QPoint currentPos = event->position().toPoint();
@@ -1284,9 +1500,9 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     Q_EMIT timelineDebugMessage(status);
 
     const QRectF dirtyRect =
-        clipRectFor(oldClip, impl_->trackHeights_, ppf,
+        clipRectFor(oldClip, impl_->trackHeights_, impl_->trackTops_, ppf,
                     impl_->horizontalOffset_, impl_->verticalOffset_)
-            .united(clipRectFor(clip, impl_->trackHeights_, ppf,
+            .united(clipRectFor(clip, impl_->trackHeights_, impl_->trackTops_, ppf,
                                 impl_->horizontalOffset_,
                                 impl_->verticalOffset_));
     update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
@@ -1295,8 +1511,9 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
   }
 
   const auto hit =
-      hitTestClips(impl_->clips_, impl_->trackHeights_, mouseX, mouseY, ppf,
-                   impl_->horizontalOffset_, impl_->verticalOffset_);
+      hitTestClips(impl_->clips_, impl_->trackHeights_, impl_->trackTops_,
+                   mouseX, mouseY, ppf, impl_->horizontalOffset_,
+                   impl_->verticalOffset_);
   const bool clipHoverChanged = (hit.clipIndex != impl_->hoverClipIndex_ ||
                                  hit.mode != impl_->hoverEdge_);
   const auto oldHoverClipIndex = impl_->hoverClipIndex_;
@@ -1343,13 +1560,15 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     if (oldHoverClipIndex >= 0 && oldHoverClipIndex < impl_->clips_.size()) {
       dirtyRect =
           clipRectFor(impl_->clips_[oldHoverClipIndex], impl_->trackHeights_,
-                      ppf, impl_->horizontalOffset_, impl_->verticalOffset_);
+                      impl_->trackTops_, ppf, impl_->horizontalOffset_,
+                      impl_->verticalOffset_);
       hasDirty = true;
     }
     if (hit.clipIndex >= 0 && hit.clipIndex < impl_->clips_.size()) {
       const QRectF rect =
-          clipRectFor(impl_->clips_[hit.clipIndex], impl_->trackHeights_, ppf,
-                      impl_->horizontalOffset_, impl_->verticalOffset_);
+          clipRectFor(impl_->clips_[hit.clipIndex], impl_->trackHeights_,
+                      impl_->trackTops_, ppf, impl_->horizontalOffset_,
+                      impl_->verticalOffset_);
       dirtyRect = hasDirty ? dirtyRect.united(rect) : rect;
       hasDirty = true;
     }
@@ -1363,7 +1582,8 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
         oldHoverMarkerIndex < impl_->keyframeMarkers_.size()) {
       const QRectF rect = markerHitRectFor(
           impl_->keyframeMarkers_[oldHoverMarkerIndex], impl_->trackHeights_,
-          ppf, impl_->horizontalOffset_, impl_->verticalOffset_);
+          impl_->trackTops_, ppf, impl_->horizontalOffset_,
+          impl_->verticalOffset_);
       dirtyRect = hasDirty ? dirtyRect.united(rect) : rect;
       hasDirty = true;
     }
@@ -1371,8 +1591,8 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
         impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
       const QRectF rect =
           markerHitRectFor(impl_->keyframeMarkers_[impl_->hoverMarkerIndex_],
-                           impl_->trackHeights_, ppf, impl_->horizontalOffset_,
-                           impl_->verticalOffset_);
+                           impl_->trackHeights_, impl_->trackTops_, ppf,
+                           impl_->horizontalOffset_, impl_->verticalOffset_);
       dirtyRect = hasDirty ? dirtyRect.united(rect) : rect;
       hasDirty = true;
     }
@@ -1500,14 +1720,15 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   const double mouseX = static_cast<double>(event->pos().x());
   const double mouseY = static_cast<double>(event->pos().y());
   const auto clipHit = hitTestClips(
-      impl_->clips_, impl_->trackHeights_, mouseX, mouseY,
+      impl_->clips_, impl_->trackHeights_, impl_->trackTops_, mouseX, mouseY,
       impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
   const bool clipUnderCursor = clipHit.mode != DragMode::None &&
                                clipHit.clipIndex >= 0 &&
                                clipHit.clipIndex < impl_->clips_.size();
   const auto markerHit = hitTestMarkers(
-      impl_->keyframeMarkers_, impl_->trackHeights_, mouseX, mouseY,
-      impl_->pixelsPerFrame_, impl_->horizontalOffset_, impl_->verticalOffset_);
+      impl_->keyframeMarkers_, impl_->trackHeights_, impl_->trackTops_, mouseX,
+      mouseY, impl_->pixelsPerFrame_, impl_->horizontalOffset_,
+      impl_->verticalOffset_);
   const bool markerUnderCursor =
       markerHit.markerIndex >= 0 &&
       markerHit.markerIndex < impl_->keyframeMarkers_.size();
@@ -1521,7 +1742,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   } else if (clipUnderCursor) {
     targetLayerId = impl_->clips_[clipHit.clipIndex].layerId;
   } else if (const auto trackIndex =
-                 trackIndexAt(impl_->trackHeights_, mouseY,
+                 trackIndexAt(impl_->trackHeights_, impl_->trackTops_, mouseY,
                                impl_->verticalOffset_);
              trackIndex.has_value()) {
     if (*trackIndex >= 0 && *trackIndex < impl_->trackRows_.size()) {
@@ -1679,7 +1900,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     }
     int applied = 0;
     if (currentComposition) {
-      applied = ArtifactTimelineWidget::applyInterpolationToSelectedKeyframesImpl(
+      applied = applyInterpolationToSelectedKeyframesImpl(
           currentComposition, interpolationTargets, type);
     }
     if (applied > 0) {

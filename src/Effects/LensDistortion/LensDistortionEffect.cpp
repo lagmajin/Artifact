@@ -55,9 +55,6 @@ void LensDistortionEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, I
     int height = srcImage.height();
     if (width <= 0 || height <= 0) return;
 
-    const float* srcData = srcImage.data();
-    std::vector<float> dstData(static_cast<size_t>(width) * height * 4);
-
     float cx = centerX_ * static_cast<float>(width);
     float cy = centerY_ * static_cast<float>(height);
     float maxR = std::min(static_cast<float>(width), static_cast<float>(height)) * 0.5f;
@@ -65,7 +62,7 @@ void LensDistortionEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, I
     if (invertDistortion_) k = -k;
     float zm = zoom_;
 
-    std::vector<cv::Vec4f> rowResults(static_cast<size_t>(width) * height);
+    std::vector<FloatRGBA> rowResults(static_cast<size_t>(width) * height);
     QVector<int> rows(height);
     std::iota(rows.begin(), rows.end(), 0);
 
@@ -90,28 +87,20 @@ void LensDistortionEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, I
 
             FloatRGBA pixel = sampleBilinear(srcImage, srcX, srcY);
             size_t idx = static_cast<size_t>(y) * width + x;
-            rowResults[idx][0] = pixel.r;
-            rowResults[idx][1] = pixel.g;
-            rowResults[idx][2] = pixel.b;
-            rowResults[idx][3] = pixel.a;
+            rowResults[idx] = pixel;
         }
     });
 
+    ImageF32x4_RGBA dstImage;
+    dstImage.resize(width, height);
     for (int y = 0; y < height; y++) {
         for (int x = 0; x < width; x++) {
-            size_t dstIdx = (static_cast<size_t>(y) * width + x) * 4;
             size_t srcIdx = static_cast<size_t>(y) * width + x;
-            dstData[dstIdx + 0] = rowResults[srcIdx][0];
-            dstData[dstIdx + 1] = rowResults[srcIdx][1];
-            dstData[dstIdx + 2] = rowResults[srcIdx][2];
-            dstData[dstIdx + 3] = rowResults[srcIdx][3];
+            dstImage.setPixel(x, y, rowResults[srcIdx]);
         }
     }
 
-    ImageF32x4_RGBA dstImage;
-    dstImage.allocate(width, height);
-    std::memcpy(dstImage.data(), dstData.data(), dstData.size() * sizeof(float));
-    dst.setImage(dstImage);
+    dst = ImageF32x4RGBAWithCache(dstImage);
 }
 
 void LensDistortionEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {

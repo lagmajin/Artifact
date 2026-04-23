@@ -405,8 +405,8 @@ namespace Artifact
             RenderPurpose::FinalExport,
             job.compositionId.toString(),
             frameNumber,
-            ctx.resolutionScale);
-        auto snapshot = createRenderContextSnapshot(ctx, RenderPurpose::FinalExport, key);
+            ctx->resolutionScale);
+        auto snapshot = createRenderContextSnapshot(*ctx, RenderPurpose::FinalExport, key);
         RenderContextRegistry::instance().registerSnapshot(snapshot);
         return key;
     }
