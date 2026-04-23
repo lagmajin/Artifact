@@ -30,6 +30,7 @@
 #include <QPen>
 #include <QPalette>
 #include <QPushButton>
+#include <QFrame>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
@@ -918,6 +919,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   }
   spinBox_->setMinimumHeight(22);
   spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+  spinBox_->setFrame(false);
 
   if (slider_) {
     slider_->setRange(0, 10000); // 精度を向上
@@ -1113,6 +1115,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   }
   spinBox_->setMinimumHeight(22);
   spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+  spinBox_->setFrame(false);
 
   if (slider_) {
     slider_->setRange(0, 10000); // 精度を向上
@@ -1261,6 +1264,7 @@ ArtifactStringPropertyEditor::ArtifactStringPropertyEditor(
   setObjectName(QStringLiteral("propertyStringEditor"));
   lineEdit_ = new QLineEdit(property.getValue().toString(), this);
   lineEdit_->setMinimumHeight(26);
+  lineEdit_->setFrame(false);
   applyPropertyFieldPalette(lineEdit_);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -1291,6 +1295,7 @@ ArtifactMultilineStringPropertyEditor::ArtifactMultilineStringPropertyEditor(
   textEdit_->setMinimumHeight(72);
   textEdit_->setTabChangesFocus(true);
   textEdit_->setLineWrapMode(QTextEdit::WidgetWidth);
+  textEdit_->setFrameStyle(QFrame::NoFrame);
   applyPropertyFieldPalette(textEdit_, true);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -1371,6 +1376,7 @@ ArtifactPathPropertyEditor::ArtifactPathPropertyEditor(
   lineEdit_ = new QLineEdit(property.getValue().toString(), this);
   browseButton_ = new QPushButton(QStringLiteral("..."), this);
   lineEdit_->setMinimumHeight(26);
+  lineEdit_->setFrame(false);
   browseButton_->setObjectName(QStringLiteral("propertyPathBrowseButton"));
   browseButton_->setFixedSize(28, 26);
   applyPropertyFieldPalette(lineEdit_);
@@ -1418,6 +1424,7 @@ ArtifactEnumPropertyEditor::ArtifactEnumPropertyEditor(
   setObjectName(QStringLiteral("propertyEnumEditor"));
   comboBox_ = new QComboBox(this);
   comboBox_->setMinimumHeight(26);
+  comboBox_->setFrame(false);
   applyPropertyFieldPalette(comboBox_);
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);

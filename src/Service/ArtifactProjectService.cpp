@@ -892,9 +892,26 @@ bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(
 
 bool ArtifactProjectService::removeLayerFromComposition(
     const CompositionID &compositionId, const LayerID &layerId) {
+  ArtifactAbstractLayerPtr removedLayer;
+  ArtifactAbstractLayerPtr selectedLayer;
+  auto *app = ArtifactApplicationManager::instance();
+  auto *selectionManager = app ? app->layerSelectionManager() : nullptr;
+  if (auto comp = currentComposition().lock()) {
+    removedLayer = comp->layerById(layerId);
+    if (selectionManager) {
+      selectedLayer = selectionManager->currentLayer();
+    }
+  }
+
   bool ok = impl_->projectManager().removeLayerFromComposition(compositionId,
                                                                layerId);
   if (ok) {
+    const bool selectionMatchedRemoved =
+        selectedLayer && selectedLayer->id() == layerId;
+    if (selectionManager && selectionMatchedRemoved) {
+      selectionManager->removeFromSelection(selectedLayer);
+    }
+
     // [Optimization] Only emit layerRemoved. notifyProjectMutation triggers
     // global projectChanged which causes heavy UI rebuilds. Most widgets handle
     // layerRemoved specifically.
@@ -902,6 +919,12 @@ bool ArtifactProjectService::removeLayerFromComposition(
         LayerChangedEvent{compositionId.toString(), layerId.toString(),
                           LayerChangedEvent::ChangeType::Removed});
     layerRemoved(compositionId, layerId);
+
+    qDebug() << "[ProjectService] removeLayerFromComposition"
+             << "composition=" << compositionId.toString()
+             << "layer=" << layerId.toString()
+             << "selectedMatchedRemoved=" << selectionMatchedRemoved
+             << "hadLayer=" << static_cast<bool>(removedLayer);
   }
   return ok;
 }
@@ -957,6 +980,7 @@ bool ArtifactProjectService::duplicateLayerInCurrentComposition(
     comp->moveLayerToIndex(result.layer->id(), sourceIndex);
     notifyProjectMutation(impl_->projectManager());
   }
+  selectLayer(result.layer->id());
   return true;
 }
 

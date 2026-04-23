@@ -175,6 +175,13 @@ QString threadIdTag()
         .arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
 }
 
+QString threadDiagnosticsTag()
+{
+    return QStringLiteral("%1 | %2")
+        .arg(ArtifactCore::sharedBackgroundThreadPoolDebugString(),
+             ArtifactCore::currentProcessThreadDebugString());
+}
+
 }
 
 // ============================================================================
@@ -393,6 +400,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         result.normalizedPath = normalizedPath;
 
         auto controller = std::make_shared<ArtifactCore::MediaPlaybackController>();
+        controller->setDecoderBackend(ArtifactCore::DecoderBackend::FFmpeg);
         if (!controller->openMediaFile(normalizedPath)) {
             result.error = controller->getLastError();
             return result;
@@ -441,7 +449,8 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
 
         if (!result.success || !result.controller) {
             qCritical() << "[VideoLayer] openMediaFile FAILED:" << result.normalizedPath
-                        << "lastError=" << result.error;
+                        << "lastError=" << result.error
+                        << threadDiagnosticsTag();
             layer->impl_->isLoaded_ = false;
             publishVideoLayerModified(layer);
             return;
@@ -462,6 +471,8 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
 
         qCInfo(videoLayerLog) << "[VideoLayer] active backend:"
                               << decoderBackendName(layer->impl_->playbackController_.get())
+                              << layer->impl_->playbackController_->getDebugState()
+                              << threadDiagnosticsTag()
                               << threadIdTag();
 
         layer->setInPoint(0);
@@ -485,6 +496,13 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         layer->impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, layer]() -> QImage {
             ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
             QImage frame = ctrl->getVideoFrameAtFrameDirect(0);
+            if (frame.isNull()) {
+                qWarning() << "[VideoLayer] initial decode FAILED"
+                           << "source=0"
+                           << "backend=" << decoderBackendName(ctrl)
+                           << "controller=" << ctrl->getDebugState()
+                           << threadDiagnosticsTag();
+            }
             layer->impl_->decoding_ = false;
             if (!frame.isNull()) {
                 publishVideoLayerModifiedAsync(layer);
@@ -644,6 +662,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                    << "out=" << outPoint()
                    << "start=" << startTime().framePosition()
                    << threadIdTag()
+                   << threadDiagnosticsTag()
                    << "streamFrames=" << impl_->streamInfo_.frameCount;
         return;
     }
@@ -685,6 +704,8 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                        << "source=" << sourceFrame
                        << "backend=" << backendName
                        << "backendLastError=" << ctrl->getLastError()
+                       << "controller=" << ctrl->getDebugState()
+                       << threadDiagnosticsTag()
                        << threadIdTag();
         }
         impl_->decoding_ = false;
@@ -728,7 +749,9 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
                        << "timeline=" << sourceFrameToTimelineFrame(this, impl_->decodeTargetFrame_)
                        << "source=" << impl_->decodeTargetFrame_
                        << "backend=" << decoderBackendName(impl_->playbackController_.get())
-                       << "backendLastError=" << impl_->playbackController_->getLastError();
+                       << "backendLastError=" << impl_->playbackController_->getLastError()
+                       << "controller=" << impl_->playbackController_->getDebugState()
+                       << threadDiagnosticsTag();
         }
         impl_->decodeTargetFrame_ = -1;
     }
@@ -768,7 +791,9 @@ QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
                    << "timeline=" << clampedTimelineFrame
                    << "source=" << sourceFrame
                    << "backend=" << decoderBackendName(impl_->playbackController_.get())
-                   << "backendLastError=" << impl_->playbackController_->getLastError();
+                   << "backendLastError=" << impl_->playbackController_->getLastError()
+                   << "controller=" << impl_->playbackController_->getDebugState()
+                   << threadDiagnosticsTag();
     }
     return decoded;
 }

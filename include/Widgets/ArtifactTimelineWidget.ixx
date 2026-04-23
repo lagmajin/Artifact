@@ -12,6 +12,7 @@ export module Artifact.Widgets.Timeline;
 import std;
 import Utils.Id;
 import Math.Interpolate;
+import Artifact.Timeline.KeyBinding;
 
 W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
@@ -41,7 +42,7 @@ class ArtifactTimelineWidget :public QWidget {
   void mouseMoveEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;
 
-  void keyPressEvent(QKeyEvent* event) override;
+ void keyPressEvent(QKeyEvent* event) override;
   void keyReleaseEvent(QKeyEvent* event) override;
  public:
   explicit ArtifactTimelineWidget(QWidget* parent = nullptr);
@@ -66,6 +67,7 @@ class ArtifactTimelineWidget :public QWidget {
   void jumpToKeyframeHit(int step);
   void jumpToFirstKeyframe();
   void jumpToLastKeyframe();
+  bool handleTimelineAction(ArtifactTimelineAction action);
 
   /*signals:*/
  public:

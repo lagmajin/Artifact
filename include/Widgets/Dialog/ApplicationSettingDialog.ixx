@@ -10,6 +10,8 @@ module;
 #include <wobjectdefs.h>
 export module ApplicationSettingDialog;
 
+class QEvent;
+
 export namespace ArtifactCore {
 
 struct SettingItemInfo {
@@ -111,9 +113,16 @@ public:
   ~ShortcutSettingPage();
 
   QVector<QWidget *> settingWidgets() const;
+  void resetToDefaults();
+  bool eventFilter(QObject *watched, QEvent *event) override;
   void loadSettings() override;
   void saveSettings() override;
   QList<SettingItemInfo> searchableItems() const override;
+
+private:
+  void applyTableToBindings();
+  void exportPreset();
+  void importPreset();
 };
 
 class PluginSettingPage : public QWidget, public ISettingPage {
