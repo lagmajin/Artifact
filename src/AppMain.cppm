@@ -1302,7 +1302,7 @@ int main(int argc, char *argv[]) {
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Playback Control"), QStringLiteral("PlaybackControl"),
         [mw]() -> QWidget * { return new ArtifactPlaybackControlWidget(mw); },
-        QRect(120, 828, 720, 96));
+        QRect(120, 828, 720, 210));
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Debug Console"), QStringLiteral("DebugConsole"),
         [mw, compositionEditor]() -> QWidget * {
