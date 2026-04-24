@@ -57,10 +57,14 @@ namespace Artifact {
   CompositionID id_;
   QString compositionNote_;
   FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
+  mutable QImage thumbnailCache_;
+  mutable QSize thumbnailCacheSize_;
+  mutable bool thumbnailCacheValid_ = false;
   //PlaybackClock playbackClock_;  // 高精度再生クロック
   
   AppendLayerToCompositionResult appendLayerTop(ArtifactAbstractLayerPtr layer);
   AppendLayerToCompositionResult appendLayerBottom(ArtifactAbstractLayerPtr layer);
+  void invalidateThumbnailCache();
   bool containsLayerById(const LayerID& id) const;
   void removeAllLayers();
   void recalculateFrameRange();
@@ -97,6 +101,13 @@ namespace Artifact {
 
  }
 
+void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
+{
+  thumbnailCacheValid_ = false;
+  thumbnailCache_.fill(Qt::transparent);
+  thumbnailCacheSize_ = QSize();
+}
+
  AppendLayerToCompositionResult ArtifactAbstractComposition::Impl::appendLayerTop(ArtifactAbstractLayerPtr layer)
  {
   AppendLayerToCompositionResult result;
@@ -124,6 +135,7 @@ namespace Artifact {
   }
   
   layerMultiIndex_.add(layer,id,layer->type_index());
+  invalidateThumbnailCache();
   recalculateFrameRange();
 
   result.success = true;
@@ -157,6 +169,7 @@ namespace Artifact {
    }
   }
   layerMultiIndex_.clear();
+  invalidateThumbnailCache();
   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
       owner_->id().toString(), QString{},
       LayerChangedEvent::ChangeType::Removed});
@@ -166,7 +179,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 {
    auto removedLayer = layerMultiIndex_.findById(id);
    // Safe Detachment: Clear parent link of any layer that refers to this ID
-   for (auto& layer : layerMultiIndex_) {
+    for (auto& layer : layerMultiIndex_) {
        if (layer->parentLayerId() == id) {
            layer->clearParent();
        }
@@ -174,6 +187,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     layerMultiIndex_.removeById(id);
     if (removedLayer) {
      removedLayer->setComposition(nullptr);
+     invalidateThumbnailCache();
      ArtifactCore::globalEventBus().publish(LayerChangedEvent{
          owner_->id().toString(), id.toString(),
          LayerChangedEvent::ChangeType::Removed});
@@ -243,6 +257,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       }
       
       layerMultiIndex_.insertAt(0, layer, layer->id(), layer->type_index());
+      invalidateThumbnailCache();
       recalculateFrameRange();
       result.success = true;
       result.error = AppendLayerToCompositionError::None;
@@ -259,6 +274,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, newIndex);
+      invalidateThumbnailCache();
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
           owner_->id().toString(), id.toString(),
           LayerChangedEvent::ChangeType::Modified});
@@ -271,6 +287,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, layerMultiIndex_.all().size() - 1);
+      invalidateThumbnailCache();
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
           owner_->id().toString(), id.toString(),
           LayerChangedEvent::ChangeType::Modified});
@@ -283,6 +300,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
       int oldIndex = layerMultiIndex_.indexOf(layer);
       if (oldIndex == -1) return;
       layerMultiIndex_.move(oldIndex, 0);
+      invalidateThumbnailCache();
       ArtifactCore::globalEventBus().publish(LayerChangedEvent{
           owner_->id().toString(), id.toString(),
           LayerChangedEvent::ChangeType::Modified});
@@ -806,6 +824,13 @@ QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const
 {
     const int safeWidth = std::max(1, width);
     const int safeHeight = std::max(1, height);
+    const QSize targetSize(safeWidth, safeHeight);
+
+    if (impl_->thumbnailCacheValid_ &&
+        impl_->thumbnailCacheSize_ == targetSize &&
+        !impl_->thumbnailCache_.isNull()) {
+        return impl_->thumbnailCache_;
+    }
 
     const auto layers = impl_->allLayerBackToFront();
     for (const auto& layer : layers) {
@@ -814,13 +839,19 @@ QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const
         }
         const QImage thumbnail = layer->getThumbnail(safeWidth, safeHeight);
         if (!thumbnail.isNull()) {
+            impl_->thumbnailCache_ = thumbnail;
+            impl_->thumbnailCacheSize_ = targetSize;
+            impl_->thumbnailCacheValid_ = true;
             return thumbnail;
         }
     }
 
-    QImage thumbnail(safeWidth, safeHeight, QImage::Format_ARGB32_Premultiplied);
-    thumbnail.fill(QColor(24, 24, 24, 255));
-    return thumbnail;
+    impl_->thumbnailCache_ = QImage(safeWidth, safeHeight,
+                                    QImage::Format_ARGB32_Premultiplied);
+    impl_->thumbnailCache_.fill(QColor(24, 24, 24, 255));
+    impl_->thumbnailCacheSize_ = targetSize;
+    impl_->thumbnailCacheValid_ = true;
+    return impl_->thumbnailCache_;
 }
 
 };

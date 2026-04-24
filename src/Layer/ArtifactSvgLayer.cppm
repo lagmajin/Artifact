@@ -16,6 +16,7 @@ module Artifact.Layer.Svg;
 
 import std;
 import Thread.Helper;
+import CvUtils;
 import Property.Abstract;
 import Property.Group;
 import Artifact.Render.IRenderer;
@@ -86,6 +87,7 @@ public:
     int height_ = 0;
     QString sourcePath_;
     mutable std::shared_ptr<QImage> cache_;
+    mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
     mutable QFuture<QImage> prefetchFuture_;
     mutable bool prefetchDone_ = false;
 };
@@ -117,6 +119,7 @@ bool ArtifactSvgLayer::loadFromPath(const QString& path)
 
     impl_->sourcePath_ = trimmed;
     impl_->cache_.reset();
+    impl_->cacheBuffer_.reset();
     impl_->prefetchDone_ = false;
     impl_->loaded_ = true;
     impl_->width_ = size.width();
@@ -166,6 +169,7 @@ QImage ArtifactSvgLayer::toQImage() const
         QImage loaded = impl_->prefetchFuture_.result();
         if (!loaded.isNull()) {
             impl_->cache_ = std::make_shared<QImage>(loaded);
+            impl_->cacheBuffer_.reset();
             if (impl_->width_ <= 0 || impl_->height_ <= 0) {
                 impl_->width_ = loaded.width();
                 impl_->height_ = loaded.height();
@@ -184,6 +188,7 @@ QImage ArtifactSvgLayer::toQImage() const
         QImage loaded = renderSvgToImage(impl_->sourcePath_, size);
         if (!loaded.isNull()) {
             impl_->cache_ = std::make_shared<QImage>(loaded);
+            impl_->cacheBuffer_.reset();
             if (impl_->width_ <= 0 || impl_->height_ <= 0) {
                 impl_->width_ = loaded.width();
                 impl_->height_ = loaded.height();
@@ -196,6 +201,38 @@ QImage ArtifactSvgLayer::toQImage() const
         return QImage();
     }
     return *impl_->cache_;
+}
+
+const ArtifactCore::ImageF32x4_RGBA &ArtifactSvgLayer::currentFrameBuffer() const
+{
+    if (!impl_->loaded_) {
+        static ArtifactCore::ImageF32x4_RGBA empty;
+        return empty;
+    }
+
+    if (!impl_->cacheBuffer_ && impl_->cache_) {
+        impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
+        const cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(*impl_->cache_, true);
+        if (!mat.empty()) {
+            cv::Mat rgba = mat;
+            if (rgba.type() != CV_32FC4) {
+                rgba.convertTo(rgba, CV_32FC4, 1.0 / 255.0);
+            }
+            impl_->cacheBuffer_->setFromCVMat(rgba);
+        }
+    }
+
+    if (impl_->cacheBuffer_) {
+        return *impl_->cacheBuffer_;
+    }
+
+    static ArtifactCore::ImageF32x4_RGBA empty;
+    return empty;
+}
+
+bool ArtifactSvgLayer::hasCurrentFrameBuffer() const
+{
+    return impl_->loaded_ && impl_->cache_ && !currentFrameBuffer().isEmpty();
 }
 
 QJsonObject ArtifactSvgLayer::toJson() const

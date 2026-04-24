@@ -273,7 +273,10 @@ public:
                                    std::memory_order_relaxed);
 
     if (composition->thread() == QThread::currentThread()) {
-      composition->goToFrame(position.framePosition());
+      // Playback only needs the composition's current frame marker.
+      // Propagating the frame into every layer is reserved for explicit
+      // timeline edits / seeks, because that path is much heavier.
+      composition->setFramePosition(position);
       return;
     }
 
@@ -288,7 +291,7 @@ public:
               pendingCompositionFrame_.load(std::memory_order_relaxed);
           compositionFrameSyncQueued_.store(false, std::memory_order_release);
           if (composition) {
-            composition->goToFrame(latestFrame);
+            composition->setFramePosition(FramePosition(latestFrame));
           }
         },
         Qt::QueuedConnection);

@@ -617,17 +617,17 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       surface.fill(toQColor(color));
       applySurfaceAndDraw(surface, localRect, true);
     } else {
-      renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
-                              static_cast<float>(localRect.y()),
-                              static_cast<float>(localRect.width()),
-                              static_cast<float>(localRect.height()),
-                              globalTransform4x4,
-                              color, (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
+      renderer->drawSolidRectTransformed(
+          static_cast<float>(localRect.x()),
+          static_cast<float>(localRect.y()),
+          static_cast<float>(localRect.width()),
+          static_cast<float>(localRect.height()), globalTransform4x4, color,
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
     }
     return;
   }
 
-    if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
+  if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
     const auto color = solidImage->color();
     if (hasRasterizerEffectsOrMasks(layer)) {
       const QSize surfaceSize(
@@ -637,12 +637,12 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       surface.fill(toQColor(color));
       applySurfaceAndDraw(surface, localRect, true);
     } else {
-      renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
-                              static_cast<float>(localRect.y()),
-                              static_cast<float>(localRect.width()),
-                              static_cast<float>(localRect.height()),
-                              globalTransform4x4,
-                              color, (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
+      renderer->drawSolidRectTransformed(
+          static_cast<float>(localRect.x()),
+          static_cast<float>(localRect.y()),
+          static_cast<float>(localRect.width()),
+          static_cast<float>(localRect.height()), globalTransform4x4, color,
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
     }
     return;
   }
@@ -673,17 +673,54 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
   if (auto* svgLayer = dynamic_cast<ArtifactSvgLayer*>(layer)) {
     if (svgLayer->isLoaded()) {
-      const QImage svgImage = svgLayer->toQImage();
-      if (!svgImage.isNull()) {
-        applySurfaceAndDraw(svgImage, localRect, hasRasterizerEffectsOrMasks(layer));
+      if (!hasRasterizerEffectsOrMasks(layer) &&
+          svgLayer->hasCurrentFrameBuffer()) {
+        const ArtifactCore::ImageF32x4_RGBA& buffer =
+            svgLayer->currentFrameBuffer();
+        const float baseOpacity =
+            (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+        drawWithClonerEffect(layer, globalTransform4x4,
+          [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+            renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                                 static_cast<float>(localRect.y()),
+                                 static_cast<float>(localRect.width()),
+                                 static_cast<float>(localRect.height()),
+                                 instanceTransform,
+                                 buffer,
+                                 baseOpacity * instanceWeight);
+          });
       } else {
-        svgLayer->draw(renderer);
+        const QImage svgImage = svgLayer->toQImage();
+        if (!svgImage.isNull()) {
+          applySurfaceAndDraw(svgImage, localRect, hasRasterizerEffectsOrMasks(layer));
+        } else {
+          svgLayer->draw(renderer);
+        }
       }
       return;
     }
   }
 
   if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
+    if (!hasRasterizerEffectsOrMasks(layer) &&
+        videoLayer->hasCurrentFrameBuffer()) {
+      const ArtifactCore::ImageF32x4_RGBA& buffer =
+          videoLayer->currentFrameBuffer();
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(layer, globalTransform4x4,
+        [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+          renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                               static_cast<float>(localRect.y()),
+                               static_cast<float>(localRect.width()),
+                               static_cast<float>(localRect.height()),
+                               instanceTransform,
+                               buffer,
+                               baseOpacity * instanceWeight);
+        });
+      return;
+    }
+
     if (videoDebugOut) {
       const bool loaded = videoLayer->isLoaded();
       const int64_t cf = layer->currentFrame();
@@ -715,6 +752,23 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       textLayer->draw(renderer);
       return;
     }
+    if (textLayer->hasCurrentFrameBuffer()) {
+      const ArtifactCore::ImageF32x4_RGBA& buffer =
+          textLayer->currentFrameBuffer();
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(layer, globalTransform4x4,
+        [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+          renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                               static_cast<float>(localRect.y()),
+                               static_cast<float>(localRect.width()),
+                               static_cast<float>(localRect.height()),
+                               instanceTransform,
+                               buffer,
+                               baseOpacity * instanceWeight);
+        });
+      return;
+    }
     const QImage textImage = textLayer->toQImage();
     if (!textImage.isNull()) {
       applySurfaceAndDraw(textImage, localRect, true);
@@ -725,8 +779,6 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   if (auto* compLayer = dynamic_cast<ArtifactCompositionLayer*>(layer)) {
     if (auto childComp = compLayer->sourceComposition()) {
       const QSize childSize = childComp->settings().compositionSize();
-      const int64_t childFrame = layer->currentFrame() - layer->inPoint().framePosition();
-      childComp->goToFrame(childFrame);
       QImage childImage = childComp->getThumbnail(childSize.width(), childSize.height());
 
       if (!childImage.isNull()) {

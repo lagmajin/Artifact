@@ -38,6 +38,7 @@ export module Artifact.Layer.Text;
 import Artifact.Layer.Abstract;
 import Utils.String.UniString;
 import Color.Float;
+import Image.ImageF32x4_RGBA;
 import Text.Style;
 import Artifact.Layers;
 
@@ -120,6 +121,8 @@ public:
     float paragraphSpacing() const;
 
     QImage toQImage() const;
+    const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
+    bool hasCurrentFrameBuffer() const;
 
     // Trigger update of internal image
     void updateImage();

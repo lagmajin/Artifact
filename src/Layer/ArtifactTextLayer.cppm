@@ -63,6 +63,7 @@ import Utils.String.UniString;
 import Color.Float;
 import FloatRGBA;
 import Image.ImageF32x4_RGBA;
+import CvUtils;
 import Size;
 import Property.Abstract;
 import Property.Group;
@@ -80,6 +81,7 @@ public:
   TextStyle textStyle_;
   ParagraphStyle paragraphStyle_;
   QImage renderedImage_;
+  mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> renderedBuffer_;
   bool isDirty_ = true;
 
   // Text Animator support
@@ -434,6 +436,24 @@ QImage ArtifactTextLayer::toQImage() const {
   return impl_->renderedImage_;
 }
 
+const ArtifactCore::ImageF32x4_RGBA &ArtifactTextLayer::currentFrameBuffer() const {
+  if (impl_->isDirty_ || impl_->renderedImage_.isNull() || !impl_->renderedBuffer_) {
+    const_cast<ArtifactTextLayer *>(this)->updateImage();
+  }
+  if (impl_->renderedBuffer_) {
+    return *impl_->renderedBuffer_;
+  }
+  static ArtifactCore::ImageF32x4_RGBA empty;
+  return empty;
+}
+
+bool ArtifactTextLayer::hasCurrentFrameBuffer() const {
+  if (impl_->isDirty_ || impl_->renderedImage_.isNull() || !impl_->renderedBuffer_) {
+    const_cast<ArtifactTextLayer *>(this)->updateImage();
+  }
+  return impl_->renderedBuffer_ && !impl_->renderedBuffer_->isEmpty();
+}
+
 void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
   if (!renderer) {
     return;
@@ -473,6 +493,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
           std::max(1, static_cast<int>(std::ceil(contentWidth + margin * 2.0))),
           std::max(1, static_cast<int>(std::ceil(contentHeight + margin * 2.0)))));
       impl_->renderedImage_ = QImage();
+      impl_->renderedBuffer_.reset();
       impl_->lastCacheKey_ = currentKey;
       impl_->isDirty_ = false;
     }
@@ -1109,6 +1130,15 @@ void ArtifactTextLayer::updateImage() {
 
   painter.end();
   setSourceSize(Size_2D(width, height));
+  impl_->renderedBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
+  const cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(impl_->renderedImage_, true);
+  if (!mat.empty()) {
+    cv::Mat rgba = mat;
+    if (rgba.type() != CV_32FC4) {
+      rgba.convertTo(rgba, CV_32FC4, 1.0 / 255.0);
+    }
+    impl_->renderedBuffer_->setFromCVMat(rgba);
+  }
   impl_->isDirty_ = false;
 }
 

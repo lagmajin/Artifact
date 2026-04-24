@@ -37,6 +37,7 @@
 export module Artifact.Layer.Svg;
 
 import Artifact.Layer.Abstract;
+import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -52,6 +53,8 @@ public:
   ~ArtifactSvgLayer();
 
   QImage toQImage() const;
+  const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
+  bool hasCurrentFrameBuffer() const;
   bool loadFromPath(const QString& path);
   QString sourcePath() const;
   bool isLoaded() const;
