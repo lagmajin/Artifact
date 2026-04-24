@@ -297,10 +297,12 @@ QButtonGroup* filterButtonGroup_ = nullptr;
    bool isVideoFile(const QString& fileName) const;
    bool isAudioFile(const QString& fileName) const;
    bool isFontFile(const QString& fileName) const;
-   ArtifactCore::FileType fileType(const QString& fileName) const;
+  ArtifactCore::FileType fileType(const QString& fileName) const;
   bool isImportedAssetPath(const QString& filePath) const;
+  bool isFavoriteAssetPath(const QString& filePath) const;
   bool isUnusedAssetPath(const QString& filePath) const;
   bool isMissingAssetPath(const QString& filePath) const;
+  void toggleFavoritePath(const QString& filePath);
   QStringList selectedAssetPaths() const;
   void syncProjectAssetRoot();
   void syncDirectorySelection();
@@ -435,13 +437,18 @@ QButtonGroup* filterButtonGroup_ = nullptr;
    return false;
   };
 
-  const auto roots = svc->projectItems();
+ const auto roots = svc->projectItems();
   for (auto* root : roots) {
    if (containsPath(root)) {
     return true;
    }
   }
   return false;
+}
+
+bool ArtifactAssetBrowser::Impl::isFavoriteAssetPath(const QString& filePath) const
+{
+  return directoryModel_ && directoryModel_->isFavoritePath(filePath);
 }
 
 QStringList ArtifactAssetBrowser::Impl::selectedAssetPaths() const
@@ -480,7 +487,26 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
   if (filePath.isEmpty()) {
    return false;
   }
-  return !QFileInfo::exists(filePath);
+ return !QFileInfo::exists(filePath);
+}
+
+void ArtifactAssetBrowser::Impl::toggleFavoritePath(const QString& filePath)
+{
+  if (!directoryModel_ || filePath.trimmed().isEmpty()) {
+   return;
+  }
+
+  if (directoryModel_->isFavoritePath(filePath)) {
+   const QString guid = directoryModel_->favoriteGuidForPath(filePath);
+   if (!guid.isEmpty()) {
+    directoryModel_->removeFavorite(guid);
+   }
+   return;
+  }
+
+  const QFileInfo info(filePath);
+  const QString displayName = info.fileName().isEmpty() ? filePath : info.fileName();
+  directoryModel_->addFavorite(filePath, displayName);
 }
 
 QString ArtifactAssetBrowser::Impl::syncStateText() const
@@ -692,11 +718,13 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     }
 
     // Check status filter
-    if (!isDir && currentStatusFilter_ != "all") {
-     const bool imported = isImportedAssetPath(fullPath);
-     const bool unused = isUnusedAssetPath(fullPath);
-     const bool missing = isMissingAssetPath(fullPath);
+    if (currentStatusFilter_ != "all") {
+     const bool imported = !isDir && isImportedAssetPath(fullPath);
+     const bool unused = !isDir && isUnusedAssetPath(fullPath);
+     const bool missing = !isDir && isMissingAssetPath(fullPath);
+     const bool favorite = isFavoriteAssetPath(fullPath);
      if (currentStatusFilter_ == "imported" && !imported) continue;
+     if (currentStatusFilter_ == "favorite" && !favorite) continue;
      if (currentStatusFilter_ == "missing" && !missing) continue;
      if (currentStatusFilter_ == "unused" && !unused) continue;
     }
@@ -704,24 +732,27 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     AssetMenuItem item;
    item.name = UniString::fromQString(entry);
    item.path = UniString::fromQString(fullPath);
-   QString itemType = isDir ? QStringLiteral("Folder") : fileInfo.suffix().toUpper();
+   QStringList markers;
+   if (isFavoriteAssetPath(fullPath)) {
+    markers.append(QStringLiteral("Favorite"));
+   }
    if (!isDir) {
     const bool imported = isImportedAssetPath(fullPath);
     const bool unused = isUnusedAssetPath(fullPath);
     const bool missing = isMissingAssetPath(fullPath);
-    if (missing && imported && unused) {
-     itemType = QStringLiteral("Missing • Imported • Unused • %1").arg(itemType);
-    } else if (missing && imported) {
-     itemType = QStringLiteral("Missing • Imported • %1").arg(itemType);
-    } else if (missing) {
-     itemType = QStringLiteral("Missing • %1").arg(itemType);
-    } else if (imported && unused) {
-     itemType = QStringLiteral("Imported • Unused • %1").arg(itemType);
-    } else if (imported) {
-     itemType = QStringLiteral("Imported • %1").arg(itemType);
-    } else if (unused) {
-     itemType = QStringLiteral("Unused • %1").arg(itemType);
+    if (missing) {
+     markers.append(QStringLiteral("Missing"));
     }
+    if (imported) {
+     markers.append(QStringLiteral("Imported"));
+    }
+    if (unused) {
+     markers.append(QStringLiteral("Unused"));
+    }
+   }
+   QString itemType = isDir ? QStringLiteral("Folder") : fileInfo.suffix().toUpper();
+   if (!markers.isEmpty()) {
+    itemType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), itemType);
    }
    item.type = UniString::fromQString(itemType);
    item.isFolder = isDir;
@@ -830,6 +861,10 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    importedBtn->setText("Imported");
    importedBtn->setCheckable(true);
 
+   auto favoriteBtn = new QToolButton();
+   favoriteBtn->setText("Favorite");
+   favoriteBtn->setCheckable(true);
+
    auto missingBtn = new QToolButton();
    missingBtn->setText("Missing");
    missingBtn->setCheckable(true);
@@ -842,11 +877,13 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    statusGroup->setExclusive(true);
    statusGroup->addButton(statusAllBtn, 0);
    statusGroup->addButton(importedBtn, 1);
-   statusGroup->addButton(missingBtn, 2);
-   statusGroup->addButton(unusedBtn, 3);
+   statusGroup->addButton(favoriteBtn, 2);
+   statusGroup->addButton(missingBtn, 3);
+   statusGroup->addButton(unusedBtn, 4);
 
    filterButtonsLayout->addWidget(statusAllBtn);
    filterButtonsLayout->addWidget(importedBtn);
+   filterButtonsLayout->addWidget(favoriteBtn);
    filterButtonsLayout->addWidget(missingBtn);
    filterButtonsLayout->addWidget(unusedBtn);
 
@@ -881,8 +918,9 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     switch (id) {
      case 0: impl_->currentStatusFilter_ = "all"; break;
      case 1: impl_->currentStatusFilter_ = "imported"; break;
-     case 2: impl_->currentStatusFilter_ = "missing"; break;
-     case 3: impl_->currentStatusFilter_ = "unused"; break;
+     case 2: impl_->currentStatusFilter_ = "favorite"; break;
+     case 3: impl_->currentStatusFilter_ = "missing"; break;
+     case 4: impl_->currentStatusFilter_ = "unused"; break;
     }
     impl_->applyFilters();
    });
@@ -1393,9 +1431,10 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    info += QString("<b>%1</b><br>").arg(fileInfo.fileName());
 
    // Check if it's a folder
-   if (fileInfo.isDir()) {
+  if (fileInfo.isDir()) {
     info += "Type: Folder<br>";
     info += QString("Entries: %1<br>").arg(QDir(filePath).entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot).size());
+    info += QString("Favorite: %1<br>").arg(impl_->isFavoriteAssetPath(filePath) ? QStringLiteral("Yes") : QStringLiteral("No"));
     info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
     info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use / N.A."));
     info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
@@ -1406,6 +1445,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    info += QString("Size: %1 KB<br>").arg(fileInfo.size() / 1024);
    info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
    info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
+   info += QString("Favorite: %1<br>").arg(impl_->isFavoriteAssetPath(filePath) ? QStringLiteral("Yes") : QStringLiteral("No"));
    info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
    info += QString("Usage: %1<br>").arg(impl_->isUnusedAssetPath(filePath) ? QStringLiteral("Unused") : QStringLiteral("In Use"));
    info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
@@ -1535,6 +1575,16 @@ if (!item.isFolder) {
     }
   });
 }
+
+  const bool favorite = impl_->isFavoriteAssetPath(filePath);
+  QAction* favoriteAction = contextMenu.addAction(favorite ? "Remove from Favorites" : "Add to Favorites");
+  connect(favoriteAction, &QAction::triggered, this, [this, filePath]() {
+   if (filePath.isEmpty()) return;
+   if (!impl_->directoryModel_) return;
+   impl_->toggleFavoritePath(filePath);
+   impl_->applyFilters();
+   impl_->syncDirectorySelection();
+  });
 
    // Open in File Explorer action
    QAction* openInExplorerAction = contextMenu.addAction("Open in File Explorer");
