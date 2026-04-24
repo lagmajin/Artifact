@@ -308,6 +308,26 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
         desc.Size           = sizeof(DotLineVertex) * 4;
         device->CreateBuffer(desc, nullptr, &m_draw_dot_line_vertex_buffer);
     }
+
+    // H5: Immutable unit-quad VB for opacity==1.0f sprites
+    {
+        const SpriteVertex unitVerts[4] = {
+            {{0.0f,0.0f},{0.0f,0.0f},{1,1,1,1}},
+            {{1.0f,0.0f},{1.0f,0.0f},{1,1,1,1}},
+            {{0.0f,1.0f},{0.0f,1.0f},{1,1,1,1}},
+            {{1.0f,1.0f},{1.0f,1.0f},{1,1,1,1}},
+        };
+        BufferDesc desc;
+        desc.Name           = "DIS Sprite Unit Quad VB";
+        desc.BindFlags      = BIND_VERTEX_BUFFER;
+        desc.Usage          = USAGE_IMMUTABLE;
+        desc.CPUAccessFlags = CPU_ACCESS_NONE;
+        desc.Size           = sizeof(unitVerts);
+        BufferData initData;
+        initData.pData    = unitVerts;
+        initData.DataSize = sizeof(unitVerts);
+        device->CreateBuffer(desc, &initData, &m_sprite_unit_quad_vb_);
+    }
 }
 
 void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
@@ -328,6 +348,59 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
     m_draw_checkerboard_pso_and_srb         = sm.checkerboardPsoAndSrb();
     m_draw_grid_pso_and_srb                 = sm.gridPsoAndSrb();
     m_draw_rect_outline_pso_and_srb         = sm.outlinePsoAndSrb();
+
+    // H1: Pre-bind all static CBs and samplers to their SRBs once
+    {
+        auto bindVar = [](IShaderResourceBinding* srb, SHADER_TYPE type, const char* name, IDeviceObject* res) {
+            if (srb && res)
+                if (auto* v = srb->GetVariableByName(type, name)) v->Set(res);
+        };
+        bindVar(m_draw_solid_rect_pso_and_srb.pSRB,           SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
+        bindVar(m_draw_solid_rect_pso_and_srb.pSRB,           SHADER_TYPE_PIXEL,  "ColorBuffer",    m_draw_solid_rect_cb);
+        bindVar(m_draw_solid_rect_transform_pso_and_srb.pSRB, SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_transform_matrix_cb);
+        bindVar(m_draw_solid_rect_transform_pso_and_srb.pSRB, SHADER_TYPE_PIXEL,  "ColorBuffer",    m_draw_solid_rect_cb);
+        bindVar(m_draw_line_pso_and_srb.pSRB,                 SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
+        bindVar(m_draw_thick_line_pso_and_srb.pSRB,           SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
+        bindVar(m_draw_dot_line_pso_and_srb.pSRB,             SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
+        bindVar(m_draw_dot_line_pso_and_srb.pSRB,             SHADER_TYPE_PIXEL,  "DotLineCB",      m_draw_dot_line_cb);
+        bindVar(m_draw_solid_triangle_pso_and_srb.pSRB,       SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
+        bindVar(m_draw_checkerboard_pso_and_srb.pSRB,         SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
+        bindVar(m_draw_checkerboard_pso_and_srb.pSRB,         SHADER_TYPE_PIXEL,  "ColorBuffer",    m_draw_solid_rect_cb);
+        bindVar(m_draw_checkerboard_pso_and_srb.pSRB,         SHADER_TYPE_PIXEL,  "ViewerHelperCB", m_draw_viewer_helper_cb);
+        bindVar(m_draw_grid_pso_and_srb.pSRB,                 SHADER_TYPE_VERTEX, "TransformCB",    m_draw_solid_rect_trnsform_cb);
+        bindVar(m_draw_grid_pso_and_srb.pSRB,                 SHADER_TYPE_PIXEL,  "ColorBuffer",    m_draw_solid_rect_cb);
+        bindVar(m_draw_grid_pso_and_srb.pSRB,                 SHADER_TYPE_PIXEL,  "ViewerHelperCB", m_draw_viewer_helper_cb);
+        bindVar(m_draw_sprite_pso_and_srb.pSRB,               SHADER_TYPE_VERTEX, "TransformCB",    m_draw_sprite_cb);
+        if (m_sprite_sampler)
+            bindVar(m_draw_sprite_pso_and_srb.pSRB,           SHADER_TYPE_PIXEL,  "g_sampler",      m_sprite_sampler);
+        bindVar(m_draw_sprite_transform_pso_and_srb.pSRB,     SHADER_TYPE_VERTEX, "TransformCB",    m_draw_sprite_transform_matrix_cb);
+        if (m_sprite_sampler)
+            bindVar(m_draw_sprite_transform_pso_and_srb.pSRB, SHADER_TYPE_PIXEL,  "g_sampler",      m_sprite_sampler);
+        bindVar(m_draw_masked_sprite_pso_and_srb.pSRB,        SHADER_TYPE_VERTEX, "TransformCB",    m_draw_sprite_cb);
+        if (m_sprite_sampler)
+            bindVar(m_draw_masked_sprite_pso_and_srb.pSRB,    SHADER_TYPE_PIXEL,  "g_sampler",      m_sprite_sampler);
+        bindVar(m_draw_glyph_pso_and_srb.pSRB,                SHADER_TYPE_VERTEX, "TransformCB",    m_draw_sprite_cb);
+        bindVar(m_draw_glyph_transform_pso_and_srb.pSRB,      SHADER_TYPE_VERTEX, "TransformCB",    m_draw_sprite_transform_matrix_cb);
+        ISampler* gSampler = m_glyph_sampler ? m_glyph_sampler.RawPtr()
+                           : (m_sprite_sampler ? m_sprite_sampler.RawPtr() : nullptr);
+        if (gSampler) {
+            bindVar(m_draw_glyph_pso_and_srb.pSRB,           SHADER_TYPE_PIXEL, "g_sampler", gSampler);
+            bindVar(m_draw_glyph_transform_pso_and_srb.pSRB, SHADER_TYPE_PIXEL, "g_sampler", gSampler);
+        }
+    }
+    // H1: Cache variable pointers for per-draw texture SRV updates
+    m_var_sprite_gTexture_      = m_draw_sprite_pso_and_srb.pSRB
+        ? m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture") : nullptr;
+    m_var_spriteXform_gTexture_ = m_draw_sprite_transform_pso_and_srb.pSRB
+        ? m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture") : nullptr;
+    m_var_maskedSprite_gScene_  = m_draw_masked_sprite_pso_and_srb.pSRB
+        ? m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_scene") : nullptr;
+    m_var_maskedSprite_gMask_   = m_draw_masked_sprite_pso_and_srb.pSRB
+        ? m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_mask") : nullptr;
+    m_var_glyph_gTexture_       = m_draw_glyph_pso_and_srb.pSRB
+        ? m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture") : nullptr;
+    m_var_glyphXform_gTexture_  = m_draw_glyph_transform_pso_and_srb.pSRB
+        ? m_draw_glyph_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture") : nullptr;
 }
 
 void DiligentImmediateSubmitter::destroy()
@@ -367,6 +440,14 @@ void DiligentImmediateSubmitter::destroy()
     m_draw_grid_pso_and_srb                 = {};
     m_draw_rect_outline_pso_and_srb         = {};
     m_frameCostStats_                       = nullptr;
+    m_sprite_unit_quad_vb_                  = nullptr;
+    m_currentPSO_                           = nullptr;
+    m_var_sprite_gTexture_                  = nullptr;
+    m_var_spriteXform_gTexture_             = nullptr;
+    m_var_maskedSprite_gScene_              = nullptr;
+    m_var_maskedSprite_gMask_               = nullptr;
+    m_var_glyph_gTexture_                   = nullptr;
+    m_var_glyphXform_gTexture_              = nullptr;
 }
 
 void DiligentImmediateSubmitter::setFrameCostStats(ArtifactCore::RenderCostStats* stats)
@@ -379,6 +460,9 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     ArtifactCore::ScopedPerformanceTimer _profSubmit2D("Submit2D");
     if (!ctx || buf.empty()) { buf.reset(); return; }
     auto* pRTV = buf.targetRTV;
+    if (!pRTV) { buf.reset(); return; }
+    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); // H2
+    m_currentPSO_ = nullptr; // H3: reset PSO dedup state per submit
     for (auto& pkt : buf.packets()) {
         std::visit([&](auto& p) {
             using T = std::decay_t<decltype(p)>;
@@ -412,19 +496,19 @@ void DiligentImmediateSubmitter::submitSolidRect(const SolidRectPkt& p, IDeviceC
         {{0.0f, 0.0f}, p.color}, {{1.0f, 0.0f}, p.color},
         {{0.0f, 1.0f}, p.color}, {{1.0f, 1.0f}, p.color},
     };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_cb,           &p.color, sizeof(p.color), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,  &p.xform, sizeof(p.xform), m_frameCostStats_);
 
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_solid_rect_pso_and_srb.pPSO);
+    if (m_currentPSO_ != m_draw_solid_rect_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_solid_rect_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_solid_rect_pso_and_srb.pPSO;
+    }
     IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-    m_draw_solid_rect_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL,  "ColorBuffer")->Set(m_draw_solid_rect_cb);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_solid_rect_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
@@ -442,21 +526,19 @@ void DiligentImmediateSubmitter::submitSolidRectXform(const SolidRectXformPkt& p
         {{0.0f, 0.0f}, p.color}, {{1.0f, 0.0f}, p.color},
         {{0.0f, 1.0f}, p.color}, {{1.0f, 1.0f}, p.color},
     };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer,      vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_cb,                 &p.color, sizeof(p.color), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_transform_matrix_cb, &p.mat,  sizeof(p.mat), m_frameCostStats_);
 
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_solid_rect_transform_pso_and_srb.pPSO);
+    if (m_currentPSO_ != m_draw_solid_rect_transform_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_solid_rect_transform_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_solid_rect_transform_pso_and_srb.pPSO;
+    }
     IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    if (auto* v = m_draw_solid_rect_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB"))
-        v->Set(m_draw_solid_rect_transform_matrix_cb);
-    if (auto* v = m_draw_solid_rect_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer"))
-        v->Set(m_draw_solid_rect_cb);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_solid_rect_transform_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
@@ -473,16 +555,17 @@ void DiligentImmediateSubmitter::submitLine(const LinePkt& p, IDeviceContext* ct
         { p.p1, p.c1 },
         { p.p2, p.c2 },
     };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,   &p.xform, sizeof(p.xform), m_frameCostStats_);
 
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_line_pso_and_srb.pPSO);
+    if (m_currentPSO_ != m_draw_line_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_line_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_line_pso_and_srb.pPSO;
+    }
     IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    m_draw_line_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_line_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawAttribs drawAttrs;
@@ -501,16 +584,17 @@ void DiligentImmediateSubmitter::submitQuad(const QuadPkt& p, IDeviceContext* ct
         { p.p0, p.color }, { p.p1, p.color },
         { p.p2, p.color }, { p.p3, p.color },
     };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_thick_line_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,   &p.xform, sizeof(p.xform), m_frameCostStats_);
 
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_thick_line_pso_and_srb.pPSO);
+    if (m_currentPSO_ != m_draw_thick_line_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_thick_line_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_thick_line_pso_and_srb.pPSO;
+    }
     IBuffer* pBufs[] = { m_draw_thick_line_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    m_draw_thick_line_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_thick_line_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawAttribs drawAttrs;
@@ -531,7 +615,6 @@ void DiligentImmediateSubmitter::submitDotLine(const DotLinePkt& p, IDeviceConte
         vertices[i].color    = p.verts[i].color;
         vertices[i].dist     = p.verts[i].dist;
     }
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_dot_line_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform, sizeof(p.xform), m_frameCostStats_);
 
@@ -539,13 +622,14 @@ void DiligentImmediateSubmitter::submitDotLine(const DotLinePkt& p, IDeviceConte
     DotLineShaderCB cb = { p.thickness, p.spacing, {0.0f, 0.0f} };
     mapWriteDiscard(ctx, m_draw_dot_line_cb, &cb, sizeof(cb), m_frameCostStats_);
 
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_dot_line_pso_and_srb.pPSO);
+    if (m_currentPSO_ != m_draw_dot_line_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_dot_line_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_dot_line_pso_and_srb.pPSO;
+    }
     IBuffer* pBufs[] = { m_draw_dot_line_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    m_draw_dot_line_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-    m_draw_dot_line_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL,  "DotLineCB")->Set(m_draw_dot_line_cb);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_dot_line_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawAttribs drawAttrs;
@@ -563,16 +647,17 @@ void DiligentImmediateSubmitter::submitSolidTri(const SolidTriPkt& p, IDeviceCon
     RectVertex vertices[3] = {
         { p.p0, p.color }, { p.p1, p.color }, { p.p2, p.color },
     };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_solid_triangle_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,       &p.xform, sizeof(p.xform), m_frameCostStats_);
 
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
+    if (m_currentPSO_ != m_draw_solid_triangle_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_solid_triangle_pso_and_srb.pPSO;
+    }
     IBuffer* pBufs[] = { m_draw_solid_triangle_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_solid_triangle_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawAttribs drawAttrs;
@@ -600,16 +685,17 @@ void DiligentImmediateSubmitter::submitSolidCircle(const SolidCirclePkt& p, IDev
         vertices[i * 3 + 2] = {{ p.cx + p.radius * std::cos(a1),     p.cy + p.radius * std::sin(a1)    }, c};
     }
 
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_solid_circle_vertex_buffer, vertices.data(), sizeof(RectVertex) * vertexCount, m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,     &p.xform,        sizeof(p.xform), m_frameCostStats_);
 
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
+    if (m_currentPSO_ != m_draw_solid_triangle_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_solid_triangle_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_solid_triangle_pso_and_srb.pPSO;
+    }
     IBuffer* pBufs[] = { m_draw_solid_circle_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    m_draw_solid_triangle_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_solid_triangle_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawAttribs drawAttrs;
@@ -629,7 +715,6 @@ void DiligentImmediateSubmitter::submitCheckerboard(const CheckerboardPkt& p, ID
         {{0,0},{1,1,1,1}}, {{1,0},{1,1,1,1}},
         {{0,1},{1,1,1,1}}, {{1,1},{1,1,1,1}},
     };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
 
     struct CBViewerHelper { float tileSize; float thickness; float2 padding; float4 color1; float4 color2; };
@@ -643,15 +728,14 @@ void DiligentImmediateSubmitter::submitCheckerboard(const CheckerboardPkt& p, ID
     mapWriteDiscard(ctx, m_draw_solid_rect_cb,         &p.baseColor, sizeof(p.baseColor), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb, &p.xform,   sizeof(p.xform), m_frameCostStats_);
 
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_checkerboard_pso_and_srb.pPSO);
+    if (m_currentPSO_ != m_draw_checkerboard_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_checkerboard_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_checkerboard_pso_and_srb.pPSO;
+    }
     IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    m_draw_checkerboard_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-    if (auto* v = m_draw_checkerboard_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer"))
-        v->Set(m_draw_solid_rect_cb);
-    m_draw_checkerboard_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ViewerHelperCB")->Set(m_draw_viewer_helper_cb);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_checkerboard_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawAttribs drawAttrs;
@@ -671,7 +755,6 @@ void DiligentImmediateSubmitter::submitGrid(const GridPkt& p, IDeviceContext* ct
         {{0,0},{1,1,1,1}}, {{1,0},{1,1,1,1}},
         {{0,1},{1,1,1,1}}, {{1,1},{1,1,1,1}},
     };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     mapWriteDiscard(ctx, m_draw_solid_rect_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
 
     struct CBViewerHelper { float spacing; float thickness; float2 padding; float4 color1; float4 color2; };
@@ -685,15 +768,14 @@ void DiligentImmediateSubmitter::submitGrid(const GridPkt& p, IDeviceContext* ct
     mapWriteDiscard(ctx, m_draw_solid_rect_cb,          &p.baseColor, sizeof(p.baseColor), m_frameCostStats_);
     mapWriteDiscard(ctx, m_draw_solid_rect_trnsform_cb,  &p.xform,    sizeof(p.xform), m_frameCostStats_);
 
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_grid_pso_and_srb.pPSO);
+    if (m_currentPSO_ != m_draw_grid_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_grid_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_grid_pso_and_srb.pPSO;
+    }
     IBuffer* pBufs[] = { m_draw_solid_rect_vertex_buffer };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
-    m_draw_grid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(m_draw_solid_rect_trnsform_cb);
-    if (auto* v = m_draw_grid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ColorBuffer"))
-        v->Set(m_draw_solid_rect_cb);
-    m_draw_grid_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "ViewerHelperCB")->Set(m_draw_viewer_helper_cb);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_grid_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     DrawAttribs drawAttrs;
@@ -750,29 +832,30 @@ void DiligentImmediateSubmitter::submitSprite(const SpritePkt& p, IDeviceContext
     if (!pRTV || !p.pSRV || !m_draw_sprite_pso_and_srb.pPSO) return;
     if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_cb) return;
 
-    SpriteVertex vertices[4] = {
-        {{0.0f,0.0f},{0.0f,0.0f},{1,1,1,p.opacity}},
-        {{1.0f,0.0f},{1.0f,0.0f},{1,1,1,p.opacity}},
-        {{0.0f,1.0f},{0.0f,1.0f},{1,1,1,p.opacity}},
-        {{1.0f,1.0f},{1.0f,1.0f},{1,1,1,p.opacity}},
-    };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_sprite_cb,            &p.xform, sizeof(p.xform), m_frameCostStats_);
-
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_sprite_pso_and_srb.pPSO);
-    if (auto* v = m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture"))
-        v->Set(p.pSRV);
-    if (m_sprite_sampler) {
-        if (auto* v = m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler"))
-            v->Set(m_sprite_sampler);
+    IBuffer* vb;
+    if (p.opacity == 1.0f && m_sprite_unit_quad_vb_) {
+        vb = m_sprite_unit_quad_vb_;
+    } else {
+        SpriteVertex vertices[4] = {
+            {{0.0f,0.0f},{0.0f,0.0f},{1,1,1,p.opacity}},
+            {{1.0f,0.0f},{1.0f,0.0f},{1,1,1,p.opacity}},
+            {{0.0f,1.0f},{0.0f,1.0f},{1,1,1,p.opacity}},
+            {{1.0f,1.0f},{1.0f,1.0f},{1,1,1,p.opacity}},
+        };
+        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+        vb = m_draw_sprite_vertex_buffer;
     }
-    if (auto* v = m_draw_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB"))
-        v->Set(m_draw_sprite_cb);
+    mapWriteDiscard(ctx, m_draw_sprite_cb, &p.xform, sizeof(p.xform), m_frameCostStats_);
+
+    if (m_currentPSO_ != m_draw_sprite_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_sprite_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_sprite_pso_and_srb.pPSO;
+    }
+    if (m_var_sprite_gTexture_) m_var_sprite_gTexture_->Set(p.pSRV);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_sprite_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    IBuffer* pBufs[] = { m_draw_sprite_vertex_buffer };
+    IBuffer* pBufs[] = { vb };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     DrawAttribs drawAttrs;
@@ -787,27 +870,28 @@ void DiligentImmediateSubmitter::submitSpriteXform(const SpriteXformPkt& p, IDev
     if (!pRTV || !p.pSRV || !m_draw_sprite_transform_pso_and_srb.pPSO) return;
     if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_transform_matrix_cb) return;
 
-    SpriteVertex vertices[4] = {
-        {{0,0},{0,0},{1,1,1,p.opacity}}, {{1,0},{1,0},{1,1,1,p.opacity}},
-        {{0,1},{0,1},{1,1,1,p.opacity}}, {{1,1},{1,1},{1,1,1,p.opacity}},
-    };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer,           vertices, sizeof(vertices), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb,     &p.mat,   sizeof(p.mat), m_frameCostStats_);
-
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_sprite_transform_pso_and_srb.pPSO);
-    if (auto* v = m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture"))
-        v->Set(p.pSRV);
-    if (m_sprite_sampler) {
-        if (auto* v = m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler"))
-            v->Set(m_sprite_sampler);
+    IBuffer* vb;
+    if (p.opacity == 1.0f && m_sprite_unit_quad_vb_) {
+        vb = m_sprite_unit_quad_vb_;
+    } else {
+        SpriteVertex vertices[4] = {
+            {{0,0},{0,0},{1,1,1,p.opacity}}, {{1,0},{1,0},{1,1,1,p.opacity}},
+            {{0,1},{0,1},{1,1,1,p.opacity}}, {{1,1},{1,1},{1,1,1,p.opacity}},
+        };
+        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+        vb = m_draw_sprite_vertex_buffer;
     }
-    if (auto* v = m_draw_sprite_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB"))
-        v->Set(m_draw_sprite_transform_matrix_cb);
+    mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat, sizeof(p.mat), m_frameCostStats_);
+
+    if (m_currentPSO_ != m_draw_sprite_transform_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_sprite_transform_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_sprite_transform_pso_and_srb.pPSO;
+    }
+    if (m_var_spriteXform_gTexture_) m_var_spriteXform_gTexture_->Set(p.pSRV);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_sprite_transform_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    IBuffer* pBufs[] = { m_draw_sprite_vertex_buffer };
+    IBuffer* pBufs[] = { vb };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -821,29 +905,29 @@ void DiligentImmediateSubmitter::submitMaskedSprite(const MaskedSpritePkt& p, ID
     if (!pRTV || !p.sceneSRV || !p.maskSRV || !m_draw_masked_sprite_pso_and_srb.pPSO) return;
     if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_cb) return;
 
-    SpriteVertex vertices[4] = {
-        {{0,0},{0,0},{1,1,1,p.opacity}}, {{1,0},{1,0},{1,1,1,p.opacity}},
-        {{0,1},{0,1},{1,1,1,p.opacity}}, {{1,1},{1,1},{1,1,1,p.opacity}},
-    };
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
-    mapWriteDiscard(ctx, m_draw_sprite_cb,            &p.xform, sizeof(p.xform), m_frameCostStats_);
-
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_masked_sprite_pso_and_srb.pPSO);
-    if (auto* v = m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_scene"))
-        v->Set(p.sceneSRV);
-    if (auto* v = m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_mask"))
-        v->Set(p.maskSRV);
-    if (m_sprite_sampler) {
-        if (auto* v = m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler"))
-            v->Set(m_sprite_sampler);
+    IBuffer* vb;
+    if (p.opacity == 1.0f && m_sprite_unit_quad_vb_) {
+        vb = m_sprite_unit_quad_vb_;
+    } else {
+        SpriteVertex vertices[4] = {
+            {{0,0},{0,0},{1,1,1,p.opacity}}, {{1,0},{1,0},{1,1,1,p.opacity}},
+            {{0,1},{0,1},{1,1,1,p.opacity}}, {{1,1},{1,1},{1,1,1,p.opacity}},
+        };
+        mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+        vb = m_draw_sprite_vertex_buffer;
     }
-    if (auto* v = m_draw_masked_sprite_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB"))
-        v->Set(m_draw_sprite_cb);
+    mapWriteDiscard(ctx, m_draw_sprite_cb, &p.xform, sizeof(p.xform), m_frameCostStats_);
+
+    if (m_currentPSO_ != m_draw_masked_sprite_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_masked_sprite_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_masked_sprite_pso_and_srb.pPSO;
+    }
+    if (m_var_maskedSprite_gScene_) m_var_maskedSprite_gScene_->Set(p.sceneSRV);
+    if (m_var_maskedSprite_gMask_)  m_var_maskedSprite_gMask_->Set(p.maskSRV);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_masked_sprite_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    IBuffer* pBufs[] = { m_draw_sprite_vertex_buffer };
+    IBuffer* pBufs[] = { vb };
     Uint64   offs[]  = { 0 };
     ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
     DrawAttribs drawAttrs;
@@ -906,24 +990,12 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
         return;
     }
 
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_glyph_pso_and_srb.pPSO);
-    if (auto* v = m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture")) {
-        v->Set(m_glyph_atlas_srv);
+    if (m_currentPSO_ != m_draw_glyph_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_glyph_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_glyph_pso_and_srb.pPSO;
     }
-    if (m_glyph_sampler) {
-        if (auto* v = m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
-            v->Set(m_glyph_sampler);
-        }
-    } else if (m_sprite_sampler) {
-        if (auto* v = m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
-            v->Set(m_sprite_sampler);
-        }
-    }
-    if (auto* v = m_draw_glyph_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
-        v->Set(m_draw_sprite_cb);
-    }
+    if (m_var_glyph_gTexture_) m_var_glyph_gTexture_->Set(m_glyph_atlas_srv);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_glyph_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     IBuffer* pBufs[] = { m_draw_sprite_vertex_buffer };
@@ -1054,25 +1126,12 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
         return;
     }
 
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    recordPipelineStateSwitch(m_frameCostStats_);
-    ctx->SetPipelineState(m_draw_glyph_transform_pso_and_srb.pPSO);
-    if (auto* v = m_draw_glyph_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_texture")) {
-        v->Set(m_glyph_atlas_srv);
+    if (m_currentPSO_ != m_draw_glyph_transform_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_glyph_transform_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_glyph_transform_pso_and_srb.pPSO;
     }
-    if (m_glyph_sampler) {
-        if (auto* v = m_draw_glyph_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
-            v->Set(m_glyph_sampler);
-        }
-    } else if (m_sprite_sampler) {
-        if (auto* v = m_draw_glyph_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
-            v->Set(m_sprite_sampler);
-        }
-    }
-    // Use m_draw_sprite_transform_matrix_cb (64-byte QMatrix4x4 buffer) — NOT the 16-byte sprite CB
-    if (auto* v = m_draw_glyph_transform_pso_and_srb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
-        v->Set(m_draw_sprite_transform_matrix_cb);
-    }
+    if (m_var_glyphXform_gTexture_) m_var_glyphXform_gTexture_->Set(m_glyph_atlas_srv);
     recordShaderResourceCommit(m_frameCostStats_);
     ctx->CommitShaderResources(m_draw_glyph_transform_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     IBuffer* pBufs[] = { m_draw_sprite_vertex_buffer };

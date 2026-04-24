@@ -66,6 +66,21 @@ private:
     GlyphAtlas m_glyph_atlas;
     ArtifactCore::RenderCostStats* m_frameCostStats_ = nullptr;
 
+    // H3: Current PSO for per-submit deduplication
+    IPipelineState* m_currentPSO_ = nullptr;
+
+    // H5: Immutable unit-quad VB for opacity==1.0f sprites (avoids mapWriteDiscard per draw)
+    RefCntAutoPtr<IBuffer> m_sprite_unit_quad_vb_;
+
+    // H1: Cached SRB variable pointers for per-draw texture SRV updates
+    // These point into per-PSO SRBs; nulled in destroy(), repopulated in setPSOs()
+    IShaderResourceVariable* m_var_sprite_gTexture_      = nullptr;
+    IShaderResourceVariable* m_var_spriteXform_gTexture_ = nullptr;
+    IShaderResourceVariable* m_var_maskedSprite_gScene_  = nullptr;
+    IShaderResourceVariable* m_var_maskedSprite_gMask_   = nullptr;
+    IShaderResourceVariable* m_var_glyph_gTexture_       = nullptr;
+    IShaderResourceVariable* m_var_glyphXform_gTexture_  = nullptr;
+
     // ---- PSOs ----
     PSOAndSRB m_draw_sprite_pso_and_srb;
     PSOAndSRB m_draw_sprite_transform_pso_and_srb;
