@@ -3,6 +3,7 @@ module;
 #include <QBoxLayout>
 #include <QBrush>
 #include <QComboBox>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QLabel>
 #include <QJsonArray>
@@ -1773,6 +1774,11 @@ public:
   bool pendingSelectionSync_ = false;
   bool pendingSelectionSyncForceRefresh_ = false;
   QTimer* curveEditorRefreshTimer_ = nullptr;
+  QTimer* playbackVisualTimer_ = nullptr;
+  QElapsedTimer playbackVisualClock_;
+  double playbackVisualBaseFrame_ = 0.0;
+  double playbackVisualRateFps_ = 30.0;
+  double playbackVisualSpeed_ = 1.0;
   bool graphEditorVisible_ = false;
   bool graphEditorNeedsFit_ = false;
   // Last playhead x-position in track-view coordinates, used to dirty the
@@ -2834,43 +2840,97 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     painterTrackView->installEventFilter(viewResizeFilter);
   }
 
+  impl_->playbackVisualTimer_ = new QTimer(this);
+  impl_->playbackVisualTimer_->setTimerType(Qt::PreciseTimer);
+  impl_->playbackVisualTimer_->setInterval(16);
+  const auto updateSmoothPlaybackPlayhead = [this]() {
+    if (!impl_ || !impl_->painterTrackView_) {
+      return;
+    }
+    auto* playback = ArtifactPlaybackService::instance();
+    if (!playback || !playback->isPlaying()) {
+      if (impl_->playbackVisualTimer_) {
+        impl_->playbackVisualTimer_->stop();
+      }
+      return;
+    }
+
+    const double elapsedSeconds =
+        impl_->playbackVisualClock_.isValid()
+            ? static_cast<double>(impl_->playbackVisualClock_.elapsed()) / 1000.0
+            : 0.0;
+    double visualFrame = impl_->playbackVisualBaseFrame_ +
+                         elapsedSeconds * impl_->playbackVisualRateFps_ *
+                             impl_->playbackVisualSpeed_;
+    const FrameRange range = playback->frameRange();
+    const double startFrame = static_cast<double>(std::min(range.start(), range.end()));
+    const double endFrame = static_cast<double>(std::max(range.start(), range.end()));
+    visualFrame = std::clamp(visualFrame, startFrame, endFrame);
+
+    impl_->currentFrame_ = visualFrame;
+    impl_->painterTrackView_->setCurrentFrame(visualFrame);
+    if (impl_->navigator_) {
+      impl_->navigator_->setCurrentFrame(visualFrame);
+    }
+    syncPlayheadOverlay();
+  };
+  QObject::connect(impl_->playbackVisualTimer_, &QTimer::timeout, this,
+                   updateSmoothPlaybackPlayhead);
+
+  const auto restartSmoothPlaybackPlayhead = [this]() {
+    if (!impl_) {
+      return;
+    }
+    auto* playback = ArtifactPlaybackService::instance();
+    if (!playback || !playback->isPlaying()) {
+      return;
+    }
+    impl_->playbackVisualBaseFrame_ =
+        static_cast<double>(playback->currentFrame().framePosition());
+    impl_->playbackVisualRateFps_ =
+        std::max(1.0, static_cast<double>(playback->frameRate().framerate()));
+    impl_->playbackVisualSpeed_ =
+        static_cast<double>(playback->playbackSpeed());
+    impl_->playbackVisualClock_.restart();
+    if (impl_->playbackVisualTimer_ && !impl_->playbackVisualTimer_->isActive()) {
+      impl_->playbackVisualTimer_->start();
+    }
+  };
+
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<FrameChangedEvent>(
-          [this, scrubBar](const FrameChangedEvent &event) {
+          [this, scrubBar, restartSmoothPlaybackPlayhead](const FrameChangedEvent &event) {
             if (impl_->compositionId_.isNil() ||
                 event.compositionId != impl_->compositionId_.toString()) {
               return;
             }
 
             const FramePosition frame(event.frame);
-            if (impl_->painterTrackView_) {
+            const bool isPlaying = ArtifactPlaybackService::instance() &&
+                                   ArtifactPlaybackService::instance()->isPlaying();
+            if (impl_->painterTrackView_ && !isPlaying) {
               impl_->painterTrackView_->setCurrentFrame(
                   static_cast<double>(frame.framePosition()));
             }
             impl_->currentFrame_ = static_cast<double>(frame.framePosition());
-            if (impl_->curveEditor_) {
+            if (impl_->curveEditor_ && !isPlaying) {
               impl_->curveEditor_->setCurrentFrame(frame.framePosition());
             }
             syncPlayheadOverlay();
             const QSignalBlocker blocker(scrubBar);
             scrubBar->setCurrentFrame(frame);
+            if (isPlaying) {
+              restartSmoothPlaybackPlayhead();
+            }
 
             // 再生中の per-frame コスト削減:
             // updateCacheVisuals() / updateSelectionState() を毎フレーム呼ぶと
             // QListWidget の clear+rebuild などで非常に重くなるためスキップ。
             // 停止・一時停止時は PlaybackStateChangedEvent で更新される。
-            const bool isPlaying = ArtifactPlaybackService::instance() &&
-                                   ArtifactPlaybackService::instance()->isPlaying();
             if (!isPlaying) {
               updateCacheVisuals();
               updateSelectionState();
               if (frame.framePosition() % 15 == 0) {
-                updateKeyframeState();
-              }
-            } else {
-              // 再生中: 30フレームに1回だけ重い更新を実行
-              if (frame.framePosition() % 30 == 0) {
-                updateSelectionState();
                 updateKeyframeState();
               }
             }
@@ -3029,9 +3089,28 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   // 再生停止/一時停止時に、再生中スキップしていたUI更新を実行する
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<PlaybackStateChangedEvent>(
-          [this](const PlaybackStateChangedEvent &event) {
+          [this, restartSmoothPlaybackPlayhead](const PlaybackStateChangedEvent &event) {
+            if (event.state == ArtifactCore::PlaybackState::Playing) {
+              restartSmoothPlaybackPlayhead();
+              return;
+            }
             if (event.state == ArtifactCore::PlaybackState::Stopped ||
                 event.state == ArtifactCore::PlaybackState::Paused) {
+              if (impl_->playbackVisualTimer_) {
+                impl_->playbackVisualTimer_->stop();
+              }
+              if (auto* playback = ArtifactPlaybackService::instance()) {
+                const double frame =
+                    static_cast<double>(playback->currentFrame().framePosition());
+                impl_->currentFrame_ = frame;
+                if (impl_->painterTrackView_) {
+                  impl_->painterTrackView_->setCurrentFrame(frame);
+                }
+                if (impl_->navigator_) {
+                  impl_->navigator_->setCurrentFrame(frame);
+                }
+                syncPlayheadOverlay();
+              }
               updateCacheVisuals();
               updateSelectionState();
               updateKeyframeState();

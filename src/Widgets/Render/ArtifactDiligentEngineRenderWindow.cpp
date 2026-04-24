@@ -616,7 +616,8 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
 
       DrawAttribs drawAttrs;
       drawAttrs.NumVertices = solidVertexCount_;
-      drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+      // drawAttrs.Flags = DRAW_FLAG_VERIFY_ALL;
+      drawAttrs.Flags = DRAW_FLAG_NONE;
       pImmediateContext->Draw(drawAttrs);
 
       if (shadingMode_ == ShadingMode::SolidWithWire && wirePso_ && wireSrb_) {

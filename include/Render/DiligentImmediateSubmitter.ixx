@@ -31,6 +31,7 @@ public:
     void setPSOs(ShaderManager& shaderManager);
     void destroy();
     void setFrameCostStats(ArtifactCore::RenderCostStats* stats);
+    void setDeferredContext(RefCntAutoPtr<IDeviceContext> deferred);
 
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
 
@@ -71,6 +72,9 @@ private:
 
     // H5: Immutable unit-quad VB for opacity==1.0f sprites (avoids mapWriteDiscard per draw)
     RefCntAutoPtr<IBuffer> m_sprite_unit_quad_vb_;
+
+    // Phase 7a: deferred context for recording; nullptr = immediate fallback
+    RefCntAutoPtr<IDeviceContext> m_deferredCtx_;
 
     // H1: Cached SRB variable pointers for per-draw texture SRV updates
     // These point into per-PSO SRBs; nulled in destroy(), repopulated in setPSOs()

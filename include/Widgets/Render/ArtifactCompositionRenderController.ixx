@@ -11,6 +11,7 @@
 #include <QVector>
 #include <QRectF>
 #include <QString>
+#include <QStringList>
 
 export module Artifact.Widgets.CompositionRenderController;
 
@@ -22,6 +23,7 @@ import Artifact.Service.Project;
 import Artifact.Render.Queue.Service;
 import Artifact.Preview.Pipeline;
 import Artifact.Widgets.Gizmo3D;
+import Artifact.Widgets.PieMenu;
 import Geometry.CameraGuide;
 import Utils.Id;
 import Artifact.LOD.Manager;
@@ -100,6 +102,16 @@ void clearDropGhostPreview();
 // Lightweight info HUD used for selection / operation feedback.
 void setInfoOverlayText(const QString& title, const QString& detail = QString());
 void clearInfoOverlayText();
+void showCommandPaletteOverlay(const QString& query, const QStringList& items);
+void showContextMenuOverlay(const QPointF& viewportPos, const QStringList& items);
+void showPieMenuOverlay(const PieMenuModel& model, const QPointF& viewportPos);
+void hideViewportOverlay();
+bool isViewportOverlayVisible() const;
+int viewportOverlayItemAt(const QPointF& viewportPos) const;
+QString confirmPieMenuOverlaySelection();
+void updatePieMenuOverlayMousePos(const QPointF& viewportPos);
+void cancelPieMenuOverlay();
+bool isPieMenuOverlayVisible() const;
 
 // LOD (Level of Detail)
 LODManager* lodManager() const;

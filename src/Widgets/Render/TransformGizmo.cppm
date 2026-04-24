@@ -5,7 +5,6 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QCursor>
-#include <QFont>
 #include <QTransform>
 #include <QString>
 #include <algorithm>
@@ -277,6 +276,36 @@ void drawArc(ArtifactIRenderer* renderer,
  renderer->drawPolyline(points, color, thickness);
 }
 
+void drawEllipse(ArtifactIRenderer* renderer,
+                 const QPointF& center,
+                 float radiusX,
+                 float radiusY,
+                 float rotationDegrees,
+                 const FloatColor& color,
+                 float thickness)
+{
+ if (!renderer || radiusX <= 0.0f || radiusY <= 0.0f) {
+  return;
+ }
+
+ constexpr int segments = 48;
+ static thread_local std::vector<Detail::float2> points;
+ points.resize(segments + 1);
+
+ const float rot = rotationDegrees * (kPi / 180.0f);
+ const float c = std::cos(rot);
+ const float s = std::sin(rot);
+ for (int i = 0; i <= segments; ++i) {
+  const float a = (static_cast<float>(i) / static_cast<float>(segments)) * kPi * 2.0f;
+  const float x = std::cos(a) * radiusX;
+  const float y = std::sin(a) * radiusY;
+  points[i] = {
+      static_cast<float>(center.x() + x * c - y * s),
+      static_cast<float>(center.y() + x * s + y * c)};
+ }
+ renderer->drawPolyline(points, color, thickness);
+}
+
 void drawRotateTickMarks(ArtifactIRenderer* renderer,
                          const RotateRingGeometry& geo,
                          const FloatColor& minorColor,
@@ -444,22 +473,34 @@ void drawAxisLabel(ArtifactIRenderer* renderer,
  const float dirLen = static_cast<float>(std::sqrt(dir.x() * dir.x() + dir.y() * dir.y()));
  const QPointF n = dirLen > 0.001f ? QPointF(dir.x() / dirLen, dir.y() / dirLen) : QPointF(1.0, 0.0);
  const QPointF perp(-n.y(), n.x());
- const QPointF labelPos = tip + n * 13.0f + perp * 4.0f;
+ const float zoom = std::max(0.001f, renderer->getZoom());
+ const float invZoom = 1.0f / zoom;
+ const QPointF labelPos = tip + n * (13.0f * invZoom) + perp * (4.0f * invZoom);
+ const float half = std::clamp(4.4f * invZoom, 2.6f, 8.0f);
+ const float shadowOffset = std::max(0.8f, 0.75f * invZoom);
+ const float thickness = std::max(1.0f, 1.35f * invZoom);
+ const FloatColor main = brighten(color, active ? 1.20f : 1.05f);
+ const FloatColor shadow{0.0f, 0.0f, 0.0f, active ? 0.70f : 0.52f};
 
- QFont font = QGuiApplication::font();
- font.setBold(true);
- const float baseSize = font.pointSizeF() > 0.0f ? font.pointSizeF() : 9.0f;
- font.setPointSizeF(std::clamp(baseSize * 0.82f, 7.0f, 10.0f));
+ auto stroke = [&](const QPointF& a, const QPointF& b, const FloatColor& c, float offset) {
+  renderer->drawSolidLine(
+      {static_cast<float>(a.x() + offset), static_cast<float>(a.y() + offset)},
+      {static_cast<float>(b.x() + offset), static_cast<float>(b.y() + offset)},
+      c, thickness);
+ };
+ auto drawStroke = [&](const QPointF& a, const QPointF& b) {
+  stroke(a, b, shadow, shadowOffset);
+  stroke(a, b, main, 0.0f);
+ };
 
- const QRectF rect(labelPos.x() - 9.0f, labelPos.y() - 7.0f, 18.0f, 14.0f);
- renderer->drawText(rect,
-                    text,
-                    font,
-                    brighten(color, active ? 1.20f : 1.05f),
-                    Qt::AlignCenter,
-                    1.0f,
-                    FloatColor{0.0f, 0.0f, 0.0f, active ? 0.78f : 0.62f},
-                    1.2f);
+ if (text == QStringLiteral("X")) {
+  drawStroke(labelPos + QPointF(-half, -half), labelPos + QPointF(half, half));
+  drawStroke(labelPos + QPointF(-half, half), labelPos + QPointF(half, -half));
+ } else if (text == QStringLiteral("Y")) {
+  drawStroke(labelPos + QPointF(-half, -half), labelPos);
+  drawStroke(labelPos + QPointF(half, -half), labelPos);
+  drawStroke(labelPos, labelPos + QPointF(0.0, half));
+ }
 }
 
 void drawBoxHandle(ArtifactIRenderer* renderer,
@@ -545,16 +586,12 @@ void drawBoxHandle(ArtifactIRenderer* renderer,
  if (!renderer) {
   return;
  }
+ Q_UNUSED(invZoom);
 
  const float half = size * 0.5f;
  renderer->drawSolidRect(static_cast<float>(center.x() - half),
                          static_cast<float>(center.y() - half),
                          size, size,
-                         FloatColor{0.0f, 0.0f, 0.0f, 0.34f}, 1.0f);
- renderer->drawSolidRect(static_cast<float>(center.x() - half + std::max(0.8f, 0.6f * invZoom)),
-                         static_cast<float>(center.y() - half + std::max(0.8f, 0.6f * invZoom)),
-                         size - std::max(1.6f, 1.2f * invZoom),
-                         size - std::max(1.6f, 1.2f * invZoom),
                          brighten(fill, 1.08f), 1.0f);
  renderer->drawRectOutline(static_cast<float>(center.x() - half),
                            static_cast<float>(center.y() - half),
@@ -682,6 +719,10 @@ const FloatColor& color,
  const float mainThickness = std::max(1.0f, thickness + std::max(0.2f, 0.18f * invZoom));
  const FloatColor shadow = { 0.0f, 0.0f, 0.0f, active ? 0.30f : 0.18f };
  const FloatColor mainColor = brighten(color, active ? 1.08f : 1.0f);
+ if (!active) {
+  renderer->drawSolidLine(a, b, mainColor, mainThickness);
+  return;
+ }
   renderer->drawSolidLine({a.x + shadowShift, a.y + shadowShift},
                            {b.x + shadowShift, b.y + shadowShift},
                            shadow, shadowThickness);
@@ -716,6 +757,9 @@ TransformGizmo::TransformGizmo() {}
 TransformGizmo::~TransformGizmo() {}
 
 void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
+  if (layer_ == layer) {
+    return;
+  }
   layer_ = std::move(layer);
   // レイヤーが変更されたらキャッシュを無効化
   geometryCacheValid_ = false;
@@ -744,6 +788,9 @@ void TransformGizmo::updateGeometryCache(const QTransform& globalTransform, cons
 }
 
 void TransformGizmo::setMode(Mode mode) {
+ if (mode_ == mode) {
+  return;
+ }
  qDebug() << "[TransformGizmo] setMode:" << static_cast<int>(mode_) << "->" << static_cast<int>(mode);
  mode_ = mode;
  if (!allowsHandle(activeHandle_)) {
@@ -802,10 +849,10 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  if (isDragging_) gizmoColor = {1.0f, 0.88f, 0.22f, 1.0f};
  const bool isActive = isDragging_ || activeHandle_ != HandleType::None;
 
- const bool showMove = mode_ == Mode::All || mode_ == Mode::Move;
+ const bool showMove = mode_ == Mode::Move;
  const bool showScale = mode_ == Mode::All || mode_ == Mode::Scale;
  const bool showRotate = mode_ == Mode::Rotate;
- const bool showAnchor = mode_ == Mode::All;
+ const bool showAnchor = mode_ == Mode::AnchorPoint || activeHandle_ == HandleType::Anchor;
  // Bounding box outline is drawn for all modes except None (provides selection feedback)
  const bool showBBox = showScale || mode_ == Mode::None;
 
@@ -922,34 +969,12 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
        std::sqrt(yAxisRaw.x() * yAxisRaw.x() + yAxisRaw.y() * yAxisRaw.y()));
    const QPointF yAxisDir = yALen > 0.001f ? yAxisRaw / yALen : QPointF(0.0, -1.0);
    drawScaleCenterHandle(renderer, centerPoint, xAxisDir, yAxisDir, invZoom, activeHandle_ == HandleType::Scale_Center);
-  } else {
-   const FloatColor centerMark = activeHandle_ == HandleType::Move
-       ? FloatColor{1.0f, 0.82f, 0.28f, 1.0f}
-       : FloatColor{0.82f, 0.86f, 0.92f, 0.92f};
-   const float centerMarkSize = std::max(4.5f, GizmoVisualStyle::centerMarkRadius * invZoom);
-   renderer->drawCircle(static_cast<float>(centerPoint.x()),
-                        static_cast<float>(centerPoint.y()),
-                        centerMarkSize,
-                        centerMark, std::max(1.0f, 0.9f * invZoom), false);
   }
   }
 
- // Center points for handles
- const Detail::float2 tc_c((float)globalTransform.map(QPointF(localRect.center().x(), localRect.top())).x(), (float)globalTransform.map(QPointF(localRect.center().x(), localRect.top())).y());
- const Detail::float2 bc_c((float)globalTransform.map(QPointF(localRect.center().x(), localRect.bottom())).x(), (float)globalTransform.map(QPointF(localRect.center().x(), localRect.bottom())).y());
- const Detail::float2 lc_c((float)globalTransform.map(QPointF(localRect.left(), localRect.center().y())).x(), (float)globalTransform.map(QPointF(localRect.left(), localRect.center().y())).y());
- const Detail::float2 rc_c((float)globalTransform.map(QPointF(localRect.right(), localRect.center().y())).x(), (float)globalTransform.map(QPointF(localRect.right(), localRect.center().y())).y());
-
- if (showScale) {
+ if (mode_ == Mode::Scale) {
   const Detail::float2 center_c((float)globalTransform.map(localRect.center()).x(), (float)globalTransform.map(localRect.center()).y());
-  const FloatColor scaleX = activeHandle_ == HandleType::Scale_L || activeHandle_ == HandleType::Scale_R
-      ? FloatColor{1.0f, 0.24f, 0.10f, 1.0f}
-      : FloatColor{0.98f, 0.18f, 0.06f, 1.0f};
-  const FloatColor scaleY = activeHandle_ == HandleType::Scale_T || activeHandle_ == HandleType::Scale_B
-      ? FloatColor{0.18f, 1.0f, 0.30f, 1.0f}
-      : FloatColor{0.08f, 0.86f, 0.22f, 1.0f};
-
-   const float centerHandleSize = std::max(10.5f, handleSize * GizmoVisualStyle::scaleHandleBoost);
+  const float centerHandleSize = std::max(10.5f, handleSize * GizmoVisualStyle::scaleHandleBoost);
   const QRectF centerRect(center_c.x - centerHandleSize * 0.5f,
                           center_c.y - centerHandleSize * 0.5f,
                           centerHandleSize, centerHandleSize);
@@ -991,6 +1016,19 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
                      : FloatColor{0.88f, 0.90f, 0.94f, 0.82f};
   const float shadowOffset = std::max(1.2f, 1.0f * invZoom);
   const float segmentSweep = 68.0f;
+
+  drawEllipse(renderer, visualRotateGeo.centerWorld,
+              visualRotateGeo.ringRadius * 0.98f,
+              visualRotateGeo.ringRadius * 0.34f,
+              0.0f,
+              FloatColor{1.0f, 0.30f, 0.18f, rotateEmphasis ? 0.70f : 0.46f},
+              std::max(1.4f, visualRotateGeo.ringThickness * 0.72f));
+  drawEllipse(renderer, visualRotateGeo.centerWorld,
+              visualRotateGeo.ringRadius * 0.34f,
+              visualRotateGeo.ringRadius * 0.98f,
+              0.0f,
+              FloatColor{0.22f, 0.90f, 0.44f, rotateEmphasis ? 0.70f : 0.46f},
+              std::max(1.4f, visualRotateGeo.ringThickness * 0.72f));
 
   renderer->drawCircle(visualRotateGeo.centerWorld.x() + shadowOffset,
                        visualRotateGeo.centerWorld.y() + shadowOffset,

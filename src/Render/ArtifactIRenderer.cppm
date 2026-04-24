@@ -509,6 +509,7 @@ namespace {
    submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
    submitter_.setPSOs(shaderManager_);
    submitter_.setFrameCostStats(nullptr);
+   submitter_.setDeferredContext(deviceManager_.deferredContext());
    primitiveRenderer_.setCommandBuffer(&cmdBuf_);
   }
 
@@ -547,6 +548,7 @@ namespace {
   submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   submitter_.setPSOs(shaderManager_);
   submitter_.setFrameCostStats(nullptr);
+  submitter_.setDeferredContext(deviceManager_.deferredContext());
   primitiveRenderer_.setCommandBuffer(&cmdBuf_);
 
   primitiveRenderer3D_.createBuffers(deviceManager_.device());
@@ -1052,6 +1054,7 @@ namespace {
    submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
    submitter_.setPSOs(shaderManager_);
    submitter_.setFrameCostStats(nullptr);
+   submitter_.setDeferredContext(deviceManager_.deferredContext());
    primitiveRenderer_.setCommandBuffer(&cmdBuf_);
    m_initialized = true;
   }
