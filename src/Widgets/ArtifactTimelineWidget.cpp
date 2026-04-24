@@ -2920,7 +2920,27 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             const QSignalBlocker blocker(scrubBar);
             scrubBar->setCurrentFrame(frame);
             if (isPlaying) {
-              restartSmoothPlaybackPlayhead();
+              // Only re-anchor the smooth interpolation clock on large drift
+              // (audio sync correction, seek). Normal per-frame events must NOT
+              // reset the clock — that causes the saw-tooth "breaststroke" stutter.
+              const bool timerRunning = impl_->playbackVisualTimer_ &&
+                                        impl_->playbackVisualTimer_->isActive();
+              if (!timerRunning) {
+                restartSmoothPlaybackPlayhead();
+              } else if (impl_->playbackVisualClock_.isValid()) {
+                const double elapsedSec =
+                    static_cast<double>(impl_->playbackVisualClock_.elapsed()) / 1000.0;
+                const double visualFrame = impl_->playbackVisualBaseFrame_ +
+                                           elapsedSec * impl_->playbackVisualRateFps_ *
+                                               impl_->playbackVisualSpeed_;
+                const double actualFrame =
+                    static_cast<double>(frame.framePosition());
+                if (std::abs(actualFrame - visualFrame) > 1.5) {
+                  restartSmoothPlaybackPlayhead();
+                }
+              } else {
+                restartSmoothPlaybackPlayhead();
+              }
             }
 
             // 再生中の per-frame コスト削減:
