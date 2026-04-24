@@ -55,6 +55,7 @@ public:
     PSOAndSRB gizmo3DPsoAndSrb() const;
     PSOAndSRB gizmo3DTrianglePsoAndSrb() const;
     PSOAndSRB batchSolidRectPsoAndSrb() const;
+    PSOAndSRB batchSolidRectAAPsoAndSrb() const;
 
     /// Glyph quad PSO for GPU text rendering
     RefCntAutoPtr<ISampler> spriteSampler() const;
