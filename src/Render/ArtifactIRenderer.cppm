@@ -41,6 +41,7 @@ import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
 import Core.Scale.Zoom;
+import Frame.Debug;
 import Image.MultiChannelImage;
 import Image.ImageF32x4_RGBA;
 import Artifact.Render.DiligentDeviceManager;
@@ -191,6 +192,8 @@ namespace {
 
   mutable DiligentImmediateSubmitter submitter_;
   mutable RenderCommandBuffer cmdBuf_;
+  ArtifactCore::RenderCostStats m_lastFrameCostStats_;
+  ArtifactCore::RenderCostStats m_currentFrameCostStats_;
 
   RefCntAutoPtr<ITexture> m_layerRT;
   RefCntAutoPtr<ITexture> m_layerDepthTex;
@@ -250,6 +253,9 @@ namespace {
   void beginFrameGpuProfiling();
   void endFrameGpuProfiling();
    double lastFrameGpuTimeMs() const;
+  void beginFrameCostCapture();
+  void endFrameCostCapture();
+  ArtifactCore::RenderCostStats frameCostStats() const;
    bool isInitialized() const { return m_initialized; }
   void readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
 
@@ -384,6 +390,7 @@ namespace {
         gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(deviceManager_.device(), deviceManager_.immediateContext());
       }
       particleRenderer_ = std::make_unique<ArtifactCore::ParticleRenderer>(*gpuContext_);
+      particleRenderer_->setFrameCostStats(nullptr);
       particleRenderer_->initialize(100000); // Support up to 100k particles
       qDebug() << "[ParticleRenderer] Initialized (max 100k particles)";
     }
@@ -435,10 +442,12 @@ namespace {
     const QMatrix4x4 projT = proj.transposed();
     particleRenderer_->setViewMatrix(viewT.constData());
     particleRenderer_->setProjectionMatrix(projT.constData());
+    particleRenderer_->setFrameCostStats(&m_currentFrameCostStats_);
 
     particleRenderer_->updateBuffer(data);
     particleRenderer_->prepare(ctx);
     particleRenderer_->draw(ctx, data.particles.size());
+    particleRenderer_->setFrameCostStats(nullptr);
   }
  };
 
@@ -499,6 +508,7 @@ namespace {
                                  deviceManager_.swapChain());
    submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
    submitter_.setPSOs(shaderManager_);
+   submitter_.setFrameCostStats(nullptr);
    primitiveRenderer_.setCommandBuffer(&cmdBuf_);
   }
 
@@ -536,6 +546,7 @@ namespace {
   primitiveRenderer_.setPSOs(shaderManager_);
   submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   submitter_.setPSOs(shaderManager_);
+  submitter_.setFrameCostStats(nullptr);
   primitiveRenderer_.setCommandBuffer(&cmdBuf_);
 
   primitiveRenderer3D_.createBuffers(deviceManager_.device());
@@ -1040,6 +1051,7 @@ namespace {
    primitiveRenderer3D_.setPSOs(shaderManager_);
    submitter_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
    submitter_.setPSOs(shaderManager_);
+   submitter_.setFrameCostStats(nullptr);
    primitiveRenderer_.setCommandBuffer(&cmdBuf_);
    m_initialized = true;
   }
@@ -1122,6 +1134,25 @@ namespace {
   return m_lastGpuFrameTimeMs;
  }
 
+ void ArtifactIRenderer::Impl::beginFrameCostCapture()
+ {
+  m_currentFrameCostStats_ = {};
+  submitter_.setFrameCostStats(&m_currentFrameCostStats_);
+  primitiveRenderer3D_.setFrameCostStats(&m_currentFrameCostStats_);
+ }
+
+ void ArtifactIRenderer::Impl::endFrameCostCapture()
+ {
+  submitter_.setFrameCostStats(nullptr);
+  primitiveRenderer3D_.setFrameCostStats(nullptr);
+  m_lastFrameCostStats_ = m_currentFrameCostStats_;
+ }
+
+ ArtifactCore::RenderCostStats ArtifactIRenderer::Impl::frameCostStats() const
+ {
+  return m_lastFrameCostStats_;
+ }
+
  // ---------------------------------------------------------------------------
  // clear / flush / destroy
  // ---------------------------------------------------------------------------
@@ -1193,8 +1224,11 @@ namespace {
   fence->Wait(1);
  }
 
- void ArtifactIRenderer::Impl::destroy()
- {
+  void ArtifactIRenderer::Impl::destroy()
+  {
+  if (particleRenderer_) {
+   particleRenderer_->setFrameCostStats(nullptr);
+  }
   submitter_.destroy();
   cmdBuf_.reset();
   m_readbackStagingTex= nullptr;
@@ -1277,9 +1311,13 @@ namespace {
   void ArtifactIRenderer::clear()        { impl_->clear(); }
   void ArtifactIRenderer::flush()        { impl_->flush(); }
   void ArtifactIRenderer::flushAndWait() { impl_->flushAndWait(); }
-  void ArtifactIRenderer::destroy()      { impl_->destroy(); }
-  bool ArtifactIRenderer::isInitialized() const { return impl_->isInitialized(); }
-  bool ArtifactIRenderer::hasSwapChain() const { return impl_->deviceManager_.swapChain() != nullptr; }
+ void ArtifactIRenderer::destroy()      { impl_->destroy(); }
+ bool ArtifactIRenderer::isInitialized() const { return impl_->isInitialized(); }
+ bool ArtifactIRenderer::hasSwapChain() const { return impl_->deviceManager_.swapChain() != nullptr; }
+ void ArtifactIRenderer::beginFrameCostCapture() { impl_->beginFrameCostCapture(); }
+ void ArtifactIRenderer::endFrameCostCapture() { impl_->endFrameCostCapture(); }
+ ArtifactCore::RenderCostStats ArtifactIRenderer::frameCostStats() const { return impl_->frameCostStats(); }
+ double ArtifactIRenderer::lastFrameGpuTimeMs() const { return impl_->lastFrameGpuTimeMs(); }
 
  QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
  QImage ArtifactIRenderer::readbackDepthToImage() const { return impl_->readbackDepthToImage(); }

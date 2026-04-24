@@ -1,6 +1,8 @@
 ﻿module;
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QMetaObject>
+#include <QThread>
 #include <QTimer>
 #include <wobjectimpl.h>
 
@@ -73,8 +75,8 @@ public:
   bool outputMonitoringEnabled_ = false;
   std::function<void(bool, bool, const QString &)> outputMonitorCallback_;
 
-  Impl() {
-    timer_ = new QTimer();
+  Impl(QObject *owner) {
+    timer_ = new QTimer(owner);
     timer_->setTimerType(Qt::PreciseTimer);
   }
 
@@ -168,7 +170,7 @@ public:
 
 ArtifactCompositionPlaybackController::ArtifactCompositionPlaybackController(
     QObject *parent)
-    : QObject(parent), impl_(new Impl()) {
+    : QObject(parent), impl_(new Impl(this)) {
 
   // タイマーのタイムアウトを接続
   connect(impl_->timer_, &QTimer::timeout, this,
@@ -183,6 +185,11 @@ ArtifactCompositionPlaybackController::
 void ArtifactCompositionPlaybackController::play() {
   if (impl_->state_ == PlaybackState::Playing)
     return;
+
+  if (thread() != QThread::currentThread()) {
+    QMetaObject::invokeMethod(this, [this]() { play(); }, Qt::QueuedConnection);
+    return;
+  }
 
   PlaybackState oldState = impl_->state_;
   impl_->state_ = PlaybackState::Playing;
@@ -199,6 +206,11 @@ void ArtifactCompositionPlaybackController::pause() {
   if (impl_->state_ != PlaybackState::Playing)
     return;
 
+  if (thread() != QThread::currentThread()) {
+    QMetaObject::invokeMethod(this, [this]() { pause(); }, Qt::QueuedConnection);
+    return;
+  }
+
   PlaybackState oldState = impl_->state_;
   impl_->state_ = PlaybackState::Paused;
   impl_->stopTimer();
@@ -211,6 +223,11 @@ void ArtifactCompositionPlaybackController::pause() {
 void ArtifactCompositionPlaybackController::stop() {
   if (impl_->state_ == PlaybackState::Stopped)
     return;
+
+  if (thread() != QThread::currentThread()) {
+    QMetaObject::invokeMethod(this, [this]() { stop(); }, Qt::QueuedConnection);
+    return;
+  }
 
   PlaybackState oldState = impl_->state_;
   impl_->state_ = PlaybackState::Stopped;

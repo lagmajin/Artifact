@@ -382,20 +382,27 @@ public:
                 .arg(range.end());
     }
 
-    static QString renderTimingText(CompositionRenderController* controller)
+    static QString renderTimingText(const ArtifactCore::FrameDebugSnapshot& snapshot,
+                                    CompositionRenderController* controller)
     {
         if (!controller) {
             return QStringLiteral("renderTiming=<no controller>");
         }
         const double lastMs = controller->lastFrameTimeMs();
         const double avgMs = controller->averageFrameTimeMs();
+        const double gpuMs = snapshot.renderGpuFrameMs;
         const double lastFps = lastMs > 0.0 ? 1000.0 / lastMs : 0.0;
         const double avgFps = avgMs > 0.0 ? 1000.0 / avgMs : 0.0;
-        return QStringLiteral("renderTiming=last %1ms (%2fps) avg %3ms (%4fps)")
+        return QStringLiteral("renderTiming=cpu %1ms (%2fps) avg %3ms (%4fps) gpu %5ms draw=%6 pso=%7 srb=%8 buf=%9")
                 .arg(QString::number(lastMs, 'f', 1))
                 .arg(QString::number(lastFps, 'f', 1))
                 .arg(QString::number(avgMs, 'f', 1))
-                .arg(QString::number(avgFps, 'f', 1));
+                .arg(QString::number(avgFps, 'f', 1))
+                .arg(QString::number(gpuMs, 'f', 1))
+                .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.drawCalls)))
+                .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.psoSwitches)))
+                .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.srbCommits)))
+                .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.bufferUpdates)));
     }
 
     static QString playbackQualityText(ArtifactPlaybackService* playbackSvc,
@@ -405,7 +412,7 @@ public:
         const QString previewQuality = previewQualityText();
         const QString cacheHealth = cacheHealthText(snapshot);
         const QString ramPreview = ramPreviewText(playbackSvc);
-        const QString renderTiming = renderTimingText(controller);
+        const QString renderTiming = renderTimingText(snapshot, controller);
         const QString audioOffset = playbackSvc
                                         ? QStringLiteral("audioOffset=%1s")
                                               .arg(QString::number(playbackSvc->audioOffsetSeconds(), 'f', 3))
@@ -442,7 +449,7 @@ public:
                      .arg(QString::number(snapshot.renderLastFrameMs, 'f', 2));
         parts << QStringLiteral("renderAvg=%1ms")
                      .arg(QString::number(snapshot.renderAverageFrameMs, 'f', 2));
-        parts << (controller ? renderTimingText(controller)
+        parts << (controller ? renderTimingText(snapshot, controller)
                              : QStringLiteral("renderTiming=<no controller>"));
         parts << sharedThreadPoolText();
         parts << QStringLiteral("audioOffset=%1s")
@@ -602,6 +609,8 @@ public:
                     QString(),
                     0.0,
                     0.0,
+                    0.0,
+                    ArtifactCore::RenderCostStats{},
                     ArtifactCore::FrameDebugCompareMode::Disabled,
                     QString(),
                     {},
@@ -803,7 +812,7 @@ public:
                           .arg(playbackSvc ? QString::number(playbackSvc->droppedFrameCount())
                                            : QStringLiteral("<no service>"));
             lines << QStringLiteral("renderTiming: %1")
-                          .arg(controller_ ? renderTimingText(controller_)
+                          .arg(controller_ ? renderTimingText(controllerSnapshot, controller_)
                                            : QStringLiteral("<no controller>"));
             lines << QStringLiteral("renderBackend: %1")
                           .arg(controllerSnapshot.renderBackend.isEmpty() ? QStringLiteral("<none>")
@@ -895,8 +904,8 @@ public:
                 lines << QStringLiteral("previewQuality: %1").arg(previewQualityText());
                 lines << QStringLiteral("threadPool: %1").arg(poolText);
                 lines << QStringLiteral("renderTiming: %1")
-                              .arg(controller_ ? renderTimingText(controller_)
-                                               : QStringLiteral("<no controller>"));
+                              .arg(controller_ ? renderTimingText(controllerSnapshot, controller_)
+                                           : QStringLiteral("<no controller>"));
                 playbackText_->setPlainText(lines.join(QStringLiteral("\n")));
             }
         }

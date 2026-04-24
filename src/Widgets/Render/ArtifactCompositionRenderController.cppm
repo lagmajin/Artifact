@@ -2650,20 +2650,6 @@ CompositionRenderController::frameDebugSnapshot() const {
     }
   } traceGuard;
 
-  struct RenderCostCaptureGuard {
-    ArtifactIRenderer* renderer = nullptr;
-    explicit RenderCostCaptureGuard(ArtifactIRenderer* r) : renderer(r) {
-      if (renderer) {
-        renderer->beginFrameCostCapture();
-      }
-    }
-    ~RenderCostCaptureGuard() {
-      if (renderer) {
-        renderer->endFrameCostCapture();
-      }
-    }
-  };
-
   ArtifactCore::FrameDebugSnapshot snapshot;
   const auto comp = impl_->previewPipeline_.composition();
   const auto selectedLayerId = impl_->selectedLayerId_;

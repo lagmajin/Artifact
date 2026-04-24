@@ -11,6 +11,7 @@ export module Artifact.Render.DiligentImmediateSubmitter;
 import Artifact.Render.IRenderSubmitter;
 import Artifact.Render.RenderCommandBuffer;
 import Artifact.Render.ShaderManager;
+import Frame.Debug;
 import Text.GlyphAtlas;
 import Text.GlyphLayout;
 import Font.FreeFont;
@@ -29,6 +30,7 @@ public:
     void createBuffers(RefCntAutoPtr<IRenderDevice> device, TEXTURE_FORMAT rtvFormat);
     void setPSOs(ShaderManager& shaderManager);
     void destroy();
+    void setFrameCostStats(ArtifactCore::RenderCostStats* stats);
 
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
 
@@ -62,6 +64,7 @@ private:
     RefCntAutoPtr<ITexture> m_glyph_atlas_texture;
     RefCntAutoPtr<ITextureView> m_glyph_atlas_srv;
     GlyphAtlas m_glyph_atlas;
+    ArtifactCore::RenderCostStats* m_frameCostStats_ = nullptr;
 
     // ---- PSOs ----
     PSOAndSRB m_draw_sprite_pso_and_srb;

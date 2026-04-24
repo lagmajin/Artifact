@@ -16,6 +16,7 @@ export module Artifact.Render.PrimitiveRenderer3D;
 import std;
 import Graphics;
 import Color.Float;
+import Frame.Debug;
 import Artifact.Render.ShaderManager;
 
 export namespace Artifact {
@@ -36,6 +37,7 @@ public:
   void setContext(IDeviceContext *ctx, ISwapChain *swapChain);
   void setOverrideRTV(ITextureView *rtv);
   void setOverrideDSV(ITextureView *dsv);
+  void setFrameCostStats(ArtifactCore::RenderCostStats* stats);
   void destroy();
 
   void setViewMatrix(const QMatrix4x4 &view);
