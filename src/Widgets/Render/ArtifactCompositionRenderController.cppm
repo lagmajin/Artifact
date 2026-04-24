@@ -8,6 +8,7 @@ module;
 #include <QColor>
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QFont>
 #include <QFontMetrics>
 #include <QFuture>
 #include <QHash>
@@ -20,6 +21,7 @@ module;
 #include <QPointer>
 #include <QRectF>
 #include <QSet>
+#include <QStringList>
 #include <QTimer>
 #include <QTransform>
 #include <QVector3D>
@@ -73,6 +75,7 @@ import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.TransformGizmo;
 import Artifact.Widgets.Gizmo3D;
+import Artifact.Widgets.PieMenu;
 import UI.View.Orientation.Navigator;
 import Geometry.CameraGuide;
 import Artifact.Tool.Manager;
@@ -117,6 +120,16 @@ QString renderBackendToString(ArtifactRenderQueueService::RenderBackend backend)
   default:
     return QStringLiteral("auto");
   }
+}
+
+qint64 latestTimerMs(const std::string& timerName)
+{
+  const auto latest = ArtifactCore::PerformanceRegistry::instance().getLatestSamples();
+  const auto it = latest.find(timerName);
+  if (it == latest.end()) {
+    return 0;
+  }
+  return static_cast<qint64>(std::llround(it->second.durationMs));
 }
 
 QString playbackStateToString(PlaybackState state)
@@ -1423,6 +1436,7 @@ public:
   qint64 lastLayerPassMs_ = 0;
   qint64 lastOverlayMs_ = 0;
   qint64 lastFlushMs_ = 0;
+  qint64 lastSubmit2DMs_ = 0;
   qint64 lastPresentMs_ = 0;
   QVector<QMetaObject::Connection> layerChangedConnections_;
   QMetaObject::Connection compositionChangedConnection_;
@@ -1439,6 +1453,8 @@ public:
   // ギズモドラッグ時のレンダリングを≈60fps にスロットル
   QElapsedTimer gizmoDragRenderTimer_;
   static constexpr qint64 kGizmoDragRenderIntervalMs = 14; // ~70fps cap
+  // ドラッグ中はGPUテクスチャキャッシュ無効化とオーバーレイ同期をスキップするフラグ
+  bool gizmoDragActive_ = false;
   bool pendingMaskCreation_ = false;
   LayerID pendingMaskLayerId_;
   MaskPath pendingMaskPath_;
@@ -1556,6 +1572,17 @@ public:
   bool infoOverlayVisible_ = false;
   QString infoOverlayTitle_;
   QString infoOverlayDetail_;
+  bool commandPaletteVisible_ = false;
+  QString commandPaletteQuery_;
+  QStringList commandPaletteItems_;
+  bool contextMenuVisible_ = false;
+  QPointF contextMenuViewportPos_;
+  QStringList contextMenuItems_;
+  bool pieMenuVisible_ = false;
+  PieMenuModel pieMenuModel_;
+  QPointF pieMenuViewportPos_;
+  QPointF pieMenuMousePos_;
+  int pieMenuSelectedIndex_ = -1;
   // Full-frame clear color used before composition content is drawn.
   FloatColor viewportClearColor_;
   FloatColor lastBgColorCache_ = {-1.f, -1.f, -1.f, -1.f};
@@ -1802,6 +1829,14 @@ public:
                                 const ArtifactCompositionPtr &comp,
                                 const ArtifactAbstractLayerPtr &selectedLayer,
                                 const FramePosition &currentFrame);
+  QRectF commandPaletteRect() const;
+  QRectF contextMenuRect() const;
+  QRectF pieMenuRect() const;
+  QRectF viewportOverlayItemRect(int index) const;
+  int viewportOverlayItemAt(const QPointF &viewportPos) const;
+  int pieMenuItemAt(const QPointF &viewportPos) const;
+  void drawPieMenuOverlay();
+  void drawViewportUiOverlay();
 
   // 変更検出器へのアクセス (デバッグ用)
   const CompositionChangeDetector &changeDetector() const {
@@ -1879,15 +1914,25 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 impl_->applyCompositionState(comp);
               } else {
                 // Property/transform modification: invalidate only this layer
+                // ギズモドラッグ中は同じレイヤーのピクセルは変わらないので
+                // GPU テクスチャキャッシュ無効化をスキップ（transform のみ変化）
                 if (auto layer = comp->layerById(layerId)) {
-                  impl_->invalidateLayerSurfaceCache(layer);
+                  const bool skipCacheInvalidation =
+                      impl_->gizmoDragActive_ &&
+                      layerId == impl_->selectedLayerId_;
+                  if (!skipCacheInvalidation) {
+                    impl_->invalidateLayerSurfaceCache(layer);
+                  }
                   impl_->changeDetector_.markLayerChanged(
                       layer->id().toString());
                 }
               }
               impl_->invalidateBaseComposite();
-              impl_->syncSelectedLayerOverlayState(
-                  impl_->previewPipeline_.composition());
+              // ギズモドラッグ中はオーバーレイ同期コストを省く（ドラッグ終了時に一括同期）
+              if (!impl_->gizmoDragActive_) {
+                impl_->syncSelectedLayerOverlayState(
+                    impl_->previewPipeline_.composition());
+              }
               renderOneFrame();
             }));
 
@@ -2532,6 +2577,125 @@ void CompositionRenderController::clearInfoOverlayText() {
   renderOneFrame();
 }
 
+void CompositionRenderController::showCommandPaletteOverlay(
+    const QString &query, const QStringList &items) {
+  if (!impl_) {
+    return;
+  }
+  impl_->commandPaletteVisible_ = true;
+  impl_->commandPaletteQuery_ = query;
+  impl_->commandPaletteItems_ = items;
+  impl_->contextMenuVisible_ = false;
+  impl_->contextMenuItems_.clear();
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+
+void CompositionRenderController::showContextMenuOverlay(
+    const QPointF &viewportPos, const QStringList &items) {
+  if (!impl_) {
+    return;
+  }
+  impl_->contextMenuVisible_ = true;
+  impl_->contextMenuViewportPos_ = viewportPos;
+  impl_->contextMenuItems_ = items;
+  impl_->commandPaletteVisible_ = false;
+  impl_->commandPaletteItems_.clear();
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+
+void CompositionRenderController::showPieMenuOverlay(
+    const PieMenuModel &model, const QPointF &viewportPos) {
+  if (!impl_) {
+    return;
+  }
+  impl_->pieMenuVisible_ = true;
+  impl_->pieMenuModel_ = model;
+  impl_->pieMenuViewportPos_ = viewportPos;
+  impl_->pieMenuMousePos_ = viewportPos;
+  impl_->pieMenuSelectedIndex_ = impl_->pieMenuItemAt(viewportPos);
+  impl_->commandPaletteVisible_ = false;
+  impl_->commandPaletteItems_.clear();
+  impl_->contextMenuVisible_ = false;
+  impl_->contextMenuItems_.clear();
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+
+void CompositionRenderController::hideViewportOverlay() {
+  if (!impl_ ||
+      (!impl_->commandPaletteVisible_ && !impl_->contextMenuVisible_ &&
+       !impl_->pieMenuVisible_)) {
+    return;
+  }
+  impl_->commandPaletteVisible_ = false;
+  impl_->commandPaletteQuery_.clear();
+  impl_->commandPaletteItems_.clear();
+  impl_->contextMenuVisible_ = false;
+  impl_->contextMenuItems_.clear();
+  impl_->pieMenuVisible_ = false;
+  impl_->pieMenuModel_ = PieMenuModel{};
+  impl_->pieMenuSelectedIndex_ = -1;
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+
+bool CompositionRenderController::isViewportOverlayVisible() const {
+  return impl_ && (impl_->commandPaletteVisible_ || impl_->contextMenuVisible_ ||
+                   impl_->pieMenuVisible_);
+}
+
+int CompositionRenderController::viewportOverlayItemAt(
+    const QPointF &viewportPos) const {
+  return impl_ ? impl_->viewportOverlayItemAt(viewportPos) : -1;
+}
+
+QString CompositionRenderController::confirmPieMenuOverlaySelection() {
+  if (!impl_ || !impl_->pieMenuVisible_) {
+    return QString();
+  }
+  const int index = impl_->pieMenuSelectedIndex_;
+  QString commandId;
+  if (index >= 0 &&
+      index < static_cast<int>(impl_->pieMenuModel_.items.size())) {
+    auto &item = impl_->pieMenuModel_.items[static_cast<size_t>(index)];
+    if (item.enabled) {
+      commandId = item.commandId;
+      if (item.action) {
+        item.action();
+      }
+    }
+  }
+  hideViewportOverlay();
+  return commandId;
+}
+
+void CompositionRenderController::updatePieMenuOverlayMousePos(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->pieMenuVisible_) {
+    return;
+  }
+  impl_->pieMenuMousePos_ = viewportPos;
+  const int selected = impl_->pieMenuItemAt(viewportPos);
+  if (selected != impl_->pieMenuSelectedIndex_) {
+    impl_->pieMenuSelectedIndex_ = selected;
+    impl_->invalidateOverlayComposite();
+    renderOneFrame();
+  }
+}
+
+void CompositionRenderController::cancelPieMenuOverlay() {
+  if (!impl_ || !impl_->pieMenuVisible_) {
+    return;
+  }
+  hideViewportOverlay();
+}
+
+bool CompositionRenderController::isPieMenuOverlayVisible() const {
+  return impl_ && impl_->pieMenuVisible_;
+}
+
 void CompositionRenderController::setGpuBlendEnabled(bool enabled) {
   if (impl_->gpuBlendEnabled_ == enabled) {
     return;
@@ -2960,6 +3124,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                                  impl_->renderer_->getProjectionMatrix());
     if (axis != GizmoAxis::None) {
       impl_->gizmo3D_->beginDrag(axis, ray);
+      impl_->gizmoDragActive_ = true;
+      notifyViewportInteractionActivity();
       impl_->invalidateOverlayComposite();
       renderOneFrame();
       return;
@@ -2970,6 +3136,8 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
     if (impl_->gizmo_->isDragging()) {
+      impl_->gizmoDragActive_ = true;
+      notifyViewportInteractionActivity();
       impl_->gizmoDragRenderTimer_.restart();
       return;
     }
@@ -3437,6 +3605,7 @@ void CompositionRenderController::handleMouseMove(
     if (sel3DLayer && sel3DLayer->is3D()) {
       Ray ray = createPickingRay(viewportPos);
       if (impl_->gizmo3D_->isDragging()) {
+        notifyViewportInteractionActivity();
         impl_->gizmo3D_->updateDrag(ray);
 
         // Update layer transform from gizmo
@@ -3481,7 +3650,8 @@ void CompositionRenderController::handleMouseMove(
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
     if (impl_->gizmo_->isDragging()) {
-      // ギズモドラッグ時はスロットルして過剰な全フレームレンダーを防ぐ
+      // ドラッグ中はインタラクション状態を維持して16msスロットル+ダウンサンプルを継続
+      notifyViewportInteractionActivity();
       const qint64 elapsed = impl_->gizmoDragRenderTimer_.isValid()
                                  ? impl_->gizmoDragRenderTimer_.elapsed()
                                  : Impl::kGizmoDragRenderIntervalMs;
@@ -3567,14 +3737,24 @@ void CompositionRenderController::handleMouseRelease() {
   impl_->commitMaskEditTransaction();
 
   if (impl_->gizmo3D_) {
+    const bool wasDragging = impl_->gizmoDragActive_;
+    impl_->gizmoDragActive_ = false;
     impl_->gizmo3D_->endDrag();
     impl_->invalidateOverlayComposite();
+    if (wasDragging) {
+      finishViewportInteraction();
+    }
     renderOneFrame();
   }
 
   if (impl_->gizmo_) {
+    const bool wasDragging = impl_->gizmoDragActive_;
+    impl_->gizmoDragActive_ = false;
     impl_->gizmo_->handleMouseRelease();
     impl_->invalidateOverlayComposite();
+    if (wasDragging) {
+      finishViewportInteraction();
+    }
     renderOneFrame();
   }
 }
@@ -3768,7 +3948,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
   }
 
-  RenderCostCaptureGuard renderCostGuard(renderer_.get());
+  struct RenderCostCaptureGuard {
+    ArtifactIRenderer* renderer = nullptr;
+    explicit RenderCostCaptureGuard(ArtifactIRenderer* r) : renderer(r) {
+      if (renderer) {
+        renderer->beginFrameCostCapture();
+      }
+    }
+    ~RenderCostCaptureGuard() {
+      if (renderer) {
+        renderer->endFrameCostCapture();
+      }
+    }
+  } renderCostGuard(renderer_.get());
 
   // 強制的なサイズ同期:
   // ホストウィジェットの物理サイズとスワップチェーンを一致させる
@@ -4855,8 +5047,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             }
           }
 
-        } else {
-          gizmo_->setLayer(nullptr);
         }
 
         if (pendingMaskCreation_ &&
@@ -5196,6 +5386,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         drawAnchorCenterOverlay(renderer_.get(), selectedLayer);
       }
       drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
+      drawViewportUiOverlay();
     }
     overlayMs = markPhaseMs();
 
@@ -5214,6 +5405,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->present();
     }
     presentMs = markPhaseMs();
+    lastSubmit2DMs_ = latestTimerMs("Submit2D");
 
     ++renderFrameCounter_;
     const qint64 frameMs = frameTimer.elapsed();
@@ -5237,6 +5429,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     lastLayerPassMs_ = layerPassMs;
     lastOverlayMs_ = overlayMs;
     lastFlushMs_ = flushMs;
+    lastSubmit2DMs_ = std::max<qint64>(lastSubmit2DMs_, 0);
     lastPresentMs_ = presentMs;
     const auto textureCacheStats = gpuTextureCacheManager_
                                        ? gpuTextureCacheManager_->stats()
@@ -5276,7 +5469,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << "viewportInteracting=" << viewportInteracting_
             << "setupMs=" << setupMs << "basePassMs=" << basePassMs
             << "layerPassMs=" << layerPassMs << "overlayMs=" << overlayMs
-            << "flushMs=" << flushMs << "presentMs=" << presentMs;
+            << "flushMs=" << flushMs << "submit2DMs=" << lastSubmit2DMs_
+            << "presentMs=" << presentMs;
       } else if ((renderFrameCounter_ % 120u) == 0u) {
         qCDebug(compositionViewLog)
             << "[CompositionView][Perf]"
@@ -5285,13 +5479,345 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << "layersDrawn=" << drawnLayerCount << "setupMs=" << setupMs
             << "basePassMs=" << basePassMs << "layerPassMs=" << layerPassMs
             << "overlayMs=" << overlayMs << "flushMs=" << flushMs
-            << "presentMs=" << presentMs;
+            << "submit2DMs=" << lastSubmit2DMs_ << "presentMs=" << presentMs;
       }
     }
   } // _profSetup ("RenderFrame") destructs here — BEFORE endFrame() so its
     // duration is correctly recorded (popScope requires inFrame == true).
   ArtifactCore::Profiler::instance().endFrame();
 } // end renderOneFrameImpl
+
+QRectF CompositionRenderController::Impl::commandPaletteRect() const {
+  const float overlayWf = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
+  const float overlayHf = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
+  const float panelW = std::min(560.0f, std::max(320.0f, overlayWf - 48.0f));
+  const int visibleRows =
+      std::min(8, static_cast<int>(commandPaletteItems_.size()));
+  const float panelH = 54.0f + static_cast<float>(visibleRows) * 30.0f + 12.0f;
+  const float x = std::max(12.0f, (overlayWf - panelW) * 0.5f);
+  const float y = std::max(12.0f, std::min(96.0f, overlayHf * 0.16f));
+  return QRectF(x, y, panelW, std::min(panelH, std::max(96.0f, overlayHf - y - 12.0f)));
+}
+
+QRectF CompositionRenderController::Impl::contextMenuRect() const {
+  const float overlayWf = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
+  const float overlayHf = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
+  QFont font = QApplication::font();
+  font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
+  const QFontMetrics fm(font);
+  int textW = 140;
+  for (const QString &item : contextMenuItems_) {
+    textW = std::max(textW, fm.horizontalAdvance(item));
+  }
+  const float panelW = static_cast<float>(std::min(280, textW + 40));
+  const float panelH = 12.0f + static_cast<float>(contextMenuItems_.size()) * 28.0f;
+  float x = static_cast<float>(contextMenuViewportPos_.x());
+  float y = static_cast<float>(contextMenuViewportPos_.y());
+  if (x + panelW > overlayWf - 8.0f) {
+    x = overlayWf - panelW - 8.0f;
+  }
+  if (y + panelH > overlayHf - 8.0f) {
+    y = overlayHf - panelH - 8.0f;
+  }
+  return QRectF(std::max(8.0f, x), std::max(8.0f, y), panelW, panelH);
+}
+
+QRectF CompositionRenderController::Impl::pieMenuRect() const {
+  const float overlayWf = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
+  const float overlayHf = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
+  const float diameter = std::min(overlayWf, overlayHf) * 0.42f;
+  const float size = std::clamp(diameter, 180.0f, 420.0f);
+  const float minX = 12.0f;
+  const float minY = 12.0f;
+  const float maxX = std::max(minX, overlayWf - size - 12.0f);
+  const float maxY = std::max(minY, overlayHf - size - 12.0f);
+  const float x = std::min(std::max(static_cast<float>(pieMenuViewportPos_.x()) - size * 0.5f, minX), maxX);
+  const float y = std::min(std::max(static_cast<float>(pieMenuViewportPos_.y()) - size * 0.5f, minY), maxY);
+  return QRectF(x, y, size, size);
+}
+
+QRectF CompositionRenderController::Impl::viewportOverlayItemRect(int index) const {
+  if (index < 0) {
+    return {};
+  }
+  if (commandPaletteVisible_) {
+    if (index >= static_cast<int>(commandPaletteItems_.size()) || index >= 8) {
+      return {};
+    }
+    const QRectF panel = commandPaletteRect();
+    return QRectF(panel.left() + 10.0, panel.top() + 54.0 + index * 30.0,
+                  panel.width() - 20.0, 28.0);
+  }
+  if (contextMenuVisible_) {
+    if (index >= static_cast<int>(contextMenuItems_.size())) {
+      return {};
+    }
+    const QRectF panel = contextMenuRect();
+    return QRectF(panel.left() + 6.0, panel.top() + 6.0 + index * 28.0,
+                  panel.width() - 12.0, 26.0);
+  }
+  return {};
+}
+
+int CompositionRenderController::Impl::pieMenuItemAt(const QPointF &viewportPos) const {
+  if (!pieMenuVisible_ || pieMenuModel_.items.empty()) {
+    return -1;
+  }
+  const QRectF rect = pieMenuRect();
+  const QPointF center = rect.center();
+  const QPointF delta = viewportPos - center;
+  const double dist = std::hypot(delta.x(), delta.y());
+  const double innerRadius = rect.width() * 0.19;
+  const double outerRadius = rect.width() * 0.48;
+  if (dist < innerRadius || dist > outerRadius) {
+    return -1;
+  }
+  const double angle = std::atan2(-delta.y(), delta.x()) * 180.0 / M_PI;
+  double normalized = angle < 0.0 ? angle + 360.0 : angle;
+  const int count = static_cast<int>(pieMenuModel_.items.size());
+  if (count <= 0) {
+    return -1;
+  }
+  const double sectorSize = 360.0 / static_cast<double>(count);
+  double shifted = normalized - (90.0 - sectorSize * 0.5);
+  while (shifted < 0.0) {
+    shifted += 360.0;
+  }
+  while (shifted >= 360.0) {
+    shifted -= 360.0;
+  }
+  const int index = static_cast<int>(shifted / sectorSize);
+  if (index < 0 || index >= count) {
+    return -1;
+  }
+  return index;
+}
+
+int CompositionRenderController::Impl::viewportOverlayItemAt(
+    const QPointF &viewportPos) const {
+  const int count = commandPaletteVisible_
+                        ? std::min(8, static_cast<int>(commandPaletteItems_.size()))
+                        : (contextMenuVisible_
+                               ? static_cast<int>(contextMenuItems_.size())
+                               : 0);
+  for (int i = 0; i < count; ++i) {
+    if (viewportOverlayItemRect(i).contains(viewportPos)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+void CompositionRenderController::Impl::drawPieMenuOverlay() {
+  if (!renderer_ || !pieMenuVisible_ || pieMenuModel_.items.empty()) {
+    return;
+  }
+
+  const float overlayWf = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
+  const float overlayHf = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
+  if (overlayWf <= 0.0f || overlayHf <= 0.0f) {
+    return;
+  }
+
+  const float prevZoom = renderer_->getZoom();
+  float prevPanX = 0.0f;
+  float prevPanY = 0.0f;
+  renderer_->getPan(prevPanX, prevPanY);
+  renderer_->setUseExternalMatrices(false);
+  renderer_->setCanvasSize(overlayWf, overlayHf);
+  renderer_->setZoom(1.0f);
+  renderer_->setPan(0.0f, 0.0f);
+
+  const QRectF rect = pieMenuRect();
+  const QPointF center = rect.center();
+  const float outerRadius = rect.width() * 0.48f;
+  const float innerRadius = rect.width() * 0.19f;
+  const int count = static_cast<int>(pieMenuModel_.items.size());
+  const float sectorSize = 360.0f / static_cast<float>(std::max(1, count));
+  renderer_->drawSolidRect(0.0f, 0.0f, overlayWf, overlayHf,
+                           FloatColor{0.0f, 0.0f, 0.0f, 0.16f}, 1.0f);
+  renderer_->drawCircle(static_cast<float>(center.x()),
+                        static_cast<float>(center.y()),
+                        outerRadius + 8.0f,
+                        FloatColor{0.08f, 0.10f, 0.13f, 0.94f}, 1.0f, true);
+  renderer_->drawCircle(static_cast<float>(center.x()),
+                        static_cast<float>(center.y()),
+                        innerRadius - 2.0f,
+                        FloatColor{0.05f, 0.06f, 0.08f, 0.98f}, 1.0f, true);
+
+  QFont labelFont = QApplication::font();
+  labelFont.setPointSizeF(std::max(9.0, static_cast<double>(labelFont.pointSizeF())));
+  labelFont.setWeight(QFont::DemiBold);
+  QFont titleFont = QApplication::font();
+  titleFont.setPointSizeF(std::max(10.0, static_cast<double>(titleFont.pointSizeF()) + 1.0));
+  titleFont.setWeight(QFont::DemiBold);
+
+  for (int i = 0; i < count; ++i) {
+    const auto &item = pieMenuModel_.items[static_cast<size_t>(i)];
+    const float startAngle = 90.0f - (i + 1) * sectorSize + sectorSize * 0.5f;
+    const float endAngle = startAngle + sectorSize;
+    const int steps = 10;
+    std::vector<Detail::float2> polygon;
+    polygon.reserve(static_cast<size_t>(steps + 3));
+    polygon.push_back({static_cast<float>(center.x()), static_cast<float>(center.y())});
+    for (int s = 0; s <= steps; ++s) {
+      const float t = static_cast<float>(s) / static_cast<float>(steps);
+      const float ang = (startAngle + (endAngle - startAngle) * t) * static_cast<float>(M_PI) / 180.0f;
+      polygon.push_back({
+          static_cast<float>(center.x() + std::cos(ang) * outerRadius),
+          static_cast<float>(center.y() - std::sin(ang) * outerRadius)});
+    }
+    const bool selected = (i == pieMenuSelectedIndex_);
+    renderer_->drawSolidPolygonLocal(polygon,
+                                     selected ? FloatColor{0.18f, 0.34f, 0.52f, 0.95f}
+                                              : FloatColor{0.10f, 0.12f, 0.15f, 0.88f});
+
+    std::vector<Detail::float2> innerEdge;
+    innerEdge.reserve(static_cast<size_t>(steps + 3));
+    for (int s = 0; s <= steps; ++s) {
+      const float t = static_cast<float>(s) / static_cast<float>(steps);
+      const float ang = (startAngle + (endAngle - startAngle) * t) * static_cast<float>(M_PI) / 180.0f;
+      innerEdge.push_back({
+          static_cast<float>(center.x() + std::cos(ang) * innerRadius),
+          static_cast<float>(center.y() - std::sin(ang) * innerRadius)});
+    }
+    renderer_->drawSolidPolygonLocal(innerEdge,
+                                     FloatColor{0.04f, 0.05f, 0.07f, 0.98f});
+
+    const float midAngle = (startAngle + sectorSize * 0.5f) * static_cast<float>(M_PI) / 180.0f;
+    const float labelRadius = (innerRadius + outerRadius) * 0.5f;
+    const QPointF labelPos(center.x() + std::cos(midAngle) * labelRadius,
+                           center.y() - std::sin(midAngle) * labelRadius);
+    const QRectF textRect(labelPos.x() - sectorSize * 1.0f,
+                          labelPos.y() - 14.0f,
+                          sectorSize * 2.0f, 28.0f);
+    renderer_->drawText(textRect, item.label,
+                        labelFont,
+                        item.enabled ? FloatColor{0.92f, 0.95f, 0.98f, 1.0f}
+                                     : FloatColor{0.55f, 0.58f, 0.62f, 1.0f},
+                        Qt::AlignCenter);
+  }
+
+  renderer_->drawCircle(static_cast<float>(center.x()),
+                        static_cast<float>(center.y()),
+                        innerRadius - 4.0f,
+                        FloatColor{0.03f, 0.04f, 0.06f, 1.0f}, 1.0f, true);
+  renderer_->drawText(QRectF(center.x() - innerRadius, center.y() - innerRadius,
+                             innerRadius * 2.0f, innerRadius * 2.0f),
+                      pieMenuModel_.title.isEmpty() ? QStringLiteral("Menu")
+                                                   : pieMenuModel_.title,
+                      titleFont, FloatColor{0.95f, 0.97f, 0.99f, 1.0f},
+                      Qt::AlignCenter);
+
+  renderer_->setZoom(prevZoom);
+  renderer_->setPan(prevPanX, prevPanY);
+}
+
+void CompositionRenderController::Impl::drawViewportUiOverlay() {
+  if (!renderer_ || (!commandPaletteVisible_ && !contextMenuVisible_ &&
+                     !pieMenuVisible_)) {
+    return;
+  }
+  const float overlayWf = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
+  const float overlayHf = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
+  if (overlayWf <= 0.0f || overlayHf <= 0.0f) {
+    return;
+  }
+
+  const float prevZoom = renderer_->getZoom();
+  float prevPanX = 0.0f;
+  float prevPanY = 0.0f;
+  renderer_->getPan(prevPanX, prevPanY);
+  renderer_->setUseExternalMatrices(false);
+  renderer_->setCanvasSize(overlayWf, overlayHf);
+  renderer_->setZoom(1.0f);
+  renderer_->setPan(0.0f, 0.0f);
+
+  QFont titleFont = QApplication::font();
+  titleFont.setPointSizeF(std::max(10.0, static_cast<double>(titleFont.pointSizeF()) + 1.0));
+  titleFont.setWeight(QFont::DemiBold);
+  QFont itemFont = QApplication::font();
+  itemFont.setPointSizeF(std::max(9.0, static_cast<double>(itemFont.pointSizeF())));
+
+  if (commandPaletteVisible_) {
+    renderer_->drawSolidRect(0.0f, 0.0f, overlayWf, overlayHf,
+                             FloatColor{0.0f, 0.0f, 0.0f, 0.22f}, 1.0f);
+    const QRectF panel = commandPaletteRect();
+    renderer_->drawSolidRect(static_cast<float>(panel.left()),
+                             static_cast<float>(panel.top()),
+                             static_cast<float>(panel.width()),
+                             static_cast<float>(panel.height()),
+                             FloatColor{0.055f, 0.065f, 0.078f, 0.96f}, 1.0f);
+    renderer_->drawRectOutline(static_cast<float>(panel.left()),
+                               static_cast<float>(panel.top()),
+                               static_cast<float>(panel.width()),
+                               static_cast<float>(panel.height()),
+                               FloatColor{0.35f, 0.50f, 0.70f, 0.90f});
+    renderer_->drawText(panel.adjusted(14.0, 8.0, -14.0, -panel.height() + 34.0),
+                        QStringLiteral("Command Palette"), titleFont,
+                        FloatColor{0.90f, 0.94f, 0.98f, 1.0f},
+                        Qt::AlignLeft | Qt::AlignVCenter);
+    const QString queryText = commandPaletteQuery_.trimmed().isEmpty()
+                                  ? QStringLiteral("Type to filter commands")
+                                  : commandPaletteQuery_.trimmed();
+    renderer_->drawText(QRectF(panel.left() + 14.0, panel.top() + 30.0,
+                               panel.width() - 28.0, 18.0),
+                        queryText, itemFont,
+                        FloatColor{0.56f, 0.64f, 0.72f, 1.0f},
+                        Qt::AlignLeft | Qt::AlignVCenter);
+    const int count =
+        std::min(8, static_cast<int>(commandPaletteItems_.size()));
+    for (int i = 0; i < count; ++i) {
+      const QRectF row = viewportOverlayItemRect(i);
+      if (i == 0) {
+        renderer_->drawSolidRect(static_cast<float>(row.left()),
+                                 static_cast<float>(row.top()),
+                                 static_cast<float>(row.width()),
+                                 static_cast<float>(row.height()),
+                                 FloatColor{0.16f, 0.28f, 0.44f, 0.86f}, 1.0f);
+      }
+      renderer_->drawText(row.adjusted(10.0, 0.0, -8.0, 0.0),
+                          commandPaletteItems_.at(i), itemFont,
+                          FloatColor{0.88f, 0.91f, 0.94f, 1.0f},
+                          Qt::AlignLeft | Qt::AlignVCenter);
+    }
+  }
+
+  if (contextMenuVisible_) {
+    const QRectF panel = contextMenuRect();
+    renderer_->drawSolidRect(static_cast<float>(panel.left()),
+                             static_cast<float>(panel.top()),
+                             static_cast<float>(panel.width()),
+                             static_cast<float>(panel.height()),
+                             FloatColor{0.060f, 0.068f, 0.078f, 0.97f}, 1.0f);
+    renderer_->drawRectOutline(static_cast<float>(panel.left()),
+                               static_cast<float>(panel.top()),
+                               static_cast<float>(panel.width()),
+                               static_cast<float>(panel.height()),
+                               FloatColor{0.30f, 0.34f, 0.40f, 0.96f});
+    for (int i = 0; i < static_cast<int>(contextMenuItems_.size()); ++i) {
+      const QRectF row = viewportOverlayItemRect(i);
+      if (i == 0) {
+        renderer_->drawSolidRect(static_cast<float>(row.left()),
+                                 static_cast<float>(row.top()),
+                                 static_cast<float>(row.width()),
+                                 static_cast<float>(row.height()),
+                                 FloatColor{0.15f, 0.22f, 0.31f, 0.80f}, 1.0f);
+      }
+      renderer_->drawText(row.adjusted(10.0, 0.0, -8.0, 0.0),
+                          contextMenuItems_.at(i), itemFont,
+                          FloatColor{0.88f, 0.90f, 0.92f, 1.0f},
+                          Qt::AlignLeft | Qt::AlignVCenter);
+    }
+  }
+
+  if (pieMenuVisible_) {
+    drawPieMenuOverlay();
+  }
+
+  renderer_->setZoom(prevZoom);
+  renderer_->setPan(prevPanX, prevPanY);
+}
 
 void CompositionRenderController::Impl::drawViewportGhostOverlay(
     CompositionRenderController *owner, const ArtifactCompositionPtr &comp,
@@ -5323,6 +5849,48 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
 
   const int overlayW = std::max(1, static_cast<int>(std::ceil(overlayWf)));
   const int overlayH = std::max(1, static_cast<int>(std::ceil(overlayHf)));
+  const bool snapHintActive = gizmo_ && gizmo_->isDragging() && selectedLayer;
+  const bool infoActive = infoOverlayVisible_ &&
+                          (!infoOverlayTitle_.trimmed().isEmpty() ||
+                           !infoOverlayDetail_.trimmed().isEmpty());
+  if (dropActive && !infoActive && !snapHintActive) {
+    const float prevZoom = renderer_->getZoom();
+    float prevPanX = 0.0f;
+    float prevPanY = 0.0f;
+    renderer_->getPan(prevPanX, prevPanY);
+    renderer_->setCanvasSize(overlayWf, overlayHf);
+    renderer_->setZoom(1.0f);
+    renderer_->setPan(0.0f, 0.0f);
+
+    renderer_->drawSolidRect(0.0f, 0.0f, overlayWf, overlayHf,
+                             FloatColor{0.24f, 0.47f, 0.94f, 0.10f}, 1.0f);
+    renderer_->drawRectOutline(4.0f, 4.0f, overlayWf - 8.0f,
+                               overlayHf - 8.0f,
+                               FloatColor{0.39f, 0.63f, 1.0f, 0.70f});
+    const QRectF ghostRect = dropGhostRect_.normalized();
+    renderer_->drawSolidRect(static_cast<float>(ghostRect.left()),
+                             static_cast<float>(ghostRect.top()),
+                             static_cast<float>(ghostRect.width()),
+                             static_cast<float>(ghostRect.height()),
+                             FloatColor{0.12f, 0.16f, 0.24f, 0.52f}, 1.0f);
+    renderer_->drawRectOutline(static_cast<float>(ghostRect.left()),
+                               static_cast<float>(ghostRect.top()),
+                               static_cast<float>(ghostRect.width()),
+                               static_cast<float>(ghostRect.height()),
+                               FloatColor{0.86f, 0.92f, 1.0f, 0.88f});
+    renderer_->setZoom(prevZoom);
+    renderer_->setPan(prevPanX, prevPanY);
+    const QSize compSize = comp ? comp->settings().compositionSize() : QSize();
+    const float cw = static_cast<float>(
+        compSize.width() > 0 ? compSize.width()
+                             : (lastCanvasWidth_ > 0.0f ? lastCanvasWidth_ : 1920.0f));
+    const float ch = static_cast<float>(
+        compSize.height() > 0 ? compSize.height()
+                              : (lastCanvasHeight_ > 0.0f ? lastCanvasHeight_ : 1080.0f));
+    renderer_->setCanvasSize(cw, ch);
+    return;
+  }
+
   QImage overlayImage(overlayW, overlayH, QImage::Format_ARGB32_Premultiplied);
   overlayImage.fill(Qt::transparent);
 
@@ -5399,8 +5967,7 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     }
   }
 
-  if (infoOverlayVisible_ && (!infoOverlayTitle_.trimmed().isEmpty() ||
-                              !infoOverlayDetail_.trimmed().isEmpty())) {
+  if (infoActive) {
     const QString title = infoOverlayTitle_.trimmed().isEmpty()
                               ? QStringLiteral("Info")
                               : infoOverlayTitle_.trimmed();
@@ -5433,7 +6000,6 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
     }
   }
 
-  const bool snapHintActive = gizmo_ && gizmo_->isDragging() && selectedLayer;
   if (snapHintActive) {
     const bool snapBypassed =
         QGuiApplication::keyboardModifiers().testFlag(Qt::AltModifier);
