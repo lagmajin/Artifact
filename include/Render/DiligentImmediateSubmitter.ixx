@@ -1,4 +1,5 @@
 module;
+#include <vector>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <Texture.h>
@@ -76,6 +77,14 @@ private:
     // Phase 7a: deferred context for recording; nullptr = immediate fallback
     RefCntAutoPtr<IDeviceContext> m_deferredCtx_;
 
+    // Phase 3: CPU staging + GPU buffers for solid-rect batching
+    struct BatchRectVertexAA { float2 pos; float4 color; float2 uv; }; // 32 bytes
+    static constexpr Uint32 k_batch_solid_rect_max = 512;
+    std::vector<BatchRectVertexAA> m_batch_solid_rect_cpu_;
+    int m_batchSolidRectCount_ = 0;
+    RefCntAutoPtr<IBuffer> m_batch_solid_rect_vb_;
+    RefCntAutoPtr<IBuffer> m_batch_solid_rect_ib_;
+
     // H1: Cached SRB variable pointers for per-draw texture SRV updates
     // These point into per-PSO SRBs; nulled in destroy(), repopulated in setPSOs()
     IShaderResourceVariable* m_var_sprite_gTexture_      = nullptr;
@@ -100,6 +109,7 @@ private:
     PSOAndSRB m_draw_checkerboard_pso_and_srb;
     PSOAndSRB m_draw_grid_pso_and_srb;
     PSOAndSRB m_draw_rect_outline_pso_and_srb;
+    PSOAndSRB m_draw_batch_solid_rect_pso_and_srb;
 
     // ---- Submit helpers (one per packet type) ----
     void submitSolidRect     (const SolidRectPkt&,      IDeviceContext*, ITextureView*);

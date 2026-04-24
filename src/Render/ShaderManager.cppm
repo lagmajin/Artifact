@@ -26,6 +26,53 @@ import Render.Shader.ThickLine;
 import Render.Shader.ViewerHelpers;
 import ArtifactCore.Utils.PerformanceProfiler;
 
+// Phase 3: inline AA batch shaders (pass-through NDC, vertex color, fwidth edge AA)
+namespace {
+
+static const QByteArray k_batchSolidRectAAVS = R"(
+struct VSInput {
+    float2 pos   : ATTRIB0;
+    float4 color : ATTRIB1;
+    float2 uv    : ATTRIB2;
+};
+struct PSInput {
+    float4 pos   : SV_POSITION;
+    float4 color : COLOR0;
+    float2 uv    : TEXCOORD0;
+};
+PSInput main(VSInput input)
+{
+    PSInput output;
+    output.pos   = float4(input.pos, 0.0f, 1.0f);
+    output.color = input.color;
+    output.uv    = input.uv;
+    return output;
+}
+)";
+
+static const QByteArray k_batchSolidRectAAPS = R"(
+struct PSInput {
+    float4 pos   : SV_POSITION;
+    float4 color : COLOR0;
+    float2 uv    : TEXCOORD0;
+};
+float4 main(PSInput input) : SV_TARGET
+{
+    float dx = min(input.uv.x, 1.0 - input.uv.x);
+    float dy = min(input.uv.y, 1.0 - input.uv.y);
+    float d  = min(dx, dy);
+    float2 fw = fwidth(input.uv);
+    float edgeWidth = max(fw.x, fw.y);
+    if (d < edgeWidth) {
+        float alpha = d / edgeWidth;
+        return float4(input.color.rgb, input.color.a * alpha);
+    }
+    return input.color;
+}
+)";
+
+} // namespace
+
 namespace Artifact {
 
 using namespace Diligent;
@@ -53,6 +100,7 @@ public:
     RenderShaderPair glyphQuadTransformShaders_;
     RenderShaderPair gizmo3DShaders_;
     RenderShaderPair batchSolidRectShaders_;
+    RenderShaderPair batchSolidRectAAShaders_;
 
     PSOAndSRB linePsoAndSrb_;
     PSOAndSRB outlinePsoAndSrb_;
@@ -71,6 +119,7 @@ public:
     PSOAndSRB gizmo3DPsoAndSrb_;
     PSOAndSRB gizmo3DTrianglePsoAndSrb_;
     PSOAndSRB batchSolidRectPsoAndSrb_;
+    PSOAndSRB batchSolidRectAAPsoAndSrb_;
 
     RefCntAutoPtr<ISampler> spriteSampler_;
     RefCntAutoPtr<ISampler> glyphAtlasSampler_;
@@ -651,6 +700,59 @@ void ShaderManager::Impl::createLineFamilyPSOs()
     if (batchSolidRectPsoAndSrb_.pPSO) {
         batchSolidRectPsoAndSrb_.pPSO->CreateShaderResourceBinding(&batchSolidRectPsoAndSrb_.pSRB, true);
     }
+
+    // AA Batch Solid Rect PSO: pass-through VS with UV, fwidth-AA PS, vertex color
+    static const LayoutElement batchAALayoutElems[] = {
+        LayoutElement{0, 0, 2, VT_FLOAT32, false},  // pos (NDC)
+        LayoutElement{1, 0, 4, VT_FLOAT32, false},  // color
+        LayoutElement{2, 0, 2, VT_FLOAT32, false},  // uv (0-1 unit quad)
+    };
+
+    ShaderCreateInfo batchAAVsInfo;
+    batchAAVsInfo.SourceLanguage  = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    batchAAVsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_VERTEX;
+    batchAAVsInfo.Desc.Name       = "BatchSolidRectAAVertexShader";
+    batchAAVsInfo.Source          = k_batchSolidRectAAVS.constData();
+    batchAAVsInfo.SourceLength    = k_batchSolidRectAAVS.length();
+    device_->CreateShader(batchAAVsInfo, &batchSolidRectAAShaders_.VS);
+
+    ShaderCreateInfo batchAAPsInfo;
+    batchAAPsInfo.SourceLanguage  = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    batchAAPsInfo.Desc.ShaderType = Diligent::SHADER_TYPE_PIXEL;
+    batchAAPsInfo.Desc.Name       = "BatchSolidRectAAPixelShader";
+    batchAAPsInfo.Source          = k_batchSolidRectAAPS.constData();
+    batchAAPsInfo.SourceLength    = k_batchSolidRectAAPS.length();
+    device_->CreateShader(batchAAPsInfo, &batchSolidRectAAShaders_.PS);
+
+    GraphicsPipelineStateCreateInfo batchAAInfo;
+    batchAAInfo.PSODesc.Name        = "BatchSolidRectAA PSO";
+    batchAAInfo.PSODesc.PipelineType = PIPELINE_TYPE_GRAPHICS;
+    batchAAInfo.pPSOCache            = psoCache_.RawPtr();
+    batchAAInfo.pVS                  = batchSolidRectAAShaders_.VS;
+    batchAAInfo.pPS                  = batchSolidRectAAShaders_.PS;
+    auto& batchAAGP                  = batchAAInfo.GraphicsPipeline;
+    batchAAGP.NumRenderTargets       = 1;
+    batchAAGP.RTVFormats[0]          = rtvFormat_;
+    batchAAGP.PrimitiveTopology      = PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    batchAAGP.RasterizerDesc.CullMode      = CULL_MODE_NONE;
+    batchAAGP.DepthStencilDesc.DepthEnable = False;
+    auto& batchAABlend = batchAAGP.BlendDesc.RenderTargets[0];
+    batchAABlend.BlendEnable            = True;
+    batchAABlend.SrcBlend               = BLEND_FACTOR_SRC_ALPHA;
+    batchAABlend.DestBlend              = BLEND_FACTOR_INV_SRC_ALPHA;
+    batchAABlend.BlendOp                = BLEND_OPERATION_ADD;
+    batchAABlend.SrcBlendAlpha          = BLEND_FACTOR_ONE;
+    batchAABlend.DestBlendAlpha         = BLEND_FACTOR_INV_SRC_ALPHA;
+    batchAABlend.BlendOpAlpha           = BLEND_OPERATION_ADD;
+    batchAABlend.RenderTargetWriteMask  = COLOR_MASK_ALL;
+    batchAAGP.InputLayout.LayoutElements = batchAALayoutElems;
+    batchAAGP.InputLayout.NumElements    = _countof(batchAALayoutElems);
+    batchAAInfo.PSODesc.ResourceLayout.Variables    = nullptr;
+    batchAAInfo.PSODesc.ResourceLayout.NumVariables = 0;
+    device_->CreateGraphicsPipelineState(batchAAInfo, &batchSolidRectAAPsoAndSrb_.pPSO);
+    if (batchSolidRectAAPsoAndSrb_.pPSO) {
+        batchSolidRectAAPsoAndSrb_.pPSO->CreateShaderResourceBinding(&batchSolidRectAAPsoAndSrb_.pSRB, true);
+    }
 }
 
 void ShaderManager::Impl::createSpriteFamilyPSOs()
@@ -984,6 +1086,7 @@ void ShaderManager::Impl::destroy()
     clearPso(gizmo3DPsoAndSrb_);
     clearPso(gizmo3DTrianglePsoAndSrb_);
     clearPso(batchSolidRectPsoAndSrb_);
+    clearPso(batchSolidRectAAPsoAndSrb_);
 
     clearShaderPair(lineShaders_);
     clearShaderPair(outlineShaders_);
@@ -1001,6 +1104,7 @@ void ShaderManager::Impl::destroy()
     clearShaderPair(gridShaders_);
     clearShaderPair(gizmo3DShaders_);
     clearShaderPair(batchSolidRectShaders_);
+    clearShaderPair(batchSolidRectAAShaders_);
 
     spriteSampler_ = nullptr;
     glyphAtlasSampler_ = nullptr;
@@ -1179,6 +1283,11 @@ PSOAndSRB ShaderManager::gizmo3DTrianglePsoAndSrb() const
 PSOAndSRB ShaderManager::batchSolidRectPsoAndSrb() const
 {
     return impl_->batchSolidRectPsoAndSrb_;
+}
+
+PSOAndSRB ShaderManager::batchSolidRectAAPsoAndSrb() const
+{
+    return impl_->batchSolidRectAAPsoAndSrb_;
 }
 
 RefCntAutoPtr<ISampler> ShaderManager::spriteSampler() const

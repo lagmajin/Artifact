@@ -431,6 +431,24 @@ bool isMultilineTextProperty(const ArtifactCore::AbstractProperty &property) {
   return name.compare(QStringLiteral("text.value"), Qt::CaseInsensitive) == 0;
 }
 
+bool shouldShowNumericSlider(const ArtifactCore::AbstractProperty &property) {
+  const QString name = property.getName();
+  if (name.isEmpty()) {
+    return true;
+  }
+  // Size/position style fields are easier to edit precisely without the
+  // extra slider strip.
+  if (name == QStringLiteral("size") ||
+      name.endsWith(QStringLiteral(".size"), Qt::CaseInsensitive) ||
+      name.startsWith(QStringLiteral("transform.position"),
+                      Qt::CaseInsensitive) ||
+      name.startsWith(QStringLiteral("transform.size"),
+                      Qt::CaseInsensitive)) {
+    return false;
+  }
+  return true;
+}
+
 std::optional<ArtifactEnumPropertyEditor::OptionList>
 parseTooltipEnumOptions(const QString &tooltip) {
   ArtifactEnumPropertyEditor::OptionList options;
@@ -2122,12 +2140,10 @@ createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
   switch (property.getType()) {
   case ArtifactCore::PropertyType::Float:
     return new ArtifactFloatPropertyEditor(
-        property, parent,
-        !property.getName().startsWith(QStringLiteral("transform.position")));
+        property, parent, shouldShowNumericSlider(property));
   case ArtifactCore::PropertyType::Integer:
     return new ArtifactIntPropertyEditor(
-        property, parent,
-        !property.getName().startsWith(QStringLiteral("transform.position")));
+        property, parent, shouldShowNumericSlider(property));
   case ArtifactCore::PropertyType::Boolean:
     return new ArtifactBoolPropertyEditor(property, parent);
   case ArtifactCore::PropertyType::Color:

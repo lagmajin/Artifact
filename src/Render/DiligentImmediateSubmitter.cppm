@@ -329,6 +329,36 @@ void DiligentImmediateSubmitter::createBuffers(RefCntAutoPtr<IRenderDevice> devi
         initData.DataSize = sizeof(unitVerts);
         device->CreateBuffer(desc, &initData, &m_sprite_unit_quad_vb_);
     }
+
+    // Phase 3: dynamic VB for batch solid rects + immutable IB
+    {
+        BufferDesc desc;
+        desc.Name           = "DIS BatchSolidRect VB";
+        desc.BindFlags      = BIND_VERTEX_BUFFER;
+        desc.Usage          = USAGE_DYNAMIC;
+        desc.CPUAccessFlags = CPU_ACCESS_WRITE;
+        desc.Size           = sizeof(BatchRectVertexAA) * 4 * k_batch_solid_rect_max;
+        device->CreateBuffer(desc, nullptr, &m_batch_solid_rect_vb_);
+    }
+    {
+        std::vector<Uint32> batchIdx(k_batch_solid_rect_max * 6);
+        for (Uint32 i = 0; i < k_batch_solid_rect_max; ++i) {
+            const Uint32 b = i * 4;
+            batchIdx[i*6+0]=b;   batchIdx[i*6+1]=b+1; batchIdx[i*6+2]=b+2;
+            batchIdx[i*6+3]=b+2; batchIdx[i*6+4]=b+1; batchIdx[i*6+5]=b+3;
+        }
+        BufferDesc desc;
+        desc.Name           = "DIS BatchSolidRect IB";
+        desc.Usage          = USAGE_IMMUTABLE;
+        desc.BindFlags      = BIND_INDEX_BUFFER;
+        desc.CPUAccessFlags = CPU_ACCESS_NONE;
+        desc.Size           = sizeof(Uint32) * Uint32(batchIdx.size());
+        BufferData initData;
+        initData.pData    = batchIdx.data();
+        initData.DataSize = desc.Size;
+        device->CreateBuffer(desc, &initData, &m_batch_solid_rect_ib_);
+    }
+    m_batch_solid_rect_cpu_.resize(k_batch_solid_rect_max * 4);
 }
 
 void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
@@ -349,6 +379,7 @@ void DiligentImmediateSubmitter::setPSOs(ShaderManager& sm)
     m_draw_checkerboard_pso_and_srb         = sm.checkerboardPsoAndSrb();
     m_draw_grid_pso_and_srb                 = sm.gridPsoAndSrb();
     m_draw_rect_outline_pso_and_srb         = sm.outlinePsoAndSrb();
+    m_draw_batch_solid_rect_pso_and_srb     = sm.batchSolidRectAAPsoAndSrb();
 
     // H1: Pre-bind all static CBs and samplers to their SRBs once
     {
@@ -450,6 +481,11 @@ void DiligentImmediateSubmitter::destroy()
     m_var_glyph_gTexture_                   = nullptr;
     m_var_glyphXform_gTexture_              = nullptr;
     m_deferredCtx_                          = nullptr;
+    m_batch_solid_rect_vb_                  = nullptr;
+    m_batch_solid_rect_ib_                  = nullptr;
+    m_draw_batch_solid_rect_pso_and_srb     = {};
+    m_batch_solid_rect_cpu_.clear();
+    m_batchSolidRectCount_                  = 0;
 }
 
 void DiligentImmediateSubmitter::setFrameCostStats(ArtifactCore::RenderCostStats* stats)
@@ -476,26 +512,81 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     }
     recordCtx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); // H2
     m_currentPSO_ = nullptr; // H3: reset PSO dedup state per submit
+    m_batchSolidRectCount_ = 0;
+    const bool batchReady = m_batch_solid_rect_vb_ && m_batch_solid_rect_ib_
+                         && m_draw_batch_solid_rect_pso_and_srb.pPSO
+                         && !m_batch_solid_rect_cpu_.empty();
+
+    // Flush all accumulated SolidRectPkts as a single batched draw call
+    auto flushSolidRectBatch = [&]() {
+        if (m_batchSolidRectCount_ == 0) return;
+        mapWriteDiscard(recordCtx, m_batch_solid_rect_vb_,
+            m_batch_solid_rect_cpu_.data(),
+            sizeof(BatchRectVertexAA) * Uint32(m_batchSolidRectCount_) * 4,
+            m_frameCostStats_);
+        if (m_currentPSO_ != m_draw_batch_solid_rect_pso_and_srb.pPSO) {
+            recordPipelineStateSwitch(m_frameCostStats_);
+            recordCtx->SetPipelineState(m_draw_batch_solid_rect_pso_and_srb.pPSO);
+            m_currentPSO_ = m_draw_batch_solid_rect_pso_and_srb.pPSO;
+        }
+        IBuffer* pBufs[] = { m_batch_solid_rect_vb_.RawPtr() };
+        Uint64   offs[]  = { 0 };
+        recordCtx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+        recordCtx->SetIndexBuffer(m_batch_solid_rect_ib_, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        recordShaderResourceCommit(m_frameCostStats_);
+        recordCtx->CommitShaderResources(m_draw_batch_solid_rect_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        DrawIndexedAttribs da(Uint32(m_batchSolidRectCount_) * 6, VT_UINT32, DRAW_FLAG_NONE);
+        recordDrawCall(m_frameCostStats_, true);
+        recordCtx->DrawIndexed(da);
+        m_batchSolidRectCount_ = 0;
+    };
+
     for (auto& pkt : buf.packets()) {
         std::visit([&](auto& p) {
             using T = std::decay_t<decltype(p)>;
-            if constexpr      (std::is_same_v<T, SolidRectPkt>)       submitSolidRect(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, SolidRectXformPkt>)  submitSolidRectXform(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, LinePkt>)            submitLine(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, QuadPkt>)            submitQuad(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, DotLinePkt>)         submitDotLine(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, SolidTriPkt>)        submitSolidTri(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, SolidCirclePkt>)     submitSolidCircle(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, CheckerboardPkt>)    submitCheckerboard(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, GridPkt>)            submitGrid(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, RectOutlinePkt>)     submitRectOutline(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, SpritePkt>)          submitSprite(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, SpriteXformPkt>)     submitSpriteXform(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    submitMaskedSprite(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, GlyphTextPkt>)       submitGlyphText(p, recordCtx, pRTV);
-            else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  submitGlyphTextTransformed(p, recordCtx, pRTV);
+            if constexpr (std::is_same_v<T, SolidRectPkt>) {
+                if (batchReady) {
+                    // Overflow: flush before adding a new rect
+                    if (m_batchSolidRectCount_ >= static_cast<int>(k_batch_solid_rect_max))
+                        flushSolidRectBatch();
+                    const auto& x = p.xform;
+                    const float invW = 2.0f / x.screenSize.x;
+                    const float invH = 2.0f / x.screenSize.y;
+                    auto* v = &m_batch_solid_rect_cpu_[m_batchSolidRectCount_ * 4];
+                    for (int i = 0; i < 4; ++i) {
+                        const float u  = float(i & 1);
+                        const float vv = float(i >> 1);
+                        const float wx = u  * x.scale.x + x.offset.x;
+                        const float wy = vv * x.scale.y + x.offset.y;
+                        v[i].pos.x = wx * invW - 1.0f;
+                        v[i].pos.y = -(wy * invH - 1.0f);
+                        v[i].color = p.color;
+                        v[i].uv    = {u, vv};
+                    }
+                    ++m_batchSolidRectCount_;
+                } else {
+                    submitSolidRect(p, recordCtx, pRTV);
+                }
+            } else {
+                flushSolidRectBatch(); // flush before switching to a different draw type
+                if constexpr      (std::is_same_v<T, SolidRectXformPkt>)  submitSolidRectXform(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, LinePkt>)            submitLine(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, QuadPkt>)            submitQuad(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, DotLinePkt>)         submitDotLine(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, SolidTriPkt>)        submitSolidTri(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, SolidCirclePkt>)     submitSolidCircle(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, CheckerboardPkt>)    submitCheckerboard(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, GridPkt>)            submitGrid(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, RectOutlinePkt>)     submitRectOutline(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, SpritePkt>)          submitSprite(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, SpriteXformPkt>)     submitSpriteXform(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    submitMaskedSprite(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, GlyphTextPkt>)       submitGlyphText(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  submitGlyphTextTransformed(p, recordCtx, pRTV);
+            }
         }, pkt);
     }
+    flushSolidRectBatch(); // flush any remaining
     if (m_deferredCtx_) {
         RefCntAutoPtr<ICommandList> pCmdList;
         m_deferredCtx_->FinishCommandList(&pCmdList);
