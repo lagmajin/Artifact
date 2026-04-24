@@ -20,6 +20,7 @@ module Artifact.Render.PrimitiveRenderer3D;
 
 import std;
 import Artifact.Render.ShaderManager;
+import Frame.Debug;
 
 namespace Artifact {
 
@@ -164,6 +165,7 @@ public:
     RefCntAutoPtr<IBuffer> gizmoLineConstantBuffer_;
     RefCntAutoPtr<IBuffer> gizmoLineVertexBuffer_;
     Uint32 gizmoLineVertexCapacity_ = 0;
+    ArtifactCore::RenderCostStats* frameCostStats_ = nullptr;
 
     // CPU-side accumulation buffers — flushed once per flushGizmoGeometry() call
     std::vector<GizmoLineVertex> pendingLineVerts_;
@@ -519,6 +521,9 @@ public:
         }
         std::memcpy(mapped, &gizmoLineConstants_, sizeof(GizmoLineConstants));
         ctx_->UnmapBuffer(gizmoLineConstantBuffer_, MAP_WRITE);
+        if (frameCostStats_) {
+            ++frameCostStats_->bufferUpdates;
+        }
 
         auto submitBatch = [&](std::vector<GizmoLineVertex>& verts, const PSOAndSRB& psoAndSrb) {
             if (verts.empty() || !psoAndSrb.pPSO || !psoAndSrb.pSRB) {
@@ -539,10 +544,16 @@ public:
             }
             std::memcpy(vmapped, verts.data(), sizeof(GizmoLineVertex) * vertexCount);
             ctx_->UnmapBuffer(gizmoLineVertexBuffer_, MAP_WRITE);
+            if (frameCostStats_) {
+                ++frameCostStats_->bufferUpdates;
+            }
 
             auto* rtv = currentRTV();
             auto* dsv = currentDSV();
             ctx_->SetRenderTargets(1, &rtv, dsv, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+            if (frameCostStats_) {
+                ++frameCostStats_->psoSwitches;
+            }
             ctx_->SetPipelineState(psoAndSrb.pPSO);
 
             IBuffer* buffers[] = { gizmoLineVertexBuffer_ };
@@ -552,11 +563,17 @@ public:
             if (auto* cbVar = psoAndSrb.pSRB->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
                 cbVar->Set(gizmoLineConstantBuffer_);
             }
+            if (frameCostStats_) {
+                ++frameCostStats_->srbCommits;
+            }
             ctx_->CommitShaderResources(psoAndSrb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
             DrawAttribs drawAttrs;
             drawAttrs.NumVertices = vertexCount;
             drawAttrs.Flags = DRAW_FLAG_NONE;
+            if (frameCostStats_) {
+                ++frameCostStats_->drawCalls;
+            }
             ctx_->Draw(drawAttrs);
             verts.clear();
         };
@@ -927,6 +944,11 @@ void PrimitiveRenderer3D::setOverrideDSV(ITextureView* dsv)
     impl_->overrideDSV_ = dsv;
 }
 
+void PrimitiveRenderer3D::setFrameCostStats(ArtifactCore::RenderCostStats* stats)
+{
+    impl_->frameCostStats_ = stats;
+}
+
 void PrimitiveRenderer3D::destroy()
 {
     impl_->textureCache_.clear();
@@ -952,6 +974,7 @@ void PrimitiveRenderer3D::destroy()
     impl_->overrideRTV_ = nullptr;
     impl_->overrideDSV_ = nullptr;
     impl_->device_ = nullptr;
+    impl_->frameCostStats_ = nullptr;
 }
 
 void PrimitiveRenderer3D::setViewMatrix(const QMatrix4x4& view)

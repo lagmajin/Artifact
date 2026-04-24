@@ -47,6 +47,13 @@ public:
         lines << QStringLiteral("renderBackend: %1").arg(snapshot.renderBackend);
         lines << QStringLiteral("renderLastFrameMs: %1").arg(QString::number(snapshot.renderLastFrameMs, 'f', 1));
         lines << QStringLiteral("renderAverageFrameMs: %1").arg(QString::number(snapshot.renderAverageFrameMs, 'f', 1));
+        lines << QStringLiteral("renderGpuFrameMs: %1").arg(QString::number(snapshot.renderGpuFrameMs, 'f', 1));
+        lines << QStringLiteral("renderCost: draw=%1 indexed=%2 pso=%3 srb=%4 buf=%5")
+                      .arg(static_cast<qulonglong>(snapshot.renderCost.drawCalls))
+                      .arg(static_cast<qulonglong>(snapshot.renderCost.indexedDrawCalls))
+                      .arg(static_cast<qulonglong>(snapshot.renderCost.psoSwitches))
+                      .arg(static_cast<qulonglong>(snapshot.renderCost.srbCommits))
+                      .arg(static_cast<qulonglong>(snapshot.renderCost.bufferUpdates));
         lines << QStringLiteral("failed: %1").arg(snapshot.failed ? QStringLiteral("true") : QStringLiteral("false"));
         if (!snapshot.failureReason.isEmpty()) {
             lines << QStringLiteral("failureReason: %1").arg(snapshot.failureReason);

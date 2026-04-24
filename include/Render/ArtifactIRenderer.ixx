@@ -23,6 +23,7 @@ export module Artifact.Render.IRenderer;
 import Color.Float;
 import Image.ImageF32x4_RGBA;
 export import Image.MultiChannelImage;
+import Frame.Debug;
 import Graphics.RayTracingManager;
 import Graphics.ParticleData;
 import Core.Light;
@@ -81,6 +82,10 @@ public:
   void present();
   bool isInitialized() const;
   bool hasSwapChain() const;
+  void beginFrameCostCapture();
+  void endFrameCostCapture();
+  ArtifactCore::RenderCostStats frameCostStats() const;
+  double lastFrameGpuTimeMs() const;
 
   QImage readbackToImage() const;
   QImage readbackDepthToImage() const;
