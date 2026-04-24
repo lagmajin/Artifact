@@ -1,8 +1,10 @@
 module;
 #include <utility>
 #include <QDebug>
+#include <QImage>
 #include <QPointF>
 #include <QRectF>
+#include <QSize>
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
 
@@ -118,6 +120,8 @@ public:
   FramePosition outPoint_ = FramePosition(300); // Default 10s at 30fps
   FramePosition startTime_ = FramePosition(0);
   int64_t currentFrame_ = 0; // 現在のフレーム位置
+  mutable QImage thumbnailCache_;
+  mutable QSize thumbnailCacheSize_;
   int64_t currentFrame() const { return currentFrame_; }
 
   bool isLocked_ = false;
@@ -1748,14 +1752,23 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
 
 QImage ArtifactAbstractLayer::getThumbnail(int width, int height) const {
   // サムネイル用に黒いイメージを作成（プレースホルダー実装）
-  QImage thumbnail(width, height, QImage::Format_ARGB32);
+  const QSize targetSize(std::max(1, width), std::max(1, height));
+  if (!impl_->thumbnailCache_.isNull() &&
+      impl_->thumbnailCacheSize_ == targetSize) {
+    return impl_->thumbnailCache_;
+  }
+
+  QImage thumbnail(targetSize.width(), targetSize.height(),
+                   QImage::Format_ARGB32);
   thumbnail.fill(QColor(0, 0, 0, 255)); // 黒で塗りつぶし
+  impl_->thumbnailCache_ = thumbnail;
+  impl_->thumbnailCacheSize_ = targetSize;
 
   // TODO: 実際のレイヤーコンテンツをサムネイルにレンダリング
   qDebug() << "[Thumbnail] Generated placeholder thumbnail:" << width << "x"
            << height;
 
-  return thumbnail;
+  return impl_->thumbnailCache_;
 }
 
 // -- Mask Impl methods --

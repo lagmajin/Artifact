@@ -60,6 +60,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
+import Artifact.Layer.Particle;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
@@ -333,6 +334,41 @@ bool isScaleHandle(TransformGizmo::HandleType handle) {
   default:
     return false;
   }
+}
+
+bool layerNeedsFrameSyncForCompositionView(ArtifactAbstractLayer *layer) {
+  if (!layer) {
+    return false;
+  }
+
+  // Animated playback-critical layers still need their frame propagated.
+  if (dynamic_cast<ArtifactVideoLayer *>(layer) ||
+      dynamic_cast<ArtifactParticleLayer *>(layer) ||
+      dynamic_cast<ArtifactCompositionLayer *>(layer)) {
+    return true;
+  }
+
+  if (layer->isTimeRemapEnabled() || layer->hasMasks() ||
+      !layer->getEffects().empty()) {
+    return true;
+  }
+
+  const auto &transform = layer->transform3D();
+  if (transform.getPositionKeyFrameCount() > 0 ||
+      transform.getRotationKeyFrameCount() > 0 ||
+      transform.getScaleKeyFrameCount() > 0) {
+    return true;
+  }
+
+  if (auto *solidImage = dynamic_cast<ArtifactSolidImageLayer *>(layer)) {
+    if (const auto property =
+            solidImage->getProperty(QStringLiteral("solid.color"));
+        property && !property->getKeyFrames().empty()) {
+      return true;
+    }
+  }
+
+  return false;
 }
 } // namespace
 
@@ -971,13 +1007,15 @@ void drawLayerForCompositionView(
   }
 
   if (auto *solidImage = dynamic_cast<ArtifactSolidImageLayer *>(layer)) {
-    // [Fix] SolidImage も QImage 経由で GPU テクスチャキャッシュを利用する
-    const QImage img = solidImage->toQImage();
-    if (!img.isNull()) {
-      applySurfaceAndDraw(img, localRect, hasRasterizerEffectsOrMasks(layer));
+    const auto color = solidImage->color();
+    if (hasRasterizerEffectsOrMasks(layer)) {
+      const QSize surfaceSize(
+          std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+      surface.fill(toQColor(color));
+      applySurfaceAndDraw(surface, localRect, true);
     } else {
-      // Fallback: 直接描画
-      const auto color = solidImage->color();
       renderer->drawSolidRectTransformed(
           static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
           static_cast<float>(localRect.width()),
@@ -988,6 +1026,25 @@ void drawLayerForCompositionView(
   }
 
   if (auto *imageLayer = dynamic_cast<ArtifactImageLayer *>(layer)) {
+    if (!hasRasterizerEffectsOrMasks(layer) &&
+        imageLayer->hasCurrentFrameBuffer()) {
+      const ArtifactCore::ImageF32x4_RGBA &buffer =
+          imageLayer->currentFrameBuffer();
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(
+          layer, globalTransform4x4,
+          [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+            renderer->drawSpriteTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                buffer, baseOpacity * instanceWeight);
+          });
+      return;
+    }
+
     const QImage img = imageLayer->toQImage();
     if (!img.isNull()) {
       applySurfaceAndDraw(img, localRect, hasRasterizerEffectsOrMasks(layer));
@@ -997,18 +1054,55 @@ void drawLayerForCompositionView(
 
   if (auto *svgLayer = dynamic_cast<ArtifactSvgLayer *>(layer)) {
     if (svgLayer->isLoaded()) {
-      const QImage svgImage = svgLayer->toQImage();
-      if (!svgImage.isNull()) {
-        applySurfaceAndDraw(svgImage, localRect,
-                            hasRasterizerEffectsOrMasks(layer));
+      if (!hasRasterizerEffectsOrMasks(layer) &&
+          svgLayer->hasCurrentFrameBuffer()) {
+        const ArtifactCore::ImageF32x4_RGBA &buffer =
+            svgLayer->currentFrameBuffer();
+        const float baseOpacity =
+            (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+        drawWithClonerEffect(
+            layer, globalTransform4x4,
+            [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(localRect.x()),
+                  static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()),
+                  static_cast<float>(localRect.height()), instanceTransform,
+                  buffer, baseOpacity * instanceWeight);
+            });
       } else {
-        svgLayer->draw(renderer);
+        const QImage svgImage = svgLayer->toQImage();
+        if (!svgImage.isNull()) {
+          applySurfaceAndDraw(svgImage, localRect,
+                              hasRasterizerEffectsOrMasks(layer));
+        } else {
+          svgLayer->draw(renderer);
+        }
       }
       return;
     }
   }
 
   if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
+    if (!hasRasterizerEffectsOrMasks(layer) &&
+        videoLayer->hasCurrentFrameBuffer()) {
+      const ArtifactCore::ImageF32x4_RGBA &buffer =
+          videoLayer->currentFrameBuffer();
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(
+          layer, globalTransform4x4,
+          [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+            renderer->drawSpriteTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                buffer, baseOpacity * instanceWeight);
+          });
+      return;
+    }
+
     QImage frame = videoLayer->currentFrameToQImage();
     bool usedSyncFallback = false;
     if (frame.isNull() && videoLayer->hasCurrentFrameBuffer()) {
@@ -1037,11 +1131,28 @@ void drawLayerForCompositionView(
   if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
     if (!hasRasterizerEffectsOrMasks(layer)) {
       textLayer->draw(renderer);
-    } else {
-      const QImage textImage = textLayer->toQImage();
-      if (!textImage.isNull()) {
-        applySurfaceAndDraw(textImage, localRect, true);
-      }
+      return;
+    }
+    if (textLayer->hasCurrentFrameBuffer()) {
+      const ArtifactCore::ImageF32x4_RGBA &buffer =
+          textLayer->currentFrameBuffer();
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(
+          layer, globalTransform4x4,
+          [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+            renderer->drawSpriteTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                buffer, baseOpacity * instanceWeight);
+          });
+      return;
+    }
+    const QImage textImage = textLayer->toQImage();
+    if (!textImage.isNull()) {
+      applySurfaceAndDraw(textImage, localRect, true);
     }
     return;
   }
@@ -1049,9 +1160,6 @@ void drawLayerForCompositionView(
   if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer)) {
     if (auto childComp = compLayer->sourceComposition()) {
       const QSize childSize = childComp->settings().compositionSize();
-      const int64_t childFrame =
-          layer->currentFrame() - layer->inPoint().framePosition();
-      childComp->goToFrame(childFrame);
       QImage childImage =
           childComp->getThumbnail(childSize.width(), childSize.height());
 
@@ -2542,6 +2650,20 @@ CompositionRenderController::frameDebugSnapshot() const {
     }
   } traceGuard;
 
+  struct RenderCostCaptureGuard {
+    ArtifactIRenderer* renderer = nullptr;
+    explicit RenderCostCaptureGuard(ArtifactIRenderer* r) : renderer(r) {
+      if (renderer) {
+        renderer->beginFrameCostCapture();
+      }
+    }
+    ~RenderCostCaptureGuard() {
+      if (renderer) {
+        renderer->endFrameCostCapture();
+      }
+    }
+  };
+
   ArtifactCore::FrameDebugSnapshot snapshot;
   const auto comp = impl_->previewPipeline_.composition();
   const auto selectedLayerId = impl_->selectedLayerId_;
@@ -2563,6 +2685,10 @@ CompositionRenderController::frameDebugSnapshot() const {
   }
   snapshot.renderLastFrameMs = lastFrameTimeMs();
   snapshot.renderAverageFrameMs = averageFrameTimeMs();
+  if (impl_->renderer_) {
+    snapshot.renderGpuFrameMs = impl_->renderer_->lastFrameGpuTimeMs();
+    snapshot.renderCost = impl_->renderer_->frameCostStats();
+  }
 
   snapshot.timestampMs =
       static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -3656,6 +3782,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
   }
 
+  RenderCostCaptureGuard renderCostGuard(renderer_.get());
+
   // 強制的なサイズ同期:
   // ホストウィジェットの物理サイズとスワップチェーンを一致させる
   if (auto *host = hostWidget_.data()) {
@@ -4181,7 +4309,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             ++cpuRasterLayerCount;
           }
 
-          layer->goToFrame(currentFrame.framePosition());
+          if (layerNeedsFrameSyncForCompositionView(layer.get())) {
+            layer->goToFrame(currentFrame.framePosition());
+          }
           const auto blendMode =
               ArtifactCore::toBlendMode(layer->layerBlendType());
           const float opacity =
@@ -4435,7 +4565,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           if (layerHasCpuRasterizerWork(layer.get())) {
             ++cpuRasterLayerCount;
           }
-          layer->goToFrame(currentFrame.framePosition());
+          if (layerNeedsFrameSyncForCompositionView(layer.get())) {
+            layer->goToFrame(currentFrame.framePosition());
+          }
           const float opacity =
               layer->opacity() *
               ((hasSelection && !isLayerSelected(selectedIds, layer))

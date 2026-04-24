@@ -8,6 +8,7 @@ module;
 #include <QJsonObject>
 #include <QLoggingCategory>
 #include <QMatrix4x4>
+#include <QSize>
 #include <QVariant>
 
 
@@ -72,6 +73,9 @@ public:
   AnimatableValueT<FloatColor> color_;
   FloatColor defaultColor_ =
       FloatColor(1.0f, 1.0f, 1.0f, 1.0f); // デフォルトは白色
+  mutable QImage cachedImage_;
+  mutable QSize cachedSize_;
+  mutable FloatColor cachedColor_ = FloatColor(-1.0f, -1.0f, -1.0f, -1.0f);
 
   Impl() {
     // デフォルトのキーフレームを追加（フレーム0）
@@ -219,9 +223,21 @@ QImage ArtifactSolidImageLayer::toQImage() const {
     return QImage();
   }
   const auto color = this->color();
+  const QSize targetSize(size.width, size.height);
+  if (!impl_->cachedImage_.isNull() && impl_->cachedSize_ == targetSize &&
+      impl_->cachedColor_.r() == color.r() &&
+      impl_->cachedColor_.g() == color.g() &&
+      impl_->cachedColor_.b() == color.b() &&
+      impl_->cachedColor_.a() == color.a()) {
+    return impl_->cachedImage_;
+  }
+
   const auto c = QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
-  QImage image(size.width, size.height, QImage::Format_ARGB32_Premultiplied);
-  image.fill(c);
-  return image;
+  impl_->cachedImage_ =
+      QImage(size.width, size.height, QImage::Format_ARGB32_Premultiplied);
+  impl_->cachedImage_.fill(c);
+  impl_->cachedSize_ = targetSize;
+  impl_->cachedColor_ = color;
+  return impl_->cachedImage_;
 }
 } // namespace Artifact
