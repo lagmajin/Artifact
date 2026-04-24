@@ -24,6 +24,7 @@ namespace Artifact
    QColor surface;
    QColor border;
    QColor accent;
+   QColor workArea;
   };
 
   TimelineTheme timelineTheme()
@@ -34,6 +35,7 @@ namespace Artifact
     QColor(theme.secondaryBackgroundColor),
     QColor(theme.borderColor),
     QColor(theme.accentColor),
+    QColor(64, 142, 232),
    };
   }
  }
@@ -114,12 +116,12 @@ public:
   // Range strip
   QRect rangeRect(x1, 0, x2 - x1, height());
   QLinearGradient grad(rangeRect.topLeft(), rangeRect.bottomLeft());
-  grad.setColorAt(0, theme.accent.lighter(120));
-  grad.setColorAt(1, theme.accent.darker(130));
+  grad.setColorAt(0, theme.workArea.lighter(122));
+  grad.setColorAt(1, theme.workArea.darker(126));
   p.fillRect(rangeRect, grad);
 
   // Bottom border for work area
-  p.setPen(QPen(theme.accent, 2));
+  p.setPen(QPen(theme.workArea.lighter(116), 2));
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   // Handles (Blue AE style) - highlight on hover
@@ -128,18 +130,18 @@ public:
   
   // Left handle
   if (impl_->hoveringLeft || impl_->draggingLeft) {
-    p.setBrush(theme.accent.lighter(135));
+    p.setBrush(theme.workArea.lighter(138));
   } else {
-    p.setBrush(theme.accent);
+    p.setBrush(theme.workArea);
   }
   p.setPen(QPen(theme.border.lighter(120), 1));
   p.drawRoundedRect(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
   
   // Right handle
   if (impl_->hoveringRight || impl_->draggingRight) {
-    p.setBrush(theme.accent.lighter(135));
+    p.setBrush(theme.workArea.lighter(138));
   } else {
-    p.setBrush(theme.accent);
+    p.setBrush(theme.workArea);
   }
   p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
  }

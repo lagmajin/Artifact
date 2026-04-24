@@ -364,6 +364,43 @@ void notifyProjectIfTimelinePropertyChanged(const QString& propertyName)
     }
 }
 
+std::optional<RationalTime> currentPlaybackTime()
+{
+    auto* playback = ArtifactPlaybackService::instance();
+    if (!playback) {
+        return std::nullopt;
+    }
+    const auto frameRate = playback->frameRate();
+    const int64_t fps = std::max<int64_t>(
+        1, static_cast<int64_t>(std::round(frameRate.framerate())));
+    return RationalTime(playback->currentFrame().framePosition(), fps);
+}
+
+bool writeAutoKeyframeIfArmed(
+    const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
+    const QVariant& value)
+{
+    if (!propertyPtr || !propertyPtr->isAnimatable()) {
+        return false;
+    }
+    const auto track = propertyPtr->getKeyFrames();
+    if (track.empty()) {
+        return false;
+    }
+    const auto now = currentPlaybackTime();
+    if (!now) {
+        return false;
+    }
+    const bool createdKeyframe = !propertyPtr->hasKeyFrameAt(*now);
+    propertyPtr->addKeyFrame(*now, value);
+    if (createdKeyframe) {
+        if (auto* svc = ArtifactProjectService::instance()) {
+            svc->projectChanged();
+        }
+    }
+    return true;
+}
+
 ArtifactPropertyEditorRowWidget* createPropertyRow(
     QWidget* parent,
     const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
@@ -381,9 +418,13 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
     const QString labelText = meta.displayLabel.isEmpty() ? humanizePropertyLabel(property.getName()) : meta.displayLabel;
     auto* row = new ArtifactPropertyEditorRowWidget(labelText, editor, property.getName(), parent);
 
-    const auto applyPropertyValue = [applyValue, propertyPtr, propertyName = property.getName()](const QVariant& value) {
+    const auto applyPropertyValue = [applyValue, propertyPtr, row, propertyName = property.getName()](const QVariant& value) {
         if (propertyPtr) {
             propertyPtr->setValue(value);
+            if (writeAutoKeyframeIfArmed(propertyPtr, value)) {
+                row->setKeyframeChecked(!propertyPtr->getKeyFrames().empty());
+                row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+            }
         }
         applyValue(propertyName, value);
     };
@@ -401,6 +442,7 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
             editor->setValueFromVariant(defaultValue);
             if (propertyPtr) {
                 propertyPtr->setValue(defaultValue);
+                writeAutoKeyframeIfArmed(propertyPtr, defaultValue);
             }
             applyValue(propertyName, defaultValue);
         });
@@ -420,7 +462,7 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
         // 現時点でのキーフレーム状態を反映
         if (playback) {
             const auto now = RationalTime(playback->currentFrame().framePosition(), fps_val);
-            row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
+            row->setKeyframeChecked(!propertyPtr->getKeyFrames().empty());
             const QVariant animatedValue = propertyPtr->interpolateValue(now);
             if (animatedValue.isValid()) {
                 editor->setValueFromVariant(animatedValue);
@@ -442,8 +484,9 @@ ArtifactPropertyEditorRowWidget* createPropertyRow(
                 svc->projectChanged();
             }
             // 状態を再反映
-            row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
-            row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+            const bool hasAnyKeyframes = !propertyPtr->getKeyFrames().empty();
+            row->setKeyframeChecked(hasAnyKeyframes);
+            row->setNavigationEnabled(hasAnyKeyframes);
         });
 
         // ナビゲーション (◀ ▶ボタン)
@@ -885,8 +928,9 @@ void ArtifactPropertyWidget::Impl::updatePropertyValues() {
         }
 
         // キーフレーム状態（◆ボタン）の更新
-        row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
-        row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+        const bool hasAnyKeyframes = !propertyPtr->getKeyFrames().empty();
+        row->setKeyframeChecked(hasAnyKeyframes);
+        row->setNavigationEnabled(hasAnyKeyframes);
     }
 
     applyLockState();
@@ -911,8 +955,7 @@ void ArtifactPropertyWidget::Impl::applyLockState() {
 
 void ArtifactPropertyWidget::Impl::rebuildUI() {
     if (rebuilding) return;
-    
-    // 1. 可視性チェック: 非表示なら後回しにする
+
     if (!owner->isVisible()) {
         needsRebuildWhenVisible = true;
         return;

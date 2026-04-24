@@ -49,6 +49,7 @@ import Artifact.Mask.LayerMask;
 import Layer.Blend;
 import Event.Bus;
 import Artifact.Event.Types;
+import Time.TimeRemap;
 
 namespace Artifact {
 
@@ -498,9 +499,94 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
 
 void drawLayerOnCanvas(QPainter& painter, const ArtifactAbstractLayerPtr& layer, const qreal opacityScale)
 {
-    if (!layer || !layer->isVisible()) {
-        return;
+  if (layer.isNull()) {
+    return;
+  }
+
+  const QString id = layer->id().toString();
+  const FramePosition ip = layer->inPoint();
+  const FramePosition op = layer->outPoint();
+  const int64_t cf = layer->currentFrame();
+  const bool active = layer->isActiveAt(FramePosition(cf));
+  qDebug() << "[drawLayerOnCanvas] id=" << id
+           << "range=[" << ip.framePosition() << "," << op.framePosition() << "]"
+           << "frame=" << cf
+           << "active=" << active;
+
+  if (!active) {
+    return;
+  }
+
+  const QRectF bounds = layer->localBounds();
+  if (bounds.isNull() || bounds.isEmpty()) {
+    return;
+  }
+
+  painter.save();
+  painter.setOpacity(opacityScale);
+
+  if (auto* solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layer.data())) {
+    painter.fillRect(bounds, QBrush(toQColor(solid2D->color())));
+  } else if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer.data())) {
+    painter.fillRect(bounds, QBrush(toQColor(solidImage->color())));
+  } else if (auto* svgLayer = dynamic_cast<ArtifactSvgLayer*>(layer.data())) {
+    const QImage svgImage = svgLayer->toQImage();
+    if (!svgImage.isNull()) {
+      painter.drawImage(bounds, svgImage);
     }
+  } else if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer.data())) {
+    // Apply frame blending if enabled
+    QImage frame;
+    TimeRemapEffect* timeRemap = layer->timeRemapEffect();
+    if (timeRemap && timeRemap->isEnabled()) {
+      double outputTime = static_cast<double>(cf) / 30.0; // Assume 30fps
+      float blendForward = 0.0f;
+      float blendBackward = 0.0f;
+      int sourceFrame = timeRemap->processFrame(outputTime, blendForward, blendBackward);
+      frame = videoLayer->decodeFrameToQImage(sourceFrame);
+      
+      if (timeRemap->needsFrameBlending(outputTime) && frame.isValid()) {
+        QImage nextFrame;
+        QImage prevFrame;
+        if (blendForward > 0.0f) {
+          nextFrame = videoLayer->decodeFrameToQImage(sourceFrame + 1);
+        }
+        if (blendBackward > 0.0f) {
+          prevFrame = videoLayer->decodeFrameToQImage(sourceFrame - 1);
+        }
+        frame = timeRemap->processFrameBlending(outputTime, frame, nextFrame, prevFrame, cf);
+      }
+    } else {
+      frame = videoLayer->currentFrameToQImage();
+    }
+    
+    if (!frame.isNull()) {
+      painter.drawImage(bounds, frame);
+    }
+  } else if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer.data())) {
+    QImage img = imageLayer->toQImage();
+    // Apply frame blending for image layers with time remap
+    TimeRemapEffect* timeRemap = layer->timeRemapEffect();
+    if (timeRemap && timeRemap->isEnabled()) {
+      // For image layers, time remap might not be as meaningful
+      // but still apply blending if needed
+      double outputTime = static_cast<double>(cf) / 30.0;
+      if (timeRemap->needsFrameBlending(outputTime)) {
+        img = timeRemap->processFrameBlending(outputTime, img, QImage(), QImage(), cf);
+      }
+    }
+    if (!img.isNull()) {
+      painter.drawImage(bounds, img);
+    }
+  } else if (auto* textLayer = dynamic_cast<ArtifactTextLayer*>(layer.data())) {
+    const QImage textImage = textLayer->toQImage();
+    if (!textImage.isNull()) {
+      painter.drawImage(bounds, textImage);
+    }
+  }
+
+  painter.restore();
+}
 
     const QImage surface = renderLayerSurface(layer);
     if (surface.isNull() && !std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer) && !std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {

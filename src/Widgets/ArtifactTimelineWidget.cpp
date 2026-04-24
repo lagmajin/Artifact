@@ -22,6 +22,7 @@ module;
 #include <QPaintEvent>
 #include <QPointer>
 #include <QPolygonF>
+#include <cmath>
 #include <limits>
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
@@ -456,7 +457,7 @@ QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
       state.nextKeyframe >= 0 ? QString::number(state.nextKeyframe)
                               : QStringLiteral("-");
 
-  return QStringLiteral("Key:%1 Now:%2 Prev:%3 Next:%4")
+  return QStringLiteral("KF:%1 Now:%2 Prev:%3 Next:%4")
       .arg(state.totalFrames)
       .arg(currentMark)
       .arg(previousMark)
@@ -985,9 +986,32 @@ public:
     setAttribute(Qt::WA_TranslucentBackground, true);
   }
 
-protected:
-  void paintEvent(QPaintEvent *) override
+  void requestPlayheadUpdate()
   {
+    const qreal newX = currentPlayheadX();
+    if (!std::isfinite(newX)) {
+      lastPlayheadX_ = newX;
+      update();
+      return;
+    }
+
+    QRect dirty = playheadDirtyRect(newX);
+    if (std::isfinite(lastPlayheadX_)) {
+      dirty = dirty.united(playheadDirtyRect(lastPlayheadX_));
+    }
+    lastPlayheadX_ = newX;
+    update(dirty.adjusted(-2, 0, 2, 0).intersected(rect()));
+  }
+
+protected:
+  void paintEvent(QPaintEvent *event) override
+  {
+    QPainter p(this);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setCompositionMode(QPainter::CompositionMode_Source);
+    p.fillRect(event ? event->rect() : rect(), Qt::transparent);
+    p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+
     if (!trackView_) {
       return;
     }
@@ -1000,10 +1024,7 @@ protected:
       return;
     }
 
-    QPainter p(this);
-    p.setRenderHint(QPainter::Antialiasing, true);
-
-    const QColor playheadColor(255, 106, 71);
+    const QColor playheadColor(255, 72, 96);
     const qreal headHeight = 13.0;
     const qreal headWidth = 14.0;
     const qreal stemTop = headHeight + 2.0;
@@ -1022,7 +1043,28 @@ protected:
   }
 
 private:
+  qreal currentPlayheadX() const
+  {
+    if (!trackView_) {
+      return std::numeric_limits<qreal>::quiet_NaN();
+    }
+    const double ppf = std::max(0.01, trackView_->pixelsPerFrame());
+    const double xOffset = trackView_->horizontalOffset();
+    const double frame = trackView_->currentFrame();
+    return static_cast<qreal>(frame * ppf - xOffset);
+  }
+
+  QRect playheadDirtyRect(const qreal playheadX) const
+  {
+    constexpr qreal halfWidth = 12.0;
+    return QRect(static_cast<int>(std::floor(playheadX - halfWidth)),
+                 0,
+                 static_cast<int>(std::ceil(halfWidth * 2.0)) + 1,
+                 height());
+  }
+
   ArtifactTimelineTrackPainterView *trackView_ = nullptr;
+  qreal lastPlayheadX_ = std::numeric_limits<qreal>::quiet_NaN();
 };
 
 class TimelineStatusClickFilter final : public QObject {
@@ -1203,6 +1245,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   displayModeCombo->addItem(QStringLiteral("Selected"), static_cast<int>(TimelineLayerDisplayMode::SelectedOnly));
   displayModeCombo->addItem(QStringLiteral("Animated"), static_cast<int>(TimelineLayerDisplayMode::AnimatedOnly));
   displayModeCombo->addItem(QStringLiteral("Keyframes + Important"), static_cast<int>(TimelineLayerDisplayMode::ImportantAndKeyframed));
+  displayModeCombo->addItem(QStringLiteral("Keyframes Only"), static_cast<int>(TimelineLayerDisplayMode::KeyframedOnly));
   displayModeCombo->addItem(QStringLiteral("Audio"), static_cast<int>(TimelineLayerDisplayMode::AudioOnly));
   displayModeCombo->addItem(QStringLiteral("Video"), static_cast<int>(TimelineLayerDisplayMode::VideoOnly));
   displayModeCombo->setCurrentIndex(0);
@@ -1247,7 +1290,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchModeCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   searchModeCombo->setMinimumWidth(120);
   displayModeCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-  displayModeCombo->setMinimumWidth(108);
+  displayModeCombo->setMinimumWidth(128);
   densityCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   densityCombo->setMinimumWidth(98);
   searchStatusLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -1681,29 +1724,31 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             }
             Q_UNUSED(scrubBar);
           }));
-  impl_->eventBusSubscriptions_.push_back(
-      impl_->eventBus_.subscribe<FrameChangedEvent>(
-          [this, scrubBar](const FrameChangedEvent &event) {
-            if (impl_->compositionId_.isNil() ||
-                event.compositionId != impl_->compositionId_.toString()) {
-              return;
-            }
+  const auto handleFrameChanged = [this, scrubBar](const FrameChangedEvent &event) {
+    if (impl_->compositionId_.isNil() ||
+        event.compositionId != impl_->compositionId_.toString()) {
+      return;
+    }
 
-            const FramePosition frame(event.frame);
-            if (impl_->painterTrackView_) {
-              impl_->painterTrackView_->setCurrentFrame(
-                  static_cast<double>(frame.framePosition()));
-            }
-            impl_->currentFrame_ = static_cast<double>(frame.framePosition());
-            syncPlayheadOverlay();
-            const QSignalBlocker blocker(scrubBar);
-            scrubBar->setCurrentFrame(frame);
-            updateSelectionState();
-            // 再生中は毎フレーム全レイヤーをスキャンするコストを避けるため15フレームに1回
-            if (frame.framePosition() % 15 == 0) {
-              updateKeyframeState();
-            }
-          }));
+    const FramePosition frame(event.frame);
+    if (impl_->painterTrackView_) {
+      impl_->painterTrackView_->setCurrentFrame(
+          static_cast<double>(frame.framePosition()));
+    }
+    impl_->currentFrame_ = static_cast<double>(frame.framePosition());
+    syncPlayheadOverlay();
+    const QSignalBlocker blocker(scrubBar);
+    scrubBar->setCurrentFrame(frame);
+    updateSelectionState();
+    // 再生中は毎フレーム全レイヤーをスキャンするコストを避けるため15フレームに1回
+    if (frame.framePosition() % 15 == 0) {
+      updateKeyframeState();
+    }
+  };
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<FrameChangedEvent>(handleFrameChanged));
+  impl_->eventBusSubscriptions_.push_back(
+      ArtifactCore::globalEventBus().subscribe<FrameChangedEvent>(handleFrameChanged));
   QTimer::singleShot(0, this, [updateZoom]() { updateZoom(); });
 
   // Ŝ̃^CCXvb^[
@@ -2513,7 +2558,7 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
   if (!impl_ || !impl_->playheadOverlay_) {
     return;
   }
-  impl_->playheadOverlay_->update();
+  impl_->playheadOverlay_->requestPlayheadUpdate();
 }
 
  void ArtifactTimelineWidget::jumpToSearchHit(int step)

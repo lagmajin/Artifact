@@ -175,9 +175,11 @@ public:
         elapsedTimer_.start();
         lastFrameTime_ = std::chrono::steady_clock::now();
         
-        const double fps = frameRate_.framerate();
+        const double fps = std::max(1e-6, static_cast<double>(frameRate_.framerate()));
+        const double speedMagnitude =
+            std::max(0.001, static_cast<double>(std::abs(playbackSpeed_)));
         // インターバルはあくまでベース。実際には毎ループ時間をチェックする。
-        const int64_t frameIntervalUs = static_cast<int64_t>(1000000.0 / (fps * std::abs(playbackSpeed_)));
+        const int64_t frameIntervalUs = static_cast<int64_t>(1000000.0 / (fps * speedMagnitude));
         
         qDebug() << "[PlaybackEngine] Starting high-precision playback loop at" << (fps * std::abs(playbackSpeed_)) << "fps";
         
@@ -251,7 +253,13 @@ public:
 
             // 音声バッファが十分あるときだけ軽く待機する。
             // 充填が追いついていない間は sleep を飛ばして先読みを優先する。
-            if (audioRenderer_) {
+            auto sleepForPlaybackPace = [frameIntervalUs]() {
+                const int64_t sleepUs = std::clamp<int64_t>(frameIntervalUs / 4, 1000, 4000);
+                std::this_thread::sleep_for(std::chrono::microseconds(sleepUs));
+            };
+
+            if (composition_ && composition_->hasAudio() && audioRenderer_ &&
+                audioTargetBufferedFrames_ > 0) {
                 const size_t buffered = audioRenderer_->bufferedFrames();
                 const size_t halfTarget = audioTargetBufferedFrames_ / 2;
                 if (buffered >= audioTargetBufferedFrames_) {
@@ -265,12 +273,13 @@ public:
                         std::this_thread::yield();
                     }
                 } else if (buffered >= halfTarget) {
-                    std::this_thread::yield();
+                    sleepForPlaybackPace();
                 } else {
                     // バッファ半分以下 — sleep せずに即デコード続行
+                    std::this_thread::yield();
                 }
             } else {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                sleepForPlaybackPace();
             }
         }
 
@@ -294,19 +303,9 @@ public:
             }, Qt::QueuedConnection);
         }
 
-        // フレームを描画（現在はダミー）
-        QImage renderedFrame = renderFrame(FramePosition(targetFrame));
-        
-        // バッファに格納
-        {
-            QMutexLocker locker(&bufferMutex_);
-            // renderedFrame already points to backBuffer_ due to optimization
-            std::swap(frontBuffer_, backBuffer_);
-        }
-        
         // メインスレッドに通知
-        QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame), frame = frontBuffer_]() {
-            Q_EMIT owner_->frameChanged(pos, frame);
+        QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame)]() {
+            Q_EMIT owner_->frameChanged(pos, QImage());
         }, Qt::QueuedConnection);
     }
 

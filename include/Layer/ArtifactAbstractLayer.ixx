@@ -158,6 +158,7 @@ public:
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);
   void setTimeRemapKey(int64_t compFrame, double sourceFrame);
+  TimeRemapEffect* timeRemapEffect() const;
   /*Transform*/
 
   /*Timeline*/

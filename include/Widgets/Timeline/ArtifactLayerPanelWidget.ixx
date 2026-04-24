@@ -31,6 +31,7 @@ export namespace Artifact
   SelectedOnly,
   AnimatedOnly,
   ImportantAndKeyframed,
+  KeyframedOnly,
   AudioOnly,
   VideoOnly
  };

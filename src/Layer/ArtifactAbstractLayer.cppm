@@ -79,7 +79,7 @@ double effectiveLayerFrameRate(const ArtifactAbstractLayer *layer) {
 
 class ArtifactAbstractLayer::Impl {
 public:
-   bool is3D_ = false;
+    bool is3D_ = false;
   bool isVisible_ = true;
   Id id;
   QString name_;
@@ -93,6 +93,9 @@ public:
   FramePosition startTime_ = FramePosition(0);
   int64_t currentFrame_ = 0; // 現在のフレーム位置
   int64_t currentFrame() const { return currentFrame_; }
+
+  // Time remap effect
+  std::unique_ptr<TimeRemapEffect> timeRemapEffect_;
 
   bool isLocked_ = false;
   bool isGuide_ = false;
@@ -675,12 +678,33 @@ void ArtifactAbstractLayer::setIs3D(bool value) {
     impl_->is3D_ = value;
 }
 
-void ArtifactAbstractLayer::setTimeRemapEnabled(bool) {}
+void ArtifactAbstractLayer::setTimeRemapEnabled(bool enabled) {
+    if (enabled && !impl_->timeRemapEffect_) {
+        impl_->timeRemapEffect_ = std::make_unique<TimeRemapEffect>();
+    } else if (!enabled) {
+        impl_->timeRemapEffect_.reset();
+    }
+}
 
 void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
-                                            double sourceFrame) {}
+                                             double sourceFrame) {
+    if (!impl_->timeRemapEffect_) {
+        impl_->timeRemapEffect_ = std::make_unique<TimeRemapEffect>();
+    }
+    // Convert to keyframe
+    TimeRemapKeyframe kf;
+    kf.outputTime = static_cast<double>(compFrame) / 30.0; // Assume 30fps for now
+    kf.sourceTime = sourceFrame;
+    impl_->timeRemapEffect_->remap().addKeyframe(kf);
+}
 
-bool ArtifactAbstractLayer::isTimeRemapEnabled() const { return false; }
+bool ArtifactAbstractLayer::isTimeRemapEnabled() const { 
+    return impl_->timeRemapEffect_ != nullptr; 
+}
+
+TimeRemapEffect* ArtifactAbstractLayer::timeRemapEffect() const {
+    return impl_->timeRemapEffect_.get();
+}
 
 bool ArtifactAbstractLayer::isNullLayer() const { return false; }
 

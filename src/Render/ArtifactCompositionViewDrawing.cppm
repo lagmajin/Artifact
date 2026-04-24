@@ -37,6 +37,7 @@ import CvUtils;
 import Color.Float;
 import FloatRGBA;
 import Frame.Position;
+import Time.TimeRemap;
 
 namespace Artifact {
 
@@ -52,15 +53,24 @@ export struct LayerSurfaceCacheEntry
 export bool layerHasCpuRasterizerWork(ArtifactAbstractLayer* layer);
 export bool layerUsesSurfaceUploadForCompositionView(ArtifactAbstractLayer* layer);
 export bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer);
+
+// Get layer frame with frame blending applied
+export QImage getLayerFrameWithBlending(
+    ArtifactAbstractLayer* layer,
+    int64_t frameNumber,
+    DetailLevel lod = DetailLevel::High,
+    bool offlineRender = false
+);
+
 export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
-                                        ArtifactIRenderer *renderer,
-                                        float opacityOverride = -1.0f,
-                                        QString* videoDebugOut = nullptr,
-                                        QHash<QString, LayerSurfaceCacheEntry>* surfaceCache = nullptr,
-                                        GPUTextureCacheManager* gpuTextureCacheManager = nullptr,
-                                        int64_t cacheFrameNumber = std::numeric_limits<int64_t>::min(),
-                                        bool offlineRender = false,
-                                        DetailLevel lod = DetailLevel::High);
+                                         ArtifactIRenderer *renderer,
+                                         float opacityOverride = -1.0f,
+                                         QString* videoDebugOut = nullptr,
+                                         QHash<QString, LayerSurfaceCacheEntry>* surfaceCache = nullptr,
+                                         GPUTextureCacheManager* gpuTextureCacheManager = nullptr,
+                                         int64_t cacheFrameNumber = std::numeric_limits<int64_t>::min(),
+                                         bool offlineRender = false,
+                                         DetailLevel lod = DetailLevel::High);
 
 namespace {
 
@@ -317,6 +327,81 @@ bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer)
          dynamic_cast<ArtifactParticleLayer*>(layer) != nullptr;
 }
 
+// Get layer frame with frame blending applied
+QImage getLayerFrameWithBlending(
+    ArtifactAbstractLayer* layer,
+    int64_t frameNumber,
+    DetailLevel lod,
+    bool offlineRender
+) {
+  if (!layer) {
+    return QImage();
+  }
+  
+  // Check if time remap is enabled
+  TimeRemapEffect* timeRemap = layer->timeRemapEffect();
+  if (!timeRemap || !timeRemap->isEnabled()) {
+    // No time remap, get frame normally
+    if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
+      QImage frame = videoLayer->currentFrameToQImage();
+      return downsampleForLOD(frame, lod);
+    }
+    if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
+      QImage frame = imageLayer->toQImage();
+      return downsampleForLOD(frame, lod);
+    }
+    return QImage();
+  }
+  
+  // Time remap is enabled, calculate frame blending
+  double outputTime = static_cast<double>(frameNumber) / 30.0; // Assume 30fps
+  
+  // Get blend factors
+  float blendForward = 0.0f;
+  float blendBackward = 0.0f;
+  int sourceFrame = timeRemap->processFrame(outputTime, blendForward, blendBackward);
+  
+  // Get current frame
+  QImage currentFrame;
+  if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
+    currentFrame = videoLayer->decodeFrameToQImage(sourceFrame);
+  } else if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
+    currentFrame = imageLayer->toQImage();
+  }
+  
+  if (currentFrame.isNull()) {
+    return currentFrame;
+  }
+  
+  // Check if blending is needed
+  if (!timeRemap->needsFrameBlending(outputTime) || 
+      (blendForward <= 0.0f && blendBackward <= 0.0f)) {
+    return downsampleForLOD(currentFrame, lod);
+  }
+  
+  // Get adjacent frames for blending
+  QImage nextFrame;
+  QImage prevFrame;
+  
+  if (blendForward > 0.0f) {
+    if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
+      nextFrame = videoLayer->decodeFrameToQImage(sourceFrame + 1);
+    }
+  }
+  
+  if (blendBackward > 0.0f) {
+    if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
+      prevFrame = videoLayer->decodeFrameToQImage(sourceFrame - 1);
+    }
+  }
+  
+  // Apply frame blending
+  QImage blended = timeRemap->processFrameBlending(
+      outputTime, currentFrame, nextFrame, prevFrame, frameNumber);
+  
+  return downsampleForLOD(blended, lod);
+}
+
 void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                  ArtifactIRenderer *renderer,
                                  float opacityOverride,
@@ -455,7 +540,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* imageLayer = dynamic_cast<ArtifactImageLayer*>(layer)) {
-    const QImage img = downsampleForLOD(imageLayer->toQImage(), lod);
+    const QImage img = getLayerFrameWithBlending(layer, layer->currentFrame(), lod, offlineRender);
     if (!img.isNull()) {
       applySurfaceAndDraw(img, localRect, hasRasterizerEffectsOrMasks(layer));
       return;
@@ -475,9 +560,12 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
-    const QImage frame = downsampleForLOD(offlineRender
-        ? videoLayer->decodeFrameToQImage(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
-        : videoLayer->currentFrameToQImage(), lod);
+    const QImage frame = getLayerFrameWithBlending(
+        layer,
+        cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame(),
+        lod,
+        offlineRender
+    );
     if (videoDebugOut) {
       const bool loaded = videoLayer->isLoaded();
       const int64_t cf = layer->currentFrame();

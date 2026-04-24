@@ -749,13 +749,15 @@ void drawLayerForCompositionView(
   }
 
   if (auto *solidImage = dynamic_cast<ArtifactSolidImageLayer *>(layer)) {
-    // [Fix] SolidImage も QImage 経由で GPU テクスチャキャッシュを利用する
-    const QImage img = solidImage->toQImage();
-    if (!img.isNull()) {
-      applySurfaceAndDraw(img, localRect, hasRasterizerEffectsOrMasks(layer));
+    const auto color = solidImage->color();
+    if (hasRasterizerEffectsOrMasks(layer)) {
+      const QSize surfaceSize(
+          std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
+      surface.fill(toQColor(color));
+      applySurfaceAndDraw(surface, localRect, false);
     } else {
-      // Fallback: 直接描画
-      const auto color = solidImage->color();
       renderer->drawSolidRectTransformed(
           static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
           static_cast<float>(localRect.width()),

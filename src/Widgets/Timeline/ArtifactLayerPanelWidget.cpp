@@ -515,6 +515,71 @@ namespace {
 
    return labels;
   }
+
+  bool layerHasAnimatableProperties(const ArtifactAbstractLayerPtr& layer)
+  {
+   if (!layer) {
+    return false;
+   }
+
+   for (const auto& group : layer->getLayerPropertyGroups()) {
+    for (const auto& property : group.sortedProperties()) {
+     if (property && property->isAnimatable()) {
+      return true;
+     }
+    }
+   }
+
+   return false;
+  }
+
+  bool layerHasKeyframes(const ArtifactAbstractLayerPtr& layer)
+  {
+   if (!layer) {
+    return false;
+   }
+
+   for (const auto& group : layer->getLayerPropertyGroups()) {
+    for (const auto& property : group.sortedProperties()) {
+     if (!property || !property->isAnimatable()) {
+      continue;
+     }
+     if (!property->getKeyFrames().empty()) {
+      return true;
+     }
+    }
+   }
+
+   return false;
+  }
+
+  bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
+                               const TimelineLayerDisplayMode mode,
+                               const LayerID& selectedLayerId)
+  {
+   if (!layer) {
+    return false;
+   }
+
+   switch (mode) {
+   case TimelineLayerDisplayMode::AllLayers:
+    return true;
+   case TimelineLayerDisplayMode::SelectedOnly:
+    return !selectedLayerId.isNil() && layer->id() == selectedLayerId;
+   case TimelineLayerDisplayMode::AnimatedOnly:
+    return layerHasAnimatableProperties(layer);
+   case TimelineLayerDisplayMode::ImportantAndKeyframed:
+    return layerHasKeyframes(layer) || layerPanelRoleFor(layer) != LayerPanelRole::Utility;
+   case TimelineLayerDisplayMode::KeyframedOnly:
+    return layerHasKeyframes(layer);
+   case TimelineLayerDisplayMode::AudioOnly:
+    return layer->hasAudio();
+   case TimelineLayerDisplayMode::VideoOnly:
+    return layer->hasVideo();
+   }
+
+   return true;
+  }
  }
 
  // ============================================================================
@@ -916,6 +981,7 @@ void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
    for (auto& l : comp->allLayer()) {
      if (!l) continue;
      if (shyHidden && l->isShy()) continue;
+     if (!layerMatchesDisplayMode(l, displayMode, selectedLayerId)) continue;
      if (!needle.isEmpty() && !l->layerName().contains(needle, Qt::CaseInsensitive)) continue;
      layers.push_back(l);
     }
@@ -1777,13 +1843,29 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
   event->accept();
  }
 
- void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
- {
+void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
+{
   if ((event->buttons() & Qt::LeftButton) && !impl_->dragCandidateLayerId.isNil()) {
     const int dragDistance = (event->pos() - impl_->dragStartPos).manhattanLength();
     if (!impl_->dragStarted_ && dragDistance >= QApplication::startDragDistance()) {
       impl_->dragStarted_ = true;
       impl_->draggedLayerId = impl_->dragCandidateLayerId;
+
+      auto* drag = new QDrag(this);
+      auto* mime = new QMimeData();
+      mime->setData(kLayerReorderMimeType,
+                    impl_->draggedLayerId.toString().toUtf8());
+      drag->setMimeData(mime);
+      drag->setHotSpot(event->pos());
+
+      const Qt::DropAction result = drag->exec(Qt::MoveAction);
+      Q_UNUSED(result);
+
+      impl_->clearDragState();
+      unsetCursor();
+      update();
+      event->accept();
+      return;
     }
     if (impl_->dragStarted_) {
       impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(event->pos().y());

@@ -304,10 +304,7 @@ public:
         return;
       }
       const QSize pendingSize = pendingResizeSize_.isValid() ? pendingResizeSize_ : size();
-      controller_->recreateSwapChain(this);
-      controller_->setViewportSize(static_cast<float>(pendingSize.width()),
-                                   static_cast<float>(pendingSize.height()));
-      controller_->renderOneFrame();
+      applyResize(pendingSize, true);
       resizePending_ = false;
       if (pendingInitialFit_) {
         QTimer::singleShot(50, this, [this]() { scheduleInitialFit(); });
@@ -329,6 +326,18 @@ public:
         overlayWidget_->raise();
       }
     }
+  }
+
+  void applyResize(const QSize& viewportSize, const bool recreateSwapChain) {
+    if (!controller_ || !controller_->isInitialized() || viewportSize.isEmpty()) {
+      return;
+    }
+    if (recreateSwapChain) {
+      controller_->recreateSwapChain(this);
+    }
+    controller_->setViewportSize(static_cast<float>(viewportSize.width()),
+                                 static_cast<float>(viewportSize.height()));
+    controller_->renderOneFrame();
   }
 
   void updateViewportCursor(const QPointF& pos) {
@@ -504,13 +513,26 @@ protected:
   void resizeEvent(QResizeEvent *event) override {
     QWidget::resizeEvent(event);
     if (controller_ && controller_->isInitialized()) {
-      controller_->setViewportSize(static_cast<float>(event->size().width()),
-                                   static_cast<float>(event->size().height()));
       pendingResizeSize_ = event->size();
       resizePending_ = true;
+      const QSize oldSize = event->oldSize();
+      const QSize newSize = event->size();
+      const bool expanded =
+          !oldSize.isValid() ||
+          newSize.width() > oldSize.width() ||
+          newSize.height() > oldSize.height();
+      const bool allowImmediateRefresh =
+          !lastResizeRefresh_.isValid() || lastResizeRefresh_.elapsed() >= 48;
+      if (expanded && allowImmediateRefresh) {
+        applyResize(newSize, true);
+        lastResizeRefresh_.restart();
+      } else {
+        controller_->setViewportSize(static_cast<float>(newSize.width()),
+                                     static_cast<float>(newSize.height()));
+      }
       if (resizeDebounceTimer_) {
         resizeDebounceTimer_->stop();
-        resizeDebounceTimer_->start(160);
+        resizeDebounceTimer_->start(expanded ? 80 : 120);
       }
     }
   }
@@ -1175,6 +1197,7 @@ private:
   bool pendingInitialFit_ = true;
   QTimer *resizeDebounceTimer_ = nullptr;
   QSize pendingResizeSize_;
+  QElapsedTimer lastResizeRefresh_;
   bool resizePending_ = false;
   QPointF lastMousePos_;
   // D&D オーバーレイ
