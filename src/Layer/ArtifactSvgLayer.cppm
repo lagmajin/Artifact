@@ -212,13 +212,9 @@ const ArtifactCore::ImageF32x4_RGBA &ArtifactSvgLayer::currentFrameBuffer() cons
 
     if (!impl_->cacheBuffer_ && impl_->cache_) {
         impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
-        const cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(*impl_->cache_, true);
+        const auto mat = ArtifactCore::CvUtils::qImageToCvMat(*impl_->cache_, true);
         if (!mat.empty()) {
-            cv::Mat rgba = mat;
-            if (rgba.type() != CV_32FC4) {
-                rgba.convertTo(rgba, CV_32FC4, 1.0 / 255.0);
-            }
-            impl_->cacheBuffer_->setFromCVMat(rgba);
+            impl_->cacheBuffer_->setFromCVMat(mat);
         }
     }
 

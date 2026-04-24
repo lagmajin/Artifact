@@ -510,9 +510,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                            << threadDiagnosticsTag();
             }
             layer->impl_->decoding_ = false;
-            if (!frame.isNull()) {
-                publishVideoLayerModifiedAsync(layer);
-            }
+            publishVideoLayerModifiedAsync(layer);
             return frame;
         });
 

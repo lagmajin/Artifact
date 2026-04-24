@@ -11,6 +11,7 @@ module;
 #include <QMatrix4x4>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/CommandList.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Buffer.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
@@ -448,11 +449,17 @@ void DiligentImmediateSubmitter::destroy()
     m_var_maskedSprite_gMask_               = nullptr;
     m_var_glyph_gTexture_                   = nullptr;
     m_var_glyphXform_gTexture_              = nullptr;
+    m_deferredCtx_                          = nullptr;
 }
 
 void DiligentImmediateSubmitter::setFrameCostStats(ArtifactCore::RenderCostStats* stats)
 {
     m_frameCostStats_ = stats;
+}
+
+void DiligentImmediateSubmitter::setDeferredContext(RefCntAutoPtr<IDeviceContext> deferred)
+{
+    m_deferredCtx_ = std::move(deferred);
 }
 
 void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext* ctx)
@@ -461,27 +468,40 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
     if (!ctx || buf.empty()) { buf.reset(); return; }
     auto* pRTV = buf.targetRTV;
     if (!pRTV) { buf.reset(); return; }
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); // H2
+    // Phase 7a: record into deferred context, then execute on immediate
+    IDeviceContext* recordCtx = ctx;
+    if (m_deferredCtx_) {
+        m_deferredCtx_->Begin(ctx->GetDesc().ContextId);
+        recordCtx = m_deferredCtx_.RawPtr();
+    }
+    recordCtx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION); // H2
     m_currentPSO_ = nullptr; // H3: reset PSO dedup state per submit
     for (auto& pkt : buf.packets()) {
         std::visit([&](auto& p) {
             using T = std::decay_t<decltype(p)>;
-            if constexpr      (std::is_same_v<T, SolidRectPkt>)       submitSolidRect(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, SolidRectXformPkt>)  submitSolidRectXform(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, LinePkt>)            submitLine(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, QuadPkt>)            submitQuad(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, DotLinePkt>)         submitDotLine(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, SolidTriPkt>)        submitSolidTri(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, SolidCirclePkt>)     submitSolidCircle(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, CheckerboardPkt>)    submitCheckerboard(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, GridPkt>)            submitGrid(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, RectOutlinePkt>)     submitRectOutline(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, SpritePkt>)          submitSprite(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, SpriteXformPkt>)     submitSpriteXform(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    submitMaskedSprite(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, GlyphTextPkt>)       submitGlyphText(p, ctx, pRTV);
-            else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  submitGlyphTextTransformed(p, ctx, pRTV);
+            if constexpr      (std::is_same_v<T, SolidRectPkt>)       submitSolidRect(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, SolidRectXformPkt>)  submitSolidRectXform(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, LinePkt>)            submitLine(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, QuadPkt>)            submitQuad(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, DotLinePkt>)         submitDotLine(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, SolidTriPkt>)        submitSolidTri(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, SolidCirclePkt>)     submitSolidCircle(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, CheckerboardPkt>)    submitCheckerboard(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, GridPkt>)            submitGrid(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, RectOutlinePkt>)     submitRectOutline(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, SpritePkt>)          submitSprite(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, SpriteXformPkt>)     submitSpriteXform(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    submitMaskedSprite(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, GlyphTextPkt>)       submitGlyphText(p, recordCtx, pRTV);
+            else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  submitGlyphTextTransformed(p, recordCtx, pRTV);
         }, pkt);
+    }
+    if (m_deferredCtx_) {
+        RefCntAutoPtr<ICommandList> pCmdList;
+        m_deferredCtx_->FinishCommandList(&pCmdList);
+        ICommandList* raw = pCmdList.RawPtr();
+        ctx->ExecuteCommandLists(1, &raw);
+        m_deferredCtx_->FinishFrame();
     }
     buf.reset();
 }

@@ -24,6 +24,7 @@ module;
 #include <QStyle>
 #include <QIcon>
 #include <QFileInfo>
+#include <QElapsedTimer>
 #include <QDebug>
 #include <QKeySequence>
 #include <QStringList>
@@ -339,6 +340,8 @@ public:
     ArtifactInOutPoints* inOutPoints_ = nullptr;
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+    QElapsedTimer frameWidgetUpdateTimer_;
+    qint64 lastDisplayedFrame_ = std::numeric_limits<qint64>::min();
     Impl(ArtifactPlaybackControlWidget* owner)
         : owner_(owner)
     {}
@@ -672,6 +675,30 @@ public:
         }
     }
 
+    void updateFrameWidgetsCoalesced(bool force = false)
+    {
+        const auto* service = ArtifactPlaybackService::instance();
+        const FramePosition current = service ? service->currentFrame() : FramePosition(0);
+        const bool playing = service && service->isPlaying();
+        constexpr qint64 kPlaybackUiUpdateIntervalMs = 16;
+
+        if (!force && current.framePosition() == lastDisplayedFrame_) {
+            return;
+        }
+        if (!force && playing && frameWidgetUpdateTimer_.isValid() &&
+            frameWidgetUpdateTimer_.elapsed() < kPlaybackUiUpdateIntervalMs) {
+            return;
+        }
+
+        if (frameWidgetUpdateTimer_.isValid()) {
+            frameWidgetUpdateTimer_.restart();
+        } else {
+            frameWidgetUpdateTimer_.start();
+        }
+        lastDisplayedFrame_ = current.framePosition();
+        updateFrameWidgets();
+    }
+
     void attachInOutPoints(ArtifactInOutPoints* points)
     {
         if (inOutPoints_ == points) {
@@ -771,11 +798,11 @@ public:
             }));
         eventBusSubscriptions_.push_back(eventBus_.subscribe<FrameChangedEvent>(
             [this](const FrameChangedEvent&) {
-                updateFrameWidgets();
+                updateFrameWidgetsCoalesced(false);
             }));
         eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackFrameRangeChangedEvent>(
             [this](const PlaybackFrameRangeChangedEvent&) {
-                updateFrameWidgets();
+                updateFrameWidgetsCoalesced(true);
             }));
         eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackSpeedChangedEvent>(
             [this](const PlaybackSpeedChangedEvent& event) {
@@ -796,7 +823,7 @@ public:
             }));
         eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackInOutPointsChangedEvent>(
             [this](const PlaybackInOutPointsChangedEvent&) {
-                updateFrameWidgets();
+                updateFrameWidgetsCoalesced(true);
             }));
 
         if (auto* service = ArtifactPlaybackService::instance()) {

@@ -201,12 +201,12 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
  void ArtifactAbstractComposition::Impl::goToStartFrame()
  {
-  //goToFrame(0);
+  goToFrame(frameRange_.start());
  }
 
  void ArtifactAbstractComposition::Impl::goToEndFrame()
  {
-
+  goToFrame(frameRange_.end());
  }
 
  void ArtifactAbstractComposition::Impl::setFramePosition(const FramePosition& position)
@@ -432,7 +432,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::goToStartFrame()
  {
-  impl_->goToEndFrame();
+  impl_->goToStartFrame();
  }
 
  void ArtifactAbstractComposition::goToEndFrame()
@@ -728,6 +728,10 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     obj["id"] = id().toString();
     obj["frameRange"] = impl_->frameRange_.toJson();
     obj["workAreaRange"] = impl_->workAreaRange_.toJson();
+    obj["currentFrame"] = impl_->position_.framePosition();
+    obj["playbackSpeed"] = impl_->playbackSpeed_;
+    obj["looping"] = impl_->looping_;
+    obj["isPlaying"] = impl_->isPlaying_;
     obj["name"] = impl_->settings_.compositionName().toQString();
     obj["compositionNote"] = impl_->compositionNote_;
     obj["width"] = impl_->settings_.compositionSize().width();
@@ -789,7 +793,13 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
     if (obj.contains("compositionNote")) {
         comp->setCompositionNote(obj["compositionNote"].toString());
     }
-    
+    if (obj.contains("playbackSpeed")) {
+        comp->setPlaybackSpeed(static_cast<float>(obj["playbackSpeed"].toDouble(1.0)));
+    }
+    if (obj.contains("looping")) {
+        comp->setLooping(obj["looping"].toBool(false));
+    }
+
     if (obj.contains("layers") && obj["layers"].isArray()) {
         QJsonArray arr = obj["layers"].toArray();
         QVector<ArtifactAbstractLayerPtr> loadedLayers;
@@ -802,7 +812,7 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
                 }
             }
         }
-        
+
         // Parent resolution pass
         for (const auto& layer : loadedLayers) {
             QJsonObject lobj = arr.at(loadedLayers.indexOf(layer)).toObject();
@@ -810,6 +820,17 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
                 LayerID pid(lobj["parentId"].toString());
                 layer->setParentById(pid);
             }
+        }
+    }
+    const int64_t restoredFrame = obj.contains("currentFrame")
+        ? obj["currentFrame"].toVariant().toLongLong()
+        : comp->frameRange().start();
+    comp->goToFrame(comp->frameRange().clampFrame(restoredFrame));
+    if (obj.contains("isPlaying")) {
+        if (obj["isPlaying"].toBool(false)) {
+            comp->play();
+        } else {
+            comp->pause();
         }
     }
     return comp;

@@ -203,7 +203,10 @@ public:
             double elapsedSeconds = elapsed.count() / 1000000.0;
             
             // 重要：フレーム = 開始フレーム + (経過秒 * fps * 再生速度)
-            int64_t frameOffset = static_cast<int64_t>(std::round(elapsedSeconds * fps * playbackSpeed_));
+            const double rawFrameOffset = elapsedSeconds * fps * playbackSpeed_;
+            int64_t frameOffset = rawFrameOffset >= 0.0
+                ? static_cast<int64_t>(std::floor(rawFrameOffset))
+                : static_cast<int64_t>(std::ceil(rawFrameOffset));
             int64_t targetFrame = playbackStartFrame_ + frameOffset;
             
             // スキップモードに応じた補正
@@ -250,10 +253,12 @@ public:
             }
             
             // フレームが更新された場合のみ描画と通知を行う
+            bool emittedFrame = false;
             if (targetFrame != lastEmittedFrame_) {
                 currentFrame_ = targetFrame;
                 updateFrame(targetFrame);
                 lastEmittedFrame_ = targetFrame;
+                emittedFrame = true;
             }
             
             // オーディオパケットの供給
@@ -266,7 +271,9 @@ public:
 
             // 音声バッファが十分あるときだけ軽く待機する。
             // 充填が追いついていない間は sleep を飛ばして先読みを優先する。
-            if (audioRenderer_) {
+            if (!emittedFrame) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            } else if (audioRenderer_) {
                 const size_t buffered = audioRenderer_->bufferedFrames();
                 const size_t halfTarget = audioTargetBufferedFrames_ / 2;
                 if (buffered >= audioTargetBufferedFrames_) {
@@ -302,26 +309,10 @@ public:
     
     /// フレーム更新処理
     void updateFrame(int64_t targetFrame) {
-        // コンポジションの状態更新をメインスレッドに委譲
-        if (composition_) {
-            QMetaObject::invokeMethod(composition_.get(), [comp = composition_, targetFrame]() {
-                comp->setFramePosition(FramePosition(targetFrame));
-            }, Qt::QueuedConnection);
-        }
-
-        // フレームを描画（現在はダミー）
-        QImage renderedFrame = renderFrame(FramePosition(targetFrame));
-        
-        // バッファに格納
-        {
-            QMutexLocker locker(&bufferMutex_);
-            // renderedFrame already points to backBuffer_ due to optimization
-            std::swap(frontBuffer_, backBuffer_);
-        }
-        
-        // メインスレッドに通知
-        QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame), frame = frontBuffer_]() {
-            Q_EMIT owner_->frameChanged(pos, frame);
+        // PlaybackService owns composition-frame sync and viewport rendering.
+        // Keep this worker path as a lightweight clock tick only.
+        QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame)]() {
+            Q_EMIT owner_->frameChanged(pos, QImage());
         }, Qt::QueuedConnection);
     }
 

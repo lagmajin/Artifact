@@ -41,6 +41,7 @@ module;
 #include <QShortcut>
 #include <QShowEvent>
 #include <QSignalBlocker>
+#include <QStringList>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
@@ -413,7 +414,6 @@ public:
     });
   }
 
-  void setPieMenu(ArtifactPieMenuWidget *pieMenu) { pieMenu_ = pieMenu; }
   void setOverlayWidget(QWidget *overlayWidget) {
     overlayWidget_ = overlayWidget;
     if (overlayWidget_) {
@@ -427,6 +427,109 @@ public:
         overlayWidget_->raise();
       }
     }
+  }
+
+  void hideViewportOverlay() {
+    viewportOverlayActions_.clear();
+    if (controller_) {
+      controller_->hideViewportOverlay();
+    }
+  }
+
+  bool triggerViewportOverlayItem(const QPointF &viewportPos) {
+    if (!controller_ || !controller_->isViewportOverlayVisible()) {
+      return false;
+    }
+    const int index = controller_->viewportOverlayItemAt(viewportPos);
+    if (index < 0 || index >= static_cast<int>(viewportOverlayActions_.size())) {
+      hideViewportOverlay();
+      return true;
+    }
+    auto action = viewportOverlayActions_.at(index);
+    hideViewportOverlay();
+    if (action) {
+      action();
+    }
+    return true;
+  }
+
+  void showCommandPalette() {
+    if (!controller_) {
+      return;
+    }
+    QStringList items;
+    QVector<std::function<void()>> actions;
+    const auto add = [&](const QString &label, std::function<void()> action) {
+      items.push_back(label);
+      actions.push_back(std::move(action));
+    };
+    add(QStringLiteral("Reset View"), [this]() {
+      if (controller_) controller_->resetView();
+    });
+    add(QStringLiteral("Zoom Fit"), [this]() {
+      if (controller_) controller_->zoomFit();
+    });
+    add(QStringLiteral("Zoom 100%"), [this]() {
+      if (controller_) controller_->zoom100();
+    });
+    add(QStringLiteral("Focus Selected Layer"), [this]() {
+      if (controller_) controller_->focusSelectedLayer();
+    });
+    add(QStringLiteral("Move Tool"), [this]() {
+      if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Move);
+    });
+    add(QStringLiteral("Rotate Tool"), [this]() {
+      if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Rotate);
+    });
+    add(QStringLiteral("Scale Tool"), [this]() {
+      if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Scale);
+    });
+    viewportOverlayActions_ = actions;
+    controller_->showCommandPaletteOverlay(QString(), items);
+  }
+
+  void showViewportContextMenu(const QPointF &viewportPos) {
+    if (!controller_) {
+      return;
+    }
+    QStringList items;
+    QVector<std::function<void()>> actions;
+    const auto add = [&](const QString &label, std::function<void()> action) {
+      items.push_back(label);
+      actions.push_back(std::move(action));
+    };
+
+    const LayerID layerId = controller_->layerAtViewportPos(viewportPos);
+    const auto comp = currentComposition();
+    const auto layer =
+        (!layerId.isNil() && comp) ? comp->layerById(layerId)
+                                   : ArtifactAbstractLayerPtr{};
+    if (layer) {
+      add(QStringLiteral("Select Layer"), [this, layerId]() {
+        if (controller_) controller_->setSelectedLayerId(layerId);
+      });
+      if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+        add(QStringLiteral("Edit Text"), [this, layer]() {
+          editTextLayerInline(this, layer, controller_);
+        });
+      }
+      add(QStringLiteral("Focus Layer"), [this, layerId]() {
+        if (controller_) {
+          controller_->setSelectedLayerId(layerId);
+          controller_->focusSelectedLayer();
+        }
+      });
+    }
+    add(QStringLiteral("Reset View"), [this]() {
+      if (controller_) controller_->resetView();
+    });
+    add(QStringLiteral("Zoom Fit"), [this]() {
+      if (controller_) controller_->zoomFit();
+    });
+    add(QStringLiteral("Command Palette"), [this]() { showCommandPalette(); });
+
+    viewportOverlayActions_ = actions;
+    controller_->showContextMenuOverlay(viewportPos, items);
   }
 
   void updateViewportCursor(const QPointF &pos) {
@@ -680,7 +783,7 @@ protected:
   }
 
   void wheelEvent(QWheelEvent *event) override {
-    if (pieMenu_ && pieMenu_->isVisible())
+    if (controller_ && controller_->isPieMenuOverlayVisible())
       return; // Block while menu open
 
     if (!controller_) {
@@ -741,41 +844,34 @@ protected:
   }
 
   void contextMenuEvent(QContextMenuEvent *event) override {
-    const auto layerId = controller_
-                             ? controller_->layerAtViewportPos(event->pos())
-                             : LayerID::Nil();
-    if (layerId.isNil()) {
-      QWidget::contextMenuEvent(event);
-      return;
-    }
-
-    const auto comp = currentComposition();
-    const auto layer =
-        comp ? comp->layerById(layerId) : ArtifactAbstractLayerPtr{};
-    if (!layer || !std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
-      QWidget::contextMenuEvent(event);
-      return;
-    }
-
-    QMenu menu(this);
-    auto *editAction = menu.addAction(QStringLiteral("Edit Text"));
-    editAction->setEnabled(true);
-    connect(editAction, &QAction::triggered, this,
-            [this, layer]() { editTextLayerInline(this, layer, controller_); });
-
-    menu.addSeparator();
-    menu.addAction(QStringLiteral("Reset View"), this, [this]() {
-      if (controller_) {
-        controller_->resetView();
-      }
-    });
-    menu.exec(event->globalPos());
+    showViewportContextMenu(event->pos());
     event->accept();
   }
 
   void mousePressEvent(QMouseEvent *event) override {
-    if (pieMenu_ && pieMenu_->isVisible())
+    if (controller_ && controller_->isPieMenuOverlayVisible()) {
+      if (event->button() == Qt::LeftButton) {
+        controller_->confirmPieMenuOverlaySelection();
+      } else {
+        controller_->cancelPieMenuOverlay();
+      }
+      event->accept();
       return;
+    }
+
+    if (controller_ && controller_->isViewportOverlayVisible()) {
+      if (event->button() == Qt::LeftButton) {
+        triggerViewportOverlayItem(event->position());
+        event->accept();
+        return;
+      }
+      if (event->button() == Qt::RightButton) {
+        showViewportContextMenu(event->position());
+        event->accept();
+        return;
+      }
+      hideViewportOverlay();
+    }
 
     qDebug() << "[VP] mousePressEvent button=" << event->button()
              << "middle=" << (event->button() == Qt::MiddleButton)
@@ -811,8 +907,8 @@ protected:
   }
 
   void mouseMoveEvent(QMouseEvent *event) override {
-    if (pieMenu_ && pieMenu_->isVisible()) {
-      pieMenu_->updateMousePos(event->globalPosition().toPoint());
+    if (controller_ && controller_->isPieMenuOverlayVisible()) {
+      controller_->updatePieMenuOverlayMousePos(event->position());
       event->accept();
       return;
     }
@@ -862,11 +958,9 @@ protected:
   }
 
   void mouseReleaseEvent(QMouseEvent *event) override {
-    if (pieMenu_ && pieMenu_->isVisible()) {
-      // Confirmation happens on KeyRelease (Tab), but we can also allow click
-      // to confirm
-      if (event->button() == Qt::LeftButton) {
-        pieMenu_->confirmSelection();
+    if (controller_ && controller_->isPieMenuOverlayVisible()) {
+      if (event->button() != Qt::LeftButton) {
+        controller_->cancelPieMenuOverlay();
       }
       event->accept();
       return;
@@ -931,7 +1025,23 @@ protected:
     const QPointF logPos = physPos / dpr;
 
     switch (msg->message) {
+    case WM_RBUTTONDOWN:
+      if (controller_ && controller_->isPieMenuOverlayVisible()) {
+        controller_->cancelPieMenuOverlay();
+        return true;
+      }
+      showViewportContextMenu(logPos);
+      return true;
+
     case WM_LBUTTONDOWN:
+      if (controller_ && controller_->isPieMenuOverlayVisible()) {
+        controller_->confirmPieMenuOverlaySelection();
+        return true;
+      }
+      if (controller_ && controller_->isViewportOverlayVisible()) {
+        triggerViewportOverlayItem(logPos);
+        return true;
+      }
       if (spacePressed_) {
         isPanning_ = true;
         isPanningWithMiddle_ = false;
@@ -993,6 +1103,10 @@ protected:
       return true;
 
     case WM_MOUSEMOVE:
+      if (controller_ && controller_->isPieMenuOverlayVisible()) {
+        controller_->updatePieMenuOverlayMousePos(logPos);
+        return true;
+      }
       if (isPanning_ && controller_) {
         const QPointF delta = logPos - lastMousePos_;
         lastMousePos_ = logPos;
@@ -1026,6 +1140,25 @@ protected:
 #endif
 
   void keyPressEvent(QKeyEvent *event) override {
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->isPieMenuOverlayVisible()) {
+      controller_->cancelPieMenuOverlay();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
+        controller_ && controller_->isViewportOverlayVisible()) {
+      hideViewportOverlay();
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_K &&
+        event->modifiers().testFlag(Qt::ControlModifier)) {
+      showCommandPalette();
+      event->accept();
+      return;
+    }
+
     if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {
       showPieMenu();
       event->accept();
@@ -1143,8 +1276,8 @@ protected:
 
    void keyReleaseEvent(QKeyEvent *event) override {
      if (event->key() == Qt::Key_Tab && !event->isAutoRepeat()) {
-       if (pieMenu_ && pieMenu_->isVisible()) {
-         pieMenu_->confirmSelection();
+       if (controller_ && controller_->isPieMenuOverlayVisible()) {
+         controller_->confirmPieMenuOverlaySelection();
        }
        event->accept();
        return;
@@ -1391,9 +1524,8 @@ protected:
 
   bool autoStartPending_ = false;
 
-  ArtifactPieMenuWidget *pieMenu_ = nullptr;
   void showPieMenu() {
-    if (!pieMenu_ || !controller_)
+    if (!controller_)
       return;
 
     PieMenuModel model;
@@ -1477,8 +1609,7 @@ protected:
            controller_->setShowSafeMargins(!controller_->isShowSafeMargins());
          }});
 
-    pieMenu_->setModel(model);
-    pieMenu_->showAt(QCursor::pos());
+    controller_->showPieMenuOverlay(model, mapFromGlobal(QCursor::pos()));
   }
 
   void saveCurrentFrame(CompositionRenderController *controller) {
@@ -1548,8 +1679,10 @@ protected:
   std::deque<PendingDroppedAsset> pendingDroppedAssets_;
   bool processingDroppedAssets_ = false;
   QWidget *overlayWidget_ = nullptr;
+  QVector<std::function<void()>> viewportOverlayActions_;
   // 動画ファイルのキャンバスサイズキャッシュ（非同期取得）
   QHash<QString, QSize> videoDimensionCache_;
+  QHash<QString, ArtifactCore::FileType> dragFileTypeCache_;
   QString lastDragPath_;
   QPointF lastDragPos_;
 
@@ -1779,13 +1912,19 @@ protected:
     lastDragPos_ = pos;
 
     QFileInfo fi(path);
-    ArtifactCore::FileTypeDetector detector;
     const bool svgShapeFile = isSvgShapeFile(path);
-    const auto fileType =
-        svgShapeFile ? ArtifactCore::FileType::Image : detector.detect(path);
-
-    if (fileType == ArtifactCore::FileType::Video) {
-      startVideoDimensionLoad(path);
+    ArtifactCore::FileType fileType = ArtifactCore::FileType::Image;
+    if (svgShapeFile) {
+      fileType = ArtifactCore::FileType::Image;
+    } else {
+      auto it = dragFileTypeCache_.find(path);
+      if (it != dragFileTypeCache_.end()) {
+        fileType = it.value();
+      } else {
+        ArtifactCore::FileTypeDetector detector;
+        fileType = detector.detectByExtension(path);
+        dragFileTypeCache_.insert(path, fileType);
+      }
     }
 
     const QSizeF canvasSize = ghostSizeForFile(path, fileType);
@@ -2075,8 +2214,6 @@ public:
   CompositionOverlayWidget *overlayView_ = nullptr;
   ViewOrientationWidget *viewOrientationWidget_ = nullptr;
   CompositionRenderController *renderController_ = nullptr;
-  ArtifactPieMenuWidget *pieMenu_ = nullptr;
-
   // Top Toolbar (Zoom/View controls)
   QToolBar *topToolbar_ = nullptr;
   QAction *resetAction_ = nullptr;
@@ -2319,9 +2456,6 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         }
       });
   impl_->viewOrientationWidget_->show();
-
-  impl_->pieMenu_ = new ArtifactPieMenuWidget(this);
-  impl_->compositionView_->setPieMenu(impl_->pieMenu_);
 
   // Top Toolbar
   impl_->topToolbar_ = new QToolBar(this);
