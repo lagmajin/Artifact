@@ -165,6 +165,7 @@ TransformGizmo* gizmo() const;
 public /*slots*/:
 
   void renderOneFrame();
+   void onRenderDebounceTimeout();
 
 signals:
   void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);

@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
@@ -1590,6 +1590,11 @@ public:
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
   std::unique_ptr<GPUTextureCacheManager> gpuTextureCacheManager_;
 
+  // Render debounce timer: coalesces rapid LayerChangedEvent notifications
+  // into a single renderOneFrame() call, preventing GPU saturation during drag
+  QTimer *renderDebounceTimer_ = nullptr;
+  static constexpr qint64 kRenderDebounceIntervalMs = 33; // ~30fps baseline
+
   // Guide positions (composition-space pixels)
   QVector<float> guideVerticals_;   // X positions
   QVector<float> guideHorizontals_; // Y positions
@@ -1875,7 +1880,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 auto *sel = app ? app->layerSelectionManager() : nullptr;
                 if (sel && sel->currentLayer()) {
                   return;
-                }
+               }
               }
               setSelectedLayerId(incomingId);
             }));
@@ -1906,11 +1911,11 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                   if (layerId == impl_->selectedLayerId_) {
                     impl_->selectedLayerId_ = LayerID();
                   }
-                }
+               }
                 impl_->surfaceCache_.clear();
                 if (impl_->gpuTextureCacheManager_) {
                   impl_->gpuTextureCacheManager_->clear();
-                }
+               }
                 impl_->applyCompositionState(comp);
               } else {
                 // Property/transform modification: invalidate only this layer
@@ -1925,7 +1930,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                   }
                   impl_->changeDetector_.markLayerChanged(
                       layer->id().toString());
-                }
+               }
               }
               impl_->invalidateBaseComposite();
               // ギズモドラッグ中はオーバーレイ同期コストを省く（ドラッグ終了時に一括同期）
@@ -1933,7 +1938,11 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 impl_->syncSelectedLayerOverlayState(
                     impl_->previewPipeline_.composition());
               }
-              renderOneFrame();
+               // Debounce render: coalesce rapid property changes into single frame
+               if (impl_->renderDebounceTimer_) {
+                 impl_->renderDebounceTimer_->start(
+                     static_cast<int>(Impl::kRenderDebounceIntervalMs));
+               }
             }));
 
     impl_->eventBusSubscriptions_.push_back(
@@ -1945,7 +1954,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                     svc->findComposition(CompositionID(event.compositionId));
                 if (found.success && !found.ptr.expired()) {
                   comp = found.ptr.lock();
-                }
+               }
               }
               if (!comp) {
                 comp = resolvePreferredComposition(svc);
@@ -2070,6 +2079,11 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
     recreateSwapChain(impl_->hostWidget_.data());
     renderOneFrame();
   });
+
+  impl_->renderDebounceTimer_ = new QTimer(this);
+  impl_->renderDebounceTimer_->setSingleShot(true);
+  connect(impl_->renderDebounceTimer_, &QTimer::timeout, this,
+          &CompositionRenderController::onRenderDebounceTimeout);
 
   // PlaybackService のフレーム変更に合わせて再描画
   if (auto *playback = ArtifactPlaybackService::instance()) {
@@ -2299,6 +2313,11 @@ void CompositionRenderController::finishViewportInteraction() {
     impl_->viewportInteractionTimer_->stop();
   }
   impl_->invalidateBaseComposite();
+  renderOneFrame();
+}
+
+void CompositionRenderController::onRenderDebounceTimeout() {
+  // Debounce timer fired: render once, coalescing all pending property changes
   renderOneFrame();
 }
 
@@ -3239,7 +3258,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                   impl_->draggingVertexIndex_ = v;
                   qDebug() << "[PenTool] Started dragging vertex" << v;
                   return;
-                }
+               }
               }
             }
           }
@@ -3576,7 +3595,7 @@ void CompositionRenderController::handleMouseMove(
                     impl_->hoveredVertexIndex_ = v;
                     break;
                   }
-                }
+               }
                 if (impl_->hoveredVertexIndex_ != -1)
                   break;
               }
@@ -5015,7 +5034,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   markers.push_back(
                       {currentCanvasPos, currentColor, currentPointRadius});
                   lastCanvasPos = currentCanvasPos;
-                }
+               }
               }
 
               if (path.isClosed() && vertexCount > 1) {
@@ -5041,7 +5060,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                        maskPointShadowColor);
                   renderer_->drawPoint(marker.pos.x, marker.pos.y,
                                        marker.radius, marker.color);
-                }
+               }
               }
               }
             }
