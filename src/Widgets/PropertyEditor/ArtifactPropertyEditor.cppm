@@ -440,6 +440,8 @@ bool shouldShowNumericSlider(const ArtifactCore::AbstractProperty &property) {
   // extra slider strip.
   if (name == QStringLiteral("size") ||
       name.endsWith(QStringLiteral(".size"), Qt::CaseInsensitive) ||
+      name == QStringLiteral("shape.width") ||
+      name == QStringLiteral("shape.height") ||
       name.startsWith(QStringLiteral("transform.position"),
                       Qt::CaseInsensitive) ||
       name.startsWith(QStringLiteral("transform.size"),

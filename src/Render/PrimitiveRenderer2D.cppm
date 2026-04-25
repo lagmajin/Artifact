@@ -1133,7 +1133,7 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
             cv::Mat rgba8;
             if (rgba.type() == CV_32FC4) {
                 rgba.convertTo(rgba8, CV_8UC4, 255.0);
-                cv::cvtColor(rgba8, rgba8, cv::COLOR_BGRA2RGBA);
+                // ImageF32x4_RGBA is already RGBA; no channel swap needed.
             } else if (rgba.channels() == 4) {
                 rgba.convertTo(rgba8, CV_8UC4);
             } else {

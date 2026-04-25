@@ -1034,7 +1034,7 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
   QObject::connect(impl_->updateValuesTimer, &QTimer::timeout, this,
                    [this]() { impl_->updatePropertyValues(); });
   QObject::connect(UndoManager::instance(), &UndoManager::historyChanged, this, [this]() {
-    impl_->updatePropertyValues();
+    impl_->scheduleUpdateValues();
   });
 
   QObject::connect(this, &QWidget::customContextMenuRequested, this,

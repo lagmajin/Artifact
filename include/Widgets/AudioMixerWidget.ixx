@@ -71,9 +71,14 @@ public:
     void refreshBuses(); // バスの増減を反映
     void updateAllMeters();
 
+protected:
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
 private:
     ArtifactCore::AudioMixer* mixer_;
     std::vector<AudioChannelStripWidget*> strips_;
+    QTimer* meterTimer_ = nullptr;
 };
 
 } // namespace Artifact

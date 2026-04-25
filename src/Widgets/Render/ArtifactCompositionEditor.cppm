@@ -3147,6 +3147,9 @@ void ArtifactCompositionEditor::setComposition(
 
   if (impl_->renderController_) {
     impl_->renderController_->setComposition(composition);
+    if (composition) {
+      impl_->renderController_->start();
+    }
   }
   if (auto *playback = ArtifactPlaybackService::instance()) {
     playback->setCurrentComposition(composition);

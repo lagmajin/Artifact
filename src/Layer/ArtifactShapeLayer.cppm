@@ -281,59 +281,65 @@ public:
          !dashPattern_.empty();
  }
 
-  QImage cachedImage_;
-  bool cacheDirty_ = true;
+    QImage cachedImage_;
+    bool cacheDirty_ = true;
 
- Impl() = default;
+    mutable QRectF cachedLocalBounds_;
+    bool localBoundsCacheDirty_ = true;
+
+    mutable std::vector<QPointF> cachedShapePoints_;
+    bool shapeContentCacheDirty_ = true;
+
+   Impl() = default;
  ~Impl() = default;
- void addShape() {}
-  void markDirty() { cacheDirty_ = true; }
-  void rebuildCache() {
-   if (!cacheDirty_) return;
-   QImage img(width_, height_, QImage::Format_ARGB32_Premultiplied);
-   img.fill(Qt::transparent);
-   QPainter painter(&img);
-   painter.setRenderHint(QPainter::Antialiasing, true);
+   void addShape() {}
+   void markDirty() { cacheDirty_ = true; shapeContentCacheDirty_ = true; }
+   void rebuildCache() {
+    if (!cacheDirty_) return;
+    QImage img(width_, height_, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::transparent);
+    QPainter painter(&img);
+    painter.setRenderHint(QPainter::Antialiasing, true);
 
-   QPainterPath path;
-   if (customPathVertices_.size() >= 3) {
-    path.moveTo(customPathVertices_[0].pos);
-    const size_t n = customPathVertices_.size();
-    for (size_t i = 0; i < n; ++i) {
-     const size_t next = (i + 1) % n;
-     if (!customPathClosed_ && next == 0) break;
-     const CustomPathVertex& v0 = customPathVertices_[i];
-     const CustomPathVertex& v1 = customPathVertices_[next];
-     path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+    QPainterPath path;
+    if (customPathVertices_.size() >= 3) {
+     path.moveTo(customPathVertices_[0].pos);
+     const size_t n = customPathVertices_.size();
+     for (size_t i = 0; i < n; ++i) {
+      const size_t next = (i + 1) % n;
+      if (!customPathClosed_ && next == 0) break;
+      const CustomPathVertex& v0 = customPathVertices_[i];
+      const CustomPathVertex& v1 = customPathVertices_[next];
+      path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+     }
+     if (customPathClosed_) path.closeSubpath();
+    } else if (customPolygonPoints_.size() >= 3) {
+     ShapePath sp;
+     sp.setPolygon(customPolygonPoints_, customPolygonClosed_);
+     path = sp.toPainterPath();
+    } else {
+     path = buildShapePath(shapeType_, width_, height_, cornerRadius_,
+                           starPoints_, starInnerRadius_, polygonSides_).toPainterPath();
     }
-    if (customPathClosed_) path.closeSubpath();
-   } else if (customPolygonPoints_.size() >= 3) {
-    ShapePath sp;
-    sp.setPolygon(customPolygonPoints_, customPolygonClosed_);
-    path = sp.toPainterPath();
-   } else {
-    path = buildShapePath(shapeType_, width_, height_, cornerRadius_,
-                          starPoints_, starInnerRadius_, polygonSides_).toPainterPath();
-   }
 
-   if (fillEnabled_) {
-    QColor fc(static_cast<int>(fillColor_.r() * 255),
-              static_cast<int>(fillColor_.g() * 255),
-              static_cast<int>(fillColor_.b() * 255),
-              static_cast<int>(fillColor_.a() * 255));
-    painter.fillPath(path, fc);
-   }
+    if (fillEnabled_) {
+     QColor fc(static_cast<int>(fillColor_.r() * 255),
+               static_cast<int>(fillColor_.g() * 255),
+               static_cast<int>(fillColor_.b() * 255),
+               static_cast<int>(fillColor_.a() * 255));
+     painter.fillPath(path, fc);
+    }
 
-   if (strokeEnabled_ && strokeWidth_ > 0) {
-    QColor sc(static_cast<int>(strokeColor_.r() * 255),
-              static_cast<int>(strokeColor_.g() * 255),
-              static_cast<int>(strokeColor_.b() * 255),
-              static_cast<int>(strokeColor_.a() * 255));
-    QPen pen(sc, strokeWidth_);
-    switch (strokeCap_) {
-     case StrokeCap::Round:  pen.setCapStyle(Qt::RoundCap);  break;
-     case StrokeCap::Square: pen.setCapStyle(Qt::SquareCap); break;
-     default:                pen.setCapStyle(Qt::FlatCap);   break;
+    if (strokeEnabled_ && strokeWidth_ > 0) {
+     QColor sc(static_cast<int>(strokeColor_.r() * 255),
+               static_cast<int>(strokeColor_.g() * 255),
+               static_cast<int>(strokeColor_.b() * 255),
+               static_cast<int>(strokeColor_.a() * 255));
+     QPen pen(sc, strokeWidth_);
+     switch (strokeCap_) {
+      case StrokeCap::Round:  pen.setCapStyle(Qt::RoundCap);  break;
+      case StrokeCap::Square: pen.setCapStyle(Qt::SquareCap); break;
+      default:                pen.setCapStyle(Qt::FlatCap);   break;
     }
     switch (strokeJoin_) {
      case StrokeJoin::Round: pen.setJoinStyle(Qt::RoundJoin); break;
@@ -391,18 +397,20 @@ bool ArtifactShapeLayer::isShapeLayer() const { return true; }
 // ============================================================
 
 void ArtifactShapeLayer::setShapeType(Artifact::ShapeType type) {
- const int raw = static_cast<int>(type);
- if (raw < static_cast<int>(Artifact::ShapeType::Rect) || raw > static_cast<int>(Artifact::ShapeType::Square)) {
-  impl_->shapeType_ = Artifact::ShapeType::Rect;
- } else {
-  impl_->shapeType_ = type;
- }
- if (impl_->shapeType_ != Artifact::ShapeType::Polygon) {
-  impl_->customPolygonPoints_.clear();
-  impl_->customPolygonClosed_ = true;
- }
- impl_->markDirty();
- Q_EMIT changed();
+  const int raw = static_cast<int>(type);
+  if (raw < static_cast<int>(Artifact::ShapeType::Rect) || raw > static_cast<int>(Artifact::ShapeType::Square)) {
+   impl_->shapeType_ = Artifact::ShapeType::Rect;
+  } else {
+   impl_->shapeType_ = type;
+  }
+  if (impl_->shapeType_ != Artifact::ShapeType::Polygon) {
+   impl_->customPolygonPoints_.clear();
+   impl_->customPolygonClosed_ = true;
+  }
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
 }
 Artifact::ShapeType ArtifactShapeLayer::shapeType() const { return impl_->shapeType_; }
 
@@ -411,11 +419,13 @@ Artifact::ShapeType ArtifactShapeLayer::shapeType() const { return impl_->shapeT
 // ============================================================
 
 void ArtifactShapeLayer::setSize(int w, int h) {
- impl_->width_ = w;
- impl_->height_ = h;
- setSourceSize(Size_2D(w, h));
- impl_->markDirty();
- Q_EMIT changed();
+  impl_->width_ = w;
+  impl_->height_ = h;
+  setSourceSize(Size_2D(w, h));
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
 }
 int ArtifactShapeLayer::shapeWidth() const { return impl_->width_; }
 int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
@@ -424,65 +434,71 @@ int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
 // Style
 // ============================================================
 
-void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillColor() const { return impl_->fillColor_; }
-void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) { impl_->strokeColor_ = c; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) { impl_->strokeColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::strokeColor() const { return impl_->strokeColor_; }
-void ArtifactShapeLayer::setStrokeWidth(float w) { impl_->strokeWidth_ = w; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeWidth(float w) { impl_->strokeWidth_ = w; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::strokeWidth() const { return impl_->strokeWidth_; }
-void ArtifactShapeLayer::setFillEnabled(bool e) { impl_->fillEnabled_ = e; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillEnabled(bool e) { impl_->fillEnabled_ = e; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 bool ArtifactShapeLayer::fillEnabled() const { return impl_->fillEnabled_; }
-void ArtifactShapeLayer::setStrokeEnabled(bool e) { impl_->strokeEnabled_ = e; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeEnabled(bool e) { impl_->strokeEnabled_ = e; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 bool ArtifactShapeLayer::strokeEnabled() const { return impl_->strokeEnabled_; }
 
 // ============================================================
 // Shape Params
 // ============================================================
 
-void ArtifactShapeLayer::setCornerRadius(float r) { impl_->cornerRadius_ = r; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setCornerRadius(float r) { impl_->cornerRadius_ = r; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::cornerRadius() const { return impl_->cornerRadius_; }
-void ArtifactShapeLayer::setStarPoints(int p) { impl_->starPoints_ = std::max(3, p); impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setStarPoints(int p) { impl_->starPoints_ = std::max(3, p); impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 int ArtifactShapeLayer::starPoints() const { return impl_->starPoints_; }
-void ArtifactShapeLayer::setStarInnerRadius(float r) { impl_->starInnerRadius_ = std::clamp(r, 0.0f, 1.0f); impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setStarInnerRadius(float r) { impl_->starInnerRadius_ = std::clamp(r, 0.0f, 1.0f); impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::starInnerRadius() const { return impl_->starInnerRadius_; }
-void ArtifactShapeLayer::setPolygonSides(int s) { impl_->polygonSides_ = std::max(3, s); impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setPolygonSides(int s) { impl_->polygonSides_ = std::max(3, s); impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 int ArtifactShapeLayer::polygonSides() const { return impl_->polygonSides_; }
 bool ArtifactShapeLayer::hasCustomPolygon() const { return impl_->customPolygonPoints_.size() >= 3; }
 void ArtifactShapeLayer::setCustomPolygonPoints(const std::vector<QPointF>& points, bool closed) {
- impl_->customPolygonPoints_ = points;
- impl_->customPolygonClosed_ = closed;
- impl_->customPathVertices_.clear(); // mutual exclusion
- impl_->markDirty();
- Q_EMIT changed();
+  impl_->customPolygonPoints_ = points;
+  impl_->customPolygonClosed_ = closed;
+  impl_->customPathVertices_.clear(); // mutual exclusion
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
 }
-void ArtifactShapeLayer::clearCustomPolygonPoints() { if (impl_->customPolygonPoints_.empty()) return; impl_->customPolygonPoints_.clear(); impl_->customPolygonClosed_ = true; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::clearCustomPolygonPoints() { if (impl_->customPolygonPoints_.empty()) return; impl_->customPolygonPoints_.clear(); impl_->customPolygonClosed_ = true; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 std::vector<QPointF> ArtifactShapeLayer::customPolygonPoints() const { return impl_->customPolygonPoints_; }
 bool ArtifactShapeLayer::customPolygonClosed() const { return impl_->customPolygonClosed_; }
 
 // Phase 3: Stroke style setters/getters
-void ArtifactShapeLayer::setStrokeCap(StrokeCap cap) { impl_->strokeCap_ = cap; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeCap(StrokeCap cap) { impl_->strokeCap_ = cap; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 StrokeCap ArtifactShapeLayer::strokeCap() const { return impl_->strokeCap_; }
-void ArtifactShapeLayer::setStrokeJoin(StrokeJoin join) { impl_->strokeJoin_ = join; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeJoin(StrokeJoin join) { impl_->strokeJoin_ = join; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 StrokeJoin ArtifactShapeLayer::strokeJoin() const { return impl_->strokeJoin_; }
-void ArtifactShapeLayer::setStrokeAlign(StrokeAlign align) { impl_->strokeAlign_ = align; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeAlign(StrokeAlign align) { impl_->strokeAlign_ = align; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 StrokeAlign ArtifactShapeLayer::strokeAlign() const { return impl_->strokeAlign_; }
-void ArtifactShapeLayer::setDashPattern(const std::vector<float>& pattern) { impl_->dashPattern_ = pattern; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setDashPattern(const std::vector<float>& pattern) { impl_->dashPattern_ = pattern; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 std::vector<float> ArtifactShapeLayer::dashPattern() const { return impl_->dashPattern_; }
 
 // Phase 5: Bezier path
 bool ArtifactShapeLayer::hasCustomPath() const { return impl_->customPathVertices_.size() >= 3; }
 void ArtifactShapeLayer::setCustomPathVertices(const std::vector<CustomPathVertex>& vertices, bool closed) {
- impl_->customPathVertices_ = vertices;
- impl_->customPathClosed_ = closed;
- impl_->customPolygonPoints_.clear(); // mutual exclusion
- impl_->markDirty();
- Q_EMIT changed();
+  impl_->customPathVertices_ = vertices;
+  impl_->customPathClosed_ = closed;
+  impl_->customPolygonPoints_.clear(); // mutual exclusion
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
 }
 void ArtifactShapeLayer::clearCustomPath() {
- if (impl_->customPathVertices_.empty()) return;
- impl_->customPathVertices_.clear();
- impl_->markDirty();
- Q_EMIT changed();
+  if (impl_->customPathVertices_.empty()) return;
+  impl_->customPathVertices_.clear();
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
 }
 std::vector<CustomPathVertex> ArtifactShapeLayer::customPathVertices() const { return impl_->customPathVertices_; }
 bool ArtifactShapeLayer::customPathClosed() const { return impl_->customPathClosed_; }
@@ -498,52 +514,56 @@ QImage ArtifactShapeLayer::toQImage() const {
 
 QRectF ArtifactShapeLayer::localBounds() const
 {
- const auto boundsOfPoints = [](const std::vector<QPointF>& points) -> QRectF {
-  if (points.empty()) {
-   return QRectF();
+  if (!impl_->localBoundsCacheDirty_) {
+    return impl_->cachedLocalBounds_;
   }
-  qreal minX = points.front().x();
-  qreal minY = points.front().y();
-  qreal maxX = points.front().x();
-  qreal maxY = points.front().y();
-  for (const auto& point : points) {
-   minX = std::min(minX, point.x());
-   minY = std::min(minY, point.y());
-   maxX = std::max(maxX, point.x());
-   maxY = std::max(maxY, point.y());
+
+  const auto boundsOfPoints = [](const std::vector<QPointF>& points) -> QRectF {
+   if (points.empty()) {
+    return QRectF();
+   }
+   qreal minX = points.front().x();
+   qreal minY = points.front().y();
+   qreal maxX = points.front().x();
+   qreal maxY = points.front().y();
+   for (const auto& point : points) {
+    minX = std::min(minX, point.x());
+    minY = std::min(minY, point.y());
+    maxX = std::max(maxX, point.x());
+    maxY = std::max(maxY, point.y());
+   }
+   return QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
+  };
+
+  QRectF bounds;
+  if (impl_->customPathVertices_.size() >= 2) {
+   std::vector<QPointF> pts;
+   pts.reserve(impl_->customPathVertices_.size());
+   for (const auto& v : impl_->customPathVertices_) pts.push_back(v.pos);
+   bounds = boundsOfPoints(pts);
+  } else if (impl_->customPolygonPoints_.size() >= 2) {
+   bounds = boundsOfPoints(impl_->customPolygonPoints_);
+  } else {
+   const QPainterPath path = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
+                                           impl_->cornerRadius_, impl_->starPoints_,
+                                           impl_->starInnerRadius_, impl_->polygonSides_)
+                                .toPainterPath();
+   bounds = path.boundingRect();
   }
-  return QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
- };
 
- QRectF bounds;
- if (impl_->customPathVertices_.size() >= 2) {
-  // Use position points for a fast approximation
-  std::vector<QPointF> pts;
-  pts.reserve(impl_->customPathVertices_.size());
-  for (const auto& v : impl_->customPathVertices_) pts.push_back(v.pos);
-  bounds = boundsOfPoints(pts);
- } else if (impl_->customPolygonPoints_.size() >= 2) {
-  bounds = boundsOfPoints(impl_->customPolygonPoints_);
- } else {
-  const QPainterPath path = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
-                                          impl_->cornerRadius_, impl_->starPoints_,
-                                          impl_->starInnerRadius_, impl_->polygonSides_)
-                               .toPainterPath();
-  bounds = path.boundingRect();
- }
-
- if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
-  const auto size = sourceSize();
-  if (size.width <= 0 || size.height <= 0) {
-   return QRectF();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+   const auto size = sourceSize();
+   if (size.width <= 0 || size.height <= 0) {
+    return QRectF();
+   }
+   bounds = QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
   }
-  bounds = QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
- }
 
- const qreal pad = std::max<qreal>(0.5, static_cast<qreal>(impl_->strokeWidth_) * 0.5);
- return bounds.adjusted(-pad, -pad, pad, pad);
+  const qreal pad = std::max<qreal>(0.5, static_cast<qreal>(impl_->strokeWidth_) * 0.5);
+  impl_->cachedLocalBounds_ = bounds.adjusted(-pad, -pad, pad, pad);
+  impl_->localBoundsCacheDirty_ = false;
+  return impl_->cachedLocalBounds_;
 }
-
 // ============================================================
 // draw (GPU rendering)
 // ============================================================
@@ -569,59 +589,63 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
   });
   return;
  }
- drawWithClonerEffect(this, baseTransform,
-                      [renderer, impl, this](const QMatrix4x4& transform, float weight) {
-   const auto fill = FloatColor(
-       impl->fillColor_.r(), impl->fillColor_.g(), impl->fillColor_.b(),
-       impl->fillColor_.a() * this->opacity() * weight);
-   const auto stroke = FloatColor(
-       impl->strokeColor_.r(), impl->strokeColor_.g(), impl->strokeColor_.b(),
-       impl->strokeColor_.a() * this->opacity() * weight);
+  drawWithClonerEffect(this, baseTransform,
+                       [renderer, impl, this](const QMatrix4x4& transform, float weight) {
+    const auto fill = FloatColor(
+        impl->fillColor_.r(), impl->fillColor_.g(), impl->fillColor_.b(),
+        impl->fillColor_.a() * this->opacity() * weight);
+    const auto stroke = FloatColor(
+        impl->strokeColor_.r(), impl->strokeColor_.g(), impl->strokeColor_.b(),
+        impl->strokeColor_.a() * this->opacity() * weight);
 
-   std::vector<QPointF> points = buildRenderablePoints(
-       impl->shapeType_, impl->width_, impl->height_, impl->cornerRadius_,
-       impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_,
-       impl->customPolygonPoints_, impl->customPolygonClosed_);
-   if (points.empty()) {
-    return;
-   }
-
-   const bool closed =
-       impl->shapeType_ != Artifact::ShapeType::Line &&
-       !(impl->shapeType_ == Artifact::ShapeType::Polygon &&
-         impl->customPolygonPoints_.size() >= 3 && !impl->customPolygonClosed_);
-
-   std::vector<QPointF> mapped;
-   mapped.reserve(points.size());
-   for (const auto& p : points) {
-    mapped.push_back(mapPoint(transform, p));
-   }
-
-   if (impl->fillEnabled_ && closed &&
-       mapped.size() >= 3) {
-    std::vector<Detail::float2> polygon;
-    polygon.reserve(mapped.size());
-    for (const auto& point : mapped) {
-     polygon.push_back({static_cast<float>(point.x()),
-                        static_cast<float>(point.y())});
+    if (impl->shapeContentCacheDirty_) {
+     impl->cachedShapePoints_ = buildRenderablePoints(
+         impl->shapeType_, impl->width_, impl->height_, impl->cornerRadius_,
+         impl->starPoints_, impl->starInnerRadius_, impl->polygonSides_,
+         impl->customPolygonPoints_, impl->customPolygonClosed_);
+     impl->shapeContentCacheDirty_ = false;
     }
-    renderer->drawSolidPolygonLocal(polygon, fill);
-   }
-
-   if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f && mapped.size() >= 2) {
-    const int edgeCount = closed ? static_cast<int>(mapped.size())
-                                 : static_cast<int>(mapped.size()) - 1;
-    for (int i = 0; i < edgeCount; ++i) {
-     const int next = (i + 1) % static_cast<int>(mapped.size());
-     renderer->drawThickLineLocal(
-         {static_cast<float>(mapped[static_cast<size_t>(i)].x()),
-          static_cast<float>(mapped[static_cast<size_t>(i)].y())},
-         {static_cast<float>(mapped[static_cast<size_t>(next)].x()),
-          static_cast<float>(mapped[static_cast<size_t>(next)].y())},
-         std::max(1.0f, impl->strokeWidth_), stroke);
+    const std::vector<QPointF>& points = impl->cachedShapePoints_;
+    if (points.empty()) {
+     return;
     }
-   }
- });
+
+    const bool closed =
+        impl->shapeType_ != Artifact::ShapeType::Line &&
+        !(impl->shapeType_ == Artifact::ShapeType::Polygon &&
+          impl->customPolygonPoints_.size() >= 3 && !impl->customPolygonClosed_);
+
+    std::vector<QPointF> mapped;
+    mapped.reserve(points.size());
+    for (const auto& p : points) {
+     mapped.push_back(mapPoint(transform, p));
+    }
+
+    if (impl->fillEnabled_ && closed &&
+        mapped.size() >= 3) {
+     std::vector<Detail::float2> polygon;
+     polygon.reserve(mapped.size());
+     for (const auto& point : mapped) {
+      polygon.push_back({static_cast<float>(point.x()),
+                         static_cast<float>(point.y())});
+     }
+     renderer->drawSolidPolygonLocal(polygon, fill);
+    }
+
+    if (impl->strokeEnabled_ && impl->strokeWidth_ > 0.0f && mapped.size() >= 2) {
+     const int edgeCount = closed ? static_cast<int>(mapped.size())
+                                  : static_cast<int>(mapped.size()) - 1;
+     for (int i = 0; i < edgeCount; ++i) {
+      const int next = (i + 1) % static_cast<int>(mapped.size());
+      renderer->drawThickLineLocal(
+          {static_cast<float>(mapped[static_cast<size_t>(i)].x()),
+           static_cast<float>(mapped[static_cast<size_t>(i)].y())},
+          {static_cast<float>(mapped[static_cast<size_t>(next)].x()),
+           static_cast<float>(mapped[static_cast<size_t>(next)].y())},
+          std::max(1.0f, impl->strokeWidth_), stroke);
+     }
+    }
+  });
 }
 
 // ============================================================

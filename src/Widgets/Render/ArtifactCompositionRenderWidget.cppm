@@ -125,6 +125,8 @@ namespace Artifact {
   std::atomic_bool running_{ false };
   tbb::task_group renderTask_;
   std::mutex renderMutex_;
+  std::condition_variable renderCv_;
+  std::mutex renderCvMutex_;
   QWidget* widget_ = nullptr;
   QTimer* resizeDebounceTimer_ = nullptr;
   QTimer* wheelRenderTimer_ = nullptr;
@@ -230,8 +232,9 @@ namespace Artifact {
   }
 
   void requestRender() {
-   needsRender_.store(true, std::memory_order_release);
-  }
+    needsRender_.store(true, std::memory_order_release);
+    renderCv_.notify_one();
+   }
   
   static ArtifactCore::InputEvent::Modifiers translateModifiers(Qt::KeyboardModifiers qtMods) {
    ArtifactCore::InputEvent::Modifiers mods = ArtifactCore::InputEvent::ModifierKey::None;

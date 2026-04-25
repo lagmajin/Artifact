@@ -11,6 +11,8 @@ module;
 #include <QMenu>
 #include <QAction>
 #include <QMouseEvent>
+#include <QShowEvent>
+#include <QHideEvent>
 #include <QFont>
 #include <QPalette>
 #include <QColor>
@@ -328,10 +330,10 @@ AudioMixerWidget::AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* par
     mixerPalette.setColor(QPalette::Window, QColor(15, 16, 18));
     setPalette(mixerPalette);
 
-    // テスト用の定期更新タイマー
-    QTimer* timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, &AudioMixerWidget::updateAllMeters);
-    timer->start(33); // 30fps
+    // メーター定期更新タイマー（表示中のみ稼働）
+    meterTimer_ = new QTimer(this);
+    connect(meterTimer_, &QTimer::timeout, this, &AudioMixerWidget::updateAllMeters);
+    meterTimer_->start(33); // 30fps
 
     refreshBuses();
 }
@@ -362,6 +364,22 @@ void AudioMixerWidget::updateAllMeters() {
     for (auto* strip : strips_) {
         strip->updateMeters();
     }
+}
+
+void AudioMixerWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (meterTimer_ && !meterTimer_->isActive()) {
+        meterTimer_->start(33);
+    }
+}
+
+void AudioMixerWidget::hideEvent(QHideEvent* event)
+{
+    if (meterTimer_) {
+        meterTimer_->stop();
+    }
+    QWidget::hideEvent(event);
 }
 
 } // namespace Artifact

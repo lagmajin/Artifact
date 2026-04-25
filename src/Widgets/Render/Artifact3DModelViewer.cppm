@@ -6,6 +6,8 @@ module;
 #include <QComboBox>
 #include <QWindow>
 #include <QTimer>
+#include <QShowEvent>
+#include <QHideEvent>
 #include <QDebug>
 #include <wobjectimpl.h>
 
@@ -77,6 +79,7 @@ public:
     QWidget* renderContainer = nullptr;
     QComboBox* modeCombo = nullptr;
     QLabel* statusLabel = nullptr;
+    QTimer* renderTimer_ = nullptr;
 
     explicit Impl(Artifact3DModelViewer* widget)
         : owner(widget)
@@ -201,9 +204,12 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     setDisplayMode(DisplayMode::Solid);
     impl_->updateStatus();
 
-    auto* renderTimer = new QTimer(this);
-    connect(renderTimer, &QTimer::timeout, this, &Artifact3DModelViewer::requestUpdate);
-    renderTimer->start(16);
+    impl_->renderTimer_ = new QTimer(this);
+    connect(impl_->renderTimer_, &QTimer::timeout, this, &Artifact3DModelViewer::requestUpdate);
+    // Start only when visible; stopped in hideEvent.
+    if (isVisible()) {
+        impl_->renderTimer_->start(16);
+    }
 }
 
 Artifact3DModelViewer::~Artifact3DModelViewer()
@@ -397,6 +403,22 @@ void Artifact3DModelViewer::requestUpdate()
     if (impl_->renderWindow) {
         impl_->renderWindow->requestRender();
     }
+}
+
+void Artifact3DModelViewer::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (impl_->renderTimer_ && !impl_->renderTimer_->isActive()) {
+        impl_->renderTimer_->start(16);
+    }
+}
+
+void Artifact3DModelViewer::hideEvent(QHideEvent* event)
+{
+    if (impl_->renderTimer_) {
+        impl_->renderTimer_->stop();
+    }
+    QWidget::hideEvent(event);
 }
 
 } // namespace Artifact

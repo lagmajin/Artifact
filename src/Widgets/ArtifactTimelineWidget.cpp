@@ -137,32 +137,33 @@ QColor layerTimelineColor(const ArtifactAbstractLayerPtr& layer)
   if (!layer) {
     return QColor(94, 124, 189);
   }
-  if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+  const auto* raw = layer.get();
+  if (dynamic_cast<const ArtifactVideoLayer*>(raw)) {
     return QColor(79, 142, 230);
   }
-  if (std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+  if (dynamic_cast<const ArtifactAudioLayer*>(raw)) {
     return QColor(86, 180, 120);
   }
-  if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+  if (dynamic_cast<const ArtifactTextLayer*>(raw)) {
     return QColor(165, 108, 255);
   }
-  if (std::dynamic_pointer_cast<ArtifactShapeLayer>(layer) ||
-      std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+  if (dynamic_cast<const ArtifactShapeLayer*>(raw) ||
+      dynamic_cast<const ArtifactSvgLayer*>(raw)) {
     return QColor(146, 106, 235);
   }
-  if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+  if (dynamic_cast<const ArtifactImageLayer*>(raw)) {
     return QColor(84, 163, 255);
   }
-  if (std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
+  if (dynamic_cast<const ArtifactSolid2DLayer*>(raw)) {
     return QColor(255, 145, 86);
   }
-  if (std::dynamic_pointer_cast<ArtifactCameraLayer>(layer)) {
+  if (dynamic_cast<const ArtifactCameraLayer*>(raw)) {
     return QColor(255, 193, 79);
   }
-  if (std::dynamic_pointer_cast<ArtifactLightLayer>(layer)) {
+  if (dynamic_cast<const ArtifactLightLayer*>(raw)) {
     return QColor(255, 221, 102);
   }
-  if (std::dynamic_pointer_cast<ArtifactParticleLayer>(layer)) {
+  if (dynamic_cast<const ArtifactParticleLayer*>(raw)) {
     return QColor(255, 110, 180);
   }
   return QColor(94, 124, 189);
