@@ -63,6 +63,7 @@ export namespace Artifact {
 
   bool isDragging() const { return isDragging_; }
   HandleType activeHandle() const { return activeHandle_; }
+  QRectF currentCanvasBoundingRect() const;
 
  private:
   HandleType hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;

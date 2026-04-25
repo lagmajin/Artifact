@@ -263,6 +263,24 @@ public:
  std::vector<QPointF> customPolygonPoints_;
  bool customPolygonClosed_ = true;
 
+ // Phase 3: Stroke styles
+ StrokeCap strokeCap_ = StrokeCap::Flat;
+ StrokeJoin strokeJoin_ = StrokeJoin::Miter;
+ StrokeAlign strokeAlign_ = StrokeAlign::Center;
+ std::vector<float> dashPattern_;
+
+ // Phase 5: Bezier path override
+ std::vector<CustomPathVertex> customPathVertices_;
+ bool customPathClosed_ = true;
+
+ bool useCachePipeline() const {
+  return customPathVertices_.size() >= 3 ||
+         strokeCap_ != StrokeCap::Flat ||
+         strokeJoin_ != StrokeJoin::Miter ||
+         strokeAlign_ != StrokeAlign::Center ||
+         !dashPattern_.empty();
+ }
+
   QImage cachedImage_;
   bool cacheDirty_ = true;
 
@@ -271,21 +289,31 @@ public:
  void addShape() {}
   void markDirty() { cacheDirty_ = true; }
   void rebuildCache() {
-   if (!cacheDirty_) {
-    return;
-   }
+   if (!cacheDirty_) return;
    QImage img(width_, height_, QImage::Format_ARGB32_Premultiplied);
    img.fill(Qt::transparent);
-
    QPainter painter(&img);
    painter.setRenderHint(QPainter::Antialiasing, true);
 
- QPainterPath path = buildShapePath(shapeType_, width_, height_, cornerRadius_,
-                                      starPoints_, starInnerRadius_, polygonSides_).toPainterPath();
-   if (customPolygonPoints_.size() >= 3) {
-    ShapePath customPath;
-    customPath.setPolygon(customPolygonPoints_, customPolygonClosed_);
-    path = customPath.toPainterPath();
+   QPainterPath path;
+   if (customPathVertices_.size() >= 3) {
+    path.moveTo(customPathVertices_[0].pos);
+    const size_t n = customPathVertices_.size();
+    for (size_t i = 0; i < n; ++i) {
+     const size_t next = (i + 1) % n;
+     if (!customPathClosed_ && next == 0) break;
+     const CustomPathVertex& v0 = customPathVertices_[i];
+     const CustomPathVertex& v1 = customPathVertices_[next];
+     path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+    }
+    if (customPathClosed_) path.closeSubpath();
+   } else if (customPolygonPoints_.size() >= 3) {
+    ShapePath sp;
+    sp.setPolygon(customPolygonPoints_, customPolygonClosed_);
+    path = sp.toPainterPath();
+   } else {
+    path = buildShapePath(shapeType_, width_, height_, cornerRadius_,
+                          starPoints_, starInnerRadius_, polygonSides_).toPainterPath();
    }
 
    if (fillEnabled_) {
@@ -302,8 +330,45 @@ public:
               static_cast<int>(strokeColor_.b() * 255),
               static_cast<int>(strokeColor_.a() * 255));
     QPen pen(sc, strokeWidth_);
-    painter.setPen(pen);
-    painter.drawPath(path);
+    switch (strokeCap_) {
+     case StrokeCap::Round:  pen.setCapStyle(Qt::RoundCap);  break;
+     case StrokeCap::Square: pen.setCapStyle(Qt::SquareCap); break;
+     default:                pen.setCapStyle(Qt::FlatCap);   break;
+    }
+    switch (strokeJoin_) {
+     case StrokeJoin::Round: pen.setJoinStyle(Qt::RoundJoin); break;
+     case StrokeJoin::Bevel: pen.setJoinStyle(Qt::BevelJoin); break;
+     default:                pen.setJoinStyle(Qt::MiterJoin); break;
+    }
+    if (!dashPattern_.empty()) {
+     QVector<qreal> qDash;
+     qDash.reserve(static_cast<int>(dashPattern_.size()));
+     for (float v : dashPattern_) qDash.push_back(static_cast<qreal>(v));
+     pen.setDashPattern(qDash);
+    }
+    if (strokeAlign_ == StrokeAlign::Inside) {
+     painter.save();
+     painter.setClipPath(path);
+     QPen widePen = pen;
+     widePen.setWidthF(static_cast<qreal>(strokeWidth_) * 2.0);
+     painter.setPen(widePen);
+     painter.drawPath(path);
+     painter.restore();
+    } else if (strokeAlign_ == StrokeAlign::Outside) {
+     painter.save();
+     QPainterPath outside;
+     outside.addRect(QRectF(-1, -1, width_ + 2, height_ + 2));
+     outside = outside.subtracted(path);
+     painter.setClipPath(outside);
+     QPen widePen = pen;
+     widePen.setWidthF(static_cast<qreal>(strokeWidth_) * 2.0);
+     painter.setPen(widePen);
+     painter.drawPath(path);
+     painter.restore();
+    } else {
+     painter.setPen(pen);
+     painter.drawPath(path);
+    }
    }
 
    painter.end();
@@ -383,10 +448,44 @@ float ArtifactShapeLayer::starInnerRadius() const { return impl_->starInnerRadiu
 void ArtifactShapeLayer::setPolygonSides(int s) { impl_->polygonSides_ = std::max(3, s); impl_->markDirty(); Q_EMIT changed(); }
 int ArtifactShapeLayer::polygonSides() const { return impl_->polygonSides_; }
 bool ArtifactShapeLayer::hasCustomPolygon() const { return impl_->customPolygonPoints_.size() >= 3; }
-void ArtifactShapeLayer::setCustomPolygonPoints(const std::vector<QPointF>& points, bool closed) { impl_->customPolygonPoints_ = points; impl_->customPolygonClosed_ = closed; impl_->markDirty(); Q_EMIT changed(); }
+void ArtifactShapeLayer::setCustomPolygonPoints(const std::vector<QPointF>& points, bool closed) {
+ impl_->customPolygonPoints_ = points;
+ impl_->customPolygonClosed_ = closed;
+ impl_->customPathVertices_.clear(); // mutual exclusion
+ impl_->markDirty();
+ Q_EMIT changed();
+}
 void ArtifactShapeLayer::clearCustomPolygonPoints() { if (impl_->customPolygonPoints_.empty()) return; impl_->customPolygonPoints_.clear(); impl_->customPolygonClosed_ = true; impl_->markDirty(); Q_EMIT changed(); }
 std::vector<QPointF> ArtifactShapeLayer::customPolygonPoints() const { return impl_->customPolygonPoints_; }
 bool ArtifactShapeLayer::customPolygonClosed() const { return impl_->customPolygonClosed_; }
+
+// Phase 3: Stroke style setters/getters
+void ArtifactShapeLayer::setStrokeCap(StrokeCap cap) { impl_->strokeCap_ = cap; impl_->markDirty(); Q_EMIT changed(); }
+StrokeCap ArtifactShapeLayer::strokeCap() const { return impl_->strokeCap_; }
+void ArtifactShapeLayer::setStrokeJoin(StrokeJoin join) { impl_->strokeJoin_ = join; impl_->markDirty(); Q_EMIT changed(); }
+StrokeJoin ArtifactShapeLayer::strokeJoin() const { return impl_->strokeJoin_; }
+void ArtifactShapeLayer::setStrokeAlign(StrokeAlign align) { impl_->strokeAlign_ = align; impl_->markDirty(); Q_EMIT changed(); }
+StrokeAlign ArtifactShapeLayer::strokeAlign() const { return impl_->strokeAlign_; }
+void ArtifactShapeLayer::setDashPattern(const std::vector<float>& pattern) { impl_->dashPattern_ = pattern; impl_->markDirty(); Q_EMIT changed(); }
+std::vector<float> ArtifactShapeLayer::dashPattern() const { return impl_->dashPattern_; }
+
+// Phase 5: Bezier path
+bool ArtifactShapeLayer::hasCustomPath() const { return impl_->customPathVertices_.size() >= 3; }
+void ArtifactShapeLayer::setCustomPathVertices(const std::vector<CustomPathVertex>& vertices, bool closed) {
+ impl_->customPathVertices_ = vertices;
+ impl_->customPathClosed_ = closed;
+ impl_->customPolygonPoints_.clear(); // mutual exclusion
+ impl_->markDirty();
+ Q_EMIT changed();
+}
+void ArtifactShapeLayer::clearCustomPath() {
+ if (impl_->customPathVertices_.empty()) return;
+ impl_->customPathVertices_.clear();
+ impl_->markDirty();
+ Q_EMIT changed();
+}
+std::vector<CustomPathVertex> ArtifactShapeLayer::customPathVertices() const { return impl_->customPathVertices_; }
+bool ArtifactShapeLayer::customPathClosed() const { return impl_->customPathClosed_; }
 
 // ============================================================
 // toQImage (Software rendering)
@@ -417,7 +516,13 @@ QRectF ArtifactShapeLayer::localBounds() const
  };
 
  QRectF bounds;
- if (impl_->customPolygonPoints_.size() >= 2) {
+ if (impl_->customPathVertices_.size() >= 2) {
+  // Use position points for a fast approximation
+  std::vector<QPointF> pts;
+  pts.reserve(impl_->customPathVertices_.size());
+  for (const auto& v : impl_->customPathVertices_) pts.push_back(v.pos);
+  bounds = boundsOfPoints(pts);
+ } else if (impl_->customPolygonPoints_.size() >= 2) {
   bounds = boundsOfPoints(impl_->customPolygonPoints_);
  } else {
   const QPainterPath path = buildShapePath(impl_->shapeType_, impl_->width_, impl_->height_,
@@ -449,6 +554,21 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
  }
  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
  auto* impl = impl_;
+ // When bezier path or non-default stroke styles are active, render via QImage cache
+ if (impl->useCachePipeline()) {
+  impl->rebuildCache();
+  const float layerOpacity = opacity();
+  drawWithClonerEffect(this, baseTransform,
+                       [renderer, impl, layerOpacity](const QMatrix4x4& transform, float weight) {
+   renderer->drawSpriteTransformed(
+       0.0f, 0.0f,
+       static_cast<float>(impl->width_),
+       static_cast<float>(impl->height_),
+       transform, impl->cachedImage_,
+       layerOpacity * weight);
+  });
+  return;
+ }
  drawWithClonerEffect(this, baseTransform,
                       [renderer, impl, this](const QMatrix4x4& transform, float weight) {
    const auto fill = FloatColor(
@@ -597,6 +717,27 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  strokeEnabledProp->setDisplayLabel(QStringLiteral("Stroke Enabled"));
   appearanceGroup.addProperty(strokeEnabledProp);
 
+ auto strokeCapProp = makeProp(QStringLiteral("shape.strokeCap"),
+                               ArtifactCore::PropertyType::Integer,
+                               static_cast<int>(impl_->strokeCap_), -205, false);
+ strokeCapProp->setDisplayLabel(QStringLiteral("Stroke Cap"));
+ strokeCapProp->setTooltip(QStringLiteral("0=Flat, 1=Round, 2=Square"));
+  appearanceGroup.addProperty(strokeCapProp);
+
+ auto strokeJoinProp = makeProp(QStringLiteral("shape.strokeJoin"),
+                                ArtifactCore::PropertyType::Integer,
+                                static_cast<int>(impl_->strokeJoin_), -204, false);
+ strokeJoinProp->setDisplayLabel(QStringLiteral("Stroke Join"));
+ strokeJoinProp->setTooltip(QStringLiteral("0=Miter, 1=Round, 2=Bevel"));
+  appearanceGroup.addProperty(strokeJoinProp);
+
+ auto strokeAlignProp = makeProp(QStringLiteral("shape.strokeAlign"),
+                                 ArtifactCore::PropertyType::Integer,
+                                 static_cast<int>(impl_->strokeAlign_), -203, false);
+ strokeAlignProp->setDisplayLabel(QStringLiteral("Stroke Align"));
+ strokeAlignProp->setTooltip(QStringLiteral("0=Center, 1=Inside, 2=Outside"));
+  appearanceGroup.addProperty(strokeAlignProp);
+
  groups.push_back(appearanceGroup);
 
  // Shape-specific params
@@ -681,6 +822,18 @@ if (propertyPath == "shape.type") {
   setPolygonSides(value.toInt());
   return true;
  }
+ if (propertyPath == "shape.strokeCap") {
+  setStrokeCap(static_cast<StrokeCap>(value.toInt()));
+  return true;
+ }
+ if (propertyPath == "shape.strokeJoin") {
+  setStrokeJoin(static_cast<StrokeJoin>(value.toInt()));
+  return true;
+ }
+ if (propertyPath == "shape.strokeAlign") {
+  setStrokeAlign(static_cast<StrokeAlign>(value.toInt()));
+  return true;
+ }
  return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
@@ -705,6 +858,9 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   obj["strokeA"] = static_cast<double>(impl_->strokeColor_.a());
   obj["strokeWidth"] = static_cast<double>(impl_->strokeWidth_);
   obj["strokeEnabled"] = impl_->strokeEnabled_;
+  obj["strokeCap"] = static_cast<int>(impl_->strokeCap_);
+  obj["strokeJoin"] = static_cast<int>(impl_->strokeJoin_);
+  obj["strokeAlign"] = static_cast<int>(impl_->strokeAlign_);
   obj["cornerRadius"] = static_cast<double>(impl_->cornerRadius_);
   obj["starPoints"] = impl_->starPoints_;
   obj["starInnerRadius"] = static_cast<double>(impl_->starInnerRadius_);
@@ -718,6 +874,18 @@ QJsonObject ArtifactShapeLayer::toJson() const {
    customPolygonPoints.push_back(p);
   }
   obj["customPolygonPoints"] = customPolygonPoints;
+  // Phase 5: bezier path
+  obj["customPathClosed"] = impl_->customPathClosed_;
+  QJsonArray customPath;
+  for (const auto& v : impl_->customPathVertices_) {
+   QJsonObject vObj;
+   vObj["px"] = v.pos.x();    vObj["py"] = v.pos.y();
+   vObj["ix"] = v.inTangent.x(); vObj["iy"] = v.inTangent.y();
+   vObj["ox"] = v.outTangent.x(); vObj["oy"] = v.outTangent.y();
+   vObj["smooth"] = v.smooth;
+   customPath.push_back(vObj);
+  }
+  obj["customPath"] = customPath;
   return obj;
 }
 
@@ -740,6 +908,9 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
  ));
  layer->setStrokeWidth(static_cast<float>(obj["strokeWidth"].toDouble(0.0)));
  layer->setStrokeEnabled(obj["strokeEnabled"].toBool(false));
+ layer->setStrokeCap(static_cast<StrokeCap>(obj["strokeCap"].toInt(0)));
+ layer->setStrokeJoin(static_cast<StrokeJoin>(obj["strokeJoin"].toInt(0)));
+ layer->setStrokeAlign(static_cast<StrokeAlign>(obj["strokeAlign"].toInt(0)));
  layer->setCornerRadius(static_cast<float>(obj["cornerRadius"].toDouble(0.0)));
  layer->setStarPoints(obj["starPoints"].toInt(5));
  layer->setStarInnerRadius(static_cast<float>(obj["starInnerRadius"].toDouble(0.382)));
@@ -751,6 +922,23 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
  for (const auto& value : customPolygonPoints) {
   const QJsonObject p = value.toObject();
   layer->impl_->customPolygonPoints_.push_back(QPointF(p["x"].toDouble(), p["y"].toDouble()));
+ }
+ // Phase 5: bezier path (takes priority over customPolygon)
+ const QJsonArray customPathArr = obj["customPath"].toArray();
+ if (!customPathArr.isEmpty()) {
+  layer->impl_->customPathClosed_ = obj["customPathClosed"].toBool(true);
+  layer->impl_->customPathVertices_.clear();
+  layer->impl_->customPathVertices_.reserve(customPathArr.size());
+  for (const auto& val : customPathArr) {
+   const QJsonObject vObj = val.toObject();
+   CustomPathVertex v;
+   v.pos = QPointF(vObj["px"].toDouble(), vObj["py"].toDouble());
+   v.inTangent = QPointF(vObj["ix"].toDouble(), vObj["iy"].toDouble());
+   v.outTangent = QPointF(vObj["ox"].toDouble(), vObj["oy"].toDouble());
+   v.smooth = vObj["smooth"].toBool(false);
+   layer->impl_->customPathVertices_.push_back(v);
+  }
+  layer->impl_->customPolygonPoints_.clear(); // mutual exclusion
  }
  layer->impl_->markDirty();
  return layer;
