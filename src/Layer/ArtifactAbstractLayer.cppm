@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 #include <QDebug>
 #include <QImage>
@@ -1445,11 +1445,13 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   auto scaleXProp = makeProp(QStringLiteral("transform.scale.x"),
                              PropertyType::Float, t3.scaleX(), -298);
   scaleXProp->setAnimatable(true);
+   scaleXProp->setSoftRange(0.0, 2.0);  // Soft range for typical use (0-200%)
   transformGroup.addProperty(scaleXProp);
 
   auto scaleYProp = makeProp(QStringLiteral("transform.scale.y"),
                              PropertyType::Float, t3.scaleY(), -297);
   scaleYProp->setAnimatable(true);
+   scaleYProp->setSoftRange(0.0, 2.0);  // Soft range for typical use (0-200%)
   transformGroup.addProperty(scaleYProp);
 
   auto rotationProp = makeProp(QStringLiteral("transform.rotation"),
