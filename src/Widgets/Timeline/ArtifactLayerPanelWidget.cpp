@@ -2016,6 +2016,33 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     };
 
+    auto triggerReplaceLayerSource = [this, layer]() {
+      if (!layer) {
+        return;
+      }
+      const auto sourceFilter = QStringLiteral(
+          "Image Files (*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp *.exr);;"
+          "All Files (*.*)");
+      const QString currentPath = [&]() -> QString {
+        if (auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+          return imageLayer->sourcePath();
+        }
+        return {};
+      }();
+      const QString selectedPath = QFileDialog::getOpenFileName(
+          this, QStringLiteral("Replace Image Source"),
+          currentPath.isEmpty() ? QString() : QFileInfo(currentPath).absolutePath(),
+          sourceFilter);
+      if (selectedPath.isEmpty()) {
+        return;
+      }
+      if (auto *svc = ArtifactProjectService::instance()) {
+        if (svc->replaceLayerSourceInCurrentComposition(layer->id(), selectedPath)) {
+          updateLayout();
+        }
+      }
+    };
+
     // Variant Context Menu
     const int nameStartX = colW * kLayerPropertyColumnCount;
     const int nameX = nameStartX + row.depth * 14;
@@ -2049,6 +2076,13 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
 
     QMenu menu(this);
+    const bool isImageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr;
+    if (isImageLayer) {
+      menu.addAction("Replace Image...", [triggerReplaceLayerSource]() {
+        triggerReplaceLayerSource();
+      });
+      menu.addSeparator();
+    }
     if (!variants.empty()) {
       menu.addAction("Create Variant B from A", [this, layer]() {
         auto* cmd = new CreateVariantCommand(layer, "B");
