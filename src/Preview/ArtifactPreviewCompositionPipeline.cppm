@@ -106,6 +106,32 @@ namespace Artifact
     return false;
    };
 
+   const auto applyRasterizerEffects = [](ArtifactAbstractLayer* targetLayer, QImage& surface) {
+    if (!targetLayer || surface.isNull()) return;
+    const auto effects = targetLayer->getEffects();
+    if (effects.empty()) return;
+
+    cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(surface, true);
+    if (mat.type() != CV_32FC4) {
+     mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
+    }
+
+    ArtifactCore::ImageF32x4_RGBA cpuImage;
+    cpuImage.setFromCVMat(mat);
+    ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
+
+    for (const auto& effect : effects) {
+     if (!effect || !effect->isEnabled() ||
+         effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+      continue;
+     }
+     ArtifactCore::ImageF32x4RGBAWithCache next;
+     effect->applyCPUOnly(current, next);
+     current = next;
+    }
+    surface = current.image().toQImage();
+   };
+
    if (const auto solid2D = dynamic_cast<ArtifactSolid2DLayer*>(layerPtr)) {
     if (hasRasterizerEffects(layerPtr)) {
      const QSize surfaceSize(
@@ -113,6 +139,7 @@ namespace Artifact
          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
      surface.fill(toQColor(solid2D->color()));
+     applyRasterizerEffects(layerPtr, surface);
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, worldRect, surface, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
       const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
@@ -147,6 +174,7 @@ namespace Artifact
          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
      surface.fill(toQColor(solidImage->color()));
+     applyRasterizerEffects(layerPtr, surface);
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, worldRect, surface, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
       const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);

@@ -64,9 +64,9 @@ UploadImageData makeUploadImageData(const ArtifactCore::ImageF32x4_RGBA& image)
         auto* dstRow = upload.bytes.data() + static_cast<size_t>(y) * static_cast<size_t>(upload.stride);
         for (int x = 0; x < rgba32.cols; ++x) {
             const cv::Vec4f pixel = srcRow[x];
-            dstRow[x * 4 + 0] = static_cast<uint8_t>(std::clamp(pixel[0], 0.0f, 1.0f) * 255.0f + 0.5f);
+            dstRow[x * 4 + 0] = static_cast<uint8_t>(std::clamp(pixel[2], 0.0f, 1.0f) * 255.0f + 0.5f);
             dstRow[x * 4 + 1] = static_cast<uint8_t>(std::clamp(pixel[1], 0.0f, 1.0f) * 255.0f + 0.5f);
-            dstRow[x * 4 + 2] = static_cast<uint8_t>(std::clamp(pixel[2], 0.0f, 1.0f) * 255.0f + 0.5f);
+            dstRow[x * 4 + 2] = static_cast<uint8_t>(std::clamp(pixel[0], 0.0f, 1.0f) * 255.0f + 0.5f);
             dstRow[x * 4 + 3] = static_cast<uint8_t>(std::clamp(pixel[3], 0.0f, 1.0f) * 255.0f + 0.5f);
         }
     }

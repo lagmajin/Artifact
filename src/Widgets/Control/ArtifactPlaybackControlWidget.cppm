@@ -322,6 +322,8 @@ public:
     QToolButton* inButton_ = nullptr;
     QToolButton* outButton_ = nullptr;
     QToolButton* clearInOutButton_ = nullptr;
+    QLabel* inTimecodeLabel_ = nullptr;
+    QLabel* outTimecodeLabel_ = nullptr;
     QToolButton* speedQuarterButton_ = nullptr;
     QToolButton* speedHalfButton_ = nullptr;
     QToolButton* speedOneButton_ = nullptr;
@@ -410,8 +412,43 @@ public:
         transportRow->addWidget(stepForwardButton_);
         transportRow->addWidget(seekEndButton_);
         transportRow->addSpacing(8);
-        transportRow->addWidget(inButton_);
-        transportRow->addWidget(outButton_);
+        
+        auto* inWidget = new QWidget(owner_);
+        auto* inLayout = new QVBoxLayout(inWidget);
+        inLayout->setContentsMargins(0, 0, 0, 0);
+        inLayout->setSpacing(2);
+        inLayout->addWidget(inButton_);
+        impl_->inTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
+        {
+            QFont labelFont = impl_->inTimecodeLabel_->font();
+            labelFont.setPointSize(7);
+            impl_->inTimecodeLabel_->setFont(labelFont);
+            QPalette labelPal = impl_->inTimecodeLabel_->palette();
+            labelPal.setColor(QPalette::WindowText, QColor(150, 150, 150));
+            impl_->inTimecodeLabel_->setPalette(labelPal);
+            impl_->inTimecodeLabel_->setAlignment(Qt::AlignCenter);
+        }
+        inLayout->addWidget(impl_->inTimecodeLabel_);
+        
+        auto* outWidget = new QWidget(owner_);
+        auto* outLayout = new QVBoxLayout(outWidget);
+        outLayout->setContentsMargins(0, 0, 0, 0);
+        outLayout->setSpacing(2);
+        outLayout->addWidget(outButton_);
+        impl_->outTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
+        {
+            QFont labelFont = impl_->outTimecodeLabel_->font();
+            labelFont.setPointSize(7);
+            impl_->outTimecodeLabel_->setFont(labelFont);
+            QPalette labelPal = impl_->outTimecodeLabel_->palette();
+            labelPal.setColor(QPalette::WindowText, QColor(150, 150, 150));
+            impl_->outTimecodeLabel_->setPalette(labelPal);
+            impl_->outTimecodeLabel_->setAlignment(Qt::AlignCenter);
+        }
+        outLayout->addWidget(impl_->outTimecodeLabel_);
+        
+        transportRow->addWidget(inWidget);
+        transportRow->addWidget(outWidget);
         transportRow->addWidget(clearInOutButton_);
         transportRow->addWidget(timecodeFrame_);
         transportRow->addSpacing(8);
@@ -672,6 +709,13 @@ public:
             currentText = formatFrameCount(clampedCurrent);
             timecodeFrame_->setCurrentFrameText(currentText);
             timecodeFrame_->setRangeTexts(inText, outText);
+            
+            if (impl_->inTimecodeLabel_) {
+                impl_->inTimecodeLabel_->setText(inText);
+            }
+            if (impl_->outTimecodeLabel_) {
+                impl_->outTimecodeLabel_->setText(outText);
+            }
         }
     }
 
@@ -1420,3 +1464,4 @@ void ArtifactPlaybackSpeedWidget::setSpeedPreset(float speed)
 }
 
 } // namespace Artifact
+

@@ -318,6 +318,8 @@ public:
   QLabel *effectParametersHintLabel = nullptr;
   ArtifactPropertyWidget *effectPropertyWidget = nullptr;
   QString focusedEffectId_;
+  ArtifactAbstractLayerPtr lastSyncedLayer_;
+  QString lastSyncedFocusedEffectId_;
 
   struct EffectRack {
     QListWidget *listWidget = nullptr;
@@ -450,6 +452,8 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
           QStringLiteral("Select a layer and effect to edit parameters."));
       effectParametersHintLabel->setVisible(true);
     }
+    lastSyncedLayer_.reset();
+    lastSyncedFocusedEffectId_.clear();
     return;
   }
 
@@ -462,6 +466,8 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
           QStringLiteral("Select a layer and effect to edit parameters."));
       effectParametersHintLabel->setVisible(true);
     }
+    lastSyncedLayer_.reset();
+    lastSyncedFocusedEffectId_.clear();
     return;
   }
 
@@ -474,6 +480,8 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
           QStringLiteral("Select a layer and effect to edit parameters."));
       effectParametersHintLabel->setVisible(true);
     }
+    lastSyncedLayer_.reset();
+    lastSyncedFocusedEffectId_.clear();
     return;
   }
 
@@ -486,8 +494,17 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
           QStringLiteral("Select a layer and effect to edit parameters."));
       effectParametersHintLabel->setVisible(true);
     }
+    lastSyncedLayer_.reset();
+    lastSyncedFocusedEffectId_.clear();
     return;
   }
+
+  if (layer == lastSyncedLayer_ && focusedEffectId_ == lastSyncedFocusedEffectId_) {
+    return;
+  }
+
+  lastSyncedLayer_ = layer;
+  lastSyncedFocusedEffectId_ = focusedEffectId_;
 
   bool effectExists = false;
   if (!focusedEffectId_.trimmed().isEmpty()) {
