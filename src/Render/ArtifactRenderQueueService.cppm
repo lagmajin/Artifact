@@ -1754,7 +1754,7 @@ namespace Artifact
 
         ArtifactRenderQueueManager queueManager;
         void* ffmpegEncoder = nullptr; // Temporarily void* to bypass build error
-        std::map<int, ArtifactCore::ImageF32x4_RGBA> frameBuffer;
+        std::unordered_map<int, ArtifactCore::ImageF32x4_RGBA> frameBuffer;
         int nextFrameToEncode = 0;
         std::mutex encoderMutex;
         std::mutex queueMutex;

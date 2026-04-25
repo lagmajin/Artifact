@@ -707,6 +707,17 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         return;
     }
 
+    qCDebug(videoLayerLog)
+        << "[VideoLayerT] decodeCurrentFrame starting bg decode"
+        << "timeline=" << timelineFrame
+        << "source=" << sourceFrame
+        << "hasBuffer=" << impl_->hasCurrentFrameBuffer_
+        << "hasQImage=" << !impl_->currentQImage_.isNull()
+        << "inPoint=" << inPoint()
+        << "outPoint=" << outPoint()
+        << "backend=" << decoderBackendName(impl_->playbackController_.get())
+        << threadIdTag();
+
     // バックグラウンドでデコードを開始し、メインスレッドをブロックしない
     // 現在フレームは currentQImage_（前のフレーム）をそのまま表示し続ける
     impl_->decoding_ = true;

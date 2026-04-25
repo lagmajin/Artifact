@@ -54,14 +54,22 @@ W_OBJECT_IMPL(RenderPerformanceMonitor)
 
 // ==================== FrameCache::Impl ====================
 
+namespace {
+struct FramePositionHash {
+    size_t operator()(const ArtifactCore::FramePosition& fp) const {
+        return std::hash<int64_t>{}(fp.framePosition());
+    }
+};
+} // namespace
+
 class FrameCache::Impl {
 public:
     // Cache storage
-    std::map<FramePosition, std::shared_ptr<FrameCacheEntry>> entries_;
+    std::unordered_map<FramePosition, std::shared_ptr<FrameCacheEntry>, FramePositionHash> entries_;
     
     // Access tracking for LRU
-    std::map<FramePosition, uint64_t> accessTimes_;
-    std::map<FramePosition, int> accessCounts_;  // For LFU
+    std::unordered_map<FramePosition, uint64_t, FramePositionHash> accessTimes_;
+    std::unordered_map<FramePosition, int, FramePositionHash> accessCounts_;  // For LFU
     std::deque<FramePosition> insertionOrder_;    // For FIFO
     
     // Configuration

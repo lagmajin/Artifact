@@ -3,6 +3,8 @@
 
 #include <wobjectdefs.h>
 #include <QWidget>
+#include <QShowEvent>
+#include <QHideEvent>
 #include <QVector3D>
 export module Artifact.Widgets.ModelViewer;
 
@@ -54,6 +56,10 @@ public:
     QVector3D cameraPosition() const;
 
     void requestUpdate();
+
+protected:
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
 };
 
 }

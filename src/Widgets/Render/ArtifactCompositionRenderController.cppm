@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <DeviceContext.h>
 #define NOMINMAX
 #define QT_NO_KEYWORDS
@@ -1097,6 +1097,13 @@ void drawLayerForCompositionView(
   }
 
   if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
+    qCDebug(compositionViewLog)
+        << "[VideoLayerT] drawLayerForCompositionView"
+        << "frame=" << cacheFrameNumber
+        << "opacityOverride=" << opacityOverride
+        << "layerOpacity=" << layer->opacity()
+        << "hasRasterizer=" << hasRasterizerEffectsOrMasks(layer)
+        << videoLayer->debugState();
     if (!hasRasterizerEffectsOrMasks(layer) &&
         videoLayer->hasCurrentFrameBuffer()) {
       const ArtifactCore::ImageF32x4_RGBA &buffer =
@@ -1450,9 +1457,9 @@ public:
 
   LayerID selectedLayerId_;
   bool isDraggingLayer_ = false;
-  // ギズモドラッグ時のレンダリングを≈60fps にスロットル
+  // ギズモドラッグ時のレンダリングを≈30fps にスロットル
   QElapsedTimer gizmoDragRenderTimer_;
-  static constexpr qint64 kGizmoDragRenderIntervalMs = 14; // ~70fps cap
+  static constexpr qint64 kGizmoDragRenderIntervalMs = 33; // ~30fps cap
   // ドラッグ中はGPUテクスチャキャッシュ無効化とオーバーレイ同期をスキップするフラグ
   bool gizmoDragActive_ = false;
   bool pendingMaskCreation_ = false;
@@ -4516,8 +4523,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               ((hasSelection && !isLayerSelected(selectedIds, layer))
                    ? kGhostOpacityScale
                    : 1.0f);
-          if (opacity <= 0.0f)
+          if (opacity <= 0.0f) {
+            qCDebug(compositionViewLog)
+                << "[LayerSkip] opacity <= 0"
+                << "layer=" << layer->id().toString()
+                << "layerName=" << layer->layerName()
+                << "opacity=" << opacity
+                << "rawOpacity=" << layer->opacity()
+                << "hasSelection=" << hasSelection;
             continue;
+          }
 
           // -- Adjustment Layer or Normal Layer? --
           renderer_->setOverrideRTV(layerRTV);
