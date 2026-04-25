@@ -756,6 +756,15 @@ void drawEmphasizedRect(ArtifactIRenderer* renderer,
 TransformGizmo::TransformGizmo() {}
 TransformGizmo::~TransformGizmo() {}
 
+QRectF TransformGizmo::currentCanvasBoundingRect() const {
+ if (!geometryCacheValid_) return QRectF();
+ const float minX = std::min({cachedPoints_.tl.x, cachedPoints_.tr.x, cachedPoints_.bl.x, cachedPoints_.br.x});
+ const float maxX = std::max({cachedPoints_.tl.x, cachedPoints_.tr.x, cachedPoints_.bl.x, cachedPoints_.br.x});
+ const float minY = std::min({cachedPoints_.tl.y, cachedPoints_.tr.y, cachedPoints_.bl.y, cachedPoints_.br.y});
+ const float maxY = std::max({cachedPoints_.tl.y, cachedPoints_.tr.y, cachedPoints_.bl.y, cachedPoints_.br.y});
+ return QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
+}
+
 void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
   if (layer_ == layer) {
     return;
