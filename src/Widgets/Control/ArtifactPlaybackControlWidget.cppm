@@ -418,34 +418,34 @@ public:
         inLayout->setContentsMargins(0, 0, 0, 0);
         inLayout->setSpacing(2);
         inLayout->addWidget(inButton_);
-        impl_->inTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
+        inTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
         {
-            QFont labelFont = impl_->inTimecodeLabel_->font();
+            QFont labelFont = inTimecodeLabel_->font();
             labelFont.setPointSize(7);
-            impl_->inTimecodeLabel_->setFont(labelFont);
-            QPalette labelPal = impl_->inTimecodeLabel_->palette();
+            inTimecodeLabel_->setFont(labelFont);
+            QPalette labelPal = inTimecodeLabel_->palette();
             labelPal.setColor(QPalette::WindowText, QColor(150, 150, 150));
-            impl_->inTimecodeLabel_->setPalette(labelPal);
-            impl_->inTimecodeLabel_->setAlignment(Qt::AlignCenter);
+            inTimecodeLabel_->setPalette(labelPal);
+            inTimecodeLabel_->setAlignment(Qt::AlignCenter);
         }
-        inLayout->addWidget(impl_->inTimecodeLabel_);
+        inLayout->addWidget(inTimecodeLabel_);
         
         auto* outWidget = new QWidget(owner_);
         auto* outLayout = new QVBoxLayout(outWidget);
         outLayout->setContentsMargins(0, 0, 0, 0);
         outLayout->setSpacing(2);
         outLayout->addWidget(outButton_);
-        impl_->outTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
+        outTimecodeLabel_ = new QLabel(QStringLiteral("--:--:--:--"), owner_);
         {
-            QFont labelFont = impl_->outTimecodeLabel_->font();
+            QFont labelFont = outTimecodeLabel_->font();
             labelFont.setPointSize(7);
-            impl_->outTimecodeLabel_->setFont(labelFont);
-            QPalette labelPal = impl_->outTimecodeLabel_->palette();
+            outTimecodeLabel_->setFont(labelFont);
+            QPalette labelPal = outTimecodeLabel_->palette();
             labelPal.setColor(QPalette::WindowText, QColor(150, 150, 150));
-            impl_->outTimecodeLabel_->setPalette(labelPal);
-            impl_->outTimecodeLabel_->setAlignment(Qt::AlignCenter);
+            outTimecodeLabel_->setPalette(labelPal);
+            outTimecodeLabel_->setAlignment(Qt::AlignCenter);
         }
-        outLayout->addWidget(impl_->outTimecodeLabel_);
+        outLayout->addWidget(outTimecodeLabel_);
         
         transportRow->addWidget(inWidget);
         transportRow->addWidget(outWidget);
@@ -710,11 +710,11 @@ public:
             timecodeFrame_->setCurrentFrameText(currentText);
             timecodeFrame_->setRangeTexts(inText, outText);
             
-            if (impl_->inTimecodeLabel_) {
-                impl_->inTimecodeLabel_->setText(inText);
+            if (inTimecodeLabel_) {
+                inTimecodeLabel_->setText(inText);
             }
-            if (impl_->outTimecodeLabel_) {
-                impl_->outTimecodeLabel_->setText(outText);
+            if (outTimecodeLabel_) {
+                outTimecodeLabel_->setText(outText);
             }
         }
     }

@@ -45,6 +45,7 @@
 #include <QDebug>
 #include <QLoggingCategory>
 #include <QString>
+#include <opencv2/opencv.hpp>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 module Artifact.Preview.Pipeline;
 
@@ -66,6 +67,7 @@ import Artifact.Render.IRenderer;
 import Artifact.Render.Context;
 import Color.Float;
 import Frame.Position;
+import CvUtils;
 
 namespace Artifact
 {
