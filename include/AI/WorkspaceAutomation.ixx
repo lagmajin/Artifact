@@ -183,6 +183,10 @@ public:
             {"startAllRenderQueues", IDescribable::loc("Start every queued render job.", "Start every queued render job.", {}), "bool"},
             {"pauseAllRenderQueues", IDescribable::loc("Pause every queued render job.", "Pause every queued render job.", {}), "bool"},
             {"cancelAllRenderQueues", IDescribable::loc("Cancel every queued render job.", "Cancel every queued render job.", {}), "bool"},
+            {"exportComposition", IDescribable::loc("Add composition to export queue with specified settings.", "Add composition to export queue with specified settings.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("compositionId"), QStringLiteral("outputPath"), QStringLiteral("format"), QStringLiteral("codec"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
+            {"exportCurrentComposition", IDescribable::loc("Add active composition to export queue with specified settings.", "Add active composition to export queue with specified settings.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("outputPath"), QStringLiteral("format"), QStringLiteral("codec"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
+            {"getSupportedExportFormats", IDescribable::loc("Get list of supported export file formats.", "Get list of supported export file formats.", {}), "QStringList"},
+            {"getDefaultCodecForFormat", IDescribable::loc("Get the default export codec for a given format.", "Get the default export codec for a given format.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("format")}},
             {"removeAllRenderQueues", IDescribable::loc("Clear the render queue.", "Clear the render queue.", {}), "bool"}
         };
     }
@@ -484,6 +488,23 @@ public:
         }
         if (name == QStringLiteral("cancelAllRenderQueues")) {
             return renderQueueCancelAll();
+        }
+        if (name == QStringLiteral("exportComposition")) {
+            if (args.size() < 8) return false;
+            return exportComposition(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), stringArg(args, 3), 
+                                   intArg(args, 4, 1920), intArg(args, 5, 1080), doubleArg(args, 6, 30.0), intArg(args, 7, 5000));
+        }
+        if (name == QStringLiteral("exportCurrentComposition")) {
+            if (args.size() < 7) return false;
+            return exportCurrentComposition(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), 
+                                          intArg(args, 3, 1920), intArg(args, 4, 1080), doubleArg(args, 5, 30.0), intArg(args, 6, 5000));
+        }
+        if (name == QStringLiteral("getSupportedExportFormats")) {
+            return getSupportedExportFormats();
+        }
+        if (name == QStringLiteral("getDefaultCodecForFormat")) {
+            if (args.isEmpty()) return QString();
+            return getDefaultCodecForFormat(stringArg(args, 0));
         }
         if (name == QStringLiteral("removeAllRenderQueues")) {
             return renderQueueRemoveAll();
@@ -2068,6 +2089,127 @@ private:
             return false;
         }
         return service->relinkFootageByPath(oldFilePath.trimmed(), newFilePath.trimmed());
+    }
+
+    // Phase 6: Export
+    //
+    // Add composition to export queue with specified settings.
+    // Supported formats: "mp4", "mov", "avi", "png", "jpg", "exr", "tiff"
+    // Returns: {"success": bool, "jobIndex": int (if added)}
+    static QVariant exportComposition(const QString& compositionId,
+                                     const QString& outputPath,
+                                     const QString& format,
+                                     const QString& codec,
+                                     int width,
+                                     int height,
+                                     double fps,
+                                     int bitrateKbps)
+    {
+        auto* renderService = ArtifactRenderQueueService::instance();
+        auto* projectService = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        
+        if (!renderService || !projectService) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("RenderQueue or Project service unavailable")}
+            };
+        }
+
+        // Validate composition exists
+        const auto found = projectService->findComposition(CompositionID(compositionId));
+        if (!found.success) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Composition not found")}
+            };
+        }
+
+        const auto comp = found.ptr.lock();
+        if (!comp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Composition is no longer available")}
+            };
+        }
+
+        // Add to render queue
+        renderService->addRenderQueueForComposition(comp->id(), comp->settings().compositionName().toQString());
+        
+        // Apply settings to last job (most recently added)
+        const int jobCount = renderService->jobCount();
+        if (jobCount <= 0) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Failed to add render queue")}
+            };
+        }
+
+        const int jobIndex = jobCount - 1;
+        
+        // Set output path
+        renderService->setJobOutputPathAt(jobIndex, outputPath);
+        
+        // Set output format, codec, and resolution
+        renderService->setJobOutputSettingsAt(jobIndex, format, codec, QStringLiteral("default"), width, height, fps, bitrateKbps);
+        
+        return QVariantMap{
+            {QStringLiteral("success"), true},
+            {QStringLiteral("jobIndex"), jobIndex}
+        };
+    }
+
+    // Export current composition to file.
+    // Convenience wrapper for exportComposition with current composition.
+    // Returns: {"success": bool, "jobIndex": int (if added)}
+    static QVariant exportCurrentComposition(const QString& outputPath,
+                                           const QString& format,
+                                           const QString& codec,
+                                           int width,
+                                           int height,
+                                           double fps,
+                                           int bitrateKbps)
+    {
+        const auto comp = currentComposition();
+        if (!comp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No active composition")}
+            };
+        }
+
+        return exportComposition(comp->id().toString(), outputPath, format, codec, width, height, fps, bitrateKbps);
+    }
+
+    // Get list of supported export formats.
+    // Returns: ["mp4", "mov", "avi", "png", "jpg", "exr", "tiff"]
+    static QVariant getSupportedExportFormats()
+    {
+        return QStringList{
+            QStringLiteral("mp4"),
+            QStringLiteral("mov"),
+            QStringLiteral("avi"),
+            QStringLiteral("png"),
+            QStringLiteral("jpg"),
+            QStringLiteral("exr"),
+            QStringLiteral("tiff")
+        };
+    }
+
+    // Get default export codec for a given format.
+    // Returns: codec name string
+    static QVariant getDefaultCodecForFormat(const QString& format)
+    {
+        const QString fmt = format.toLower().trimmed();
+        if (fmt == QStringLiteral("mp4") || fmt == QStringLiteral("mov")) {
+            return QStringLiteral("h264");
+        } else if (fmt == QStringLiteral("avi")) {
+            return QStringLiteral("mpeg2video");
+        } else if (fmt == QStringLiteral("png") || fmt == QStringLiteral("jpg") || fmt == QStringLiteral("tiff")) {
+            return QStringLiteral("image");
+        } else if (fmt == QStringLiteral("exr")) {
+            return QStringLiteral("exr");
+        }
+        return QStringLiteral("h264");  // Default fallback
     }
 
     static QVariant addRenderQueueForCurrentComposition()
