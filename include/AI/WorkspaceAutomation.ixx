@@ -126,6 +126,24 @@ public:
             {"setCompositionNote", IDescribable::loc("Set the note text of a composition by id.", "Set the note text of a composition by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("compositionId"), QStringLiteral("note")}},
             {"getLayerNote", IDescribable::loc("Get the note text of a layer in the active composition.", "Get the note text of a layer in the active composition.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"setLayerNote", IDescribable::loc("Set the note text of a layer in the active composition.", "Set the note text of a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("note")}},
+            {"getLayerPosition", IDescribable::loc("Get the position of a layer in the active composition (X, Y).", "Get the position of a layer in the active composition (X, Y).", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"setLayerPosition", IDescribable::loc("Set the position of a layer in the active composition (X, Y).", "Set the position of a layer in the active composition (X, Y).", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("x"), QStringLiteral("y")}},
+            {"getLayerScale", IDescribable::loc("Get the scale of a layer in the active composition (X, Y).", "Get the scale of a layer in the active composition (X, Y).", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"setLayerScale", IDescribable::loc("Set the scale of a layer in the active composition (X, Y).", "Set the scale of a layer in the active composition (X, Y).", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("sx"), QStringLiteral("sy")}},
+            {"getLayerRotation", IDescribable::loc("Get the rotation of a layer in the active composition (degrees).", "Get the rotation of a layer in the active composition (degrees).", {}), "double", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"setLayerRotation", IDescribable::loc("Set the rotation of a layer in the active composition (degrees).", "Set the rotation of a layer in the active composition (degrees).", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("rotation")}},
+            {"getLayerOpacity", IDescribable::loc("Get the opacity of a layer in the active composition (0-100).", "Get the opacity of a layer in the active composition (0-100).", {}), "double", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"setLayerOpacity", IDescribable::loc("Set the opacity of a layer in the active composition (0-100).", "Set the opacity of a layer in the active composition (0-100).", {}), "bool", {QStringLiteral("QString"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("opacity")}},
+            {"getLayerEffects", IDescribable::loc("Get the list of effects applied to a layer in the active composition.", "Get the list of effects applied to a layer in the active composition.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"addLayerEffect", IDescribable::loc("Add an effect to a layer in the active composition.", "Add an effect to a layer in the active composition.", {}), "QString", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectType")}},
+            {"removeLayerEffect", IDescribable::loc("Remove an effect from a layer in the active composition.", "Remove an effect from a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId")}},
+            {"setLayerEffectParameter", IDescribable::loc("Set an effect parameter on a layer in the active composition.", "Set an effect parameter on a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("paramName"), QStringLiteral("value")}},
+            {"setKeyframe", IDescribable::loc("Set a keyframe for a layer property at a specific frame.", "Set a keyframe for a layer property at a specific frame.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber"), QStringLiteral("value")}},
+            {"getKeyframes", IDescribable::loc("Get all keyframes for a layer property.", "Get all keyframes for a layer property.", {}), "QVariantList", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath")}},
+            {"deleteKeyframe", IDescribable::loc("Delete a keyframe for a layer property at a specific frame.", "Delete a keyframe for a layer property at a specific frame.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber")}},
+            {"createGroupLayer", IDescribable::loc("Create a new group layer in the active composition.", "Create a new group layer in the active composition.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("name")}},
+            {"moveLayersToGroup", IDescribable::loc("Move multiple layers into a group layer.", "Move multiple layers into a group layer.", {}), "bool", {QStringLiteral("QStringList"), QStringLiteral("QString")}, {QStringLiteral("layerIds"), QStringLiteral("groupLayerId")}},
+            {"ungroupLayers", IDescribable::loc("Ungroup all layers in a group layer.", "Ungroup all layers in a group layer.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("groupLayerId")}},
             {"compositionRemovalConfirmationMessage", IDescribable::loc("Return the confirmation message for deleting a composition.", "Return the confirmation message for deleting a composition.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"removeCompositionWithRenderQueueCleanup", IDescribable::loc("Remove a composition and clear related render queue jobs.", "Remove a composition and clear related render queue jobs.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"removeAllAssets", IDescribable::loc("Remove all imported assets from the project.", "Remove all imported assets from the project.", {}), "bool"},
@@ -297,6 +315,60 @@ public:
         }
         if (name == QStringLiteral("setLayerNote")) {
             return setLayerNote(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("getLayerPosition")) {
+            return getLayerPosition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setLayerPosition")) {
+            return setLayerPosition(stringArg(args, 0), doubleArg(args, 1, 0.0), doubleArg(args, 2, 0.0));
+        }
+        if (name == QStringLiteral("getLayerScale")) {
+            return getLayerScale(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setLayerScale")) {
+            return setLayerScale(stringArg(args, 0), doubleArg(args, 1, 1.0), doubleArg(args, 2, 1.0));
+        }
+        if (name == QStringLiteral("getLayerRotation")) {
+            return getLayerRotation(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setLayerRotation")) {
+            return setLayerRotation(stringArg(args, 0), doubleArg(args, 1, 0.0));
+        }
+        if (name == QStringLiteral("getLayerOpacity")) {
+            return getLayerOpacity(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setLayerOpacity")) {
+            return setLayerOpacity(stringArg(args, 0), doubleArg(args, 1, 100.0));
+        }
+        if (name == QStringLiteral("getLayerEffects")) {
+            return getLayerEffects(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("addLayerEffect")) {
+            return addLayerEffect(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("removeLayerEffect")) {
+            return removeLayerEffect(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("setLayerEffectParameter")) {
+            return setLayerEffectParameter(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), doubleArg(args, 3, 0.0));
+        }
+        if (name == QStringLiteral("setKeyframe")) {
+            return setKeyframe(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0), doubleArg(args, 3, 0.0));
+        }
+        if (name == QStringLiteral("getKeyframes")) {
+            return getKeyframes(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("deleteKeyframe")) {
+            return deleteKeyframe(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0));
+        }
+        if (name == QStringLiteral("createGroupLayer")) {
+            return createGroupLayer(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("moveLayersToGroup")) {
+            return moveLayersToGroup(collectStringList(args), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("ungroupLayers")) {
+            return ungroupLayers(stringArg(args, 0));
         }
         if (name == QStringLiteral("compositionRemovalConfirmationMessage")) {
             return compositionRemovalConfirmationMessage(stringArg(args, 0));
@@ -1212,6 +1284,258 @@ private:
         }
         layer->setLayerNote(note);
         return true;
+    }
+
+    // Phase 2: Layer Properties
+    static QVariant getLayerPosition(const QString& layerId)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return QVariantMap();
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return QVariantMap();
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return QVariantMap();
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return QVariantMap();
+        }
+        float x = 0.0f, y = 0.0f;
+        auto& transform = layer->transform2D();
+        transform.position(x, y);
+        QVariantMap result;
+        result[QStringLiteral("x")] = static_cast<double>(x);
+        result[QStringLiteral("y")] = static_cast<double>(y);
+        return result;
+    }
+
+    static QVariant setLayerPosition(const QString& layerId, double x, double y)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return false;
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return false;
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return false;
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        auto& transform = layer->transform2D();
+        transform.setPosition(static_cast<float>(x), static_cast<float>(y));
+        return true;
+    }
+
+    static QVariant getLayerScale(const QString& layerId)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return QVariantMap();
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return QVariantMap();
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return QVariantMap();
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return QVariantMap();
+        }
+        float sx = 1.0f, sy = 1.0f;
+        auto& transform = layer->transform2D();
+        transform.scale(sx, sy);
+        QVariantMap result;
+        result[QStringLiteral("x")] = static_cast<double>(sx);
+        result[QStringLiteral("y")] = static_cast<double>(sy);
+        return result;
+    }
+
+    static QVariant setLayerScale(const QString& layerId, double sx, double sy)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return false;
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return false;
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return false;
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        auto& transform = layer->transform2D();
+        transform.setScale(static_cast<float>(sx), static_cast<float>(sy));
+        return true;
+    }
+
+    static QVariant getLayerRotation(const QString& layerId)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return 0.0;
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return 0.0;
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return 0.0;
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return 0.0;
+        }
+        auto& transform = layer->transform2D();
+        return static_cast<double>(transform.rotation());
+    }
+
+    static QVariant setLayerRotation(const QString& layerId, double rotation)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return false;
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return false;
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return false;
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        auto& transform = layer->transform2D();
+        transform.setRotation(static_cast<float>(rotation));
+        return true;
+    }
+
+    static QVariant getLayerOpacity(const QString& layerId)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return 100.0;
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return 100.0;
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return 100.0;
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return 100.0;
+        }
+        return static_cast<double>(layer->opacity() * 100.0);
+    }
+
+    static QVariant setLayerOpacity(const QString& layerId, double opacity)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return false;
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return false;
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return false;
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        layer->setOpacity(static_cast<float>(opacity / 100.0));
+        return true;
+    }
+
+    // Phase 3: Effects/Masks (stub implementations)
+    static QVariant getLayerEffects(const QString& layerId)
+    {
+        // TODO: Implement after effect stack API is clarified
+        return QVariantList();
+    }
+
+    static QVariant addLayerEffect(const QString& layerId, const QString& effectType)
+    {
+        // TODO: Implement after effect registry is accessible
+        return QString();
+    }
+
+    static QVariant removeLayerEffect(const QString& layerId, const QString& effectId)
+    {
+        // TODO: Implement after effect ID tracking is set up
+        return false;
+    }
+
+    static QVariant setLayerEffectParameter(const QString& layerId, const QString& effectId, const QString& paramName, double value)
+    {
+        // TODO: Implement after effect parameter API is clarified
+        return false;
+    }
+
+    // Phase 4: Keyframe Animation (stub implementations)
+    static QVariant setKeyframe(const QString& layerId, const QString& propertyPath, int frameNumber, double value)
+    {
+        // TODO: Implement after keyframe API is clarified
+        return false;
+    }
+
+    static QVariant getKeyframes(const QString& layerId, const QString& propertyPath)
+    {
+        // TODO: Implement after keyframe query API is clarified
+        return QVariantList();
+    }
+
+    static QVariant deleteKeyframe(const QString& layerId, const QString& propertyPath, int frameNumber)
+    {
+        // TODO: Implement after keyframe deletion API is clarified
+        return false;
+    }
+
+    // Phase 5: Group Layers (stub implementations)
+    static QVariant createGroupLayer(const QString& name)
+    {
+        // TODO: Implement after group layer API is clarified
+        return QString();
+    }
+
+    static QVariant moveLayersToGroup(const QStringList& layerIds, const QString& groupLayerId)
+    {
+        // TODO: Implement after group layer management API is clarified
+        return false;
+    }
+
+    static QVariant ungroupLayers(const QString& groupLayerId)
+    {
+        // TODO: Implement after ungroup operation is clarified
+        return false;
     }
 
     static ProjectItem* findProjectItemRecursive(ProjectItem* item, const QString& itemId)
