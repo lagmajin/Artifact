@@ -167,6 +167,12 @@ public /*slots*/:
   void renderOneFrame();
    void onRenderDebounceTimeout();
 
+  // Mark render state as dirty. The fixed-rate render tick (~60fps) will
+  // pick up the change and render on the next tick. Use this instead of
+  // renderOneFrame() for high-frequency events (mouse move, drag, etc.)
+  // to avoid the forced 16ms scheduling delay.
+  void markRenderDirty();
+
 signals:
   void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);
  };

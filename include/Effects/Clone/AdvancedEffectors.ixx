@@ -176,4 +176,62 @@ export namespace Artifact {
         }
     };
 
+    // ─────────────────────────────────────────────────────────
+    // NoiseCloneEffector (ノイズエフェクター)
+    // パーリンノイズ等を用いて、時間やインデックスに応じて滑らかなランダム変化を与える
+    // ─────────────────────────────────────────────────────────
+    class NoiseCloneEffector : public AbstractCloneEffector {
+    public:
+        QVector3D positionAmplitude{50, 50, 0};
+        QVector3D rotationAmplitude{0, 0, 45};
+        float scaleAmplitude = 0.0f;
+        float frequency = 1.0f;
+        float timeSpeed = 1.0f;
+        float currentTime = 0.0f;
+        int seed = 54321;
+
+        // 簡易的なノイズ関数 (Sin合成による擬似ノイズ)
+        float noise(float x, float y, float z) const {
+            auto s = [](float v) { return std::sin(v); };
+            return (s(x) + s(y + 1.23f) + s(z + 2.34f)) / 3.0f;
+        }
+
+        void applyToClones(std::vector<CloneData>& clones) const override {
+            for (auto& clone : clones) {
+                QVector3D currentPos = clone.transform.column(3).toVector3D();
+                float fieldWeight = calculateFieldWeight(currentPos);
+                float finalWeight = clone.weight * fieldWeight;
+
+                if (finalWeight <= 0.0001f) continue;
+
+                // ノイズのサンプリング座標 (インデックス + 時間)
+                float sampleX = static_cast<float>(clone.index) * frequency + seed;
+                float sampleY = currentTime * timeSpeed;
+                float sampleZ = seed * 0.1f;
+
+                float nx = noise(sampleX, sampleY, sampleZ);
+                float ny = noise(sampleX + 10.0f, sampleY, sampleZ);
+                float nz = noise(sampleX + 20.0f, sampleY, sampleZ);
+
+                if (!positionAmplitude.isNull()) {
+                    clone.transform.translate(nx * positionAmplitude.x() * finalWeight,
+                                            ny * positionAmplitude.y() * finalWeight,
+                                            nz * positionAmplitude.z() * finalWeight);
+                }
+
+                if (!rotationAmplitude.isNull()) {
+                    clone.transform.rotate(nx * rotationAmplitude.x() * finalWeight, 1, 0, 0);
+                    clone.transform.rotate(ny * rotationAmplitude.y() * finalWeight, 0, 1, 0);
+                    clone.transform.rotate(nz * rotationAmplitude.z() * finalWeight, 0, 0, 1);
+                }
+
+                if (scaleAmplitude != 0.0f) {
+                    float s = 1.0f + (nx * scaleAmplitude * finalWeight);
+                    clone.transform.scale(s, s, s);
+                }
+            }
+        }
+    };
+
 }
+
