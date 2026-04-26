@@ -25,6 +25,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.InitParams;
+import Artifact.Layer.Group;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Render.Queue.Service;
@@ -1688,23 +1689,184 @@ private:
         };
     }
 
-    // Phase 5: Group Layers (stub implementations)
+    // Phase 5: Group Layers
+    //
+    // Create a new group layer in the active composition.
+    // Returns: {"success": bool, "groupLayerId": string}
     static QVariant createGroupLayer(const QString& name)
     {
-        // TODO: Implement after group layer API is clarified
-        return QString();
+        auto svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("ProjectService not available")}
+            };
+        }
+
+        auto currentComp = svc->currentComposition();
+        if (!currentComp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No active composition")}
+            };
+        }
+
+        auto groupLayer = std::make_shared<ArtifactGroupLayer>();
+        groupLayer->setLayerName(name.isEmpty() ? QStringLiteral("Layer Group") : name);
+
+        // Add group layer to composition at top
+        auto result = currentComp->appendLayerTop(groupLayer);
+        if (!result.success) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Failed to add group layer to composition")}
+            };
+        }
+
+        // Notify changes
+        currentComp->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{currentComp->id().toString(), groupLayer->id().toString(),
+                            LayerChangedEvent::ChangeType::Created});
+
+        return QVariantMap{
+            {QStringLiteral("success"), true},
+            {QStringLiteral("groupLayerId"), groupLayer->id().toString()}
+        };
     }
 
+    // Move layers into a group layer.
+    // Returns: {"success": bool, "movedCount": int}
     static QVariant moveLayersToGroup(const QStringList& layerIds, const QString& groupLayerId)
     {
-        // TODO: Implement after group layer management API is clarified
-        return false;
+        auto svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("ProjectService not available")}
+            };
+        }
+
+        auto currentComp = svc->currentComposition();
+        if (!currentComp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No active composition")}
+            };
+        }
+
+        auto groupLayerPtr = currentComp->layerById(LayerID::fromString(groupLayerId));
+        if (!groupLayerPtr) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Group layer not found")}
+            };
+        }
+
+        auto* groupLayer = dynamic_cast<ArtifactGroupLayer*>(groupLayerPtr.get());
+        if (!groupLayer) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Target layer is not a group layer")}
+            };
+        }
+
+        int movedCount = 0;
+        for (const auto& layerId : layerIds) {
+            auto layerToMove = currentComp->layerById(LayerID::fromString(layerId));
+            if (layerToMove) {
+                // Remove from composition
+                currentComp->removeLayerById(LayerID::fromString(layerId));
+                
+                // Add to group
+                groupLayer->addChild(layerToMove);
+                movedCount++;
+
+                // Notify layer change
+                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                    LayerChangedEvent{currentComp->id().toString(), layerId,
+                                    LayerChangedEvent::ChangeType::Modified});
+            }
+        }
+
+        // Notify group change
+        currentComp->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{currentComp->id().toString(), groupLayerId,
+                            LayerChangedEvent::ChangeType::Modified});
+
+        return QVariantMap{
+            {QStringLiteral("success"), movedCount > 0},
+            {QStringLiteral("movedCount"), movedCount}
+        };
     }
 
+    // Ungroup all layers in a group layer (move children back to composition).
+    // Returns: {"success": bool, "unGroupedCount": int}
     static QVariant ungroupLayers(const QString& groupLayerId)
     {
-        // TODO: Implement after ungroup operation is clarified
-        return false;
+        auto svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("ProjectService not available")}
+            };
+        }
+
+        auto currentComp = svc->currentComposition();
+        if (!currentComp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No active composition")}
+            };
+        }
+
+        auto groupLayerPtr = currentComp->layerById(LayerID::fromString(groupLayerId));
+        if (!groupLayerPtr) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Group layer not found")}
+            };
+        }
+
+        auto* groupLayer = dynamic_cast<ArtifactGroupLayer*>(groupLayerPtr.get());
+        if (!groupLayer) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Target layer is not a group layer")}
+            };
+        }
+
+        // Get group's children before clearing
+        auto childrenCopy = groupLayer->children();
+        int unGroupedCount = 0;
+
+        // Move each child back to composition
+        for (const auto& child : childrenCopy) {
+            if (child) {
+                groupLayer->removeChild(child->id());
+                currentComp->appendLayerTop(child);
+                unGroupedCount++;
+
+                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                    LayerChangedEvent{currentComp->id().toString(), child->id().toString(),
+                                    LayerChangedEvent::ChangeType::Modified});
+            }
+        }
+
+        // Remove the now-empty group layer
+        currentComp->removeLayerById(LayerID::fromString(groupLayerId));
+        
+        // Notify changes
+        currentComp->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{currentComp->id().toString(), groupLayerId,
+                            LayerChangedEvent::ChangeType::Deleted});
+
+        return QVariantMap{
+            {QStringLiteral("success"), unGroupedCount > 0},
+            {QStringLiteral("unGroupedCount"), unGroupedCount}
+        };
     }
 
     static ProjectItem* findProjectItemRecursive(ProjectItem* item, const QString& itemId)
