@@ -160,11 +160,16 @@ void LayerMask::applyToImage(int width, int height, void* imageMat,
     cv::Mat alphaMask;
     compositeAlphaMask(width, height, &alphaMask, offsetX, offsetY);
 
-    // Split channels, multiply alpha by mask, merge back
+    // For CV_32FC4, OpenCV stores as BGRA in memory
+    // Split preserves this order: [B, G, R, A]
     std::vector<cv::Mat> channels(4);
     cv::split(img, channels);
-    cv::multiply(channels[3], alphaMask, channels[3]);
-    cv::merge(channels, img);
+    
+    if (channels.size() >= 4) {
+        // channels[3] is the alpha channel
+        cv::multiply(channels[3], alphaMask, channels[3]);
+        cv::merge(channels, img);
+    }
 }
 
 }
