@@ -29,6 +29,7 @@ import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
+import Artifact.Service.Effect;
 import Utils.String.UniString;
 
 export namespace Artifact {
@@ -1475,29 +1476,71 @@ private:
         return true;
     }
 
-    // Phase 3: Effects/Masks (stub implementations)
+    // Phase 3: Effects/Masks (fully implemented)
     static QVariant getLayerEffects(const QString& layerId)
     {
-        // TODO: Implement after effect stack API is clarified
-        return QVariantList();
+        auto* ps = ArtifactProjectService::instance();
+        if (!ps) return QVariantList();
+        
+        auto comp = ps->currentComposition();
+        if (!comp) return QVariantList();
+        
+        auto layer = comp->findLayerByID(ArtifactCore::LayerID::fromString(layerId.toStdString()));
+        if (!layer) return QVariantList();
+        
+        QVariantList effectsList;
+        for (const auto& effect : layer->getEffects()) {
+            QVariantMap effectMap;
+            effectMap[QStringLiteral("id")] = effect->effectID().toString();
+            effectMap[QStringLiteral("name")] = effect->displayName();
+            effectMap[QStringLiteral("enabled")] = effect->isEnabled();
+            effectsList.append(effectMap);
+        }
+        return effectsList;
     }
 
     static QVariant addLayerEffect(const QString& layerId, const QString& effectType)
     {
-        // TODO: Implement after effect registry is accessible
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return QString();
+        
+        const auto result = effectService->addEffectToLayer(
+            ArtifactCore::LayerID::fromString(layerId.toStdString()),
+            EffectID(effectType)
+        );
+        
+        if (result.success) {
+            return result.effectId;
+        }
         return QString();
     }
 
     static QVariant removeLayerEffect(const QString& layerId, const QString& effectId)
     {
-        // TODO: Implement after effect ID tracking is set up
-        return false;
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return false;
+        
+        const auto result = effectService->removeEffectFromLayer(
+            ArtifactCore::LayerID::fromString(layerId.toStdString()),
+            effectId
+        );
+        
+        return result.success;
     }
 
     static QVariant setLayerEffectParameter(const QString& layerId, const QString& effectId, const QString& paramName, double value)
     {
-        // TODO: Implement after effect parameter API is clarified
-        return false;
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return false;
+        
+        const auto result = effectService->setEffectProperty(
+            ArtifactCore::LayerID::fromString(layerId.toStdString()),
+            effectId,
+            paramName,
+            QVariant(value)
+        );
+        
+        return result.success;
     }
 
     // Phase 4: Keyframe Animation (stub implementations)
