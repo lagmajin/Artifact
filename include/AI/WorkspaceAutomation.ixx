@@ -30,6 +30,9 @@ import Artifact.Project.Items;
 import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
+import Artifact.Timeline.KeyframeModel;
+import Math.Interpolate;
+import Time.Rational;
 import Utils.String.UniString;
 
 export namespace Artifact {
@@ -1543,23 +1546,146 @@ private:
         return result.success;
     }
 
-    // Phase 4: Keyframe Animation (stub implementations)
+    // Phase 4: Keyframe Animation
+    // 
+    // Set keyframe at given frame number for a property path.
+    // Supported property paths (transform): "transform.position.x", "transform.position.y", 
+    // "transform.rotation", "transform.scale.x", "transform.scale.y", "transform.anchor.x", "transform.anchor.y"
+    // Returns: {"success": bool, "keyframeId": string (frame number)}
     static QVariant setKeyframe(const QString& layerId, const QString& propertyPath, int frameNumber, double value)
     {
-        // TODO: Implement after keyframe API is clarified
-        return false;
+        auto svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("ProjectService not available")}
+            };
+        }
+
+        auto currentComp = svc->currentComposition();
+        if (!currentComp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No active composition")}
+            };
+        }
+
+        auto layer = currentComp->layerById(LayerID::fromString(layerId));
+        if (!layer) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Layer not found")}
+            };
+        }
+
+        // Use KeyframeModel to handle the operation
+        static ArtifactTimelineKeyframeModel keyframeModel;
+        RationalTime time(frameNumber, 30);  // Assuming 30fps base; can be made configurable
+        bool added = keyframeModel.addKeyframe(
+            currentComp->id(),
+            layer->id(),
+            propertyPath,
+            time,
+            QVariant(value),
+            InterpolationType::Linear
+        );
+
+        return QVariantMap{
+            {QStringLiteral("success"), added},
+            {QStringLiteral("keyframeId"), QString::number(frameNumber)}
+        };
     }
 
+    // Get keyframes for a property path
+    // Returns: [{"frame": int, "value": double, "interpolation": string}]
     static QVariant getKeyframes(const QString& layerId, const QString& propertyPath)
     {
-        // TODO: Implement after keyframe query API is clarified
-        return QVariantList();
+        auto svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return QVariantList();
+        }
+
+        auto currentComp = svc->currentComposition();
+        if (!currentComp) {
+            return QVariantList();
+        }
+
+        auto layer = currentComp->layerById(LayerID::fromString(layerId));
+        if (!layer) {
+            return QVariantList();
+        }
+
+        // Use KeyframeModel to query keyframes
+        static ArtifactTimelineKeyframeModel keyframeModel;
+        auto keyframes = keyframeModel.getKeyframesFor(
+            currentComp->id(),
+            layer->id(),
+            propertyPath
+        );
+
+        QVariantList result;
+        for (const auto& kf : keyframes) {
+            QString interpolationStr = QStringLiteral("Linear");
+            if (kf.interpolation == InterpolationType::Bezier) {
+                interpolationStr = QStringLiteral("Bezier");
+            } else if (kf.interpolation == InterpolationType::EaseIn) {
+                interpolationStr = QStringLiteral("EaseIn");
+            } else if (kf.interpolation == InterpolationType::EaseOut) {
+                interpolationStr = QStringLiteral("EaseOut");
+            }
+
+            QVariantMap item{
+                {QStringLiteral("frame"), static_cast<int>(kf.time.value())},
+                {QStringLiteral("value"), kf.value.toDouble()},
+                {QStringLiteral("interpolation"), interpolationStr}
+            };
+            result.append(item);
+        }
+
+        return result;
     }
 
+    // Delete keyframe at given frame number for a property path
+    // Returns: {"success": bool}
     static QVariant deleteKeyframe(const QString& layerId, const QString& propertyPath, int frameNumber)
     {
-        // TODO: Implement after keyframe deletion API is clarified
-        return false;
+        auto svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("ProjectService not available")}
+            };
+        }
+
+        auto currentComp = svc->currentComposition();
+        if (!currentComp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No active composition")}
+            };
+        }
+
+        auto layer = currentComp->layerById(LayerID::fromString(layerId));
+        if (!layer) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Layer not found")}
+            };
+        }
+
+        // Use KeyframeModel to handle removal
+        static ArtifactTimelineKeyframeModel keyframeModel;
+        RationalTime time(frameNumber, 30);  // Same base fps as setKeyframe
+        bool removed = keyframeModel.removeKeyframe(
+            currentComp->id(),
+            layer->id(),
+            propertyPath,
+            time
+        );
+
+        return QVariantMap{
+            {QStringLiteral("success"), removed}
+        };
     }
 
     // Phase 5: Group Layers (stub implementations)
