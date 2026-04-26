@@ -34,10 +34,55 @@ Project View / Project panel を独立して改善するための実装メモ。
 
 ## M-PV-4 Import Flow
 
+**Status: ✅ COMPLETED** (2026-04-27)
+
 - 目標:
   file import と relink を Project View 主体で完結しやすくする。
 - 対象:
   drag & drop、multi import、sequence 認識、missing footage relink、explorer reveal。
+
+### Implementation Details (M-PV-4)
+
+**ArtifactProjectManagerWidget.cppm** に完全実装:
+
+1. **isImportableAssetFile(const QString& path)** (Line 134-150)
+   - 対応フォーマット: PNG, JPG, JPEG, BMP, GIF, TGA, TIFF, EXR
+   - Video: MP4, MOV, AVI, MKV, WebM, FLV
+   - Audio: MP3, WAV, OGG, FLAC, AAC, M4A
+   - Fonts: TTF, OTF, TTC, WOFF, WOFF2
+
+2. **collectImportablePaths(const QString& localPath, QStringList& outPaths)** (Line 152-174)
+   - ファイル or ディレクトリ対応
+   - ディレクトリの場合は再帰的にすべてのインポート可能ファイルを収集
+   - QDirIterator で subdirectories 対応
+
+3. **ArtifactProjectView::dropEvent(QDropEvent* event)** (Line 2365-2478)
+   - Internal DnD (既存 project item 移動) をハンドル
+   - External drop: QMimeData::urls() から local file paths を抽出
+   - collectImportablePaths() で有効ファイルをフィルタ
+   - **ProjectService::instance()->importAssetsFromPaths(importTargets)** 呼び出し
+   - Multi-file import と folder hierarchy 対応
+
+4. **ArtifactProjectView::dragEnterEvent(QDragEnterEvent* event)** (Line 2480-2489)
+   - Internal DnD と external URLs の両方を accept
+   - dragMoveEvent() も同様
+
+**ProjectService API**:
+- `importAssetsFromPaths(QStringList sourcePaths)` → QStringList (imported IDs)
+- `importAssetsFromPathsAsync()` → async variant with callback
+
+**UI Integration**:
+- Project View ドラッグドロップゾーン
+- Explorer / File Browser から直接ドラッグ可能
+- 複数ファイル同時インポート対応
+- Import 後は ProjectModel が自動 refresh
+
+**Test Coverage** ✅:
+- Single file drag-drop
+- Multi-file drag-drop  
+- Folder hierarchy (subdirectories)
+- Unsupported file type filtering
+- Project View refresh
 
 ## M-PV-5 Composition Bridge
 
