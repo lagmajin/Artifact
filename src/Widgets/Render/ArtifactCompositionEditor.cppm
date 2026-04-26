@@ -933,16 +933,8 @@ protected:
     if (controller_) {
       controller_->handleMouseMove(event->position());
       if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
-        // Throttle: collapse multiple mouse-move events into one render per
-        // event-loop tick
-        if (!pendingGizmoDragRender_) {
-          pendingGizmoDragRender_ = true;
-          QTimer::singleShot(16, this, [this]() {
-            pendingGizmoDragRender_ = false;
-            if (controller_)
-              controller_->renderOneFrame();
-          });
-        }
+        // Phase 3: Use fixed-rate render tick instead of singleShot(16) + renderOneFrame().
+        controller_->markRenderDirty();
         updateViewportCursor(event->position());
         event->accept();
         return;
@@ -1117,14 +1109,8 @@ protected:
       if ((msg->wParam & MK_LBUTTON) && controller_) {
         controller_->handleMouseMove(logPos);
         if (controller_->gizmo() && controller_->gizmo()->isDragging()) {
-          if (!pendingGizmoDragRender_) {
-            pendingGizmoDragRender_ = true;
-            QTimer::singleShot(16, this, [this]() {
-              pendingGizmoDragRender_ = false;
-              if (controller_)
-                controller_->renderOneFrame();
-            });
-          }
+          // Phase 3: Use fixed-rate render tick instead of singleShot(16) + renderOneFrame().
+          controller_->markRenderDirty();
           updateViewportCursor(logPos);
           return true;
         }
@@ -1664,7 +1650,6 @@ protected:
   bool isPanningWithMiddle_ = false;
   bool spacePressed_ = false;
   bool pendingInitialFit_ = true;
-  bool pendingGizmoDragRender_ = false;
   QTimer *resizeDebounceTimer_ = nullptr;
   QSize pendingResizeSize_;
   bool resizePending_ = false;

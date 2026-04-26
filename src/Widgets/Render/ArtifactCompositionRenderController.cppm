@@ -1428,8 +1428,11 @@ public:
   bool running_ = false;
   float devicePixelRatio_ = 1.0f;
   bool renderScheduled_ = false;
-  bool renderInProgress_ = false;
-  bool renderRescheduleRequested_ = false;
+
+  // Fixed-rate render tick (Phase 1: infrastructure only)
+  QTimer *renderTickTimer_ = nullptr;
+  std::atomic_bool renderDirty_{false};
+  static constexpr int kRenderTickIntervalMs = 16; // ~60fps
   QElapsedTimer startupTimer_;
   bool blendPipelineReady_ = false;
   bool blendPipelineInitAttempted_ = false;
@@ -1457,10 +1460,6 @@ public:
 
   LayerID selectedLayerId_;
   bool isDraggingLayer_ = false;
-  // ギズモドラッグ時のレンダリングを≈30fps にスロットル
-  QElapsedTimer gizmoDragRenderTimer_;
-  static constexpr qint64 kGizmoDragRenderIntervalMs = 33; // ~30fps cap
-  // ドラッグ中はGPUテクスチャキャッシュ無効化とオーバーレイ同期をスキップするフラグ
   bool gizmoDragActive_ = false;
   bool pendingMaskCreation_ = false;
   LayerID pendingMaskLayerId_;
@@ -1601,6 +1600,10 @@ public:
   // into a single renderOneFrame() call, preventing GPU saturation during drag
   QTimer *renderDebounceTimer_ = nullptr;
   static constexpr qint64 kRenderDebounceIntervalMs = 33; // ~30fps baseline
+  
+  // Render tick infrastructure
+  bool renderInProgress_ = false;  // Guards against concurrent renderOneFrameImpl() calls
+  QElapsedTimer gizmoDragRenderTimer_;  // Throttles render frequency during gizmo drag
 
   // Guide positions (composition-space pixels)
   QVector<float> guideVerticals_;   // X positions
@@ -2092,6 +2095,35 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   connect(impl_->renderDebounceTimer_, &QTimer::timeout, this,
           &CompositionRenderController::onRenderDebounceTimeout);
 
+  // Fixed-rate render tick: consumes renderDirty_ flag at ~60fps.
+  // In Phase 1 this timer is infrastructure-only (renderDirty_ is never set).
+  // Phase 2 will migrate event handlers to use markRenderDirty().
+  impl_->renderTickTimer_ = new QTimer(this);
+  impl_->renderTickTimer_->setInterval(Impl::kRenderTickIntervalMs);
+  connect(impl_->renderTickTimer_, &QTimer::timeout, this, [this]() {
+    if (!impl_->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
+      return; // No state change since last tick — skip
+    }
+    // Guard: skip if host is hidden or not initialized
+    if (!impl_->initialized_ || !impl_->renderer_ || !impl_->running_) {
+      return;
+    }
+    if (auto *host = impl_->hostWidget_.data()) {
+      if (!host->isVisible()) {
+        return;
+      }
+    }
+    if (impl_->renderInProgress_) {
+      // A render is already in progress — mark dirty so next tick retries
+      impl_->renderDirty_.store(true, std::memory_order_release);
+      return;
+    }
+    impl_->renderInProgress_ = true;
+    impl_->renderOneFrameImpl(this);
+    impl_->renderInProgress_ = false;
+  });
+  impl_->renderTickTimer_->start();
+
   // PlaybackService のフレーム変更に合わせて再描画
   if (auto *playback = ArtifactPlaybackService::instance()) {
     connect(playback, &ArtifactPlaybackService::frameChanged, this,
@@ -2275,12 +2307,12 @@ void CompositionRenderController::panBy(const QPointF &viewportDelta) {
   if (!impl_->renderer_) {
     return;
   }
-  // viewportDelta is in logical pixels from Qt; convert to physical for the
-  // renderer
   impl_->renderer_->panBy((float)viewportDelta.x() * impl_->devicePixelRatio_,
                           (float)viewportDelta.y() * impl_->devicePixelRatio_);
-  impl_->invalidateBaseComposite();
-  renderOneFrame();
+  // Phase 2: Use fixed-rate render tick instead of renderOneFrame().
+  // No invalidateBaseComposite() needed — panX/panY in RenderKeyState
+  // already detects the change.
+  markRenderDirty();
 }
 
 void CompositionRenderController::setGizmoMode(
@@ -3676,21 +3708,15 @@ void CompositionRenderController::handleMouseMove(
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
     if (impl_->gizmo_->isDragging()) {
-      // ドラッグ中はインタラクション状態を維持して16msスロットル+ダウンサンプルを継続
       notifyViewportInteractionActivity();
-      const qint64 elapsed = impl_->gizmoDragRenderTimer_.isValid()
-                                 ? impl_->gizmoDragRenderTimer_.elapsed()
-                                 : Impl::kGizmoDragRenderIntervalMs;
-      if (elapsed >= Impl::kGizmoDragRenderIntervalMs) {
-        impl_->gizmoDragRenderTimer_.restart();
-        renderOneFrame();
-      }
+      // Phase 3: Use fixed-rate render tick instead of 33ms throttle + renderOneFrame().
+      markRenderDirty();
       return;
     }
   }
 
   if (needsRender) {
-    renderOneFrame();
+    markRenderDirty();
   }
 }
 
@@ -3848,56 +3874,27 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
 void CompositionRenderController::renderOneFrame() {
   if (!impl_->initialized_ || !impl_->renderer_) {
-    qCDebug(compositionViewLog)
-        << "[CompositionView] renderOneFrame skipped: not initialized";
     return;
   }
   if (!impl_->running_) {
-    qCDebug(compositionViewLog)
-        << "[CompositionView] renderOneFrame skipped: controller stopped";
     return;
   }
   if (auto *host = impl_->hostWidget_.data()) {
     if (!host->isVisible()) {
-      qCDebug(compositionViewLog)
-          << "[CompositionView] renderOneFrame skipped: host hidden";
       return;
     }
   }
-
-  if (impl_->renderInProgress_) {
-    impl_->renderRescheduleRequested_ = true;
-    return;
-  }
-
+  // Re-entrancy guard: renderOneFrameImpl must not be called recursively.
   if (impl_->renderScheduled_) {
     return;
   }
-
   impl_->renderScheduled_ = true;
-  const int scheduleDelayMs = impl_->viewportInteracting_ ? 16 : 0;
-  QTimer::singleShot(scheduleDelayMs, this, [this]() {
-    impl_->renderScheduled_ = false;
-    if (!impl_->initialized_ || !impl_->renderer_ || !impl_->running_) {
-      return;
-    }
-    if (auto *host = impl_->hostWidget_.data()) {
-      if (!host->isVisible()) {
-        return;
-      }
-    }
-    if (impl_->renderInProgress_) {
-      impl_->renderRescheduleRequested_ = true;
-      return;
-    }
-    impl_->renderInProgress_ = true;
-    impl_->renderOneFrameImpl(this);
-    impl_->renderInProgress_ = false;
-    if (impl_->renderRescheduleRequested_) {
-      impl_->renderRescheduleRequested_ = false;
-      renderOneFrame();
-    }
-  });
+  impl_->renderOneFrameImpl(this);
+  impl_->renderScheduled_ = false;
+}
+
+void CompositionRenderController::markRenderDirty() {
+  impl_->renderDirty_.store(true, std::memory_order_release);
 }
 
 void CompositionRenderController::Impl::clearPendingMaskCreation() {

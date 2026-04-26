@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <vector>
 #include <memory>
@@ -13,19 +13,46 @@ import Artifact.Layers;
 import Artifact.Effect.Clone.Core;
 import Artifact.Effect.Abstract;
 import Utils.String.UniString;
+import Utils.Id;
+
 
 export namespace Artifact {
 
 using namespace ArtifactCore;
 
+enum class CloneMode {
+    Linear,
+    Grid,
+    Radial
+};
+
 class ArtifactCloneLayerSettings {
 public:
-    int cloneCount = 3;
-    QVector3D offset = QVector3D(160.0f, 48.0f, 0.0f);
+    CloneMode mode = CloneMode::Linear;
+    int cloneCount = 5;
+    
+    // Linear
+    QVector3D offset = QVector3D(100.0f, 0.0f, 0.0f);
+    
+    // Grid
+    int columns = 3;
+    int rows = 3;
+    int depth = 1;
+    QVector3D gridSpacing = QVector3D(200.0f, 200.0f, 200.0f);
+    
+    // Radial
+    int radialCount = 8;
+    float radius = 300.0f;
+    float startAngle = 0.0f;
+    float endAngle = 360.0f;
+    
     float rotationStep = 0.0f;
     float opacityDecay = 0.0f;
-    bool useEffector = false;
+    bool useEffector = true;
+    
+    LayerID sourceLayerId;
 };
+
 
 class ArtifactCloneLayer : public ArtifactAbstractLayer {
 private:
