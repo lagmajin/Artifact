@@ -35,6 +35,8 @@ import Render.Shader.ViewerHelpers;
 import Image.ImageF32x4_RGBA;
 import Color.Float;
 import Text.Style;
+import Text.GlyphAtlas;
+import Text.GlyphLayout;
 import Utils.String.UniString;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.RenderCommandBuffer;
@@ -157,6 +159,8 @@ class PrimitiveRenderer2D::Impl {
 public:
     ISwapChain*                  pSwapChain_ = nullptr;
     RefCntAutoPtr<IRenderDevice> pDevice_;
+    
+    std::unique_ptr<GlyphAtlas>  pGlyphAtlas_;
 
     struct CachedTexture {
         RefCntAutoPtr<ITexture> pTexture;
@@ -228,6 +232,11 @@ void PrimitiveRenderer2D::createBuffers(RefCntAutoPtr<IRenderDevice> device, TEX
 {
     if (!device) return;
     impl_->pDevice_ = device;
+    
+    // Initialize GlyphAtlas
+    if (!impl_->pGlyphAtlas_) {
+        impl_->pGlyphAtlas_ = std::make_unique<GlyphAtlas>();
+    }
 }
 
 void PrimitiveRenderer2D::destroy()
@@ -1221,6 +1230,61 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
     pkt.pSRV = pSRV;
     pkt.opacity = opacity;
     impl_->cmdBuf_->append(pkt);
+}
+
+// WP-3: GPU GlyphAtlas based text rendering
+void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
+                                        const TextStyle& style,
+                                        const FloatColor& color,
+                                        float opacity)
+{
+    if (!impl_->pGlyphAtlas_ || text.empty()) return;
+    
+    // Simplified implementation: acquire each character from atlas
+    // Full implementation would use TextLayoutEngine for proper glyph positioning
+    float currentX = x;
+    
+    for (char32_t codePoint : text) {
+        GlyphKey key;
+        key.codePoint = codePoint;
+        key.fontSize = style.fontSize;
+        key.fontFamily = style.fontFamily.toUtf8String();
+        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
+                         (static_cast<uint32_t>(style.fontStyle) << 0);
+        
+        QFont qfont(QString::fromStdString(key.fontFamily));
+        qfont.setPointSizeF(style.fontSize);
+        qfont.setBold(style.fontWeight == FontWeight::Bold);
+        qfont.setItalic(style.fontStyle == FontStyle::Italic);
+        
+        GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, qfont);
+        if (!rect.valid) continue;
+        
+        // TODO: Generate and append glyph quad
+        // currentX += rect.advance;
+    }
+}
+
+void PrimitiveRenderer2D::drawGlyphTextTransformed(float x, float y, const UniString& text,
+                                                    const TextStyle& style,
+                                                    const FloatColor& color,
+                                                    const QMatrix4x4& transform,
+                                                    float opacity)
+{
+    if (!impl_->pGlyphAtlas_ || text.empty()) return;
+    
+    // TODO: Implement transformed glyph rendering with matrix
+}
+
+void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
+                                     const TextStyle& style,
+                                     const FloatColor& color,
+                                     float opacity)
+{
+    if (!impl_->pGlyphAtlas_ || glyphs.empty() || !impl_->cmdBuf_) return;
+    
+    // TODO: Render pre-laid-out glyphs
+    // This variant is useful for animated text and text animators
 }
 
 } // namespace Artifact

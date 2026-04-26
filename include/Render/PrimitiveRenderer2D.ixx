@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <span>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
 #include <SwapChain.h>
@@ -18,6 +19,9 @@ export module Artifact.Render.PrimitiveRenderer2D;
 import Graphics;
 import Image.ImageF32x4_RGBA;
 import Color.Float;
+import Text.Style;
+import Text.GlyphAtlas;
+import Text.GlyphLayout;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.RenderCommandBuffer;
 
@@ -102,6 +106,23 @@ public:
     void drawSpriteTransformed(float x, float y, float w, float h, const QMatrix4x4& transform, ITextureView* texture, float opacity = 1.0f);
     void drawTextureLocal(float x, float y, float w, float h, ITextureView* pSRV, float opacity = 1.0f);
     void drawMaskedTextureLocal(float x, float y, float w, float h, ITextureView* sceneSRV, const QImage& maskImage, float opacity = 1.0f);
+
+    // GPU glyph atlas based text rendering (WP-3)
+    void drawGlyphText(float x, float y, const ArtifactCore::UniString& text,
+                       const ArtifactCore::TextStyle& style,
+                       const FloatColor& color,
+                       float opacity = 1.0f);
+    
+    void drawGlyphTextTransformed(float x, float y, const ArtifactCore::UniString& text,
+                                  const ArtifactCore::TextStyle& style,
+                                  const FloatColor& color,
+                                  const QMatrix4x4& transform,
+                                  float opacity = 1.0f);
+    
+    void drawGlyphs(std::span<const ArtifactCore::GlyphItem> glyphs,
+                    const ArtifactCore::TextStyle& style,
+                    const FloatColor& color,
+                    float opacity = 1.0f);
 
     // Returns the currently active render target view (override or swapchain back-buffer).
     // Used by direct-draw code paths (e.g. particle renderer) that bypass the command buffer.
