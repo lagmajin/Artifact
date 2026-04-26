@@ -31,6 +31,7 @@ import Artifact.Project.Items;
 import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
+import Artifact.Service.Playback;
 import Artifact.Timeline.KeyframeModel;
 import Math.Interpolate;
 import Time.Rational;
@@ -183,6 +184,25 @@ public:
             {"startAllRenderQueues", IDescribable::loc("Start every queued render job.", "Start every queued render job.", {}), "bool"},
             {"pauseAllRenderQueues", IDescribable::loc("Pause every queued render job.", "Pause every queued render job.", {}), "bool"},
             {"cancelAllRenderQueues", IDescribable::loc("Cancel every queued render job.", "Cancel every queued render job.", {}), "bool"},
+            {"playbackStart", IDescribable::loc("Start playback of the active composition.", "Start playback of the active composition.", {}), "bool"},
+            {"playbackPause", IDescribable::loc("Pause playback of the active composition.", "Pause playback of the active composition.", {}), "bool"},
+            {"playbackStop", IDescribable::loc("Stop playback and return to start frame.", "Stop playback and return to start frame.", {}), "bool"},
+            {"playbackToggle", IDescribable::loc("Toggle between play and pause.", "Toggle between play and pause.", {}), "bool"},
+            {"playbackGetState", IDescribable::loc("Get current playback state.", "Get current playback state.", {}), "QString"},
+            {"playbackGetCurrentFrame", IDescribable::loc("Get current playhead position in frames.", "Get current playhead position in frames.", {}), "int"},
+            {"playbackSetCurrentFrame", IDescribable::loc("Set playhead to specific frame.", "Set playhead to specific frame.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("frameNumber")}},
+            {"playbackNextFrame", IDescribable::loc("Move playhead to next frame.", "Move playhead to next frame.", {}), "bool"},
+            {"playbackPreviousFrame", IDescribable::loc("Move playhead to previous frame.", "Move playhead to previous frame.", {}), "bool"},
+            {"playbackGoToStart", IDescribable::loc("Move playhead to start of composition.", "Move playhead to start of composition.", {}), "bool"},
+            {"playbackGoToEnd", IDescribable::loc("Move playhead to end of composition.", "Move playhead to end of composition.", {}), "bool"},
+            {"playbackGetDuration", IDescribable::loc("Get composition duration in frames.", "Get composition duration in frames.", {}), "int"},
+            {"playbackGetFrameRange", IDescribable::loc("Get playback frame range (in/out points).", "Get playback frame range (in/out points).", {}), "QVariantMap"},
+            {"playbackSetFrameRange", IDescribable::loc("Set playback frame range (work area).", "Set playback frame range (work area).", {}), "bool", {QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("frameStart"), QStringLiteral("frameEnd")}},
+            {"playbackGetFrameRate", IDescribable::loc("Get playback frame rate (fps).", "Get playback frame rate (fps).", {}), "double"},
+            {"playbackGetSpeed", IDescribable::loc("Get playback speed multiplier.", "Get playback speed multiplier.", {}), "float"},
+            {"playbackSetSpeed", IDescribable::loc("Set playback speed multiplier.", "Set playback speed multiplier.", {}), "bool", {QStringLiteral("double")}, {QStringLiteral("speed")}},
+            {"playbackGetLooping", IDescribable::loc("Get looping state.", "Get looping state.", {}), "bool"},
+            {"playbackSetLooping", IDescribable::loc("Enable or disable looping.", "Enable or disable looping.", {}), "bool", {QStringLiteral("bool")}, {QStringLiteral("enabled")}},
             {"exportComposition", IDescribable::loc("Add composition to export queue with specified settings.", "Add composition to export queue with specified settings.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("compositionId"), QStringLiteral("outputPath"), QStringLiteral("format"), QStringLiteral("codec"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
             {"exportCurrentComposition", IDescribable::loc("Add active composition to export queue with specified settings.", "Add active composition to export queue with specified settings.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("outputPath"), QStringLiteral("format"), QStringLiteral("codec"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
             {"getSupportedExportFormats", IDescribable::loc("Get list of supported export file formats.", "Get list of supported export file formats.", {}), "QStringList"},
@@ -488,6 +508,67 @@ public:
         }
         if (name == QStringLiteral("cancelAllRenderQueues")) {
             return renderQueueCancelAll();
+        }
+        if (name == QStringLiteral("playbackStart")) {
+            return playbackStart();
+        }
+        if (name == QStringLiteral("playbackPause")) {
+            return playbackPause();
+        }
+        if (name == QStringLiteral("playbackStop")) {
+            return playbackStop();
+        }
+        if (name == QStringLiteral("playbackToggle")) {
+            return playbackToggle();
+        }
+        if (name == QStringLiteral("playbackGetState")) {
+            return playbackGetState();
+        }
+        if (name == QStringLiteral("playbackGetCurrentFrame")) {
+            return playbackGetCurrentFrame();
+        }
+        if (name == QStringLiteral("playbackSetCurrentFrame")) {
+            if (args.isEmpty()) return false;
+            return playbackSetCurrentFrame(intArg(args, 0, 0));
+        }
+        if (name == QStringLiteral("playbackNextFrame")) {
+            return playbackNextFrame();
+        }
+        if (name == QStringLiteral("playbackPreviousFrame")) {
+            return playbackPreviousFrame();
+        }
+        if (name == QStringLiteral("playbackGoToStart")) {
+            return playbackGoToStart();
+        }
+        if (name == QStringLiteral("playbackGoToEnd")) {
+            return playbackGoToEnd();
+        }
+        if (name == QStringLiteral("playbackGetDuration")) {
+            return playbackGetDuration();
+        }
+        if (name == QStringLiteral("playbackGetFrameRange")) {
+            return playbackGetFrameRange();
+        }
+        if (name == QStringLiteral("playbackSetFrameRange")) {
+            if (args.size() < 2) return false;
+            return playbackSetFrameRange(intArg(args, 0, 0), intArg(args, 1, 0));
+        }
+        if (name == QStringLiteral("playbackGetFrameRate")) {
+            return playbackGetFrameRate();
+        }
+        if (name == QStringLiteral("playbackGetSpeed")) {
+            return playbackGetSpeed();
+        }
+        if (name == QStringLiteral("playbackSetSpeed")) {
+            if (args.isEmpty()) return false;
+            return playbackSetSpeed(doubleArg(args, 0, 1.0));
+        }
+        if (name == QStringLiteral("playbackGetLooping")) {
+            return playbackGetLooping();
+        }
+        if (name == QStringLiteral("playbackSetLooping")) {
+            if (args.isEmpty()) return false;
+            return playbackSetLooping(args.first().toBool());
         }
         if (name == QStringLiteral("exportComposition")) {
             if (args.size() < 8) return false;
@@ -2089,6 +2170,252 @@ private:
             return false;
         }
         return service->relinkFootageByPath(oldFilePath.trimmed(), newFilePath.trimmed());
+    }
+
+    // Phase 7: Timeline Operations
+    //
+    // Playback control and timeline navigation for the active composition.
+    
+    // Playback State & Control
+    
+    // Start playback of the active composition.
+    // Returns: bool (success)
+    static QVariant playbackStart()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->play();
+        return true;
+    }
+
+    // Pause playback of the active composition.
+    // Returns: bool (success)
+    static QVariant playbackPause()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->pause();
+        return true;
+    }
+
+    // Stop playback and return to start frame.
+    // Returns: bool (success)
+    static QVariant playbackStop()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->stop();
+        return true;
+    }
+
+    // Toggle between play and pause.
+    // Returns: bool (success)
+    static QVariant playbackToggle()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->togglePlayPause();
+        return true;
+    }
+
+    // Get current playback state.
+    // Returns: "playing" | "paused" | "stopped"
+    static QVariant playbackGetState()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return QStringLiteral("unknown");
+        }
+        if (playback->isPlaying()) {
+            return QStringLiteral("playing");
+        } else if (playback->isPaused()) {
+            return QStringLiteral("paused");
+        } else {
+            return QStringLiteral("stopped");
+        }
+    }
+
+    // Frame Navigation
+    
+    // Get current playhead position in frames.
+    // Returns: int (frame number)
+    static QVariant playbackGetCurrentFrame()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return 0;
+        }
+        return static_cast<int>(playback->currentFrame().frame());
+    }
+
+    // Set playhead to specific frame.
+    // Returns: bool (success)
+    static QVariant playbackSetCurrentFrame(int frameNumber)
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback || frameNumber < 0) {
+            return false;
+        }
+        playback->setCurrentFrame(FramePosition(frameNumber));
+        return true;
+    }
+
+    // Move playhead to next frame.
+    // Returns: bool (success)
+    static QVariant playbackNextFrame()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->goToNextFrame();
+        return true;
+    }
+
+    // Move playhead to previous frame.
+    // Returns: bool (success)
+    static QVariant playbackPreviousFrame()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->goToPreviousFrame();
+        return true;
+    }
+
+    // Move playhead to start of composition.
+    // Returns: bool (success)
+    static QVariant playbackGoToStart()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->goToStartFrame();
+        return true;
+    }
+
+    // Move playhead to end of composition.
+    // Returns: bool (success)
+    static QVariant playbackGoToEnd()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->goToEndFrame();
+        return true;
+    }
+
+    // Timeline Information
+    
+    // Get composition duration in frames.
+    // Returns: int (frame count)
+    static QVariant playbackGetDuration()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return 0;
+        }
+        const auto range = playback->frameRange();
+        return static_cast<int>(range.out().frame());
+    }
+
+    // Get playback frame range (in/out points).
+    // Returns: {"start": int, "end": int}
+    static QVariant playbackGetFrameRange()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return QVariantMap();
+        }
+        const auto range = playback->frameRange();
+        return QVariantMap{
+            {QStringLiteral("start"), static_cast<int>(range.in().frame())},
+            {QStringLiteral("end"), static_cast<int>(range.out().frame())}
+        };
+    }
+
+    // Set playback frame range (work area).
+    // frameStart and frameEnd define the playback range.
+    // Returns: bool (success)
+    static QVariant playbackSetFrameRange(int frameStart, int frameEnd)
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback || frameStart < 0 || frameEnd < frameStart) {
+            return false;
+        }
+        playback->setFrameRange(FrameRange(FramePosition(frameStart), FramePosition(frameEnd)));
+        return true;
+    }
+
+    // Playback Settings
+    
+    // Get playback frame rate (fps).
+    // Returns: double (frames per second)
+    static QVariant playbackGetFrameRate()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return 0.0;
+        }
+        return playback->frameRate().toDouble();
+    }
+
+    // Get playback speed multiplier.
+    // Returns: float (1.0 = normal, 2.0 = 2x speed, 0.5 = half speed)
+    static QVariant playbackGetSpeed()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return 1.0f;
+        }
+        return playback->playbackSpeed();
+    }
+
+    // Set playback speed multiplier.
+    // Speed of 1.0 is normal, 2.0 is double speed, 0.5 is half speed.
+    // Returns: bool (success)
+    static QVariant playbackSetSpeed(double speed)
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback || speed <= 0.0) {
+            return false;
+        }
+        playback->setPlaybackSpeed(static_cast<float>(speed));
+        return true;
+    }
+
+    // Get looping state.
+    // Returns: bool (true = looping enabled)
+    static QVariant playbackGetLooping()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        return playback->isLooping();
+    }
+
+    // Enable or disable looping.
+    // Returns: bool (success)
+    static QVariant playbackSetLooping(bool enabled)
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->setLooping(enabled);
+        return true;
     }
 
     // Phase 6: Export
