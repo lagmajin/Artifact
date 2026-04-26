@@ -122,6 +122,10 @@ public:
             {"splitLayerAtCurrentTime", IDescribable::loc("Split a layer at the current composition time cursor.", "Split a layer at the current composition time cursor.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"renameComposition", IDescribable::loc("Rename a composition by id.", "Rename a composition by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("compositionId"), QStringLiteral("newName")}},
             {"duplicateComposition", IDescribable::loc("Duplicate a composition by id.", "Duplicate a composition by id.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
+            {"getCompositionNote", IDescribable::loc("Get the note text of a composition by id.", "Get the note text of a composition by id.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
+            {"setCompositionNote", IDescribable::loc("Set the note text of a composition by id.", "Set the note text of a composition by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("compositionId"), QStringLiteral("note")}},
+            {"getLayerNote", IDescribable::loc("Get the note text of a layer in the active composition.", "Get the note text of a layer in the active composition.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"setLayerNote", IDescribable::loc("Set the note text of a layer in the active composition.", "Set the note text of a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("note")}},
             {"compositionRemovalConfirmationMessage", IDescribable::loc("Return the confirmation message for deleting a composition.", "Return the confirmation message for deleting a composition.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"removeCompositionWithRenderQueueCleanup", IDescribable::loc("Remove a composition and clear related render queue jobs.", "Remove a composition and clear related render queue jobs.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"removeAllAssets", IDescribable::loc("Remove all imported assets from the project.", "Remove all imported assets from the project.", {}), "bool"},
@@ -281,6 +285,18 @@ public:
         }
         if (name == QStringLiteral("duplicateComposition")) {
             return duplicateComposition(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("getCompositionNote")) {
+            return getCompositionNote(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setCompositionNote")) {
+            return setCompositionNote(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("getLayerNote")) {
+            return getLayerNote(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("setLayerNote")) {
+            return setLayerNote(stringArg(args, 0), stringArg(args, 1));
         }
         if (name == QStringLiteral("compositionRemovalConfirmationMessage")) {
             return compositionRemovalConfirmationMessage(stringArg(args, 0));
@@ -1125,6 +1141,76 @@ private:
             return false;
         }
         service->removeAllAssets();
+        return true;
+    }
+
+    static QVariant getCompositionNote(const QString& compositionId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QString();
+        }
+        auto composition = service->compositionById(CompositionID(compositionId));
+        if (!composition) {
+            return QString();
+        }
+        return composition->compositionNote();
+    }
+
+    static QVariant setCompositionNote(const QString& compositionId, const QString& note)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+        auto composition = service->compositionById(CompositionID(compositionId));
+        if (!composition) {
+            return false;
+        }
+        composition->setCompositionNote(note);
+        return true;
+    }
+
+    static QVariant getLayerNote(const QString& layerId)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return QString();
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return QString();
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return QString();
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return QString();
+        }
+        return layer->layerNote();
+    }
+
+    static QVariant setLayerNote(const QString& layerId, const QString& note)
+    {
+        auto* app = ArtifactApplicationManager::instance();
+        if (!app) {
+            return false;
+        }
+        auto* compositionView = app->activeCompositionView();
+        if (!compositionView) {
+            return false;
+        }
+        auto composition = compositionView->composition();
+        if (!composition) {
+            return false;
+        }
+        auto layer = composition->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        layer->setLayerNote(note);
         return true;
     }
 
