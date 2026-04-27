@@ -8,6 +8,7 @@ module;
 #include <QMatrix4x4>
 #include <vector>
 #include <memory>
+#include <algorithm>
 
 module Artifact.Layer.Clone;
 
@@ -20,8 +21,54 @@ import Artifact.Render.IRenderer;
 import Property.Abstract;
 import Utils.Id;
 
+// Mesh instancing (Phase 2) - convert CloneData to InstanceData
+import Graphics;
+
 
 namespace Artifact {
+
+// Helper function to convert CloneData to InstanceData (Mesh Instancing Phase 2)
+namespace {
+    ArtifactCore::InstanceData cloneDataToInstanceData(const CloneData& clone) {
+        ArtifactCore::InstanceData instance;
+        
+        // Convert QMatrix4x4 (row-major) to float[16] (column-major for GPU)
+        const float* matPtr = clone.transform.constData();
+        for (int i = 0; i < 16; ++i) {
+            instance.transform[i] = matPtr[i];
+        }
+        
+        // Convert QColor (0-255) to float[4] (0.0-1.0)
+        instance.color[0] = clone.color.redF();
+        instance.color[1] = clone.color.greenF();
+        instance.color[2] = clone.color.blueF();
+        instance.color[3] = clone.color.alphaF();
+        
+        // Copy numeric values
+        instance.weight = std::clamp(clone.weight, 0.0f, 1.0f);
+        instance.timeOffset = clone.timeOffset;
+        instance.padding[0] = 0.0f;
+        instance.padding[1] = 0.0f;
+        
+        return instance;
+    }
+    
+    std::vector<ArtifactCore::InstanceData> cloneDataVectorToInstanceDataVector(
+        const std::vector<CloneData>& clones) 
+    {
+        std::vector<ArtifactCore::InstanceData> instances;
+        instances.reserve(clones.size());
+        
+        for (const auto& clone : clones) {
+            if (clone.visible) {  // Only include visible clones
+                instances.push_back(cloneDataToInstanceData(clone));
+            }
+        }
+        
+        return instances;
+    }
+} // anonymous namespace
+
 
 class ArtifactCloneLayer::Impl {
 public:
@@ -343,6 +390,15 @@ void ArtifactCloneLayer::setPropertyValue(const UniString& name, const QVariant&
     } else if (key == QStringLiteral("Opacity Decay")) {
         impl_->settings_.opacityDecay = std::clamp(value.toFloat(), 0.0f, 1.0f);
     }
+}
+
+// Mesh Instancing Phase 2: Convert CloneData to InstanceData for GPU submission
+std::vector<ArtifactCore::InstanceData> ArtifactCloneLayer::getInstanceData() const {
+    // Get current clone configuration
+    auto clones = generateCloneData();
+    
+    // Convert to InstanceData format
+    return cloneDataVectorToInstanceDataVector(clones);
 }
 
 } // namespace Artifact

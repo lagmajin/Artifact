@@ -89,9 +89,9 @@ public:
     std::vector<AbstractProperty> getProperties() const;
     void setPropertyValue(const UniString& name, const QVariant& value);
 
-    // Mesh instancing support (TODO: implement GpuContext abstraction)
-    // void initializeMeshRenderer(GpuContext& context, size_t maxInstances, size_t vertexCount, size_t indexCount);
-    // void setSourceMesh(const float* positions, const float* normals, const float* uvs, const uint32_t* indices);
+    // Mesh instancing support (Phase 2)
+    // Convert CloneData array to InstanceData and submit to MeshRenderer
+    std::vector<ArtifactCore::InstanceData> getInstanceData() const;
 };
 
 } // namespace Artifact
