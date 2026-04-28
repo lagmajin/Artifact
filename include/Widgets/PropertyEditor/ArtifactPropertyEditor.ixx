@@ -55,6 +55,7 @@ public:
     virtual void setValueFromVariant(const QVariant& value) = 0;
     virtual bool supportsScrub() const;
     virtual void scrubByPixels(int deltaPixels, Qt::KeyboardModifiers modifiers);
+    virtual QWidget* scrubTargetWidget() const;
 
 protected:
     void commitValue(const QVariant& value) const;
@@ -77,6 +78,7 @@ public:
     void setValueFromVariant(const QVariant& value) override;
     bool supportsScrub() const override;
     void scrubByPixels(int deltaPixels, Qt::KeyboardModifiers modifiers) override;
+    QWidget* scrubTargetWidget() const override;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -102,6 +104,7 @@ public:
     void setValueFromVariant(const QVariant& value) override;
     bool supportsScrub() const override;
     void scrubByPixels(int deltaPixels, Qt::KeyboardModifiers modifiers) override;
+    QWidget* scrubTargetWidget() const override;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
@@ -116,6 +119,39 @@ private:
     int softMin_ = 0;
     int softMax_ = 100;
     bool sliderInteracting_ = false;
+};
+
+class ArtifactAnimatorCountPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactAnimatorCountPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+private:
+    void stepCount(int delta);
+    void syncUi();
+
+private:
+    QLabel* countLabel_ = nullptr;
+    QPushButton* removeButton_ = nullptr;
+    QPushButton* addButton_ = nullptr;
+    int currentCount_ = 0;
+    int minCount_ = 0;
+    int maxCount_ = 16;
+};
+
+class ArtifactRotationPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactRotationPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+    bool supportsScrub() const override;
+    void scrubByPixels(int deltaPixels, Qt::KeyboardModifiers modifiers) override;
+    QWidget* scrubTargetWidget() const override;
+
+private:
+    QDoubleSpinBox* spinBox_ = nullptr;
+    QWidget* knob_ = nullptr;
 };
 
 class ArtifactBoolPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -251,7 +287,7 @@ private:
     void updateKeyframeButtonIcon();
 
     QLabel* label_ = nullptr;
-    QLabel* scrubHandle_ = nullptr;
+    QWidget* scrubTarget_ = nullptr;
     QLabel* supplementaryLabel_ = nullptr;
     ArtifactAbstractPropertyEditor* editor_ = nullptr;
     QPushButton* keyframeButton_ = nullptr;
@@ -265,16 +301,11 @@ private:
     KeyFrameHandler keyframeHandler_;
     NavigationHandler navigationHandler_;
     
+    bool scrubCandidate_ = false;
     bool scrubbing_ = false;
-    bool scrubStarted_ = false;
     int scrubStartX_ = 0;
     int scrubThreshold_ = 4;
     QVariant scrubStartValue_;
-    bool editorScrubbing_ = false;
-    bool editorScrubStarted_ = false;
-    int editorScrubStartX_ = 0;
-    int editorScrubThreshold_ = 4;
-    QVariant editorScrubStartValue_;
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

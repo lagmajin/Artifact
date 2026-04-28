@@ -1,16 +1,21 @@
 module;
+#include <compare>
 #include <vector>
 #include <variant>
 #include <cstdint>
 #include <QFont>
+#include <QImage>
 #include <QMatrix4x4>
 #include <QRectF>
 #include <QString>
+#include <QVector2D>
+#include <QVector3D>
 #include <Texture.h>
 #include <BasicMath.hpp>
 export module Artifact.Render.RenderCommandBuffer;
 
 import Text.Style;
+import Graphics.ParticleData;
 
 export namespace Artifact {
 
@@ -119,6 +124,30 @@ struct MaskedSpritePkt {
     float              _pad[3];
 };
 
+struct BillboardPkt {
+    QVector3D           center;
+    QVector2D           size;
+    ITextureView*       pSRV        = nullptr;
+    float4              tint        = {1.0f, 1.0f, 1.0f, 1.0f};
+    float               opacity     = 1.0f;
+    float               rollDegrees = 0.0f;
+};
+
+struct BillboardImagePkt {
+    QVector3D           center;
+    QVector2D           size;
+    QImage              image;
+    float4              tint        = {1.0f, 1.0f, 1.0f, 1.0f};
+    float               opacity     = 1.0f;
+    float               rollDegrees = 0.0f;
+};
+
+struct ParticlePkt {
+    ArtifactCore::ParticleRenderData data;
+    QMatrix4x4                       viewMatrix;
+    QMatrix4x4                       projMatrix;
+};
+
 struct GlyphTextPkt {
     QRectF              rect;
     RenderSolidTransform2D xform;
@@ -149,6 +178,7 @@ using DrawPacket = std::variant<
     LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
     SpritePkt, SpriteXformPkt, MaskedSpritePkt,
+    BillboardPkt, BillboardImagePkt, ParticlePkt,
     GlyphTextPkt, GlyphTextXformPkt
 >;
 

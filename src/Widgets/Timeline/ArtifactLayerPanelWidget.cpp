@@ -1917,7 +1917,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       QObject::connect(combo, QOverload<int>::of(&QComboBox::activated), this, [this, service, layer, combo](int i) {
         const auto mode = static_cast<LAYER_BLEND_TYPE>(combo->itemData(i).toInt());
         layer->setBlendMode(mode);
-        impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
+        layer->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(LayerChangedEvent{
             impl_->compositionId.toString(), layer->id().toString(),
             LayerChangedEvent::ChangeType::Modified});
         combo->deleteLater();

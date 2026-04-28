@@ -67,6 +67,8 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
 import Artifact.Layer.Composition;
+import Artifact.Layer.Shape;
+import Layer.Matte;
 import Artifact.Layers.Model3D;
 import Artifact.Render.Offscreen;
 import Image.ImageF32x4_RGBA;
@@ -829,6 +831,88 @@ hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr &comp,
   return ArtifactAbstractLayerPtr();
 }
 
+/// Apply track matte to a layer surface by evaluating its MatteStack.
+/// Modifies the surface's alpha channel in-place.
+static void applyLayerMatteToSurface(
+    ArtifactAbstractLayer *layer, QImage &surface,
+    const std::function<QImage(const ArtifactCore::Id &)> &sourceResolver)
+{
+    auto mattes = layer->matteReferences();
+    if (mattes.empty()) return;
+
+    const int w = surface.width();
+    const int h = surface.height();
+    if (w <= 0 || h <= 0) return;
+
+    // Build source alpha buffers from matte source layers
+    std::vector<std::vector<float>> sources;
+    for (const auto &ref : mattes) {
+        if (!ref.enabled || ref.sourceLayerId.isNil()) continue;
+
+        QImage srcImage = sourceResolver(ref.sourceLayerId);
+        if (srcImage.isNull()) continue;
+
+        // Resize to match target surface
+        if (srcImage.size() != surface.size()) {
+            srcImage = srcImage.scaled(w, h, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+        }
+        srcImage = srcImage.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+
+        const int srcW = srcImage.width();
+        const int srcH = srcImage.height();
+
+        std::vector<float> alpha(static_cast<size_t>(w) * h, 0.0f);
+        const bool useLuma = (ref.type == MatteType::Luma || ref.type == MatteType::InverseLuma);
+
+        for (int y = 0; y < h && y < srcH; ++y) {
+            const QRgb *srcLine = reinterpret_cast<const QRgb *>(srcImage.constScanLine(y));
+            for (int x = 0; x < w && x < srcW; ++x) {
+                QRgb px = srcLine[x];
+                if (useLuma) {
+                    // ITU-R BT.601 luma
+                    float luma = 0.299f * qRed(px) + 0.587f * qGreen(px) + 0.114f * qBlue(px);
+                    alpha[static_cast<size_t>(y) * w + x] = luma / 255.0f;
+                } else {
+                    alpha[static_cast<size_t>(y) * w + x] = qAlpha(px) / 255.0f;
+                }
+            }
+        }
+
+        // Invert if needed
+        if (ref.invert) {
+            for (auto &v : alpha) v = 1.0f - v;
+        }
+
+        sources.push_back(std::move(alpha));
+    }
+
+    if (sources.empty()) return;
+
+    // Use Core's evaluateMatteStack to combine sources
+    MatteStack stack;
+    for (const auto &ref : mattes) {
+        if (ref.enabled && !ref.sourceLayerId.isNil()) {
+            stack.addNode(ref.toCoreMatteNode());
+        }
+    }
+
+    auto result = evaluateMatteStack(sources, stack, w, h);
+    if (!result.isValid()) return;
+
+    // Apply alpha mask to surface
+    surface = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    for (int y = 0; y < h; ++y) {
+        QRgb *line = reinterpret_cast<QRgb *>(surface.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            float maskAlpha = result.sampleAlpha(x, y);
+            int currentAlpha = qAlpha(line[x]);
+            int newAlpha = static_cast<int>(currentAlpha * maskAlpha + 0.5f);
+            line[x] = qRgba(qRed(line[x]), qGreen(line[x]), qBlue(line[x]),
+                            std::clamp(newAlpha, 0, 255));
+        }
+    }
+}
+
 void drawLayerForCompositionView(
     ArtifactAbstractLayer *layer, ArtifactIRenderer *renderer,
     float opacityOverride = -1.0f, QString *videoDebugOut = nullptr,
@@ -837,7 +921,8 @@ void drawLayerForCompositionView(
     int64_t cacheFrameNumber = std::numeric_limits<int64_t>::min(),
     bool useGpuPath = false, const DetailLevel lod = DetailLevel::High,
     const QMatrix4x4 *cameraView = nullptr,
-    const QMatrix4x4 *cameraProj = nullptr) {
+    const QMatrix4x4 *cameraProj = nullptr,
+    const std::function<QImage(const ArtifactCore::Id &)> *matteSourceResolver = nullptr) {
   if (!layer || !renderer) {
     qCDebug(compositionViewLog)
         << "[CompositionView] drawLayerForCompositionView: invalid "
@@ -903,6 +988,11 @@ void drawLayerForCompositionView(
                                  bool allowSurfaceCache) {
     if (surface.isNull()) {
       return false;
+    }
+
+    // Apply track matte before drawing
+    if (matteSourceResolver && layer->matteReferences().size() > 0) {
+        applyLayerMatteToSurface(layer, surface, *matteSourceResolver);
     }
 
     const QString ownerId = layer->id().toString();
@@ -1270,6 +1360,112 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
                           centerColor);
 }
 
+void drawSelectionOverlay(ArtifactIRenderer *renderer,
+                          const ArtifactAbstractLayerPtr &layer) {
+  if (!renderer || !layer) {
+    return;
+  }
+
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+      localBounds.height() <= 0.0) {
+    return;
+  }
+
+  const QTransform globalTransform = layer->getGlobalTransform();
+  const QPointF tl = globalTransform.map(localBounds.topLeft());
+  const QPointF tr = globalTransform.map(localBounds.topRight());
+  const QPointF br = globalTransform.map(localBounds.bottomRight());
+  const QPointF bl = globalTransform.map(localBounds.bottomLeft());
+
+  const FloatColor outerColor{0.15f, 0.95f, 1.0f, 0.92f};
+  const FloatColor innerColor{0.02f, 0.08f, 0.10f, 0.72f};
+  renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          outerColor, 1.8f);
+  renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          outerColor, 1.8f);
+  renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          outerColor, 1.8f);
+  renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          outerColor, 1.8f);
+  renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          innerColor, 0.8f);
+  renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          innerColor, 0.8f);
+  renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          innerColor, 0.8f);
+  renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          innerColor, 0.8f);
+
+  const float zoom = std::max(0.001f, renderer->getZoom());
+  const float nodeSize = std::max(4.5f, 7.5f / zoom);
+  const FloatColor nodeColor{1.0f, 0.94f, 0.32f, 0.98f};
+
+  if (const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+    const auto type = shape->shapeType();
+    if (type == ShapeType::Polygon) {
+      const auto points = shape->customPolygonPoints();
+      if (!points.empty()) {
+        QPointF prev = globalTransform.map(points.front());
+        for (size_t i = 1; i < points.size(); ++i) {
+          const QPointF cur = globalTransform.map(points[i]);
+          renderer->drawSolidLine(
+              {static_cast<float>(prev.x()), static_cast<float>(prev.y())},
+              {static_cast<float>(cur.x()), static_cast<float>(cur.y())},
+              outerColor, 1.2f);
+          prev = cur;
+        }
+        if (shape->customPolygonClosed() && points.size() > 1) {
+          const QPointF first = globalTransform.map(points.front());
+          renderer->drawSolidLine(
+              {static_cast<float>(prev.x()), static_cast<float>(prev.y())},
+              {static_cast<float>(first.x()), static_cast<float>(first.y())},
+              outerColor, 1.2f);
+        }
+        for (const auto &pt : points) {
+          const QPointF canvasPt = globalTransform.map(pt);
+          renderer->drawPoint(static_cast<float>(canvasPt.x()),
+                              static_cast<float>(canvasPt.y()), nodeSize,
+                              nodeColor);
+        }
+      }
+    } else if (!shape->customPathVertices().empty()) {
+      const auto vertices = shape->customPathVertices();
+      QPointF prev;
+      bool hasPrev = false;
+      for (const auto &vertex : vertices) {
+        const QPointF canvasPt = globalTransform.map(vertex.pos);
+        renderer->drawPoint(static_cast<float>(canvasPt.x()),
+                            static_cast<float>(canvasPt.y()), nodeSize,
+                            nodeColor);
+        if (hasPrev) {
+          renderer->drawSolidLine(
+              {static_cast<float>(prev.x()), static_cast<float>(prev.y())},
+              {static_cast<float>(canvasPt.x()), static_cast<float>(canvasPt.y())},
+              outerColor, 1.0f);
+        }
+        prev = canvasPt;
+        hasPrev = true;
+      }
+      if (shape->customPathClosed() && vertices.size() > 1) {
+        const QPointF first = globalTransform.map(vertices.front().pos);
+        renderer->drawSolidLine(
+            {static_cast<float>(prev.x()), static_cast<float>(prev.y())},
+            {static_cast<float>(first.x()), static_cast<float>(first.y())},
+            outerColor, 1.0f);
+      }
+    }
+  }
+}
+
 // Draws checkerboard in Viewport Space so transparent regions of the
 // composition reveal the pattern against the viewport background.
 // This should be called before blitting the composition result to the
@@ -1420,7 +1616,6 @@ public:
   ArtifactPreviewCompositionPipeline previewPipeline_;
   std::unique_ptr<TransformGizmo> gizmo_;
   std::unique_ptr<Artifact3DGizmo> gizmo3D_;
-  std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
   RenderPipeline renderPipeline_;
   QTimer *renderTimer_ = nullptr;
@@ -2165,16 +2360,10 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
       if (!renderer)
         return;
       auto device = renderer->device();
-      auto ctx = renderer->immediateContext();
-      if (!device || !ctx)
+      if (!device)
         return;
-      if (!impl_->gpuContext_)
-        impl_->gpuContext_ =
-            std::make_unique<ArtifactCore::GpuContext>(device, ctx);
-      if (impl_->gpuContext_ && !impl_->blendPipeline_)
-        impl_->blendPipeline_ =
-            std::make_unique<ArtifactCore::LayerBlendPipeline>(
-                *impl_->gpuContext_);
+      if (!impl_->blendPipeline_)
+        impl_->blendPipeline_ = renderer->createLayerBlendPipeline();
       if (impl_->blendPipeline_) {
         QElapsedTimer t;
         t.start();
@@ -4145,6 +4334,28 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
   }
 
+  // Build matte source resolver: find layer by ID, render to QImage
+  auto matteResolverLambda = [&layers](const ArtifactCore::Id &layerId) -> QImage {
+      for (const auto &l : layers) {
+          if (l && l->id() == layerId) {
+              if (auto *imgLayer = dynamic_cast<ArtifactImageLayer *>(l.get())) {
+                  return imgLayer->toQImage();
+              }
+              if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(l.get())) {
+                  return videoLayer->currentFrameToQImage();
+              }
+              if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(l.get())) {
+                  return textLayer->toQImage();
+              }
+              if (auto *svgLayer = dynamic_cast<ArtifactSvgLayer *>(l.get())) {
+                  return svgLayer->toQImage();
+              }
+          }
+      }
+      return {};
+  };
+  std::function<QImage(const ArtifactCore::Id &)> matteResolver = matteResolverLambda;
+
   // Find active camera layer for 3D rendering
   ArtifactCameraLayer *activeCamera = nullptr;
   for (const auto &l : layers) {
@@ -4267,7 +4478,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       if (auto device = renderer_->device()) {
         renderPipeline_.initialize(device, static_cast<Uint32>(rcw),
                                    static_cast<Uint32>(rch),
-                                   RenderConfig::MainRTVFormat);
+                                   RenderConfig::LinearColorFormat);
       }
     } else if (gpuBlendRequested && lastPipelineStateMask_ != -1) {
       qCDebug(compositionViewLog)
@@ -4387,8 +4598,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     if (pipelineEnabled) {
       ArtifactCore::ProfileScope _profBase(
           "BasePass", ArtifactCore::ProfileCategory::Composite);
-      auto ctx = renderer_->immediateContext();
-      auto accumRTV = renderPipeline_.accumRTV();
       auto accumSRV = renderPipeline_.accumSRV();
       auto tempUAV = renderPipeline_.tempUAV();
       auto layerRTV = renderPipeline_.layerRTV();
@@ -4404,23 +4613,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       const float offscreenScale =
           (origViewW > 0.0f) ? (rcw / origViewW) : 1.0f;
 
-      // -- 1: 背景を accum に直接描画（オフスクリーン座標系）--
-      // 背景は Composition Space で現在の Pan/Zoom を適用して描画する。
+      // -- 1: 背景を offscreen 座標系で準備 --
+      // 背景矩形は一度 layerRTV に rasterize してから compute blend で
+      // accum にシードする。これで accum/temp は Vulkan 互換の
+      // linear storage image に保てる。
       renderer_->setViewportSize(rcw, rch);
       renderer_->setCanvasSize(cw, ch);      // ← Composition Space に設定
       renderer_->setZoom(origZoom);          // ← 現在のカメラズームを適用
       renderer_->setPan(origPanX, origPanY); // ← 現在のカメラパンを適用
-      {
-        Diligent::Viewport offVP;
-        offVP.TopLeftX = 0.0f;
-        offVP.TopLeftY = 0.0f;
-        offVP.Width = rcw;
-        offVP.Height = rch;
-        offVP.MinDepth = 0.0f;
-        offVP.MaxDepth = 1.0f;
-        ctx->SetViewports(1, &offVP, static_cast<Diligent::Uint32>(rcw),
-                          static_cast<Diligent::Uint32>(rch));
-      }
+      renderer_->setViewportRect(rcw, rch);
 
       const FloatColor layerBgColor = comp->backgroundColor();
       if (compositionViewLog().isDebugEnabled()) {
@@ -4437,26 +4638,41 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << "bgMode=" << static_cast<int>(backgroundMode)
             << "compositionSpaceApplied=" << true;
       }
-      renderer_->setOverrideRTV(accumRTV);
-      renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
-      renderer_->clear();
-      renderer_->setClearColor(viewportClearColor_);
+      renderer_->setOverrideRTV(renderPipeline_.accumRTV());
+        renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+        renderer_->clear();
+        renderer_->setClearColor(viewportClearColor_);
+        renderer_->setOverrideRTV(nullptr);
+
       // Switch to offscreen-scaled coordinate system so the background aligns
       // with the layer renders (both use offscreenScale-adjusted zoom/pan).
       renderer_->setCanvasSize(rcw, rch);
       renderer_->setZoom(origZoom * offscreenScale);
       renderer_->setPan(origPanX * offscreenScale, origPanY * offscreenScale);
-      // Draw the composition background into the accum before the layer loop.
-      // Solid, MayaGradient, and Checkerboard all draw bgColor into accum so
-      // the composition area is opaque and blocks the viewport background
-      // during the SRC_ALPHA blit in step 4.  Viewport-space backgrounds
-      // (checkerboard / gradient) are drawn separately in step 3.
+
+      // Seed accum through the same graphics->compute path used by layers.
+      // This keeps compute intermediates in a linear, storage-compatible format
+      // while the raster pass still targets the regular sRGB layer RT.
       if (backgroundMode == CompositionBackgroundMode::Solid ||
           backgroundMode == CompositionBackgroundMode::MayaGradient ||
           backgroundMode == CompositionBackgroundMode::Checkerboard) {
+        renderer_->setOverrideRTV(layerRTV);
+        renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+        renderer_->clear();
+        renderer_->setClearColor(viewportClearColor_);
         renderer_->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+        renderer_->flush();
+        renderer_->setOverrideRTV(nullptr);
+        renderer_->unbindColorTargetsForCompute();
+        const bool seeded = renderer_->blendLayers(
+            blendPipeline_.get(), layerSRV, accumSRV, tempUAV,
+            ArtifactCore::BlendMode::Normal, 1.0f);
+        if (seeded) {
+          renderPipeline_.swapAccumAndTemp();
+          accumSRV = renderPipeline_.accumSRV();
+          tempUAV = renderPipeline_.tempUAV();
+        }
       }
-      renderer_->setOverrideRTV(nullptr);
       basePassMs = markPhaseMs();
 
       // Already in offscreen-scale coordinate system — layer loop uses it
@@ -4534,6 +4750,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // -- Adjustment Layer or Normal Layer? --
           renderer_->setOverrideRTV(layerRTV);
           if (layer->isAdjustmentLayer()) {
+            renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+            renderer_->clear();
             // -- Adjustment Layer: Capture the background --
             // We draw the current composition result (accumSRV) into our layer
             // buffer. This makes the 'background' available as a source for
@@ -4555,15 +4773,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               layer.get(), renderer_.get(), 1.0f, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(), true,
               lod, has3DCamera ? &cameraViewMatrix : nullptr,
-              has3DCamera ? &cameraProjMatrix : nullptr);
+              has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver);
+          // Keep the command-buffer architecture, but make the graphics ->
+          // compute boundary explicit. The blend pipeline samples layerSRV,
+          // so pending draw packets must be submitted before dispatch.
+          renderer_->flush();
           renderer_->setOverrideRTV(nullptr);
 
           // CS 実行前に RTV を解除
-          ctx->SetRenderTargets(0, nullptr, nullptr,
-                                RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+          renderer_->unbindColorTargetsForCompute();
 
-          const bool blendOk = blendPipeline_->blend(
-              ctx, layerSRV, accumSRV, tempUAV, blendMode, opacity);
+          const bool blendOk = renderer_->blendLayers(
+              blendPipeline_.get(), layerSRV, accumSRV, tempUAV, blendMode,
+              opacity);
           if (!blendOk) {
             continue;
           }
@@ -4574,18 +4796,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
 
       // ==== オフスクリーン描画後: ホスト viewport に戻す ====
-      renderer_->setViewportSize(origViewW, origViewH);
-      {
-        Diligent::Viewport hostVP;
-        hostVP.TopLeftX = 0.0f;
-        hostVP.TopLeftY = 0.0f;
-        hostVP.Width = origViewW;
-        hostVP.Height = origViewH;
-        hostVP.MinDepth = 0.0f;
-        hostVP.MaxDepth = 1.0f;
-        ctx->SetViewports(1, &hostVP, static_cast<Diligent::Uint32>(origViewW),
-                          static_cast<Diligent::Uint32>(origViewH));
-      }
+      renderer_->setViewportRect(origViewW, origViewH);
 
       // -- 3: main FB に背景を描画してから accum を blit --
       // MayaGradient と Checkerboard はビューポート全体を覆う背景として main FB
@@ -4637,18 +4848,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       layerPassMs = markPhaseMs();
     } else {
       // === Fallback path (GPU パイプラインなし) ===
-      renderer_->setViewportSize(viewportW, viewportH);
-      if (auto ctx = renderer_->immediateContext()) {
-        Diligent::Viewport hostVP;
-        hostVP.TopLeftX = 0.0f;
-        hostVP.TopLeftY = 0.0f;
-        hostVP.Width = viewportW;
-        hostVP.Height = viewportH;
-        hostVP.MinDepth = 0.0f;
-        hostVP.MaxDepth = 1.0f;
-        ctx->SetViewports(1, &hostVP, static_cast<Diligent::Uint32>(viewportW),
-                          static_cast<Diligent::Uint32>(viewportH));
-      }
+      renderer_->setViewportRect(viewportW, viewportH);
       const float prevZoom = renderer_->getZoom();
       float prevPanX = 0.0f;
       float prevPanY = 0.0f;
@@ -4793,7 +4993,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               layer.get(), renderer_.get(), opacity, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(),
               false, lod, has3DCamera ? &cameraViewMatrix : nullptr,
-              has3DCamera ? &cameraProjMatrix : nullptr);
+              has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver);
 
           // === 段階 7: ROI デバッグ表示 ===
           if (debugMode_) {
@@ -5380,6 +5580,29 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                innerColor);
     }
 
+    guideVerticals_.clear();
+    guideHorizontals_.clear();
+    if (showGuides_ && comp && !selectedLayerId_.isNil()) {
+      const auto guideLayer = comp->layerById(selectedLayerId_);
+      if (guideLayer) {
+        const QRectF bounds = guideLayer->transformedBoundingBox();
+        if (bounds.isValid() && bounds.width() > 0.0 && bounds.height() > 0.0) {
+          const float left = static_cast<float>(bounds.left());
+          const float right = static_cast<float>(bounds.right());
+          const float top = static_cast<float>(bounds.top());
+          const float bottom = static_cast<float>(bounds.bottom());
+          const float centerX = static_cast<float>(bounds.center().x());
+          const float centerY = static_cast<float>(bounds.center().y());
+          guideVerticals_.push_back(left);
+          guideVerticals_.push_back(centerX);
+          guideVerticals_.push_back(right);
+          guideHorizontals_.push_back(top);
+          guideHorizontals_.push_back(centerY);
+          guideHorizontals_.push_back(bottom);
+        }
+      }
+    }
+
     if (showGuides_) {
       const FloatColor guideColor = {0.2f, 0.8f, 1.0f, 0.7f};
       for (float x : guideVerticals_) {
@@ -5412,6 +5635,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setCanvasSize(cw, ch);
       if (showCompositionRegionOverlay_) {
         drawCompositionRegionOverlay(renderer_.get(), comp);
+      }
+      if (selectedLayer) {
+        drawSelectionOverlay(renderer_.get(), selectedLayer);
       }
       if (showAnchorCenterOverlay_ && selectedLayer) {
         drawAnchorCenterOverlay(renderer_.get(), selectedLayer);
@@ -6034,11 +6260,35 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
   if (snapHintActive) {
     const bool snapBypassed =
         QGuiApplication::keyboardModifiers().testFlag(Qt::AltModifier);
-    const QString snapTitle =
+    QString snapTitle =
         snapBypassed ? QStringLiteral("Snap Off") : QStringLiteral("Snap On");
     const QString snapDetail =
         snapBypassed ? QStringLiteral("Hold Alt to enable free move")
                      : QStringLiteral("Hold Alt to bypass snapping");
+    if (!snapBypassed && gizmo_) {
+      int verticalCount = 0;
+      int horizontalCount = 0;
+      for (const auto &line : gizmo_->activeSnapLines()) {
+        if (line.isVertical) {
+          ++verticalCount;
+        } else {
+          ++horizontalCount;
+        }
+      }
+      if (verticalCount > 0 || horizontalCount > 0) {
+        QStringList parts;
+        if (verticalCount > 0) {
+          parts << QStringLiteral("X");
+        }
+        if (horizontalCount > 0) {
+          parts << QStringLiteral("Y");
+        }
+        if (!parts.isEmpty()) {
+          snapTitle += QStringLiteral(" - ");
+          snapTitle += parts.join(QStringLiteral("/"));
+        }
+      }
+    }
     const QFontMetrics fm(p.font());
     const int lineHeight = fm.height();
     const int contentWidth = std::max(fm.horizontalAdvance(snapTitle),

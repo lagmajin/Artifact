@@ -19,6 +19,9 @@
 module Artifact.Render.PrimitiveRenderer3D;
 
 import std;
+import FloatRGBA;
+import Color.Float;
+import Artifact.Render.RenderCommandBuffer;
 import Artifact.Render.ShaderManager;
 import Frame.Debug;
 
@@ -149,6 +152,7 @@ public:
     ISwapChain* swapChain_ = nullptr;
     ITextureView* overrideRTV_ = nullptr;
     ITextureView* overrideDSV_ = nullptr;
+    RenderCommandBuffer* cmdBuf_ = nullptr;
     RefCntAutoPtr<IRenderDevice> device_;
 
     RefCntAutoPtr<IShader> vs_;
@@ -928,6 +932,11 @@ void PrimitiveRenderer3D::setContext(IDeviceContext* ctx)
     setContext(ctx, nullptr);
 }
 
+void PrimitiveRenderer3D::setCommandBuffer(RenderCommandBuffer* cmdBuf)
+{
+    impl_->cmdBuf_ = cmdBuf;
+}
+
 void PrimitiveRenderer3D::setContext(IDeviceContext* ctx, ISwapChain* swapChain)
 {
     impl_->ctx_ = ctx;
@@ -973,6 +982,7 @@ void PrimitiveRenderer3D::destroy()
     impl_->swapChain_ = nullptr;
     impl_->overrideRTV_ = nullptr;
     impl_->overrideDSV_ = nullptr;
+    impl_->cmdBuf_ = nullptr;
     impl_->device_ = nullptr;
     impl_->frameCostStats_ = nullptr;
 }
@@ -1002,13 +1012,43 @@ void PrimitiveRenderer3D::resetMatrices()
 void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVector2D& size,
                                             const FloatColor& tint, float opacity, float rollDegrees)
 {
-    impl_->drawBillboard(center, size, impl_->defaultTextureSRV_.RawPtr(), tint, opacity, rollDegrees);
+    drawBillboardQuad(center, size, impl_->defaultTextureSRV_.RawPtr(), tint, opacity, rollDegrees);
+}
+
+void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVector2D& size,
+                                            ITextureView* texture, const FloatRGBA& tint,
+                                            float opacity, float rollDegrees)
+{
+    drawBillboardQuad(center, size, texture,
+                      FloatColor{tint.r(), tint.g(), tint.b(), tint.a()},
+                      opacity, rollDegrees);
+}
+
+void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVector2D& size,
+                                            const QImage& image, const FloatRGBA& tint,
+                                            float opacity, float rollDegrees)
+{
+    drawBillboardQuad(center, size, image,
+                      FloatColor{tint.r(), tint.g(), tint.b(), tint.a()},
+                      opacity, rollDegrees);
 }
 
 void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVector2D& size,
                                             ITextureView* texture, const FloatColor& tint,
                                             float opacity, float rollDegrees)
 {
+    if (impl_->cmdBuf_ && impl_->currentRTV()) {
+        impl_->cmdBuf_->targetRTV = impl_->currentRTV();
+        BillboardPkt pkt;
+        pkt.center = center;
+        pkt.size = size;
+        pkt.pSRV = texture;
+        pkt.tint = { tint.r(), tint.g(), tint.b(), tint.a() };
+        pkt.opacity = opacity;
+        pkt.rollDegrees = rollDegrees;
+        impl_->cmdBuf_->append(std::move(pkt));
+        return;
+    }
     impl_->drawBillboard(center, size, texture, tint, opacity, rollDegrees);
 }
 
@@ -1016,10 +1056,54 @@ void PrimitiveRenderer3D::drawBillboardQuad(const QVector3D& center, const QVect
                                             const QImage& image, const FloatColor& tint,
                                             float opacity, float rollDegrees)
 {
+    if (impl_->cmdBuf_ && impl_->currentRTV()) {
+        impl_->cmdBuf_->targetRTV = impl_->currentRTV();
+        BillboardImagePkt pkt;
+        pkt.center = center;
+        pkt.size = size;
+        pkt.image = image;
+        pkt.tint = { tint.r(), tint.g(), tint.b(), tint.a() };
+        pkt.opacity = opacity;
+        pkt.rollDegrees = rollDegrees;
+        impl_->cmdBuf_->append(std::move(pkt));
+        return;
+    }
+    drawBillboardQuadImmediate(center, size, image, tint, opacity, rollDegrees);
+}
+
+void PrimitiveRenderer3D::drawBillboardQuadImmediate(const QVector3D& center, const QVector2D& size,
+                                                     ITextureView* texture, const FloatColor& tint,
+                                                     float opacity, float rollDegrees)
+{
+    impl_->drawBillboard(center, size, texture, tint, opacity, rollDegrees);
+}
+
+void PrimitiveRenderer3D::drawBillboardQuadImmediate(const QVector3D& center, const QVector2D& size,
+                                                     ITextureView* texture, const FloatRGBA& tint,
+                                                     float opacity, float rollDegrees)
+{
+    impl_->drawBillboard(center, size, texture,
+                         FloatColor{tint.r(), tint.g(), tint.b(), tint.a()},
+                         opacity, rollDegrees);
+}
+
+void PrimitiveRenderer3D::drawBillboardQuadImmediate(const QVector3D& center, const QVector2D& size,
+                                                     const QImage& image, const FloatColor& tint,
+                                                     float opacity, float rollDegrees)
+{
     auto texture = impl_->textureFromImage(image);
     impl_->drawBillboard(center, size, texture ? texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE)
                                                : impl_->defaultTextureSRV_.RawPtr(),
                          tint, opacity, rollDegrees);
+}
+
+void PrimitiveRenderer3D::drawBillboardQuadImmediate(const QVector3D& center, const QVector2D& size,
+                                                     const QImage& image, const FloatRGBA& tint,
+                                                     float opacity, float rollDegrees)
+{
+    drawBillboardQuadImmediate(center, size, image,
+                               FloatColor{tint.r(), tint.g(), tint.b(), tint.a()},
+                               opacity, rollDegrees);
 }
 
 void PrimitiveRenderer3D::draw3DLine(const QVector3D& start, const QVector3D& end,

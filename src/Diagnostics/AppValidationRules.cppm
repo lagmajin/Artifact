@@ -131,7 +131,7 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
         for (const auto& ref : matteRefs) {
             if (!ref.enabled) continue;
 
-            const QString sourceId = ref.assetId.toString();
+            const QString sourceId = ref.sourceLayerId.toString();
 
             // Check 1: missing source
             if (!layerMap.contains(sourceId)) {
@@ -190,8 +190,8 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
             const auto refs = currentLayer->matteReferences();
             bool foundNext = false;
             for (const auto& r : refs) {
-                if (r.enabled && !r.assetId.isNil()) {
-                    currentId = r.assetId.toString();
+                if (r.enabled && !r.sourceLayerId.isNil()) {
+                    currentId = r.sourceLayerId.toString();
                     foundNext = true;
                     break;
                 }

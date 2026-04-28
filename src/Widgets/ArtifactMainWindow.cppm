@@ -1,4 +1,5 @@
 ﻿module;
+#include <algorithm>
 #include <utility>
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -23,11 +24,13 @@
 #include <QKeyEvent>
 #include <QLayout>
 #include <QList>
+#include <cmath>
 #include <QMessageBox>
 #include <QPointer>
 #include <QShowEvent>
 #include <QStatusBar>
 #include <QTimer>
+#include <QToolBar>
 #include <QTreeView>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -35,6 +38,15 @@
 module Artifact.MainWindow;
 
 import Artifact.MainWindow;
+import Artifact.Application.Manager;
+import Artifact.Composition.Abstract;
+import Artifact.Event.Types;
+import Artifact.Layer.Shape;
+import Artifact.Layer.Text;
+import Event.Bus;
+import Text.Style;
+import Utils.String.UniString;
+import Widgets.ToolOptionsBar;
 import Artifact.Widgets.ProjectManagerWidget;
 import Menu.MenuBar;
 import Artifact.Menu.View;
@@ -339,6 +351,8 @@ public:
   CDockManager *dockManager = nullptr;
   DockStyleManager *dockStyleManager = nullptr;
   ArtifactToolBar *toolBar = nullptr;
+  ArtifactToolOptionsBar *toolOptionsBar = nullptr;
+  QToolBar *toolOptionsHost = nullptr;
   QWidget *centralWidgetHost = nullptr;
   CDockWidget *primaryCenterDock = nullptr;
   bool primaryCenterDockAssigned = false;
@@ -351,6 +365,85 @@ public:
   bool menuBarInitialized = false;
   bool initialLayoutApplied = false;
   ArtifactAICloudWidget *aiCloudWidget_ = nullptr;
+  QMetaObject::Connection currentTextLayerChangedConnection;
+  QMetaObject::Connection currentShapeLayerChangedConnection;
+
+  void syncTextToolOptions(ArtifactMainWindow *owner) {
+    if (!owner || !toolOptionsBar) {
+      return;
+    }
+
+    if (currentTextLayerChangedConnection) {
+      QObject::disconnect(currentTextLayerChangedConnection);
+    }
+
+    auto *app = ArtifactApplicationManager::instance();
+    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    const auto current =
+        selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(current);
+    if (!textLayer) {
+      toolOptionsBar->clearTextOptions();
+      return;
+    }
+
+    toolOptionsBar->setTextOptions(
+        textLayer->fontFamily().toQString(),
+        static_cast<int>(std::max(1.0f, textLayer->fontSize())),
+        textLayer->isBold(),
+        textLayer->isItalic(), textLayer->isUnderline(),
+        static_cast<int>(textLayer->horizontalAlignment()),
+        static_cast<int>(textLayer->verticalAlignment()),
+        static_cast<int>(textLayer->wrapMode()), true);
+
+    currentTextLayerChangedConnection = QObject::connect(
+        current.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
+          if (owner && owner->impl_) {
+            owner->impl_->syncTextToolOptions(owner);
+          }
+        });
+  }
+
+  void syncShapeToolOptions(ArtifactMainWindow *owner) {
+    if (!owner || !toolOptionsBar) {
+      return;
+    }
+
+    if (currentShapeLayerChangedConnection) {
+      QObject::disconnect(currentShapeLayerChangedConnection);
+    }
+
+    auto *app = ArtifactApplicationManager::instance();
+    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    const auto current =
+        selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+    const auto shapeLayer =
+        std::dynamic_pointer_cast<ArtifactShapeLayer>(current);
+    if (!shapeLayer) {
+      toolOptionsBar->clearShapeOptions();
+      return;
+    }
+
+    toolOptionsBar->setShapeOptions(
+        static_cast<int>(shapeLayer->shapeType()),
+        std::max(1, shapeLayer->shapeWidth()),
+        std::max(1, shapeLayer->shapeHeight()), shapeLayer->fillEnabled(),
+        shapeLayer->strokeEnabled(),
+        static_cast<int>(std::lround(std::max(0.0f, shapeLayer->strokeWidth()))),
+        static_cast<int>(std::lround(std::max(0.0f, shapeLayer->cornerRadius()))),
+        std::max(3, shapeLayer->starPoints()),
+        std::clamp(static_cast<int>(
+                       std::lround(shapeLayer->starInnerRadius() * 100.0f)),
+                   0, 100),
+        std::max(3, shapeLayer->polygonSides()), true);
+
+    currentShapeLayerChangedConnection = QObject::connect(
+        current.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
+          if (owner && owner->impl_) {
+            owner->impl_->syncShapeToolOptions(owner);
+          }
+        });
+  }
 };
 
 ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
@@ -380,6 +473,28 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   auto *toolBar = new ArtifactToolBar(this);
   addToolBar(toolBar);
   impl_->toolBar = toolBar;
+
+  impl_->toolOptionsBar = new ArtifactToolOptionsBar(this);
+  impl_->toolOptionsBar->clearTextOptions();
+  impl_->toolOptionsBar->clearShapeOptions();
+  impl_->toolOptionsHost = new QToolBar(this);
+  impl_->toolOptionsHost->setMovable(false);
+  impl_->toolOptionsHost->setFloatable(false);
+  impl_->toolOptionsHost->setIconSize(QSize(16, 16));
+  {
+    QPalette pal = impl_->toolOptionsHost->palette();
+    pal.setColor(QPalette::Window,
+                 QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    pal.setColor(QPalette::Button,
+                 QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+    pal.setColor(QPalette::WindowText,
+                 QColor(ArtifactCore::currentDCCTheme().textColor));
+    impl_->toolOptionsHost->setPalette(pal);
+  }
+  impl_->toolOptionsHost->addWidget(impl_->toolOptionsBar);
+  addToolBarBreak();
+  addToolBar(impl_->toolOptionsHost);
+  toolBar->setToolOptionsBar(impl_->toolOptionsBar);
   toolBar->refreshFromApplicationState();
   QObject::connect(toolBar, &ArtifactToolBar::workspaceModeChanged, this,
                    [this](WorkspaceMode mode) {
@@ -398,6 +513,211 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   QObject::connect(
       toolBar, &ArtifactToolBar::scaleToolRequested, this,
       [this]() { qDebug() << "[MainWindow] Scale tool selected (R)"; });
+
+  QObject::connect(
+      impl_->toolOptionsBar, &ArtifactToolOptionsBar::optionChanged, this,
+      [this](const QString &toolName, const QString &optionName,
+             const QVariant &value) {
+        auto *app = ArtifactApplicationManager::instance();
+        auto *selection = app ? app->layerSelectionManager() : nullptr;
+        const auto current =
+            selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+
+        if (toolName == QStringLiteral("テキスト")) {
+          const auto textLayer =
+              std::dynamic_pointer_cast<ArtifactTextLayer>(current);
+          if (!textLayer) {
+            return;
+          }
+
+          bool changed = false;
+          if (optionName == QStringLiteral("font")) {
+            const QString family = value.toString().trimmed();
+            if (!family.isEmpty() &&
+                textLayer->fontFamily().toQString() != family) {
+              textLayer->setFontFamily(
+                  ArtifactCore::UniString::fromQString(family));
+              changed = true;
+            }
+          } else if (optionName == QStringLiteral("fontSize")) {
+            const float fontSize = std::max(1.0f, value.toFloat());
+            if (std::abs(textLayer->fontSize() - fontSize) > 0.001f) {
+              textLayer->setFontSize(fontSize);
+              changed = true;
+            }
+          } else if (optionName == QStringLiteral("bold")) {
+            const bool enabled = value.toBool();
+            if (textLayer->isBold() != enabled) {
+              textLayer->setBold(enabled);
+              changed = true;
+            }
+          } else if (optionName == QStringLiteral("italic")) {
+            const bool enabled = value.toBool();
+            if (textLayer->isItalic() != enabled) {
+              textLayer->setItalic(enabled);
+              changed = true;
+            }
+          } else if (optionName == QStringLiteral("underline")) {
+            const bool enabled = value.toBool();
+            if (textLayer->isUnderline() != enabled) {
+              textLayer->setUnderline(enabled);
+              changed = true;
+            }
+          } else if (optionName == QStringLiteral("horizontalAlignment")) {
+            const auto alignment =
+                static_cast<ArtifactCore::TextHorizontalAlignment>(value.toInt());
+            if (textLayer->horizontalAlignment() != alignment) {
+              textLayer->setHorizontalAlignment(alignment);
+              changed = true;
+            }
+          } else if (optionName == QStringLiteral("verticalAlignment")) {
+            const auto alignment =
+                static_cast<ArtifactCore::TextVerticalAlignment>(value.toInt());
+            if (textLayer->verticalAlignment() != alignment) {
+              textLayer->setVerticalAlignment(alignment);
+              changed = true;
+            }
+          } else if (optionName == QStringLiteral("wrapMode")) {
+            const auto wrapMode =
+                static_cast<ArtifactCore::TextWrapMode>(value.toInt());
+            if (textLayer->wrapMode() != wrapMode) {
+              textLayer->setWrapMode(wrapMode);
+              changed = true;
+            }
+          }
+
+          if (!changed) {
+            return;
+          }
+
+          textLayer->setDirty(LayerDirtyFlag::Property);
+          textLayer->addDirtyReason(LayerDirtyReason::UserEdit);
+          textLayer->changed();
+          if (auto *comp = static_cast<ArtifactAbstractComposition *>(
+                  textLayer->composition())) {
+            ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                LayerChangedEvent{comp->id().toString(),
+                                  textLayer->id().toString(),
+                                  LayerChangedEvent::ChangeType::Modified});
+          }
+          return;
+        }
+
+        if (toolName != QStringLiteral("シェイプ")) {
+          return;
+        }
+
+        const auto shapeLayer =
+            std::dynamic_pointer_cast<ArtifactShapeLayer>(current);
+        if (!shapeLayer) {
+          return;
+        }
+
+        bool changed = false;
+        if (optionName == QStringLiteral("shapeType")) {
+          const auto shapeType = static_cast<Artifact::ShapeType>(value.toInt());
+          if (shapeLayer->shapeType() != shapeType) {
+            shapeLayer->setShapeType(shapeType);
+            changed = true;
+          }
+        } else if (optionName == QStringLiteral("shapeWidth")) {
+          const int width = std::max(1, value.toInt());
+          if (shapeLayer->shapeWidth() != width) {
+            shapeLayer->setSize(width, shapeLayer->shapeHeight());
+            changed = true;
+          }
+        } else if (optionName == QStringLiteral("shapeHeight")) {
+          const int height = std::max(1, value.toInt());
+          if (shapeLayer->shapeHeight() != height) {
+            shapeLayer->setSize(shapeLayer->shapeWidth(), height);
+            changed = true;
+          }
+        } else if (optionName == QStringLiteral("fillEnabled")) {
+          const bool enabled = value.toBool();
+          if (shapeLayer->fillEnabled() != enabled) {
+            shapeLayer->setFillEnabled(enabled);
+            changed = true;
+          }
+        } else if (optionName == QStringLiteral("strokeEnabled")) {
+          const bool enabled = value.toBool();
+          if (shapeLayer->strokeEnabled() != enabled) {
+            shapeLayer->setStrokeEnabled(enabled);
+            changed = true;
+          }
+        } else if (optionName == QStringLiteral("strokeWidth")) {
+          const float strokeWidth = std::max(0.0f, value.toFloat());
+          if (std::abs(shapeLayer->strokeWidth() - strokeWidth) > 0.001f) {
+            shapeLayer->setStrokeWidth(strokeWidth);
+            changed = true;
+          }
+        } else if (optionName == QStringLiteral("shapePrimary")) {
+          switch (shapeLayer->shapeType()) {
+          case Artifact::ShapeType::Rect:
+          case Artifact::ShapeType::Square: {
+            const float radius = std::max(0.0f, value.toFloat());
+            if (std::abs(shapeLayer->cornerRadius() - radius) > 0.001f) {
+              shapeLayer->setCornerRadius(radius);
+              changed = true;
+            }
+            break;
+          }
+          case Artifact::ShapeType::Star: {
+            const int points = std::max(3, value.toInt());
+            if (shapeLayer->starPoints() != points) {
+              shapeLayer->setStarPoints(points);
+              changed = true;
+            }
+            break;
+          }
+          case Artifact::ShapeType::Polygon: {
+            const int sides = std::max(3, value.toInt());
+            if (shapeLayer->polygonSides() != sides) {
+              shapeLayer->setPolygonSides(sides);
+              changed = true;
+            }
+            break;
+          }
+          default:
+            break;
+          }
+        } else if (optionName == QStringLiteral("shapeSecondary") &&
+                   shapeLayer->shapeType() == Artifact::ShapeType::Star) {
+          const float innerRadius =
+              std::clamp(value.toFloat() / 100.0f, 0.0f, 1.0f);
+          if (std::abs(shapeLayer->starInnerRadius() - innerRadius) > 0.001f) {
+            shapeLayer->setStarInnerRadius(innerRadius);
+            changed = true;
+          }
+        }
+
+        if (!changed) {
+          return;
+        }
+
+        shapeLayer->setDirty(LayerDirtyFlag::Property);
+        shapeLayer->addDirtyReason(LayerDirtyReason::UserEdit);
+        if (auto *comp = static_cast<ArtifactAbstractComposition *>(
+                shapeLayer->composition())) {
+          ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+              LayerChangedEvent{comp->id().toString(),
+                                shapeLayer->id().toString(),
+                                LayerChangedEvent::ChangeType::Modified});
+        }
+      });
+
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    if (auto *selection = app->layerSelectionManager()) {
+      QObject::connect(selection, &ArtifactLayerSelectionManager::selectionChanged,
+                       this, [this]() {
+                         if (impl_) {
+                           impl_->syncTextToolOptions(this);
+                           impl_->syncShapeToolOptions(this);
+                         }
+                       });
+    }
+  }
+  impl_->syncTextToolOptions(this);
+  impl_->syncShapeToolOptions(this);
 
   impl_->dockManager = new CDockManager(this);
   impl_->dockStyleManager = new DockStyleManager(impl_->dockManager, this);

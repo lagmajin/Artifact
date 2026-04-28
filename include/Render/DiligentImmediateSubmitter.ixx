@@ -11,12 +11,15 @@ export module Artifact.Render.DiligentImmediateSubmitter;
 
 import Artifact.Render.IRenderSubmitter;
 import Artifact.Render.RenderCommandBuffer;
+import Artifact.Render.PrimitiveRenderer3D;
+import Color.Float;
 import Artifact.Render.ShaderManager;
 import Frame.Debug;
 import Text.GlyphAtlas;
 import Text.GlyphLayout;
 import Font.FreeFont;
 import Graphics;
+import Graphics.ParticleRenderer;
 
 export namespace Artifact {
 
@@ -33,6 +36,8 @@ public:
     void destroy();
     void setFrameCostStats(ArtifactCore::RenderCostStats* stats);
     void setDeferredContext(RefCntAutoPtr<IDeviceContext> deferred);
+    void setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer);
+    void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer);
 
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
 
@@ -67,6 +72,8 @@ private:
     RefCntAutoPtr<ITextureView> m_glyph_atlas_srv;
     GlyphAtlas m_glyph_atlas;
     ArtifactCore::RenderCostStats* m_frameCostStats_ = nullptr;
+    PrimitiveRenderer3D* m_primitiveRenderer3D_ = nullptr;
+    ArtifactCore::ParticleRenderer* m_particleRenderer_ = nullptr;
 
     // H3: Current PSO for per-submit deduplication
     IPipelineState* m_currentPSO_ = nullptr;
@@ -125,6 +132,9 @@ private:
     void submitSprite        (const SpritePkt&,         IDeviceContext*, ITextureView*);
     void submitSpriteXform   (const SpriteXformPkt&,    IDeviceContext*, ITextureView*);
     void submitMaskedSprite  (const MaskedSpritePkt&,   IDeviceContext*, ITextureView*);
+    void submitBillboard     (const BillboardPkt&,      IDeviceContext*, ITextureView*);
+    void submitBillboardImage(const BillboardImagePkt&, IDeviceContext*, ITextureView*);
+    void submitParticles     (const ParticlePkt&,       IDeviceContext*, ITextureView*);
     void submitGlyphText     (const GlyphTextPkt&,      IDeviceContext*, ITextureView*);
     void submitGlyphTextTransformed(const GlyphTextXformPkt&, IDeviceContext*, ITextureView*);
 };

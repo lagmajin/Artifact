@@ -117,17 +117,24 @@ public:
     void setBoxHeight(float height);
     float boxHeight() const;
 
-    void setParagraphSpacing(float spacing);
-    float paragraphSpacing() const;
+     void setParagraphSpacing(float spacing);
+     float paragraphSpacing() const;
 
-    QImage toQImage() const;
-    const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
-    bool hasCurrentFrameBuffer() const;
+     void addAnimator();
+     void removeAnimator(int index);
+     void setAnimatorCount(int count);
+     int animatorCount() const;
 
-    // Trigger update of internal image
-    void updateImage();
-    std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
-    bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
+     QImage toQImage() const;
+     const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
+     bool hasCurrentFrameBuffer() const;
+
+     // Trigger update of internal image
+     void updateImage();
+     QJsonObject toJson() const override;
+     void fromJsonProperties(const QJsonObject& obj) override;
+     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+     bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 
     void draw(ArtifactIRenderer* renderer) override;
 };

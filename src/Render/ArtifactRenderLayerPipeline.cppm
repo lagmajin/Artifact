@@ -127,7 +127,7 @@ namespace Artifact
 
   const TEXTURE_FORMAT resolvedFormat = format != TEX_FORMAT_UNKNOWN
                                              ? format
-                                             : RenderConfig::MainRTVFormat;
+                                             : RenderConfig::LinearColorFormat;
 
   const bool sameSize = impl_->device_ == device &&
                         impl_->width_ == width &&

@@ -33,6 +33,7 @@ import Time.TimeRemap;
 import Artifact.Layer.Settings;
 import Artifact.Layer.Physics;
 import Artifact.Layer.Matte;
+import Layer.Matte;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
@@ -1840,6 +1841,16 @@ void ArtifactAbstractLayer::addMatteReference(const LayerMatteReference& ref) {
 
 void ArtifactAbstractLayer::clearMatteReferences() {
   impl_->mattes_.clear();
+}
+
+MatteStack ArtifactAbstractLayer::buildMatteStack() const {
+    MatteStack stack;
+    for (const auto& ref : impl_->mattes_) {
+        if (ref.enabled && !ref.sourceLayerId.isNil()) {
+            stack.addNode(ref.toCoreMatteNode());
+        }
+    }
+    return stack;
 }
 
 // Opacity

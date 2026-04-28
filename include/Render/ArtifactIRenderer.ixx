@@ -25,6 +25,8 @@ import Image.ImageF32x4_RGBA;
 export import Image.MultiChannelImage;
 import Frame.Debug;
 import Graphics.RayTracingManager;
+import Graphics.LayerBlendPipeline;
+import Layer.Blend;
 import Graphics.ParticleData;
 import Core.Light;
 import Artifact.LOD.Manager;
@@ -98,6 +100,8 @@ public:
   void setClearColor(const FloatColor &color);
   FloatColor getClearColor() const;
   void setViewportSize(float w, float h);
+  void setViewportRect(float w, float h);
+  void unbindColorTargetsForCompute();
   void setDevicePixelRatio(float dpr);
 
   // ==== マルチチャンネルレンダリング ====
@@ -276,6 +280,12 @@ public:
   void drawGrid(float x, float y, float w, float h, float spacing,
                 float thickness, const FloatColor &color);
   void setUpscaleConfig(bool enable, float sharpness);
+  std::unique_ptr<ArtifactCore::LayerBlendPipeline> createLayerBlendPipeline() const;
+  bool blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
+                   Diligent::ITextureView *srcSRV,
+                   Diligent::ITextureView *dstSRV,
+                   Diligent::ITextureView *outUAV,
+                   ArtifactCore::BlendMode mode, float opacity) const;
 
   Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device() const;
   Diligent::RefCntAutoPtr<Diligent::IDeviceContext> immediateContext() const;

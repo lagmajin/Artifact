@@ -63,6 +63,7 @@ export namespace Artifact {
 
   bool isDragging() const { return isDragging_; }
   HandleType activeHandle() const { return activeHandle_; }
+  const std::vector<SnapLine>& activeSnapLines() const { return activeSnapLines_; }
   QRectF currentCanvasBoundingRect() const;
 
  private:
@@ -78,6 +79,7 @@ export namespace Artifact {
   std::vector<float> cachedSnapVLines_;
   std::vector<float> cachedSnapHLines_;
   QPointF dragStartCanvasPos_;
+  QPointF dragStartLocalMousePos_;
   QPointF dragStartLayerPos_;
   float dragStartScaleX_ = 1.0f;
   float dragStartScaleY_ = 1.0f;
@@ -86,11 +88,14 @@ export namespace Artifact {
   bool dragStartHasPositionKey_ = false;
   bool dragStartHasRotationKey_ = false;
   bool dragStartHasScaleKey_ = false;
+  bool dragStartHasTextBoxState_ = false;
   QTransform dragStartGlobalTransform_;
   QRectF dragStartBoundingBox_;
   QRectF dragStartLocalBounds_;
   QPointF dragStartAnchor_;
   float dragStartAnchorZ_ = 0.0f;
+  float dragStartTextBoxWidth_ = 0.0f;
+  float dragStartTextBoxHeight_ = 0.0f;
   float dragStartPointerAngle_ = 0.0f;
   float dragAccumulatedRotationDelta_ = 0.0f;
   QPointF lastCanvasMousePos_;

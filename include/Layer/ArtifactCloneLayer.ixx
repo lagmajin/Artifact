@@ -6,6 +6,7 @@ module;
 #include <QVariant>
 #include <QVector3D>
 #include <QMatrix4x4>
+#include <Graphics/InstanceData.h>
 export module Artifact.Layer.Clone;
 
 

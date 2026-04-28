@@ -32,6 +32,7 @@ import Animation.Transform3D;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
+import Layer.Matte;
 import Frame.Position;
 import Audio.Segment;
 export import Property.Abstract;
@@ -344,6 +345,9 @@ public:
   void setMatteReferences(const std::vector<LayerMatteReference>& refs);
   void addMatteReference(const LayerMatteReference& ref);
   void clearMatteReferences();
+  /// Convert matte references to Core MatteStack for evaluation.
+  /// Also accessible as convenience for the render pipeline.
+  ArtifactCore::MatteStack buildMatteStack() const;
   /*Mattes*/
 
   // LOD (Level of Detail) rendering
