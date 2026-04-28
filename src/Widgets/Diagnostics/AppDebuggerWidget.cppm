@@ -984,16 +984,27 @@ public:
             const QString layerText = controllerSnapshot.selectedLayerName.isEmpty()
                                             ? QStringLiteral("<none>")
                                             : controllerSnapshot.selectedLayerName;
-            captureSummary_->setText(QStringLiteral("frame=%1  composition=%2  layer=%3  backend=%4  passes=%5  resources=%6  attachments=%7  traceEvents=%8")
+            const QString compareText = controllerSnapshot.compareMode == ArtifactCore::FrameDebugCompareMode::Disabled
+                                            ? QStringLiteral("off")
+                                            : QStringLiteral("%1%2")
+                                                  .arg(ArtifactCore::toString(controllerSnapshot.compareMode))
+                                                  .arg(controllerSnapshot.compareTargetId.isEmpty()
+                                                           ? QString()
+                                                           : QStringLiteral(" -> %1").arg(controllerSnapshot.compareTargetId));
+            captureSummary_->setText(QStringLiteral("frame=%1  composition=%2  layer=%3  backend=%4  compare=%5  passes=%6  resources=%7  attachments=%8  traceEvents=%9  bundle=%10")
                                          .arg(controllerSnapshot.frame.framePosition())
                                          .arg(compositionText)
                                          .arg(layerText)
                                          .arg(backendText)
+                                         .arg(compareText)
                                          .arg(static_cast<int>(controllerSnapshot.passes.size()))
                                          .arg(static_cast<int>(controllerSnapshot.resources.size()))
                                          .arg(static_cast<int>(controllerSnapshot.attachments.size()))
-                                         .arg(static_cast<int>(trace.events.size())));
-            captureSummary_->setToolTip(QStringLiteral("RenderDoc-like capture overview"));
+                                         .arg(static_cast<int>(trace.events.size()))
+                                         .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>")));
+            captureSummary_->setToolTip(QStringLiteral("history=%1  currentCapture=%2")
+                                            .arg(hasCaptureBundle_ ? static_cast<int>(captureBundle_.history.size()) : 0)
+                                            .arg(hasCaptureBundle_ ? captureBundle_.capture.captureId : QStringLiteral("<none>")));
         }
 
         if (hasControllerSnapshot) {
@@ -1506,9 +1517,24 @@ public:
                                                                             : controllerSnapshot.compositionName);
             lines << QStringLiteral("  playback: %1")
                           .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
+            lines << QStringLiteral("  compare: %1")
+                          .arg(ArtifactCore::toString(controllerSnapshot.compareMode));
+            lines << QStringLiteral("  compareTarget: %1")
+                          .arg(controllerSnapshot.compareTargetId.isEmpty()
+                                   ? QStringLiteral("<none>")
+                                   : controllerSnapshot.compareTargetId);
             lines << QStringLiteral("  traceFrames: %1").arg(static_cast<int>(trace.frames.size()));
             lines << QStringLiteral("  traceEvents: %1").arg(static_cast<int>(trace.events.size()));
             lines << QStringLiteral("  crashes: %1").arg(static_cast<int>(trace.crashes.size()));
+            lines << QStringLiteral("  captureBundle: %1")
+                          .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>"));
+            lines << QStringLiteral("  captureHistory: %1")
+                          .arg(hasCaptureBundle_ ? static_cast<int>(captureBundle_.history.size()) : 0);
+            if (hasCaptureBundle_) {
+                lines << QStringLiteral("CaptureBundle JSON:");
+                lines << QString::fromUtf8(QJsonDocument(captureBundle_.toJson()).toJson(QJsonDocument::Indented));
+                lines << QString();
+            }
             lines << QStringLiteral("FrameDebugSnapshot JSON:");
             lines << QString::fromUtf8(QJsonDocument(controllerSnapshot.toJson()).toJson(QJsonDocument::Indented));
             lines << QString();
@@ -1523,12 +1549,15 @@ public:
                 crashText = trace.crashes.back().summary.isEmpty() ? QStringLiteral("<no-summary>")
                                                                   : trace.crashes.back().summary.left(48);
             }
-            exportSummary_->setText(QStringLiteral("ready to copy: frame=%1  traceEvents=%2  crashes=%3  compare=%4")
+            exportSummary_->setText(QStringLiteral("ready to copy: frame=%1  traceEvents=%2  crashes=%3  compare=%4  bundle=%5")
                                         .arg(controllerSnapshot.frame.framePosition())
                                         .arg(static_cast<int>(trace.events.size()))
                                         .arg(static_cast<int>(trace.crashes.size()))
-                                        .arg(ArtifactCore::toString(controllerSnapshot.compareMode)));
-            exportSummary_->setToolTip(QStringLiteral("latestCrash=%1").arg(crashText));
+                                        .arg(ArtifactCore::toString(controllerSnapshot.compareMode))
+                                        .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>")));
+            exportSummary_->setToolTip(QStringLiteral("latestCrash=%1  history=%2")
+                                           .arg(crashText)
+                                           .arg(hasCaptureBundle_ ? static_cast<int>(captureBundle_.history.size()) : 0));
         }
     }
 };

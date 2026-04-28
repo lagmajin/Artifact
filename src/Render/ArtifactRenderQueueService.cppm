@@ -99,6 +99,7 @@ import Artifact.Layer.Text;
 import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Solid2D;
+import Artifact.Layer.Shape;
 import Layer.Blend;
 import Color.Float;
 
@@ -2052,6 +2053,13 @@ namespace Artifact
 
             if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
                 return renderVideoLayerSurface(videoLayer, layerSize);
+            }
+
+            if (const auto shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+                const QImage image = shapeLayer->toQImage();
+                if (!image.isNull()) {
+                    return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+                }
             }
 
             QImage fallback = layer->getThumbnail(layerSize.width(), layerSize.height());

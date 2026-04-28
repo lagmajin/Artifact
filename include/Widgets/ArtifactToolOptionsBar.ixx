@@ -20,6 +20,16 @@ public:
 
   // ツール名に応じてオプションパネルを切替
   void setCurrentTool(const QString &toolName);
+  void setTextOptions(const QString &fontFamily, int fontSize, bool bold,
+                      bool italic, bool underline, int horizontalAlignment,
+                      int verticalAlignment, int wrapMode,
+                      bool enabled = true);
+  void clearTextOptions();
+  void setShapeOptions(int shapeType, int width, int height, bool fillEnabled,
+                       bool strokeEnabled, int strokeWidth, int cornerRadius,
+                       int starPoints, int starInnerRadiusPercent,
+                       int polygonSides, bool enabled = true);
+  void clearShapeOptions();
 
 signals:
   void optionChanged(const QString &toolName, const QString &optionName,

@@ -36,6 +36,8 @@ import Artifact.Timeline.KeyframeModel;
 import Math.Interpolate;
 import Time.Rational;
 import Utils.String.UniString;
+import Event.Bus;
+import Artifact.Event.Types;
 
 export namespace Artifact {
 
@@ -1329,7 +1331,11 @@ private:
         if (!service) {
             return QString();
         }
-        auto composition = service->compositionById(CompositionID(compositionId));
+        auto result = service->findComposition(CompositionID(compositionId));
+        if (!result.success) {
+            return QString();
+        }
+        auto composition = result.ptr.lock();
         if (!composition) {
             return QString();
         }
@@ -1342,7 +1348,11 @@ private:
         if (!service) {
             return false;
         }
-        auto composition = service->compositionById(CompositionID(compositionId));
+        auto result = service->findComposition(CompositionID(compositionId));
+        if (!result.success) {
+            return false;
+        }
+        auto composition = result.ptr.lock();
         if (!composition) {
             return false;
         }
@@ -1356,11 +1366,7 @@ private:
         if (!app) {
             return QString();
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return QString();
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return QString();
         }
@@ -1377,11 +1383,7 @@ private:
         if (!app) {
             return false;
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return false;
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return false;
         }
@@ -1400,11 +1402,7 @@ private:
         if (!app) {
             return QVariantMap();
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return QVariantMap();
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return QVariantMap();
         }
@@ -1427,11 +1425,7 @@ private:
         if (!app) {
             return false;
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return false;
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return false;
         }
@@ -1450,11 +1444,7 @@ private:
         if (!app) {
             return QVariantMap();
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return QVariantMap();
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return QVariantMap();
         }
@@ -1477,11 +1467,7 @@ private:
         if (!app) {
             return false;
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return false;
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return false;
         }
@@ -1500,11 +1486,7 @@ private:
         if (!app) {
             return 0.0;
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return 0.0;
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return 0.0;
         }
@@ -1522,11 +1504,7 @@ private:
         if (!app) {
             return false;
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return false;
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return false;
         }
@@ -1545,11 +1523,7 @@ private:
         if (!app) {
             return 100.0;
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return 100.0;
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return 100.0;
         }
@@ -1566,11 +1540,7 @@ private:
         if (!app) {
             return false;
         }
-        auto* compositionView = app->activeCompositionView();
-        if (!compositionView) {
-            return false;
-        }
-        auto composition = compositionView->composition();
+        auto composition = app->activeContextService()->activeComposition();
         if (!composition) {
             return false;
         }
@@ -1588,17 +1558,17 @@ private:
         auto* ps = ArtifactProjectService::instance();
         if (!ps) return QVariantList();
         
-        auto comp = ps->currentComposition();
+        auto comp = ps->currentComposition().lock();
         if (!comp) return QVariantList();
         
-        auto layer = comp->findLayerByID(ArtifactCore::LayerID::fromString(layerId.toStdString()));
+        auto layer = comp->layerById(ArtifactCore::LayerID(layerId));
         if (!layer) return QVariantList();
         
         QVariantList effectsList;
         for (const auto& effect : layer->getEffects()) {
             QVariantMap effectMap;
-            effectMap[QStringLiteral("id")] = effect->effectID().toString();
-            effectMap[QStringLiteral("name")] = effect->displayName();
+            effectMap[QStringLiteral("id")] = effect->effectID().toQString();
+            effectMap[QStringLiteral("name")] = effect->displayName().toQString();
             effectMap[QStringLiteral("enabled")] = effect->isEnabled();
             effectsList.append(effectMap);
         }
@@ -1611,7 +1581,7 @@ private:
         if (!effectService) return QString();
         
         const auto result = effectService->addEffectToLayer(
-            ArtifactCore::LayerID::fromString(layerId.toStdString()),
+            ArtifactCore::LayerID(layerId),
             EffectID(effectType)
         );
         
@@ -1627,7 +1597,7 @@ private:
         if (!effectService) return false;
         
         const auto result = effectService->removeEffectFromLayer(
-            ArtifactCore::LayerID::fromString(layerId.toStdString()),
+            ArtifactCore::LayerID(layerId),
             effectId
         );
         
@@ -1640,7 +1610,7 @@ private:
         if (!effectService) return false;
         
         const auto result = effectService->setEffectProperty(
-            ArtifactCore::LayerID::fromString(layerId.toStdString()),
+            ArtifactCore::LayerID(layerId),
             effectId,
             paramName,
             QVariant(value)
@@ -1665,7 +1635,7 @@ private:
             };
         }
 
-        auto currentComp = svc->currentComposition();
+        auto currentComp = svc->currentComposition().lock();
         if (!currentComp) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -1673,7 +1643,7 @@ private:
             };
         }
 
-        auto layer = currentComp->layerById(LayerID::fromString(layerId));
+        auto layer = currentComp->layerById(LayerID(layerId));
         if (!layer) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -1708,12 +1678,12 @@ private:
             return QVariantList();
         }
 
-        auto currentComp = svc->currentComposition();
+        auto currentComp = svc->currentComposition().lock();
         if (!currentComp) {
             return QVariantList();
         }
 
-        auto layer = currentComp->layerById(LayerID::fromString(layerId));
+        auto layer = currentComp->layerById(LayerID(layerId));
         if (!layer) {
             return QVariantList();
         }
@@ -1760,7 +1730,7 @@ private:
             };
         }
 
-        auto currentComp = svc->currentComposition();
+        auto currentComp = svc->currentComposition().lock();
         if (!currentComp) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -1768,7 +1738,7 @@ private:
             };
         }
 
-        auto layer = currentComp->layerById(LayerID::fromString(layerId));
+        auto layer = currentComp->layerById(LayerID(layerId));
         if (!layer) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -1805,7 +1775,7 @@ private:
             };
         }
 
-        auto currentComp = svc->currentComposition();
+        auto currentComp = svc->currentComposition().lock();
         if (!currentComp) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -1849,7 +1819,7 @@ private:
             };
         }
 
-        auto currentComp = svc->currentComposition();
+        auto currentComp = svc->currentComposition().lock();
         if (!currentComp) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -1857,7 +1827,7 @@ private:
             };
         }
 
-        auto groupLayerPtr = currentComp->layerById(LayerID::fromString(groupLayerId));
+        auto groupLayerPtr = currentComp->layerById(LayerID(groupLayerId));
         if (!groupLayerPtr) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -1875,10 +1845,10 @@ private:
 
         int movedCount = 0;
         for (const auto& layerId : layerIds) {
-            auto layerToMove = currentComp->layerById(LayerID::fromString(layerId));
+            auto layerToMove = currentComp->layerById(LayerID(layerId));
             if (layerToMove) {
                 // Remove from composition
-                currentComp->removeLayerById(LayerID::fromString(layerId));
+                currentComp->removeLayerById(LayerID(layerId));
                 
                 // Add to group
                 groupLayer->addChild(layerToMove);
@@ -1915,7 +1885,7 @@ private:
             };
         }
 
-        auto currentComp = svc->currentComposition();
+        auto currentComp = svc->currentComposition().lock();
         if (!currentComp) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -1923,7 +1893,7 @@ private:
             };
         }
 
-        auto groupLayerPtr = currentComp->layerById(LayerID::fromString(groupLayerId));
+        auto groupLayerPtr = currentComp->layerById(LayerID(groupLayerId));
         if (!groupLayerPtr) {
             return QVariantMap{
                 {QStringLiteral("success"), false},
@@ -1957,13 +1927,13 @@ private:
         }
 
         // Remove the now-empty group layer
-        currentComp->removeLayerById(LayerID::fromString(groupLayerId));
+        currentComp->removeLayerById(LayerID(groupLayerId));
         
         // Notify changes
         currentComp->changed();
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
             LayerChangedEvent{currentComp->id().toString(), groupLayerId,
-                            LayerChangedEvent::ChangeType::Deleted});
+                            LayerChangedEvent::ChangeType::Removed});
 
         return QVariantMap{
             {QStringLiteral("success"), unGroupedCount > 0},
@@ -2253,7 +2223,7 @@ private:
         if (!playback) {
             return 0;
         }
-        return static_cast<int>(playback->currentFrame().frame());
+        return static_cast<int>(playback->currentFrame().framePosition());
     }
 
     // Set playhead to specific frame.
@@ -2327,7 +2297,7 @@ private:
             return 0;
         }
         const auto range = playback->frameRange();
-        return static_cast<int>(range.out().frame());
+        return static_cast<int>(range.endPosition().framePosition());
     }
 
     // Get playback frame range (in/out points).
@@ -2340,8 +2310,8 @@ private:
         }
         const auto range = playback->frameRange();
         return QVariantMap{
-            {QStringLiteral("start"), static_cast<int>(range.in().frame())},
-            {QStringLiteral("end"), static_cast<int>(range.out().frame())}
+            {QStringLiteral("start"), static_cast<int>(range.startPosition().framePosition())},
+            {QStringLiteral("end"), static_cast<int>(range.endPosition().framePosition())}
         };
     }
 
@@ -2368,7 +2338,7 @@ private:
         if (!playback) {
             return 0.0;
         }
-        return playback->frameRate().toDouble();
+        return static_cast<double>(playback->frameRate().framerate());
     }
 
     // Get playback speed multiplier.

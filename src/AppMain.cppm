@@ -41,6 +41,7 @@ module;
 #include <QMainWindow>
 #include <QMessageBox>
 #include <QMetaType>
+#include <QPointer>
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
@@ -1277,6 +1278,8 @@ int main(int argc, char *argv[]) {
   }
   auto *autoSaveManager = new ArtifactAutoSaveManager();
   QPointer<ArtifactRenderCenterWindow> renderCenterWindow;
+  QPointer<ArtifactDebugConsoleWidget> debugConsoleWidget;
+  QPointer<FrameDebugViewWidget> frameDebugWidget;
   const QString recoveryDir =
       QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
           .filePath("Recovery");
@@ -1305,8 +1308,9 @@ int main(int argc, char *argv[]) {
         QRect(120, 828, 720, 210));
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Debug Console"), QStringLiteral("DebugConsole"),
-        [mw, compositionEditor]() -> QWidget * {
+        [mw, compositionEditor, &debugConsoleWidget]() -> QWidget * {
           auto* widget = new ArtifactDebugConsoleWidget(mw);
+          debugConsoleWidget = widget;
           if (compositionEditor) {
             if (auto* controller = compositionEditor->renderController()) {
               widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
@@ -1317,8 +1321,9 @@ int main(int argc, char *argv[]) {
         QRect(200, 200, 800, 400));
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Frame Debug"), QStringLiteral("FrameDebug"),
-        [mw, compositionEditor]() -> QWidget * {
+        [mw, compositionEditor, &frameDebugWidget]() -> QWidget * {
           auto* widget = new FrameDebugViewWidget(mw);
+          frameDebugWidget = widget;
           if (compositionEditor) {
             if (auto* controller = compositionEditor->renderController()) {
               widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
@@ -1343,6 +1348,29 @@ int main(int argc, char *argv[]) {
         },
         QRect(1040, 200, 760, 520));
     mw->setDockVisible(QStringLiteral("AI Chat"), false);
+
+    auto refreshFrameDebugWidgets = [compositionEditor, &debugConsoleWidget,
+                                     &frameDebugWidget]() mutable {
+      if (!compositionEditor) {
+        return;
+      }
+      auto* controller = compositionEditor->renderController();
+      if (!controller) {
+        return;
+      }
+      const auto snapshot = controller->frameDebugSnapshot();
+      if (debugConsoleWidget) {
+        debugConsoleWidget->setFrameDebugSnapshot(snapshot);
+      }
+      if (frameDebugWidget) {
+        frameDebugWidget->setFrameDebugSnapshot(snapshot);
+      }
+    };
+    auto* frameDebugTimer = new QTimer(mw);
+    frameDebugTimer->setInterval(250);
+    QObject::connect(frameDebugTimer, &QTimer::timeout, mw,
+                     refreshFrameDebugWidgets);
+    frameDebugTimer->start();
 
     // Update StatusBar console summary
     auto updateStatusConsole = [status, mw]() {

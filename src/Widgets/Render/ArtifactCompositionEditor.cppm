@@ -73,6 +73,7 @@ import Artifact.MainWindow;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
 import Artifact.Layer.Svg;
 import Artifact.Application.Manager;
@@ -132,6 +133,55 @@ QIcon loadIconWithFallback(const QString &fileName) {
 
 QIcon loadEditorMenuIcon(const QString &fileName) {
   return loadIconWithFallback(fileName);
+}
+
+QString shapeTypeDisplayName(ShapeType type) {
+  switch (type) {
+  case ShapeType::Rect:
+    return QStringLiteral("Rect");
+  case ShapeType::Ellipse:
+    return QStringLiteral("Ellipse");
+  case ShapeType::Star:
+    return QStringLiteral("Star");
+  case ShapeType::Polygon:
+    return QStringLiteral("Polygon");
+  case ShapeType::Line:
+    return QStringLiteral("Line");
+  case ShapeType::Triangle:
+    return QStringLiteral("Triangle");
+  case ShapeType::Square:
+    return QStringLiteral("Square");
+  }
+  return QStringLiteral("Shape");
+}
+
+QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
+  if (!shape) {
+    return {};
+  }
+
+  QString detail = QStringLiteral("Shape - %1 - %2x%3")
+                       .arg(shapeTypeDisplayName(shape->shapeType()))
+                       .arg(shape->shapeWidth())
+                       .arg(shape->shapeHeight());
+
+  const auto type = shape->shapeType();
+  if (type == ShapeType::Polygon) {
+    const int pointCount = static_cast<int>(shape->customPolygonPoints().size());
+    if (pointCount > 0) {
+      detail += QStringLiteral(" - %1 points").arg(pointCount);
+    }
+  } else if (type == ShapeType::Star) {
+    detail += QStringLiteral(" - %1 spikes").arg(shape->starPoints());
+  } else if (type == ShapeType::Rect || type == ShapeType::Square) {
+    const float radius = shape->cornerRadius();
+    if (radius > 0.0f) {
+      detail += QStringLiteral(" - r%1").arg(radius, 0, 'f', 1);
+    }
+  }
+
+  detail += QStringLiteral(" - Vertex edit ready");
+  return detail;
 }
 
 ArtifactCompositionPtr resolvePreferredComposition() {
@@ -2283,10 +2333,16 @@ public:
       const QString layerName = current->layerName().trimmed();
       const QString title =
           layerName.isEmpty() ? current->id().toString() : layerName;
-      const QString detail =
+      QString detail =
           selectedCount <= 1
               ? QStringLiteral("Layer selected")
               : QStringLiteral("%1 layers selected").arg(selectedCount);
+      if (selectedCount == 1) {
+        if (const auto shape =
+                std::dynamic_pointer_cast<ArtifactShapeLayer>(current)) {
+          detail = shapeSelectionDetail(shape);
+        }
+      }
       renderController_->setInfoOverlayText(title, detail);
     } else {
       renderController_->setInfoOverlayText(

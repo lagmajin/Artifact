@@ -40,6 +40,7 @@ import Graphics.Shader.Set;
 import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
+import Graphics.LayerBlendPipeline;
 import Core.Scale.Zoom;
 import Frame.Debug;
 import Image.MultiChannelImage;
@@ -185,7 +186,7 @@ namespace {
   DiligentDeviceManager deviceManager_;
   ShaderManager shaderManager_;
   PrimitiveRenderer2D primitiveRenderer_;
-  PrimitiveRenderer3D primitiveRenderer3D_;
+  mutable PrimitiveRenderer3D primitiveRenderer3D_;
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
@@ -236,6 +237,14 @@ namespace {
   void createLayerRT(QWidget* window);
   ITextureView* activeDepthView() const;
   float upscaleRenderScale() const { return m_upscaleEnabled ? m_upscaleScale : 1.0f; }
+  void submitQueuedDraws(IDeviceContext* ctx) const
+  {
+   if (!ctx) {
+    return;
+   }
+   submitter_.submit(cmdBuf_, ctx);
+   primitiveRenderer3D_.flushGizmo3D();
+  }
 
  public:
   explicit Impl(RefCntAutoPtr<IRenderDevice> device,
@@ -272,6 +281,24 @@ namespace {
 
   // Viewport
   void setViewportSize(float w, float h) { primitiveRenderer_.setViewportSize(w, h); m_viewportWidth = w; m_viewportHeight = h; }
+  void setViewportRect(float w, float h) {
+    setViewportSize(w, h);
+    if (auto ctx = deviceManager_.immediateContext()) {
+      Viewport VP;
+      VP.Width = w;
+      VP.Height = h;
+      VP.MinDepth = 0.0f;
+      VP.MaxDepth = 1.0f;
+      VP.TopLeftX = 0.0f;
+      VP.TopLeftY = 0.0f;
+      ctx->SetViewports(1, &VP, static_cast<Uint32>(w), static_cast<Uint32>(h));
+    }
+  }
+  void unbindColorTargetsForCompute() {
+    if (auto ctx = deviceManager_.immediateContext()) {
+      ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    }
+  }
   void setCanvasSize(float w, float h)   { primitiveRenderer_.setCanvasSize(w, h); }
   void setPan(float x, float y)          { primitiveRenderer_.setPan(x, y); }
   void getPan(float& x, float& y) const  { primitiveRenderer_.getPan(x, y); }
@@ -392,27 +419,11 @@ namespace {
       particleRenderer_ = std::make_unique<ArtifactCore::ParticleRenderer>(*gpuContext_);
       particleRenderer_->setFrameCostStats(nullptr);
       particleRenderer_->initialize(100000); // Support up to 100k particles
+      submitter_.setParticleRenderer(particleRenderer_.get());
       qDebug() << "[ParticleRenderer] Initialized (max 100k particles)";
     }
 
-    auto ctx = deviceManager_.immediateContext();
-    if (!ctx) return;
-
     if (m_viewportWidth <= 0.0f || m_viewportHeight <= 0.0f) return;
-
-    // Flush any pending primitive draw calls before issuing direct GPU draw calls.
-    // This ensures draw ordering is preserved (background/underlays are rendered first).
-    submitter_.submit(cmdBuf_, ctx);
-
-    // Re-bind the render target. clear() leaves the device context with no color RT
-    // (it calls SetRenderTargets(0, nullptr, dsv, ...) to clear depth). Every direct
-    // Diligent draw that bypasses the submitter must re-set the RT explicitly.
-    auto* pRTV = primitiveRenderer_.currentRTV();
-    if (!pRTV) {
-      qWarning() << "[ParticleRenderer] No active RTV — skipping particle draw";
-      return;
-    }
-    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
     // The particle VS uses mul(pos, Matrix) row-vector convention, so Qt matrices
     // must be transposed before upload.
@@ -438,16 +449,18 @@ namespace {
       proj.ortho(0.0f, m_viewportWidth, m_viewportHeight, 0.0f, -1.0f, 1.0f);
     }
 
-    const QMatrix4x4 viewT = view.transposed();
-    const QMatrix4x4 projT = proj.transposed();
-    particleRenderer_->setViewMatrix(viewT.constData());
-    particleRenderer_->setProjectionMatrix(projT.constData());
-    particleRenderer_->setFrameCostStats(&m_currentFrameCostStats_);
+    auto* pRTV = primitiveRenderer_.currentRTV();
+    if (!pRTV) {
+      qWarning() << "[ParticleRenderer] No active RTV — skipping particle draw";
+      return;
+    }
 
-    particleRenderer_->updateBuffer(data);
-    particleRenderer_->prepare(ctx);
-    particleRenderer_->draw(ctx, data.particles.size());
-    particleRenderer_->setFrameCostStats(nullptr);
+    cmdBuf_.targetRTV = pRTV;
+    ParticlePkt pkt;
+    pkt.data = data;
+    pkt.viewMatrix = view.transposed();
+    pkt.projMatrix = proj.transposed();
+    cmdBuf_.append(std::move(pkt));
   }
  };
 
@@ -510,15 +523,17 @@ namespace {
    submitter_.setPSOs(shaderManager_);
    submitter_.setFrameCostStats(nullptr);
    submitter_.setDeferredContext(deviceManager_.deferredContext());
+   submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_);
    primitiveRenderer_.setCommandBuffer(&cmdBuf_);
   }
 
   {
-   ScopedStartupTimer t("PrimitiveRenderer3D::init", StartupPhase::Custom);
-   primitiveRenderer3D_.createBuffers(deviceManager_.device());
-   primitiveRenderer3D_.setPSOs(shaderManager_);
-   primitiveRenderer3D_.setContext(deviceManager_.immediateContext(),
-                                   deviceManager_.swapChain());
+    ScopedStartupTimer t("PrimitiveRenderer3D::init", StartupPhase::Custom);
+    primitiveRenderer3D_.createBuffers(deviceManager_.device());
+    primitiveRenderer3D_.setPSOs(shaderManager_);
+    primitiveRenderer3D_.setCommandBuffer(&cmdBuf_);
+    primitiveRenderer3D_.setContext(deviceManager_.immediateContext(),
+                                    deviceManager_.swapChain());
   }
 
   m_initialized = true;
@@ -549,10 +564,12 @@ namespace {
   submitter_.setPSOs(shaderManager_);
   submitter_.setFrameCostStats(nullptr);
   submitter_.setDeferredContext(deviceManager_.deferredContext());
+  submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_);
   primitiveRenderer_.setCommandBuffer(&cmdBuf_);
 
   primitiveRenderer3D_.createBuffers(deviceManager_.device());
   primitiveRenderer3D_.setPSOs(shaderManager_);
+  primitiveRenderer3D_.setCommandBuffer(&cmdBuf_);
 
   TextureDesc TexDesc;
   TexDesc.Name      = "OfflineRenderTarget";
@@ -672,8 +689,9 @@ namespace {
    m_readbackFenceValue = 0;
   }
 
-  // Flush any pending draw packets before reading back.
-  submitter_.submit(cmdBuf_, ctx);
+  // Flush queued draws before reading back so both the 2D command buffer and
+  // the 3D gizmo batch are materialized in the source texture.
+  submitQueuedDraws(ctx);
 
   // Transition both textures to the required states and issue the copy.
   // Unbind the render target first so Vulkan doesn't complain about copying
@@ -794,7 +812,7 @@ namespace {
   device->CreateFence(fenceDesc, &fence);
   if (!fence) return {};
 
-  submitter_.submit(cmdBuf_, ctx);
+  submitQueuedDraws(ctx);
   ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
 
   CopyTextureAttribs copyAttribs;
@@ -1206,8 +1224,10 @@ namespace {
 
  void ArtifactIRenderer::Impl::flush()
  {
-  if (auto ctx = deviceManager_.immediateContext())
+  if (auto ctx = deviceManager_.immediateContext()) {
+   submitQueuedDraws(ctx);
    ctx->Flush();
+  }
  }
 
  void ArtifactIRenderer::Impl::flushAndWait()
@@ -1221,6 +1241,7 @@ namespace {
   desc.Name = "StopRenderLoopFence";
   desc.Type = FENCE_TYPE_GENERAL;
   device->CreateFence(desc, &fence);
+  submitQueuedDraws(ctx);
   ctx->Flush();
   ctx->EnqueueSignal(fence, 1);
   ctx->Flush();
@@ -1232,6 +1253,8 @@ namespace {
   if (particleRenderer_) {
    particleRenderer_->setFrameCostStats(nullptr);
   }
+  submitter_.setParticleRenderer(nullptr);
+  submitter_.setPrimitiveRenderer3D(nullptr);
   submitter_.destroy();
   cmdBuf_.reset();
   m_readbackStagingTex= nullptr;
@@ -1245,6 +1268,8 @@ namespace {
   for (auto& query : m_frameQueries) query = nullptr;
   primitiveRenderer_.destroy();
   primitiveRenderer3D_.destroy();
+  particleRenderer_.reset();
+  gpuContext_.reset();
   shaderManager_.destroy();
   deviceManager_.destroy();
   widget_                = nullptr;
@@ -1252,14 +1277,14 @@ namespace {
   m_frameQueryInitialized = false;
  }
 
- void ArtifactIRenderer::Impl::present()
-  {
-   if (auto sc = deviceManager_.swapChain())
+  void ArtifactIRenderer::Impl::present()
    {
-    submitter_.submit(cmdBuf_, deviceManager_.immediateContext());
-     try {
-      sc->Present();
-    } catch (const std::exception& ex) {
+    if (auto sc = deviceManager_.swapChain())
+    {
+     submitQueuedDraws(deviceManager_.immediateContext());
+      try {
+       sc->Present();
+     } catch (const std::exception& ex) {
      const QString msg = QString::fromLocal8Bit(ex.what());
      qWarning() << "[ArtifactIRenderer] present() failed:" << msg;
 
@@ -1393,10 +1418,12 @@ namespace {
  bool ArtifactIRenderer::isMultiChannelEnabled() const { return impl_->isMultiChannelEnabled(); }
  void ArtifactIRenderer::setChannelEnabled(ArtifactIRenderer::ChannelType channel, bool enabled) { impl_->setChannelEnabled(channel, enabled); }
  bool ArtifactIRenderer::isChannelEnabled(ArtifactIRenderer::ChannelType channel) const { return impl_->isChannelEnabled(channel); }
- FloatColor ArtifactIRenderer::getClearColor() const { return impl_->getClearColor(); }
- void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
- void ArtifactIRenderer::setDevicePixelRatio(float dpr) { impl_->primitiveRenderer_.setDevicePixelRatio(dpr); }
- void ArtifactIRenderer::setCanvasSize(float w, float h)        { impl_->setCanvasSize(w, h); }
+  FloatColor ArtifactIRenderer::getClearColor() const { return impl_->getClearColor(); }
+  void ArtifactIRenderer::setViewportSize(float w, float h) { impl_->setViewportSize(w, h); }
+  void ArtifactIRenderer::setViewportRect(float w, float h) { impl_->setViewportRect(w, h); }
+  void ArtifactIRenderer::unbindColorTargetsForCompute() { impl_->unbindColorTargetsForCompute(); }
+  void ArtifactIRenderer::setDevicePixelRatio(float dpr) { impl_->primitiveRenderer_.setDevicePixelRatio(dpr); }
+  void ArtifactIRenderer::setCanvasSize(float w, float h)        { impl_->setCanvasSize(w, h); }
  void ArtifactIRenderer::setPan(float x, float y)               { impl_->setPan(x, y); }
  void ArtifactIRenderer::getPan(float& x, float& y) const       { impl_->getPan(x, y); }
  void ArtifactIRenderer::setZoom(float zoom)                    { impl_->setZoom(zoom); }
@@ -1570,6 +1597,30 @@ void ArtifactIRenderer::draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail:
   if (impl_->widget_) {
    impl_->createLayerRT(impl_->widget_);
   }
+ }
+ std::unique_ptr<ArtifactCore::LayerBlendPipeline>
+ ArtifactIRenderer::createLayerBlendPipeline() const
+ {
+  auto device = impl_->deviceManager_.device();
+  auto ctx = impl_->deviceManager_.immediateContext();
+  if (!device || !ctx) {
+   return {};
+  }
+  ArtifactCore::GpuContext context(device, ctx);
+  return std::make_unique<ArtifactCore::LayerBlendPipeline>(context);
+ }
+bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
+                                    Diligent::ITextureView *srcSRV,
+                                    Diligent::ITextureView *dstSRV,
+                                    Diligent::ITextureView *outUAV,
+                                    ArtifactCore::BlendMode mode,
+                                    float opacity) const
+ {
+  auto ctx = impl_->deviceManager_.immediateContext();
+  if (!pipeline || !ctx) {
+   return false;
+  }
+  return pipeline->blend(ctx, srcSRV, dstSRV, outUAV, mode, opacity);
  }
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> ArtifactIRenderer::device() const
  { return impl_->deviceManager_.device(); }

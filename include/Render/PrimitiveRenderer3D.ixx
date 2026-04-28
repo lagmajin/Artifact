@@ -15,8 +15,10 @@ export module Artifact.Render.PrimitiveRenderer3D;
 
 import std;
 import Graphics;
+import FloatRGBA;
 import Color.Float;
 import Frame.Debug;
+import Artifact.Render.RenderCommandBuffer;
 import Artifact.Render.ShaderManager;
 
 export namespace Artifact {
@@ -33,6 +35,7 @@ public:
   void createBuffers(RefCntAutoPtr<IRenderDevice> device,
                      TEXTURE_FORMAT rtvFormat);
   void setPSOs(ShaderManager &shaderManager);
+  void setCommandBuffer(RenderCommandBuffer* cmdBuf);
   void setContext(IDeviceContext *ctx);
   void setContext(IDeviceContext *ctx, ISwapChain *swapChain);
   void setOverrideRTV(ITextureView *rtv);
@@ -49,6 +52,12 @@ public:
                          const FloatColor &tint, float opacity = 1.0f,
                          float rollDegrees = 0.0f);
   void drawBillboardQuad(const QVector3D &center, const QVector2D &size,
+                         ITextureView *texture, const FloatRGBA &tint,
+                         float opacity = 1.0f, float rollDegrees = 0.0f);
+  void drawBillboardQuad(const QVector3D &center, const QVector2D &size,
+                         const QImage &image, const FloatRGBA &tint,
+                         float opacity = 1.0f, float rollDegrees = 0.0f);
+  void drawBillboardQuad(const QVector3D &center, const QVector2D &size,
                          ITextureView *texture,
                          const FloatColor &tint = FloatColor{1.0f, 1.0f, 1.0f,
                                                              1.0f},
@@ -56,8 +65,24 @@ public:
   void drawBillboardQuad(const QVector3D &center, const QVector2D &size,
                          const QImage &image,
                          const FloatColor &tint = FloatColor{1.0f, 1.0f, 1.0f,
-                                                             1.0f},
+                                                              1.0f},
                          float opacity = 1.0f, float rollDegrees = 0.0f);
+  void drawBillboardQuadImmediate(const QVector3D &center, const QVector2D &size,
+                                  ITextureView *texture,
+                                  const FloatColor &tint = FloatColor{1.0f, 1.0f, 1.0f,
+                                                                      1.0f},
+                                  float opacity = 1.0f, float rollDegrees = 0.0f);
+  void drawBillboardQuadImmediate(const QVector3D &center, const QVector2D &size,
+                                  ITextureView *texture, const FloatRGBA &tint,
+                                  float opacity = 1.0f, float rollDegrees = 0.0f);
+  void drawBillboardQuadImmediate(const QVector3D &center, const QVector2D &size,
+                                  const QImage &image,
+                                  const FloatColor &tint = FloatColor{1.0f, 1.0f, 1.0f,
+                                                                      1.0f},
+                                  float opacity = 1.0f, float rollDegrees = 0.0f);
+  void drawBillboardQuadImmediate(const QVector3D &center, const QVector2D &size,
+                                  const QImage &image, const FloatRGBA &tint,
+                                  float opacity = 1.0f, float rollDegrees = 0.0f);
   void draw3DLine(const QVector3D &start, const QVector3D &end,
                   const FloatColor &color, float thickness = 1.0f);
   void draw3DArrow(const QVector3D &start, const QVector3D &end,

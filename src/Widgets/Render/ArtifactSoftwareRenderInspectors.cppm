@@ -46,6 +46,7 @@ import Artifact.Layer.Text;
 import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Solid2D;
+import Artifact.Layer.Shape;
 import Artifact.Mask.Path;
 import Artifact.Mask.LayerMask;
 import Layer.Blend;
@@ -97,6 +98,12 @@ QPainter::CompositionMode compositionMode(ArtifactCore::BlendMode mode)
     case ArtifactCore::BlendMode::Saturation:
     case ArtifactCore::BlendMode::Color:
     case ArtifactCore::BlendMode::Luminosity:
+    case ArtifactCore::BlendMode::LinearBurn:
+    case ArtifactCore::BlendMode::Divide:
+    case ArtifactCore::BlendMode::PinLight:
+    case ArtifactCore::BlendMode::VividLight:
+    case ArtifactCore::BlendMode::LinearLight:
+    case ArtifactCore::BlendMode::HardMix:
         return QPainter::CompositionMode_SourceOver;
     case ArtifactCore::BlendMode::Normal:
     default:
@@ -493,6 +500,13 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
 
     if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
         return renderVideoLayerSurface(videoLayer, layerSize);
+    }
+
+    if (const auto shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+        const QImage image = shapeLayer->toQImage();
+        if (!image.isNull()) {
+            return image.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        }
     }
 
     return renderLayerCard(layer, layerSize, QStringLiteral("Data-driven fallback"));

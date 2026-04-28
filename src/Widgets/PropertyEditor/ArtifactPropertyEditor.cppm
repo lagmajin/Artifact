@@ -154,6 +154,29 @@ protected:
   }
 };
 
+class PropertyCallbackButton final : public QPushButton {
+public:
+  using Callback = std::function<void()>;
+
+  explicit PropertyCallbackButton(const QString &text, QWidget *parent = nullptr)
+      : QPushButton(text, parent) {}
+
+  void setCallback(Callback callback) { callback_ = std::move(callback); }
+
+protected:
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    QPushButton::mouseReleaseEvent(event);
+    if (!isEnabled() || !callback_ || !event ||
+        event->button() != Qt::LeftButton || !rect().contains(event->pos())) {
+      return;
+    }
+    callback_();
+  }
+
+private:
+  Callback callback_;
+};
+
 QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
   const qreal clamped = std::clamp(t, 0.0, 1.0);
   return QColor::fromRgbF(a.redF() * (1.0 - clamped) + b.redF() * clamped,
@@ -324,6 +347,10 @@ void ArtifactAbstractPropertyEditor::scrubByPixels(
     int deltaPixels, Qt::KeyboardModifiers modifiers) {
   Q_UNUSED(deltaPixels);
   Q_UNUSED(modifiers);
+}
+
+QWidget *ArtifactAbstractPropertyEditor::scrubTargetWidget() const {
+  return const_cast<ArtifactAbstractPropertyEditor *>(this);
 }
 
 namespace {
@@ -698,6 +725,8 @@ class ArtifactRelativeDoubleSpinBox : public QDoubleSpinBox {
 public:
   using QDoubleSpinBox::QDoubleSpinBox;
 
+  QLineEdit *scrubLineEdit() const { return lineEdit(); }
+
   QValidator::State validate(QString &input, int &pos) const override {
     if (input.isEmpty())
       return QValidator::Intermediate;
@@ -737,6 +766,8 @@ public:
 class ArtifactRelativeSpinBox : public QSpinBox {
 public:
   using QSpinBox::QSpinBox;
+
+  QLineEdit *scrubLineEdit() const { return lineEdit(); }
 
   QValidator::State validate(QString &input, int &pos) const override {
     if (input.isEmpty())
@@ -844,6 +875,146 @@ protected:
       painter.drawRoundedRect(trackRect.adjusted(1, 1, -1, -1), radius, radius);
     }
   }
+};
+
+class PropertyRotationKnobWidget final : public QWidget {
+public:
+  using ValueHandler = std::function<void(double)>;
+
+  explicit PropertyRotationKnobWidget(QWidget *parent = nullptr)
+      : QWidget(parent) {
+    setFocusPolicy(Qt::StrongFocus);
+    setCursor(Qt::OpenHandCursor);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  }
+
+  QSize sizeHint() const override { return {28, 28}; }
+  QSize minimumSizeHint() const override { return {24, 24}; }
+
+  void setValue(const double value) {
+    if (std::abs(value_ - value) < 0.0001) {
+      return;
+    }
+    value_ = value;
+    update();
+  }
+
+  void setPreviewHandler(ValueHandler handler) {
+    previewHandler_ = std::move(handler);
+  }
+
+  void setCommitHandler(ValueHandler handler) {
+    commitHandler_ = std::move(handler);
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    if (event->button() != Qt::LeftButton) {
+      QWidget::mousePressEvent(event);
+      return;
+    }
+    dragging_ = true;
+    lastAngle_ = angleFromPosition(event->position());
+    grabMouse();
+    setFocus(Qt::MouseFocusReason);
+    setCursor(Qt::ClosedHandCursor);
+    event->accept();
+  }
+
+  void mouseMoveEvent(QMouseEvent *event) override {
+    if (!dragging_) {
+      QWidget::mouseMoveEvent(event);
+      return;
+    }
+    double delta = angleFromPosition(event->position()) - lastAngle_;
+    if (delta > 180.0) {
+      delta -= 360.0;
+    } else if (delta < -180.0) {
+      delta += 360.0;
+    }
+
+    double sensitivity = 1.0;
+    if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+      sensitivity *= 0.2;
+    }
+    if (event->modifiers().testFlag(Qt::ControlModifier)) {
+      sensitivity *= 4.0;
+    }
+
+    value_ += delta * sensitivity;
+    lastAngle_ = angleFromPosition(event->position());
+    update();
+    if (previewHandler_) {
+      previewHandler_(value_);
+    }
+    event->accept();
+  }
+
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (!dragging_ || event->button() != Qt::LeftButton) {
+      QWidget::mouseReleaseEvent(event);
+      return;
+    }
+    dragging_ = false;
+    releaseMouse();
+    setCursor(Qt::OpenHandCursor);
+    if (commitHandler_) {
+      commitHandler_(value_);
+    }
+    event->accept();
+  }
+
+  void paintEvent(QPaintEvent *event) override {
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QColor window = palette().color(QPalette::Window);
+    const QColor text = palette().color(QPalette::Text);
+    const QColor border = palette().color(QPalette::Mid);
+    const QColor highlight = palette().color(QPalette::Highlight);
+
+    const QRectF knobRect = rect().adjusted(2, 2, -2, -2);
+    painter.setPen(QPen(border, 1.0));
+    painter.setBrush(window);
+    painter.drawEllipse(knobRect);
+
+    painter.setPen(QPen(blendColor(border, text, 0.35), 1.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawEllipse(knobRect.adjusted(3, 3, -3, -3));
+
+    const QPointF center = knobRect.center();
+    const qreal radius = std::min(knobRect.width(), knobRect.height()) * 0.32;
+    const double radians = (value_ - 90.0) * std::numbers::pi / 180.0;
+    const QPointF tip(center.x() + std::cos(radians) * radius,
+                      center.y() + std::sin(radians) * radius);
+
+    painter.setPen(QPen(highlight, 2.0, Qt::SolidLine, Qt::RoundCap));
+    painter.drawLine(center, tip);
+    painter.setBrush(highlight);
+    painter.setPen(Qt::NoPen);
+    painter.drawEllipse(center, 1.7, 1.7);
+
+    if (hasFocus()) {
+      QPen focusPen(highlight.lighter(125), 1.0, Qt::DashLine);
+      painter.setPen(focusPen);
+      painter.setBrush(Qt::NoBrush);
+      painter.drawEllipse(knobRect.adjusted(1, 1, -1, -1));
+    }
+  }
+
+private:
+  double angleFromPosition(const QPointF &position) const {
+    const QPointF center = rect().center();
+    const QPointF delta = position - center;
+    return std::atan2(delta.y(), delta.x()) * 180.0 / std::numbers::pi + 90.0;
+  }
+
+  double value_ = 0.0;
+  double lastAngle_ = 0.0;
+  bool dragging_ = false;
+  ValueHandler previewHandler_;
+  ValueHandler commitHandler_;
 };
 
 } // namespace
@@ -1041,6 +1212,17 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
 
 bool ArtifactFloatPropertyEditor::supportsScrub() const { return true; }
 
+QWidget *ArtifactFloatPropertyEditor::scrubTargetWidget() const {
+  if (!spinBox_) {
+    return ArtifactAbstractPropertyEditor::scrubTargetWidget();
+  }
+  auto *spinBox = static_cast<ArtifactRelativeDoubleSpinBox *>(spinBox_);
+  if (auto *lineEdit = spinBox->scrubLineEdit()) {
+    return lineEdit;
+  }
+  return ArtifactAbstractPropertyEditor::scrubTargetWidget();
+}
+
 void ArtifactFloatPropertyEditor::scrubByPixels(
     const int deltaPixels, const Qt::KeyboardModifiers modifiers) {
   if (!spinBox_) {
@@ -1204,6 +1386,17 @@ void ArtifactIntPropertyEditor::setValueFromVariant(const QVariant &value) {
 
 bool ArtifactIntPropertyEditor::supportsScrub() const { return true; }
 
+QWidget *ArtifactIntPropertyEditor::scrubTargetWidget() const {
+  if (!spinBox_) {
+    return ArtifactAbstractPropertyEditor::scrubTargetWidget();
+  }
+  auto *spinBox = static_cast<ArtifactRelativeSpinBox *>(spinBox_);
+  if (auto *lineEdit = spinBox->scrubLineEdit()) {
+    return lineEdit;
+  }
+  return ArtifactAbstractPropertyEditor::scrubTargetWidget();
+}
+
 bool ArtifactIntPropertyEditor::eventFilter(QObject *watched, QEvent *event) {
   if (slider_ && watched == slider_ && event->type() == QEvent::MouseButtonPress) {
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
@@ -1248,6 +1441,209 @@ void ArtifactIntPropertyEditor::scrubByPixels(
       std::llround(static_cast<double>(spinBox_->value()) +
                    static_cast<double>(deltaPixels) * scaledStep));
   spinBox_->setValue(nextValue);
+}
+
+ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
+    const ArtifactCore::AbstractProperty &property, QWidget *parent)
+    : ArtifactAbstractPropertyEditor(parent) {
+  setObjectName(QStringLiteral("propertyAnimatorCountEditor"));
+
+  const auto meta = property.metadata();
+  minCount_ = meta.hardMin.isValid() ? meta.hardMin.toInt() : 0;
+  maxCount_ = meta.hardMax.isValid() ? meta.hardMax.toInt() : 16;
+  if (maxCount_ < minCount_) {
+    std::swap(maxCount_, minCount_);
+  }
+
+  auto *layout = new QHBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(6);
+
+  removeButton_ = new PropertyCallbackButton(QStringLiteral("-"), this);
+  removeButton_->setToolTip(QStringLiteral("Remove last animator"));
+  removeButton_->setFixedHeight(24);
+  removeButton_->setMinimumWidth(28);
+  applyPropertyButtonPalette(removeButton_, false);
+  static_cast<PropertyCallbackButton *>(removeButton_)->setCallback(
+      [this]() { stepCount(-1); });
+
+  countLabel_ = new QLabel(this);
+  countLabel_->setAlignment(Qt::AlignCenter);
+  countLabel_->setMinimumHeight(24);
+  countLabel_->setMinimumWidth(92);
+  countLabel_->setFrameStyle(QFrame::StyledPanel | QFrame::Plain);
+  applyPropertyFieldPalette(countLabel_, true);
+  applyPropertyLabelPalette(countLabel_, true);
+
+  addButton_ = new PropertyCallbackButton(QStringLiteral("+"), this);
+  addButton_->setToolTip(QStringLiteral("Add animator"));
+  addButton_->setFixedHeight(24);
+  addButton_->setMinimumWidth(28);
+  applyPropertyButtonPalette(addButton_, true);
+  static_cast<PropertyCallbackButton *>(addButton_)->setCallback(
+      [this]() { stepCount(1); });
+
+  layout->addWidget(removeButton_, 0);
+  layout->addWidget(countLabel_, 1);
+  layout->addWidget(addButton_, 0);
+
+  setValueFromVariant(property.getValue());
+}
+
+QVariant ArtifactAnimatorCountPropertyEditor::value() const {
+  return currentCount_;
+}
+
+void ArtifactAnimatorCountPropertyEditor::setValueFromVariant(
+    const QVariant &value) {
+  currentCount_ = std::clamp(value.toInt(), minCount_, maxCount_);
+  syncUi();
+}
+
+void ArtifactAnimatorCountPropertyEditor::stepCount(const int delta) {
+  const int nextCount =
+      std::clamp(currentCount_ + delta, minCount_, maxCount_);
+  if (nextCount == currentCount_) {
+    return;
+  }
+  currentCount_ = nextCount;
+  syncUi();
+  commitValue(currentCount_);
+}
+
+void ArtifactAnimatorCountPropertyEditor::syncUi() {
+  if (countLabel_) {
+    countLabel_->setText(
+        QStringLiteral("%1 animator%2")
+            .arg(currentCount_)
+            .arg(currentCount_ == 1 ? QStringLiteral("") : QStringLiteral("s")));
+  }
+  if (removeButton_) {
+    removeButton_->setEnabled(currentCount_ > minCount_);
+  }
+  if (addButton_) {
+    addButton_->setEnabled(currentCount_ < maxCount_);
+  }
+}
+
+ArtifactRotationPropertyEditor::ArtifactRotationPropertyEditor(
+    const ArtifactCore::AbstractProperty &property, QWidget *parent)
+    : ArtifactAbstractPropertyEditor(parent) {
+  setObjectName(QStringLiteral("propertyRotationEditor"));
+
+  auto *layout = new QHBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(6);
+
+  auto *knob = new PropertyRotationKnobWidget(this);
+  knob_ = knob;
+  knob->setFixedSize(28, 28);
+  applyPropertyFieldPalette(knob);
+
+  spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
+  const auto meta = property.metadata();
+  spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1000000.0,
+                     meta.hardMax.isValid() ? meta.hardMax.toDouble() : 1000000.0);
+  spinBox_->setValue(property.getValue().toDouble());
+  if (meta.step.isValid()) {
+    spinBox_->setSingleStep(meta.step.toDouble());
+  } else {
+    spinBox_->setSingleStep(1.0);
+  }
+  if (!meta.unit.isEmpty()) {
+    spinBox_->setSuffix(QStringLiteral(" ") + meta.unit);
+  }
+  spinBox_->setMinimumHeight(22);
+  spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
+  spinBox_->setFrame(false);
+  {
+    QFont font = spinBox_->font();
+    font.setPointSize(11);
+    font.setWeight(QFont::DemiBold);
+    spinBox_->setFont(font);
+    applyPropertyFieldPalette(spinBox_);
+    applyThemeTextPalette(spinBox_);
+  }
+
+  layout->addWidget(knob_, 0, Qt::AlignVCenter);
+  layout->addWidget(spinBox_, 1);
+
+  knob->setValue(spinBox_->value());
+  knob->setPreviewHandler([this](const double value) {
+    if (!spinBox_) {
+      return;
+    }
+    const QSignalBlocker blocker(spinBox_);
+    spinBox_->setValue(value);
+    previewValue(value);
+  });
+  knob->setCommitHandler([this](const double value) {
+    if (!spinBox_) {
+      return;
+    }
+    const QSignalBlocker blocker(spinBox_);
+    spinBox_->setValue(value);
+    commitValue(value);
+  });
+
+  QObject::connect(spinBox_, &QDoubleSpinBox::valueChanged, this,
+                   [this, knob](const double nextValue) {
+                     const QSignalBlocker blocker(knob);
+                     knob->setValue(nextValue);
+                     if (spinBox_->hasFocus()) {
+                       previewValue(nextValue);
+                     }
+                   });
+  QObject::connect(spinBox_, &QDoubleSpinBox::editingFinished, this,
+                   [this]() { commitValue(spinBox_->value()); });
+}
+
+QVariant ArtifactRotationPropertyEditor::value() const {
+  return spinBox_ ? QVariant(spinBox_->value()) : QVariant();
+}
+
+void ArtifactRotationPropertyEditor::setValueFromVariant(const QVariant &value) {
+  if (!spinBox_) {
+    return;
+  }
+  const double nextValue = value.toDouble();
+  {
+    const QSignalBlocker spinBlocker(spinBox_);
+    spinBox_->setValue(nextValue);
+  }
+  if (auto *knob = static_cast<PropertyRotationKnobWidget *>(knob_)) {
+    const QSignalBlocker knobBlocker(knob);
+    knob->setValue(nextValue);
+  }
+}
+
+bool ArtifactRotationPropertyEditor::supportsScrub() const { return true; }
+
+void ArtifactRotationPropertyEditor::scrubByPixels(
+    const int deltaPixels, const Qt::KeyboardModifiers modifiers) {
+  if (!spinBox_) {
+    return;
+  }
+  double sensitivity = 0.5;
+  if (modifiers.testFlag(Qt::ShiftModifier)) {
+    sensitivity *= 0.2;
+  }
+  if (modifiers.testFlag(Qt::ControlModifier)) {
+    sensitivity *= 4.0;
+  }
+  spinBox_->setValue(spinBox_->value() +
+                     static_cast<double>(deltaPixels) * sensitivity);
+}
+
+QWidget *ArtifactRotationPropertyEditor::scrubTargetWidget() const {
+  if (!spinBox_) {
+    return ArtifactAbstractPropertyEditor::scrubTargetWidget();
+  }
+  auto *spinBox = static_cast<ArtifactRelativeDoubleSpinBox *>(spinBox_);
+  if (auto *lineEdit = spinBox->scrubLineEdit()) {
+    return lineEdit;
+  }
+  return ArtifactAbstractPropertyEditor::scrubTargetWidget();
 }
 
 ArtifactBoolPropertyEditor::ArtifactBoolPropertyEditor(
@@ -1561,8 +1957,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
     const QString &labelText, ArtifactAbstractPropertyEditor *editor,
     const QString &propertyName, QWidget *parent)
     : QWidget(parent), label_(new QLabel(labelText, this)),
-      scrubHandle_(new QLabel(QStringLiteral("::"), this)), editor_(editor),
-      keyframeButton_(new QPushButton(this)),
+      editor_(editor), keyframeButton_(new QPushButton(this)),
       resetButton_(new QPushButton(this)),
       expressionButton_(new QPushButton(this)),
       prevKeyBtn_(new QPushButton(this)), nextKeyBtn_(new QPushButton(this)),
@@ -1587,14 +1982,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   label_->setMinimumHeight(kPropertyRowLabelMinHeight);
   label_->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
   label_->setAutoFillBackground(false);
-  scrubHandle_->setToolTip(
-      QStringLiteral("Drag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
-  scrubHandle_->setObjectName(QStringLiteral("propertyScrubHandle"));
-  scrubHandle_->setAlignment(Qt::AlignCenter);
-  scrubHandle_->setFixedWidth(16);
-  scrubHandle_->setAutoFillBackground(false);
   applyPropertyLabelPalette(label_);
-  applyPropertyLabelPalette(scrubHandle_);
 
   supplementaryLabel_ = new QLabel(this);
   supplementaryLabel_->setObjectName(
@@ -1683,23 +2071,22 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   auxLayout->addWidget(resetButton_);
   auxLayout->addWidget(expressionButton_);
 
-  scrubHandle_->installEventFilter(this);
-  editor_->installEventFilter(this);
+  scrubTarget_ = editor_->scrubTargetWidget();
+  if (!scrubTarget_) {
+    scrubTarget_ = editor_;
+  }
+  scrubTarget_->installEventFilter(this);
   label_->setCursor(Qt::ArrowCursor);
-  scrubHandle_->setVisible(editor_->supportsScrub());
-  scrubHandle_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
+  editor_->setCursor(Qt::ArrowCursor);
+  scrubTarget_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
                                                    : Qt::ArrowCursor);
-  editor_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
-                                              : Qt::ArrowCursor);
 
   if (g_propertyRowLayoutMode ==
       ArtifactPropertyRowLayoutMode::EditorThenLabel) {
     layout->addWidget(editor_, 1);
     layout->addWidget(label_, 0);
-    layout->addWidget(scrubHandle_);
   } else {
     layout->addWidget(label_, 0);
-    layout->addWidget(scrubHandle_);
     layout->addWidget(editor_, 1);
   }
   layout->addWidget(supplementaryLabel_, 0);
@@ -1786,10 +2173,15 @@ void ArtifactPropertyEditorRowWidget::setNavigationHandler(
 
 void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString &tooltip) {
   label_->setToolTip(tooltip);
-  scrubHandle_->setToolTip(
-      tooltip +
-      QStringLiteral("\nDrag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel."));
   editor_->setToolTip(tooltip);
+  if (scrubTarget_) {
+    scrubTarget_->setToolTip(
+        editor_ && editor_->supportsScrub()
+            ? tooltip +
+                  QStringLiteral(
+                      "\nDrag to scrub. Shift=fine, Ctrl=coarse, Esc=cancel.")
+            : tooltip);
+  }
   if (supplementaryLabel_) {
     supplementaryLabel_->setToolTip(tooltip);
   }
@@ -2000,79 +2392,52 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
     if (mouseEvent->button() != Qt::LeftButton) {
       break;
     }
-    if (watched == scrubHandle_) {
-      scrubbing_ = true;
-      scrubStarted_ = false;
+    if (watched == scrubTarget_) {
+      scrubCandidate_ = true;
+      scrubbing_ = false;
       scrubStartX_ = mouseEvent->globalPosition().toPoint().x();
       scrubStartValue_ = editor_->value();
-      scrubHandle_->grabMouse();
-      grabKeyboard();
       setFocus(Qt::MouseFocusReason);
-      scrubHandle_->setCursor(Qt::SizeHorCursor);
-      return true;
-    }
-    if (watched == editor_) {
-      editorScrubbing_ = true;
-      editorScrubStarted_ = false;
-      editorScrubStartX_ = mouseEvent->globalPosition().toPoint().x();
-      editorScrubStartValue_ = editor_->value();
-      setFocus(Qt::MouseFocusReason);
-      editor_->setCursor(Qt::SizeHorCursor);
+      return false;
     }
     break;
   }
   case QEvent::MouseMove: {
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
-    if (watched == scrubHandle_) {
-      if (!scrubbing_) {
+    if (watched == scrubTarget_) {
+      if (!scrubCandidate_ && !scrubbing_) {
+        break;
+      }
+      if (!mouseEvent->buttons().testFlag(Qt::LeftButton)) {
+        scrubCandidate_ = false;
         break;
       }
       const int currentX = mouseEvent->globalPosition().toPoint().x();
       const int deltaPixels = currentX - scrubStartX_;
-      if (!scrubStarted_ && std::abs(deltaPixels) < scrubThreshold_) {
-        return true;
+      if (!scrubbing_) {
+        if (std::abs(deltaPixels) < scrubThreshold_) {
+          break;
+        }
+        scrubbing_ = true;
+        scrubTarget_->grabMouse();
+        grabKeyboard();
+        scrubTarget_->setCursor(Qt::SizeHorCursor);
       }
-      scrubStarted_ = true;
       editor_->setValueFromVariant(scrubStartValue_);
       editor_->scrubByPixels(deltaPixels, mouseEvent->modifiers());
       editor_->previewCurrentValue();
       return true;
     }
-    if (watched == editor_) {
-      if (!editorScrubbing_) {
-        break;
-      }
-      const int currentX = mouseEvent->globalPosition().toPoint().x();
-      const int deltaPixels = currentX - editorScrubStartX_;
-      if (!editorScrubStarted_ && std::abs(deltaPixels) < editorScrubThreshold_) {
-        return true;
-      }
-      editorScrubStarted_ = true;
-      editor_->setValueFromVariant(editorScrubStartValue_);
-      editor_->scrubByPixels(deltaPixels, mouseEvent->modifiers());
-      editor_->previewCurrentValue();
-      return true;
-    }
+    break;
   }
   case QEvent::MouseButtonRelease: {
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
-    if (watched == scrubHandle_ && scrubbing_ && mouseEvent->button() == Qt::LeftButton) {
-      finishScrub(scrubStarted_);
-      return true;
-    }
-    if (watched == editor_ && editorScrubbing_ && mouseEvent->button() == Qt::LeftButton) {
-      const bool commitChanges = editorScrubStarted_;
-      editorScrubbing_ = false;
-      editorScrubStarted_ = false;
-      editor_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
-                                                  : Qt::ArrowCursor);
-      if (commitChanges) {
-        editor_->commitCurrentValue();
-      } else {
-        editor_->setValueFromVariant(editorScrubStartValue_);
-        editor_->previewValueFromVariant(editorScrubStartValue_);
+    if (watched == scrubTarget_ && mouseEvent->button() == Qt::LeftButton) {
+      if (scrubbing_) {
+        finishScrub(true);
+        return true;
       }
-      return true;
+      scrubCandidate_ = false;
     }
     break;
   }
@@ -2084,14 +2449,8 @@ bool ArtifactPropertyEditorRowWidget::eventFilter(QObject *watched,
 }
 
 void ArtifactPropertyEditorRowWidget::keyPressEvent(QKeyEvent *event) {
-  if ((scrubbing_ || editorScrubbing_) && event->key() == Qt::Key_Escape) {
+  if ((scrubbing_ || scrubCandidate_) && event->key() == Qt::Key_Escape) {
     finishScrub(false);
-    editorScrubbing_ = false;
-    editorScrubStarted_ = false;
-    if (editor_) {
-      editor_->setCursor(editor_->supportsScrub() ? Qt::SizeHorCursor
-                                                  : Qt::ArrowCursor);
-    }
     event->accept();
     return;
   }
@@ -2099,28 +2458,33 @@ void ArtifactPropertyEditorRowWidget::keyPressEvent(QKeyEvent *event) {
 }
 
 void ArtifactPropertyEditorRowWidget::finishScrub(const bool commitChanges) {
-  if (!scrubbing_) {
+  if (!scrubbing_ && !scrubCandidate_) {
     return;
   }
-  scrubbing_ = false;
-  scrubHandle_->releaseMouse();
-  releaseKeyboard();
-  scrubHandle_->setCursor(editor_ && editor_->supportsScrub()
-                              ? Qt::SizeHorCursor
-                              : Qt::ArrowCursor);
+  if (scrubbing_ && scrubTarget_) {
+    scrubTarget_->releaseMouse();
+    releaseKeyboard();
+  }
+  if (scrubTarget_) {
+    scrubTarget_->setCursor(editor_ && editor_->supportsScrub()
+                                ? Qt::SizeHorCursor
+                                : Qt::ArrowCursor);
+  }
 
   if (!editor_) {
-    scrubStarted_ = false;
+    scrubCandidate_ = false;
+    scrubbing_ = false;
     return;
   }
 
-  if (commitChanges) {
+  if (commitChanges && scrubbing_) {
     editor_->commitCurrentValue();
   } else {
     editor_->setValueFromVariant(scrubStartValue_);
     editor_->previewValueFromVariant(scrubStartValue_);
   }
-  scrubStarted_ = false;
+  scrubCandidate_ = false;
+  scrubbing_ = false;
 }
 
 ArtifactAbstractPropertyEditor *
@@ -2137,6 +2501,14 @@ createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
   }
   if (const auto enumOptions = enumOptionsForProperty(property)) {
     return new ArtifactEnumPropertyEditor(property, *enumOptions, parent);
+  }
+  if (property.getType() == ArtifactCore::PropertyType::Float &&
+      property.getName() == QStringLiteral("transform.rotation")) {
+    return new ArtifactRotationPropertyEditor(property, parent);
+  }
+  if (property.getType() == ArtifactCore::PropertyType::Integer &&
+      property.getName() == QStringLiteral("text.animatorCount")) {
+    return new ArtifactAnimatorCountPropertyEditor(property, parent);
   }
 
   switch (property.getType()) {

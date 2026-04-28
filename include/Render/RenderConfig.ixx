@@ -8,11 +8,12 @@ export namespace Artifact {
 
 // Global render configuration constants
 struct RenderConfig {
-    // Single color format used across the current render path.
-    // Keep render targets, intermediate textures, and PSO RTV formats aligned.
+    // Swapchain-facing and immediate graphics RTV format.
     static constexpr Diligent::TEXTURE_FORMAT MainRTVFormat = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
-    static constexpr Diligent::TEXTURE_FORMAT PipelineFormat = MainRTVFormat;
-    static constexpr Diligent::TEXTURE_FORMAT LinearColorFormat = MainRTVFormat;
+    // Composite intermediates stay in float so GPU blending is not forced down to
+    // 8-bit UNORM. Use a storage-image compatible linear format for Vulkan.
+    static constexpr Diligent::TEXTURE_FORMAT PipelineFormat = Diligent::TEX_FORMAT_RGBA16_FLOAT;
+    static constexpr Diligent::TEXTURE_FORMAT LinearColorFormat = PipelineFormat;
 };
 
 } // namespace Artifact

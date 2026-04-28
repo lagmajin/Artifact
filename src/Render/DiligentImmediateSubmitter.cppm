@@ -19,6 +19,8 @@ module;
 module Artifact.Render.DiligentImmediateSubmitter;
 
 import Graphics;
+import FloatRGBA;
+import Color.Float;
 import std;
 import VertexBuffer;
 import Text.Style;
@@ -472,6 +474,8 @@ void DiligentImmediateSubmitter::destroy()
     m_draw_grid_pso_and_srb                 = {};
     m_draw_rect_outline_pso_and_srb         = {};
     m_frameCostStats_                       = nullptr;
+    m_primitiveRenderer3D_                  = nullptr;
+    m_particleRenderer_                     = nullptr;
     m_sprite_unit_quad_vb_                  = nullptr;
     m_currentPSO_                           = nullptr;
     m_var_sprite_gTexture_                  = nullptr;
@@ -496,6 +500,16 @@ void DiligentImmediateSubmitter::setFrameCostStats(ArtifactCore::RenderCostStats
 void DiligentImmediateSubmitter::setDeferredContext(RefCntAutoPtr<IDeviceContext> deferred)
 {
     m_deferredCtx_ = std::move(deferred);
+}
+
+void DiligentImmediateSubmitter::setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer)
+{
+    m_primitiveRenderer3D_ = renderer;
+}
+
+void DiligentImmediateSubmitter::setParticleRenderer(ArtifactCore::ParticleRenderer* renderer)
+{
+    m_particleRenderer_ = renderer;
 }
 
 void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext* ctx)
@@ -581,6 +595,9 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                 else if constexpr (std::is_same_v<T, SpritePkt>)          submitSprite(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, SpriteXformPkt>)     submitSpriteXform(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    submitMaskedSprite(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, BillboardPkt>)       submitBillboard(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, BillboardImagePkt>)  submitBillboardImage(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, ParticlePkt>)        submitParticles(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, GlyphTextPkt>)       submitGlyphText(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, GlyphTextXformPkt>)  submitGlyphTextTransformed(p, recordCtx, pRTV);
             }
@@ -595,6 +612,39 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
         m_deferredCtx_->FinishFrame();
     }
     buf.reset();
+}
+
+void DiligentImmediateSubmitter::submitBillboard(const BillboardPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    if (!ctx || !pRTV || !m_primitiveRenderer3D_) {
+        return;
+    }
+    FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
+    m_primitiveRenderer3D_->drawBillboardQuad(p.center, p.size, p.pSRV, tint, p.opacity, p.rollDegrees);
+}
+
+void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    if (!ctx || !pRTV || !m_primitiveRenderer3D_) {
+        return;
+    }
+    FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
+    m_primitiveRenderer3D_->drawBillboardQuad(p.center, p.size, p.image, tint, p.opacity, p.rollDegrees);
+}
+
+void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    if (!ctx || !pRTV || !m_particleRenderer_ || p.data.particles.empty()) {
+        return;
+    }
+    ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    m_particleRenderer_->setViewMatrix(p.viewMatrix.constData());
+    m_particleRenderer_->setProjectionMatrix(p.projMatrix.constData());
+    m_particleRenderer_->setFrameCostStats(m_frameCostStats_);
+    m_particleRenderer_->updateBuffer(p.data);
+    m_particleRenderer_->prepare(ctx);
+    m_particleRenderer_->draw(ctx, p.data.particles.size());
+    m_particleRenderer_->setFrameCostStats(nullptr);
 }
 
 void DiligentImmediateSubmitter::submitSolidRect(const SolidRectPkt& p, IDeviceContext* ctx, ITextureView* pRTV)

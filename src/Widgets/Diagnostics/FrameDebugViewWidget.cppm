@@ -1,6 +1,9 @@
 module;
 #include <algorithm>
+#include <QColor>
+#include <QLabel>
 #include <QPlainTextEdit>
+#include <QPalette>
 #include <QVBoxLayout>
 #include <QStringList>
 #include <wobjectimpl.h>
@@ -17,6 +20,7 @@ W_OBJECT_IMPL(FrameDebugViewWidget)
 class FrameDebugViewWidget::Impl {
 public:
     FrameDebugViewWidget* owner_;
+    QLabel* summary_ = nullptr;
     QPlainTextEdit* text_ = nullptr;
 
     explicit Impl(FrameDebugViewWidget* owner) : owner_(owner) {}
@@ -25,6 +29,12 @@ public:
         auto* layout = new QVBoxLayout(owner_);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
+
+        summary_ = new QLabel(owner_);
+        summary_->setWordWrap(true);
+        summary_->setMargin(8);
+        summary_->setAutoFillBackground(true);
+        layout->addWidget(summary_);
 
         text_ = new QPlainTextEdit(owner_);
         text_->setReadOnly(true);
@@ -35,6 +45,36 @@ public:
     void showFrameDebugSnapshot(const ArtifactCore::FrameDebugSnapshot& snapshot) {
         if (!text_) {
             return;
+        }
+
+        const int failedPassCount = static_cast<int>(std::count_if(
+            snapshot.passes.begin(), snapshot.passes.end(),
+            [](const auto& pass) { return pass.status == ArtifactCore::FrameDebugPassStatus::Failed; }));
+        const int warningResourceCount = static_cast<int>(std::count_if(
+            snapshot.resources.begin(), snapshot.resources.end(),
+            [](const auto& resource) { return resource.stale || !resource.cacheHit; }));
+        const QString statusText =
+            snapshot.failed
+                ? QStringLiteral("Failed")
+                : (failedPassCount > 0 ? QStringLiteral("Degraded") : QStringLiteral("Healthy"));
+        if (summary_) {
+            const QString summaryText = QStringLiteral("%1 | frame %2 | comp %3 | layer %4 | backend %5 | passes %6 | resources %7")
+                                            .arg(statusText)
+                                            .arg(snapshot.frame.framePosition())
+                                            .arg(snapshot.compositionName.isEmpty() ? QStringLiteral("<none>") : snapshot.compositionName)
+                                            .arg(snapshot.selectedLayerName.isEmpty() ? QStringLiteral("<none>") : snapshot.selectedLayerName)
+                                            .arg(snapshot.renderBackend.isEmpty() ? QStringLiteral("<none>") : snapshot.renderBackend)
+                                            .arg(static_cast<int>(snapshot.passes.size()))
+                                            .arg(static_cast<int>(snapshot.resources.size()));
+            summary_->setText(summaryText);
+            QPalette pal = summary_->palette();
+            pal.setColor(QPalette::Window,
+                         snapshot.failed ? QColor(54, 18, 18)
+                                         : (failedPassCount > 0 ? QColor(50, 40, 18)
+                                                                : QColor(24, 30, 36)));
+            pal.setColor(QPalette::WindowText, snapshot.failed ? QColor(255, 210, 210)
+                                                               : QColor(232, 238, 244));
+            summary_->setPalette(pal);
         }
 
         QStringList lines;
@@ -64,18 +104,48 @@ public:
         }
 
         lines << QString();
+        lines << QStringLiteral("Highlights:");
+        if (snapshot.failed) {
+            lines << QStringLiteral("  - snapshot failed");
+            if (!snapshot.failureReason.isEmpty()) {
+                lines << QStringLiteral("    reason: %1").arg(snapshot.failureReason);
+            }
+        }
+        if (failedPassCount > 0) {
+            lines << QStringLiteral("  - failed passes: %1").arg(failedPassCount);
+        }
+        if (warningResourceCount > 0) {
+            lines << QStringLiteral("  - warning resources: %1").arg(warningResourceCount);
+        }
+
+        lines << QString();
         lines << QStringLiteral("Passes:");
         if (snapshot.passes.empty()) {
             lines << QStringLiteral("  <none>");
         } else {
-            for (const auto& pass : snapshot.passes) {
-                lines << QStringLiteral("  - %1 [%2/%3] inputs=%4 outputs=%5 note=%6")
+            auto passOrder = snapshot.passes;
+            std::stable_sort(passOrder.begin(), passOrder.end(), [](const auto& a, const auto& b) {
+                if (a.status == ArtifactCore::FrameDebugPassStatus::Failed &&
+                    b.status != ArtifactCore::FrameDebugPassStatus::Failed) {
+                    return true;
+                }
+                if (a.status != ArtifactCore::FrameDebugPassStatus::Failed &&
+                    b.status == ArtifactCore::FrameDebugPassStatus::Failed) {
+                    return false;
+                }
+                return static_cast<int>(a.kind) < static_cast<int>(b.kind);
+            });
+            for (const auto& pass : passOrder) {
+                lines << QStringLiteral("  - %1 [%2/%3] inputs=%4 outputs=%5 durationUs=%6")
                               .arg(pass.name,
                                    ArtifactCore::toString(pass.kind),
                                    ArtifactCore::toString(pass.status))
                               .arg(pass.inputs.size())
                               .arg(pass.outputs.size())
-                              .arg(pass.note);
+                              .arg(pass.durationUs);
+                if (!pass.note.isEmpty()) {
+                    lines << QStringLiteral("    note: %1").arg(pass.note);
+                }
             }
         }
 
@@ -84,13 +154,30 @@ public:
         if (snapshot.resources.empty()) {
             lines << QStringLiteral("  <none>");
         } else {
-            for (const auto& resource : snapshot.resources) {
+            auto resourceOrder = snapshot.resources;
+            std::stable_sort(resourceOrder.begin(), resourceOrder.end(), [](const auto& a, const auto& b) {
+                const bool aHot = a.stale || !a.cacheHit;
+                const bool bHot = b.stale || !b.cacheHit;
+                if (aHot != bHot) {
+                    return aHot;
+                }
+                return a.label < b.label;
+            });
+            for (const auto& resource : resourceOrder) {
+                const bool hot = resource.stale || !resource.cacheHit;
                 lines << QStringLiteral("  - %1 [%2] relation=%3 cacheHit=%4 stale=%5")
-                              .arg(resource.label, resource.type, resource.relation)
+                              .arg(resource.label.isEmpty() ? QStringLiteral("<unnamed>") : resource.label,
+                                   resource.type.isEmpty() ? QStringLiteral("<type?>") : resource.type,
+                                   resource.relation.isEmpty() ? QStringLiteral("<none>") : resource.relation)
                               .arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
                               .arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"));
-                if (!resource.note.isEmpty()) {
+                if (hot && !resource.note.isEmpty()) {
                     lines << QStringLiteral("    note: %1").arg(resource.note);
+                }
+                if (!resource.note.isEmpty()) {
+                    if (!hot) {
+                        lines << QStringLiteral("    note: %1").arg(resource.note);
+                    }
                 }
             }
         }

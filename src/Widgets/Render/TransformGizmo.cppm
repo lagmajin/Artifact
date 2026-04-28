@@ -17,6 +17,7 @@ module Artifact.Widgets.TransformGizmo;
 import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Text;
 import Undo.UndoManager;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -129,6 +130,127 @@ QRectF adjustedResizeBox(const QRectF& startBox, const QPointF& delta, Transform
  }
 
  return box.normalized();
+}
+
+QRectF enforceResizeMinSize(QRectF box, const TransformGizmo::HandleType handle,
+                           const double minWidth, const double minHeight)
+{
+ if (box.width() < minWidth) {
+  if (handle == TransformGizmo::HandleType::Scale_L ||
+      handle == TransformGizmo::HandleType::Scale_TL ||
+      handle == TransformGizmo::HandleType::Scale_BL) {
+   box.setLeft(box.right() - minWidth);
+  } else {
+   box.setRight(box.left() + minWidth);
+  }
+ }
+
+ if (box.height() < minHeight) {
+  if (handle == TransformGizmo::HandleType::Scale_T ||
+      handle == TransformGizmo::HandleType::Scale_TL ||
+      handle == TransformGizmo::HandleType::Scale_TR) {
+   box.setTop(box.bottom() - minHeight);
+  } else {
+   box.setBottom(box.top() + minHeight);
+  }
+ }
+
+ return box.normalized();
+}
+
+bool handleAffectsWidth(const TransformGizmo::HandleType handle)
+{
+ switch (handle) {
+ case TransformGizmo::HandleType::Scale_TL:
+ case TransformGizmo::HandleType::Scale_TR:
+ case TransformGizmo::HandleType::Scale_BL:
+ case TransformGizmo::HandleType::Scale_BR:
+ case TransformGizmo::HandleType::Scale_L:
+ case TransformGizmo::HandleType::Scale_R:
+  return true;
+ default:
+  return false;
+ }
+}
+
+bool handleAffectsHeight(const TransformGizmo::HandleType handle)
+{
+ switch (handle) {
+ case TransformGizmo::HandleType::Scale_TL:
+ case TransformGizmo::HandleType::Scale_TR:
+ case TransformGizmo::HandleType::Scale_BL:
+ case TransformGizmo::HandleType::Scale_BR:
+ case TransformGizmo::HandleType::Scale_T:
+ case TransformGizmo::HandleType::Scale_B:
+  return true;
+ default:
+  return false;
+ }
+}
+
+QPointF fixedPointForHandle(const QRectF& rect, const TransformGizmo::HandleType handle)
+{
+ switch (handle) {
+ case TransformGizmo::HandleType::Scale_TL:
+  return rect.bottomRight();
+ case TransformGizmo::HandleType::Scale_TR:
+  return rect.bottomLeft();
+ case TransformGizmo::HandleType::Scale_BL:
+  return rect.topRight();
+ case TransformGizmo::HandleType::Scale_BR:
+  return rect.topLeft();
+ case TransformGizmo::HandleType::Scale_L:
+  return QPointF(rect.right(), rect.center().y());
+ case TransformGizmo::HandleType::Scale_R:
+  return QPointF(rect.left(), rect.center().y());
+ case TransformGizmo::HandleType::Scale_T:
+  return QPointF(rect.center().x(), rect.bottom());
+ case TransformGizmo::HandleType::Scale_B:
+  return QPointF(rect.center().x(), rect.top());
+ default:
+  return rect.center();
+ }
+}
+
+float textEffectMargin(const ArtifactTextLayer& textLayer)
+{
+ return 24.0f +
+        (textLayer.isStrokeEnabled() ? textLayer.strokeWidth() : 0.0f) +
+        (textLayer.isShadowEnabled() ? textLayer.shadowBlur() * 2.0f : 0.0f);
+}
+
+void drawTransformedLine(ArtifactIRenderer* renderer,
+                         const QTransform& transform,
+                         const QPointF& localA,
+                         const QPointF& localB,
+                         const FloatColor& color,
+                         const float thickness)
+{
+ const QPointF a = transform.map(localA);
+ const QPointF b = transform.map(localB);
+ renderer->drawSolidLine({static_cast<float>(a.x()), static_cast<float>(a.y())},
+                         {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                         color, thickness);
+}
+
+void drawTransformedRect(ArtifactIRenderer* renderer,
+                         const QTransform& transform,
+                         const QRectF& localRect,
+                         const FloatColor& color,
+                         const float thickness)
+{
+ if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
+  return;
+ }
+
+ drawTransformedLine(renderer, transform, localRect.topLeft(), localRect.topRight(),
+                     color, thickness);
+ drawTransformedLine(renderer, transform, localRect.topRight(), localRect.bottomRight(),
+                     color, thickness);
+ drawTransformedLine(renderer, transform, localRect.bottomRight(), localRect.bottomLeft(),
+                     color, thickness);
+ drawTransformedLine(renderer, transform, localRect.bottomLeft(), localRect.topLeft(),
+                     color, thickness);
 }
 
 QPointF applyScaleRotateToVector(const QPointF& v, const float scaleX, const float scaleY, const float rotationDegrees)
@@ -614,6 +736,7 @@ struct TransformSnapshot {
  bool hasPositionKey = false;
  bool hasRotationKey = false;
  bool hasScaleKey = false;
+ bool hasTextBoxState = false;
  float positionX = 0.0f;
  float positionY = 0.0f;
  float rotation = 0.0f;
@@ -622,7 +745,39 @@ struct TransformSnapshot {
  float anchorX = 0.0f;
  float anchorY = 0.0f;
  float anchorZ = 0.0f;
+ float textBoxWidth = 0.0f;
+ float textBoxHeight = 0.0f;
 };
+
+TransformSnapshot captureTransformSnapshot(const ArtifactAbstractLayerPtr& layer,
+                                           const ArtifactCore::RationalTime& time)
+{
+ TransformSnapshot snapshot;
+ if (!layer) {
+  return snapshot;
+ }
+
+ const auto& t3d = layer->transform3D();
+ snapshot.hasPositionKey = t3d.hasPositionKeyFrameAt(time);
+ snapshot.hasRotationKey = t3d.hasRotationKeyFrameAt(time);
+ snapshot.hasScaleKey = t3d.hasScaleKeyFrameAt(time);
+ snapshot.positionX = t3d.positionX();
+ snapshot.positionY = t3d.positionY();
+ snapshot.rotation = t3d.rotation();
+ snapshot.scaleX = t3d.scaleX();
+ snapshot.scaleY = t3d.scaleY();
+ snapshot.anchorX = t3d.anchorX();
+ snapshot.anchorY = t3d.anchorY();
+ snapshot.anchorZ = t3d.anchorZ();
+
+ if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+  snapshot.hasTextBoxState = true;
+  snapshot.textBoxWidth = textLayer->maxWidth();
+  snapshot.textBoxHeight = textLayer->boxHeight();
+ }
+
+ return snapshot;
+}
 
 class TransformUndoCommand final : public UndoCommand {
 public:
@@ -642,23 +797,12 @@ private:
 
   const ArtifactCore::RationalTime time(frame_, 24);
   auto& t3d = layer->transform3D();
-  const TransformSnapshot current{
-   t3d.hasPositionKeyFrameAt(time),
-   t3d.hasRotationKeyFrameAt(time),
-   t3d.hasScaleKeyFrameAt(time),
-   t3d.positionX(),
-   t3d.positionY(),
-   t3d.rotation(),
-   t3d.scaleX(),
-   t3d.scaleY(),
-   t3d.anchorX(),
-   t3d.anchorY(),
-   t3d.anchorZ()
-  };
+  const TransformSnapshot current = captureTransformSnapshot(layer, time);
   const bool alreadyMatches =
       current.hasPositionKey == snapshot.hasPositionKey &&
       current.hasRotationKey == snapshot.hasRotationKey &&
       current.hasScaleKey == snapshot.hasScaleKey &&
+      current.hasTextBoxState == snapshot.hasTextBoxState &&
       std::abs(current.positionX - snapshot.positionX) <= 0.0001f &&
       std::abs(current.positionY - snapshot.positionY) <= 0.0001f &&
       std::abs(current.rotation - snapshot.rotation) <= 0.0001f &&
@@ -666,7 +810,9 @@ private:
       std::abs(current.scaleY - snapshot.scaleY) <= 0.0001f &&
       std::abs(current.anchorX - snapshot.anchorX) <= 0.0001f &&
       std::abs(current.anchorY - snapshot.anchorY) <= 0.0001f &&
-      std::abs(current.anchorZ - snapshot.anchorZ) <= 0.0001f;
+      std::abs(current.anchorZ - snapshot.anchorZ) <= 0.0001f &&
+      std::abs(current.textBoxWidth - snapshot.textBoxWidth) <= 0.0001f &&
+      std::abs(current.textBoxHeight - snapshot.textBoxHeight) <= 0.0001f;
   if (alreadyMatches) {
    return;
   }
@@ -687,6 +833,13 @@ private:
    t3d.setScale(time, snapshot.scaleX, snapshot.scaleY);
   } else {
    t3d.removeScaleKeyFrameAt(time);
+  }
+  if (snapshot.hasTextBoxState) {
+   if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+    textLayer->setMaxWidth(snapshot.textBoxWidth);
+    textLayer->setBoxHeight(snapshot.textBoxHeight);
+   }
+   layer->setDirty(LayerDirtyFlag::Source);
   }
   layer->setDirty(LayerDirtyFlag::Transform);
   layer->changed();
@@ -841,10 +994,14 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  const float lineThickness = std::clamp(3.0f * invZoom, 1.65f, 5.4f);
   const float handleSize = std::clamp(HANDLE_SIZE * 1.62f * 1.5f * invZoom, 11.0f, 28.0f);
 
+ const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+ const bool isTextLayer = static_cast<bool>(textLayer);
+
  QRectF localRect = layer_->localBounds();
  if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
   return;
  }
+ const QRectF sourceLocalRect = localRect;
 
  // Apply visual offset
  localRect.adjust(-GIZMO_OFFSET, -GIZMO_OFFSET, GIZMO_OFFSET, GIZMO_OFFSET);
@@ -937,22 +1094,51 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
   drawEmphasizedLine(renderer, tr_c, br_c, gizmoColor, lineThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, br_c, bl_c, gizmoColor, lineThickness, invZoom, isActive);
   drawEmphasizedLine(renderer, bl_c, tl_c, gizmoColor, lineThickness, invZoom, isActive);
+  if (isTextLayer) {
+   const float margin = std::max(0.0f, textEffectMargin(*textLayer));
+   const QRectF paragraphRect =
+       sourceLocalRect.adjusted(margin, margin, -margin, -margin);
+   if (paragraphRect.isValid() && paragraphRect.width() > 1.0 &&
+       paragraphRect.height() > 1.0) {
+    const bool textScaleActive = activeHandle_ >= HandleType::Scale_TL &&
+                                 activeHandle_ <= HandleType::Scale_Center;
+    const FloatColor paragraphColor = textScaleActive
+        ? FloatColor{0.42f, 0.92f, 1.0f, 0.96f}
+        : FloatColor{0.34f, 0.78f, 0.96f, 0.78f};
+    const FloatColor guideColor = textScaleActive
+        ? FloatColor{0.62f, 0.96f, 1.0f, 0.42f}
+        : FloatColor{0.58f, 0.86f, 0.98f, 0.26f};
+    const float guideThickness = std::max(1.0f, lineThickness * 0.46f);
+    drawTransformedRect(renderer, globalTransform, paragraphRect, paragraphColor,
+                        guideThickness);
+    drawTransformedLine(renderer, globalTransform,
+                        QPointF(paragraphRect.left(), paragraphRect.center().y()),
+                        QPointF(paragraphRect.right(), paragraphRect.center().y()),
+                        guideColor, std::max(1.0f, guideThickness * 0.82f));
+    drawTransformedLine(renderer, globalTransform,
+                        QPointF(paragraphRect.center().x(), paragraphRect.top()),
+                        QPointF(paragraphRect.center().x(), paragraphRect.bottom()),
+                        guideColor, std::max(1.0f, guideThickness * 0.82f));
+   }
+  }
  }
 
  if (showScale) {
-   const float handleSizeScale = std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize, 10.0f, 22.0f);
-   const FloatColor cornerFill = activeHandle_ == HandleType::Scale_TL ||
-                                 activeHandle_ == HandleType::Scale_TR ||
-                                 activeHandle_ == HandleType::Scale_BL ||
-                                 activeHandle_ == HandleType::Scale_BR
-       ? FloatColor{1.0f, 0.95f, 0.72f, 1.0f}
-       : FloatColor{0.94f, 0.96f, 0.98f, 0.96f};
-   const FloatColor axisFill = activeHandle_ == HandleType::Scale_T ||
-                               activeHandle_ == HandleType::Scale_B ||
-                               activeHandle_ == HandleType::Scale_L ||
-                               activeHandle_ == HandleType::Scale_R
-       ? FloatColor{0.68f, 0.96f, 0.82f, 1.0f}
-       : FloatColor{0.90f, 0.94f, 0.96f, 0.95f};
+    const float handleSizeScale = std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize, 10.0f, 22.0f);
+    const FloatColor cornerFill = activeHandle_ == HandleType::Scale_TL ||
+                                  activeHandle_ == HandleType::Scale_TR ||
+                                  activeHandle_ == HandleType::Scale_BL ||
+                                  activeHandle_ == HandleType::Scale_BR
+        ? FloatColor{1.0f, 0.95f, 0.72f, 1.0f}
+        : (isTextLayer ? FloatColor{0.80f, 0.94f, 1.0f, 0.98f}
+                       : FloatColor{0.94f, 0.96f, 0.98f, 0.96f});
+    const FloatColor axisFill = activeHandle_ == HandleType::Scale_T ||
+                                activeHandle_ == HandleType::Scale_B ||
+                                activeHandle_ == HandleType::Scale_L ||
+                                activeHandle_ == HandleType::Scale_R
+        ? FloatColor{0.68f, 0.96f, 0.82f, 1.0f}
+        : (isTextLayer ? FloatColor{0.72f, 0.90f, 1.0f, 0.97f}
+                       : FloatColor{0.90f, 0.94f, 0.96f, 0.95f});
    const FloatColor boxOutline = activeHandle_ != HandleType::None
         ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
         : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
@@ -989,7 +1175,8 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
                           centerHandleSize, centerHandleSize);
   drawEmphasizedRect(renderer, centerRect,
                      activeHandle_ == HandleType::Scale_Center ? FloatColor{1.0f, 0.92f, 0.35f, 1.0f}
-                                                               : FloatColor{0.96f, 0.96f, 0.96f, 1.0f},
+                                                                : (isTextLayer ? FloatColor{0.80f, 0.94f, 1.0f, 1.0f}
+                                                                               : FloatColor{0.96f, 0.96f, 0.96f, 1.0f}),
                      std::max(1.0f, 0.75f * invZoom), invZoom,
                      activeHandle_ != HandleType::None);
  }
@@ -1392,14 +1579,25 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
    dragStartScaleX_ = t3d.scaleX();
    dragStartScaleY_ = t3d.scaleY();
    dragStartRotation_ = t3d.rotation();
-   dragStartHasPositionKey_ = t3d.hasPositionKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
-   dragStartHasRotationKey_ = t3d.hasRotationKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
-   dragStartHasScaleKey_ = t3d.hasScaleKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
+  dragStartHasPositionKey_ = t3d.hasPositionKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
+  dragStartHasRotationKey_ = t3d.hasRotationKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
+  dragStartHasScaleKey_ = t3d.hasScaleKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
+  dragStartHasTextBoxState_ = false;
   dragStartGlobalTransform_ = layer_->getGlobalTransform();
   dragStartBoundingBox_ = layer_->transformedBoundingBox();
   dragStartLocalBounds_ = layer_->localBounds();
+  bool invertible = false;
+  const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
+  dragStartLocalMousePos_ = invertible ? inv.map(dragStartCanvasPos_) : QPointF();
   dragStartAnchor_ = QPointF(t3d.anchorX(), t3d.anchorY());
   dragStartAnchorZ_ = t3d.anchorZ();
+  dragStartTextBoxWidth_ = 0.0f;
+  dragStartTextBoxHeight_ = 0.0f;
+  if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_)) {
+   dragStartHasTextBoxState_ = true;
+   dragStartTextBoxWidth_ = textLayer->maxWidth();
+   dragStartTextBoxHeight_ = textLayer->boxHeight();
+  }
   dragAccumulatedRotationDelta_ = 0.0f;
   if (activeHandle_ == HandleType::Rotate) {
    const QPointF pivotWorld = dragStartGlobalTransform_.map(dragStartLocalBounds_.center());
@@ -1622,24 +1820,66 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
   const QRectF localBounds = dragStartLocalBounds_;
   if (startBox.isValid() && startBox.width() > 0.0 && startBox.height() > 0.0 &&
       localBounds.isValid() && localBounds.width() > 0.0 && localBounds.height() > 0.0) {
-   const QRectF targetBox = adjustedResizeBox(startBox, delta, activeHandle_);
-   const double baseW = std::max(1.0, startBox.width());
-   const double baseH = std::max(1.0, startBox.height());
-   const float newScaleX = dragStartScaleX_ * static_cast<float>(targetBox.width() / baseW);
-   const float newScaleY = dragStartScaleY_ * static_cast<float>(targetBox.height() / baseH);
-   const float localLeft = static_cast<float>(localBounds.left());
-   const float localTop = static_cast<float>(localBounds.top());
-   const float anchorX = dragStartAnchor_.x();
-   const float anchorY = dragStartAnchor_.y();
-   const float newPosX = static_cast<float>(targetBox.left()) - newScaleX * (localLeft - anchorX);
-   const float newPosY = static_cast<float>(targetBox.top()) - newScaleY * (localTop - anchorY);
+   bool invertible = false;
+   const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
+   if (invertible) {
+    if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_)) {
+     QRectF targetLocalBox = adjustedResizeBox(
+         localBounds, inv.map(currentCanvasPos) - dragStartLocalMousePos_, activeHandle_);
+     const double margin = std::max(0.0f, textEffectMargin(*textLayer));
+     const double minWidth =
+         handleAffectsWidth(activeHandle_) ? (margin * 2.0 + 1.0) : 1.0;
+     const double minHeight =
+         handleAffectsHeight(activeHandle_) ? (margin * 2.0 + 1.0) : 1.0;
+     targetLocalBox =
+         enforceResizeMinSize(targetLocalBox, activeHandle_, minWidth, minHeight);
 
-   t3d.setScale(time, newScaleX, newScaleY);
-   t3d.setPosition(time, newPosX, newPosY);
+     if (handleAffectsWidth(activeHandle_)) {
+      textLayer->setMaxWidth(
+          static_cast<float>(std::max(1.0, targetLocalBox.width() - margin * 2.0)));
+     }
+     if (handleAffectsHeight(activeHandle_)) {
+      textLayer->setBoxHeight(
+          static_cast<float>(std::max(1.0, targetLocalBox.height() - margin * 2.0)));
+     }
 
-   layer_->setDirty(LayerDirtyFlag::Transform);
+     const QPointF startFixedLocal = fixedPointForHandle(localBounds, activeHandle_);
+     const QPointF newFixedLocal = fixedPointForHandle(targetLocalBox, activeHandle_);
+     const QPointF fixedWorld = dragStartGlobalTransform_.map(startFixedLocal);
+     const QPointF newPos = fixedWorld - applyScaleRotateToVector(
+         newFixedLocal - dragStartAnchor_, dragStartScaleX_, dragStartScaleY_,
+         dragStartRotation_);
+
+     t3d.setPosition(time, static_cast<float>(newPos.x()),
+                     static_cast<float>(newPos.y()));
+     layer_->setDirty(LayerDirtyFlag::Source);
+     layer_->setDirty(LayerDirtyFlag::Transform);
+     if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+     }
+    } else {
+     const QRectF targetBox = adjustedResizeBox(startBox, delta, activeHandle_);
+     const double baseW = std::max(1.0, startBox.width());
+     const double baseH = std::max(1.0, startBox.height());
+     const float newScaleX = dragStartScaleX_ * static_cast<float>(targetBox.width() / baseW);
+     const float newScaleY = dragStartScaleY_ * static_cast<float>(targetBox.height() / baseH);
+     const float localLeft = static_cast<float>(localBounds.left());
+     const float localTop = static_cast<float>(localBounds.top());
+     const float anchorX = dragStartAnchor_.x();
+     const float anchorY = dragStartAnchor_.y();
+     const float newPosX = static_cast<float>(targetBox.left()) - newScaleX * (localLeft - anchorX);
+     const float newPosY = static_cast<float>(targetBox.top()) - newScaleY * (localTop - anchorY);
+
+     t3d.setScale(time, newScaleX, newScaleY);
+     t3d.setPosition(time, newPosX, newPosY);
+
+     layer_->setDirty(LayerDirtyFlag::Transform);
+    }
+   }
   }
-  }
+ }
 
  lastCanvasMousePos_ = currentCanvasPos;
  return true;
@@ -1647,43 +1887,36 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
 
 void TransformGizmo::handleMouseRelease() {
  if (isDragging_ && layer_) {
-  const auto& t3d = layer_->transform3D();
   const ArtifactCore::RationalTime time(dragStartFrame_, 24);
-   const TransformSnapshot before{
-    dragStartHasPositionKey_,
-    dragStartHasRotationKey_,
-    dragStartHasScaleKey_,
-    static_cast<float>(dragStartLayerPos_.x()),
-    static_cast<float>(dragStartLayerPos_.y()),
-    dragStartRotation_,
-    dragStartScaleX_,
-    dragStartScaleY_,
-    static_cast<float>(dragStartAnchor_.x()),
-    static_cast<float>(dragStartAnchor_.y()),
-    dragStartAnchorZ_
-   };
-  const TransformSnapshot after{
-   t3d.hasPositionKeyFrameAt(time),
-   t3d.hasRotationKeyFrameAt(time),
-   t3d.hasScaleKeyFrameAt(time),
-   t3d.positionX(),
-   t3d.positionY(),
-   t3d.rotation(),
-   t3d.scaleX(),
-   t3d.scaleY(),
-   t3d.anchorX(),
-   t3d.anchorY(),
-   t3d.anchorZ()
+  const TransformSnapshot before{
+   dragStartHasPositionKey_,
+   dragStartHasRotationKey_,
+   dragStartHasScaleKey_,
+   dragStartHasTextBoxState_,
+   static_cast<float>(dragStartLayerPos_.x()),
+   static_cast<float>(dragStartLayerPos_.y()),
+   dragStartRotation_,
+   dragStartScaleX_,
+   dragStartScaleY_,
+   static_cast<float>(dragStartAnchor_.x()),
+   static_cast<float>(dragStartAnchor_.y()),
+   dragStartAnchorZ_,
+   dragStartTextBoxWidth_,
+   dragStartTextBoxHeight_
   };
+  const TransformSnapshot after = captureTransformSnapshot(layer_, time);
 
   const bool changed = before.hasPositionKey != after.hasPositionKey ||
                        before.hasRotationKey != after.hasRotationKey ||
                        before.hasScaleKey != after.hasScaleKey ||
+                       before.hasTextBoxState != after.hasTextBoxState ||
                        std::abs(before.positionX - after.positionX) > 0.0001f ||
                        std::abs(before.positionY - after.positionY) > 0.0001f ||
                        std::abs(before.rotation - after.rotation) > 0.0001f ||
                        std::abs(before.scaleX - after.scaleX) > 0.0001f ||
-                       std::abs(before.scaleY - after.scaleY) > 0.0001f;
+                       std::abs(before.scaleY - after.scaleY) > 0.0001f ||
+                       std::abs(before.textBoxWidth - after.textBoxWidth) > 0.0001f ||
+                       std::abs(before.textBoxHeight - after.textBoxHeight) > 0.0001f;
 
   if (changed) {
    if (auto* mgr = UndoManager::instance()) {

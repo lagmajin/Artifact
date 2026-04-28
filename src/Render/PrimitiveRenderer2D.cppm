@@ -1238,17 +1238,18 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
                                         const FloatColor& color,
                                         float opacity)
 {
-    if (!impl_->pGlyphAtlas_ || text.empty()) return;
+    if (!impl_->pGlyphAtlas_ || text.length() == 0) return;
     
     // Simplified implementation: acquire each character from atlas
     // Full implementation would use TextLayoutEngine for proper glyph positioning
     float currentX = x;
     
-    for (char32_t codePoint : text) {
+    auto u32 = text.toStdU32String();
+    for (char32_t codePoint : u32) {
         GlyphKey key;
         key.codePoint = codePoint;
         key.fontSize = style.fontSize;
-        key.fontFamily = style.fontFamily.toUtf8String();
+        key.fontFamily = std::string(style.fontFamily);
         key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
                          (static_cast<uint32_t>(style.fontStyle) << 0);
         
@@ -1271,7 +1272,7 @@ void PrimitiveRenderer2D::drawGlyphTextTransformed(float x, float y, const UniSt
                                                     const QMatrix4x4& transform,
                                                     float opacity)
 {
-    if (!impl_->pGlyphAtlas_ || text.empty()) return;
+    if (!impl_->pGlyphAtlas_ || text.length() == 0) return;
     
     // TODO: Implement transformed glyph rendering with matrix
 }

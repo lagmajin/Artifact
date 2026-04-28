@@ -6,6 +6,7 @@ export module Artifact.Layer.Matte;
 
 import Utils.Id;
 import Utils.String.UniString;
+import Layer.Matte;
 
 export namespace Artifact {
 
@@ -35,7 +36,7 @@ export namespace Artifact {
 
     struct LayerMatteReference {
         ArtifactCore::Id id;               // マット自体のユニークID (UI操作用)
-        ArtifactCore::Id assetId;          // 参照するアセットのID
+        ArtifactCore::Id sourceLayerId;    // 参照するレイヤーのID (AEのトラックマット)
         bool enabled = true;
         MatteType type = MatteType::Alpha;
         MatteBlendMode blendMode = MatteBlendMode::Add;
@@ -50,7 +51,7 @@ export namespace Artifact {
         QJsonObject toJson() const {
             QJsonObject obj;
             obj["id"] = id.toString();
-            obj["assetId"] = assetId.toString();
+            obj["sourceLayerId"] = sourceLayerId.toString();
             obj["enabled"] = enabled;
             obj["type"] = static_cast<int>(type);
             obj["blendMode"] = static_cast<int>(blendMode);
@@ -64,8 +65,11 @@ export namespace Artifact {
             if (obj.contains("id")) {
                 id = ArtifactCore::Id(obj["id"].toString());
             }
-            if (obj.contains("assetId")) {
-                assetId = ArtifactCore::Id(obj["assetId"].toString());
+            if (obj.contains("sourceLayerId")) {
+                sourceLayerId = ArtifactCore::Id(obj["sourceLayerId"].toString());
+            } else if (obj.contains("assetId")) {
+                // legacy: migrate old assetId to sourceLayerId
+                sourceLayerId = ArtifactCore::Id(obj["assetId"].toString());
             }
             enabled = obj["enabled"].toBool(true);
             type = static_cast<MatteType>(obj["type"].toInt(static_cast<int>(MatteType::Alpha)));
@@ -73,6 +77,34 @@ export namespace Artifact {
             fitMode = static_cast<MatteFitMode>(obj["fitMode"].toInt(static_cast<int>(MatteFitMode::Stretch)));
             opacity = static_cast<float>(obj["opacity"].toDouble(1.0));
             invert = obj["invert"].toBool(false);
+        }
+
+        // Core MatteMode への変換
+        ArtifactCore::MatteMode toCoreMatteMode() const {
+            if (invert) {
+                switch (type) {
+                case MatteType::Alpha: return ArtifactCore::MatteMode::AlphaInverted;
+                case MatteType::Luma: return ArtifactCore::MatteMode::LuminanceInverted;
+                case MatteType::InverseAlpha: return ArtifactCore::MatteMode::Alpha;
+                case MatteType::InverseLuma: return ArtifactCore::MatteMode::Luminance;
+                }
+            }
+            switch (type) {
+            case MatteType::Alpha: return ArtifactCore::MatteMode::Alpha;
+            case MatteType::Luma: return ArtifactCore::MatteMode::Luminance;
+            case MatteType::InverseAlpha: return ArtifactCore::MatteMode::AlphaInverted;
+            case MatteType::InverseLuma: return ArtifactCore::MatteMode::LuminanceInverted;
+            }
+            return ArtifactCore::MatteMode::Alpha;
+        }
+
+        // Core MatteNode への変換
+        ArtifactCore::MatteNode toCoreMatteNode() const {
+            ArtifactCore::MatteNode node;
+            node.setSourceLayerId(sourceLayerId);
+            node.setMode(toCoreMatteMode());
+            node.setEnabled(enabled);
+            return node;
         }
     };
 }
