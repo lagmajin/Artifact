@@ -4,6 +4,7 @@ module;
 export module Artifact.Layer.Null;
 
 import Artifact.Layers;
+import Artifact.Layers.Abstract._2D;
 
 export namespace Artifact {
 
@@ -14,7 +15,7 @@ export namespace Artifact {
 
  };
 
- class ArtifactNullLayer:public ArtifactAbstractLayer
+ class ArtifactNullLayer:public ArtifactAbstract2DLayer
  {
  private:
   class Impl;

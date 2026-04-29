@@ -38,6 +38,7 @@ export module Artifact.Layers.Abstract._2D;
 
 
 import Artifact.Layer.Abstract;
+import ArtifactCore.Rig2D;
 
 
 export namespace Artifact
@@ -50,6 +51,16 @@ export namespace Artifact
  public:
   ArtifactAbstract2DLayer();
   ~ArtifactAbstract2DLayer();
+
+  ArtifactCore::Rig2D& rig2D();
+  const ArtifactCore::Rig2D& rig2D() const;
+  ArtifactCore::Bone2D* addRigBone(const QString& name = QStringLiteral("Bone"),
+                                   const QString& parentName = QString());
+  void clearRigBones();
+  int rigBoneCount() const;
+  QString rigRootBoneName() const;
+  std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+  bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 
  };
 

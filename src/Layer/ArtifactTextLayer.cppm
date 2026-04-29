@@ -61,7 +61,7 @@
 
 module Artifact.Layer.Text;
 
-import Artifact.Layer.Abstract;
+import Artifact.Layers.Abstract._2D;
 import Utils.String.UniString;
 import Color.Float;
 import FloatRGBA;

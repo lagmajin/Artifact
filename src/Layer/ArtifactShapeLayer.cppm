@@ -15,6 +15,7 @@ module;
 module Artifact.Layer.Shape;
 
 import std;
+import Artifact.Layers.Abstract._2D;
 import Artifact.Layer.CloneEffectSupport;
 import Shape.Types;
 import Shape.Path;

@@ -15,6 +15,7 @@ module;
 module Artifact.Layers.SolidImage;
 
 import std;
+import Artifact.Layers.Abstract._2D;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Property.Abstract;

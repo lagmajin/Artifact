@@ -5,7 +5,7 @@ module;
 #include <QImage>
 export module Artifact.Layers.SolidImage;
 import Color.Float;
-import Artifact.Layer.Abstract;
+import Artifact.Layers.Abstract._2D;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -16,7 +16,7 @@ public:
   ~ArtifactSolidImageLayerSettings();
 };
 
-class ArtifactSolidImageLayer : public ArtifactAbstractLayer {
+class ArtifactSolidImageLayer : public ArtifactAbstract2DLayer {
 private:
   class Impl;
   Impl *impl_;

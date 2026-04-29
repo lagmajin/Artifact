@@ -9,6 +9,7 @@ module;
 
 module Artifact.Layer.Solid2D;
 
+import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import Property.Abstract;
 import Property.Group;

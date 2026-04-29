@@ -8,7 +8,7 @@ module;
 export module Artifact.Layer.Shape;
 
 import Color.Float;
-import Artifact.Layer.Abstract;
+import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 
 export namespace Artifact {
@@ -29,7 +29,7 @@ struct CustomPathVertex {
   bool smooth = false;
 };
 
-class ArtifactShapeLayer : public ArtifactAbstractLayer {
+class ArtifactShapeLayer : public ArtifactAbstract2DLayer {
 private:
   class Impl;
   Impl *impl_;

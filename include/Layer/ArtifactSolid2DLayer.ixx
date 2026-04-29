@@ -36,13 +36,13 @@ export module Artifact.Layer.Solid2D;
 
 
 import Color.Float;
-import Artifact.Layer.Abstract;
+import Artifact.Layers.Abstract._2D;
 
 export namespace Artifact
 {
  using namespace ArtifactCore;
 	
- class ArtifactSolid2DLayer:public ArtifactAbstractLayer
+ class ArtifactSolid2DLayer:public ArtifactAbstract2DLayer
  {
  private:
   class Impl;

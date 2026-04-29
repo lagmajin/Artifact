@@ -6,14 +6,14 @@
 export module Artifact.Layer.Image;
 
 
-import Artifact.Layers;
+import Artifact.Layers.Abstract._2D;
 
 import Image;
 import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
 
- class ArtifactImageLayer:public ArtifactAbstractLayer {
+ class ArtifactImageLayer:public ArtifactAbstract2DLayer {
  W_OBJECT(ArtifactImageLayer)
  private:
   class Impl;
