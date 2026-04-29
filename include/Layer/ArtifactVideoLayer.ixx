@@ -117,6 +117,9 @@ public:
     /// Lightweight diagnostics for the internal debugger
     QString debugState() const;
 
+    /// Short status string for render-path logs
+    QString decodeState() const;
+
     // === Playback Control ===
     
     /// Seek to specific frame

@@ -69,7 +69,7 @@ namespace Artifact
 
  QJsonObject ArtifactSolid2DLayer::toJson() const
  {
-  QJsonObject obj = ArtifactAbstractLayer::toJson();
+  QJsonObject obj = ArtifactAbstract2DLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Solid);
   obj["solidWidth"] = sourceSize().width;
   obj["solidHeight"] = sourceSize().height;
@@ -85,7 +85,7 @@ namespace Artifact
 
  void ArtifactSolid2DLayer::fromJsonProperties(const QJsonObject& obj)
  {
-  ArtifactAbstractLayer::fromJsonProperties(obj);
+  ArtifactAbstract2DLayer::fromJsonProperties(obj);
   if (obj.contains("solidWidth") || obj.contains("solidHeight")) {
    const int width = obj.value("solidWidth").toInt(sourceSize().width);
    const int height = obj.value("solidHeight").toInt(sourceSize().height);
@@ -102,7 +102,7 @@ namespace Artifact
 
  std::vector<ArtifactCore::PropertyGroup> ArtifactSolid2DLayer::getLayerPropertyGroups() const
  {
-  auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+  auto groups = ArtifactAbstract2DLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup solidGroup(QStringLiteral("Solid"));
 
   const auto c = color();
@@ -127,7 +127,7 @@ namespace Artifact
    Q_EMIT changed();
    return true;
   }
-  return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+  return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
  }
 
 void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)

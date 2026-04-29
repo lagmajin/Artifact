@@ -47,6 +47,17 @@ public:
             return;
         }
 
+        auto resourceState = [&snapshot](const QString& typeName, const QString& labelName) {
+            for (const auto& resource : snapshot.resources) {
+                if (resource.type == typeName || resource.label == labelName) {
+                    const bool skipped = resource.note.contains(QStringLiteral("skipped=")) ||
+                                         resource.stale || !resource.cacheHit;
+                    return skipped ? QStringLiteral("skipped") : QStringLiteral("ok");
+                }
+            }
+            return QStringLiteral("none");
+        };
+
         const int failedPassCount = static_cast<int>(std::count_if(
             snapshot.passes.begin(), snapshot.passes.end(),
             [](const auto& pass) { return pass.status == ArtifactCore::FrameDebugPassStatus::Failed; }));
@@ -58,14 +69,16 @@ public:
                 ? QStringLiteral("Failed")
                 : (failedPassCount > 0 ? QStringLiteral("Degraded") : QStringLiteral("Healthy"));
         if (summary_) {
-            const QString summaryText = QStringLiteral("%1 | frame %2 | comp %3 | layer %4 | backend %5 | passes %6 | resources %7")
+            const QString summaryText = QStringLiteral("%1 | frame %2 | comp %3 | layer %4 | backend %5 | passes %6 | resources %7 | video %8 | particle %9")
                                             .arg(statusText)
                                             .arg(snapshot.frame.framePosition())
                                             .arg(snapshot.compositionName.isEmpty() ? QStringLiteral("<none>") : snapshot.compositionName)
                                             .arg(snapshot.selectedLayerName.isEmpty() ? QStringLiteral("<none>") : snapshot.selectedLayerName)
                                             .arg(snapshot.renderBackend.isEmpty() ? QStringLiteral("<none>") : snapshot.renderBackend)
                                             .arg(static_cast<int>(snapshot.passes.size()))
-                                            .arg(static_cast<int>(snapshot.resources.size()));
+                                            .arg(static_cast<int>(snapshot.resources.size()))
+                                            .arg(resourceState(QStringLiteral("video"), QStringLiteral("Video Decode")))
+                                            .arg(resourceState(QStringLiteral("particle"), QStringLiteral("Particle Draw")));
             summary_->setText(summaryText);
             QPalette pal = summary_->palette();
             pal.setColor(QPalette::Window,
@@ -165,19 +178,17 @@ public:
             });
             for (const auto& resource : resourceOrder) {
                 const bool hot = resource.stale || !resource.cacheHit;
+                const bool isMediaResource =
+                    resource.label == QStringLiteral("Video Decode") ||
+                    resource.label == QStringLiteral("Particle Draw");
                 lines << QStringLiteral("  - %1 [%2] relation=%3 cacheHit=%4 stale=%5")
                               .arg(resource.label.isEmpty() ? QStringLiteral("<unnamed>") : resource.label,
                                    resource.type.isEmpty() ? QStringLiteral("<type?>") : resource.type,
                                    resource.relation.isEmpty() ? QStringLiteral("<none>") : resource.relation)
                               .arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
                               .arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"));
-                if (hot && !resource.note.isEmpty()) {
+                if (!resource.note.isEmpty() && (hot || isMediaResource)) {
                     lines << QStringLiteral("    note: %1").arg(resource.note);
-                }
-                if (!resource.note.isEmpty()) {
-                    if (!hot) {
-                        lines << QStringLiteral("    note: %1").arg(resource.note);
-                    }
                 }
             }
         }

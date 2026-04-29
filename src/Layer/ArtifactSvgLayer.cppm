@@ -240,7 +240,7 @@ bool ArtifactSvgLayer::hasCurrentFrameBuffer() const
 
 QJsonObject ArtifactSvgLayer::toJson() const
 {
-    QJsonObject obj = ArtifactAbstractLayer::toJson();
+    QJsonObject obj = ArtifactAbstract2DLayer::toJson();
     obj["type"] = static_cast<int>(LayerType::Shape);
     obj["svg.sourcePath"] = impl_->sourcePath_;
     obj["svg.fitToLayer"] = impl_->fitToLayer_;
@@ -249,7 +249,7 @@ QJsonObject ArtifactSvgLayer::toJson() const
 
 void ArtifactSvgLayer::fromJsonProperties(const QJsonObject& obj)
 {
-    ArtifactAbstractLayer::fromJsonProperties(obj);
+    ArtifactAbstract2DLayer::fromJsonProperties(obj);
     if (obj.contains("svg.sourcePath")) {
         loadFromPath(obj.value("svg.sourcePath").toString());
     } else if (obj.contains("sourcePath")) {
@@ -262,7 +262,7 @@ void ArtifactSvgLayer::fromJsonProperties(const QJsonObject& obj)
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactSvgLayer::getLayerPropertyGroups() const
 {
-    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    auto groups = ArtifactAbstract2DLayer::getLayerPropertyGroups();
     ArtifactCore::PropertyGroup svgGroup(QStringLiteral("SVG"));
 
     auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type,
@@ -289,7 +289,7 @@ bool ArtifactSvgLayer::setLayerPropertyValue(const QString& propertyPath, const 
         setFitToLayer(value.toBool());
         return true;
     }
-    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+    return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 void ArtifactSvgLayer::draw(ArtifactIRenderer* renderer)

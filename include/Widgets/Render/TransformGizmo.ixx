@@ -6,6 +6,7 @@
 #include <QRectF>
 #include <QCursor>
 #include <QTransform>
+#include <QString>
 export module Artifact.Widgets.TransformGizmo;
 
 
@@ -20,6 +21,12 @@ export namespace Artifact {
  struct SnapLine {
   bool isVertical = false;
   float position = 0.0f;
+ };
+
+ struct SnapLabel {
+  bool isVertical = false;
+  QPointF position;
+  QString text;
  };
 
  export class TransformGizmo {
@@ -64,6 +71,7 @@ export namespace Artifact {
   bool isDragging() const { return isDragging_; }
   HandleType activeHandle() const { return activeHandle_; }
   const std::vector<SnapLine>& activeSnapLines() const { return activeSnapLines_; }
+  const std::vector<SnapLabel>& activeSnapLabels() const { return activeSnapLabels_; }
   QRectF currentCanvasBoundingRect() const;
 
  private:
@@ -75,9 +83,12 @@ export namespace Artifact {
   HandleType activeHandle_ = HandleType::None;
   bool isDragging_ = false;
   std::vector<SnapLine> activeSnapLines_;
+  std::vector<SnapLabel> activeSnapLabels_;
   // ドラッグ開始時に一度だけ計算するスナップラインキャッシュ
   std::vector<float> cachedSnapVLines_;
   std::vector<float> cachedSnapHLines_;
+  std::vector<float> cachedSpacingVLines_;
+  std::vector<float> cachedSpacingHLines_;
   QPointF dragStartCanvasPos_;
   QPointF dragStartLocalMousePos_;
   QPointF dragStartLayerPos_;
@@ -99,6 +110,10 @@ export namespace Artifact {
   float dragStartPointerAngle_ = 0.0f;
   float dragAccumulatedRotationDelta_ = 0.0f;
   QPointF lastCanvasMousePos_;
+  bool resizeBadgeVisible_ = false;
+  std::vector<QString> resizeBadgeLines_;
+  QPointF resizeBadgeAnchor_;
+  QRectF resizeBadgeBox_;
   
   static constexpr float HANDLE_SIZE = 10.0f;
   // Reduced rotation gizmo size ~30% to improve usability

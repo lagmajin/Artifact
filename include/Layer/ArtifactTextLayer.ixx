@@ -44,6 +44,11 @@ import Artifact.Layers;
 
 export namespace Artifact {
 
+enum class TextLayoutMode : int {
+    Point = 0,
+    Box = 1
+};
+
 class ArtifactTextLayer : public ArtifactAbstract2DLayer {
 private:
     class Impl;
@@ -110,6 +115,10 @@ public:
 
     void setWrapMode(ArtifactCore::TextWrapMode wrapMode);
     ArtifactCore::TextWrapMode wrapMode() const;
+
+    void setLayoutMode(TextLayoutMode mode);
+    TextLayoutMode layoutMode() const;
+    bool isBoxText() const;
 
     void setMaxWidth(float width);
     float maxWidth() const;

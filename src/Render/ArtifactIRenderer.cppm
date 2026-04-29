@@ -190,6 +190,7 @@ namespace {
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
+  QString lastParticleDebug_;
 
   mutable DiligentImmediateSubmitter submitter_;
   mutable RenderCommandBuffer cmdBuf_;
@@ -436,10 +437,20 @@ namespace {
   { primitiveRenderer_.drawGrid(x, y, w, h, spacing, thickness, color); }
 
   void drawParticles(const ArtifactCore::ParticleRenderData& data) {
-    if (data.particles.empty()) return;
+    if (data.particles.empty()) {
+      lastParticleDebug_ = QStringLiteral("skipped=empty count=0");
+      qDebug() << "[ParticleRenderer] drawParticles skipped: empty particle buffer";
+      return;
+    }
 
     if (!particleRenderer_) {
-      if (!deviceManager_.device()) return;
+      if (!deviceManager_.device()) {
+        lastParticleDebug_ = QStringLiteral("skipped=device-null count=%1")
+                                 .arg(data.particles.size());
+        qWarning() << "[ParticleRenderer] drawParticles skipped: device is null"
+                   << "count=" << data.particles.size();
+        return;
+      }
       // Lazy initialization of particle renderer
       if (!gpuContext_) {
         gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(deviceManager_.device(), deviceManager_.immediateContext());
@@ -451,7 +462,16 @@ namespace {
       qDebug() << "[ParticleRenderer] Initialized (max 100k particles)";
     }
 
-    if (m_viewportWidth <= 0.0f || m_viewportHeight <= 0.0f) return;
+    if (m_viewportWidth <= 0.0f || m_viewportHeight <= 0.0f) {
+      lastParticleDebug_ = QStringLiteral("skipped=invalid-viewport count=%1 viewport=%2x%3")
+                               .arg(data.particles.size())
+                               .arg(m_viewportWidth)
+                               .arg(m_viewportHeight);
+      qWarning() << "[ParticleRenderer] drawParticles skipped: invalid viewport"
+                 << "count=" << data.particles.size()
+                 << "viewport=(" << m_viewportWidth << "x" << m_viewportHeight << ")";
+      return;
+    }
 
     // The particle VS uses mul(pos, Matrix) row-vector convention, so Qt matrices
     // must be transposed before upload.
@@ -479,10 +499,29 @@ namespace {
 
     auto* pRTV = primitiveRenderer_.currentRTV();
     if (!pRTV) {
-      qWarning() << "[ParticleRenderer] No active RTV — skipping particle draw";
+      lastParticleDebug_ = QStringLiteral("skipped=no-rtv count=%1 camera3D=%2 viewport=%3x%4")
+                               .arg(data.particles.size())
+                               .arg(particle3DCameraActive_ ? QStringLiteral("true")
+                                                            : QStringLiteral("false"))
+                               .arg(m_viewportWidth)
+                               .arg(m_viewportHeight);
+      qWarning() << "[ParticleRenderer] No active RTV — skipping particle draw"
+                 << "count=" << data.particles.size()
+                 << "camera3D=" << particle3DCameraActive_
+                 << "viewport=(" << m_viewportWidth << "x" << m_viewportHeight << ")";
       return;
     }
 
+    lastParticleDebug_ =
+        QStringLiteral("drawn count=%1 camera3D=%2 zoom=%3 pan=%4,%5 viewport=%6x%7")
+            .arg(data.particles.size())
+            .arg(particle3DCameraActive_ ? QStringLiteral("true")
+                                         : QStringLiteral("false"))
+            .arg(QString::number(zoom, 'f', 3))
+            .arg(QString::number(panX, 'f', 1))
+            .arg(QString::number(panY, 'f', 1))
+            .arg(m_viewportWidth)
+            .arg(m_viewportHeight);
     cmdBuf_.targetRTV = pRTV;
     ParticlePkt pkt;
     pkt.data = data;
@@ -1186,6 +1225,7 @@ namespace {
  void ArtifactIRenderer::Impl::beginFrameCostCapture()
  {
   m_currentFrameCostStats_ = {};
+  lastParticleDebug_.clear();
   submitter_.setFrameCostStats(&m_currentFrameCostStats_);
   primitiveRenderer3D_.setFrameCostStats(&m_currentFrameCostStats_);
  }
@@ -1613,6 +1653,15 @@ void ArtifactIRenderer::drawGrid(float x, float y, float w, float h,
                                  float spacing, float thickness, const FloatColor& color)
 { impl_->drawGrid(x, y, w, h, spacing, thickness, color); }
 void ArtifactIRenderer::drawParticles(const ArtifactCore::ParticleRenderData& data) { impl_->drawParticles(data); }
+
+QString ArtifactIRenderer::particleDebugState() const {
+  if (!impl_) {
+    return QStringLiteral("<no renderer>");
+  }
+  return impl_->lastParticleDebug_.isEmpty()
+             ? QStringLiteral("<none>")
+             : impl_->lastParticleDebug_;
+}
 void ArtifactIRenderer::drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
 { impl_->primitiveRenderer3D_.draw3DLine({start.x, start.y, start.z}, {end.x, end.y, end.z}, color, thickness); }
 void ArtifactIRenderer::drawGizmoArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size)

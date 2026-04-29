@@ -86,11 +86,16 @@ struct TextAnimatorState {
   AnimatorProperties properties;
 };
 
+TextLayoutMode defaultTextLayoutMode() {
+  return TextLayoutMode::Point;
+}
+
 class ArtifactTextLayer::Impl {
 public:
   UniString text_;
   TextStyle textStyle_;
   ParagraphStyle paragraphStyle_;
+  TextLayoutMode layoutMode_ = defaultTextLayoutMode();
   QImage renderedImage_;
   mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> renderedBuffer_;
   bool isDirty_ = true;
@@ -457,7 +462,7 @@ QFont makeTextFont(const TextStyle &style, const QString &sampleText) {
 } // namespace
 
 ArtifactTextLayer::ArtifactTextLayer()
-    : ArtifactAbstractLayer(), impl_(new Impl()) {
+    : ArtifactAbstract2DLayer(), impl_(new Impl()) {
   // Defer expensive text rasterization until the layer is actually drawn.
   impl_->renderedImage_ = QImage(1, 1, QImage::Format_ARGB32_Premultiplied);
   impl_->renderedImage_.fill(Qt::transparent);
@@ -673,8 +678,27 @@ TextWrapMode ArtifactTextLayer::wrapMode() const {
   return impl_->paragraphStyle_.wrapMode;
 }
 
+void ArtifactTextLayer::setLayoutMode(TextLayoutMode mode) {
+  impl_->layoutMode_ = mode;
+  markDirty();
+}
+
+TextLayoutMode ArtifactTextLayer::layoutMode() const {
+  return impl_->layoutMode_;
+}
+
+bool ArtifactTextLayer::isBoxText() const {
+  return impl_->layoutMode_ == TextLayoutMode::Box;
+}
+
 void ArtifactTextLayer::setMaxWidth(float width) {
   impl_->paragraphStyle_.boxWidth = (width <= 0.0f) ? 0.0f : width;
+  if (impl_->paragraphStyle_.boxWidth > 0.0f ||
+      impl_->paragraphStyle_.boxHeight > 0.0f) {
+    impl_->layoutMode_ = TextLayoutMode::Box;
+  } else {
+    impl_->layoutMode_ = TextLayoutMode::Point;
+  }
   markDirty();
 }
 
@@ -684,6 +708,12 @@ float ArtifactTextLayer::maxWidth() const {
 
 void ArtifactTextLayer::setBoxHeight(float height) {
   impl_->paragraphStyle_.boxHeight = (height <= 0.0f) ? 0.0f : height;
+  if (impl_->paragraphStyle_.boxWidth > 0.0f ||
+      impl_->paragraphStyle_.boxHeight > 0.0f) {
+    impl_->layoutMode_ = TextLayoutMode::Box;
+  } else {
+    impl_->layoutMode_ = TextLayoutMode::Point;
+  }
   markDirty();
 }
 
@@ -734,7 +764,7 @@ int ArtifactTextLayer::animatorCount() const {
 }
 
 QJsonObject ArtifactTextLayer::toJson() const {
-  QJsonObject obj = ArtifactAbstractLayer::toJson();
+  QJsonObject obj = ArtifactAbstract2DLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Text);
   obj["text.value"] = text().toQString();
   obj["text.fontFamily"] = fontFamily().toQString();
@@ -749,6 +779,7 @@ QJsonObject ArtifactTextLayer::toJson() const {
   obj["text.alignment"] = static_cast<int>(horizontalAlignment());
   obj["text.verticalAlignment"] = static_cast<int>(verticalAlignment());
   obj["text.wrapMode"] = static_cast<int>(wrapMode());
+  obj["text.layoutMode"] = static_cast<int>(layoutMode());
   obj["text.maxWidth"] = maxWidth();
   obj["text.boxHeight"] = boxHeight();
   obj["text.paragraphSpacing"] = paragraphSpacing();
@@ -773,7 +804,7 @@ QJsonObject ArtifactTextLayer::toJson() const {
 }
 
 void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
-  ArtifactAbstractLayer::fromJsonProperties(obj);
+  ArtifactAbstract2DLayer::fromJsonProperties(obj);
 
   if (obj.contains("text.value")) {
     setText(UniString(obj.value("text.value").toString()));
@@ -820,6 +851,11 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
     setWrapMode(static_cast<TextWrapMode>(
         obj.value("text.wrapMode").toInt(static_cast<int>(wrapMode()))));
   }
+  const bool hasLayoutMode = obj.contains("text.layoutMode");
+  if (hasLayoutMode) {
+    setLayoutMode(static_cast<TextLayoutMode>(
+        obj.value("text.layoutMode").toInt(static_cast<int>(layoutMode()))));
+  }
   if (obj.contains("text.maxWidth")) {
     setMaxWidth(static_cast<float>(obj.value("text.maxWidth").toDouble(maxWidth())));
   }
@@ -830,6 +866,13 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("text.paragraphSpacing")) {
     setParagraphSpacing(static_cast<float>(
         obj.value("text.paragraphSpacing").toDouble(paragraphSpacing())));
+  }
+  if (!hasLayoutMode) {
+    if (maxWidth() > 0.0f || boxHeight() > 0.0f) {
+      setLayoutMode(TextLayoutMode::Box);
+    } else {
+      setLayoutMode(TextLayoutMode::Point);
+    }
   }
   if (obj.contains("text.color")) {
     const auto color =
@@ -914,6 +957,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
   if (!renderer) {
     return;
   }
+  const bool boxLayout = isBoxText();
   const bool hasEnabledAnimators =
       std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
                   [](const TextAnimatorState &animator) {
@@ -921,14 +965,16 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                   });
   QString displayText = impl_->text_.toQString();
   const bool isRichText = Qt::mightBeRichText(displayText);
+  const bool containsCjk = FontManager::containsCjkCharacters(displayText);
+  if (impl_->textStyle_.allCaps && !isRichText) {
+    displayText = displayText.toUpper();
+  }
   const bool plainGpuText = !isRichText && !hasEnabledAnimators &&
+                            !containsCjk &&
                             impl_->textStyle_.leading <= 0.0f &&
                             impl_->paragraphStyle_.paragraphSpacing <= 0.0f;
 
   if (plainGpuText) {
-    if (impl_->textStyle_.allCaps) {
-      displayText = displayText.toUpper();
-    }
     if (displayText.isEmpty()) {
       displayText = QStringLiteral(" ");
     }
@@ -941,14 +987,12 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
       impl_->glyphs_ = TextLayoutEngine::layout(
           UniString(displayText), impl_->textStyle_, impl_->paragraphStyle_);
       const QRectF glyphBounds = unitedGlyphBounds(impl_->glyphs_);
-      const qreal contentWidth =
-          impl_->paragraphStyle_.boxWidth > 0.0f
-              ? impl_->paragraphStyle_.boxWidth
-              : std::max<qreal>(1.0, std::ceil(glyphBounds.width()));
-      const qreal contentHeight =
-          impl_->paragraphStyle_.boxHeight > 0.0f
-              ? impl_->paragraphStyle_.boxHeight
-              : std::max<qreal>(1.0, std::ceil(glyphBounds.height()));
+      const qreal contentWidth = boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f
+                                     ? impl_->paragraphStyle_.boxWidth
+                                     : std::max<qreal>(1.0, std::ceil(glyphBounds.width()));
+      const qreal contentHeight = boxLayout && impl_->paragraphStyle_.boxHeight > 0.0f
+                                      ? impl_->paragraphStyle_.boxHeight
+                                      : std::max<qreal>(1.0, std::ceil(glyphBounds.height()));
       const qreal margin = textEffectMargin(impl_->textStyle_);
       setSourceSize(Size_2D(
           std::max(1, static_cast<int>(std::ceil(contentWidth + margin * 2.0))),
@@ -965,14 +1009,12 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
     }
 
     const qreal margin = textEffectMargin(impl_->textStyle_);
-    const qreal contentWidth =
-        impl_->paragraphStyle_.boxWidth > 0.0f
-            ? impl_->paragraphStyle_.boxWidth
-            : std::max<qreal>(1.0, size.width - margin * 2.0);
-    const qreal contentHeight =
-        impl_->paragraphStyle_.boxHeight > 0.0f
-            ? impl_->paragraphStyle_.boxHeight
-            : std::max<qreal>(1.0, size.height - margin * 2.0);
+    const qreal contentWidth = boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f
+                                   ? impl_->paragraphStyle_.boxWidth
+                                   : std::max<qreal>(1.0, size.width - margin * 2.0);
+    const qreal contentHeight = boxLayout && impl_->paragraphStyle_.boxHeight > 0.0f
+                                    ? impl_->paragraphStyle_.boxHeight
+                                    : std::max<qreal>(1.0, size.height - margin * 2.0);
     const QRectF textRect(margin, margin, contentWidth, contentHeight);
     const QFont font = makeTextFont(impl_->textStyle_, displayText);
     const Qt::Alignment alignment = alignmentFromParagraph(impl_->paragraphStyle_);
@@ -1041,7 +1083,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
 
 std::vector<ArtifactCore::PropertyGroup>
 ArtifactTextLayer::getLayerPropertyGroups() const {
-  auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+  auto groups = ArtifactAbstract2DLayer::getLayerPropertyGroups();
   ArtifactCore::PropertyGroup textGroup(QStringLiteral("Text"));
 
   auto makeProp = [this](const QString &name, ArtifactCore::PropertyType type,
@@ -1102,9 +1144,16 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
       QStringLiteral("0=NoWrap, 1=WordWrap, 2=WrapAnywhere, 3=ManualWrap"));
   textGroup.addProperty(wrapModeProp);
 
+  auto layoutModeProp = makeProp(QStringLiteral("text.layoutMode"),
+                                 ArtifactCore::PropertyType::Integer,
+                                 static_cast<int>(layoutMode()), -85);
+  layoutModeProp->setTooltip(
+      QStringLiteral("0=Point text, 1=Box text"));
+  textGroup.addProperty(layoutModeProp);
+
   auto maxWidthProp =
       makeProp(QStringLiteral("text.maxWidth"),
-               ArtifactCore::PropertyType::Float, maxWidth(), -85);
+               ArtifactCore::PropertyType::Float, maxWidth(), -84);
   maxWidthProp->setHardRange(0.0, 100000.0);
   maxWidthProp->setSoftRange(0.0, 1920.0);
   maxWidthProp->setStep(1.0);
@@ -1114,7 +1163,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   auto boxHeightProp =
       makeProp(QStringLiteral("text.boxHeight"),
-               ArtifactCore::PropertyType::Float, boxHeight(), -84);
+               ArtifactCore::PropertyType::Float, boxHeight(), -83);
   boxHeightProp->setHardRange(0.0, 100000.0);
   boxHeightProp->setSoftRange(0.0, 1080.0);
   boxHeightProp->setStep(1.0);
@@ -1124,7 +1173,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   auto paragraphSpacingProp =
       makeProp(QStringLiteral("text.paragraphSpacing"),
-               ArtifactCore::PropertyType::Float, paragraphSpacing(), -83);
+               ArtifactCore::PropertyType::Float, paragraphSpacing(), -82);
   paragraphSpacingProp->setHardRange(0.0, 1000.0);
   paragraphSpacingProp->setSoftRange(0.0, 80.0);
   paragraphSpacingProp->setStep(0.5);
@@ -1133,7 +1182,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   const auto c = textColor();
   auto colorProp = persistentLayerProperty(QStringLiteral("text.color"),
                                            ArtifactCore::PropertyType::Color,
-                                           QVariant(), -82);
+                                           QVariant(), -81);
   colorProp->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   colorProp->setValue(colorProp->getColorValue());
   textGroup.addProperty(colorProp);
@@ -1141,43 +1190,43 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   // Stroke
   textGroup.addProperty(makeProp(QStringLiteral("text.strokeEnabled"),
                                  ArtifactCore::PropertyType::Boolean,
-                                 isStrokeEnabled(), -81));
+                                 isStrokeEnabled(), -80));
   const auto sc = strokeColor();
   auto strokeColorProp = persistentLayerProperty(
       QStringLiteral("text.strokeColor"), ArtifactCore::PropertyType::Color,
-      QVariant(), -80);
+      QVariant(), -79);
   strokeColorProp->setColorValue(
       QColor::fromRgbF(sc.r(), sc.g(), sc.b(), sc.a()));
   strokeColorProp->setValue(strokeColorProp->getColorValue());
   textGroup.addProperty(strokeColorProp);
   textGroup.addProperty(makeProp(QStringLiteral("text.strokeWidth"),
                                  ArtifactCore::PropertyType::Float,
-                                 strokeWidth(), -79));
+                                 strokeWidth(), -78));
 
   // Shadow
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowEnabled"),
                                  ArtifactCore::PropertyType::Boolean,
-                                 isShadowEnabled(), -78));
+                                 isShadowEnabled(), -77));
   const auto shc = shadowColor();
   auto shadowColorProp = persistentLayerProperty(
       QStringLiteral("text.shadowColor"), ArtifactCore::PropertyType::Color,
-      QVariant(), -77);
+      QVariant(), -76);
   shadowColorProp->setColorValue(
       QColor::fromRgbF(shc.r(), shc.g(), shc.b(), shc.a()));
   shadowColorProp->setValue(shadowColorProp->getColorValue());
   textGroup.addProperty(shadowColorProp);
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetX"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowOffsetX(), -76));
+                                 shadowOffsetX(), -75));
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetY"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowOffsetY(), -75));
+                                 shadowOffsetY(), -74));
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowBlur"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowBlur(), -74));
+                                 shadowBlur(), -73));
   auto animatorCountProp =
       makeProp(QStringLiteral("text.animatorCount"),
-               ArtifactCore::PropertyType::Integer, animatorCount(), -73);
+               ArtifactCore::PropertyType::Integer, animatorCount(), -72);
   animatorCountProp->setHardRange(0, 16);
   animatorCountProp->setSoftRange(0, 8);
   animatorCountProp->setStep(1);
@@ -1427,6 +1476,11 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     setDirty(LayerDirtyFlag::Property);
     return true;
   }
+  if (propertyPath == QStringLiteral("text.layoutMode")) {
+    setLayoutMode(static_cast<TextLayoutMode>(value.toInt(static_cast<int>(layoutMode()))));
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
   if (propertyPath == QStringLiteral("text.maxWidth")) {
     setMaxWidth(static_cast<float>(value.toDouble()));
     setDirty(LayerDirtyFlag::Property);
@@ -1566,7 +1620,7 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
       return true;
     }
   }
-  return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+  return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 void ArtifactTextLayer::updateImage() {
@@ -1575,6 +1629,7 @@ void ArtifactTextLayer::updateImage() {
                   [](const TextAnimatorState &animator) {
                     return animator.enabled;
                   });
+  const bool boxLayout = isBoxText();
   Impl::CacheKey currentKey{impl_->text_, impl_->textStyle_,
                             impl_->paragraphStyle_};
   if (!hasAnimators && !impl_->isDirty_ && impl_->lastCacheKey_ &&
@@ -1603,25 +1658,32 @@ void ArtifactTextLayer::updateImage() {
   if (impl_->perGlyphMode_) {
     const float timeSeconds =
         static_cast<float>(currentFrame()) / 30.0f;
+    std::vector<std::tuple<RangeSelector, WigglySelector, AnimatorProperties>> animatorStack;
+    animatorStack.reserve(impl_->animators_.size());
     for (const auto &animator : impl_->animators_) {
       if (!animator.enabled) {
         continue;
       }
-      TextAnimatorEngine::applyAnimator(impl_->glyphs_, animator.range,
-                                        animator.wiggly, animator.properties,
-                                        timeSeconds);
+      animatorStack.emplace_back(animator.range, animator.wiggly,
+                                 animator.properties);
     }
+    TextAnimatorEngine::applyAnimatorStack(impl_->glyphs_, animatorStack,
+                                           timeSeconds);
 
     const QRectF glyphBounds = animatedGlyphBounds(impl_->glyphs_,
                                                    impl_->textStyle_);
     const qreal margin = textEffectMargin(impl_->textStyle_) +
                          std::max<qreal>(12.0, impl_->textStyle_.fontSize * 0.5);
+    const qreal contentWidth = boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f
+                                   ? impl_->paragraphStyle_.boxWidth
+                                   : std::max<qreal>(1.0, glyphBounds.width());
+    const qreal contentHeight = boxLayout && impl_->paragraphStyle_.boxHeight > 0.0f
+                                    ? impl_->paragraphStyle_.boxHeight
+                                    : std::max<qreal>(1.0, glyphBounds.height());
     const int width = std::max(
-        1, static_cast<int>(std::ceil(std::max<qreal>(1.0, glyphBounds.width()) +
-                                      margin * 2.0)));
+        1, static_cast<int>(std::ceil(contentWidth + margin * 2.0)));
     const int height = std::max(
-        1, static_cast<int>(std::ceil(std::max<qreal>(1.0, glyphBounds.height()) +
-                                      margin * 2.0)));
+        1, static_cast<int>(std::ceil(contentHeight + margin * 2.0)));
     const QPointF drawOrigin(margin - glyphBounds.left(),
                              margin - glyphBounds.top());
 
@@ -1754,7 +1816,7 @@ void ArtifactTextLayer::updateImage() {
     }
   }
 
-  if (impl_->paragraphStyle_.boxWidth > 0.0f) {
+  if (boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f) {
     doc.setTextWidth(impl_->paragraphStyle_.boxWidth);
   }
 
@@ -1763,10 +1825,10 @@ void ArtifactTextLayer::updateImage() {
   qreal docWidth = doc.size().width();
   qreal docHeight = doc.size().height();
 
-  const qreal boxWidth = impl_->paragraphStyle_.boxWidth > 0.0f
+  const qreal boxWidth = boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f
                              ? impl_->paragraphStyle_.boxWidth
                              : docWidth;
-  const qreal boxHeight = impl_->paragraphStyle_.boxHeight > 0.0f
+  const qreal boxHeight = boxLayout && impl_->paragraphStyle_.boxHeight > 0.0f
                               ? impl_->paragraphStyle_.boxHeight
                               : docHeight;
 
@@ -1792,7 +1854,7 @@ void ArtifactTextLayer::updateImage() {
   painter.setRenderHint(QPainter::SmoothPixmapTransform);
 
   qreal verticalOffset = 0.0;
-  if (boxHeight > docHeight) {
+  if (boxLayout && boxHeight > docHeight) {
     switch (impl_->paragraphStyle_.verticalAlignment) {
     case TextVerticalAlignment::Middle:
       verticalOffset = (boxHeight - docHeight) * 0.5;

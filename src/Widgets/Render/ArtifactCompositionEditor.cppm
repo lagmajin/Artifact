@@ -77,6 +77,7 @@ import Artifact.Widgets.TransformGizmo;
 import Artifact.Widgets.Gizmo3D;
 import Artifact.Widgets.PieMenu;
 import UI.View.Orientation.Navigator;
+import Math.Interpolate;
 import Artifact.MainWindow;
 import Color.Float;
 import Artifact.Composition.Abstract;
@@ -254,7 +255,7 @@ private:
                               LayerChangedEvent::ChangeType::Modified});
       }
       if (ctrl_)
-        ctrl_->renderOneFrame();
+        ctrl_->markRenderDirty();
     }
     editor_->hide();
     editor_->deleteLater();
@@ -418,7 +419,7 @@ public:
       controller_->setViewportSize(static_cast<float>(pendingSize.width()),
                                    static_cast<float>(pendingSize.height()));
       controller_->recreateSwapChain(this);
-      controller_->renderOneFrame();
+      controller_->markRenderDirty();
       resizePending_ = false;
       if (pendingInitialFit_) {
         QTimer::singleShot(50, this, [this]() { scheduleInitialFit(); });
@@ -725,7 +726,7 @@ public:
         ++pasted;
       }
       if (pasted == 0) {
-        QMessageBox::warning(compositionView_, QStringLiteral("Paste Layers"),
+        QMessageBox::warning(this, QStringLiteral("Paste Layers"),
                              QStringLiteral("No layers could be pasted."));
       }
     };
@@ -823,6 +824,97 @@ public:
                               clickedLayer->id().toString(),
                               LayerChangedEvent::ChangeType::Modified});
       });
+      if (controller_->isShowMotionPathOverlay() && selected) {
+        const auto playback = ArtifactPlaybackService::instance();
+        const auto currentFrame =
+            playback ? playback->currentFrame()
+                     : (comp ? comp->framePosition() : FramePosition(0));
+        const ArtifactCore::RationalTime time(currentFrame.framePosition(), 24);
+        const bool hasMotionPathKey =
+            layer->transform3D().hasPositionKeyFrameAt(time);
+        const auto currentMotionPathInterpolation =
+            layer->transform3D().positionXKeyFrameInterpolationAt(time);
+        addSeparator();
+        add(QStringLiteral("Set Motion Path Keyframe Here"),
+            [this]() {
+              if (controller_) {
+                controller_->setSelectedLayerMotionPathKeyframeAtCurrentFrame();
+              }
+            },
+            !hasMotionPathKey);
+        add(QStringLiteral("Remove Motion Path Keyframe Here"),
+            [this]() {
+              if (controller_) {
+                controller_->removeSelectedLayerMotionPathKeyframeAtCurrentFrame();
+              }
+            },
+            hasMotionPathKey);
+        addSeparator();
+        add(QStringLiteral("Motion Path: Hold"), [this]() {
+              if (controller_) {
+                controller_->setSelectedLayerMotionPathInterpolationAtCurrentFrame(
+                    static_cast<int>(ArtifactCore::InterpolationType::Constant));
+              }
+            },
+            hasMotionPathKey &&
+                currentMotionPathInterpolation != ArtifactCore::InterpolationType::Constant);
+        add(QStringLiteral("Motion Path: Linear"), [this]() {
+              if (controller_) {
+                controller_->setSelectedLayerMotionPathInterpolationAtCurrentFrame(
+                    static_cast<int>(ArtifactCore::InterpolationType::Linear));
+              }
+            },
+            hasMotionPathKey &&
+                currentMotionPathInterpolation != ArtifactCore::InterpolationType::Linear);
+        add(QStringLiteral("Motion Path: Ease In"), [this]() {
+              if (controller_) {
+                controller_->setSelectedLayerMotionPathInterpolationAtCurrentFrame(
+                    static_cast<int>(ArtifactCore::InterpolationType::EaseIn));
+              }
+            },
+            hasMotionPathKey &&
+                currentMotionPathInterpolation != ArtifactCore::InterpolationType::EaseIn);
+        add(QStringLiteral("Motion Path: Ease Out"), [this]() {
+              if (controller_) {
+                controller_->setSelectedLayerMotionPathInterpolationAtCurrentFrame(
+                    static_cast<int>(ArtifactCore::InterpolationType::EaseOut));
+              }
+            },
+            hasMotionPathKey &&
+                currentMotionPathInterpolation != ArtifactCore::InterpolationType::EaseOut);
+        add(QStringLiteral("Motion Path: Ease In-Out"), [this]() {
+              if (controller_) {
+                controller_->setSelectedLayerMotionPathInterpolationAtCurrentFrame(
+                    static_cast<int>(ArtifactCore::InterpolationType::EaseInOut));
+              }
+            },
+            hasMotionPathKey &&
+                currentMotionPathInterpolation != ArtifactCore::InterpolationType::EaseInOut);
+        add(QStringLiteral("Motion Path: Bezier"), [this]() {
+              if (controller_) {
+                controller_->setSelectedLayerMotionPathInterpolationAtCurrentFrame(
+                    static_cast<int>(ArtifactCore::InterpolationType::Bezier));
+              }
+            },
+            hasMotionPathKey &&
+                currentMotionPathInterpolation != ArtifactCore::InterpolationType::Bezier);
+        add(QStringLiteral("Motion Path: Back"), [this]() {
+              if (controller_) {
+                controller_->setSelectedLayerMotionPathInterpolationAtCurrentFrame(
+                    static_cast<int>(ArtifactCore::InterpolationType::BackOut));
+              }
+            },
+            hasMotionPathKey &&
+                currentMotionPathInterpolation != ArtifactCore::InterpolationType::BackOut);
+        add(QStringLiteral("Motion Path: Expo"), [this]() {
+              if (controller_) {
+                controller_->setSelectedLayerMotionPathInterpolationAtCurrentFrame(
+                    static_cast<int>(ArtifactCore::InterpolationType::Exponential));
+              }
+            },
+            hasMotionPathKey &&
+                currentMotionPathInterpolation != ArtifactCore::InterpolationType::Exponential);
+      }
       addSeparator();
       const auto parentId =
           svc ? svc->layerParentIdInCurrentComposition(layerId) : LayerID{};
@@ -861,15 +953,15 @@ public:
               }
               service->moveLayerInCurrentComposition(layerId, currentIndex - 1);
             });
-            add(QStringLiteral("Bring to Front"), [layerId]() {
+            add(QStringLiteral("Bring to Front"), [this, layerId]() {
               auto *service = ArtifactProjectService::instance();
               const auto compNow = currentComposition();
               if (!service || !compNow) {
                 return;
               }
               const auto layers = compNow->allLayer();
-              service->moveLayerInCurrentComposition(layerId,
-                                                    std::max(0, layers.size() - 1));
+              service->moveLayerInCurrentComposition(
+                  layerId, std::max(0, static_cast<int>(layers.size()) - 1));
             });
           }
           if (currentIndex < lastIndex) {
@@ -896,7 +988,7 @@ public:
             return;
           }
           if (!service->groupSelectedLayersInCurrentComposition()) {
-            QMessageBox::warning(compositionView_, QStringLiteral("Group Layers"),
+            QMessageBox::warning(this, QStringLiteral("Group Layers"),
                                  QStringLiteral("Could not group selected layers."));
           }
         }, selectedCount > 1);
@@ -907,7 +999,7 @@ public:
             return;
           }
           if (!service->ungroupSelectedGroupInCurrentComposition()) {
-            QMessageBox::warning(compositionView_, QStringLiteral("Ungroup Layers"),
+            QMessageBox::warning(this, QStringLiteral("Ungroup Layers"),
                                  QStringLiteral("Could not ungroup the selected group."));
           }
         }, layer->isGroupLayer());
@@ -918,7 +1010,7 @@ public:
           return;
         }
         if (!service->duplicateLayerInCurrentComposition(layerId)) {
-          QMessageBox::warning(compositionView_, QStringLiteral("Duplicate Layer"),
+          QMessageBox::warning(this, QStringLiteral("Duplicate Layer"),
                                QStringLiteral("Layer duplication failed."));
         }
       });
@@ -931,7 +1023,7 @@ public:
         const QString currentName = service->layerNameInCurrentComposition(layerId);
         bool ok = false;
         const QString newName = QInputDialog::getText(
-            compositionView_, QStringLiteral("Rename Layer"), QStringLiteral("Layer name:"),
+            this, QStringLiteral("Rename Layer"), QStringLiteral("Layer name:"),
             QLineEdit::Normal, currentName, &ok);
         if (!ok) {
           return;
@@ -941,7 +1033,7 @@ public:
           return;
         }
         if (!service->renameLayerInCurrentComposition(layerId, trimmed)) {
-          QMessageBox::warning(compositionView_, QStringLiteral("Rename Layer"),
+          QMessageBox::warning(this, QStringLiteral("Rename Layer"),
                                QStringLiteral("Layer rename failed."));
         }
       });
@@ -954,13 +1046,13 @@ public:
         const QString message =
             service->layerRemovalConfirmationMessage(compNow->id(), layerId);
         const auto response = QMessageBox::question(
-            compositionView_, QStringLiteral("Delete Layer"), message,
+            this, QStringLiteral("Delete Layer"), message,
             QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
         if (response != QMessageBox::Yes) {
           return;
         }
         if (!service->removeLayerFromComposition(compNow->id(), layerId)) {
-          QMessageBox::warning(compositionView_, QStringLiteral("Delete Layer"),
+          QMessageBox::warning(this, QStringLiteral("Delete Layer"),
                                QStringLiteral("Layer deletion failed."));
         }
       });
@@ -1011,19 +1103,19 @@ public:
           return;
         }
         const QString filePath = QFileDialog::getOpenFileName(
-            compositionView_, QStringLiteral("SVGを選択"), QString(),
+            this, QStringLiteral("SVGを選択"), QString(),
             QStringLiteral("SVG (*.svg);;All Files (*.*)"));
         if (filePath.isEmpty()) {
           return;
         }
         if (!filePath.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
-          QMessageBox::warning(compositionView_, QStringLiteral("Layer"),
+          QMessageBox::warning(this, QStringLiteral("Layer"),
                                QStringLiteral("SVG ファイルを選択してください。"));
           return;
         }
         QSvgRenderer validator(filePath);
         if (!validator.isValid()) {
-          QMessageBox::warning(compositionView_, QStringLiteral("Layer"),
+          QMessageBox::warning(this, QStringLiteral("Layer"),
                                QStringLiteral("SVG を読み込めませんでした。"));
           return;
         }
@@ -1047,14 +1139,14 @@ public:
           return;
         }
         const QString filePath = QFileDialog::getOpenFileName(
-            compositionView_, QStringLiteral("画像を選択"), QString(),
+            this, QStringLiteral("画像を選択"), QString(),
             QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All Files (*.*)"));
         if (filePath.isEmpty()) {
           return;
         }
         QImageReader reader(filePath);
         if (!reader.canRead()) {
-          QMessageBox::warning(compositionView_, QStringLiteral("Layer"),
+          QMessageBox::warning(this, QStringLiteral("Layer"),
                                QStringLiteral("画像を読み込めませんでした。"));
           return;
         }
@@ -1078,7 +1170,7 @@ public:
           return;
         }
         const QString filePath = QFileDialog::getOpenFileName(
-            compositionView_, QStringLiteral("オーディオを選択"), QString(),
+            this, QStringLiteral("オーディオを選択"), QString(),
             QStringLiteral("Audio (*.wav *.mp3 *.ogg *.flac *.aac *.m4a);;All Files (*.*)"));
         if (filePath.isEmpty()) {
           return;
@@ -1609,7 +1701,7 @@ protected:
       const bool wasScaleDrag = isScaleDragActive();
       controller_->handleMouseRelease();
       if (wasScaleDrag) {
-        controller_->renderOneFrame();
+        controller_->markRenderDirty();
       }
       if (wasScaleDrag) {
         update();
@@ -1709,7 +1801,7 @@ protected:
         controller_->handleMouseRelease();
         if (overlayWidget_)
           overlayWidget_->update();
-        controller_->renderOneFrame();
+        controller_->markRenderDirty();
       }
       return true;
 
@@ -2162,7 +2254,7 @@ protected:
       controller_->zoomFill();
       pendingInitialFit_ = false;
       // Fill完了後にrenderingスタート
-      controller_->renderOneFrame();
+      controller_->markRenderDirty();
       if (autoStartPending_) {
         autoStartPending_ = false;
         controller_->start();
@@ -2228,19 +2320,19 @@ protected:
                              gizmo3D->mode() == GizmoMode::Move,
                              [this, gizmo3D]() {
                                gizmo3D->setMode(GizmoMode::Move);
-                               controller_->renderOneFrame();
+                               controller_->markRenderDirty();
                              }});
       model.items.push_back({"3D Rotate", QIcon(), "gizmo3d.rotate", true,
                              gizmo3D->mode() == GizmoMode::Rotate,
                              [this, gizmo3D]() {
                                gizmo3D->setMode(GizmoMode::Rotate);
-                               controller_->renderOneFrame();
+                               controller_->markRenderDirty();
                              }});
       model.items.push_back({"3D Scale", QIcon(), "gizmo3d.scale", true,
                              gizmo3D->mode() == GizmoMode::Scale,
                              [this, gizmo3D]() {
                                gizmo3D->setMode(GizmoMode::Scale);
-                               controller_->renderOneFrame();
+                               controller_->markRenderDirty();
                              }});
     }
 
@@ -3021,7 +3113,7 @@ public:
     if (compositionView_) {
       compositionView_->requestInitialFit();
     }
-    renderController_->renderOneFrame();
+    renderController_->markRenderDirty();
     startupCompositionRetryCount_ = 0;
     return true;
   }
@@ -3287,7 +3379,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
         LayerChangedEvent{comp->id().toString(), layer->id().toString(),
                           LayerChangedEvent::ChangeType::Modified});
-    impl_->renderController_->renderOneFrame();
+    impl_->renderController_->markRenderDirty();
   };
   const auto addPivotAction = [&](const QString &text, bool useCenter,
                                   bool checked) {
@@ -3642,7 +3734,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     if (editTextLayerInline(impl_->compositionView_, layer,
                             impl_->renderController_) &&
         impl_->renderController_) {
-      impl_->renderController_->renderOneFrame();
+      impl_->renderController_->markRenderDirty();
     }
   });
   QObject::connect(

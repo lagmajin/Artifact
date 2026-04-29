@@ -65,7 +65,7 @@ float4 main(PSInput input) : SV_TARGET
     float edgeWidth = max(fw.x, fw.y);
     if (d < edgeWidth) {
         float alpha = d / edgeWidth;
-        return float4(input.color.rgb, input.color.a * alpha);
+        return float4(input.color.rgb * alpha, input.color.a * alpha);
     }
     return input.color;
 }
@@ -256,6 +256,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     float4 scene = g_scene.Sample(g_sampler, input.TexCoord);
     float maskAlpha = g_mask.Sample(g_sampler, input.TexCoord).a;
     float4 color = scene * input.Color;
+    color.rgb *= maskAlpha;
     color.a *= maskAlpha;
     return color;
 }
@@ -281,7 +282,7 @@ SamplerState g_sampler : register(s0);
 float4 main(PS_INPUT input) : SV_TARGET
 {
     const float alpha = g_texture.Sample(g_sampler, input.TexCoord).a;
-    return float4(input.Color.rgb, input.Color.a * alpha);
+    return float4(input.Color.rgb * alpha, input.Color.a * alpha);
 }
 )";
     ShaderCreateInfo glyphQuadPsInfo;

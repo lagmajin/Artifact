@@ -31,6 +31,9 @@
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QString>
+#include <QVariant>
+#include <QJsonObject>
 export module Artifact.Layers.Abstract._2D;
 
 
@@ -39,6 +42,7 @@ export module Artifact.Layers.Abstract._2D;
 
 import Artifact.Layer.Abstract;
 import ArtifactCore.Rig2D;
+import Utils.Id;
 
 
 export namespace Artifact
@@ -56,9 +60,16 @@ export namespace Artifact
   const ArtifactCore::Rig2D& rig2D() const;
   ArtifactCore::Bone2D* addRigBone(const QString& name = QStringLiteral("Bone"),
                                    const QString& parentName = QString());
+  ArtifactCore::Bone2D* addRigBone(const QString& name,
+                                   const ArtifactCore::Id& parentId);
+  bool removeRigBone(const ArtifactCore::Id& boneId);
+  bool setRigBoneLocalTransform(const ArtifactCore::Id& boneId,
+                                const ArtifactCore::BoneTransform& transform);
   void clearRigBones();
   int rigBoneCount() const;
   QString rigRootBoneName() const;
+  QJsonObject toJson() const override;
+  void fromJsonProperties(const QJsonObject& obj) override;
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 

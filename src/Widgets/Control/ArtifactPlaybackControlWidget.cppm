@@ -101,6 +101,13 @@ public:
         update();
     }
 
+    void setEndFrameText(const QString& text)
+    {
+        endText_ = text;
+        updateGeometry();
+        update();
+    }
+
     void setRangeTexts(const QString& inText, const QString& outText)
     {
         inText_ = inText;
@@ -112,37 +119,43 @@ public:
     QSize sizeHint() const override
     {
         QFont currentFont = font();
-        currentFont.setPointSize(13);
+        currentFont.setPointSize(12);
         currentFont.setWeight(QFont::DemiBold);
         QFont labelFont = font();
-        labelFont.setPointSize(10);
+        labelFont.setPointSize(8);
         labelFont.setWeight(QFont::DemiBold);
         QFont valueFont = font();
-        valueFont.setPointSize(11);
+        valueFont.setPointSize(9);
         valueFont.setWeight(QFont::DemiBold);
 
         const QFontMetrics currentMetrics(currentFont);
         const QFontMetrics labelMetrics(labelFont);
         const QFontMetrics valueMetrics(valueFont);
         const QString currentLine = currentText_.isEmpty()
-            ? QStringLiteral("F0")
+            ? QStringLiteral("00:00:00:00")
             : currentText_;
+        const QString endLine = endText_.isEmpty()
+            ? QStringLiteral("00:00:00:00")
+            : endText_;
         const QString inLabel = QStringLiteral("In");
         const QString outLabel = QStringLiteral("Out");
         const QString inValue = inText_.isEmpty() ? QStringLiteral("--:--:--:--") : inText_;
         const QString outValue = outText_.isEmpty() ? QStringLiteral("--:--:--:--") : outText_;
 
-        int width = currentMetrics.horizontalAdvance(currentLine);
-        const int leftColumnWidth = std::max(labelMetrics.horizontalAdvance(inLabel),
-                                             valueMetrics.horizontalAdvance(inValue));
-        const int rightColumnWidth = std::max(labelMetrics.horizontalAdvance(outLabel),
-                                              valueMetrics.horizontalAdvance(outValue));
-        const int lowerWidth = leftColumnWidth + rightColumnWidth + 22;
-        width = std::max(width, lowerWidth);
-
-        const int height = currentMetrics.lineSpacing() +
-                           labelMetrics.lineSpacing() + valueMetrics.lineSpacing() + 14;
-        return QSize(width + 18, height + 12);
+        const int mainWidth = currentMetrics.horizontalAdvance(currentLine) +
+                              currentMetrics.horizontalAdvance(endLine) +
+                              currentMetrics.horizontalAdvance(QStringLiteral(" / ")) + 18;
+        const int inWidth =
+            labelMetrics.horizontalAdvance(inLabel) + 3 +
+            valueMetrics.horizontalAdvance(inValue);
+        const int outWidth =
+            labelMetrics.horizontalAdvance(outLabel) + 3 +
+            valueMetrics.horizontalAdvance(outValue);
+        const int rangeWidth = std::max(64, std::max(inWidth, outWidth));
+        const int width = mainWidth + rangeWidth + 20;
+        const int height = std::max(currentMetrics.lineSpacing() + 18,
+                                    labelMetrics.lineSpacing() * 2 + 14);
+        return QSize(width + 16, height);
     }
 
     QSize minimumSizeHint() const override
@@ -158,64 +171,88 @@ protected:
         const auto& theme = ArtifactCore::currentDCCTheme();
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.fillRect(rect(), QColor(theme.secondaryBackgroundColor));
-        painter.setPen(QPen(QColor(theme.borderColor), 1));
+        const QColor frameBg(QColor(theme.secondaryBackgroundColor).darker(108));
+        painter.fillRect(rect(), frameBg);
+        painter.setPen(QPen(QColor(theme.borderColor).darker(115), 1));
         painter.drawRect(rect().adjusted(0, 0, -1, -1));
 
-        const QRect content = rect().adjusted(8, 6, -8, -6);
+        const QRect content = rect().adjusted(8, 5, -8, -5);
         QFont currentFont = font();
-        currentFont.setPointSize(13);
+        currentFont.setPointSize(12);
         currentFont.setWeight(QFont::DemiBold);
         QFont labelFont = font();
-        labelFont.setPointSize(10);
+        labelFont.setPointSize(8);
         labelFont.setWeight(QFont::DemiBold);
         QFont valueFont = font();
-        valueFont.setPointSize(11);
+        valueFont.setPointSize(9);
         valueFont.setWeight(QFont::DemiBold);
 
-        const QColor goldText(QColor(theme.accentColor));
-        const QColor mutedGoldText(QColor(theme.textColor).darker(120));
+        const QColor currentTimeText(232, 178, 82);
+        const QColor endTimeText(QColor(theme.textColor).darker(145));
+        const QColor mutedText(QColor(theme.textColor).darker(125));
         const QString currentLine = currentText_.isEmpty()
-            ? QStringLiteral("F0")
+            ? QStringLiteral("00:00:00:00")
             : currentText_;
+        const QString endLine = endText_.isEmpty()
+            ? QStringLiteral("00:00:00:00")
+            : endText_;
         const QString inLabel = QStringLiteral("In");
         const QString outLabel = QStringLiteral("Out");
         const QString inValue = inText_.isEmpty() ? QStringLiteral("--:--:--:--") : inText_;
         const QString outValue = outText_.isEmpty() ? QStringLiteral("--:--:--:--") : outText_;
 
+        const int rangeWidth = 82;
+        const QRect mainRect(content.left(), content.top(),
+                             std::max(1, content.width() - rangeWidth - 10),
+                             content.height());
+        const QRect rangeRect(mainRect.right() + 10, content.top(),
+                              rangeWidth, content.height());
+
+        painter.fillRect(mainRect.adjusted(0, 2, 0, -2),
+                         QColor(theme.backgroundColor).darker(104));
+        painter.setPen(QPen(QColor(theme.borderColor).darker(125), 1));
+        painter.drawRect(mainRect.adjusted(0, 2, 0, -2));
+
         painter.setFont(currentFont);
-        painter.setPen(goldText);
-        int y = content.top() + QFontMetrics(currentFont).ascent();
-        painter.drawText(content.left(), y, currentLine);
+        const QFontMetrics currentMetrics(currentFont);
+        const int baseline =
+            mainRect.center().y() + (currentMetrics.ascent() - currentMetrics.descent()) / 2;
+        int x = mainRect.left() + 9;
+        painter.setPen(currentTimeText);
+        painter.drawText(x, baseline, currentLine);
+        x += currentMetrics.horizontalAdvance(currentLine);
+        painter.setPen(mutedText);
+        painter.drawText(x + 5, baseline, QStringLiteral("/"));
+        x += currentMetrics.horizontalAdvance(QStringLiteral(" / "));
+        painter.setPen(endTimeText);
+        painter.drawText(x, baseline, endLine);
 
-        y += QFontMetrics(currentFont).descent() + 8;
-        const int lowerTop = y;
-        const int columnGap = 16;
-        const int columnWidth = std::max(
-            1, (content.width() - columnGap) / 2);
-        const QRect leftRect(content.left(), lowerTop, columnWidth, content.height() - (lowerTop - content.top()));
-        const QRect rightRect(content.left() + columnWidth + columnGap, lowerTop, columnWidth, content.height() - (lowerTop - content.top()));
-
-        painter.setFont(labelFont);
-        painter.setPen(mutedGoldText);
-        const int labelHeight = QFontMetrics(labelFont).lineSpacing();
-        const int valueHeight = QFontMetrics(valueFont).lineSpacing();
-
-        painter.drawText(leftRect.adjusted(0, 0, 0, 0), Qt::AlignLeft | Qt::AlignTop, inLabel);
-        painter.setFont(valueFont);
-        painter.setPen(goldText);
-        painter.drawText(leftRect.adjusted(0, labelHeight - 1, 0, 0), Qt::AlignLeft | Qt::AlignTop, inValue);
+        painter.fillRect(rangeRect, QColor(theme.backgroundColor).darker(102));
+        painter.setPen(QPen(QColor(theme.borderColor).darker(125), 1));
+        painter.drawRect(rangeRect.adjusted(0, 0, -1, -1));
 
         painter.setFont(labelFont);
-        painter.setPen(mutedGoldText);
-        painter.drawText(rightRect.adjusted(0, 0, 0, 0), Qt::AlignLeft | Qt::AlignTop, outLabel);
+        painter.setPen(mutedText);
+        const QFontMetrics labelMetrics(labelFont);
+        const QFontMetrics valueMetrics(valueFont);
+        int y = rangeRect.top() + 4 + labelMetrics.ascent();
+        painter.drawText(rangeRect.left() + 5, y, inLabel);
         painter.setFont(valueFont);
-        painter.setPen(goldText);
-        painter.drawText(rightRect.adjusted(0, labelHeight - 1, 0, 0), Qt::AlignLeft | Qt::AlignTop, outValue);
+        painter.setPen(currentTimeText);
+        painter.drawText(rangeRect.left() + 22, y, inValue);
+
+        painter.setFont(labelFont);
+        painter.setPen(mutedText);
+        y += std::max(labelMetrics.lineSpacing(), valueMetrics.lineSpacing()) + 2;
+        painter.drawText(rangeRect.left() + 5, y, outLabel);
+        painter.setFont(valueFont);
+        painter.setPen(currentTimeText);
+        painter.drawText(rangeRect.left() + 22, y, outValue);
     }
 
 private:
     QString currentText_;
+    QString endText_;
     QString inText_;
     QString outText_;
 };
@@ -429,6 +466,7 @@ public:
             inTimecodeLabel_->setAlignment(Qt::AlignCenter);
         }
         inLayout->addWidget(inTimecodeLabel_);
+        inTimecodeLabel_->setVisible(false);
         
         auto* outWidget = new QWidget(owner_);
         auto* outLayout = new QVBoxLayout(outWidget);
@@ -446,6 +484,7 @@ public:
             outTimecodeLabel_->setAlignment(Qt::AlignCenter);
         }
         outLayout->addWidget(outTimecodeLabel_);
+        outTimecodeLabel_->setVisible(false);
         
         transportRow->addWidget(inWidget);
         transportRow->addWidget(outWidget);
@@ -697,7 +736,8 @@ public:
         if (timecodeFrame_) {
             QString inText = QStringLiteral("--:--:--:--");
             QString outText = QStringLiteral("--:--:--:--");
-            QString currentText = QStringLiteral("00:00:00:00 / 00:00:00:00");
+            QString currentText = QStringLiteral("00:00:00:00");
+            QString endText = QStringLiteral("00:00:00:00");
             if (inOutPoints_) {
                 if (const auto inPoint = inOutPoints_->inPoint()) {
                     inText = formatTimecode(inPoint->framePosition(), fps);
@@ -706,8 +746,10 @@ public:
                     outText = formatTimecode(outPoint->framePosition(), fps);
                 }
             }
-            currentText = formatFrameCount(clampedCurrent);
+            currentText = formatTimecode(clampedCurrent, fps);
+            endText = formatTimecode(endFrame, fps);
             timecodeFrame_->setCurrentFrameText(currentText);
+            timecodeFrame_->setEndFrameText(endText);
             timecodeFrame_->setRangeTexts(inText, outText);
             
             if (inTimecodeLabel_) {

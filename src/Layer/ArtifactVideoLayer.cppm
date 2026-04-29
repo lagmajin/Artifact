@@ -1,6 +1,7 @@
 ﻿module;
 #include <QImage>
 #include <QMatrix4x4>
+#include <QSize>
 #include <QString>
 #include <QJsonObject>
 #include <QDebug>
@@ -544,10 +545,17 @@ QString ArtifactVideoLayer::debugState() const
     const auto* controller = impl_ ? impl_->playbackController_.get() : nullptr;
     const int64_t timelineFrame = currentFrame();
     const int64_t sourceFrame = currentSourceFrame(this);
+    const QSize currentImageSize = impl_ && !impl_->currentQImage_.isNull()
+        ? impl_->currentQImage_.size()
+        : QSize();
+    const QSize currentBufferSize = impl_
+        ? QSize(impl_->currentFrameBuffer_.width(), impl_->currentFrameBuffer_.height())
+        : QSize();
     return QStringLiteral(
                "loaded=%1 opening=%2 decoding=%3 timeline=%4 source=%5 "
-               "decodeTarget=%6 lastDecoded=%7 cached=%8 hasQImage=%9 hasBuffer=%10 "
-               "syncFallbackFrame=%11 syncFallbackOk=%12 backend=%13 lastError=%14 state={%15}")
+               "decodeTarget=%6 lastDecoded=%7 cachedFrames=%8 hasQImage=%9 qImageSize=%10 "
+               "hasBuffer=%11 bufferSize=%12 syncFallbackFrame=%13 syncFallbackOk=%14 "
+               "backend=%15 lastError=%16 state={%17}")
         .arg(impl_ && impl_->isLoaded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->opening_.load() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->decoding_.load() ? QStringLiteral("true") : QStringLiteral("false"))
@@ -555,14 +563,34 @@ QString ArtifactVideoLayer::debugState() const
         .arg(sourceFrame)
         .arg(impl_ ? impl_->decodeTargetFrame_ : -1)
         .arg(impl_ ? impl_->lastDecodedFrame_ : -1)
-        .arg(isFrameCached(timelineFrame) ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(impl_ ? impl_->frameCache_.size() : 0)
         .arg(impl_ && !impl_->currentQImage_.isNull() ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(currentImageSize.isValid() ? QStringLiteral("%1x%2").arg(currentImageSize.width()).arg(currentImageSize.height()) : QStringLiteral("0x0"))
         .arg(impl_ && impl_->hasCurrentFrameBuffer_ ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(currentBufferSize.isValid() ? QStringLiteral("%1x%2").arg(currentBufferSize.width()).arg(currentBufferSize.height()) : QStringLiteral("0x0"))
         .arg(impl_ ? impl_->lastSyncFallbackSourceFrame_ : -1)
         .arg(impl_ && impl_->lastSyncFallbackSucceeded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(decoderBackendName(controller))
         .arg(controller ? controller->getLastError() : QStringLiteral("<no controller>"))
         .arg(controller ? controller->getDebugState() : QStringLiteral("<no controller>"));
+}
+
+QString ArtifactVideoLayer::decodeState() const
+{
+    const auto* controller = impl_ ? impl_->playbackController_.get() : nullptr;
+    const int64_t sourceFrame = currentSourceFrame(this);
+    return QStringLiteral("loaded=%1 opening=%2 decoding=%3 source=%4 target=%5 last=%6 hasBuffer=%7 qImage=%8 syncOk=%9 backend=%10 err=%11")
+        .arg(impl_ && impl_->isLoaded_ ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(impl_ && impl_->opening_.load() ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(impl_ && impl_->decoding_.load() ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(sourceFrame)
+        .arg(impl_ ? impl_->decodeTargetFrame_ : -1)
+        .arg(impl_ ? impl_->lastDecodedFrame_ : -1)
+        .arg(impl_ && impl_->hasCurrentFrameBuffer_ ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(impl_ && !impl_->currentQImage_.isNull() ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(impl_ && impl_->lastSyncFallbackSucceeded_ ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(decoderBackendName(controller))
+        .arg(controller ? controller->getLastError() : QStringLiteral("<no controller>"));
 }
 
 // === Playback Control ===

@@ -45,7 +45,7 @@ export namespace Artifact
    QString label;
   };
 
- struct TrackClipVisual {
+  struct TrackClipVisual {
    enum class Kind {
     Generic,
     Audio,
@@ -61,6 +61,8 @@ export namespace Artifact
    QColor fillColor = QColor(73, 126, 196);
    Kind kind = Kind::Generic;
    bool selected = false;
+   QVector<float> waveformPeaks;
+   QVector<float> waveformRms;
   };
 
  private:

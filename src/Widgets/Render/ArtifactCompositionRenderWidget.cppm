@@ -198,23 +198,31 @@ namespace Artifact {
    running_ = true;
    renderTask_.run([this]() {
     while (running_.load(std::memory_order_acquire)) {
-     const bool playing = isPlaying_.load(std::memory_order_acquire);
-     const bool dirty = needsRender_.exchange(false, std::memory_order_acq_rel);
-     if (!playing && !dirty) {
-      std::this_thread::sleep_for(std::chrono::milliseconds(33));
-      continue;
-     }
-     {
-      std::lock_guard<std::mutex> lock(renderMutex_);
-      renderOneFrame();
-     }
-     std::this_thread::sleep_for(std::chrono::milliseconds(16));
+      const bool playing = isPlaying_.load(std::memory_order_acquire);
+      const bool dirty = needsRender_.exchange(false, std::memory_order_acq_rel);
+      if (!playing && !dirty) {
+        std::unique_lock<std::mutex> waitLock(renderCvMutex_);
+        renderCv_.wait_for(waitLock, std::chrono::milliseconds(33), [this]() {
+          return !running_.load(std::memory_order_acquire) ||
+                 isPlaying_.load(std::memory_order_acquire) ||
+                 needsRender_.load(std::memory_order_acquire);
+        });
+        continue;
+      }
+      {
+        std::lock_guard<std::mutex> lock(renderMutex_);
+        renderOneFrame();
+      }
+      if (playing) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(16));
+      }
     }
    });
   }
 
   void stopRenderLoop() {
    running_ = false;
+   renderCv_.notify_all();
    renderTask_.wait();
    if (renderer_) renderer_->flushAndWait();
   }

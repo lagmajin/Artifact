@@ -14,6 +14,7 @@ import Property.Abstract;
 import Property.Group;
 import Audio.SimpleWav;
 import Audio.Cache;
+import Artifact.Audio.Waveform;
 import Artifact.Composition.Abstract;
 
 namespace Artifact
@@ -235,6 +236,98 @@ int ArtifactAudioLayer::channelCount() const
 qint64 ArtifactAudioLayer::totalFrames() const
 {
   return impl_->totalFrames_;
+}
+
+WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
+{
+  WaveformData data;
+  data.width = displayWidth;
+  data.sampleRate = impl_->sourceSampleRate_;
+
+  if (!impl_->isLoaded_ || impl_->sourceSampleRate_ <= 0 ||
+      impl_->sourceChannelCount_ <= 0 || displayWidth <= 0 ||
+      impl_->interleavedPcm_.isEmpty()) {
+    return data;
+  }
+
+  auto *composition = static_cast<ArtifactAbstractComposition *>(this->composition());
+  const double compositionFps =
+      (composition && composition->frameRate().framerate() > 0.0)
+          ? composition->frameRate().framerate()
+          : 30.0;
+
+  const qint64 sourceStartFrame =
+      std::max<qint64>(0, startTime().framePosition());
+  const qint64 sourceDurationFrames =
+      std::max<qint64>(1, outPoint().framePosition() - inPoint().framePosition());
+  const qint64 sourceFrameCount =
+      static_cast<qint64>(impl_->interleavedPcm_.size() /
+                          std::max(1, impl_->sourceChannelCount_));
+
+  const qint64 startSample = std::clamp<qint64>(
+      std::llround((static_cast<double>(sourceStartFrame) / compositionFps) *
+                   impl_->sourceSampleRate_),
+      0, std::max<qint64>(0, sourceFrameCount - 1));
+  const qint64 sampleCount = std::clamp<qint64>(
+      std::llround((static_cast<double>(sourceDurationFrames) / compositionFps) *
+                   impl_->sourceSampleRate_),
+      1, std::max<qint64>(1, sourceFrameCount - startSample));
+
+  const int firstSample = static_cast<int>(std::clamp<qint64>(startSample, 0, sourceFrameCount));
+  const int lastSample = static_cast<int>(std::clamp<qint64>(startSample + sampleCount, firstSample, sourceFrameCount));
+  if (firstSample >= lastSample) {
+    return data;
+  }
+
+  const int sampleSpan = lastSample - firstSample;
+  const int channelCount = std::max(1, impl_->sourceChannelCount_);
+
+  data.peaks.resize(displayWidth);
+  data.rms.resize(displayWidth);
+
+  float minVal = 0.0f;
+  float maxVal = 0.0f;
+  for (int bin = 0; bin < displayWidth; ++bin) {
+    const int binStart = firstSample +
+                         static_cast<int>((static_cast<double>(sampleSpan) * bin) /
+                                          std::max(1, displayWidth));
+    const int binEnd = firstSample +
+                       static_cast<int>((static_cast<double>(sampleSpan) * (bin + 1)) /
+                                        std::max(1, displayWidth));
+    if (binStart >= binEnd) {
+      break;
+    }
+
+    float peak = 0.0f;
+    float sumSquares = 0.0f;
+    int count = 0;
+    for (int frame = binStart; frame < binEnd; ++frame) {
+      const int base = frame * channelCount;
+      float sample = 0.0f;
+      for (int ch = 0; ch < channelCount; ++ch) {
+        const int index = base + ch;
+        if (index < impl_->interleavedPcm_.size()) {
+          sample += impl_->interleavedPcm_[index];
+        }
+      }
+      sample /= static_cast<float>(channelCount);
+      peak = std::max(peak, std::abs(sample));
+      sumSquares += sample * sample;
+      ++count;
+    }
+
+    const float rms = count > 0
+                          ? std::sqrt(sumSquares / static_cast<float>(count))
+                          : 0.0f;
+    data.peaks[bin] = peak;
+    data.rms[bin] = rms;
+    minVal = std::min(minVal, -peak);
+    maxVal = std::max(maxVal, peak);
+  }
+
+  data.minSample = minVal;
+  data.maxSample = maxVal;
+  return data;
 }
 
 size_t ArtifactAudioLayer::getCacheSize() const

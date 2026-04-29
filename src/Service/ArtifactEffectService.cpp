@@ -18,6 +18,16 @@ import Artifact.Effect.Ofx.Host;
 import Artifact.Effect.Ofx.Impl;
 import Artifact.Project.PresetManager;
 import Artifact.Service.Project;
+import Artifact.Effect.WhiteBalance;
+import TritoneEffect;
+import ColoramaEffect;
+import PhotoFilterEffect;
+import GradientRampEffect;
+import FillEffect;
+import ColorBalanceEffect;
+import LevelsEffect;
+import ChannelMixerEffect;
+import SelectiveColorEffect;
 import ColorWheelsEffect;
 import CurvesEffect;
 
@@ -63,6 +73,39 @@ W_OBJECT_IMPL(ArtifactEffectService)
   if (effectId == QStringLiteral("effect.colorcorrection.curves")) {
    return std::make_unique<CurvesEffect>();
   }
+  if (effectId == QStringLiteral("effect.colorcorrection.tint")) {
+   auto effect = std::make_unique<WhiteBalanceEffect>();
+   effect->setDisplayName(UniString("Tint"));
+   effect->setEffectID(UniString::fromQString(effectId));
+   return effect;
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.photofilter")) {
+   return std::make_unique<PhotoFilterEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.gradientramp")) {
+   return std::make_unique<GradientRampEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.fill")) {
+   return std::make_unique<FillEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.tritone")) {
+   return std::make_unique<TritoneEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.colorama")) {
+   return std::make_unique<ColoramaEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.colorbalance")) {
+   return std::make_unique<ColorBalanceEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.levels")) {
+   return std::make_unique<LevelsEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.channelmixer")) {
+   return std::make_unique<ChannelMixerEffect>();
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.selectivecolor")) {
+   return std::make_unique<SelectiveColorEffect>();
+  }
   if (effectId.startsWith(QStringLiteral("ofx."))) {
    const QString pluginId = effectId.mid(QStringLiteral("ofx.").size());
    Artifact::Ofx::ArtifactOfxHost::instance().initialize();
@@ -96,6 +139,16 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("hue_saturation"), "Hue & Saturation"});
   effects.push_back({EffectID("effect.colorcorrection.colorwheels"), "Color Wheels"});
   effects.push_back({EffectID("effect.colorcorrection.curves"), "Curves"});
+  effects.push_back({EffectID("effect.colorcorrection.tint"), "Tint"});
+  effects.push_back({EffectID("effect.colorcorrection.photofilter"), "Photo Filter"});
+  effects.push_back({EffectID("effect.colorcorrection.gradientramp"), "Gradient Ramp"});
+  effects.push_back({EffectID("effect.colorcorrection.fill"), "Fill"});
+  effects.push_back({EffectID("effect.colorcorrection.tritone"), "Tritone"});
+  effects.push_back({EffectID("effect.colorcorrection.colorama"), "Colorama"});
+  effects.push_back({EffectID("effect.colorcorrection.colorbalance"), "Color Balance"});
+  effects.push_back({EffectID("effect.colorcorrection.levels"), "Levels"});
+  effects.push_back({EffectID("effect.colorcorrection.channelmixer"), "Channel Mixer"});
+  effects.push_back({EffectID("effect.colorcorrection.selectivecolor"), "Selective Color"});
   effects.push_back({EffectID("exposure"), "Exposure"});
   effects.push_back({EffectID("chroma_key"), "Chroma Key"});
   effects.push_back({EffectID("drop_shadow"), "Drop Shadow"});

@@ -3,6 +3,7 @@ module;
 #include <QPainter>
 #include <QMouseEvent>
 #include <algorithm>
+#include <cmath>
 
 #include <wobjectimpl.h>
 module Artifact.Widget.WorkAreaControlWidget;
@@ -45,6 +46,8 @@ namespace Artifact
   bool hoveringLeft{ false };
   bool hoveringRight{ false };
   bool hoveringRange{ false };
+  double rulerPixelsPerFrame{ 0.0 };
+  double rulerHorizontalOffset{ 0.0 };
  };
 
  
@@ -77,7 +80,8 @@ void WorkAreaControl::setEnd(float e) {
  }
 
  void WorkAreaControl::setCurrentFrame(float frame) {
-  const float clamped = std::max(0.0f, frame);
+  const float maxFrame = std::max(0.0f, totalFrames - 1.0f);
+  const float clamped = std::clamp(frame, 0.0f, maxFrame);
   if (currentFrame != clamped) {
     currentFrame = clamped;
     update();
@@ -88,6 +92,23 @@ void WorkAreaControl::setEnd(float e) {
   const float clamped = std::max(1.0f, frames);
   if (totalFrames != clamped) {
     totalFrames = clamped;
+    currentFrame = std::clamp(currentFrame, 0.0f, std::max(0.0f, totalFrames - 1.0f));
+    update();
+  }
+ }
+
+ void WorkAreaControl::setRulerPixelsPerFrame(double ppf) {
+  const double sanitized = std::max(0.0, ppf);
+  if (std::abs(impl_->rulerPixelsPerFrame - sanitized) > 0.0001) {
+    impl_->rulerPixelsPerFrame = sanitized;
+    update();
+  }
+ }
+
+ void WorkAreaControl::setRulerHorizontalOffset(double offset) {
+  const double sanitized = std::max(0.0, offset);
+  if (std::abs(impl_->rulerHorizontalOffset - sanitized) > 0.0001) {
+    impl_->rulerHorizontalOffset = sanitized;
     update();
   }
  }
@@ -144,10 +165,19 @@ void WorkAreaControl::setEnd(float e) {
   }
   p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
 
-  const float safeTotalFrames = std::max(1.0f, totalFrames);
-  const float clampedFrame = std::clamp(currentFrame, 0.0f, safeTotalFrames);
-  const float playheadNorm = std::clamp(clampedFrame / safeTotalFrames, 0.0f, 1.0f);
-  const int playheadX = handleHalfW + static_cast<int>(playheadNorm * usableWidth);
+  const float safeLastFrame = std::max(1.0f, totalFrames - 1.0f);
+  const float clampedFrame = std::clamp(currentFrame, 0.0f, safeLastFrame);
+  int playheadX = 0;
+  if (impl_->rulerPixelsPerFrame > 0.001) {
+    playheadX = static_cast<int>(std::round(
+        static_cast<double>(clampedFrame) * impl_->rulerPixelsPerFrame -
+        impl_->rulerHorizontalOffset));
+  } else {
+    const float playheadNorm =
+        std::clamp(clampedFrame / safeLastFrame, 0.0f, 1.0f);
+    playheadX = handleHalfW + static_cast<int>(playheadNorm * usableWidth);
+  }
+  playheadX = std::clamp(playheadX, 0, std::max(0, width() - 1));
   const QColor playheadColor(255, 92, 92);
   p.setPen(QPen(playheadColor, 2));
   p.drawLine(playheadX, 0, playheadX, height() - 1);
