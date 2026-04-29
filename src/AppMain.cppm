@@ -140,6 +140,7 @@ import Diagnostics.Logger;
 import Artifact.Widgets.DebugConsoleWidget;
 import Artifact.Widgets.FrameDebugViewWidget;
 import Artifact.Widgets.AppDebuggerWidget;
+import Artifact.Widgets.DebugRenderHarnessWidget;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Workspace.Manager;
@@ -1279,6 +1280,7 @@ int main(int argc, char *argv[]) {
   QPointer<ArtifactRenderCenterWindow> renderCenterWindow;
   QPointer<ArtifactDebugConsoleWidget> debugConsoleWidget;
   QPointer<FrameDebugViewWidget> frameDebugWidget;
+  QPointer<DebugRenderHarnessWidget> debugHarnessWidget;
   const QString recoveryDir =
       QDir(QStandardPaths::writableLocation(QStandardPaths::AppDataLocation))
           .filePath("Recovery");
@@ -1305,7 +1307,7 @@ int main(int argc, char *argv[]) {
   QTimer::singleShot(
       0, mw,
       [=, &renderCenterWindow, &workspaceManager, &debugConsoleWidget,
-       &frameDebugWidget]() {
+       &frameDebugWidget, &debugHarnessWidget]() {
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Playback Control"), QStringLiteral("PlaybackControl"),
         [mw]() -> QWidget * { return new ArtifactPlaybackControlWidget(mw); },
@@ -1343,8 +1345,22 @@ int main(int argc, char *argv[]) {
           return new AppDebuggerWidget(controller, mw);
         },
         QRect(140, 140, 1080, 640));
+    mw->addLazyDockedWidgetFloating(
+        QStringLiteral("Debug Render Harness"), QStringLiteral("DebugRenderHarness"),
+        [mw, compositionEditor, &debugHarnessWidget]() mutable -> QWidget * {
+          auto* widget = new DebugRenderHarnessWidget(mw);
+          debugHarnessWidget = widget;
+          widget->setScenePreset(QStringLiteral("mixed-media"));
+          if (compositionEditor) {
+            if (auto* controller = compositionEditor->renderController()) {
+              widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
+            }
+          }
+          return widget;
+        },
+        QRect(180, 180, 1100, 660));
     auto refreshFrameDebugWidgets = [compositionEditor, &debugConsoleWidget,
-                                     &frameDebugWidget]() mutable {
+                                     &frameDebugWidget, &debugHarnessWidget]() mutable {
       if (!compositionEditor) {
         return;
       }
@@ -1358,6 +1374,9 @@ int main(int argc, char *argv[]) {
       }
       if (frameDebugWidget) {
         frameDebugWidget->setFrameDebugSnapshot(snapshot);
+      }
+      if (debugHarnessWidget) {
+        debugHarnessWidget->setFrameDebugSnapshot(snapshot);
       }
     };
     auto* frameDebugTimer = new QTimer(mw);
