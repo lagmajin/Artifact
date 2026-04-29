@@ -1898,6 +1898,8 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
 
 ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     : QWidget(parent), impl_(new Impl()) {
+  QElapsedTimer ctorTimer;
+  ctorTimer.start();
 
   setWindowFlags(Qt::FramelessWindowHint);
 
@@ -3137,6 +3139,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               updateKeyframeState();
             }
           }));
+  qInfo() << "[TimelineWidget][Ctor] total ms=" << ctorTimer.elapsed();
 }
 
 ArtifactTimelineWidget::~ArtifactTimelineWidget() {
@@ -3441,6 +3444,7 @@ void ArtifactTimelineWidget::syncWorkAreaFromCurrentComposition() {
   QSignalBlocker blocker(impl_->workArea_);
   impl_->workArea_->setStart(static_cast<float>(startNorm));
   impl_->workArea_->setEnd(static_cast<float>(endNorm));
+  impl_->workArea_->setTotalFrames(static_cast<float>(totalFrames));
 }
 
 void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
@@ -3869,6 +3873,11 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
 
   if (impl_->navigator_) {
     impl_->navigator_->setCurrentFrame(frame);
+  }
+  if (impl_->workArea_) {
+    impl_->workArea_->setTotalFrames(
+        static_cast<float>(std::max(1.0, impl_->painterTrackView_->durationFrames())));
+    impl_->workArea_->setCurrentFrame(static_cast<float>(frame));
   }
 
   constexpr int kMargin = 12;

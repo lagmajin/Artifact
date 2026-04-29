@@ -40,11 +40,13 @@ public:
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
-        cv::Mat mat = dst.image().toCVMat();
-        if (mat.empty()) {
+        float* pixels = dst.image().rgba32fData();
+        if (!pixels) {
             return;
         }
 
+        const int width = dst.image().width();
+        const int height = dst.image().height();
         float refR = 1.0f;
         float refG = 1.0f;
         float refB = 1.0f;
@@ -62,16 +64,14 @@ public:
         const float tintM = 1.0f - tint_ * 0.5f;
         const float brightMul = std::pow(2.0f, brightness_);
 
-        for (int y = 0; y < mat.rows; ++y) {
-            for (int x = 0; x < mat.cols; ++x) {
-                cv::Vec4f& p = mat.at<cv::Vec4f>(y, x);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                float* p = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
                 p[2] = std::clamp(p[2] * corrR * tintM * brightMul, 0.0f, 1.0f);
                 p[1] = std::clamp(p[1] * corrG * tintG * brightMul, 0.0f, 1.0f);
                 p[0] = std::clamp(p[0] * corrB * tintM * brightMul, 0.0f, 1.0f);
             }
         }
-
-        dst.image().setFromCVMat(mat);
     }
 };
 

@@ -58,7 +58,12 @@ namespace Artifact {
 
 void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCache& src, ArtifactCore::ImageF32x4RGBAWithCache& dst) {
     const ArtifactCore::ImageF32x4_RGBA& srcImage = src.image();
-    cv::Mat srcMat = srcImage.toCVMat();
+    const float* srcData = srcImage.rgba32fData();
+    if (!srcData) {
+        dst = src;
+        return;
+    }
+    cv::Mat srcMat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
 
     // Ensure we have data
     if (srcMat.empty()) {
@@ -118,7 +123,7 @@ void ChromaKeyEffectCPUImpl::applyCPU(const ArtifactCore::ImageF32x4RGBAWithCach
     }
 
     ImageF32x4_RGBA dstImage;
-    dstImage.setFromCVMat(dstMat);
+    dstImage.setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);
     dst = ImageF32x4RGBAWithCache(dstImage);
 }
 // Properties - single definitions placed after implementation

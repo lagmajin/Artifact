@@ -55,6 +55,7 @@ import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
+import Artifact.Layer.Composition;
 import Layer.Matte;
 import Artifact.Timeline.KeyframeModel;
 import Undo.UndoManager;
@@ -126,6 +127,15 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: 3D Layer");
     descriptor.capabilitySummaryText = QStringLiteral("3D Space");
     descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Precomp Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Precomp");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Precomp Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Precomp Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Nested Composition");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
     return descriptor;
   }
   if (layer->hasAudio() && layer->hasVideo()) {
@@ -2044,6 +2054,23 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     };
 
+    auto triggerOpenComposition = [this, layer]() {
+      if (!layer) {
+        return;
+      }
+      auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get());
+      if (!compLayer) {
+        return;
+      }
+      const CompositionID sourceCompId = compLayer->sourceCompositionId();
+      if (sourceCompId.isNil()) {
+        return;
+      }
+      if (auto *svc = ArtifactProjectService::instance()) {
+        svc->changeCurrentComposition(sourceCompId);
+      }
+    };
+
     // Variant Context Menu
     const int nameStartX = colW * kLayerPropertyColumnCount;
     const int nameX = nameStartX + row.depth * 14;
@@ -2077,6 +2104,12 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
 
     QMenu menu(this);
+    if (dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
+      menu.addAction("Open Composition", [triggerOpenComposition]() {
+        triggerOpenComposition();
+      });
+      menu.addSeparator();
+    }
     const bool isImageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr;
     if (isImageLayer) {
       menu.addAction("Replace Image...", [triggerReplaceLayerSource]() {
@@ -2135,7 +2168,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
    return;
   }
 
-   if (row.hasChildren) {
+  if (row.hasChildren) {
     const int nameStartX = colW * kLayerPropertyColumnCount;
     const int nameX = nameStartX + row.depth * 14;
     const QRect treeHitRect(nameX, impl_->rowViewportY(idx), std::max(40, width() - nameX), rowH);
@@ -2148,17 +2181,29 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
     }
    }
 
-   if (!impl_->layerNameEditable) {
-    event->accept();
-    return;
-   }
-
    const int nameStartX = colW * kLayerPropertyColumnCount;
   const bool showInlineCombos = width() >= (kLayerColumnWidth * kLayerPropertyColumnCount + kInlineComboReserve + kLayerNameMinWidth);
   const int parentRectX = width() - kInlineComboReserve;
   const int nameX = nameStartX + row.depth * 14 + (row.hasChildren ? 16 : 4);
   const int nameWidth = showInlineCombos ? std::max(20, parentRectX - nameX - 8) : std::max(20, width() - nameX - 8);
   const QRect editRect(nameX + 2, impl_->rowViewportY(idx) + 2, nameWidth, rowH - 4);
+
+  if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
+    const CompositionID sourceCompId = compLayer->sourceCompositionId();
+    if (!sourceCompId.isNil()) {
+      if (auto *svc = ArtifactProjectService::instance()) {
+        if (svc->changeCurrentComposition(sourceCompId).success) {
+          event->accept();
+          return;
+        }
+      }
+    }
+  }
+
+   if (!impl_->layerNameEditable) {
+    event->accept();
+    return;
+   }
 
   if (!editRect.contains(event->pos())) {
    QWidget::mouseDoubleClickEvent(event);

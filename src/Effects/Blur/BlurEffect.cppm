@@ -28,31 +28,14 @@ public:
     void setEdgeThreshold(float t) { edgeThreshold_ = t; }
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        cv::Mat srcMat = src.image().toCVMat();
-        if (srcMat.empty()) {
+        auto& srcImage = src.image();
+        const float* srcData = srcImage.rgba32fData();
+        if (!srcData) {
             dst = src;
             return;
         }
 
-        cv::Mat floatMat;
-        if (srcMat.depth() == CV_32F) {
-            floatMat = srcMat;
-        } else if (srcMat.depth() == CV_8U) {
-            srcMat.convertTo(floatMat, CV_32F, 1.0 / 255.0);
-        } else if (srcMat.depth() == CV_16U) {
-            srcMat.convertTo(floatMat, CV_32F, 1.0 / 65535.0);
-        } else {
-            srcMat.convertTo(floatMat, CV_32F);
-        }
-
-        if (floatMat.channels() == 1) {
-            cv::cvtColor(floatMat, floatMat, cv::COLOR_GRAY2BGRA);
-        } else if (floatMat.channels() == 3) {
-            cv::cvtColor(floatMat, floatMat, cv::COLOR_BGR2BGRA);
-        } else if (floatMat.channels() != 4) {
-            dst.image().setFromCVMat(srcMat);
-            return;
-        }
+        cv::Mat floatMat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
 
         std::vector<cv::Mat> channels;
         cv::split(floatMat, channels);
@@ -100,8 +83,11 @@ public:
             }
         }
 
-        cv::merge(std::vector<cv::Mat>{color, alpha}, floatMat);
-        dst.image().setFromCVMat(floatMat);
+        std::vector<cv::Mat> outChannels;
+        cv::split(color, outChannels);
+        outChannels.push_back(alpha);
+        cv::merge(outChannels, floatMat);
+        dst.image().setFromRGBA32F(floatMat.ptr<float>(), floatMat.cols, floatMat.rows);
     }
 };
 

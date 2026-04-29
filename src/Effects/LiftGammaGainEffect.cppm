@@ -26,14 +26,16 @@ static void applyLiftGammaGainCore(const ImageF32x4RGBAWithCache& src,
                                    float gammaR, float gammaG, float gammaB,
                                    float gainR, float gainG, float gainB) {
     dst = src;
-    cv::Mat mat = dst.image().toCVMat();
-    if (mat.empty()) {
+    float* pixels = dst.image().rgba32fData();
+    if (!pixels) {
         return;
     }
 
-    for (int y = 0; y < mat.rows; ++y) {
-        for (int x = 0; x < mat.cols; ++x) {
-            cv::Vec4f& p = mat.at<cv::Vec4f>(y, x);
+    const int width = dst.image().width();
+    const int height = dst.image().height();
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float* p = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
             float& b = p[0];
             float& g = p[1];
             float& r = p[2];
@@ -55,8 +57,6 @@ static void applyLiftGammaGainCore(const ImageF32x4RGBAWithCache& src,
             b = std::clamp(b, 0.0f, 1.0f);
         }
     }
-
-    dst.image().setFromCVMat(mat);
 }
 
 class LiftGammaGainCPUImpl : public ArtifactEffectImplBase {

@@ -25,12 +25,18 @@ export namespace Artifact
   ~WorkAreaControl();
   float start{ 0.0f }; // 0..1
   float end{ 1.0f };   // 0..1
+  float currentFrame{ 0.0f };
+  float totalFrames{ 1.0f };
 
   // Property accessors with signals
   float startValue() const { return start; }
   float endValue() const { return end; }
+  float currentFrameValue() const { return currentFrame; }
+  float totalFramesValue() const { return totalFrames; }
   void setStart(float s);
   void setEnd(float e);
+  void setCurrentFrame(float frame);
+  void setTotalFrames(float frames);
 
  public:
    void startChanged(float value) W_SIGNAL(startChanged, value)

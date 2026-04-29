@@ -158,6 +158,22 @@ public:
                        const FloatColor &color);
   void drawRectOutline(Detail::float2 pos, Detail::float2 size,
                        const FloatColor &color);
+  void drawDashedRectOutline(float x, float y, float w, float h,
+                             const FloatColor &color, float thickness = 1.0f,
+                             float dashLength = 8.0f,
+                             float gapLength = 4.0f);
+  void drawDashedRectOutline(Detail::float2 pos, Detail::float2 size,
+                             const FloatColor &color, float thickness = 1.0f,
+                             float dashLength = 8.0f,
+                             float gapLength = 4.0f);
+  void drawOverlayPanel(float x, float y, float w, float h,
+                        const FloatColor &fillColor,
+                        const FloatColor &outlineColor,
+                        float opacity = 1.0f);
+  void drawOverlayPanel(Detail::float2 pos, Detail::float2 size,
+                        const FloatColor &fillColor,
+                        const FloatColor &outlineColor,
+                        float opacity = 1.0f);
   void drawSolidLine(Detail::float2 start, Detail::float2 end,
                      const FloatColor &color, float thickness);
   void drawPolyline(const std::vector<Detail::float2> &points,

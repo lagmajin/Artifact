@@ -3,6 +3,7 @@ module;
 #include <QAction>
 #include <QInputDialog>
 #include <QKeySequence>
+#include <QDialog>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
@@ -27,6 +28,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Shape;
 import Artifact.Composition.Abstract;
+import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Tool.CameraTracker;
@@ -276,6 +278,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     selectMenu->addAction(clearParentAction);
 
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
+    precomposeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
+    precomposeAction->setIcon(QIcon(resolveIconPath("Material/view_comfy.svg")));
     groupSelectionAction = new QAction("グループ化(&G)...", menu);
     ungroupAction = new QAction("グループ解除(&U)", menu);
     splitAction = new QAction("レイヤー分割(&L)", menu);
@@ -746,7 +750,61 @@ void ArtifactLayerMenu::Impl::handleClearParent()
 
 void ArtifactLayerMenu::Impl::handlePrecompose()
 {
-    QMessageBox::information(menu_->window(), "Layer", "プリコンポーズは次のステップで実装します。");
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        QMessageBox::warning(menu_->window(), "プリコンポーズ", "コンポジションが選択されていません。");
+        return;
+    }
+
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    if (!selectionManager) {
+        QMessageBox::warning(menu_->window(), "プリコンポーズ", "選択レイヤーを取得できませんでした。");
+        return;
+    }
+
+    const auto selected = selectionManager->selectedLayers();
+    QVector<LayerID> selectedIds;
+    QStringList selectedNames;
+    selectedIds.reserve(selected.size());
+    selectedNames.reserve(selected.size());
+    auto isSelected = [&selected](const LayerID& id) {
+        for (const auto& layer : selected) {
+            if (layer && layer->id() == id) {
+                return true;
+            }
+        }
+        return false;
+    };
+    for (const auto& layer : comp->allLayer()) {
+        if (!layer || !isSelected(layer->id())) {
+            continue;
+        }
+        selectedIds.push_back(layer->id());
+        selectedNames.push_back(layer->layerName());
+    }
+
+    if (selectedIds.isEmpty()) {
+        QMessageBox::warning(menu_->window(), "プリコンポーズ", "選択レイヤーがありません。");
+        return;
+    }
+
+    PrecomposeDialog dialog(menu_->window());
+    dialog.setSelectedLayerNames(selectedNames);
+    dialog.setTotalLayerCount(comp->layerCount());
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    if (!service->precomposeLayersInCurrentComposition(
+            selectedIds, UniString(dialog.newCompositionName()),
+            dialog.openNewComposition(), dialog.matchWorkspaceDuration())) {
+        QMessageBox::warning(menu_->window(), "プリコンポーズ", "プリコンポーズに失敗しました。");
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleGroupSelection()

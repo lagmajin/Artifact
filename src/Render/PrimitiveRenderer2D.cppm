@@ -68,24 +68,23 @@ qint64 computeImageContentKey(const QImage& image) {
     return static_cast<qint64>(h);
 }
 
-qint64 computeImageContentKey(const ArtifactCore::ImageF32x4_RGBA& image)
+qint64 computeImageContentKey(const auto& image)
 {
-    const cv::Mat mat = image.toCVMat();
-    if (mat.empty()) {
+    const float* data = image.rgba32fData();
+    if (!data) {
         return 0;
     }
 
-    const size_t totalBytes = static_cast<size_t>(mat.total()) * static_cast<size_t>(mat.elemSize());
+    const size_t totalBytes = static_cast<size_t>(image.width()) * static_cast<size_t>(image.height()) * 4u * sizeof(float);
     const size_t sampleBytes = std::min<size_t>(totalBytes, 4096u);
-    quint32 h = qHashMulti(0, mat.cols, mat.rows, mat.type(), mat.channels(),
-                           static_cast<quint32>(mat.step));
-    const uchar* data = mat.ptr<uchar>(0);
+    quint32 h = qHashMulti(0, image.width(), image.height(), 4, sizeof(float));
+    const quint8* bytes = reinterpret_cast<const quint8*>(data);
     for (size_t i = 0; i < sampleBytes; ++i) {
-        h ^= data[i];
+        h ^= static_cast<quint32>(bytes[i]);
         h *= 16777619u;
     }
     if (sampleBytes > 0) {
-        h ^= data[sampleBytes - 1];
+        h ^= static_cast<quint32>(bytes[sampleBytes - 1]);
         h *= 16777619u;
     }
     return static_cast<qint64>(h);
@@ -1133,42 +1132,38 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         pTexture = it->second.pTexture;
         it->second.lastUsedFrame = impl_->m_frameCount;
     } else {
-        cv::Mat rgba = image.toCVMat();
-        if (rgba.empty()) {
+        const int width = image.width();
+        const int height = image.height();
+        const float* rgba32 = image.rgba32fData();
+        const std::uint8_t* rgba8 = image.rgba8Data();
+        if (width <= 0 || height <= 0 || (!rgba32 && !rgba8)) {
             return;
         }
 
-        if (rgba.type() != CV_8UC4) {
-            cv::Mat rgba8;
-            if (rgba.type() == CV_32FC4) {
-                rgba.convertTo(rgba8, CV_8UC4, 255.0);
-                // ImageF32x4_RGBA is already RGBA; no channel swap needed.
-            } else if (rgba.channels() == 4) {
-                rgba.convertTo(rgba8, CV_8UC4);
-            } else {
-                cv::Mat normalized;
-                rgba.convertTo(normalized, CV_32F, 1.0 / 255.0);
-                if (normalized.channels() == 3) {
-                    cv::cvtColor(normalized, rgba8, cv::COLOR_BGR2RGBA);
-                    rgba8.convertTo(rgba8, CV_8UC4, 255.0);
-                } else if (normalized.channels() == 1) {
-                    cv::cvtColor(normalized, rgba8, cv::COLOR_GRAY2RGBA);
-                    rgba8.convertTo(rgba8, CV_8UC4, 255.0);
-                } else {
-                    return;
-                }
+        std::vector<uint8_t> uploadBytes;
+        const uint8_t* uploadPtr = nullptr;
+        if (rgba8) {
+            uploadPtr = rgba8;
+        } else {
+            uploadBytes.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u);
+            const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+            for (size_t i = 0; i < pixelCount; ++i) {
+                const float r = rgba32[i * 4u + 0];
+                const float g = rgba32[i * 4u + 1];
+                const float b = rgba32[i * 4u + 2];
+                const float a = rgba32[i * 4u + 3];
+                uploadBytes[i * 4u + 0] = static_cast<uint8_t>(std::clamp(r, 0.0f, 1.0f) * 255.0f + 0.5f);
+                uploadBytes[i * 4u + 1] = static_cast<uint8_t>(std::clamp(g, 0.0f, 1.0f) * 255.0f + 0.5f);
+                uploadBytes[i * 4u + 2] = static_cast<uint8_t>(std::clamp(b, 0.0f, 1.0f) * 255.0f + 0.5f);
+                uploadBytes[i * 4u + 3] = static_cast<uint8_t>(std::clamp(a, 0.0f, 1.0f) * 255.0f + 0.5f);
             }
-            rgba = rgba8;
-        }
-
-        if (rgba.channels() != 4) {
-            return;
+            uploadPtr = uploadBytes.data();
         }
 
         TextureDesc texDesc;
         texDesc.Type = RESOURCE_DIM_TEX_2D;
-        texDesc.Width = static_cast<Uint32>(rgba.cols);
-        texDesc.Height = static_cast<Uint32>(rgba.rows);
+        texDesc.Width = static_cast<Uint32>(width);
+        texDesc.Height = static_cast<Uint32>(height);
         texDesc.Format = TEX_FORMAT_RGBA8_UNORM_SRGB;
         texDesc.MipLevels = 1;
         texDesc.Usage = USAGE_IMMUTABLE;
@@ -1176,8 +1171,8 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         texDesc.CPUAccessFlags = CPU_ACCESS_NONE;
 
         TextureSubResData subData;
-        subData.pData = rgba.data;
-        subData.Stride = static_cast<Uint64>(rgba.step);
+        subData.pData = uploadPtr;
+        subData.Stride = static_cast<Uint64>(width) * 4ull;
         TextureData initData;
         initData.pSubResources = &subData;
         initData.NumSubresources = 1;

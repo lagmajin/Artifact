@@ -21,6 +21,7 @@ module Artifact.Service.Project;
 import std;
 
 import Utils.String.UniString;
+import Artifact.Layer.Composition;
 import Artifact.Project.Manager;
 import Artifact.Project.RevisionService;
 import Artifact.Layer.Factory;
@@ -1185,14 +1186,176 @@ bool ArtifactProjectService::setLayerParentInCurrentComposition(
 }
 
 bool ArtifactProjectService::precomposeLayersInCurrentComposition(
-    const QVector<LayerID> &layerIds, const UniString &newCompositionName) {
-  // TODO: Implement precompose (pre-render selected layers into a new
-  // composition)
-  qWarning() << "[ArtifactProjectService] precomposeLayersInCurrentComposition "
-                "is not yet implemented";
-  Q_UNUSED(layerIds);
-  Q_UNUSED(newCompositionName);
-  return false;
+    const QVector<LayerID> &layerIds, const UniString &newCompositionName,
+    bool openNewComposition, bool matchWorkspaceDuration) {
+  auto project = getCurrentProjectSharedPtr();
+  auto comp = currentComposition().lock();
+  if (!project || !comp || layerIds.isEmpty()) {
+    return false;
+  }
+
+  QVector<ArtifactAbstractLayerPtr> orderedLayers;
+  QVector<LayerID> originalParentIds;
+  orderedLayers.reserve(layerIds.size());
+  originalParentIds.reserve(layerIds.size());
+  auto containsLayerId = [&layerIds](const LayerID &id) {
+    for (const auto &candidate : layerIds) {
+      if (candidate == id) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  int firstIndex = -1;
+  int64_t minInFrame = 0;
+  int64_t maxOutFrame = 0;
+  bool firstTiming = true;
+  const auto allLayers = comp->allLayer();
+  for (int i = 0; i < allLayers.size(); ++i) {
+    const auto &layer = allLayers[i];
+    if (!layer || !containsLayerId(layer->id())) {
+      continue;
+    }
+    if (firstIndex < 0) {
+      firstIndex = i;
+    }
+    orderedLayers.push_back(layer);
+    originalParentIds.push_back(layer->parentLayerId());
+    const int64_t inFrame = layer->inPoint().framePosition();
+    const int64_t outFrame = layer->outPoint().framePosition();
+    if (firstTiming) {
+      minInFrame = inFrame;
+      maxOutFrame = outFrame;
+      firstTiming = false;
+    } else {
+      minInFrame = std::min<int64_t>(minInFrame, inFrame);
+      maxOutFrame = std::max<int64_t>(maxOutFrame, outFrame);
+    }
+  }
+
+  if (orderedLayers.isEmpty() || firstIndex < 0) {
+    return false;
+  }
+
+  if (newCompositionName.toQString().trimmed().isEmpty()) {
+    return false;
+  }
+
+  const int64_t childDurationFrames = [&]() -> int64_t {
+    if (matchWorkspaceDuration) {
+      const int64_t workDuration = comp->workAreaRange().duration();
+      if (workDuration > 0) {
+        return workDuration;
+      }
+    }
+    return std::max<int64_t>(1, comp->frameRange().duration());
+  }();
+  ArtifactCompositionInitParams childParams;
+  childParams.setCompositionName(newCompositionName);
+  childParams.setResolution(comp->settings().compositionSize().width(),
+                            comp->settings().compositionSize().height());
+  childParams.setFrameRate(comp->frameRate());
+  childParams.setDurationFrames(childDurationFrames);
+  childParams.setBackgroundColor(comp->backgroundColor());
+  const int64_t fpsScale =
+      std::max<int64_t>(1, static_cast<int64_t>(std::llround(
+                               comp->frameRate().framerate())));
+  childParams.setWorkArea(RationalTime(0, fpsScale),
+                          RationalTime(childDurationFrames, fpsScale));
+
+  auto childComp = std::make_shared<ArtifactAbstractComposition>(
+      CompositionID(), childParams);
+  if (!childComp) {
+    return false;
+  }
+
+  if (!project->addImportedComposition(childComp, newCompositionName.toQString())) {
+    return false;
+  }
+
+  const CompositionID childCompId = childComp->id();
+  QVector<LayerID> movedLayerIds;
+  movedLayerIds.reserve(orderedLayers.size());
+
+  for (const auto &layer : orderedLayers) {
+    if (!layer) {
+      continue;
+    }
+    const LayerID layerId = layer->id();
+    const LayerID parentId = layer->parentLayerId();
+    if (!parentId.isNil() && !containsLayerId(parentId)) {
+      layer->clearParent();
+    }
+    if (!project->addLayerToComposition(childCompId, layer).success) {
+      return false;
+    }
+    movedLayerIds.push_back(layerId);
+  }
+
+  for (const auto &layer : orderedLayers) {
+    if (!layer) {
+      continue;
+    }
+    if (!project->removeLayerFromComposition(comp->id(), layer->id())) {
+      return false;
+    }
+  }
+
+  for (const auto &layer : orderedLayers) {
+    if (!layer) {
+      continue;
+    }
+    layer->setComposition(childComp.get());
+  }
+
+  for (int i = 0; i < orderedLayers.size(); ++i) {
+    const auto &layer = orderedLayers[i];
+    if (!layer) {
+      continue;
+    }
+    const LayerID parentId = originalParentIds.value(i);
+    if (!parentId.isNil() && containsLayerId(parentId)) {
+      layer->setParentById(parentId);
+    } else {
+      layer->clearParent();
+    }
+  }
+
+  ArtifactCompositionLayerInitParams precompParams;
+  ArtifactLayerResult precompLayerResult =
+      project->createLayerAndAddToComposition(comp->id(), precompParams);
+  if (!precompLayerResult.success || !precompLayerResult.layer) {
+    return false;
+  }
+
+  auto precompLayer =
+      std::dynamic_pointer_cast<ArtifactCompositionLayer>(precompLayerResult.layer);
+  if (!precompLayer) {
+    return false;
+  }
+
+  precompLayer->setLayerName(newCompositionName.toQString());
+  precompLayer->setCompositionId(childCompId);
+  precompLayer->setInPoint(FramePosition(minInFrame));
+  precompLayer->setOutPoint(FramePosition(maxOutFrame));
+  precompLayer->setStartTime(FramePosition(minInFrame));
+
+  comp->moveLayerToIndex(precompLayer->id(), firstIndex);
+  project->projectChanged();
+
+  if (openNewComposition) {
+    changeCurrentComposition(childCompId);
+    if (!movedLayerIds.isEmpty()) {
+      selectLayer(movedLayerIds.front());
+    } else {
+      selectLayer(LayerID());
+    }
+  } else {
+    selectLayer(precompLayer->id());
+  }
+
+  return true;
 }
 
 void ArtifactProjectService::splitLayerAtCurrentTime(

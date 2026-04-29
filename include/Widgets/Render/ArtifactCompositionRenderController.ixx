@@ -18,6 +18,7 @@ export module Artifact.Widgets.CompositionRenderController;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
+import Artifact.Grid.System;
 import Frame.Debug;
 import Artifact.Service.Project;
 import Artifact.Render.Queue.Service;
@@ -77,6 +78,10 @@ void setShowGrid(bool show);
 bool isShowGrid() const;
 void setShowCheckerboard(bool show);
 bool isShowCheckerboard() const;
+void setCheckerboardSize(float size);
+float checkerboardSize() const;
+void setGridSettings(const Artifact::Grid::GridSettings& settings);
+Artifact::Grid::GridSettings gridSettings() const;
 void setShowGuides(bool show);
 bool isShowGuides() const;
 void setShowSafeMargins(bool show);
@@ -87,6 +92,8 @@ void setShowMotionPathOverlay(bool show);
 bool isShowMotionPathOverlay() const;
 void setShowAnchorCenterOverlay(bool show);
 bool isShowAnchorCenterOverlay() const;
+void setShowCameraFrustumOverlay(bool show);
+bool isShowCameraFrustumOverlay() const;
 
    // Render Queue support: when active, composition changed signals do not invalidate caches
    void setRenderQueueActive(bool active);
@@ -103,7 +110,10 @@ void clearDropGhostPreview();
 void setInfoOverlayText(const QString& title, const QString& detail = QString());
 void clearInfoOverlayText();
 void showCommandPaletteOverlay(const QString& query, const QStringList& items);
-void showContextMenuOverlay(const QPointF& viewportPos, const QStringList& items);
+void showContextMenuOverlay(const QPointF& viewportPos, const QStringList& items,
+                           const QString& title = QString(),
+                           const QString& subtitle = QString(),
+                           const QVector<bool>& enabledStates = QVector<bool>());
 void showPieMenuOverlay(const PieMenuModel& model, const QPointF& viewportPos);
 void hideViewportOverlay();
 bool isViewportOverlayVisible() const;
@@ -125,6 +135,7 @@ bool isDebugMode() const;
 void resetView();
 void zoomInAt(const QPointF& viewportPos);
 void zoomOutAt(const QPointF& viewportPos);
+void zoomAtFactor(const QPointF& viewportPos, float factor);
 void zoomFit();
 void zoomFill();
   void zoom100();

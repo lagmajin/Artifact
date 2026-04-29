@@ -250,7 +250,7 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  }
 
- ArtifactCompositionLayerInitParams::ArtifactCompositionLayerInitParams() :ArtifactLayerInitParams(UniString("name"), LayerType::Null)
+ ArtifactCompositionLayerInitParams::ArtifactCompositionLayerInitParams() :ArtifactLayerInitParams(UniString("name"), LayerType::Precomp)
  {
 
  }

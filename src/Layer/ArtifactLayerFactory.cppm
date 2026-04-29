@@ -19,6 +19,7 @@ import Artifact.Layer.AdjustableLayer;
 import Artifact.Layer.Video;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
+import Artifact.Layer.Composition;
 import Artifact.Layer.Text;
  import Artifact.Layer.Group;
  import Artifact.Layer.Clone;
@@ -126,7 +127,8 @@ namespace Artifact {
    ptr = std::make_shared<ArtifactVideoLayer>();
    break;
   case LayerType::Precomp:
-   //ptr = std::make_shared<ArtifactCompositionLayer>();
+   ptr = std::make_shared<ArtifactCompositionLayer>();
+   break;
   case LayerType::Camera:
    ptr = std::make_shared<ArtifactCameraLayer>();
    break;

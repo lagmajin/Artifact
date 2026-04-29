@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <cstring>
 #include <vector>
 #include <utility>
 #include <QHash>
@@ -9,7 +10,6 @@ module;
 #include <QString>
 #include <QDebug>
 #include <QMutexLocker>
-#include <opencv2/core.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
@@ -42,39 +42,39 @@ struct UploadImageData
 UploadImageData makeUploadImageData(const ArtifactCore::ImageF32x4_RGBA& image)
 {
     UploadImageData upload;
-    const cv::Mat src = image.toCVMat();
-    if (src.empty()) {
+    const int width = image.width();
+    const int height = image.height();
+    if (width <= 0 || height <= 0) {
         return upload;
     }
 
-    cv::Mat rgba32;
-    if (src.type() == CV_32FC4) {
-        rgba32 = src;
-    } else {
-        image.toCVMat().convertTo(rgba32, CV_32FC4);
+    if (const float* rgba32 = image.rgba32fData()) {
+        upload.width = static_cast<Uint32>(width);
+        upload.height = static_cast<Uint32>(height);
+        upload.stride = static_cast<Uint64>(upload.width) * 4ull * sizeof(float);
+        upload.bytes.resize(static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
+        std::memcpy(upload.bytes.data(),
+                    rgba32,
+                    static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
+        return upload;
     }
 
-    upload.width = static_cast<Uint32>(rgba32.cols);
-    upload.height = static_cast<Uint32>(rgba32.rows);
-    upload.stride = static_cast<Uint64>(upload.width) * 4ull;
-    upload.bytes.resize(static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
-
-    for (int y = 0; y < rgba32.rows; ++y) {
-        const auto* srcRow = rgba32.ptr<cv::Vec4f>(y);
-        auto* dstRow = upload.bytes.data() + static_cast<size_t>(y) * static_cast<size_t>(upload.stride);
-        for (int x = 0; x < rgba32.cols; ++x) {
-            const cv::Vec4f pixel = srcRow[x];
-            dstRow[x * 4 + 0] = static_cast<uint8_t>(std::clamp(pixel[2], 0.0f, 1.0f) * 255.0f + 0.5f);
-            dstRow[x * 4 + 1] = static_cast<uint8_t>(std::clamp(pixel[1], 0.0f, 1.0f) * 255.0f + 0.5f);
-            dstRow[x * 4 + 2] = static_cast<uint8_t>(std::clamp(pixel[0], 0.0f, 1.0f) * 255.0f + 0.5f);
-            dstRow[x * 4 + 3] = static_cast<uint8_t>(std::clamp(pixel[3], 0.0f, 1.0f) * 255.0f + 0.5f);
-        }
+    if (const std::uint8_t* rgba8 = image.rgba8Data()) {
+        upload.width = static_cast<Uint32>(width);
+        upload.height = static_cast<Uint32>(height);
+        upload.stride = static_cast<Uint64>(upload.width) * 4ull;
+        upload.bytes.resize(static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
+        std::memcpy(upload.bytes.data(),
+                    rgba8,
+                    static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
+        return upload;
     }
 
     return upload;
 }
 
 } // namespace
+
 
 GPUTextureCacheManager::GPUTextureCacheManager() = default;
 GPUTextureCacheManager::~GPUTextureCacheManager() = default;

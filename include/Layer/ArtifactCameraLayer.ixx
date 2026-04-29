@@ -3,6 +3,7 @@ module;
 #include <memory>
 #include <wobjectdefs.h>
 #include <QMatrix4x4>
+#include <QJsonObject>
 #include <QString>
 export module Artifact.Layer.Camera;
 
@@ -51,6 +52,9 @@ export namespace Artifact {
   // Perspective-specific
   float fov() const;
   void setFov(float fovDegrees);
+  bool useManualFov() const;
+  void setUseManualFov(bool enable);
+  void resetFovToZoom();
 
   // Orthographic-specific
   float orthoWidth() const;
@@ -73,6 +77,8 @@ export namespace Artifact {
   // Generic properties for Inspector
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
+  QJsonObject toJson() const override;
+  void fromJsonProperties(const QJsonObject& obj) override;
 
  private:
   struct Impl;

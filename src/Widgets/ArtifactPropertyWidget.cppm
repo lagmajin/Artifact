@@ -643,9 +643,23 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
 
   const auto applyPreviewValue =
       [handler = previewValue ? previewValue : commitValue, propertyPtr,
+        playback, currentTimeProvider, keyframeChanged,
         propertyName = property.getName(), row, rowValueChanged](const QVariant &value) {
          if (propertyPtr) {
            propertyPtr->setValue(value);
+           if (row && row->isKeyframeModeEnabled() &&
+               propertyPtr && (playback || currentTimeProvider)) {
+             const auto nowTime = currentTimeProvider
+                                      ? currentTimeProvider()
+                                      : currentPlaybackTime(playback);
+             propertyPtr->setAnimatable(true);
+             propertyPtr->addKeyFrame(nowTime, value);
+             row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
+             row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+             if (keyframeChanged) {
+               keyframeChanged(propertyName);
+             }
+           }
          }
          if (rowValueChanged) {
            rowValueChanged(row, propertyPtr, value);
@@ -662,19 +676,17 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
         if (rowValueChanged) {
           rowValueChanged(row, propertyPtr, value);
         }
-        if (propertyPtr && (playback || currentTimeProvider)) {
-          const bool hasAnyKeyframes = !propertyPtr->getKeyFrames().empty();
-          if (hasAnyKeyframes) {
-            const auto nowTime = currentTimeProvider
-                                     ? currentTimeProvider()
-                                     : currentPlaybackTime(playback);
-            propertyPtr->setAnimatable(true);
-            propertyPtr->addKeyFrame(nowTime, value);
-            row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
-            row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
-            if (keyframeChanged) {
-              keyframeChanged(propertyName);
-            }
+        if (row && row->isKeyframeModeEnabled() &&
+            propertyPtr && (playback || currentTimeProvider)) {
+          const auto nowTime = currentTimeProvider
+                                   ? currentTimeProvider()
+                                   : currentPlaybackTime(playback);
+          propertyPtr->setAnimatable(true);
+          propertyPtr->addKeyFrame(nowTime, value);
+          row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
+          row->setNavigationEnabled(!propertyPtr->getKeyFrames().empty());
+          if (keyframeChanged) {
+            keyframeChanged(propertyName);
           }
         }
         commitValue(propertyName, value);
@@ -711,12 +723,14 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
       const auto now = currentTimeProvider ? currentTimeProvider()
                                            : currentPlaybackTime(playback);
       row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
+      row->setKeyframeModeEnabled(propertyPtr->hasKeyFrameAt(now));
       const QVariant animatedValue = propertyPtr->interpolateValue(now);
       if (animatedValue.isValid()) {
         editor->setValueFromVariant(animatedValue);
       }
     } else {
       row->setKeyframeChecked(!track.empty());
+      row->setKeyframeModeEnabled(!track.empty());
     }
 
     // キーフレームトグル (◆ボタン)
@@ -737,6 +751,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
             propertyPtr->removeKeyFrame(nowTime);
           }
           const bool hasAnyKeyframes = !propertyPtr->getKeyFrames().empty();
+          row->setKeyframeModeEnabled(checked);
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
           row->setNavigationEnabled(hasAnyKeyframes);
           if (keyframeChanged) {
@@ -1224,6 +1239,8 @@ void ArtifactPropertyWidget::Impl::updatePropertyValues() {
 
     const bool hasAnyKeyframes = !propertyPtr->getKeyFrames().empty();
     row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(now));
+    row->setKeyframeModeEnabled(row->isKeyframeModeEnabled() ||
+                                propertyPtr->hasKeyFrameAt(now));
     row->setNavigationEnabled(hasAnyKeyframes);
   }
 
