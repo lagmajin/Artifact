@@ -367,6 +367,24 @@ public:
                 .arg(staleCount);
     }
 
+    static QString mediaHealthText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    {
+        auto resourceState = [&snapshot](const QString& typeName, const QString& labelName) {
+            for (const auto& resource : snapshot.resources) {
+                if (resource.type == typeName || resource.label == labelName) {
+                    const bool skipped = resource.note.contains(QStringLiteral("skipped=")) ||
+                                         resource.stale || !resource.cacheHit;
+                    return skipped ? QStringLiteral("skipped") : QStringLiteral("ok");
+                }
+            }
+            return QStringLiteral("none");
+        };
+
+        return QStringLiteral("media video=%1 particle=%2")
+                .arg(resourceState(QStringLiteral("video"), QStringLiteral("Video Decode")))
+                .arg(resourceState(QStringLiteral("particle"), QStringLiteral("Particle Draw")));
+    }
+
     static QString ramPreviewText(ArtifactPlaybackService* playbackSvc)
     {
         if (!playbackSvc) {
@@ -1277,7 +1295,10 @@ public:
                                        .arg(resourceCount)
                                        .arg(attachmentCount)
                                        .arg(totalPassUs));
-            frameSummary_->setToolTip(QStringLiteral("%1\nfailedPasses=%2").arg(hint).arg(failedPasses));
+            frameSummary_->setToolTip(QStringLiteral("%1\nfailedPasses=%2\n%3")
+                                          .arg(hint)
+                                          .arg(failedPasses)
+                                          .arg(mediaHealthText(controllerSnapshot)));
         }
 
         if (pipelineView_) {
@@ -1504,7 +1525,9 @@ public:
                                              }())
                                              .arg(queueSvc ? queueSvc->jobCount() : 0)
                                              .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>")));
-            diagnosticsSummary_->setToolTip(QStringLiteral("lastCrash=%1").arg(lastCrashText));
+            diagnosticsSummary_->setToolTip(QStringLiteral("lastCrash=%1\n%2")
+                                                .arg(lastCrashText)
+                                                .arg(mediaHealthText(controllerSnapshot)));
         }
 
         if (exportText_) {

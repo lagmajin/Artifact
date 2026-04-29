@@ -132,24 +132,28 @@ std::vector<AbstractProperty> WhiteBalanceEffect::getProperties() const {
     tempProp.setName("Temperature (K)");
     tempProp.setType(PropertyType::Float);
     tempProp.setValue(temperature_);
+    tempProp.setDisplayPriority(-10);
     props.push_back(tempProp);
 
     AbstractProperty tintProp;
     tintProp.setName("Tint");
     tintProp.setType(PropertyType::Float);
     tintProp.setValue(tint_);
+    tintProp.setDisplayPriority(0);
     props.push_back(tintProp);
 
     AbstractProperty brightnessProp;
     brightnessProp.setName("Brightness");
     brightnessProp.setType(PropertyType::Float);
     brightnessProp.setValue(brightness_);
+    brightnessProp.setDisplayPriority(10);
     props.push_back(brightnessProp);
 
     AbstractProperty presetProp;
     presetProp.setName("Preset");
     presetProp.setType(PropertyType::Integer);
     presetProp.setValue(0);
+    presetProp.setDisplayPriority(-20);
     props.push_back(presetProp);
 
     return props;

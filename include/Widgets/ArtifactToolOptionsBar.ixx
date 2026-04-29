@@ -22,7 +22,7 @@ public:
   void setCurrentTool(const QString &toolName);
   void setTextOptions(const QString &fontFamily, int fontSize, bool bold,
                       bool italic, bool underline, int horizontalAlignment,
-                      int verticalAlignment, int wrapMode,
+                      int verticalAlignment, int wrapMode, int layoutMode,
                       bool enabled = true);
   void clearTextOptions();
   void setShapeOptions(int shapeType, int width, int height, bool fillEnabled,

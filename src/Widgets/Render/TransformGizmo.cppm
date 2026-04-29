@@ -1,6 +1,9 @@
 module;
 #include <utility>
 #include <QDebug>
+#include <QApplication>
+#include <QFont>
+#include <QFontMetrics>
 #include <QLoggingCategory>
 #include <QPointF>
 #include <QRectF>
@@ -210,6 +213,259 @@ QPointF fixedPointForHandle(const QRectF& rect, const TransformGizmo::HandleType
  default:
   return rect.center();
  }
+}
+
+struct SnapGuideSet {
+ std::vector<float> vertical;
+ std::vector<float> horizontal;
+};
+
+void appendBoundsToSnapGuides(const QRectF& bounds, SnapGuideSet& guides)
+{
+ if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+  return;
+ }
+ guides.vertical.push_back(static_cast<float>(bounds.left()));
+ guides.vertical.push_back(static_cast<float>(bounds.center().x()));
+ guides.vertical.push_back(static_cast<float>(bounds.right()));
+ guides.horizontal.push_back(static_cast<float>(bounds.top()));
+ guides.horizontal.push_back(static_cast<float>(bounds.center().y()));
+ guides.horizontal.push_back(static_cast<float>(bounds.bottom()));
+}
+
+void appendEdgeBoundsToSnapGuides(const QRectF& bounds, SnapGuideSet& guides)
+{
+ if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+  return;
+ }
+ guides.vertical.push_back(static_cast<float>(bounds.left()));
+ guides.vertical.push_back(static_cast<float>(bounds.right()));
+ guides.horizontal.push_back(static_cast<float>(bounds.top()));
+ guides.horizontal.push_back(static_cast<float>(bounds.bottom()));
+}
+
+SnapGuideSet buildSnapGuides(const std::shared_ptr<ArtifactAbstractComposition>& comp,
+                             const ArtifactAbstractLayerPtr& ignoreLayer)
+{
+ SnapGuideSet guides;
+ if (!comp) {
+  return guides;
+ }
+
+ const QSize sz = comp->settings().compositionSize();
+ guides.vertical.push_back(0.0f);
+ guides.vertical.push_back(sz.width() * 0.5f);
+ guides.vertical.push_back(static_cast<float>(sz.width()));
+ guides.horizontal.push_back(0.0f);
+ guides.horizontal.push_back(sz.height() * 0.5f);
+ guides.horizontal.push_back(static_cast<float>(sz.height()));
+
+ for (const auto& other : comp->allLayer()) {
+  if (!other || !other->isVisible() || (ignoreLayer && other->id() == ignoreLayer->id()) ||
+      other->isLocked()) {
+   continue;
+  }
+  appendBoundsToSnapGuides(other->transformedBoundingBox(), guides);
+ }
+ return guides;
+}
+
+SnapGuideSet buildSpacingGuides(const std::shared_ptr<ArtifactAbstractComposition>& comp,
+                                const ArtifactAbstractLayerPtr& ignoreLayer)
+{
+ SnapGuideSet guides;
+ if (!comp) {
+  return guides;
+ }
+
+ const QSize sz = comp->settings().compositionSize();
+ guides.vertical.push_back(0.0f);
+ guides.vertical.push_back(static_cast<float>(sz.width()));
+ guides.horizontal.push_back(0.0f);
+ guides.horizontal.push_back(static_cast<float>(sz.height()));
+
+ for (const auto& other : comp->allLayer()) {
+  if (!other || !other->isVisible() || (ignoreLayer && other->id() == ignoreLayer->id()) ||
+      other->isLocked()) {
+   continue;
+  }
+  appendEdgeBoundsToSnapGuides(other->transformedBoundingBox(), guides);
+ }
+ return guides;
+}
+
+bool snapValueToGuides(float& value, const std::vector<float>& guides,
+                       const float threshold, const bool isVertical,
+                       std::vector<SnapLine>& activeSnapLines)
+{
+ float bestDist = threshold;
+ float bestValue = value;
+ bool snapped = false;
+ for (const float guide : guides) {
+  const float dist = std::abs(value - guide);
+  if (dist <= bestDist) {
+   bestDist = dist;
+   bestValue = guide;
+   snapped = true;
+  }
+ }
+ if (snapped) {
+  value = bestValue;
+  activeSnapLines.push_back({isVertical, bestValue});
+ }
+ return snapped;
+}
+
+bool snapBoundingBoxAxis(QRectF& box, const std::vector<float>& guides,
+                         const float threshold, const bool snapVertical,
+                         std::vector<SnapLine>& activeSnapLines)
+{
+ if (guides.empty()) {
+  return false;
+ }
+ const float left = static_cast<float>(box.left());
+ const float center = static_cast<float>(box.center().x());
+ const float right = static_cast<float>(box.right());
+ const float top = static_cast<float>(box.top());
+ const float middle = static_cast<float>(box.center().y());
+ const float bottom = static_cast<float>(box.bottom());
+
+ float bestDist = threshold;
+ float bestDelta = 0.0f;
+ float bestLine = 0.0f;
+ bool snapped = false;
+
+ auto trySnap = [&](const float value) {
+  for (const float guide : guides) {
+   const float dist = std::abs(value - guide);
+   if (dist <= bestDist) {
+    bestDist = dist;
+    bestDelta = guide - value;
+    bestLine = guide;
+    snapped = true;
+   }
+  }
+ };
+
+ if (snapVertical) {
+  trySnap(left);
+  trySnap(center);
+  trySnap(right);
+  if (snapped) {
+   box.translate(bestDelta, 0.0);
+   activeSnapLines.push_back({true, bestLine});
+  }
+ } else {
+  trySnap(top);
+  trySnap(middle);
+  trySnap(bottom);
+  if (snapped) {
+   box.translate(0.0, bestDelta);
+   activeSnapLines.push_back({false, bestLine});
+  }
+ }
+ return snapped;
+}
+
+bool snapBoxBetweenGuides(QRectF& box, const std::vector<float>& guides,
+                          const float threshold, const bool snapVertical,
+                          std::vector<SnapLine>& activeSnapLines,
+                          std::vector<SnapLabel>& activeSnapLabels)
+{
+ if (guides.size() < 2) {
+  return false;
+ }
+
+ std::vector<float> sortedGuides = guides;
+ std::sort(sortedGuides.begin(), sortedGuides.end());
+ sortedGuides.erase(
+     std::unique(sortedGuides.begin(), sortedGuides.end(),
+                 [](const float a, const float b) {
+                  return std::abs(a - b) < 0.5f;
+                 }),
+     sortedGuides.end());
+ if (sortedGuides.size() < 2) {
+  return false;
+ }
+
+ const float currentStart = snapVertical ? static_cast<float>(box.left())
+                                          : static_cast<float>(box.top());
+ const float span = snapVertical ? static_cast<float>(box.width())
+                                 : static_cast<float>(box.height());
+ float bestDist = threshold;
+ float bestDelta = 0.0f;
+ float leftGuide = 0.0f;
+ float rightGuide = 0.0f;
+ bool snapped = false;
+
+ for (std::size_t i = 0; i + 1 < sortedGuides.size(); ++i) {
+  const float a = sortedGuides[i];
+  const float b = sortedGuides[i + 1];
+  const float gap = b - a;
+  if (gap <= span + 1.0f) {
+   continue;
+  }
+  const float targetStart = a + (gap - span) * 0.5f;
+  const float dist = std::abs(currentStart - targetStart);
+  if (dist <= bestDist) {
+   bestDist = dist;
+   bestDelta = targetStart - currentStart;
+   leftGuide = a;
+   rightGuide = b;
+   snapped = true;
+  }
+ }
+
+ if (snapped) {
+  box.translate(snapVertical ? bestDelta : 0.0, snapVertical ? 0.0 : bestDelta);
+  activeSnapLines.push_back({snapVertical, leftGuide});
+  activeSnapLines.push_back({snapVertical, rightGuide});
+  const float gap = rightGuide - leftGuide;
+  activeSnapLabels.push_back(
+      {snapVertical,
+       snapVertical ? QPointF((leftGuide + rightGuide) * 0.5f,
+                              static_cast<float>(box.center().y()))
+                    : QPointF(static_cast<float>(box.center().x()),
+                              (leftGuide + rightGuide) * 0.5f),
+       QStringLiteral("%1 px")
+           .arg(static_cast<int>(std::lround(gap)))});
+ }
+ return snapped;
+}
+
+bool snapResizePointToGuides(QPointF& point, const TransformGizmo::HandleType handle,
+                             const SnapGuideSet& guides, const float threshold,
+                             std::vector<SnapLine>& activeSnapLines)
+{
+ bool snapped = false;
+ const bool snapX = handle == TransformGizmo::HandleType::Scale_Center ||
+                    handle == TransformGizmo::HandleType::Scale_L ||
+                    handle == TransformGizmo::HandleType::Scale_R ||
+                    handle == TransformGizmo::HandleType::Scale_TL ||
+                    handle == TransformGizmo::HandleType::Scale_TR ||
+                    handle == TransformGizmo::HandleType::Scale_BL ||
+                    handle == TransformGizmo::HandleType::Scale_BR;
+ const bool snapY = handle == TransformGizmo::HandleType::Scale_Center ||
+                    handle == TransformGizmo::HandleType::Scale_T ||
+                    handle == TransformGizmo::HandleType::Scale_B ||
+                    handle == TransformGizmo::HandleType::Scale_TL ||
+                    handle == TransformGizmo::HandleType::Scale_TR ||
+                    handle == TransformGizmo::HandleType::Scale_BL ||
+                    handle == TransformGizmo::HandleType::Scale_BR;
+
+ if (snapX) {
+  float snappedX = static_cast<float>(point.x());
+  snapped |= snapValueToGuides(snappedX, guides.vertical, threshold, true,
+                               activeSnapLines);
+  point.setX(snappedX);
+ }
+ if (snapY) {
+  float snappedY = static_cast<float>(point.y());
+  snapped |= snapValueToGuides(snappedY, guides.horizontal, threshold, false,
+                               activeSnapLines);
+  point.setY(snappedY);
+ }
+ return snapped;
 }
 
 float textEffectMargin(const ArtifactTextLayer& textLayer)
@@ -730,6 +986,93 @@ QPointF offsetPointAwayFromCenter(const QPointF& center, const QPointF& point, f
 QPointF offsetPointAwayFromCenter(const QPointF& center, const Detail::float2& point, float amount)
 {
  return offsetPointAwayFromCenter(center, QPointF(point.x, point.y), amount);
+}
+
+QPointF resizeBadgeAnchorForHandle(const QRectF& box, const TransformGizmo::HandleType handle)
+{
+ switch (handle) {
+ case TransformGizmo::HandleType::Scale_TL:
+ case TransformGizmo::HandleType::Scale_L:
+ case TransformGizmo::HandleType::Scale_BL:
+  return box.topLeft();
+ default:
+  return box.topRight();
+ }
+}
+
+void drawResizeBadge(ArtifactIRenderer* renderer,
+                     const QRectF& box,
+                     const QPointF& anchor,
+                     const std::vector<QString>& lines,
+                     const QColor& accentColor,
+                     float invZoom)
+{
+ if (!renderer || !box.isValid() || lines.empty()) {
+  return;
+ }
+
+ QFont badgeFont = QApplication::font();
+ badgeFont.setPointSizeF(std::max(8.0, static_cast<double>(badgeFont.pointSizeF())));
+ const QFontMetrics fm(badgeFont);
+ float textW = 0.0f;
+ for (const auto& line : lines) {
+  textW = std::max(textW, static_cast<float>(fm.horizontalAdvance(line.trimmed())));
+ }
+ textW += 20.0f;
+ const float lineH = static_cast<float>(fm.height());
+ const float lineGap = 2.0f;
+ const float textH = static_cast<float>(lines.size()) * lineH +
+                     std::max(0.0f, static_cast<float>(lines.size() - 1) * lineGap) +
+                     10.0f;
+ const float pad = std::max(8.0f, 8.0f * invZoom);
+ const float margin = std::max(8.0f, 10.0f * invZoom);
+
+ QPointF pos = anchor;
+ if (anchor.x() <= box.center().x()) {
+  pos += QPointF(-textW - pad, -textH - pad);
+ } else {
+  pos += QPointF(pad, -textH - pad);
+ }
+
+ auto clampToBounds = [&](const float minX, const float minY, const float maxX, const float maxY) {
+  pos.setX(std::clamp(static_cast<float>(pos.x()), minX, maxX));
+  pos.setY(std::clamp(static_cast<float>(pos.y()), minY, maxY));
+ };
+
+ auto comp = ArtifactProjectService::instance()->currentComposition().lock();
+ if (comp) {
+  const auto size = comp->settings().compositionSize();
+  const float compW = static_cast<float>(size.width() > 0 ? size.width() : 1920);
+  const float compH = static_cast<float>(size.height() > 0 ? size.height() : 1080);
+  const float maxX = std::max(margin, compW - margin - textW);
+  const float maxY = std::max(margin, compH - margin - textH);
+  clampToBounds(margin, margin, maxX, maxY);
+ }
+
+ const QRectF textRect(pos.x(), pos.y(), textW, textH);
+ renderer->drawOverlayPanel(static_cast<float>(textRect.left()),
+                            static_cast<float>(textRect.top()),
+                            static_cast<float>(textRect.width()),
+                            static_cast<float>(textRect.height()),
+                            FloatColor{0.04f, 0.05f, 0.07f, 0.86f},
+                            FloatColor{accentColor.redF(),
+                                       accentColor.greenF(),
+                                       accentColor.blueF(),
+                                       0.92f});
+
+ for (size_t i = 0; i < lines.size(); ++i) {
+  const QString line = lines[i].trimmed();
+  if (line.isEmpty()) {
+   continue;
+  }
+  const QRectF lineRect(textRect.left() + 10.0f,
+                        textRect.top() + 5.0f + static_cast<float>(i) * (lineH + lineGap),
+                        textRect.width() - 20.0f,
+                        lineH);
+  renderer->drawText(lineRect, line, badgeFont,
+                     FloatColor{0.97f, 0.98f, 1.0f, 1.0f},
+                     Qt::AlignLeft | Qt::AlignVCenter);
+ }
 }
 
 struct TransformSnapshot {
@@ -1370,7 +1713,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
    const auto size = comp->settings().compositionSize();
    const float w = static_cast<float>(size.width() > 0 ? size.width() : 1920);
    const float h = static_cast<float>(size.height() > 0 ? size.height() : 1080);
-  for (const auto& sl : activeSnapLines_) {
+ for (const auto& sl : activeSnapLines_) {
     const FloatColor snapColor{
         themeAccent.redF(),
         themeAccent.greenF(),
@@ -1382,7 +1725,52 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
      renderer->drawSolidLine({0.0f, sl.position}, {w, sl.position}, snapColor, std::max(1.0f, 1.5f * invZoom));
     }
    }
+   if (!activeSnapLabels_.empty()) {
+    QFont labelFont = QApplication::font();
+    labelFont.setPointSizeF(std::max(8.0, static_cast<double>(labelFont.pointSizeF())));
+    const QFontMetrics fm(labelFont);
+    for (const auto& label : activeSnapLabels_) {
+     const QString text = label.text.trimmed();
+     if (text.isEmpty()) {
+      continue;
+     }
+     const float textW = static_cast<float>(fm.horizontalAdvance(text) + 18);
+     const float textH = static_cast<float>(fm.height() + 10);
+     QPointF pos = label.position;
+     if (label.isVertical) {
+      pos.ry() -= 18.0f;
+     } else {
+      pos.rx() += 18.0f;
+     }
+     const QRectF textRect(pos.x() - textW * 0.5f, pos.y() - textH * 0.5f,
+                           textW, textH);
+     renderer->drawOverlayPanel(static_cast<float>(textRect.left()),
+                                 static_cast<float>(textRect.top()),
+                                 static_cast<float>(textRect.width()),
+                                 static_cast<float>(textRect.height()),
+                                 FloatColor{0.05f, 0.06f, 0.08f, 0.82f},
+                                 FloatColor{themeAccent.redF(),
+                                            themeAccent.greenF(),
+                                            themeAccent.blueF(),
+                                            0.84f});
+     renderer->drawText(textRect, text, labelFont,
+                        FloatColor{0.94f, 0.97f, 0.99f, 1.0f},
+                        Qt::AlignCenter);
+    }
+   }
   }
+ }
+
+ if (isDragging_ && resizeBadgeVisible_ &&
+     (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_Center)) {
+  ArtifactCore::ProfileScope _profResizeBadge(
+      "TransformGizmoResizeBadge", ArtifactCore::ProfileCategory::Render);
+  drawResizeBadge(renderer,
+                  resizeBadgeBox_.isValid() ? resizeBadgeBox_ : currentCanvasBoundingRect(),
+                  resizeBadgeAnchor_,
+                  resizeBadgeText_,
+                  themeAccent,
+                  invZoom);
  }
 }
 
@@ -1599,31 +1987,32 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
    dragStartTextBoxHeight_ = textLayer->boxHeight();
   }
   dragAccumulatedRotationDelta_ = 0.0f;
-  if (activeHandle_ == HandleType::Rotate) {
+  resizeBadgeVisible_ = false;
+  resizeBadgeLines_.clear();
+  resizeBadgeBox_ = QRectF();
+ if (activeHandle_ == HandleType::Rotate) {
    const QPointF pivotWorld = dragStartGlobalTransform_.map(dragStartLocalBounds_.center());
    dragStartPointerAngle_ = angleDegreesAround(pivotWorld, dragStartCanvasPos_);
   }
   // スナップラインをドラッグ開始時に1回だけ計算してキャッシュ（毎マウスムーブのO(n)コストを排除）
   cachedSnapVLines_.clear();
   cachedSnapHLines_.clear();
-  if (activeHandle_ == HandleType::Move) {
+  cachedSpacingVLines_.clear();
+  cachedSpacingHLines_.clear();
+  activeSnapLines_.clear();
+  activeSnapLabels_.clear();
+  if (activeHandle_ == HandleType::Move ||
+      activeHandle_ == HandleType::Scale_Center ||
+      (activeHandle_ >= HandleType::Scale_TL &&
+       activeHandle_ <= HandleType::Scale_R)) {
    auto comp = ArtifactProjectService::instance()->currentComposition().lock();
    if (comp) {
-    const auto sz = comp->settings().compositionSize();
-    cachedSnapVLines_ = {0.0f, sz.width() / 2.0f, (float)sz.width()};
-    cachedSnapHLines_ = {0.0f, sz.height() / 2.0f, (float)sz.height()};
-    for (const auto& other : comp->allLayer()) {
-     if (!other || !other->isVisible() || other->id() == layer_->id() || other->isLocked()) continue;
-     const QRectF bounds = other->transformedBoundingBox();
-     if (bounds.isValid() && bounds.width() > 0) {
-      cachedSnapVLines_.push_back(static_cast<float>(bounds.left()));
-      cachedSnapVLines_.push_back(static_cast<float>(bounds.center().x()));
-      cachedSnapVLines_.push_back(static_cast<float>(bounds.right()));
-      cachedSnapHLines_.push_back(static_cast<float>(bounds.top()));
-      cachedSnapHLines_.push_back(static_cast<float>(bounds.center().y()));
-      cachedSnapHLines_.push_back(static_cast<float>(bounds.bottom()));
-     }
-    }
+    const auto guides = buildSnapGuides(comp, layer_);
+    cachedSnapVLines_ = guides.vertical;
+    cachedSnapHLines_ = guides.horizontal;
+    const auto spacingGuides = buildSpacingGuides(comp, layer_);
+    cachedSpacingVLines_ = spacingGuides.vertical;
+    cachedSpacingHLines_ = spacingGuides.horizontal;
    }
   }
   return true;
@@ -1659,53 +2048,37 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  QPointF delta = currentCanvasPos - dragStartCanvasPos_;
  ArtifactCore::RationalTime time(layer_->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
  auto &t3d = layer_->transform3D();
+ activeSnapLines_.clear();
+ activeSnapLabels_.clear();
 
   if (activeHandle_ == HandleType::Move) {
    float newX = dragStartLayerPos_.x() + static_cast<float>(delta.x());
    float newY = dragStartLayerPos_.y() + static_cast<float>(delta.y());
-
-   activeSnapLines_.clear();
    const bool enableSnapping = !(QGuiApplication::keyboardModifiers() & Qt::AltModifier);
 
-   if (enableSnapping && !cachedSnapVLines_.empty()) {
+   if (enableSnapping &&
+       (!cachedSnapVLines_.empty() || !cachedSnapHLines_.empty())) {
     const float SNAP_DIST = 10.0f / (renderer->getZoom() > 0.001f ? renderer->getZoom() : 1.0f);
 
     QRectF currentBBox = dragStartBoundingBox_;
     currentBBox.translate(delta);
+    const float movedLeft = static_cast<float>(currentBBox.left());
+    const float movedTop = static_cast<float>(currentBBox.top());
+    snapBoundingBoxAxis(currentBBox, cachedSnapVLines_, SNAP_DIST, true,
+                        activeSnapLines_);
+    snapBoundingBoxAxis(currentBBox, cachedSnapHLines_, SNAP_DIST, false,
+                        activeSnapLines_);
+    newX += static_cast<float>(currentBBox.left() - movedLeft);
+    newY += static_cast<float>(currentBBox.top() - movedTop);
 
-    // Snap X (center horizontal axis) — キャッシュ済みラインを再利用
-    float centerV = currentBBox.center().x();
-    float bestVDist = SNAP_DIST;
-    float bestVLine = 0.0f;
-    bool snappedV = false;
-    for (float vl : cachedSnapVLines_) {
-     if (std::abs(centerV - vl) < bestVDist) {
-      bestVDist = std::abs(centerV - vl);
-      bestVLine = vl;
-      snappedV = true;
-     }
-    }
-    if (snappedV) {
-     newX += (bestVLine - centerV);
-     activeSnapLines_.push_back({true, bestVLine});
-    }
-
-    // Snap Y (center vertical axis)
-    float centerH = currentBBox.center().y();
-    float bestHDist = SNAP_DIST;
-    float bestHLine = 0.0f;
-    bool snappedH = false;
-    for (float hl : cachedSnapHLines_) {
-     if (std::abs(centerH - hl) < bestHDist) {
-      bestHDist = std::abs(centerH - hl);
-      bestHLine = hl;
-      snappedH = true;
-     }
-    }
-    if (snappedH) {
-     newY += (bestHLine - centerH);
-     activeSnapLines_.push_back({false, bestHLine});
-    }
+    const float alignedLeft = static_cast<float>(currentBBox.left());
+    const float alignedTop = static_cast<float>(currentBBox.top());
+    snapBoxBetweenGuides(currentBBox, cachedSpacingVLines_, SNAP_DIST, true,
+                         activeSnapLines_, activeSnapLabels_);
+    snapBoxBetweenGuides(currentBBox, cachedSpacingHLines_, SNAP_DIST, false,
+                         activeSnapLines_, activeSnapLabels_);
+    newX += static_cast<float>(currentBBox.left() - alignedLeft);
+    newY += static_cast<float>(currentBBox.top() - alignedTop);
    }
 
       t3d.setPosition(time, newX, newY);
@@ -1793,7 +2166,15 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    const QPointF pivotLocal = dragStartLocalBounds_.center();
    const QPointF pivotWorldStart = dragStartGlobalTransform_.map(pivotLocal);
    const QPointF startVec = dragStartCanvasPos_ - pivotWorldStart;
-   const QPointF currentVec = currentCanvasPos - pivotWorldStart;
+   QPointF snappedCanvasPos = currentCanvasPos;
+   const bool enableSnapping = !(QGuiApplication::keyboardModifiers() & Qt::AltModifier);
+   if (enableSnapping && (!cachedSnapVLines_.empty() || !cachedSnapHLines_.empty())) {
+    const float SNAP_DIST = 10.0f / (renderer->getZoom() > 0.001f ? renderer->getZoom() : 1.0f);
+    snapResizePointToGuides(snappedCanvasPos, activeHandle_,
+                            SnapGuideSet{cachedSnapVLines_, cachedSnapHLines_},
+                            SNAP_DIST, activeSnapLines_);
+   }
+   const QPointF currentVec = snappedCanvasPos - pivotWorldStart;
    const float startLen = std::max(1.0f, static_cast<float>(std::sqrt(startVec.x() * startVec.x() + startVec.y() * startVec.y())));
    const float currentLen = std::max(0.001f, static_cast<float>(std::sqrt(currentVec.x() * currentVec.x() + currentVec.y() * currentVec.y())));
    const float factor = std::clamp(currentLen / startLen, 0.05f, 100.0f);
@@ -1819,33 +2200,67 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
   } else if (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_R) {
   if (std::abs(delta.x()) < 0.01 && std::abs(delta.y()) < 0.01) {
    lastCanvasMousePos_ = currentCanvasPos;
+   resizeBadgeVisible_ = true;
+   resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(dragStartBoundingBox_, activeHandle_);
+   resizeBadgeBox_ = dragStartBoundingBox_;
+   resizeBadgeLines_.clear();
+   resizeBadgeLines_.push_back(QStringLiteral("%1 x %2 px")
+                                  .arg(QString::number(static_cast<int>(std::lround(dragStartBoundingBox_.width()))))
+                                  .arg(QString::number(static_cast<int>(std::lround(dragStartBoundingBox_.height())))));
    return true;
+  }
+  QPointF snappedCanvasPos = currentCanvasPos;
+  const bool enableSnapping = !(QGuiApplication::keyboardModifiers() & Qt::AltModifier);
+  if (enableSnapping && (!cachedSnapVLines_.empty() || !cachedSnapHLines_.empty())) {
+   const float SNAP_DIST = 10.0f / (renderer->getZoom() > 0.001f ? renderer->getZoom() : 1.0f);
+   snapResizePointToGuides(snappedCanvasPos, activeHandle_,
+                           SnapGuideSet{cachedSnapVLines_, cachedSnapHLines_},
+                           SNAP_DIST, activeSnapLines_);
   }
   const QRectF startBox = dragStartBoundingBox_;
   const QRectF localBounds = dragStartLocalBounds_;
   if (startBox.isValid() && startBox.width() > 0.0 && startBox.height() > 0.0 &&
       localBounds.isValid() && localBounds.width() > 0.0 && localBounds.height() > 0.0) {
+   const QPointF snappedDelta = snappedCanvasPos - dragStartCanvasPos_;
+   const QRectF targetBox = adjustedResizeBox(startBox, snappedDelta, activeHandle_);
+   double textMargin = 0.0;
+   resizeBadgeVisible_ = true;
+   resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(targetBox, activeHandle_);
+   resizeBadgeBox_ = targetBox;
+   resizeBadgeLines_.clear();
+   resizeBadgeLines_.push_back(QStringLiteral("%1 x %2 px")
+                                  .arg(QString::number(static_cast<int>(std::lround(targetBox.width()))))
+                                  .arg(QString::number(static_cast<int>(std::lround(targetBox.height())))));
    bool invertible = false;
    const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
    if (invertible) {
     if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_)) {
+     textMargin = std::max(0.0f, textEffectMargin(*textLayer));
+     if (textLayer->isBoxText()) {
+      const int boxWidth = static_cast<int>(std::lround(std::max(1.0, targetBox.width() - textMargin * 2.0)));
+      const int boxHeight = static_cast<int>(std::lround(std::max(1.0, targetBox.height() - textMargin * 2.0)));
+      resizeBadgeLines_.push_back(QStringLiteral("box %1 x %2 px")
+                                      .arg(QString::number(boxWidth))
+                                      .arg(QString::number(boxHeight)));
+     } else {
+      resizeBadgeLines_.push_back(QStringLiteral("point text"));
+     }
      QRectF targetLocalBox = adjustedResizeBox(
-         localBounds, inv.map(currentCanvasPos) - dragStartLocalMousePos_, activeHandle_);
-     const double margin = std::max(0.0f, textEffectMargin(*textLayer));
+         localBounds, inv.map(snappedCanvasPos) - dragStartLocalMousePos_, activeHandle_);
      const double minWidth =
-         handleAffectsWidth(activeHandle_) ? (margin * 2.0 + 1.0) : 1.0;
+         handleAffectsWidth(activeHandle_) ? (textMargin * 2.0 + 1.0) : 1.0;
      const double minHeight =
-         handleAffectsHeight(activeHandle_) ? (margin * 2.0 + 1.0) : 1.0;
+         handleAffectsHeight(activeHandle_) ? (textMargin * 2.0 + 1.0) : 1.0;
      targetLocalBox =
          enforceResizeMinSize(targetLocalBox, activeHandle_, minWidth, minHeight);
 
      if (handleAffectsWidth(activeHandle_)) {
       textLayer->setMaxWidth(
-          static_cast<float>(std::max(1.0, targetLocalBox.width() - margin * 2.0)));
+          static_cast<float>(std::max(1.0, targetLocalBox.width() - textMargin * 2.0)));
      }
      if (handleAffectsHeight(activeHandle_)) {
       textLayer->setBoxHeight(
-          static_cast<float>(std::max(1.0, targetLocalBox.height() - margin * 2.0)));
+          static_cast<float>(std::max(1.0, targetLocalBox.height() - textMargin * 2.0)));
      }
 
      const QPointF startFixedLocal = fixedPointForHandle(localBounds, activeHandle_);
@@ -1865,7 +2280,6 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                             LayerChangedEvent::ChangeType::Modified});
      }
     } else {
-     const QRectF targetBox = adjustedResizeBox(startBox, delta, activeHandle_);
      const double baseW = std::max(1.0, startBox.width());
      const double baseH = std::max(1.0, startBox.height());
      const float newScaleX = dragStartScaleX_ * static_cast<float>(targetBox.width() / baseW);
@@ -1942,7 +2356,11 @@ void TransformGizmo::handleMouseRelease() {
  isDragging_ = false;
  activeHandle_ = HandleType::None;
  dragAccumulatedRotationDelta_ = 0.0f;
+ resizeBadgeVisible_ = false;
+ resizeBadgeLines_.clear();
+ resizeBadgeBox_ = QRectF();
  activeSnapLines_.clear();
+ activeSnapLabels_.clear();
 }
 
 }

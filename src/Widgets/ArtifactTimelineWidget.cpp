@@ -5,6 +5,7 @@ module;
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QEvent>
+#include <QHash>
 #include <QLabel>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -167,6 +168,48 @@ QColor layerTimelineColor(const ArtifactAbstractLayerPtr& layer)
     return QColor(255, 110, 180);
   }
   return QColor(94, 124, 189);
+}
+
+struct CachedAudioWaveform {
+  QString signature;
+  QVector<float> peaks;
+  QVector<float> rms;
+};
+
+QString audioWaveformCacheKey(const CompositionID &compositionId,
+                              const LayerID &layerId) {
+  return QStringLiteral("%1|%2").arg(compositionId.toString(), layerId.toString());
+}
+
+QString audioWaveformSignatureForLayer(const ArtifactAudioLayer &layer) {
+  return QStringLiteral("%1|%2|%3|%4|%5|%6|%7")
+      .arg(layer.sourcePath().trimmed(),
+           QString::number(layer.inPoint().framePosition()),
+           QString::number(layer.outPoint().framePosition()),
+           QString::number(layer.startTime().framePosition()),
+           QString::number(layer.totalFrames()),
+           QString::number(layer.sampleRate()),
+           QString::number(layer.channelCount()));
+}
+
+std::optional<CachedAudioWaveform> buildAudioWaveformForLayer(
+    const ArtifactAudioLayer &layer,
+    const int waveformBins = 128) {
+  if (!layer.isLoaded() || layer.sourcePath().trimmed().isEmpty() ||
+      layer.sampleRate() <= 0 || layer.duration() <= 0.0) {
+    return std::nullopt;
+  }
+
+  const auto waveform = layer.buildWaveformData(std::clamp(waveformBins, 64, 256));
+  if (waveform.peaks.isEmpty()) {
+    return std::nullopt;
+  }
+
+  CachedAudioWaveform cached;
+  cached.signature = audioWaveformSignatureForLayer(layer);
+  cached.peaks = waveform.peaks;
+  cached.rms = waveform.rms;
+  return cached;
 }
 
 bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
@@ -1776,15 +1819,19 @@ public:
   bool pendingSelectionSyncForceRefresh_ = false;
   QTimer* curveEditorRefreshTimer_ = nullptr;
   QTimer* playbackVisualTimer_ = nullptr;
+  QTimer* audioPreviewStopTimer_ = nullptr;
   QElapsedTimer playbackVisualClock_;
+  int audioPreviewFrame_ = 0;
   double playbackVisualBaseFrame_ = 0.0;
   double playbackVisualRateFps_ = 30.0;
   double playbackVisualSpeed_ = 1.0;
   bool graphEditorVisible_ = false;
   bool graphEditorNeedsFit_ = false;
+  bool audioPreviewActive_ = false;
   // Last playhead x-position in track-view coordinates, used to dirty the
   // correct strip when the playhead moves.
   int lastPlayheadTrackX_ = -9999;
+  QHash<QString, CachedAudioWaveform> audioWaveformCache_;
 };
 
 ArtifactTimelineWidget::Impl::Impl() {}
@@ -2518,6 +2565,46 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         }
       });
   QObject::connect(
+      scrubBar, &ArtifactTimelineScrubBar::frameDragStarted, this, [this]() {
+        if (!impl_) {
+          return;
+        }
+        impl_->audioPreviewActive_ = false;
+        if (impl_->audioPreviewStopTimer_) {
+          impl_->audioPreviewStopTimer_->stop();
+        }
+      });
+  QObject::connect(
+      scrubBar, &ArtifactTimelineScrubBar::frameDragFinished, this, [this]() {
+        if (!impl_) {
+          return;
+        }
+        auto *playback = ArtifactPlaybackService::instance();
+        if (!playback || playback->isPlaying()) {
+          return;
+        }
+        const auto composition = safeCompositionLookup(impl_->compositionId_);
+        if (!composition || !composition->hasAudio() || !impl_->scrubBar_) {
+          return;
+        }
+
+        const int previewFrame = std::clamp(
+            impl_->scrubBar_->currentFrame().framePosition(), 0,
+            std::max(0, impl_->scrubBar_->totalFrames() - 1));
+        const int currentFrame = playback->currentFrame().framePosition();
+        if (previewFrame == currentFrame) {
+          return;
+        }
+
+        impl_->audioPreviewActive_ = true;
+        impl_->audioPreviewFrame_ = previewFrame;
+        playback->goToFrame(FramePosition(previewFrame));
+        playback->play();
+        if (impl_->audioPreviewStopTimer_) {
+          impl_->audioPreviewStopTimer_->start(350);
+        }
+      });
+  QObject::connect(
       painterTrackView, &ArtifactTimelineTrackPainterView::clipSelected, this,
       [this](const QString& clipId, const ArtifactCore::LayerID& layerId) {
         Q_UNUSED(clipId);
@@ -2597,6 +2684,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         if (impl_->scrubBar_) {
           impl_->scrubBar_->setRulerPixelsPerFrame(zoom);
           impl_->scrubBar_->setRulerHorizontalOffset(offset);
+        }
+        if (impl_->workArea_) {
+          impl_->workArea_->setRulerPixelsPerFrame(zoom);
+          impl_->workArea_->setRulerHorizontalOffset(offset);
         }
 
         if (impl_->navigator_) {
@@ -2846,6 +2937,21 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->playbackVisualTimer_ = new QTimer(this);
   impl_->playbackVisualTimer_->setTimerType(Qt::PreciseTimer);
   impl_->playbackVisualTimer_->setInterval(16);
+  impl_->audioPreviewStopTimer_ = new QTimer(this);
+  impl_->audioPreviewStopTimer_->setSingleShot(true);
+  QObject::connect(impl_->audioPreviewStopTimer_, &QTimer::timeout, this,
+                   [this]() {
+                     if (!impl_ || !impl_->audioPreviewActive_) {
+                       return;
+                     }
+                     impl_->audioPreviewActive_ = false;
+                     if (auto *playback = ArtifactPlaybackService::instance()) {
+                       if (playback->isPlaying()) {
+                         playback->pause();
+                       }
+                       playback->goToFrame(FramePosition(impl_->audioPreviewFrame_));
+                     }
+                   });
   const auto updateSmoothPlaybackPlayhead = [this]() {
     if (!impl_ || !impl_->painterTrackView_) {
       return;
@@ -3122,6 +3228,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               if (impl_->playbackVisualTimer_) {
                 impl_->playbackVisualTimer_->stop();
               }
+              if (impl_->audioPreviewStopTimer_) {
+                impl_->audioPreviewStopTimer_->stop();
+              }
+              impl_->audioPreviewActive_ = false;
               if (auto* playback = ArtifactPlaybackService::instance()) {
                 const double frame =
                     static_cast<double>(playback->currentFrame().framePosition());
@@ -3148,6 +3258,7 @@ ArtifactTimelineWidget::~ArtifactTimelineWidget() {
 
 void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
   impl_->compositionId_ = id;
+  impl_->audioWaveformCache_.clear();
   if (impl_->layerTimelinePanel_) {
     impl_->layerTimelinePanel_->setComposition(id);
   }
@@ -3251,6 +3362,7 @@ void ArtifactTimelineWidget::onLayerRemoved(const CompositionID &compId,
     return;
   qDebug() << "[ArtifactTimelineWidget::onLayerRemoved] Layer removed:"
            << lid.toString();
+  impl_->audioWaveformCache_.remove(audioWaveformCacheKey(compId, lid));
   refreshTracks();
   updateSelectionState();
 }
@@ -3332,8 +3444,25 @@ void ArtifactTimelineWidget::refreshTracks() {
       visual.durationFrame = clipDuration;
       visual.title = layer->layerName();
       visual.fillColor = layerTimelineColor(layer);
-      if (std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+      const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer);
+      if (audioLayer) {
         visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio;
+        const QString cacheKey = audioWaveformCacheKey(impl_->compositionId_, row.layerId);
+        const QString signature = audioWaveformSignatureForLayer(*audioLayer);
+        auto cachedIt = impl_->audioWaveformCache_.find(cacheKey);
+        if (cachedIt == impl_->audioWaveformCache_.end() ||
+            cachedIt->signature != signature) {
+          if (auto waveform = buildAudioWaveformForLayer(*audioLayer)) {
+            cachedIt = impl_->audioWaveformCache_.insert(cacheKey, std::move(*waveform));
+          } else {
+            impl_->audioWaveformCache_.remove(cacheKey);
+            cachedIt = impl_->audioWaveformCache_.end();
+          }
+        }
+        if (cachedIt != impl_->audioWaveformCache_.end()) {
+          visual.waveformPeaks = cachedIt->peaks;
+          visual.waveformRms = cachedIt->rms;
+        }
       } else if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
         visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video;
       }
@@ -3421,7 +3550,9 @@ void ArtifactTimelineWidget::wheelEvent(QWheelEvent *event) {
     impl_->painterTrackView_->setCurrentFrame(std::max(0.0, newPos));
     syncPlayheadOverlay();
     impl_->painterTrackView_->seekRequested(
-        std::clamp(newPos, 0.0, impl_->painterTrackView_->durationFrames()));
+        std::clamp(newPos, 0.0,
+                   std::max(0.0, impl_->painterTrackView_->durationFrames() -
+                                        1.0)));
   }
   event->accept();
 }
@@ -3800,6 +3931,9 @@ void ArtifactTimelineWidget::syncTimelineHorizontalOffset(const double offset)
   if (impl_->scrubBar_) {
     impl_->scrubBar_->setRulerHorizontalOffset(offset);
   }
+  if (impl_->workArea_) {
+    impl_->workArea_->setRulerHorizontalOffset(offset);
+  }
   syncPlayheadOverlay();
 }
 
@@ -3851,6 +3985,9 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
   impl_->painterTrackView_->setPixelsPerFrame(newZoom);
   if (impl_->scrubBar_) {
     impl_->scrubBar_->setRulerPixelsPerFrame(newZoom);
+  }
+  if (impl_->workArea_) {
+    impl_->workArea_->setRulerPixelsPerFrame(newZoom);
   }
 
   Q_EMIT zoomLevelChanged(newZoom * 100.0);

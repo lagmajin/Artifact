@@ -166,7 +166,10 @@ void LayerMask::applyToImage(int width, int height, void* imageMat,
     cv::split(img, channels);
     
     if (channels.size() >= 4) {
-        // channels[3] is the alpha channel
+        // Keep premultiplied RGBA consistent: scale RGB and alpha together.
+        cv::multiply(channels[0], alphaMask, channels[0]);
+        cv::multiply(channels[1], alphaMask, channels[1]);
+        cv::multiply(channels[2], alphaMask, channels[2]);
         cv::multiply(channels[3], alphaMask, channels[3]);
         cv::merge(channels, img);
     }

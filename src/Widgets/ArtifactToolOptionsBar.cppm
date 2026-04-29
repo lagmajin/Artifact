@@ -81,6 +81,7 @@ public:
   QComboBox *horizontalAlignCombo = nullptr;
   QComboBox *verticalAlignCombo = nullptr;
   QComboBox *wrapModeCombo = nullptr;
+  QComboBox *layoutModeCombo = nullptr;
 
   // BrushTool
   QSpinBox *brushSizeSpin = nullptr;
@@ -267,6 +268,12 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
                            static_cast<int>(ArtifactCore::TextWrapMode::ManualWrap));
     wrapModeCombo->setMinimumWidth(96);
     ly->addWidget(wrapModeCombo);
+
+    layoutModeCombo = makeCombo(frame);
+    layoutModeCombo->addItem(QStringLiteral("点文字"), 0);
+    layoutModeCombo->addItem(QStringLiteral("箱文字"), 1);
+    layoutModeCombo->setMinimumWidth(88);
+    ly->addWidget(layoutModeCombo);
 
     ly->addStretch();
     optionFrames[TextTool] = frame;
@@ -519,6 +526,12 @@ void ArtifactToolOptionsBar::Impl::connectSignals() {
               emitOpt("テキスト", "wrapMode", wrapModeCombo->itemData(i));
             });
 
+  if (layoutModeCombo)
+    connect(layoutModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            toolOptionsBar, [this, emitOpt](int i) {
+              emitOpt("テキスト", "layoutMode", layoutModeCombo->itemData(i));
+            });
+
   if (brushSizeSpin)
     connect(brushSizeSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             toolOptionsBar,
@@ -611,6 +624,7 @@ void ArtifactToolOptionsBar::setTextOptions(const QString &fontFamily,
                                             int horizontalAlignment,
                                             int verticalAlignment,
                                             int wrapMode,
+                                            int layoutMode,
                                             bool enabled) {
   if (!impl_) {
     return;
@@ -681,13 +695,23 @@ void ArtifactToolOptionsBar::setTextOptions(const QString &fontFamily,
     }
     impl_->wrapModeCombo->setEnabled(enabled);
   }
+
+  if (impl_->layoutModeCombo) {
+    QSignalBlocker blocker(*impl_->layoutModeCombo);
+    const int index = impl_->layoutModeCombo->findData(layoutMode);
+    if (index >= 0) {
+      impl_->layoutModeCombo->setCurrentIndex(index);
+    }
+    impl_->layoutModeCombo->setEnabled(enabled);
+  }
 }
 
 void ArtifactToolOptionsBar::clearTextOptions() {
   setTextOptions(QString(), 12, false, false, false,
                  static_cast<int>(ArtifactCore::TextHorizontalAlignment::Left),
                  static_cast<int>(ArtifactCore::TextVerticalAlignment::Top),
-                 static_cast<int>(ArtifactCore::TextWrapMode::WordWrap), false);
+                 static_cast<int>(ArtifactCore::TextWrapMode::WordWrap), 0,
+                 false);
 }
 
 void ArtifactToolOptionsBar::setShapeOptions(int shapeType, int width, int height,

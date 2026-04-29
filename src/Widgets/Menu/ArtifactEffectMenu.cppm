@@ -113,9 +113,19 @@ QIcon menuIcon(const QString& path)
   colorCorrectionMenu_->setIcon(menuIcon(QStringLiteral("Material/palette.svg")));
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/brightness_6.svg")), "輝度＆コントラスト");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/show_chart.svg")), "トーンカーブ");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/tint.svg")), "Tint");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/filter.svg")), "Photo Filter");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/gradient.svg")), "Gradient Ramp");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/palette.svg")), "Fill");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/hdr_on.svg")), "色相/彩度");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/color_lens.svg")), "Color Wheels");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/show_chart.svg")), "Curves");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/gradient.svg")), "Tritone");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/palette.svg")), "Colorama");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/color_lens.svg")), "Color Balance");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "Levels");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/merge_type.svg")), "Channel Mixer");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/colorize.svg")), "Selective Color");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "レベル補正");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/color_lens.svg")), "カラーバランス");
   colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/filter.svg")), "写真フィルター");
@@ -184,7 +194,7 @@ QIcon menuIcon(const QString& path)
   utilityMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "Levels (Individual Controls)");
   utilityMenu_->addAction(menuIcon(QStringLiteral("Material/crop_din.svg")), "Null Object");
   utilityMenu_->addAction(menuIcon(QStringLiteral("Material/blur_on.svg")), "Particle Playground");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/tint.svg")), "Tint");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/tint.svg")), "White Balance");
   utilityMenu_->addAction(menuIcon(QStringLiteral("Material/edit.svg")), "Write-on");
 
   // Matte submenu

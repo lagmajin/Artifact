@@ -32,6 +32,9 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
+#include <QString>
+#include <QJsonObject>
+#include <QtGlobal>
 module Artifact.Layers.Abstract._2D;
 
 
@@ -40,17 +43,20 @@ module Artifact.Layers.Abstract._2D;
 import Artifact.Layer.Abstract;
 import Animation.Transform2D;
 import ArtifactCore.Rig2D;
+import Utils.Id;
 
 
 namespace Artifact {
 
- class ArtifactAbstract2DLayer::Impl {
+class ArtifactAbstract2DLayer::Impl {
  private:
   ArtifactCore::Rig2D rig2D_;
 
  public:
   Impl();
   ~Impl();
+  ArtifactCore::Rig2D& rig2D() { return rig2D_; }
+  const ArtifactCore::Rig2D& rig2D() const { return rig2D_; }
  };
 
  ArtifactAbstract2DLayer::Impl::Impl()
@@ -75,12 +81,12 @@ namespace Artifact {
 
  ArtifactCore::Rig2D& ArtifactAbstract2DLayer::rig2D()
  {
-  return impl_->rig2D_;
+  return impl_->rig2D();
  }
 
  const ArtifactCore::Rig2D& ArtifactAbstract2DLayer::rig2D() const
  {
-  return impl_->rig2D_;
+  return impl_->rig2D();
  }
 
  ArtifactCore::Bone2D* ArtifactAbstract2DLayer::addRigBone(const QString& name,
@@ -88,25 +94,60 @@ namespace Artifact {
  {
   ArtifactCore::Bone2D* parent = nullptr;
   if (!parentName.isEmpty()) {
-   parent = impl_->rig2D_.findBone(parentName);
+   parent = impl_->rig2D().findBone(parentName);
   }
-  return impl_->rig2D_.addBone(name, parent);
+  return impl_->rig2D().addBone(name, parent);
+ }
+
+ ArtifactCore::Bone2D* ArtifactAbstract2DLayer::addRigBone(const QString& name,
+                                                           const ArtifactCore::Id& parentId)
+ {
+  return impl_->rig2D().addBone(name, parentId);
+ }
+
+ bool ArtifactAbstract2DLayer::removeRigBone(const ArtifactCore::Id& boneId)
+ {
+  return impl_->rig2D().removeBone(boneId);
+ }
+
+ bool ArtifactAbstract2DLayer::setRigBoneLocalTransform(
+     const ArtifactCore::Id& boneId,
+     const ArtifactCore::BoneTransform& transform)
+ {
+  return impl_->rig2D().setBoneLocalTransform(boneId, transform);
  }
 
  void ArtifactAbstract2DLayer::clearRigBones()
  {
-  impl_->rig2D_.clearBones();
+  impl_->rig2D().clearBones();
  }
 
  int ArtifactAbstract2DLayer::rigBoneCount() const
  {
-  return static_cast<int>(impl_->rig2D_.bones().size());
+  return static_cast<int>(impl_->rig2D().bones().size());
  }
 
  QString ArtifactAbstract2DLayer::rigRootBoneName() const
  {
-  const auto* rootBone = impl_->rig2D_.rootBone();
+  const auto* rootBone = impl_->rig2D().rootBone();
   return rootBone ? rootBone->name() : QString();
+ }
+
+ QJsonObject ArtifactAbstract2DLayer::toJson() const
+ {
+  QJsonObject obj = ArtifactAbstractLayer::toJson();
+  if (!impl_->rig2D().bones().isEmpty()) {
+   obj["rig2D"] = impl_->rig2D().toJson();
+  }
+  return obj;
+ }
+
+ void ArtifactAbstract2DLayer::fromJsonProperties(const QJsonObject& obj)
+ {
+  ArtifactAbstractLayer::fromJsonProperties(obj);
+  if (obj.contains("rig2D") && obj.value("rig2D").isObject()) {
+   impl_->rig2D() = ArtifactCore::Rig2D::fromJson(obj.value("rig2D").toObject());
+  }
  }
 
  std::vector<ArtifactCore::PropertyGroup> ArtifactAbstract2DLayer::getLayerPropertyGroups() const

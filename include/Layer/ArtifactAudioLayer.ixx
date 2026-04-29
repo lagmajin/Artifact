@@ -37,6 +37,7 @@ export module Artifact.Layer.Audio;
 
 import Audio.Volume;
 import Audio.Segment;
+import Artifact.Audio.Waveform;
 import Artifact.Layer.Abstract;
 
 export namespace Artifact
@@ -66,6 +67,7 @@ export namespace Artifact
   int sampleRate() const;
   int channelCount() const;
   qint64 totalFrames() const;
+  WaveformData buildWaveformData(int displayWidth) const;
 
   // Cache information
   size_t getCacheSize() const;

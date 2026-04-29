@@ -447,8 +447,15 @@ QImage applyMatteStackToSurface(const QImage& surface,
     for (int x = 0; x < w; ++x) {
       const size_t idx = static_cast<size_t>(y) * w + x;
       QRgb pixel = result.pixel(x, y);
-      int a = static_cast<int>(qAlpha(pixel) * combinedMask[idx]);
-      result.setPixel(x, y, qRgba(qRed(pixel), qGreen(pixel), qBlue(pixel), a));
+      const float mask = combinedMask[idx];
+      int a = static_cast<int>(qAlpha(pixel) * mask);
+      const int r = static_cast<int>(qRed(pixel) * mask);
+      const int g = static_cast<int>(qGreen(pixel) * mask);
+      const int b = static_cast<int>(qBlue(pixel) * mask);
+      result.setPixel(x, y, qRgba(std::clamp(r, 0, 255),
+                                  std::clamp(g, 0, 255),
+                                  std::clamp(b, 0, 255),
+                                  std::clamp(a, 0, 255)));
     }
   }
   return result;

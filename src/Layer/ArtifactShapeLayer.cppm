@@ -859,7 +859,7 @@ if (propertyPath == "shape.type") {
   setStrokeAlign(static_cast<StrokeAlign>(value.toInt()));
   return true;
  }
- return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+ return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 // ============================================================
@@ -867,7 +867,7 @@ if (propertyPath == "shape.type") {
 // ============================================================
 
 QJsonObject ArtifactShapeLayer::toJson() const {
- QJsonObject obj = ArtifactAbstractLayer::toJson();
+ QJsonObject obj = ArtifactAbstract2DLayer::toJson();
  obj["layerType"] = QStringLiteral("Shape");
   obj["shapeType"] = static_cast<int>(impl_->shapeType_);
   obj["shapeWidth"] = impl_->width_;
@@ -916,6 +916,7 @@ QJsonObject ArtifactShapeLayer::toJson() const {
 
 std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject& obj) {
  auto layer = std::make_shared<ArtifactShapeLayer>();
+ layer->ArtifactAbstract2DLayer::fromJsonProperties(obj);
  layer->setShapeType(static_cast<Artifact::ShapeType>(obj["shapeType"].toInt()));
  layer->setSize(obj["shapeWidth"].toInt(200), obj["shapeHeight"].toInt(200));
  layer->setFillColor(FloatColor(

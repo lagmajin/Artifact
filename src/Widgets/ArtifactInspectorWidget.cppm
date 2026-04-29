@@ -93,6 +93,16 @@ import ExposureEffect;
 import HueAndSaturation;
 import ColorWheelsEffect;
 import CurvesEffect;
+import Artifact.Effect.WhiteBalance;
+import PhotoFilterEffect;
+import GradientRampEffect;
+import FillEffect;
+import TritoneEffect;
+import ColoramaEffect;
+import ColorBalanceEffect;
+import LevelsEffect;
+import ChannelMixerEffect;
+import SelectiveColorEffect;
 import Artifact.Effect.Glow;
 import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Keying.ChromaKey;
@@ -1509,6 +1519,20 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
     effectMenu.addAction("Exposure", [addAndRefresh]() {
       addAndRefresh(std::make_shared<ExposureEffect>());
     });
+    effectMenu.addAction("Tint", [addAndRefresh]() {
+      auto effect = std::make_shared<WhiteBalanceEffect>();
+      effect->setDisplayName(ArtifactCore::UniString("Tint"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addAction("Photo Filter", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<PhotoFilterEffect>());
+    });
+    effectMenu.addAction("Gradient Ramp", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<GradientRampEffect>());
+    });
+    effectMenu.addAction("Fill", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<FillEffect>());
+    });
     effectMenu.addAction("Hue / Saturation", [addAndRefresh]() {
       addAndRefresh(std::make_shared<HueAndSaturation>());
     });
@@ -1517,6 +1541,24 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
     });
     effectMenu.addAction("Curves", [addAndRefresh]() {
       addAndRefresh(std::make_shared<CurvesEffect>());
+    });
+    effectMenu.addAction("Tritone", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<TritoneEffect>());
+    });
+    effectMenu.addAction("Colorama", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<ColoramaEffect>());
+    });
+    effectMenu.addAction("Color Balance", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<ColorBalanceEffect>());
+    });
+    effectMenu.addAction("Levels", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<LevelsEffect>());
+    });
+    effectMenu.addAction("Channel Mixer", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<ChannelMixerEffect>());
+    });
+    effectMenu.addAction("Selective Color", [addAndRefresh]() {
+      addAndRefresh(std::make_shared<SelectiveColorEffect>());
     });
     effectMenu.addSeparator();
     effectMenu.addAction("Chroma Key", [addAndRefresh]() {

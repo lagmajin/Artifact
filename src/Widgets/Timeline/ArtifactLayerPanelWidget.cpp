@@ -2071,6 +2071,61 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     };
 
+    auto triggerRenameComposition = [this, layer]() {
+      if (!layer) {
+        return;
+      }
+      auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get());
+      if (!compLayer) {
+        return;
+      }
+      const CompositionID sourceCompId = compLayer->sourceCompositionId();
+      if (sourceCompId.isNil()) {
+        return;
+      }
+      auto *svc = ArtifactProjectService::instance();
+      if (!svc) {
+        return;
+      }
+      auto found = svc->findComposition(sourceCompId);
+      auto comp = found.ptr.lock();
+      const QString currentName = comp
+                                      ? comp->settings().compositionName().toQString()
+                                      : layer->layerName();
+      bool ok = false;
+      const QString newName = QInputDialog::getText(
+          this, QStringLiteral("Rename Composition"),
+          QStringLiteral("New composition name:"),
+          QLineEdit::Normal, currentName, &ok);
+      if (!ok || newName.trimmed().isEmpty()) {
+        return;
+      }
+      if (svc->renameComposition(sourceCompId, UniString(newName))) {
+        updateLayout();
+      }
+    };
+
+    auto triggerDuplicateComposition = [this, layer]() {
+      if (!layer) {
+        return;
+      }
+      auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get());
+      if (!compLayer) {
+        return;
+      }
+      const CompositionID sourceCompId = compLayer->sourceCompositionId();
+      if (sourceCompId.isNil()) {
+        return;
+      }
+      auto *svc = ArtifactProjectService::instance();
+      if (!svc) {
+        return;
+      }
+      if (svc->duplicateComposition(sourceCompId)) {
+        updateLayout();
+      }
+    };
+
     // Variant Context Menu
     const int nameStartX = colW * kLayerPropertyColumnCount;
     const int nameX = nameStartX + row.depth * 14;
@@ -2104,10 +2159,23 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
 
     QMenu menu(this);
-    if (dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
-      menu.addAction("Open Composition", [triggerOpenComposition]() {
-        triggerOpenComposition();
-      });
+    if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
+      QMenu *precompMenu = menu.addMenu(QStringLiteral("プリコンポーズ"));
+      precompMenu->addAction(QStringLiteral("コンポジションを開く"),
+                             [triggerOpenComposition]() {
+                               triggerOpenComposition();
+                             });
+      precompMenu->addAction(QStringLiteral("コンポジション名を変更..."),
+                             [triggerRenameComposition]() {
+                               triggerRenameComposition();
+                             });
+      precompMenu->addAction(QStringLiteral("コンポジションを複製"),
+                             [triggerDuplicateComposition]() {
+                               triggerDuplicateComposition();
+                             });
+      if (compLayer->sourceCompositionId().isNil()) {
+        precompMenu->setEnabled(false);
+      }
       menu.addSeparator();
     }
     const bool isImageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr;
@@ -2792,22 +2860,35 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.setPen(text);
       p.drawText(textX + 4, y, labelWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
     } else {
+     const bool isPrecompLayer = dynamic_cast<ArtifactCompositionLayer *>(l.get()) != nullptr;
      const auto variants = l->getVariants();
      const int activeIdx = static_cast<int>(l->getActiveVariantIndex());
      const int variantAreaW = variants.empty() ? 0 : (variants.size() * 22 + 20);
      const int textWidth = std::max(20, width() - textX - 8 - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW);
      const QString layerName = l->layerName();
      const QString layerAux = row.auxiliaryText.trimmed();
+     const int layerTextX = textX + 4 + (isPrecompLayer ? 18 : 0);
+     if (isPrecompLayer) {
+      const QRect iconRect(textX + 4, y + 7, 12, 12);
+      const QColor iconFill = mixColor(background, accent, 0.34);
+      const QColor iconStroke = layerSelected ? accent.darker(180) : border;
+      p.setPen(QPen(iconStroke, 1.2));
+      p.setBrush(iconFill);
+      p.drawRoundedRect(iconRect, 2, 2);
+      p.setBrush(Qt::NoBrush);
+      p.setPen(QPen(iconStroke.darker(120), 1.0));
+      p.drawRect(iconRect.adjusted(3, 3, -3, -3));
+     }
      if (!layerAux.isEmpty()) {
       const QFontMetrics fm(p.font());
       const int badgeTextWidth = fm.horizontalAdvance(layerAux) + 16;
       const int badgeWidth = std::min(120, std::max(52, badgeTextWidth));
-      const int badgeX = std::max(textX + 4, width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - badgeWidth - 10);
+      const int badgeX = std::max(layerTextX, width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - badgeWidth - 10);
       const QRect badgeRect(badgeX, y + 5, badgeWidth, rowH - 10);
-      const int nameWidth = std::max(20, badgeRect.left() - (textX + 8));
+      const int nameWidth = std::max(20, badgeRect.left() - (layerTextX + 4));
       const QString elidedName = fm.elidedText(layerName, Qt::ElideRight, nameWidth);
       p.setPen(text);
-      p.drawText(textX + 4, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, elidedName);
+      p.drawText(layerTextX, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, elidedName);
       p.setPen(layerSelected ? accent.darker(180) : border);
       p.setBrush(toneBadgeFill(row.auxiliaryTone, background, surface, accent));
       p.drawRoundedRect(badgeRect, 4, 4);
@@ -2816,7 +2897,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                  fm.elidedText(layerAux, Qt::ElideRight, badgeRect.width() - 16));
      } else {
       p.setPen(text);
-      p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, layerName);
+      p.drawText(layerTextX, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, layerName);
      }
 
      if (!variants.empty()) {

@@ -1883,7 +1883,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     }
     if (layer && impl_->deleteHoveredMaskVertex(layer)) {
      impl_->commitMaskEditTransaction();
-     impl_->renderOneFrame();
+     impl_->requestRender();
      event->accept();
      return;
     }
@@ -1904,7 +1904,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     }
     if (handled) {
      impl_->commitShapeEditTransaction();
-     impl_->renderOneFrame();
+     impl_->requestRender();
      event->accept();
      return;
     }
@@ -1969,7 +1969,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
                       impl_->renderer_.get())) {
     setCursor(impl_->transformGizmo_->cursorShapeForViewportPos(
         {event->position().x(), event->position().y()}, impl_->renderer_.get()));
-    impl_->renderOneFrame();
+    impl_->requestRender();
     event->accept();
     return;
    }
@@ -2017,7 +2017,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       shape->setCustomPathVertices(verts, shape->customPathClosed());
       impl_->markPathEditDirty();
       impl_->hoveredPathVertexIndex_ = static_cast<int>(verts.size()) - 1;
-      impl_->renderOneFrame();
+      impl_->requestRender();
       event->accept();
       return;
      }
@@ -2038,7 +2038,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       impl_->hoveredShapeSegmentIndex_ = std::max(0, insertIndex - 1);
       if (impl_->insertPointOnHoveredShapeSegment(layer, canvasPoint)) {
        setCursor(Qt::ClosedHandCursor);
-       impl_->renderOneFrame();
+       impl_->requestRender();
        event->accept();
        return;
       }
@@ -2072,7 +2072,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      impl_->markShapeEditDirty();
      impl_->hoveredShapeVertexIndex_ = static_cast<int>(points.size()) - 1;
      impl_->hoveredShapeSegmentIndex_ = static_cast<int>(points.size()) - 2;
-     impl_->renderOneFrame();
+     impl_->requestRender();
      event->accept();
      return;
     }
@@ -2120,13 +2120,13 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       if (vertexIndex == 0 && !path.isClosed() && path.vertexCount() > 2) {
        impl_->beginMaskEditTransaction(layer);
        path.setClosed(true);
-       mask.setMaskPath(pathIndex, path);
-       layer->setMask(maskIndex, mask);
-       impl_->markMaskEditDirty();
-       impl_->renderOneFrame();
-       event->accept();
-       return;
-      }
+      mask.setMaskPath(pathIndex, path);
+      layer->setMask(maskIndex, mask);
+      impl_->markMaskEditDirty();
+      impl_->requestRender();
+      event->accept();
+      return;
+     }
       impl_->beginMaskEditTransaction(layer);
       impl_->isDraggingMaskVertex_ = true;
       impl_->draggingMaskIndex_ = maskIndex;
@@ -2249,7 +2249,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
   }
   if (impl_->transformGizmo_ && event->button() == Qt::LeftButton && impl_->transformGizmo_->isDragging()) {
    impl_->transformGizmo_->handleMouseRelease();
-   impl_->renderOneFrame();
+   impl_->requestRender();
    unsetCursor();
    event->accept();
    return;
@@ -2278,7 +2278,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       mask.setMaskPath(pathIndex, path);
       layer->setMask(maskIndex, mask);
       impl_->markMaskEditDirty();
-      impl_->renderOneFrame();
+      impl_->requestRender();
       event->accept();
       return;
      }
@@ -2308,7 +2308,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      const float dx = static_cast<float>(event->position().x()) - impl_->cornerRadiusDragAnchorX_;
      const float newCr = std::clamp(impl_->cornerRadiusDragStart_ + dx * 0.5f, 0.0f, impl_->cornerRadiusDragMaxCr_);
      shape->setCornerRadius(newCr);
-     impl_->renderOneFrame();
+     impl_->requestRender();
      event->accept();
      return;
     }
@@ -2325,7 +2325,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
        const float dist = static_cast<float>(QLineF(center, localPos).length());
       shape->setStarInnerRadius(outerR > 0.001f ? std::clamp(dist / outerR, 0.05f, 0.99f) : impl_->starInnerRadiusDragStart_);
      }
-     impl_->renderOneFrame();
+     impl_->requestRender();
      event->accept();
      return;
     }
@@ -2343,7 +2343,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     impl_->hoveredCornerRadius_ = impl_->hitTestCornerRadiusHandle(layer, canvasPoint);
     impl_->hoveredStarInnerRadius_ = impl_->hitTestStarInnerRadiusHandle(layer, canvasPoint);
     if (prevCr != impl_->hoveredCornerRadius_ || prevStar != impl_->hoveredStarInnerRadius_) {
-     impl_->renderOneFrame();
+     impl_->requestRender();
     }
    }
   }
@@ -2356,7 +2356,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     if (impl_->transformGizmo_->isDragging()) {
      if (impl_->transformGizmo_->handleMouseMove(
              {event->position().x(), event->position().y()}, impl_->renderer_.get())) {
-      impl_->renderOneFrame();
+      impl_->requestRender();
       setCursor(impl_->transformGizmo_->cursorShapeForViewportPos(
           {event->position().x(), event->position().y()}, impl_->renderer_.get()));
       event->accept();
@@ -2397,7 +2397,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       mask.setMaskPath(impl_->draggingPathIndex_, path);
       layer->setMask(impl_->draggingMaskIndex_, mask);
       impl_->markMaskEditDirty();
-      impl_->renderOneFrame();
+      impl_->requestRender();
       event->accept();
       return;
      }
@@ -2415,7 +2415,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       mask.setMaskPath(impl_->draggingPathIndex_, path);
       layer->setMask(impl_->draggingMaskIndex_, mask);
       impl_->markMaskEditDirty();
-      impl_->renderOneFrame();
+      impl_->requestRender();
       event->accept();
       return;
      }
@@ -2425,11 +2425,11 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      const int beforeVertex = impl_->hoveredVertexIndex_;
      const int beforeHandleType = impl_->hoveredMaskHandleType_;
       impl_->updateMaskHover(layer, canvasPoint);
-      if (beforeMask != impl_->hoveredMaskIndex_ ||
+     if (beforeMask != impl_->hoveredMaskIndex_ ||
          beforePath != impl_->hoveredPathIndex_ ||
          beforeVertex != impl_->hoveredVertexIndex_ ||
          beforeHandleType != impl_->hoveredMaskHandleType_) {
-      impl_->renderOneFrame();
+      impl_->requestRender();
      }
      if (impl_->hoveredVertexIndex_ >= 0) {
       setCursor(Qt::CrossCursor);
@@ -2457,10 +2457,10 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
        auto verts = shape->customPathVertices();
        const int idx = impl_->draggingPathVertexIndex_;
        if (idx < static_cast<int>(verts.size())) {
-        verts[idx].pos = inv.map(canvasPoint);
-        shape->setCustomPathVertices(verts, shape->customPathClosed());
-        impl_->markPathEditDirty();
-        impl_->renderOneFrame();
+       verts[idx].pos = inv.map(canvasPoint);
+       shape->setCustomPathVertices(verts, shape->customPathClosed());
+       impl_->markPathEditDirty();
+        impl_->requestRender();
         event->accept();
         return;
        }
@@ -2485,7 +2485,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
         }
         shape->setCustomPathVertices(verts, shape->customPathClosed());
         impl_->markPathEditDirty();
-        impl_->renderOneFrame();
+        impl_->requestRender();
         event->accept();
         return;
        }
@@ -2507,7 +2507,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
       impl_->hoveredPathTangentIndex_ = -1;
      }
      if (prevVi != impl_->hoveredPathVertexIndex_ || prevTi != impl_->hoveredPathTangentIndex_) {
-      impl_->renderOneFrame();
+      impl_->requestRender();
      }
      return;
     }
@@ -2526,7 +2526,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
        impl_->beginShapeEditTransaction(layer);
        shape->setCustomPolygonPoints(points, shape->customPolygonClosed());
        impl_->markShapeEditDirty();
-       impl_->renderOneFrame();
+       impl_->requestRender();
        event->accept();
        return;
       }
@@ -2537,7 +2537,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      impl_->updateShapeHover(layer, canvasPoint);
      if (beforeVertex != impl_->hoveredShapeVertexIndex_ ||
          beforeSegment != impl_->hoveredShapeSegmentIndex_) {
-      impl_->renderOneFrame();
+      impl_->requestRender();
      }
      if (impl_->hoveredShapeVertexIndex_ >= 0 ||
          impl_->hoveredShapeSegmentIndex_ >= 0) {
@@ -2646,7 +2646,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     }
     if (handled) {
      impl_->commitShapeEditTransaction();
-     impl_->renderOneFrame();
+     impl_->requestRender();
      event->accept();
      return;
     }
@@ -2692,8 +2692,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
 
  impl_->refreshBackgroundCache();
  if (impl_->initialized_ && impl_->renderer_) {
-  std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
-  impl_->renderOneFrame();
+  impl_->requestRender();
  }
  event->accept();
 }
@@ -2806,6 +2805,7 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
       impl_->syncTransformGizmo(layer);
       impl_->renderer_->fitToViewport();
       impl_->zoomLevel_ = impl_->renderer_->getZoom();
+      impl_->requestRender();
       return;
      }
    }
@@ -2814,14 +2814,18 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
    impl_->transformGizmo_->setLayer(nullptr);
   }
   impl_->renderer_->resetView();
+  impl_->requestRender();
  }
 }
 
  void ArtifactLayerEditorWidgetV2::resetView()
  {
-  impl_->zoomLevel_ = 1.0f;
-  if (impl_->renderer_) impl_->renderer_->resetView();
- }
+ impl_->zoomLevel_ = 1.0f;
+  if (impl_->renderer_) {
+   impl_->renderer_->resetView();
+   impl_->requestRender();
+  }
+}
  
   void ArtifactLayerEditorWidgetV2::fitToViewport()
   {
@@ -2888,8 +2892,7 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
    }
   }
   if (impl_->initialized_ && impl_->renderer_) {
-   std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
-   impl_->renderOneFrame();
+   impl_->requestRender();
   }
  }
 
@@ -2900,8 +2903,7 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
    impl_->syncTransformGizmo(impl_->targetLayer());
   }
   if (impl_->initialized_ && impl_->renderer_) {
-   std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
-   impl_->renderOneFrame();
+   impl_->requestRender();
   }
  }
 

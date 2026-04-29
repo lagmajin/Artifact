@@ -37,6 +37,8 @@ export namespace Artifact
   void setEnd(float e);
   void setCurrentFrame(float frame);
   void setTotalFrames(float frames);
+  void setRulerPixelsPerFrame(double ppf);
+  void setRulerHorizontalOffset(double offset);
 
  public:
    void startChanged(float value) W_SIGNAL(startChanged, value)

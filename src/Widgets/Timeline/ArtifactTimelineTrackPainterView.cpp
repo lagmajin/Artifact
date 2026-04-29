@@ -150,7 +150,9 @@ bool sameTrackClipVisual(
          std::abs(lhs.durationFrame - rhs.durationFrame) < 0.0001 &&
          lhs.title == rhs.title && lhs.fillColor == rhs.fillColor &&
          lhs.kind == rhs.kind &&
-         lhs.selected == rhs.selected;
+         lhs.selected == rhs.selected &&
+         lhs.waveformPeaks == rhs.waveformPeaks &&
+         lhs.waveformRms == rhs.waveformRms;
 }
 
 bool sameKeyframeMarkerVisual(
@@ -839,7 +841,8 @@ double ArtifactTimelineTrackPainterView::durationFrames() const {
 }
 
 void ArtifactTimelineTrackPainterView::setCurrentFrame(const double frame) {
-  const double sanitized = std::clamp(frame, 0.0, impl_->durationFrames_);
+  const double sanitized =
+      std::clamp(frame, 0.0, std::max(0.0, impl_->durationFrames_ - 1.0));
   if (std::abs(impl_->currentFrame_ - sanitized) < 0.0001) {
     return;
   }
@@ -1297,22 +1300,46 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                                               : theme.text.lighter(110);
       QColor waveformSoft = waveformColor;
       waveformSoft.setAlpha(90);
-      const int barCount = std::max(8, static_cast<int>(clipRect.width() / 10.0));
       const qreal innerTop = clipRect.top() + 5.0;
       const qreal innerBottom = clipRect.bottom() - 5.0;
       const qreal centerY = (innerTop + innerBottom) * 0.5;
       const qreal halfSpan = std::max<qreal>(2.0, (innerBottom - innerTop) * 0.42);
-      const quint32 hashSeed = qHash(clip.clipId) ^ qHash(clip.title) ^
-                               static_cast<quint32>(clip.trackIndex * 131);
-      for (int bar = 0; bar < barCount; ++bar) {
-        const qreal t = barCount > 1 ? static_cast<qreal>(bar) / static_cast<qreal>(barCount - 1) : 0.0;
-        const qreal x = clipRect.left() + 4.0 + t * (clipRect.width() - 8.0);
-        const quint32 sample = (hashSeed >> (bar % 16)) ^ static_cast<quint32>(bar * 2654435761u);
-        const qreal amplitude = 0.25 + 0.75 * (static_cast<qreal>(sample & 0xFFu) / 255.0);
-        const qreal top = centerY - halfSpan * amplitude;
-        const qreal bottom = centerY + halfSpan * amplitude;
-        p.setPen(QPen((bar % 3 == 0) ? waveformColor : waveformSoft, 1.0));
-        p.drawLine(QPointF(x, top), QPointF(x, bottom));
+      if (!clip.waveformPeaks.isEmpty()) {
+        const int binCount = clip.waveformPeaks.size();
+        const bool hasRms = clip.waveformRms.size() == binCount;
+        const qreal innerLeft = clipRect.left() + 4.0;
+        const qreal innerRight = clipRect.right() - 4.0;
+        const qreal span = std::max<qreal>(1.0, innerRight - innerLeft);
+        for (int bar = 0; bar < binCount; ++bar) {
+          const qreal t = binCount > 1 ? static_cast<qreal>(bar) / static_cast<qreal>(binCount - 1) : 0.0;
+          const qreal x = innerLeft + t * span;
+          const qreal peak = std::clamp(static_cast<qreal>(clip.waveformPeaks[bar]), 0.0, 1.0);
+          const qreal top = centerY - halfSpan * peak;
+          const qreal bottom = centerY + halfSpan * peak;
+          if (hasRms) {
+            const qreal rms = std::clamp(static_cast<qreal>(clip.waveformRms[bar]), 0.0, 1.0);
+            const qreal rmsTop = centerY - halfSpan * rms;
+            const qreal rmsBottom = centerY + halfSpan * rms;
+            p.setPen(QPen(waveformSoft, 1.0));
+            p.drawLine(QPointF(x, rmsTop), QPointF(x, rmsBottom));
+          }
+          p.setPen(QPen((bar % 3 == 0) ? waveformColor : waveformSoft, 1.0));
+          p.drawLine(QPointF(x, top), QPointF(x, bottom));
+        }
+      } else {
+        const int barCount = std::max(8, static_cast<int>(clipRect.width() / 10.0));
+        const quint32 hashSeed = qHash(clip.clipId) ^ qHash(clip.title) ^
+                                 static_cast<quint32>(clip.trackIndex * 131);
+        for (int bar = 0; bar < barCount; ++bar) {
+          const qreal t = barCount > 1 ? static_cast<qreal>(bar) / static_cast<qreal>(barCount - 1) : 0.0;
+          const qreal x = clipRect.left() + 4.0 + t * (clipRect.width() - 8.0);
+          const quint32 sample = (hashSeed >> (bar % 16)) ^ static_cast<quint32>(bar * 2654435761u);
+          const qreal amplitude = 0.25 + 0.75 * (static_cast<qreal>(sample & 0xFFu) / 255.0);
+          const qreal top = centerY - halfSpan * amplitude;
+          const qreal bottom = centerY + halfSpan * amplitude;
+          p.setPen(QPen((bar % 3 == 0) ? waveformColor : waveformSoft, 1.0));
+          p.drawLine(QPointF(x, top), QPointF(x, bottom));
+        }
       }
     }
   }
@@ -1412,7 +1439,8 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
     if (markerHit.markerIndex >= 0) {
       const auto &marker = impl_->keyframeMarkers_[markerHit.markerIndex];
       const double frame =
-          std::clamp(marker.frame, 0.0, impl_->durationFrames_);
+          std::clamp(marker.frame, 0.0,
+                     std::max(0.0, impl_->durationFrames_ - 1.0));
       const QString key =
           keyframeSelectionKey(marker.layerId, marker.propertyPath,
                                static_cast<qint64>(std::llround(marker.frame)));
@@ -1472,7 +1500,8 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
     const double clickedFrame = (mouseX + impl_->horizontalOffset_) /
                                 std::max(0.001, impl_->pixelsPerFrame_);
     const double clamped =
-        std::clamp(clickedFrame, 0.0, impl_->durationFrames_);
+        std::clamp(clickedFrame, 0.0,
+                   std::max(0.0, impl_->durationFrames_ - 1.0));
     seekRequested(clamped);
     setCurrentFrame(clamped);
     event->accept();
@@ -1504,7 +1533,8 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
           (event->position().x() - impl_->dragMarkerStartPoint_.x()) /
           std::max(0.001, impl_->pixelsPerFrame_);
       const double newFrame = std::clamp(
-          impl_->dragMarkerOrigFrame_ + deltaFrames, 0.0, impl_->durationFrames_);
+          impl_->dragMarkerOrigFrame_ + deltaFrames, 0.0,
+          std::max(0.0, impl_->durationFrames_ - 1.0));
       const qreal oldX = impl_->dragMarkerOrigFrame_ * impl_->pixelsPerFrame_ -
                          impl_->horizontalOffset_;
       const qreal newX = newFrame * impl_->pixelsPerFrame_ - impl_->horizontalOffset_;
@@ -1698,7 +1728,8 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
         (event->position().x() - impl_->dragMarkerStartPoint_.x()) /
         std::max(0.001, impl_->pixelsPerFrame_);
     const double newFrame = std::clamp(
-        impl_->dragMarkerOrigFrame_ + deltaFrames, 0.0, impl_->durationFrames_);
+        impl_->dragMarkerOrigFrame_ + deltaFrames, 0.0,
+        std::max(0.0, impl_->durationFrames_ - 1.0));
     const qint64 fromFrame =
         static_cast<qint64>(std::llround(impl_->dragMarkerOrigFrame_));
     const qint64 toFrame = static_cast<qint64>(std::llround(newFrame));
@@ -1851,7 +1882,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   const qint64 contextFrame = static_cast<qint64>(std::llround(std::clamp(
       (mouseX + impl_->horizontalOffset_) /
           std::max(0.001, impl_->pixelsPerFrame_),
-      0.0, impl_->durationFrames_)));
+      0.0, std::max(0.0, impl_->durationFrames_ - 1.0))));
 
   QMenu menu(this);
   QAction *jumpToMarkerAct = nullptr;
@@ -1926,7 +1957,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
 
   if (chosen == jumpToMarkerAct) {
     const double targetFrame = std::clamp(static_cast<double>(contextFrame), 0.0,
-                                          impl_->durationFrames_);
+                                          std::max(0.0, impl_->durationFrames_ - 1.0));
     setCurrentFrame(targetFrame);
     seekRequested(targetFrame);
     if (auto *svc = ArtifactProjectService::instance()) {
@@ -2016,7 +2047,8 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     if (layer && (chosen == moveStartClipAct || chosen == trimInClipAct ||
                   chosen == trimOutClipAct)) {
       const qint64 currentFrame = static_cast<qint64>(std::llround(
-          std::clamp(impl_->currentFrame_, 0.0, impl_->durationFrames_)));
+          std::clamp(impl_->currentFrame_, 0.0,
+                     std::max(0.0, impl_->durationFrames_ - 1.0))));
       bool changed = false;
       if (chosen == moveStartClipAct) {
         changed = applyTimelineLayerRangeEdit(layer, currentFrame, 0, true);
@@ -2183,10 +2215,12 @@ void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent *event) {
     }
     const auto &marker = impl_->keyframeMarkers_[idx];
     const qint64 fromFrame = static_cast<qint64>(
-        std::llround(std::clamp(marker.frame, 0.0, impl_->durationFrames_)));
+        std::llround(std::clamp(marker.frame, 0.0,
+                                std::max(0.0, impl_->durationFrames_ - 1.0))));
     const qint64 toFrame =
         std::clamp(fromFrame + deltaFrames, qint64(0),
-                   static_cast<qint64>(std::llround(impl_->durationFrames_)));
+                   static_cast<qint64>(
+                       std::llround(std::max(0.0, impl_->durationFrames_ - 1.0))));
     if (fromFrame == toFrame) {
       continue;
     }

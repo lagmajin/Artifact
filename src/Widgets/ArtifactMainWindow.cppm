@@ -392,7 +392,8 @@ public:
         textLayer->isItalic(), textLayer->isUnderline(),
         static_cast<int>(textLayer->horizontalAlignment()),
         static_cast<int>(textLayer->verticalAlignment()),
-        static_cast<int>(textLayer->wrapMode()), true);
+        static_cast<int>(textLayer->wrapMode()),
+        static_cast<int>(textLayer->layoutMode()), true);
 
     currentTextLayerChangedConnection = QObject::connect(
         current.get(), &ArtifactAbstractLayer::changed, owner, [owner]() {
@@ -599,6 +600,12 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                 static_cast<ArtifactCore::TextWrapMode>(value.toInt());
             if (textLayer->wrapMode() != wrapMode) {
               textLayer->setWrapMode(wrapMode);
+              changed = true;
+            }
+          } else if (optionName == QStringLiteral("layoutMode")) {
+            const auto layoutMode = static_cast<TextLayoutMode>(value.toInt());
+            if (textLayer->layoutMode() != layoutMode) {
+              textLayer->setLayoutMode(layoutMode);
               changed = true;
             }
           }

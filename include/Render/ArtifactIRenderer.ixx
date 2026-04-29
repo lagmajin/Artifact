@@ -88,6 +88,7 @@ public:
   void endFrameCostCapture();
   ArtifactCore::RenderCostStats frameCostStats() const;
   double lastFrameGpuTimeMs() const;
+  QString particleDebugState() const;
 
   QImage readbackToImage() const;
   QImage readbackDepthToImage() const;
