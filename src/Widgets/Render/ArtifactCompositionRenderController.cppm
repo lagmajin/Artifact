@@ -43,6 +43,7 @@ module;
 module Artifact.Widgets.CompositionRenderController;
 
 import Artifact.Render.IRenderer;
+import Artifact.Grid.System;
 import Artifact.Render.GPUTextureCacheManager;
 import Artifact.Render.CompositionViewDrawing;
 import Artifact.Render.CompositionRenderer;
@@ -619,6 +620,102 @@ buildCameraFrustumVisual(const ArtifactCompositionPtr &comp,
   visual.farPlaneCorners.push_back(
       unprojectClipCorner(invViewProj, -1.0f, 1.0f, 1.0f));
   return visual;
+}
+
+CompositionRenderController::CameraFrustumVisual
+buildCameraFrustumVisual(const ArtifactCameraLayer *camera,
+                         const ArtifactCompositionPtr &comp) {
+  CompositionRenderController::CameraFrustumVisual visual;
+  if (!camera || !comp) {
+    return visual;
+  }
+
+  const auto size = comp->settings().compositionSize();
+  const float width =
+      static_cast<float>(size.width() > 0 ? size.width() : 1920);
+  const float height =
+      static_cast<float>(size.height() > 0 ? size.height() : 1080);
+  const float aspect = std::max(0.001f, width / std::max(0.001f, height));
+
+  const QMatrix4x4 view = camera->viewMatrix();
+  const QMatrix4x4 proj = camera->projectionMatrix(aspect);
+  bool invertible = false;
+  const QMatrix4x4 invViewProj = (proj * view).inverted(&invertible);
+  if (!invertible) {
+    return visual;
+  }
+
+  visual.valid = true;
+  visual.layerId = camera->id();
+  visual.cameraPosition = view.inverted().map(QVector3D(0.0f, 0.0f, 0.0f));
+  visual.viewMatrix = view;
+  visual.projectionMatrix = proj;
+  visual.guide = makeNukeStyleCameraGuidePrimitive();
+  visual.aspect = aspect;
+  visual.zoom = camera->zoom();
+
+  visual.nearPlaneCorners.reserve(4);
+  visual.farPlaneCorners.reserve(4);
+  visual.nearPlaneCorners.push_back(
+      unprojectClipCorner(invViewProj, -1.0f, -1.0f, -1.0f));
+  visual.nearPlaneCorners.push_back(
+      unprojectClipCorner(invViewProj, 1.0f, -1.0f, -1.0f));
+  visual.nearPlaneCorners.push_back(
+      unprojectClipCorner(invViewProj, 1.0f, 1.0f, -1.0f));
+  visual.nearPlaneCorners.push_back(
+      unprojectClipCorner(invViewProj, -1.0f, 1.0f, -1.0f));
+  visual.farPlaneCorners.push_back(
+      unprojectClipCorner(invViewProj, -1.0f, -1.0f, 1.0f));
+  visual.farPlaneCorners.push_back(
+      unprojectClipCorner(invViewProj, 1.0f, -1.0f, 1.0f));
+  visual.farPlaneCorners.push_back(
+      unprojectClipCorner(invViewProj, 1.0f, 1.0f, 1.0f));
+  visual.farPlaneCorners.push_back(
+      unprojectClipCorner(invViewProj, -1.0f, 1.0f, 1.0f));
+  return visual;
+}
+
+void drawCameraFrustumOverlay(ArtifactIRenderer *renderer,
+                              const CompositionRenderController::CameraFrustumVisual &visual,
+                              bool activeCamera) {
+  if (!renderer || !visual.valid || visual.nearPlaneCorners.size() < 4 ||
+      visual.farPlaneCorners.size() < 4) {
+    return;
+  }
+
+  const FloatColor outerColor = activeCamera
+                                    ? FloatColor{0.35f, 0.95f, 0.58f, 0.92f}
+                                    : FloatColor{0.36f, 0.72f, 0.98f, 0.88f};
+  const FloatColor innerColor = activeCamera
+                                    ? FloatColor{0.08f, 0.18f, 0.12f, 0.58f}
+                                    : FloatColor{0.07f, 0.10f, 0.14f, 0.56f};
+  const auto drawLine = [renderer](const QVector3D &a, const QVector3D &b,
+                                   const FloatColor &color, float thickness) {
+    renderer->drawGizmoLine(Detail::float3{a.x(), a.y(), a.z()},
+                            Detail::float3{b.x(), b.y(), b.z()}, color,
+                            thickness);
+  };
+
+  renderer->setUseExternalMatrices(true);
+  renderer->set3DCameraMatrices(visual.viewMatrix, visual.projectionMatrix);
+  for (int i = 0; i < 4; ++i) {
+    const int next = (i + 1) % 4;
+    drawLine(visual.nearPlaneCorners[i], visual.nearPlaneCorners[next], outerColor,
+         1.2f);
+    drawLine(visual.farPlaneCorners[i], visual.farPlaneCorners[next], innerColor,
+         0.8f);
+    drawLine(visual.nearPlaneCorners[i], visual.farPlaneCorners[i], outerColor,
+         0.9f);
+  }
+
+  const QVector3D center =
+      (visual.nearPlaneCorners[0] + visual.nearPlaneCorners[1] +
+       visual.nearPlaneCorners[2] + visual.nearPlaneCorners[3]) /
+      4.0f;
+  const QVector3D camPos = visual.cameraPosition;
+  drawLine(camPos, center, outerColor, 1.0f);
+  renderer->reset3DCameraMatrices();
+  renderer->setUseExternalMatrices(false);
 }
 
 QMatrix4x4 viewportOrientationViewMatrix(
@@ -1466,12 +1563,87 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
   }
 }
 
+void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
+                                const ArtifactAbstractLayerPtr &layer,
+                                bool isActiveCamera) {
+  if (!renderer || !layer) {
+    return;
+  }
+
+  const auto camera = std::dynamic_pointer_cast<ArtifactCameraLayer>(layer);
+  if (!camera) {
+    return;
+  }
+
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+      localBounds.height() <= 0.0) {
+    return;
+  }
+
+  const QTransform globalTransform = layer->getGlobalTransform();
+  const QPointF tl = globalTransform.map(localBounds.topLeft());
+  const QPointF tr = globalTransform.map(localBounds.topRight());
+  const QPointF br = globalTransform.map(localBounds.bottomRight());
+  const QPointF panelAnchor = QPointF(
+      std::min(tl.x(), tr.x()),
+      std::min(tl.y(), br.y()) - 52.0);
+
+  const FloatColor fillColor =
+      isActiveCamera ? FloatColor{0.08f, 0.18f, 0.12f, 0.95f}
+                     : FloatColor{0.06f, 0.08f, 0.11f, 0.94f};
+  const FloatColor outlineColor =
+      isActiveCamera ? FloatColor{0.30f, 0.82f, 0.48f, 0.92f}
+                     : FloatColor{0.28f, 0.56f, 0.82f, 0.88f};
+
+  renderer->drawOverlayPanel(static_cast<float>(panelAnchor.x()),
+                             static_cast<float>(panelAnchor.y()), 178.0f, 44.0f,
+                             fillColor, outlineColor);
+
+  QFont titleFont = QApplication::font();
+  titleFont.setPointSizeF(std::max(10.0, static_cast<double>(titleFont.pointSizeF()) + 1.0));
+  titleFont.setWeight(QFont::DemiBold);
+  QFont detailFont = QApplication::font();
+  detailFont.setPointSizeF(std::max(8.5, static_cast<double>(detailFont.pointSizeF())));
+
+  const QString modeText =
+      camera->projectionMode() == ProjectionMode::Orthographic
+          ? QStringLiteral("Orthographic")
+          : QStringLiteral("Perspective");
+  const QString lensText = camera->projectionMode() == ProjectionMode::Orthographic
+                               ? QStringLiteral("Ortho %1 x %2")
+                                     .arg(camera->orthoWidth(), 0, 'f', 0)
+                                     .arg(camera->orthoHeight(), 0, 'f', 0)
+                               : (camera->useManualFov()
+                                      ? QStringLiteral("FOV %1 deg")
+                                            .arg(camera->fov(), 0, 'f', 1)
+                                      : QStringLiteral("Zoom %1 px")
+                                            .arg(camera->zoom(), 0, 'f', 0));
+  const QString dofText =
+      camera->depthOfField() ? QStringLiteral("DOF On") : QStringLiteral("DOF Off");
+
+  renderer->drawText(QRectF(panelAnchor.x() + 12.0, panelAnchor.y() + 6.0,
+                            154.0, 16.0),
+                     QStringLiteral("Camera"), titleFont,
+                     isActiveCamera ? FloatColor{0.88f, 0.98f, 0.92f, 1.0f}
+                                    : FloatColor{0.90f, 0.94f, 0.98f, 1.0f},
+                     Qt::AlignLeft | Qt::AlignVCenter);
+  renderer->drawText(QRectF(panelAnchor.x() + 12.0, panelAnchor.y() + 22.0,
+                            154.0, 14.0),
+                     QStringLiteral("%1 | %2 | %3")
+                         .arg(modeText, lensText, dofText),
+                     detailFont,
+                     isActiveCamera ? FloatColor{0.74f, 0.94f, 0.82f, 1.0f}
+                                    : FloatColor{0.74f, 0.82f, 0.90f, 1.0f},
+                     Qt::AlignLeft | Qt::AlignVCenter);
+}
+
 // Draws checkerboard in Viewport Space so transparent regions of the
 // composition reveal the pattern against the viewport background.
 // This should be called before blitting the composition result to the
 // visible framebuffer.
 void drawViewportCheckerboardBackground(ArtifactIRenderer *renderer, float vw,
-                                        float vh) {
+                                        float vh, float tileSize) {
   if (!renderer || vw <= 0.0f || vh <= 0.0f) {
     return;
   }
@@ -1485,7 +1657,7 @@ void drawViewportCheckerboardBackground(ArtifactIRenderer *renderer, float vw,
   renderer->setCanvasSize(vw, vh);
   renderer->setZoom(1.0f);
   renderer->setPan(0.0f, 0.0f);
-  renderer->drawCheckerboard(0.0f, 0.0f, vw, vh, 16.0f,
+  renderer->drawCheckerboard(0.0f, 0.0f, vw, vh, std::max(2.0f, tileSize),
                              {0.18f, 0.18f, 0.18f, 1.0f},
                              {0.28f, 0.28f, 0.28f, 1.0f});
 
@@ -1498,7 +1670,8 @@ void drawViewportCheckerboardBackground(ArtifactIRenderer *renderer, float vw,
 // Must be called BEFORE layer drawing so transparent regions reveal the
 // pattern.
 void drawCompositionCheckerboard(ArtifactIRenderer *renderer,
-                                 const ArtifactCompositionPtr &comp) {
+                                 const ArtifactCompositionPtr &comp,
+                                 float tileSize) {
   if (!renderer || !comp) {
     return;
   }
@@ -1512,7 +1685,7 @@ void drawCompositionCheckerboard(ArtifactIRenderer *renderer,
     return;
   }
 
-  renderer->drawCheckerboard(0.0f, 0.0f, cw, ch, 16.0f,
+  renderer->drawCheckerboard(0.0f, 0.0f, cw, ch, std::max(2.0f, tileSize),
                              {0.18f, 0.18f, 0.18f, 1.0f},
                              {0.28f, 0.28f, 0.28f, 1.0f});
 }
@@ -1659,6 +1832,9 @@ public:
   bool pendingMaskCreation_ = false;
   LayerID pendingMaskLayerId_;
   MaskPath pendingMaskPath_;
+  bool penToolPreviewVisible_ = false;
+  bool penMaskPreviewValid_ = false;
+  Detail::float2 penMaskPreviewCanvasPos_ = {0.0f, 0.0f};
   void clearPendingMaskCreation();
   void beginPendingMaskCreation(const ArtifactAbstractLayerPtr &layer,
                                 const QPointF &localPos);
@@ -1690,10 +1866,13 @@ public:
   // color.
   CompositionBackgroundMode compositionBackgroundMode_ =
       CompositionBackgroundMode::Checkerboard;
+  float checkerboardTileSize_ = 16.0f;
+  Artifact::Grid::GridSettings gridSettings_{};
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
   bool showMotionPathOverlay_ = false;
   bool showAnchorCenterOverlay_ = false;
+  bool showCameraFrustumOverlay_ = false;
   bool showFrameInfo_ = false; // Changed to false by default
   bool showGizmoOverlay_ = true;
   bool showCompositionRegionOverlay_ =
@@ -1722,9 +1901,20 @@ public:
     float zoom = 0, panX = 0, panY = 0;
     float bgR = 0, bgG = 0, bgB = 0, bgA = 0;
     int32_t bgMode = 0;
+    float checkerboardTileSize = 0.0f;
+    float gridMajorInterval = 0.0f;
+    int32_t gridSubdivisions = 0;
+    uint8_t gridShowMajor = 0, gridShowMinor = 0, gridShowAxis = 0;
+    float gridMajorR = 0.0f, gridMajorG = 0.0f, gridMajorB = 0.0f,
+          gridMajorA = 0.0f;
+    float gridMinorR = 0.0f, gridMinorG = 0.0f, gridMinorB = 0.0f,
+          gridMinorA = 0.0f;
+    float gridAxisR = 0.0f, gridAxisG = 0.0f, gridAxisB = 0.0f,
+          gridAxisA = 0.0f;
     int32_t gizmoMode = -1, gizmoHover = -1, gizmoActive = -1;
     uint8_t gpuBlend = 0, showGrid = 0, showGuides = 0, showSafeMargins = 0,
-            showAnchorCenter = 0, viewportInteracting = 0;
+            showAnchorCenter = 0, showCameraFrustum = 0,
+            viewportInteracting = 0;
     LayerID selectedLayerId;
 
     bool operator==(const RenderKeyState &o) const {
@@ -1734,11 +1924,24 @@ public:
              downsample == o.downsample && zoom == o.zoom && panX == o.panX &&
              panY == o.panY && bgR == o.bgR && bgG == o.bgG && bgB == o.bgB &&
              bgA == o.bgA && bgMode == o.bgMode && gizmoMode == o.gizmoMode &&
+             checkerboardTileSize == o.checkerboardTileSize &&
+             gridMajorInterval == o.gridMajorInterval &&
+             gridSubdivisions == o.gridSubdivisions &&
+             gridShowMajor == o.gridShowMajor &&
+             gridShowMinor == o.gridShowMinor &&
+             gridShowAxis == o.gridShowAxis &&
+             gridMajorR == o.gridMajorR && gridMajorG == o.gridMajorG &&
+             gridMajorB == o.gridMajorB && gridMajorA == o.gridMajorA &&
+             gridMinorR == o.gridMinorR && gridMinorG == o.gridMinorG &&
+             gridMinorB == o.gridMinorB && gridMinorA == o.gridMinorA &&
+             gridAxisR == o.gridAxisR && gridAxisG == o.gridAxisG &&
+             gridAxisB == o.gridAxisB && gridAxisA == o.gridAxisA &&
              gizmoHover == o.gizmoHover && gizmoActive == o.gizmoActive &&
              gpuBlend == o.gpuBlend && showGrid == o.showGrid &&
              showGuides == o.showGuides &&
              showSafeMargins == o.showSafeMargins &&
              showAnchorCenter == o.showAnchorCenter &&
+             showCameraFrustum == o.showCameraFrustum &&
              viewportInteracting == o.viewportInteracting &&
              selectedLayerId == o.selectedLayerId;
     }
@@ -1778,7 +1981,10 @@ public:
   QStringList commandPaletteItems_;
   bool contextMenuVisible_ = false;
   QPointF contextMenuViewportPos_;
+  QString contextMenuTitle_;
+  QString contextMenuSubtitle_;
   QStringList contextMenuItems_;
+  QVector<bool> contextMenuItemEnabled_;
   bool pieMenuVisible_ = false;
   PieMenuModel pieMenuModel_;
   QPointF pieMenuViewportPos_;
@@ -2039,6 +2245,9 @@ public:
                                 const ArtifactCompositionPtr &comp,
                                 const ArtifactAbstractLayerPtr &selectedLayer,
                                 const FramePosition &currentFrame);
+  void drawCameraFrustumOverlay(ArtifactIRenderer *renderer,
+                                const CompositionRenderController::CameraFrustumVisual &visual,
+                                bool activeCamera);
   QRectF commandPaletteRect() const;
   QRectF contextMenuRect() const;
   QRectF pieMenuRect() const;
@@ -2695,6 +2904,28 @@ bool CompositionRenderController::isShowCheckerboard() const {
   return impl_->compositionBackgroundMode_ ==
          CompositionBackgroundMode::Checkerboard;
 }
+void CompositionRenderController::setCheckerboardSize(float size) {
+  const float clamped = std::clamp(size, 2.0f, 128.0f);
+  if (std::abs(impl_->checkerboardTileSize_ - clamped) <= 0.001f) {
+    return;
+  }
+  impl_->checkerboardTileSize_ = clamped;
+  impl_->invalidateBaseComposite();
+  renderOneFrame();
+}
+float CompositionRenderController::checkerboardSize() const {
+  return impl_->checkerboardTileSize_;
+}
+void CompositionRenderController::setGridSettings(
+    const Artifact::Grid::GridSettings &settings) {
+  impl_->gridSettings_ = settings;
+  if (impl_->showGrid_) {
+    renderOneFrame();
+  }
+}
+Artifact::Grid::GridSettings CompositionRenderController::gridSettings() const {
+  return impl_->gridSettings_;
+}
 void CompositionRenderController::setCompositionBackgroundMode(int mode) {
   const auto backgroundMode = static_cast<CompositionBackgroundMode>(mode);
   if (impl_->compositionBackgroundMode_ == backgroundMode) {
@@ -2741,6 +2972,19 @@ void CompositionRenderController::setShowAnchorCenterOverlay(bool show) {
 
 bool CompositionRenderController::isShowAnchorCenterOverlay() const {
   return impl_ ? impl_->showAnchorCenterOverlay_ : false;
+}
+
+void CompositionRenderController::setShowCameraFrustumOverlay(bool show) {
+  if (impl_->showCameraFrustumOverlay_ == show) {
+    return;
+  }
+  impl_->showCameraFrustumOverlay_ = show;
+  impl_->invalidateOverlayComposite();
+  renderOneFrame();
+}
+
+bool CompositionRenderController::isShowCameraFrustumOverlay() const {
+  return impl_ ? impl_->showCameraFrustumOverlay_ : false;
 }
 
 void CompositionRenderController::setShowMotionPathOverlay(bool show) {
@@ -2833,21 +3077,39 @@ void CompositionRenderController::showCommandPaletteOverlay(
   impl_->commandPaletteQuery_ = query;
   impl_->commandPaletteItems_ = items;
   impl_->contextMenuVisible_ = false;
+  impl_->contextMenuTitle_.clear();
+  impl_->contextMenuSubtitle_.clear();
   impl_->contextMenuItems_.clear();
+  impl_->contextMenuItemEnabled_.clear();
+  impl_->pieMenuVisible_ = false;
+  impl_->pieMenuModel_ = PieMenuModel{};
+  impl_->pieMenuSelectedIndex_ = -1;
   impl_->invalidateOverlayComposite();
   renderOneFrame();
 }
 
 void CompositionRenderController::showContextMenuOverlay(
-    const QPointF &viewportPos, const QStringList &items) {
+    const QPointF &viewportPos, const QStringList &items,
+    const QString &title, const QString &subtitle,
+    const QVector<bool> &enabledStates) {
   if (!impl_) {
     return;
   }
   impl_->contextMenuVisible_ = true;
   impl_->contextMenuViewportPos_ = viewportPos;
+  impl_->contextMenuTitle_ = title;
+  impl_->contextMenuSubtitle_ = subtitle;
   impl_->contextMenuItems_ = items;
+  impl_->contextMenuItemEnabled_ = enabledStates;
+  if (impl_->contextMenuItemEnabled_.size() != impl_->contextMenuItems_.size()) {
+    impl_->contextMenuItemEnabled_.resize(impl_->contextMenuItems_.size());
+    impl_->contextMenuItemEnabled_.fill(true);
+  }
   impl_->commandPaletteVisible_ = false;
   impl_->commandPaletteItems_.clear();
+  impl_->pieMenuVisible_ = false;
+  impl_->pieMenuModel_ = PieMenuModel{};
+  impl_->pieMenuSelectedIndex_ = -1;
   impl_->invalidateOverlayComposite();
   renderOneFrame();
 }
@@ -2865,7 +3127,10 @@ void CompositionRenderController::showPieMenuOverlay(
   impl_->commandPaletteVisible_ = false;
   impl_->commandPaletteItems_.clear();
   impl_->contextMenuVisible_ = false;
+  impl_->contextMenuTitle_.clear();
+  impl_->contextMenuSubtitle_.clear();
   impl_->contextMenuItems_.clear();
+  impl_->contextMenuItemEnabled_.clear();
   impl_->invalidateOverlayComposite();
   renderOneFrame();
 }
@@ -2880,7 +3145,10 @@ void CompositionRenderController::hideViewportOverlay() {
   impl_->commandPaletteQuery_.clear();
   impl_->commandPaletteItems_.clear();
   impl_->contextMenuVisible_ = false;
+  impl_->contextMenuTitle_.clear();
+  impl_->contextMenuSubtitle_.clear();
   impl_->contextMenuItems_.clear();
+  impl_->contextMenuItemEnabled_.clear();
   impl_->pieMenuVisible_ = false;
   impl_->pieMenuModel_ = PieMenuModel{};
   impl_->pieMenuSelectedIndex_ = -1;
@@ -2970,32 +3238,30 @@ void CompositionRenderController::resetView() {
 
 void CompositionRenderController::zoomInAt(const QPointF &viewportPos) {
   if (impl_->renderer_) {
-    notifyViewportInteractionActivity();
-    const float currentZoom = impl_->renderer_->getZoom();
-    const float newZoom = std::clamp(currentZoom * 1.1f, 0.05f, 64.0f);
-    // viewportPos is in logical pixels; convert to physical
-    impl_->renderer_->zoomAroundViewportPoint(
-        {(float)viewportPos.x() * impl_->devicePixelRatio_,
-         (float)viewportPos.y() * impl_->devicePixelRatio_},
-        newZoom);
-    impl_->invalidateBaseComposite();
-    renderOneFrame();
+    zoomAtFactor(viewportPos, 1.1f);
   }
 }
 
 void CompositionRenderController::zoomOutAt(const QPointF &viewportPos) {
   if (impl_->renderer_) {
-    notifyViewportInteractionActivity();
-    const float currentZoom = impl_->renderer_->getZoom();
-    const float newZoom = std::clamp(currentZoom / 1.1f, 0.05f, 64.0f);
-    // viewportPos is in logical pixels; convert to physical
-    impl_->renderer_->zoomAroundViewportPoint(
-        {(float)viewportPos.x() * impl_->devicePixelRatio_,
-         (float)viewportPos.y() * impl_->devicePixelRatio_},
-        newZoom);
-    impl_->invalidateBaseComposite();
-    renderOneFrame();
+    zoomAtFactor(viewportPos, 1.0f / 1.1f);
   }
+}
+
+void CompositionRenderController::zoomAtFactor(const QPointF &viewportPos,
+                                               float factor) {
+  if (!impl_->renderer_) {
+    return;
+  }
+  notifyViewportInteractionActivity();
+  const float currentZoom = impl_->renderer_->getZoom();
+  const float newZoom = std::clamp(currentZoom * factor, 0.05f, 64.0f);
+  impl_->renderer_->zoomAroundViewportPoint(
+      {(float)viewportPos.x() * impl_->devicePixelRatio_,
+       (float)viewportPos.y() * impl_->devicePixelRatio_},
+      newZoom);
+  impl_->invalidateBaseComposite();
+  renderOneFrame();
 }
 
 void CompositionRenderController::zoomFit() {
@@ -3357,13 +3623,139 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   // event->position() is in logical pixels; convert to physical for rendering
   // pipeline
   const QPointF viewportPos = event->position() * impl_->devicePixelRatio_;
+  auto toolManager = ArtifactApplicationManager::instance()
+                         ? ArtifactApplicationManager::instance()->toolManager()
+                         : nullptr;
+  auto activeTool = toolManager ? toolManager->activeTool() : ToolType::Selection;
 
-  // 3D Gizmo hit test (GIZ-2) — only for 3D layers
   auto comp = impl_->previewPipeline_.composition();
   auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
                            ? comp->layerById(impl_->selectedLayerId_)
                            : ArtifactAbstractLayerPtr{};
-  if (selectedLayer && impl_->gizmo3D_ && selectedLayer->is3D()) {
+
+  if (event->button() == Qt::LeftButton && activeTool == ToolType::Pen &&
+      selectedLayer && comp && impl_->renderer_) {
+    const auto cPos = impl_->renderer_->viewportToCanvas(
+        {(float)viewportPos.x(), (float)viewportPos.y()});
+    const QTransform globalTransform = selectedLayer->getGlobalTransform();
+    bool invertible = false;
+    const QTransform invTransform = globalTransform.inverted(&invertible);
+
+    if (invertible) {
+      impl_->beginMaskEditTransaction(selectedLayer);
+      const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
+      impl_->penMaskPreviewCanvasPos_ = {cPos.x, cPos.y};
+      impl_->penMaskPreviewValid_ = true;
+
+      if (impl_->pendingMaskCreation_ &&
+          impl_->pendingMaskLayerId_ != selectedLayer->id()) {
+        impl_->clearPendingMaskCreation();
+      }
+
+      const float handleThreshold = 14.0f / impl_->renderer_->getZoom();
+      int handleMaskIndex = -1;
+      int handlePathIndex = -1;
+      int handleVertexIndex = -1;
+      MaskHandleType handleType = MaskHandleType::None;
+      if (hitTestMaskHandle(selectedLayer, QPointF(cPos.x, cPos.y), handleThreshold,
+                            handleMaskIndex, handlePathIndex, handleVertexIndex,
+                            handleType)) {
+        impl_->isDraggingVertex_ = false;
+        impl_->isDraggingMaskHandle_ = true;
+        impl_->draggingMaskIndex_ = handleMaskIndex;
+        impl_->draggingPathIndex_ = handlePathIndex;
+        impl_->draggingVertexIndex_ = handleVertexIndex;
+        impl_->draggingMaskHandleType_ = static_cast<int>(handleType);
+        impl_->hoveredMaskIndex_ = handleMaskIndex;
+        impl_->hoveredPathIndex_ = handlePathIndex;
+        impl_->hoveredVertexIndex_ = handleVertexIndex;
+        impl_->hoveredMaskHandleType_ = static_cast<int>(handleType);
+        event->accept();
+        return;
+      }
+
+      // 1. Hit test existing vertices for dragging or closing path
+      const float hitThreshold =
+          12.0f / impl_->renderer_->getZoom(); // widened for direct mask edits
+      for (int m = 0; m < selectedLayer->maskCount(); ++m) {
+        LayerMask mask = selectedLayer->mask(m);
+        for (int p = 0; p < mask.maskPathCount(); ++p) {
+          MaskPath path = mask.maskPath(p);
+          for (int v = 0; v < path.vertexCount(); ++v) {
+            MaskVertex vertex = path.vertex(v);
+            if (QVector2D(vertex.position - localPos).length() <
+                hitThreshold) {
+              if (v == 0 && !path.isClosed() && path.vertexCount() > 2) {
+                path.setClosed(true);
+                mask.setMaskPath(p, path);
+                mask.addMaskPath(MaskPath());
+                selectedLayer->setMask(m, mask);
+                impl_->markMaskEditDirty();
+                qDebug() << "[PenTool] Closed path" << p;
+                ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+                    comp->id().toString(), selectedLayer->id().toString(),
+                    LayerChangedEvent::ChangeType::Modified});
+                impl_->isDraggingVertex_ = false;
+                impl_->draggingMaskIndex_ = m;
+                impl_->draggingPathIndex_ = p;
+                impl_->draggingVertexIndex_ = -1;
+                impl_->hoveredMaskIndex_ = m;
+                impl_->hoveredPathIndex_ = p;
+                impl_->hoveredVertexIndex_ = -1;
+                event->accept();
+                return;
+              }
+
+              impl_->isDraggingVertex_ = true;
+              impl_->draggingMaskIndex_ = m;
+              impl_->draggingPathIndex_ = p;
+              impl_->draggingVertexIndex_ = v;
+              qDebug() << "[PenTool] Started dragging vertex" << v;
+              event->accept();
+              return;
+            }
+          }
+        }
+      }
+
+      if (impl_->pendingMaskCreation_ &&
+          impl_->pendingMaskLayerId_ == selectedLayer->id() &&
+          impl_->pendingMaskPath_.vertexCount() >= 3) {
+        const float closeThreshold = 12.0f / impl_->renderer_->getZoom();
+        const MaskVertex firstVertex = impl_->pendingMaskPath_.vertex(0);
+        if (QVector2D(firstVertex.position - localPos).length() <
+            closeThreshold) {
+          if (impl_->finalizePendingMaskCreation(selectedLayer)) {
+            impl_->markMaskEditDirty();
+            qDebug() << "[PenTool] Finalized pending mask path"
+                     << "layer:" << selectedLayer->id().toString();
+            ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+                comp->id().toString(), selectedLayer->id().toString(),
+                LayerChangedEvent::ChangeType::Modified});
+          }
+          event->accept();
+          return;
+        }
+      }
+
+      if (!impl_->pendingMaskCreation_ ||
+          impl_->pendingMaskLayerId_ != selectedLayer->id()) {
+        impl_->beginPendingMaskCreation(selectedLayer, localPos);
+      } else {
+        impl_->beginPendingMaskCreation(selectedLayer, localPos);
+      }
+
+      qDebug() << "[PenTool] Added pending mask vertex at local:" << localPos
+               << "layer:" << selectedLayer->id().toString()
+               << "pendingVertices:" << impl_->pendingMaskPath_.vertexCount();
+      event->accept();
+      return;
+    }
+  }
+
+  // 3D Gizmo hit test (GIZ-2) — only for 3D layers
+  if (selectedLayer && impl_->gizmo3D_ && selectedLayer->is3D() &&
+      activeTool != ToolType::Pen) {
     impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
     Ray ray = createPickingRay(viewportPos);
     GizmoAxis axis =
@@ -3380,7 +3772,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   }
 
   // Gizmo hit test first (2D)
-  if (impl_->gizmo_) {
+  if (impl_->gizmo_ && activeTool != ToolType::Pen) {
     impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
     if (impl_->gizmo_->isDragging()) {
       impl_->gizmoDragActive_ = true;
@@ -3391,11 +3783,6 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   }
 
   if (event->button() == Qt::LeftButton) {
-    auto toolManager = ArtifactApplicationManager::instance()->toolManager();
-    auto activeTool =
-        toolManager ? toolManager->activeTool() : ToolType::Selection;
-
-    auto comp = impl_->previewPipeline_.composition();
     if (comp && impl_->renderer_) {
       const auto cPos = impl_->renderer_->viewportToCanvas(
           {(float)viewportPos.x(), (float)viewportPos.y()});
@@ -3404,130 +3791,6 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
               ? ArtifactApplicationManager::instance()->layerSelectionManager()
               : nullptr;
       const auto currentFrame = currentFrameForComposition(comp);
-
-      // Get selected layer for Pen tool operations
-      auto selectedLayer = (!impl_->selectedLayerId_.isNil())
-                               ? comp->layerById(impl_->selectedLayerId_)
-                               : ArtifactAbstractLayerPtr{};
-
-      if (activeTool == ToolType::Pen && selectedLayer) {
-        // Convert canvas position to layer local position
-        const QTransform globalTransform = selectedLayer->getGlobalTransform();
-        bool invertible = false;
-        const QTransform invTransform = globalTransform.inverted(&invertible);
-
-        if (invertible) {
-          impl_->beginMaskEditTransaction(selectedLayer);
-          const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
-
-          if (impl_->pendingMaskCreation_ &&
-              impl_->pendingMaskLayerId_ != selectedLayer->id()) {
-            impl_->clearPendingMaskCreation();
-          }
-
-          const float handleThreshold = 10.0f / impl_->renderer_->getZoom();
-          int handleMaskIndex = -1;
-          int handlePathIndex = -1;
-          int handleVertexIndex = -1;
-          MaskHandleType handleType = MaskHandleType::None;
-          if (hitTestMaskHandle(selectedLayer, QPointF(cPos.x, cPos.y), handleThreshold,
-                                handleMaskIndex, handlePathIndex, handleVertexIndex,
-                                handleType)) {
-            impl_->isDraggingVertex_ = false;
-            impl_->isDraggingMaskHandle_ = true;
-            impl_->draggingMaskIndex_ = handleMaskIndex;
-            impl_->draggingPathIndex_ = handlePathIndex;
-            impl_->draggingVertexIndex_ = handleVertexIndex;
-            impl_->draggingMaskHandleType_ = static_cast<int>(handleType);
-            impl_->hoveredMaskIndex_ = handleMaskIndex;
-            impl_->hoveredPathIndex_ = handlePathIndex;
-            impl_->hoveredVertexIndex_ = handleVertexIndex;
-            impl_->hoveredMaskHandleType_ = static_cast<int>(handleType);
-            return;
-          }
-
-          // 1. Hit test existing vertices for dragging or closing path
-          const float hitThreshold =
-              8.0f / impl_->renderer_->getZoom(); // 8px in viewport space
-          for (int m = 0; m < selectedLayer->maskCount(); ++m) {
-            LayerMask mask = selectedLayer->mask(m);
-            for (int p = 0; p < mask.maskPathCount(); ++p) {
-              MaskPath path = mask.maskPath(p);
-              for (int v = 0; v < path.vertexCount(); ++v) {
-                MaskVertex vertex = path.vertex(v);
-                if (QVector2D(vertex.position - localPos).length() <
-                    hitThreshold) {
-                  // If it's the first vertex and we have more than 2, close the
-                  // path
-                  if (v == 0 && !path.isClosed() && path.vertexCount() > 2) {
-                    path.setClosed(true);
-                    mask.setMaskPath(p, path);
-                    mask.addMaskPath(MaskPath());
-                    selectedLayer->setMask(m, mask);
-                    impl_->markMaskEditDirty();
-                    qDebug() << "[PenTool] Closed path" << p;
-                    ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-                        comp->id().toString(), selectedLayer->id().toString(),
-                        LayerChangedEvent::ChangeType::Modified});
-                    impl_->isDraggingVertex_ = false;
-                    impl_->draggingMaskIndex_ = m;
-                    impl_->draggingPathIndex_ = p;
-                    impl_->draggingVertexIndex_ = -1;
-                    impl_->hoveredMaskIndex_ = m;
-                    impl_->hoveredPathIndex_ = p;
-                    impl_->hoveredVertexIndex_ = -1;
-                    return;
-                  }
-
-                  // Start dragging vertex
-                  impl_->isDraggingVertex_ = true;
-                  impl_->draggingMaskIndex_ = m;
-                  impl_->draggingPathIndex_ = p;
-                  impl_->draggingVertexIndex_ = v;
-                  qDebug() << "[PenTool] Started dragging vertex" << v;
-                  return;
-               }
-              }
-            }
-          }
-
-          // 2. Build a pending mask path first. We only materialize a
-          //    LayerMask once the path is ready to close, so the first click
-          //    does not immediately alter the layer's mask stack.
-          if (impl_->pendingMaskCreation_ &&
-              impl_->pendingMaskLayerId_ == selectedLayer->id() &&
-              impl_->pendingMaskPath_.vertexCount() >= 3) {
-            const float closeThreshold =
-                8.0f / impl_->renderer_->getZoom();
-            const MaskVertex firstVertex = impl_->pendingMaskPath_.vertex(0);
-            if (QVector2D(firstVertex.position - localPos).length() <
-                closeThreshold) {
-              if (impl_->finalizePendingMaskCreation(selectedLayer)) {
-                impl_->markMaskEditDirty();
-                qDebug() << "[PenTool] Finalized pending mask path"
-                         << "layer:" << selectedLayer->id().toString();
-                ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-                    comp->id().toString(), selectedLayer->id().toString(),
-                    LayerChangedEvent::ChangeType::Modified});
-              }
-              return;
-            }
-          }
-
-          if (!impl_->pendingMaskCreation_ ||
-              impl_->pendingMaskLayerId_ != selectedLayer->id()) {
-            impl_->beginPendingMaskCreation(selectedLayer, localPos);
-          } else {
-            impl_->beginPendingMaskCreation(selectedLayer, localPos);
-          }
-
-          qDebug() << "[PenTool] Added pending mask vertex at local:"
-                   << localPos << "layer:" << selectedLayer->id().toString()
-                   << "pendingVertices:"
-                   << impl_->pendingMaskPath_.vertexCount();
-          return; // Handled
-        }
-      }
 
       const auto layers = comp->allLayer();
 
@@ -3775,6 +4038,7 @@ void CompositionRenderController::handleMouseMove(
 
   // Hover detection for Pen tool
   if (activeTool == ToolType::Pen) {
+    impl_->penToolPreviewVisible_ = true;
     const int prevHoveredMaskIndex = impl_->hoveredMaskIndex_;
     const int prevHoveredPathIndex = impl_->hoveredPathIndex_;
     const int prevHoveredVertexIndex = impl_->hoveredVertexIndex_;
@@ -3796,7 +4060,9 @@ void CompositionRenderController::handleMouseMove(
 
         if (invertible) {
           const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
-          const float hitThreshold = 8.0f / impl_->renderer_->getZoom();
+          const float hitThreshold = 12.0f / impl_->renderer_->getZoom();
+          impl_->penMaskPreviewCanvasPos_ = {cPos.x, cPos.y};
+          impl_->penMaskPreviewValid_ = true;
 
           int handleMaskIndex = -1;
           int handlePathIndex = -1;
@@ -3841,6 +4107,9 @@ void CompositionRenderController::handleMouseMove(
       impl_->invalidateOverlayComposite();
       needsRender = true;
     }
+  } else {
+    impl_->penToolPreviewVisible_ = false;
+    impl_->penMaskPreviewValid_ = false;
   }
 
   // 3D Gizmo interaction (GIZ-2, GIZ-3) — only for 3D layers
@@ -4091,6 +4360,8 @@ void CompositionRenderController::Impl::clearPendingMaskCreation() {
   pendingMaskLayerId_ = LayerID();
   pendingMaskPath_.clearVertices();
   pendingMaskPath_.setClosed(false);
+  penToolPreviewVisible_ = false;
+  penMaskPreviewValid_ = false;
 }
 
 void CompositionRenderController::Impl::beginPendingMaskCreation(
@@ -4110,6 +4381,7 @@ void CompositionRenderController::Impl::beginPendingMaskCreation(
   vertex.inTangent = QPointF(0, 0);
   vertex.outTangent = QPointF(0, 0);
   pendingMaskPath_.addVertex(vertex);
+  penMaskPreviewValid_ = true;
 }
 
 bool CompositionRenderController::Impl::finalizePendingMaskCreation(
@@ -4434,6 +4706,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       currentBgColor.b(),
       currentBgColor.a(),
       static_cast<int32_t>(backgroundMode),
+      checkerboardTileSize_,
+      gridSettings_.majorInterval,
+      gridSettings_.subdivisions,
+      static_cast<uint8_t>(gridSettings_.showMajor ? 1 : 0),
+      static_cast<uint8_t>(gridSettings_.showMinor ? 1 : 0),
+      static_cast<uint8_t>(gridSettings_.showAxis ? 1 : 0),
+      gridSettings_.majorColor.r(),
+      gridSettings_.majorColor.g(),
+      gridSettings_.majorColor.b(),
+      gridSettings_.majorColor.a(),
+      gridSettings_.minorColor.r(),
+      gridSettings_.minorColor.g(),
+      gridSettings_.minorColor.b(),
+      gridSettings_.minorColor.a(),
+      gridSettings_.axisColor.r(),
+      gridSettings_.axisColor.g(),
+      gridSettings_.axisColor.b(),
+      gridSettings_.axisColor.a(),
       gizmo3D_ ? static_cast<int32_t>(gizmo3D_->mode()) : -1,
       gizmo3D_ ? static_cast<int32_t>(gizmo3D_->hoverAxis()) : -1,
       gizmo3D_ ? static_cast<int32_t>(gizmo3D_->activeAxis()) : -1,
@@ -4442,6 +4732,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       static_cast<uint8_t>(showGuides_ ? 1 : 0),
       static_cast<uint8_t>(showSafeMargins_ ? 1 : 0),
       static_cast<uint8_t>(showAnchorCenterOverlay_ ? 1 : 0),
+      static_cast<uint8_t>(showCameraFrustumOverlay_ ? 1 : 0),
       static_cast<uint8_t>(viewportInteracting_ ? 1 : 0),
       selectedLayerId_};
   if (currentKey == lastRenderKeyState_) {
@@ -4456,15 +4747,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const bool hasGpuBlendJustification =
         std::any_of(layers.begin(), layers.end(),
                     [&](const ArtifactAbstractLayerPtr &layer) {
-                      if (!isLayerEffectivelyVisible(layer) ||
+                      if (!layer || !isLayerEffectivelyVisible(layer) ||
                           !layer->isActiveAt(currentFrame)) {
                         return false;
                       }
                       if (layer->layerBlendType() !=
                           ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL) {
-                        return true;
-                      }
-                      if (layer->maskCount() > 0) {
                         return true;
                       }
                       return layerHasCpuRasterizerWork(layer.get());
@@ -4813,7 +5101,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                            cachedMayaGradientSprite_);
       } else if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
         drawViewportCheckerboardBackground(renderer_.get(), origViewW,
-                                           origViewH);
+                                           origViewH,
+                                           checkerboardTileSize_);
       }
       renderer_->setCanvasSize(origViewW, origViewH);
       renderer_->setZoom(origZoom);
@@ -4873,7 +5162,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->setZoom(1.0f);
         renderer_->setPan(0.0f, 0.0f);
         drawViewportCheckerboardBackground(renderer_.get(), viewportW,
-                                           viewportH);
+                                           viewportH,
+                                           checkerboardTileSize_);
         renderer_->setCanvasSize(cw, ch);
         renderer_->setZoom(prevZoom);
         renderer_->setPan(prevPanX, prevPanY);
@@ -4882,6 +5172,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
                                       backgroundMode,
                                       cachedMayaGradientSprite_);
+      if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
+        drawCompositionCheckerboard(renderer_.get(), comp, checkerboardTileSize_);
+      }
       renderer_->setUseExternalMatrices(false);
       renderer_->resetGizmoCameraMatrices();
       renderer_->reset3DCameraMatrices();
@@ -4889,8 +5182,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setZoom(prevZoom);
       renderer_->setPan(prevPanX, prevPanY);
       if (showGrid_) {
-        renderer_->drawGrid(0, 0, cw, ch, 100.0f, 1.0f,
-                            {0.3f, 0.3f, 0.3f, 0.5f});
+        renderer_->drawGrid(0, 0, cw, ch,
+                            std::max(1.0f, gridSettings_.majorInterval),
+                            gridSettings_.majorStyle.thickness,
+                            gridSettings_.majorColor);
       }
 
       if (compositionViewLog().isDebugEnabled()) {
@@ -5310,6 +5605,33 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                  pendingPointColor);
             lastCanvasPos = currentCanvasPos;
           }
+          if (penToolPreviewVisible_ && penMaskPreviewValid_) {
+            const FloatColor previewLineShadowColor = {0.0f, 0.0f, 0.0f, 0.20f};
+            const FloatColor previewLineColor = {0.50f, 0.95f, 1.0f, 0.58f};
+            renderer_->drawThickLineLocal(lastCanvasPos,
+                                          penMaskPreviewCanvasPos_, 4.0f,
+                                          previewLineShadowColor);
+            renderer_->drawThickLineLocal(lastCanvasPos,
+                                          penMaskPreviewCanvasPos_, 2.0f,
+                                          previewLineColor);
+          }
+        }
+
+        if (penToolPreviewVisible_ && penMaskPreviewValid_) {
+          const bool closingSoon =
+              pendingMaskCreation_ &&
+              pendingMaskLayerId_ == selectedLayer->id() &&
+              pendingMaskPath_.vertexCount() >= 3;
+          const FloatColor previewShadowColor = {0.0f, 0.0f, 0.0f, 0.30f};
+          const FloatColor previewColor = closingSoon
+                                              ? FloatColor{1.0f, 0.88f, 0.46f, 0.95f}
+                                              : FloatColor{0.82f, 0.97f, 1.0f, 0.92f};
+          renderer_->drawPoint(penMaskPreviewCanvasPos_.x,
+                               penMaskPreviewCanvasPos_.y, 10.0f,
+                               previewShadowColor);
+          renderer_->drawPoint(penMaskPreviewCanvasPos_.x,
+                               penMaskPreviewCanvasPos_.y, 5.5f,
+                               previewColor);
         }
       }
 
@@ -5636,8 +5958,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       if (showCompositionRegionOverlay_) {
         drawCompositionRegionOverlay(renderer_.get(), comp);
       }
+      if (showCameraFrustumOverlay_ && activeCamera) {
+        const auto cameraOverlayVisual =
+            buildCameraFrustumVisual(activeCamera, comp);
+        ::Artifact::drawCameraFrustumOverlay(
+            renderer_.get(), cameraOverlayVisual,
+            activeCamera->id() == selectedLayerId_);
+      }
       if (selectedLayer) {
         drawSelectionOverlay(renderer_.get(), selectedLayer);
+        const bool selectedLayerIsActiveCamera =
+            activeCamera && activeCamera->id() == selectedLayer->id();
+        drawCameraSelectionOverlay(renderer_.get(), selectedLayer,
+                                   selectedLayerIsActiveCamera);
       }
       if (showAnchorCenterOverlay_ && selectedLayer) {
         drawAnchorCenterOverlay(renderer_.get(), selectedLayer);
@@ -5761,13 +6094,27 @@ QRectF CompositionRenderController::Impl::contextMenuRect() const {
   const float overlayHf = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
   QFont font = QApplication::font();
   font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
+  QFont titleFont = font;
+  titleFont.setBold(true);
+  titleFont.setPointSizeF(titleFont.pointSizeF() + 1.0);
+  const QFontMetrics titleFm(titleFont);
   const QFontMetrics fm(font);
   int textW = 140;
   for (const QString &item : contextMenuItems_) {
     textW = std::max(textW, fm.horizontalAdvance(item));
   }
-  const float panelW = static_cast<float>(std::min(280, textW + 40));
-  const float panelH = 12.0f + static_cast<float>(contextMenuItems_.size()) * 28.0f;
+  if (!contextMenuTitle_.trimmed().isEmpty()) {
+    textW = std::max(textW, titleFm.horizontalAdvance(contextMenuTitle_));
+  }
+  if (!contextMenuSubtitle_.trimmed().isEmpty()) {
+    textW = std::max(textW, fm.horizontalAdvance(contextMenuSubtitle_));
+  }
+  const float panelW = static_cast<float>(std::min(360, textW + 48));
+  const bool hasTitle = !contextMenuTitle_.trimmed().isEmpty();
+  const bool hasSubtitle = !contextMenuSubtitle_.trimmed().isEmpty();
+  const float headerH = hasTitle ? (hasSubtitle ? 54.0f : 36.0f) : 0.0f;
+  const float panelH = 12.0f + headerH +
+                       static_cast<float>(contextMenuItems_.size()) * 28.0f;
   float x = static_cast<float>(contextMenuViewportPos_.x());
   float y = static_cast<float>(contextMenuViewportPos_.y());
   if (x + panelW > overlayWf - 8.0f) {
@@ -5809,8 +6156,11 @@ QRectF CompositionRenderController::Impl::viewportOverlayItemRect(int index) con
     if (index >= static_cast<int>(contextMenuItems_.size())) {
       return {};
     }
+    const bool hasTitle = !contextMenuTitle_.trimmed().isEmpty();
+    const bool hasSubtitle = !contextMenuSubtitle_.trimmed().isEmpty();
+    const float headerH = hasTitle ? (hasSubtitle ? 54.0f : 36.0f) : 0.0f;
     const QRectF panel = contextMenuRect();
-    return QRectF(panel.left() + 6.0, panel.top() + 6.0 + index * 28.0,
+    return QRectF(panel.left() + 6.0, panel.top() + 6.0 + headerH + index * 28.0,
                   panel.width() - 12.0, 26.0);
   }
   return {};
@@ -6000,16 +6350,12 @@ void CompositionRenderController::Impl::drawViewportUiOverlay() {
     renderer_->drawSolidRect(0.0f, 0.0f, overlayWf, overlayHf,
                              FloatColor{0.0f, 0.0f, 0.0f, 0.22f}, 1.0f);
     const QRectF panel = commandPaletteRect();
-    renderer_->drawSolidRect(static_cast<float>(panel.left()),
-                             static_cast<float>(panel.top()),
-                             static_cast<float>(panel.width()),
-                             static_cast<float>(panel.height()),
-                             FloatColor{0.055f, 0.065f, 0.078f, 0.96f}, 1.0f);
-    renderer_->drawRectOutline(static_cast<float>(panel.left()),
-                               static_cast<float>(panel.top()),
-                               static_cast<float>(panel.width()),
-                               static_cast<float>(panel.height()),
-                               FloatColor{0.35f, 0.50f, 0.70f, 0.90f});
+    renderer_->drawOverlayPanel(static_cast<float>(panel.left()),
+                                static_cast<float>(panel.top()),
+                                static_cast<float>(panel.width()),
+                                static_cast<float>(panel.height()),
+                                FloatColor{0.055f, 0.065f, 0.078f, 0.96f},
+                                FloatColor{0.35f, 0.50f, 0.70f, 0.90f});
     renderer_->drawText(panel.adjusted(14.0, 8.0, -14.0, -panel.height() + 34.0),
                         QStringLiteral("Command Palette"), titleFont,
                         FloatColor{0.90f, 0.94f, 0.98f, 1.0f},
@@ -6042,19 +6388,50 @@ void CompositionRenderController::Impl::drawViewportUiOverlay() {
 
   if (contextMenuVisible_) {
     const QRectF panel = contextMenuRect();
-    renderer_->drawSolidRect(static_cast<float>(panel.left()),
-                             static_cast<float>(panel.top()),
-                             static_cast<float>(panel.width()),
-                             static_cast<float>(panel.height()),
-                             FloatColor{0.060f, 0.068f, 0.078f, 0.97f}, 1.0f);
-    renderer_->drawRectOutline(static_cast<float>(panel.left()),
-                               static_cast<float>(panel.top()),
-                               static_cast<float>(panel.width()),
-                               static_cast<float>(panel.height()),
-                               FloatColor{0.30f, 0.34f, 0.40f, 0.96f});
+    const bool hasTitle = !contextMenuTitle_.trimmed().isEmpty();
+    const bool hasSubtitle = !contextMenuSubtitle_.trimmed().isEmpty();
+    const float headerH = hasTitle ? (hasSubtitle ? 54.0f : 36.0f) : 0.0f;
+    renderer_->drawOverlayPanel(static_cast<float>(panel.left()),
+                                static_cast<float>(panel.top()),
+                                static_cast<float>(panel.width()),
+                                static_cast<float>(panel.height()),
+                                FloatColor{0.060f, 0.068f, 0.078f, 0.97f},
+                                FloatColor{0.30f, 0.34f, 0.40f, 0.96f});
+    if (hasTitle) {
+      QFont titleFont = itemFont;
+      titleFont.setBold(true);
+      titleFont.setPointSizeF(titleFont.pointSizeF() + 1.0);
+      const QRectF titleRect(panel.left() + 12.0, panel.top() + 8.0,
+                             panel.width() - 24.0, hasSubtitle ? 18.0 : 24.0);
+      renderer_->drawText(titleRect, contextMenuTitle_, titleFont,
+                          FloatColor{0.94f, 0.96f, 0.98f, 1.0f},
+                          Qt::AlignLeft | Qt::AlignVCenter);
+      if (hasSubtitle) {
+        const QRectF subtitleRect(panel.left() + 12.0, panel.top() + 26.0,
+                                  panel.width() - 24.0, 18.0);
+        renderer_->drawText(subtitleRect, contextMenuSubtitle_, itemFont,
+                            FloatColor{0.58f, 0.64f, 0.72f, 1.0f},
+                            Qt::AlignLeft | Qt::AlignVCenter);
+      }
+      renderer_->drawSolidRect(static_cast<float>(panel.left() + 10.0f),
+                               static_cast<float>(panel.top() + headerH - 2.0f),
+                               static_cast<float>(panel.width() - 20.0f), 1.0f,
+                               FloatColor{0.20f, 0.24f, 0.29f, 0.9f}, 1.0f);
+    }
     for (int i = 0; i < static_cast<int>(contextMenuItems_.size()); ++i) {
       const QRectF row = viewportOverlayItemRect(i);
-      if (i == 0) {
+      const bool enabled =
+          i < static_cast<int>(contextMenuItemEnabled_.size())
+              ? contextMenuItemEnabled_.at(i)
+              : true;
+      if (contextMenuItems_.at(i).trimmed().isEmpty()) {
+        const float y = static_cast<float>(row.center().y());
+        renderer_->drawSolidRect(static_cast<float>(row.left() + 10.0f), y,
+                                 static_cast<float>(row.width() - 20.0f), 1.0f,
+                                 FloatColor{0.20f, 0.24f, 0.29f, 0.95f}, 1.0f);
+        continue;
+      }
+      if (i == 0 && enabled) {
         renderer_->drawSolidRect(static_cast<float>(row.left()),
                                  static_cast<float>(row.top()),
                                  static_cast<float>(row.width()),
@@ -6063,7 +6440,8 @@ void CompositionRenderController::Impl::drawViewportUiOverlay() {
       }
       renderer_->drawText(row.adjusted(10.0, 0.0, -8.0, 0.0),
                           contextMenuItems_.at(i), itemFont,
-                          FloatColor{0.88f, 0.90f, 0.92f, 1.0f},
+                          enabled ? FloatColor{0.88f, 0.90f, 0.92f, 1.0f}
+                                  : FloatColor{0.52f, 0.56f, 0.62f, 1.0f},
                           Qt::AlignLeft | Qt::AlignVCenter);
     }
   }
@@ -6121,9 +6499,10 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
 
     renderer_->drawSolidRect(0.0f, 0.0f, overlayWf, overlayHf,
                              FloatColor{0.24f, 0.47f, 0.94f, 0.10f}, 1.0f);
-    renderer_->drawRectOutline(4.0f, 4.0f, overlayWf - 8.0f,
-                               overlayHf - 8.0f,
-                               FloatColor{0.39f, 0.63f, 1.0f, 0.70f});
+    renderer_->drawDashedRectOutline(4.0f, 4.0f, overlayWf - 8.0f,
+                                     overlayHf - 8.0f,
+                                     FloatColor{0.39f, 0.63f, 1.0f, 0.70f},
+                                     2.0f, 14.0f, 8.0f);
     const QRectF ghostRect = dropGhostRect_.normalized();
     renderer_->drawSolidRect(static_cast<float>(ghostRect.left()),
                              static_cast<float>(ghostRect.top()),

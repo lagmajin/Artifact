@@ -54,6 +54,7 @@ public:
   std::shared_ptr<ArtifactAbstractComposition> sourceComposition() const;
 
   // ArtifactAbstractLayer overrides
+  void draw(ArtifactIRenderer *renderer) override;
   QRectF localBounds() const override;
   std::vector<ArtifactCore::PropertyGroup>
   getLayerPropertyGroups() const override;

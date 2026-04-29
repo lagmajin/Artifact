@@ -16,6 +16,7 @@ module;
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
+#include <QJsonArray>
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QEvent>
@@ -27,6 +28,7 @@ module;
 #include <QHash>
 #include <QHideEvent>
 #include <QIcon>
+#include <QInputDialog>
 #include <QImageReader>
 #include <QKeySequence>
 #include <QMenu>
@@ -36,8 +38,10 @@ module;
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QMessageBox>
 #include <QResizeEvent>
 #include <QSet>
+#include <QLineEdit>
 #include <QShortcut>
 #include <QShowEvent>
 #include <QSignalBlocker>
@@ -47,8 +51,12 @@ module;
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QVector>
+#include <QVector3D>
 #include <QWheelEvent>
+#include <QFileDialog>
+#include <QtSVG/QSvgRenderer>
 #include <algorithm>
+#include <cmath>
 #include <array>
 #include <atomic>
 #include <deque>
@@ -82,6 +90,7 @@ import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Layer.Video;
 import Artifact.Tool.Manager;
+import Clipboard.ClipboardManager;
 import Utils.Path;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
@@ -481,6 +490,7 @@ public:
 
   void hideViewportOverlay() {
     viewportOverlayActions_.clear();
+    viewportOverlayEnabledStates_.clear();
     if (controller_) {
       controller_->hideViewportOverlay();
     }
@@ -493,6 +503,10 @@ public:
     const int index = controller_->viewportOverlayItemAt(viewportPos);
     if (index < 0 || index >= static_cast<int>(viewportOverlayActions_.size())) {
       hideViewportOverlay();
+      return true;
+    }
+    if (index >= static_cast<int>(viewportOverlayEnabledStates_.size()) ||
+        !viewportOverlayEnabledStates_.at(index)) {
       return true;
     }
     auto action = viewportOverlayActions_.at(index);
@@ -544,9 +558,21 @@ public:
     }
     QStringList items;
     QVector<std::function<void()>> actions;
-    const auto add = [&](const QString &label, std::function<void()> action) {
+    QVector<bool> enabledStates;
+    QString title;
+    QString subtitle;
+    const auto add = [&](const QString &label, std::function<void()> action,
+                         bool enabled = true) {
       items.push_back(label);
       actions.push_back(std::move(action));
+      enabledStates.push_back(enabled);
+    };
+    const auto addSeparator = [&]() {
+      if (!items.isEmpty() && !items.last().trimmed().isEmpty()) {
+        items.push_back(QString());
+        actions.push_back([]() {});
+        enabledStates.push_back(false);
+      }
     };
 
     const LayerID layerId = controller_->layerAtViewportPos(viewportPos);
@@ -554,13 +580,162 @@ public:
     const auto layer =
         (!layerId.isNil() && comp) ? comp->layerById(layerId)
                                    : ArtifactAbstractLayerPtr{};
+    auto *svc = ArtifactProjectService::instance();
+    auto *app = ArtifactApplicationManager::instance();
+    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    const int selectedCount =
+        selection ? static_cast<int>(selection->selectedLayers().size()) : 0;
+    const bool clipboardHasLayerData =
+        ArtifactCore::ClipboardManager::instance().hasLayerData();
+    const auto describeLayerMenuTitle = [&](const ArtifactAbstractLayerPtr &targetLayer) {
+      if (!targetLayer) {
+        return QStringLiteral("Layer");
+      }
+      QString typeText = QStringLiteral("Layer");
+      const QString className = targetLayer->className().toQString();
+      if (targetLayer->isNullLayer() ||
+          className.contains(QStringLiteral("Null"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Null Layer");
+      } else if (targetLayer->isAdjustmentLayer() ||
+                 className.contains(QStringLiteral("Adjust"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Adjustment Layer");
+      } else if (targetLayer->isGroupLayer() ||
+                 className.contains(QStringLiteral("Group"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Group Layer");
+      } else if (targetLayer->isCloneLayer() ||
+                 className.contains(QStringLiteral("Clone"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Clone Layer");
+      } else if (className.contains(QStringLiteral("Text"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Text Layer");
+      } else if (className.contains(QStringLiteral("Image"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Image Layer");
+      } else if (className.contains(QStringLiteral("Svg"), Qt::CaseInsensitive) ||
+                 className.contains(QStringLiteral("Shape"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("SVG Layer");
+      } else if (className.contains(QStringLiteral("Audio"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Audio Layer");
+      } else if (className.contains(QStringLiteral("Video"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Video Layer");
+      } else if (className.contains(QStringLiteral("Camera"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Camera Layer");
+      } else if (className.contains(QStringLiteral("Composition"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Precomp Layer");
+      } else if (targetLayer->is3D()) {
+        typeText = QStringLiteral("3D Layer");
+      }
+      QString statePrefix;
+      if (svc && svc->isLayerLockedInCurrentComposition(layerId)) {
+        statePrefix = QStringLiteral("Locked");
+      } else if (svc && !svc->isLayerVisibleInCurrentComposition(layerId)) {
+        statePrefix = QStringLiteral("Hidden");
+      } else if (svc && svc->isLayerSoloInCurrentComposition(layerId)) {
+        statePrefix = QStringLiteral("Solo");
+      } else if (svc && svc->isLayerShyInCurrentComposition(layerId)) {
+        statePrefix = QStringLiteral("Shy");
+      }
+      const QString nameText = targetLayer->layerName().trimmed().isEmpty()
+                                   ? QStringLiteral("Layer")
+                                   : targetLayer->layerName().trimmed();
+      if (statePrefix.isEmpty()) {
+        return QStringLiteral("%1 • %2").arg(typeText, nameText);
+      }
+      return QStringLiteral("%1 %2 • %3").arg(statePrefix, typeText, nameText);
+    };
+    const auto describeContextSubtitle = [&](bool layerContext) {
+      QStringList parts;
+      parts.push_back(layerContext ? QStringLiteral("Layer actions")
+                                   : QStringLiteral("Viewport actions"));
+      if (layerContext && selectedCount > 1) {
+        parts.push_back(QStringLiteral("%1 selected").arg(selectedCount));
+      }
+      if (!layerContext && clipboardHasLayerData) {
+        parts.push_back(QStringLiteral("Clipboard ready"));
+      }
+      return parts.join(QStringLiteral(" • "));
+    };
+    const auto pasteLayersHere = [this]() {
+      auto *service = ArtifactProjectService::instance();
+      if (!service) {
+        return;
+      }
+      const auto compNow = currentComposition();
+      if (!compNow) {
+        return;
+      }
+      const QJsonArray layersArray =
+          ArtifactCore::ClipboardManager::instance().pasteLayers();
+      if (layersArray.isEmpty()) {
+        return;
+      }
+      auto *selectionManager = ArtifactApplicationManager::instance()
+                                   ? ArtifactApplicationManager::instance()
+                                         ->layerSelectionManager()
+                                   : nullptr;
+      ArtifactAbstractLayerPtr anchorLayer;
+      int anchorIndex = -1;
+      if (selectionManager) {
+        anchorLayer = selectionManager->currentLayer();
+        if (anchorLayer) {
+          const auto layers = compNow->allLayer();
+          for (int i = 0; i < layers.size(); ++i) {
+            if (layers[i] && layers[i]->id() == anchorLayer->id()) {
+              anchorIndex = i;
+              break;
+            }
+          }
+        }
+      }
+      if (selectionManager) {
+        selectionManager->clearSelection();
+      }
+      int pasted = 0;
+      for (const auto &val : layersArray) {
+        if (!val.isObject()) {
+          continue;
+        }
+        auto pastedLayer = ArtifactAbstractLayer::fromJson(val.toObject());
+        if (!pastedLayer) {
+          continue;
+        }
+        pastedLayer->setLayerName(pastedLayer->layerName() +
+                                  QStringLiteral(" (Copy)"));
+        auto result = compNow->appendLayerTop(pastedLayer);
+        if (!result.success) {
+          continue;
+        }
+        if (anchorIndex >= 0) {
+          const auto layers = compNow->allLayer();
+          int pastedIndex = -1;
+          for (int i = 0; i < layers.size(); ++i) {
+            if (layers[i] && layers[i]->id() == pastedLayer->id()) {
+              pastedIndex = i;
+              break;
+            }
+          }
+          const int targetIndex = std::clamp(
+              anchorIndex + pasted, 0,
+              std::max(0, static_cast<int>(layers.size()) - 1));
+          if (pastedIndex >= 0 && pastedIndex != targetIndex) {
+            compNow->moveLayerToIndex(pastedLayer->id(), targetIndex);
+          }
+        }
+        if (selectionManager) {
+          selectionManager->addToSelection(pastedLayer);
+        }
+        ++pasted;
+      }
+      if (pasted == 0) {
+        QMessageBox::warning(compositionView_, QStringLiteral("Paste Layers"),
+                             QStringLiteral("No layers could be pasted."));
+      }
+    };
     if (layer) {
-      add(QStringLiteral("Select Layer"), [this, layerId]() {
-        if (controller_) controller_->setSelectedLayerId(layerId);
-      });
-      if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
-        add(QStringLiteral("Edit Text"), [this, layer]() {
-          editTextLayerInline(this, layer, controller_);
+      title = describeLayerMenuTitle(layer);
+      subtitle = describeContextSubtitle(true);
+      const bool selected = controller_->selectedLayerId() == layerId;
+      if (!selected) {
+        add(QStringLiteral("Select Layer"), [this, layerId]() {
+          if (controller_) controller_->setSelectedLayerId(layerId);
         });
       }
       add(QStringLiteral("Focus Layer"), [this, layerId]() {
@@ -569,17 +744,387 @@ public:
           controller_->focusSelectedLayer();
         }
       });
+      if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+        add(QStringLiteral("Edit Text"), [this, layer]() {
+          editTextLayerInline(this, layer, controller_);
+        });
+      }
+      add(QStringLiteral("Copy Layer"), [layer]() {
+        ArtifactCore::ClipboardManager::instance().copyLayer(layer->toJson(),
+                                                             layer->layerName());
+      });
+      add(QStringLiteral("Paste Layers Here"), pasteLayersHere,
+          clipboardHasLayerData);
+      addSeparator();
+      const bool visible =
+          svc ? svc->isLayerVisibleInCurrentComposition(layerId) : true;
+      add(visible ? QStringLiteral("Hide Layer")
+                  : QStringLiteral("Show Layer"),
+          [layerId, visible]() {
+            auto *service = ArtifactProjectService::instance();
+            if (!service) {
+              return;
+            }
+            service->setLayerVisibleInCurrentComposition(layerId, !visible);
+          });
+      const bool locked =
+          svc ? svc->isLayerLockedInCurrentComposition(layerId) : false;
+      add(locked ? QStringLiteral("Unlock Layer")
+                 : QStringLiteral("Lock Layer"),
+          [layerId, locked]() {
+            auto *service = ArtifactProjectService::instance();
+            if (!service) {
+              return;
+            }
+            service->setLayerLockedInCurrentComposition(layerId, !locked);
+          });
+      const bool solo =
+          svc ? svc->isLayerSoloInCurrentComposition(layerId) : false;
+      add(solo ? QStringLiteral("Unsolo Layer")
+               : QStringLiteral("Solo Layer"),
+          [layerId, solo]() {
+            auto *service = ArtifactProjectService::instance();
+            if (!service) {
+              return;
+            }
+            service->setLayerSoloInCurrentComposition(layerId, !solo);
+          });
+      const bool shy = svc ? svc->isLayerShyInCurrentComposition(layerId) : false;
+      add(shy ? QStringLiteral("Unshy Layer")
+              : QStringLiteral("Shy Layer"),
+          [layerId, shy]() {
+            auto *service = ArtifactProjectService::instance();
+            if (!service) {
+              return;
+            }
+            service->setLayerShyInCurrentComposition(layerId, !shy);
+          });
+      add(QStringLiteral("Center Layer"), [this, layerId]() {
+        auto *service = ArtifactProjectService::instance();
+        const auto compNow = currentComposition();
+        const auto clickedLayer =
+            compNow ? compNow->layerById(layerId) : ArtifactAbstractLayerPtr{};
+        if (!service || !compNow || !clickedLayer) {
+          return;
+        }
+        const QSize compSize = compNow->settings().compositionSize();
+        const float compCenterX =
+            static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920) *
+            0.5f;
+        const float compCenterY =
+            static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080) *
+            0.5f;
+        const QVector3D current = clickedLayer->position3D();
+        clickedLayer->setPosition3D(
+            QVector3D(compCenterX, compCenterY, current.z()));
+        clickedLayer->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{compNow->id().toString(),
+                              clickedLayer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+      });
+      addSeparator();
+      const auto parentId =
+          svc ? svc->layerParentIdInCurrentComposition(layerId) : LayerID{};
+      if (!parentId.isNil()) {
+        add(QStringLiteral("Select Parent Layer"), [this, parentId]() {
+          auto *service = ArtifactProjectService::instance();
+          if (!service) {
+            return;
+          }
+          service->selectLayer(parentId);
+        });
+        add(QStringLiteral("Unparent Layer"), [layerId]() {
+          auto *service = ArtifactProjectService::instance();
+          if (!service) {
+            return;
+          }
+          service->clearLayerParentInCurrentComposition(layerId);
+        });
+      }
+      if (comp) {
+        const auto layers = comp->allLayer();
+        int currentIndex = -1;
+        for (int i = 0; i < layers.size(); ++i) {
+          if (layers[i] && layers[i]->id() == layerId) {
+            currentIndex = i;
+            break;
+          }
+        }
+        if (currentIndex >= 0) {
+          const int lastIndex = layers.isEmpty() ? 0 : layers.size() - 1;
+          if (currentIndex > 0) {
+            add(QStringLiteral("Bring Forward"), [layerId, currentIndex]() {
+              auto *service = ArtifactProjectService::instance();
+              if (!service) {
+                return;
+              }
+              service->moveLayerInCurrentComposition(layerId, currentIndex - 1);
+            });
+            add(QStringLiteral("Bring to Front"), [layerId]() {
+              auto *service = ArtifactProjectService::instance();
+              const auto compNow = currentComposition();
+              if (!service || !compNow) {
+                return;
+              }
+              const auto layers = compNow->allLayer();
+              service->moveLayerInCurrentComposition(layerId,
+                                                    std::max(0, layers.size() - 1));
+            });
+          }
+          if (currentIndex < lastIndex) {
+            add(QStringLiteral("Send Backward"), [layerId, currentIndex]() {
+              auto *service = ArtifactProjectService::instance();
+              if (!service) {
+                return;
+              }
+              service->moveLayerInCurrentComposition(layerId, currentIndex + 1);
+            });
+            add(QStringLiteral("Send to Back"), [layerId]() {
+              auto *service = ArtifactProjectService::instance();
+              if (!service) {
+                return;
+              }
+              service->moveLayerInCurrentComposition(layerId, 0);
+            });
+          }
+        }
+      }
+      add(QStringLiteral("Group Selected Layers"), [this]() {
+          auto *service = ArtifactProjectService::instance();
+          if (!service) {
+            return;
+          }
+          if (!service->groupSelectedLayersInCurrentComposition()) {
+            QMessageBox::warning(compositionView_, QStringLiteral("Group Layers"),
+                                 QStringLiteral("Could not group selected layers."));
+          }
+        }, selectedCount > 1);
+      addSeparator();
+      add(QStringLiteral("Ungroup Selected Group"), [this]() {
+          auto *service = ArtifactProjectService::instance();
+          if (!service) {
+            return;
+          }
+          if (!service->ungroupSelectedGroupInCurrentComposition()) {
+            QMessageBox::warning(compositionView_, QStringLiteral("Ungroup Layers"),
+                                 QStringLiteral("Could not ungroup the selected group."));
+          }
+        }, layer->isGroupLayer());
+      addSeparator();
+      add(QStringLiteral("Duplicate Layer"), [this, layerId]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        if (!service->duplicateLayerInCurrentComposition(layerId)) {
+          QMessageBox::warning(compositionView_, QStringLiteral("Duplicate Layer"),
+                               QStringLiteral("Layer duplication failed."));
+        }
+      });
+      add(QStringLiteral("Rename Layer"), [this, layerId]() {
+        auto *service = ArtifactProjectService::instance();
+        const auto compNow = currentComposition();
+        if (!service || !compNow) {
+          return;
+        }
+        const QString currentName = service->layerNameInCurrentComposition(layerId);
+        bool ok = false;
+        const QString newName = QInputDialog::getText(
+            compositionView_, QStringLiteral("Rename Layer"), QStringLiteral("Layer name:"),
+            QLineEdit::Normal, currentName, &ok);
+        if (!ok) {
+          return;
+        }
+        const QString trimmed = newName.trimmed();
+        if (trimmed.isEmpty()) {
+          return;
+        }
+        if (!service->renameLayerInCurrentComposition(layerId, trimmed)) {
+          QMessageBox::warning(compositionView_, QStringLiteral("Rename Layer"),
+                               QStringLiteral("Layer rename failed."));
+        }
+      });
+      add(QStringLiteral("Delete Layer"), [this, layerId]() {
+        auto *service = ArtifactProjectService::instance();
+        const auto compNow = currentComposition();
+        if (!service || !compNow) {
+          return;
+        }
+        const QString message =
+            service->layerRemovalConfirmationMessage(compNow->id(), layerId);
+        const auto response = QMessageBox::question(
+            compositionView_, QStringLiteral("Delete Layer"), message,
+            QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+        if (response != QMessageBox::Yes) {
+          return;
+        }
+        if (!service->removeLayerFromComposition(compNow->id(), layerId)) {
+          QMessageBox::warning(compositionView_, QStringLiteral("Delete Layer"),
+                               QStringLiteral("Layer deletion failed."));
+        }
+      });
+    } else {
+      title = QStringLiteral("View");
+      subtitle = describeContextSubtitle(false);
+      add(QStringLiteral("New Text Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactTextLayerInitParams params(QStringLiteral("Text 1"));
+        service->addLayerToCurrentComposition(params);
+      });
+      add(QStringLiteral("New Null Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        const auto compNow = currentComposition();
+        if (!service || !compNow) {
+          return;
+        }
+        ArtifactNullLayerInitParams params(QStringLiteral("Null 1"));
+        const QSize compSize = compNow->settings().compositionSize();
+        params.setWidth(compSize.width());
+        params.setHeight(compSize.height());
+        service->addLayerToCurrentComposition(params);
+      });
+      add(QStringLiteral("New Adjustment Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactLayerInitParams params(QStringLiteral("Adjustment Layer 1"),
+                                       LayerType::Adjustment);
+        service->addLayerToCurrentComposition(params);
+      });
+      add(QStringLiteral("New Camera Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactCameraLayerInitParams params;
+        params.setName(UniString(QStringLiteral("Camera 1")));
+        service->addLayerToCurrentComposition(params);
+      });
+      add(QStringLiteral("New SVG Layer..."), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        const QString filePath = QFileDialog::getOpenFileName(
+            compositionView_, QStringLiteral("SVGを選択"), QString(),
+            QStringLiteral("SVG (*.svg);;All Files (*.*)"));
+        if (filePath.isEmpty()) {
+          return;
+        }
+        if (!filePath.endsWith(QStringLiteral(".svg"), Qt::CaseInsensitive)) {
+          QMessageBox::warning(compositionView_, QStringLiteral("Layer"),
+                               QStringLiteral("SVG ファイルを選択してください。"));
+          return;
+        }
+        QSvgRenderer validator(filePath);
+        if (!validator.isValid()) {
+          QMessageBox::warning(compositionView_, QStringLiteral("Layer"),
+                               QStringLiteral("SVG を読み込めませんでした。"));
+          return;
+        }
+        const QString layerName =
+            QFileInfo(filePath).completeBaseName().isEmpty()
+                ? QStringLiteral("SVG 1")
+                : QFileInfo(filePath).completeBaseName();
+        service->importAssetsFromPathsAsync(QStringList{filePath},
+                                           [service, layerName](QStringList importedPaths) {
+                                             if (!service || importedPaths.isEmpty()) {
+                                               return;
+                                             }
+                                             ArtifactSvgInitParams params(layerName);
+                                             params.setSvgPath(importedPaths.first());
+                                             service->addLayerToCurrentComposition(params);
+                                           });
+      });
+      add(QStringLiteral("New Image Layer..."), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        const QString filePath = QFileDialog::getOpenFileName(
+            compositionView_, QStringLiteral("画像を選択"), QString(),
+            QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.tif *.tiff);;All Files (*.*)"));
+        if (filePath.isEmpty()) {
+          return;
+        }
+        QImageReader reader(filePath);
+        if (!reader.canRead()) {
+          QMessageBox::warning(compositionView_, QStringLiteral("Layer"),
+                               QStringLiteral("画像を読み込めませんでした。"));
+          return;
+        }
+        const QString layerName =
+            QFileInfo(filePath).completeBaseName().isEmpty()
+                ? QStringLiteral("Image 1")
+                : QFileInfo(filePath).completeBaseName();
+        service->importAssetsFromPathsAsync(QStringList{filePath},
+                                           [service, layerName](QStringList importedPaths) {
+                                             if (!service || importedPaths.isEmpty()) {
+                                               return;
+                                             }
+                                             ArtifactImageInitParams params(layerName);
+                                             params.setImagePath(importedPaths.first());
+                                             service->addLayerToCurrentComposition(params);
+                                           });
+      });
+      add(QStringLiteral("New Audio Layer..."), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        const QString filePath = QFileDialog::getOpenFileName(
+            compositionView_, QStringLiteral("オーディオを選択"), QString(),
+            QStringLiteral("Audio (*.wav *.mp3 *.ogg *.flac *.aac *.m4a);;All Files (*.*)"));
+        if (filePath.isEmpty()) {
+          return;
+        }
+        const QString layerName =
+            QFileInfo(filePath).completeBaseName().isEmpty()
+                ? QStringLiteral("Audio 1")
+                : QFileInfo(filePath).completeBaseName();
+        service->importAssetsFromPathsAsync(QStringList{filePath},
+                                           [service, layerName](QStringList importedPaths) {
+                                             if (!service || importedPaths.isEmpty()) {
+                                               return;
+                                             }
+                                             ArtifactAudioInitParams params(layerName);
+                                             params.setAudioPath(importedPaths.first());
+                                             service->addLayerToCurrentComposition(params);
+                                           });
+      });
+      addSeparator();
+      const bool hasSelectedLayer = !controller_->selectedLayerId().isNil();
+      add(QStringLiteral("Focus Selected Layer"), [this]() {
+          if (controller_) {
+            controller_->focusSelectedLayer();
+          }
+        }, hasSelectedLayer);
+      addSeparator();
+      add(QStringLiteral("Reset View"), [this]() {
+        if (controller_) controller_->resetView();
+      });
+      add(QStringLiteral("Zoom Fit"), [this]() {
+        if (controller_) controller_->zoomFit();
+      });
+      add(QStringLiteral("Zoom 100%"), [this]() {
+        if (controller_) controller_->zoom100();
+      });
+      addSeparator();
+      add(QStringLiteral("Paste Layers Here"), pasteLayersHere,
+          clipboardHasLayerData);
+      addSeparator();
+      add(QStringLiteral("Command Palette"), [this]() { showCommandPalette(); });
     }
-    add(QStringLiteral("Reset View"), [this]() {
-      if (controller_) controller_->resetView();
-    });
-    add(QStringLiteral("Zoom Fit"), [this]() {
-      if (controller_) controller_->zoomFit();
-    });
-    add(QStringLiteral("Command Palette"), [this]() { showCommandPalette(); });
 
     viewportOverlayActions_ = actions;
-    controller_->showContextMenuOverlay(viewportPos, items);
+    viewportOverlayEnabledStates_ = enabledStates;
+    controller_->showContextMenuOverlay(viewportPos, items, title, subtitle,
+                                        enabledStates);
   }
 
   void updateViewportCursor(const QPointF &pos) {
@@ -926,7 +1471,21 @@ protected:
     qDebug() << "[VP] mousePressEvent button=" << event->button()
              << "middle=" << (event->button() == Qt::MiddleButton)
              << "space=" << spacePressed_
+             << "alt=" << event->modifiers().testFlag(Qt::AltModifier)
              << "pos=" << event->position();
+
+    if (event->button() == Qt::RightButton &&
+        event->modifiers().testFlag(Qt::AltModifier)) {
+      isAltZooming_ = true;
+      lastMousePos_ = event->position();
+      grabMouse();
+      if (controller_) {
+        controller_->notifyViewportInteractionActivity();
+      }
+      setCursor(Qt::SizeVerCursor);
+      event->accept();
+      return;
+    }
 
     if (event->button() == Qt::MiddleButton ||
         (event->button() == Qt::LeftButton && spacePressed_)) {
@@ -969,6 +1528,16 @@ protected:
       isPanning_ = true;
       isPanningWithMiddle_ = true;
       lastMousePos_ = event->position();
+    }
+    if (isAltZooming_ && controller_) {
+      const QPointF delta = event->position() - lastMousePos_;
+      lastMousePos_ = event->position();
+      controller_->notifyViewportInteractionActivity();
+      const float zoomDelta = static_cast<float>(-delta.y()) * 0.01f;
+      const float factor = std::exp(std::clamp(zoomDelta, -0.35f, 0.35f));
+      controller_->zoomAtFactor(event->position(), factor);
+      event->accept();
+      return;
     }
     if (isPanning_ && controller_) {
       const QPointF delta = event->position() - lastMousePos_;
@@ -1025,6 +1594,17 @@ protected:
       return;
     }
 
+    if (isAltZooming_ && event->button() == Qt::RightButton) {
+      isAltZooming_ = false;
+      releaseMouse();
+      if (controller_) {
+        controller_->finishViewportInteraction();
+      }
+      unsetCursor();
+      event->accept();
+      return;
+    }
+
     if (controller_) {
       const bool wasScaleDrag = isScaleDragActive();
       controller_->handleMouseRelease();
@@ -1065,11 +1645,22 @@ protected:
     const QPointF physPos(GET_X_LPARAM(msg->lParam),
                           GET_Y_LPARAM(msg->lParam));
     const QPointF logPos = physPos / dpr;
+    const bool altDown = (GetKeyState(VK_MENU) & 0x8000) != 0;
 
     switch (msg->message) {
     case WM_RBUTTONDOWN:
       if (controller_ && controller_->isPieMenuOverlayVisible()) {
         controller_->cancelPieMenuOverlay();
+        return true;
+      }
+      if (altDown) {
+        isAltZooming_ = true;
+        lastMousePos_ = logPos;
+        SetCapture(msg->hwnd);
+        setCursor(Qt::SizeVerCursor);
+        if (controller_) {
+          controller_->notifyViewportInteractionActivity();
+        }
         return true;
       }
       showViewportContextMenu(logPos);
@@ -1144,9 +1735,30 @@ protected:
       }
       return true;
 
+    case WM_RBUTTONUP:
+      if (isAltZooming_) {
+        isAltZooming_ = false;
+        ReleaseCapture();
+        if (controller_) {
+          controller_->finishViewportInteraction();
+        }
+        unsetCursor();
+        return true;
+      }
+      break;
+
     case WM_MOUSEMOVE:
       if (controller_ && controller_->isPieMenuOverlayVisible()) {
         controller_->updatePieMenuOverlayMousePos(logPos);
+        return true;
+      }
+      if (isAltZooming_ && controller_) {
+        const QPointF delta = logPos - lastMousePos_;
+        lastMousePos_ = logPos;
+        controller_->notifyViewportInteractionActivity();
+        const float zoomDelta = static_cast<float>(-delta.y()) * 0.01f;
+        const float factor = std::exp(std::clamp(zoomDelta, -0.35f, 0.35f));
+        controller_->zoomAtFactor(logPos, factor);
         return true;
       }
       if (isPanning_ && controller_) {
@@ -1636,13 +2248,23 @@ protected:
     model.items.push_back(
         {"Grid", loadIconWithFallback("MaterialVS/neutral/grid.svg"),
          "display.grid", true, controller_->isShowGrid(),
-         [this]() { controller_->setShowGrid(!controller_->isShowGrid()); }});
+         [this]() {
+           const bool next = !controller_->isShowGrid();
+           controller_->setShowGrid(next);
+           if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+             settings->setCompositionShowGrid(next);
+           }
+         }});
 
     // Safe Area Toggle
     model.items.push_back(
         {"Safe Area", loadIconWithFallback("MaterialVS/neutral/safe_area.svg"),
          "display.safeArea", true, controller_->isShowSafeMargins(), [this]() {
-           controller_->setShowSafeMargins(!controller_->isShowSafeMargins());
+           const bool next = !controller_->isShowSafeMargins();
+           controller_->setShowSafeMargins(next);
+           if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+             settings->setCompositionShowSafeMargins(next);
+           }
          }});
 
     controller_->showPieMenuOverlay(model, mapFromGlobal(QCursor::pos()));
@@ -1698,6 +2320,7 @@ protected:
   CompositionRenderController *controller_ = nullptr;
   bool isPanning_ = false;
   bool isPanningWithMiddle_ = false;
+  bool isAltZooming_ = false;
   bool spacePressed_ = false;
   bool pendingInitialFit_ = true;
   QTimer *resizeDebounceTimer_ = nullptr;
@@ -1715,6 +2338,7 @@ protected:
   bool processingDroppedAssets_ = false;
   QWidget *overlayWidget_ = nullptr;
   QVector<std::function<void()>> viewportOverlayActions_;
+  QVector<bool> viewportOverlayEnabledStates_;
   // 動画ファイルのキャンバスサイズキャッシュ（非同期取得）
   QHash<QString, QSize> videoDimensionCache_;
   QHash<QString, ArtifactCore::FileType> dragFileTypeCache_;
@@ -2457,6 +3081,8 @@ public:
 
 ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
+  QElapsedTimer ctorTimer;
+  ctorTimer.start();
   setMinimumSize(0, 0);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   setAutoFillBackground(true);
@@ -2476,6 +3102,24 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     const QColor clear(28, 40, 56);
     impl_->renderController_->setClearColor(
         {clear.redF(), clear.greenF(), clear.blueF(), 1.0f});
+  }
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    impl_->renderController_->setCompositionBackgroundMode(
+        settings->compositionBackgroundMode());
+    impl_->renderController_->setCheckerboardSize(
+        settings->compositionCheckerboardSize());
+    impl_->renderController_->setGridSettings(
+        settings->compositionGridSettings());
+    impl_->renderController_->setShowGrid(settings->compositionShowGrid());
+    impl_->renderController_->setShowGuides(settings->compositionShowGuides());
+    impl_->renderController_->setShowSafeMargins(
+        settings->compositionShowSafeMargins());
+    impl_->renderController_->setShowAnchorCenterOverlay(
+        settings->compositionShowAnchorCenterOverlay());
+    impl_->renderController_->setShowCameraFrustumOverlay(
+        settings->compositionShowCameraFrustumOverlay());
+    impl_->renderController_->setShowMotionPathOverlay(
+        settings->compositionShowMotionPathOverlay());
   }
 
   QObject::connect(impl_->renderController_,
@@ -2521,7 +3165,6 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->editTextAction_->setShortcut(QKeySequence(Qt::Key_F2));
   impl_->motionPathAction_ = impl_->topToolbar_->addAction("Motion Path");
   impl_->motionPathAction_->setCheckable(true);
-  impl_->motionPathAction_->setChecked(false);
   impl_->motionPathAction_->setToolTip(
       QStringLiteral("Show motion path overlay for the selected layer"));
 
@@ -2765,6 +3408,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *solidBgAct = displayMenu->addAction("Solid");
   QAction *solidColorAct = displayMenu->addAction("Solid Color...");
   QAction *checkerboardAct = displayMenu->addAction("Checkerboard");
+  auto *checkerboardSizeMenu = displayMenu->addMenu("Checkerboard Size");
   QAction *mayaBgAct = displayMenu->addAction("Maya Gradient");
   auto *bgGroup = new QActionGroup(displayMenu);
   bgGroup->setExclusive(true);
@@ -2775,13 +3419,17 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *guidesAct = displayMenu->addAction("Guides");
   QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
   QAction *anchorCenterAct = displayMenu->addAction("Anchor / Center");
+  QAction *cameraOverlayAct = displayMenu->addAction("Camera Frustum");
   displayMenu->addSeparator();
   QAction *gpuBlendAct = displayMenu->addAction("GPU Blend Path");
+  const std::array<float, 5> checkerboardSizes{8.0f, 12.0f, 16.0f, 24.0f,
+                                               32.0f};
   checkerboardAct->setCheckable(true);
   gridAct->setCheckable(true);
   guidesAct->setCheckable(true);
   safeMarginsAct->setCheckable(true);
   anchorCenterAct->setCheckable(true);
+  cameraOverlayAct->setCheckable(true);
   gpuBlendAct->setCheckable(true);
   anchorCenterAct->setToolTip(
       QStringLiteral("Show the selected layer anchor point and center point"));
@@ -2789,6 +3437,20 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       QStringLiteral("Enable the compute-shader blend path when the composition needs masks, non-normal blending, or rasterizer effects"));
   gpuBlendAct->setStatusTip(
       QStringLiteral("Toggle the experimental GPU blend path"));
+  for (const float size : checkerboardSizes) {
+    QAction *sizeAct = checkerboardSizeMenu->addAction(
+        QStringLiteral("%1 px").arg(QString::number(size, 'f', 0)));
+    sizeAct->setCheckable(true);
+    sizeAct->setData(size);
+    QObject::connect(sizeAct, &QAction::triggered, this, [this, size]() {
+      if (impl_->renderController_) {
+        impl_->renderController_->setCheckerboardSize(size);
+        if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+          settings->setCompositionCheckerboardSize(size);
+        }
+      }
+    });
+  }
   impl_->displayOptionsBtn_->setMenu(displayMenu);
 
   // Connect actions
@@ -2796,6 +3458,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     if (impl_->renderController_) {
       impl_->renderController_->setCompositionBackgroundMode(
           static_cast<int>(CompositionBackgroundMode::Solid));
+      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+        settings->setCompositionBackgroundMode(
+            static_cast<int>(CompositionBackgroundMode::Solid));
+      }
     }
   });
   QObject::connect(solidColorAct, &QAction::triggered, this, [this]() {
@@ -2818,36 +3484,78 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    chosen.alphaF()));
     impl_->renderController_->setCompositionBackgroundMode(
         static_cast<int>(CompositionBackgroundMode::Solid));
+    if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      settings->setCompositionBackgroundMode(
+          static_cast<int>(CompositionBackgroundMode::Solid));
+    }
   });
   QObject::connect(checkerboardAct, &QAction::triggered, this, [this]() {
     if (impl_->renderController_) {
       impl_->renderController_->setCompositionBackgroundMode(
           static_cast<int>(CompositionBackgroundMode::Checkerboard));
+      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+        settings->setCompositionBackgroundMode(
+            static_cast<int>(CompositionBackgroundMode::Checkerboard));
+      }
     }
   });
   QObject::connect(mayaBgAct, &QAction::triggered, this, [this]() {
     if (impl_->renderController_) {
       impl_->renderController_->setCompositionBackgroundMode(
           static_cast<int>(CompositionBackgroundMode::MayaGradient));
+      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+        settings->setCompositionBackgroundMode(
+            static_cast<int>(CompositionBackgroundMode::MayaGradient));
+      }
     }
   });
   QObject::connect(gridAct, &QAction::toggled, this, [this](bool checked) {
-    if (impl_->renderController_)
+    if (impl_->renderController_) {
       impl_->renderController_->setShowGrid(checked);
+      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+        settings->setCompositionShowGrid(checked);
+      }
+    }
   });
   QObject::connect(guidesAct, &QAction::toggled, this, [this](bool checked) {
-    if (impl_->renderController_)
+    if (impl_->renderController_) {
       impl_->renderController_->setShowGuides(checked);
+      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+        settings->setCompositionShowGuides(checked);
+      }
+    }
   });
   QObject::connect(safeMarginsAct, &QAction::toggled, this,
                    [this](bool checked) {
-                     if (impl_->renderController_)
+                     if (impl_->renderController_) {
                        impl_->renderController_->setShowSafeMargins(checked);
+                       if (auto *settings =
+                               ArtifactCore::ArtifactAppSettings::instance()) {
+                         settings->setCompositionShowSafeMargins(checked);
+                       }
+                     }
                    });
   QObject::connect(anchorCenterAct, &QAction::toggled, this,
                    [this](bool checked) {
-                     if (impl_->renderController_)
+                     if (impl_->renderController_) {
                        impl_->renderController_->setShowAnchorCenterOverlay(checked);
+                       if (auto *settings =
+                               ArtifactCore::ArtifactAppSettings::instance()) {
+                         settings->setCompositionShowAnchorCenterOverlay(
+                             checked);
+                       }
+                     }
+                   });
+  QObject::connect(cameraOverlayAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (impl_->renderController_) {
+                       impl_->renderController_->setShowCameraFrustumOverlay(checked);
+                       if (auto *settings =
+                               ArtifactCore::ArtifactAppSettings::instance()) {
+                         settings->setCompositionShowCameraFrustumOverlay(
+                             checked);
+                       }
+                     }
                    });
   QObject::connect(gpuBlendAct, &QAction::toggled, this, [this](bool checked) {
     if (impl_->renderController_) {
@@ -2873,7 +3581,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     guidesAct->setChecked(impl_->renderController_->isShowGuides());
     safeMarginsAct->setChecked(impl_->renderController_->isShowSafeMargins());
     anchorCenterAct->setChecked(impl_->renderController_->isShowAnchorCenterOverlay());
+    cameraOverlayAct->setChecked(impl_->renderController_->isShowCameraFrustumOverlay());
     gpuBlendAct->setChecked(impl_->renderController_->isGpuBlendEnabled());
+    impl_->motionPathAction_->setChecked(
+        impl_->renderController_->isShowMotionPathOverlay());
+    const float checkerboardSize = impl_->renderController_->checkerboardSize();
+    for (QAction *action : checkerboardSizeMenu->actions()) {
+      const float size = action->data().toFloat();
+      action->setChecked(std::abs(size - checkerboardSize) <= 0.5f);
+    }
   }
 
   bottomLayout->addWidget(impl_->resolutionCombo_);
@@ -2933,6 +3649,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       impl_->motionPathAction_, &QAction::toggled, this, [this](bool checked) {
         if (impl_->renderController_) {
           impl_->renderController_->setShowMotionPathOverlay(checked);
+          if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+            settings->setCompositionShowMotionPathOverlay(checked);
+          }
         }
       });
   auto *immersiveExitShortcut =
@@ -3073,74 +3792,85 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
             setComposition(nullptr);
           }));
 
-  // --- Profiler overlay (Ctrl+Shift+P to toggle) ---
-  impl_->profilerOverlay_ = new ProfilerOverlayWidget(this);
-  impl_->profilerOverlay_->hide();
-
-  auto *profilerShortcut =
-      new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), this);
-  QObject::connect(profilerShortcut, &QShortcut::activated, this, [this]() {
-    if (!impl_ || !impl_->profilerOverlay_)
+  QTimer::singleShot(0, this, [this]() {
+    if (!impl_) {
       return;
-    const bool willShow = !impl_->profilerOverlay_->isVisible();
-    ArtifactCore::Profiler::instance().setEnabled(willShow);
-    impl_->profilerOverlay_->setVisible(willShow);
-    if (willShow) {
-      impl_->syncOverlayGeometry(this);
     }
+
+    // --- Profiler overlay (Ctrl+Shift+P to toggle) ---
+    impl_->profilerOverlay_ = new ProfilerOverlayWidget(this);
+    impl_->profilerOverlay_->hide();
+
+    auto *profilerShortcut =
+        new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_P), this);
+    QObject::connect(profilerShortcut, &QShortcut::activated, this, [this]() {
+      if (!impl_ || !impl_->profilerOverlay_)
+        return;
+      const bool willShow = !impl_->profilerOverlay_->isVisible();
+      ArtifactCore::Profiler::instance().setEnabled(willShow);
+      impl_->profilerOverlay_->setVisible(willShow);
+      if (willShow) {
+        impl_->syncOverlayGeometry(this);
+      }
+    });
+
+    // Ctrl+Shift+C: copy diagnostic report to clipboard
+    auto *profilerCopyShortcut =
+        new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this);
+    QObject::connect(profilerCopyShortcut, &QShortcut::activated, this,
+                     [this]() {
+                       if (!ArtifactCore::Profiler::instance().isEnabled())
+                         return;
+                       const std::string report =
+                           ArtifactCore::Profiler::instance()
+                               .generateDiagnosticReport(60);
+                       QGuiApplication::clipboard()->setText(
+                           QString::fromStdString(report));
+                     });
+
+    // --- Profiler panel (Ctrl+Shift+D to toggle) ---
+    impl_->profilerPanel_ = new ProfilerPanelWidget(nullptr);
+    impl_->profilerPanel_->hide();
+
+    auto *profilerPanelShortcut =
+        new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D), this);
+    QObject::connect(
+        profilerPanelShortcut, &QShortcut::activated, this, [this]() {
+          if (!impl_ || !impl_->profilerPanel_)
+            return;
+          const bool willShow = !impl_->profilerPanel_->isVisible();
+          ArtifactCore::Profiler::instance().setEnabled(
+              willShow || impl_->profilerOverlay_->isVisible());
+          impl_->profilerPanel_->setVisible(willShow);
+          if (willShow) {
+            // Position panel to the right of the composite editor
+            const QRect geom = frameGeometry();
+            impl_->profilerPanel_->move(geom.right() + 8, geom.top());
+            impl_->profilerPanel_->raise();
+          }
+        });
+
+    // --- EventBus Debugger (Ctrl+Shift+E to toggle) ---
+    impl_->eventBusDebugger_ = new EventBusDebuggerWidget(nullptr);
+    impl_->eventBusDebugger_->hide();
+
+    auto *eventBusDebuggerShortcut =
+        new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E), this);
+    QObject::connect(
+        eventBusDebuggerShortcut, &QShortcut::activated, this, [this]() {
+          if (!impl_ || !impl_->eventBusDebugger_)
+            return;
+          const bool willShow = !impl_->eventBusDebugger_->isVisible();
+          impl_->eventBusDebugger_->setVisible(willShow);
+          if (willShow) {
+            const QRect geom = frameGeometry();
+            impl_->eventBusDebugger_->move(geom.right() + 8, geom.top() + 60);
+            impl_->eventBusDebugger_->raise();
+          }
+        });
   });
 
-  // Ctrl+Shift+C: copy diagnostic report to clipboard
-  auto *profilerCopyShortcut =
-      new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C), this);
-  QObject::connect(profilerCopyShortcut, &QShortcut::activated, this, [this]() {
-    if (!ArtifactCore::Profiler::instance().isEnabled())
-      return;
-    const std::string report =
-        ArtifactCore::Profiler::instance().generateDiagnosticReport(60);
-    QGuiApplication::clipboard()->setText(QString::fromStdString(report));
-  });
-
-  // --- Profiler panel (Ctrl+Shift+D to toggle) ---
-  impl_->profilerPanel_ = new ProfilerPanelWidget(nullptr);
-  impl_->profilerPanel_->hide();
-
-  auto *profilerPanelShortcut =
-      new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D), this);
-  QObject::connect(
-      profilerPanelShortcut, &QShortcut::activated, this, [this]() {
-        if (!impl_ || !impl_->profilerPanel_)
-          return;
-        const bool willShow = !impl_->profilerPanel_->isVisible();
-        ArtifactCore::Profiler::instance().setEnabled(
-            willShow || impl_->profilerOverlay_->isVisible());
-        impl_->profilerPanel_->setVisible(willShow);
-        if (willShow) {
-          // Position panel to the right of the composite editor
-          const QRect geom = frameGeometry();
-          impl_->profilerPanel_->move(geom.right() + 8, geom.top());
-          impl_->profilerPanel_->raise();
-        }
-      });
-
-  // --- EventBus Debugger (Ctrl+Shift+E to toggle) ---
-  impl_->eventBusDebugger_ = new EventBusDebuggerWidget(nullptr);
-  impl_->eventBusDebugger_->hide();
-
-  auto *eventBusDebuggerShortcut =
-      new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E), this);
-  QObject::connect(
-      eventBusDebuggerShortcut, &QShortcut::activated, this, [this]() {
-        if (!impl_ || !impl_->eventBusDebugger_)
-          return;
-        const bool willShow = !impl_->eventBusDebugger_->isVisible();
-        impl_->eventBusDebugger_->setVisible(willShow);
-        if (willShow) {
-          const QRect geom = frameGeometry();
-          impl_->eventBusDebugger_->move(geom.right() + 8, geom.top() + 60);
-          impl_->eventBusDebugger_->raise();
-        }
-      });
+  qInfo() << "[CompositionEditor][Ctor] total ms=" << ctorTimer.elapsed();
 }
 
 void ArtifactCompositionEditor::resizeEvent(QResizeEvent *event) {

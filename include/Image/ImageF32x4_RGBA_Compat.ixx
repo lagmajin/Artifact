@@ -9,10 +9,32 @@ import Image.ImageF32x4_RGBA;
 
 export namespace ArtifactCore {
 
+namespace Detail {
+inline void setImageFromRgbaMat(ImageF32x4_RGBA& out, const cv::Mat& rgba)
+{
+    if (rgba.empty())
+    {
+        return;
+    }
+    cv::Mat converted;
+    if (rgba.type() == CV_32FC4)
+    {
+        converted = rgba;
+    }
+    else
+    {
+        rgba.convertTo(converted, CV_32FC4, 1.0 / 255.0);
+    }
+    out.setFromRGBA32F(converted.ptr<float>(), converted.cols, converted.rows);
+}
+} // namespace Detail
+
 // Thin compatibility helpers between ImageF32xN and ImageF32x4_RGBA
 inline ImageF32x4_RGBA ImageFromF32xN(const ImageF32xN& src, bool srcIsBGR = true, bool srcHasAlpha = false, float alphaValue = 1.0f) {
     ImageF32x4_RGBA out;
-    cv::Mat m = src.toCVMat();
+    if (src.width() <= 0 || src.height() <= 0 || src.channels() <= 0) return out;
+
+    cv::Mat m(src.height(), src.width(), CV_MAKETYPE(CV_32F, src.channels()), const_cast<float*>(src.data()));
     if (m.empty()) return out;
 
     cv::Mat conv;
@@ -49,14 +71,16 @@ inline ImageF32x4_RGBA ImageFromF32xN(const ImageF32xN& src, bool srcIsBGR = tru
         cv::merge(chs, conv);
     }
 
-    // conv is float or non-float; setFromCVMat will normalize/convert
-    out.setFromCVMat(conv);
+    Detail::setImageFromRgbaMat(out, conv);
     return out;
 }
 
 inline ImageF32xN ImageToF32xN(const ImageF32x4_RGBA& src, int outChannels = 4, bool outIsBGR = false) {
     ImageF32xN out;
-    cv::Mat m = src.toCVMat();
+    const float* rgba = src.rgba32fData();
+    if (!rgba || src.width() <= 0 || src.height() <= 0) return out;
+
+    cv::Mat m(src.height(), src.width(), CV_32FC4, const_cast<float*>(rgba));
     if (m.empty()) return out;
 
     cv::Mat conv;
@@ -109,7 +133,7 @@ inline ImageF32x4_RGBA ImageFromYUV420Planes(const cv::Mat& yPlane, const cv::Ma
     cv::Mat rgba;
     cv::cvtColor(bgr, rgba, cv::COLOR_BGR2RGBA);
     rgba.convertTo(rgba, CV_32F);
-    out.setFromCVMat(rgba);
+    Detail::setImageFromRgbaMat(out, rgba);
     return out;
 }
 
@@ -129,7 +153,7 @@ inline ImageF32x4_RGBA ImageFromNV12(const cv::Mat& yPlane, const cv::Mat& uvInt
     cv::Mat rgba;
     cv::cvtColor(combined, rgba, cv::COLOR_YUV2RGBA_NV12);
     rgba.convertTo(rgba, CV_32F, 1.0/255.0);
-    out.setFromCVMat(rgba);
+    Detail::setImageFromRgbaMat(out, rgba);
     return out;
 }
 

@@ -216,13 +216,11 @@ namespace Artifact
                                                 int width, 
                                                 int height)
   {
-    float r = solidColor_.redF();
-    float g = solidColor_.greenF();
-    float b = solidColor_.blueF();
-    float a = solidColor_.alphaF();
-
-    cv::Mat mat(height, width, CV_32FC4, cv::Scalar(r, g, b, a));
-    dst.image().setFromCVMat(mat);
+    dst.image().resize(width, height);
+    dst.image().fill(FloatRGBA(solidColor_.redF(),
+                               solidColor_.greenF(),
+                               solidColor_.blueF(),
+                               solidColor_.alphaF()));
     dst.UpdateGpuTextureFromCpuData();
 
     qDebug() << "[SolidGenerator] Generated solid color:" << solidColor_.name() << width << "x" << height;
@@ -301,7 +299,7 @@ namespace Artifact
         }
     }
 
-    dst.image().setFromCVMat(mat);
+    dst.image().setFromRGBA32F(mat.ptr<float>(), width, height);
     dst.UpdateGpuTextureFromCpuData();
 
     qDebug() << "[GradientGenerator] Generated gradient:" 
@@ -379,7 +377,7 @@ namespace Artifact
     int alpha_from_to[] = { 0, 3 };
     cv::mixChannels(&alpha, 1, &mat, 1, alpha_from_to, 1);
 
-    dst.image().setFromCVMat(mat);
+    dst.image().setFromRGBA32F(mat.ptr<float>(), width, height);
     dst.UpdateGpuTextureFromCpuData();
 
     qDebug() << "[NoiseGenerator] Generated noise - Type:" << static_cast<int>(noiseType_)
@@ -484,7 +482,7 @@ namespace Artifact
         }
     }
 
-    dst.image().setFromCVMat(mat);
+    dst.image().setFromRGBA32F(mat.ptr<float>(), width, height);
     dst.UpdateGpuTextureFromCpuData();
 
     const char* shapeNames[] = {"Rectangle", "Circle", "Triangle", "Polygon"};

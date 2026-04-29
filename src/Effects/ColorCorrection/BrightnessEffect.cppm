@@ -27,16 +27,18 @@ public:
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
-        cv::Mat mat = dst.image().toCVMat();
-        if (mat.empty()) {
+        float* pixels = dst.image().rgba32fData();
+        if (!pixels) {
             return;
         }
 
+        const int width = dst.image().width();
+        const int height = dst.image().height();
         const float contrastFactor = (contrast_ != 1.0f) ? (1.0f + contrast_) / (1.0f - contrast_) : 100.0f;
 
-        for (int y = 0; y < mat.rows; ++y) {
-            for (int x = 0; x < mat.cols; ++x) {
-                cv::Vec4f& pixel = mat.at<cv::Vec4f>(y, x);
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                float* pixel = pixels + (static_cast<size_t>(y) * static_cast<size_t>(width) + static_cast<size_t>(x)) * 4u;
                 for (int c = 0; c < 3; ++c) {
                     float val = pixel[c];
                     val += brightness_;
@@ -53,8 +55,6 @@ public:
                 }
             }
         }
-
-        dst.image().setFromCVMat(mat);
     }
 };
 

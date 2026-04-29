@@ -23,37 +23,24 @@ public:
     bool colorize_ = false;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        cv::Mat srcMat = src.image().toCVMat();
-        if (srcMat.empty()) {
+        auto& srcImage = src.image();
+        const float* srcData = srcImage.rgba32fData();
+        if (!srcData) {
             dst = src;
             return;
         }
 
-        cv::Mat floatMat;
-        if (srcMat.depth() == CV_32F) {
-            floatMat = srcMat;
-        } else if (srcMat.depth() == CV_8U) {
-            srcMat.convertTo(floatMat, CV_32F, 1.0 / 255.0);
-        } else if (srcMat.depth() == CV_16U) {
-            srcMat.convertTo(floatMat, CV_32F, 1.0 / 65535.0);
-        } else {
-            srcMat.convertTo(floatMat, CV_32F);
-        }
+        cv::Mat floatMat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
 
-        if (floatMat.channels() == 1) {
-            cv::cvtColor(floatMat, floatMat, cv::COLOR_GRAY2BGRA);
-        } else if (floatMat.channels() == 3) {
-            cv::cvtColor(floatMat, floatMat, cv::COLOR_BGR2BGRA);
-        } else if (floatMat.channels() != 4) {
-            dst.image().setFromCVMat(srcMat);
+        cv::Mat alpha;
+        cv::Mat bgr = floatMat.clone();
+        if (bgr.channels() != 4) {
             return;
         }
-
         std::vector<cv::Mat> channels;
-        cv::split(floatMat, channels);
-        cv::Mat bgr;
+        cv::split(bgr, channels);
+        alpha = channels[3];
         cv::merge(std::vector<cv::Mat>{channels[0], channels[1], channels[2]}, bgr);
-        cv::Mat alpha = channels[3];
 
         cv::Mat hsv;
         cv::cvtColor(bgr, hsv, cv::COLOR_BGR2HSV);
@@ -75,7 +62,7 @@ public:
 
         cv::cvtColor(hsv, bgr, cv::COLOR_HSV2BGR);
         cv::merge(std::vector<cv::Mat>{bgr, alpha}, floatMat);
-        dst.image().setFromCVMat(floatMat);
+        dst.image().setFromRGBA32F(floatMat.ptr<float>(), floatMat.cols, floatMat.rows);
     }
 };
 

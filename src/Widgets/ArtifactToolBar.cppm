@@ -23,6 +23,7 @@ import Artifact.Tool.Manager;
 import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Service.Application;
+import Application.AppSettings;
 
 namespace {
 
@@ -362,7 +363,6 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   // Grid/Guide actions
   impl_->gridToggleAction_ = new QAction("Grid");
   impl_->gridToggleAction_->setCheckable(true);
-  impl_->gridToggleAction_->setChecked(true);
   impl_->gridToggleAction_->setIcon(
       loadIconWithFallback("Material/grid_on.svg"));
   impl_->gridToggleAction_->setToolTip("Show Grid");
@@ -370,7 +370,6 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
 
   impl_->guideToggleAction_ = new QAction("Guide");
   impl_->guideToggleAction_->setCheckable(true);
-  impl_->guideToggleAction_->setChecked(true);
   impl_->guideToggleAction_->setIcon(
       loadIconWithFallback("Material/visibility.svg"));
   impl_->guideToggleAction_->setToolTip("Show Guide Lines");
@@ -494,6 +493,9 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
         impl_->gridToggleAction_->setIcon(loadIconWithFallback(
             checked ? "Material/grid_on.svg" : "Material/grid_off.svg"));
         gridToggled(checked);
+        if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+          settings->setToolbarShowGrid(checked);
+        }
       });
 
   QObject::connect(impl_->guideToggleAction_, &QAction::triggered, this,
@@ -502,6 +504,10 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                          checked ? "Material/visibility.svg"
                                  : "Material/visibility_off.svg"));
                      guideToggled(checked);
+                     if (auto *settings =
+                             ArtifactCore::ArtifactAppSettings::instance()) {
+                       settings->setToolbarShowGuide(checked);
+                     }
                    });
 
   impl_->eventBusSubscriptions_.push_back(
@@ -517,6 +523,21 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
           }));
 
   refreshFromApplicationState();
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    const bool showGrid = settings->toolbarShowGrid();
+    const bool showGuides = settings->toolbarShowGuide();
+    impl_->gridToggleAction_->setChecked(showGrid);
+    impl_->gridToggleAction_->setIcon(
+        loadIconWithFallback(showGrid ? "Material/grid_on.svg"
+                                      : "Material/grid_off.svg"));
+    impl_->guideToggleAction_->setChecked(showGuides);
+    impl_->guideToggleAction_->setIcon(loadIconWithFallback(
+        showGuides ? "Material/visibility.svg"
+                   : "Material/visibility_off.svg"));
+  } else {
+    impl_->gridToggleAction_->setChecked(true);
+    impl_->guideToggleAction_->setChecked(true);
+  }
   setAutoFillBackground(true);
 }
 
@@ -547,6 +568,11 @@ void ArtifactToolBar::setGridVisible(bool visible) {
   impl_->gridVisible_ = visible;
   if (impl_->gridToggleAction_) {
     impl_->gridToggleAction_->setChecked(visible);
+    impl_->gridToggleAction_->setIcon(loadIconWithFallback(
+        visible ? "Material/grid_on.svg" : "Material/grid_off.svg"));
+  }
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    settings->setToolbarShowGrid(visible);
   }
 }
 
@@ -554,6 +580,12 @@ void ArtifactToolBar::setGuideVisible(bool visible) {
   impl_->guideVisible_ = visible;
   if (impl_->guideToggleAction_) {
     impl_->guideToggleAction_->setChecked(visible);
+    impl_->guideToggleAction_->setIcon(loadIconWithFallback(
+        visible ? "Material/visibility.svg"
+                : "Material/visibility_off.svg"));
+  }
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    settings->setToolbarShowGuide(visible);
   }
 }
 
@@ -708,6 +740,27 @@ void ArtifactToolBar::setWorkspaceMode(WorkspaceMode mode) {
   }
 
   impl_->updateDisplayMode();
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    QString modeText = QStringLiteral("Default");
+    switch (mode) {
+    case WorkspaceMode::Default:
+      modeText = QStringLiteral("Default");
+      break;
+    case WorkspaceMode::Animation:
+      modeText = QStringLiteral("Animation");
+      break;
+    case WorkspaceMode::VFX:
+      modeText = QStringLiteral("VFX");
+      break;
+    case WorkspaceMode::Compositing:
+      modeText = QStringLiteral("Compositing");
+      break;
+    case WorkspaceMode::Audio:
+      modeText = QStringLiteral("Audio");
+      break;
+    }
+    settings->setProjectDefaultWorkspaceModeText(modeText);
+  }
   emit workspaceModeChanged(mode);
 }
 

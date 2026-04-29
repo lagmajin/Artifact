@@ -314,7 +314,7 @@ namespace Artifact
   const QColor railColor = theme.surface.darker(108);
   const QColor railBorder = theme.border;
   const QColor cacheBaseColor(84, 198, 120);
-  const QColor playheadColor = theme.accent;
+  const QColor playheadColor(255, 92, 92);
   
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
   bgGrad.setColorAt(0.0, bgTop);

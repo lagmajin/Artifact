@@ -116,7 +116,11 @@ export namespace Artifact {
   bool removeCompositionWithRenderQueueCleanup(const CompositionID& id, int* removedQueueCount = nullptr);
    bool duplicateComposition(const CompositionID& id);
    bool renameComposition(const CompositionID& id, const UniString& name);
-   bool precomposeLayersInCurrentComposition(const QVector<LayerID>& layerIds, const UniString& newCompositionName);
+   bool precomposeLayersInCurrentComposition(
+       const QVector<LayerID>& layerIds,
+       const UniString& newCompositionName,
+       bool openNewComposition = true,
+       bool matchWorkspaceDuration = true);
    void splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId);
    std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
    // Relink functions

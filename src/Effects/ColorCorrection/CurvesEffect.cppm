@@ -24,16 +24,16 @@ public:
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
-        cv::Mat mat = dst.image().toCVMat();
-        if (mat.empty()) {
+        float* pixels = dst.image().rgba32fData();
+        if (!pixels) {
             return;
         }
 
-        for (int y = 0; y < mat.rows; ++y) {
-            curves_.process(reinterpret_cast<float*>(mat.ptr(y)), mat.cols, 1);
+        const int width = dst.image().width();
+        const int height = dst.image().height();
+        for (int y = 0; y < height; ++y) {
+            curves_.process(pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u, width, 1);
         }
-
-        dst.image().setFromCVMat(mat);
     }
 };
 
@@ -43,16 +43,16 @@ public:
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
-        cv::Mat mat = dst.image().toCVMat();
-        if (mat.empty()) {
+        float* pixels = dst.image().rgba32fData();
+        if (!pixels) {
             return;
         }
 
-        for (int y = 0; y < mat.rows; ++y) {
-            curves_.process(reinterpret_cast<float*>(mat.ptr(y)), mat.cols, 1);
+        const int width = dst.image().width();
+        const int height = dst.image().height();
+        for (int y = 0; y < height; ++y) {
+            curves_.process(pixels + static_cast<size_t>(y) * static_cast<size_t>(width) * 4u, width, 1);
         }
-
-        dst.image().setFromCVMat(mat);
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {

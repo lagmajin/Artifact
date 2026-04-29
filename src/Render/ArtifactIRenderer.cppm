@@ -351,6 +351,34 @@ namespace {
   { primitiveRenderer_.drawRectOutlineLocal(x, y, w, h, color); }
   void drawRectOutline(float2 pos, float2 size, const FloatColor& color)
   { primitiveRenderer_.drawRectOutlineLocal(pos.x, pos.y, size.x, size.y, color); }
+  void drawDashedRectOutline(float x, float y, float w, float h, const FloatColor& color,
+                             float thickness, float dashLength, float gapLength)
+  {
+    const Detail::float2 topLeft{x, y};
+    const Detail::float2 topRight{x + w, y};
+    const Detail::float2 bottomRight{x + w, y + h};
+    const Detail::float2 bottomLeft{x, y + h};
+    primitiveRenderer_.drawDashedLineLocal(toDiligentFloat2(topLeft), toDiligentFloat2(topRight),
+                                           thickness, dashLength, gapLength, color);
+    primitiveRenderer_.drawDashedLineLocal(toDiligentFloat2(topRight), toDiligentFloat2(bottomRight),
+                                           thickness, dashLength, gapLength, color);
+    primitiveRenderer_.drawDashedLineLocal(toDiligentFloat2(bottomRight), toDiligentFloat2(bottomLeft),
+                                           thickness, dashLength, gapLength, color);
+    primitiveRenderer_.drawDashedLineLocal(toDiligentFloat2(bottomLeft), toDiligentFloat2(topLeft),
+                                           thickness, dashLength, gapLength, color);
+  }
+  void drawDashedRectOutline(float2 pos, float2 size, const FloatColor& color,
+                             float thickness, float dashLength, float gapLength)
+  { drawDashedRectOutline(pos.x, pos.y, size.x, size.y, color, thickness, dashLength, gapLength); }
+  void drawOverlayPanel(float x, float y, float w, float h, const FloatColor& fillColor,
+                        const FloatColor& outlineColor, float opacity)
+  {
+    primitiveRenderer_.drawRectLocal(x, y, w, h, fillColor, opacity);
+    primitiveRenderer_.drawRectOutlineLocal(x, y, w, h, outlineColor);
+  }
+  void drawOverlayPanel(float2 pos, float2 size, const FloatColor& fillColor,
+                        const FloatColor& outlineColor, float opacity)
+  { drawOverlayPanel(pos.x, pos.y, size.x, size.y, fillColor, outlineColor, opacity); }
   void drawSolidLine(Detail::float2 start, Detail::float2 end, const FloatColor& color, float thickness)
   { primitiveRenderer_.drawThickLineLocal(toDiligentFloat2(start), toDiligentFloat2(end), thickness, color); }
   void drawPolyline(const std::vector<Detail::float2>& points, const FloatColor& color, float thickness)
@@ -1464,6 +1492,24 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
  { impl_->drawRectOutline(x, y, w, h, color); }
  void ArtifactIRenderer::drawRectOutline(Detail::float2 pos, Detail::float2 size, const FloatColor& color)
  { impl_->drawRectOutline(toDiligentFloat2(pos), toDiligentFloat2(size), color); }
+ void ArtifactIRenderer::drawDashedRectOutline(float x, float y, float w, float h,
+                                              const FloatColor& color, float thickness,
+                                              float dashLength, float gapLength)
+ { impl_->drawDashedRectOutline(x, y, w, h, color, thickness, dashLength, gapLength); }
+ void ArtifactIRenderer::drawDashedRectOutline(Detail::float2 pos, Detail::float2 size,
+                                              const FloatColor& color, float thickness,
+                                              float dashLength, float gapLength)
+ { impl_->drawDashedRectOutline(toDiligentFloat2(pos), toDiligentFloat2(size), color, thickness, dashLength, gapLength); }
+ void ArtifactIRenderer::drawOverlayPanel(float x, float y, float w, float h,
+                                         const FloatColor& fillColor,
+                                         const FloatColor& outlineColor,
+                                         float opacity)
+ { impl_->drawOverlayPanel(x, y, w, h, fillColor, outlineColor, opacity); }
+ void ArtifactIRenderer::drawOverlayPanel(Detail::float2 pos, Detail::float2 size,
+                                         const FloatColor& fillColor,
+                                         const FloatColor& outlineColor,
+                                         float opacity)
+ { impl_->drawOverlayPanel(toDiligentFloat2(pos), toDiligentFloat2(size), fillColor, outlineColor, opacity); }
  void ArtifactIRenderer::drawSolidLine(Detail::float2 start, Detail::float2 end,
                                        const FloatColor& color, float thickness)
  { impl_->drawSolidLine(start, end, color, thickness); }
@@ -1601,14 +1647,14 @@ void ArtifactIRenderer::draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail:
  std::unique_ptr<ArtifactCore::LayerBlendPipeline>
  ArtifactIRenderer::createLayerBlendPipeline() const
  {
-  auto device = impl_->deviceManager_.device();
-  auto ctx = impl_->deviceManager_.immediateContext();
-  if (!device || !ctx) {
-   return {};
-  }
-  ArtifactCore::GpuContext context(device, ctx);
-  return std::make_unique<ArtifactCore::LayerBlendPipeline>(context);
+ auto device = impl_->deviceManager_.device();
+ auto ctx = impl_->deviceManager_.immediateContext();
+ if (!device || !ctx) {
+  return {};
  }
+ auto context = std::make_shared<ArtifactCore::GpuContext>(device, ctx);
+ return std::make_unique<ArtifactCore::LayerBlendPipeline>(std::move(context));
+}
 bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
                                     Diligent::ITextureView *srcSRV,
                                     Diligent::ITextureView *dstSRV,

@@ -277,6 +277,8 @@ public:
     void setShowKeyframeButton(bool visible);
     
     void setKeyframeChecked(bool checked);
+    void setKeyframeModeEnabled(bool enabled);
+    bool isKeyframeModeEnabled() const;
     void setKeyframeEnabled(bool enabled);
     void setNavigationEnabled(bool enabled);
     static void setGlobalLayoutMode(ArtifactPropertyRowLayoutMode mode);
@@ -300,6 +302,7 @@ private:
     std::function<void()> resetHandler_;
     KeyFrameHandler keyframeHandler_;
     NavigationHandler navigationHandler_;
+    bool currentFrameKeyframed_ = false;
     
     bool scrubCandidate_ = false;
     bool scrubbing_ = false;

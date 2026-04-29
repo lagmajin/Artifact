@@ -53,7 +53,12 @@ namespace Artifact {
 
 void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
     const ImageF32x4_RGBA& srcImage = src.image();
-    cv::Mat srcMat = srcImage.toCVMat();
+    const float* srcData = srcImage.rgba32fData();
+    if (!srcData) {
+        dst = src;
+        return;
+    }
+    cv::Mat srcMat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
     
     int height = srcMat.rows;
     int width = srcMat.cols;
@@ -118,7 +123,7 @@ void SpherizeEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF3
     
     // 結果をdstに設定
     ImageF32x4_RGBA dstImage;
-    dstImage.setFromCVMat(dstMat);
+    dstImage.setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);
 }
 
 void SpherizeEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {

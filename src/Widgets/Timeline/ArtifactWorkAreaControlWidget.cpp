@@ -68,10 +68,26 @@ namespace Artifact
   }
  }
 
- void WorkAreaControl::setEnd(float e) {
+void WorkAreaControl::setEnd(float e) {
   if (end != e) {
     end = e;
     endChanged(e);
+    update();
+  }
+ }
+
+ void WorkAreaControl::setCurrentFrame(float frame) {
+  const float clamped = std::max(0.0f, frame);
+  if (currentFrame != clamped) {
+    currentFrame = clamped;
+    update();
+  }
+ }
+
+ void WorkAreaControl::setTotalFrames(float frames) {
+  const float clamped = std::max(1.0f, frames);
+  if (totalFrames != clamped) {
+    totalFrames = clamped;
     update();
   }
  }
@@ -99,10 +115,12 @@ namespace Artifact
 
   // Range strip
   QRect rangeRect(x1, 0, x2 - x1, height());
-  p.fillRect(rangeRect, theme.accent.darker(112));
+  const QColor workAreaColor(222, 168, 78);
+  p.fillRect(rangeRect, QColor(workAreaColor.red(), workAreaColor.green(),
+                               workAreaColor.blue(), 112));
 
   // Bottom border for work area
-  p.setPen(QPen(theme.accent.darker(115), 2));
+  p.setPen(QPen(workAreaColor.lighter(118), 2));
   p.drawLine(x1, height() - 1, x2, height() - 1);
 
   // Handles (Blue AE style) - highlight on hover
@@ -111,20 +129,28 @@ namespace Artifact
   
   // Left handle
   if (impl_->hoveringLeft || impl_->draggingLeft) {
-    p.setBrush(theme.accent.lighter(112));
+    p.setBrush(workAreaColor.lighter(118));
   } else {
-    p.setBrush(theme.accent.darker(108));
+    p.setBrush(workAreaColor.darker(108));
   }
   p.setPen(QPen(theme.border.darker(120), 1));
   p.drawRoundedRect(QRectF(x1 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
   
   // Right handle
   if (impl_->hoveringRight || impl_->draggingRight) {
-    p.setBrush(theme.accent.lighter(112));
+    p.setBrush(workAreaColor.lighter(118));
   } else {
-    p.setBrush(theme.accent.darker(108));
+    p.setBrush(workAreaColor.darker(108));
   }
   p.drawRoundedRect(QRectF(x2 - handleHalfW, handleTopInset, handleW, handleHeight), 2, 2);
+
+  const float safeTotalFrames = std::max(1.0f, totalFrames);
+  const float clampedFrame = std::clamp(currentFrame, 0.0f, safeTotalFrames);
+  const float playheadNorm = std::clamp(clampedFrame / safeTotalFrames, 0.0f, 1.0f);
+  const int playheadX = handleHalfW + static_cast<int>(playheadNorm * usableWidth);
+  const QColor playheadColor(255, 92, 92);
+  p.setPen(QPen(playheadColor, 2));
+  p.drawLine(playheadX, 0, playheadX, height() - 1);
  }
 
  void WorkAreaControl::mouseMoveEvent(QMouseEvent* ev)

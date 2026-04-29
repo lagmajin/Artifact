@@ -51,7 +51,12 @@ namespace Artifact {
 
 void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
     const ImageF32x4_RGBA& srcImage = src.image();
-    cv::Mat srcMat = srcImage.toCVMat();
+    const float* srcData = srcImage.rgba32fData();
+    if (!srcData) {
+        dst = src;
+        return;
+    }
+    cv::Mat srcMat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
     cv::Mat dstMat;
 
     // ArtifactCoreのOpenCVグロー実装を適用
@@ -70,7 +75,7 @@ void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
 
     // 結果をdstに設定
     ImageF32x4_RGBA dstImage;
-    dstImage.setFromCVMat(dstMat);
+    dstImage.setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);
     //dst = ImageF32x4RGBAWithCache(dstImage);
 }
 

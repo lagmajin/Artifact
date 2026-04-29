@@ -74,6 +74,12 @@ ArtifactCompositionLayer::sourceComposition() const {
   return result.ptr.lock();
 }
 
+void ArtifactCompositionLayer::draw(ArtifactIRenderer *) {
+  // Precomp layers are rendered through the composition view drawing path.
+  // The layer itself acts as a container/reference marker in the timeline and
+  // inspector, so the direct layer draw is intentionally a no-op.
+}
+
 QRectF ArtifactCompositionLayer::localBounds() const {
   if (auto comp = sourceComposition()) {
     const QSize size = comp->settings().compositionSize();

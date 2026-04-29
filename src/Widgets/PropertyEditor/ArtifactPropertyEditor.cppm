@@ -191,7 +191,7 @@ QColor propertySurfaceColor(const bool elevated = false) {
       themeColor(theme.backgroundColor, QColor(QStringLiteral("#20242A")));
   const QColor surface = themeColor(theme.secondaryBackgroundColor,
                                     QColor(QStringLiteral("#2B3038")));
-  return blendColor(background, surface, elevated ? 0.72 : 0.58);
+  return blendColor(background, surface, elevated ? 0.64 : 0.54);
 }
 
 void applyThemeTextPalette(QWidget *widget, int shade = 100) {
@@ -2237,10 +2237,20 @@ void ArtifactPropertyEditorRowWidget::updateKeyframeButtonIcon() {
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked) {
+  currentFrameKeyframed_ = checked;
+  update();
+}
+
+void ArtifactPropertyEditorRowWidget::setKeyframeModeEnabled(
+    const bool enabled) {
   const QSignalBlocker blocker(keyframeButton_);
-  keyframeButton_->setChecked(checked);
+  keyframeButton_->setChecked(enabled);
   updateKeyframeButtonIcon();
   update();
+}
+
+bool ArtifactPropertyEditorRowWidget::isKeyframeModeEnabled() const {
+  return keyframeButton_ && keyframeButton_->isChecked();
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeEnabled(const bool enabled) {
@@ -2345,7 +2355,7 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
 
   const bool hovered = underMouse();
   const bool focused = editor_ && editor_->hasFocus();
-  const bool keyframed = keyframeButton_ && keyframeButton_->isChecked();
+  const bool keyframed = currentFrameKeyframed_;
 
   const QRectF frame = rect().adjusted(0.5, 0.5, -0.5, -0.5);
   const qreal radius = 7.0;

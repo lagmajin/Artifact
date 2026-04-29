@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <algorithm>
 #include <QColor>
 #include <QVariant>
 #include <wobjectimpl.h>
@@ -63,33 +64,45 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
 
   const auto type = lightType();
   const auto lightColor = color();
+  const float intensityScale = std::clamp(lightImpl_->intensity_ / 100.0f, 0.2f, 4.0f);
+  const ArtifactCore::FloatColor tintColor{
+      lightColor.r() * std::min(1.0f, intensityScale),
+      lightColor.g() * std::min(1.0f, intensityScale),
+      lightColor.b() * std::min(1.0f, intensityScale),
+      std::min(1.0f, lightColor.a() * (0.35f + 0.65f * std::min(1.0f, intensityScale)))};
   
   // Calculate gizmo size (scale inversely with zoom to keep constant screen size if desired, 
   // or just use a fixed 3D size). Here we use a fixed size that's easy to see.
   const float zoom = renderer->getZoom();
-  const float baseSize = 15.0f / (zoom > 0.001f ? zoom : 1.0f);
+  const float baseSize = 15.0f * intensityScale / (zoom > 0.001f ? zoom : 1.0f);
 
   // Use renderer's gizmo APIs
   using namespace Artifact::Detail;
   float3 p{pos.x(), pos.y(), pos.z()};
 
   // Main "bulb" representation: 3 orthogonal rings
-  renderer->drawGizmoRing(p, float3{1, 0, 0}, baseSize, lightColor, 1.0f);
-  renderer->drawGizmoRing(p, float3{0, 1, 0}, baseSize, lightColor, 1.0f);
-  renderer->drawGizmoRing(p, float3{0, 0, 1}, baseSize, lightColor, 1.0f);
+  renderer->drawGizmoRing(p, float3{1, 0, 0}, baseSize, tintColor, 1.0f);
+  renderer->drawGizmoRing(p, float3{0, 1, 0}, baseSize, tintColor, 1.0f);
+  renderer->drawGizmoRing(p, float3{0, 0, 1}, baseSize, tintColor, 1.0f);
+
+  if (lightImpl_->castsShadows_) {
+    const float shadowRing = baseSize + std::max(2.0f, lightImpl_->shadowRadius_ * 0.05f);
+    renderer->drawGizmoRing(p, float3{0, 1, 0}, shadowRing,
+                            ArtifactCore::FloatColor{lightColor.r(), lightColor.g(),
+                                                     lightColor.b(), 0.18f},
+                            1.0f);
+  }
 
   // Direction indicators for oriented lights
   if (type == LightType::Spot || type == LightType::Parallel) {
     // In AE, lights generally look towards -Z of their local space or special target.
     // Basic representation: a line pointing in the forward direction.
     // For now, simpler: just draw a small "antenna" or axis.
-    QMatrix4x4 m;
-    m.rotate(static_cast<float>(t3.rotationAt(frameTime)), 0, 0, 1);
-    
+    QMatrix4x4 m = getGlobalTransform4x4();
     QVector3D forward = m.mapVector(QVector3D(0, 0, 100.0f / (zoom > 0.001f ? zoom : 1.0f)));
     QVector3D tip = pos + forward;
     
-    renderer->drawGizmoArrow(p, float3{tip.x(), tip.y(), tip.z()}, lightColor, baseSize);
+    renderer->drawGizmoArrow(p, float3{tip.x(), tip.y(), tip.z()}, tintColor, baseSize);
   }
 }
 
@@ -117,7 +130,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     auto typeProp = persistentLayerProperty(QStringLiteral("Light Options/Light Type"),
                                             ArtifactCore::PropertyType::Integer,
                                             static_cast<int>(lightImpl_->type_), -150);
-    typeProp->setTooltip(QStringLiteral("0: Parallel, 1: Point, 2: Spot, 3: Ambient"));
+    typeProp->setTooltip(QStringLiteral("0: Point, 1: Spot, 2: Parallel, 3: Ambient"));
     lightOptions.addProperty(typeProp);
 
     auto colorProp = persistentLayerProperty(QStringLiteral("Light Options/Color"),
@@ -133,10 +146,12 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     intensityProp->setUnit(QStringLiteral("%"));
     lightOptions.addProperty(intensityProp);
 
-    lightOptions.addProperty(persistentLayerProperty(
+    auto shadowProp = persistentLayerProperty(
         QStringLiteral("Light Options/Shadows"),
         ArtifactCore::PropertyType::Boolean,
-        lightImpl_->castsShadows_, -130));
+        lightImpl_->castsShadows_, -130);
+    shadowProp->setTooltip(QStringLiteral("Show a softer outer ring to indicate shadow softness"));
+    lightOptions.addProperty(shadowProp);
 
     auto radiusProp = persistentLayerProperty(
         QStringLiteral("Light Options/Shadow Radius"),

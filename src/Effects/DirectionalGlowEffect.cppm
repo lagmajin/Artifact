@@ -104,11 +104,14 @@ public:
     float angleOffset_ = 0.0f;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        cv::Mat mat = src.image().toCVMat();
-        if (mat.empty()) {
+        auto& srcImage = src.image();
+        const float* srcData = srcImage.rgba32fData();
+        if (!srcData) {
             dst = src;
             return;
         }
+
+        cv::Mat mat(srcImage.height(), srcImage.width(), CV_32FC4, const_cast<float*>(srcData));
 
         cv::Mat bright = cv::Mat::zeros(mat.size(), CV_32FC4);
         for (int y = 0; y < mat.rows; ++y) {
@@ -149,7 +152,7 @@ public:
             }
         }
 
-        dst.image().setFromCVMat(result);
+        dst.image().setFromRGBA32F(result.ptr<float>(), result.cols, result.rows);
     }
 };
 

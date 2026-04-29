@@ -24,6 +24,7 @@ module;
 #include <QSignalBlocker>
 #include <QGuiApplication>
 #include <QScreen>
+#include <QElapsedTimer>
 #include <QTimer>
 #include <QDebug>
 #include <QSet>
@@ -95,12 +96,16 @@ void collectCompositionNames(ProjectItem* item, QSet<QString>& names)
 
 QSet<QString> occupiedCompositionNames()
 {
+ QElapsedTimer timer;
+ timer.start();
  QSet<QString> names;
  if (auto* service = ArtifactProjectService::instance()) {
   for (auto* root : service->projectItems()) {
    collectCompositionNames(root, names);
   }
  }
+ qInfo() << "[CreateCompositionDialog][Names] occupiedCompositionNames ms="
+         << timer.elapsed() << "count=" << names.size();
  return names;
 }
 
@@ -193,6 +198,8 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
 
  CompositionSettingPage::CompositionSettingPage(QWidget* parent) : QWidget(parent), impl_(new Impl)
  {
+  QElapsedTimer ctorTimer;
+  ctorTimer.start();
   auto mainLayout = new QVBoxLayout(this);
   mainLayout->setContentsMargins(15, 15, 15, 15);
   mainLayout->setSpacing(10);
@@ -395,6 +402,9 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
     }
   }
 
+  qInfo() << "[CreateCompositionDialog][Ctor] CompositionSettingPage ms="
+          << ctorTimer.elapsed();
+
  }
 
  CompositionSettingPage::~CompositionSettingPage() {}
@@ -459,6 +469,8 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
 
  CreateCompositionDialog::CreateCompositionDialog(QWidget* parent) : QDialog(parent), impl_(new Impl(this))
  {
+  QElapsedTimer ctorTimer;
+  ctorTimer.start();
   setWindowTitle("Composition Settings");
   setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
   setFixedSize(500, 520);
@@ -512,6 +524,8 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
 
   QObject::connect(okBtn, &QPushButton::clicked, this, [this]() { impl_->ok(this); });
   QObject::connect(cancelBtn, &QPushButton::clicked, this, [this]() { impl_->cancel(this); });
+
+  qInfo() << "[CreateCompositionDialog][Ctor] total ms=" << ctorTimer.elapsed();
 
  }
 

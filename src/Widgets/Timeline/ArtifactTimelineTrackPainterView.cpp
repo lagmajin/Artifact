@@ -1384,7 +1384,7 @@ void ArtifactTimelineTrackPainterView::drawPlayhead(QPainter& p) const {
 
   p.setRenderHint(QPainter::Antialiasing, true);
 
-  const QColor playheadColor = timelineThemeColors().accent;
+  const QColor playheadColor(255, 92, 92);
   const qreal stemTop = 0.0;
   const qreal stemBottom = static_cast<qreal>(height()) - 1.0;
 
@@ -1499,7 +1499,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
       setCursor(Qt::ClosedHandCursor);
     }
     if (impl_->draggingMarker_) {
-      const auto &marker = impl_->keyframeMarkers_[impl_->dragMarkerIndex_];
+      const auto marker = impl_->keyframeMarkers_[impl_->dragMarkerIndex_];
       const double deltaFrames =
           (event->position().x() - impl_->dragMarkerStartPoint_.x()) /
           std::max(0.001, impl_->pixelsPerFrame_);
@@ -1520,7 +1520,7 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
         dirtyRect = QRectF(QPointF(std::min(oldX, newX) - 12.0, 0.0),
                            QPointF(std::max(oldX, newX) + 12.0, height()));
       }
-      update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
+      update(dirtyRect.adjusted(-6.0, -6.0, 6.0, 6.0).toAlignedRect());
       event->accept();
       return;
     }

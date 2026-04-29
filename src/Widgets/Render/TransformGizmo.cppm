@@ -1811,6 +1811,11 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                    dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
                    dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
    layer_->setDirty(LayerDirtyFlag::Transform);
+   if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+   }
   } else if (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_R) {
   if (std::abs(delta.x()) < 0.01 && std::abs(delta.y()) < 0.01) {
    lastCanvasMousePos_ = currentCanvasPos;
@@ -1876,6 +1881,11 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      t3d.setPosition(time, newPosX, newPosY);
 
      layer_->setDirty(LayerDirtyFlag::Transform);
+     if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+     }
     }
    }
   }
