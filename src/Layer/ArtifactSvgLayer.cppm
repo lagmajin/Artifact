@@ -15,6 +15,7 @@ module;
 module Artifact.Layer.Svg;
 
 import std;
+import Artifact.Layers.Abstract._2D;
 import Thread.Helper;
 import CvUtils;
 import Property.Abstract;
@@ -212,9 +213,15 @@ const ArtifactCore::ImageF32x4_RGBA &ArtifactSvgLayer::currentFrameBuffer() cons
 
     if (!impl_->cacheBuffer_ && impl_->cache_) {
         impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
-        const auto mat = ArtifactCore::CvUtils::qImageToCvMat(*impl_->cache_, true);
-        if (!mat.empty()) {
-            impl_->cacheBuffer_->setFromCVMat(mat);
+        const QImage rgba = impl_->cache_->convertToFormat(QImage::Format_RGBA8888);
+        if (!rgba.isNull()) {
+            std::vector<std::uint8_t> packed;
+            packed.reserve(static_cast<size_t>(rgba.width()) * static_cast<size_t>(rgba.height()) * 4u);
+            for (int y = 0; y < rgba.height(); ++y) {
+                const auto* row = rgba.constScanLine(y);
+                packed.insert(packed.end(), row, row + static_cast<size_t>(rgba.width()) * 4u);
+            }
+            impl_->cacheBuffer_->setFromRGBA8(packed.data(), rgba.width(), rgba.height());
         }
     }
 

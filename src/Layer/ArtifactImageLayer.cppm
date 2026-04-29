@@ -20,6 +20,7 @@ module;
 module Artifact.Layer.Image;
 
 import std;
+import Artifact.Layers.Abstract._2D;
 import Thread.Helper;
 import CvUtils;
 import Artifact.Render.IRenderer;

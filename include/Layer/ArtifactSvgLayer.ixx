@@ -36,13 +36,13 @@
 #include <wobjectimpl.h>
 export module Artifact.Layer.Svg;
 
-import Artifact.Layer.Abstract;
+import Artifact.Layers.Abstract._2D;
 import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
 using namespace ArtifactCore;
 
-class ArtifactSvgLayer : public ArtifactAbstractLayer {
+class ArtifactSvgLayer : public ArtifactAbstract2DLayer {
   W_OBJECT(ArtifactSvgLayer)
 private:
   class Impl;

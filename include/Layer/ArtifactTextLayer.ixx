@@ -35,7 +35,7 @@ export module Artifact.Layer.Text;
 
 
 
-import Artifact.Layer.Abstract;
+import Artifact.Layers.Abstract._2D;
 import Utils.String.UniString;
 import Color.Float;
 import Image.ImageF32x4_RGBA;
@@ -44,7 +44,7 @@ import Artifact.Layers;
 
 export namespace Artifact {
 
-class ArtifactTextLayer : public ArtifactAbstractLayer {
+class ArtifactTextLayer : public ArtifactAbstract2DLayer {
 private:
     class Impl;
     Impl* impl_;

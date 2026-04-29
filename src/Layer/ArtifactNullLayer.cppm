@@ -4,7 +4,7 @@ module;
 
 module Artifact.Layer.Null;
 import std;
-//import ArtifactNullLayer;
+import Artifact.Layers.Abstract._2D;
 
 
 namespace Artifact {
