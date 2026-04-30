@@ -1,5 +1,9 @@
 module;
 #include <utility>
+#include <algorithm>
+#include <cmath>
+#include <QString>
+#include <QJsonObject>
 
 export module Artifact.Layers.Model3D;
 
@@ -18,6 +22,7 @@ export namespace Artifact {
    class Impl;
    Impl* impl_;
    void createCubeMesh();
+   void updateSourceSizeFromMesh();
 
  public:
     Artifact3DLayer();
@@ -29,13 +34,16 @@ export namespace Artifact {
    RenderMode renderMode() const;
    void setRenderMode(RenderMode mode);
 
-   // ArtifactIRenderer interface
-   void draw(ArtifactIRenderer* renderer) override;
-   void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod) override;
+    // ArtifactIRenderer interface
+    void draw(ArtifactIRenderer* renderer) override;
+    void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod) override;
+    QJsonObject toJson() const override;
+    QString sourcePath() const;
+    UniString className() const override;
 
-   // Properties
-   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
-   bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
+    // Properties
+    std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+    bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
  };
 
 }

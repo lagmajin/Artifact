@@ -24,6 +24,7 @@ import Artifact.Layer.Text;
  import Artifact.Layer.Group;
  import Artifact.Layer.Clone;
 import Artifact.Layer.SDF;
+import Artifact.Layers.Model3D;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -138,9 +139,21 @@ namespace Artifact {
    case LayerType::Clone:
     ptr = std::make_shared<ArtifactCloneLayer>();
     break;
-   case LayerType::SDF:
-    ptr = std::make_shared<ArtifactSDFLayer>();
-    break;
+  case LayerType::SDF:
+   ptr = std::make_shared<ArtifactSDFLayer>();
+   break;
+  case LayerType::Model3D: {
+   auto modelLayer = std::make_shared<Artifact3DLayer>();
+   if (auto* modelParams =
+           dynamic_cast<ArtifactModel3DLayerInitParams*>(&params)) {
+    const QString path = modelParams->modelPath();
+    if (!path.isEmpty()) {
+     modelLayer->loadFromFile(path);
+    }
+   }
+   ptr = modelLayer;
+   break;
+  }
    default:
     break;
   }
@@ -177,7 +190,27 @@ namespace Artifact {
       if (!json.contains("type")) return nullptr;
       LayerType type = static_cast<LayerType>(json["type"].toInt());
       QString name = json.value("name").toString("Layer");
-      ArtifactLayerFactory factory;
+  ArtifactLayerFactory factory;
+      if (type == LayerType::Model3D &&
+          (json.contains("sourcePath") || json.contains("modelPath"))) {
+          ArtifactModel3DLayerInitParams modelParams(name);
+          if (json.contains("sourcePath")) {
+              modelParams.setModelPath(json.value("sourcePath").toString());
+          } else if (json.contains("modelPath")) {
+              modelParams.setModelPath(json.value("modelPath").toString());
+          }
+          auto result = factory.createLayer(modelParams);
+          if (result.success && result.layer) {
+              if (auto modelLayer = std::dynamic_pointer_cast<Artifact3DLayer>(result.layer)) {
+                  if (json.contains("renderMode")) {
+                      modelLayer->setRenderMode(static_cast<RenderMode>(json.value("renderMode").toInt()));
+                  }
+              }
+              result.layer->fromJsonProperties(json);
+              return result.layer;
+          }
+          return nullptr;
+      }
       if (json.contains("svg.sourcePath") || json.contains("sourcePath")) {
           ArtifactSvgInitParams svgParams(name);
           if (json.contains("svg.sourcePath")) {

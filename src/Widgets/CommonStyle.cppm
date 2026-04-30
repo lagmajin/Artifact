@@ -27,6 +27,7 @@ module;
 #include <QStyleFactory>
 #include <QBitmap>
 #include <QEvent>
+#include <cmath>
 #ifdef _WIN32
 #include <qt_windows.h>
 #endif
@@ -54,11 +55,11 @@ void scaleMenuFont(QWidget* widget)
   QFont font = widget->font();
   const int pointSize = font.pointSize();
   if (pointSize > 0) {
-    font.setPointSizeF(static_cast<qreal>(pointSize) * 1.15);
+    font.setPointSize(std::max(11, static_cast<int>(std::lround(static_cast<qreal>(pointSize) * 1.15))));
   } else {
     const qreal pointSizeF = font.pointSizeF();
     if (pointSizeF > 0.0) {
-      font.setPointSizeF(pointSizeF * 1.15);
+      font.setPointSizeF(std::max<qreal>(11.0, pointSizeF * 1.15));
     }
   }
   widget->setFont(font);
@@ -242,7 +243,7 @@ void ArtifactCommonStyle::polish(QWidget* widget)
   if (qobject_cast<QMenuBar*>(widget) || qobject_cast<QMenu*>(widget)) {
     scaleMenuFont(widget);
     QPalette pal = widget->palette();
-    pal.setColor(QPalette::Highlight, QColor(theme.secondaryBackgroundColor).lighter(112));
+    pal.setColor(QPalette::Highlight, QColor(theme.accentColor).lighter(108));
     pal.setColor(QPalette::HighlightedText, text);
     pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
     pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
@@ -304,7 +305,7 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
   const auto& theme = ArtifactCore::currentDCCTheme();
   const QColor menuSurface(theme.secondaryBackgroundColor);
   const QColor menuText(theme.textColor);
-  const QColor menuHover = QColor(theme.secondaryBackgroundColor).lighter(108);
+  const QColor menuHover = QColor(theme.accentColor).lighter(108);
   const QColor menuBorder = QColor(theme.borderColor);
 
   if (element == CE_MenuItem) {

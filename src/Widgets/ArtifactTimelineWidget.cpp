@@ -1342,6 +1342,7 @@ protected:
         const int frame = static_cast<int>(std::round(clamped));
         trackView_->setCurrentFrame(clamped);
         scrubBar_->setCurrentFrame(FramePosition(frame));
+        scrubBar_->setVisualFrame(clamped);
         
         if (debugCallback_) {
           debugCallback_(QStringLiteral("Playhead: %1 (Seek)").arg(frame));
@@ -1391,6 +1392,7 @@ protected:
 
     trackView_->setCurrentFrame(clamped);
     scrubBar_->setCurrentFrame(FramePosition(frame));
+    scrubBar_->setVisualFrame(clamped);
 
     if (debugCallback_) {
       debugCallback_(QStringLiteral("Playhead: %1 (Scrubbing)").arg(frame));
@@ -2588,9 +2590,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           return;
         }
 
-        const int previewFrame = std::clamp(
-            impl_->scrubBar_->currentFrame().framePosition(), 0,
-            std::max(0, impl_->scrubBar_->totalFrames() - 1));
+        const int previewFrame = std::clamp<int>(
+            static_cast<int>(impl_->scrubBar_->currentFrame().framePosition()),
+            0,
+            std::max<int>(0, impl_->scrubBar_->totalFrames() - 1));
         const int currentFrame = playback->currentFrame().framePosition();
         if (previewFrame == currentFrame) {
           return;
@@ -2855,6 +2858,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      if (impl_->scrubBar_) {
                        const QSignalBlocker blocker(impl_->scrubBar_);
                        impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(frame)));
+                       impl_->scrubBar_->setVisualFrame(static_cast<double>(frame));
                      }
                      syncPlayheadOverlay();
                      if (auto *app = ArtifactApplicationManager::instance()) {
@@ -2981,6 +2985,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     if (impl_->navigator_) {
       impl_->navigator_->setCurrentFrame(visualFrame);
     }
+    if (impl_->scrubBar_) {
+      const QSignalBlocker blocker(impl_->scrubBar_);
+      impl_->scrubBar_->setVisualFrame(visualFrame);
+    }
     syncPlayheadOverlay();
   };
   QObject::connect(impl_->playbackVisualTimer_, &QTimer::timeout, this,
@@ -3028,6 +3036,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             syncPlayheadOverlay();
             const QSignalBlocker blocker(scrubBar);
             scrubBar->setCurrentFrame(frame);
+            scrubBar->setVisualFrame(static_cast<double>(frame.framePosition()));
             if (isPlaying) {
               // Only re-anchor the smooth interpolation clock on large drift
               // (audio sync correction, seek). Normal per-frame events must NOT
@@ -4005,7 +4014,7 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
   }
   const double ppf = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
   const double xOff = impl_->painterTrackView_->horizontalOffset();
-  const double frame = impl_->painterTrackView_->currentFrame();
+  const double frame = std::max(0.0, impl_->currentFrame_);
   const int newX = static_cast<int>(frame * ppf - xOff);
 
   if (impl_->navigator_) {

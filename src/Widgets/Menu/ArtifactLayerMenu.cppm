@@ -129,6 +129,7 @@ public:
     QAction* createCameraAction = nullptr;
     QAction* createAudioAction = nullptr;
     QAction* createSvgAction = nullptr;
+    QAction* createModel3DAction = nullptr;
     QAction* createShapeRectAction = nullptr;
     QAction* createShapeSquareAction = nullptr;
     QAction* createShapePolygonAction = nullptr;
@@ -163,6 +164,7 @@ public:
     void handleCreateCamera();
     void handleCreateAudio();
     void handleCreateSvg();
+    void handleCreateModel3D();
     void handleCreateShape(ShapeType type, const QString& nameBase);
 
     void handleDuplicateLayer();
@@ -218,6 +220,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createAudioAction->setIcon(QIcon(resolveIconPath("Material/audiotrack.svg")));
 
     createSvgAction = new QAction("SVG シェイプレイヤー(&V)...", createMenu);
+    createModel3DAction = new QAction("3Dモデルレイヤー(&3)...", createMenu);
+    createModel3DAction->setToolTip(QStringLiteral("Import a 3D model as a layer"));
 
     createShapeMenu = new QMenu("シェイプ(&S)", createMenu);
     createShapeRectAction = new QAction("四角形", createShapeMenu);
@@ -244,6 +248,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createCameraAction);
     createMenu->addAction(createAudioAction);
     createMenu->addAction(createSvgAction);
+    createMenu->addAction(createModel3DAction);
     createMenu->addMenu(createShapeMenu);
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
@@ -313,6 +318,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createCameraAction) { handleCreateCamera(); return; }
         if (action == createAudioAction) { handleCreateAudio(); return; }
         if (action == createSvgAction) { handleCreateSvg(); return; }
+        if (action == createModel3DAction) { handleCreateModel3D(); return; }
         if (action == createShapeRectAction) { handleCreateShape(ShapeType::Rect, QStringLiteral("Shape 1")); return; }
         if (action == createShapeSquareAction) { handleCreateShape(ShapeType::Square, QStringLiteral("Square 1")); return; }
         if (action == createShapePolygonAction) { handleCreateShape(ShapeType::Polygon, QStringLiteral("Polygon 1")); return; }
@@ -435,6 +441,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createCameraAction->setEnabled(hasProject);
     createAudioAction->setEnabled(hasProject);
     createSvgAction->setEnabled(hasProject);
+    createModel3DAction->setEnabled(hasProject);
     createShapeRectAction->setEnabled(hasProject);
     createShapeSquareAction->setEnabled(hasProject);
     createShapePolygonAction->setEnabled(hasProject);
@@ -620,6 +627,37 @@ void ArtifactLayerMenu::Impl::handleCreateSvg()
         }
         ArtifactSvgInitParams params(layerName);
         params.setSvgPath(importedPaths.first());
+        service->addLayerToCurrentComposition(params);
+    });
+}
+
+void ArtifactLayerMenu::Impl::handleCreateModel3D()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    if (!service) {
+        return;
+    }
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        menu_ ? menu_->window() : nullptr,
+        QStringLiteral("3Dモデルを選択"),
+        QString(),
+        QStringLiteral("3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usdz *.pmd *.pmx);;All Files (*.*)"));
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    const QString layerName = uniqueLayerName(QFileInfo(filePath).completeBaseName());
+    service->importAssetsFromPathsAsync(QStringList{filePath}, [service, layerName](QStringList importedPaths) {
+        if (!service || importedPaths.isEmpty()) {
+            return;
+        }
+        ArtifactModel3DLayerInitParams params(layerName);
+        params.setModelPath(importedPaths.first());
         service->addLayerToCurrentComposition(params);
     });
 }

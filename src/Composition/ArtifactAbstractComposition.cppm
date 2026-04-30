@@ -411,7 +411,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::setBackGroundColor(const FloatColor& color)
  {
-  impl_->backgroundColor_ = color;
+  impl_->backgroundColor_ = FloatColor(color.r(), color.g(), color.b(), 1.0f);
   Q_EMIT changed();
  }
 
@@ -512,12 +512,18 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
     return hasAnyAudio;
 }
 
- QVector<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
- {
+QVector<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
+{
   return impl_->layerMultiIndex_.all();
- }
+}
 
- AppendLayerToCompositionResult ArtifactAbstractComposition::appendLayerTop(ArtifactAbstractLayerPtr layer)
+const QVector<Artifact::ArtifactAbstractLayerPtr>&
+ArtifactAbstractComposition::allLayerRef() const
+{
+  return impl_->layerMultiIndex_.all();
+}
+
+AppendLayerToCompositionResult ArtifactAbstractComposition::appendLayerTop(ArtifactAbstractLayerPtr layer)
  {
   return impl_->appendLayerTop(layer);
  }

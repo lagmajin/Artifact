@@ -5,6 +5,7 @@
 #include <QPainter>
 #include <QWidget>
 #include <wobjectimpl.h>
+#include "TimelinePlayheadDraw.hpp"
 
 module Artifact.Timeline.NavigatorWidget;
 
@@ -120,7 +121,7 @@ namespace Artifact
   QPainter p(this);
   p.setRenderHint(QPainter::Antialiasing);
   const TimelineTheme theme = timelineTheme();
-  const QColor playheadColor(255, 106, 71);
+  const QColor playheadColor = TimelinePlayheadDraw::playheadColor();
 
   const QRect outer = rect();
   p.fillRect(outer, theme.background);
@@ -197,23 +198,12 @@ namespace Artifact
                                    0.0, 1.0);
    const int currentX = kHandleHalfW + static_cast<int>(std::lround(ratio * usableWidth));
    const int clampedCurrentX = std::clamp(currentX, trackRect.left(), trackRect.right());
-   const qreal headTop = 1.0;
-   const qreal headHeight = std::min<qreal>(10.0, static_cast<qreal>(trackRect.height() - 3));
-   const qreal headWidth = 12.0;
-   const qreal stemTop = headTop + headHeight + 1.0;
    const qreal stemBottom = static_cast<qreal>(outer.bottom()) - 1.0;
-   QPainterPath headPath;
-   headPath.moveTo(clampedCurrentX, headTop + headHeight);
-   headPath.lineTo(clampedCurrentX - headWidth * 0.5, headTop);
-   headPath.lineTo(clampedCurrentX + headWidth * 0.5, headTop);
-   headPath.closeSubpath();
-   p.setPen(QPen(QColor(18, 18, 18, 150), 1));
-   p.setBrush(playheadColor);
-   p.drawPath(headPath);
-   p.setPen(QPen(playheadColor, 2, Qt::SolidLine, Qt::FlatCap));
-   p.drawLine(QPointF(clampedCurrentX, stemTop), QPointF(clampedCurrentX, stemBottom));
+   TimelinePlayheadDraw::drawPlayhead(
+       p, static_cast<qreal>(clampedCurrentX), 0.0, stemBottom, true, 1.0,
+       std::min<qreal>(10.0, static_cast<qreal>(trackRect.height() - 3)), 12.0);
   }
- }
+}
 
  void ArtifactTimelineNavigatorWidget::mousePressEvent(QMouseEvent* ev)
  {

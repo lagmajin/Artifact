@@ -2103,15 +2103,14 @@ namespace Artifact
             const int compH = std::max(16, compSize.height());
             // RGBA8888 で直接作成（ARGB→RGBA 変換の問題を回避）
             QImage canvas(QSize(compW, compH), QImage::Format_RGBA8888);
-            const QColor bgColor = toQColor(composition->backgroundColor());
-            canvas.fill(QColor(bgColor.red(), bgColor.green(), bgColor.blue(), 255));
+            canvas.fill(Qt::transparent);
 
             QPainter painter(&canvas);
             painter.setRenderHint(QPainter::Antialiasing, true);
             painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
             const ArtifactCore::FramePosition currentPos(frameNumber);
-            const auto layers = composition->allLayer();
+            const auto& layers = composition->allLayerRef();
             for (const auto& layer : layers) {
                 if (!layer || !layer->isVisible() || !layer->isActiveAt(currentPos)) {
                     continue;
@@ -2177,23 +2176,13 @@ namespace Artifact
             comp->goToFrame(job.startFrame);
 
             const auto compSize = comp->settings().compositionSize();
-            const FloatColor bgColor{
-                comp->backgroundColor().r(),
-                comp->backgroundColor().g(),
-                comp->backgroundColor().b(),
-                1.0f
-            };
             QHash<QString, LayerSurfaceCacheEntry> surfaceCache;
             GPUTextureCacheManager gpuTextureCacheManager;
             gpuTextureCacheManager.setDevice(gpuRenderer_->device());
 
-            gpuRenderer_->setClearColor(bgColor);
+            gpuRenderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
             gpuRenderer_->clear();
-            gpuRenderer_->drawRectLocal(0.0f, 0.0f,
-                                        static_cast<float>(std::max(1, compSize.width())),
-                                        static_cast<float>(std::max(1, compSize.height())),
-                                        bgColor, 1.0f);
-            const auto layers = comp->allLayer();
+            const auto& layers = comp->allLayerRef();
             const ArtifactCore::FramePosition currentPos(job.startFrame);
 
                 for (const auto& layer : layers) {
@@ -2986,13 +2975,6 @@ namespace Artifact
                         // 経路B: GPU Diligent レンダリング
                         // ヘッドレスレンダラーで1フレームレンダリング → readback
                         const auto compSize = (*compositionForRender)->settings().compositionSize();
-                        const FloatColor bgColor{
-                            (*compositionForRender)->backgroundColor().r(),
-                            (*compositionForRender)->backgroundColor().g(),
-                            (*compositionForRender)->backgroundColor().b(),
-                            1.0f
-                        };
-
                         const TileRenderMode tileMode = impl_->tileRenderMode_;
                         const int tileSz = impl_->tileSize_;
                         if (tileMode == TileRenderMode::Tiled) {
@@ -3002,15 +2984,11 @@ namespace Artifact
                                     << " tileSize=" << tileSz;
                         }
 
-                        impl_->gpuRenderer_->setClearColor(bgColor);
+                        impl_->gpuRenderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
                         impl_->gpuRenderer_->clear();
-                        impl_->gpuRenderer_->drawRectLocal(0.0f, 0.0f,
-                                                           static_cast<float>(std::max(1, compSize.width())),
-                                                           static_cast<float>(std::max(1, compSize.height())),
-                                                           bgColor, 1.0f);
 
                         (*compositionForRender)->goToFrame(f);
-                        const auto gpuLayers = (*compositionForRender)->allLayer();
+                        const auto& gpuLayers = (*compositionForRender)->allLayerRef();
                         const ArtifactCore::FramePosition gpuPos(f);
                         for (const auto& layer : gpuLayers) {
                             if (!layer || !layer->isVisible() || !layer->isActiveAt(gpuPos)) continue;

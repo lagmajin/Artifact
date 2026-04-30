@@ -102,6 +102,26 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
     return transformed;
 }
 
+QVector3D defaultEmitterPositionForPreset(const QString& presetName,
+                                          int width,
+                                          int height)
+{
+    const float w = static_cast<float>(std::max(1, width));
+    const float h = static_cast<float>(std::max(1, height));
+    if (presetName == QStringLiteral("rain") ||
+        presetName == QStringLiteral("snow") ||
+        presetName == QStringLiteral("leaves") ||
+        presetName == QStringLiteral("pollen") ||
+        presetName == QStringLiteral("confetti")) {
+        return QVector3D(w * 0.5f, h * 0.18f, 0.0f);
+    }
+    if (presetName == QStringLiteral("splash") ||
+        presetName == QStringLiteral("fountain")) {
+        return QVector3D(w * 0.5f, h * 0.78f, 0.0f);
+    }
+    return QVector3D(w * 0.5f, h * 0.5f, 0.0f);
+}
+
 } // namespace
 
 // ==================== ArtifactParticleLayer::Impl ====================
@@ -118,6 +138,22 @@ public:
     
     Impl() {
         particleSystem = std::make_unique<ParticleSystem>();
+    }
+
+    void scaleEmitterPositions(float scaleX, float scaleY)
+    {
+        auto& emitters = const_cast<std::vector<std::unique_ptr<ParticleEmitter>>&>(
+            particleSystem->emitters());
+        for (auto& emitter : emitters) {
+            if (!emitter) {
+                continue;
+            }
+            auto params = emitter->params();
+            params.position = QVector3D(params.position.x() * scaleX,
+                                        params.position.y() * scaleY,
+                                        params.position.z());
+            emitter->setParams(params);
+        }
     }
 };
 
@@ -695,7 +731,10 @@ void ArtifactParticleLayer::goToFrame(int64_t frameNumber)
         impl_->particleSystem->update(deltaTime);
         impl_->lastTime = time;
     }
-    
+
+    // The simulation state moved to a new frame, so any previously rasterized
+    // image is stale even if the frame number cache is about to be updated.
+    impl_->cachedFrame = QImage();
     impl_->cachedFrameNumber = frameNumber;
 }
 
@@ -814,7 +853,9 @@ void ArtifactParticleLayer::loadPreset(const QString& presetName)
         // Default fallback
         params = ParticlePresets::fire();
     }
-    
+
+    params.position =
+        defaultEmitterPositionForPreset(presetName, impl_->width, impl_->height);
     addEmitter(params);
     emit particleSystemChanged();
 }
@@ -890,13 +931,19 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
         return true;
     }
     if (propertyPath == QStringLiteral("particle.previewWidth")) {
+        const int oldWidth = std::max(1, impl_->width);
         impl_->width = std::max(1, value.toInt());
+        impl_->scaleEmitterPositions(
+            static_cast<float>(impl_->width) / static_cast<float>(oldWidth), 1.0f);
         clearFrameCache();
         Q_EMIT changed();
         return true;
     }
     if (propertyPath == QStringLiteral("particle.previewHeight")) {
+        const int oldHeight = std::max(1, impl_->height);
         impl_->height = std::max(1, value.toInt());
+        impl_->scaleEmitterPositions(
+            1.0f, static_cast<float>(impl_->height) / static_cast<float>(oldHeight));
         clearFrameCache();
         Q_EMIT changed();
         return true;

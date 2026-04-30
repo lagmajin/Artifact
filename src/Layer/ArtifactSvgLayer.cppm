@@ -213,7 +213,9 @@ const ArtifactCore::ImageF32x4_RGBA &ArtifactSvgLayer::currentFrameBuffer() cons
 
     if (!impl_->cacheBuffer_ && impl_->cache_) {
         impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>();
-        const QImage rgba = impl_->cache_->convertToFormat(QImage::Format_RGBA8888);
+        const QImage rgba = (impl_->cache_->format() == QImage::Format_RGBA8888)
+                                ? *impl_->cache_
+                                : impl_->cache_->convertToFormat(QImage::Format_RGBA8888);
         if (!rgba.isNull()) {
             std::vector<std::uint8_t> packed;
             packed.reserve(static_cast<size_t>(rgba.width()) * static_cast<size_t>(rgba.height()) * 4u);

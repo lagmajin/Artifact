@@ -39,6 +39,7 @@ export namespace Artifact
 
   FramePosition currentFrame() const;
   void setCurrentFrame(const FramePosition& frame);
+  void setVisualFrame(double frame);
 
   void setTotalFrames(int totalFrames);
   int totalFrames() const;

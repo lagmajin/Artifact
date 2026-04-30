@@ -10,6 +10,7 @@ module;
 #include <QSizePolicy>
 #include <QWidget>
 #include <wobjectimpl.h>
+#include "TimelinePlayheadDraw.hpp"
 
 module Artifact.Timeline.ScrubBar;
 
@@ -52,10 +53,11 @@ namespace Artifact
  class ArtifactTimelineScrubBar::Impl
  {
  public:
-  Impl();
+ Impl();
   ~Impl();
 
   FramePosition currentFrame_;
+  double visualFrame_ = -1.0;
   int totalFrames_ = 100;
   bool dragging_ = false;
   int handleWidth_ = 10;
@@ -166,15 +168,30 @@ namespace Artifact
   return impl_->currentFrame_;
  }
 
- void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
- {
+void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
+{
   int frameValue = frame.framePosition();
   frameValue = qBound(0, frameValue, impl_->totalFrames_ - 1);
+  const bool isFrameChanged = impl_->currentFrame_.framePosition() != frameValue;
 
-  if (impl_->currentFrame_.framePosition() != frameValue) {
+  if (isFrameChanged) {
    impl_->currentFrame_ = FramePosition(frameValue);
-   update();
+  }
+  impl_->visualFrame_ = static_cast<double>(frameValue);
+  if (isFrameChanged) {
    Q_EMIT frameChanged(impl_->currentFrame_);
+  }
+  update();
+ }
+
+ void ArtifactTimelineScrubBar::setVisualFrame(double frame)
+ {
+  const double maxFrame =
+      std::max(0.0, static_cast<double>(impl_->totalFrames_ - 1));
+  const double clamped = std::clamp(frame, 0.0, maxFrame);
+  if (std::abs(impl_->visualFrame_ - clamped) > 0.0001) {
+   impl_->visualFrame_ = clamped;
+   update();
   }
  }
 
@@ -300,7 +317,12 @@ namespace Artifact
   const QRect r = rect();
   const int w = r.width();
   const int h = r.height();
-  const int currentX = impl_->resolveFrameToX(std::max(0, static_cast<int>(impl_->currentFrame_.framePosition())), w);
+  const double visualFrame =
+      impl_->visualFrame_ >= 0.0
+          ? impl_->visualFrame_
+          : static_cast<double>(impl_->currentFrame_.framePosition());
+  const int currentX = impl_->resolveFrameToX(
+      std::max(0, static_cast<int>(std::lround(visualFrame))), w);
   const int railHalfH = std::max(3, h / 7);
   const int railBottomInset = std::max(3, h / 10);
   const int centerY = h - railBottomInset - railHalfH;
@@ -314,7 +336,6 @@ namespace Artifact
   const QColor railColor = theme.surface.darker(108);
   const QColor railBorder = theme.border;
   const QColor cacheBaseColor(84, 198, 120);
-  const QColor playheadColor(255, 92, 92);
   
   QLinearGradient bgGrad(r.topLeft(), r.bottomLeft());
   bgGrad.setColorAt(0.0, bgTop);
@@ -418,13 +439,8 @@ namespace Artifact
   // ── 再生ヘッド描画 ──────────────────────
   const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());
   if (railRect.width() > 0) {
-   const QColor stemColor(playheadColor.red(), playheadColor.green(),
-                          playheadColor.blue(), 220);
-   const qreal stemTop = 0.0;
-   const qreal stemBottom = static_cast<qreal>(h) - 1.0;
-
-   p.setPen(QPen(stemColor, 2, Qt::SolidLine, Qt::FlatCap));
-   p.drawLine(QPointF(clampedX, stemTop), QPointF(clampedX, stemBottom));
+   TimelinePlayheadDraw::drawPlayhead(
+       p, static_cast<qreal>(clampedX), 0.0, static_cast<qreal>(h) - 1.0, true);
   }
 
   // ── 目盛り描画 ──────────────────────
@@ -477,6 +493,7 @@ namespace Artifact
    newFrame = qBound(0, newFrame, impl_->totalFrames_ - 1);
    if (impl_->currentFrame_.framePosition() != newFrame) {
     impl_->currentFrame_ = FramePosition(newFrame);
+    impl_->visualFrame_ = static_cast<double>(newFrame);
     update();
     Q_EMIT frameChanged(impl_->currentFrame_);
    }
@@ -507,6 +524,7 @@ namespace Artifact
 
    if (impl_->currentFrame_.framePosition() != newFrame) {
     impl_->currentFrame_ = FramePosition(newFrame);
+    impl_->visualFrame_ = static_cast<double>(newFrame);
     update();
     Q_EMIT frameChanged(impl_->currentFrame_);
    }

@@ -410,6 +410,11 @@ int sliderPositionToInt(const int sliderValue, const int minValue,
 }
 
 QString fileDialogFilterForProperty(const QString &propertyName) {
+  if (propertyName.contains(QStringLiteral("model"), Qt::CaseInsensitive) ||
+      propertyName.contains(QStringLiteral("3d"), Qt::CaseInsensitive)) {
+    return QStringLiteral(
+        "3D Models (*.obj *.fbx *.gltf *.glb *.stl *.dae *.abc *.usd *.usdz *.pmd *.pmx);;All Files (*.*)");
+  }
   if (propertyName.contains(QStringLiteral("video"), Qt::CaseInsensitive) ||
       propertyName.contains(QStringLiteral("media"), Qt::CaseInsensitive)) {
     return QStringLiteral("Media Files (*.mp4 *.mov *.avi *.mkv *.webm *.mp3 "
@@ -434,6 +439,8 @@ bool isPathProperty(const ArtifactCore::AbstractProperty &property) {
   }
   const QString name = property.getName();
   return name.compare(QStringLiteral("video.sourcePath"),
+                      Qt::CaseInsensitive) == 0 ||
+         name.compare(QStringLiteral("model.sourcePath"),
                       Qt::CaseInsensitive) == 0 ||
          name.endsWith(QStringLiteral(".sourcePath"), Qt::CaseInsensitive) ||
          name.compare(QStringLiteral("sourcePath"), Qt::CaseInsensitive) == 0;

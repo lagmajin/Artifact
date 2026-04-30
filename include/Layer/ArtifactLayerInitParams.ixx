@@ -166,6 +166,17 @@ export namespace Artifact {
   ~ArtifactCompositionLayerInitParams();
  };
 
+ class ArtifactModel3DLayerInitParams : public ArtifactLayerInitParams {
+ private:
+  QString modelPath_;
+
+ public:
+  explicit ArtifactModel3DLayerInitParams(const QString& name);
+  ~ArtifactModel3DLayerInitParams();
+  QString modelPath() const { return modelPath_; }
+  void setModelPath(const QString& path) { modelPath_ = path; }
+ };
+
 };
 
 W_REGISTER_ARGTYPE(Artifact::ArtifactSolidLayerInitParams)

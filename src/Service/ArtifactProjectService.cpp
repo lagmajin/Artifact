@@ -9,6 +9,7 @@ module;
 #include <QList>
 #include <QPointer>
 #include <QRectF>
+#include <QVector3D>
 #include <QtConcurrent>
 #include <QtSvg/QSvgRenderer>
 #include <QFileSystemWatcher>
@@ -285,6 +286,21 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
         const_cast<ArtifactLayerInitParams &>(params));
   }
   if (result.success && result.layer) {
+    if (auto comp = currentComposition().lock()) {
+      if (result.layer->is3D()) {
+        const QSize compSize = comp->settings().compositionSize();
+        const float compCenterX =
+            static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920) *
+            0.5f;
+        const float compCenterY =
+            static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080) *
+            0.5f;
+        const QVector3D current = result.layer->position3D();
+        result.layer->setPosition3D(
+            QVector3D(compCenterX, compCenterY, current.z()));
+      }
+    }
+
     if (targetedCurrentComposition) {
       if (auto comp = currentComposition().lock()) {
         if (!selectedLayerId.isNil() &&

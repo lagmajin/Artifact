@@ -125,7 +125,12 @@ static ParagraphStyle paragraphStyleFromRectAndAlignment(const QRectF& rect,
 
 static QImage atlasImageToRgba(const QImage& image)
 {
-    return image.isNull() ? QImage{} : image.convertToFormat(QImage::Format_RGBA8888);
+    if (image.isNull()) {
+        return {};
+    }
+    return (image.format() == QImage::Format_RGBA8888)
+               ? image
+               : image.convertToFormat(QImage::Format_RGBA8888);
 }
 
 static RefCntAutoPtr<ITexture> createAtlasTexture(RefCntAutoPtr<IRenderDevice> device,

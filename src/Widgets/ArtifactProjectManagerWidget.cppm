@@ -102,6 +102,7 @@ module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
 import Artifact.Widgets.SoftwareRenderInspectors;
+import FloatColorPickerDialog;
 import Widgets.Utils.CSS;
 
 
@@ -130,6 +131,73 @@ namespace Artifact {
  using namespace ArtifactCore;
 
 namespace {
+
+void updateCompositionColorButtonPreview(QPushButton* button, const QColor& color)
+{
+    if (!button) {
+        return;
+    }
+    QPixmap pix(button->size().isEmpty() ? QSize(40, 24) : button->size());
+    pix.fill(Qt::transparent);
+    {
+        QPainter painter(&pix);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(QColor(85, 85, 85), 1));
+        painter.setBrush(color);
+        painter.drawRoundedRect(pix.rect().adjusted(1, 1, -2, -2), 3, 3);
+    }
+    button->setIcon(QIcon(pix));
+    button->setIconSize(pix.size());
+    button->setToolTip(QStringLiteral("Background Color: %1").arg(color.name(QColor::HexArgb)));
+    button->setText(QString());
+}
+
+class CompositionBackgroundColorButton final : public QPushButton
+{
+public:
+    explicit CompositionBackgroundColorButton(const QColor& initialColor,
+                                              QWidget* parent = nullptr)
+        : QPushButton(parent), color_(initialColor)
+    {
+        updateCompositionColorButtonPreview(this, color_);
+    }
+
+    QColor selectedColor() const
+    {
+        return color_;
+    }
+
+    void setSelectedColor(const QColor& color)
+    {
+        if (!color.isValid()) {
+            return;
+        }
+        color_ = color;
+        updateCompositionColorButtonPreview(this, color_);
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        if (event && event->button() == Qt::LeftButton) {
+            ArtifactWidgets::FloatColorPicker picker(this);
+            picker.setWindowTitle(QStringLiteral("Background Color"));
+            picker.setInitialColor(ArtifactCore::FloatColor(
+                color_.redF(), color_.greenF(), color_.blueF(), color_.alphaF()));
+            if (picker.exec() == QDialog::Accepted) {
+                const ArtifactCore::FloatColor picked = picker.getColor();
+                setSelectedColor(QColor::fromRgbF(
+                    picked.r(), picked.g(), picked.b(), picked.a()));
+            }
+            event->accept();
+            return;
+        }
+        QPushButton::mousePressEvent(event);
+    }
+
+private:
+    QColor color_;
+};
 
 bool isImportableAssetFile(const QString& path)
 {
@@ -2063,6 +2131,19 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 rangeLayout->addWidget(endSpin);
                 layout->addLayout(rangeLayout);
 
+                auto* bgLayout = new QHBoxLayout();
+                auto* bgButton = new CompositionBackgroundColorButton(
+                    QColor::fromRgbF(
+                        composition->backgroundColor().r(),
+                        composition->backgroundColor().g(),
+                        composition->backgroundColor().b(),
+                        composition->backgroundColor().a()),
+                    dialog);
+                bgLayout->addWidget(new QLabel(QStringLiteral("Background"), dialog));
+                bgLayout->addWidget(bgButton);
+                bgLayout->addStretch();
+                layout->addLayout(bgLayout);
+
                 auto* infoLabel = new QLabel(
                     QStringLiteral("ID: %1").arg(compositionId.toString()), dialog);
                 {
@@ -2076,7 +2157,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 layout->addWidget(buttons.widget);
 
                 QObject::connect(buttons.cancelButton, &QPushButton::clicked, dialog, &QDialog::reject);
-                QObject::connect(buttons.okButton, &QPushButton::clicked, dialog, [this, dialog, svc, compositionId, composition, nameEdit, widthSpin, heightSpin, fpsSpin, startSpin, endSpin]() {
+                QObject::connect(buttons.okButton, &QPushButton::clicked, dialog, [this, dialog, svc, compositionId, composition, nameEdit, widthSpin, heightSpin, fpsSpin, startSpin, endSpin, bgButton]() {
                     const QString trimmedName = nameEdit->text().trimmed();
                     if (trimmedName.isEmpty()) {
                         QMessageBox::warning(dialog, QStringLiteral("Composition Settings"),
@@ -2096,6 +2177,11 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     composition->setCompositionSize(QSize(widthSpin->value(), heightSpin->value()));
                     composition->setFrameRate(FrameRate(static_cast<float>(fpsSpin->value())));
                     composition->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
+                    if (bgButton) {
+                        const QColor bg = bgButton->selectedColor();
+                        composition->setBackGroundColor(FloatColor(
+                            bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF()));
+                    }
 
                     if (!svc->renameComposition(compositionId, UniString::fromQString(trimmedName))) {
                         QMessageBox::warning(dialog, QStringLiteral("Composition Settings"),

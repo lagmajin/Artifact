@@ -109,6 +109,7 @@ export namespace Artifact {
   static std::shared_ptr<ArtifactAbstractComposition> fromJson(const QJsonDocument& doc);
 
   QVector<ArtifactAbstractLayerPtr> allLayer();
+  const QVector<ArtifactAbstractLayerPtr>& allLayerRef() const;
 
   // Asset usage tracking for unused asset detection
   QVector<ArtifactCore::AssetID> getUsedAssets() const;

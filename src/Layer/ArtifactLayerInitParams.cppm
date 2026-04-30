@@ -260,6 +260,15 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  }
 
+ ArtifactModel3DLayerInitParams::ArtifactModel3DLayerInitParams(const QString& name)
+     : ArtifactLayerInitParams(name, LayerType::Model3D)
+ {
+ }
+
+ ArtifactModel3DLayerInitParams::~ArtifactModel3DLayerInitParams()
+ {
+ }
+
 
 };
 

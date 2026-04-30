@@ -15,6 +15,7 @@
 #include <QToolTip>
 #include <QtGlobal>
 #include <wobjectimpl.h>
+#include "TimelinePlayheadDraw.hpp"
 
 
 module Artifact.Timeline.TrackPainterView;
@@ -1409,14 +1410,8 @@ void ArtifactTimelineTrackPainterView::drawPlayhead(QPainter& p) const {
     return;
   }
 
-  p.setRenderHint(QPainter::Antialiasing, true);
-
-  const QColor playheadColor(255, 92, 92);
-  const qreal stemTop = 0.0;
-  const qreal stemBottom = static_cast<qreal>(height()) - 1.0;
-
-  p.setPen(QPen(playheadColor, 2, Qt::SolidLine, Qt::FlatCap));
-  p.drawLine(QPointF(playheadX, stemTop), QPointF(playheadX, stemBottom));
+  TimelinePlayheadDraw::drawPlayhead(
+      p, playheadX, 0.0, static_cast<qreal>(height()) - 1.0, true);
 }
 
 void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {

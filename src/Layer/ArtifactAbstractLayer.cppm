@@ -150,6 +150,18 @@ public:
   uint32_t dirtyFlags_ = (uint32_t)LayerDirtyFlag::All;
   uint64_t dirtyReasonMask_ =
       static_cast<uint64_t>(LayerDirtyReason::PropertyChanged);
+  mutable quint64 geometryRevision_ = 1;
+  mutable quint64 cachedGlobalTransformRevision_ = 0;
+  mutable quint64 cachedGlobalTransformParentRevision_ = 0;
+  mutable int64_t cachedGlobalTransformFrame_ =
+      std::numeric_limits<int64_t>::min();
+  mutable LayerID cachedGlobalTransformParentId_;
+  mutable QTransform cachedGlobalTransform_;
+  mutable quint64 cachedBoundingBoxRevision_ = 0;
+  mutable quint64 cachedBoundingBoxParentRevision_ = 0;
+  mutable int64_t cachedBoundingBoxFrame_ = std::numeric_limits<int64_t>::min();
+  mutable LayerID cachedBoundingBoxParentId_;
+  mutable QRectF cachedBoundingBox_;
 
   // エフェクトコンテナ
   std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
@@ -392,6 +404,7 @@ void ArtifactAbstractLayer::setLabelColorIndex(int index) {
 
 void ArtifactAbstractLayer::setDirty(LayerDirtyFlag flag) {
   impl_->dirtyFlags_ |= (uint32_t)flag;
+  ++impl_->geometryRevision_;
 }
 void ArtifactAbstractLayer::clearDirty(LayerDirtyFlag flag) {
   impl_->dirtyFlags_ &= ~(uint32_t)flag;
@@ -661,12 +674,25 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
 }
 
 QTransform ArtifactAbstractLayer::getGlobalTransform() const {
-  QTransform local = getLocalTransform();
   auto parent = parentLayer();
-  if (parent) {
-    return combineLayerTransform2D(local, parent->getGlobalTransform());
+  const LayerID parentId = impl_->parentLayerId_;
+  const quint64 parentRevision = parent ? parent->impl_->geometryRevision_ : 0;
+  const int64_t frame = impl_->currentFrame_;
+  if (impl_->cachedGlobalTransformRevision_ == impl_->geometryRevision_ &&
+      impl_->cachedGlobalTransformParentRevision_ == parentRevision &&
+      impl_->cachedGlobalTransformFrame_ == frame &&
+      impl_->cachedGlobalTransformParentId_ == parentId) {
+    return impl_->cachedGlobalTransform_;
   }
-  return local;
+  QTransform local = getLocalTransform();
+  impl_->cachedGlobalTransform_ =
+      parent ? combineLayerTransform2D(local, parent->getGlobalTransform())
+             : local;
+  impl_->cachedGlobalTransformRevision_ = impl_->geometryRevision_;
+  impl_->cachedGlobalTransformParentRevision_ = parentRevision;
+  impl_->cachedGlobalTransformFrame_ = frame;
+  impl_->cachedGlobalTransformParentId_ = parentId;
+  return impl_->cachedGlobalTransform_;
 }
 
 QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const {
@@ -942,14 +968,28 @@ bool ArtifactAbstractLayer::getAudio(AudioSegment &outSegment,
 }
 
 QRectF ArtifactAbstractLayer::transformedBoundingBox() const {
+  auto parent = parentLayer();
+  const LayerID parentId = impl_->parentLayerId_;
+  const quint64 parentRevision = parent ? parent->impl_->geometryRevision_ : 0;
+  const int64_t frame = impl_->currentFrame_;
+  if (impl_->cachedBoundingBoxRevision_ == impl_->geometryRevision_ &&
+      impl_->cachedBoundingBoxParentRevision_ == parentRevision &&
+      impl_->cachedBoundingBoxFrame_ == frame &&
+      impl_->cachedBoundingBoxParentId_ == parentId) {
+    return impl_->cachedBoundingBox_;
+  }
   const QRectF localRect = localBounds();
   if (!localRect.isValid() || localRect.width() <= 0.0 ||
       localRect.height() <= 0.0) {
-    return QRectF();
+    impl_->cachedBoundingBox_ = QRectF();
+  } else {
+    impl_->cachedBoundingBox_ = getGlobalTransform().mapRect(localRect);
   }
-
-  QTransform global = getGlobalTransform();
-  return global.mapRect(localRect);
+  impl_->cachedBoundingBoxRevision_ = impl_->geometryRevision_;
+  impl_->cachedBoundingBoxParentRevision_ = parentRevision;
+  impl_->cachedBoundingBoxFrame_ = frame;
+  impl_->cachedBoundingBoxParentId_ = parentId;
+  return impl_->cachedBoundingBox_;
 }
 
 AnimatableTransform2D &ArtifactAbstractLayer::transform2D() {

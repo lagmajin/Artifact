@@ -262,7 +262,7 @@ public:
         
         if (!currentComposition) return;
         
-        const auto layers = currentComposition->allLayer();
+        const auto &layers = currentComposition->allLayerRef();
         if (layers.isEmpty()) return;
         
         // 各レイヤーのコントロールを作成
@@ -395,7 +395,7 @@ public:
         if (infoLabel) {
             const QString info = QString("Composition: %1 | Layers: %2 | Visible: %3")
                 .arg(currentComposition->settings().compositionName().toQString())
-                .arg(currentComposition->allLayer().size())
+                .arg(currentComposition->allLayerRef().size())
                 .arg(visibleLayerCount);
             infoLabel->setText(info);
         }
