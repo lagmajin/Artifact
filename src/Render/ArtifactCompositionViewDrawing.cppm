@@ -796,8 +796,38 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* particleLayer = dynamic_cast<ArtifactParticleLayer*>(layer)) {
-    particleLayer->draw(renderer);
-    return;
+    const QSize surfaceSize(
+        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
+    const int64_t targetFrame =
+        (cacheFrameNumber != std::numeric_limits<int64_t>::min())
+            ? cacheFrameNumber
+            : layer->currentFrame();
+    particleLayer->goToFrame(targetFrame);
+    QImage particleSurface;
+    const bool cacheHit =
+        particleLayer->getCachedFrame(targetFrame, particleSurface) &&
+        particleSurface.size() == surfaceSize;
+    if (!cacheHit) {
+      float fps = 30.0f;
+      if (auto* comp =
+              static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+        fps = comp->frameRate().framerate();
+      }
+      particleSurface = particleLayer->renderFrame(
+          surfaceSize.width(), surfaceSize.height(),
+          static_cast<float>(targetFrame) / std::max(0.001f, fps));
+    }
+    particleSurface = downsampleForLOD(particleSurface, lod);
+    if (!particleSurface.isNull() &&
+        particleSurface.format() != QImage::Format_ARGB32_Premultiplied) {
+      particleSurface =
+          particleSurface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+    }
+    if (!particleSurface.isNull()) {
+      applySurfaceAndDraw(particleSurface, localRect, true);
+      return;
+    }
   }
 
   if (layer->isAdjustmentLayer()) {

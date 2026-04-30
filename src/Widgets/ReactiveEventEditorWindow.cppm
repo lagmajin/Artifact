@@ -77,6 +77,9 @@ QString typeLabelForLayer(const ArtifactAbstractLayerPtr& layer)
  if (!layer) {
   return QStringLiteral("Layer");
  }
+ if (layer->is3D()) {
+  return QStringLiteral("3D Model Layer");
+ }
  return layer->className().toQString();
 }
 

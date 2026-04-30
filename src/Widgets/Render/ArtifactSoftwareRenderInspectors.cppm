@@ -357,7 +357,9 @@ QImage renderLayerCard(const ArtifactAbstractLayerPtr& layer, const QSize& size,
     bodyFont.setBold(false);
     bodyFont.setPointSize(10);
     painter.setFont(bodyFont);
-    const QString typeName = layer->className().toQString();
+    const QString typeName = layer->is3D()
+        ? QStringLiteral("3D Model Layer")
+        : layer->className().toQString();
     const QString info = QStringLiteral("Blend: %1\nVisible: %2  Locked: %3  Solo: %4  Shy: %5")
         .arg(blendLabel(ArtifactCore::toBlendMode(layer->layerBlendType())))
         .arg(layer->isVisible() ? QStringLiteral("Yes") : QStringLiteral("No"))
@@ -580,7 +582,7 @@ QImage renderCompositionCanvas(
     painter.setRenderHint(QPainter::Antialiasing, true);
     painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 
-    const auto layers = composition->allLayer();
+    const auto &layers = composition->allLayerRef();
     for (const auto& layer : layers) {
         if (!layer || !layer->isVisible()) {
             continue;
@@ -639,7 +641,7 @@ QString compositionSummaryText(const ArtifactCompositionPtr& composition)
     }
 
     const QSize compSize = safeCompositionSize(composition);
-    const auto layers = composition->allLayer();
+    const auto &layers = composition->allLayerRef();
     int visibleCount = 0;
     int solidCount = 0;
     int imageCount = 0;
@@ -765,7 +767,9 @@ QString layerSummaryText(const ArtifactCompositionPtr& composition, const Artifa
 
     return QStringLiteral("%1 | %2 | Blend=%3 | Visible=%4 | Source=%5 | Bounds=(%6, %7, %8x%9)%10")
         .arg(layer->layerName())
-        .arg(layer->className().toQString())
+        .arg(layer->is3D()
+                 ? QStringLiteral("3D Model Layer")
+                 : layer->className().toQString())
         .arg(blendLabel(ArtifactCore::toBlendMode(layer->layerBlendType())))
         .arg(layer->isVisible() ? QStringLiteral("Yes") : QStringLiteral("No"))
         .arg(sourceLabel)
@@ -1020,7 +1024,7 @@ void ArtifactSoftwareLayerTestWidget::Impl::reloadLayers()
         layerCombo_->addItem(QStringLiteral("(No layer)"), QString());
         return;
     }
-    const auto layers = composition->allLayer();
+    const auto &layers = composition->allLayerRef();
     for (const auto& layer : layers) {
         if (!layer) {
             continue;

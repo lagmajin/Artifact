@@ -90,7 +90,8 @@ namespace Artifact {
   : impl_(new Impl())
  {
   impl_->compositionName_ = name;
-  impl_->backgroundColor_ = backgroundColor;
+  impl_->backgroundColor_ = FloatColor(backgroundColor.r(), backgroundColor.g(),
+                                       backgroundColor.b(), 1.0f);
  }
 
  ArtifactCompositionInitParams::ArtifactCompositionInitParams(const ArtifactCompositionInitParams& other)
@@ -285,7 +286,8 @@ namespace Artifact {
 
  void ArtifactCompositionInitParams::setBackgroundColor(const FloatColor& color)
  {
-  impl_->backgroundColor_ = color;
+  impl_->backgroundColor_ =
+      FloatColor(color.r(), color.g(), color.b(), 1.0f);
  }
 
  PreviewQuality ArtifactCompositionInitParams::previewQuality() const

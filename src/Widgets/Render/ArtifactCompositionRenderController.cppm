@@ -31,6 +31,7 @@ module;
 #include <deque>
 #include <QtConcurrent>
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -248,6 +249,14 @@ enum class MaskHandleType { None, InTangent, OutTangent };
 
 QColor toQColor(const FloatColor &color) {
   return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
+}
+
+int compositionPreviewIntervalMs(const ArtifactCompositionPtr &comp) {
+  const double fps = comp ? comp->frameRate().framerate() : 0.0;
+  if (fps <= 0.0) {
+    return 16;
+  }
+  return std::max(1, static_cast<int>(std::lround(1000.0 / fps)));
 }
 
 QString layerSurfaceDependencyKey(ArtifactAbstractLayer *layer) {
@@ -1216,7 +1225,7 @@ hitTopmostLayerAtViewportPos(const ArtifactCompositionPtr &comp,
   const auto canvasPos =
       renderer->viewportToCanvas({static_cast<float>(viewportPos.x()),
                                   static_cast<float>(viewportPos.y())});
-  const auto layers = comp->allLayer();
+  const auto &layers = comp->allLayerRef();
   for (int i = static_cast<int>(layers.size()) - 1; i >= 0; --i) {
     const auto &layer = layers[static_cast<size_t>(i)];
     if (!isLayerEffectivelyVisible(layer) || !layer->isActiveAt(currentFrame)) {
@@ -1712,6 +1721,11 @@ void drawLayerForCompositionView(
     return;
   }
 
+  if (dynamic_cast<ArtifactParticleLayer *>(layer)) {
+    layer->draw(renderer);
+    return;
+  }
+
   // Fallback for layer types without a direct surface accessor.
   qCDebug(compositionViewLog) << "[CompositionView] fallback layer draw"
                               << "id=" << layer->id().toString()
@@ -1775,6 +1789,7 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
   const QPointF bl = globalTransform.map(localBounds.bottomLeft());
 
   const float zoom = std::max(0.001f, renderer->getZoom());
+  const float invZoom = 1.0f / zoom;
   const float pointSize = std::max(7.0f, 11.0f / zoom);
   const float crossSize = std::max(12.0f, 20.0f / zoom);
   const float lineWidth = std::max(1.5f, 2.4f / zoom);
@@ -1853,16 +1868,27 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
   const QString centerText = QStringLiteral("Center   %1 , %2")
                                  .arg(QString::number(centerCanvas.x(), 'f', 1),
                                       QString::number(centerCanvas.y(), 'f', 1));
-  const float panelWidth = std::max(208.0f,
-                                    static_cast<float>(std::max(titleFm.horizontalAdvance(titleText),
-                                                                std::max(detailFm.horizontalAdvance(boundsText),
-                                                                         std::max(detailFm.horizontalAdvance(anchorText),
-                                                                                  detailFm.horizontalAdvance(centerText))))) +
-                                        28.0f);
-  const float panelHeight = static_cast<float>(titleFm.height() + detailFm.height() * 3 + 26);
+  const float panelWidthPx =
+      std::max(244.0f,
+               static_cast<float>(std::max(
+                   titleFm.horizontalAdvance(titleText),
+                   std::max(detailFm.horizontalAdvance(boundsText),
+                            std::max(detailFm.horizontalAdvance(anchorText),
+                                     detailFm.horizontalAdvance(centerText))))) +
+                   34.0f);
+  const float panelHeightPx =
+      static_cast<float>(titleFm.height() + detailFm.height() * 3 + 32);
+  const float panelWidth = panelWidthPx * invZoom;
+  const float panelHeight = panelHeightPx * invZoom;
+  const float panelInsetX = 12.0f * invZoom;
+  const float panelTitleTop = 6.0f * invZoom;
+  const float panelBodyTop = 24.0f * invZoom;
+  const float panelGap = static_cast<float>(detailFm.height()) * invZoom;
   const QPointF panelOffset(
-      anchorCanvas.x() >= centerCanvas.x() ? -panelWidth - 18.0 : 18.0,
-      anchorCanvas.y() >= centerCanvas.y() ? -panelHeight - 18.0 : 18.0);
+      anchorCanvas.x() >= centerCanvas.x() ? -panelWidth - 18.0f * invZoom
+                                           : 18.0f * invZoom,
+      anchorCanvas.y() >= centerCanvas.y() ? -panelHeight - 18.0f * invZoom
+                                           : 18.0f * invZoom);
   const QRectF panelRect(anchorCanvas + panelOffset, QSizeF(panelWidth, panelHeight));
 
   renderer->drawOverlayPanel(static_cast<float>(panelRect.left()),
@@ -1871,29 +1897,37 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
                              static_cast<float>(panelRect.height()),
                              FloatColor{0.04f, 0.05f, 0.07f, 0.88f},
                              FloatColor{0.18f, 0.75f, 0.95f, 0.90f});
-  renderer->drawText(QRectF(panelRect.left() + 12.0, panelRect.top() + 6.0,
-                            panelRect.width() - 24.0, titleFm.height() + 2.0),
+  renderer->drawText(QRectF(panelRect.left() + panelInsetX,
+                            panelRect.top() + panelTitleTop,
+                            panelRect.width() - panelInsetX * 2.0f,
+                            (titleFm.height() + 2.0f) * invZoom),
                      titleText, titleFont,
                      FloatColor{0.95f, 0.98f, 1.0f, 1.0f},
                      Qt::AlignLeft | Qt::AlignVCenter);
-  renderer->drawText(QRectF(panelRect.left() + 12.0, panelRect.top() + 24.0,
-                            panelRect.width() - 24.0, detailFm.height() + 2.0),
+  renderer->drawText(QRectF(panelRect.left() + panelInsetX,
+                            panelRect.top() + panelBodyTop,
+                            panelRect.width() - panelInsetX * 2.0f,
+                            (detailFm.height() + 2.0f) * invZoom),
                      boundsText, detailFont,
                      FloatColor{0.45f, 0.84f, 0.98f, 1.0f},
                      Qt::AlignLeft | Qt::AlignVCenter,
                      1.0f,
                      FloatColor{0.0f, 0.0f, 0.0f, 0.86f},
                      1.2f);
-  renderer->drawText(QRectF(panelRect.left() + 12.0, panelRect.top() + 24.0 + detailFm.height(),
-                            panelRect.width() - 24.0, detailFm.height() + 2.0),
+  renderer->drawText(QRectF(panelRect.left() + panelInsetX,
+                            panelRect.top() + panelBodyTop + panelGap,
+                            panelRect.width() - panelInsetX * 2.0f,
+                            (detailFm.height() + 2.0f) * invZoom),
                      anchorText, detailFont,
                      FloatColor{1.0f, 0.86f, 0.40f, 1.0f},
                      Qt::AlignLeft | Qt::AlignVCenter,
                      1.0f,
                      FloatColor{0.0f, 0.0f, 0.0f, 0.86f},
                      1.2f);
-  renderer->drawText(QRectF(panelRect.left() + 12.0, panelRect.top() + 24.0 + detailFm.height() * 2.0,
-                            panelRect.width() - 24.0, detailFm.height() + 2.0),
+  renderer->drawText(QRectF(panelRect.left() + panelInsetX,
+                            panelRect.top() + panelBodyTop + panelGap * 2.0f,
+                            panelRect.width() - panelInsetX * 2.0f,
+                            (detailFm.height() + 2.0f) * invZoom),
                      centerText, detailFont,
                      FloatColor{0.32f, 0.88f, 1.0f, 1.0f},
                      Qt::AlignLeft | Qt::AlignVCenter,
@@ -2147,22 +2181,23 @@ void drawCompositionBackgroundDirect(ArtifactIRenderer *renderer, float cw,
   if (!renderer || cw <= 0.0f || ch <= 0.0f) {
     return;
   }
+  const FloatColor opaqueBgColor{bgColor.r(), bgColor.g(), bgColor.b(), 1.0f};
   if (mode == CompositionBackgroundMode::Solid) {
-    renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+    renderer->drawRectLocal(0.f, 0.f, cw, ch, opaqueBgColor, 1.0f);
     return;
   }
   if (mode == CompositionBackgroundMode::Checkerboard) {
     // Checkerboard is the viewport background; composition area shows bgColor.
-    renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+    renderer->drawRectLocal(0.f, 0.f, cw, ch, opaqueBgColor, 1.0f);
     return;
   }
   // MayaGradient only affects the viewport background; the composition area
   // itself is always rendered with the solid bgColor.
   if (mode == CompositionBackgroundMode::MayaGradient) {
-    renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+    renderer->drawRectLocal(0.f, 0.f, cw, ch, opaqueBgColor, 1.0f);
     return;
   }
-  renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+  renderer->drawRectLocal(0.f, 0.f, cw, ch, opaqueBgColor, 1.0f);
 }
 
 void drawViewportMayaGradientBackground(ArtifactIRenderer *renderer, float vw,
@@ -2452,7 +2487,7 @@ public:
   // Render debounce timer: coalesces rapid LayerChangedEvent notifications
   // into a single renderOneFrame() call, preventing GPU saturation during drag
   QTimer *renderDebounceTimer_ = nullptr;
-  static constexpr qint64 kRenderDebounceIntervalMs = 33; // ~30fps baseline
+  static constexpr qint64 kRenderDebounceIntervalMs = 16; // ~60fps baseline
   
   // Render tick infrastructure
   bool renderInProgress_ = false;  // Guards against concurrent renderOneFrameImpl() calls
@@ -2499,6 +2534,7 @@ public:
   bool maskEditDirty_ = false;
   ArtifactAbstractLayerWeak maskEditLayer_;
   std::vector<LayerMask> maskEditBefore_;
+  std::chrono::steady_clock::time_point lastLayerMutationNotify_{};
 
   // Cyclic selection state
   QPointF lastHitPosition_;
@@ -2524,6 +2560,35 @@ public:
   void markMaskEditDirty() {
     if (maskEditPending_) {
       maskEditDirty_ = true;
+    }
+  }
+
+  void resetLayerMutationNotify() {
+    lastLayerMutationNotify_ = {};
+  }
+
+  bool shouldPublishLayerMutation() {
+    constexpr auto kLayerMutationNotifyInterval = std::chrono::milliseconds(16);
+    const auto now = std::chrono::steady_clock::now();
+    if (lastLayerMutationNotify_.time_since_epoch().count() == 0 ||
+        now - lastLayerMutationNotify_ >= kLayerMutationNotifyInterval) {
+      lastLayerMutationNotify_ = now;
+      return true;
+    }
+    return false;
+  }
+
+  void publishLayerModified(const ArtifactAbstractLayerPtr& layer, bool force = false) {
+    if (!layer) {
+      return;
+    }
+    if (!force && !shouldPublishLayerMutation()) {
+      return;
+    }
+    if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
     }
   }
 
@@ -2868,11 +2933,12 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 impl_->syncSelectedLayerOverlayState(
                     impl_->previewPipeline_.composition());
               }
-               // Debounce render: coalesce rapid property changes into single frame
-               if (impl_->renderDebounceTimer_) {
-                 impl_->renderDebounceTimer_->start(
-                     static_cast<int>(Impl::kRenderDebounceIntervalMs));
-               }
+              // Debounce render: coalesce rapid property changes into single frame
+              if (impl_->renderDebounceTimer_) {
+                  impl_->renderDebounceTimer_->start(
+                      compositionPreviewIntervalMs(
+                          impl_->previewPipeline_.composition()));
+                }
             }));
 
     impl_->eventBusSubscriptions_.push_back(
@@ -3019,7 +3085,8 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   // In Phase 1 this timer is infrastructure-only (renderDirty_ is never set).
   // Phase 2 will migrate event handlers to use markRenderDirty().
   impl_->renderTickTimer_ = new QTimer(this);
-  impl_->renderTickTimer_->setInterval(Impl::kRenderTickIntervalMs);
+  impl_->renderTickTimer_->setInterval(
+      compositionPreviewIntervalMs(impl_->previewPipeline_.composition()));
   connect(impl_->renderTickTimer_, &QTimer::timeout, this, [this]() {
     if (!impl_->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
       return; // No state change since last tick — skip
@@ -3304,6 +3371,14 @@ void CompositionRenderController::setComposition(
       impl_->previewPipeline_.setComposition(composition);
       impl_->bindCompositionChanged(this, composition);
     }
+    if (impl_->renderTickTimer_) {
+      impl_->renderTickTimer_->setInterval(
+          compositionPreviewIntervalMs(impl_->previewPipeline_.composition()));
+    }
+    if (impl_->renderDebounceTimer_) {
+      impl_->renderDebounceTimer_->setInterval(
+          compositionPreviewIntervalMs(impl_->previewPipeline_.composition()));
+    }
     markRenderDirty();
     return;
   }
@@ -3336,11 +3411,27 @@ void CompositionRenderController::setComposition(
     impl_->renderer_->fillToViewport();
 
     impl_->syncSelectedLayerOverlayState(composition);
+    if (impl_->renderTickTimer_) {
+      impl_->renderTickTimer_->setInterval(
+          compositionPreviewIntervalMs(composition));
+    }
+    if (impl_->renderDebounceTimer_) {
+      impl_->renderDebounceTimer_->setInterval(
+          compositionPreviewIntervalMs(composition));
+    }
 
     // コンポジションがセットされた瞬間に1フレーム描画
     markRenderDirty();
   } else if (!composition) {
     impl_->syncSelectedLayerOverlayState(composition);
+    if (impl_->renderTickTimer_) {
+      impl_->renderTickTimer_->setInterval(
+          compositionPreviewIntervalMs(nullptr));
+    }
+    if (impl_->renderDebounceTimer_) {
+      impl_->renderDebounceTimer_->setInterval(
+          compositionPreviewIntervalMs(nullptr));
+    }
     markRenderDirty();
   }
 }
@@ -4359,6 +4450,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       if (hitTestMaskHandle(selectedLayer, QPointF(cPos.x, cPos.y), handleThreshold,
                             handleMaskIndex, handlePathIndex, handleVertexIndex,
                             handleType)) {
+        impl_->resetLayerMutationNotify();
         impl_->isDraggingVertex_ = false;
         impl_->isDraggingMaskHandle_ = true;
         impl_->draggingMaskIndex_ = handleMaskIndex;
@@ -4406,6 +4498,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
               }
 
               impl_->isDraggingVertex_ = true;
+              impl_->resetLayerMutationNotify();
               impl_->draggingMaskIndex_ = m;
               impl_->draggingPathIndex_ = p;
               impl_->draggingVertexIndex_ = v;
@@ -4555,7 +4648,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
               : nullptr;
       const auto currentFrame = currentFrameForComposition(comp);
 
-      const auto layers = comp->allLayer();
+      const auto &layers = comp->allLayerRef();
 
       ArtifactAbstractLayerPtr hitLayer = nullptr;
       QVector<ArtifactAbstractLayerPtr> hitLayers;
@@ -4771,14 +4864,15 @@ void CompositionRenderController::handleMouseMove(
     auto comp = impl_->previewPipeline_.composition();
     if (comp && impl_->renderer_) {
       auto selectedLayer = comp->layerById(impl_->selectedLayerId_);
-      if (selectedLayer &&
-          impl_->applyMotionPathDrag(selectedLayer,
-                                     impl_->renderer_->viewportToCanvas(
-                                         {(float)viewportPos.x(),
-                                          (float)viewportPos.y()}))) {
-        impl_->motionPathCache_.valid = false;
-        markRenderDirty();
-        return;
+      if (selectedLayer) {
+        const auto canvasPos = impl_->renderer_->viewportToCanvas(
+            {(float)viewportPos.x(), (float)viewportPos.y()});
+        if (impl_->applyMotionPathDrag(
+                selectedLayer, QPointF(canvasPos.x, canvasPos.y))) {
+          impl_->motionPathCache_.valid = false;
+          markRenderDirty();
+          return;
+        }
       }
     }
   }
@@ -4839,10 +4933,7 @@ void CompositionRenderController::handleMouseMove(
           mask.setMaskPath(impl_->draggingPathIndex_, path);
           selectedLayer->setMask(impl_->draggingMaskIndex_, mask);
           impl_->markMaskEditDirty();
-
-          ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-              comp->id().toString(), selectedLayer->id().toString(),
-              LayerChangedEvent::ChangeType::Modified});
+          impl_->publishLayerModified(selectedLayer);
           return;
         }
       }
@@ -5037,7 +5128,7 @@ void CompositionRenderController::handleMouseRelease() {
     if (comp && selection && impl_->renderer_) {
       const QRectF rect = impl_->rubberBandCanvasRect().normalized();
       const auto currentFrame = currentFrameForComposition(comp);
-      const auto layers = comp->allLayer();
+      const auto &layers = comp->allLayerRef();
       QVector<ArtifactAbstractLayerPtr> hits;
       hits.reserve(layers.size());
       for (const auto &layer : layers) {
@@ -5083,6 +5174,8 @@ void CompositionRenderController::handleMouseRelease() {
     return;
   }
 
+  const bool publishFinalMaskEditChange = impl_->maskEditDirty_;
+  const auto maskEditLayer = impl_->maskEditLayer_.lock();
   impl_->isDraggingVertex_ = false;
   impl_->isDraggingMaskHandle_ = false;
   impl_->draggingMaskIndex_ = -1;
@@ -5090,6 +5183,10 @@ void CompositionRenderController::handleMouseRelease() {
   impl_->draggingVertexIndex_ = -1;
   impl_->draggingMaskHandleType_ = -1;
   impl_->commitMaskEditTransaction();
+  if (publishFinalMaskEditChange) {
+    impl_->publishLayerModified(maskEditLayer, true);
+  }
+  impl_->resetLayerMutationNotify();
 
   if (impl_->gizmo3D_) {
     const bool wasDragging = impl_->gizmoDragActive_;
@@ -5345,7 +5442,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       qCDebug(compositionViewLog)
           << "[CompositionView] renderOneFrame resynced preferred composition"
           << "id=" << comp->id().toString()
-          << "layers=" << comp->allLayer().size();
+          << "layers=" << comp->allLayerRef().size();
     }
   }
   if (!comp) {
@@ -5442,7 +5539,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     renderer_->setCanvasSize(cw, ch);
   }
 
-  const auto layers = comp->allLayer();
+  const auto &layers = comp->allLayerRef();
   FramePosition currentFrame = comp->framePosition();
   if (auto *playback = ArtifactPlaybackService::instance()) {
     const auto playbackComp = playback->currentComposition();
@@ -5783,29 +5880,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setZoom(origZoom * offscreenScale);
       renderer_->setPan(origPanX * offscreenScale, origPanY * offscreenScale);
 
-      // Seed accum through the same graphics->compute path used by layers.
-      // This keeps compute intermediates in a linear, storage-compatible format
-      // while the raster pass still targets the regular sRGB layer RT.
-      if (backgroundMode == CompositionBackgroundMode::Solid ||
-          backgroundMode == CompositionBackgroundMode::MayaGradient ||
-          backgroundMode == CompositionBackgroundMode::Checkerboard) {
-        renderer_->setOverrideRTV(layerRTV);
-        renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
-        renderer_->clear();
-        renderer_->setClearColor(viewportClearColor_);
-        renderer_->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
-        renderer_->flush();
-        renderer_->setOverrideRTV(nullptr);
-        renderer_->unbindColorTargetsForCompute();
-        const bool seeded = renderer_->blendLayers(
-            blendPipeline_.get(), layerSRV, accumSRV, tempUAV,
-            ArtifactCore::BlendMode::Normal, 1.0f);
-        if (seeded) {
-          renderPipeline_.swapAccumAndTemp();
-          accumSRV = renderPipeline_.accumSRV();
-          tempUAV = renderPipeline_.tempUAV();
-        }
-      }
       basePassMs = markPhaseMs();
 
       // Already in offscreen-scale coordinate system — layer loop uses it
@@ -5949,13 +6023,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                            origViewH,
                                            checkerboardTileSize_);
       }
-      renderer_->setCanvasSize(origViewW, origViewH);
+      renderer_->setCanvasSize(cw, ch);
       renderer_->setZoom(origZoom);
       renderer_->setPan(origPanX, origPanY);
+      drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
+                                      backgroundMode,
+                                      cachedMayaGradientSprite_);
 
       // -- 4: オフスクリーン RT を画面全体に描画（スクリーン座標、SRC_ALPHA
-      // ブレンド） -- accum には背景色 (Solid/Checkerboard)
-      // とレイヤー合成結果が 入っている。コンポジション外は alpha=0 なので
+      // ブレンド） -- accum にはレイヤー合成結果だけが入っている。
+      // コンポジション外は alpha=0 なので
       // SRC_ALPHA ブレンドで main FB のビューポートカラーが透けて見える。
       renderer_->setCanvasSize(origViewW, origViewH);
       renderer_->setZoom(1.0f);

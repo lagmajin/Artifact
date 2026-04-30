@@ -1477,7 +1477,10 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("text.layoutMode")) {
-    setLayoutMode(static_cast<TextLayoutMode>(value.toInt(static_cast<int>(layoutMode()))));
+    bool ok = false;
+    const int layoutModeValue = value.toInt(&ok);
+    setLayoutMode(static_cast<TextLayoutMode>(ok ? layoutModeValue
+                                                 : static_cast<int>(layoutMode())));
     setDirty(LayerDirtyFlag::Property);
     return true;
   }

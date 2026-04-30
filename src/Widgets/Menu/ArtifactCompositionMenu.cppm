@@ -2,7 +2,6 @@ module;
 #include <utility>
 #include <QMenu>
 #include <QAction>
-#include <QColorDialog>
 #include <QDebug>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -19,6 +18,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Dialog.Composition;
+import FloatColorPickerDialog;
 import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
@@ -190,9 +190,16 @@ void ArtifactCompositionMenu::Impl::showColor()
 {
  auto service = ArtifactProjectService::instance();
  if (auto comp = service->currentComposition().lock()) {
-  QColor color = QColorDialog::getColor(Qt::black, mainWindow_, "Background Color");
-  if (color.isValid()) {
-   comp->setBackGroundColor(FloatColor(color.redF(), color.greenF(), color.blueF(), color.alphaF()));
+  ArtifactWidgets::FloatColorPicker picker(mainWindow_ ? mainWindow_ : menu_);
+  picker.setWindowTitle(QStringLiteral("Background Color"));
+  picker.setInitialColor(FloatColor(comp->backgroundColor().r(),
+                                    comp->backgroundColor().g(),
+                                    comp->backgroundColor().b(),
+                                    comp->backgroundColor().a()));
+  if (picker.exec() == QDialog::Accepted) {
+   const FloatColor picked = picker.getColor();
+   comp->setBackGroundColor(
+       FloatColor(picked.r(), picked.g(), picked.b(), picked.a()));
   }
  }
 }

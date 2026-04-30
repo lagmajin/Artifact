@@ -121,10 +121,10 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     return descriptor;
   }
   if (layer->is3D()) {
-    descriptor.typeText = QStringLiteral("3D Layer");
+    descriptor.typeText = QStringLiteral("3D Model Layer");
     descriptor.timelineBadgeText = QStringLiteral("3D");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · 3D Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: 3D Layer");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · 3D Model Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: 3D Model Layer");
     descriptor.capabilitySummaryText = QStringLiteral("3D Space");
     descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
     return descriptor;
@@ -968,6 +968,7 @@ public:
     iconCreateNull    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg"));
     iconCreateAdjust  = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/warning.svg"));
     iconCreateText    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/title.svg"));
+    iconCreateModel3D = loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/layers.svg"));
   }
   ~Impl() = default;
 
@@ -985,7 +986,7 @@ public:
   QIcon iconRename, iconCopy, iconDelete, iconFileOpen;
   QIcon iconVisOn, iconVisOff, iconLock, iconUnlock, iconSolo, iconShy;
   QIcon iconLink, iconLinkOff;
-  QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText;
+  QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText, iconCreateModel3D;
   bool shyHidden = false;
   QString filterText;
   SearchMatchMode searchMatchMode = SearchMatchMode::AllVisible;
@@ -2861,13 +2862,14 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.drawText(textX + 4, y, labelWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
     } else {
      const bool isPrecompLayer = dynamic_cast<ArtifactCompositionLayer *>(l.get()) != nullptr;
+     const bool isModel3DLayer = l->is3D() && !isPrecompLayer;
      const auto variants = l->getVariants();
      const int activeIdx = static_cast<int>(l->getActiveVariantIndex());
      const int variantAreaW = variants.empty() ? 0 : (variants.size() * 22 + 20);
      const int textWidth = std::max(20, width() - textX - 8 - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW);
      const QString layerName = l->layerName();
      const QString layerAux = row.auxiliaryText.trimmed();
-     const int layerTextX = textX + 4 + (isPrecompLayer ? 18 : 0);
+     const int layerTextX = textX + 4 + ((isPrecompLayer || isModel3DLayer) ? 18 : 0);
      if (isPrecompLayer) {
       const QRect iconRect(textX + 4, y + 7, 12, 12);
       const QColor iconFill = mixColor(background, accent, 0.34);
@@ -2878,6 +2880,15 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.setBrush(Qt::NoBrush);
       p.setPen(QPen(iconStroke.darker(120), 1.0));
       p.drawRect(iconRect.adjusted(3, 3, -3, -3));
+     } else if (isModel3DLayer) {
+      const QRect iconRect(textX + 4, y + 6, 14, 14);
+      if (!impl_->iconCreateModel3D.isNull()) {
+        p.drawPixmap(iconRect, impl_->iconCreateModel3D.pixmap(iconRect.size()));
+      } else {
+        p.setPen(QPen(layerSelected ? accent.darker(180) : border, 1.2));
+        p.setBrush(mixColor(background, accent, 0.28));
+        p.drawRoundedRect(iconRect, 2, 2);
+      }
      }
      if (!layerAux.isEmpty()) {
       const QFontMetrics fm(p.font());

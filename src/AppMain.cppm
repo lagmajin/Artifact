@@ -1350,7 +1350,7 @@ int main(int argc, char *argv[]) {
         [mw, compositionEditor, &debugHarnessWidget]() mutable -> QWidget * {
           auto* widget = new DebugRenderHarnessWidget(mw);
           debugHarnessWidget = widget;
-          widget->setScenePreset(QStringLiteral("mixed-media"));
+          widget->setScenePreset(QStringLiteral("particle-only"));
           if (compositionEditor) {
             if (auto* controller = compositionEditor->renderController()) {
               widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
@@ -1719,6 +1719,7 @@ int main(int argc, char *argv[]) {
         ads::RightDockWidgetArea,
         [mw]() -> QWidget * { return new ArtifactAICloudWidget(mw); },
         QString());
+    mw->setDockVisible(QStringLiteral("AI Cloud"), false);
     renderCenterWindow = new ArtifactRenderCenterWindow();
     renderCenterWindow->present();
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);

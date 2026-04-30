@@ -362,7 +362,7 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
       picker.setInitialColor(FloatColor(impl_->bgColor.redF(),
                                         impl_->bgColor.greenF(),
                                         impl_->bgColor.blueF(),
-                                        impl_->bgColor.alphaF()));
+                                        1.0f));
       if (picker.exec() != QDialog::Accepted) {
           return;
       }
@@ -397,8 +397,9 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
     const QColor defaultBg(
         settings->projectDefaultCompositionBackgroundColor());
     if (defaultBg.isValid()) {
-      impl_->bgColor = defaultBg;
-      updateColorButtonPreview(impl_->bgColorButton, defaultBg);
+      impl_->bgColor =
+          QColor(defaultBg.red(), defaultBg.green(), defaultBg.blue(), 255);
+      updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
     }
   }
 

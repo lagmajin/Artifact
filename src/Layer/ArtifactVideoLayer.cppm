@@ -158,7 +158,9 @@ QImage cpuVideoFrameToQImage(const ArtifactCore::CpuVideoFrame& frame)
         return QImage();
     }
 
-    const int rowBytes = std::min(frame.strideBytes, image.bytesPerLine());
+    const int rowBytes = frame.strideBytes < static_cast<int>(image.bytesPerLine())
+        ? frame.strideBytes
+        : static_cast<int>(image.bytesPerLine());
     for (int y = 0; y < frame.meta.height; ++y) {
         std::memcpy(image.scanLine(y),
                     frame.bytes.data() + static_cast<size_t>(y) * static_cast<size_t>(frame.strideBytes),

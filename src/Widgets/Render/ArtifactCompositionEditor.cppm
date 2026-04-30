@@ -114,6 +114,31 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
+void polishEditorMenu(QMenu* menu, QWidget* owner)
+{
+  if (!menu) {
+    return;
+  }
+
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  QPalette pal = menu->palette();
+  pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+  pal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+  pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+  pal.setColor(QPalette::Text, QColor(theme.textColor));
+  pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+  pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+  pal.setColor(QPalette::Highlight, QColor(theme.accentColor));
+  pal.setColor(QPalette::HighlightedText, QColor(theme.backgroundColor));
+  menu->setPalette(pal);
+
+  QFont font = owner ? owner->font() : menu->font();
+  if (font.pointSize() < 11) {
+    font.setPointSize(11);
+  }
+  menu->setFont(font);
+}
+
 // CompositionEditor 内部の同期は Qt signal を増やさず、
 // ここで定義する deferred event に集約する。
 // selection / tool label / fit などの状態変化は postEvent でまとめて反映する。
@@ -3412,6 +3437,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->editTextAction_->setShortcut(QKeySequence(Qt::Key_F2));
 
   auto* screenshotMenu = new QMenu(this);
+  polishEditorMenu(screenshotMenu, this);
   impl_->quickScreenshotAction_ = screenshotMenu->addAction(QStringLiteral("Quick Screenshot"));
   impl_->quickScreenshotAction_->setToolTip(
       QStringLiteral("Save the current composition view with minimal options"));
@@ -3430,6 +3456,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       QStringLiteral("Show motion path overlay for the selected layer"));
 
   auto *toolMenu = new QMenu(this);
+  polishEditorMenu(toolMenu, this);
   auto *toolGroup = new QActionGroup(this);
   toolGroup->setExclusive(true);
   const auto addToolAction = [&](const QString &text, const QString &iconName,
@@ -3466,6 +3493,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->topToolbar_->addWidget(impl_->toolModeButton_);
 
   auto *gizmoMenu = new QMenu(this);
+  polishEditorMenu(gizmoMenu, this);
   gizmoMenu->setIcon(
       loadEditorMenuIcon(QStringLiteral("MaterialVS/neutral/transform.svg")));
   auto *gizmoGroup = new QActionGroup(this);
@@ -3506,6 +3534,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->topToolbar_->addWidget(impl_->gizmoModeButton_);
 
   auto *pivotMenu = new QMenu(this);
+  polishEditorMenu(pivotMenu, this);
   auto *pivotGroup = new QActionGroup(this);
   pivotGroup->setExclusive(true);
   const auto applyPivotPreset = [this](const bool useCenter) {
@@ -3637,6 +3666,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   }
 
   auto *fastPreviewMenu = new QMenu(this);
+  polishEditorMenu(fastPreviewMenu, this);
   QAction *fpOff = fastPreviewMenu->addAction("Off");
   QAction *fpAdaptive = fastPreviewMenu->addAction("Adaptive Resolution");
   QAction *fpDraft = fastPreviewMenu->addAction("Fast Draft");
@@ -3678,10 +3708,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   }
 
   auto *displayMenu = new QMenu(this);
+  polishEditorMenu(displayMenu, this);
   QAction *solidBgAct = displayMenu->addAction("Solid");
   QAction *solidColorAct = displayMenu->addAction("Solid Color...");
   QAction *checkerboardAct = displayMenu->addAction("Checkerboard");
   auto *checkerboardSizeMenu = displayMenu->addMenu("Checkerboard Size");
+  polishEditorMenu(checkerboardSizeMenu, this);
   QAction *mayaBgAct = displayMenu->addAction("Maya Gradient");
   auto *bgGroup = new QActionGroup(displayMenu);
   bgGroup->setExclusive(true);

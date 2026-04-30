@@ -2,6 +2,7 @@
 #include <utility>
 #include <memory>
 #include <vector>
+#include <chrono>
 #include <QPointF>
 #include <QRectF>
 #include <QCursor>
@@ -110,6 +111,7 @@ export namespace Artifact {
   float dragStartPointerAngle_ = 0.0f;
   float dragAccumulatedRotationDelta_ = 0.0f;
   QPointF lastCanvasMousePos_;
+  std::chrono::steady_clock::time_point lastDragMutationNotify_{};
   bool resizeBadgeVisible_ = false;
   std::vector<QString> resizeBadgeLines_;
   QPointF resizeBadgeAnchor_;

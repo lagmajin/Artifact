@@ -104,10 +104,10 @@ namespace Artifact
         pContext_->ClearRenderTarget(pRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
 
         // レイヤーリストを取得
-        auto layers = composition->allLayer();
+        const auto& layers = composition->allLayerRef();
         
         // `allLayer()` は背面 -> 前面の順で保持されているので、そのまま描画する。
-        for (auto& layer : layers) {
+        for (const auto& layer : layers) {
             if (layer && layer->isActiveAt(position) && layer->isVisible()) {
                 // 各レイヤーの描画ロジック（render）を呼び出し
                 layer->draw(renderer_.get());

@@ -4,6 +4,7 @@ module;
 #include <QMouseEvent>
 #include <algorithm>
 #include <cmath>
+#include "TimelinePlayheadDraw.hpp"
 
 #include <wobjectimpl.h>
 module Artifact.Widget.WorkAreaControlWidget;
@@ -178,10 +179,10 @@ void WorkAreaControl::setEnd(float e) {
     playheadX = handleHalfW + static_cast<int>(playheadNorm * usableWidth);
   }
   playheadX = std::clamp(playheadX, 0, std::max(0, width() - 1));
-  const QColor playheadColor(255, 92, 92);
-  p.setPen(QPen(playheadColor, 2));
-  p.drawLine(playheadX, 0, playheadX, height() - 1);
- }
+  TimelinePlayheadDraw::drawPlayhead(
+      p, static_cast<qreal>(playheadX), 0.0,
+      static_cast<qreal>(height()) - 1.0, true);
+}
 
  void WorkAreaControl::mouseMoveEvent(QMouseEvent* ev)
  {

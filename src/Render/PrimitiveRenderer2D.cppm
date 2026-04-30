@@ -705,7 +705,9 @@ void PrimitiveRenderer2D::drawSpriteLocal(float x, float y, float w, float h, co
         qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: cache hit for key" << cacheKey << "-> pTexture=" << (pTexture != nullptr);
     } else {
         qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: cache miss for key" << cacheKey;
-        const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+        const QImage rgba = (image.format() == QImage::Format_RGBA8888)
+                                ? image
+                                : image.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width(), imgH = rgba.height();
         qCDebug(primitiveRenderer2DLog) << "drawSpriteLocal: creating texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
         if (imgW <= 0 || imgH <= 0) return;
@@ -873,7 +875,9 @@ void PrimitiveRenderer2D::drawMaskedTextureLocal(float x, float y, float w, floa
         qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: cache hit for key" << cacheKey << "-> pMaskTexture=" << (pMaskTexture != nullptr);
     } else {
         qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: cache miss for key" << cacheKey;
-        const QImage rgba = maskImage.convertToFormat(QImage::Format_RGBA8888);
+        const QImage rgba = (maskImage.format() == QImage::Format_RGBA8888)
+                                ? maskImage
+                                : maskImage.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width(), imgH = rgba.height();
         qCDebug(primitiveRenderer2DLog) << "drawMaskedTextureLocal: creating mask texture" << imgW << "x" << imgH << " bytesPerLine=" << rgba.bytesPerLine();
         if (imgW <= 0 || imgH <= 0) return;
@@ -940,7 +944,9 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
         pTexture = it->second.pTexture;
         it->second.lastUsedFrame = impl_->m_frameCount;
     } else {
-        const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+        const QImage rgba = (image.format() == QImage::Format_RGBA8888)
+                                ? image
+                                : image.convertToFormat(QImage::Format_RGBA8888);
         const int imgW = rgba.width(), imgH = rgba.height();
         if (imgW <= 0 || imgH <= 0) return;
         TextureDesc texDesc;

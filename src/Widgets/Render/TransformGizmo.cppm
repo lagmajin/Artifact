@@ -260,7 +260,7 @@ SnapGuideSet buildSnapGuides(const std::shared_ptr<ArtifactAbstractComposition>&
  guides.horizontal.push_back(sz.height() * 0.5f);
  guides.horizontal.push_back(static_cast<float>(sz.height()));
 
- for (const auto& other : comp->allLayer()) {
+ for (const auto& other : comp->allLayerRef()) {
   if (!other || !other->isVisible() || (ignoreLayer && other->id() == ignoreLayer->id()) ||
       other->isLocked()) {
    continue;
@@ -284,7 +284,7 @@ SnapGuideSet buildSpacingGuides(const std::shared_ptr<ArtifactAbstractCompositio
  guides.horizontal.push_back(0.0f);
  guides.horizontal.push_back(static_cast<float>(sz.height()));
 
- for (const auto& other : comp->allLayer()) {
+ for (const auto& other : comp->allLayerRef()) {
   if (!other || !other->isVisible() || (ignoreLayer && other->id() == ignoreLayer->id()) ||
       other->isLocked()) {
    continue;
@@ -1768,7 +1768,7 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
   drawResizeBadge(renderer,
                   resizeBadgeBox_.isValid() ? resizeBadgeBox_ : currentCanvasBoundingRect(),
                   resizeBadgeAnchor_,
-                  resizeBadgeText_,
+                  resizeBadgeLines_,
                   themeAccent,
                   invZoom);
  }
@@ -1961,6 +1961,7 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
   auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
   dragStartCanvasPos_ = QPointF(canvasMouse.x, canvasMouse.y);
   lastCanvasMousePos_ = dragStartCanvasPos_;
+  lastDragMutationNotify_ = {};
   const auto &t3d = layer_->transform3D();
   dragStartFrame_ = layer_->currentFrame();
    dragStartLayerPos_ = QPointF(t3d.positionX(), t3d.positionY());
@@ -2048,6 +2049,26 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  QPointF delta = currentCanvasPos - dragStartCanvasPos_;
  ArtifactCore::RationalTime time(layer_->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
  auto &t3d = layer_->transform3D();
+ const auto shouldPublishDragMutation = [this]() -> bool {
+  constexpr auto kDragMutationNotifyInterval = std::chrono::milliseconds(16);
+  const auto now = std::chrono::steady_clock::now();
+  if (lastDragMutationNotify_.time_since_epoch().count() == 0 ||
+      now - lastDragMutationNotify_ >= kDragMutationNotifyInterval) {
+   lastDragMutationNotify_ = now;
+   return true;
+  }
+  return false;
+ };
+ const auto publishDragMutation = [this, &shouldPublishDragMutation]() {
+  if (!shouldPublishDragMutation()) {
+   return;
+  }
+  if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
+   ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+       LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
+                         LayerChangedEvent::ChangeType::Modified});
+  }
+ };
  activeSnapLines_.clear();
  activeSnapLabels_.clear();
 
@@ -2083,11 +2104,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
 
       t3d.setPosition(time, newX, newY);
       layer_->setDirty(LayerDirtyFlag::Transform);
-      if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
-       ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-           LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
-                             LayerChangedEvent::ChangeType::Modified});
-      }
+      publishDragMutation();
   } else if (activeHandle_ == HandleType::Anchor) {
    bool invertible = false;
    const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
@@ -2129,11 +2146,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                     dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
     layer_->setDirty(LayerDirtyFlag::Transform);
     if (isDragging_) {
-     if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
-      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-          LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
-                            LayerChangedEvent::ChangeType::Modified});
-     }
+     publishDragMutation();
     }
    }
   } else if (activeHandle_ == HandleType::Rotate) {
@@ -2155,12 +2168,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                    dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
                    dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
    layer_->setDirty(LayerDirtyFlag::Transform);
-    if (isDragging_) {
-    if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
-     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-         LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
-                           LayerChangedEvent::ChangeType::Modified});
-    }
+   if (isDragging_) {
+    publishDragMutation();
    }
   } else if (activeHandle_ == HandleType::Scale_Center) {
    const QPointF pivotLocal = dragStartLocalBounds_.center();
@@ -2192,11 +2201,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                    dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
                    dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
    layer_->setDirty(LayerDirtyFlag::Transform);
-   if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
-    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-        LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
-                          LayerChangedEvent::ChangeType::Modified});
-   }
+   publishDragMutation();
   } else if (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_R) {
   if (std::abs(delta.x()) < 0.01 && std::abs(delta.y()) < 0.01) {
    lastCanvasMousePos_ = currentCanvasPos;
@@ -2274,11 +2279,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                      static_cast<float>(newPos.y()));
      layer_->setDirty(LayerDirtyFlag::Source);
      layer_->setDirty(LayerDirtyFlag::Transform);
-     if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
-      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-          LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
-                            LayerChangedEvent::ChangeType::Modified});
-     }
+     publishDragMutation();
     } else {
      const double baseW = std::max(1.0, startBox.width());
      const double baseH = std::max(1.0, startBox.height());
@@ -2295,11 +2296,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      t3d.setPosition(time, newPosX, newPosY);
 
      layer_->setDirty(LayerDirtyFlag::Transform);
-     if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
-      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-          LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
-                            LayerChangedEvent::ChangeType::Modified});
-     }
+     publishDragMutation();
     }
    }
   }
@@ -2351,11 +2348,12 @@ void TransformGizmo::handleMouseRelease() {
         LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
                           LayerChangedEvent::ChangeType::Modified});
    }
-  }
  }
- isDragging_ = false;
- activeHandle_ = HandleType::None;
- dragAccumulatedRotationDelta_ = 0.0f;
+}
+isDragging_ = false;
+ lastDragMutationNotify_ = {};
+activeHandle_ = HandleType::None;
+dragAccumulatedRotationDelta_ = 0.0f;
  resizeBadgeVisible_ = false;
  resizeBadgeLines_.clear();
  resizeBadgeBox_ = QRectF();

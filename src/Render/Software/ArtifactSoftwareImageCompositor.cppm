@@ -70,7 +70,9 @@ QImage buildOverlayCanvas(const CompositeRequest& request, const QSize& outSize)
 
 cv::Mat qImageToMatRGBA(const QImage& image)
 {
- QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+ QImage rgba = (image.format() == QImage::Format_RGBA8888)
+                   ? image
+                   : image.convertToFormat(QImage::Format_RGBA8888);
  cv::Mat view(rgba.height(), rgba.width(), CV_8UC4, const_cast<uchar*>(rgba.bits()), rgba.bytesPerLine());
  return view.clone();
 }
@@ -172,7 +174,9 @@ void blendBgrWithQPainter(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float op
  painter.drawImage(0, 0, srcCopy);
  painter.end();
 
- QImage dstRgba = dstCopy.convertToFormat(QImage::Format_RGBA8888);
+ QImage dstRgba = (dstCopy.format() == QImage::Format_RGBA8888)
+                      ? dstCopy
+                      : dstCopy.convertToFormat(QImage::Format_RGBA8888);
  cv::Mat rgbaView(dstRgba.height(), dstRgba.width(), CV_8UC4, const_cast<uchar*>(dstRgba.bits()), dstRgba.bytesPerLine());
  cv::cvtColor(rgbaView, dstBgr, cv::COLOR_RGBA2BGR);
 }

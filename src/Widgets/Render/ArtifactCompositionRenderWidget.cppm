@@ -13,6 +13,7 @@
 #include <QEnterEvent>
 #include <QShowEvent>
 #include <QCloseEvent>
+#include <QElapsedTimer>
 #include <QRectF>
 #include <QTimer>
 #include <QDebug>
@@ -51,26 +52,27 @@ namespace Artifact {
 
  W_OBJECT_IMPL(ArtifactCompositionRenderWidget)
 
- namespace {
- enum class LayerDragMode {
+namespace {
+enum class LayerDragMode {
   None,
   Move,
   ScaleTL,
   ScaleTR,
   ScaleBL,
   ScaleBR
- };
+};
 
- LayerDragMode hitTestLayerDragMode(const ArtifactAbstractLayerPtr& layer,
-                                    const QPointF& viewportPos,
-                                    ArtifactIRenderer* renderer)
- {
-  if (!layer || !renderer) {
-   return LayerDragMode::None;
-  }
+struct LayerHitTestResult {
+  ArtifactAbstractLayerPtr layer;
+  QRectF bbox;
+};
 
-  const QRectF bbox = layer->transformedBoundingBox();
-  if (!bbox.isValid() || bbox.width() <= 0.0 || bbox.height() <= 0.0) {
+LayerDragMode hitTestLayerDragMode(const QRectF& bbox,
+                                   const QPointF& viewportPos,
+                                   ArtifactIRenderer* renderer)
+{
+  if (!renderer || !bbox.isValid() || bbox.width() <= 0.0 ||
+      bbox.height() <= 0.0) {
    return LayerDragMode::None;
   }
 
@@ -91,14 +93,48 @@ namespace Artifact {
   if (containsHandle((float)bbox.left(), (float)bbox.bottom())) {
    return LayerDragMode::ScaleBL;
   }
- if (containsHandle((float)bbox.right(), (float)bbox.bottom())) {
+  if (containsHandle((float)bbox.right(), (float)bbox.bottom())) {
    return LayerDragMode::ScaleBR;
   }
 
   return LayerDragMode::Move;
+}
+
+LayerDragMode hitTestLayerDragMode(const ArtifactAbstractLayerPtr& layer,
+                                   const QPointF& viewportPos,
+                                   ArtifactIRenderer* renderer)
+{
+  if (!layer || !renderer) {
+   return LayerDragMode::None;
+  }
+  return hitTestLayerDragMode(layer->transformedBoundingBox(), viewportPos,
+                              renderer);
  }
 
- Qt::CursorShape cursorForLayerDragMode(LayerDragMode mode, bool dragging)
+LayerHitTestResult hitTestTopVisibleLayer(
+    const std::shared_ptr<ArtifactAbstractComposition>& comp,
+    ArtifactIRenderer* renderer, const QPointF& viewportPos)
+{
+  if (!comp || !renderer) {
+   return {};
+  }
+  const auto cPos =
+      renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
+  const auto& layers = comp->allLayerRef();
+  for (int i = (int)layers.size() - 1; i >= 0; --i) {
+   const auto& layer = layers[i];
+   if (!layer || !layer->isVisible()) {
+    continue;
+   }
+   const QRectF bbox = layer->transformedBoundingBox();
+   if (bbox.contains(cPos.x, cPos.y)) {
+    return {layer, bbox};
+   }
+  }
+  return {};
+ }
+
+Qt::CursorShape cursorForLayerDragMode(LayerDragMode mode, bool dragging)
  {
   switch (mode) {
   case LayerDragMode::Move:
@@ -111,9 +147,19 @@ namespace Artifact {
    return Qt::SizeBDiagCursor;
   default:
    return Qt::ArrowCursor;
+   }
   }
- }
- } // namespace
+
+int compositionPreviewIntervalMs(
+    const std::shared_ptr<ArtifactAbstractComposition>& comp)
+{
+  const double fps = comp ? comp->frameRate().framerate() : 0.0;
+  if (fps <= 0.0) {
+    return 16;
+  }
+  return std::max(1, static_cast<int>(std::lround(1000.0 / fps)));
+}
+  } // namespace
 
  class ArtifactCompositionRenderWidget::Impl {
  public:
@@ -146,6 +192,7 @@ namespace Artifact {
   float dragStartScaleY_ = 1.0f;
   int64_t dragFrame_ = 0;
   QPointF dragAppliedDelta_;
+  std::chrono::steady_clock::time_point lastDragMutationNotify_{};
   
   Impl() = default;
   ~Impl() { destroy(); }
@@ -197,28 +244,37 @@ namespace Artifact {
    if (running_) return;
    running_ = true;
    renderTask_.run([this]() {
-    while (running_.load(std::memory_order_acquire)) {
-      const bool playing = isPlaying_.load(std::memory_order_acquire);
-      const bool dirty = needsRender_.exchange(false, std::memory_order_acq_rel);
-      if (!playing && !dirty) {
-        std::unique_lock<std::mutex> waitLock(renderCvMutex_);
-        renderCv_.wait_for(waitLock, std::chrono::milliseconds(33), [this]() {
+     while (running_.load(std::memory_order_acquire)) {
+       const int frameIntervalMs =
+           compositionPreviewIntervalMs(previewPipeline_.composition());
+       const bool playing = isPlaying_.load(std::memory_order_acquire);
+       const bool dirty = needsRender_.exchange(false, std::memory_order_acq_rel);
+       if (!playing && !dirty) {
+         std::unique_lock<std::mutex> waitLock(renderCvMutex_);
+         renderCv_.wait_for(waitLock, std::chrono::milliseconds(frameIntervalMs), [this]() {
           return !running_.load(std::memory_order_acquire) ||
                  isPlaying_.load(std::memory_order_acquire) ||
                  needsRender_.load(std::memory_order_acquire);
-        });
-        continue;
+         });
+         continue;
       }
-      {
+       {
         std::lock_guard<std::mutex> lock(renderMutex_);
+        QElapsedTimer frameTimer;
+        frameTimer.start();
         renderOneFrame();
-      }
-      if (playing) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(16));
-      }
-    }
-   });
-  }
+        const qint64 renderElapsedMs = frameTimer.elapsed();
+        if (playing) {
+          const int remainingMs =
+              std::max(0, frameIntervalMs - static_cast<int>(renderElapsedMs));
+          if (remainingMs > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(remainingMs));
+          }
+        }
+       }
+     }
+    });
+   }
 
   void stopRenderLoop() {
    running_ = false;
@@ -259,6 +315,18 @@ namespace Artifact {
    return val;
   }
 
+  bool shouldPublishDragMutation()
+  {
+   constexpr auto kDragMutationNotifyInterval = std::chrono::milliseconds(16);
+   const auto now = std::chrono::steady_clock::now();
+   if (lastDragMutationNotify_.time_since_epoch().count() == 0 ||
+       now - lastDragMutationNotify_ >= kDragMutationNotifyInterval) {
+    lastDragMutationNotify_ = now;
+    return true;
+   }
+   return false;
+  }
+
   void updateHoverCursor(const QPointF& viewportPos)
   {
    if (isPanningViewport_) {
@@ -277,28 +345,19 @@ namespace Artifact {
    }
 
    std::lock_guard<std::mutex> lock(renderMutex_);
-   auto comp = previewPipeline_.composition();
-   if (!comp) {
-    auto* tm = ArtifactApplicationManager::instance()->toolManager();
-    widget_->setCursor(tm && tm->activeTool() == ToolType::Hand ? Qt::OpenHandCursor : Qt::ArrowCursor);
-    return;
-   }
+  auto comp = previewPipeline_.composition();
+  if (!comp) {
+   auto* tm = ArtifactApplicationManager::instance()->toolManager();
+   widget_->setCursor(tm && tm->activeTool() == ToolType::Hand ? Qt::OpenHandCursor : Qt::ArrowCursor);
+   return;
+  }
 
-   auto cPos = renderer_->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
-   ArtifactAbstractLayerPtr hitLayer = nullptr;
-   const auto layers = comp->allLayer();
-   for (int i = (int)layers.size() - 1; i >= 0; --i) {
-    if (!layers[i] || !layers[i]->isVisible()) continue;
-    if (layers[i]->transformedBoundingBox().contains(cPos.x, cPos.y)) {
-     hitLayer = layers[i];
-     break;
-    }
-   }
-
-   if (hitLayer) {
-    widget_->setCursor(cursorForLayerDragMode(hitTestLayerDragMode(hitLayer, viewportPos, renderer_.get()), false));
-    return;
-   }
+  const auto hit = hitTestTopVisibleLayer(comp, renderer_.get(), viewportPos);
+  if (hit.layer) {
+   widget_->setCursor(cursorForLayerDragMode(
+       hitTestLayerDragMode(hit.bbox, viewportPos, renderer_.get()), false));
+   return;
+  }
 
    auto* tm = ArtifactApplicationManager::instance()->toolManager();
    widget_->setCursor(tm && tm->activeTool() == ToolType::Hand ? Qt::OpenHandCursor : Qt::ArrowCursor);
@@ -529,31 +588,24 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       // Context Menu
       if (impl_->renderer_) {
           std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-          auto cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
           auto comp = impl_->previewPipeline_.composition();
           if (comp) {
-              auto layers = comp->allLayer();
-              ArtifactAbstractLayerPtr hitLayer = nullptr;
-              for (int i = (int)layers.size() - 1; i >= 0; --i) {
-                  if (layers[i] && layers[i]->isVisible() && layers[i]->transformedBoundingBox().contains(cPos.x, cPos.y)) {
-                      hitLayer = layers[i];
-                      break;
-                  }
-              }
-              
-              if (hitLayer) {
-                  ArtifactApplicationManager::instance()->layerSelectionManager()->selectLayer(hitLayer);
+              const auto hit =
+                  hitTestTopVisibleLayer(comp, impl_->renderer_.get(),
+                                         event->position());
+              if (hit.layer) {
+                  ArtifactApplicationManager::instance()->layerSelectionManager()->selectLayer(hit.layer);
                   
                   QMenu menu(this);
-                  menu.addAction("Center in Comp", [hitLayer, comp]() {
+                  menu.addAction("Center in Comp", [layer = hit.layer, comp]() {
                       auto size = comp->settings().compositionSize();
-                      auto& t3 = hitLayer->transform3D();
+                      auto& t3 = layer->transform3D();
                       t3.setPosition(ArtifactCore::RationalTime(comp->framePosition().framePosition(), 30000), size.width() / 2.0f, size.height() / 2.0f);
-                      hitLayer->changed();
+                      layer->changed();
                   });
                   menu.addSeparator();
-                  menu.addAction("Bring to Front", [hitLayer, comp]() { comp->bringToFront(hitLayer->id()); });
-                  menu.addAction("Send to Back", [hitLayer, comp]() { comp->sendToBack(hitLayer->id()); });
+                  menu.addAction("Bring to Front", [layer = hit.layer, comp]() { comp->bringToFront(layer->id()); });
+                  menu.addAction("Send to Back", [layer = hit.layer, comp]() { comp->sendToBack(layer->id()); });
                   menu.exec(event->globalPosition().toPoint());
               }
       }
@@ -564,26 +616,18 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   } else if (event->button() == Qt::LeftButton) {
    if (impl_->renderer_) {
     std::lock_guard<std::mutex> lock(impl_->renderMutex_);
-    auto cPos = impl_->renderer_->viewportToCanvas({(float)event->position().x(), (float)event->position().y()});
     auto comp = impl_->previewPipeline_.composition();
     if (comp) {
-     auto layers = comp->allLayer();
-     ArtifactAbstractLayerPtr hitLayer = nullptr;
-     for (int i = (int)layers.size() - 1; i >= 0; --i) {
-      if (!layers[i] || !layers[i]->isVisible()) continue;
-      if (layers[i]->transformedBoundingBox().contains(cPos.x, cPos.y)) {
-       hitLayer = layers[i];
-       break;
-      }
-     }
+     const auto hit =
+         hitTestTopVisibleLayer(comp, impl_->renderer_.get(), event->position());
      
-     if (hitLayer) {
+     if (hit.layer) {
       if (event->modifiers() & Qt::ShiftModifier) {
-          ArtifactApplicationManager::instance()->layerSelectionManager()->addToSelection(hitLayer);
+          ArtifactApplicationManager::instance()->layerSelectionManager()->addToSelection(hit.layer);
       } else {
-          ArtifactApplicationManager::instance()->layerSelectionManager()->selectLayer(hitLayer);
+          ArtifactApplicationManager::instance()->layerSelectionManager()->selectLayer(hit.layer);
       }
-      impl_->selectedLayerId_ = hitLayer->id();
+      impl_->selectedLayerId_ = hit.layer->id();
       impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
 
       if (tm->activeTool() != ToolType::Selection) {
@@ -594,15 +638,19 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
           return;
       }
 
+      const auto cPos = impl_->renderer_->viewportToCanvas(
+          {(float)event->position().x(), (float)event->position().y()});
       impl_->dragStartCanvasPos_ = QPointF(cPos.x, cPos.y);
-      impl_->dragStartLayerPos_ = QPointF(hitLayer->transform3D().positionX(),
-                                          hitLayer->transform3D().positionY());
-      impl_->dragStartScaleX_ = hitLayer->transform3D().scaleX();
-      impl_->dragStartScaleY_ = hitLayer->transform3D().scaleY();
-      impl_->dragStartBoundingBox_ = hitLayer->transformedBoundingBox();
+      impl_->dragStartLayerPos_ = QPointF(hit.layer->transform3D().positionX(),
+                                          hit.layer->transform3D().positionY());
+      impl_->dragStartScaleX_ = hit.layer->transform3D().scaleX();
+      impl_->dragStartScaleY_ = hit.layer->transform3D().scaleY();
+      impl_->dragStartBoundingBox_ = hit.bbox;
       impl_->dragFrame_ = comp->framePosition().framePosition();
       impl_->dragAppliedDelta_ = QPointF(0.0, 0.0);
-      impl_->dragMode_ = hitTestLayerDragMode(hitLayer, event->position(), impl_->renderer_.get());
+      impl_->lastDragMutationNotify_ = {};
+      impl_->dragMode_ =
+          hitTestLayerDragMode(hit.bbox, event->position(), impl_->renderer_.get());
       if (impl_->dragMode_ == LayerDragMode::None) {
        impl_->dragMode_ = LayerDragMode::Move;
       }
@@ -735,10 +783,12 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                       impl_->dragStartLayerPos_.x() + static_cast<float>(moveDelta.x()),
                       impl_->dragStartLayerPos_.y() + static_cast<float>(moveDelta.y()));
        layer->setDirty(LayerDirtyFlag::Transform);
-       layer->changed();
-       ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-           LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                             LayerChangedEvent::ChangeType::Modified});
+       if (impl_->shouldPublishDragMutation()) {
+        layer->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+       }
       } else {
        if (std::abs(totalDelta.x()) < 0.01 && std::abs(totalDelta.y()) < 0.01) {
         impl_->dragAppliedDelta_ = totalDelta;
@@ -779,10 +829,12 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
         t3.setScale(t0, impl_->dragStartScaleX_ * scaleFactorX,
                     impl_->dragStartScaleY_ * scaleFactorY);
         layer->setDirty(LayerDirtyFlag::Transform);
-        layer->changed();
-        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
-                              LayerChangedEvent::ChangeType::Modified});
+        if (impl_->shouldPublishDragMutation()) {
+         layer->changed();
+         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+             LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                               LayerChangedEvent::ChangeType::Modified});
+        }
        }
       }
      }

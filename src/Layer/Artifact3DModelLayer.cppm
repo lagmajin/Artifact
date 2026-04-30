@@ -2,6 +2,7 @@ module;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QColor>
+#include <QJsonObject>
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
@@ -25,6 +26,21 @@ namespace {
 Artifact::Detail::float3 toFloat3(const QVector3D &v) {
   return {v.x(), v.y(), v.z()};
 }
+
+void centerMeshPositions(Mesh &mesh) {
+  mesh.updateBounds();
+  const QVector3D minB = mesh.boundingBoxMin();
+  const QVector3D maxB = mesh.boundingBoxMax();
+  const QVector3D center = (minB + maxB) * 0.5f;
+  auto positions = mesh.vertexAttributes().get<QVector3D>("position");
+  if (!positions) {
+    return;
+  }
+  for (auto &pos : positions->data()) {
+    pos -= center;
+  }
+  mesh.updateBounds();
+}
 } // namespace
 
 class Artifact3DLayer::Impl {
@@ -32,6 +48,7 @@ public:
   RenderMode renderMode_ = RenderMode::Wireframe;
   ArtifactCore::Material material_ = ArtifactCore::Material::makeDefault();
   Mesh mesh_; // The 3D mesh data
+  QString sourcePath_;
   bool meshLoaded_ = false;
   Impl() {}
   ~Impl() {}
@@ -46,13 +63,16 @@ Artifact3DLayer::Artifact3DLayer() : impl_(new Impl()) {
 Artifact3DLayer::~Artifact3DLayer() { delete impl_; }
 
 void Artifact3DLayer::loadFromFile() {
+  impl_->sourcePath_.clear();
   // Try loading via MeshImporter (ufbx for FBX, tinyobj for OBJ)
   ArtifactCore::MeshImporter importer;
   auto mesh = importer.importMeshFromFile(UniString("")); // Will be set by user
 
   if (mesh && mesh->vertexCount() > 0) {
     impl_->mesh_ = *mesh;
+    centerMeshPositions(impl_->mesh_);
     impl_->meshLoaded_ = true;
+    updateSourceSizeFromMesh();
     return;
   }
 
@@ -65,7 +85,7 @@ void Artifact3DLayer::loadFromFile() {
 
 void Artifact3DLayer::loadFromFile(const QString &filePath) {
   if (filePath.isEmpty()) {
-    loadFromFile();
+    qWarning() << "[Artifact3DLayer] Ignoring empty source path reload";
     return;
   }
 
@@ -74,7 +94,11 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
 
   if (mesh && mesh->vertexCount() > 0) {
     impl_->mesh_ = *mesh;
+    centerMeshPositions(impl_->mesh_);
     impl_->meshLoaded_ = true;
+    updateSourceSizeFromMesh();
+    impl_->renderMode_ = RenderMode::Solid;
+    impl_->sourcePath_ = filePath;
     setLayerName(QFileInfo(filePath).baseName());
     return;
   }
@@ -85,7 +109,20 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
   if (!impl_->meshLoaded_) {
     createCubeMesh();
     impl_->meshLoaded_ = true;
+    updateSourceSizeFromMesh();
   }
+}
+
+QString Artifact3DLayer::sourcePath() const { return impl_->sourcePath_; }
+
+UniString Artifact3DLayer::className() const { return QStringLiteral("Artifact3DLayer"); }
+
+QJsonObject Artifact3DLayer::toJson() const {
+  QJsonObject obj = ArtifactAbstractLayer::toJson();
+  obj["type"] = static_cast<int>(LayerType::Model3D);
+  obj["sourcePath"] = impl_->sourcePath_;
+  obj["renderMode"] = static_cast<int>(impl_->renderMode_);
+  return obj;
 }
 
 void Artifact3DLayer::createCubeMesh() {
@@ -126,6 +163,17 @@ void Artifact3DLayer::createCubeMesh() {
   // Right face
   impl_->mesh_.addPolygon({1, 2, 6});
   impl_->mesh_.addPolygon({1, 6, 5});
+}
+
+void Artifact3DLayer::updateSourceSizeFromMesh() {
+  impl_->mesh_.updateBounds();
+  const QVector3D minB = impl_->mesh_.boundingBoxMin();
+  const QVector3D maxB = impl_->mesh_.boundingBoxMax();
+  const int width =
+      std::max(1, static_cast<int>(std::ceil(std::abs(maxB.x() - minB.x()))));
+  const int height =
+      std::max(1, static_cast<int>(std::ceil(std::abs(maxB.y() - minB.y()))));
+  setSourceSize(Size_2D(width, height));
 }
 
 RenderMode Artifact3DLayer::renderMode() const { return impl_->renderMode_; }
@@ -223,7 +271,15 @@ Artifact3DLayer::getLayerPropertyGroups() const {
       QStringLiteral("render.mode"), PropertyType::Integer,
       static_cast<int>(renderMode()), -50);
   renderModeProp->setDisplayLabel(QStringLiteral("Render Mode"));
+  renderModeProp->setTooltip(QStringLiteral("0=Wireframe, 1=Solid"));
   renderGroup.addProperty(renderModeProp);
+
+  auto sourcePathProp = persistentLayerProperty(
+      QStringLiteral("model.sourcePath"), PropertyType::String,
+      sourcePath(), -55);
+  sourcePathProp->setDisplayLabel(QStringLiteral("Source Path"));
+  sourcePathProp->setTooltip(QStringLiteral("3D model source file path"));
+  renderGroup.addProperty(sourcePathProp);
 
   PropertyGroup materialGroup(QStringLiteral("Material"));
 
@@ -275,6 +331,11 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
       Q_EMIT changed();
       return true;
     }
+  } else if (propertyPath == QStringLiteral("model.sourcePath") ||
+             propertyPath == QStringLiteral("sourcePath")) {
+    loadFromFile(value.toString());
+    Q_EMIT changed();
+    return true;
   } else if (propertyPath == QStringLiteral("material.base.color")) {
     impl_->material_.setBaseColor(value.value<QColor>());
     Q_EMIT changed();

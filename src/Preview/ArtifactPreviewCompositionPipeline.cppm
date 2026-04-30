@@ -343,7 +343,7 @@ namespace Artifact
                               { 0.4f, 0.4f, 0.4f, 1.0f });
 
    // 2. Layers
-   const auto layers = composition_->allLayer();
+   const auto& layers = composition_->allLayerRef();
    const bool hasSoloLayer = std::any_of(layers.begin(), layers.end(), [](const ArtifactAbstractLayerPtr& layer) {
     return layer && layer->isVisible() && layer->isSolo();
    });
