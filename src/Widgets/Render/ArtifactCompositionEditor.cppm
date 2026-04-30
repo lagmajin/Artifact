@@ -11,8 +11,6 @@ module;
 #include <QCursor>
 #include <QDebug>
 #include <QLoggingCategory>
-#include <QDialog>
-#include <QDialogButtonBox>
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
@@ -42,6 +40,7 @@ module;
 #include <QResizeEvent>
 #include <QSet>
 #include <QLineEdit>
+#include <QPushButton>
 #include <QShortcut>
 #include <QShowEvent>
 #include <QSignalBlocker>
@@ -50,6 +49,7 @@ module;
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QLabel>
 #include <QVector>
 #include <QVector3D>
 #include <QWheelEvent>
@@ -89,6 +89,7 @@ import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Time.Rational;
 import Artifact.Layer.Video;
 import Artifact.Tool.Manager;
 import Clipboard.ClipboardManager;
@@ -102,7 +103,9 @@ import Artifact.Event.Types;
 import Artifact.Widgets.ProfilerOverlay;
 import Artifact.Widgets.ProfilerPanel;
 import Artifact.Widgets.EventBusDebugger;
+import Artifact.Widget.Dialog.ScreenshotExport;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Image.ImageF32x4_RGBA;
 import Codec.Thumbnail.FFmpeg;
 
 namespace Artifact {
@@ -143,6 +146,77 @@ QIcon loadIconWithFallback(const QString &fileName) {
 
 QIcon loadEditorMenuIcon(const QString &fileName) {
   return loadIconWithFallback(fileName);
+}
+
+QString screenshotDefaultExtensionForFilter(const QString& selectedFilter)
+{
+  const QString filter = selectedFilter.toLower();
+  if (filter.contains(QStringLiteral("exr"))) {
+    return QStringLiteral("exr");
+  }
+  if (filter.contains(QStringLiteral("jpg")) || filter.contains(QStringLiteral("jpeg"))) {
+    return QStringLiteral("jpg");
+  }
+  return QStringLiteral("png");
+}
+
+QString ensureScreenshotSuffix(QString path, const QString& selectedFilter)
+{
+  if (path.isEmpty()) {
+    return path;
+  }
+  if (QFileInfo(path).suffix().isEmpty()) {
+    path += QStringLiteral(".");
+    path += screenshotDefaultExtensionForFilter(selectedFilter);
+  }
+  return path;
+}
+
+QImage captureCompositionScreenshot(CompositionRenderController* controller, QWidget* fallbackWidget)
+{
+  if (controller && controller->renderer()) {
+    const QImage frame = controller->renderer()->readbackToImage();
+    if (!frame.isNull()) {
+      return frame;
+    }
+  }
+
+  if (fallbackWidget) {
+    return fallbackWidget->grab().toImage();
+  }
+
+  return QImage();
+}
+
+QImage captureScreenshotForOptions(CompositionRenderController* controller,
+                                   QWidget* fallbackWidget,
+                                   ScreenshotCaptureSource source)
+{
+  if (source == ScreenshotCaptureSource::WholeWindow && fallbackWidget) {
+    return fallbackWidget->grab().toImage();
+  }
+  return captureCompositionScreenshot(controller, fallbackWidget);
+}
+
+bool saveScreenshotImage(const QImage& image, const QString& filePath, const QString& format, int jpegQuality)
+{
+  if (image.isNull() || filePath.isEmpty()) {
+    return false;
+  }
+
+  const QString normalizedFormat = format.toLower();
+  if (normalizedFormat == QStringLiteral("exr")) {
+    const QImage rgba = image.convertToFormat(QImage::Format_RGBA8888);
+    ArtifactCore::ImageF32x4_RGBA exrImage;
+    exrImage.setFromRGBA8(rgba.constBits(), rgba.width(), rgba.height());
+    return exrImage.save(filePath);
+  }
+
+  if (normalizedFormat == QStringLiteral("jpg") || normalizedFormat == QStringLiteral("jpeg")) {
+    return image.save(filePath, "JPG", jpegQuality);
+  }
+
+  return image.save(filePath, "PNG");
 }
 
 QString shapeTypeDisplayName(ShapeType type) {
@@ -622,7 +696,7 @@ public:
       } else if (className.contains(QStringLiteral("Composition"), Qt::CaseInsensitive)) {
         typeText = QStringLiteral("Precomp Layer");
       } else if (targetLayer->is3D()) {
-        typeText = QStringLiteral("3D Layer");
+        typeText = QStringLiteral("3D Model Layer");
       }
       QString statePrefix;
       if (svc && svc->isLayerLockedInCurrentComposition(layerId)) {
@@ -677,7 +751,7 @@ public:
       if (selectionManager) {
         anchorLayer = selectionManager->currentLayer();
         if (anchorLayer) {
-          const auto layers = compNow->allLayer();
+          const auto &layers = compNow->allLayerRef();
           for (int i = 0; i < layers.size(); ++i) {
             if (layers[i] && layers[i]->id() == anchorLayer->id()) {
               anchorIndex = i;
@@ -705,7 +779,7 @@ public:
           continue;
         }
         if (anchorIndex >= 0) {
-          const auto layers = compNow->allLayer();
+          const auto &layers = compNow->allLayerRef();
           int pastedIndex = -1;
           for (int i = 0; i < layers.size(); ++i) {
             if (layers[i] && layers[i]->id() == pastedLayer->id()) {
@@ -829,7 +903,7 @@ public:
         const auto currentFrame =
             playback ? playback->currentFrame()
                      : (comp ? comp->framePosition() : FramePosition(0));
-        const ArtifactCore::RationalTime time(currentFrame.framePosition(), 24);
+        const RationalTime time(currentFrame.framePosition(), 24);
         const bool hasMotionPathKey =
             layer->transform3D().hasPositionKeyFrameAt(time);
         const auto currentMotionPathInterpolation =
@@ -935,7 +1009,7 @@ public:
         });
       }
       if (comp) {
-        const auto layers = comp->allLayer();
+        const auto &layers = comp->allLayerRef();
         int currentIndex = -1;
         for (int i = 0; i < layers.size(); ++i) {
           if (layers[i] && layers[i]->id() == layerId) {
@@ -959,7 +1033,7 @@ public:
               if (!service || !compNow) {
                 return;
               }
-              const auto layers = compNow->allLayer();
+              const auto &layers = compNow->allLayerRef();
               service->moveLayerInCurrentComposition(
                   layerId, std::max(0, static_cast<int>(layers.size()) - 1));
             });
@@ -1292,7 +1366,7 @@ public:
         ArtifactLayerInitParams params(asset.layerName, LayerType::Video);
         svc->addLayerToCurrentComposition(params, shouldSelectThisLayer);
         if (auto comp = controller_ ? controller_->composition() : nullptr) {
-          const auto layers = comp->allLayer();
+          const auto &layers = comp->allLayerRef();
           if (!layers.isEmpty()) {
             auto maybeLast = layers.last();
             if (auto videoLayer =
@@ -1301,6 +1375,10 @@ public:
             }
           }
         }
+      } else if (asset.fileType == FT::Model3D) {
+        ArtifactModel3DLayerInitParams params(asset.layerName);
+        params.setModelPath(asset.importedPath);
+        svc->addLayerToCurrentComposition(params, shouldSelectThisLayer);
       } else {
         ArtifactImageInitParams params(asset.layerName);
         params.setImagePath(asset.importedPath);
@@ -2114,7 +2192,7 @@ protected:
     }
 
     temporarySoloStates_.clear();
-    const auto layers = comp->allLayer();
+    const auto &layers = comp->allLayerRef();
     temporarySoloStates_.reserve(layers.size());
     for (const auto &candidate : layers) {
       if (!candidate) {
@@ -2389,7 +2467,7 @@ protected:
 
     // TODO: 本来は controller->captureSelectedLayer() のようなものが必要
     // ここではコンポジション内の「最初の動画レイヤー」を探して保存するデバッグコードを試みる
-    for (auto &layer : comp->allLayer()) {
+    for (const auto &layer : comp->allLayerRef()) {
       if (auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
         QImage img = video->currentFrameToQImage();
         if (!img.isNull()) {
@@ -2446,7 +2524,7 @@ protected:
     case ArtifactCore::FileType::Audio:
       return QStringLiteral("Audio layer");
     case ArtifactCore::FileType::Model3D:
-      return QStringLiteral("3D layer");
+      return QStringLiteral("3D model layer");
     default:
       return QStringLiteral("Imported layer");
     }
@@ -2487,7 +2565,7 @@ protected:
     case ArtifactCore::FileType::Audio:
       return QSizeF(cw, ch * 0.08);
     case ArtifactCore::FileType::Model3D:
-      return QSizeF(cw * 0.5, ch * 0.5);
+      return QSizeF(cw * 0.42, ch * 0.42);
     default:
       return QSizeF(cw * 0.4, ch * 0.4);
     }
@@ -2973,6 +3051,9 @@ public:
   QAction *zoomFitAction_ = nullptr;
   QAction *zoom100Action_ = nullptr;
   QAction *editTextAction_ = nullptr;
+  QToolButton *screenshotButton_ = nullptr;
+  QAction *quickScreenshotAction_ = nullptr;
+  QAction *advancedScreenshotAction_ = nullptr;
   QAction *motionPathAction_ = nullptr;
   QToolButton *toolModeButton_ = nullptr;
   QToolButton *gizmoModeButton_ = nullptr;
@@ -3169,6 +3250,80 @@ public:
                                           : QStringLiteral("Immersive"));
     }
   }
+
+  bool saveQuickScreenshot(ArtifactCompositionEditor* owner) {
+    if (!owner || !renderController_) {
+      return false;
+    }
+
+    const QString selectedFilterDefault = QStringLiteral("PNG Image (*.png)");
+    QString selectedFilter = selectedFilterDefault;
+    const QString rawPath = QFileDialog::getSaveFileName(
+        owner,
+        QStringLiteral("スクリーンショットを保存"),
+        QStringLiteral("composition_screenshot.png"),
+        QStringLiteral("PNG Image (*.png);;JPEG Image (*.jpg *.jpeg);;OpenEXR (*.exr);;All Files (*.*)"),
+        &selectedFilter);
+    if (rawPath.isEmpty()) {
+      return false;
+    }
+
+    const QString filePath = ensureScreenshotSuffix(rawPath, selectedFilter);
+    const QString suffix = QFileInfo(filePath).suffix().toLower();
+    const QImage screenshot = captureScreenshotForOptions(
+        renderController_, owner, ScreenshotCaptureSource::Renderer);
+    if (screenshot.isNull()) {
+      QMessageBox::warning(owner, QStringLiteral("スクリーンショット"),
+                           QStringLiteral("現在のフレームを取得できませんでした。"));
+      return false;
+    }
+
+    if (!saveScreenshotImage(screenshot, filePath, suffix, 95)) {
+      QMessageBox::warning(owner, QStringLiteral("スクリーンショット"),
+                           QStringLiteral("保存に失敗しました:\n%1").arg(filePath));
+      return false;
+    }
+
+    QMessageBox::information(owner, QStringLiteral("スクリーンショット"),
+                             QStringLiteral("保存しました:\n%1").arg(filePath));
+    return true;
+  }
+
+  bool saveAdvancedScreenshot(ArtifactCompositionEditor* owner) {
+    if (!owner || !renderController_) {
+      return false;
+    }
+
+    const QString defaultPath = QStringLiteral("composition_screenshot.png");
+    ArtifactScreenshotExportDialog dialog(owner);
+    dialog.setFilePath(defaultPath);
+    dialog.setFormat(QStringLiteral("png"));
+    if (dialog.exec() != QDialog::Accepted) {
+      return false;
+    }
+
+    const ScreenshotExportOptions options = dialog.options();
+
+    const QString filePath = options.filePath;
+
+    const QImage screenshot = captureScreenshotForOptions(
+        renderController_, owner, options.captureSource);
+    if (screenshot.isNull()) {
+      QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                           QStringLiteral("現在のフレームを取得できませんでした。"));
+      return false;
+    }
+
+    if (!saveScreenshotImage(screenshot, filePath, options.format, options.jpegQuality)) {
+      QMessageBox::warning(owner, QStringLiteral("Advanced Screenshot"),
+                           QStringLiteral("保存に失敗しました:\n%1").arg(filePath));
+      return false;
+    }
+
+    QMessageBox::information(owner, QStringLiteral("Advanced Screenshot"),
+                             QStringLiteral("保存しました:\n%1").arg(filePath));
+    return true;
+  }
 };
 
 ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
@@ -3255,6 +3410,20 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->editTextAction_ = impl_->topToolbar_->addAction("Edit Text");
   impl_->editTextAction_->setToolTip(QStringLiteral("Edit current text layer"));
   impl_->editTextAction_->setShortcut(QKeySequence(Qt::Key_F2));
+
+  auto* screenshotMenu = new QMenu(this);
+  impl_->quickScreenshotAction_ = screenshotMenu->addAction(QStringLiteral("Quick Screenshot"));
+  impl_->quickScreenshotAction_->setToolTip(
+      QStringLiteral("Save the current composition view with minimal options"));
+  impl_->advancedScreenshotAction_ = screenshotMenu->addAction(QStringLiteral("Advanced Screenshot..."));
+  impl_->advancedScreenshotAction_->setToolTip(
+      QStringLiteral("Open the custom screenshot dialog"));
+  impl_->screenshotButton_ = new QToolButton(this);
+  impl_->screenshotButton_->setText(QStringLiteral("Screenshot"));
+  impl_->screenshotButton_->setMenu(screenshotMenu);
+  impl_->screenshotButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->topToolbar_->addWidget(impl_->screenshotButton_);
+
   impl_->motionPathAction_ = impl_->topToolbar_->addAction("Motion Path");
   impl_->motionPathAction_->setCheckable(true);
   impl_->motionPathAction_->setToolTip(
@@ -3359,7 +3528,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         useCenter ? localBounds.center() : localBounds.topLeft();
 
     auto &t3d = layer->transform3D();
-    const ArtifactCore::RationalTime time(layer->currentFrame(), 30);
+    const RationalTime time(layer->currentFrame(), 30);
     const QPointF currentAnchor(t3d.anchorX(), t3d.anchorY());
     const QPointF delta = targetAnchor - currentAnchor;
     const double radians = t3d.rotation() * 3.14159265358979323846 / 180.0;
@@ -3408,6 +3577,18 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    [this](bool checked) {
                      if (impl_) {
                        impl_->toggleImmersiveMode(this, checked);
+                     }
+                   });
+  QObject::connect(impl_->quickScreenshotAction_, &QAction::triggered, this,
+                   [this]() {
+                     if (impl_) {
+                       impl_->saveQuickScreenshot(this);
+                     }
+                   });
+  QObject::connect(impl_->advancedScreenshotAction_, &QAction::triggered, this,
+                   [this]() {
+                     if (impl_) {
+                       impl_->saveAdvancedScreenshot(this);
                      }
                    });
 

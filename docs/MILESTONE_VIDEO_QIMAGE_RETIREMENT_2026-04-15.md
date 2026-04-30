@@ -1,6 +1,6 @@
 # Milestone: Video QImage Retirement (2026-04-15)
 
-**Status:** Planned
+**Status:** In Progress
 
 ## Goal
 
@@ -16,12 +16,14 @@ This milestone is specifically about:
 
 ## Current State
 
-Video is still fundamentally `QImage`-first today.
+Video is still partially `QImage`-based, but the canonical decode path is moving to raw frames.
 
-- `ArtifactVideoLayer` stores decoded frames in `currentQImage_`.
-- `ArtifactVideoLayer::currentFrameToQImage()` is the main composition-facing entry point.
-- `ArtifactCompositionRenderController` and `ArtifactPreviewCompositionPipeline` both render video by pulling a `QImage`.
-- GPU texture caching happens after the `QImage` stage, not before it.
+- `ArtifactCore::FFmpegVideoDecoder` now exposes `decodeNextVideoFrameRaw()` as the primary decode API.
+- `ArtifactCore::MediaPlaybackController` has raw-first video accessors alongside legacy `QImage` wrappers.
+- `ArtifactVideoLayer` now pulls decoded frames through the raw API in the direct decode path, then converts at the layer boundary.
+- `ArtifactVideoLayer` still keeps `currentQImage_` and a `QImage` cache for compatibility and async UI flow.
+- `ArtifactCompositionRenderController` and `ArtifactPreviewCompositionPipeline` still render video through legacy `QImage`-shaped paths.
+- GPU texture caching still happens after the `QImage` stage for video.
 
 This keeps the path simple, but it also means:
 
@@ -125,6 +127,8 @@ Deliverables:
 - decoder-to-surface bridge
 - legacy `QImage` fallback path
 - metadata-preserving frame handoff from decoder to layer
+- raw-first FFmpeg decoder contract in Core
+- raw-first playback controller entry points
 
 ### WP-4 Renderer Upload And Cache Path
 
@@ -178,6 +182,13 @@ Requirements:
 - scrubbing and playback stay responsive
 - opacity, masks, effects, and transforms still work
 - fallback path remains available during rollout
+
+### Progress Notes
+
+- 2026-04-30:
+  - Added `VideoFrame` / `DecodedVideoFrame` and moved FFmpeg decode to raw-first output.
+  - Added raw-first playback controller entry points and started routing `ArtifactVideoLayer` through them.
+  - Kept legacy `QImage` adapters only at the compatibility boundary so the editor stays functional during migration.
 
 ### WP-7 QImage Retirement
 
