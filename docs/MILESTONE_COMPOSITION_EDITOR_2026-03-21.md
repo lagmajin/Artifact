@@ -34,6 +34,8 @@
 - safe area / grid / guides の切替を editor 内で見つけやすくする
 - Figma 風スマートガイドを追加し、レイヤー端・中心・コンポ中心/端へのスナップを見える化する
 - レイヤー間距離のリアルタイム表示を追加し、等間隔や揃いの検出を補助する
+- screenshot / snapshot 導線を editor 内に持ち、Quick と Advanced を分けて保存できるようにする
+- Advanced 側は再利用可能な独立 dialog に切り出して、他の編集画面からも呼べるようにする
 
 ### 3. Composition Visibility
 - 画像、平面、動画、テキストの基本レイヤー表示を安定化する
@@ -67,6 +69,7 @@
   - layer drag reorder、selection、preview log の整理を同時に進めている
   - pivot 変更の最小導線として `Pivot: Center / Top Left` を toolbar から呼べるようにした
   - `F11` で immersive fullscreen を切り替えられるようにした
+  - screenshot は `Quick` と `Advanced` に分け、Advanced は独立 dialog として再利用できるようにした
   - pivot / gizmo space 切替は今後の編集 UX 拡張として追加する
   - レイヤー移動中のスマートガイドは今後の編集 UX 拡張として追加する
 
