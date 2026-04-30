@@ -55,6 +55,7 @@
 #include <regex>
 #include <random>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
+#include <cstring>
 module Artifact.Layer.Video;
 
 
@@ -140,6 +141,38 @@ ArtifactCore::ImageF32x4_RGBA toFrameBuffer(const QImage& frame)
 
     buffer.setFromCVMat(mat);
     return buffer;
+}
+
+QImage cpuVideoFrameToQImage(const ArtifactCore::CpuVideoFrame& frame)
+{
+    if (!frame.isValid() || frame.meta.width <= 0 || frame.meta.height <= 0) {
+        return QImage();
+    }
+
+    const QImage::Format format =
+        frame.meta.pixelFormat == ArtifactCore::VideoFramePixelFormat::RGB24
+            ? QImage::Format_RGB888
+            : QImage::Format_RGBA8888;
+    QImage image(frame.meta.width, frame.meta.height, format);
+    if (image.isNull()) {
+        return QImage();
+    }
+
+    const int rowBytes = std::min(frame.strideBytes, image.bytesPerLine());
+    for (int y = 0; y < frame.meta.height; ++y) {
+        std::memcpy(image.scanLine(y),
+                    frame.bytes.data() + static_cast<size_t>(y) * static_cast<size_t>(frame.strideBytes),
+                    static_cast<size_t>(rowBytes));
+    }
+    return image;
+}
+
+QImage decodedVideoFrameToQImage(const ArtifactCore::DecodedVideoFrame& decoded)
+{
+    if (const auto* cpu = std::get_if<ArtifactCore::CpuVideoFrame>(&decoded)) {
+        return cpuVideoFrameToQImage(*cpu);
+    }
+    return QImage();
 }
 
 void publishVideoLayerModified(ArtifactVideoLayer* layer)
@@ -502,7 +535,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         auto* ctrl = layer->impl_->playbackController_.get();
         layer->impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, layer]() -> QImage {
             ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
-            QImage frame = ctrl->getVideoFrameAtFrameDirect(0);
+            const QImage frame = decodedVideoFrameToQImage(ctrl->getVideoFrameAtFrameDirectRaw(0));
             if (frame.isNull()) {
                 qWarning() << "[VideoLayer] initial decode FAILED"
                            << "source=0"
@@ -754,7 +787,8 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     const QString backendName = decoderBackendName(ctrl);
     impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, timelineFrame, sourceFrame, backendName, this]() -> QImage {
         ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
-        QImage decoded = ctrl->getVideoFrameAtFrameDirect(sourceFrame);
+        const QImage decoded = decodedVideoFrameToQImage(
+            ctrl->getVideoFrameAtFrameDirectRaw(sourceFrame));
         if (!decoded.isNull()) {
             impl_->frameCache_.put(sourceFrame, decoded);
             impl_->currentQImage_ = decoded;
@@ -865,7 +899,8 @@ QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
         return QImage();
     }
 
-    const QImage decoded = impl_->playbackController_->getVideoFrameAtFrameDirect(sourceFrame);
+    const QImage decoded = decodedVideoFrameToQImage(
+        impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame));
     if (!decoded.isNull()) {
         impl_->frameCache_.put(sourceFrame, decoded);
         if (sourceFrame == currentSourceFrame(this)) {
@@ -910,7 +945,8 @@ void ArtifactVideoLayer::preloadFrames(int64_t startFrame, int count)
             sourceFrame >= 0 &&
             (!hasKnownFrameCount || sourceFrame < impl_->streamInfo_.frameCount)) {
             if (!impl_->frameCache_.contains(sourceFrame)) {
-                const QImage frameData = impl_->playbackController_->getVideoFrameAtFrameDirect(sourceFrame);
+                const QImage frameData = decodedVideoFrameToQImage(
+                    impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame));
                 if (!frameData.isNull()) {
                     impl_->frameCache_.put(sourceFrame, frameData);
                 }
