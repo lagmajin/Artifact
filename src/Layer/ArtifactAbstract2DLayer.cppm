@@ -33,6 +33,7 @@ module;
 #include <regex>
 #include <random>
 #include <QString>
+#include <QVector2D>
 #include <QJsonObject>
 #include <QtGlobal>
 module Artifact.Layers.Abstract._2D;
@@ -117,6 +118,67 @@ class ArtifactAbstract2DLayer::Impl {
   return impl_->rig2D().setBoneLocalTransform(boneId, transform);
  }
 
+ ArtifactCore::RigControl2D* ArtifactAbstract2DLayer::addRigSlider(const QString& name,
+                                                                   double defaultValue,
+                                                                   double minValue,
+                                                                   double maxValue)
+ {
+  return impl_->rig2D().addSlider(name, defaultValue, minValue, maxValue);
+ }
+
+ ArtifactCore::RigControl2D* ArtifactAbstract2DLayer::addRigPoint(const QString& name,
+                                                                  const QVector2D& defaultValue)
+ {
+  return impl_->rig2D().addPoint(name, defaultValue);
+ }
+
+ ArtifactCore::RigControl2D* ArtifactAbstract2DLayer::addRigAngle(const QString& name,
+                                                                  double defaultValue,
+                                                                  double minValue,
+                                                                  double maxValue)
+ {
+  return impl_->rig2D().addAngle(name, defaultValue, minValue, maxValue);
+ }
+
+ std::shared_ptr<ArtifactCore::ParentConstraint2D> ArtifactAbstract2DLayer::addRigParentConstraint(
+     const QString& name,
+     const ArtifactCore::Id& targetBoneId,
+     const ArtifactCore::Id& parentBoneId)
+ {
+  auto constraint = std::make_shared<ArtifactCore::ParentConstraint2D>(name, targetBoneId, parentBoneId);
+  return std::static_pointer_cast<ArtifactCore::ParentConstraint2D>(impl_->rig2D().addConstraint(constraint));
+ }
+
+ std::shared_ptr<ArtifactCore::MapRangeConstraint2D> ArtifactAbstract2DLayer::addRigMapRangeConstraint(
+     const QString& name,
+     const ArtifactCore::Id& controlId,
+     const ArtifactCore::Id& targetBoneId)
+ {
+  auto constraint = std::make_shared<ArtifactCore::MapRangeConstraint2D>(name, controlId, targetBoneId);
+  return std::static_pointer_cast<ArtifactCore::MapRangeConstraint2D>(impl_->rig2D().addConstraint(constraint));
+ }
+
+ std::shared_ptr<ArtifactCore::AimConstraint2D> ArtifactAbstract2DLayer::addRigAimConstraint(
+     const QString& name,
+     const ArtifactCore::Id& sourceBoneId,
+     const ArtifactCore::Id& targetBoneId)
+ {
+  auto constraint = std::make_shared<ArtifactCore::AimConstraint2D>(name, sourceBoneId, targetBoneId);
+  return std::static_pointer_cast<ArtifactCore::AimConstraint2D>(impl_->rig2D().addConstraint(constraint));
+ }
+
+ std::shared_ptr<ArtifactCore::TwoBoneIKConstraint2D> ArtifactAbstract2DLayer::addRigTwoBoneIKConstraint(
+     const QString& name,
+     const ArtifactCore::Id& upperBoneId,
+     const ArtifactCore::Id& lowerBoneId,
+     const ArtifactCore::Id& effectorBoneId,
+     const ArtifactCore::Id& targetBoneId)
+ {
+  auto constraint = std::make_shared<ArtifactCore::TwoBoneIKConstraint2D>(
+      name, upperBoneId, lowerBoneId, effectorBoneId, targetBoneId);
+  return std::static_pointer_cast<ArtifactCore::TwoBoneIKConstraint2D>(impl_->rig2D().addConstraint(constraint));
+ }
+
  void ArtifactAbstract2DLayer::clearRigBones()
  {
   impl_->rig2D().clearBones();
@@ -136,7 +198,9 @@ class ArtifactAbstract2DLayer::Impl {
  QJsonObject ArtifactAbstract2DLayer::toJson() const
  {
   QJsonObject obj = ArtifactAbstractLayer::toJson();
-  if (!impl_->rig2D().bones().isEmpty()) {
+  if (!impl_->rig2D().bones().isEmpty() ||
+      !impl_->rig2D().controls().isEmpty() ||
+      !impl_->rig2D().constraints().isEmpty()) {
    obj["rig2D"] = impl_->rig2D().toJson();
   }
   return obj;
@@ -165,10 +229,20 @@ class ArtifactAbstract2DLayer::Impl {
                                 static_cast<qint64>(rigBoneCount()),
                                 -55));
 
+  rigGroup.addProperty(makeProp(QStringLiteral("rig.controlCount"),
+                                ArtifactCore::PropertyType::Integer,
+                                static_cast<qint64>(rig2D().controlCount()),
+                                -54));
+
   rigGroup.addProperty(makeProp(QStringLiteral("rig.rootBone"),
                                 ArtifactCore::PropertyType::String,
                                 rigRootBoneName(),
-                                -54));
+                                -53));
+
+  rigGroup.addProperty(makeProp(QStringLiteral("rig.constraintCount"),
+                                ArtifactCore::PropertyType::Integer,
+                                static_cast<qint64>(rig2D().constraintCount()),
+                                -52));
 
   groups.push_back(rigGroup);
   return groups;
