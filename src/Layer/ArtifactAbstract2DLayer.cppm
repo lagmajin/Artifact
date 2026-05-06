@@ -219,9 +219,27 @@ class ArtifactAbstract2DLayer::Impl {
   auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
 
   ArtifactCore::PropertyGroup rigGroup(QStringLiteral("Rig"));
+  ArtifactCore::PropertyGroup rigControlGroup(QStringLiteral("Rig Controls"));
   auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type,
                          const QVariant& value, int priority = 0) {
    return persistentLayerProperty(name, type, value, priority);
+  };
+  auto makeRigControlProp = [this](const QString& path,
+                                   const QString& displayLabel,
+                                   ArtifactCore::PropertyType type,
+                                   const QVariant& value,
+                                   int priority,
+                                   const QVariant& minValue = QVariant(),
+                                   const QVariant& maxValue = QVariant()) {
+   auto property = persistentLayerProperty(path, type, value, priority);
+   property->setDisplayLabel(displayLabel);
+   if (minValue.isValid()) {
+    property->setMinValue(minValue);
+   }
+   if (maxValue.isValid()) {
+    property->setMaxValue(maxValue);
+   }
+   return property;
   };
 
   rigGroup.addProperty(makeProp(QStringLiteral("rig.boneCount"),
@@ -244,7 +262,69 @@ class ArtifactAbstract2DLayer::Impl {
                                 static_cast<qint64>(rig2D().constraintCount()),
                                 -52));
 
+  for (const auto* control : rig2D().controls()) {
+   if (!control) {
+    continue;
+   }
+
+   const QString controlId = control->id().toString();
+   const QString controlPrefix = QStringLiteral("rig.control.%1").arg(controlId);
+   switch (control->kind()) {
+   case ArtifactCore::RigControlKind::Point: {
+    const QVector2D pointValue = control->value().value<QVector2D>();
+    auto xProp = makeRigControlProp(controlPrefix + QStringLiteral(".x"),
+                                    control->name() + QStringLiteral(" X"),
+                                    ArtifactCore::PropertyType::Float,
+                                    static_cast<double>(pointValue.x()),
+                                    -51,
+                                    control->minValue().canConvert<QVector2D>()
+                                        ? QVariant::fromValue(control->minValue().value<QVector2D>().x())
+                                        : QVariant(),
+                                    control->maxValue().canConvert<QVector2D>()
+                                        ? QVariant::fromValue(control->maxValue().value<QVector2D>().x())
+                                        : QVariant());
+    xProp->setUnit(QStringLiteral("px"));
+    rigControlGroup.addProperty(xProp);
+
+    auto yProp = makeRigControlProp(controlPrefix + QStringLiteral(".y"),
+                                    control->name() + QStringLiteral(" Y"),
+                                    ArtifactCore::PropertyType::Float,
+                                    static_cast<double>(pointValue.y()),
+                                    -50,
+                                    control->minValue().canConvert<QVector2D>()
+                                        ? QVariant::fromValue(control->minValue().value<QVector2D>().y())
+                                        : QVariant(),
+                                    control->maxValue().canConvert<QVector2D>()
+                                        ? QVariant::fromValue(control->maxValue().value<QVector2D>().y())
+                                        : QVariant());
+    yProp->setUnit(QStringLiteral("px"));
+    rigControlGroup.addProperty(yProp);
+    break;
+   }
+   case ArtifactCore::RigControlKind::Angle:
+   case ArtifactCore::RigControlKind::Slider:
+   default: {
+    const double scalarValue = control->value().toDouble();
+    auto prop = makeRigControlProp(controlPrefix,
+                                   control->name(),
+                                   ArtifactCore::PropertyType::Float,
+                                   scalarValue,
+                                   -51,
+                                   control->minValue(),
+                                   control->maxValue());
+    if (control->kind() == ArtifactCore::RigControlKind::Angle) {
+     prop->setUnit(QStringLiteral("deg"));
+    }
+    rigControlGroup.addProperty(prop);
+    break;
+   }
+   }
+  }
+
   groups.push_back(rigGroup);
+  if (rigControlGroup.propertyCount() > 0) {
+   groups.push_back(rigControlGroup);
+  }
   return groups;
  }
 
@@ -252,7 +332,37 @@ class ArtifactAbstract2DLayer::Impl {
                                                      const QVariant& value)
  {
   if (propertyPath.startsWith(QStringLiteral("rig."))) {
-   Q_UNUSED(value);
+   if (propertyPath.startsWith(QStringLiteral("rig.control."))) {
+    const QString controlPath = propertyPath.mid(QStringLiteral("rig.control.").size());
+    const int separatorIndex = controlPath.indexOf(QLatin1Char('.'));
+    const QString controlIdString = separatorIndex >= 0 ? controlPath.left(separatorIndex) : controlPath;
+    const QString controlChannel = separatorIndex >= 0 ? controlPath.mid(separatorIndex + 1) : QString();
+
+    ArtifactCore::RigControl2D* control = nullptr;
+    if (!controlIdString.isEmpty()) {
+     control = rig2D().findControl(ArtifactCore::Id(controlIdString));
+    }
+    if (!control) {
+     return false;
+    }
+
+    if (control->kind() == ArtifactCore::RigControlKind::Point) {
+     QVector2D pointValue = control->value().value<QVector2D>();
+     if (controlChannel.compare(QStringLiteral("x"), Qt::CaseInsensitive) == 0) {
+      pointValue.setX(static_cast<float>(value.toDouble()));
+     } else if (controlChannel.compare(QStringLiteral("y"), Qt::CaseInsensitive) == 0) {
+      pointValue.setY(static_cast<float>(value.toDouble()));
+     } else {
+      pointValue = value.value<QVector2D>();
+     }
+     control->setValue(QVariant::fromValue(pointValue));
+     return true;
+    }
+
+    control->setValue(value);
+    return true;
+   }
+
    return false;
   }
   return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
