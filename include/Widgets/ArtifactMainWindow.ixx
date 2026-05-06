@@ -61,6 +61,7 @@ public /*slots*/:
   void activateDock(const QString &title);
   bool closeDock(const QString &title);
   void setDockImmersive(QWidget *widget, bool immersive);
+  void setStartupLayoutFrozen(bool frozen);
 
   void closeAllDocks();
   void showStatusMessage(const QString &message, int timeoutMs = 2000);
