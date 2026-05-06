@@ -88,6 +88,8 @@ namespace Artifact {
   uint64_t memMB_ = 0;
   float ramPreviewHitRate_ = 0.0f;
   int ramPreviewCachedFrameCount_ = 0;
+  int ramPreviewRequestedFrameCount_ = 0;
+  int ramPreviewReadyFrameCount_ = 0;
   bool isPlaying_ = false;
   QTimer* refreshTimer = nullptr;
  };
@@ -206,11 +208,17 @@ namespace Artifact {
 
   // Periodic refresh to update displayed FPS/Mem if set externally
   connect(impl_->refreshTimer, &QTimer::timeout, this, [this]() {
+    if (auto* playback = ArtifactPlaybackService::instance()) {
+      impl_->ramPreviewRequestedFrameCount_ = playback->ramPreviewRequestedFrameCount();
+      impl_->ramPreviewReadyFrameCount_ = playback->ramPreviewReadyFrameCountInRange();
+    }
     impl_->fpsLabel->setText(QString("FPS: %1").arg(impl_->fps_ > 0.0 ? QString::number(impl_->fps_, 'f', 1) : QString("N/A")));
     impl_->memLabel->setText(QString("Mem: %1 MB").arg(impl_->memMB_ ? QString::number(impl_->memMB_) : QString("N/A")));
-    impl_->ramPreviewLabel->setText(QString("RAM: %1 | %2 frames")
-                                        .arg(QString::number(impl_->ramPreviewHitRate_ * 100.0f, 'f', 0) + QStringLiteral("% hit"))
-                                        .arg(impl_->ramPreviewCachedFrameCount_));
+    impl_->ramPreviewLabel->setText(QString("RAM: ready %1/%2 | cached %3 | %4 hit")
+                                        .arg(impl_->ramPreviewReadyFrameCount_)
+                                        .arg(impl_->ramPreviewRequestedFrameCount_)
+                                        .arg(impl_->ramPreviewCachedFrameCount_)
+                                        .arg(QString::number(impl_->ramPreviewHitRate_ * 100.0f, 'f', 0) + QStringLiteral("%")));
   });
   impl_->refreshTimer->start(1000);
  }
@@ -252,9 +260,15 @@ void ArtifactCompositionViewerFooter::setRamPreviewStats(float hitRate, int cach
   if (!impl_) return;
   impl_->ramPreviewHitRate_ = std::clamp(hitRate, 0.0f, 1.0f);
   impl_->ramPreviewCachedFrameCount_ = std::max(0, cachedFrameCount);
-  impl_->ramPreviewLabel->setText(QString("RAM: %1 | %2 frames")
-                                      .arg(QString::number(impl_->ramPreviewHitRate_ * 100.0f, 'f', 0) + QStringLiteral("% hit"))
-                                      .arg(impl_->ramPreviewCachedFrameCount_));
+  if (auto* playback = ArtifactPlaybackService::instance()) {
+    impl_->ramPreviewRequestedFrameCount_ = playback->ramPreviewRequestedFrameCount();
+    impl_->ramPreviewReadyFrameCount_ = playback->ramPreviewReadyFrameCountInRange();
+  }
+  impl_->ramPreviewLabel->setText(QString("RAM: ready %1/%2 | cached %3 | %4 hit")
+                                      .arg(impl_->ramPreviewReadyFrameCount_)
+                                      .arg(impl_->ramPreviewRequestedFrameCount_)
+                                      .arg(impl_->ramPreviewCachedFrameCount_)
+                                      .arg(QString::number(impl_->ramPreviewHitRate_ * 100.0f, 'f', 0) + QStringLiteral("%")));
 }
 
 void ArtifactCompositionViewerFooter::setSelectedLayerInfo(const QString& layerInfo)
