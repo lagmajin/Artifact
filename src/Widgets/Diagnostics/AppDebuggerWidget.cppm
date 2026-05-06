@@ -31,6 +31,7 @@ import Artifact.Widgets.FrameDebugViewWidget;
 import Artifact.Widgets.FrameResourceInspectorWidget;
 import Artifact.Widgets.FrameStateDiffWidget;
 import Artifact.Widgets.TraceTimelineWidget;
+import Artifact.Widgets.DebugRenderHarnessWidget;
 import Thread.Helper;
 import Frame.Debug;
 import Playback.State;
@@ -100,6 +101,8 @@ public:
     QWidget* framePage_ = nullptr;
     QLabel* frameSummary_ = nullptr;
     QPlainTextEdit* frameText_ = nullptr;
+    QWidget* harnessPage_ = nullptr;
+    DebugRenderHarnessWidget* harnessWidget_ = nullptr;
     QWidget* diagnosticsPage_ = nullptr;
     QLabel* diagnosticsSummary_ = nullptr;
     QPlainTextEdit* diagnosticsText_ = nullptr;
@@ -270,6 +273,13 @@ public:
         frameText_->setReadOnly(true);
         frameText_->setLineWrapMode(QPlainTextEdit::NoWrap);
         frameLayout->addWidget(frameText_);
+        harnessPage_ = new QWidget(tabs_);
+        auto* harnessLayout = new QVBoxLayout(harnessPage_);
+        harnessLayout->setContentsMargins(0, 0, 0, 0);
+        harnessLayout->setSpacing(0);
+        harnessWidget_ = new DebugRenderHarnessWidget(harnessPage_);
+        harnessWidget_->setScenePreset(QStringLiteral("mixed-media"));
+        harnessLayout->addWidget(harnessWidget_);
         diagnosticsPage_ = new QWidget(tabs_);
         auto* diagnosticsLayout = new QVBoxLayout(diagnosticsPage_);
         diagnosticsLayout->setContentsMargins(0, 0, 0, 0);
@@ -306,6 +316,7 @@ public:
         tabs_->addTab(diffPage_, QStringLiteral("State Diff"));
         tabs_->addTab(traceTimelinePage_, QStringLiteral("Trace Timeline"));
         tabs_->addTab(framePage_, QStringLiteral("Frame"));
+        tabs_->addTab(harnessPage_, QStringLiteral("Harness"));
         tabs_->addTab(diagnosticsPage_, QStringLiteral("Diagnostics"));
         tabs_->addTab(exportPage_, QStringLiteral("Export"));
 
@@ -390,10 +401,14 @@ public:
         if (!playbackSvc) {
             return QStringLiteral("ramPreview=<no service>");
         }
+        const int requestedFrames = playbackSvc->ramPreviewRequestedFrameCount();
+        const int readyFrames = playbackSvc->ramPreviewReadyFrameCountInRange();
         const int cachedFrames = playbackSvc->ramPreviewCachedFrameCount();
         const float hitRate = playbackSvc->ramPreviewHitRate() * 100.0f;
         const auto range = playbackSvc->ramPreviewRange();
-        return QStringLiteral("ramPreview=%1 frames hit=%2%% range=%3-%4")
+        return QStringLiteral("ramPreview ready=%1/%2 cached=%3 hit=%4%% range=%5-%6")
+                .arg(readyFrames)
+                .arg(requestedFrames)
                 .arg(cachedFrames)
                 .arg(QString::number(hitRate, 'f', 1))
                 .arg(range.start())
@@ -1299,6 +1314,10 @@ public:
                                           .arg(hint)
                                           .arg(failedPasses)
                                           .arg(mediaHealthText(controllerSnapshot)));
+        }
+
+        if (harnessWidget_) {
+            harnessWidget_->setFrameDebugSnapshot(controllerSnapshot);
         }
 
         if (pipelineView_) {

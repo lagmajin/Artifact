@@ -1,8 +1,13 @@
 module;
+#include <cmath>
 #include <algorithm>
 #include <QCoreApplication>
+#include <QDateTime>
+#include <QFile>
+#include <QFileDialog>
 #include <QFrame>
 #include <QLabel>
+#include <QHBoxLayout>
 #include <QListWidget>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -20,6 +25,9 @@ module;
 #include <QPoint>
 #include <QRect>
 #include <QVBoxLayout>
+#include <QStandardPaths>
+#include <QToolButton>
+#include <QTextStream>
 #include <QStringList>
 #include <memory>
 #include <wobjectimpl.h>
@@ -83,11 +91,16 @@ public:
 
     DebugRenderHarnessWidget* owner_ = nullptr;
     QLabel* summary_ = nullptr;
+    QLabel* reportMeta_ = nullptr;
+    QToolButton* copyReportButton_ = nullptr;
+    QToolButton* saveReportButton_ = nullptr;
     PresetListWidget* presetList_ = nullptr;
     QLabel* preview_ = nullptr;
     QPlainTextEdit* report_ = nullptr;
     ArtifactCore::FrameDebugSnapshot snapshot_;
     QString scenePreset_ = QStringLiteral("particle-only");
+    QString reportId_;
+    QDateTime reportCreatedAt_;
     mutable std::unique_ptr<ArtifactVideoLayer> videoFixtureLayer_;
     mutable QString videoFixturePath_;
     bool hasSnapshot_ = false;
@@ -105,6 +118,34 @@ public:
         summary_->setWordWrap(true);
         summary_->setMinimumHeight(48);
         layout->addWidget(summary_);
+
+        auto* reportBar = new QWidget(owner_);
+        auto* reportBarLayout = new QHBoxLayout(reportBar);
+        reportBarLayout->setContentsMargins(8, 4, 8, 4);
+        reportBarLayout->setSpacing(8);
+
+        reportMeta_ = new QLabel(reportBar);
+        reportMeta_->setTextFormat(Qt::PlainText);
+        reportMeta_->setWordWrap(false);
+        reportMeta_->setMinimumHeight(24);
+        reportBarLayout->addWidget(reportMeta_);
+        reportBarLayout->addStretch();
+
+        copyReportButton_ = new QToolButton(reportBar);
+        copyReportButton_->setText(QStringLiteral("Copy Report"));
+        copyReportButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        copyReportButton_->setToolTip(QStringLiteral("Copy the current smoke report to the clipboard"));
+        copyReportButton_->setFixedWidth(120);
+        reportBarLayout->addWidget(copyReportButton_);
+
+        saveReportButton_ = new QToolButton(reportBar);
+        saveReportButton_->setText(QStringLiteral("Save Report"));
+        saveReportButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        saveReportButton_->setToolTip(QStringLiteral("Save the current smoke report to a text file"));
+        saveReportButton_->setFixedWidth(120);
+        reportBarLayout->addWidget(saveReportButton_);
+
+        layout->addWidget(reportBar);
 
         auto* splitter = new QSplitter(Qt::Horizontal, owner_);
         presetList_ = new PresetListWidget(this, splitter);
@@ -143,7 +184,23 @@ public:
         rightSplitter->setStretchFactor(1, 3);
         layout->addWidget(splitter);
 
+        QObject::connect(copyReportButton_, &QToolButton::clicked, owner_, [this]() {
+            copyReportToClipboard();
+        });
+
+        QObject::connect(saveReportButton_, &QToolButton::clicked, owner_, [this]() {
+            saveReportToFile();
+        });
+
         refresh();
+    }
+
+    void updateReportIdentity()
+    {
+        const QString preset = scenePreset_.trimmed().isEmpty() ? QStringLiteral("particle-only") : scenePreset_.trimmed();
+        reportCreatedAt_ = QDateTime::currentDateTime();
+        reportId_ = QStringLiteral("%1-%2")
+                        .arg(preset, reportCreatedAt_.toString(QStringLiteral("yyyyMMddHHmmss")));
     }
 
     QSize previewSize() const
@@ -440,6 +497,7 @@ public:
     void setScenePreset(const QString& presetName)
     {
         const QString normalized = presetReportName(presetName);
+        const bool presetChanged = normalized != scenePreset_;
         scenePreset_ = normalized;
         if (presetList_) {
             const auto matches = presetList_->findItems(normalized, Qt::MatchExactly);
@@ -449,6 +507,9 @@ public:
                     presetList_->setCurrentRow(row);
                 }
             }
+        }
+        if (presetChanged || reportId_.isEmpty()) {
+            updateReportIdentity();
         }
         refresh();
     }
@@ -461,7 +522,12 @@ public:
         if (row < 0 || row >= presetList_->count()) {
             return;
         }
-        scenePreset_ = presetList_->item(row)->text();
+        const QString normalized = presetList_->item(row)->text();
+        const bool presetChanged = normalized != scenePreset_;
+        scenePreset_ = normalized;
+        if (presetChanged || reportId_.isEmpty()) {
+            updateReportIdentity();
+        }
         refresh();
     }
 
@@ -469,6 +535,9 @@ public:
     {
         snapshot_ = snapshot;
         hasSnapshot_ = true;
+        if (reportId_.isEmpty()) {
+            updateReportIdentity();
+        }
         refresh();
     }
 
@@ -480,10 +549,26 @@ public:
 
         QString fixtureNote;
         const QImage previewImage = renderPreviewImage(&fixtureNote);
+        if (reportId_.isEmpty()) {
+            updateReportIdentity();
+        }
+        const QString reportId = reportId_;
+        const QString statusText = previewImage.isNull()
+                                       ? QStringLiteral("pending")
+                                       : (hasSnapshot_ && snapshot_.failed ? QStringLiteral("failed")
+                                                                          : QStringLiteral("ok"));
+        const QString reportText = buildReportText(reportId, statusText, fixtureNote, previewImage);
         if (preview_) {
             const QImage canvas = composePreviewCanvas(previewImage, previewSize());
             preview_->setPixmap(QPixmap::fromImage(canvas));
             preview_->setText(previewImage.isNull() ? fixtureNote : QString());
+        }
+        if (reportMeta_) {
+            reportMeta_->setText(QStringLiteral("reportId=%1  status=%2  viewport=%3x%4")
+                                     .arg(reportId)
+                                     .arg(statusText)
+                                     .arg(previewSize().width())
+                                     .arg(previewSize().height()));
         }
 
         const QString particleState = hasSnapshot_
@@ -506,10 +591,36 @@ public:
                               .arg(videoState)
                               .arg(blendState));
 
+        report_->setPlainText(reportText);
+    }
+
+    QString reportText() const
+    {
+        return report_ ? report_->toPlainText() : QString();
+    }
+
+    QString buildReportText(const QString& reportId,
+                            const QString& statusText,
+                            const QString& fixtureNote,
+                            const QImage& previewImage) const
+    {
+        const QString preset = scenePreset_.trimmed().isEmpty() ? QStringLiteral("particle-only") : scenePreset_.trimmed();
+        const QString viewport = QStringLiteral("%1x%2").arg(previewSize().width()).arg(previewSize().height());
+        const QString createdAt = reportCreatedAt_.isValid()
+                                      ? reportCreatedAt_.toString(Qt::ISODateWithMs)
+                                      : QDateTime::currentDateTime().toString(Qt::ISODateWithMs);
+        const QString cacheHealth = hasSnapshot_ ? cacheHealthText() : QStringLiteral("cache=unknown");
+        const QString resourceNotes = hasSnapshot_ ? resourceNotesText() : QStringLiteral("resourceNotes=<no snapshot>");
+        const QString skippedReasons = hasSnapshot_ ? skippedReasonsText() : QStringLiteral("skippedReasons=<no snapshot>");
+        const QString shortReason = hasSnapshot_ && snapshot_.failed && !snapshot_.failureReason.isEmpty()
+                                        ? snapshot_.failureReason
+                                        : QStringLiteral("none");
+
         QStringList lines;
         lines << QStringLiteral("Debug Render Harness");
-        lines << QStringLiteral("preset: %1").arg(scenePreset_);
-        lines << QStringLiteral("fixture: %1").arg(fixtureNote.isEmpty() ? QStringLiteral("pending") : fixtureNote);
+        lines << QStringLiteral("reportId: %1").arg(reportId);
+        lines << QStringLiteral("createdAt: %1").arg(createdAt);
+        lines << QStringLiteral("preset: %1").arg(preset);
         lines << QStringLiteral("frame: %1").arg(hasSnapshot_ ? snapshot_.frame.framePosition() : -1);
         lines << QStringLiteral("composition: %1").arg(hasSnapshot_ && !snapshot_.compositionName.isEmpty()
                                                        ? snapshot_.compositionName
@@ -520,46 +631,178 @@ public:
         lines << QStringLiteral("renderBackend: %1").arg(hasSnapshot_ && !snapshot_.renderBackend.isEmpty()
                                                        ? snapshot_.renderBackend
                                                        : QStringLiteral("<none>"));
-        lines << QStringLiteral("viewport: <from scene>");
-        lines << QStringLiteral("status: %1")
-                     .arg(hasSnapshot_ && snapshot_.failed ? QStringLiteral("failed")
-                                                           : QStringLiteral("ok"));
-        if (hasSnapshot_ && snapshot_.failed && !snapshot_.failureReason.isEmpty()) {
-            lines << QStringLiteral("failureReason: %1").arg(snapshot_.failureReason);
-        }
 
         lines << QString();
-        lines << QStringLiteral("Media:");
-        lines << QStringLiteral("  particle=%1").arg(particleState);
-        lines << QStringLiteral("  video=%1").arg(videoState);
-        lines << QStringLiteral("  blend=%1").arg(blendState);
+        lines << QStringLiteral("Summary");
+        lines << QStringLiteral("status: %1").arg(statusText);
+        lines << QStringLiteral("shortReason: %1").arg(shortReason);
+        lines << QStringLiteral("viewport: %1").arg(viewport);
+        lines << QStringLiteral("rtvState: %1").arg(previewImage.isNull() ? QStringLiteral("missing")
+                                                                           : QStringLiteral("ready"));
+        lines << QStringLiteral("cacheHealth: %1").arg(cacheHealth);
 
         lines << QString();
-        lines << QStringLiteral("Scene Contract:");
-        lines << QStringLiteral("  - particle-only: one emitter over dark/light backgrounds");
-        lines << QStringLiteral("  - video-only: short MP4, frame 0 and mid-frame seek");
-        lines << QStringLiteral("  - blend-only: visible vs transparent output");
-        lines << QStringLiteral("  - overlay-only: grid / anchor / guidance visible without media");
-        lines << QStringLiteral("  - mixed-media: all paths present in one report");
-        lines << QStringLiteral("  - current fixture status: %1").arg(fixtureNote.isEmpty() ? QStringLiteral("pending") : fixtureNote);
+        lines << QStringLiteral("Media States");
+        lines << QStringLiteral("particle: %1").arg(hasSnapshot_ ? particleStateText() : QStringLiteral("none"));
+        lines << QStringLiteral("video: %1").arg(hasSnapshot_ ? videoStateText() : QStringLiteral("none"));
+        lines << QStringLiteral("blend: %1").arg(hasSnapshot_ ? blendStateText() : QStringLiteral("none"));
+        lines << QStringLiteral("viewportNotes: %1").arg(previewImage.isNull()
+                                                            ? QStringLiteral("preview missing or not yet rendered")
+                                                            : QStringLiteral("preview available"));
 
         lines << QString();
-        lines << QStringLiteral("Capture Notes:");
+        lines << QStringLiteral("Diagnostics");
         if (hasSnapshot_) {
-            lines << QStringLiteral("  traceFrames=%1").arg(static_cast<int>(snapshot_.passes.size()));
-            lines << QStringLiteral("  resources=%1").arg(static_cast<int>(snapshot_.resources.size()));
-            lines << QStringLiteral("  attachments=%1").arg(static_cast<int>(snapshot_.attachments.size()));
-            lines << QStringLiteral("  compareMode=%1").arg(ArtifactCore::toString(snapshot_.compareMode));
+            lines << QStringLiteral("traceFrames: %1").arg(static_cast<int>(snapshot_.passes.size()));
+            lines << QStringLiteral("resourceNotes: %1").arg(resourceNotes);
+            lines << QStringLiteral("skippedReasons: %1").arg(skippedReasons);
+            lines << QStringLiteral("compareMode: %1").arg(ArtifactCore::toString(snapshot_.compareMode));
+            if (!snapshot_.compareTargetId.isEmpty()) {
+                lines << QStringLiteral("compareTarget: %1").arg(snapshot_.compareTargetId);
+            }
+            lines << QStringLiteral("resources: %1").arg(static_cast<int>(snapshot_.resources.size()));
+            lines << QStringLiteral("attachments: %1").arg(static_cast<int>(snapshot_.attachments.size()));
         } else {
-            lines << QStringLiteral("  <no frame snapshot>");
+            lines << QStringLiteral("resourceNotes: <no snapshot>");
+            lines << QStringLiteral("skippedReasons: <no snapshot>");
         }
 
-        report_->setPlainText(lines.join(QStringLiteral("\n")));
+        lines << QString();
+        lines << QStringLiteral("Scene Contract");
+        lines << QStringLiteral("particle-only: one emitter over dark/light backgrounds");
+        lines << QStringLiteral("video-only: short MP4, frame 0 and mid-frame seek");
+        lines << QStringLiteral("blend-only: visible vs transparent output");
+        lines << QStringLiteral("overlay-only: grid / anchor / guidance visible without media");
+        lines << QStringLiteral("mixed-media: all paths present in one report");
+        lines << QStringLiteral("fixture: %1").arg(fixtureNote.isEmpty() ? QStringLiteral("pending") : fixtureNote);
+
+        lines << QString();
+        lines << QStringLiteral("Capture Notes");
+        if (hasSnapshot_) {
+            lines << QStringLiteral("timestampMs: %1").arg(snapshot_.timestampMs);
+            lines << QStringLiteral("playbackState: %1").arg(snapshot_.playbackState.isEmpty() ? QStringLiteral("<none>") : snapshot_.playbackState);
+            lines << QStringLiteral("renderLastFrameMs: %1").arg(QString::number(snapshot_.renderLastFrameMs, 'f', 1));
+            lines << QStringLiteral("renderAverageFrameMs: %1").arg(QString::number(snapshot_.renderAverageFrameMs, 'f', 1));
+            lines << QStringLiteral("renderGpuFrameMs: %1").arg(QString::number(snapshot_.renderGpuFrameMs, 'f', 1));
+            lines << QStringLiteral("renderCost: draw=%1 indexed=%2 pso=%3 srb=%4 buf=%5")
+                          .arg(static_cast<qulonglong>(snapshot_.renderCost.drawCalls))
+                          .arg(static_cast<qulonglong>(snapshot_.renderCost.indexedDrawCalls))
+                          .arg(static_cast<qulonglong>(snapshot_.renderCost.psoSwitches))
+                          .arg(static_cast<qulonglong>(snapshot_.renderCost.srbCommits))
+                          .arg(static_cast<qulonglong>(snapshot_.renderCost.bufferUpdates));
+            if (!snapshot_.failureReason.isEmpty()) {
+                lines << QStringLiteral("failureReason: %1").arg(snapshot_.failureReason);
+            }
+        } else {
+            lines << QStringLiteral("<no frame snapshot>");
+        }
+
+        return lines.join(QStringLiteral("\n"));
     }
 
-    QString reportText() const
+    QString particleStateText() const
     {
-        return report_ ? report_->toPlainText() : QString();
+        return mediaStateFromResource(snapshot_, QStringLiteral("particle"), QStringLiteral("Particle Draw"));
+    }
+
+    QString videoStateText() const
+    {
+        return mediaStateFromResource(snapshot_, QStringLiteral("video"), QStringLiteral("Video Decode"));
+    }
+
+    QString blendStateText() const
+    {
+        return mediaStateFromResource(snapshot_, QStringLiteral("composition"), QStringLiteral("Render Path"));
+    }
+
+    QString cacheHealthText() const
+    {
+        if (snapshot_.resources.empty()) {
+            return QStringLiteral("cache=unknown");
+        }
+        int hitCount = 0;
+        int staleCount = 0;
+        for (const auto& resource : snapshot_.resources) {
+            if (resource.cacheHit) {
+                ++hitCount;
+            }
+            if (resource.stale) {
+                ++staleCount;
+            }
+        }
+        const int total = static_cast<int>(snapshot_.resources.size());
+        const int hitPercent = total > 0 ? static_cast<int>(std::lround((hitCount * 100.0) / total)) : 0;
+        return QStringLiteral("cache=%1/%2 hit (%3%%) stale=%4")
+                .arg(hitCount)
+                .arg(total)
+                .arg(hitPercent)
+                .arg(staleCount);
+    }
+
+    QString resourceNotesText() const
+    {
+        QStringList notes;
+        for (const auto& resource : snapshot_.resources) {
+            const QString note = resource.note.trimmed();
+            if (!note.isEmpty()) {
+                notes << QStringLiteral("%1:%2").arg(resource.type.isEmpty() ? resource.label : resource.type, note);
+            }
+        }
+        return notes.isEmpty() ? QStringLiteral("none") : notes.join(QStringLiteral(" | "));
+    }
+
+    QString skippedReasonsText() const
+    {
+        QStringList reasons;
+        for (const auto& pass : snapshot_.passes) {
+            if (pass.status == ArtifactCore::FrameDebugPassStatus::Skipped && !pass.note.trimmed().isEmpty()) {
+                reasons << QStringLiteral("%1:%2").arg(pass.name, pass.note.trimmed());
+            }
+        }
+        for (const auto& resource : snapshot_.resources) {
+            if (resource.note.contains(QStringLiteral("skipped="))) {
+                reasons << QStringLiteral("%1:%2").arg(resource.label.isEmpty() ? resource.type : resource.label, resource.note.trimmed());
+            }
+        }
+        return reasons.isEmpty() ? QStringLiteral("none") : reasons.join(QStringLiteral(" | "));
+    }
+
+    void copyReportToClipboard() const
+    {
+        const QString text = reportText();
+        if (!text.isEmpty()) {
+            QGuiApplication::clipboard()->setText(text);
+        }
+    }
+
+    bool saveReportToFile() const
+    {
+        const QString text = reportText();
+        if (text.isEmpty()) {
+            return false;
+        }
+
+        const QString preset = scenePreset_.trimmed().isEmpty() ? QStringLiteral("particle-only") : scenePreset_.trimmed();
+        const QString defaultName = QStringLiteral("debug_render_%1_%2.txt")
+                                        .arg(preset,
+                                             QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_HHmmss")));
+        const QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+        const QString initialPath = QDir(defaultDir.isEmpty() ? QDir::currentPath() : defaultDir).filePath(defaultName);
+        const QString path = QFileDialog::getSaveFileName(
+            owner_, QStringLiteral("Save Debug Render Report"), initialPath,
+            QStringLiteral("Text Files (*.txt);;All Files (*.*)"));
+        if (path.trimmed().isEmpty()) {
+            return false;
+        }
+
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            return false;
+        }
+
+        QTextStream stream(&file);
+        stream << text;
+        return true;
     }
 };
 
@@ -598,7 +841,7 @@ void DebugRenderHarnessWidget::keyPressEvent(QKeyEvent* event)
 
     if (event->matches(QKeySequence::Copy)) {
         if (!impl_->reportText().isEmpty()) {
-            QGuiApplication::clipboard()->setText(impl_->reportText());
+            impl_->copyReportToClipboard();
             event->accept();
             return;
         }

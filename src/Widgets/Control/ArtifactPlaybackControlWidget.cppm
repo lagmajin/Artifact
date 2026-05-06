@@ -365,6 +365,8 @@ public:
     QToolButton* speedHalfButton_ = nullptr;
     QToolButton* speedOneButton_ = nullptr;
     QCheckBox* ramCacheCheckbox_ = nullptr;
+    QToolButton* previewWorkAreaButton_ = nullptr;
+    QToolButton* clearRamPreviewButton_ = nullptr;
     QComboBox* playbackRangeCombo_ = nullptr;
     QComboBox* playbackSkipCombo_ = nullptr;
     QSlider* scrubSlider_ = nullptr;
@@ -548,6 +550,24 @@ public:
             ramCacheCheckbox_->setPalette(pal);
         }
         optionsRow->addWidget(ramCacheCheckbox_);
+
+        previewWorkAreaButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/neutral/play_circle.svg"),
+            QStringLiteral("Material/play_circle.svg")
+        }, QStringLiteral("ワークエリアを RAM preview"), 0);
+        previewWorkAreaButton_->setText(QStringLiteral("Preview Work Area"));
+        previewWorkAreaButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        previewWorkAreaButton_->setFixedWidth(160);
+        optionsRow->addWidget(previewWorkAreaButton_);
+
+        clearRamPreviewButton_ = createToolButton(QStringList{
+            QStringLiteral("MaterialVS/neutral/delete_sweep.svg"),
+            QStringLiteral("Material/clear.svg")
+        }, QStringLiteral("RAM preview キャッシュをクリア"), 0);
+        clearRamPreviewButton_->setText(QStringLiteral("Clear Cache"));
+        clearRamPreviewButton_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+        clearRamPreviewButton_->setFixedWidth(124);
+        optionsRow->addWidget(clearRamPreviewButton_);
 
         optionsRow->addSpacing(16);
 
@@ -856,6 +876,23 @@ public:
             }
         });
 
+        QObject::connect(previewWorkAreaButton_, &QToolButton::clicked, owner_, [this]() {
+            if (auto* service = ArtifactPlaybackService::instance()) {
+                service->setRamPreviewEnabled(true);
+                if (auto composition = service->currentComposition()) {
+                    service->setRamPreviewRange(composition->workAreaRange());
+                } else {
+                    service->prewarmRamPreviewAroundCurrentFrame();
+                }
+            }
+        });
+
+        QObject::connect(clearRamPreviewButton_, &QToolButton::clicked, owner_, [this]() {
+            if (auto* service = ArtifactPlaybackService::instance()) {
+                service->clearRamPreviewCache();
+            }
+        });
+
         QObject::connect(playbackRangeCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged), owner_, [this](int index) {
             if (auto* service = ArtifactPlaybackService::instance()) {
                 PlaybackRangeMode mode = playbackRangeCombo_->itemData(index).value<PlaybackRangeMode>();
@@ -1079,6 +1116,12 @@ public:
             if (ramCacheCheckbox_) {
                 QSignalBlocker blocker(ramCacheCheckbox_);
                 ramCacheCheckbox_->setChecked(service->isRamPreviewEnabled());
+            }
+            if (previewWorkAreaButton_) {
+                previewWorkAreaButton_->setEnabled(service->currentComposition() != nullptr);
+            }
+            if (clearRamPreviewButton_) {
+                clearRamPreviewButton_->setEnabled(service->currentComposition() != nullptr);
             }
             if (playbackRangeCombo_) {
                 QSignalBlocker blocker(playbackRangeCombo_);

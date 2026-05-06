@@ -1848,6 +1848,10 @@ void ArtifactTimelineWidget::updateCacheVisuals()
 
   if (auto* svc = ArtifactPlaybackService::instance()) {
     impl_->scrubBar_->setCacheBitmap(svc->ramPreviewCacheBitmap());
+    impl_->scrubBar_->setCachedFrameRange(
+        static_cast<int>(svc->ramPreviewRange().start()),
+        static_cast<int>(svc->ramPreviewRange().end()),
+        svc->isRamPreviewEnabled());
   }
 }
 
@@ -2485,15 +2489,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   scrubBar->update();
 
   if (auto *playback = ArtifactPlaybackService::instance()) {
+    scrubBar->setCacheBitmap(playback->ramPreviewCacheBitmap());
     scrubBar->setCachedFrameRange(static_cast<int>(playback->ramPreviewRange().start()),
                                   static_cast<int>(playback->ramPreviewRange().end()),
                                   playback->isRamPreviewEnabled());
-    QObject::connect(playback, &ArtifactPlaybackService::ramPreviewStateChanged, this,
-                     [scrubBar](bool enabled, const FrameRange &range) {
-                       scrubBar->setCachedFrameRange(static_cast<int>(range.start()),
-                                                    static_cast<int>(range.end()),
-                                                    enabled);
-                     });
   } else {
     scrubBar->setCachedFrameRange(0, 0, false);
   }

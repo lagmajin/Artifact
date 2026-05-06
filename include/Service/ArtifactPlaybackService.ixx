@@ -146,6 +146,8 @@ public:
   void prewarmRamPreviewAroundCurrentFrame();
   float ramPreviewHitRate() const;
   int ramPreviewCachedFrameCount() const; // Updated to improve performance
+  int ramPreviewRequestedFrameCount() const;
+  int ramPreviewReadyFrameCountInRange() const;
   std::vector<bool> ramPreviewCacheBitmap() const;
 
   // Marker navigation

@@ -401,38 +401,50 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   p.drawRoundedRect(railRect, railHalfH, railHalfH);
 
   // ── キャッシュ描画 (Bitmap or Range) ──────────────────────
-  if (!impl_->cacheBitmap_.empty()) {
-   p.setPen(Qt::NoPen);
-   p.setBrush(cacheBaseColor);
-   
-   int startF = -1;
-   for (int f = 0; f < static_cast<int>(impl_->cacheBitmap_.size()); ++f) {
-    if (impl_->cacheBitmap_[f]) {
-     if (startF == -1) startF = f;
-    } else {
-     if (startF != -1) {
-      const int x1 = impl_->resolveFrameToX(startF, w);
-      const int x2 = impl_->resolveFrameToX(f, w);
-      p.drawRect(QRect(x1, railRect.top() + 2, std::max(1, x2 - x1), railRect.height() - 4));
-      startF = -1;
-     }
-    }
-   }
-   if (startF != -1) {
-    const int x1 = impl_->resolveFrameToX(startF, w);
-    const int x2 = impl_->resolveFrameToX(static_cast<int>(impl_->cacheBitmap_.size()), w);
-    p.drawRect(QRect(x1, railRect.top() + 2, std::max(1, x2 - x1), railRect.height() - 4));
-   }
-  } else if (impl_->cacheRangeVisible_) {
+  if (impl_->cacheRangeVisible_) {
    const int cacheStartX = impl_->resolveFrameToX(impl_->cacheRangeStart_, w);
    const int cacheEndX = impl_->resolveFrameToX(impl_->cacheRangeEnd_, w);
    const int cacheLeft = std::clamp(std::min(cacheStartX, cacheEndX), railRect.left(), railRect.right());
    const int cacheRight = std::clamp(std::max(cacheStartX, cacheEndX), railRect.left(), railRect.right());
    const QRect cacheRect(cacheLeft, railRect.top(), std::max(1, cacheRight - cacheLeft + 1), railRect.height());
    if (cacheRect.width() > 1) {
-    p.setPen(QPen(cacheBaseColor.lighter(124), 1));
-    p.setBrush(cacheBaseColor.darker(110));
-    p.drawRoundedRect(cacheRect.adjusted(0, 0, -1, 0), railHalfH, railHalfH);
+    QColor requestedColor = cacheBaseColor;
+    requestedColor.setAlpha(66);
+    p.setPen(Qt::NoPen);
+    p.setBrush(requestedColor);
+    p.drawRoundedRect(cacheRect.adjusted(0, 1, -1, -1), railHalfH, railHalfH);
+   }
+  }
+
+  bool hasAnyCachedFrame = false;
+  for (bool cached : impl_->cacheBitmap_) {
+   if (cached) {
+    hasAnyCachedFrame = true;
+    break;
+   }
+  }
+
+  if (hasAnyCachedFrame) {
+   p.setPen(Qt::NoPen);
+   QColor cachedColor = cacheBaseColor.lighter(112);
+   cachedColor.setAlpha(210);
+   p.setBrush(cachedColor);
+
+   int startF = -1;
+   for (int f = 0; f < static_cast<int>(impl_->cacheBitmap_.size()); ++f) {
+    if (impl_->cacheBitmap_[f]) {
+     if (startF == -1) startF = f;
+    } else if (startF != -1) {
+     const int x1 = impl_->resolveFrameToX(startF, w);
+     const int x2 = impl_->resolveFrameToX(f, w);
+     p.drawRect(QRect(x1, railRect.top() + 2, std::max(1, x2 - x1), railRect.height() - 4));
+     startF = -1;
+    }
+   }
+   if (startF != -1) {
+    const int x1 = impl_->resolveFrameToX(startF, w);
+    const int x2 = impl_->resolveFrameToX(static_cast<int>(impl_->cacheBitmap_.size()), w);
+    p.drawRect(QRect(x1, railRect.top() + 2, std::max(1, x2 - x1), railRect.height() - 4));
    }
   }
 

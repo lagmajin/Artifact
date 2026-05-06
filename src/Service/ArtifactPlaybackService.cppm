@@ -122,12 +122,12 @@ public:
           }
 
           syncCurrentCompositionFrame(position);
-          // FrameCache disabled
           const auto publishFrame = [this, position, compositionId]() {
             ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
                 FrameChangedEvent{QString(compositionId),
                                   position.framePosition()});
             Q_EMIT owner_->frameChanged(position);
+            emitRamPreviewStats();
           };
           QMetaObject::invokeMethod(owner_, publishFrame, Qt::QueuedConnection);
         },
@@ -297,7 +297,19 @@ public:
         Qt::QueuedConnection);
   }
 
-  void emitRamPreviewStats() { Q_EMIT owner_->ramPreviewStatsChanged(0.0f, 0); }
+  void emitRamPreviewStats() {
+    Q_EMIT owner_->ramPreviewStatsChanged(ramPreviewHitRate(),
+                                          ramPreviewCachedFrameCount());
+  }
+
+  void resetRamPreviewCache() {
+    if (currentComposition_) {
+      cacheBitmap_.assign(currentComposition_->frameRange().duration(), false);
+    } else {
+      cacheBitmap_.clear();
+    }
+    emitRamPreviewStats();
+  }
 
   FrameRange clampedRamPreviewRange(const FramePosition &center) const {
     const int64_t centerFrame = center.framePosition();
@@ -337,6 +349,31 @@ public:
 
   int ramPreviewCachedFrameCount() const {
     return static_cast<int>(std::count(cacheBitmap_.begin(), cacheBitmap_.end(), true));
+  }
+
+  int ramPreviewRequestedFrameCount() const {
+    return static_cast<int>(std::max<int64_t>(0, ramPreviewRange_.duration()));
+  }
+
+  int ramPreviewReadyFrameCountInRange() const {
+    if (cacheBitmap_.empty()) {
+      return 0;
+    }
+
+    const int64_t start = std::max<int64_t>(0, ramPreviewRange_.start());
+    const int64_t endExclusive = std::min<int64_t>(
+        static_cast<int64_t>(cacheBitmap_.size()), ramPreviewRange_.end());
+    if (endExclusive <= start) {
+      return 0;
+    }
+
+    int ready = 0;
+    for (int64_t frame = start; frame < endExclusive; ++frame) {
+      if (cacheBitmap_[static_cast<size_t>(frame)]) {
+        ++ready;
+      }
+    }
+    return ready;
   }
 
   std::vector<bool> ramPreviewCacheBitmap() const { return cacheBitmap_; }
@@ -657,9 +694,12 @@ void ArtifactPlaybackService::setCurrentComposition(
     // Clear and resize cache bitmap
     if (composition) {
         impl_->cacheBitmap_.assign(composition->frameRange().duration(), false);
+        impl_->ramPreviewRange_ = composition->frameRange();
     } else {
         impl_->cacheBitmap_.clear();
+        impl_->ramPreviewRange_ = FrameRange(FramePosition(0), FramePosition(0));
     }
+    impl_->emitRamPreviewStats();
 
     // エンジンにコンポジションの設定を反映
     if (impl_->engine_ && composition) {
@@ -839,7 +879,13 @@ FrameRange ArtifactPlaybackService::ramPreviewRange() const {
 }
 
 void ArtifactPlaybackService::clearRamPreviewCache() {
-  // FrameCache disabled
+  if (!impl_) {
+    return;
+  }
+
+  impl_->resetRamPreviewCache();
+  Q_EMIT ramPreviewStateChanged(impl_->ramPreviewEnabled_,
+                                impl_->ramPreviewRange_);
 }
 
 void ArtifactPlaybackService::prewarmRamPreviewAroundCurrentFrame() {
@@ -860,6 +906,14 @@ float ArtifactPlaybackService::ramPreviewHitRate() const {
 
 int ArtifactPlaybackService::ramPreviewCachedFrameCount() const {
   return impl_ ? impl_->ramPreviewCachedFrameCount() : 0;
+}
+
+int ArtifactPlaybackService::ramPreviewRequestedFrameCount() const {
+  return impl_ ? impl_->ramPreviewRequestedFrameCount() : 0;
+}
+
+int ArtifactPlaybackService::ramPreviewReadyFrameCountInRange() const {
+  return impl_ ? impl_->ramPreviewReadyFrameCountInRange() : 0;
 }
 
 double ArtifactPlaybackService::audioOffsetSeconds() const {
