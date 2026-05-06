@@ -20,11 +20,25 @@ import Image.ImageF32x4_RGBA;
 
 export namespace Artifact {
 
+enum class GPUTextureBindingMode {
+    LegacySRV,
+    BindlessCandidate
+};
+
 struct GPUTextureCacheHandle {
     quint64 id = 0;
     quint64 generation = 0;
 
     bool isValid() const { return id != 0; }
+};
+
+struct GPUTextureBindingRecord {
+    GPUTextureCacheHandle handle;
+    Diligent::ITexture* texture = nullptr;
+    Diligent::ITextureView* srv = nullptr;
+    GPUTextureBindingMode preferredMode = GPUTextureBindingMode::LegacySRV;
+
+    bool isValid() const { return handle.isValid() && texture != nullptr && srv != nullptr; }
 };
 
 struct GPUTextureCacheStats {
@@ -57,6 +71,7 @@ public:
                                           const ArtifactCore::ImageF32x4_RGBA& image);
 
     Diligent::ITextureView* textureView(const GPUTextureCacheHandle& handle) const;
+    GPUTextureBindingRecord bindingRecord(const GPUTextureCacheHandle& handle) const;
     bool isValid(const GPUTextureCacheHandle& handle) const;
     void invalidate(const GPUTextureCacheHandle& handle);
     void invalidateOwner(const QString& ownerId);
