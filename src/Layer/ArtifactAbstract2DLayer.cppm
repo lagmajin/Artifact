@@ -42,12 +42,62 @@ module Artifact.Layers.Abstract._2D;
 
 
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Animation.Transform2D;
 import ArtifactCore.Rig2D;
 import Utils.Id;
 
 
 namespace Artifact {
+
+namespace {
+
+ArtifactCore::RationalTime rigTimeForLayer(const ArtifactAbstractLayer* layer)
+{
+ if (!layer) {
+  return ArtifactCore::RationalTime(0, 30.0);
+ }
+ double fps = 30.0;
+ if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+  const double compFps = comp->frameRate().framerate();
+  if (compFps > 0.0) {
+   fps = compFps;
+  }
+ }
+ return ArtifactCore::RationalTime(layer->currentFrame(), fps);
+}
+
+void applyRigPropertyBindings(ArtifactAbstract2DLayer* layer)
+{
+ if (!layer) {
+  return;
+ }
+ auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition());
+ if (!comp) {
+  return;
+ }
+
+ auto& rig = layer->rig2D();
+ for (const auto& binding : rig.propertyBindings()) {
+  if (!binding || !binding->enabled()) {
+   continue;
+  }
+
+  auto control = rig.findControl(binding->controlId());
+  if (!control || !control->enabled()) {
+   continue;
+  }
+
+  auto targetLayer = comp->layerById(binding->targetLayerId());
+  if (!targetLayer) {
+   continue;
+  }
+
+  targetLayer->setLayerPropertyValue(binding->targetPropertyPath(), control->value());
+ }
+}
+
+} // namespace
 
 class ArtifactAbstract2DLayer::Impl {
  private:
@@ -78,6 +128,13 @@ class ArtifactAbstract2DLayer::Impl {
  ArtifactAbstract2DLayer::~ArtifactAbstract2DLayer()
  {
   delete impl_;
+ }
+
+ void ArtifactAbstract2DLayer::goToFrame(int64_t frameNumber)
+ {
+  ArtifactAbstractLayer::goToFrame(frameNumber);
+  impl_->rig2D().evaluate(rigTimeForLayer(this));
+  applyRigPropertyBindings(this);
  }
 
  ArtifactCore::Rig2D& ArtifactAbstract2DLayer::rig2D()

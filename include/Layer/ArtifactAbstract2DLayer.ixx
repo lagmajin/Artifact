@@ -59,6 +59,7 @@ export namespace Artifact
 
   ArtifactCore::Rig2D& rig2D();
   const ArtifactCore::Rig2D& rig2D() const;
+  void goToFrame(int64_t frameNumber = 0) override;
   ArtifactCore::Bone2D* addRigBone(const QString& name = QStringLiteral("Bone"),
                                    const QString& parentName = QString());
   ArtifactCore::Bone2D* addRigBone(const QString& name,
