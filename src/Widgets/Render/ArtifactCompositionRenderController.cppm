@@ -1503,12 +1503,13 @@ void drawLayerForCompositionView(
                         layer->id().toString(), cacheSignature, uploadSurface);
               }
             }
-            if (auto *srv = gpuTextureCacheManager->textureView(
-                    cacheEntry->gpuTextureHandle)) {
+            const auto binding = gpuTextureCacheManager->bindingRecord(
+                cacheEntry->gpuTextureHandle);
+            if (binding.isValid()) {
               renderer->drawSpriteTransformed(
                   static_cast<float>(rect.x()), static_cast<float>(rect.y()),
                   static_cast<float>(rect.width()),
-                  static_cast<float>(rect.height()), instanceTransform, srv,
+                  static_cast<float>(rect.height()), instanceTransform, binding.srv,
                   finalOpacity);
               return;
             }
