@@ -94,6 +94,10 @@ export namespace Artifact
       const ArtifactCore::Id& lowerBoneId,
       const ArtifactCore::Id& effectorBoneId,
       const ArtifactCore::Id& targetBoneId);
+  std::shared_ptr<ArtifactCore::RigPropertyBinding2D> addRigPropertyBinding(
+      const QString& name,
+      const ArtifactCore::Id& controlId,
+      const QString& targetPropertyPath);
   void clearRigBones();
   int rigBoneCount() const;
   QString rigRootBoneName() const;
