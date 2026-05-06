@@ -2247,6 +2247,7 @@ int main(int argc, char *argv[]) {
     mw->activateDock(QStringLiteral("Composition Viewer"));
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
     mw->activateDock(QStringLiteral("Layer View (Diligent)"));
+    mw->setStartupLayoutFrozen(false);
   });
 
   QObject::connect(&a, &QCoreApplication::aboutToQuit, [mw, &workspaceManager]() {

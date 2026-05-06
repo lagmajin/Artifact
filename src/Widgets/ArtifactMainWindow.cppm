@@ -362,7 +362,9 @@ public:
   QPointer<CDockWidget> immersiveTargetDock_;
   bool menuBarInitialized = false;
   bool initialLayoutApplied = false;
+  bool startupLayoutFrozen = true;
   ArtifactAICloudWidget *aiCloudWidget_ = nullptr;
+  QHash<CDockWidget *, std::function<QWidget *()>> lazyDockFactories;
   QMetaObject::Connection currentTextLayerChangedConnection;
   QMetaObject::Connection currentShapeLayerChangedConnection;
 
@@ -447,6 +449,7 @@ public:
 
 ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
     : QMainWindow(parent), impl_(new Impl()) {
+  setUpdatesEnabled(false);
   CDockManager::setConfigFlags(CDockManager::DefaultOpaqueConfig);
   // CDockManager::setConfigFlag(CDockManager::RetainTabSizeWhenCloseButtonHidden,
   // true);
@@ -892,9 +895,11 @@ void ArtifactMainWindow::addDockedWidgetTabbedWithId(
   }
 
   impl_->dockWidgets.push_back(dock);
-  dock->toggleView(true);
-  dock->setAsCurrentTab();
-  dock->raise();
+  if (!impl_->startupLayoutFrozen) {
+    dock->toggleView(true);
+    dock->setAsCurrentTab();
+    dock->raise();
+  }
   wireDockWidgetSignals(dock, this);
   impl_->dockStyleManager->applyStyle();
   applyWorkspaceMode(this, impl_->workspaceMode_);
@@ -911,6 +916,7 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
   auto *placeholder = new QWidget(dock);
   dock->setWidget(placeholder);
+  impl_->lazyDockFactories.insert(dock, std::move(factory));
 
   ads::CDockAreaWidget *targetArea = nullptr;
   if (!tabGroupPrefix.isEmpty()) {
@@ -959,22 +965,33 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
 
   QObject::connect(
       dock, &ads::CDockWidget::visibilityChanged, this,
-      [this, title, dock, placeholder, factory = std::move(factory)](bool visible) mutable {
-        if (!visible || dock->property("artifactLazyWidgetCreated").toBool() ||
+      [this, dock, placeholder](bool visible) mutable {
+        if (!visible || !impl_ ||
+            dock->property("artifactLazyWidgetCreated").toBool() ||
             dock->property("artifactLazyWidgetCreationPending").toBool()) {
           return;
         }
 
-        dock->setProperty("artifactLazyWidgetCreationPending", true);
-        QTimer::singleShot(0, dock, [this, title, dock, placeholder,
-                                    factory = std::move(factory)]() mutable {
-          if (!dock || dock->property("artifactLazyWidgetCreated").toBool()) {
+        if (impl_->startupLayoutFrozen) {
+          dock->setProperty("artifactLazyWidgetStartupPending", true);
+          return;
+        }
+
+        auto createNow = [this, dock, placeholder]() {
+          if (!impl_ || !dock ||
+              dock->property("artifactLazyWidgetCreated").toBool()) {
             if (dock) {
               dock->setProperty("artifactLazyWidgetCreationPending", false);
             }
             return;
           }
 
+          if (!impl_->lazyDockFactories.contains(dock)) {
+            dock->setProperty("artifactLazyWidgetCreationPending", false);
+            return;
+          }
+
+          auto factory = impl_->lazyDockFactories.take(dock);
           QWidget *widget = factory ? factory() : nullptr;
           if (!widget) {
             dock->setProperty("artifactLazyWidgetCreationPending", false);
@@ -983,15 +1000,19 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
 
           dock->setProperty("artifactLazyWidgetCreated", true);
           dock->setProperty("artifactLazyWidgetCreationPending", false);
+          dock->setProperty("artifactLazyWidgetStartupPending", false);
           dock->setWidget(widget);
-          if (title == QStringLiteral("AI Cloud")) {
+          if (dock->windowTitle() == QStringLiteral("AI Cloud")) {
             impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
           }
           if (placeholder) {
             placeholder->deleteLater();
           }
           refreshDockWidgetSurface(dock);
-        });
+        };
+
+        dock->setProperty("artifactLazyWidgetCreationPending", true);
+        QTimer::singleShot(0, dock, createNow);
       });
 
   impl_->dockStyleManager->applyStyle();
@@ -1013,7 +1034,9 @@ void ArtifactMainWindow::addDockedWidgetFloating(
   }
 
   impl_->dockWidgets.push_back(dock);
-  dock->toggleView(true);
+  if (!impl_->startupLayoutFrozen) {
+    dock->toggleView(true);
+  }
   wireDockWidgetSignals(dock, this);
   impl_->dockStyleManager->applyStyle();
 }
@@ -1029,25 +1052,38 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
   auto *placeholder = new QWidget(dock);
   dock->setWidget(placeholder);
+  impl_->lazyDockFactories.insert(dock, std::move(factory));
 
   QObject::connect(
       dock, &ads::CDockWidget::visibilityChanged, this,
-      [this, title, dock, placeholder, factory = std::move(factory)](bool visible) mutable {
-        if (!visible || dock->property("artifactLazyWidgetCreated").toBool() ||
+      [this, dock, placeholder](bool visible) mutable {
+        if (!visible || !impl_ ||
+            dock->property("artifactLazyWidgetCreated").toBool() ||
             dock->property("artifactLazyWidgetCreationPending").toBool()) {
           return;
         }
 
+        if (impl_->startupLayoutFrozen) {
+          dock->setProperty("artifactLazyWidgetStartupPending", true);
+          return;
+        }
+
         dock->setProperty("artifactLazyWidgetCreationPending", true);
-        QTimer::singleShot(0, dock, [this, title, dock, placeholder,
-                                    factory = std::move(factory)]() mutable {
-          if (!dock || dock->property("artifactLazyWidgetCreated").toBool()) {
+        QTimer::singleShot(0, dock, [this, dock, placeholder]() mutable {
+          if (!impl_ || !dock ||
+              dock->property("artifactLazyWidgetCreated").toBool()) {
             if (dock) {
               dock->setProperty("artifactLazyWidgetCreationPending", false);
             }
             return;
           }
 
+          if (!impl_->lazyDockFactories.contains(dock)) {
+            dock->setProperty("artifactLazyWidgetCreationPending", false);
+            return;
+          }
+
+          auto factory = impl_->lazyDockFactories.take(dock);
           QWidget *widget = factory ? factory() : nullptr;
           if (!widget) {
             dock->setProperty("artifactLazyWidgetCreationPending", false);
@@ -1056,8 +1092,9 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
 
           dock->setProperty("artifactLazyWidgetCreated", true);
           dock->setProperty("artifactLazyWidgetCreationPending", false);
+          dock->setProperty("artifactLazyWidgetStartupPending", false);
           dock->setWidget(widget);
-          if (title == QStringLiteral("AI Cloud")) {
+          if (dock->windowTitle() == QStringLiteral("AI Cloud")) {
             impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
           }
           if (placeholder) {
@@ -1422,6 +1459,87 @@ void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
   }
 }
 
+void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
+  if (!impl_ || impl_->startupLayoutFrozen == frozen) {
+    return;
+  }
+
+  impl_->startupLayoutFrozen = frozen;
+  setUpdatesEnabled(!frozen);
+
+  if (frozen) {
+    return;
+  }
+
+  for (auto *dock : impl_->dockWidgets) {
+    if (!dock) {
+      continue;
+    }
+    if (!dock->property("artifactLazyWidgetCreated").toBool() &&
+        (dock->isVisible() ||
+         dock->property("artifactLazyWidgetStartupPending").toBool())) {
+      dock->setProperty("artifactLazyWidgetCreationPending", true);
+      if (!impl_->lazyDockFactories.contains(dock)) {
+        dock->setProperty("artifactLazyWidgetCreationPending", false);
+        continue;
+      }
+      auto factory = impl_->lazyDockFactories.take(dock);
+      QWidget *widget = factory ? factory() : nullptr;
+      if (!widget) {
+        dock->setProperty("artifactLazyWidgetCreationPending", false);
+        continue;
+      }
+      QWidget *placeholder = dock->widget();
+      dock->setProperty("artifactLazyWidgetCreated", true);
+      dock->setProperty("artifactLazyWidgetCreationPending", false);
+      dock->setProperty("artifactLazyWidgetStartupPending", false);
+      dock->setWidget(widget);
+      if (dock->windowTitle() == QStringLiteral("AI Cloud")) {
+        impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
+      }
+      if (placeholder) {
+        placeholder->deleteLater();
+      }
+      refreshDockWidgetSurface(dock);
+    }
+  }
+
+  QTimer::singleShot(0, this, [this]() {
+    if (!impl_ || !impl_->dockManager) {
+      return;
+    }
+    applyDarkNativeTitleBar(this);
+    refreshFloatingWidgetTree(this);
+    for (auto *dock : impl_->dockWidgets) {
+      wireDockWidgetSignals(dock, this);
+      refreshDockWidgetSurface(dock);
+    }
+    const auto floatingWidgets = impl_->dockManager->floatingWidgets();
+    for (auto *floatingWidget : floatingWidgets) {
+      prepareFloatingDockContainer(floatingWidget, this);
+    }
+    if (!impl_->initialLayoutApplied) {
+      impl_->initialLayoutApplied = true;
+      for (auto *dock : impl_->dockWidgets) {
+        if (!dock)
+          continue;
+        if (dock->windowTitle() == QStringLiteral("Project") ||
+            dock->objectName() == QStringLiteral("Project")) {
+          if (auto *area = dock->dockAreaWidget()) {
+            const int totalW = this->width();
+            const int sideW = qBound(240, totalW / 7, 360);
+            const int centerW = qMax(400, totalW - 2 * sideW);
+            impl_->dockManager->setSplitterSizes(area,
+                                                 {sideW, centerW, sideW});
+          }
+          break;
+        }
+      }
+    }
+    update();
+  });
+}
+
 void ArtifactMainWindow::keyPressEvent(QKeyEvent *event) {
   QMainWindow::keyPressEvent(event);
 }
@@ -1442,6 +1560,9 @@ void ArtifactMainWindow::closeEvent(QCloseEvent *event) {
 
 void ArtifactMainWindow::showEvent(QShowEvent *event) {
   QMainWindow::showEvent(event);
+  if (impl_ && impl_->startupLayoutFrozen) {
+    return;
+  }
   QTimer::singleShot(0, this, [this]() {
     if (!impl_ || !impl_->dockManager) {
       return;
