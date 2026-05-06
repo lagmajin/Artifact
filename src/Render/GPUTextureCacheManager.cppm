@@ -254,6 +254,21 @@ Diligent::ITextureView* GPUTextureCacheManager::textureView(const GPUTextureCach
     return it->srv.RawPtr();
 }
 
+GPUTextureBindingRecord GPUTextureCacheManager::bindingRecord(const GPUTextureCacheHandle& handle) const
+{
+    QMutexLocker locker(&mutex_);
+    GPUTextureBindingRecord record;
+    record.handle = handle;
+    auto it = entries_.find(handle.id);
+    if (it == entries_.end() || it->generation != handle.generation || !it->texture || !it->srv) {
+        return record;
+    }
+    record.texture = it->texture.RawPtr();
+    record.srv = it->srv.RawPtr();
+    record.preferredMode = GPUTextureBindingMode::LegacySRV;
+    return record;
+}
+
 bool GPUTextureCacheManager::isValid(const GPUTextureCacheHandle& handle) const
 {
     QMutexLocker locker(&mutex_);
