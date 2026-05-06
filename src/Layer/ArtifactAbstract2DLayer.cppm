@@ -179,6 +179,16 @@ class ArtifactAbstract2DLayer::Impl {
   return std::static_pointer_cast<ArtifactCore::TwoBoneIKConstraint2D>(impl_->rig2D().addConstraint(constraint));
  }
 
+ std::shared_ptr<ArtifactCore::RigPropertyBinding2D> ArtifactAbstract2DLayer::addRigPropertyBinding(
+     const QString& name,
+     const ArtifactCore::Id& controlId,
+     const QString& targetPropertyPath)
+ {
+  auto binding = std::make_shared<ArtifactCore::RigPropertyBinding2D>(
+      name, controlId, ArtifactCore::LayerID(id()), targetPropertyPath);
+  return std::static_pointer_cast<ArtifactCore::RigPropertyBinding2D>(impl_->rig2D().addPropertyBinding(binding));
+ }
+
  void ArtifactAbstract2DLayer::clearRigBones()
  {
   impl_->rig2D().clearBones();
@@ -261,6 +271,11 @@ class ArtifactAbstract2DLayer::Impl {
                                 ArtifactCore::PropertyType::Integer,
                                 static_cast<qint64>(rig2D().constraintCount()),
                                 -52));
+
+  rigGroup.addProperty(makeProp(QStringLiteral("rig.bindingCount"),
+                                ArtifactCore::PropertyType::Integer,
+                                static_cast<qint64>(rig2D().propertyBindingCount()),
+                                -51));
 
   for (const auto* control : rig2D().controls()) {
    if (!control) {
