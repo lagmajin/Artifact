@@ -1720,8 +1720,6 @@ int main(int argc, char *argv[]) {
         [mw]() -> QWidget * { return new ArtifactAICloudWidget(mw); },
         QString());
     mw->setDockVisible(QStringLiteral("AI Cloud"), false);
-    renderCenterWindow = new ArtifactRenderCenterWindow();
-    renderCenterWindow->present();
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
     mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), false);

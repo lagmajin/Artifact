@@ -1784,11 +1784,6 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
   const QPointF centerLocal = localBounds.center();
   const QPointF anchorCanvas = globalTransform.map(anchorLocal);
   const QPointF centerCanvas = globalTransform.map(centerLocal);
-  const QPointF tl = globalTransform.map(localBounds.topLeft());
-  const QPointF tr = globalTransform.map(localBounds.topRight());
-  const QPointF br = globalTransform.map(localBounds.bottomRight());
-  const QPointF bl = globalTransform.map(localBounds.bottomLeft());
-
   const float zoom = std::max(0.001f, renderer->getZoom());
   const float invZoom = 1.0f / zoom;
   const float pointSize = std::max(7.0f, 11.0f / zoom);
@@ -1798,33 +1793,6 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
   const FloatColor anchorColor{1.0f, 0.72f, 0.20f, 0.99f};
   const FloatColor centerColor{0.22f, 0.86f, 1.0f, 0.99f};
   const FloatColor linkColor{0.94f, 0.95f, 0.99f, 0.82f};
-  const FloatColor boundsOuterColor{0.14f, 0.93f, 1.0f, 0.90f};
-  const FloatColor boundsInnerColor{0.02f, 0.08f, 0.10f, 0.65f};
-
-  renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                          {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                          boundsOuterColor, 1.8f);
-  renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                          {static_cast<float>(br.x()), static_cast<float>(br.y())},
-                          boundsOuterColor, 1.8f);
-  renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
-                          {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                          boundsOuterColor, 1.8f);
-  renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                          {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                          boundsOuterColor, 1.8f);
-  renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                          {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                          boundsInnerColor, 0.8f);
-  renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                          {static_cast<float>(br.x()), static_cast<float>(br.y())},
-                          boundsInnerColor, 0.8f);
-  renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
-                          {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                          boundsInnerColor, 0.8f);
-  renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                          {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                          boundsInnerColor, 0.8f);
 
   renderer->drawSolidLine({static_cast<float>(anchorCanvas.x()), static_cast<float>(anchorCanvas.y())},
                           {static_cast<float>(centerCanvas.x()), static_cast<float>(centerCanvas.y())},
@@ -2290,6 +2258,7 @@ public:
   QString lastVideoDebug_;
   QString lastEmittedVideoDebug_;
   QString lastRenderPathSummary_;
+  QString lastBlendMaskSummary_;
   qint64 lastSetupMs_ = 0;
   qint64 lastBasePassMs_ = 0;
   qint64 lastLayerPassMs_ = 0;
@@ -4191,6 +4160,34 @@ CompositionRenderController::frameDebugSnapshot() const {
     snapshot.resources.push_back(renderPathResource);
   }
 
+  if (!impl_->lastBlendMaskSummary_.isEmpty()) {
+    ArtifactCore::FrameDebugResourceRecord blendMaskResource;
+    blendMaskResource.label = QStringLiteral("Blend / Mask Contract");
+    blendMaskResource.type = QStringLiteral("blendMask");
+    blendMaskResource.relation = QStringLiteral("contract");
+    blendMaskResource.cacheHit =
+        impl_->lastBlendMaskSummary_.contains(QStringLiteral("failed=0")) &&
+        impl_->lastBlendMaskSummary_.contains(QStringLiteral("directFallback=0"));
+    blendMaskResource.stale =
+        impl_->lastBlendMaskSummary_.contains(QStringLiteral("maskContract=pending"));
+    blendMaskResource.texture.valid = true;
+    blendMaskResource.texture.name = QStringLiteral("accum/temp/layer");
+    blendMaskResource.texture.format =
+        QStringLiteral("accum=temp=RGBA32F layer=RGBA8_sRGB");
+    blendMaskResource.texture.width =
+        std::max(1, static_cast<int>(std::lround(impl_->lastCanvasWidth_)));
+    blendMaskResource.texture.height =
+        std::max(1, static_cast<int>(std::lround(impl_->lastCanvasHeight_)));
+    blendMaskResource.texture.mipLevel = 0;
+    blendMaskResource.texture.mipLevels = 1;
+    blendMaskResource.texture.sliceIndex = 0;
+    blendMaskResource.texture.arrayLayers = 1;
+    blendMaskResource.texture.sampleCount = 1;
+    blendMaskResource.texture.srgb = false;
+    blendMaskResource.note = impl_->lastBlendMaskSummary_;
+    snapshot.resources.push_back(blendMaskResource);
+  }
+
   if (!impl_->lastVideoDebug_.isEmpty()) {
     ArtifactCore::FrameDebugResourceRecord videoResource;
     videoResource.label = QStringLiteral("Video Decode");
@@ -4215,6 +4212,18 @@ CompositionRenderController::frameDebugSnapshot() const {
       particleResource.stale = particleDebug.contains(QStringLiteral("skipped="));
       particleResource.note = particleDebug;
       snapshot.resources.push_back(particleResource);
+    }
+
+    const QString glyphAtlasDebug = impl_->renderer_->glyphAtlasDebugState();
+    if (!glyphAtlasDebug.isEmpty() && glyphAtlasDebug != QStringLiteral("<none>")) {
+      ArtifactCore::FrameDebugResourceRecord glyphAtlasResource;
+      glyphAtlasResource.label = QStringLiteral("Glyph Atlas");
+      glyphAtlasResource.type = QStringLiteral("glyphAtlas");
+      glyphAtlasResource.relation = QStringLiteral("atlas");
+      glyphAtlasResource.cacheHit = !glyphAtlasDebug.contains(QStringLiteral("dirty=true"));
+      glyphAtlasResource.stale = glyphAtlasDebug.contains(QStringLiteral("dirty=true"));
+      glyphAtlasResource.note = glyphAtlasDebug;
+      snapshot.resources.push_back(glyphAtlasResource);
     }
   }
 
@@ -4293,6 +4302,8 @@ CompositionRenderController::frameDebugSnapshot() const {
 
     if (!snapshot.selectedLayerName.isEmpty() &&
         snapshot.selectedLayerName != QStringLiteral("<none>")) {
+      const auto selectedLayer = comp ? comp->layerById(selectedLayerId)
+                                      : ArtifactAbstractLayerPtr{};
       ArtifactCore::FrameDebugResourceRecord selectedResource;
       selectedResource.label = snapshot.selectedLayerName;
       selectedResource.type = QStringLiteral("layer");
@@ -4310,7 +4321,23 @@ CompositionRenderController::frameDebugSnapshot() const {
       selectedResource.texture.arrayLayers = 1;
       selectedResource.texture.sampleCount = 1;
       selectedResource.texture.srgb = false;
-      selectedResource.note = impl_->lastVideoDebug_;
+      if (selectedLayer) {
+        auto *layer = selectedLayer.get();
+        if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
+          selectedResource.type = QStringLiteral("video");
+          selectedResource.note = videoLayer->decodeState();
+        } else if (auto *particleLayer = dynamic_cast<ArtifactParticleLayer *>(layer)) {
+          selectedResource.type = QStringLiteral("particle");
+          selectedResource.note = particleLayer->debugState();
+        } else if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
+          selectedResource.type = QStringLiteral("text");
+          selectedResource.note = textLayer->debugState();
+        } else {
+          selectedResource.note = impl_->lastVideoDebug_;
+        }
+      } else {
+        selectedResource.note = impl_->lastVideoDebug_;
+      }
       snapshot.resources.push_back(selectedResource);
     }
 
@@ -5754,6 +5781,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     int drawnLayerCount = 0;
     int surfaceUploadLayerCount = 0;
     int cpuRasterLayerCount = 0;
+    int maskedLayerCount = 0;
+    int totalMaskCount = 0;
+    int nonNormalBlendLayerCount = 0;
+    int blendDispatchCount = 0;
+    int blendFailureCount = 0;
+    int blendRetryNormalCount = 0;
+    int directBlendFallbackCount = 0;
+    QStringList blendMaskLayerNotes;
     const float targetViewportW = hostWidth_;
     const float targetViewportH = hostHeight_;
     const float legacyDownsampleViewportW =
@@ -5785,7 +5820,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const bool hasSoloLayer = hasSoloLayerCache_;
     const QStringList selectedIds = selectedLayerIdList();
     const bool hasSelection = !selectedIds.isEmpty();
-    constexpr float kGhostOpacityScale = 0.22f;
 
     if (compositionViewLog().isDebugEnabled()) {
       const ArtifactAbstractLayerPtr overlaySelectedLayer =
@@ -5939,11 +5973,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
           const auto blendMode =
               ArtifactCore::toBlendMode(layer->layerBlendType());
-          const float opacity =
-              layer->opacity() *
-              ((hasSelection && !isLayerSelected(selectedIds, layer))
-                   ? kGhostOpacityScale
-                   : 1.0f);
+          const float opacity = layer->opacity();
           if (opacity <= 0.0f) {
             qCDebug(compositionViewLog)
                 << "[LayerSkip] opacity <= 0"
@@ -5953,6 +5983,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 << "rawOpacity=" << layer->opacity()
                 << "hasSelection=" << hasSelection;
             continue;
+          }
+          const int layerMaskCount = layer->maskCount();
+          if (layerMaskCount > 0) {
+            ++maskedLayerCount;
+            totalMaskCount += layerMaskCount;
+          }
+          if (blendMode != ArtifactCore::BlendMode::Normal) {
+            ++nonNormalBlendLayerCount;
           }
 
           // -- Adjustment Layer or Normal Layer? --
@@ -5991,11 +6029,45 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // CS 実行前に RTV を解除
           renderer_->unbindColorTargetsForCompute();
 
-          const bool blendOk = renderer_->blendLayers(
+          ++blendDispatchCount;
+          bool blendOk = renderer_->blendLayers(
               blendPipeline_.get(), layerSRV, accumSRV, tempUAV, blendMode,
               opacity);
+          if (!blendOk && blendMode != ArtifactCore::BlendMode::Normal) {
+            ++blendRetryNormalCount;
+            qWarning() << "[CompositionView] blend failed; retrying with Normal"
+                       << "layer=" << layer->id().toString()
+                       << "layerName=" << layer->layerName()
+                       << "mode=" << static_cast<int>(blendMode)
+                       << "opacity=" << opacity;
+            ++blendDispatchCount;
+            blendOk = renderer_->blendLayers(
+                blendPipeline_.get(), layerSRV, accumSRV, tempUAV,
+                ArtifactCore::BlendMode::Normal, opacity);
+          }
           if (!blendOk) {
+            ++blendFailureCount;
+            ++directBlendFallbackCount;
+            qWarning() << "[CompositionView] blend failed; falling back to direct sprite"
+                       << "layer=" << layer->id().toString()
+                       << "layerName=" << layer->layerName()
+                       << "mode=" << static_cast<int>(blendMode)
+                       << "opacity=" << opacity;
+            renderer_->setOverrideRTV(renderPipeline_.accumRTV());
+            renderer_->drawSprite(0.0f, 0.0f, cw, ch, layerSRV, opacity);
+            renderer_->flush();
+            renderer_->setOverrideRTV(nullptr);
             continue;
+          }
+          if (blendMaskLayerNotes.size() < 4 &&
+              (blendMode != ArtifactCore::BlendMode::Normal ||
+               layerMaskCount > 0)) {
+            blendMaskLayerNotes
+                << QStringLiteral("%1:blend=%2 opacity=%3 masks=%4")
+                       .arg(layer->layerName(),
+                            ArtifactCore::BlendModeUtils::toString(blendMode),
+                            QString::number(opacity, 'f', 3))
+                       .arg(layerMaskCount);
           }
           renderPipeline_.swapAccumAndTemp();
           accumSRV = renderPipeline_.accumSRV();
@@ -6209,13 +6281,29 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           if (layerNeedsFrameSyncForCompositionView(layer.get())) {
             layer->goToFrame(currentFrame.framePosition());
           }
-          const float opacity =
-              layer->opacity() *
-              ((hasSelection && !isLayerSelected(selectedIds, layer))
-                   ? kGhostOpacityScale
-                   : 1.0f);
+          const auto blendMode =
+              ArtifactCore::toBlendMode(layer->layerBlendType());
+          const float opacity = layer->opacity();
           if (opacity <= 0.0f) {
             continue;
+          }
+          const int layerMaskCount = layer->maskCount();
+          if (layerMaskCount > 0) {
+            ++maskedLayerCount;
+            totalMaskCount += layerMaskCount;
+          }
+          if (blendMode != ArtifactCore::BlendMode::Normal) {
+            ++nonNormalBlendLayerCount;
+          }
+          if (blendMaskLayerNotes.size() < 4 &&
+              (blendMode != ArtifactCore::BlendMode::Normal ||
+               layerMaskCount > 0)) {
+            blendMaskLayerNotes
+                << QStringLiteral("%1:blend=%2 opacity=%3 masks=%4")
+                       .arg(layer->layerName(),
+                            ArtifactCore::BlendModeUtils::toString(blendMode),
+                            QString::number(opacity, 'f', 3))
+                       .arg(layerMaskCount);
           }
           QString *dbgOut =
               QLoggingCategory::defaultCategory()->isDebugEnabled()
@@ -6310,7 +6398,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                : ArtifactAbstractLayerPtr{};
       if (selectedLayer && isLayerEffectivelyVisible(selectedLayer)) {
         gizmo_->setMode(gizmoMode_);
-        {
+        if (!selectedLayer->is3D()) {
           ArtifactCore::ProfileScope _profG2D(
               "Gizmo2D", ArtifactCore::ProfileCategory::Render);
           {
@@ -6323,6 +6411,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
             gizmo_->draw(renderer_.get());
           }
+        } else {
+          gizmo_->setLayer(nullptr);
         }
 
         if (gizmo3D_ && selectedLayer->is3D()) {
@@ -6921,13 +7011,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             activeCamera->id() == selectedLayerId_);
       }
       if (selectedLayer) {
-        drawSelectionOverlay(renderer_.get(), selectedLayer);
+        if (!showGizmoOverlay_) {
+          drawSelectionOverlay(renderer_.get(), selectedLayer);
+        }
         const bool selectedLayerIsActiveCamera =
             activeCamera && activeCamera->id() == selectedLayer->id();
         drawCameraSelectionOverlay(renderer_.get(), selectedLayer,
                                    selectedLayerIsActiveCamera);
       }
-      if (showAnchorCenterOverlay_ && selectedLayer) {
+      const bool anchorOverlayToolActive =
+          gizmoMode_ == TransformGizmo::Mode::AnchorPoint ||
+          (gizmo_ && gizmo_->isDragging() &&
+           gizmo_->activeHandle() == TransformGizmo::HandleType::Anchor);
+      if (showAnchorCenterOverlay_ && selectedLayer && anchorOverlayToolActive) {
         drawAnchorCenterOverlay(renderer_.get(), selectedLayer);
       }
       drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
@@ -6999,6 +7095,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(viewportInteracting_)
             .arg(textureCacheStats.entryCount)
             .arg(static_cast<qulonglong>(textureCacheStats.memoryBytes));
+    lastBlendMaskSummary_ =
+        QStringLiteral(
+            "phase=blend-mask-smoke-v1 path=%1 blendContract=straight-src_over-premul-accum "
+            "maskContract=%2 pipelineFormat=RGBA32F layerFormat=RGBA8_sRGB "
+            "layersDrawn=%3 nonNormal=%4 maskedLayers=%5 masks=%6 "
+            "dispatch=%7 retryNormal=%8 failed=%9 directFallback=%10 notes=%11")
+            .arg(pipelineEnabled ? QStringLiteral("gpu-blend")
+                                 : QStringLiteral("fallback"))
+            .arg(totalMaskCount > 0 ? QStringLiteral("pending")
+                                    : QStringLiteral("none"))
+            .arg(drawnLayerCount)
+            .arg(nonNormalBlendLayerCount)
+            .arg(maskedLayerCount)
+            .arg(totalMaskCount)
+            .arg(blendDispatchCount)
+            .arg(blendRetryNormalCount)
+            .arg(blendFailureCount)
+            .arg(directBlendFallbackCount)
+            .arg(blendMaskLayerNotes.isEmpty()
+                     ? QStringLiteral("none")
+                     : blendMaskLayerNotes.join(QStringLiteral("; ")));
     if (compositionViewLog().isDebugEnabled()) {
       if (frameMs >= 16) {
         qCDebug(compositionViewLog)

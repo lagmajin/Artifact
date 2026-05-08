@@ -2,6 +2,7 @@
 #include <QObject>
 #include <QImage>
 #include <QDebug>
+#include <QString>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QPainter>
@@ -256,6 +257,28 @@ QRectF ArtifactParticleLayer::localBounds() const
         return QRectF();
     }
     return QRectF(0.0, 0.0, static_cast<qreal>(width), static_cast<qreal>(height));
+}
+
+QString ArtifactParticleLayer::debugState() const
+{
+    if (!impl_ || !impl_->particleSystem) {
+        return QStringLiteral("<no particle system>");
+    }
+
+    const auto& rs = impl_->particleSystem->renderSettings();
+    const auto sourceData = impl_->particleSystem->captureRenderData();
+    const int emitterCount = impl_->particleSystem->emitterCount();
+    return QStringLiteral("playing=%1 emitters=%2 alive=%3 blend=%4 billboard=%5 sort=%6 depthTest=%7 depthWrite=%8 cachedFrame=%9 timeScale=%10")
+        .arg(impl_->playing ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(emitterCount)
+        .arg(sourceData.particles.size())
+        .arg(static_cast<int>(rs.blendMode))
+        .arg(static_cast<int>(rs.billboardMode))
+        .arg(static_cast<int>(rs.sortMode))
+        .arg(rs.depthTest ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(rs.depthWrite ? QStringLiteral("true") : QStringLiteral("false"))
+        .arg(impl_->cachedFrameNumber)
+        .arg(QString::number(impl_->particleSystem->timeScale(), 'f', 3));
 }
 
 QJsonObject ArtifactParticleLayer::toJson() const

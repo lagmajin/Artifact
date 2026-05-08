@@ -1289,4 +1289,12 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
     // This variant is useful for animated text and text animators
 }
 
+QString PrimitiveRenderer2D::glyphAtlasDebugState() const
+{
+    if (!impl_->pGlyphAtlas_) {
+        return QStringLiteral("<no atlas>");
+    }
+    return impl_->pGlyphAtlas_->debugState();
+}
+
 } // namespace Artifact

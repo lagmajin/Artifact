@@ -1662,6 +1662,14 @@ QString ArtifactIRenderer::particleDebugState() const {
              ? QStringLiteral("<none>")
              : impl_->lastParticleDebug_;
 }
+
+QString ArtifactIRenderer::glyphAtlasDebugState() const {
+  if (!impl_) {
+    return QStringLiteral("<no renderer>");
+  }
+  const QString state = impl_->primitiveRenderer_.glyphAtlasDebugState();
+  return state.isEmpty() ? QStringLiteral("<none>") : state;
+}
 void ArtifactIRenderer::drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
 { impl_->primitiveRenderer3D_.draw3DLine({start.x, start.y, start.z}, {end.x, end.y, end.z}, color, thickness); }
 void ArtifactIRenderer::drawGizmoArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size)

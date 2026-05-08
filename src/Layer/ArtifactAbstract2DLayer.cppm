@@ -45,6 +45,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Animation.Transform2D;
 import ArtifactCore.Rig2D;
+import Time.Rational;
 import Utils.Id;
 
 
@@ -55,13 +56,16 @@ namespace {
 ArtifactCore::RationalTime rigTimeForLayer(const ArtifactAbstractLayer* layer)
 {
  if (!layer) {
-  return ArtifactCore::RationalTime(0, 30.0);
+  return ArtifactCore::RationalTime(0, 30);
  }
- double fps = 30.0;
+ int64_t fps = 30;
  if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
   const double compFps = comp->frameRate().framerate();
   if (compFps > 0.0) {
-   fps = compFps;
+   fps = static_cast<int64_t>(std::llround(compFps));
+   if (fps <= 0) {
+    fps = 30;
+   }
   }
  }
  return ArtifactCore::RationalTime(layer->currentFrame(), fps);

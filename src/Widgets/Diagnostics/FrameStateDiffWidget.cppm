@@ -161,10 +161,14 @@ public:
                 const auto& now = snapshot.passes[static_cast<std::size_t>(i)];
                 const auto& prev = previous_.passes[static_cast<std::size_t>(i)];
                 if (now.name != prev.name || now.kind != prev.kind || now.status != prev.status || now.durationUs != prev.durationUs) {
-                    lines << QStringLiteral("  #%1 %2/%3 -> %4/%5 duration %6 -> %7")
+                    lines << QStringLiteral("  #%1 %2/%3/%4 -> %5/%6/%7 duration %8 -> %9")
                                   .arg(i)
-                                  .arg(prev.name, ArtifactCore::toString(prev.kind), ArtifactCore::toString(prev.status))
-                                  .arg(now.name, ArtifactCore::toString(now.kind), ArtifactCore::toString(now.status))
+                                  .arg(prev.name)
+                                  .arg(ArtifactCore::toString(prev.kind))
+                                  .arg(ArtifactCore::toString(prev.status))
+                                  .arg(now.name)
+                                  .arg(ArtifactCore::toString(now.kind))
+                                  .arg(ArtifactCore::toString(now.status))
                                   .arg(prev.durationUs)
                                   .arg(now.durationUs);
                 }
@@ -190,14 +194,15 @@ public:
                     now.cacheHit != prev.cacheHit || now.stale != prev.stale) {
                     lines << QStringLiteral("  #%1 %2 -> %3 hit %4 -> %5 stale %6 -> %7")
                                   .arg(i)
-                                  .arg(prev.label.isEmpty() ? QStringLiteral("<unnamed>") : prev.label,
-                                       now.label.isEmpty() ? QStringLiteral("<unnamed>") : now.label)
-                                  .arg(prev.relation.isEmpty() ? QStringLiteral("<none>") : prev.relation,
-                                       now.relation.isEmpty() ? QStringLiteral("<none>") : now.relation)
-                                  .arg(prev.cacheHit ? QStringLiteral("true") : QStringLiteral("false"),
-                                       now.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
-                                  .arg(prev.stale ? QStringLiteral("true") : QStringLiteral("false"),
-                                       now.stale ? QStringLiteral("true") : QStringLiteral("false"));
+                                  .arg(prev.label.isEmpty() ? QStringLiteral("<unnamed>") : prev.label)
+                                  .arg(now.label.isEmpty() ? QStringLiteral("<unnamed>") : now.label)
+                                  .arg(prev.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
+                                  .arg(now.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
+                                  .arg(prev.stale ? QStringLiteral("true") : QStringLiteral("false"))
+                                  .arg(now.stale ? QStringLiteral("true") : QStringLiteral("false"));
+                    lines << QStringLiteral("    relation: %1 -> %2")
+                                  .arg(prev.relation.isEmpty() ? QStringLiteral("<none>") : prev.relation)
+                                  .arg(now.relation.isEmpty() ? QStringLiteral("<none>") : now.relation);
                     if (now.texture.valid || prev.texture.valid) {
                         lines << QStringLiteral("    texture: %1x%2 -> %3x%4 mip %5/%6 -> %7/%8 array %9 -> %10")
                                       .arg(prev.texture.width)
@@ -245,12 +250,12 @@ public:
                     now.texture.valid != prev.texture.valid || now.buffer.valid != prev.buffer.valid) {
                     lines << QStringLiteral("  #%1 %2/%3 -> %4/%5 readOnly %6 -> %7")
                                   .arg(i)
-                                  .arg(prev.name.isEmpty() ? QStringLiteral("<unnamed>") : prev.name,
-                                       prev.role.isEmpty() ? QStringLiteral("<none>") : prev.role)
-                                  .arg(now.name.isEmpty() ? QStringLiteral("<unnamed>") : now.name,
-                                       now.role.isEmpty() ? QStringLiteral("<none>") : now.role)
-                                  .arg(prev.readOnly ? QStringLiteral("true") : QStringLiteral("false"),
-                                       now.readOnly ? QStringLiteral("true") : QStringLiteral("false"));
+                                  .arg(prev.name.isEmpty() ? QStringLiteral("<unnamed>") : prev.name)
+                                  .arg(prev.role.isEmpty() ? QStringLiteral("<none>") : prev.role)
+                                  .arg(now.name.isEmpty() ? QStringLiteral("<unnamed>") : now.name)
+                                  .arg(now.role.isEmpty() ? QStringLiteral("<none>") : now.role)
+                                  .arg(prev.readOnly ? QStringLiteral("true") : QStringLiteral("false"))
+                                  .arg(now.readOnly ? QStringLiteral("true") : QStringLiteral("false"));
                     if (now.texture.valid || prev.texture.valid) {
                         lines << QStringLiteral("    texture: %1x%2 -> %3x%4 mip %5/%6 -> %7/%8")
                                       .arg(prev.texture.width)

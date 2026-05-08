@@ -724,9 +724,9 @@ public:
                 const auto& pass = snapshot.passes[static_cast<std::size_t>(i)];
                 lines << QStringLiteral("  #%1 %2 [%3/%4] us=%5 in=%6 out=%7")
                               .arg(i)
-                              .arg(pass.name.isEmpty() ? QStringLiteral("<unnamed>") : pass.name,
-                                   ArtifactCore::toString(pass.kind),
-                                   ArtifactCore::toString(pass.status))
+                              .arg(pass.name.isEmpty() ? QStringLiteral("<unnamed>") : pass.name)
+                              .arg(ArtifactCore::toString(pass.kind))
+                              .arg(ArtifactCore::toString(pass.status))
                               .arg(pass.durationUs)
                               .arg(static_cast<int>(pass.inputs.size()))
                               .arg(static_cast<int>(pass.outputs.size()));
@@ -745,8 +745,8 @@ public:
                 const auto& resource = snapshot.resources[static_cast<std::size_t>(i)];
                 lines << QStringLiteral("  #%1 %2 [%3] rel=%4 hit=%5 stale=%6")
                               .arg(i)
-                              .arg(resource.label.isEmpty() ? QStringLiteral("<unnamed>") : resource.label,
-                                   resource.type.isEmpty() ? QStringLiteral("<type?>") : resource.type)
+                              .arg(resource.label.isEmpty() ? QStringLiteral("<unnamed>") : resource.label)
+                              .arg(resource.type.isEmpty() ? QStringLiteral("<type?>") : resource.type)
                               .arg(resource.relation.isEmpty() ? QStringLiteral("<none>") : resource.relation)
                               .arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
                               .arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"));
@@ -765,8 +765,8 @@ public:
                 const auto& attachment = snapshot.attachments[static_cast<std::size_t>(i)];
                 lines << QStringLiteral("  #%1 %2 [%3] readOnly=%4 tex=%5x%6")
                               .arg(i)
-                              .arg(attachment.name.isEmpty() ? QStringLiteral("<unnamed>") : attachment.name,
-                                   attachment.role.isEmpty() ? QStringLiteral("<none>") : attachment.role)
+                              .arg(attachment.name.isEmpty() ? QStringLiteral("<unnamed>") : attachment.name)
+                              .arg(attachment.role.isEmpty() ? QStringLiteral("<none>") : attachment.role)
                               .arg(attachment.readOnly ? QStringLiteral("true") : QStringLiteral("false"))
                               .arg(attachment.texture.width)
                               .arg(attachment.texture.height);
@@ -1250,9 +1250,9 @@ public:
             lines << QStringLiteral("passes: %1").arg(static_cast<int>(controllerSnapshot.passes.size()));
             for (const auto& pass : controllerSnapshot.passes) {
                 lines << QStringLiteral("  - %1 [%2/%3] inputs=%4 outputs=%5")
-                              .arg(pass.name,
-                                   ArtifactCore::toString(pass.kind),
-                                   ArtifactCore::toString(pass.status))
+                              .arg(pass.name)
+                              .arg(ArtifactCore::toString(pass.kind))
+                              .arg(ArtifactCore::toString(pass.status))
                               .arg(static_cast<int>(pass.inputs.size()))
                               .arg(static_cast<int>(pass.outputs.size()));
             }

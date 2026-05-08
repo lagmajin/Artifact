@@ -30,6 +30,7 @@ module;
 #include <regex>
 #include <random>
 #include <QImage>
+#include <QString>
 export module Artifact.Layer.Text;
 
 
@@ -137,6 +138,7 @@ public:
      QImage toQImage() const;
      const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
      bool hasCurrentFrameBuffer() const;
+     QString debugState() const;
 
      // Trigger update of internal image
      void updateImage();

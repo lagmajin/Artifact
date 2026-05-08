@@ -497,7 +497,9 @@ public:
                                                    .arg(resource.texture.sampleCount);
                 }
                 lines << QStringLiteral("  - %1 [%2] relation=%3 cacheHit=%4 stale=%5%6")
-                              .arg(resourceLabel, resourceType, relation)
+                              .arg(resourceLabel)
+                              .arg(resourceType)
+                              .arg(relation)
                               .arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
                               .arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"))
                               .arg(resourceView);

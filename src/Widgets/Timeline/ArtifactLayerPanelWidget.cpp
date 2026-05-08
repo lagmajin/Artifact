@@ -227,6 +227,125 @@ namespace {
     }
   }
 
+  constexpr int kVariantChipWidth = 72;
+  constexpr int kVariantChipHeight = 16;
+
+  QString variantNameForIndex(int index)
+  {
+    if (index < 0) {
+      return QStringLiteral("A");
+    }
+
+    QString name;
+    int value = index + 1;
+    while (value > 0) {
+      --value;
+      name.prepend(QChar(static_cast<ushort>('A' + (value % 26))));
+      value /= 26;
+    }
+    return name;
+  }
+
+  QString variantDisplayName(const ArtifactAbstractLayerPtr& layer, int index)
+  {
+    const auto variants = layer ? layer->getVariants() : std::vector<LayerVariant*>{};
+    if (index >= 0 && index < variants.size() && variants[index]) {
+      const QString name = QString::fromStdString(variants[index]->GetName()).trimmed();
+      if (!name.isEmpty()) {
+        return name;
+      }
+    }
+    return variantNameForIndex(index);
+  }
+
+  QString nextVariantName(const ArtifactAbstractLayerPtr& layer)
+  {
+    QSet<QString> used;
+    if (layer) {
+      const auto variants = layer->getVariants();
+      for (int i = 0; i < variants.size(); ++i) {
+        used.insert(variantDisplayName(layer, i));
+      }
+    }
+
+    for (int i = 0; i < 1024; ++i) {
+      const QString candidate = variantNameForIndex(i);
+      if (!used.contains(candidate)) {
+        return candidate;
+      }
+    }
+
+    return QStringLiteral("Variant %1").arg(used.size() + 1);
+  }
+
+  QString variantChipText(const ArtifactAbstractLayerPtr& layer)
+  {
+    if (!layer) {
+      return QStringLiteral("Variant");
+    }
+
+    const auto variants = layer->getVariants();
+    const int activeIdx = static_cast<int>(layer->getActiveVariantIndex());
+    if (activeIdx >= 0 && activeIdx < variants.size()) {
+      return variantDisplayName(layer, activeIdx);
+    }
+    return QStringLiteral("Variant");
+  }
+
+  QRect variantChipRect(const QRect& rowRect,
+                        const ArtifactAbstractLayerPtr& layer,
+                        const bool showInlineCombos,
+                        const int rowH)
+  {
+    if (!layer) {
+      return {};
+    }
+    constexpr int kInlineComboReserveProxy = 286;
+    const int chipX = rowRect.right() - (showInlineCombos ? kInlineComboReserveProxy : 0) -
+                      kVariantChipWidth - 6;
+    return QRect(chipX, rowRect.top() + (rowH - kVariantChipHeight) / 2,
+                 kVariantChipWidth, kVariantChipHeight);
+  }
+
+  void showVariantPickerMenu(QWidget* parent,
+                             const ArtifactAbstractLayerPtr& layer,
+                             const QPoint& globalPos)
+  {
+    if (!parent || !layer) {
+      return;
+    }
+
+    QMenu menu(parent);
+    const auto variants = layer->getVariants();
+    const int activeIdx = static_cast<int>(layer->getActiveVariantIndex());
+
+    for (int i = 0; i < variants.size(); ++i) {
+      const QString label = variantDisplayName(layer, i);
+      QAction* action = menu.addAction(label, [parent, layer, i]() {
+        auto* cmd = new ChangeActiveVariantCommand(layer,
+                                                   layer->getActiveVariantIndex(),
+                                                   static_cast<size_t>(i));
+        UndoManager::instance()->push(std::unique_ptr<ChangeActiveVariantCommand>(cmd));
+        parent->update();
+      });
+      action->setCheckable(true);
+      action->setChecked(i == activeIdx);
+    }
+
+    if (!variants.empty()) {
+      menu.addSeparator();
+    }
+
+    const QString newVariantName = nextVariantName(layer);
+    menu.addAction(QStringLiteral("New Variant (%1)").arg(newVariantName), [parent, layer, newVariantName]() {
+      auto* cmd = new CreateVariantCommand(layer, newVariantName.toStdString());
+      UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
+      parent->update();
+    });
+
+    menu.exec(globalPos);
+  }
+
   void applyLayerPanelButtonPalette(QPushButton* button, bool accent = false)
   {
     if (!button) {
@@ -1962,24 +2081,12 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
       
-      const auto variants = layer->getVariants();
-      int variantAreaW = variants.empty() ? 0 : (variants.size() * 22 + 20);
-      int vx = width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - 6;
-      if (!variants.empty() && clickX >= vx && clickX < vx + variantAreaW) {
-          int clickedIdx = (clickX - vx) / 22;
-          if (clickedIdx >= 0 && clickedIdx < variants.size()) {
-              auto* cmd = new ChangeActiveVariantCommand(layer, layer->getActiveVariantIndex(), clickedIdx);
-              UndoManager::instance()->push(std::unique_ptr<ChangeActiveVariantCommand>(cmd));
-              update();
-              event->accept();
-              return;
-          } else if (clickX >= vx + variants.size() * 22) {
-              auto* cmd = new CreateVariantCommand(layer, std::string(1, (char)('A' + layer->getVariants().size())));
-              UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
-              update();
-              event->accept();
-              return;
-          }
+      const QRect chipRect = variantChipRect(QRect(0, impl_->rowViewportY(idx), width(), rowH),
+                                             layer, showInlineCombos, rowH);
+      if (chipRect.contains(event->pos())) {
+          showVariantPickerMenu(this, layer, event->globalPos());
+          event->accept();
+          return;
       }
     }
     // 名前エリアまたはスイッチ列でドラッグを開始可能に
@@ -2127,36 +2234,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     };
 
-    // Variant Context Menu
     const int nameStartX = colW * kLayerPropertyColumnCount;
     const int nameX = nameStartX + row.depth * 14;
     const bool showInlineCombos = width() - (nameX + 8) >= (kInlineComboReserve + kLayerNameMinWidth);
     const auto variants = layer->getVariants();
-    int variantAreaW = variants.empty() ? 0 : (variants.size() * 22 + 20);
-    int vx = width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - 6;
-
-    if (!variants.empty() && clickX >= vx && clickX < vx + variantAreaW) {
-        QMenu menu(this);
-        menu.addAction("Create Variant B from A", [this, layer]() {
-            auto* cmd = new CreateVariantCommand(layer, "B");
-            UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
-            update();
-        });
-        menu.addAction("Create Variant C from current", [this, layer]() {
-            auto* cmd = new CreateVariantCommand(layer, std::string(1, (char)('A' + layer->getVariants().size())));
-            UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
-            update();
-        });
-        menu.addSeparator();
-        menu.addAction("Duplicate Layer", [triggerDuplicateLayer]() {
-          triggerDuplicateLayer();
-        });
-        menu.addAction("Delete Layer", [triggerDeleteLayer]() {
-          triggerDeleteLayer();
-        });
-        menu.exec(event->globalPos());
-        event->accept();
-        return;
+    const QRect chipRect = variantChipRect(QRect(0, impl_->rowViewportY(idx), width(), rowH),
+                                           layer, showInlineCombos, rowH);
+    if (chipRect.contains(event->pos())) {
+      showVariantPickerMenu(this, layer, event->globalPos());
+      event->accept();
+      return;
     }
 
     QMenu menu(this);
@@ -2187,15 +2274,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       menu.addSeparator();
     }
     if (!variants.empty()) {
-      menu.addAction("Create Variant B from A", [this, layer]() {
-        auto* cmd = new CreateVariantCommand(layer, "B");
-        UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
-        update();
-      });
-      menu.addAction("Create Variant C from current", [this, layer]() {
-        auto* cmd = new CreateVariantCommand(layer, std::string(1, (char)('A' + layer->getVariants().size())));
-        UndoManager::instance()->push(std::unique_ptr<CreateVariantCommand>(cmd));
-        update();
+      menu.addAction(QStringLiteral("Variant Picker..."), [this, layer]() {
+        showVariantPickerMenu(this, layer, QCursor::pos());
       });
       menu.addSeparator();
     }
@@ -2389,23 +2469,8 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
             impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, dragLayerId),
             0,
             static_cast<int>(remainingVisibleLayerIds.size()));
-          int newIndex = oldIndex;
-          if (targetVisibleIndex >= static_cast<int>(remainingVisibleLayerIds.size())) {
-            newIndex = static_cast<int>(allLayers.size()) - 1;
-          } else {
-            const LayerID targetLayerId = remainingVisibleLayerIds[targetVisibleIndex];
-            int targetIndex = -1;
-            for (int i = 0; i < allLayers.size(); ++i) {
-              if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
-                targetIndex = i;
-                break;
-              }
-            }
-            if (targetIndex >= 0) {
-              if (oldIndex < targetIndex) --targetIndex;
-              newIndex = targetIndex;
-            }
-          }
+          int newIndex = static_cast<int>(remainingVisibleLayerIds.size()) -
+                         targetVisibleIndex;
           newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
            if (newIndex != oldIndex) {
             auto layer = comp->layerById(dragLayerId);
@@ -2864,9 +2929,8 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      const bool isPrecompLayer = dynamic_cast<ArtifactCompositionLayer *>(l.get()) != nullptr;
      const bool isModel3DLayer = l->is3D() && !isPrecompLayer;
      const auto variants = l->getVariants();
-     const int activeIdx = static_cast<int>(l->getActiveVariantIndex());
-     const int variantAreaW = variants.empty() ? 0 : (variants.size() * 22 + 20);
-     const int textWidth = std::max(20, width() - textX - 8 - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW);
+     const int variantChipW = kVariantChipWidth;
+     const int textWidth = std::max(20, width() - textX - 8 - (showInlineCombos ? kInlineComboReserve : 0) - variantChipW);
      const QString layerName = l->layerName();
      const QString layerAux = row.auxiliaryText.trimmed();
      const int layerTextX = textX + 4 + ((isPrecompLayer || isModel3DLayer) ? 18 : 0);
@@ -2894,7 +2958,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       const QFontMetrics fm(p.font());
       const int badgeTextWidth = fm.horizontalAdvance(layerAux) + 16;
       const int badgeWidth = std::min(120, std::max(52, badgeTextWidth));
-      const int badgeX = std::max(layerTextX, width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - badgeWidth - 10);
+      const int badgeX = std::max(layerTextX, width() - (showInlineCombos ? kInlineComboReserve : 0) - variantChipW - badgeWidth - 10);
       const QRect badgeRect(badgeX, y + 5, badgeWidth, rowH - 10);
       const int nameWidth = std::max(20, badgeRect.left() - (layerTextX + 4));
       const QString elidedName = fm.elidedText(layerName, Qt::ElideRight, nameWidth);
@@ -2911,35 +2975,19 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.drawText(layerTextX, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, layerName);
      }
 
-     if (!variants.empty()) {
-       int vx = width() - (showInlineCombos ? kInlineComboReserve : 0) - variantAreaW - 6;
-       p.save();
-       p.setFont(QFont("Inter", 8, QFont::Bold));
-       for (size_t vIdx = 0; vIdx < variants.size(); ++vIdx) {
-           QRect vRect(vx, y + (rowH - 16)/2, 18, 16);
-           if (static_cast<int>(vIdx) == activeIdx) {
-               p.setBrush(accent);
-               p.setPen(Qt::NoPen);
-               p.drawRoundedRect(vRect, 3, 3);
-               p.setPen(background); // dark text
-           } else {
-               p.setBrush(surface);
-               p.setPen(border);
-               p.drawRoundedRect(vRect, 3, 3);
-               p.setPen(text.darker(150));
-           }
-           const auto n = variants[vIdx]->GetName();
-           p.drawText(vRect, Qt::AlignCenter, QString::fromStdString(n.empty() ? "V" : n.substr(0, 1)));
-           vx += 22;
-       }
-       QRect plusRect(vx, y + (rowH - 16)/2, 18, 16);
-       p.setBrush(surface);
-       p.setPen(border);
-       p.drawRoundedRect(plusRect, 3, 3);
-       p.setPen(text);
-       p.drawText(plusRect, Qt::AlignCenter, "+");
-       p.restore();
-     }
+     const QRect chipRect = variantChipRect(QRect(0, y, width(), rowH), l,
+                                            showInlineCombos, rowH);
+     const QString chipText = QStringLiteral("%1 ▾").arg(variantChipText(l));
+     p.save();
+     p.setFont(QFont("Inter", 8, QFont::Bold));
+     p.setBrush(surface);
+     p.setPen(layerSelected ? accent.darker(180) : border);
+     p.drawRoundedRect(chipRect, 4, 4);
+     p.setPen(text);
+     const QFontMetrics fm(p.font());
+     const QString elidedChip = fm.elidedText(chipText, Qt::ElideRight, chipRect.width() - 8);
+     p.drawText(chipRect.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, elidedChip);
+     p.restore();
     }
    }
 
@@ -3069,27 +3117,8 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
           0,
           static_cast<int>(remainingVisibleLayerIds.size()));
 
-        int newIndex = oldIndex;
-        if (targetVisibleIndex >= static_cast<int>(remainingVisibleLayerIds.size())) {
-          // 末尾に挿入
-          newIndex = static_cast<int>(allLayers.size()) - 1;
-        } else {
-          // remainingVisibleLayerIds からターゲットレイヤーを取得し、allLayers でのインデックスを求める
-          const LayerID targetLayerId = remainingVisibleLayerIds[targetVisibleIndex];
-          int targetIndex = -1;
-          for (int i = 0; i < allLayers.size(); ++i) {
-            if (allLayers[i] && allLayers[i]->id() == targetLayerId) {
-              targetIndex = i;
-              break;
-            }
-          }
-          if (targetIndex >= 0) {
-            if (oldIndex < targetIndex) {
-              --targetIndex;
-            }
-            newIndex = targetIndex;
-          }
-        }
+        int newIndex = static_cast<int>(remainingVisibleLayerIds.size()) -
+                       targetVisibleIndex;
 
         newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
          if (newIndex != oldIndex) {

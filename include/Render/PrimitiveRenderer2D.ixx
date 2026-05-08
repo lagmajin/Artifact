@@ -124,6 +124,7 @@ public:
                     const ArtifactCore::TextStyle& style,
                     const FloatColor& color,
                     float opacity = 1.0f);
+    QString glyphAtlasDebugState() const;
 
     // Returns the currently active render target view (override or swapchain back-buffer).
     // Used by direct-draw code paths (e.g. particle renderer) that bypass the command buffer.

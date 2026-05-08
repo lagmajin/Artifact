@@ -1660,12 +1660,62 @@ private:
 
 class TimelineRightPanelWidget final : public QWidget {
 public:
-  explicit TimelineRightPanelWidget(QWidget *parent = nullptr)
-      : QWidget(parent) {
+  TimelineRightPanelWidget(ArtifactTimelineNavigatorWidget *navigator,
+                          ArtifactTimelineScrubBar *scrubBar,
+                          WorkAreaControl *workArea,
+                          ArtifactTimelineTrackPainterView *painterTrackView,
+                          QWidget *curveHeader,
+                          ArtifactCurveEditorWidget *curveEditor,
+                          QWidget *parent = nullptr)
+      : QWidget(parent), navigator_(navigator), scrubBar_(scrubBar),
+        workArea_(workArea), painterTrackView_(painterTrackView) {
     setAutoFillBackground(false);
     setAttribute(Qt::WA_OpaquePaintEvent, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
+
+    auto *rightPanelLayout = new QVBoxLayout(this);
+    rightPanelLayout->setSpacing(0);
+    rightPanelLayout->setContentsMargins(0, 0, 0, 0);
+
+    timelinePainterPage_ = new QWidget(this);
+    auto *timelinePainterLayout = new QVBoxLayout(timelinePainterPage_);
+    timelinePainterLayout->setContentsMargins(0, 0, 0, 0);
+    timelinePainterLayout->setSpacing(0);
+    if (painterTrackView_) {
+      timelinePainterLayout->addWidget(painterTrackView_, 1);
+    }
+
+    curveEditorPage_ = new QWidget(this);
+    auto *curvePanelLayout = new QVBoxLayout(curveEditorPage_);
+    curvePanelLayout->setContentsMargins(0, 0, 0, 0);
+    curvePanelLayout->setSpacing(0);
+    if (curveHeader) {
+      curvePanelLayout->addWidget(curveHeader);
+    }
+    if (curveEditor) {
+      curvePanelLayout->addWidget(curveEditor, 1);
+    }
+
+    timelineModeStack_ = new QStackedWidget(this);
+    timelineModeStack_->addWidget(timelinePainterPage_);
+    timelineModeStack_->addWidget(curveEditorPage_);
+    timelineModeStack_->setCurrentWidget(timelinePainterPage_);
+
+    if (navigator_) {
+      rightPanelLayout->addWidget(navigator_);
+    }
+    if (scrubBar_) {
+      rightPanelLayout->addWidget(scrubBar_);
+    }
+    if (workArea_) {
+      rightPanelLayout->addWidget(workArea_);
+    }
+    rightPanelLayout->addWidget(timelineModeStack_, 1);
   }
+
+  QWidget *timelinePainterPage() const { return timelinePainterPage_; }
+  QWidget *curveEditorPage() const { return curveEditorPage_; }
+  QStackedWidget *timelineModeStack() const { return timelineModeStack_; }
 
 protected:
   void resizeEvent(QResizeEvent *event) override
@@ -1693,6 +1743,15 @@ protected:
     painter.fillRect(QRect(bounds.left(), bounds.top(), bounds.width(), 1),
                      accent);
   }
+
+private:
+  ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
+  ArtifactTimelineScrubBar *scrubBar_ = nullptr;
+  WorkAreaControl *workArea_ = nullptr;
+  ArtifactTimelineTrackPainterView *painterTrackView_ = nullptr;
+  QWidget *timelinePainterPage_ = nullptr;
+  QWidget *curveEditorPage_ = nullptr;
+  QStackedWidget *timelineModeStack_ = nullptr;
 };
 
 class TimelineStatusClickFilter final : public QObject {
@@ -2435,9 +2494,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto leftPanel = new QWidget();
   leftPanel->setLayout(leftLayout);
 
-  auto *rightPanelLayout = new QVBoxLayout();
-  rightPanelLayout->setSpacing(0);
-  rightPanelLayout->setContentsMargins(0, 0, 0, 0);
   auto timeNavigatorWidget = impl_->navigator_ =
       new ArtifactTimelineNavigatorWidget();
   auto workAreaWidget = impl_->workArea_ = new WorkAreaControl();
@@ -2876,29 +2932,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   // layerTimelinePanel->setMinimumWidth(220);
   // layerTimelinePanel->setMaximumWidth(320);
 
-  auto rightPanel = new TimelineRightPanelWidget();
-  rightPanelLayout->addWidget(timeNavigatorWidget);
-  rightPanelLayout->addWidget(scrubBar);
-  rightPanelLayout->addWidget(workAreaWidget);
-  impl_->timelinePainterPage_ = new QWidget();
-  auto *timelinePainterLayout = new QVBoxLayout(impl_->timelinePainterPage_);
-  timelinePainterLayout->setContentsMargins(0, 0, 0, 0);
-  timelinePainterLayout->setSpacing(0);
-  timelinePainterLayout->addWidget(painterTrackView, 1);
-
-  impl_->curveEditorPage_ = new QWidget();
-  auto *curvePanelLayout = new QVBoxLayout(impl_->curveEditorPage_);
-  curvePanelLayout->setContentsMargins(0, 0, 0, 0);
-  curvePanelLayout->setSpacing(0);
-  curvePanelLayout->addWidget(curveHeader);
-  curvePanelLayout->addWidget(curveEditor, 1);
-
-  impl_->timelineModeStack_ = new QStackedWidget();
-  impl_->timelineModeStack_->addWidget(impl_->timelinePainterPage_);
-  impl_->timelineModeStack_->addWidget(impl_->curveEditorPage_);
-  impl_->timelineModeStack_->setCurrentWidget(impl_->timelinePainterPage_);
-  rightPanelLayout->addWidget(impl_->timelineModeStack_, 1);
-  rightPanel->setLayout(rightPanelLayout);
+  auto rightPanel = new TimelineRightPanelWidget(
+      timeNavigatorWidget, scrubBar, workAreaWidget, painterTrackView,
+      curveHeader, curveEditor);
+  impl_->timelinePainterPage_ = rightPanel->timelinePainterPage();
+  impl_->curveEditorPage_ = rightPanel->curveEditorPage();
+  impl_->timelineModeStack_ = rightPanel->timelineModeStack();
 
   auto *headerSeekFilter =
       new HeaderSeekFilter(painterTrackView, scrubBar, rightPanel);

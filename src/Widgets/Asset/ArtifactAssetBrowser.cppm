@@ -1,4 +1,13 @@
 module;
+#ifdef _WIN32
+#include <windows.h>
+#include <wincodec.h>
+#include <shobjidl.h>
+#include <wrl/client.h>
+#pragma comment(lib, "windowscodecs.lib")
+#pragma comment(lib, "shell32.lib")
+#pragma comment(lib, "gdi32.lib")
+#endif
 #include <utility>
 #include <QFileSystemModel>
 #include <QDir>
@@ -50,6 +59,8 @@ module;
 #include <cstdint>
 #include <atomic>
 #include <algorithm>
+#include <cmath>
+#include <vector>
 #include <wobjectimpl.h>
 
 // Async waveform thumbnail
@@ -84,6 +95,300 @@ namespace {
 constexpr int kAssetThumbnailMinPx = 25;
 constexpr int kAssetThumbnailMaxPx = 256;
 constexpr int kAssetThumbnailDefaultPx = 96;
+
+#ifdef _WIN32
+using Microsoft::WRL::ComPtr;
+
+QImage loadImageThumbnailViaWIC(const QString& filePath,
+                                const QSize& targetSize = QSize(),
+                                QString* errorOut = nullptr)
+{
+  const std::wstring widePath = filePath.toStdWString();
+  const HRESULT initHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  const bool comReady = SUCCEEDED(initHr) || initHr == RPC_E_CHANGED_MODE;
+  const bool shouldUninitialize = SUCCEEDED(initHr);
+  if (!comReady) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("CoInitializeEx failed: 0x%1")
+                      .arg(static_cast<qulonglong>(initHr), 0, 16);
+    }
+    return {};
+  }
+
+  struct CoUninitializeScope {
+    bool enabled = false;
+    ~CoUninitializeScope() {
+      if (enabled) {
+        CoUninitialize();
+      }
+    }
+  } cleanup{shouldUninitialize};
+
+  ComPtr<IWICImagingFactory> factory;
+  HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory2, nullptr,
+                                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+  if (FAILED(hr)) {
+    hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr,
+                          CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+  }
+  if (FAILED(hr) || !factory) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("WIC factory creation failed: 0x%1")
+                      .arg(static_cast<qulonglong>(hr), 0, 16);
+    }
+    return {};
+  }
+
+  ComPtr<IWICBitmapDecoder> decoder;
+  hr = factory->CreateDecoderFromFilename(
+      widePath.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand,
+      &decoder);
+  if (FAILED(hr) || !decoder) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("WIC decoder open failed: 0x%1")
+                      .arg(static_cast<qulonglong>(hr), 0, 16);
+    }
+    return {};
+  }
+
+  ComPtr<IWICBitmapFrameDecode> frame;
+  hr = decoder->GetFrame(0, &frame);
+  if (FAILED(hr) || !frame) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("WIC GetFrame failed: 0x%1")
+                      .arg(static_cast<qulonglong>(hr), 0, 16);
+    }
+    return {};
+  }
+
+  UINT width = 0;
+  UINT height = 0;
+  hr = frame->GetSize(&width, &height);
+  if (FAILED(hr) || width == 0 || height == 0) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("WIC GetSize failed: 0x%1")
+                      .arg(static_cast<qulonglong>(hr), 0, 16);
+    }
+    return {};
+  }
+
+  UINT targetWidth = width;
+  UINT targetHeight = height;
+  if (targetSize.isValid() && !targetSize.isEmpty()) {
+    const double sx = static_cast<double>(targetSize.width()) /
+                      static_cast<double>(std::max<UINT>(1, width));
+    const double sy = static_cast<double>(targetSize.height()) /
+                      static_cast<double>(std::max<UINT>(1, height));
+    const double scale = std::min(sx, sy);
+    if (scale > 0.0) {
+      targetWidth = std::max<UINT>(1, static_cast<UINT>(std::lround(width * scale)));
+      targetHeight =
+          std::max<UINT>(1, static_cast<UINT>(std::lround(height * scale)));
+    }
+  }
+
+  ComPtr<IWICBitmapSource> bitmapSource = frame;
+  ComPtr<IWICBitmapScaler> scaler;
+  if (targetWidth != width || targetHeight != height) {
+    hr = factory->CreateBitmapScaler(&scaler);
+    if (FAILED(hr) || !scaler) {
+      if (errorOut) {
+        *errorOut = QStringLiteral("WIC scaler creation failed: 0x%1")
+                        .arg(static_cast<qulonglong>(hr), 0, 16);
+      }
+      return {};
+    }
+    hr = scaler->Initialize(frame.Get(), targetWidth, targetHeight,
+                            WICBitmapInterpolationModeFant);
+    if (FAILED(hr)) {
+      if (errorOut) {
+        *errorOut = QStringLiteral("WIC scaler init failed: 0x%1")
+                        .arg(static_cast<qulonglong>(hr), 0, 16);
+      }
+      return {};
+    }
+    bitmapSource = scaler;
+  }
+
+  ComPtr<IWICFormatConverter> converter;
+  hr = factory->CreateFormatConverter(&converter);
+  if (FAILED(hr) || !converter) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("WIC converter creation failed: 0x%1")
+                      .arg(static_cast<qulonglong>(hr), 0, 16);
+    }
+    return {};
+  }
+
+  hr = converter->Initialize(bitmapSource.Get(), GUID_WICPixelFormat32bppRGBA,
+                             WICBitmapDitherTypeNone, nullptr, 0.0,
+                             WICBitmapPaletteTypeCustom);
+  if (FAILED(hr)) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("WIC converter init failed: 0x%1")
+                      .arg(static_cast<qulonglong>(hr), 0, 16);
+    }
+    return {};
+  }
+
+  QImage image(static_cast<int>(targetWidth), static_cast<int>(targetHeight),
+               QImage::Format_RGBA8888);
+  if (image.isNull()) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("Failed to allocate WIC thumbnail image.");
+    }
+    return {};
+  }
+
+  const UINT stride = targetWidth * 4;
+  const UINT bytes = stride * targetHeight;
+  hr = converter->CopyPixels(nullptr, stride, bytes, image.bits());
+  if (FAILED(hr)) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("WIC CopyPixels failed: 0x%1")
+                      .arg(static_cast<qulonglong>(hr), 0, 16);
+    }
+    return {};
+  }
+
+  return image;
+}
+
+QImage imageFromShellBitmap(HBITMAP bitmap, QString* errorOut = nullptr)
+{
+  if (!bitmap) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("Shell thumbnail returned a null bitmap.");
+    }
+    return {};
+  }
+
+  BITMAP bitmapInfo{};
+  if (::GetObject(bitmap, sizeof(bitmapInfo), &bitmapInfo) == 0 ||
+      bitmapInfo.bmWidth <= 0 || bitmapInfo.bmHeight <= 0) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("GetObject failed for Shell thumbnail bitmap.");
+    }
+    return {};
+  }
+
+  QImage image(bitmapInfo.bmWidth, bitmapInfo.bmHeight,
+               QImage::Format_ARGB32);
+  if (image.isNull()) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("Failed to allocate Shell thumbnail image.");
+    }
+    return {};
+  }
+
+  BITMAPINFO dibInfo{};
+  dibInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+  dibInfo.bmiHeader.biWidth = bitmapInfo.bmWidth;
+  dibInfo.bmiHeader.biHeight = -bitmapInfo.bmHeight;
+  dibInfo.bmiHeader.biPlanes = 1;
+  dibInfo.bmiHeader.biBitCount = 32;
+  dibInfo.bmiHeader.biCompression = BI_RGB;
+
+  HDC dc = ::GetDC(nullptr);
+  const int rows = dc ? ::GetDIBits(dc, bitmap, 0,
+                                    static_cast<UINT>(bitmapInfo.bmHeight),
+                                    image.bits(), &dibInfo, DIB_RGB_COLORS)
+                      : 0;
+  if (dc) {
+    ::ReleaseDC(nullptr, dc);
+  }
+  if (rows == 0) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("GetDIBits failed for Shell thumbnail bitmap.");
+    }
+    return {};
+  }
+
+  bool hasAlpha = false;
+  for (int y = 0; y < image.height() && !hasAlpha; ++y) {
+    const auto *line = reinterpret_cast<const QRgb *>(image.constScanLine(y));
+    for (int x = 0; x < image.width(); ++x) {
+      if (qAlpha(line[x]) != 0) {
+        hasAlpha = true;
+        break;
+      }
+    }
+  }
+  if (!hasAlpha) {
+    for (int y = 0; y < image.height(); ++y) {
+      auto *line = reinterpret_cast<QRgb *>(image.scanLine(y));
+      for (int x = 0; x < image.width(); ++x) {
+        line[x] = qRgba(qRed(line[x]), qGreen(line[x]), qBlue(line[x]), 255);
+      }
+    }
+  }
+
+  return image;
+}
+
+QImage loadImageThumbnailViaWindowsShell(const QString& filePath,
+                                         const QSize& targetSize = QSize(),
+                                         QString* errorOut = nullptr)
+{
+  const std::wstring widePath = filePath.toStdWString();
+  const HRESULT initHr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  const bool comReady = SUCCEEDED(initHr) || initHr == RPC_E_CHANGED_MODE;
+  const bool shouldUninitialize = SUCCEEDED(initHr);
+  if (!comReady) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("CoInitializeEx failed for Shell thumbnail: 0x%1")
+                      .arg(static_cast<qulonglong>(initHr), 0, 16);
+    }
+    return {};
+  }
+
+  struct CoUninitializeScope {
+    bool enabled = false;
+    ~CoUninitializeScope() {
+      if (enabled) {
+        CoUninitialize();
+      }
+    }
+  } cleanup{shouldUninitialize};
+
+  ComPtr<IShellItemImageFactory> imageFactory;
+  HRESULT hr = SHCreateItemFromParsingName(
+      widePath.c_str(), nullptr, IID_PPV_ARGS(&imageFactory));
+  if (FAILED(hr) || !imageFactory) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("SHCreateItemFromParsingName failed: 0x%1")
+                      .arg(static_cast<qulonglong>(hr), 0, 16);
+    }
+    return {};
+  }
+
+  const int width = targetSize.width() > 0 ? targetSize.width() : 256;
+  const int height = targetSize.height() > 0 ? targetSize.height() : width;
+  const SIZE shellSize{width, height};
+  HBITMAP bitmap = nullptr;
+  hr = imageFactory->GetImage(shellSize, SIIGBF_BIGGERSIZEOK, &bitmap);
+  if (FAILED(hr) || !bitmap) {
+    hr = imageFactory->GetImage(shellSize, SIIGBF_RESIZETOFIT, &bitmap);
+  }
+  if (FAILED(hr) || !bitmap) {
+    if (errorOut) {
+      *errorOut = QStringLiteral("IShellItemImageFactory::GetImage failed: 0x%1")
+                      .arg(static_cast<qulonglong>(hr), 0, 16);
+    }
+    return {};
+  }
+
+  QImage image = imageFromShellBitmap(bitmap, errorOut);
+  ::DeleteObject(bitmap);
+  if (!image.isNull() && targetSize.isValid() &&
+      (image.width() > targetSize.width() ||
+       image.height() > targetSize.height())) {
+    image = image.scaled(targetSize, Qt::KeepAspectRatio,
+                         Qt::SmoothTransformation);
+  }
+  return image;
+}
+#endif
 
 QImage loadImageThumbnailViaOIIO(const QString& filePath, const QSize& targetSize = QSize(), QString* errorOut = nullptr)
 {
@@ -894,6 +1199,18 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
       if (!fallbackImage.isNull()) {
         return fallbackImage.scaled(thumbSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
       }
+#ifdef _WIN32
+      QString wicError;
+      image = loadImageThumbnailViaWIC(filePath, thumbSize, &wicError);
+      if (!image.isNull()) {
+        return image;
+      }
+      QString shellError;
+      image = loadImageThumbnailViaWindowsShell(filePath, thumbSize, &shellError);
+      if (!image.isNull()) {
+        return image;
+      }
+#endif
       return {};
     }
 

@@ -12,7 +12,7 @@ struct RenderConfig {
     static constexpr Diligent::TEXTURE_FORMAT MainRTVFormat = Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
     // Composite intermediates stay in float so GPU blending is not forced down to
     // 8-bit UNORM. Use a storage-image compatible linear format for Vulkan.
-    static constexpr Diligent::TEXTURE_FORMAT PipelineFormat = Diligent::TEX_FORMAT_RGBA16_FLOAT;
+    static constexpr Diligent::TEXTURE_FORMAT PipelineFormat = Diligent::TEX_FORMAT_RGBA32_FLOAT;
     static constexpr Diligent::TEXTURE_FORMAT LinearColorFormat = PipelineFormat;
 };
 

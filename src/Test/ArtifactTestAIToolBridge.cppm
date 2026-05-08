@@ -240,6 +240,48 @@ int runAIToolBridgeTests()
     const QJsonObject setQueueAudioBitrateTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setRenderQueueJobAudioBitrateKbpsAt"));
     report.check(!setQueueAudioBitrateTool.isEmpty(), QStringLiteral("workspace automation exposes render queue audio bitrate editing"));
 
+    const QJsonObject playbackSetInPointTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackSetInPoint"));
+    report.check(!playbackSetInPointTool.isEmpty(), QStringLiteral("workspace automation exposes playback in-point editing"));
+
+    const QJsonObject playbackSetOutPointTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackSetOutPoint"));
+    report.check(!playbackSetOutPointTool.isEmpty(), QStringLiteral("workspace automation exposes playback out-point editing"));
+
+    const QJsonObject playbackNextMarkerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackGoToNextMarker"));
+    report.check(!playbackNextMarkerTool.isEmpty(), QStringLiteral("workspace automation exposes marker navigation"));
+
+    const QJsonObject playbackPrevMarkerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackGoToPreviousMarker"));
+    report.check(!playbackPrevMarkerTool.isEmpty(), QStringLiteral("workspace automation exposes previous marker navigation"));
+
+    const QJsonObject playbackAddMarkerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackAddMarker"));
+    report.check(!playbackAddMarkerTool.isEmpty(), QStringLiteral("workspace automation exposes marker creation"));
+
+    const QJsonObject playbackClearMarkersTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackClearAllMarkers"));
+    report.check(!playbackClearMarkersTool.isEmpty(), QStringLiteral("workspace automation exposes marker clearing"));
+
+    const QJsonObject playbackClearPointsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackClearAllPoints"));
+    report.check(!playbackClearPointsTool.isEmpty(), QStringLiteral("workspace automation exposes point clearing"));
+
+    const QJsonObject playbackNextChapterTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackGoToNextChapter"));
+    report.check(!playbackNextChapterTool.isEmpty(), QStringLiteral("workspace automation exposes next chapter navigation"));
+
+    const QJsonObject playbackPrevChapterTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackGoToPreviousChapter"));
+    report.check(!playbackPrevChapterTool.isEmpty(), QStringLiteral("workspace automation exposes previous chapter navigation"));
+
+    const QJsonObject playbackAddChapterTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("playbackAddChapter"));
+    report.check(!playbackAddChapterTool.isEmpty(), QStringLiteral("workspace automation exposes chapter creation"));
+
+    const QJsonObject exportCompositionTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("exportComposition"));
+    report.check(!exportCompositionTool.isEmpty(), QStringLiteral("workspace automation exposes composition export"));
+
+    const QJsonObject exportCurrentCompositionTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("exportCurrentComposition"));
+    report.check(!exportCurrentCompositionTool.isEmpty(), QStringLiteral("workspace automation exposes current composition export"));
+
+    const QJsonObject supportedExportFormatsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getSupportedExportFormats"));
+    report.check(!supportedExportFormatsTool.isEmpty(), QStringLiteral("workspace automation exposes supported export formats"));
+
+    const QJsonObject defaultCodecTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getDefaultCodecForFormat"));
+    report.check(!defaultCodecTool.isEmpty(), QStringLiteral("workspace automation exposes default export codec lookup"));
+
     const QJsonObject resetQueueJobTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("resetRenderQueueJobForRerun"));
     report.check(!resetQueueJobTool.isEmpty(), QStringLiteral("workspace automation exposes render queue rerun reset"));
 
@@ -428,6 +470,36 @@ int runAIToolBridgeTests()
                                                      {0});
     report.check(queueErrorVariant.typeId() == QMetaType::QString,
                  QStringLiteral("render queue job error lookup returns text"));
+
+    const QVariant supportedExportFormatsVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("getSupportedExportFormats"),
+                                                     {});
+    report.check(supportedExportFormatsVariant.typeId() == QMetaType::QStringList,
+                 QStringLiteral("supported export formats lookup returns a string list"));
+
+    const QVariant defaultExportCodecVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("getDefaultCodecForFormat"),
+                                                     {QStringLiteral("mp4")});
+    report.check(defaultExportCodecVariant.typeId() == QMetaType::QString,
+                 QStringLiteral("default export codec lookup returns text"));
+
+    const QVariant playbackClearPointsResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("playbackClearAllPoints"),
+                                                     {});
+    report.check(playbackClearPointsResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("playback point clearing returns a boolean"));
+
+    const QVariant playbackNextChapterResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("playbackGoToNextChapter"),
+                                                     {});
+    report.check(playbackNextChapterResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("chapter navigation returns a boolean"));
+
+    const QVariant playbackPrevChapterResult =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("playbackGoToPreviousChapter"),
+                                                     {});
+    report.check(playbackPrevChapterResult.typeId() == QMetaType::Bool,
+                 QStringLiteral("previous chapter navigation returns a boolean"));
 
     const QVariant setQueueOutputSettingsResult =
         Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("setRenderQueueJobOutputSettingsAt"),
