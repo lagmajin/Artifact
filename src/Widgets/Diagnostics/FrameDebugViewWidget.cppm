@@ -150,9 +150,9 @@ public:
             });
             for (const auto& pass : passOrder) {
                 lines << QStringLiteral("  - %1 [%2/%3] inputs=%4 outputs=%5 durationUs=%6")
-                              .arg(pass.name,
-                                   ArtifactCore::toString(pass.kind),
-                                   ArtifactCore::toString(pass.status))
+                              .arg(pass.name)
+                              .arg(ArtifactCore::toString(pass.kind))
+                              .arg(ArtifactCore::toString(pass.status))
                               .arg(pass.inputs.size())
                               .arg(pass.outputs.size())
                               .arg(pass.durationUs);
@@ -182,9 +182,9 @@ public:
                     resource.label == QStringLiteral("Video Decode") ||
                     resource.label == QStringLiteral("Particle Draw");
                 lines << QStringLiteral("  - %1 [%2] relation=%3 cacheHit=%4 stale=%5")
-                              .arg(resource.label.isEmpty() ? QStringLiteral("<unnamed>") : resource.label,
-                                   resource.type.isEmpty() ? QStringLiteral("<type?>") : resource.type,
-                                   resource.relation.isEmpty() ? QStringLiteral("<none>") : resource.relation)
+                              .arg(resource.label.isEmpty() ? QStringLiteral("<unnamed>") : resource.label)
+                              .arg(resource.type.isEmpty() ? QStringLiteral("<type?>") : resource.type)
+                              .arg(resource.relation.isEmpty() ? QStringLiteral("<none>") : resource.relation)
                               .arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
                               .arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"));
                 if (!resource.note.isEmpty() && (hot || isMediaResource)) {

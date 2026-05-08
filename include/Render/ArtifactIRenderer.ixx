@@ -89,6 +89,7 @@ public:
   ArtifactCore::RenderCostStats frameCostStats() const;
   double lastFrameGpuTimeMs() const;
   QString particleDebugState() const;
+  QString glyphAtlasDebugState() const;
 
   QImage readbackToImage() const;
   QImage readbackDepthToImage() const;

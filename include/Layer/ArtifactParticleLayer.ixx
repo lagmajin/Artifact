@@ -34,6 +34,7 @@ module;
 #include <random>
 #include <QObject>
 #include <QImage>
+#include <QString>
 #include <QJsonObject>
 #include <QVariant>
 export module Artifact.Layer.Particle;
@@ -70,6 +71,7 @@ public:
     // Layer interface
     void draw(ArtifactIRenderer* renderer) override;
     QRectF localBounds() const override;
+    QString debugState() const;
     QJsonObject toJson() const;
     static ArtifactAbstractLayerPtr fromJson(const QJsonObject& obj);
     

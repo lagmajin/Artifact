@@ -32,6 +32,7 @@ import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
 import Artifact.Service.Playback;
+import Artifact.Composition.InOutPoints;
 import Artifact.Timeline.KeyframeModel;
 import Math.Interpolate;
 import Time.Rational;
@@ -197,6 +198,18 @@ public:
             {"playbackPreviousFrame", IDescribable::loc("Move playhead to previous frame.", "Move playhead to previous frame.", {}), "bool"},
             {"playbackGoToStart", IDescribable::loc("Move playhead to start of composition.", "Move playhead to start of composition.", {}), "bool"},
             {"playbackGoToEnd", IDescribable::loc("Move playhead to end of composition.", "Move playhead to end of composition.", {}), "bool"},
+            {"playbackSetInPoint", IDescribable::loc("Set the playback in point at the current frame.", "Set the playback in point at the current frame.", {}), "bool"},
+            {"playbackSetOutPoint", IDescribable::loc("Set the playback out point at the current frame.", "Set the playback out point at the current frame.", {}), "bool"},
+            {"playbackClearInPoint", IDescribable::loc("Clear the playback in point.", "Clear the playback in point.", {}), "bool"},
+            {"playbackClearOutPoint", IDescribable::loc("Clear the playback out point.", "Clear the playback out point.", {}), "bool"},
+            {"playbackClearAllPoints", IDescribable::loc("Clear all playback in and out points.", "Clear all playback in and out points.", {}), "bool"},
+            {"playbackGoToNextMarker", IDescribable::loc("Move playhead to the next marker.", "Move playhead to the next marker.", {}), "bool"},
+            {"playbackGoToPreviousMarker", IDescribable::loc("Move playhead to the previous marker.", "Move playhead to the previous marker.", {}), "bool"},
+            {"playbackGoToNextChapter", IDescribable::loc("Move playhead to the next chapter marker.", "Move playhead to the next chapter marker.", {}), "bool"},
+            {"playbackGoToPreviousChapter", IDescribable::loc("Move playhead to the previous chapter marker.", "Move playhead to the previous chapter marker.", {}), "bool"},
+            {"playbackAddMarker", IDescribable::loc("Add a comment marker at the current frame.", "Add a comment marker at the current frame.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("comment")}},
+            {"playbackAddChapter", IDescribable::loc("Add a chapter marker at the current frame.", "Add a chapter marker at the current frame.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("name")}},
+            {"playbackClearAllMarkers", IDescribable::loc("Remove all timeline markers.", "Remove all timeline markers.", {}), "bool"},
             {"playbackGetDuration", IDescribable::loc("Get composition duration in frames.", "Get composition duration in frames.", {}), "int"},
             {"playbackGetFrameRange", IDescribable::loc("Get playback frame range (in/out points).", "Get playback frame range (in/out points).", {}), "QVariantMap"},
             {"playbackSetFrameRange", IDescribable::loc("Set playback frame range (work area).", "Set playback frame range (work area).", {}), "bool", {QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("frameStart"), QStringLiteral("frameEnd")}},
@@ -544,6 +557,42 @@ public:
         }
         if (name == QStringLiteral("playbackGoToEnd")) {
             return playbackGoToEnd();
+        }
+        if (name == QStringLiteral("playbackSetInPoint")) {
+            return playbackSetInPoint();
+        }
+        if (name == QStringLiteral("playbackSetOutPoint")) {
+            return playbackSetOutPoint();
+        }
+        if (name == QStringLiteral("playbackClearInPoint")) {
+            return playbackClearInPoint();
+        }
+        if (name == QStringLiteral("playbackClearOutPoint")) {
+            return playbackClearOutPoint();
+        }
+        if (name == QStringLiteral("playbackClearAllPoints")) {
+            return playbackClearAllPoints();
+        }
+        if (name == QStringLiteral("playbackGoToNextMarker")) {
+            return playbackGoToNextMarker();
+        }
+        if (name == QStringLiteral("playbackGoToPreviousMarker")) {
+            return playbackGoToPreviousMarker();
+        }
+        if (name == QStringLiteral("playbackGoToNextChapter")) {
+            return playbackGoToNextChapter();
+        }
+        if (name == QStringLiteral("playbackGoToPreviousChapter")) {
+            return playbackGoToPreviousChapter();
+        }
+        if (name == QStringLiteral("playbackAddMarker")) {
+            return playbackAddMarker(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("playbackAddChapter")) {
+            return playbackAddChapter(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("playbackClearAllMarkers")) {
+            return playbackClearAllMarkers();
         }
         if (name == QStringLiteral("playbackGetDuration")) {
             return playbackGetDuration();
@@ -2286,6 +2335,154 @@ private:
         return true;
     }
 
+    static QVariant playbackSetInPoint()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!playback || !points) {
+            return false;
+        }
+        points->setInPointAtCurrent(playback->currentFrame());
+        return true;
+    }
+
+    static QVariant playbackSetOutPoint()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!playback || !points) {
+            return false;
+        }
+        points->setOutPointAtCurrent(playback->currentFrame());
+        return true;
+    }
+
+    static QVariant playbackClearInPoint()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!points) {
+            return false;
+        }
+        points->clearInPoint();
+        return true;
+    }
+
+    static QVariant playbackClearOutPoint()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!points) {
+            return false;
+        }
+        points->clearOutPoint();
+        return true;
+    }
+
+    static QVariant playbackClearAllPoints()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!points) {
+            return false;
+        }
+        points->clearAllPoints();
+        return true;
+    }
+
+    static QVariant playbackGoToNextMarker()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!playback || !points) {
+            return false;
+        }
+        const auto next = points->nextMarker(playback->currentFrame());
+        if (!next) {
+            return false;
+        }
+        playback->setCurrentFrame(*next);
+        return true;
+    }
+
+    static QVariant playbackGoToPreviousMarker()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!playback || !points) {
+            return false;
+        }
+        const auto prev = points->previousMarker(playback->currentFrame());
+        if (!prev) {
+            return false;
+        }
+        playback->setCurrentFrame(*prev);
+        return true;
+    }
+
+    static QVariant playbackGoToNextChapter()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!playback || !points) {
+            return false;
+        }
+        const auto next = points->nextChapter(playback->currentFrame());
+        if (!next) {
+            return false;
+        }
+        playback->setCurrentFrame(*next);
+        return true;
+    }
+
+    static QVariant playbackGoToPreviousChapter()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!playback || !points) {
+            return false;
+        }
+        const auto prev = points->previousChapter(playback->currentFrame());
+        if (!prev) {
+            return false;
+        }
+        playback->setCurrentFrame(*prev);
+        return true;
+    }
+
+    static QVariant playbackAddMarker(const QString& comment)
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!playback || !points) {
+            return false;
+        }
+        points->addMarker(playback->currentFrame(), comment, MarkerType::Comment);
+        return true;
+    }
+
+    static QVariant playbackAddChapter(const QString& name)
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!playback || !points) {
+            return false;
+        }
+        points->addMarker(playback->currentFrame(), name, MarkerType::Chapter);
+        return true;
+    }
+
+    static QVariant playbackClearAllMarkers()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        auto* points = playback ? playback->inOutPoints() : nullptr;
+        if (!points) {
+            return false;
+        }
+        points->clearAllMarkers();
+        return true;
+    }
+
     // Timeline Information
     
     // Get composition duration in frames.
@@ -2429,6 +2626,15 @@ private:
             };
         }
 
+        const QString resolvedCodec = [] (const QString& requestedFormat, const QString& requestedCodec) {
+            const QString trimmedCodec = requestedCodec.trimmed();
+            if (!trimmedCodec.isEmpty() &&
+                trimmedCodec.compare(QStringLiteral("default"), Qt::CaseInsensitive) != 0) {
+                return trimmedCodec;
+            }
+            return getDefaultCodecForFormat(requestedFormat).toString();
+        }(format, codec);
+
         // Add to render queue
         renderService->addRenderQueueForComposition(comp->id(), comp->settings().compositionName().toQString());
         
@@ -2447,7 +2653,7 @@ private:
         renderService->setJobOutputPathAt(jobIndex, outputPath);
         
         // Set output format, codec, and resolution
-        renderService->setJobOutputSettingsAt(jobIndex, format, codec, QStringLiteral("default"), width, height, fps, bitrateKbps);
+        renderService->setJobOutputSettingsAt(jobIndex, format, resolvedCodec, QStringLiteral("default"), width, height, fps, bitrateKbps);
         
         return QVariantMap{
             {QStringLiteral("success"), true},

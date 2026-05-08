@@ -1107,7 +1107,9 @@ public:
         } else {
             for (const auto& resource : snapshot.resources) {
                 lines << QStringLiteral("  - %1 [%2] relation=%3 cacheHit=%4 stale=%5")
-                              .arg(resource.label, resource.type, resource.relation)
+                              .arg(resource.label)
+                              .arg(resource.type)
+                              .arg(resource.relation)
                               .arg(resource.cacheHit ? QStringLiteral("true") : QStringLiteral("false"))
                               .arg(resource.stale ? QStringLiteral("true") : QStringLiteral("false"));
                 if ((resource.label == QStringLiteral("Video Decode") ||

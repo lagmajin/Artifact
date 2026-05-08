@@ -80,6 +80,14 @@ namespace Artifact
    return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
   }
 
+  float previewLayerOpacity(const ArtifactAbstractLayer* layerPtr)
+  {
+   if (!layerPtr) {
+    return 0.0f;
+   }
+   return layerPtr->opacity();
+  }
+
  void drawLayerForPreviewView(const ArtifactAbstractLayerPtr& layer,
                                ArtifactIRenderer* renderer,
                                const ArtifactCore::LayerID& selectedLayerId)
@@ -144,7 +152,7 @@ namespace Artifact
      applyRasterizerEffects(layerPtr, surface);
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, worldRect, surface, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
+      const float opacity = previewLayerOpacity(layerPtr);
       renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
                                       static_cast<float>(worldRect.y()),
                                       static_cast<float>(worldRect.width()),
@@ -155,7 +163,7 @@ namespace Artifact
     } else {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, worldRect, solid2D, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
+      const float opacity = previewLayerOpacity(layerPtr);
       const FloatColor c = solid2D->color();
       renderer->drawSolidRectTransformed(static_cast<float>(worldRect.x()),
                                          static_cast<float>(worldRect.y()),
@@ -179,7 +187,7 @@ namespace Artifact
      applyRasterizerEffects(layerPtr, surface);
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, worldRect, surface, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
+      const float opacity = previewLayerOpacity(layerPtr);
       renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
                                       static_cast<float>(worldRect.y()),
                                       static_cast<float>(worldRect.width()),
@@ -190,7 +198,7 @@ namespace Artifact
     } else {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, worldRect, solidImage, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
+      const float opacity = previewLayerOpacity(layerPtr);
       renderer->drawSolidRectTransformed(static_cast<float>(worldRect.x()),
                                          static_cast<float>(worldRect.y()),
                                          static_cast<float>(worldRect.width()),
@@ -208,7 +216,7 @@ namespace Artifact
     if (!img.isNull()) {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, worldRect, img, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
+      const float opacity = previewLayerOpacity(layerPtr);
       renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
                                       static_cast<float>(worldRect.y()),
                                       static_cast<float>(worldRect.width()),
@@ -232,7 +240,7 @@ namespace Artifact
      const ArtifactCore::ImageF32x4_RGBA& frameBuffer = videoLayer->currentFrameBuffer();
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [&frameBuffer, renderer, worldRect, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
+      const float opacity = previewLayerOpacity(layerPtr);
       renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
                                       static_cast<float>(worldRect.y()),
                                       static_cast<float>(worldRect.width()),
@@ -246,7 +254,7 @@ namespace Artifact
     if (!frame.isNull()) {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, worldRect, frame, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
+      const float opacity = previewLayerOpacity(layerPtr);
       renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
                                       static_cast<float>(worldRect.y()),
                                       static_cast<float>(worldRect.width()),
@@ -267,7 +275,7 @@ namespace Artifact
     if (!textImage.isNull()) {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
      drawWithClonerEffect(layerPtr, baseTransform, [renderer, worldRect, textImage, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = layerPtr->opacity() * ((selectedLayerId.isNil() || layerPtr->id() == selectedLayerId) ? 1.0f : 0.22f);
+      const float opacity = previewLayerOpacity(layerPtr);
       renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
                                       static_cast<float>(worldRect.y()),
                                       static_cast<float>(worldRect.width()),
