@@ -3099,12 +3099,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               }
             }
 
-            // 再生中の per-frame コスト削減:
-            // updateCacheVisuals() / updateSelectionState() を毎フレーム呼ぶと
-            // QListWidget の clear+rebuild などで非常に重くなるためスキップ。
-            // 停止・一時停止時は PlaybackStateChangedEvent で更新される。
+            // 再生中でも cache 可視化だけは追随させる。
+            // selection / keyframe の再構築は重いので停止時にだけ行うが、
+            // RAM preview の帯は frameChanged に合わせて更新しておく。
+            updateCacheVisuals();
             if (!isPlaying) {
-              updateCacheVisuals();
               updateSelectionState();
               if (frame.framePosition() % 15 == 0) {
                 updateKeyframeState();

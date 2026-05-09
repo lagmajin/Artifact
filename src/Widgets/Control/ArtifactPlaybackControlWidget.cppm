@@ -16,6 +16,7 @@ module;
 #include <QFontMetrics>
 #include <QComboBox>
 #include <QAbstractItemView>
+#include <QAbstractScrollArea>
 #include <QDoubleSpinBox>
 #include <QSignalBlocker>
 #include <QCheckBox>
@@ -268,6 +269,29 @@ void applyThemeTextPalette(QWidget* widget, const QColor& color, int shade = 100
     widget->setPalette(pal);
 }
 
+void applyPlaybackSurfacePalette(QWidget* root, const QPalette& palette)
+{
+    if (!root) {
+        return;
+    }
+    root->setAutoFillBackground(true);
+    root->setAttribute(Qt::WA_StyledBackground, true);
+    root->setPalette(palette);
+    for (auto* child : root->findChildren<QWidget*>()) {
+        if (!child || child->testAttribute(Qt::WA_PaintOnScreen)) {
+            continue;
+        }
+        child->setPalette(palette);
+        if (auto* scroll = qobject_cast<QAbstractScrollArea*>(child)) {
+            if (auto* viewport = scroll->viewport()) {
+                viewport->setAutoFillBackground(true);
+                viewport->setAttribute(Qt::WA_StyledBackground, true);
+                viewport->setPalette(palette);
+            }
+        }
+    }
+}
+
 QIcon loadIconWithFallback(const QString& fileName)
 {
   const QString resourcePath = ArtifactCore::resolveIconResourcePath(fileName);
@@ -496,6 +520,15 @@ public:
         transportRow->addWidget(loopButton_);
         transportRow->addStretch();
 
+        mainLayout->addLayout(transportRow);
+
+        scrubSlider_ = new QSlider(Qt::Horizontal, owner_);
+        scrubSlider_->setRange(0, 300);
+        scrubSlider_->setTracking(true);
+        scrubSlider_->setMinimumHeight(18);
+        scrubSlider_->setToolTip(QStringLiteral("Current frame scrubber"));
+        mainLayout->addWidget(scrubSlider_);
+
         auto* speedLayout = new QHBoxLayout();
         speedLayout->setSpacing(4);
         auto* speedLabel = createLabel(QStringLiteral("速度:"), QStringLiteral("再生速度"));
@@ -533,8 +566,6 @@ public:
         speedLayout->addWidget(speedHalfButton_);
         speedLayout->addWidget(speedOneButton_);
         transportRow->addLayout(speedLayout);
-
-        mainLayout->addLayout(transportRow);
 
         auto* optionsRow = new QHBoxLayout();
         optionsRow->setContentsMargins(4, 0, 4, 0);
@@ -649,13 +680,6 @@ public:
         skipRow->addWidget(playbackSkipCombo_);
         skipRow->addStretch();
         mainLayout->addLayout(skipRow);
-
-        scrubSlider_ = new QSlider(Qt::Horizontal, owner_);
-        scrubSlider_->setRange(0, 300);
-        scrubSlider_->setTracking(true);
-        scrubSlider_->setMinimumHeight(18);
-        scrubSlider_->setToolTip(QStringLiteral("Current frame scrubber"));
-        mainLayout->addWidget(scrubSlider_);
 
         connectSignals();
     }
@@ -1152,11 +1176,29 @@ ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent)
 {
     setWindowTitle("Playback Control");
     setMinimumHeight(165);
-    setAutoFillBackground(false);
+    setAutoFillBackground(true);
+    setAttribute(Qt::WA_StyledBackground, true);
+    {
+        const auto& theme = ArtifactCore::currentDCCTheme();
+        QPalette palette = this->palette();
+        palette.setColor(QPalette::Window, QColor(theme.backgroundColor));
+        palette.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+        palette.setColor(QPalette::Text, QColor(theme.textColor));
+        palette.setColor(QPalette::WindowText, QColor(theme.textColor));
+        palette.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+        palette.setColor(QPalette::ButtonText, QColor(theme.textColor));
+        applyPlaybackSurfacePalette(this, palette);
+    }
     
     impl_->setupUI();
-    
+    applyPlaybackSurfacePalette(this, palette());
+    ensurePolished();
+    if (auto* layout = this->layout()) {
+        layout->activate();
+    }
     impl_->syncFromService();
+    updateGeometry();
+    update();
 }
 
 ArtifactPlaybackControlWidget::~ArtifactPlaybackControlWidget()

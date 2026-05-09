@@ -297,7 +297,14 @@ void refreshDockWidgetSurface(ads::CDockWidget *dock) {
   }
 
   if (auto *content = dock->widget()) {
+    applyLazyDockSurfacePalette(content);
+    content->ensurePolished();
+    if (auto *layout = content->layout()) {
+      layout->activate();
+    }
+    content->updateGeometry();
     refreshFloatingWidgetTree(content);
+    content->update();
   }
 }
 
@@ -386,6 +393,12 @@ void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
   }
 
   applyDarkNativeTitleBar(floatingWidget);
+  floatingWidget->ensurePolished();
+  if (auto *layout = floatingWidget->layout()) {
+    layout->activate();
+  }
+  floatingWidget->updateGeometry();
+  floatingWidget->update();
   scheduleFloatingRefresh(floatingWidget);
 }
 } // namespace
@@ -446,9 +459,19 @@ public:
     if (auto *layout = widget->layout()) {
       layout->activate();
     }
+    widget->ensurePolished();
     widget->show();
     widget->updateGeometry();
     widget->update();
+    refreshFloatingWidgetTree(widget);
+    QTimer::singleShot(0, owner, [owner, dock]() {
+      if (!owner || !dock) {
+        return;
+      }
+      refreshDockWidgetSurface(dock);
+      dock->updateGeometry();
+      dock->update();
+    });
     if (dock->windowTitle() == QStringLiteral("AI Cloud")) {
       aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
     }
@@ -949,6 +972,9 @@ void ArtifactMainWindow::addDockedWidgetTabbedWithId(
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
   dock->setWidget(widget);
+  if (auto *aiWidget = qobject_cast<ArtifactAICloudWidget *>(widget)) {
+    impl_->aiCloudWidget_ = aiWidget;
+  }
 
   ads::CDockAreaWidget *targetArea = nullptr;
   if (!tabGroupPrefix.isEmpty()) {
@@ -1102,6 +1128,9 @@ void ArtifactMainWindow::addDockedWidgetFloating(
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
   dock->setWidget(widget);
+  if (auto *aiWidget = qobject_cast<ArtifactAICloudWidget *>(widget)) {
+    impl_->aiCloudWidget_ = aiWidget;
+  }
 
   auto *container = impl_->dockManager->addDockWidgetFloating(dock);
   if (container) {

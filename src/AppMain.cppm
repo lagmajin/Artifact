@@ -1308,57 +1308,53 @@ int main(int argc, char *argv[]) {
       0, mw,
       [=, &renderCenterWindow, &workspaceManager, &debugConsoleWidget,
        &frameDebugWidget, &debugHarnessWidget]() {
-    mw->addLazyDockedWidgetFloating(
+    auto* playbackControlWidget = new ArtifactPlaybackControlWidget(mw);
+    mw->addDockedWidgetFloating(
         QStringLiteral("Playback Control"), QStringLiteral("PlaybackControl"),
-        [mw]() -> QWidget * { return new ArtifactPlaybackControlWidget(mw); },
-        QRect(120, 828, 720, 210));
-    mw->addLazyDockedWidgetFloating(
+        playbackControlWidget, QRect(120, 828, 720, 210));
+    mw->setDockVisible(QStringLiteral("Playback Control"), false);
+    auto* debugConsole = new ArtifactDebugConsoleWidget(mw);
+    debugConsoleWidget = debugConsole;
+    if (compositionEditor) {
+      if (auto* controller = compositionEditor->renderController()) {
+        debugConsole->setFrameDebugSnapshot(controller->frameDebugSnapshot());
+      }
+    }
+    mw->addDockedWidgetFloating(
         QStringLiteral("Debug Console"), QStringLiteral("DebugConsole"),
-        [mw, compositionEditor, &debugConsoleWidget]() mutable -> QWidget * {
-          auto* widget = new ArtifactDebugConsoleWidget(mw);
-          debugConsoleWidget = widget;
-          if (compositionEditor) {
-            if (auto* controller = compositionEditor->renderController()) {
-              widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
-            }
-          }
-          return widget;
-        },
-        QRect(200, 200, 800, 400));
-    mw->addLazyDockedWidgetFloating(
+        debugConsole, QRect(200, 200, 800, 400));
+    mw->setDockVisible(QStringLiteral("Debug Console"), false);
+
+    auto* frameDebug = new FrameDebugViewWidget(mw);
+    frameDebugWidget = frameDebug;
+    if (compositionEditor) {
+      if (auto* controller = compositionEditor->renderController()) {
+        frameDebug->setFrameDebugSnapshot(controller->frameDebugSnapshot());
+      }
+    }
+    mw->addDockedWidgetFloating(
         QStringLiteral("Frame Debug"), QStringLiteral("FrameDebug"),
-        [mw, compositionEditor, &frameDebugWidget]() mutable -> QWidget * {
-          auto* widget = new FrameDebugViewWidget(mw);
-          frameDebugWidget = widget;
-          if (compositionEditor) {
-            if (auto* controller = compositionEditor->renderController()) {
-              widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
-            }
-          }
-          return widget;
-        },
-        QRect(220, 240, 900, 520));
-    mw->addLazyDockedWidgetFloating(
+        frameDebug, QRect(220, 240, 900, 520));
+    mw->setDockVisible(QStringLiteral("Frame Debug"), false);
+    auto* appDebuggerWidget = new AppDebuggerWidget(
+        compositionEditor ? compositionEditor->renderController() : nullptr, mw);
+    mw->addDockedWidgetFloating(
         QStringLiteral("App Debugger"), QStringLiteral("AppDebugger"),
-        [mw, compositionEditor]() -> QWidget * {
-          auto* controller = compositionEditor ? compositionEditor->renderController() : nullptr;
-          return new AppDebuggerWidget(controller, mw);
-        },
-        QRect(140, 140, 1080, 640));
-    mw->addLazyDockedWidgetFloating(
+        appDebuggerWidget, QRect(140, 140, 1080, 640));
+    mw->setDockVisible(QStringLiteral("App Debugger"), false);
+
+    auto* debugRenderHarness = new DebugRenderHarnessWidget(mw);
+    debugRenderHarness->setScenePreset(QStringLiteral("mixed-media"));
+    if (compositionEditor) {
+      if (auto* controller = compositionEditor->renderController()) {
+        debugRenderHarness->setFrameDebugSnapshot(controller->frameDebugSnapshot());
+      }
+    }
+    debugHarnessWidget = debugRenderHarness;
+    mw->addDockedWidgetFloating(
         QStringLiteral("Debug Render Harness"), QStringLiteral("DebugRenderHarness"),
-        [mw, compositionEditor, &debugHarnessWidget]() mutable -> QWidget * {
-          auto* widget = new DebugRenderHarnessWidget(mw);
-          debugHarnessWidget = widget;
-          widget->setScenePreset(QStringLiteral("particle-only"));
-          if (compositionEditor) {
-            if (auto* controller = compositionEditor->renderController()) {
-              widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
-            }
-          }
-          return widget;
-        },
-        QRect(180, 180, 1100, 660));
+        debugRenderHarness, QRect(180, 180, 1100, 660));
+    mw->setDockVisible(QStringLiteral("Debug Render Harness"), false);
     auto refreshFrameDebugWidgets = [compositionEditor, &debugConsoleWidget,
                                      &frameDebugWidget, &debugHarnessWidget]() mutable {
       if (!compositionEditor) {
@@ -1408,13 +1404,12 @@ int main(int argc, char *argv[]) {
                      updateStatusConsole);
     QObject::connect(Logger::instance(), &Logger::logsCleared, mw,
                      updateStatusConsole);
-    mw->addLazyDockedWidgetTabbedWithId(
+    auto* softwareCompositionView =
+        new ArtifactSoftwareCompositionTestWidget(mw);
+    mw->addDockedWidgetTabbedWithId(
         QStringLiteral("Composition View (Software)"),
         QStringLiteral("Composition View (Software)"),
-        ads::CenterDockWidgetArea,
-        [mw]() -> QWidget * {
-          return new ArtifactSoftwareCompositionTestWidget(mw);
-        },
+        ads::CenterDockWidgetArea, softwareCompositionView,
         QStringLiteral("Composition Viewer"));
     auto *layerViewEditor = new ArtifactRenderLayerEditor(mw);
     layerViewEditor->setSizePolicy(QSizePolicy::Expanding,
@@ -1423,11 +1418,11 @@ int main(int argc, char *argv[]) {
     mw->addDockedWidgetTabbed(QStringLiteral("Layer View (Diligent)"),
                               ads::CenterDockWidgetArea, layerViewEditor,
                               QStringLiteral("Composition Viewer"));
-    mw->addLazyDockedWidgetTabbedWithId(
+    auto* softwareLayerView = new ArtifactSoftwareLayerTestWidget(mw);
+    mw->addDockedWidgetTabbedWithId(
         QStringLiteral("Layer View (Software)"),
         QStringLiteral("Layer View (Software)"), ads::CenterDockWidgetArea,
-        [mw]() -> QWidget * { return new ArtifactSoftwareLayerTestWidget(mw); },
-        QStringLiteral("Layer View (Diligent)"));
+        softwareLayerView, QStringLiteral("Layer View (Diligent)"));
     auto *projectManagerWidget = new ArtifactProjectManagerWidget(mw);
     projectManagerWidget->setMinimumWidth(240);
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea,
@@ -1714,11 +1709,10 @@ int main(int argc, char *argv[]) {
                               QStringLiteral("Inspector"));
     mw->addDockedWidget(QStringLiteral("Audio Mixer"), ads::RightDockWidgetArea,
                         new ArtifactCompositionAudioMixerWidget(mw));
-    mw->addLazyDockedWidgetTabbedWithId(
+    auto* aiCloud = new ArtifactAICloudWidget(mw);
+    mw->addDockedWidgetTabbedWithId(
         QStringLiteral("AI Cloud"), QStringLiteral("AI Cloud"),
-        ads::RightDockWidgetArea,
-        [mw]() -> QWidget * { return new ArtifactAICloudWidget(mw); },
-        QString());
+        ads::RightDockWidgetArea, aiCloud, QString());
     mw->setDockVisible(QStringLiteral("AI Cloud"), false);
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
     mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
@@ -2049,39 +2043,36 @@ int main(int argc, char *argv[]) {
                         mw->activateDock(dockId);
                         return;
                       }
-                      mw->addLazyDockedWidgetTabbedWithId(
+                      QElapsedTimer timelineTimer;
+                      timelineTimer.start();
+                      auto *panel = new ArtifactTimelineWidget(mw);
+                      qInfo() << "[AppMain][CompositionCreated] ArtifactTimelineWidget ctor ms="
+                              << timelineTimer.elapsed();
+                      timelineTimer.restart();
+                      panel->setMinimumHeight(200);
+                      panel->resize(1200, 350);
+                      panel->setComposition(compId);
+                      panel->setWindowTitle(dockTitle);
+                      qInfo() << "[AppMain][CompositionCreated] timeline setComposition ms="
+                              << timelineTimer.elapsed();
+
+                      QObject::connect(
+                          panel, &ArtifactTimelineWidget::zoomLevelChanged,
+                          status, &ArtifactStatusBar::setZoomPercent);
+                      QObject::connect(
+                          panel, &ArtifactTimelineWidget::timelineDebugMessage,
+                          status, &ArtifactStatusBar::setTimelineDebugText);
+
+                      mw->addDockedWidgetTabbedWithId(
                           dockTitle, dockId, ads::BottomDockWidgetArea,
-                          [mw, compId, dockId, dockTitle, status]() -> QWidget * {
-                            QElapsedTimer timelineTimer;
-                            timelineTimer.start();
-                            auto *panel = new ArtifactTimelineWidget(mw);
-                            qInfo() << "[AppMain][CompositionCreated] ArtifactTimelineWidget ctor ms="
-                                    << timelineTimer.elapsed();
-                            timelineTimer.restart();
-                            panel->setMinimumHeight(200);
-                            panel->resize(1200, 350);
-                            panel->setComposition(compId);
-                            panel->setWindowTitle(dockTitle);
-                            qInfo() << "[AppMain][CompositionCreated] timeline setComposition ms="
-                                    << timelineTimer.elapsed();
-
-                            QObject::connect(
-                                panel, &ArtifactTimelineWidget::zoomLevelChanged,
-                                status, &ArtifactStatusBar::setZoomPercent);
-                            QObject::connect(
-                                panel, &ArtifactTimelineWidget::timelineDebugMessage,
-                                status, &ArtifactStatusBar::setTimelineDebugText);
-
-                            QTimer::singleShot(0, mw, [mw, dockId, panel]() {
-                              mw->setDockSplitterSizes(dockId, {700, 350});
-                              if (panel) {
-                                panel->setFocus(Qt::OtherFocusReason);
-                              }
-                              mw->activateDock(dockId);
-                            });
-                            return panel;
-                          },
-                          QStringLiteral("timeline::"));
+                          panel, QStringLiteral("timeline::"));
+                      QTimer::singleShot(0, mw, [mw, dockId, panel]() {
+                        mw->setDockSplitterSizes(dockId, {700, 350});
+                        if (panel) {
+                          panel->setFocus(Qt::OtherFocusReason);
+                        }
+                        mw->activateDock(dockId);
+                      });
                     });
               }));
       appEventSubscriptions.push_back(

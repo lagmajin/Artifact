@@ -2868,13 +2868,6 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      p.drawRoundedRect(r, 3, 3);
      p.setPen(layerSelected ? mixColor(text, accent, 0.42) : text);
      p.drawText(r.adjusted(6, 0, -16, 0), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(label, Qt::ElideRight, r.width() - 20));
-     QPolygon arrow;
-     const int ax = r.right() - 10;
-     const int ay = r.center().y();
-     arrow << QPoint(ax - 4, ay - 2) << QPoint(ax + 4, ay - 2) << QPoint(ax, ay + 3);
-     p.setBrush(layerSelected ? accent.lighter(120) : text.darker(25));
-     p.setPen(Qt::NoPen);
-     p.drawPolygon(arrow);
     };
 
     if (showInlineCombos) {

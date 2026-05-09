@@ -5,12 +5,19 @@
 #include <QAbstractItemView>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QColor>
 #include <QJsonDocument>
 #include <QLabel>
 #include <QListWidget>
+#include <QAbstractScrollArea>
+#include <QPainter>
+#include <QPaintEvent>
 #include <QPlainTextEdit>
+#include <QPalette>
+#include <QResizeEvent>
 #include <QSplitter>
 #include <QTabWidget>
+#include <QShowEvent>
 #include <QVBoxLayout>
 #include <QTimerEvent>
 #include <QVector>
@@ -40,6 +47,33 @@ import Utils.String.UniString;
 namespace Artifact {
 
 W_OBJECT_IMPL(AppDebuggerWidget)
+
+namespace {
+void applyDebuggerSurfacePalette(QWidget* root, const QPalette& palette)
+{
+    if (!root) {
+        return;
+    }
+    root->setAutoFillBackground(true);
+    root->setAttribute(Qt::WA_StyledBackground, true);
+    root->setPalette(palette);
+    for (auto* child : root->findChildren<QWidget*>()) {
+        if (!child || child->testAttribute(Qt::WA_PaintOnScreen)) {
+            continue;
+        }
+        child->setAutoFillBackground(true);
+        child->setAttribute(Qt::WA_StyledBackground, true);
+        child->setPalette(palette);
+        if (auto* scroll = qobject_cast<QAbstractScrollArea*>(child)) {
+            if (auto* viewport = scroll->viewport()) {
+                viewport->setAutoFillBackground(true);
+                viewport->setAttribute(Qt::WA_StyledBackground, true);
+                viewport->setPalette(palette);
+            }
+        }
+    }
+}
+}
 
 class AppDebuggerWidget::Impl {
 public:
@@ -118,6 +152,15 @@ public:
 
     void setupUI()
     {
+        owner_->setAutoFillBackground(true);
+        owner_->setAttribute(Qt::WA_StyledBackground, true);
+        QPalette palette = owner_->palette();
+        palette.setColor(QPalette::Window, QColor::fromRgb(28, 30, 36));
+        palette.setColor(QPalette::WindowText, QColor::fromRgb(232, 240, 248));
+        palette.setColor(QPalette::Base, QColor::fromRgb(20, 22, 28));
+        palette.setColor(QPalette::Text, QColor::fromRgb(232, 240, 248));
+        owner_->setPalette(palette);
+
         auto* layout = new QVBoxLayout(owner_);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
@@ -323,6 +366,19 @@ public:
         layout->addWidget(tabs_);
 
         timerId_ = owner_->startTimer(250);
+        owner_->ensurePolished();
+        layout->activate();
+        applyDebuggerSurfacePalette(owner_, palette);
+        for (auto* edit : owner_->findChildren<QPlainTextEdit*>()) {
+            if (!edit) {
+                continue;
+            }
+            edit->setPalette(palette);
+            if (auto* viewport = edit->viewport()) {
+                viewport->setAutoFillBackground(true);
+                viewport->setPalette(palette);
+            }
+        }
         refresh();
     }
 
@@ -1622,6 +1678,29 @@ void AppDebuggerWidget::timerEvent(QTimerEvent* event)
         return;
     }
     QWidget::timerEvent(event);
+}
+
+void AppDebuggerWidget::paintEvent(QPaintEvent* event)
+{
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.fillRect(rect(), palette().color(QPalette::Window));
+}
+
+void AppDebuggerWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (impl_) {
+        impl_->refresh();
+    }
+}
+
+void AppDebuggerWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (impl_) {
+        impl_->refresh();
+    }
 }
 
 } // namespace Artifact
