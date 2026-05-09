@@ -1,6 +1,8 @@
 ﻿module;
+#include <QDebug>
 #include <QPointF>
 #include <QPolygonF>
+#include <QSize>
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -174,7 +176,15 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
     dst = cv::Mat::zeros(height, width, CV_32FC1);
 
     QPolygonF poly = impl_->toPolygon(16);
-    if (poly.isEmpty()) return;
+    if (poly.isEmpty()) {
+        qWarning() << "[MaskPath] rasterizeToAlpha: empty polygon"
+                   << "name=" << impl_->name.toQString()
+                   << "closed=" << impl_->closed
+                   << "vertexCount=" << static_cast<int>(impl_->vertices.size())
+                   << "size=" << QSize(width, height)
+                   << "offset=" << QPointF(offsetX, offsetY);
+        return;
+    }
 
     // QPolygonF -> cv::Point array for fillPoly
     // offsetX/offsetY translates from layer-local space to image pixel space
@@ -219,6 +229,18 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
     // Invert
     if (impl_->inverted) {
         dst = cv::Scalar(1.0f) - dst;
+    }
+
+    double minValue = 0.0;
+    double maxValue = 0.0;
+    cv::minMaxLoc(dst, &minValue, &maxValue);
+    if (maxValue <= 0.0) {
+        qWarning() << "[MaskPath] rasterizeToAlpha: zero coverage"
+                   << "name=" << impl_->name.toQString()
+                   << "closed=" << impl_->closed
+                   << "vertexCount=" << static_cast<int>(impl_->vertices.size())
+                   << "size=" << QSize(width, height)
+                   << "offset=" << QPointF(offsetX, offsetY);
     }
 }
 

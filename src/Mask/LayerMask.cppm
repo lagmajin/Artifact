@@ -100,28 +100,36 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
         return;
     }
 
-    // Start with all zeros (transparent); first valid Add mask will define visibility
-    dst = cv::Mat::zeros(height, width, CV_32FC1);
-    bool firstAdd = true;
     bool hasEffectivePath = false;
 
     for (const auto& path : impl_->paths) {
         if (!path.isClosed() || path.vertexCount() < 3) {
             continue;
         }
-        hasEffectivePath = true;
         cv::Mat pathMask;
         path.rasterizeToAlpha(width, height, &pathMask, offsetX, offsetY);
 
+        if (!hasEffectivePath) {
+            hasEffectivePath = true;
+            switch (path.mode()) {
+                case MaskMode::Add:
+                case MaskMode::Intersect:
+                    dst = pathMask.clone();
+                    break;
+                case MaskMode::Subtract:
+                    dst = cv::Scalar(1.0f) - pathMask;
+                    break;
+                case MaskMode::Difference:
+                    dst = pathMask.clone();
+                    break;
+            }
+            continue;
+        }
+
         switch (path.mode()) {
             case MaskMode::Add:
-                if (firstAdd) {
-                    dst = pathMask.clone();
-                    firstAdd = false;
-                } else {
-                    // Union: max
-                    cv::max(dst, pathMask, dst);
-                }
+                // Union: max
+                cv::max(dst, pathMask, dst);
                 break;
             case MaskMode::Subtract:
                 // dst = dst * (1 - pathMask)

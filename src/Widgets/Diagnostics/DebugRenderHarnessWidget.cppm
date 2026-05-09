@@ -7,9 +7,11 @@ module;
 #include <QFileDialog>
 #include <QFrame>
 #include <QLabel>
+#include <QAbstractScrollArea>
 #include <QHBoxLayout>
 #include <QListWidget>
 #include <QClipboard>
+#include <QColor>
 #include <QGuiApplication>
 #include <QImage>
 #include <QKeyEvent>
@@ -18,12 +20,16 @@ module;
 #include <QPlainTextEdit>
 #include <QSplitter>
 #include <QPainter>
+#include <QPaintEvent>
 #include <QPen>
 #include <QPixmap>
 #include <QDir>
 #include <QFileInfo>
 #include <QPoint>
 #include <QRect>
+#include <QPalette>
+#include <QResizeEvent>
+#include <QShowEvent>
 #include <QVBoxLayout>
 #include <QStandardPaths>
 #include <QToolButton>
@@ -41,6 +47,31 @@ import Artifact.Layer.Video;
 namespace Artifact {
 
 namespace {
+void applyHarnessSurfacePalette(QWidget* root, const QPalette& palette)
+{
+    if (!root) {
+        return;
+    }
+    root->setAutoFillBackground(true);
+    root->setAttribute(Qt::WA_StyledBackground, true);
+    root->setPalette(palette);
+    for (auto* child : root->findChildren<QWidget*>()) {
+        if (!child || child->testAttribute(Qt::WA_PaintOnScreen)) {
+            continue;
+        }
+        child->setAutoFillBackground(true);
+        child->setAttribute(Qt::WA_StyledBackground, true);
+        child->setPalette(palette);
+        if (auto* scroll = qobject_cast<QAbstractScrollArea*>(child)) {
+            if (auto* viewport = scroll->viewport()) {
+                viewport->setAutoFillBackground(true);
+                viewport->setAttribute(Qt::WA_StyledBackground, true);
+                viewport->setPalette(palette);
+            }
+        }
+    }
+}
+
 QString presetReportName(const QString& preset)
 {
     const QString trimmed = preset.trimmed();
@@ -109,11 +140,21 @@ public:
 
     void setupUI()
     {
+        owner_->setAutoFillBackground(true);
+        owner_->setAttribute(Qt::WA_StyledBackground, true);
+        QPalette palette = owner_->palette();
+        palette.setColor(QPalette::Window, QColor::fromRgb(28, 30, 36));
+        palette.setColor(QPalette::WindowText, QColor::fromRgb(232, 240, 248));
+        palette.setColor(QPalette::Base, QColor::fromRgb(20, 22, 28));
+        palette.setColor(QPalette::Text, QColor::fromRgb(232, 240, 248));
+        owner_->setPalette(palette);
+
         auto* layout = new QVBoxLayout(owner_);
         layout->setContentsMargins(0, 0, 0, 0);
         layout->setSpacing(0);
 
         summary_ = new QLabel(owner_);
+        summary_->setPalette(palette);
         summary_->setTextFormat(Qt::PlainText);
         summary_->setWordWrap(true);
         summary_->setMinimumHeight(48);
@@ -125,6 +166,7 @@ public:
         reportBarLayout->setSpacing(8);
 
         reportMeta_ = new QLabel(reportBar);
+        reportMeta_->setPalette(palette);
         reportMeta_->setTextFormat(Qt::PlainText);
         reportMeta_->setWordWrap(false);
         reportMeta_->setMinimumHeight(24);
@@ -163,15 +205,24 @@ public:
         rightSplitter->setChildrenCollapsible(false);
 
         preview_ = new QLabel(rightSplitter);
+        preview_->setAutoFillBackground(true);
+        preview_->setAttribute(Qt::WA_StyledBackground, true);
+        preview_->setPalette(palette);
         preview_->setAlignment(Qt::AlignCenter);
         preview_->setFrameShape(QFrame::StyledPanel);
         preview_->setFrameShadow(QFrame::Sunken);
         preview_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Expanding);
+        preview_->setMinimumSize(360, 240);
         preview_->setMinimumHeight(260);
-        preview_->setText(QStringLiteral("preview pending"));
+        preview_->setText(QString());
         preview_->setWordWrap(true);
 
         report_ = new QPlainTextEdit(rightSplitter);
+        report_->setPalette(palette);
+        if (auto* viewport = report_->viewport()) {
+            viewport->setAutoFillBackground(true);
+            viewport->setPalette(palette);
+        }
         report_->setReadOnly(true);
         report_->setLineWrapMode(QPlainTextEdit::NoWrap);
         report_->setFocusPolicy(Qt::StrongFocus);
@@ -192,6 +243,9 @@ public:
             saveReportToFile();
         });
 
+        owner_->ensurePolished();
+        layout->activate();
+        applyHarnessSurfacePalette(owner_, palette);
         refresh();
     }
 
@@ -561,7 +615,8 @@ public:
         if (preview_) {
             const QImage canvas = composePreviewCanvas(previewImage, previewSize());
             preview_->setPixmap(QPixmap::fromImage(canvas));
-            preview_->setText(previewImage.isNull() ? fixtureNote : QString());
+            preview_->setText(QString());
+            preview_->update();
         }
         if (reportMeta_) {
             reportMeta_->setText(QStringLiteral("reportId=%1  status=%2  viewport=%3x%4")
@@ -895,6 +950,29 @@ void DebugRenderHarnessWidget::keyPressEvent(QKeyEvent* event)
     }
 
     QWidget::keyPressEvent(event);
+}
+
+void DebugRenderHarnessWidget::paintEvent(QPaintEvent* event)
+{
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.fillRect(rect(), palette().color(QPalette::Window));
+}
+
+void DebugRenderHarnessWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    if (impl_) {
+        impl_->refresh();
+    }
+}
+
+void DebugRenderHarnessWidget::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    if (impl_) {
+        impl_->refresh();
+    }
 }
 
 } // namespace Artifact

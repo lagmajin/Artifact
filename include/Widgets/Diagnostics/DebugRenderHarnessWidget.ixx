@@ -3,6 +3,9 @@ module;
 #include <QWidget>
 #include <QString>
 #include <QKeyEvent>
+#include <QResizeEvent>
+#include <QShowEvent>
+#include <QPaintEvent>
 
 export module Artifact.Widgets.DebugRenderHarnessWidget;
 
@@ -21,6 +24,9 @@ public:
 
 protected:
     void keyPressEvent(QKeyEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     class Impl;

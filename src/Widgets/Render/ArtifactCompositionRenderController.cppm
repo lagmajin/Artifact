@@ -381,9 +381,38 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
     const QRectF lb = targetLayer->localBounds();
     const float maskOffsetX = static_cast<float>(-lb.x());
     const float maskOffsetY = static_cast<float>(-lb.y());
+    if (compositionViewLog().isDebugEnabled()) {
+      qCDebug(compositionViewLog)
+          << "[MaskTrace] rasterize begin"
+          << "layer=" << targetLayer->id().toString()
+          << "name=" << targetLayer->layerName()
+          << "size=" << QSize(mat.cols, mat.rows)
+          << "localBounds=" << lb
+          << "maskCount=" << targetLayer->maskCount()
+          << "offset=" << QPointF(maskOffsetX, maskOffsetY);
+    }
     for (int m = 0; m < targetLayer->maskCount(); ++m) {
       LayerMask mask = targetLayer->mask(m);
       mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY);
+    }
+    if (compositionViewLog().isDebugEnabled()) {
+      cv::Mat alpha;
+      std::vector<cv::Mat> channels;
+      cv::split(mat, channels);
+      if (!channels.empty()) {
+        alpha = channels.back();
+        double alphaMin = 0.0;
+        double alphaMax = 0.0;
+        cv::minMaxLoc(alpha, &alphaMin, &alphaMax);
+        qCDebug(compositionViewLog)
+            << "[MaskTrace] rasterize end"
+            << "layer=" << targetLayer->id().toString()
+            << "name=" << targetLayer->layerName()
+            << "alphaMin=" << alphaMin
+            << "alphaMax=" << alphaMax
+            << "hasMasks=" << hasMasks
+            << "hasRasterizerEffect=" << hasRasterizerEffect;
+      }
     }
   }
 
@@ -2258,6 +2287,7 @@ public:
   QString lastVideoDebug_;
   QString lastEmittedVideoDebug_;
   QString lastRenderPathSummary_;
+  QString lastCompositionVisibilitySummary_;
   QString lastBlendMaskSummary_;
   qint64 lastSetupMs_ = 0;
   qint64 lastBasePassMs_ = 0;
@@ -4160,6 +4190,21 @@ CompositionRenderController::frameDebugSnapshot() const {
     snapshot.resources.push_back(renderPathResource);
   }
 
+  if (!impl_->lastCompositionVisibilitySummary_.isEmpty()) {
+    ArtifactCore::FrameDebugResourceRecord visibilityResource;
+    visibilityResource.label = QStringLiteral("Composition Visibility");
+    visibilityResource.type = QStringLiteral("composition");
+    visibilityResource.relation = QStringLiteral("visibility");
+    visibilityResource.cacheHit =
+        impl_->lastCompositionVisibilitySummary_.contains(
+            QStringLiteral("state=drawn"));
+    visibilityResource.stale =
+        impl_->lastCompositionVisibilitySummary_.contains(
+            QStringLiteral("frameOutOfRange=1"));
+    visibilityResource.note = impl_->lastCompositionVisibilitySummary_;
+    snapshot.resources.push_back(visibilityResource);
+  }
+
   if (!impl_->lastBlendMaskSummary_.isEmpty()) {
     ArtifactCore::FrameDebugResourceRecord blendMaskResource;
     blendMaskResource.label = QStringLiteral("Blend / Mask Contract");
@@ -5705,7 +5750,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       static_cast<uint8_t>(showCameraFrustumOverlay_ ? 1 : 0),
       static_cast<uint8_t>(viewportInteracting_ ? 1 : 0),
       selectedLayerId_};
-  if (currentKey == lastRenderKeyState_) {
+  const bool forceContinuousRedraw =
+      viewportInteracting_ || isRubberBandSelecting_ || dropGhostVisible_ ||
+      (gizmo_ && gizmo_->isDragging());
+  if (!forceContinuousRedraw && currentKey == lastRenderKeyState_) {
     return;
   }
   lastRenderKeyState_ = currentKey;
@@ -5721,15 +5769,20 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                           !layer->isActiveAt(currentFrame)) {
                         return false;
                       }
-                      if (layer->layerBlendType() !=
-                          ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL) {
-                        return true;
-                      }
-                      return layerHasCpuRasterizerWork(layer.get());
+                      return layer->layerBlendType() !=
+                                 ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL &&
+                             !layerHasCpuRasterizerWork(layer.get());
+                    });
+    const bool hasGpuBlendBlocker =
+        std::any_of(layers.begin(), layers.end(),
+                    [&](const ArtifactAbstractLayerPtr &layer) {
+                      return layer && isLayerEffectivelyVisible(layer) &&
+                             layer->isActiveAt(currentFrame) &&
+                             layerHasCpuRasterizerWork(layer.get());
                     });
     const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
     const bool gpuBlendPathRequested =
-        gpuBlendRequested && hasGpuBlendJustification;
+        gpuBlendRequested && hasGpuBlendJustification && !hasGpuBlendBlocker;
 
     // Avoid paying render-pipeline setup cost when GPU blending is disabled.
     if (gpuBlendPathRequested) {
@@ -5788,6 +5841,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     int blendFailureCount = 0;
     int blendRetryNormalCount = 0;
     int directBlendFallbackCount = 0;
+    int skipInvisibleCount = 0;
+    int skipSoloCount = 0;
+    int skipInactiveCount = 0;
+    int skipRoiCount = 0;
+    int skipLodCount = 0;
+    int opacityZeroCount = 0;
+    int compositedLayerCount = 0;
+    int firstLayerSeedCount = 0;
     QStringList blendMaskLayerNotes;
     const float targetViewportW = hostWidth_;
     const float targetViewportH = hostHeight_;
@@ -5928,15 +5989,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->setDetailLevel(static_cast<LODManager::DetailLevel>(
             lod)); // Pass LOD to renderer/effects
         for (const auto &layer : layers) {
-          if (!isLayerEffectivelyVisible(layer))
+          if (!isLayerEffectivelyVisible(layer)) {
+            ++skipInvisibleCount;
             continue;
-          if (hasSoloLayer && !layer->isSolo())
+          }
+          if (hasSoloLayer && !layer->isSolo()) {
+            ++skipSoloCount;
             continue;
-          if (!layer->isActiveAt(currentFrame))
+          }
+          if (!layer->isActiveAt(currentFrame)) {
+            ++skipInactiveCount;
             continue;
+          }
           const QRectF layerBounds = layer->transformedBoundingBox();
           if (layerBounds.isValid() &&
               layerBounds.intersected(roiRect).isEmpty()) {
+            ++skipRoiCount;
             continue;
           }
 
@@ -5951,11 +6019,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             const float screenH = std::abs(br.y - tl.y);
 
             if (lod == DetailLevel::Low) {
-              if (screenW < 8.0f || screenH < 8.0f)
+              if (screenW < 8.0f || screenH < 8.0f) {
+                ++skipLodCount;
                 continue;
+              }
             } else if (lod == DetailLevel::Medium) {
-              if (screenW < 2.0f || screenH < 2.0f)
+              if (screenW < 2.0f || screenH < 2.0f) {
+                ++skipLodCount;
                 continue;
+              }
             }
           }
           // ------------------------------------------------
@@ -5975,6 +6047,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               ArtifactCore::toBlendMode(layer->layerBlendType());
           const float opacity = layer->opacity();
           if (opacity <= 0.0f) {
+            ++opacityZeroCount;
             qCDebug(compositionViewLog)
                 << "[LayerSkip] opacity <= 0"
                 << "layer=" << layer->id().toString()
@@ -5984,6 +6057,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 << "hasSelection=" << hasSelection;
             continue;
           }
+          ++compositedLayerCount;
           const int layerMaskCount = layer->maskCount();
           if (layerMaskCount > 0) {
             ++maskedLayerCount;
@@ -6028,6 +6102,25 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
           // CS 実行前に RTV を解除
           renderer_->unbindColorTargetsForCompute();
+
+          if (compositedLayerCount == 1 &&
+              blendMode != ArtifactCore::BlendMode::Normal) {
+            ++firstLayerSeedCount;
+            renderer_->setOverrideRTV(renderPipeline_.accumRTV());
+            renderer_->drawSprite(0.0f, 0.0f, cw, ch, layerSRV, opacity);
+            renderer_->flush();
+            renderer_->setOverrideRTV(nullptr);
+            if (blendMaskLayerNotes.size() < 4) {
+              blendMaskLayerNotes
+                  << QStringLiteral(
+                         "%1:blend=%2 opacity=%3 masks=%4 seededAsNormal=1")
+                         .arg(layer->layerName(),
+                              ArtifactCore::BlendModeUtils::toString(blendMode),
+                              QString::number(opacity, 'f', 3))
+                         .arg(layerMaskCount);
+            }
+            continue;
+          }
 
           ++blendDispatchCount;
           bool blendOk = renderer_->blendLayers(
@@ -6103,20 +6196,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                       backgroundMode,
                                       cachedMayaGradientSprite_);
 
-      // -- 4: オフスクリーン RT を画面全体に描画（スクリーン座標、SRC_ALPHA
-      // ブレンド） -- accum にはレイヤー合成結果だけが入っている。
-      // コンポジション外は alpha=0 なので
-      // SRC_ALPHA ブレンドで main FB のビューポートカラーが透けて見える。
-      renderer_->setCanvasSize(origViewW, origViewH);
-      renderer_->setZoom(1.0f);
-      renderer_->setPan(0.0f, 0.0f);
-      {
-        QMatrix4x4 screenIdentity;
-        screenIdentity.setToIdentity();
-        renderer_->drawSpriteTransformed(0.0f, 0.0f, origViewW, origViewH,
-                                         screenIdentity,
-                                         renderPipeline_.accumSRV(), 1.0f);
-      }
+      // -- 4: オフスクリーン RT を composition-space に戻して描画。
+      // ここを viewport 全体へ伸ばすと、単一の平面レイヤーを非 Normal blend に
+      // しただけで編集ビュー全面がその色で塗り潰される。
+      renderer_->setCanvasSize(cw, ch);
+      renderer_->setZoom(origZoom);
+      renderer_->setPan(origPanX, origPanY);
+      renderer_->drawSprite(0.0f, 0.0f, cw, ch, renderPipeline_.accumSRV(),
+                            1.0f);
 
       // コンポジションのキャンバス座標系に戻す
       if (compositionRenderer_) {
@@ -6235,12 +6322,18 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             lod)); // Pass LOD to renderer/effects
 
         for (const auto &layer : layers) {
-          if (!isLayerEffectivelyVisible(layer))
+          if (!isLayerEffectivelyVisible(layer)) {
+            ++skipInvisibleCount;
             continue;
-          if (hasSoloLayer && !layer->isSolo())
+          }
+          if (hasSoloLayer && !layer->isSolo()) {
+            ++skipSoloCount;
             continue;
-          if (!layer->isActiveAt(currentFrame))
+          }
+          if (!layer->isActiveAt(currentFrame)) {
+            ++skipInactiveCount;
             continue;
+          }
 
           // === 段階 2: ROI 計算 ===
           const QRectF layerBounds = layer->transformedBoundingBox();
@@ -6257,17 +6350,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             const float screenH = std::abs(br.y - tl.y);
 
             if (lod == DetailLevel::Low) {
-              if (screenW < 8.0f || screenH < 8.0f)
+              if (screenW < 8.0f || screenH < 8.0f) {
+                ++skipLodCount;
                 continue;
+              }
             } else if (lod == DetailLevel::Medium) {
-              if (screenW < 2.0f || screenH < 2.0f)
+              if (screenW < 2.0f || screenH < 2.0f) {
+                ++skipLodCount;
                 continue;
+              }
             }
           }
           // ------------------------------------------------
 
           // === 段階 3: 空 ROI スキップ ===
           if (intersected.isEmpty()) {
+            ++skipRoiCount;
             continue; // 画面外レイヤーをスキップ
           }
 
@@ -6285,8 +6383,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               ArtifactCore::toBlendMode(layer->layerBlendType());
           const float opacity = layer->opacity();
           if (opacity <= 0.0f) {
+            ++opacityZeroCount;
             continue;
           }
+          ++compositedLayerCount;
           const int layerMaskCount = layer->maskCount();
           if (layerMaskCount > 0) {
             ++maskedLayerCount;
@@ -6409,7 +6509,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           {
             ArtifactCore::ProfileScope _profG2DDrawCall(
                 "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
-            gizmo_->draw(renderer_.get());
+            const bool suppressMoveDragVisual =
+                gizmo_->isDragging() &&
+                gizmo_->activeHandle() == TransformGizmo::HandleType::Move;
+            if (!suppressMoveDragVisual) {
+              gizmo_->draw(renderer_.get());
+            }
           }
         } else {
           gizmo_->setLayer(nullptr);
@@ -6470,16 +6575,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               "MaskDraw", ArtifactCore::ProfileCategory::Render);
           const QTransform globalTransform =
               selectedLayer->getGlobalTransform();
-          const FloatColor maskLineShadowColor = {0.0f, 0.0f, 0.0f, 0.30f};
-          const FloatColor maskLineColor = {0.26f, 0.84f, 0.96f, 0.96f};
           const FloatColor maskPointShadowColor = {0.0f, 0.0f, 0.0f, 0.42f};
           const FloatColor maskPointColor = {0.97f, 0.99f, 1.0f, 1.0f};
           const FloatColor hoverColor = {1.0f, 0.76f, 0.28f, 1.0f};
           const FloatColor dragColor = {1.0f, 0.40f, 0.24f, 1.0f};
-          const FloatColor handleLineColor = {0.74f, 0.82f, 0.92f, 0.55f};
+          const FloatColor handleStrokeColor = {0.82f, 0.92f, 1.0f, 0.88f};
           const FloatColor handlePointColor = {0.70f, 0.90f, 1.0f, 0.95f};
           const FloatColor handleHoverColor = {1.0f, 0.78f, 0.32f, 1.0f};
           const FloatColor handleDragColor = {1.0f, 0.44f, 0.24f, 1.0f};
+          constexpr float maskStrokeWidth = 4.5f;
+          constexpr float handleStrokeWidth = 3.25f;
 
           for (int m = 0; m < maskCount; ++m) {
             LayerMask mask = selectedLayer->mask(m);
@@ -6516,8 +6621,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   const Detail::float2 outHandleCanvas = {(float)outHandlePos.x(), (float)outHandlePos.y()};
 
                   if (vertex.inTangent != QPointF(0, 0)) {
-                    renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, 4.0f, maskLineShadowColor);
-                    renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, 2.0f, handleLineColor);
+                    renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, handleStrokeWidth, handleStrokeColor);
                     FloatColor handleColor = handlePointColor;
                     if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
                         draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
@@ -6530,8 +6634,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     renderer_->drawPoint(inHandleCanvas.x, inHandleCanvas.y, 6.5f, handleColor);
                   }
                   if (vertex.outTangent != QPointF(0, 0)) {
-                    renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, 4.0f, maskLineShadowColor);
-                    renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, 2.0f, handleLineColor);
+                    renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, handleStrokeWidth, handleStrokeColor);
                     FloatColor handleColor = handlePointColor;
                     if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
                         draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
@@ -6546,10 +6649,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
                   if (v > 0) {
                     renderer_->drawThickLineLocal(lastCanvasPos,
-                                                  currentCanvasPos, 6.0f,
-                                                  maskLineShadowColor);
-                    renderer_->drawThickLineLocal(
-                        lastCanvasPos, currentCanvasPos, 3.5f, maskLineColor);
+                                                  currentCanvasPos, maskStrokeWidth,
+                                                  handleStrokeColor);
                   }
 
                   FloatColor currentColor = maskPointColor;
@@ -6578,11 +6679,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 renderer_->drawThickLineLocal(
                     lastCanvasPos,
                     {(float)firstCanvasPos.x(), (float)firstCanvasPos.y()},
-                    7.0f, maskLineShadowColor);
-                renderer_->drawThickLineLocal(
-                    lastCanvasPos,
-                    {(float)firstCanvasPos.x(), (float)firstCanvasPos.y()},
-                    4.0f, maskLineColor);
+                    maskStrokeWidth, handleStrokeColor);
               }
 
               {
@@ -6607,11 +6704,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             pendingMaskPath_.vertexCount() > 0) {
           const MaskPath &path = pendingMaskPath_;
           const int vertexCount = path.vertexCount();
-          const FloatColor pendingLineShadowColor = {0.0f, 0.0f, 0.0f, 0.24f};
-          const FloatColor pendingLineColor = {0.40f, 0.92f, 0.98f, 0.70f};
+          const FloatColor pendingLineColor = {0.82f, 0.92f, 1.0f, 0.88f};
           const FloatColor pendingPointShadowColor = {0.0f, 0.0f, 0.0f, 0.36f};
           const FloatColor pendingPointColor = {0.84f, 0.98f, 1.0f, 0.88f};
           const QTransform globalTransform = selectedLayer->getGlobalTransform();
+          constexpr float pendingStrokeWidth = 4.5f;
 
           Detail::float2 lastCanvasPos;
           for (int v = 0; v < vertexCount; ++v) {
@@ -6622,9 +6719,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 static_cast<float>(canvasPos.y())};
             if (v > 0) {
               renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
-                                            5.0f, pendingLineShadowColor);
-              renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
-                                            2.5f, pendingLineColor);
+                                            pendingStrokeWidth, pendingLineColor);
             }
             renderer_->drawPoint(currentCanvasPos.x, currentCanvasPos.y, 11.0f,
                                  pendingPointShadowColor);
@@ -6822,48 +6917,51 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       {
         ArtifactCore::ProfileScope _profBBox(
             "BoundingBox", ArtifactCore::ProfileCategory::Render);
-        const FloatColor primaryColor{1.0f, 0.72f, 0.22f, 1.0f};
-        const FloatColor secondaryColor{0.28f, 0.74f, 1.0f, 0.85f};
-        for (const auto &layer : layersForOverlay) {
-          if (!isLayerEffectivelyVisible(layer) ||
-              !layer->isActiveAt(currentFrame)) {
-            continue;
-          }
-          if (!isLayerSelected(selectedIds, layer)) {
-            continue;
-          }
+        const bool drawSelectionBounds = showGizmoOverlay_ && showGuides_;
+        if (drawSelectionBounds) {
+          const FloatColor primaryColor{1.0f, 0.72f, 0.22f, 1.0f};
+          const FloatColor secondaryColor{0.28f, 0.74f, 1.0f, 0.85f};
+          for (const auto &layer : layersForOverlay) {
+            if (!isLayerEffectivelyVisible(layer) ||
+                !layer->isActiveAt(currentFrame)) {
+              continue;
+            }
+            if (!isLayerSelected(selectedIds, layer)) {
+              continue;
+            }
 
-          const QRectF localBounds = layer->localBounds();
-          if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
-              localBounds.height() <= 0.0) {
-            continue;
-          }
+            const QRectF localBounds = layer->localBounds();
+            if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+                localBounds.height() <= 0.0) {
+              continue;
+            }
 
-          const bool primary =
-              !selectedLayerId_.isNil() && layer->id() == selectedLayerId_;
-          const QTransform globalTransform = layer->getGlobalTransform();
-          const QPointF tl = globalTransform.map(localBounds.topLeft());
-          const QPointF tr = globalTransform.map(localBounds.topRight());
-          const QPointF br = globalTransform.map(localBounds.bottomRight());
-          const QPointF bl = globalTransform.map(localBounds.bottomLeft());
-          const FloatColor color = primary ? primaryColor : secondaryColor;
-          const float thickness = primary ? 1.9f : 1.4f;
-          renderer_->drawSolidLine(
-              {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-              {static_cast<float>(tr.x()), static_cast<float>(tr.y())}, color,
-              thickness);
-          renderer_->drawSolidLine(
-              {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-              {static_cast<float>(br.x()), static_cast<float>(br.y())}, color,
-              thickness);
-          renderer_->drawSolidLine(
-              {static_cast<float>(br.x()), static_cast<float>(br.y())},
-              {static_cast<float>(bl.x()), static_cast<float>(bl.y())}, color,
-              thickness);
-          renderer_->drawSolidLine(
-              {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-              {static_cast<float>(tl.x()), static_cast<float>(tl.y())}, color,
-              thickness);
+            const bool primary =
+                !selectedLayerId_.isNil() && layer->id() == selectedLayerId_;
+            const QTransform globalTransform = layer->getGlobalTransform();
+            const QPointF tl = globalTransform.map(localBounds.topLeft());
+            const QPointF tr = globalTransform.map(localBounds.topRight());
+            const QPointF br = globalTransform.map(localBounds.bottomRight());
+            const QPointF bl = globalTransform.map(localBounds.bottomLeft());
+            const FloatColor color = primary ? primaryColor : secondaryColor;
+            const float thickness = primary ? 1.9f : 1.4f;
+            renderer_->drawSolidLine(
+                {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                {static_cast<float>(tr.x()), static_cast<float>(tr.y())}, color,
+                thickness);
+            renderer_->drawSolidLine(
+                {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                {static_cast<float>(br.x()), static_cast<float>(br.y())}, color,
+                thickness);
+            renderer_->drawSolidLine(
+                {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                {static_cast<float>(bl.x()), static_cast<float>(bl.y())}, color,
+                thickness);
+            renderer_->drawSolidLine(
+                {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                {static_cast<float>(tl.x()), static_cast<float>(tl.y())}, color,
+                thickness);
+          }
         }
       } // BoundingBox scope
     }
@@ -7095,12 +7193,48 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(viewportInteracting_)
             .arg(textureCacheStats.entryCount)
             .arg(static_cast<qulonglong>(textureCacheStats.memoryBytes));
+    const QString visibilityState =
+        frameOutOfRange
+            ? QStringLiteral("frameOutOfRange")
+            : (compositedLayerCount > 0
+                   ? QStringLiteral("drawn")
+                   : (layers.isEmpty() ? QStringLiteral("noLayers")
+                                       : QStringLiteral("allSkipped")));
+    lastCompositionVisibilitySummary_ =
+        QStringLiteral(
+            "phase=composition-visibility-v1 state=%1 path=%2 layersTotal=%3 "
+            "drawn=%4 composited=%5 skippedInvisible=%6 skippedSolo=%7 "
+            "skippedInactive=%8 skippedRoi=%9 skippedLod=%10 opacityZero=%11 "
+            "frameOutOfRange=%12 gpuBlendBlocker=%13 "
+            "forceContinuousRedraw=%14 viewportInteracting=%15 "
+            "firstLayerSeed=%16 notes=%17")
+            .arg(visibilityState,
+                 pipelineEnabled ? QStringLiteral("gpu-blend")
+                                 : QStringLiteral("fallback"))
+            .arg(layers.size())
+            .arg(drawnLayerCount)
+            .arg(compositedLayerCount)
+            .arg(skipInvisibleCount)
+            .arg(skipSoloCount)
+            .arg(skipInactiveCount)
+            .arg(skipRoiCount)
+            .arg(skipLodCount)
+            .arg(opacityZeroCount)
+            .arg(frameOutOfRange ? 1 : 0)
+            .arg(hasGpuBlendBlocker ? 1 : 0)
+            .arg(forceContinuousRedraw ? 1 : 0)
+            .arg(viewportInteracting_ ? 1 : 0)
+            .arg(firstLayerSeedCount)
+            .arg(hasGpuBlendBlocker
+                     ? QStringLiteral("gpuBlendBlockedByCpuRasterizerWork")
+                     : QStringLiteral("none"));
     lastBlendMaskSummary_ =
         QStringLiteral(
             "phase=blend-mask-smoke-v1 path=%1 blendContract=straight-src_over-premul-accum "
             "maskContract=%2 pipelineFormat=RGBA32F layerFormat=RGBA8_sRGB "
             "layersDrawn=%3 nonNormal=%4 maskedLayers=%5 masks=%6 "
-            "dispatch=%7 retryNormal=%8 failed=%9 directFallback=%10 notes=%11")
+            "dispatch=%7 retryNormal=%8 failed=%9 directFallback=%10 "
+            "firstLayerSeed=%11 notes=%12")
             .arg(pipelineEnabled ? QStringLiteral("gpu-blend")
                                  : QStringLiteral("fallback"))
             .arg(totalMaskCount > 0 ? QStringLiteral("pending")
@@ -7113,6 +7247,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(blendRetryNormalCount)
             .arg(blendFailureCount)
             .arg(directBlendFallbackCount)
+            .arg(firstLayerSeedCount)
             .arg(blendMaskLayerNotes.isEmpty()
                      ? QStringLiteral("none")
                      : blendMaskLayerNotes.join(QStringLiteral("; ")));

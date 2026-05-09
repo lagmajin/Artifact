@@ -2,6 +2,9 @@ module;
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QTimerEvent>
+#include <QResizeEvent>
+#include <QShowEvent>
+#include <QPaintEvent>
 
 export module Artifact.Widgets.AppDebuggerWidget;
 
@@ -22,6 +25,9 @@ public:
 
 protected:
     void timerEvent(QTimerEvent* event) override;
+    void paintEvent(QPaintEvent* event) override;
+    void showEvent(QShowEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
 
 private:
     class Impl;

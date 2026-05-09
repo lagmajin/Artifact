@@ -36,6 +36,7 @@
 #include <QSpinBox>
 #include <QStyleOptionSlider>
 #include <QTextEdit>
+#include <QVBoxLayout>
 #include <QtSVG/QSvgRenderer>
 
 module Artifact.Widgets.PropertyEditor;
@@ -895,8 +896,8 @@ public:
     setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   }
 
-  QSize sizeHint() const override { return {28, 28}; }
-  QSize minimumSizeHint() const override { return {24, 24}; }
+  QSize sizeHint() const override { return {36, 36}; }
+  QSize minimumSizeHint() const override { return {30, 30}; }
 
   void setValue(const double value) {
     if (std::abs(value_ - value) < 0.0001) {
@@ -1538,13 +1539,13 @@ ArtifactRotationPropertyEditor::ArtifactRotationPropertyEditor(
     : ArtifactAbstractPropertyEditor(parent) {
   setObjectName(QStringLiteral("propertyRotationEditor"));
 
-  auto *layout = new QHBoxLayout(this);
+  auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
-  layout->setSpacing(6);
+  layout->setSpacing(4);
 
   auto *knob = new PropertyRotationKnobWidget(this);
   knob_ = knob;
-  knob->setFixedSize(28, 28);
+  knob->setFixedSize(36, 36);
   applyPropertyFieldPalette(knob);
 
   spinBox_ = new ArtifactRelativeDoubleSpinBox(this);
@@ -1561,6 +1562,7 @@ ArtifactRotationPropertyEditor::ArtifactRotationPropertyEditor(
     spinBox_->setSuffix(QStringLiteral(" ") + meta.unit);
   }
   spinBox_->setMinimumHeight(22);
+  spinBox_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
   spinBox_->setFrame(false);
   {
@@ -1572,8 +1574,8 @@ ArtifactRotationPropertyEditor::ArtifactRotationPropertyEditor(
     applyThemeTextPalette(spinBox_);
   }
 
-  layout->addWidget(knob_, 0, Qt::AlignVCenter);
-  layout->addWidget(spinBox_, 1);
+  layout->addWidget(spinBox_, 0);
+  layout->addWidget(knob_, 0, Qt::AlignHCenter);
 
   knob->setValue(spinBox_->value());
   knob->setPreviewHandler([this](const double value) {
