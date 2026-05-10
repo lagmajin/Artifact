@@ -38,6 +38,7 @@ module;
 #include <limits>
 #include <memory>
 #include <opencv2/core.hpp>
+#include <opencv2/imgproc.hpp>
 #include <utility>
 #include <vector>
 #include <wobjectimpl.h>
@@ -494,6 +495,96 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer,
   }
 
   return false;
+}
+
+bool hitTestMaskSegment(const ArtifactAbstractLayerPtr& layer,
+                        const QPointF& canvasPos,
+                        float threshold,
+                        int& outMaskIndex,
+                        int& outPathIndex,
+                        int& outSegmentIndex)
+{
+  if (!layer) {
+    return false;
+  }
+
+  const QTransform globalTransform = layer->getGlobalTransform();
+  bool invertible = false;
+  const QTransform invTransform = globalTransform.inverted(&invertible);
+  if (!invertible) {
+    return false;
+  }
+
+  const QPointF localPos = invTransform.map(canvasPos);
+  const float thresholdSq = threshold * threshold;
+  const auto distanceToSegmentSq = [](const QPointF &p, const QPointF &a,
+                                      const QPointF &b) {
+    const QPointF ab = b - a;
+    const double abLenSq = QPointF::dotProduct(ab, ab);
+    if (abLenSq <= std::numeric_limits<double>::epsilon()) {
+      const QPointF delta = p - a;
+      return QPointF::dotProduct(delta, delta);
+    }
+
+    const QPointF ap = p - a;
+    const double t =
+        std::clamp(QPointF::dotProduct(ap, ab) / abLenSq, 0.0, 1.0);
+    const QPointF proj = a + ab * t;
+    const QPointF delta = p - proj;
+    return QPointF::dotProduct(delta, delta);
+  };
+
+  for (int m = 0; m < layer->maskCount(); ++m) {
+    const LayerMask mask = layer->mask(m);
+    if (!mask.isEnabled()) {
+      continue;
+    }
+    for (int p = 0; p < mask.maskPathCount(); ++p) {
+      const MaskPath path = mask.maskPath(p);
+      const int vertexCount = path.vertexCount();
+      if (vertexCount < 2) {
+        continue;
+      }
+
+      const int segmentCount = path.isClosed() ? vertexCount : vertexCount - 1;
+      for (int s = 0; s < segmentCount; ++s) {
+        const MaskVertex startVertex = path.vertex(s);
+        const MaskVertex endVertex = path.vertex((s + 1) % vertexCount);
+        if (distanceToSegmentSq(localPos, startVertex.position,
+                                endVertex.position) <= thresholdSq) {
+          outMaskIndex = m;
+          outPathIndex = p;
+          outSegmentIndex = s;
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+void drawMaskSquareMarker(ArtifactIRenderer *renderer,
+                          const Detail::float2 &center,
+                          float size,
+                          const FloatColor &color,
+                          const FloatColor *shadowColor = nullptr,
+                          float shadowExpand = 0.0f)
+{
+  if (!renderer) {
+    return;
+  }
+
+  if (shadowColor) {
+    const float shadowSize = size + shadowExpand;
+    const float shadowHalf = shadowSize * 0.5f;
+    renderer->drawRectOutline(center.x - shadowHalf, center.y - shadowHalf,
+                              shadowSize, shadowSize, *shadowColor);
+  }
+
+  const float half = size * 0.5f;
+  renderer->drawRectOutline(center.x - half, center.y - half, size, size,
+                            color);
 }
 
 bool isScaleHandle(TransformGizmo::HandleType handle) {
@@ -4613,12 +4704,22 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
         }
       }
 
-      if (!impl_->pendingMaskCreation_ ||
-          impl_->pendingMaskLayerId_ != selectedLayer->id()) {
-        impl_->beginPendingMaskCreation(selectedLayer, localPos);
-      } else {
-        impl_->beginPendingMaskCreation(selectedLayer, localPos);
+      int segmentMaskIndex = -1;
+      int segmentPathIndex = -1;
+      int segmentIndex = -1;
+      const float segmentThreshold = 12.0f / impl_->renderer_->getZoom();
+      if (hitTestMaskSegment(selectedLayer, QPointF(cPos.x, cPos.y),
+                             segmentThreshold, segmentMaskIndex,
+                             segmentPathIndex, segmentIndex)) {
+        qDebug() << "[PenTool] Ignored new mask start near existing segment"
+                 << "mask:" << segmentMaskIndex
+                 << "path:" << segmentPathIndex
+                 << "segment:" << segmentIndex;
+        event->accept();
+        return;
       }
+
+      impl_->beginPendingMaskCreation(selectedLayer, localPos);
 
       qDebug() << "[PenTool] Added pending mask vertex at local:" << localPos
                << "layer:" << selectedLayer->id().toString()
@@ -6593,8 +6694,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const FloatColor handlePointColor = {0.70f, 0.90f, 1.0f, 0.95f};
           const FloatColor handleHoverColor = {1.0f, 0.78f, 0.32f, 1.0f};
           const FloatColor handleDragColor = {1.0f, 0.44f, 0.24f, 1.0f};
-          constexpr float maskStrokeWidth = 4.5f;
-          constexpr float handleStrokeWidth = 3.25f;
+          constexpr float maskStrokeWidth = 5.0f;
+          constexpr float handleStrokeWidth = 3.5f;
 
           for (int m = 0; m < maskCount; ++m) {
             LayerMask mask = selectedLayer->mask(m);
@@ -6640,8 +6741,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
                       handleColor = handleHoverColor;
                     }
-                    renderer_->drawPoint(inHandleCanvas.x, inHandleCanvas.y, 10.0f, maskPointShadowColor);
-                    renderer_->drawPoint(inHandleCanvas.x, inHandleCanvas.y, 6.5f, handleColor);
+                    drawMaskSquareMarker(renderer_, inHandleCanvas, 7.0f,
+                                         handleColor, &maskPointShadowColor,
+                                         4.0f);
                   }
                   if (vertex.outTangent != QPointF(0, 0)) {
                     renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, handleStrokeWidth, handleStrokeColor);
@@ -6653,8 +6755,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
                       handleColor = handleHoverColor;
                     }
-                    renderer_->drawPoint(outHandleCanvas.x, outHandleCanvas.y, 10.0f, maskPointShadowColor);
-                    renderer_->drawPoint(outHandleCanvas.x, outHandleCanvas.y, 6.5f, handleColor);
+                    drawMaskSquareMarker(renderer_, outHandleCanvas, 7.0f,
+                                         handleColor, &maskPointShadowColor,
+                                         4.0f);
                   }
 
                   if (v > 0) {
@@ -6696,11 +6799,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 ArtifactCore::ProfileScope _profMaskPoints(
                     "MaskDrawPoints", ArtifactCore::ProfileCategory::Render);
                 for (const auto &marker : markers) {
-                  renderer_->drawPoint(marker.pos.x, marker.pos.y,
-                                       marker.radius + 3.0f,
-                                       maskPointShadowColor);
-                  renderer_->drawPoint(marker.pos.x, marker.pos.y,
-                                       marker.radius, marker.color);
+                  drawMaskSquareMarker(renderer_, marker.pos,
+                                       std::max(6.5f, marker.radius * 0.55f),
+                                       marker.color, &maskPointShadowColor,
+                                       3.5f);
                }
               }
               }
@@ -6718,7 +6820,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const FloatColor pendingPointShadowColor = {0.0f, 0.0f, 0.0f, 0.36f};
           const FloatColor pendingPointColor = {0.84f, 0.98f, 1.0f, 0.88f};
           const QTransform globalTransform = selectedLayer->getGlobalTransform();
-          constexpr float pendingStrokeWidth = 4.5f;
+          constexpr float pendingStrokeWidth = 5.0f;
 
           Detail::float2 lastCanvasPos;
           for (int v = 0; v < vertexCount; ++v) {
@@ -6731,10 +6833,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
                                             pendingStrokeWidth, pendingLineColor);
             }
-            renderer_->drawPoint(currentCanvasPos.x, currentCanvasPos.y, 11.0f,
-                                 pendingPointShadowColor);
-            renderer_->drawPoint(currentCanvasPos.x, currentCanvasPos.y, 7.0f,
-                                 pendingPointColor);
+            drawMaskSquareMarker(renderer_, currentCanvasPos, 7.5f,
+                                 pendingPointColor, &pendingPointShadowColor,
+                                 4.0f);
             lastCanvasPos = currentCanvasPos;
           }
           if (penToolPreviewVisible_ && penMaskPreviewValid_) {
@@ -6758,12 +6859,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const FloatColor previewColor = closingSoon
                                               ? FloatColor{1.0f, 0.88f, 0.46f, 0.95f}
                                               : FloatColor{0.82f, 0.97f, 1.0f, 0.92f};
-          renderer_->drawPoint(penMaskPreviewCanvasPos_.x,
-                               penMaskPreviewCanvasPos_.y, 10.0f,
-                               previewShadowColor);
-          renderer_->drawPoint(penMaskPreviewCanvasPos_.x,
-                               penMaskPreviewCanvasPos_.y, 5.5f,
-                               previewColor);
+          drawMaskSquareMarker(renderer_, penMaskPreviewCanvasPos_, 6.0f,
+                               previewColor, &previewShadowColor, 4.0f);
         }
       }
 

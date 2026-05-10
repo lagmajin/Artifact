@@ -1154,14 +1154,16 @@ void PrimitiveRenderer2D::drawSpriteTransformed(float x, float y, float w, float
             uploadBytes.resize(static_cast<size_t>(width) * static_cast<size_t>(height) * 4u);
             const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
             for (size_t i = 0; i < pixelCount; ++i) {
-                const float r = rgba32[i * 4u + 0];
-                const float g = rgba32[i * 4u + 1];
-                const float b = rgba32[i * 4u + 2];
-                const float a = rgba32[i * 4u + 3];
-                uploadBytes[i * 4u + 0] = static_cast<uint8_t>(std::clamp(r, 0.0f, 1.0f) * 255.0f + 0.5f);
-                uploadBytes[i * 4u + 1] = static_cast<uint8_t>(std::clamp(g, 0.0f, 1.0f) * 255.0f + 0.5f);
-                uploadBytes[i * 4u + 2] = static_cast<uint8_t>(std::clamp(b, 0.0f, 1.0f) * 255.0f + 0.5f);
-                uploadBytes[i * 4u + 3] = static_cast<uint8_t>(std::clamp(a, 0.0f, 1.0f) * 255.0f + 0.5f);
+                // Source layout from ImageF32x4_RGBA internal mat: [B, G, R, A] as float
+                const float srcB = rgba32[i * 4u + 0];
+                const float srcG = rgba32[i * 4u + 1];
+                const float srcR = rgba32[i * 4u + 2];
+                const float srcA = rgba32[i * 4u + 3];
+                // Dest layout: [R, G, B, A] as uint8 (TEX_FORMAT_RGBA8_UNORM_SRGB)
+                uploadBytes[i * 4u + 0] = static_cast<uint8_t>(std::clamp(srcR, 0.0f, 1.0f) * 255.0f + 0.5f);
+                uploadBytes[i * 4u + 1] = static_cast<uint8_t>(std::clamp(srcG, 0.0f, 1.0f) * 255.0f + 0.5f);
+                uploadBytes[i * 4u + 2] = static_cast<uint8_t>(std::clamp(srcB, 0.0f, 1.0f) * 255.0f + 0.5f);
+                uploadBytes[i * 4u + 3] = static_cast<uint8_t>(std::clamp(srcA, 0.0f, 1.0f) * 255.0f + 0.5f);
             }
             uploadPtr = uploadBytes.data();
         }

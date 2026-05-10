@@ -49,13 +49,26 @@ UploadImageData makeUploadImageData(const ArtifactCore::ImageF32x4_RGBA& image)
     }
 
     if (const float* rgba32 = image.rgba32fData()) {
-        upload.width = static_cast<Uint32>(width);
+        // Internal mat is CV_32FC4 stored as BGRA (from qImageToCvMat+BGR2BGRA).
+        // GPU texture is TEX_FORMAT_RGBA8_UNORM_SRGB, so convert float->uint8 and swap B<->R.
+        upload.width  = static_cast<Uint32>(width);
         upload.height = static_cast<Uint32>(height);
-        upload.stride = static_cast<Uint64>(upload.width) * 4ull * sizeof(float);
-        upload.bytes.resize(static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
-        std::memcpy(upload.bytes.data(),
-                    rgba32,
-                    static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height));
+        upload.stride = static_cast<Uint64>(upload.width) * 4ull;  // 4 bytes/pixel (RGBA8)
+        const size_t totalBytes = static_cast<size_t>(upload.stride) * static_cast<size_t>(upload.height);
+        upload.bytes.resize(totalBytes);
+        const size_t pixelCount = static_cast<size_t>(width) * static_cast<size_t>(height);
+        for (size_t i = 0; i < pixelCount; ++i) {
+            // Source layout: [B, G, R, A] as float
+            const float srcB = rgba32[i * 4u + 0];
+            const float srcG = rgba32[i * 4u + 1];
+            const float srcR = rgba32[i * 4u + 2];
+            const float srcA = rgba32[i * 4u + 3];
+            // Dest layout: [R, G, B, A] as uint8 (RGBA8_UNORM)
+            upload.bytes[i * 4u + 0] = static_cast<uint8_t>(std::clamp(srcR, 0.0f, 1.0f) * 255.0f + 0.5f);
+            upload.bytes[i * 4u + 1] = static_cast<uint8_t>(std::clamp(srcG, 0.0f, 1.0f) * 255.0f + 0.5f);
+            upload.bytes[i * 4u + 2] = static_cast<uint8_t>(std::clamp(srcB, 0.0f, 1.0f) * 255.0f + 0.5f);
+            upload.bytes[i * 4u + 3] = static_cast<uint8_t>(std::clamp(srcA, 0.0f, 1.0f) * 255.0f + 0.5f);
+        }
         return upload;
     }
 

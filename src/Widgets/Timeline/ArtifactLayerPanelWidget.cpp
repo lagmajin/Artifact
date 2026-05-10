@@ -739,6 +739,14 @@ namespace {
    return fullLabel;
   }
 
+  QString maskSelectionPropertyPath(const int maskIndex)
+  {
+   if (maskIndex < 0) {
+    return QString();
+   }
+   return QStringLiteral("mask.%1.enabled").arg(maskIndex);
+  }
+
   QRect propertyKeyframeMarkerRect(const int widgetWidth, const int rowY, const int rowH)
   {
    constexpr int kMarkerSize = 14;
@@ -1116,6 +1124,8 @@ public:
   int contentHeight = kLayerRowHeight;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
+  LayerID selectedMaskLayerId;
+  int selectedMaskIndex = -1;
   QVector<VisibleRow> visibleRows;
   QHash<QString, bool> expandedByLayerId;
   QHash<QString, bool> expandedByGroupKey;
@@ -1162,6 +1172,12 @@ public:
    }
 
    editingLayerId = LayerID();
+  }
+
+  void clearMaskSelection()
+  {
+   selectedMaskLayerId = LayerID();
+   selectedMaskIndex = -1;
   }
 
   int maxVerticalOffset(const ArtifactLayerPanelWidget* owner) const
@@ -1896,6 +1912,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   if (row.kind == RowKind::Group ||
       row.kind == RowKind::MaskStack ||
       row.kind == RowKind::MatteStack) {
+   impl_->clearMaskSelection();
    if (event->button() == Qt::LeftButton) {
     if (!row.groupKey.trimmed().isEmpty()) {
       impl_->expandedByGroupKey[row.groupKey] = !impl_->expandedByGroupKey.value(row.groupKey, true);
@@ -1906,6 +1923,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
    return;
   }
   if (row.kind == RowKind::Property) {
+   impl_->clearMaskSelection();
    if (event->button() == Qt::LeftButton) {
     RationalTime currentTime = impl_->currentTime;
     if (auto comp = safeCompositionLookup(impl_->compositionId)) {
@@ -1943,12 +1961,25 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   }
   if (row.kind == RowKind::Mask || row.kind == RowKind::Matte) {
     impl_->clearDragState();
+    if (event->button() == Qt::LeftButton) {
+      auto* service = ArtifactProjectService::instance();
+      if (service) {
+        service->selectLayer(layer->id());
+      }
+      impl_->selectedLayerId = layer->id();
+      impl_->selectedMaskLayerId = layer->id();
+      impl_->selectedMaskIndex = row.propertyPath.trimmed().toInt();
+      impl_->currentPropertyPath = maskSelectionPropertyPath(impl_->selectedMaskIndex);
+      propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+      update();
+    }
     event->accept();
     return;
   }
   auto* service = ArtifactProjectService::instance();
   if (row.kind != RowKind::Layer) {
     impl_->clearDragState();
+    impl_->clearMaskSelection();
     if (event->button() == Qt::LeftButton) {
       if (service) {
        service->selectLayer(layer->id());
@@ -1984,6 +2015,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
   if (event->button() == Qt::LeftButton) {
     impl_->selectedLayerId = layer->id();
+    impl_->clearMaskSelection();
     impl_->currentPropertyPath.clear();
     propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
     if (!clickInInlineCombo) {
@@ -2496,11 +2528,44 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
   if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+    if (!impl_->selectedMaskLayerId.isNil() &&
+        impl_->selectedMaskIndex >= 0 &&
+        impl_->selectedMaskLayerId == impl_->selectedLayerId) {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+      auto layer = comp ? comp->layerById(impl_->selectedLayerId) : ArtifactAbstractLayerPtr{};
+      if (!compId.isNil() && layer &&
+          impl_->selectedMaskIndex < layer->maskCount()) {
+        std::vector<LayerMask> beforeMasks;
+        beforeMasks.reserve(static_cast<size_t>(layer->maskCount()));
+        for (int i = 0; i < layer->maskCount(); ++i) {
+          beforeMasks.push_back(layer->mask(i));
+        }
+
+        layer->removeMask(impl_->selectedMaskIndex);
+
+        std::vector<LayerMask> afterMasks;
+        afterMasks.reserve(static_cast<size_t>(layer->maskCount()));
+        for (int i = 0; i < layer->maskCount(); ++i) {
+          afterMasks.push_back(layer->mask(i));
+        }
+
+        if (auto *undo = UndoManager::instance()) {
+          undo->push(std::make_unique<MaskEditCommand>(layer, std::move(beforeMasks),
+                                                       std::move(afterMasks)));
+        }
+        impl_->clearMaskSelection();
+        updateLayout();
+        event->accept();
+        return;
+      }
+    }
     if (!impl_->selectedLayerId.isNil()) {
       if (auto* service = ArtifactProjectService::instance()) {
         auto comp = safeCompositionLookup(impl_->compositionId);
         const CompositionID compId = comp ? comp->id() : impl_->compositionId;
         if (!compId.isNil()) {
+          impl_->clearMaskSelection();
           service->removeLayerFromComposition(compId, impl_->selectedLayerId);
           event->accept();
           return;
@@ -2720,6 +2785,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const bool isDisplayLeafRow = (row.kind == RowKind::Mask || row.kind == RowKind::Matte);
     const bool sel = (l->id() == impl_->selectedLayerId);
     const bool layerSelected = sel && row.kind == RowKind::Layer;
+    const bool maskSelected = sel && row.kind == RowKind::Mask &&
+                              impl_->selectedMaskLayerId == l->id() &&
+                              impl_->selectedMaskIndex == row.propertyPath.trimmed().toInt();
     const QString propertyPath =
         (isPropertyRow && !row.propertyPath.trimmed().isEmpty())
             ? row.propertyPath
@@ -2735,11 +2803,17 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const QColor rowSelected = mixColor(background, accent, 0.34);
     if (propertyFocused) {
       p.fillRect(0, y, width(), rowH, mixColor(background, selection, 0.32));
+    } else if (maskSelected) {
+      p.fillRect(0, y, width(), rowH, mixColor(background, accent, 0.30));
     } else if (layerSelected) {
       p.fillRect(0, y, width(), rowH, rowSelected); // Modo-like Amber selection
     }
     else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, rowHover); // Subtle grey hover
     else p.fillRect(0, y, width(), rowH, rowBase);
+
+    if (maskSelected) {
+      p.fillRect(0, y, 4, rowH, accent);
+    }
 
     p.setPen(border.darker(120));
     p.drawLine(0, y + rowH, width(), y + rowH);
@@ -2775,7 +2849,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
                    fm.elidedText(groupAux, Qt::ElideRight, badgeRect.width() - 16));
       }
-      p.setPen(text);
+      p.setPen(maskSelected ? accent.lighter(135) : text);
       const int groupTextWidth = std::max(20, width() - textX - 8 - (groupAux.isEmpty() ? 0 : 100));
       p.drawText(textX, y, groupTextWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
       continue;
@@ -2955,7 +3029,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       const QRect badgeRect(badgeX, y + 5, badgeWidth, rowH - 10);
       const int nameWidth = std::max(20, badgeRect.left() - (layerTextX + 4));
       const QString elidedName = fm.elidedText(layerName, Qt::ElideRight, nameWidth);
-      p.setPen(text);
+      p.setPen(maskSelected ? accent.lighter(135) : text);
       p.drawText(layerTextX, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, elidedName);
       p.setPen(layerSelected ? accent.darker(180) : border);
       p.setBrush(toneBadgeFill(row.auxiliaryTone, background, surface, accent));
@@ -2964,7 +3038,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
                  fm.elidedText(layerAux, Qt::ElideRight, badgeRect.width() - 16));
      } else {
-      p.setPen(text);
+      p.setPen(maskSelected ? accent.lighter(135) : text);
       p.drawText(layerTextX, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, layerName);
      }
 
