@@ -2,7 +2,6 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
-#include <QColorDialog>
 #include <QContextMenuEvent>
 #include <QCursor>
 #include <QDoubleSpinBox>

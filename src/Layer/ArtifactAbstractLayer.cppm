@@ -5,6 +5,7 @@
 #include <QPointF>
 #include <QRectF>
 #include <QSize>
+#include <QStringList>
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
 
@@ -103,6 +104,134 @@ int64_t currentTimelineFrame(const ArtifactAbstractLayer *layer) {
 
 RationalTime currentTimelineTime(const ArtifactAbstractLayer *layer) {
   return RationalTime(currentTimelineFrame(layer), effectiveLayerFrameRate(layer));
+}
+
+struct MaskPropertyAddress {
+  int maskIndex = -1;
+  int pathIndex = -1;
+  QString field;
+};
+
+std::optional<MaskPropertyAddress>
+parseMaskPropertyPath(const QString &propertyPath) {
+  const QStringList parts = propertyPath.split(QLatin1Char('.'), Qt::SkipEmptyParts);
+  if (parts.size() < 3 || parts[0] != QStringLiteral("mask")) {
+    return std::nullopt;
+  }
+
+  bool ok = false;
+  const int maskIndex = parts[1].toInt(&ok);
+  if (!ok || maskIndex < 0) {
+    return std::nullopt;
+  }
+
+  if (parts.size() == 3 && parts[2] == QStringLiteral("enabled")) {
+    return MaskPropertyAddress{maskIndex, -1, parts[2]};
+  }
+
+  if (parts.size() != 5 || parts[2] != QStringLiteral("path")) {
+    return std::nullopt;
+  }
+
+  const int pathIndex = parts[3].toInt(&ok);
+  if (!ok || pathIndex < 0) {
+    return std::nullopt;
+  }
+
+  const QString field = parts[4];
+  if (field == QStringLiteral("closed") ||
+      field == QStringLiteral("opacity") ||
+      field == QStringLiteral("feather") ||
+      field == QStringLiteral("expansion") ||
+      field == QStringLiteral("inverted") ||
+      field == QStringLiteral("mode") ||
+      field == QStringLiteral("name")) {
+    return MaskPropertyAddress{maskIndex, pathIndex, field};
+  }
+
+  return std::nullopt;
+}
+
+QString maskPropertyPrefix(const int maskIndex) {
+  return QStringLiteral("mask.%1").arg(maskIndex);
+}
+
+QString maskPathPropertyPrefix(const int maskIndex, const int pathIndex) {
+  return QStringLiteral("mask.%1.path.%2").arg(maskIndex).arg(pathIndex);
+}
+
+void applyMaskPropertyState(const ArtifactAbstractLayer *layer,
+                            const int maskIndex, LayerMask &mask) {
+  if (!layer) {
+    return;
+  }
+
+  const RationalTime time = currentTimelineTime(layer);
+  const auto resolveBool = [layer, time](const QString &propertyPath,
+                                         const bool fallback) {
+    const auto property = layer->getProperty(propertyPath);
+    if (!property) {
+      return fallback;
+    }
+    const QVariant value = property->evaluateValue(time);
+    return value.isValid() ? value.toBool() : fallback;
+  };
+  const auto resolveInt = [layer, time](const QString &propertyPath,
+                                        const int fallback) {
+    const auto property = layer->getProperty(propertyPath);
+    if (!property) {
+      return fallback;
+    }
+    const QVariant value = property->evaluateValue(time);
+    return value.isValid() ? value.toInt() : fallback;
+  };
+  const auto resolveDouble = [layer, time](const QString &propertyPath,
+                                           const double fallback) {
+    const auto property = layer->getProperty(propertyPath);
+    if (!property) {
+      return fallback;
+    }
+    const QVariant value = property->evaluateValue(time);
+    return value.isValid() ? value.toDouble() : fallback;
+  };
+  const auto resolveString = [layer, time](const QString &propertyPath,
+                                           const QString &fallback) {
+    const auto property = layer->getProperty(propertyPath);
+    if (!property) {
+      return fallback;
+    }
+    const QVariant value = property->evaluateValue(time);
+    return value.isValid() ? value.toString() : fallback;
+  };
+
+  const QString maskPrefix = maskPropertyPrefix(maskIndex);
+  mask.setEnabled(resolveBool(maskPrefix + QStringLiteral(".enabled"),
+                              mask.isEnabled()));
+
+  for (int pathIndex = 0; pathIndex < mask.maskPathCount(); ++pathIndex) {
+    MaskPath path = mask.maskPath(pathIndex);
+    const QString pathPrefix = maskPathPropertyPrefix(maskIndex, pathIndex);
+    path.setClosed(resolveBool(pathPrefix + QStringLiteral(".closed"),
+                               path.isClosed()));
+    path.setOpacity(static_cast<float>(
+        resolveDouble(pathPrefix + QStringLiteral(".opacity"),
+                      static_cast<double>(path.opacity()))));
+    path.setFeather(static_cast<float>(
+        resolveDouble(pathPrefix + QStringLiteral(".feather"),
+                      static_cast<double>(path.feather()))));
+    path.setExpansion(static_cast<float>(
+        resolveDouble(pathPrefix + QStringLiteral(".expansion"),
+                      static_cast<double>(path.expansion()))));
+    path.setInverted(resolveBool(pathPrefix + QStringLiteral(".inverted"),
+                                 path.isInverted()));
+    path.setMode(static_cast<MaskMode>(
+        resolveInt(pathPrefix + QStringLiteral(".mode"),
+                   static_cast<int>(path.mode()))));
+    path.setName(UniString(resolveString(pathPrefix + QStringLiteral(".name"),
+                                         path.name().toQString())
+                               .toStdString()));
+    mask.setMaskPath(pathIndex, path);
+  }
 }
 } // namespace
 
@@ -1593,7 +1722,95 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       QStringLiteral("Apply effects to all layers below"));
   layerGroup.addProperty(isAdjustmentProp);
 
-  return {transformGroup, physicsGroup, layerGroup};
+  std::vector<PropertyGroup> maskGroups;
+  maskGroups.reserve(static_cast<size_t>(maskCount()));
+  for (int maskIndex = 0; maskIndex < maskCount(); ++maskIndex) {
+    const LayerMask resolvedMask = mask(maskIndex);
+    PropertyGroup maskGroup(QStringLiteral("Mask %1").arg(maskIndex + 1));
+
+    auto maskEnabledProp =
+        makeProp(maskPropertyPrefix(maskIndex) + QStringLiteral(".enabled"),
+                 PropertyType::Boolean, resolvedMask.isEnabled(),
+                 -240 - maskIndex);
+    maskEnabledProp->setAnimatable(true);
+    maskEnabledProp->setDisplayLabel(QStringLiteral("Enabled"));
+    maskGroup.addProperty(maskEnabledProp);
+
+    for (int pathIndex = 0; pathIndex < resolvedMask.maskPathCount();
+         ++pathIndex) {
+      const MaskPath path = resolvedMask.maskPath(pathIndex);
+      const QString pathPrefix = maskPathPropertyPrefix(maskIndex, pathIndex);
+      const QString pathLabel =
+          QStringLiteral("Path %1").arg(pathIndex + 1);
+
+      auto closedProp = makeProp(pathPrefix + QStringLiteral(".closed"),
+                                 PropertyType::Boolean, path.isClosed(),
+                                 -230 - pathIndex);
+      closedProp->setAnimatable(true);
+      closedProp->setDisplayLabel(pathLabel + QStringLiteral(" Closed"));
+      maskGroup.addProperty(closedProp);
+
+      auto opacityProp = makeProp(pathPrefix + QStringLiteral(".opacity"),
+                                  PropertyType::Float,
+                                  static_cast<double>(path.opacity()),
+                                  -229 - pathIndex);
+      opacityProp->setAnimatable(true);
+      opacityProp->setHardRange(0.0, 1.0);
+      opacityProp->setSoftRange(0.0, 1.0);
+      opacityProp->setStep(0.01);
+      opacityProp->setDisplayLabel(pathLabel + QStringLiteral(" Opacity"));
+      maskGroup.addProperty(opacityProp);
+
+      auto featherProp = makeProp(pathPrefix + QStringLiteral(".feather"),
+                                  PropertyType::Float,
+                                  static_cast<double>(path.feather()),
+                                  -228 - pathIndex);
+      featherProp->setAnimatable(true);
+      featherProp->setSoftRange(0.0, 128.0);
+      featherProp->setStep(0.5);
+      featherProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather"));
+      maskGroup.addProperty(featherProp);
+
+      auto expansionProp = makeProp(pathPrefix + QStringLiteral(".expansion"),
+                                    PropertyType::Float,
+                                    static_cast<double>(path.expansion()),
+                                    -227 - pathIndex);
+      expansionProp->setAnimatable(true);
+      expansionProp->setSoftRange(-256.0, 256.0);
+      expansionProp->setStep(0.5);
+      expansionProp->setDisplayLabel(pathLabel + QStringLiteral(" Expansion"));
+      maskGroup.addProperty(expansionProp);
+
+      auto invertedProp = makeProp(pathPrefix + QStringLiteral(".inverted"),
+                                   PropertyType::Boolean, path.isInverted(),
+                                   -226 - pathIndex);
+      invertedProp->setAnimatable(true);
+      invertedProp->setDisplayLabel(pathLabel + QStringLiteral(" Inverted"));
+      maskGroup.addProperty(invertedProp);
+
+      auto modeProp = makeProp(pathPrefix + QStringLiteral(".mode"),
+                               PropertyType::Integer,
+                               static_cast<int>(path.mode()),
+                               -225 - pathIndex);
+      modeProp->setAnimatable(true);
+      modeProp->setTooltip(
+          QStringLiteral("0=Add,1=Subtract,2=Intersect,3=Difference"));
+      modeProp->setDisplayLabel(pathLabel + QStringLiteral(" Mode"));
+      maskGroup.addProperty(modeProp);
+    }
+
+    maskGroups.push_back(std::move(maskGroup));
+  }
+
+  std::vector<PropertyGroup> groups;
+  groups.reserve(3 + maskGroups.size());
+  groups.push_back(std::move(transformGroup));
+  groups.push_back(std::move(physicsGroup));
+  groups.push_back(std::move(layerGroup));
+  for (auto &group : maskGroups) {
+    groups.push_back(std::move(group));
+  }
+  return groups;
 }
 
 std::shared_ptr<ArtifactCore::AbstractProperty>
@@ -1664,6 +1881,54 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
 
   if (propertyPath == QStringLiteral("layer.opacity")) {
     setOpacity(static_cast<float>(value.toDouble()));
+    return true;
+  }
+
+  if (const auto maskAddress = parseMaskPropertyPath(propertyPath)) {
+    if (maskAddress->maskIndex < 0 ||
+        maskAddress->maskIndex >= impl_->maskCount()) {
+      return false;
+    }
+
+    if (maskAddress->pathIndex < 0) {
+      LayerMask mask = impl_->getMask(maskAddress->maskIndex);
+      if (maskAddress->field == QStringLiteral("enabled")) {
+        mask.setEnabled(value.toBool());
+        impl_->setMask(maskAddress->maskIndex, mask);
+        notifyLayerMutation(this, LayerDirtyFlag::Mask,
+                            LayerDirtyReason::PropertyChanged);
+        return true;
+      }
+      return false;
+    }
+
+    LayerMask mask = impl_->getMask(maskAddress->maskIndex);
+    if (maskAddress->pathIndex >= mask.maskPathCount()) {
+      return false;
+    }
+
+    MaskPath path = mask.maskPath(maskAddress->pathIndex);
+    if (maskAddress->field == QStringLiteral("closed")) {
+      path.setClosed(value.toBool());
+    } else if (maskAddress->field == QStringLiteral("opacity")) {
+      path.setOpacity(static_cast<float>(value.toDouble()));
+    } else if (maskAddress->field == QStringLiteral("feather")) {
+      path.setFeather(static_cast<float>(value.toDouble()));
+    } else if (maskAddress->field == QStringLiteral("expansion")) {
+      path.setExpansion(static_cast<float>(value.toDouble()));
+    } else if (maskAddress->field == QStringLiteral("inverted")) {
+      path.setInverted(value.toBool());
+    } else if (maskAddress->field == QStringLiteral("mode")) {
+      path.setMode(static_cast<MaskMode>(value.toInt()));
+    } else if (maskAddress->field == QStringLiteral("name")) {
+      path.setName(UniString(value.toString().toStdString()));
+    } else {
+      return false;
+    }
+    mask.setMaskPath(maskAddress->pathIndex, path);
+    impl_->setMask(maskAddress->maskIndex, mask);
+    notifyLayerMutation(this, LayerDirtyFlag::Mask,
+                        LayerDirtyReason::PropertyChanged);
     return true;
   }
 
@@ -1858,7 +2123,9 @@ void ArtifactAbstractLayer::setMask(int index, const LayerMask &mask) {
 }
 
 LayerMask ArtifactAbstractLayer::mask(int index) const {
-  return impl_->getMask(index);
+  LayerMask resolved = impl_->getMask(index);
+  applyMaskPropertyState(this, index, resolved);
+  return resolved;
 }
 
 int ArtifactAbstractLayer::maskCount() const { return impl_->maskCount(); }

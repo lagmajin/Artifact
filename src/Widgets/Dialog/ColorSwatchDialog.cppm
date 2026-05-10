@@ -366,7 +366,11 @@ ColorSwatchDialog::ColorSwatchDialog(QWidget* parent)
     // ── Separator ────────────────────────────────────────────────────────
     auto* sep = new QFrame();
     sep->setFrameShape(QFrame::HLine);
-    sep->setStyleSheet("color:#444;");
+    {
+      QPalette pal = sep->palette();
+      pal.setColor(QPalette::WindowText, QColor("#444"));
+      sep->setPalette(pal);
+    }
     mainLayout->addWidget(sep);
 
     // ── Info panel ───────────────────────────────────────────────────────

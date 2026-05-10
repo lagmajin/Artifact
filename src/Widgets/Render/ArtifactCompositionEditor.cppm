@@ -4,7 +4,6 @@ module;
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QColor>
-#include <QColorDialog>
 #include <QComboBox>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
@@ -92,6 +91,7 @@ import Artifact.Service.Playback;
 import Time.Rational;
 import Artifact.Layer.Video;
 import Artifact.Tool.Manager;
+import FloatColorPickerDialog;
 import Clipboard.ClipboardManager;
 import Utils.Path;
 import Artifact.Layer.InitParams;
@@ -3773,25 +3773,19 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     if (!impl_->renderController_) {
       return;
     }
-    const QColor initial = QColor::fromRgbF(
-        impl_->renderController_->clearColor().r(),
-        impl_->renderController_->clearColor().g(),
-        impl_->renderController_->clearColor().b(),
-        impl_->renderController_->clearColor().a());
-    const QColor chosen = QColorDialog::getColor(
-        initial, this, QStringLiteral("Choose Solid Background Color"),
-        QColorDialog::ShowAlphaChannel);
-    if (!chosen.isValid()) {
-      return;
-    }
-    impl_->renderController_->setClearColor(
-        FloatColor(chosen.redF(), chosen.greenF(), chosen.blueF(),
-                   chosen.alphaF()));
-    impl_->renderController_->setCompositionBackgroundMode(
-        static_cast<int>(CompositionBackgroundMode::Solid));
-    if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-      settings->setCompositionBackgroundMode(
+    const FloatColor initial = impl_->renderController_->clearColor();
+    ArtifactWidgets::FloatColorPicker picker(this);
+    picker.setColor(initial);
+    picker.setInitialColor(initial);
+    if (picker.exec() == QDialog::Accepted) {
+      const FloatColor chosen = picker.getColor();
+      impl_->renderController_->setClearColor(chosen);
+      impl_->renderController_->setCompositionBackgroundMode(
           static_cast<int>(CompositionBackgroundMode::Solid));
+      if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+        settings->setCompositionBackgroundMode(
+            static_cast<int>(CompositionBackgroundMode::Solid));
+      }
     }
   });
   QObject::connect(checkerboardAct, &QAction::triggered, this, [this]() {

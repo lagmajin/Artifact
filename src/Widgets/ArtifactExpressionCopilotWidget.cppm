@@ -130,10 +130,11 @@ public:
             return;
         }
         statusLabel->setText(text);
-        statusLabel->setStyleSheet(QStringLiteral("color: rgb(%1, %2, %3);")
-                                       .arg(color.red())
-                                       .arg(color.green())
-                                       .arg(color.blue()));
+        {
+            QPalette pal = statusLabel->palette();
+            pal.setColor(QPalette::WindowText, color);
+            statusLabel->setPalette(pal);
+        }
     }
 
     void applyErrorSelection(int position, int length, const QString& text) {
@@ -194,7 +195,12 @@ public:
         auto* headerLayout = new QHBoxLayout();
         auto* iconLabel = new QLabel(QString::fromUtf8("fx"));
         auto* titleLabel = new QLabel(QStringLiteral("Expression Copilot"));
-        titleLabel->setStyleSheet(QStringLiteral("font-weight: bold; font-size: 14px;"));
+        {
+            QFont font = titleLabel->font();
+            font.setBold(true);
+            font.setPointSize(14);
+            titleLabel->setFont(font);
+        }
         headerLayout->addWidget(iconLabel);
         headerLayout->addWidget(titleLabel);
         headerLayout->addStretch();
@@ -223,7 +229,11 @@ public:
 
         statusLabel = new QLabel(QStringLiteral("Ready"));
         statusLabel->setWordWrap(true);
-        statusLabel->setStyleSheet(QStringLiteral("color: rgb(148, 163, 184);"));
+        {
+            QPalette pal = statusLabel->palette();
+            pal.setColor(QPalette::WindowText, QColor(148, 163, 184));
+            statusLabel->setPalette(pal);
+        }
         layout->addWidget(statusLabel);
 
         auto* btnLayout = new QHBoxLayout();

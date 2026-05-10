@@ -170,7 +170,8 @@ UniString MaskPath::name() const { return impl_->name; }
 void MaskPath::setName(const UniString& name) { impl_->name = name; }
 
 void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
-                                float offsetX, float offsetY) const
+                                float offsetX, float offsetY,
+                                float scaleX, float scaleY) const
 {
     cv::Mat& dst = *static_cast<cv::Mat*>(outMat);
     dst = cv::Mat::zeros(height, width, CV_32FC1);
@@ -191,8 +192,8 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
     std::vector<cv::Point> pts;
     pts.reserve(poly.size());
     for (const auto& p : poly) {
-        pts.emplace_back(static_cast<int>(std::round(p.x() + offsetX)),
-                         static_cast<int>(std::round(p.y() + offsetY)));
+        pts.emplace_back(static_cast<int>(std::round(p.x() * scaleX + offsetX)),
+                         static_cast<int>(std::round(p.y() * scaleY + offsetY)));
     }
 
     // fillPoly on 8-bit image, then convert to float
@@ -201,7 +202,7 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
     cv::fillPoly(mask8, contours, cv::Scalar(255));
 
     // Expansion: morphological dilate(+) or erode(-)
-    float exp = impl_->expansion;
+    float exp = impl_->expansion * ((scaleX + scaleY) * 0.5f);
     if (std::abs(exp) > 0.5f) {
         int ksize = static_cast<int>(std::abs(exp) * 2.0f) | 1; // ensure odd
         cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(ksize, ksize));
@@ -213,8 +214,9 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
     }
 
     // Feather: Gaussian blur
-    if (impl_->feather > 0.5f) {
-        int ksize = static_cast<int>(impl_->feather * 2.0f) | 1;
+    float featherVal = impl_->feather * ((scaleX + scaleY) * 0.5f);
+    if (featherVal > 0.5f) {
+        int ksize = static_cast<int>(featherVal * 2.0f) | 1;
         cv::GaussianBlur(mask8, mask8, cv::Size(ksize, ksize), 0);
     }
 

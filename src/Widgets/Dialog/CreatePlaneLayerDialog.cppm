@@ -526,12 +526,25 @@ DialogChrome buildDialogChrome(QDialog* dlg)
     // Header bar
     auto* header = new QWidget(dlg);
     header->setFixedHeight(50);
-    header->setStyleSheet("background-color: #2a2a2a;");
+    header->setAutoFillBackground(true);
+    {
+        QPalette pal = header->palette();
+        pal.setColor(QPalette::Window, QColor("#2a2a2a"));
+        header->setPalette(pal);
+    }
     auto* headerLayout = new QHBoxLayout(header);
     headerLayout->setContentsMargins(15, 0, 10, 0);
 
     auto* titleLabel = new QLabel(u8"平面設定", header);
-    titleLabel->setStyleSheet("color: #e0e0e0; font-size: 13px; font-weight: bold;");
+    {
+        QFont font = titleLabel->font();
+        font.setBold(true);
+        font.setPointSize(13);
+        titleLabel->setFont(font);
+        QPalette pal = titleLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor("#e0e0e0"));
+        titleLabel->setPalette(pal);
+    }
 
     chrome.closeButton = new QPushButton(u8"×", header);
     chrome.closeButton->setFixedSize(30, 30);

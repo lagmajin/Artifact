@@ -317,11 +317,13 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
     // Mask vertices are stored in layer-local space (centered at 0,0).
     // Translate to pixel space: pixel = localPos - localBounds.topLeft()
     const QRectF lb = targetLayer->localBounds();
-    const float maskOffsetX = static_cast<float>(-lb.x());
-    const float maskOffsetY = static_cast<float>(-lb.y());
+    const float scaleX = static_cast<float>(mat.cols) / std::max(1.0f, static_cast<float>(lb.width()));
+    const float scaleY = static_cast<float>(mat.rows) / std::max(1.0f, static_cast<float>(lb.height()));
+    const float maskOffsetX = static_cast<float>(-lb.x() * scaleX);
+    const float maskOffsetY = static_cast<float>(-lb.y() * scaleY);
     for (int m = 0; m < targetLayer->maskCount(); ++m) {
       LayerMask mask = targetLayer->mask(m);
-      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY);
+      mask.applyToImage(mat.cols, mat.rows, &mat, maskOffsetX, maskOffsetY, scaleX, scaleY);
     }
   }
 
