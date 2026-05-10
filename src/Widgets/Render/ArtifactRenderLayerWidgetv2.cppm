@@ -1500,8 +1500,12 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
                  hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
        handleColor = handleHoverColor;
       }
-      renderer_->drawPoint(inHandleCanvas.x, inHandleCanvas.y, 10.0f, maskPointShadowColor);
-      renderer_->drawPoint(inHandleCanvas.x, inHandleCanvas.y, 6.5f, handleColor);
+      renderer_->drawRectOutline(inHandleCanvas.x - 5.5f,
+                                  inHandleCanvas.y - 5.5f, 11.0f, 11.0f,
+                                  maskPointShadowColor);
+      renderer_->drawRectOutline(inHandleCanvas.x - 3.5f,
+                                  inHandleCanvas.y - 3.5f, 7.0f, 7.0f,
+                                  handleColor);
      }
      if (vertex.outTangent != QPointF(0, 0)) {
       renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, 4.0f, maskLineShadowColor);
@@ -1514,8 +1518,12 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
                  hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
        handleColor = handleHoverColor;
       }
-      renderer_->drawPoint(outHandleCanvas.x, outHandleCanvas.y, 10.0f, maskPointShadowColor);
-      renderer_->drawPoint(outHandleCanvas.x, outHandleCanvas.y, 6.5f, handleColor);
+      renderer_->drawRectOutline(outHandleCanvas.x - 5.5f,
+                                  outHandleCanvas.y - 5.5f, 11.0f, 11.0f,
+                                  maskPointShadowColor);
+      renderer_->drawRectOutline(outHandleCanvas.x - 3.5f,
+                                  outHandleCanvas.y - 3.5f, 7.0f, 7.0f,
+                                  handleColor);
      }
      if (v > 0) {
       renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos, 6.0f, maskLineShadowColor);
@@ -1547,10 +1555,17 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
       currentColor = hoverColor;
       currentRadius = 21.0f;
      }
-     renderer_->drawPoint(static_cast<float>(canvasPos.x()), static_cast<float>(canvasPos.y()),
-                          currentRadius + 3.0f, maskPointShadowColor);
-     renderer_->drawPoint(static_cast<float>(canvasPos.x()), static_cast<float>(canvasPos.y()),
-                          currentRadius, currentColor);
+     renderer_->drawRectOutline(static_cast<float>(canvasPos.x()) -
+                                    (currentRadius + 3.0f) * 0.5f,
+                                static_cast<float>(canvasPos.y()) -
+                                    (currentRadius + 3.0f) * 0.5f,
+                                currentRadius + 3.0f, currentRadius + 3.0f,
+                                maskPointShadowColor);
+     renderer_->drawRectOutline(static_cast<float>(canvasPos.x()) -
+                                    currentRadius * 0.5f,
+                                static_cast<float>(canvasPos.y()) -
+                                    currentRadius * 0.5f,
+                                currentRadius, currentRadius, currentColor);
     }
    }
   }

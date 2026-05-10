@@ -39,6 +39,7 @@ import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Artifact.Mask.LayerMask;
+import Artifact.Mask.Path;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
 import Property.Abstract;
