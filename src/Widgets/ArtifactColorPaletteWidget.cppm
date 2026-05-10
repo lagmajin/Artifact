@@ -5,7 +5,6 @@ module;
 #include <QPushButton>
 #include <QListWidget>
 #include <QComboBox>
-#include <QColorDialog>
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QMessageBox>
@@ -58,7 +57,7 @@ import Color.Harmonizer;
 import Artifact.Project.PresetManager;
 import Color.Float;
 import Analyze.SmartPalette;
-#endif
+import FloatColorPickerDialog;
 
 namespace Artifact {
 
@@ -192,11 +191,14 @@ void ArtifactColorPaletteWidget::updatePaletteList() {
 }
 
 void ArtifactColorPaletteWidget::onGenerateHarmonicPalette() {
-    QColor base = QColorDialog::getColor(Qt::red, this, "Select Base Color");
-    if (!base.isValid()) return;
-
-    // Convert to FloatColor for ColorHarmonizer
-    FloatColor floatBase(base.redF(), base.greenF(), base.blueF(), base.alphaF());
+    const FloatColor initial(1.0f, 0.0f, 0.0f, 1.0f); // Qt::red equivalent
+    ArtifactWidgets::FloatColorPicker picker(this);
+    picker.setColor(initial);
+    picker.setInitialColor(initial);
+    if (picker.exec() != QDialog::Accepted) {
+        return;
+    }
+    const FloatColor floatBase = picker.getColor();
     QList<FloatColor> harmonyColors;
 
     int idx = impl_->comboHarmony->currentIndex();

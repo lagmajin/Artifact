@@ -62,6 +62,43 @@ QString ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
     return QStringLiteral("Transform / Anchor Y");
   }
 
+  if (propertyPath.startsWith(QStringLiteral("mask."), Qt::CaseInsensitive)) {
+    const auto parts = propertyPath.split(QLatin1Char('.'), Qt::SkipEmptyParts);
+    if (parts.size() == 3 && parts[2] == QStringLiteral("enabled")) {
+      const int maskIndex = parts[1].toInt();
+      return QStringLiteral("Mask %1 / Enabled").arg(maskIndex + 1);
+    }
+    if (parts.size() == 5 && parts[2] == QStringLiteral("path")) {
+      const int maskIndex = parts[1].toInt();
+      const int pathIndex = parts[3].toInt();
+      const QString pathLabel = QStringLiteral("Mask %1 / Path %2")
+                                    .arg(maskIndex + 1)
+                                    .arg(pathIndex + 1);
+      const QString field = parts[4];
+      if (field == QStringLiteral("closed")) {
+        return pathLabel + QStringLiteral(" / Closed");
+      }
+      if (field == QStringLiteral("opacity")) {
+        return pathLabel + QStringLiteral(" / Opacity");
+      }
+      if (field == QStringLiteral("feather")) {
+        return pathLabel + QStringLiteral(" / Feather");
+      }
+      if (field == QStringLiteral("expansion")) {
+        return pathLabel + QStringLiteral(" / Expansion");
+      }
+      if (field == QStringLiteral("inverted")) {
+        return pathLabel + QStringLiteral(" / Inverted");
+      }
+      if (field == QStringLiteral("mode")) {
+        return pathLabel + QStringLiteral(" / Mode");
+      }
+      if (field == QStringLiteral("name")) {
+        return pathLabel + QStringLiteral(" / Name");
+      }
+    }
+  }
+
   QString fallback = propertyPath;
   fallback.replace(QLatin1Char('.'), QStringLiteral(" / "));
   return fallback;

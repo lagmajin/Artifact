@@ -535,6 +535,14 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Horizontal")}, {1, QStringLiteral("Vertical")}};
   }
+  if (name.startsWith(QStringLiteral("mask."), Qt::CaseInsensitive) &&
+      name.endsWith(QStringLiteral(".mode"), Qt::CaseInsensitive)) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Add")},
+        {1, QStringLiteral("Subtract")},
+        {2, QStringLiteral("Intersect")},
+        {3, QStringLiteral("Difference")}};
+  }
 
   return std::nullopt;
 }

@@ -279,11 +279,24 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
     // ── Header ────────────────────────────────────────────────────────────
     auto* header = new QWidget(this);
     header->setFixedHeight(48);
-    header->setStyleSheet("background-color: #2a2a2a;");
+    header->setAutoFillBackground(true);
+    {
+        QPalette pal = header->palette();
+        pal.setColor(QPalette::Window, QColor("#2a2a2a"));
+        header->setPalette(pal);
+    }
     auto* hLay = new QHBoxLayout(header);
     hLay->setContentsMargins(15, 0, 10, 0);
     auto* titleLbl = new QLabel(u8"カメラ設定", header);
-    titleLbl->setStyleSheet("color: #e0e0e0; font-size: 13px; font-weight: bold;");
+    {
+        QFont font = titleLbl->font();
+        font.setBold(true);
+        font.setPointSize(13);
+        titleLbl->setFont(font);
+        QPalette pal = titleLbl->palette();
+        pal.setColor(QPalette::WindowText, QColor("#e0e0e0"));
+        titleLbl->setPalette(pal);
+    }
     auto* closeBtn = new QPushButton(u8"×", header);
     closeBtn->setFixedSize(30, 30);
     closeBtn->setStyleSheet(
@@ -311,7 +324,14 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         auto* l = new QHBoxLayout(w);
         l->setContentsMargins(0, 10, 0, 4);
         auto* lbl = new QLabel(text, w);
-        lbl->setStyleSheet("color: #888888; font-size: 11px;");
+        {
+            QFont font = lbl->font();
+            font.setPointSize(11);
+            lbl->setFont(font);
+            QPalette pal = lbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#888888"));
+            lbl->setPalette(pal);
+        }
         l->addWidget(lbl);
         l->addStretch();
         return w;
@@ -319,7 +339,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
     const auto makeSeparator = [&]() -> QFrame* {
         auto* sep = new QFrame(body);
         sep->setFrameShape(QFrame::HLine);
-        sep->setStyleSheet("color: #3a3a3a;");
+        {
+            QPalette pal = sep->palette();
+            pal.setColor(QPalette::WindowText, QColor("#3a3a3a"));
+            sep->setPalette(pal);
+        }
         sep->setFixedHeight(1);
         return sep;
     };
@@ -332,7 +356,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         auto* lbl = new QLabel(u8"名前", row);
         lbl->setFixedWidth(80);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        lbl->setStyleSheet("color: #cccccc;");
+        {
+            QPalette pal = lbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            lbl->setPalette(pal);
+        }
         impl_->nameEdit = new QLineEdit(uniqueCameraLayerName(), row);
         rl->addWidget(lbl);
         rl->addWidget(impl_->nameEdit, 1);
@@ -350,7 +378,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         auto* lbl = new QLabel(u8"プリセット", row);
         lbl->setFixedWidth(80);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        lbl->setStyleSheet("color: #cccccc;");
+        {
+            QPalette pal = lbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            lbl->setPalette(pal);
+        }
         impl_->presetCombo = new QComboBox(row);
         for (const auto& p : kPresets) impl_->presetCombo->addItem(p.name);
         impl_->presetCombo->setCurrentIndex(5); // 35mm default
@@ -367,7 +399,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         auto* lbl = new QLabel(u8"焦点距離", row);
         lbl->setFixedWidth(80);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        lbl->setStyleSheet("color: #cccccc;");
+        {
+            QPalette pal = lbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            lbl->setPalette(pal);
+        }
         impl_->focalLengthSpin = new QDoubleSpinBox(row);
         impl_->focalLengthSpin->setRange(1.0, 2000.0);
         impl_->focalLengthSpin->setDecimals(2);
@@ -386,7 +422,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         auto* lbl = new QLabel(u8"視野角", row);
         lbl->setFixedWidth(80);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        lbl->setStyleSheet("color: #cccccc;");
+        {
+            QPalette pal = lbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            lbl->setPalette(pal);
+        }
         impl_->fovSpin = new QDoubleSpinBox(row);
         impl_->fovSpin->setRange(0.5, 170.0);
         impl_->fovSpin->setDecimals(2);
@@ -414,7 +454,11 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         auto* lbl = new QLabel(u8"絞り（F値）", row);
         lbl->setFixedWidth(80);
         lbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        lbl->setStyleSheet("color: #cccccc;");
+        {
+            QPalette pal = lbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            lbl->setPalette(pal);
+        }
         impl_->apertureFCombo = new QComboBox(row);
         for (const auto& f : kFStops) impl_->apertureFCombo->addItem(f);
         impl_->apertureFCombo->setCurrentText("f/4");
@@ -431,21 +475,33 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         auto* fdLbl = new QLabel(u8"焦点距離", row);
         fdLbl->setFixedWidth(80);
         fdLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        fdLbl->setStyleSheet("color: #cccccc;");
+        {
+            QPalette pal = fdLbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            fdLbl->setPalette(pal);
+        }
         impl_->focusDistSpin = new QDoubleSpinBox(row);
         impl_->focusDistSpin->setRange(0.0, 1000000.0);
         impl_->focusDistSpin->setDecimals(1);
         impl_->focusDistSpin->setValue(1000.0);
         auto* blurLbl = new QLabel(u8"ブラー量", row);
         blurLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        blurLbl->setStyleSheet("color: #cccccc;");
+        {
+            QPalette pal = blurLbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            blurLbl->setPalette(pal);
+        }
         blurLbl->setFixedWidth(60);
         impl_->blurAmountSpin = new QDoubleSpinBox(row);
         impl_->blurAmountSpin->setRange(0.0, 100.0);
         impl_->blurAmountSpin->setDecimals(0);
         impl_->blurAmountSpin->setValue(100.0);
         auto* pctLbl = new QLabel("%", row);
-        pctLbl->setStyleSheet("color: #888888;");
+        {
+            QPalette pal = pctLbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#888888"));
+            pctLbl->setPalette(pal);
+        }
         rl->addWidget(fdLbl);
         rl->addWidget(impl_->focusDistSpin, 2);
         rl->addSpacing(8);
@@ -488,14 +544,22 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         rl2->setContentsMargins(0, 0, 0, 0);
         auto* zoomLbl = new QLabel(u8"ズーム", rightCol);
         zoomLbl->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        zoomLbl->setStyleSheet("color: #cccccc;");
+        {
+            QPalette pal = zoomLbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#cccccc"));
+            zoomLbl->setPalette(pal);
+        }
         zoomLbl->setFixedWidth(50);
         impl_->zoomSpin = new QDoubleSpinBox(rightCol);
         impl_->zoomSpin->setRange(1.0, 100000.0);
         impl_->zoomSpin->setDecimals(1);
         impl_->zoomSpin->setValue(666.7);
         auto* pxLbl = new QLabel("px", rightCol);
-        pxLbl->setStyleSheet("color: #888888;");
+        {
+            QPalette pal = pxLbl->palette();
+            pal.setColor(QPalette::WindowText, QColor("#888888"));
+            pxLbl->setPalette(pal);
+        }
         rl2->addWidget(zoomLbl);
         rl2->addWidget(impl_->zoomSpin, 1);
         rl2->addWidget(pxLbl);

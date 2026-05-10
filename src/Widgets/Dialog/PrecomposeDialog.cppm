@@ -223,8 +223,6 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
             rLay->setSpacing(2);
             impl_->moveAllAttribsRadio = new QRadioButton(
                 u8"すべての属性を新規コンポジションに移動する", radioWidget);
-            impl_->moveAllAttribsRadio->setStyleSheet(
-                "");
             auto* subLbl = new QLabel(
                 u8"トランスフォームなどの属性もプリコンプに引き継がれます。", radioWidget);
             {

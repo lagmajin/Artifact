@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <iostream>
 #include <vector>
 #include <string>
@@ -65,12 +65,14 @@ public:
     /// 全マスクパスを合成して単一アルファマスク (CV_32FC1) を生成
     /// offsetX/offsetY: レイヤーローカル空間→ピクセル空間変換オフセット
     void compositeAlphaMask(int width, int height, void* outMat,
-                            float offsetX = 0.0f, float offsetY = 0.0f) const;
+                            float offsetX = 0.0f, float offsetY = 0.0f,
+                            float scaleX = 1.0f, float scaleY = 1.0f) const;
 
     /// RGBA画像のアルファチャンネルにマスクを乗算適用
     /// offsetX/offsetY: レイヤーローカル空間→ピクセル空間変換オフセット
     void applyToImage(int width, int height, void* imageMat,
-                      float offsetX = 0.0f, float offsetY = 0.0f) const;
+                      float offsetX = 0.0f, float offsetY = 0.0f,
+                      float scaleX = 1.0f, float scaleY = 1.0f) const;
 };
 
 }

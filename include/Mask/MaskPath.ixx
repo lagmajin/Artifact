@@ -104,7 +104,8 @@ public:
     ///   (通常は -localBounds.x(), -localBounds.y() を渡す)
     /// 戻り値は CV_32FC1 の cv::Mat
     void rasterizeToAlpha(int width, int height, void* outMat,
-                          float offsetX = 0.0f, float offsetY = 0.0f) const;
+                          float offsetX = 0.0f, float offsetY = 0.0f,
+                          float scaleX = 1.0f, float scaleY = 1.0f) const;
 };
 
 }

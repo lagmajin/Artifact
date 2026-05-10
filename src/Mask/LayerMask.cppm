@@ -90,7 +90,8 @@ bool LayerMask::isEnabled() const { return impl_->enabled; }
 void LayerMask::setEnabled(bool enabled) { impl_->enabled = enabled; }
 
 void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
-                                   float offsetX, float offsetY) const
+                                   float offsetX, float offsetY,
+                                   float scaleX, float scaleY) const
 {
     cv::Mat& dst = *static_cast<cv::Mat*>(outMat);
 
@@ -107,7 +108,7 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
             continue;
         }
         cv::Mat pathMask;
-        path.rasterizeToAlpha(width, height, &pathMask, offsetX, offsetY);
+        path.rasterizeToAlpha(width, height, &pathMask, offsetX, offsetY, scaleX, scaleY);
 
         if (!hasEffectivePath) {
             hasEffectivePath = true;
@@ -159,14 +160,15 @@ void LayerMask::compositeAlphaMask(int width, int height, void* outMat,
 }
 
 void LayerMask::applyToImage(int width, int height, void* imageMat,
-                             float offsetX, float offsetY) const
+                             float offsetX, float offsetY,
+                             float scaleX, float scaleY) const
 {
     cv::Mat& img = *static_cast<cv::Mat*>(imageMat);
     if (img.empty() || img.type() != CV_32FC4) return;
     if (!impl_->enabled || impl_->paths.empty()) return;
 
     cv::Mat alphaMask;
-    compositeAlphaMask(width, height, &alphaMask, offsetX, offsetY);
+    compositeAlphaMask(width, height, &alphaMask, offsetX, offsetY, scaleX, scaleY);
 
     // For CV_32FC4, OpenCV stores as BGRA in memory
     // Split preserves this order: [B, G, R, A]

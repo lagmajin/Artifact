@@ -1535,7 +1535,11 @@ PluginSettingPage::PluginSettingPage(QWidget *parent)
   auto *infoGroup = new QGroupBox("Plugin Directory", this);
   auto *infoLayout = new QHBoxLayout(infoGroup);
   auto *dirLabel = new QLabel(impl_->pluginDirectory_, this);
-  dirLabel->setStyleSheet("color: gray;");
+  {
+    QPalette pal = dirLabel->palette();
+    pal.setColor(QPalette::WindowText, Qt::gray);
+    dirLabel->setPalette(pal);
+  }
   infoLayout->addWidget(dirLabel);
   impl_->openFolderButton_ = new QPushButton("Open Folder", this);
   infoLayout->addWidget(impl_->openFolderButton_);
