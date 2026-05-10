@@ -353,6 +353,13 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
   }
 
   cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(surface, true);
+  if (mat.channels() == 3) {
+      if (mat.type() == CV_8UC3) cv::cvtColor(mat, mat, cv::COLOR_BGR2BGRA);
+      else if (mat.type() == CV_32FC3) cv::cvtColor(mat, mat, cv::COLOR_BGR2BGRA);
+  } else if (mat.channels() == 1) {
+      if (mat.type() == CV_8UC1) cv::cvtColor(mat, mat, cv::COLOR_GRAY2BGRA);
+      else if (mat.type() == CV_32FC1) cv::cvtColor(mat, mat, cv::COLOR_GRAY2BGRA);
+  }
   if (mat.type() != CV_32FC4) {
     mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
   }
