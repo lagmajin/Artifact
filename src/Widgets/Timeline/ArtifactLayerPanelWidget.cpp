@@ -1055,6 +1055,62 @@ bool isLayerSelectedInSelectionManager(const LayerID& id)
  return false;
 }
 
+QVector<LayerID> selectedLayerIdsInVisibleOrder(const QVector<VisibleRow>& rows)
+{
+ QVector<LayerID> ids;
+ for (const auto& row : rows) {
+  if (row.kind != RowKind::Layer || !row.layer) {
+   continue;
+  }
+  if (isLayerSelectedInSelectionManager(row.layer->id())) {
+   ids.push_back(row.layer->id());
+  }
+ }
+ return ids;
+}
+
+QVector<LayerID> visibleLayerIdsInRange(const QVector<VisibleRow>& rows,
+                                        const LayerID& from,
+                                        const LayerID& to)
+{
+ if (from.isNil() || to.isNil()) {
+  return {};
+ }
+
+ int fromIndex = -1;
+ int toIndex = -1;
+ for (int i = 0; i < rows.size(); ++i) {
+  const auto& row = rows[i];
+  if (row.kind != RowKind::Layer || !row.layer) {
+   continue;
+  }
+  if (fromIndex < 0 && row.layer->id() == from) {
+   fromIndex = i;
+  }
+  if (toIndex < 0 && row.layer->id() == to) {
+   toIndex = i;
+  }
+  if (fromIndex >= 0 && toIndex >= 0) {
+   break;
+  }
+ }
+
+ if (fromIndex < 0 || toIndex < 0) {
+  return {};
+ }
+
+ const int begin = std::min(fromIndex, toIndex);
+ const int end = std::max(fromIndex, toIndex);
+ QVector<LayerID> ids;
+ for (int i = begin; i <= end; ++i) {
+  const auto& row = rows[i];
+  if (row.kind == RowKind::Layer && row.layer) {
+   ids.push_back(row.layer->id());
+  }
+ }
+ return ids;
+}
+
 QString matteTypeToText(MatteType type)
 {
  switch (type) {
@@ -1197,6 +1253,7 @@ public:
   int contentHeight = kLayerRowHeight;
   int hoveredLayerIndex = -1;
   LayerID selectedLayerId;
+  LayerID selectionAnchorLayerId;
   LayerID selectedMaskLayerId;
   int selectedMaskIndex = -1;
   QVector<VisibleRow> visibleRows;
@@ -1649,6 +1706,7 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
           if (impl_->selectedLayerId != layerId) {
             const bool layerActuallyChanged = impl_->selectedLayerId != layerId;
             impl_->selectedLayerId = layerId;
+            impl_->selectionAnchorLayerId = layerId.isNil() ? LayerID() : layerId;
             if (layerActuallyChanged) {
               impl_->currentPropertyPath.clear();
               this->propertyFocusChanged(impl_->selectedLayerId,
@@ -1681,6 +1739,7 @@ void ArtifactLayerPanelWidget::setComposition(const CompositionID& id)
 {
   impl_->compositionId = id;
   impl_->selectedLayerId = LayerID();
+  impl_->selectionAnchorLayerId = LayerID();
   impl_->currentPropertyPath.clear();
   propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
   updateLayout();
@@ -2112,8 +2171,46 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   if (event->button() == Qt::LeftButton) {
     auto* selectionManager = currentLayerSelectionManager();
     auto comp = safeCompositionLookup(impl_->compositionId);
+    const bool rangeSelection = (event->modifiers() & Qt::ShiftModifier) &&
+                                !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier));
     const bool toggleSelection = (event->modifiers() & Qt::ControlModifier) &&
                                  !(event->modifiers() & (Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier));
+    if (rangeSelection) {
+      if (selectionManager) {
+        selectionManager->setActiveComposition(comp);
+        LayerID anchor = impl_->selectionAnchorLayerId;
+        if (anchor.isNil()) {
+          anchor = impl_->selectedLayerId.isNil() ? layer->id() : impl_->selectedLayerId;
+        }
+        const auto ids = visibleLayerIdsInRange(impl_->visibleRows, anchor, layer->id());
+        if (!ids.isEmpty()) {
+          selectionManager->clearSelection();
+          for (const auto& id : ids) {
+            if (comp) {
+              selectionManager->addToSelection(comp->layerById(id));
+            }
+          }
+          impl_->selectedLayerId = layer->id();
+          impl_->selectionAnchorLayerId = anchor;
+        } else {
+          impl_->selectedLayerId = layer->id();
+          impl_->selectionAnchorLayerId = layer->id();
+          selectionManager->selectLayer(comp ? comp->layerById(layer->id()) : ArtifactAbstractLayerPtr{});
+        }
+      } else {
+        impl_->selectedLayerId = layer->id();
+        impl_->selectionAnchorLayerId = layer->id();
+      }
+      impl_->clearMaskSelection();
+      impl_->currentPropertyPath.clear();
+      propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+      if (!clickInInlineCombo) {
+        impl_->clearInlineEditors();
+      }
+      update();
+      event->accept();
+      return;
+    }
     if (toggleSelection) {
       if (selectionManager) {
         selectionManager->setActiveComposition(comp);
@@ -2124,9 +2221,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           selectionManager->addToSelection(selectedLayer);
         }
         const auto current = selectionManager->currentLayer();
-        impl_->selectedLayerId = current ? current->id() : layer->id();
+        impl_->selectedLayerId = current ? current->id() : LayerID();
+        impl_->selectionAnchorLayerId = current ? current->id() : LayerID();
       } else {
         impl_->selectedLayerId = layer->id();
+        impl_->selectionAnchorLayerId = layer->id();
       }
       impl_->clearMaskSelection();
       impl_->currentPropertyPath.clear();
@@ -2140,6 +2239,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
 
     impl_->selectedLayerId = layer->id();
+    impl_->selectionAnchorLayerId = layer->id();
     impl_->clearMaskSelection();
     impl_->currentPropertyPath.clear();
     propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
@@ -2254,7 +2354,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     update();
   } else if (event->button() == Qt::RightButton) {
-    if (service) {
+    if (service && !isLayerSelectedInSelectionManager(layer->id())) {
       service->selectLayer(layer->id());
     }
 
@@ -2282,6 +2382,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     };
 
     const QVector<LayerID> selectedIds = selectedLayerIdsSnapshot();
+    const QVector<LayerID> selectedVisibleIds = selectedLayerIdsInVisibleOrder(impl_->visibleRows);
     auto triggerDeleteSelectedLayers = [this, selectedIds]() {
       if (selectedIds.size() <= 1) {
         return;
@@ -2303,10 +2404,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           for (const auto& layerId : selectedIds) {
             svc->removeLayerFromComposition(compId, layerId);
           }
-          impl_->selectedLayerId = LayerID();
-          impl_->currentPropertyPath.clear();
-          propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
-          updateLayout();
+  impl_->selectedLayerId = LayerID();
+  impl_->selectionAnchorLayerId = LayerID();
+  impl_->currentPropertyPath.clear();
+  propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+  updateLayout();
         }
       }
     };
@@ -2319,6 +2421,94 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         if (svc->duplicateLayerInCurrentComposition(layer->id())) {
           updateLayout();
         }
+      }
+    };
+
+    auto triggerDuplicateSelectedLayers = [this, selectedVisibleIds]() {
+      if (selectedVisibleIds.size() <= 1) {
+        return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+        if (!compId.isNil()) {
+          for (const auto& layerId : selectedVisibleIds) {
+            svc->duplicateLayerInCurrentComposition(layerId);
+          }
+          updateLayout();
+        }
+      }
+    };
+
+    auto triggerGroupSelectedLayers = [this, selectedVisibleIds]() {
+      if (selectedVisibleIds.size() <= 1) {
+        return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+        if (svc->groupSelectedLayersInCurrentComposition()) {
+          updateLayout();
+        }
+      }
+    };
+
+    auto triggerPrecomposeSelectedLayers = [this, selectedVisibleIds]() {
+      if (selectedVisibleIds.size() <= 1) {
+        return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+        if (svc->precomposeLayersInCurrentComposition(selectedVisibleIds,
+                                                      UniString(QStringLiteral("Precomp")),
+                                                      true, true)) {
+          updateLayout();
+        }
+      }
+    };
+
+    auto triggerSelectedVisibility = [this, selectedVisibleIds](bool visible) {
+      if (selectedVisibleIds.isEmpty()) {
+        return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+        for (const auto& layerId : selectedVisibleIds) {
+          svc->setLayerVisibleInCurrentComposition(layerId, visible);
+        }
+        updateLayout();
+      }
+    };
+
+    auto triggerSelectedLock = [this, selectedVisibleIds](bool locked) {
+      if (selectedVisibleIds.isEmpty()) {
+        return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+        for (const auto& layerId : selectedVisibleIds) {
+          svc->setLayerLockedInCurrentComposition(layerId, locked);
+        }
+        updateLayout();
+      }
+    };
+
+    auto triggerSelectedSolo = [this, selectedVisibleIds](bool solo) {
+      if (selectedVisibleIds.isEmpty()) {
+        return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+        for (const auto& layerId : selectedVisibleIds) {
+          svc->setLayerSoloInCurrentComposition(layerId, solo);
+        }
+        updateLayout();
+      }
+    };
+
+    auto triggerSelectedShy = [this, selectedVisibleIds](bool shy) {
+      if (selectedVisibleIds.isEmpty()) {
+        return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+        for (const auto& layerId : selectedVisibleIds) {
+          svc->setLayerShyInCurrentComposition(layerId, shy);
+        }
+        updateLayout();
       }
     };
 
@@ -2467,6 +2657,42 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       menu.addSeparator();
     }
     if (selectedIds.size() > 1) {
+      menu.addAction(QStringLiteral("Duplicate Selected Layers"), [triggerDuplicateSelectedLayers]() {
+        triggerDuplicateSelectedLayers();
+      });
+      menu.addAction(QStringLiteral("Group Selected Layers"), [triggerGroupSelectedLayers]() {
+        triggerGroupSelectedLayers();
+      });
+      menu.addAction(QStringLiteral("Precompose Selected Layers"), [triggerPrecomposeSelectedLayers]() {
+        triggerPrecomposeSelectedLayers();
+      });
+      menu.addSeparator();
+      QMenu* batchStateMenu = menu.addMenu(QStringLiteral("Batch State"));
+      batchStateMenu->addAction(QStringLiteral("Show Selected"), [triggerSelectedVisibility]() {
+        triggerSelectedVisibility(true);
+      });
+      batchStateMenu->addAction(QStringLiteral("Hide Selected"), [triggerSelectedVisibility]() {
+        triggerSelectedVisibility(false);
+      });
+      batchStateMenu->addAction(QStringLiteral("Lock Selected"), [triggerSelectedLock]() {
+        triggerSelectedLock(true);
+      });
+      batchStateMenu->addAction(QStringLiteral("Unlock Selected"), [triggerSelectedLock]() {
+        triggerSelectedLock(false);
+      });
+      batchStateMenu->addAction(QStringLiteral("Solo Selected"), [triggerSelectedSolo]() {
+        triggerSelectedSolo(true);
+      });
+      batchStateMenu->addAction(QStringLiteral("Unsolo Selected"), [triggerSelectedSolo]() {
+        triggerSelectedSolo(false);
+      });
+      batchStateMenu->addAction(QStringLiteral("Shy Selected"), [triggerSelectedShy]() {
+        triggerSelectedShy(true);
+      });
+      batchStateMenu->addAction(QStringLiteral("Unshy Selected"), [triggerSelectedShy]() {
+        triggerSelectedShy(false);
+      });
+      menu.addSeparator();
       menu.addAction(QStringLiteral("Delete Selected Layers"), [triggerDeleteSelectedLayers]() {
         triggerDeleteSelectedLayers();
       });
