@@ -48,7 +48,7 @@ import Utils.Path;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Application.Manager;
-import Artifact.Layer.Selection.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
