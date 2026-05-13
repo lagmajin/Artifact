@@ -234,7 +234,7 @@ public:
 
         state.candidates = rootSuggestions();
         state.prefix = rawPrefix;
-        state.replaceStart = std::max(0, pos - rawPrefix.size());
+        state.replaceStart = std::max(0, static_cast<int>(pos - rawPrefix.size()));
 
         if (rawPrefix.isEmpty()) {
             if (pos > 0 && text.at(pos - 1) == QLatin1Char('.')) {
@@ -255,8 +255,8 @@ public:
             const QString anchor = rawPrefix.left(lastDot);
             const QString suffix = rawPrefix.mid(lastDot + 1);
             state.prefix = suffix;
-            state.replaceStart = std::max(0, pos - suffix.size());
-            const QString contextText = text.left(std::max(0, pos - rawPrefix.size()));
+            state.replaceStart = std::max(0, static_cast<int>(pos - suffix.size()));
+            const QString contextText = text.left(std::max(0, static_cast<int>(pos - rawPrefix.size())));
 
             if (anchor.endsWith(QStringLiteral("thisComp"), Qt::CaseInsensitive)) {
                 state.candidates = thisCompSuggestions();
@@ -357,8 +357,8 @@ public:
         suggestionList->setCurrentRow(0);
         suggestionList->setMinimumWidth(std::max(260, expressionEdit->width()));
         suggestionList->setMinimumHeight(std::min(180, 24 * added + 6));
-        const QPoint pos = expressionEdit->mapToGlobal(QPoint(0, expressionEdit->height()));
-        suggestionPopup->move(pos.x(), pos.y() + 4);
+        const QPoint popupPos = expressionEdit->mapToGlobal(QPoint(0, expressionEdit->height()));
+        suggestionPopup->move(popupPos.x(), popupPos.y() + 4);
         suggestionPopup->resize(suggestionList->minimumWidth(), suggestionList->minimumHeight());
         suggestionPopup->show();
         suggestionPopup->raise();
