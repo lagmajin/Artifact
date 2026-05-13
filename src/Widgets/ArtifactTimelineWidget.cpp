@@ -441,6 +441,26 @@ struct CurveEditorSnapshot {
   QString summary;
 };
 
+int curveTrackIndexForSelection(
+    const QVector<CurveTrackBinding>& bindings,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers)
+{
+  if (bindings.isEmpty() || markers.isEmpty()) {
+    return -1;
+  }
+
+  for (const auto& marker : markers) {
+    for (int i = 0; i < bindings.size(); ++i) {
+      const auto& binding = bindings[i];
+      if (binding.layerId == marker.layerId &&
+          binding.propertyPath == marker.propertyPath) {
+        return i;
+      }
+    }
+  }
+  return -1;
+}
+
 CurveEditorSnapshot buildCurveEditorSnapshot(
     const ArtifactCompositionPtr &composition,
     ArtifactLayerSelectionManager *selectionManager)
@@ -1234,7 +1254,7 @@ KeyframeNavigationState collectKeyframeNavigationState(
 QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
 {
   if (state.totalFrames <= 0) {
-    return QStringLiteral("Keyframes: -");
+    return QStringLiteral("Keyframes: none");
   }
 
   const QString currentMark =
@@ -1246,7 +1266,7 @@ QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
       state.nextKeyframe >= 0 ? QString::number(state.nextKeyframe)
                               : QStringLiteral("-");
 
-  return QStringLiteral("Key:%1 Now:%2 Prev:%3 Next:%4")
+  return QStringLiteral("Keyframes: %1 | Now: %2 | Prev: %3 | Next: %4")
       .arg(state.totalFrames)
       .arg(currentMark)
       .arg(previousMark)
@@ -1939,7 +1959,18 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   impl_->curveTracks_ = payload.tracks;
   impl_->curveBindings_ = payload.bindings;
   if (impl_->curveEditorSummaryLabel_) {
-    impl_->curveEditorSummaryLabel_->setText(payload.summary);
+    QString summary = payload.summary;
+    if (impl_->graphEditorVisible_ && impl_->painterTrackView_) {
+      const auto markers = impl_->painterTrackView_->selectedKeyframeMarkers();
+      const int focusTrack =
+          curveTrackIndexForSelection(impl_->curveBindings_, markers);
+      if (focusTrack >= 0 && focusTrack < impl_->curveTracks_.size()) {
+        summary = QStringLiteral("%1 | Focus: %2")
+                      .arg(summary)
+                      .arg(impl_->curveTracks_[focusTrack].name);
+      }
+    }
+    impl_->curveEditorSummaryLabel_->setText(summary);
   }
   qDebug() << "[CurveEditor] refresh"
            << "tracks=" << payload.tracks.size()
@@ -1948,6 +1979,17 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   impl_->curveEditor_->setTracks(payload.tracks);
   impl_->curveEditor_->setCurrentFrame(
       static_cast<int64_t>(std::llround(std::max(0.0, impl_->currentFrame_))));
+  if (impl_->graphEditorVisible_ && impl_->painterTrackView_) {
+    const auto markers = impl_->painterTrackView_->selectedKeyframeMarkers();
+    const int focusTrack =
+        curveTrackIndexForSelection(impl_->curveBindings_, markers);
+    if (focusTrack >= 0) {
+      impl_->focusedCurveTrackIndex_ = focusTrack;
+    }
+  }
+  if (impl_->graphEditorVisible_ && impl_->curveEditor_) {
+    impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
+  }
   if (impl_->graphEditorVisible_ && impl_->graphEditorNeedsFit_) {
     impl_->curveEditor_->fitToContent();
     impl_->graphEditorNeedsFit_ = false;
@@ -2062,6 +2104,21 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->zoomSummaryLabel_ = zoomSummaryLabel;
   impl_->selectionSummaryLabel_ = selectionSummaryLabel;
   impl_->globalSwitches_ = globalSwitches;
+
+  keyframeStatusLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  keyframeStatusLabel->setMinimumWidth(260);
+  keyframeStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  {
+    QFont font = keyframeStatusLabel->font();
+    font.setWeight(QFont::DemiBold);
+    keyframeStatusLabel->setFont(font);
+    QPalette pal = keyframeStatusLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(255, 216, 148));
+    keyframeStatusLabel->setPalette(pal);
+  }
+  keyframeStatusLabel->setCursor(Qt::PointingHandCursor);
+  keyframeStatusLabel->setToolTip(
+      QStringLiteral("Current keyframe navigation state. Left click: next. Right click: previous."));
 
   QObject::connect(searchBar, &ArtifactTimelineSearchBarWidget::searchTextChanged,
                    this, &ArtifactTimelineWidget::onSearchTextChanged);
@@ -2332,6 +2389,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       },
       headerWidget);
   currentLayerLabel->installEventFilter(currentLayerClickFilter);
+
+  auto *keyframeStatusClickFilter = new SearchStatusClickFilter(
+      keyframeStatusLabel, [this]() { jumpToKeyframeHit(+1); },
+      [this]() { jumpToKeyframeHit(-1); }, headerWidget);
+  keyframeStatusLabel->installEventFilter(keyframeStatusClickFilter);
 
   auto *selectionSummaryClickFilter = new TimelineStatusClickFilter(
       selectionSummaryLabel, [this]() {
@@ -3902,6 +3964,7 @@ void ArtifactTimelineWidget::updateSelectionState()
 
   ArtifactAbstractLayerPtr currentLayer;
   int selectedCount = 0;
+  int selectedKeyframeCount = 0;
   QString compositionLabel = QStringLiteral("-");
   qint64 frameLabelValue = qRound64(std::max(0.0, impl_->currentFrame_));
   if (auto *app = ArtifactApplicationManager::instance()) {
@@ -3929,9 +3992,14 @@ void ArtifactTimelineWidget::updateSelectionState()
     impl_->frameSummaryLabel_->setText(QStringLiteral("Frame: %1").arg(frameLabelValue));
   }
   if (impl_->selectionSummaryLabel_) {
+    if (impl_->painterTrackView_) {
+      selectedKeyframeCount = static_cast<int>(
+          impl_->painterTrackView_->selectedKeyframeMarkers().size());
+    }
     impl_->selectionSummaryLabel_->setText(
-        QStringLiteral("Selected: %1 | Comp: %2 | Frame: %3")
+        QStringLiteral("Selected: %1 | Keys: %2 | Comp: %3 | Frame: %4")
             .arg(selectedCount)
+            .arg(selectedKeyframeCount)
             .arg(compositionLabel)
             .arg(frameLabelValue));
   }

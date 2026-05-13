@@ -18,6 +18,7 @@ import Utils.String.Like;
 import Utils.String.UniString;
 import Artifact.Layer.InitParams;
 import Artifact.Project.Settings;
+import Artifact.Project.Health;
 
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
@@ -77,6 +78,7 @@ export namespace Artifact {
 
   FindCompositionResult findComposition(const CompositionID& id);
   QVector<ProjectItem*> projectItems() const;
+  ProjectHealthReport currentProjectHealthReport() const;
   
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);

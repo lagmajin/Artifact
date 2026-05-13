@@ -1,6 +1,8 @@
 module;
 #include <utility>
 #include <wobjectimpl.h>
+#include <QObject>
+#include <QEvent>
 #include <QWidget>
 #include <QString>
 export module Artifact.Widgets.ExpressionCopilotWidget;
@@ -19,5 +21,6 @@ export namespace Artifact {
         QString expressionText() const;
 
         QSize sizeHint() const override;
+        bool eventFilter(QObject* watched, QEvent* event) override;
     };
 }

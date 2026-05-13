@@ -47,6 +47,7 @@ class ArtifactProjectHealthChecker {
 public:
     static ProjectHealthReport check(ArtifactProject* project);
     static AutoRepairResult checkAndRepair(ArtifactProject* project, const AutoRepairOptions& options = {});
+    static bool hasBlockingErrors(const ProjectHealthReport& report);
 
 private:
     static void checkCircularReferences(ArtifactProject* project, ProjectHealthReport& report);

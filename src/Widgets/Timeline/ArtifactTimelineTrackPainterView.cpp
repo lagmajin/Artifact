@@ -629,6 +629,22 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
               return lhs.laneIndex < rhs.laneIndex;
             });
 
+  for (int i = 0; i < markers.size();) {
+    const int trackIndex = markers[i].trackIndex;
+    const qint64 frame = static_cast<qint64>(std::llround(markers[i].frame));
+    int j = i + 1;
+    while (j < markers.size() && markers[j].trackIndex == trackIndex &&
+           static_cast<qint64>(std::llround(markers[j].frame)) == frame) {
+      ++j;
+    }
+    const int laneCount = std::max(1, j - i);
+    for (int lane = i; lane < j; ++lane) {
+      markers[lane].laneCount = laneCount;
+      markers[lane].laneIndex = lane - i;
+    }
+    i = j;
+  }
+
   return markers;
 }
 
@@ -1182,12 +1198,26 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     const int rowH = impl_->trackHeights_[i];
     const double rowTop =
         trackTopAt(impl_->trackTops_, impl_->trackHeights_, i) - yOffset;
+    const auto &row =
+        (i >= 0 && i < impl_->trackRows_.size()) ? impl_->trackRows_.at(i)
+                                                 : TimelineRowDescriptor{};
+    const bool isSelectedPropertyLane =
+        row.kind == TimelineRowKind::Property && !row.layerId.isNil() &&
+        impl_->lastSyncedSelectedLayerIds_.contains(row.layerId);
 
     // 画面外（dirtyRect外）の行は描画をスキップ
     if (rowTop + rowH >= dirtyRect.top() && rowTop <= dirtyRect.bottom()) {
       const QColor rowColor =
           (i % 2 == 0) ? theme.surface.lighter(102) : theme.surface.darker(104);
       p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), rowColor);
+      if (isSelectedPropertyLane) {
+        QColor laneTint = theme.accent;
+        laneTint.setAlpha(22);
+        p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), laneTint);
+        QColor laneStrip = theme.accent;
+        laneStrip.setAlpha(96);
+        p.fillRect(QRectF(0.0, rowTop, 3.0, rowH), laneStrip);
+      }
       p.setPen(QPen(theme.border.darker(160), 1));
       p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
     }

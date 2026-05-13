@@ -34,6 +34,7 @@ import Artifact.Layer.Svg;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import Artifact.Layer.Group;
+import Artifact.Project.Health;
 import Image.PSDDocument;
 import File.TypeDetector;
 import Artifact.Layers.Selection.Manager;
@@ -1807,6 +1808,14 @@ ArtifactCompositionWeakPtr ArtifactProjectService::currentComposition() {
 std::shared_ptr<ArtifactProject>
 ArtifactProjectService::getCurrentProjectSharedPtr() const {
   return impl_->projectManager().getCurrentProjectSharedPtr();
+}
+
+ProjectHealthReport ArtifactProjectService::currentProjectHealthReport() const {
+  auto project = getCurrentProjectSharedPtr();
+  if (!project) {
+    return {};
+  }
+  return ArtifactProjectHealthChecker::check(project.get());
 }
 
 ChangeCompositionResult

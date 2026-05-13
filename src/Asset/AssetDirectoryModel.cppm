@@ -62,12 +62,14 @@ namespace Artifact {
  class AssetDirectoryModel::Impl {
  public:
   TreeItem* rootItem = nullptr;
+  TreeItem* recentNode = nullptr;
   TreeItem* favoritesNode = nullptr;
   TreeItem* assetsNode = nullptr;
   TreeItem* packagesNode = nullptr;
   QString assetRootPath;
   QString packageRootPath;
   QHash<QString, TreeItem*> guidToItem;
+  QVector<RecentEntry> recent_;
   QVector<FavoriteEntry> favorites_;
 
   Impl();
@@ -77,6 +79,8 @@ namespace Artifact {
   void loadChildrenForNode(TreeItem* node);
   TreeItem* findItemByGuid(const QString& guid) const;
   QString normalizedPath(const QString& path) const;
+  void loadRecentFromSettings();
+  void saveRecentToSettings() const;
   void loadFavoritesFromSettings();
   void saveFavoritesToSettings() const;
   void calculateIntelligence(TreeItem* node);
@@ -105,6 +109,7 @@ namespace Artifact {
   rootItem->name = "Root";
   rootItem->isVirtual = true;
   guidToItem["root"] = rootItem;
+  loadRecentFromSettings();
   loadFavoritesFromSettings();
  }
 
@@ -120,9 +125,21 @@ namespace Artifact {
   rootItem->children.clear();
   guidToItem.clear();
   guidToItem.insert("root", rootItem);
+  recentNode = nullptr;
   favoritesNode = nullptr;
   assetsNode = nullptr;
   packagesNode = nullptr;
+
+  recentNode = createNode("recent", "Recent", QString(), rootItem, true);
+  recentNode->childrenLoaded = true;
+  for (const auto& recent : recent_) {
+   if (recent.path.trimmed().isEmpty()) {
+    continue;
+   }
+   const QFileInfo info(recent.path);
+   const QString displayName = recent.name.trimmed().isEmpty() ? info.fileName() : recent.name.trimmed();
+   createNode(recent.guid, displayName, info.absoluteFilePath(), recentNode, info.isDir());
+  }
 
   favoritesNode = createNode("favorites", "Favorites", QString(), rootItem, true);
   favoritesNode->childrenLoaded = true;
@@ -241,6 +258,43 @@ namespace Artifact {
     entry.guid = QUuid::createUuid().toString(QUuid::WithoutBraces);
    }
    favorites_.append(entry);
+  }
+  settings.endArray();
+  settings.endGroup();
+ }
+
+ void AssetDirectoryModel::Impl::loadRecentFromSettings() {
+  recent_.clear();
+  QSettings settings;
+  settings.beginGroup(QStringLiteral("AssetBrowser/Recent"));
+  const int count = settings.beginReadArray(QStringLiteral("items"));
+  for (int i = 0; i < count; ++i) {
+   settings.setArrayIndex(i);
+   RecentEntry entry;
+   entry.guid = settings.value(QStringLiteral("guid")).toString();
+   entry.name = settings.value(QStringLiteral("name")).toString();
+   entry.path = settings.value(QStringLiteral("path")).toString();
+   if (entry.path.trimmed().isEmpty()) {
+    continue;
+   }
+   if (entry.guid.trimmed().isEmpty()) {
+    entry.guid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+   }
+   recent_.append(entry);
+  }
+  settings.endArray();
+  settings.endGroup();
+ }
+
+ void AssetDirectoryModel::Impl::saveRecentToSettings() const {
+  QSettings settings;
+  settings.beginGroup(QStringLiteral("AssetBrowser/Recent"));
+  settings.beginWriteArray(QStringLiteral("items"));
+  for (int i = 0; i < recent_.size(); ++i) {
+   settings.setArrayIndex(i);
+   settings.setValue(QStringLiteral("guid"), recent_[i].guid);
+   settings.setValue(QStringLiteral("name"), recent_[i].name);
+   settings.setValue(QStringLiteral("path"), recent_[i].path);
   }
   settings.endArray();
   settings.endGroup();
@@ -481,6 +535,39 @@ namespace Artifact {
   endResetModel();
  }
 
+ void AssetDirectoryModel::addRecentPath(const QString& path, const QString& displayName) {
+  if (!impl_) {
+   return;
+  }
+  const QString normalized = impl_->normalizedPath(path);
+  if (normalized.isEmpty()) {
+   return;
+  }
+
+  for (auto it = impl_->recent_.begin(); it != impl_->recent_.end(); ++it) {
+   if (impl_->normalizedPath(it->path) == normalized) {
+    impl_->recent_.erase(it);
+    break;
+   }
+  }
+
+  RecentEntry entry;
+  entry.guid = QUuid::createUuid().toString(QUuid::WithoutBraces);
+  entry.name = displayName.trimmed().isEmpty()
+                   ? QFileInfo(normalized).fileName()
+                   : displayName.trimmed();
+  entry.path = normalized;
+  impl_->recent_.prepend(entry);
+  constexpr int kMaxRecentEntries = 8;
+  while (impl_->recent_.size() > kMaxRecentEntries) {
+   impl_->recent_.removeLast();
+  }
+  impl_->saveRecentToSettings();
+  beginResetModel();
+  impl_->buildRootTree();
+  endResetModel();
+ }
+
  void AssetDirectoryModel::removeFavorite(const QString& guid) {
   if (guid.trimmed().isEmpty()) {
    return;
@@ -535,6 +622,18 @@ namespace Artifact {
   entries.reserve(impl_->favorites_.size());
   for (const auto& favorite : impl_->favorites_) {
    entries.push_back(favorite);
+  }
+  return entries;
+ }
+
+ QVector<RecentEntry> AssetDirectoryModel::recentEntries() const {
+  if (!impl_) {
+   return {};
+  }
+  QVector<RecentEntry> entries;
+  entries.reserve(impl_->recent_.size());
+  for (const auto& recent : impl_->recent_) {
+   entries.push_back(recent);
   }
   return entries;
  }
