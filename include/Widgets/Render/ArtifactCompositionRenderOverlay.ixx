@@ -1,4 +1,4 @@
-export module Artifact.Widgets.CompositionRenderOverlay;
+module;
 
 #include <QFont>
 #include <QRectF>
@@ -6,6 +6,8 @@ export module Artifact.Widgets.CompositionRenderOverlay;
 #include <QStringList>
 #include <QSize>
 #include <QVector>
+
+export module Artifact.Widgets.CompositionRenderOverlay;
 
 import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
