@@ -52,6 +52,12 @@ export namespace Artifact {
   QString path;
  };
 
+ struct RecentEntry {
+  QString guid;
+  QString name;
+  QString path;
+ };
+
  struct TreeItem {
   QString guid;
   QString name;
@@ -115,6 +121,8 @@ export namespace Artifact {
   bool isFavoritePath(const QString& path) const;
   QString favoriteGuidForPath(const QString& path) const;
   QVector<FavoriteEntry> favoriteEntries() const;
+  void addRecentPath(const QString& path, const QString& displayName = "");
+  QVector<RecentEntry> recentEntries() const;
 
  public:
   //signals

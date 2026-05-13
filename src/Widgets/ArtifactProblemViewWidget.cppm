@@ -248,42 +248,12 @@ void ArtifactProblemViewWidget::refreshFromCurrentProject()
         return;
     }
 
-    std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
-    const auto issues = project->validate();
-    diagnostics.reserve(issues.size());
-
-    for (const auto& issue : issues) {
-        ArtifactCore::DiagnosticSeverity severity = ArtifactCore::DiagnosticSeverity::Info;
-        ArtifactCore::DiagnosticCategory category = ArtifactCore::DiagnosticCategory::Custom;
-
-        switch (issue.severity) {
-        case ProjectValidationIssue::Severity::Error:
-            severity = ArtifactCore::DiagnosticSeverity::Error;
-            break;
-        case ProjectValidationIssue::Severity::Warning:
-            severity = ArtifactCore::DiagnosticSeverity::Warning;
-            break;
-        case ProjectValidationIssue::Severity::Info:
-        default:
-            severity = ArtifactCore::DiagnosticSeverity::Info;
-            break;
-        }
-
-        if (issue.field.startsWith(QStringLiteral("composition."))) {
-            category = ArtifactCore::DiagnosticCategory::Configuration;
-        } else if (issue.field.startsWith(QStringLiteral("layer."))) {
-            category = ArtifactCore::DiagnosticCategory::Reference;
-        } else if (issue.field.startsWith(QStringLiteral("footage."))) {
-            category = ArtifactCore::DiagnosticCategory::File;
-        }
-
-        ArtifactCore::ProjectDiagnostic diag(severity, category, issue.message);
-        diag.setDescription(issue.suggestion);
-        diag.setSourceCompId(issue.field);
-        diagnostics.push_back(diag);
+    if (auto* projectService = ArtifactProjectService::instance()) {
+        loadProjectHealth(projectService->currentProjectHealthReport());
+        return;
     }
 
-    loadDiagnostics(diagnostics);
+    loadProjectHealth(ArtifactProjectHealthChecker::check(project));
 }
 
 void ArtifactProblemViewWidget::loadProjectHealth(const ProjectHealthReport& report)

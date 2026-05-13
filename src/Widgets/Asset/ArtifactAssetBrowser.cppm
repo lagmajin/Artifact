@@ -9,6 +9,7 @@ module;
 #pragma comment(lib, "gdi32.lib")
 #endif
 #include <utility>
+#include <functional>
 #include <QFileSystemModel>
 #include <QDir>
 #include <QLabel>
@@ -56,6 +57,7 @@ module;
 #include <QHBoxLayout>
 #include <QAbstractItemView>
 #include <QComboBox>
+#include <QMouseEvent>
 #include <cstdint>
 #include <atomic>
 #include <algorithm>
@@ -95,6 +97,37 @@ namespace {
 constexpr int kAssetThumbnailMinPx = 25;
 constexpr int kAssetThumbnailMaxPx = 256;
 constexpr int kAssetThumbnailDefaultPx = 96;
+
+class RecentFolderButton final : public QToolButton {
+ public:
+  explicit RecentFolderButton(QWidget* parent = nullptr) : QToolButton(parent) {
+    setAutoRaise(true);
+    setCursor(Qt::PointingHandCursor);
+    setToolButtonStyle(Qt::ToolButtonTextOnly);
+  }
+
+  void setEntry(const QString& text, const QString& path, std::function<void(const QString&)> activate) {
+    text_ = text;
+    path_ = path;
+    activate_ = std::move(activate);
+    setText(text_.isEmpty() ? QStringLiteral("(unnamed)") : text_);
+    setToolTip(path_.isEmpty() ? text_ : path_);
+    setVisible(!path_.isEmpty());
+  }
+
+ protected:
+  void mouseReleaseEvent(QMouseEvent* event) override {
+    QToolButton::mouseReleaseEvent(event);
+    if (event && event->button() == Qt::LeftButton && activate_ && !path_.isEmpty()) {
+      activate_(path_);
+    }
+  }
+
+ private:
+  QString text_;
+  QString path_;
+  std::function<void(const QString&)> activate_;
+};
 
 #ifdef _WIN32
 using Microsoft::WRL::ComPtr;
@@ -770,8 +803,11 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   QLineEdit* searchEdit_ = nullptr;
   QFileSystemModel* fileModel_ = nullptr;
   QButtonGroup* filterButtonGroup_ = nullptr;
-  ArtifactBreadcrumbWidget* breadcrumb_ = nullptr;
+   ArtifactBreadcrumbWidget* breadcrumb_ = nullptr;
    QLabel* currentPathLabel_ = nullptr;
+   QLabel* leftHubSummaryLabel_ = nullptr;
+   QLabel* leftHubRecentLabel_ = nullptr;
+   QVector<RecentFolderButton*> recentFolderButtons_;
    QLabel* fileInfoLabel_ = nullptr;  // File details display
    QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
     QString currentDirectoryPath_;
@@ -806,6 +842,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   void syncProjectAssetRoot();
   void syncDirectorySelection();
   void refreshUnusedAssetCache();
+  void refreshLeftHubSummary();
   QString syncStateText() const;
    int thumbnailSizePx() const;
    void setThumbnailSizePx(int value);
@@ -1253,12 +1290,13 @@ void ArtifactAssetBrowser::Impl::syncProjectAssetRoot()
    currentDirectoryPath_ = previousRoot;
   }
 
-  if (breadcrumb_) {
+ if (breadcrumb_) {
    breadcrumb_->setRootPath(assetsPath);
    breadcrumb_->setPath(currentDirectoryPath_);
   }
 
   refreshUnusedAssetCache();
+  refreshLeftHubSummary();
   clearThumbnailCache();
   applyFilters();
   syncDirectorySelection();
@@ -1285,7 +1323,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   }
 }
 
- void ArtifactAssetBrowser::Impl::syncDirectorySelection()
+  void ArtifactAssetBrowser::Impl::syncDirectorySelection()
  {
   if (!directoryView_ || !directoryModel_ || currentDirectoryPath_.isEmpty()) {
    return;
@@ -1320,6 +1358,75 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   directoryView_->expand(matchedIndex.parent());
   directoryView_->setCurrentIndex(matchedIndex);
   directoryView_->scrollTo(matchedIndex, QAbstractItemView::PositionAtCenter);
+ }
+
+ void ArtifactAssetBrowser::Impl::refreshLeftHubSummary()
+ {
+  if (currentPathLabel_) {
+   const QString pathText = currentDirectoryPath_.isEmpty()
+                                ? QStringLiteral("Current: (none)")
+                                : QStringLiteral("Current: %1").arg(currentDirectoryPath_);
+   currentPathLabel_->setText(pathText);
+   currentPathLabel_->setToolTip(currentDirectoryPath_);
+  }
+  if (leftHubSummaryLabel_) {
+   const int recentCount = directoryModel_ ? directoryModel_->recentEntries().size() : 0;
+   const int favoriteCount = directoryModel_ ? directoryModel_->favoriteEntries().size() : 0;
+   const int sourceCount =
+       (directoryModel_ && directoryModel_->indexFromGuid(QStringLiteral("assets")).isValid() ? 1 : 0) +
+       (directoryModel_ && directoryModel_->indexFromGuid(QStringLiteral("packages")).isValid() ? 1 : 0);
+   leftHubSummaryLabel_->setText(
+       QStringLiteral("Recent %1  •  Favorites %2  •  Sources %3")
+           .arg(recentCount)
+           .arg(favoriteCount)
+           .arg(sourceCount));
+  }
+  if (leftHubRecentLabel_) {
+   const QVector<RecentEntry> entries = directoryModel_ ? directoryModel_->recentEntries() : QVector<RecentEntry>{};
+   if (entries.isEmpty()) {
+    leftHubRecentLabel_->setText(QStringLiteral("Recent folders: none yet"));
+    leftHubRecentLabel_->setToolTip(QStringLiteral("Folders you visit will appear here."));
+   } else {
+    QStringList names;
+    const int limit = static_cast<int>(std::min<qsizetype>(entries.size(), 3));
+    names.reserve(limit);
+    for (int i = 0; i < limit; ++i) {
+     QString label = entries[i].name.trimmed();
+     if (label.isEmpty()) {
+      label = QFileInfo(entries[i].path).fileName();
+     }
+     if (label.isEmpty()) {
+      label = entries[i].path;
+     }
+     names.append(label);
+    }
+    leftHubRecentLabel_->setText(QStringLiteral("Recent folders: %1").arg(names.join(QStringLiteral("  •  "))));
+    leftHubRecentLabel_->setToolTip(entries.first().path);
+   }
+  }
+  if (!recentFolderButtons_.isEmpty()) {
+   const QVector<RecentEntry> entries = directoryModel_ ? directoryModel_->recentEntries() : QVector<RecentEntry>{};
+   for (int i = 0; i < recentFolderButtons_.size(); ++i) {
+    RecentFolderButton* button = recentFolderButtons_[i];
+    if (!button) {
+     continue;
+    }
+    if (i < entries.size()) {
+     QString label = entries[i].name.trimmed();
+     if (label.isEmpty()) {
+      label = QFileInfo(entries[i].path).fileName();
+     }
+     if (label.isEmpty()) {
+      label = entries[i].path;
+     }
+     button->setEntry(QStringLiteral("• %1").arg(label), entries[i].path, [this](const QString& path) {
+      navigateToFolder(path);
+     });
+    } else {
+     button->setEntry(QString(), QString(), {});
+    }
+   }
+  }
  }
 
  void ArtifactAssetBrowser::Impl::applyFilters()
@@ -1611,6 +1718,41 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     impl_->syncStateLabel_->setPalette(pal);
   }
 
+  auto* leftHubCard = new QGroupBox(QStringLiteral("Library Hub"));
+  auto* leftHubLayout = new QVBoxLayout();
+  impl_->currentPathLabel_ = new QLabel(QStringLiteral("Current: %1").arg(desktopPath), leftHubCard);
+  impl_->leftHubSummaryLabel_ = new QLabel(leftHubCard);
+  impl_->leftHubRecentLabel_ = new QLabel(leftHubCard);
+  impl_->recentFolderButtons_.clear();
+  impl_->currentPathLabel_->setWordWrap(true);
+  impl_->leftHubSummaryLabel_->setWordWrap(true);
+  impl_->leftHubRecentLabel_->setWordWrap(true);
+  impl_->currentPathLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  impl_->leftHubSummaryLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  impl_->leftHubRecentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  {
+   QPalette pal = leftHubCard->palette();
+   pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+   pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+   pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
+   pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+   leftHubCard->setAutoFillBackground(true);
+   leftHubCard->setPalette(pal);
+   impl_->currentPathLabel_->setPalette(pal);
+   impl_->leftHubSummaryLabel_->setPalette(pal);
+   impl_->leftHubRecentLabel_->setPalette(pal);
+  }
+  leftHubLayout->addWidget(impl_->currentPathLabel_);
+  leftHubLayout->addWidget(impl_->leftHubSummaryLabel_);
+  leftHubLayout->addWidget(impl_->leftHubRecentLabel_);
+  for (int i = 0; i < 3; ++i) {
+   auto* recentButton = new RecentFolderButton(leftHubCard);
+   recentButton->setVisible(false);
+   leftHubLayout->addWidget(recentButton);
+   impl_->recentFolderButtons_.append(recentButton);
+  }
+  leftHubCard->setLayout(leftHubLayout);
+
   auto assetModel = impl_->assetModel_ = new AssetMenuModel(this);
   auto fileView = impl_->fileView_ = new AssetFileListView();
   fileView->setModel(assetModel);
@@ -1658,15 +1800,11 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     if (nextPath.isEmpty()) {
      nextPath = assetsRoot;
     }
-   if (!assetsRoot.isEmpty() && !nextPath.startsWith(assetsRoot, Qt::CaseInsensitive)) {
+    if (!assetsRoot.isEmpty() && !nextPath.startsWith(assetsRoot, Qt::CaseInsensitive)) {
      nextPath = assetsRoot;
     }
     if (nextPath.isEmpty() || nextPath == impl_->currentDirectoryPath_) return;
-    impl_->currentDirectoryPath_ = nextPath;
-    impl_->clearThumbnailCache();
-    impl_->applyFilters();
-    impl_->syncDirectorySelection();
-    folderChanged(nextPath);
+    navigateToFolder(nextPath);
    });
   }
 
@@ -1694,12 +1832,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    QString path = directoryModel->pathFromIndex(index);
 
    if (!path.isEmpty()) {
-     impl_->currentDirectoryPath_ = path;
-     impl_->watchCurrentDirectory();
-     impl_->clearThumbnailCache();
-     impl_->applyFilters();
-     impl_->syncDirectorySelection();
-     folderChanged(path);
+     navigateToFolder(path);
     }
    });
 
@@ -1713,12 +1846,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
    // If it's a folder, navigate into it
    if (item.isFolder) {
-    impl_->currentDirectoryPath_ = filePath;
-    impl_->watchCurrentDirectory();
-    impl_->clearThumbnailCache();
-    impl_->applyFilters();
-    impl_->syncDirectorySelection();
-    folderChanged(filePath);
+    navigateToFolder(filePath);
     return;
    }
 
@@ -1823,13 +1951,19 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   VBoxLayout->addWidget(fileInfoGroup);
   VBoxLayout->addWidget(thumbnailControlGroup);
 
+  auto leftColumnLayout = new QVBoxLayout();
+  leftColumnLayout->addWidget(leftHubCard);
+  leftColumnLayout->addWidget(directoryView, 1);
+
   vLayout->addWidget(breadcrumbBar);
   vLayout->addWidget(assetToolBar);
   vLayout->addLayout(filterButtonsLayout);
-  layout->addWidget(directoryView, 1);
+  layout->addLayout(leftColumnLayout, 1);
   layout->addLayout(VBoxLayout, 3);
   vLayout->addLayout(layout);
   setLayout(vLayout);
+
+  impl_->refreshLeftHubSummary();
 
   impl_->setupFileSystemWatcher();
  }
@@ -2065,10 +2199,13 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    impl_->applyFilters();
   }
 
-  void ArtifactAssetBrowser::navigateToFolder(const QString& folderPath)
+ void ArtifactAssetBrowser::navigateToFolder(const QString& folderPath)
   {
   if (folderPath.isEmpty() || !QDir(folderPath).exists()) return;
   impl_->currentDirectoryPath_ = folderPath;
+  if (impl_->directoryModel_) {
+   impl_->directoryModel_->addRecentPath(folderPath, QFileInfo(folderPath).fileName());
+  }
   impl_->watchCurrentDirectory();
   impl_->clearThumbnailCache();
   if (impl_->breadcrumb_) {
@@ -2076,6 +2213,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   }
   impl_->applyFilters();
   impl_->syncDirectorySelection();
+  impl_->refreshLeftHubSummary();
   folderChanged(folderPath);
  }
 

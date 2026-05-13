@@ -74,6 +74,15 @@ AutoRepairResult ArtifactProjectHealthChecker::checkAndRepair(ArtifactProject* p
     return result;
 }
 
+bool ArtifactProjectHealthChecker::hasBlockingErrors(const ProjectHealthReport& report) {
+    for (const auto& issue : report.issues) {
+        if (issue.severity == HealthIssueSeverity::Error) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ArtifactProjectHealthChecker::checkCircularReferences(ArtifactProject* project, ProjectHealthReport& report) {
     // 全コンポジションを収集
     auto items = project->projectItems();

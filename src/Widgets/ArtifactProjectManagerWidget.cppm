@@ -398,8 +398,30 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
     // Composition metadata
     if (item->type() == eProjectItemType::Composition) {
         auto* composition = static_cast<CompositionItem*>(item);
+        const QString itemName = composition->name.toQString().trimmed();
+        lines << QStringLiteral("Name: %1").arg(itemName.isEmpty()
+                                                    ? QStringLiteral("Composition")
+                                                    : itemName);
         lines << QStringLiteral("Composition ID: %1").arg(composition->compositionId.toString());
         lines << QStringLiteral("Kind: Composition");
+        if (auto* svc = ArtifactProjectService::instance()) {
+            const auto found = svc->findComposition(composition->compositionId);
+            if (auto comp = found.ptr.lock()) {
+                const QSize compSize = comp->settings().compositionSize();
+                const auto frameRange = comp->frameRange().normalized();
+                const auto workAreaRange = comp->workAreaRange().normalized();
+                lines << QStringLiteral("Resolution: %1 x %2")
+                             .arg(compSize.width())
+                             .arg(compSize.height());
+                lines << QStringLiteral("Frame Rate: %1 fps")
+                             .arg(QString::number(comp->frameRate().framerate(), 'f', 2));
+                lines << QStringLiteral("Duration: %1 frames").arg(frameRange.duration());
+                lines << QStringLiteral("Work Area: %1 frames").arg(workAreaRange.duration());
+                lines << QStringLiteral("Layers: %1").arg(comp->allLayer().size());
+            } else {
+                lines << QStringLiteral("Status: Composition data unavailable");
+            }
+        }
     }
 
     // Footage metadata
@@ -2705,6 +2727,7 @@ public:
     ArtifactProjectManagerToolBox* toolBox = nullptr;
     QLabel* projectNameLabel = nullptr;
     QLabel* syncStateLabel = nullptr;
+    QLabel* projectHealthLabel = nullptr;
     QLabel* selectionSummaryLabel = nullptr;
     QLabel* selectionDetailLabel = nullptr;
     QPushButton* openSelectionButton = nullptr;
@@ -3002,7 +3025,7 @@ public:
         const QString unusedText = unusedOnlyCheck && unusedOnlyCheck->isChecked()
             ? QStringLiteral("Unused only")
             : QStringLiteral("All items");
-        return QStringLiteral("Selected: %1 | Filter: %2 | Type: %3 | %4")
+        return QStringLiteral("Selection: %1 | Search: %2 | Type: %3 | State: %4")
             .arg(selectedCount)
             .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText)
             .arg(typeText)
@@ -3013,9 +3036,24 @@ public:
         return QStringLiteral("Asset Browser linked");
     }
 
+    QString projectHealthText() const {
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc || !svc->hasProject()) {
+            return QStringLiteral("Project Health: <no project>");
+        }
+        const auto report = svc->currentProjectHealthReport();
+        return QStringLiteral("Project Health: %1 (%2 issue%3)")
+            .arg(report.isHealthy ? QStringLiteral("healthy") : QStringLiteral("issues"))
+            .arg(static_cast<int>(report.issues.size()))
+            .arg(report.issues.size() == 1 ? QString() : QStringLiteral("s"));
+    }
+
     void refreshSelectionChrome() {
         if (syncStateLabel) {
             syncStateLabel->setText(syncStateText());
+        }
+        if (projectHealthLabel) {
+            projectHealthLabel->setText(projectHealthText());
         }
         if (selectionSummaryLabel) {
             selectionSummaryLabel->setText(selectionSummaryText());
@@ -3033,13 +3071,13 @@ public:
             : QStringLiteral("Item");
         if (selectionDetailLabel) {
             if (!hasItem) {
-                selectionDetailLabel->setText(QStringLiteral("Use the search bar or click an item to inspect it."));
+                selectionDetailLabel->setText(QStringLiteral("Current: none | Use the search bar or click an item to inspect it."));
             } else {
                 const QString pathPart = pathText.isEmpty() ? QStringLiteral("-") : pathText;
                 if (isFootage) {
-                    selectionDetailLabel->setText(QStringLiteral("%1 | %2 | Open previews in Contents Viewer").arg(statusText, pathPart));
+                    selectionDetailLabel->setText(QStringLiteral("Current: %1 | %2 | Open previews in Contents Viewer").arg(statusText, pathPart));
                 } else {
-                    selectionDetailLabel->setText(QStringLiteral("%1 | %2").arg(statusText, pathPart));
+                    selectionDetailLabel->setText(QStringLiteral("Current: %1 | %2").arg(statusText, pathPart));
                 }
             }
         }
@@ -3347,11 +3385,26 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     }
     chromeLayout->addWidget(impl_->syncStateLabel);
 
+    impl_->projectHealthLabel = new QLabel(QStringLiteral("Project Health: <no project>"), chromePanel);
+    impl_->projectHealthLabel->setObjectName(QStringLiteral("projectManagerSyncChip"));
+    {
+        QFont f = impl_->projectHealthLabel->font();
+        f.setPointSize(9);
+        f.setBold(true);
+        impl_->projectHealthLabel->setFont(f);
+        impl_->projectHealthLabel->setAlignment(Qt::AlignCenter);
+        impl_->projectHealthLabel->setContentsMargins(8, 3, 8, 3);
+        QPalette pal = impl_->projectHealthLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(120));
+        impl_->projectHealthLabel->setPalette(pal);
+    }
+    chromeLayout->addWidget(impl_->projectHealthLabel);
+
     auto* selectionChrome = new QWidget(chromePanel);
     auto* selectionChromeLayout = new QVBoxLayout(selectionChrome);
     selectionChromeLayout->setContentsMargins(10, 0, 10, 8);
     selectionChromeLayout->setSpacing(4);
-    impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Selected: 0 | Filter: - | Type: All | All items"), selectionChrome);
+    impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Selection: 0 | Search: - | Type: All | State: All items"), selectionChrome);
     impl_->selectionSummaryLabel->setWordWrap(true);
     {
         QFont f = impl_->selectionSummaryLabel->font();
@@ -3362,7 +3415,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->selectionSummaryLabel->setPalette(pal);
     }
     selectionChromeLayout->addWidget(impl_->selectionSummaryLabel);
-    impl_->selectionDetailLabel = new QLabel(QStringLiteral("Use the search bar or click an item to inspect it."), selectionChrome);
+    impl_->selectionDetailLabel = new QLabel(QStringLiteral("Current: none | Use the search bar or click an item to inspect it."), selectionChrome);
     impl_->selectionDetailLabel->setWordWrap(true);
     {
         QFont f = impl_->selectionDetailLabel->font();

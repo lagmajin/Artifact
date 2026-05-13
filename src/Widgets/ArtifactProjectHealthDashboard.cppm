@@ -28,6 +28,7 @@ import std;
 
 import Artifact.Project;
 import Artifact.Project.Health;
+import Artifact.Service.Project;
 import Widgets.Utils.CSS;
 import Utils.Path;
 import Utils.String.UniString;
@@ -65,12 +66,14 @@ public:
             statusLabel_->setText("No project loaded.");
             applyStatusColor(QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
             issuesTree_->clear();
+            lastReport_ = {};
             return;
         }
 
         issuesTree_->clear();
-        ArtifactProjectHealthChecker checker;
-        ProjectHealthReport report = checker.check(project_);
+        ProjectHealthReport report = ArtifactProjectService::instance()
+                                          ? ArtifactProjectService::instance()->currentProjectHealthReport()
+                                          : ArtifactProjectHealthChecker::check(project_);
         lastReport_ = report;
 
         // Update overall status

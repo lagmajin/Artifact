@@ -48,6 +48,7 @@ import Utils.Path;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Application.Manager;
+import Artifact.Layer.Selection.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
@@ -982,6 +983,78 @@ bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
  }
 }
 
+bool propertyMatchesDisplayMode(const std::shared_ptr<ArtifactCore::AbstractProperty>& property,
+                                const TimelineLayerDisplayMode mode)
+{
+ if (!property) {
+  return false;
+ }
+ switch (mode) {
+ case TimelineLayerDisplayMode::AnimatedOnly:
+ case TimelineLayerDisplayMode::ImportantAndKeyframed:
+  return property->isAnimatable() && !property->getKeyFrames().empty();
+ case TimelineLayerDisplayMode::AudioOnly:
+ case TimelineLayerDisplayMode::VideoOnly:
+ case TimelineLayerDisplayMode::SelectedOnly:
+ case TimelineLayerDisplayMode::AllLayers:
+ default:
+  return true;
+ }
+}
+
+bool groupHasVisibleProperties(const ArtifactCore::PropertyGroup& group,
+                               const TimelineLayerDisplayMode mode)
+{
+ for (const auto& property : group.sortedProperties()) {
+  if (propertyMatchesDisplayMode(property, mode)) {
+   return true;
+  }
+ }
+ return false;
+}
+
+ArtifactLayerSelectionManager* currentLayerSelectionManager()
+{
+ auto* app = ArtifactApplicationManager::instance();
+ return app ? app->layerSelectionManager() : nullptr;
+}
+
+QVector<LayerID> selectedLayerIdsSnapshot()
+{
+ QVector<LayerID> ids;
+ auto* selectionManager = currentLayerSelectionManager();
+ if (!selectionManager) {
+  return ids;
+ }
+
+ const auto selected = selectionManager->selectedLayers();
+ ids.reserve(static_cast<int>(selected.size()));
+ for (const auto& layer : selected) {
+  if (layer) {
+   ids.push_back(layer->id());
+  }
+ }
+ return ids;
+}
+
+bool isLayerSelectedInSelectionManager(const LayerID& id)
+{
+ if (id.isNil()) {
+  return false;
+ }
+ auto* selectionManager = currentLayerSelectionManager();
+ if (!selectionManager) {
+  return false;
+ }
+ const auto selected = selectionManager->selectedLayers();
+ for (const auto& layer : selected) {
+  if (layer && layer->id() == id) {
+   return true;
+  }
+ }
+ return false;
+}
+
 QString matteTypeToText(MatteType type)
 {
  switch (type) {
@@ -1360,15 +1433,19 @@ public:
    if (!hasChildren || !expanded) return;
 
      for (const auto& groupDef : panelGroups) {
-      const QString groupName = groupDef.name().trimmed().isEmpty()
+     const QString groupName = groupDef.name().trimmed().isEmpty()
                                    ? QStringLiteral("Layer")
                                    : groupDef.name().trimmed();
-      const QString groupKey = nodeId + QStringLiteral("::") + groupName.toLower();
-      const bool groupExpanded = expandedByGroupKey.value(groupKey, true);
+     const QString groupKey = nodeId + QStringLiteral("::") + groupName.toLower();
+     const bool groupExpanded = expandedByGroupKey.value(groupKey, true);
+      const bool hasVisibleProperties = groupHasVisibleProperties(groupDef, displayMode);
+      if (!hasVisibleProperties) {
+       continue;
+      }
       visibleRows.push_back(VisibleRow{
        node,
        depth + 1,
-       !groupDef.sortedProperties().empty(),
+       true,
        groupExpanded,
       RowKind::Group,
       groupName,
@@ -1381,6 +1458,9 @@ public:
       if (groupExpanded) {
        for (const auto& property : groupDef.sortedProperties()) {
         if (!property) {
+         continue;
+        }
+        if (!propertyMatchesDisplayMode(property, displayMode)) {
          continue;
         }
         visibleRows.push_back(VisibleRow{
@@ -1396,7 +1476,7 @@ public:
          LayerPresentationBadgeTone::Neutral
         });
       }
-     }
+      }
     }
 
     if (hasMaskStack) {
@@ -1959,7 +2039,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
    event->accept();
    return;
   }
-  if (row.kind == RowKind::Mask || row.kind == RowKind::Matte) {
+  if (row.kind == RowKind::Mask) {
     impl_->clearDragState();
     if (event->button() == Qt::LeftButton) {
       auto* service = ArtifactProjectService::instance();
@@ -1970,6 +2050,22 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       impl_->selectedMaskLayerId = layer->id();
       impl_->selectedMaskIndex = row.propertyPath.trimmed().toInt();
       impl_->currentPropertyPath = maskSelectionPropertyPath(impl_->selectedMaskIndex);
+      propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+      update();
+    }
+    event->accept();
+    return;
+  }
+  if (row.kind == RowKind::Matte) {
+    impl_->clearDragState();
+    impl_->clearMaskSelection();
+    if (event->button() == Qt::LeftButton) {
+      auto* service = ArtifactProjectService::instance();
+      if (service) {
+        service->selectLayer(layer->id());
+      }
+      impl_->selectedLayerId = layer->id();
+      impl_->currentPropertyPath.clear();
       propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
       update();
     }
@@ -2014,6 +2110,35 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                   (parentRect.contains(event->pos()) || blendRect.contains(event->pos()));
 
   if (event->button() == Qt::LeftButton) {
+    auto* selectionManager = currentLayerSelectionManager();
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    const bool toggleSelection = (event->modifiers() & Qt::ControlModifier) &&
+                                 !(event->modifiers() & (Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier));
+    if (toggleSelection) {
+      if (selectionManager) {
+        selectionManager->setActiveComposition(comp);
+        const auto selectedLayer = comp ? comp->layerById(layer->id()) : ArtifactAbstractLayerPtr{};
+        if (selectionManager->isSelected(selectedLayer)) {
+          selectionManager->removeFromSelection(selectedLayer);
+        } else {
+          selectionManager->addToSelection(selectedLayer);
+        }
+        const auto current = selectionManager->currentLayer();
+        impl_->selectedLayerId = current ? current->id() : layer->id();
+      } else {
+        impl_->selectedLayerId = layer->id();
+      }
+      impl_->clearMaskSelection();
+      impl_->currentPropertyPath.clear();
+      propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+      if (!clickInInlineCombo) {
+        impl_->clearInlineEditors();
+      }
+      update();
+      event->accept();
+      return;
+    }
+
     impl_->selectedLayerId = layer->id();
     impl_->clearMaskSelection();
     impl_->currentPropertyPath.clear();
@@ -2151,6 +2276,36 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           svc->removeLayerFromComposition(compId, layer->id());
           impl_->selectedLayerId = LayerID();
           impl_->currentPropertyPath.clear();
+          updateLayout();
+        }
+      }
+    };
+
+    const QVector<LayerID> selectedIds = selectedLayerIdsSnapshot();
+    auto triggerDeleteSelectedLayers = [this, selectedIds]() {
+      if (selectedIds.size() <= 1) {
+        return;
+      }
+      const auto response = QMessageBox::question(
+          this, QStringLiteral("Delete Layers"),
+          QStringLiteral("Delete %1 selected layers?").arg(selectedIds.size()),
+          QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+      if (response != QMessageBox::Yes) {
+        return;
+      }
+      if (auto* svc = ArtifactProjectService::instance()) {
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+        if (!compId.isNil()) {
+          if (auto* selectionManager = currentLayerSelectionManager()) {
+            selectionManager->clearSelection();
+          }
+          for (const auto& layerId : selectedIds) {
+            svc->removeLayerFromComposition(compId, layerId);
+          }
+          impl_->selectedLayerId = LayerID();
+          impl_->currentPropertyPath.clear();
+          propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
           updateLayout();
         }
       }
@@ -2308,6 +2463,12 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (!variants.empty()) {
       menu.addAction(QStringLiteral("Variant Picker..."), [this, layer]() {
         showVariantPickerMenu(this, layer, QCursor::pos());
+      });
+      menu.addSeparator();
+    }
+    if (selectedIds.size() > 1) {
+      menu.addAction(QStringLiteral("Delete Selected Layers"), [triggerDeleteSelectedLayers]() {
+        triggerDeleteSelectedLayers();
       });
       menu.addSeparator();
     }
@@ -2527,6 +2688,17 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
+  if (event->key() == Qt::Key_U &&
+      !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
+    const auto nextMode =
+        impl_->displayMode == TimelineLayerDisplayMode::ImportantAndKeyframed
+            ? TimelineLayerDisplayMode::AllLayers
+            : TimelineLayerDisplayMode::ImportantAndKeyframed;
+    setDisplayMode(nextMode);
+    event->accept();
+    return;
+  }
+
   if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
     if (!impl_->selectedMaskLayerId.isNil() &&
         impl_->selectedMaskIndex >= 0 &&
@@ -2560,13 +2732,26 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
         return;
       }
     }
-    if (!impl_->selectedLayerId.isNil()) {
+    QVector<LayerID> selectedIds = selectedLayerIdsSnapshot();
+    if (selectedIds.isEmpty() && !impl_->selectedLayerId.isNil()) {
+      selectedIds.push_back(impl_->selectedLayerId);
+    }
+    if (!selectedIds.isEmpty()) {
       if (auto* service = ArtifactProjectService::instance()) {
         auto comp = safeCompositionLookup(impl_->compositionId);
         const CompositionID compId = comp ? comp->id() : impl_->compositionId;
         if (!compId.isNil()) {
+          if (auto* selectionManager = currentLayerSelectionManager()) {
+            selectionManager->clearSelection();
+          }
           impl_->clearMaskSelection();
-          service->removeLayerFromComposition(compId, impl_->selectedLayerId);
+          impl_->selectedLayerId = LayerID();
+          impl_->currentPropertyPath.clear();
+          propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+          for (const auto& layerId : selectedIds) {
+            service->removeLayerFromComposition(compId, layerId);
+          }
+          updateLayout();
           event->accept();
           return;
         }
@@ -2783,7 +2968,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                             row.kind == RowKind::MatteStack);
     const bool isPropertyRow = (row.kind == RowKind::Property);
     const bool isDisplayLeafRow = (row.kind == RowKind::Mask || row.kind == RowKind::Matte);
-    const bool sel = (l->id() == impl_->selectedLayerId);
+    const bool sel = isLayerSelectedInSelectionManager(l->id());
     const bool layerSelected = sel && row.kind == RowKind::Layer;
     const bool maskSelected = sel && row.kind == RowKind::Mask &&
                               impl_->selectedMaskLayerId == l->id() &&

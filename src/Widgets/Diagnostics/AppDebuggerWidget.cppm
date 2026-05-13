@@ -1038,10 +1038,15 @@ public:
             const QString healthText = controllerSnapshot.failed
                                            ? QStringLiteral("failed")
                                            : (failedPasses > 0 ? QStringLiteral("pass failed") : QStringLiteral("ok"));
+            const QString projectHealthText = projectSvc
+                                                  ? (projectSvc->currentProjectHealthReport().isHealthy
+                                                         ? QStringLiteral("healthy")
+                                                         : QStringLiteral("issues"))
+                                                  : QStringLiteral("<no service>");
             const QString compareText = controllerSnapshot.compareMode == ArtifactCore::FrameDebugCompareMode::Disabled
                                             ? QStringLiteral("off")
                                             : ArtifactCore::toString(controllerSnapshot.compareMode);
-            overviewSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  backend=%6  health=%7  compare=%8  passes=%9  crashes=%10  traceEvents=%11  hotThread=%12(%13)  lastCrash=%14")
+            overviewSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  backend=%6  health=%7  projectHealth=%8  compare=%9  passes=%10  crashes=%11  traceEvents=%12  hotThread=%13(%14)  lastCrash=%15")
                                           .arg(projectText,
                                                compositionText,
                                                layerText)
@@ -1049,6 +1054,7 @@ public:
                                           .arg(playbackText)
                                           .arg(backendText)
                                           .arg(healthText)
+                                          .arg(projectHealthText)
                                           .arg(compareText)
                                           .arg(static_cast<int>(controllerSnapshot.passes.size()))
                                           .arg(static_cast<int>(trace.crashes.size()))
@@ -1575,6 +1581,14 @@ public:
             lines << QStringLiteral("queueCount: %1").arg(queueSvc ? queueSvc->jobCount() : 0);
             lines << QStringLiteral("playbackState: %1")
                           .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
+            if (projectSvc) {
+                const auto projectHealth = projectSvc->currentProjectHealthReport();
+                lines << QStringLiteral("projectHealth: %1/%2")
+                              .arg(projectHealth.isHealthy ? QStringLiteral("healthy") : QStringLiteral("issues"))
+                              .arg(static_cast<int>(projectHealth.issues.size()));
+            } else {
+                lines << QStringLiteral("projectHealth: <no service>");
+            }
             if (controllerSnapshot.failed && !controllerSnapshot.failureReason.isEmpty()) {
                 lines << QStringLiteral("failureReason: %1").arg(controllerSnapshot.failureReason);
             }
@@ -1600,9 +1614,13 @@ public:
                                              }())
                                              .arg(queueSvc ? queueSvc->jobCount() : 0)
                                              .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>")));
-            diagnosticsSummary_->setToolTip(QStringLiteral("lastCrash=%1\n%2")
+            diagnosticsSummary_->setToolTip(QStringLiteral("lastCrash=%1\n%2\nprojectHealth=%3")
                                                 .arg(lastCrashText)
-                                                .arg(mediaHealthText(controllerSnapshot)));
+                                                .arg(mediaHealthText(controllerSnapshot))
+                                                .arg(projectSvc ? (projectSvc->currentProjectHealthReport().isHealthy
+                                                                       ? QStringLiteral("healthy")
+                                                                       : QStringLiteral("issues"))
+                                                              : QStringLiteral("<no service>")));
         }
 
         if (exportText_) {

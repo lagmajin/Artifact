@@ -1801,7 +1801,11 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     auto rackLayout = new QVBoxLayout();
 
     impl_->racks[i].listWidget = new QListWidget();
-    impl_->racks[i].listWidget->setMaximumHeight(100);
+    const bool rasterizerRack =
+        stageFromRackIndex(i) == EffectPipelineStage::Rasterizer;
+    impl_->racks[i].listWidget->setMinimumHeight(rasterizerRack ? 72 : 36);
+    impl_->racks[i].listWidget->setMaximumHeight(rasterizerRack ? 100 : 56);
+    impl_->racks[i].listWidget->setUniformItemSizes(true);
     applyInspectorList(impl_->racks[i].listWidget);
     impl_->racks[i].listWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     if (impl_->racks[i].listWidget->viewport()) {

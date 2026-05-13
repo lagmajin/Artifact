@@ -612,6 +612,8 @@ namespace {
       result.warnings.append("Project has no compositions or layers");
     }
 
+    result.success = result.errors.isEmpty();
+
     return result;
   }
 }
@@ -630,7 +632,8 @@ ArtifactProjectExporterResult ArtifactProjectManager::saveToFile(const QString& 
   auto validation = validateBeforeSave(projectPtr);
   if (!validation.errors.isEmpty()) {
     qWarning() << "[saveToFile] Validation errors found:" << validation.errors;
-    // エラーがあっても保存は続行（ユーザーに警告のみ）
+    result.success = false;
+    return result;
   }
   if (!validation.warnings.isEmpty()) {
     qDebug() << "[saveToFile] Validation warnings:" << validation.warnings;
@@ -801,8 +804,14 @@ void ArtifactProjectManager::saveToFileAsync(const QString& fullpath,
     result.success = false;
 
     if (onProgress) onProgress(0, 100, QStringLiteral("Validating..."));
-    // Validation in background (simplified check)
     if (!projectPtr || projectPtr->isNull()) {
+      return result;
+    }
+
+    auto validation = validateBeforeSave(projectPtr);
+    if (!validation.errors.isEmpty()) {
+      qWarning() << "[saveToFileAsync] Validation errors found:" << validation.errors;
+      if (onProgress) onProgress(100, 100, QStringLiteral("Validation failed"));
       return result;
     }
 
