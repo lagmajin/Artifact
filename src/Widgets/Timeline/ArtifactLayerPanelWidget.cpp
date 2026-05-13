@@ -3226,6 +3226,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const bool isDisplayLeafRow = (row.kind == RowKind::Mask || row.kind == RowKind::Matte);
     const bool sel = isLayerSelectedInSelectionManager(l->id());
     const bool layerSelected = sel && row.kind == RowKind::Layer;
+    const bool selectionAnchor =
+        layerSelected && !impl_->selectionAnchorLayerId.isNil() &&
+        l->id() == impl_->selectionAnchorLayerId;
     const bool maskSelected = sel && row.kind == RowKind::Mask &&
                               impl_->selectedMaskLayerId == l->id() &&
                               impl_->selectedMaskIndex == row.propertyPath.trimmed().toInt();
@@ -3254,6 +3257,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
     if (maskSelected) {
       p.fillRect(0, y, 4, rowH, accent);
+    } else if (selectionAnchor) {
+      QColor anchorColor = mixColor(background, accent, 0.90);
+      anchorColor.setAlpha(230);
+      p.fillRect(0, y, 3, rowH, anchorColor);
     }
 
     p.setPen(border.darker(120));
