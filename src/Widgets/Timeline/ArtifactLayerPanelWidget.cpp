@@ -2914,6 +2914,36 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
+  if (event->matches(QKeySequence::SelectAll)) {
+    auto* selectionManager = currentLayerSelectionManager();
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    if (selectionManager && comp) {
+      QVector<LayerID> visibleLayerIds;
+      visibleLayerIds.reserve(impl_->visibleRows.size());
+      for (const auto& row : impl_->visibleRows) {
+        if (row.kind == RowKind::Layer && row.layer) {
+          visibleLayerIds.push_back(row.layer->id());
+        }
+      }
+
+      if (!visibleLayerIds.isEmpty()) {
+        selectionManager->clearSelection();
+        for (const auto& layerId : visibleLayerIds) {
+          selectionManager->addToSelection(comp->layerById(layerId));
+        }
+        impl_->selectedMaskLayerId = LayerID();
+        impl_->selectedMaskIndex = -1;
+        impl_->selectedLayerId = visibleLayerIds.last();
+        impl_->selectionAnchorLayerId = visibleLayerIds.first();
+        impl_->currentPropertyPath.clear();
+        propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+        update();
+        event->accept();
+        return;
+      }
+    }
+  }
+
   if (event->key() == Qt::Key_U &&
       !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
     const auto nextMode =
@@ -3480,9 +3510,33 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     const int markerSize = 6;
     p.drawEllipse(QPoint(markerSize, lineY), markerSize / 2, markerSize / 2);
     p.drawEllipse(QPoint(std::max(markerSize, width() - markerSize), lineY), markerSize / 2, markerSize / 2);
-   }
+  }
 
   p.restore();
+
+  const int selectedCount = static_cast<int>(selectedLayerIdsSnapshot().size());
+  if (selectedCount > 0) {
+    const QString badgeText = QStringLiteral("%1 selected").arg(selectedCount);
+    const QFontMetrics fm(p.font());
+    const int badgePadX = 10;
+    const int badgePadY = 5;
+    const int badgeH = fm.height() + badgePadY * 2;
+    const int badgeW = fm.horizontalAdvance(badgeText) + badgePadX * 2;
+    const int badgeX = std::max(8, width() - badgeW - 10);
+    const QRect badgeRect(badgeX, 8, badgeW, badgeH);
+    QColor badgeBg = mixColor(background, accent, 0.52);
+    badgeBg.setAlpha(230);
+    QColor badgeBorder = mixColor(badgeBg, border, 0.40);
+    QColor badgeTextColor = themeColor(theme.textColor, QColor(QStringLiteral("#F5F2E8")));
+
+    p.setPen(QPen(badgeBorder, 1.0));
+    p.setBrush(badgeBg);
+    p.drawRoundedRect(badgeRect, 9, 9);
+    p.setPen(badgeTextColor);
+    p.drawText(badgeRect.adjusted(badgePadX, 0, -badgePadX, 0),
+               Qt::AlignVCenter | Qt::AlignLeft,
+               badgeText);
+  }
 
 }
 
