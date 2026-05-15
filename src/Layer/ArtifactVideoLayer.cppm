@@ -391,7 +391,13 @@ ArtifactVideoLayer::~ArtifactVideoLayer()
 // === Source Management ===
 void ArtifactVideoLayer::setSourceFile(const QString& path)
 {
-    if (path.isEmpty()) return;
+    if (path.isEmpty()) {
+        qWarning() << "[VideoLayer] setSourceFile called with empty path"
+                   << threadIdTag();
+        return;
+    }
+    qDebug() << "[VideoLayer] setSourceFile" << QFileInfo(path).absoluteFilePath()
+             << threadIdTag();
     (void)loadFromPath(path);
 }
 
@@ -414,6 +420,9 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
 {
     const QString normalizedPath = QFileInfo(path).absoluteFilePath();
     qDebug() << "[VideoLayer] loadFromPath:" << normalizedPath << threadIdTag();
+    qCInfo(videoLayerLog) << "[VideoLayer] load begin"
+                          << "path=" << normalizedPath
+                          << "thread=" << threadIdTag();
 
     impl_->sourcePath_ = normalizedPath;
     impl_->streamInfo_ = VideoStreamInfo{};
@@ -491,6 +500,11 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
             qCritical() << "[VideoLayer] openMediaFile FAILED:" << result.normalizedPath
                         << "lastError=" << result.error
                         << threadDiagnosticsTag();
+            qCInfo(videoLayerLog) << "[VideoLayer] load failed"
+                                  << "path=" << result.normalizedPath
+                                  << "error=" << result.error
+                                  << "requestId=" << requestId
+                                  << "thread=" << threadIdTag();
             layer->impl_->isLoaded_ = false;
             publishVideoLayerModified(layer);
             return;
@@ -516,6 +530,14 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                               << layer->impl_->playbackController_->getDebugState()
                               << threadDiagnosticsTag()
                               << threadIdTag();
+        qCInfo(videoLayerLog) << "[VideoLayer] load success"
+                              << "path=" << layer->impl_->sourcePath_
+                              << "requestId=" << requestId
+                              << "stream=" << layer->impl_->streamInfo_.width << "x"
+                              << layer->impl_->streamInfo_.height
+                              << "fps=" << layer->impl_->streamInfo_.frameRate
+                              << "frames=" << layer->impl_->streamInfo_.frameCount
+                              << "thread=" << threadIdTag();
 
         layer->setInPoint(0);
         layer->setOutPoint(result.defaultOutPoint);

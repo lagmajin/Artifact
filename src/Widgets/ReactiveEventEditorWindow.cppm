@@ -805,38 +805,11 @@ connect(impl_->ruleTree, &QTreeWidget::currentItemChanged, this,
          [hookApply](int) { hookApply(); });
  connect(impl_->valueThresholdEdit, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
          [hookApply](double) { hookApply(); });
- connect(impl_->frameNumberEdit, qOverload<int>(&QSpinBox::valueChanged), this, [hookApply](int) { hookApply(); });
- connect(impl_->delayEdit, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+  connect(impl_->frameNumberEdit, qOverload<int>(&QSpinBox::valueChanged), this, [hookApply](int) { hookApply(); });
+  connect(impl_->delayEdit, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
          [hookApply](double) { hookApply(); });
- connect(impl_->cooldownEdit, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+  connect(impl_->cooldownEdit, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
          [hookApply](double) { hookApply(); });
-
-  auto* svc = ArtifactProjectService::instance();
-  if (svc) {
-  connect(svc, &ArtifactProjectService::projectChanged, this, [this]() {
-   if (impl_) {
-    impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
-    impl_->eventBus_.drain();
-   }
-  });
-  connect(svc, &ArtifactProjectService::projectCreated, this, [this]() {
-   if (impl_) {
-    impl_->eventBus_.post<CompositionCreatedEvent>(CompositionCreatedEvent{QString(), QString()});
-    impl_->eventBus_.drain();
-   }
-  });
-  connect(svc, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& compositionId) {
-   if (impl_) {
-    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{compositionId.toString()});
-    impl_->eventBus_.drain();
-   }
-  });
-  connect(svc, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID& compositionId) {
-   if (impl_) {
-    impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{compositionId.toString()});
-    impl_->eventBus_.drain();
-   }
-  });
 
   impl_->eventBusSubscriptions_.push_back(
    impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
@@ -863,7 +836,6 @@ connect(impl_->ruleTree, &QTreeWidget::currentItemChanged, this,
      impl_->appendLog(QStringLiteral("Layer selection changed"));
     }
    }));
-  }
 
  impl_->loadSampleRules();
  impl_->refreshAll();

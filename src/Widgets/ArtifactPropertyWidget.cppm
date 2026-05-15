@@ -390,11 +390,14 @@ public:
   bool needsRebuildWhenVisible = false;
   bool valueColumnFirst = false;
   bool sliderBeforeValue = false;
+  bool isPlaying = false;
   int localPropertyEditDepth = 0;
   QHash<QString, ArtifactPropertyEditorRowWidget *> propertyEditors;
   QString rebuildSignature;
   qint64 lastPropertyUpdateFramePosition = std::numeric_limits<qint64>::min();
   int64_t lastPropertyUpdateFps = -1;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   void scheduleRebuild(int delayMs = -1) {
     if (!rebuildTimer) {
@@ -1065,36 +1068,35 @@ ArtifactPropertyWidget::ArtifactPropertyWidget(QWidget *parent)
                                       });
                      menu.exec(mapToGlobal(pos));
                    });
-  if (auto *playback = ArtifactPlaybackService::instance()) {
-    QObject::connect(playback, &ArtifactPlaybackService::frameChanged, this,
-                     [this, playback]() {
-                       if (isVisible()) {
-                         // [Optimization] If playing, only update if it's the
-                         // first frame of playback or not playing.
-                         // High-frequency UI updates during playback can cause
-                         // significant lag.
-                         if (!playback->isPlaying()) {
-                           impl_->updatePropertyValues();
-                         }
-                       } else {
-                         impl_->needsRebuildWhenVisible = true;
-                       }
-                     });
-    QObject::connect(playback, &ArtifactPlaybackService::playbackStateChanged,
-                     this, [this](PlaybackState state) {
-                       if (state != PlaybackState::Playing) {
-                         impl_->updatePropertyValues();
-                       }
-                     });
-  }
-  if (auto *projectService = ArtifactProjectService::instance()) {
-    QObject::connect(projectService, &ArtifactProjectService::projectChanged,
-                     this, [this]() {
-                       if (impl_->currentLayer) {
-                         impl_->scheduleRebuild();
-                       }
-                     });
-  }
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<PlaybackStateChangedEvent>(
+          [this](const PlaybackStateChangedEvent &event) {
+            impl_->isPlaying = event.state == PlaybackState::Playing;
+            if (!impl_->isPlaying) {
+              impl_->updatePropertyValues();
+            }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<FrameChangedEvent>(
+          [this](const FrameChangedEvent &) {
+            if (isVisible()) {
+              // [Optimization] If playing, only update if it's the first frame
+              // of playback or not playing.
+              // High-frequency UI updates during playback can cause
+              // significant lag.
+              if (!impl_->isPlaying) {
+                impl_->updatePropertyValues();
+              }
+            } else {
+              impl_->needsRebuildWhenVisible = true;
+            }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+        if (impl_->currentLayer) {
+          impl_->scheduleRebuild();
+        }
+      }));
 }
 
 ArtifactPropertyWidget::~ArtifactPropertyWidget() {

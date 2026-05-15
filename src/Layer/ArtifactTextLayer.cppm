@@ -1139,6 +1139,12 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
     }
   }
 
+  const auto current = sourceSize();
+  if (current.width <= 0 || current.height <= 0) {
+    setSourceSize(Size_2D(std::max(1, current.width),
+                          std::max(1, current.height)));
+  }
+
   markDirty();
 }
 
@@ -1708,6 +1714,33 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
       presetProperty->setValue(0);
     }
   };
+
+  if (propertyPath == QStringLiteral("source.width")) {
+    const auto current = sourceSize();
+    const int width = std::max(1, value.toInt());
+    if (current.width == width) {
+      return true;
+    }
+    setSourceSize(Size_2D(width, std::max(1, current.height)));
+    setDirty(LayerDirtyFlag::Source);
+    addDirtyReason(LayerDirtyReason::PropertyChanged);
+    markDirty();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("source.height")) {
+    const auto current = sourceSize();
+    const int height = std::max(1, value.toInt());
+    if (current.height == height) {
+      return true;
+    }
+    setSourceSize(Size_2D(std::max(1, current.width), height));
+    setDirty(LayerDirtyFlag::Source);
+    addDirtyReason(LayerDirtyReason::PropertyChanged);
+    markDirty();
+    Q_EMIT changed();
+    return true;
+  }
 
   if (propertyPath == QStringLiteral("text.value")) {
     setText(UniString(value.toString()));

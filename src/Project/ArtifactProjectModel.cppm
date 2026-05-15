@@ -53,6 +53,8 @@ import Artifact.Project.Cleanup;
 import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Project.Roles;
+import Artifact.Event.Types;
+import Event.Bus;
 import Utils.Path;
 
 namespace Artifact
@@ -130,8 +132,9 @@ QStandardItem* projectItemFromModelIndex(const QModelIndex& index)
 
   ArtifactProjectWeakPtr projectPtr_;
   QStandardItemModel* model_ = nullptr;
-  QMetaObject::Connection compositionConnection_;
   QSet<QString> unusedAssetPaths_;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   void refreshTree();
   static ArtifactProjectService* projectService();
   Impl();
@@ -149,8 +152,6 @@ ArtifactProjectModel::Impl::Impl()
 
 ArtifactProjectModel::Impl::~Impl()
 {
- if (compositionConnection_)
-  QObject::disconnect(compositionConnection_);
 }
 
 void ArtifactProjectModel::Impl::updateUnusedAssetPaths()
@@ -399,21 +400,22 @@ void ArtifactProjectModel::onCompositionCreated(const ArtifactCore::CompositionI
 
 ArtifactProjectModel::ArtifactProjectModel(QObject* parent/*=nullptr*/) :QAbstractItemModel(parent), impl_(new Impl())
 {
-  connect(impl_->projectService(), &ArtifactProjectService::layerCreated, this, [this]() {
-    if (impl_->projectPtr_.lock()) {
-      beginResetModel();
-      impl_->refreshTree();
-      endResetModel();
-    }
-  });
-  // Also refresh when the project/service notifies of general changes
-  connect(impl_->projectService(), &ArtifactProjectService::projectChanged, this, [this]() {
-    if (impl_->projectPtr_.lock()) {
-      beginResetModel();
-      impl_->refreshTree();
-      endResetModel();
-    }
-  });
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
+        if (impl_->projectPtr_.lock()) {
+          beginResetModel();
+          impl_->refreshTree();
+          endResetModel();
+        }
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+        if (impl_->projectPtr_.lock()) {
+          beginResetModel();
+          impl_->refreshTree();
+          endResetModel();
+        }
+      }));
   // Transfer ownership of the internal model to this QObject so Qt manages its lifetime
   if (impl_ && impl_->model_)
     impl_->model_->setParent(this);
@@ -428,16 +430,11 @@ void ArtifactProjectModel::setProject(const std::shared_ptr<ArtifactProject>& pr
 {
   if (!impl_) return;
   // disconnect previous connection
-  if (impl_->compositionConnection_) QObject::disconnect(impl_->compositionConnection_);
   impl_->projectPtr_ = project;
 
   beginResetModel();
   impl_->refreshTree();
   endResetModel();
-
-  if (auto shared = impl_->projectPtr_.lock()) {
-    impl_->compositionConnection_ = connect(shared.get(), &ArtifactProject::compositionCreated, this, &ArtifactProjectModel::onCompositionCreated);
-  }
 }
 
  ArtifactProjectModel::~ArtifactProjectModel()

@@ -2160,14 +2160,14 @@ int main(int argc, char *argv[]) {
     recoveryTimer->start();
 
     if (playbackService) {
-      QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged,
-                       mw,
-                       [latestFrame, hasFrameUpdate,
-                        frameCounter](const FramePosition &position) {
-                         latestFrame->store(position.framePosition());
-                         hasFrameUpdate->store(true);
-                         frameCounter->fetch_add(1);
-                       });
+      appEventSubscriptions.push_back(
+          appEventBus.subscribe<FrameChangedEvent>(
+              [latestFrame, hasFrameUpdate,
+               frameCounter](const FrameChangedEvent &event) {
+                latestFrame->store(event.frame);
+                hasFrameUpdate->store(true);
+                frameCounter->fetch_add(1);
+              }));
     }
 
     {

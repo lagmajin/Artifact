@@ -1,4 +1,5 @@
 module;
+class tst_QList;
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QWheelEvent>

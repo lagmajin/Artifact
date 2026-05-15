@@ -1,4 +1,5 @@
-﻿module;
+module;
+class tst_QList;
 #include <utility>
 #include <QJsonObject>
 #include <QList>
@@ -126,6 +127,15 @@ namespace Artifact {
   }
   case LayerType::Video:
    ptr = std::make_shared<ArtifactVideoLayer>();
+   if (ptr) {
+    if (auto* videoParams = dynamic_cast<ArtifactVideoInitParams*>(&params)) {
+     const QString path = videoParams->videoPath();
+     if (!path.isEmpty()) {
+      auto* videoLayer = static_cast<ArtifactVideoLayer*>(ptr.get());
+      videoLayer->setSourceFile(path);
+     }
+    }
+   }
    break;
   case LayerType::Precomp:
    ptr = std::make_shared<ArtifactCompositionLayer>();

@@ -1,4 +1,5 @@
-﻿module;
+module;
+class tst_QList;
 #include <algorithm>
 #include <utility>
 #if defined(_WIN32)
@@ -429,6 +430,8 @@ public:
   QHash<CDockWidget *, std::function<QWidget *()>> lazyDockFactories;
   QMetaObject::Connection currentTextLayerChangedConnection;
   QMetaObject::Connection currentShapeLayerChangedConnection;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   bool createLazyDockWidgetNow(ArtifactMainWindow *owner, CDockWidget *dock) {
     if (!owner || !dock || dock->property("artifactLazyWidgetCreated").toBool()) {
@@ -848,17 +851,13 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
         }
       });
 
-  if (auto *app = ArtifactApplicationManager::instance()) {
-    if (auto *selection = app->layerSelectionManager()) {
-      QObject::connect(selection, &ArtifactLayerSelectionManager::selectionChanged,
-                       this, [this]() {
-                         if (impl_) {
-                           impl_->syncTextToolOptions(this);
-                           impl_->syncShapeToolOptions(this);
-                         }
-                       });
-    }
-  }
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<LayerSelectionChangedEvent>([this](const LayerSelectionChangedEvent&) {
+        if (impl_) {
+          impl_->syncTextToolOptions(this);
+          impl_->syncShapeToolOptions(this);
+        }
+      }));
   impl_->syncTextToolOptions(this);
   impl_->syncShapeToolOptions(this);
 

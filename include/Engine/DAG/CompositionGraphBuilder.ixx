@@ -1,4 +1,5 @@
 module;
+class tst_QList;
 #include <vector>
 #include <unordered_map>
 #include <memory>

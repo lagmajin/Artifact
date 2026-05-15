@@ -1253,12 +1253,18 @@ TransformGizmo::TransformGizmo() {}
 TransformGizmo::~TransformGizmo() {}
 
 QRectF TransformGizmo::currentCanvasBoundingRect() const {
- if (!geometryCacheValid_) return QRectF();
- const float minX = std::min({cachedPoints_.tl.x, cachedPoints_.tr.x, cachedPoints_.bl.x, cachedPoints_.br.x});
- const float maxX = std::max({cachedPoints_.tl.x, cachedPoints_.tr.x, cachedPoints_.bl.x, cachedPoints_.br.x});
- const float minY = std::min({cachedPoints_.tl.y, cachedPoints_.tr.y, cachedPoints_.bl.y, cachedPoints_.br.y});
- const float maxY = std::max({cachedPoints_.tl.y, cachedPoints_.tr.y, cachedPoints_.bl.y, cachedPoints_.br.y});
- return QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
+ if (!layer_) return QRectF();
+
+ const QRectF localRect = layer_->localBounds();
+ if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
+  return QRectF();
+ }
+
+ const QRectF bbox = layer_->getGlobalTransform().mapRect(localRect);
+ if (!bbox.isValid() || bbox.width() <= 0.0 || bbox.height() <= 0.0) {
+  return QRectF();
+ }
+ return bbox;
 }
 
 void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {

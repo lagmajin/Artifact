@@ -78,6 +78,8 @@ module Widgets.AssetBrowser;
 
 import Widgets.Utils.CSS;
 import Artifact.Service.Project;
+import Artifact.Event.Types;
+import Event.Bus;
 import Artifact.Project.Manager;
 import Artifact.Project.Cleanup;
 import AssetMenuModel;
@@ -793,9 +795,10 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
  public:
   Impl();
   ~Impl();
-  QToolButton* upButton_ = nullptr;
-  QToolButton* refreshButton_ = nullptr;
-  QTreeView* directoryView_ = nullptr;
+ QToolButton* upButton_ = nullptr;
+ QToolButton* refreshButton_ = nullptr;
+  ArtifactAssetBrowser* owner_ = nullptr;
+ QTreeView* directoryView_ = nullptr;
   AssetDirectoryModel* directoryModel_ = nullptr;
   QListView* fileView_ = nullptr;
   AssetMenuModel* assetModel_ = nullptr;
@@ -816,6 +819,8 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
     QString currentSearchFilter_;
     QString currentSortBy_ = "name";  // name, date, size, type
     bool sortAscending_ = true;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   void handleDirectryChanged();
   void handleDoubleClicked();
@@ -1420,7 +1425,9 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
       label = entries[i].path;
      }
      button->setEntry(QStringLiteral("• %1").arg(label), entries[i].path, [this](const QString& path) {
-      navigateToFolder(path);
+      if (owner_) {
+       owner_->navigateToFolder(path);
+      }
      });
     } else {
      button->setEntry(QString(), QString(), {});
@@ -1536,8 +1543,9 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    assetModel_->setItems(items);
  }
 
-  ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
+ ArtifactAssetBrowser::ArtifactAssetBrowser(QWidget* parent /*= nullptr*/) :QWidget(parent), impl_(new Impl())
  {
+  impl_->owner_ = this;
   setWindowTitle("AssetBrowser");
 
   // Enable drag and drop
@@ -1929,21 +1937,20 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   // Initial load
   impl_->applyFilters();
 
-  auto* projectService = ArtifactProjectService::instance();
-  if (projectService) {
-   connect(projectService, &ArtifactProjectService::projectCreated, this, [this]() {
-    impl_->syncProjectAssetRoot();
-    if (impl_->syncStateLabel_) {
-     impl_->syncStateLabel_->setText(impl_->syncStateText());
-    }
-   });
-   connect(projectService, &ArtifactProjectService::projectChanged, this, [this]() {
-    impl_->syncProjectAssetRoot();
-    if (impl_->syncStateLabel_) {
-     impl_->syncStateLabel_->setText(impl_->syncStateText());
-    }
-   });
-  }
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectCreatedEvent>([this](const ProjectCreatedEvent&) {
+        impl_->syncProjectAssetRoot();
+        if (impl_->syncStateLabel_) {
+          impl_->syncStateLabel_->setText(impl_->syncStateText());
+        }
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+        impl_->syncProjectAssetRoot();
+        if (impl_->syncStateLabel_) {
+          impl_->syncStateLabel_->setText(impl_->syncStateText());
+        }
+      }));
 
   auto VBoxLayout = new  QVBoxLayout();
   VBoxLayout->addWidget(impl_->syncStateLabel_);

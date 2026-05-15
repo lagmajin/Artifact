@@ -1,4 +1,5 @@
-﻿module;
+module;
+class tst_QList;
 #include <utility>
 
 #include <wobjectdefs.h>
@@ -40,6 +41,18 @@ export namespace Artifact {
   MayaGradient
  };
 
+ enum class LineDebugKind : uint8_t {
+  Grid = 0,
+  Axis,
+  Bounds,
+  MaskPath,
+  MaskHandle,
+  SelectionRect,
+  MotionPath,
+  DebugProbe,
+  Unknown
+ };
+
  class CompositionRenderController : public QObject
  {
   W_OBJECT(CompositionRenderController)
@@ -76,6 +89,8 @@ int compositionBackgroundMode() const;
 
 void setShowGrid(bool show);
 bool isShowGrid() const;
+void setLineDebugKindVisible(LineDebugKind kind, bool visible);
+bool isLineDebugKindVisible(LineDebugKind kind) const;
 void setShowCheckerboard(bool show);
 bool isShowCheckerboard() const;
 void setCheckerboardSize(float size);

@@ -1,4 +1,5 @@
 module;
+class tst_QList;
 
 #pragma warning(push)
 #pragma warning(disable: 2382)  // redefinition; different exception specifications (std::ranges)

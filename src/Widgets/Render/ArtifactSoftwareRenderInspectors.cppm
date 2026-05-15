@@ -1,4 +1,5 @@
 module;
+class tst_QList;
 #include <utility>
 #include <QWidget>
 #include <QVBoxLayout>
@@ -114,6 +115,7 @@ QPainter::CompositionMode compositionMode(ArtifactCore::BlendMode mode)
 QPainterPath toQPainterPath(const MaskPath& path)
 {
     QPainterPath qpath;
+    qpath.setFillRule(Qt::WindingFill);
     const int count = path.vertexCount();
     if (count < 2) return qpath;
 
@@ -529,6 +531,8 @@ void drawLayerOnCanvas(QPainter& painter, const ArtifactAbstractLayerPtr& layer,
     const qreal finalOpacity = std::clamp(opacityScale * static_cast<qreal>(layer->opacity()), 0.0, 1.0);
 
     painter.save();
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
     
     // 1. Apply Transform
     painter.setTransform(layer->getGlobalTransform(), true);

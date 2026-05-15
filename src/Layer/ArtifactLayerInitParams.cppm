@@ -240,6 +240,15 @@ LayerType ArtifactLayerInitParams::layerType() const
  {
  }
 
+ ArtifactVideoInitParams::ArtifactVideoInitParams(const QString& name)
+     : ArtifactLayerInitParams(name, LayerType::Video)
+ {
+ }
+
+ ArtifactVideoInitParams::~ArtifactVideoInitParams()
+ {
+ }
+
  ArtifactCameraLayerInitParams::ArtifactCameraLayerInitParams() :ArtifactLayerInitParams(UniString("Camera 1"), LayerType::Camera)
  {
 

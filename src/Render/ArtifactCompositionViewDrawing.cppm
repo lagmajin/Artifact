@@ -712,12 +712,30 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* videoLayer = dynamic_cast<ArtifactVideoLayer*>(layer)) {
-    if (!hasRasterizerEffectsOrMasks(layer) &&
-        videoLayer->hasCurrentFrameBuffer()) {
+    const bool hasRasterizer = hasRasterizerEffectsOrMasks(layer);
+    const bool hasBuffer = videoLayer->hasCurrentFrameBuffer();
+    const bool loaded = videoLayer->isLoaded();
+    const bool active =
+        layer->isActiveAt(FramePosition(static_cast<int>(layer->currentFrame())));
+    const FramePosition ip = layer->inPoint();
+    const FramePosition op = layer->outPoint();
+    if (!hasRasterizer && hasBuffer) {
       const ArtifactCore::ImageF32x4_RGBA& buffer =
           videoLayer->currentFrameBuffer();
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      if (videoDebugOut) {
+        *videoDebugOut = QStringLiteral(
+                             "[Video] branch=buffer loaded=%1 hasBuffer=%2 "
+                             "rasterizer=%3 active=%4 range=[%5,%6] curFrame=%7")
+                             .arg(loaded)
+                             .arg(hasBuffer)
+                             .arg(hasRasterizer)
+                             .arg(active)
+                             .arg(ip.framePosition())
+                             .arg(op.framePosition())
+                             .arg(layer->currentFrame());
+      }
       drawWithClonerEffect(layer, globalTransform4x4,
         [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
           renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
@@ -727,29 +745,64 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                instanceTransform,
                                buffer,
                                baseOpacity * instanceWeight);
-        });
+      });
       return;
     }
 
+    QImage frame;
+    bool usedSyncFallback = false;
+    bool usedBufferFallback = false;
+    QString reason;
+    if (loaded) {
+      frame = downsampleForLOD(offlineRender
+          ? videoLayer->decodeFrameToQImage(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
+          : videoLayer->currentFrameToQImage(), lod);
+    } else {
+      reason = QStringLiteral("notLoaded");
+    }
+    if (frame.isNull() && hasBuffer) {
+      frame = downsampleForLOD(videoLayer->currentFrameBuffer().toQImage(), lod);
+      usedBufferFallback = !frame.isNull();
+    }
+    if (frame.isNull() && loaded) {
+      frame = downsampleForLOD(
+          videoLayer->decodeFrameToQImage(
+              cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame()),
+          lod);
+      usedSyncFallback = !frame.isNull();
+    }
     if (videoDebugOut) {
-      const bool loaded = videoLayer->isLoaded();
-      const int64_t cf = layer->currentFrame();
-      const FramePosition ip = layer->inPoint();
-      const FramePosition op = layer->outPoint();
-      const bool active = layer->isActiveAt(FramePosition(static_cast<int>(cf)));
+      if (reason.isEmpty()) {
+        if (!loaded) {
+          reason = QStringLiteral("notLoaded");
+        } else if (usedSyncFallback) {
+          reason = QStringLiteral("syncDecode");
+        } else if (usedBufferFallback) {
+          reason = QStringLiteral("bufferFallback");
+        } else if (frame.isNull()) {
+          reason = hasBuffer ? QStringLiteral("decodeNull")
+                             : QStringLiteral("noBuffer");
+        } else {
+          reason = QStringLiteral("ok");
+        }
+      }
       const QSize source = QSize(std::max(0, layer->sourceSize().width), std::max(0, layer->sourceSize().height));
-      *videoDebugOut = QString("[Video] loaded=%1 size=%2x%3 active=%4 range=[%5,%6] curFrame=%7")
+      *videoDebugOut = QString("[Video] branch=preview loaded=%1 size=%2x%3 "
+                               "hasBuffer=%4 rasterizer=%5 active=%6 "
+                               "syncFallback=%7 bufferFallback=%8 reason=%9 "
+                               "range=[%10,%11] curFrame=%12")
         .arg(loaded)
         .arg(source.width())
         .arg(source.height())
+        .arg(hasBuffer)
+        .arg(hasRasterizer)
         .arg(active)
-        .arg(ip.framePosition()).arg(op.framePosition()).arg(cf);
-    }
-    QImage frame = downsampleForLOD(offlineRender
-        ? videoLayer->decodeFrameToQImage(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
-        : videoLayer->currentFrameToQImage(), lod);
-    if (frame.isNull() && videoLayer->hasCurrentFrameBuffer()) {
-      frame = downsampleForLOD(videoLayer->currentFrameBuffer().toQImage(), lod);
+        .arg(usedSyncFallback)
+        .arg(usedBufferFallback)
+        .arg(reason)
+        .arg(ip.framePosition())
+        .arg(op.framePosition())
+        .arg(layer->currentFrame());
     }
     if (!frame.isNull()) {
       applySurfaceAndDraw(frame, localRect, true);

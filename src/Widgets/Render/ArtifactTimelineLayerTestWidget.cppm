@@ -560,19 +560,6 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
                 impl_->reloadLayerControls(this);
                 impl_->updateComposite();
             }));
-
-        QObject::connect(impl_->service, &ArtifactProjectService::layerCreated, this,
-            [this](const ArtifactCore::CompositionID& compId, const ArtifactCore::LayerID& layerId) {
-                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
-                    compId.toString(), layerId.toString(), LayerChangedEvent::ChangeType::Created});
-                impl_->eventBus_.drain();
-            });
-        QObject::connect(impl_->service, &ArtifactProjectService::layerRemoved, this,
-            [this](const ArtifactCore::CompositionID& compId, const ArtifactCore::LayerID& layerId) {
-                impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
-                    compId.toString(), layerId.toString(), LayerChangedEvent::ChangeType::Removed});
-                impl_->eventBus_.drain();
-            });
         
         impl_->reloadCompositions();
         

@@ -84,7 +84,7 @@ QSize imageSizeForPath(const QString &path) {
 
 void notifyProjectMutation(ArtifactProjectManager &manager) {
   if (auto project = manager.getCurrentProjectSharedPtr()) {
-    project->projectChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
   }
 }
 
@@ -125,6 +125,8 @@ public:
   void checkImportedAssetCompatibility(const QStringList &importedPaths);
   bool forwardingSelectionChange_ = false;
   LayerID lastForwardedLayerId_;
+  ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
   QFileSystemWatcher* fileWatcher_ = nullptr;
   QTimer* statusCheckTimer_ = nullptr;
@@ -651,40 +653,15 @@ W_OBJECT_IMPL(ArtifactProjectService)
 
 ArtifactProjectService::ArtifactProjectService(QObject *parent)
     : QObject(parent), impl_(new Impl()) {
-  connect(&impl_->projectManager(), &ArtifactProjectManager::projectCreated,
-          this, [this]() {
-            impl_->currentCompositionId_ = {};
-            ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
-                ProjectChangedEvent{QString(), QString()});
-            ArtifactRevisionService::instance()->noteProjectChanged();
-            const QString pname =
-                hasProject() ? impl_->projectName().toQString() : QString();
-            ArtifactCore::globalEventBus().publish<ProjectCreatedEvent>(
-                ProjectCreatedEvent{QString(), pname});
-            projectCreated();
-          });
-  connect(&impl_->projectManager(), &ArtifactProjectManager::compositionCreated,
-          this, [this](const CompositionID &id) {
-            ArtifactCore::globalEventBus().publish<CompositionCreatedEvent>(
-                CompositionCreatedEvent{id.toString(), QString()});
-            compositionCreated(id);
-          });
-  connect(&impl_->projectManager(), &ArtifactProjectManager::layerCreated, this,
-          [this](const CompositionID &compId, const LayerID &layerId) {
-            ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-                LayerChangedEvent{compId.toString(), layerId.toString(),
-                                  LayerChangedEvent::ChangeType::Created});
-            layerCreated(compId, layerId);
-          });
-  connect(&impl_->projectManager(), &ArtifactProjectManager::projectChanged,
-          this, [this]() {
-            const QString pname =
-                hasProject() ? impl_->projectName().toQString() : QString();
-            ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
-                ProjectChangedEvent{QString(), pname});
-            ArtifactRevisionService::instance()->noteProjectChanged();
-            projectChanged();
-          });
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectCreatedEvent>([this](const ProjectCreatedEvent&) {
+        impl_->currentCompositionId_ = {};
+        ArtifactRevisionService::instance()->noteProjectChanged();
+      }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+        ArtifactRevisionService::instance()->noteProjectChanged();
+      }));
   impl_->installSelectionBridge(this);
 }
 
@@ -933,11 +910,6 @@ bool ArtifactProjectService::removeLayerFromComposition(
     // [Optimization] Only emit layerRemoved. notifyProjectMutation triggers
     // global projectChanged which causes heavy UI rebuilds. Most widgets handle
     // layerRemoved specifically.
-    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-        LayerChangedEvent{compositionId.toString(), layerId.toString(),
-                          LayerChangedEvent::ChangeType::Removed});
-    layerRemoved(compositionId, layerId);
-
     qDebug() << "[ProjectService] removeLayerFromComposition"
              << "composition=" << compositionId.toString()
              << "layer=" << layerId.toString()
@@ -1359,7 +1331,7 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
   precompLayer->setStartTime(FramePosition(minInFrame));
 
   comp->moveLayerToIndex(precompLayer->id(), firstIndex);
-  project->projectChanged();
+  ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
 
   if (openNewComposition) {
     changeCurrentComposition(childCompId);
@@ -1408,7 +1380,7 @@ void ArtifactProjectService::splitLayerAtCurrentTime(
   auto newLayer = result.layer;
   newLayer->setInPoint(now);
   newLayer->setOutPoint(oldOut);
-  projectChanged();
+  ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
 }
 
 bool ArtifactProjectService::clearLayerParentInCurrentComposition(
@@ -1696,11 +1668,11 @@ bool ArtifactProjectService::removeComposition(const CompositionID &id) {
   if (!projectShared)
     return false;
   bool ok = projectShared->removeCompositionById(id);
-  if (ok) {
+    if (ok) {
     compositionRemoved(id);
     ArtifactCore::globalEventBus().publish<CompositionRemovedEvent>(
         CompositionRemovedEvent{id.toString()});
-    projectShared->projectChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
   }
   return ok;
 }
@@ -1767,7 +1739,7 @@ bool ArtifactProjectService::renameComposition(const CompositionID &id,
         CompositionItem *ci = static_cast<CompositionItem *>(c);
         if (ci->compositionId == id) {
           ci->name = name;
-          projectShared->projectChanged();
+          ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
           return true;
         }
       }
@@ -1827,7 +1799,6 @@ ArtifactProjectService::changeCurrentComposition(const CompositionID &id) {
     QTimer::singleShot(0, this, [this, id]() {
       ArtifactCore::globalEventBus().publish<CurrentCompositionChangedEvent>(
           CurrentCompositionChangedEvent{id.toString()});
-      currentCompositionChanged(id);
     });
   }
   return result;
@@ -1883,8 +1854,6 @@ void ArtifactProjectService::createProject(
     const ArtifactProjectSettings &setting) {
   auto &manager = impl_->projectManager();
   manager.createProject(setting.projectName());
-  ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
-      ProjectChangedEvent{QString(), setting.projectName()});
     if (auto project = manager.getCurrentProjectSharedPtr()) {
       if (auto *rq = ArtifactRenderQueueService::instance()) {
       rq->sessionLedger().recordProjectOpened(
@@ -1917,7 +1886,7 @@ bool ArtifactProjectService::relinkFootage(ProjectItem *footageItem,
   // Notify project changed
   auto shared = getCurrentProjectSharedPtr();
   if (shared) {
-    shared->projectChanged();
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
   }
   return true;
 }

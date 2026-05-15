@@ -148,6 +148,18 @@ export namespace Artifact {
   void setAudioPath(const QString& path) { audioPath_ = path; }
  };
 
+ class ArtifactVideoInitParams : public ArtifactLayerInitParams
+ {
+ private:
+  QString videoPath_;
+
+ public:
+  explicit ArtifactVideoInitParams(const QString& name);
+  ~ArtifactVideoInitParams();
+  QString videoPath() const { return videoPath_; }
+  void setVideoPath(const QString& path) { videoPath_ = path; }
+ };
+
 
  class ArtifactCameraLayerInitParams :public ArtifactLayerInitParams
  {

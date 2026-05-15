@@ -1,4 +1,5 @@
 module;
+class tst_QList;
 #include <QList>
 #include <iostream>
 #include <vector>

@@ -1,4 +1,5 @@
-﻿module;
+module;
+class tst_QList;
 #include <QVector>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -3564,59 +3565,6 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
          }
     });
 
-    auto svc = ArtifactProjectService::instance();
-    connect(svc, &ArtifactProjectService::projectChanged, this, [this, svc]() {
-        if (!impl_) {
-            return;
-        }
-        const QString projectName = svc && svc->getCurrentProjectSharedPtr()
-            ? svc->projectName().toQString()
-            : QString();
-        impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), projectName});
-        (void)impl_->eventBus_.drain();
-    });
-    connect(svc, &ArtifactProjectService::projectCreated, this, [this, svc]() {
-        if (!impl_) {
-            return;
-        }
-        const QString projectName = svc && svc->getCurrentProjectSharedPtr()
-            ? svc->projectName().toQString()
-            : QString();
-        impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), projectName});
-        (void)impl_->eventBus_.drain();
-    });
-    connect(svc, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID& id) {
-        impl_->eventBus_.post<CompositionCreatedEvent>(CompositionCreatedEvent{
-            id.toString(), QString()
-        });
-        (void)impl_->eventBus_.drain();
-    });
-    connect(svc, &ArtifactProjectService::layerCreated, this, [this](const CompositionID& cid, const LayerID& lid) {
-        impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
-            cid.toString(),
-            lid.toString(),
-            LayerChangedEvent::ChangeType::Created
-        });
-        (void)impl_->eventBus_.drain();
-    });
-    connect(svc, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID& cid, const LayerID& lid) {
-        impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{
-            cid.toString(),
-            lid.toString(),
-            LayerChangedEvent::ChangeType::Removed
-        });
-        (void)impl_->eventBus_.drain();
-    });
-    connect(svc, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID& cid) {
-        if (!impl_) {
-            return;
-        }
-        impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{
-            cid.toString()
-        });
-        (void)impl_->eventBus_.drain();
-    });
-
     // EventBus subscriptions
     impl_->thumbnailUpdateDebounce_ = new QTimer(this);
     impl_->thumbnailUpdateDebounce_->setSingleShot(true);
@@ -3683,9 +3631,6 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     impl_->update();
 
-    connect(ArtifactProjectService::instance(), &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID&) {
-        impl_->syncSelectionToCurrentComposition();
-    });
 }
 
 ArtifactProjectManagerWidget::~ArtifactProjectManagerWidget() { delete impl_; }
