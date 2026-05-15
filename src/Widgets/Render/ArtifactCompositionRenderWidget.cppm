@@ -219,17 +219,16 @@ int compositionPreviewIntervalMs(
    QObject::connect(wheelRenderTimer_, &QTimer::timeout, widget_, [this]() {
     requestRender();
    });
-   if (auto* playback = ArtifactPlaybackService::instance()) {
-   QObject::connect(playback, &ArtifactPlaybackService::playbackStateChanged, widget_,
-                     [this](::Artifact::PlaybackState state) {
-      isPlaying_.store(state == ::Artifact::PlaybackState::Playing, std::memory_order_release);
-      requestRender();
-     });
-    QObject::connect(playback, &ArtifactPlaybackService::frameChanged, widget_,
-                     [this](const auto&) {
-      requestRender();
-     });
-   }
+   eventBusSubscriptions_.push_back(
+       eventBus_.subscribe<PlaybackStateChangedEvent>(
+           [this](const PlaybackStateChangedEvent &event) {
+             isPlaying_.store(event.state == ::Artifact::PlaybackState::Playing,
+                              std::memory_order_release);
+             requestRender();
+           }));
+   eventBusSubscriptions_.push_back(
+       eventBus_.subscribe<FrameChangedEvent>(
+           [this](const FrameChangedEvent &) { requestRender(); }));
    initialized_ = true;
    needsRender_.store(true, std::memory_order_release);
   }
@@ -494,14 +493,13 @@ int compositionPreviewIntervalMs(
     impl_->renderer_->setViewportSize((float)width(), (float)height());
     impl_->renderer_->setDevicePixelRatio((float)devicePixelRatioF());
 
-    connect(ArtifactApplicationManager::instance()->layerSelectionManager(), &ArtifactLayerSelectionManager::selectionChanged, this, [this]() {
-     auto* selection = ArtifactApplicationManager::instance()->layerSelectionManager();
-     auto current = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
-     if (current) impl_->selectedLayerId_ = current->id();
-     else impl_->selectedLayerId_ = ArtifactCore::LayerID::Nil();
-     impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
-     impl_->requestRender();
-    });
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
+            [this](const LayerSelectionChangedEvent& event) {
+              impl_->selectedLayerId_ = LayerID(event.layerId);
+              impl_->previewPipeline_.setSelectedLayerId(impl_->selectedLayerId_);
+              impl_->requestRender();
+            }));
 
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<ToolChangedEvent>(

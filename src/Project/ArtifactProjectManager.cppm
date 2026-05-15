@@ -19,6 +19,8 @@ module Artifact.Project.Manager;
 
 import std;
 
+import Artifact.Event.Types;
+import Event.Bus;
 import Utils;
 import Artifact.Project;
 import Application.AppSettings;
@@ -40,6 +42,12 @@ namespace Artifact {
  using namespace ArtifactCore;
 
  namespace {
+  inline void publishProjectCreatedEvent(const QString& projectName)
+  {
+    ArtifactCore::globalEventBus().publish<ProjectCreatedEvent>(
+        ProjectCreatedEvent{QString(), projectName});
+  }
+
   static const QStringList kProjectSubfolders = {
     QStringLiteral("Assets"),
     QStringLiteral("Scenes"),
@@ -133,7 +141,6 @@ public:
   ~Impl();
   bool isCreated_ = false;
   std::shared_ptr<ArtifactProject> currentProjectPtr_;
-  bool signalsConnected_ = false;
   bool suppressDefaultCreate_ = false;
   bool creatingComposition_ = false;
   QString projectDisplayName_;
@@ -348,11 +355,9 @@ QString ArtifactProjectManager::Impl::makeUniqueAssetPath(const QString& directo
   return false;
  }
 
- ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :QObject(parent), impl_(new Impl())
- {
-
-
- }
+ArtifactProjectManager::ArtifactProjectManager(QObject* parent /*= nullptr*/) :QObject(parent), impl_(new Impl())
+{
+}
 
  ArtifactProjectManager::~ArtifactProjectManager()
  {
@@ -364,8 +369,7 @@ bool ArtifactProjectManager::closeCurrentProject()
  impl_->currentProjectPtr_.reset();
  impl_->currentProjectPath_.clear();
  impl_->projectRootPath_.clear();
- impl_->signalsConnected_ = false;
- impl_->isCreated_ = false;
+  impl_->isCreated_ = false;
  return true;
 }
 
@@ -380,35 +384,11 @@ void ArtifactProjectManager::createProject(const QString& projectName, bool forc
 
  impl_->createProject(projectName, force);
 
- // ensure current project pointer is valid before connecting signals
- if (impl_->currentProjectPtr_) {
-   // Use lambda forwarding with weak_ptr capture to avoid using raw pointers
-   if (!impl_->signalsConnected_) {
-     auto shared = impl_->currentProjectPtr_;
-     std::weak_ptr<ArtifactProject> weakProj = shared;
-     connect(shared.get(), &ArtifactProject::projectChanged, this, [weakProj, this]() {
-       if (weakProj.lock()) {
-         // forward signal from project to manager
-         projectChanged();
-       }
-     });
-     connect(shared.get(), &ArtifactProject::compositionCreated, this, [weakProj, this](const CompositionID& id) {
-       if (weakProj.lock()) {
-         compositionCreated(id);
-       }
-     });
-     connect(shared.get(), &ArtifactProject::layerCreated, this, [weakProj, this](const CompositionID& cid, const LayerID& lid) {
-       if (weakProj.lock()) {
-         layerCreated(cid, lid);
-       }
-     });
-     impl_->signalsConnected_ = true;
-   }
- } else {
+ if (!impl_->currentProjectPtr_) {
    qDebug() << "createProject: failed to create currentProjectPtr_";
  }
 
- /*emit*/ projectCreated();
+  publishProjectCreatedEvent(impl_->projectDisplayName_);
 
  if (impl_->currentProjectPtr_) {
   auto report = ArtifactProjectHealthChecker::check(impl_->currentProjectPtr_.get());
@@ -496,27 +476,12 @@ void ArtifactProjectManager::loadFromFile(const QString& fullpath)
   }
 
   impl_->currentProjectPtr_.reset();
-  impl_->signalsConnected_ = false;
   impl_->currentProjectPtr_ = importResult.project;
   impl_->currentProjectPath_ = fullpath;
   impl_->projectRootPath_ = QFileInfo(fullpath).absolutePath();
 
- if (impl_->currentProjectPtr_) {
-   if (!impl_->signalsConnected_) {
-    auto shared = impl_->currentProjectPtr_;
-    std::weak_ptr<ArtifactProject> weakProj = shared;
-    connect(shared.get(), &ArtifactProject::projectChanged, this, [weakProj, this]() {
-     if (weakProj.lock()) projectChanged();
-    });
-    connect(shared.get(), &ArtifactProject::compositionCreated, this, [weakProj, this](const CompositionID& id) {
-     if (weakProj.lock()) compositionCreated(id);
-    });
-    connect(shared.get(), &ArtifactProject::layerCreated, this, [weakProj, this](const CompositionID& cid, const LayerID& lid) {
-     if (weakProj.lock()) layerCreated(cid, lid);
-    });
-   impl_->signalsConnected_ = true;
-   }
-   projectCreated();
+  if (impl_->currentProjectPtr_) {
+   publishProjectCreatedEvent(impl_->projectDisplayName_);
    auto report = ArtifactProjectHealthChecker::check(impl_->currentProjectPtr_.get());
    if (!report.isHealthy) {
     qWarning() << "[loadFromFile] health issues detected:" << report.issues.size();
@@ -705,30 +670,15 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
       return;
     }
 
-    // Switch to main thread for UI updates
+      // Switch to main thread for UI updates
     QMetaObject::invokeMethod(this, [this, importResult, fullpath, onFinished]() {
       impl_->currentProjectPtr_.reset();
-      impl_->signalsConnected_ = false;
       impl_->currentProjectPtr_ = importResult.project;
       impl_->currentProjectPath_ = fullpath;
       impl_->projectRootPath_ = QFileInfo(fullpath).absolutePath();
 
       if (impl_->currentProjectPtr_) {
-        if (!impl_->signalsConnected_) {
-          auto shared = impl_->currentProjectPtr_;
-          std::weak_ptr<ArtifactProject> weakProj = shared;
-          connect(shared.get(), &ArtifactProject::projectChanged, this, [weakProj, this]() {
-            if (weakProj.lock()) projectChanged();
-          });
-          connect(shared.get(), &ArtifactProject::compositionCreated, this, [weakProj, this](const CompositionID& id) {
-            if (weakProj.lock()) compositionCreated(id);
-          });
-          connect(shared.get(), &ArtifactProject::layerCreated, this, [weakProj, this](const CompositionID& cid, const LayerID& lid) {
-            if (weakProj.lock()) layerCreated(cid, lid);
-          });
-          impl_->signalsConnected_ = true;
-        }
-        projectCreated();
+        publishProjectCreatedEvent(impl_->projectDisplayName_);
       }
 
       if (onFinished) onFinished(importResult);
@@ -998,8 +948,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
    return;
   }
   impl_->addAssetFromFilePath(filePath);
-  projectChanged();
- }
+  }
 
  void ArtifactProjectManager::addAssetsFromFilePaths(const QStringList& filePaths)
  {
@@ -1007,8 +956,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
    return;
   }
   impl_->addAssetsFromFilePaths(filePaths);
-  projectChanged();
- }
+  }
 
 ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
 {
@@ -1133,8 +1081,8 @@ ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
     }
 
     if (removed > 0) {
-      projectChanged();
-    }
+      
+  }
     qDebug() << "removeAllAssets: removed" << removed << "asset items";
   }
 
@@ -1231,26 +1179,18 @@ ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
   ArtifactLayerResult ArtifactProjectManager::addLayerToCurrentComposition(ArtifactLayerInitParams& params)
   {
    auto result = impl_->addLayerToCurrentComposition(params);
-   if (result.success && result.layer) {
-     projectChanged();
-   }
    return result;
   }
 
   bool ArtifactProjectManager::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
   {
     if (!impl_->currentProjectPtr_) return false;
-    bool ok = impl_->currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
-    if (ok) layerRemoved(compositionId, layerId);
-    return ok;
+    return impl_->currentProjectPtr_->removeLayerFromComposition(compositionId, layerId);
   }
 
   ArtifactLayerResult ArtifactProjectManager::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
   {
    auto result = impl_->duplicateLayerInComposition(compositionId, layerId);
-   if (result.success && result.layer) {
-     projectChanged();
-   }
    return result;
   }
 
@@ -1258,9 +1198,7 @@ ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
   {
    auto result = impl_->duplicateComposition(compositionId);
    if (result.success) {
-    compositionCreated(result.id);
-    projectChanged();
-    qDebug() << "ArtifactProjectManager::duplicateComposition succeeded id:" << result.id.toString();
+     qDebug() << "ArtifactProjectManager::duplicateComposition succeeded id:" << result.id.toString();
    } else {
     qDebug() << "ArtifactProjectManager::duplicateComposition failed";
    }

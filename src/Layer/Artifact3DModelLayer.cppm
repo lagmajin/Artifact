@@ -1,6 +1,8 @@
 module;
+class tst_QList;
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QDir>
 #include <QColor>
 #include <QJsonObject>
 #include <QObject>
@@ -40,6 +42,39 @@ void centerMeshPositions(Mesh &mesh) {
     pos -= center;
   }
   mesh.updateBounds();
+}
+
+QString detectSiblingBaseColorTexture(const QString& modelPath)
+{
+  const QFileInfo modelInfo(modelPath);
+  if (!modelInfo.exists()) {
+    return {};
+  }
+
+  const QDir dir = modelInfo.dir();
+  const QString base = modelInfo.completeBaseName();
+  const QStringList candidates = {
+      base + QStringLiteral("_basecolor.png"),
+      base + QStringLiteral("_BaseColor.png"),
+      base + QStringLiteral("_albedo.png"),
+      base + QStringLiteral("_Albedo.png"),
+      base + QStringLiteral("_diffuse.png"),
+      base + QStringLiteral("_Diffuse.png"),
+      base + QStringLiteral(".png"),
+      base + QStringLiteral(".jpg"),
+      base + QStringLiteral(".jpeg"),
+      base + QStringLiteral(".tga"),
+      base + QStringLiteral(".bmp"),
+      base + QStringLiteral(".webp")
+  };
+
+  for (const auto& candidate : candidates) {
+    if (dir.exists(candidate)) {
+      return dir.absoluteFilePath(candidate);
+    }
+  }
+
+  return {};
 }
 } // namespace
 
@@ -97,6 +132,60 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
     centerMeshPositions(impl_->mesh_);
     impl_->meshLoaded_ = true;
     updateSourceSizeFromMesh();
+    const QString importedTexture = importer.lastBaseColorTexture();
+    if (!importedTexture.isEmpty() &&
+        impl_->material_.baseColorTexture().toQString().isEmpty()) {
+      qDebug() << "[Artifact3DLayer] Imported base color texture:" << importedTexture;
+      impl_->material_.setBaseColorTexture(
+          ArtifactCore::UniString::fromQString(importedTexture));
+    }
+    const QString importedMetallicRoughnessTexture =
+        importer.lastMetallicRoughnessTexture();
+    if (!importedMetallicRoughnessTexture.isEmpty() &&
+        impl_->material_.metallicRoughnessTexture().toQString().isEmpty()) {
+      qDebug() << "[Artifact3DLayer] Imported metallic-roughness texture:"
+               << importedMetallicRoughnessTexture;
+      impl_->material_.setMetallicRoughnessTexture(
+          ArtifactCore::UniString::fromQString(importedMetallicRoughnessTexture));
+    }
+    const QString importedNormalTexture = importer.lastNormalTexture();
+    if (!importedNormalTexture.isEmpty() &&
+        impl_->material_.normalTexture().toQString().isEmpty()) {
+      qDebug() << "[Artifact3DLayer] Imported normal texture:" << importedNormalTexture;
+      impl_->material_.setNormalTexture(
+          ArtifactCore::UniString::fromQString(importedNormalTexture));
+    }
+    const QString importedEmissionTexture = importer.lastEmissionTexture();
+    if (!importedEmissionTexture.isEmpty() &&
+        impl_->material_.emissionTexture().toQString().isEmpty()) {
+      qDebug() << "[Artifact3DLayer] Imported emission texture:"
+               << importedEmissionTexture;
+      impl_->material_.setEmissionTexture(
+          ArtifactCore::UniString::fromQString(importedEmissionTexture));
+    }
+    const QString importedOcclusionTexture = importer.lastOcclusionTexture();
+    if (!importedOcclusionTexture.isEmpty() &&
+        impl_->material_.occlusionTexture().toQString().isEmpty()) {
+      qDebug() << "[Artifact3DLayer] Imported occlusion texture:"
+               << importedOcclusionTexture;
+      impl_->material_.setOcclusionTexture(
+          ArtifactCore::UniString::fromQString(importedOcclusionTexture));
+    }
+    const QString importedOpacityTexture = importer.lastOpacityTexture();
+    if (!importedOpacityTexture.isEmpty() &&
+        impl_->material_.opacityTexture().toQString().isEmpty()) {
+      qDebug() << "[Artifact3DLayer] Imported opacity texture:"
+               << importedOpacityTexture;
+      impl_->material_.setOpacityTexture(
+          ArtifactCore::UniString::fromQString(importedOpacityTexture));
+    }
+    if (impl_->material_.baseColorTexture().toQString().isEmpty()) {
+      const QString detectedTexture = detectSiblingBaseColorTexture(filePath);
+      if (!detectedTexture.isEmpty()) {
+        qDebug() << "[Artifact3DLayer] Auto-detected base color texture:" << detectedTexture;
+        impl_->material_.setBaseColorTexture(ArtifactCore::UniString::fromQString(detectedTexture));
+      }
+    }
     impl_->renderMode_ = RenderMode::Solid;
     impl_->sourcePath_ = filePath;
     setLayerName(QFileInfo(filePath).baseName());
@@ -122,7 +211,52 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["type"] = static_cast<int>(LayerType::Model3D);
   obj["sourcePath"] = impl_->sourcePath_;
   obj["renderMode"] = static_cast<int>(impl_->renderMode_);
+  obj["material.baseColorTexture"] = impl_->material_.baseColorTexture().toQString();
+  obj["material.metallicRoughnessTexture"] =
+      impl_->material_.metallicRoughnessTexture().toQString();
+  obj["material.normalTexture"] = impl_->material_.normalTexture().toQString();
+  obj["material.emissionTexture"] = impl_->material_.emissionTexture().toQString();
+  obj["material.occlusionTexture"] = impl_->material_.occlusionTexture().toQString();
+  obj["material.opacityTexture"] = impl_->material_.opacityTexture().toQString();
   return obj;
+}
+
+void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
+{
+  ArtifactAbstractLayer::fromJsonProperties(obj);
+
+  const QString sourcePath = obj.contains("model.sourcePath")
+                                 ? obj.value("model.sourcePath").toString()
+                                 : obj.value("sourcePath").toString();
+  if (!sourcePath.isEmpty()) {
+    loadFromFile(sourcePath);
+  }
+
+  if (obj.contains("renderMode")) {
+    setRenderMode(static_cast<RenderMode>(obj.value("renderMode").toInt()));
+  }
+
+  const QString baseColorTexture = obj.contains("material.baseColorTexture")
+                                       ? obj.value("material.baseColorTexture").toString()
+                                       : QString();
+  impl_->material_.setBaseColorTexture(ArtifactCore::UniString::fromQString(baseColorTexture));
+
+  const QString metallicRoughnessTexture =
+      obj.value("material.metallicRoughnessTexture").toString();
+  impl_->material_.setMetallicRoughnessTexture(
+      ArtifactCore::UniString::fromQString(metallicRoughnessTexture));
+
+  const QString normalTexture = obj.value("material.normalTexture").toString();
+  impl_->material_.setNormalTexture(ArtifactCore::UniString::fromQString(normalTexture));
+
+  const QString emissionTexture = obj.value("material.emissionTexture").toString();
+  impl_->material_.setEmissionTexture(ArtifactCore::UniString::fromQString(emissionTexture));
+
+  const QString occlusionTexture = obj.value("material.occlusionTexture").toString();
+  impl_->material_.setOcclusionTexture(ArtifactCore::UniString::fromQString(occlusionTexture));
+
+  const QString opacityTexture = obj.value("material.opacityTexture").toString();
+  impl_->material_.setOpacityTexture(ArtifactCore::UniString::fromQString(opacityTexture));
 }
 
 void Artifact3DLayer::createCubeMesh() {
@@ -143,6 +277,14 @@ void Artifact3DLayer::createCubeMesh() {
   auto &vertexAttrs = impl_->mesh_.vertexAttributes();
   auto positionAttr = vertexAttrs.add<QVector3D>("position");
   positionAttr->data() = positions;
+  auto normalAttr = vertexAttrs.add<QVector3D>("normal");
+  auto uvAttr = vertexAttrs.add<QVector2D>("uv");
+  for (int i = 0; i < positions.size(); ++i) {
+    const QVector3D normal = positions[i].normalized();
+    (*normalAttr)[i] = normal;
+    (*uvAttr)[i] = QVector2D((positions[i].x() + halfSize) / (2.0f * halfSize),
+                             (positions[i].y() + halfSize) / (2.0f * halfSize));
+  }
 
   // Add polygons (triangulated for simplicity)
   // Bottom face
@@ -187,15 +329,15 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
     return;
   }
 
-  // Get transform
   const auto &t3 = transform3D();
   const RationalTime frameTime(currentFrame(), 30); // Assume 30fps for now
-  const QVector3D position(t3.positionXAt(frameTime), t3.positionYAt(frameTime),
-                           t3.positionZAt(frameTime));
-  const QVector3D scale(t3.scaleXAt(frameTime), t3.scaleYAt(frameTime),
-                        1.0f); // Z scale not implemented yet
-  const QVector3D anchor(t3.anchorXAt(frameTime), t3.anchorYAt(frameTime),
-                         t3.anchorZAt(frameTime));
+  const auto snapshot = t3.snapshotAt(frameTime);
+  QMatrix4x4 modelMatrix;
+  modelMatrix.setToIdentity();
+  modelMatrix.translate(snapshot.positionX, snapshot.positionY, snapshot.positionZ);
+  modelMatrix.rotate(snapshot.rotation, 0.0f, 0.0f, 1.0f);
+  modelMatrix.scale(snapshot.scaleX, snapshot.scaleY, 1.0f);
+  modelMatrix.translate(-snapshot.anchorX, -snapshot.anchorY, -snapshot.anchorZ);
 
   // Get mesh data
   const auto &vertexAttrs = impl_->mesh_.vertexAttributes();
@@ -208,38 +350,26 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   QVector<QVector3D> transformedVertices;
   transformedVertices.reserve(positions->data().size());
   for (const auto &pos : positions->data()) {
-    QVector3D v = pos;
-    v *= scale;
-    v += position - anchor; // Apply anchor offset
-    transformedVertices.append(v);
+    transformedVertices.append(modelMatrix.map(pos));
   }
 
-  // Draw based on render mode
   const FloatColor wireframeColor{1.0f, 1.0f, 1.0f, opacity()};
-  const QColor diffuseColor = impl_->material_.baseColor();
-  const FloatColor solidColor{diffuseColor.redF(), diffuseColor.greenF(),
-                              diffuseColor.blueF(), opacity()};
   const float thickness = 2.0f;
 
   if (impl_->renderMode_ == RenderMode::Solid) {
-    // Draw filled polygons with fan triangulation for N-gons.
-    // PrimitiveRenderer3D only exposes quad filling, so use a degenerate
-    // quad where the first triangle carries the face and the second
-    // triangle collapses away.
-    const FloatColor color = solidColor;
-    for (int i = 0; i < impl_->mesh_.polygonCount(); ++i) {
-      const auto vertexIndices = impl_->mesh_.getPolygonVertices(i);
-      if (vertexIndices.size() >= 3) {
-        // Fan triangulation: v0-v1-v2, v0-v2-v3, v0-v3-v4, ...
-        for (size_t j = 1; j + 1 < vertexIndices.size(); ++j) {
-          const QVector3D &v0 = transformedVertices[vertexIndices[0]];
-          const QVector3D &v1 = transformedVertices[vertexIndices[j]];
-          const QVector3D &v2 = transformedVertices[vertexIndices[j + 1]];
-          renderer->draw3DQuad(toFloat3(v0), toFloat3(v1), toFloat3(v2),
-                               toFloat3(v0), color);
-        }
-      }
+    const QString cacheKey = sourcePath().isEmpty() ? id().toString() : sourcePath();
+    if (!impl_->material_.baseColorTexture().toQString().isEmpty()) {
+      renderer->setBaseColorTexture(impl_->material_.baseColorTexture().toQString());
+    } else {
+      renderer->clearBaseColorTexture();
     }
+    if (!impl_->material_.opacityTexture().toQString().isEmpty()) {
+      renderer->setOpacityTexture(impl_->material_.opacityTexture().toQString());
+    } else {
+      renderer->clearOpacityTexture();
+    }
+    renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
+                       opacity());
   } else {
     // Wireframe mode: draw edges
     const FloatColor color = wireframeColor;
@@ -289,21 +419,58 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   baseColorProp->setDisplayLabel(QStringLiteral("Base Color"));
   materialGroup.addProperty(baseColorProp);
 
+  auto baseColorTextureProp = persistentLayerProperty(
+      QStringLiteral("material.baseColorTexture"), PropertyType::String,
+      impl_->material_.baseColorTexture().toQString(), -41);
+  baseColorTextureProp->setDisplayLabel(QStringLiteral("Base Color Texture"));
+  baseColorTextureProp->setTooltip(QStringLiteral("Texture path for the base color"));
+  materialGroup.addProperty(baseColorTextureProp);
+
+  auto metallicRoughnessTextureProp = persistentLayerProperty(
+      QStringLiteral("material.metallicRoughnessTexture"), PropertyType::String,
+      impl_->material_.metallicRoughnessTexture().toQString(), -40);
+  metallicRoughnessTextureProp->setDisplayLabel(QStringLiteral("Metallic Roughness Texture"));
+  materialGroup.addProperty(metallicRoughnessTextureProp);
+
+  auto normalTextureProp = persistentLayerProperty(
+      QStringLiteral("material.normalTexture"), PropertyType::String,
+      impl_->material_.normalTexture().toQString(), -39);
+  normalTextureProp->setDisplayLabel(QStringLiteral("Normal Texture"));
+  materialGroup.addProperty(normalTextureProp);
+
+  auto emissionTextureProp = persistentLayerProperty(
+      QStringLiteral("material.emissionTexture"), PropertyType::String,
+      impl_->material_.emissionTexture().toQString(), -38);
+  emissionTextureProp->setDisplayLabel(QStringLiteral("Emission Texture"));
+  materialGroup.addProperty(emissionTextureProp);
+
+  auto occlusionTextureProp = persistentLayerProperty(
+      QStringLiteral("material.occlusionTexture"), PropertyType::String,
+      impl_->material_.occlusionTexture().toQString(), -37);
+  occlusionTextureProp->setDisplayLabel(QStringLiteral("Occlusion Texture"));
+  materialGroup.addProperty(occlusionTextureProp);
+
+  auto opacityTextureProp = persistentLayerProperty(
+      QStringLiteral("material.opacityTexture"), PropertyType::String,
+      impl_->material_.opacityTexture().toQString(), -36);
+  opacityTextureProp->setDisplayLabel(QStringLiteral("Opacity Texture"));
+  materialGroup.addProperty(opacityTextureProp);
+
   auto emissionColorProp = persistentLayerProperty(
       QStringLiteral("material.emission.color"), PropertyType::Color,
-      impl_->material_.emissionColor(), -39);
+      impl_->material_.emissionColor(), -35);
   emissionColorProp->setDisplayLabel(QStringLiteral("Emission Color"));
   materialGroup.addProperty(emissionColorProp);
 
   auto metallicProp = persistentLayerProperty(
       QStringLiteral("material.metallic"), PropertyType::Float,
-      impl_->material_.metallic(), -38);
+      impl_->material_.metallic(), -34);
   metallicProp->setDisplayLabel(QStringLiteral("Metallic"));
   materialGroup.addProperty(metallicProp);
 
   auto roughnessProp = persistentLayerProperty(
       QStringLiteral("material.roughness"), PropertyType::Float,
-      impl_->material_.roughness(), -37);
+      impl_->material_.roughness(), -33);
   roughnessProp->setDisplayLabel(QStringLiteral("Roughness"));
   materialGroup.addProperty(roughnessProp);
 
@@ -338,6 +505,31 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   } else if (propertyPath == QStringLiteral("material.base.color")) {
     impl_->material_.setBaseColor(value.value<QColor>());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.baseColorTexture")) {
+    impl_->material_.setBaseColorTexture(ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.metallicRoughnessTexture")) {
+    impl_->material_.setMetallicRoughnessTexture(
+        ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.normalTexture")) {
+    impl_->material_.setNormalTexture(ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.emissionTexture")) {
+    impl_->material_.setEmissionTexture(ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.occlusionTexture")) {
+    impl_->material_.setOcclusionTexture(ArtifactCore::UniString::fromQString(value.toString()));
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.opacityTexture")) {
+    impl_->material_.setOpacityTexture(ArtifactCore::UniString::fromQString(value.toString()));
     Q_EMIT changed();
     return true;
   } else if (propertyPath == QStringLiteral("material.emission.color")) {

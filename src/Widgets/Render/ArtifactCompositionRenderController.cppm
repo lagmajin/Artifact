@@ -31,6 +31,7 @@ module;
 #include <deque>
 #include <QtConcurrent>
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -117,6 +118,56 @@ W_OBJECT_IMPL(CompositionRenderController)
 
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
+
+constexpr size_t lineDebugKindCount()
+{
+  return static_cast<size_t>(LineDebugKind::Unknown);
+}
+
+size_t lineDebugKindIndex(LineDebugKind kind)
+{
+  const size_t index = static_cast<size_t>(kind);
+  return index < lineDebugKindCount() ? index : lineDebugKindCount();
+}
+
+bool lineDebugKindVisible(
+    const std::array<bool, lineDebugKindCount()> &visibility,
+    LineDebugKind kind)
+{
+  const size_t index = lineDebugKindIndex(kind);
+  if (index >= visibility.size()) {
+    return false;
+  }
+  return visibility[index];
+}
+
+void drawTaggedSolidLine(ArtifactIRenderer *renderer, const QPointF &a,
+                         const QPointF &b, const FloatColor &color,
+                         float thickness, bool enabled)
+{
+  if (!renderer || !enabled) {
+    return;
+  }
+  renderer->drawSolidLine({static_cast<float>(a.x()), static_cast<float>(a.y())},
+                          {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                          color, thickness);
+}
+
+void drawTaggedRectOutline(ArtifactIRenderer *renderer, const QRectF &rect,
+                           const FloatColor &color, bool enabled)
+{
+  if (!renderer || !enabled || !rect.isValid()) {
+    return;
+  }
+  const QPointF tl = rect.topLeft();
+  const QPointF tr = rect.topRight();
+  const QPointF br = rect.bottomRight();
+  const QPointF bl = rect.bottomLeft();
+  drawTaggedSolidLine(renderer, tl, tr, color, 1.0f, enabled);
+  drawTaggedSolidLine(renderer, tr, br, color, 1.0f, enabled);
+  drawTaggedSolidLine(renderer, br, bl, color, 1.0f, enabled);
+  drawTaggedSolidLine(renderer, bl, tl, color, 1.0f, enabled);
+}
 
 QString renderBackendToString(ArtifactRenderQueueService::RenderBackend backend)
 {
@@ -577,16 +628,32 @@ void drawMaskSquareMarker(ArtifactIRenderer *renderer,
     return;
   }
 
+  const auto drawSquareOutline = [&](float squareSize,
+                                     const FloatColor &outlineColor,
+                                     float thickness) {
+    const float half = squareSize * 0.5f;
+    const Detail::float2 tl{center.x - half, center.y - half};
+    const Detail::float2 tr{center.x + half, center.y - half};
+    const Detail::float2 br{center.x + half, center.y + half};
+    const Detail::float2 bl{center.x - half, center.y + half};
+    renderer->drawThickLineLocal(tl, tr, thickness, outlineColor);
+    renderer->drawThickLineLocal(tr, br, thickness, outlineColor);
+    renderer->drawThickLineLocal(br, bl, thickness, outlineColor);
+    renderer->drawThickLineLocal(bl, tl, thickness, outlineColor);
+  };
+
   if (shadowColor) {
     const float shadowSize = size + shadowExpand;
     const float shadowHalf = shadowSize * 0.5f;
-    renderer->drawRectOutline(center.x - shadowHalf, center.y - shadowHalf,
-                              shadowSize, shadowSize, *shadowColor);
+    renderer->drawSolidRect(center.x - shadowHalf, center.y - shadowHalf,
+                            shadowSize, shadowSize, *shadowColor, 0.25f);
+    drawSquareOutline(shadowSize, *shadowColor, 1.75f);
   }
 
   const float half = size * 0.5f;
-  renderer->drawRectOutline(center.x - half, center.y - half, size, size,
-                            color);
+  renderer->drawSolidRect(center.x - half, center.y - half, size, size,
+                          color, 0.20f);
+  drawSquareOutline(size, color, 1.5f);
 }
 
 bool isScaleHandle(TransformGizmo::HandleType handle) {
@@ -1740,19 +1807,30 @@ void drawLayerForCompositionView(
   }
 
   if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
-    qCDebug(compositionViewLog)
-        << "[VideoLayerT] drawLayerForCompositionView"
-        << "frame=" << cacheFrameNumber
-        << "opacityOverride=" << opacityOverride
-        << "layerOpacity=" << layer->opacity()
-        << "hasRasterizer=" << hasRasterizerEffectsOrMasks(layer)
-        << videoLayer->decodeState();
-    if (!hasRasterizerEffectsOrMasks(layer) &&
-        videoLayer->hasCurrentFrameBuffer()) {
+    const bool hasRasterizer = hasRasterizerEffectsOrMasks(layer);
+    const bool hasBuffer = videoLayer->hasCurrentFrameBuffer();
+    const bool loaded = videoLayer->isLoaded();
+    const bool active =
+        layer->isActiveAt(FramePosition(static_cast<int>(layer->currentFrame())));
+    const FramePosition ip = layer->inPoint();
+    const FramePosition op = layer->outPoint();
+    if (!hasRasterizer && hasBuffer) {
       const ArtifactCore::ImageF32x4_RGBA &buffer =
           videoLayer->currentFrameBuffer();
       const float baseOpacity =
           (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      if (videoDebugOut) {
+        *videoDebugOut = QStringLiteral(
+                             "[Video] branch=buffer loaded=%1 hasBuffer=%2 "
+                             "rasterizer=%3 active=%4 range=[%5,%6] curFrame=%7")
+                             .arg(loaded)
+                             .arg(hasBuffer)
+                             .arg(hasRasterizer)
+                             .arg(active)
+                             .arg(ip.framePosition())
+                             .arg(op.framePosition())
+                             .arg(layer->currentFrame());
+      }
       drawWithClonerEffect(
           layer, globalTransform4x4,
           [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
@@ -1762,28 +1840,56 @@ void drawLayerForCompositionView(
                 static_cast<float>(localRect.width()),
                 static_cast<float>(localRect.height()), instanceTransform,
                 buffer, baseOpacity * instanceWeight);
-          });
+      });
       return;
     }
 
-    QImage frame = videoLayer->currentFrameToQImage();
+    QImage frame;
     bool usedSyncFallback = false;
+    bool usedBufferFallback = false;
+    QString reason;
+    if (loaded) {
+      frame = videoLayer->currentFrameToQImage();
+    } else {
+      reason = QStringLiteral("notLoaded");
+    }
     if (frame.isNull() && videoLayer->hasCurrentFrameBuffer()) {
       frame = videoLayer->currentFrameBuffer().toQImage();
+      usedBufferFallback = !frame.isNull();
     }
-    if (frame.isNull()) {
+    if (frame.isNull() && loaded) {
       frame = videoLayer->decodeFrameToQImage(layer->currentFrame());
       usedSyncFallback = !frame.isNull();
     }
     if (videoDebugOut) {
-      const bool active =
-          layer->isActiveAt(FramePosition(static_cast<int>(layer->currentFrame())));
-      *videoDebugOut =
-          QStringLiteral("[Video] %1 active=%2 syncFallback=%3")
-              .arg(videoLayer->debugState())
-              .arg(active)
-              .arg(usedSyncFallback ? QStringLiteral("hit")
-                                    : QStringLiteral("miss"));
+      if (reason.isEmpty()) {
+        if (!loaded) {
+          reason = QStringLiteral("notLoaded");
+        } else if (usedSyncFallback) {
+          reason = QStringLiteral("syncDecode");
+        } else if (usedBufferFallback) {
+          reason = QStringLiteral("bufferFallback");
+        } else if (frame.isNull()) {
+          reason = hasBuffer ? QStringLiteral("decodeNull")
+                             : QStringLiteral("noBuffer");
+        } else {
+          reason = QStringLiteral("ok");
+        }
+      }
+      *videoDebugOut = QStringLiteral(
+                          "[Video] branch=decode loaded=%1 hasBuffer=%2 "
+                          "rasterizer=%3 active=%4 syncFallback=%5 "
+                          "bufferFallback=%6 reason=%7 range=[%8,%9] curFrame=%10")
+                          .arg(loaded)
+                          .arg(hasBuffer)
+                          .arg(hasRasterizer)
+                          .arg(active)
+                          .arg(usedSyncFallback)
+                          .arg(usedBufferFallback)
+                          .arg(reason)
+                          .arg(ip.framePosition())
+                          .arg(op.framePosition())
+                          .arg(layer->currentFrame());
     }
     if (!frame.isNull()) {
       applySurfaceAndDraw(frame, localRect, true);
@@ -1913,6 +2019,7 @@ void drawCompositionCheckerboard(ArtifactIRenderer *renderer,
 void drawCompositionBackgroundDirect(ArtifactIRenderer *renderer, float cw,
                                      float ch, const FloatColor &bgColor,
                                      CompositionBackgroundMode mode,
+                                     float checkerboardTileSize,
                                      const QImage &mayaGradientSprite) {
   if (!renderer || cw <= 0.0f || ch <= 0.0f) {
     return;
@@ -1923,7 +2030,8 @@ void drawCompositionBackgroundDirect(ArtifactIRenderer *renderer, float cw,
     return;
   }
   if (mode == CompositionBackgroundMode::Checkerboard) {
-    // Checkerboard is the viewport background; composition area shows bgColor.
+    // Checkerboard is the viewport background; the composition area itself
+    // should stay filled with the composition bg color.
     renderer->drawRectLocal(0.f, 0.f, cw, ch, opaqueBgColor, 1.0f);
     return;
   }
@@ -2095,6 +2203,16 @@ public:
   bool showGizmoOverlay_ = true;
   bool showCompositionRegionOverlay_ =
       false; // Temporarily disable the blue frame.
+  std::array<bool, lineDebugKindCount()> lineDebugVisibility_ = {
+      true,  // Grid
+      true,  // Axis
+      true,  // Bounds
+      true,  // MaskPath
+      true,  // MaskHandle
+      true,  // SelectionRect
+      false, // MotionPath
+      false, // DebugProbe
+  };
   ArtifactCore::ViewOrientationNavigator viewportOrientationNavigator_;
   bool viewportOrientationActive_ = false;
   int currentFrameForOverlay_ = 0;
@@ -2855,20 +2973,19 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   impl_->renderTickTimer_->start();
 
   // PlaybackService のフレーム変更に合わせて再描画
-  if (auto *playback = ArtifactPlaybackService::instance()) {
-    connect(playback, &ArtifactPlaybackService::frameChanged, this,
-            [this](const FramePosition &position) {
-              // 可視性チェック: 非表示（他タブの裏など）なら描画しない
-              if (auto *owner = qobject_cast<QWidget *>(parent())) {
-                if (!owner->isVisible())
-                  return;
-              }
-              // comp->goToFrame() は ArtifactPlaybackService::syncCurrentCompositionFrame()
-              // が publishFrame より先に投入済みのため、ここで重複呼び出しは不要。
-              impl_->invalidateOverlayComposite();
-              markRenderDirty();
-            });
-  }
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<FrameChangedEvent>(
+          [this](const FrameChangedEvent &) {
+            // 可視性チェック: 非表示（他タブの裏など）なら描画しない
+            if (auto *owner = qobject_cast<QWidget *>(parent())) {
+              if (!owner->isVisible())
+                return;
+            }
+            // comp->goToFrame() は ArtifactPlaybackService::syncCurrentCompositionFrame()
+            // が publishFrame より先に投入済みのため、ここで重複呼び出しは不要。
+            impl_->invalidateOverlayComposite();
+            markRenderDirty();
+          }));
   if (!impl_->gpuTextureCacheManager_) {
     impl_->gpuTextureCacheManager_ = std::make_unique<GPUTextureCacheManager>();
   }
@@ -3238,6 +3355,29 @@ void CompositionRenderController::setShowGrid(bool show) {
 }
 bool CompositionRenderController::isShowGrid() const {
   return impl_->showGrid_;
+}
+void CompositionRenderController::setLineDebugKindVisible(LineDebugKind kind,
+                                                          bool visible) {
+  if (!impl_) {
+    return;
+  }
+  const size_t index = lineDebugKindIndex(kind);
+  if (index >= impl_->lineDebugVisibility_.size()) {
+    return;
+  }
+  if (impl_->lineDebugVisibility_[index] == visible) {
+    return;
+  }
+  impl_->lineDebugVisibility_[index] = visible;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+bool CompositionRenderController::isLineDebugKindVisible(
+    LineDebugKind kind) const {
+  if (!impl_) {
+    return false;
+  }
+  return lineDebugKindVisible(impl_->lineDebugVisibility_, kind);
 }
 void CompositionRenderController::setShowCheckerboard(bool show) {
   const auto nextMode = show ? CompositionBackgroundMode::Checkerboard
@@ -5089,6 +5229,25 @@ bool CompositionRenderController::isDebugMode() const {
 
 Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
     const QPointF &viewportPos) const {
+  const auto *app = ArtifactApplicationManager::instance();
+  const auto *toolManager = app ? app->toolManager() : nullptr;
+  const ToolType activeTool =
+      toolManager != nullptr ? toolManager->activeTool() : ToolType::Selection;
+
+  if (activeTool == ToolType::Pen) {
+    if (impl_->isDraggingMaskHandle_ || impl_->isDraggingVertex_) {
+      return Qt::ClosedHandCursor;
+    }
+    if (impl_->hoveredMaskHandleType_ !=
+        static_cast<int>(MaskHandleType::None)) {
+      return Qt::SizeAllCursor;
+    }
+    if (impl_->hoveredVertexIndex_ >= 0) {
+      return Qt::OpenHandCursor;
+    }
+    return Qt::CrossCursor;
+  }
+
   if (!impl_->gizmo_ || !impl_->renderer_) {
     return Qt::ArrowCursor;
   }
@@ -5855,10 +6014,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             renderer_->clear();
           }
 
-          QString *dbgOut =
-              QLoggingCategory::defaultCategory()->isDebugEnabled()
-                  ? &lastVideoDebug_
-                  : nullptr;
+          QString *dbgOut = &lastVideoDebug_;
           drawLayerForCompositionView(
               layer.get(), renderer_.get(), 1.0f, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(), true,
@@ -5963,7 +6119,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setZoom(origZoom);
       renderer_->setPan(origPanX, origPanY);
       drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
-                                      backgroundMode,
+                                      backgroundMode, checkerboardTileSize_,
                                       cachedMayaGradientSprite_);
 
       // -- 4: オフスクリーン RT を composition-space に戻して描画。
@@ -6022,18 +6178,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
       // Composition Space で直接 fill する（viewport-space 変換不要）
       drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
-                                      backgroundMode,
+                                      backgroundMode, checkerboardTileSize_,
                                       cachedMayaGradientSprite_);
-      if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
-        drawCompositionCheckerboard(renderer_.get(), comp, checkerboardTileSize_);
-      }
       renderer_->setUseExternalMatrices(false);
       renderer_->resetGizmoCameraMatrices();
       renderer_->reset3DCameraMatrices();
       renderer_->setCanvasSize(cw, ch);
       renderer_->setZoom(prevZoom);
       renderer_->setPan(prevPanX, prevPanY);
-      if (showGrid_) {
+      const bool showGridDebug =
+          owner->isLineDebugKindVisible(LineDebugKind::Grid);
+      if (showGrid_ && showGridDebug) {
         renderer_->drawGrid(0, 0, cw, ch,
                             std::max(1.0f, gridSettings_.majorInterval),
                             gridSettings_.majorStyle.thickness,
@@ -6044,14 +6199,22 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         const float thirdX2 = cw * 2.0f / 3.0f;
         const float thirdY1 = ch / 3.0f;
         const float thirdY2 = ch * 2.0f / 3.0f;
-        renderer_->drawSolidLine({thirdX1, 0.0f}, {thirdX1, ch}, thirdsShadow, 2.0f);
-        renderer_->drawSolidLine({thirdX2, 0.0f}, {thirdX2, ch}, thirdsShadow, 2.0f);
-        renderer_->drawSolidLine({0.0f, thirdY1}, {cw, thirdY1}, thirdsShadow, 2.0f);
-        renderer_->drawSolidLine({0.0f, thirdY2}, {cw, thirdY2}, thirdsShadow, 2.0f);
-        renderer_->drawSolidLine({thirdX1, 0.0f}, {thirdX1, ch}, thirdsColor, 1.0f);
-        renderer_->drawSolidLine({thirdX2, 0.0f}, {thirdX2, ch}, thirdsColor, 1.0f);
-        renderer_->drawSolidLine({0.0f, thirdY1}, {cw, thirdY1}, thirdsColor, 1.0f);
-        renderer_->drawSolidLine({0.0f, thirdY2}, {cw, thirdY2}, thirdsColor, 1.0f);
+        drawTaggedSolidLine(renderer_.get(), {thirdX1, 0.0f}, {thirdX1, ch},
+                            thirdsShadow, 2.0f, showGridDebug);
+        drawTaggedSolidLine(renderer_.get(), {thirdX2, 0.0f}, {thirdX2, ch},
+                            thirdsShadow, 2.0f, showGridDebug);
+        drawTaggedSolidLine(renderer_.get(), {0.0f, thirdY1}, {cw, thirdY1},
+                            thirdsShadow, 2.0f, showGridDebug);
+        drawTaggedSolidLine(renderer_.get(), {0.0f, thirdY2}, {cw, thirdY2},
+                            thirdsShadow, 2.0f, showGridDebug);
+        drawTaggedSolidLine(renderer_.get(), {thirdX1, 0.0f}, {thirdX1, ch},
+                            thirdsColor, 1.0f, showGridDebug);
+        drawTaggedSolidLine(renderer_.get(), {thirdX2, 0.0f}, {thirdX2, ch},
+                            thirdsColor, 1.0f, showGridDebug);
+        drawTaggedSolidLine(renderer_.get(), {0.0f, thirdY1}, {cw, thirdY1},
+                            thirdsColor, 1.0f, showGridDebug);
+        drawTaggedSolidLine(renderer_.get(), {0.0f, thirdY2}, {cw, thirdY2},
+                            thirdsColor, 1.0f, showGridDebug);
       }
 
       if (compositionViewLog().isDebugEnabled()) {
@@ -6188,9 +6351,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // === 段階 7: ROI デバッグ表示 ===
           if (debugMode_) {
             // ROI を赤い枠で表示
-            renderer_->drawRectOutline(
-                intersected.x(), intersected.y(), intersected.width(),
-                intersected.height(), FloatColor{1.0f, 0.0f, 0.0f, 1.0f});
+            const bool showDebugProbe =
+                owner->isLineDebugKindVisible(LineDebugKind::DebugProbe);
+            drawTaggedRectOutline(renderer_.get(), intersected,
+                                  FloatColor{1.0f, 0.0f, 0.0f, 1.0f},
+                                  showDebugProbe);
           }
         }
       }
@@ -6353,8 +6518,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const FloatColor handlePointColor = {0.70f, 0.90f, 1.0f, 0.95f};
           const FloatColor handleHoverColor = {1.0f, 0.78f, 0.32f, 1.0f};
           const FloatColor handleDragColor = {1.0f, 0.44f, 0.24f, 1.0f};
-          constexpr float maskStrokeWidth = 5.0f;
-          constexpr float handleStrokeWidth = 3.5f;
+          constexpr float maskStrokeWidth = 4.2f;
+          constexpr float handleStrokeWidth = 3.0f;
+          const bool showMaskPath =
+              owner->isLineDebugKindVisible(LineDebugKind::MaskPath);
+          const bool showMaskHandle =
+              owner->isLineDebugKindVisible(LineDebugKind::MaskHandle);
 
           for (int m = 0; m < maskCount; ++m) {
             LayerMask mask = selectedLayer->mask(m);
@@ -6390,7 +6559,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   const Detail::float2 inHandleCanvas = {(float)inHandlePos.x(), (float)inHandlePos.y()};
                   const Detail::float2 outHandleCanvas = {(float)outHandlePos.x(), (float)outHandlePos.y()};
 
-                  if (vertex.inTangent != QPointF(0, 0)) {
+                  if (showMaskHandle && vertex.inTangent != QPointF(0, 0)) {
                     renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, handleStrokeWidth, handleStrokeColor);
                     FloatColor handleColor = handlePointColor;
                     if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
@@ -6404,7 +6573,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                          handleColor, &maskPointShadowColor,
                                          4.0f);
                   }
-                  if (vertex.outTangent != QPointF(0, 0)) {
+                  if (showMaskHandle && vertex.outTangent != QPointF(0, 0)) {
                     renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, handleStrokeWidth, handleStrokeColor);
                     FloatColor handleColor = handlePointColor;
                     if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
@@ -6419,23 +6588,23 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                          4.0f);
                   }
 
-                  if (v > 0) {
+                  if (showMaskPath && v > 0) {
                     renderer_->drawThickLineLocal(lastCanvasPos,
                                                   currentCanvasPos, maskStrokeWidth,
                                                   handleStrokeColor);
                   }
 
                   FloatColor currentColor = maskPointColor;
-                  float currentPointRadius = 17.0f;
+                  float currentPointRadius = 14.0f;
 
                   if (isDraggingVertex_ && draggingMaskIndex_ == m &&
                       draggingPathIndex_ == p && draggingVertexIndex_ == v) {
                     currentColor = dragColor;
-                    currentPointRadius = 21.0f;
+                    currentPointRadius = 17.0f;
                   } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
                              hoveredVertexIndex_ == v) {
                     currentColor = hoverColor;
-                    currentPointRadius = 21.0f;
+                    currentPointRadius = 17.0f;
                   }
 
                   markers.push_back(
@@ -6444,7 +6613,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                }
               }
 
-              if (path.isClosed() && vertexCount > 1) {
+              if (showMaskPath && path.isClosed() && vertexCount > 1) {
                 MaskVertex firstVertex = path.vertex(0);
                 QPointF firstCanvasPos =
                     globalTransform.map(firstVertex.position);
@@ -6457,11 +6626,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               {
                 ArtifactCore::ProfileScope _profMaskPoints(
                     "MaskDrawPoints", ArtifactCore::ProfileCategory::Render);
-                for (const auto &marker : markers) {
-                  drawMaskSquareMarker(renderer_.get(), marker.pos,
-                                       std::max(6.5f, marker.radius * 0.55f),
-                                       marker.color, &maskPointShadowColor,
-                                       3.5f);
+                if (showMaskHandle) {
+                  for (const auto &marker : markers) {
+                    drawMaskSquareMarker(renderer_.get(), marker.pos,
+                                          std::max(5.5f, marker.radius * 0.42f),
+                                          marker.color, &maskPointShadowColor,
+                                          3.0f);
+                  }
                }
               }
               }
@@ -6682,9 +6853,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             bool hasLastPos = false;
             for (const auto &pt : motionPathCache_.pathPoints) {
               Detail::float2 currentPos(pt.x, pt.y);
-              if (hasLastPos)
-                renderer_->drawSolidLine(lastPos, currentPos, pathColor,
-                                         lineThickness);
+              const bool showMotionPath =
+                  owner->isLineDebugKindVisible(LineDebugKind::MotionPath);
+              if (hasLastPos) {
+                drawTaggedSolidLine(renderer_.get(),
+                                    {lastPos.x, lastPos.y},
+                                    {currentPos.x, currentPos.y}, pathColor,
+                                    lineThickness, showMotionPath);
+              }
               renderer_->drawPoint(pt.x, pt.y, dotRadius * 0.6f,
                                    {0.8f, 0.8f, 0.8f, 0.7f});
               lastPos = currentPos;
@@ -6730,13 +6906,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       {
         ArtifactCore::ProfileScope _profBBox(
             "BoundingBox", ArtifactCore::ProfileCategory::Render);
-        const bool drawSelectionBounds = showGizmoOverlay_ && showGuides_;
-        if (drawSelectionBounds) {
+        if (showGizmoOverlay_ && showGuides_) {
           const FloatColor primaryColor{1.0f, 0.72f, 0.22f, 1.0f};
           const FloatColor secondaryColor{0.28f, 0.74f, 1.0f, 0.85f};
           for (const auto &layer : layersForOverlay) {
             if (!isLayerEffectivelyVisible(layer) ||
                 !layer->isActiveAt(currentFrame)) {
+              continue;
+            }
+            if (dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
               continue;
             }
             if (!isLayerSelected(selectedIds, layer)) {
@@ -6758,22 +6936,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             const QPointF bl = globalTransform.map(localBounds.bottomLeft());
             const FloatColor color = primary ? primaryColor : secondaryColor;
             const float thickness = primary ? 1.9f : 1.4f;
-            renderer_->drawSolidLine(
-                {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                {static_cast<float>(tr.x()), static_cast<float>(tr.y())}, color,
-                thickness);
-            renderer_->drawSolidLine(
-                {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                {static_cast<float>(br.x()), static_cast<float>(br.y())}, color,
-                thickness);
-            renderer_->drawSolidLine(
-                {static_cast<float>(br.x()), static_cast<float>(br.y())},
-                {static_cast<float>(bl.x()), static_cast<float>(bl.y())}, color,
-                thickness);
-            renderer_->drawSolidLine(
-                {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                {static_cast<float>(tl.x()), static_cast<float>(tl.y())}, color,
-                thickness);
+            const bool showBounds =
+                owner->isLineDebugKindVisible(LineDebugKind::Bounds);
+            drawTaggedSolidLine(renderer_.get(), tl, tr, color, thickness,
+                                showBounds);
+            drawTaggedSolidLine(renderer_.get(), tr, br, color, thickness,
+                                showBounds);
+            drawTaggedSolidLine(renderer_.get(), br, bl, color, thickness,
+                                showBounds);
+            drawTaggedSolidLine(renderer_.get(), bl, tl, color, thickness,
+                                showBounds);
           }
         }
       } // BoundingBox scope
@@ -6788,11 +6960,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                  static_cast<float>(rubberBandRect.width()),
                                  static_cast<float>(rubberBandRect.height()),
                                  {0.25f, 0.55f, 1.0f, 0.14f}, 1.0f);
-        renderer_->drawRectOutline(static_cast<float>(rubberBandRect.left()),
-                                   static_cast<float>(rubberBandRect.top()),
-                                   static_cast<float>(rubberBandRect.width()),
-                                   static_cast<float>(rubberBandRect.height()),
-                                   {0.25f, 0.70f, 1.0f, 0.95f});
+        const bool showSelectionRect =
+            owner->isLineDebugKindVisible(LineDebugKind::SelectionRect);
+        drawTaggedRectOutline(renderer_.get(), rubberBandRect,
+                              {0.25f, 0.70f, 1.0f, 0.95f},
+                              showSelectionRect);
       }
     }
 
@@ -6947,6 +7119,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     if (!lastVideoDebug_.isEmpty() &&
         lastVideoDebug_ != lastEmittedVideoDebug_) {
       lastEmittedVideoDebug_ = lastVideoDebug_;
+      qDebug() << lastVideoDebug_;
       Q_EMIT owner->videoDebugMessage(lastVideoDebug_);
     }
 

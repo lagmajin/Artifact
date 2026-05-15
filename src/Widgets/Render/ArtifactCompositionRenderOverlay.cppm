@@ -1,4 +1,5 @@
 module;
+class tst_QList;
 
 #include <QApplication>
 #include <QColor>
@@ -160,7 +161,10 @@ void presentOverlayImage(ArtifactIRenderer *renderer, const QImage &overlayImage
   }
 }
 
-void drawViewportCommandPaletteOverlay(ArtifactIRenderer *renderer,
+} // namespace
+
+#if 0
+__declspec(dllexport) void drawViewportCommandPaletteOverlay(ArtifactIRenderer *renderer,
                                       float overlayWf,
                                       float overlayHf,
                                       const QRectF &panel,
@@ -214,7 +218,7 @@ void drawViewportCommandPaletteOverlay(ArtifactIRenderer *renderer,
   }
 }
 
-void drawViewportContextMenuOverlay(ArtifactIRenderer *renderer,
+__declspec(dllexport) void drawViewportContextMenuOverlay(ArtifactIRenderer *renderer,
                                    float /*overlayW*/,
                                    float /*overlayH*/,
                                    const QRectF &panel,
@@ -288,7 +292,7 @@ void drawViewportContextMenuOverlay(ArtifactIRenderer *renderer,
   }
 }
 
-void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
+__declspec(dllexport) void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
                                 float overlayWf,
                                 float overlayHf,
                                 const QRectF &rect,
@@ -394,6 +398,8 @@ void drawViewportPieMenuOverlay(ArtifactIRenderer *renderer,
 }
 
 } // namespace
+
+#endif
 
 void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
                                   const ArtifactCompositionPtr &comp)
@@ -1001,5 +1007,14 @@ void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
   p.end();
   presentOverlayImage(renderer, overlayImage, restoreCanvasSize);
 }
+
+namespace {
+[[maybe_unused]] auto* const kForceCommandPaletteOverlayLink =
+    &Artifact::drawViewportCommandPaletteOverlay;
+[[maybe_unused]] auto* const kForceContextMenuOverlayLink =
+    &Artifact::drawViewportContextMenuOverlay;
+[[maybe_unused]] auto* const kForcePieMenuOverlayLink =
+    &Artifact::drawViewportPieMenuOverlay;
+} // namespace
 
 } // namespace Artifact

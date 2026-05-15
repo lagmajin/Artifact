@@ -38,6 +38,7 @@ export namespace Artifact {
     void draw(ArtifactIRenderer* renderer) override;
     void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod) override;
     QJsonObject toJson() const override;
+    void fromJsonProperties(const QJsonObject& obj) override;
     QString sourcePath() const;
     UniString className() const override;
 

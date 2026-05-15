@@ -21,6 +21,8 @@ module;
 export module Artifact.Render.IRenderer;
 
 import Color.Float;
+import Mesh;
+import Material.Material;
 import Image.ImageF32x4_RGBA;
 export import Image.MultiChannelImage;
 import Frame.Debug;
@@ -283,6 +285,9 @@ public:
                     const FloatColor &color, float thickness = 1.0f);
   void draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail::float3 v2,
                   Detail::float3 v3, const FloatColor &color);
+  void drawMesh(const QString &cacheKey, const ArtifactCore::Mesh &mesh,
+                const ArtifactCore::Material &material,
+                const QMatrix4x4 &modelMatrix, float opacity = 1.0f);
 
   void drawCheckerboard(float x, float y, float w, float h, float tileSize,
                         const FloatColor &c1, const FloatColor &c2);

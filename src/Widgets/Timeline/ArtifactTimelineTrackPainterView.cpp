@@ -1440,8 +1440,10 @@ void ArtifactTimelineTrackPainterView::drawPlayhead(QPainter& p) const {
     return;
   }
 
+  // Track view keeps the stem only so the playhead head is drawn once in the
+  // timeline chrome instead of repeating in each pane.
   TimelinePlayheadDraw::drawPlayhead(
-      p, playheadX, 0.0, static_cast<qreal>(height()) - 1.0, true);
+      p, playheadX, 0.0, static_cast<qreal>(height()) - 1.0, false);
 }
 
 void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {

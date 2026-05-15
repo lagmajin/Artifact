@@ -1254,7 +1254,7 @@ KeyframeNavigationState collectKeyframeNavigationState(
 QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
 {
   if (state.totalFrames <= 0) {
-    return QStringLiteral("Keyframes: none");
+    return QStringLiteral("Status: keyframes none");
   }
 
   const QString currentMark =
@@ -1266,11 +1266,34 @@ QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
       state.nextKeyframe >= 0 ? QString::number(state.nextKeyframe)
                               : QStringLiteral("-");
 
-  return QStringLiteral("Keyframes: %1 | Now: %2 | Prev: %3 | Next: %4")
+  return QStringLiteral("Status: keyframes %1 | Now: %2 | Prev: %3 | Next: %4")
       .arg(state.totalFrames)
       .arg(currentMark)
       .arg(previousMark)
       .arg(nextMark);
+}
+
+QString formatRecentLayersText(const QStringList& recentLayerNames)
+{
+  if (recentLayerNames.isEmpty()) {
+    return QStringLiteral("Recent: none");
+  }
+
+  return QStringLiteral("Recent: %1").arg(recentLayerNames.join(QStringLiteral(", ")));
+}
+
+void pushRecentLayerName(QStringList& recentLayerNames, const QString& layerName)
+{
+  const QString trimmed = layerName.trimmed();
+  if (trimmed.isEmpty()) {
+    return;
+  }
+
+  recentLayerNames.removeAll(trimmed);
+  recentLayerNames.prepend(trimmed);
+  while (recentLayerNames.size() > 3) {
+    recentLayerNames.removeLast();
+  }
 }
 
 class HeaderSeekFilter final : public QObject {
@@ -1854,6 +1877,7 @@ public:
   QLabel *keyframeStatusLabel_ = nullptr;
   QToolButton *easingLabButton_ = nullptr;
   QLabel *currentLayerLabel_ = nullptr;
+  QLabel *recentLayerLabel_ = nullptr;
   QLabel *frameSummaryLabel_ = nullptr;
   QLabel *zoomSummaryLabel_ = nullptr;
   QLabel *selectionSummaryLabel_ = nullptr;
@@ -1876,6 +1900,8 @@ public:
   CompositionID compositionId_;
   bool shyActive_ = false;
   QString filterText_;
+  QStringList recentLayerNames_;
+  QString lastCurrentLayerName_;
   QVector<LayerID> searchResultLayerIds_;
   int searchResultIndex_ = -1;
   QVector<TimelineRowDescriptor> trackRows_;
@@ -2091,6 +2117,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   easingLabButton->setAutoRaise(true);
   easingLabButton->setVisible(false);
   auto currentLayerLabel = new QLabel();
+  auto recentLayerLabel = new QLabel();
   auto frameSummaryLabel = new QLabel();
   auto zoomSummaryLabel = new QLabel();
   auto selectionSummaryLabel = new QLabel();
@@ -2100,6 +2127,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->keyframeStatusLabel_ = keyframeStatusLabel;
   impl_->easingLabButton_ = easingLabButton;
   impl_->currentLayerLabel_ = currentLayerLabel;
+  impl_->recentLayerLabel_ = recentLayerLabel;
   impl_->frameSummaryLabel_ = frameSummaryLabel;
   impl_->zoomSummaryLabel_ = zoomSummaryLabel;
   impl_->selectionSummaryLabel_ = selectionSummaryLabel;
@@ -2262,8 +2290,22 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   }
   currentLayerLabel->setText("");
   currentLayerLabel->setVisible(false);
+  recentLayerLabel = new QLabel();
+  recentLayerLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  recentLayerLabel->setMinimumWidth(280);
+  recentLayerLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  {
+    QFont font = recentLayerLabel->font();
+    font.setWeight(QFont::DemiBold);
+    recentLayerLabel->setFont(font);
+    QPalette pal = recentLayerLabel->palette();
+    pal.setColor(QPalette::WindowText, QColor(192, 206, 255));
+    recentLayerLabel->setPalette(pal);
+  }
+  recentLayerLabel->setText("");
+  recentLayerLabel->setVisible(false);
   frameSummaryLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-  frameSummaryLabel->setMinimumWidth(110);
+  frameSummaryLabel->setMinimumWidth(180);
   frameSummaryLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   {
     QFont font = frameSummaryLabel->font();
@@ -2290,6 +2332,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   // Hide zoom percentage label on the left header — user prefers it not shown.
    zoomSummaryLabel->setVisible(false);
   currentLayerLabel->setCursor(Qt::PointingHandCursor);
+  recentLayerLabel->setCursor(Qt::PointingHandCursor);
   frameSummaryLabel->setCursor(Qt::PointingHandCursor);
   zoomSummaryLabel->setCursor(Qt::PointingHandCursor);
   selectionSummaryLabel->setCursor(Qt::PointingHandCursor);
@@ -2320,6 +2363,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->addWidget(keyframeStatusLabel);
   searchBarLayout->addWidget(easingLabButton);
   searchBarLayout->addWidget(currentLayerLabel);
+  searchBarLayout->addWidget(recentLayerLabel);
   searchBarLayout->addWidget(frameSummaryLabel);
   searchBarLayout->addWidget(zoomSummaryLabel);
   searchBarLayout->addWidget(selectionSummaryLabel);
@@ -2336,7 +2380,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setStretch(8, 0);
   searchBarLayout->setStretch(9, 0);
   searchBarLayout->setStretch(10, 0);
-  searchBarLayout->setStretch(11, 1);
+  searchBarLayout->setStretch(11, 0);
+  searchBarLayout->setStretch(12, 1);
 
   // legacy direct signal connection disabled — prefer EventBus
   if (false) QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
@@ -2389,6 +2434,29 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       },
       headerWidget);
   currentLayerLabel->installEventFilter(currentLayerClickFilter);
+
+  auto *recentLayerClickFilter = new TimelineStatusClickFilter(
+      recentLayerLabel, [this]() {
+        if (!impl_ || !impl_->recentLayerNames_.isEmpty()) {
+          if (auto *svc = ArtifactProjectService::instance()) {
+            const auto name = impl_->recentLayerNames_.front();
+            if (auto composition = svc->currentComposition().lock()) {
+              const auto layers = composition->allLayer();
+              for (const auto &layer : layers) {
+                if (layer && layer->layerName() == name) {
+                  svc->selectLayer(layer->id());
+                  if (impl_ && impl_->layerTimelinePanel_) {
+                    impl_->layerTimelinePanel_->scrollToLayer(layer->id());
+                  }
+                  break;
+                }
+              }
+            }
+          }
+        }
+      },
+      headerWidget);
+  recentLayerLabel->installEventFilter(recentLayerClickFilter);
 
   auto *keyframeStatusClickFilter = new SearchStatusClickFilter(
       keyframeStatusLabel, [this]() { jumpToKeyframeHit(+1); },
@@ -3966,6 +4034,7 @@ void ArtifactTimelineWidget::updateSelectionState()
   int selectedCount = 0;
   int selectedKeyframeCount = 0;
   QString compositionLabel = QStringLiteral("-");
+  QString currentLayerName;
   qint64 frameLabelValue = qRound64(std::max(0.0, impl_->currentFrame_));
   if (auto *app = ArtifactApplicationManager::instance()) {
     if (auto *selection = app->layerSelectionManager()) {
@@ -3984,12 +4053,27 @@ void ArtifactTimelineWidget::updateSelectionState()
   }
 
   if (currentLayer) {
-    impl_->currentLayerLabel_->setText(QStringLiteral("Current: %1").arg(currentLayer->layerName()));
+    currentLayerName = currentLayer->layerName().trimmed();
+    if (!impl_->lastCurrentLayerName_.isEmpty() &&
+        impl_->lastCurrentLayerName_ != currentLayerName) {
+      pushRecentLayerName(impl_->recentLayerNames_, impl_->lastCurrentLayerName_);
+    }
+    impl_->lastCurrentLayerName_ = currentLayerName;
+    impl_->currentLayerLabel_->setText(QStringLiteral("Current: %1")
+                                          .arg(currentLayerName.isEmpty() ? QStringLiteral("(unnamed)")
+                                                                          : currentLayerName));
   } else {
     impl_->currentLayerLabel_->setText(QStringLiteral("Current: none"));
   }
+  impl_->currentLayerLabel_->setVisible(true);
+  if (impl_->recentLayerLabel_) {
+    impl_->recentLayerLabel_->setText(formatRecentLayersText(impl_->recentLayerNames_));
+    impl_->recentLayerLabel_->setVisible(true);
+  }
   if (impl_->frameSummaryLabel_) {
-    impl_->frameSummaryLabel_->setText(QStringLiteral("Frame: %1").arg(frameLabelValue));
+    impl_->frameSummaryLabel_->setText(
+        QStringLiteral("Status: %1 | Frame: %2").arg(compositionLabel).arg(frameLabelValue));
+    impl_->frameSummaryLabel_->setVisible(true);
   }
   if (impl_->selectionSummaryLabel_) {
     if (impl_->painterTrackView_) {
@@ -3997,11 +4081,10 @@ void ArtifactTimelineWidget::updateSelectionState()
           impl_->painterTrackView_->selectedKeyframeMarkers().size());
     }
     impl_->selectionSummaryLabel_->setText(
-        QStringLiteral("Selected: %1 | Keys: %2 | Comp: %3 | Frame: %4")
+        QStringLiteral("Selection: %1 layer(s) | Keys: %2")
             .arg(selectedCount)
-            .arg(selectedKeyframeCount)
-            .arg(compositionLabel)
-            .arg(frameLabelValue));
+            .arg(selectedKeyframeCount));
+    impl_->selectionSummaryLabel_->setVisible(true);
   }
   if (impl_->curveEditorSummaryLabel_) {
     const int curveCount = static_cast<int>(impl_->curveTracks_.size());

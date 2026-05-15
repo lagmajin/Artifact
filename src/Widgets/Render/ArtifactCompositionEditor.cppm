@@ -33,6 +33,7 @@ module;
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QMessageBox>
@@ -114,6 +115,41 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
+QCursor makeMaskAddCursor()
+{
+  static const QCursor cursor = []() {
+    QPixmap pixmap(24, 24);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QColor darkLine(0, 0, 0, 220);
+    const QColor lightLine(255, 255, 255, 245);
+    QPen pen(darkLine, 1.8);
+    pen.setCapStyle(Qt::SquareCap);
+    painter.setPen(pen);
+    painter.drawLine(12, 2, 12, 22);
+    painter.drawLine(2, 12, 22, 12);
+
+    pen.setColor(lightLine);
+    pen.setWidthF(1.0);
+    painter.setPen(pen);
+    painter.drawLine(12, 4, 12, 20);
+    painter.drawLine(4, 12, 20, 12);
+
+    pen.setColor(QColor(255, 255, 255, 255));
+    pen.setWidthF(1.6);
+    painter.setPen(pen);
+    painter.drawLine(9, 12, 15, 12);
+    painter.drawLine(12, 9, 12, 15);
+
+    painter.end();
+    return QCursor(pixmap, 12, 12);
+  }();
+  return cursor;
+}
+
 void polishEditorMenu(QMenu* menu, QWidget* owner)
 {
   if (!menu) {
@@ -570,6 +606,45 @@ public:
         return;
       }
       schedulePreferredCompositionRetry();
+    });
+  }
+
+  void scheduleViewportInitializationRetry() {
+    const int retryCount =
+        property("artifactStartupViewportInitRetry").toInt();
+    if (retryCount >= 20) {
+      return;
+    }
+    setProperty("artifactStartupViewportInitRetry", retryCount + 1);
+    QTimer::singleShot(250, this, [this]() {
+      if (!controller_ || controller_->isInitialized()) {
+        return;
+      }
+      if (!isVisible() || window()->isMinimized()) {
+        scheduleViewportInitializationRetry();
+        return;
+      }
+      QElapsedTimer initTimer;
+      initTimer.start();
+      controller_->initialize(this);
+      qInfo() << "[CompositionEditor][Startup] controller initialize ms="
+              << initTimer.elapsed();
+      initTimer.restart();
+      controller_->recreateSwapChain(this);
+      qInfo() << "[CompositionEditor][Startup] recreateSwapChain ms="
+              << initTimer.elapsed();
+      controller_->setViewportSize((float)width(), (float)height());
+      QTimer::singleShot(250, this, [this]() {
+        if (!controller_ || !isVisible() || window()->isMinimized()) {
+          return;
+        }
+        if (syncPreferredComposition()) {
+          setProperty("artifactStartupViewportInitRetry", 0);
+          return;
+        }
+        schedulePreferredCompositionRetry();
+      });
+      setProperty("artifactStartupViewportInitRetry", 0);
     });
   }
 
@@ -1322,7 +1397,17 @@ public:
     if (!controller_ || spacePressed_) {
       return;
     }
-    setCursor(controller_->cursorShapeForViewportPos(pos));
+    auto *app = ArtifactApplicationManager::instance();
+    auto *toolManager = app ? app->toolManager() : nullptr;
+    const ToolType activeTool =
+        toolManager ? toolManager->activeTool() : ToolType::Selection;
+    const Qt::CursorShape cursorShape =
+        controller_->cursorShapeForViewportPos(pos);
+    if (activeTool == ToolType::Pen && cursorShape == Qt::CrossCursor) {
+      setCursor(makeMaskAddCursor());
+      return;
+    }
+    setCursor(cursorShape);
   }
 
   void enqueueDroppedAssets(const QStringList &paths,
@@ -1388,18 +1473,9 @@ public:
         params.setAudioPath(asset.importedPath);
         svc->addLayerToCurrentComposition(params, shouldSelectThisLayer);
       } else if (asset.fileType == FT::Video) {
-        ArtifactLayerInitParams params(asset.layerName, LayerType::Video);
+        ArtifactVideoInitParams params(asset.layerName);
+        params.setVideoPath(asset.importedPath);
         svc->addLayerToCurrentComposition(params, shouldSelectThisLayer);
-        if (auto comp = controller_ ? controller_->composition() : nullptr) {
-          const auto &layers = comp->allLayerRef();
-          if (!layers.isEmpty()) {
-            auto maybeLast = layers.last();
-            if (auto videoLayer =
-                    std::dynamic_pointer_cast<ArtifactVideoLayer>(maybeLast)) {
-              videoLayer->setSourceFile(asset.importedPath);
-            }
-          }
-        }
       } else if (asset.fileType == FT::Model3D) {
         ArtifactModel3DLayerInitParams params(asset.layerName);
         params.setModelPath(asset.importedPath);
@@ -1424,30 +1500,29 @@ protected:
       const bool needsInitialize = !controller_->isInitialized();
       if (needsInitialize) {
         QTimer::singleShot(16, this, [this]() {
-          if (!controller_ || !isVisible() || controller_->isInitialized()) {
+          if (!controller_ || controller_->isInitialized()) {
             return;
           }
-          QElapsedTimer timer;
-          timer.start();
+          if (!isVisible() || window()->isMinimized()) {
+            scheduleViewportInitializationRetry();
+            return;
+          }
+          QElapsedTimer initTimer;
+          initTimer.start();
           controller_->initialize(this);
           qInfo() << "[CompositionEditor][Startup] controller initialize ms="
-                  << timer.elapsed();
-          timer.restart();
+                  << initTimer.elapsed();
+          initTimer.restart();
           controller_->recreateSwapChain(this);
           qInfo() << "[CompositionEditor][Startup] recreateSwapChain ms="
-                  << timer.elapsed();
+                  << initTimer.elapsed();
           controller_->setViewportSize((float)width(), (float)height());
-          // フェーズ2：Composition
-          // 接続とレンダー開始はイベントループを1サイクル挟んで実行
-          // (重いシェーダーコンパイル直後の UI ブロックを軽減)
-          // [PERF] 初回コンポジションロードをUI安定後に遅延
-          // 250ms
-          // 待つことでウィンドウ表示アニメーションやドライバ初期化と競合しない
           QTimer::singleShot(250, this, [this]() {
             if (!controller_ || !isVisible() || window()->isMinimized()) {
               return;
             }
             if (syncPreferredComposition()) {
+              setProperty("artifactStartupViewportInitRetry", 0);
               return;
             }
             schedulePreferredCompositionRetry();
@@ -3727,8 +3802,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *cameraOverlayAct = displayMenu->addAction("Camera Frustum");
   displayMenu->addSeparator();
   QAction *gpuBlendAct = displayMenu->addAction("GPU Blend Path");
-  const std::array<float, 5> checkerboardSizes{8.0f, 12.0f, 16.0f, 24.0f,
-                                               32.0f};
+  const std::array<float, 8> checkerboardSizes{
+      8.0f, 12.0f, 16.0f, 24.0f, 32.0f, 48.0f, 64.0f, 96.0f};
   checkerboardAct->setCheckable(true);
   gridAct->setCheckable(true);
   guidesAct->setCheckable(true);

@@ -1,5 +1,6 @@
-﻿// ReSharper disable All
+// ReSharper disable All
 module;
+class tst_QList;
 #include <utility>
 #include <QJsonDocument>
 #include <QList>

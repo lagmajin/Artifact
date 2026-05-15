@@ -1641,15 +1641,18 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
   updateLayout();
  });
 
- if (auto* playback = ArtifactPlaybackService::instance()) {
-  QObject::connect(playback, &ArtifactPlaybackService::frameChanged, this, [this]() {
-   if (auto* playback = ArtifactPlaybackService::instance()) {
-    const auto fps = playback->frameRate().framerate();
-    impl_->currentTime = RationalTime(playback->currentFrame().framePosition(), fps);
-    update();
-   }
-  });
- }
+ impl_->eventBusSubscriptions_.push_back(
+  impl_->eventBus_.subscribe<FrameChangedEvent>([this](const FrameChangedEvent& event) {
+    if (!impl_->compositionId.isNil() &&
+        event.compositionId != impl_->compositionId.toString()) {
+      return;
+    }
+    if (auto* playback = ArtifactPlaybackService::instance()) {
+      const auto fps = playback->frameRate().framerate();
+      impl_->currentTime = RationalTime(event.frame, fps);
+      update();
+    }
+  }));
 
  impl_->eventBusSubscriptions_.push_back(
   impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent& event) {

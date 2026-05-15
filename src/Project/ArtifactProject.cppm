@@ -1,4 +1,5 @@
-﻿module;
+module;
+class tst_QList;
 #include <utility>
 #include <QDebug>
 #include <wobjectimpl.h>
@@ -17,6 +18,8 @@ module Artifact.Project;
 
 import std;
 
+import Artifact.Event.Types;
+import Event.Bus;
 import Utils;
 import Utils.String.Like;
 import Utils.String.UniString;
@@ -38,6 +41,26 @@ import Artifact.Project.Items;
 
 namespace Artifact {
  using namespace ArtifactCore;
+
+ namespace {
+  inline void publishProjectChangedEvent()
+  {
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
+  }
+
+  inline void publishCompositionCreatedEvent(const CompositionID& id)
+  {
+    ArtifactCore::globalEventBus().publish<CompositionCreatedEvent>(
+        CompositionCreatedEvent{id.toString(), QString()});
+  }
+
+  inline void publishLayerChangedEvent(const CompositionID& compId, const LayerID& layerId,
+                                       LayerChangedEvent::ChangeType changeType)
+  {
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(LayerChangedEvent{
+        compId.toString(), layerId.toString(), changeType});
+  }
+ } // namespace
 
  //W_REGISTER_ARGTYPE(Id)
  W_OBJECT_IMPL(ArtifactProject)
@@ -190,7 +213,7 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
   // (the public object will be the 'this' pointer's outer class; use outer emit helper)
   // For simplicity, we will call a free helper that emits the signal on a target project
   // Find the parent ArtifactProject instance: we cannot from Impl; instead rely on callers
-  // to call projectChanged() after calling this method.
+  // publish ProjectChangedEvent after calling this method.
 
   // Mark project state as dirty
   setDirty(true);
@@ -241,11 +264,6 @@ CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactC
  qDebug() << "Impl::createComposition: created composition id=" << id.toString();
  return result;
  }
-
-void notifyProjectCompositionCreated(ArtifactProject* proj, const CompositionID& id) {
-    // helper - emit signal
-    proj->compositionCreated(id);
-}
 
 void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
 
@@ -775,8 +793,6 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
   rootUp->name.setQString("Project Root");
   impl_->ownedItems_.push_back(std::move(rootUp));
 
-  Q_EMIT projectCreated();
-
  }
 
  ArtifactProject::ArtifactProject(const QString& name) :impl_(new Impl())
@@ -786,7 +802,6 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
   impl_->ownedItems_.push_back(std::move(rootUp));
   impl_->setProjectName(name);
 
-  Q_EMIT projectCreated();
  }
 
  ArtifactProject::ArtifactProject(const ArtifactProjectSettings& setting) :impl_(new Impl())
@@ -796,8 +811,6 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
   impl_->ownedItems_.push_back(std::move(rootUp));
   impl_->setProjectName(setting.projectName());
   impl_->setAuthor(setting.author().toQString());
-
-  Q_EMIT projectCreated();
 
  }
 
@@ -855,8 +868,7 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
            CreateCompositionResult result;
            result.success = true;
            result.id = ci->compositionId;
-           // notify listeners that project data changed
-           projectChanged();
+          publishProjectChangedEvent();
            return result;
          }
        }
@@ -874,8 +886,7 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
       if (existing->compositionId == res.id) {
         // already have an item for this composition
         qDebug() << "Composition item for ID already exists, skipping add:" << res.id.toString();
-        // notify listeners that project data changed
-        projectChanged();
+        publishProjectChangedEvent();
         return res;
       }
     }
@@ -903,14 +914,12 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
      projectRoot->children.append(raw);
    }
    impl_->ownedItems_.push_back(std::move(compItemUp));
-  // emit signal
-  compositionCreated(res.id);
+  publishCompositionCreatedEvent(res.id);
   // log using captured name (compItemUp is null after move)
   QString idStr = res.id.toString();
   qDebug() << "Composition created:" << capturedName << "(ID:" << idStr << ")";
  }
-  // notify listeners that project data changed
-  projectChanged();
+  publishProjectChangedEvent();
  return res;
  }
 
@@ -952,7 +961,7 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
         targetParent->children.append(folderUp.get());
     }
     impl_->ownedItems_.push_back(std::move(folderUp));
-    projectChanged();
+    publishProjectChangedEvent();
   }
 
   bool ArtifactProject::moveItem(ProjectItem* item, ProjectItem* newParent)
@@ -999,7 +1008,7 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
     }
 
     impl_->setDirty(true);
-    projectChanged();
+    publishProjectChangedEvent();
     return true;
   }
 
@@ -1025,7 +1034,7 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
     
     if (it != impl_->ownedItems_.end()) {
         impl_->ownedItems_.erase(it);
-        projectChanged();
+        publishProjectChangedEvent();
         return true;
     }
     return false;
@@ -1033,10 +1042,10 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
 
  bool ArtifactProject::addImportedComposition(ArtifactCompositionPtr comp, const QString& name)
  {
-  if (!impl_->addImportedComposition(comp, name)) return false;
-  compositionCreated(comp->id());
-  projectChanged();
-  return true;
+ if (!impl_->addImportedComposition(comp, name)) return false;
+  publishCompositionCreatedEvent(comp->id());
+    publishProjectChangedEvent();
+ return true;
  }
 
  void ArtifactProject::setProjectName(const QString& name)
@@ -1335,32 +1344,32 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
   
   ArtifactLayerResult ArtifactProject::createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params)
   {
-   auto result = impl_->createLayerAndAddToComposition(compositionId, params);
-   if (result.success && result.layer) {
-    layerCreated(compositionId, result.layer->id());
-   }
-   return result;
+  auto result = impl_->createLayerAndAddToComposition(compositionId, params);
+  if (result.success && result.layer) {
+   publishLayerChangedEvent(compositionId, result.layer->id(), LayerChangedEvent::ChangeType::Created);
+  }
+  return result;
   }
 
 
   ArtifactLayerResult ArtifactProject::duplicateLayerInComposition(const CompositionID& compositionId, const LayerID& layerId)
   {
-   auto result = impl_->duplicateLayerInComposition(compositionId, layerId);
-   if (result.success && result.layer) {
-    layerCreated(compositionId, result.layer->id());
-    projectChanged();
-   }
-   return result;
+  auto result = impl_->duplicateLayerInComposition(compositionId, layerId);
+  if (result.success && result.layer) {
+   publishLayerChangedEvent(compositionId, result.layer->id(), LayerChangedEvent::ChangeType::Created);
+     publishProjectChangedEvent();
+  }
+  return result;
   }
 
   CreateCompositionResult ArtifactProject::duplicateComposition(const CompositionID& compositionId)
   {
-   auto result = impl_->duplicateComposition(compositionId);
-   if (result.success) {
-    compositionCreated(result.id);
-    projectChanged();
-   }
-   return result;
+  auto result = impl_->duplicateComposition(compositionId);
+  if (result.success) {
+    publishCompositionCreatedEvent(result.id);
+    publishProjectChangedEvent();
+  }
+  return result;
   }
 
   void ArtifactProject::createCompositions(const QStringList& names) {}
@@ -1377,8 +1386,10 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
 
   bool ArtifactProject::removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId)
   {
-    bool ok = impl_->removeLayerFromComposition(compositionId, layerId);
-    if (ok) layerRemoved(compositionId, layerId);
+  bool ok = impl_->removeLayerFromComposition(compositionId, layerId);
+    if (ok) {
+      publishLayerChangedEvent(compositionId, layerId, LayerChangedEvent::ChangeType::Removed);
+    }
     return ok;
   }
 
@@ -1397,7 +1408,7 @@ void ArtifactProject::removeAllAssets()
 
   // Mark as dirty
   impl_->setDirty(true);
-  Q_EMIT projectChanged();
+  publishProjectChangedEvent();
 }
 
 void ArtifactProject::restoreProjectItems(const QJsonArray& items)
@@ -1496,7 +1507,7 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
 
   // Mark as dirty (since we modified the project)
   impl_->setDirty(true);
-  Q_EMIT projectChanged();
+  publishProjectChangedEvent();
 }
 
 

@@ -268,28 +268,6 @@ namespace Artifact {
     ArtifactCompositionGraphWidget::ArtifactCompositionGraphWidget(QWidget* parent)
         : QWidget(parent), impl_(new Impl()) {
         impl_->setupUi(this);
-        
-        auto service = ArtifactProjectService::instance();
-        connect(service, &ArtifactProjectService::projectChanged, this, [this]() {
-            impl_->eventBus_.post<ProjectChangedEvent>(ProjectChangedEvent{QString(), QString()});
-            impl_->eventBus_.drain();
-        });
-        connect(service, &ArtifactProjectService::compositionCreated, this, [this](const CompositionID&) {
-            impl_->eventBus_.post<CompositionCreatedEvent>(CompositionCreatedEvent{QString(), QString()});
-            impl_->eventBus_.drain();
-        });
-        connect(service, &ArtifactProjectService::currentCompositionChanged, this, [this](const CompositionID&) {
-            impl_->eventBus_.post<CurrentCompositionChangedEvent>(CurrentCompositionChangedEvent{QString()});
-            impl_->eventBus_.drain();
-        });
-        connect(service, &ArtifactProjectService::layerCreated, this, [this](const CompositionID&, const LayerID& layerId) {
-            impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{QString(), layerId.toString(), LayerChangedEvent::ChangeType::Created});
-            impl_->eventBus_.drain();
-        });
-        connect(service, &ArtifactProjectService::layerRemoved, this, [this](const CompositionID&, const LayerID& layerId) {
-            impl_->eventBus_.post<LayerChangedEvent>(LayerChangedEvent{QString(), layerId.toString(), LayerChangedEvent::ChangeType::Removed});
-            impl_->eventBus_.drain();
-        });
 
         impl_->eventBusSubscriptions_.push_back(
             impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {

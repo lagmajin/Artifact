@@ -1,4 +1,5 @@
 module;
+class tst_QList;
 #include <utility>
 #include <memory>
 #include <opencv2/opencv.hpp>

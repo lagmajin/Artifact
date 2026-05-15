@@ -7,11 +7,10 @@ module;
 export module Artifact.Widgets.ProblemViewWidget;
 
 import Core.Diagnostics.ProjectDiagnostic;
+import Artifact.Project;
 import Artifact.Project.Health;
 
 export namespace Artifact {
-
-class ArtifactProject;
 
 class ArtifactProblemViewWidget : public QWidget {
     W_OBJECT(ArtifactProblemViewWidget)

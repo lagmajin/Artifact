@@ -20,7 +20,10 @@ inline void drawPlayhead(QPainter& painter, const qreal x, const qreal stemTop,
   const QColor color = playheadColor();
   painter.setRenderHint(QPainter::Antialiasing, true);
 
-  qreal lineTop = stemTop;
+  painter.setBrush(Qt::NoBrush);
+  painter.setPen(QPen(color, 2, Qt::SolidLine, Qt::FlatCap));
+  painter.drawLine(QPointF(x, stemTop), QPointF(x, stemBottom));
+
   if (drawHead) {
     const qreal availableHeight = std::max<qreal>(0.0, stemBottom - headTop);
     const qreal headHeight =
@@ -34,13 +37,8 @@ inline void drawPlayhead(QPainter& painter, const qreal x, const qreal stemTop,
       painter.setPen(QPen(QColor(18, 18, 18, 150), 1));
       painter.setBrush(color);
       painter.drawPath(headPath);
-      lineTop = headTop + headHeight + 1.0;
     }
   }
-
-  painter.setBrush(Qt::NoBrush);
-  painter.setPen(QPen(color, 2, Qt::SolidLine, Qt::FlatCap));
-  painter.drawLine(QPointF(x, lineTop), QPointF(x, stemBottom));
 }
 
 }  // namespace Artifact::TimelinePlayheadDraw

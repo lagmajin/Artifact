@@ -14,6 +14,7 @@ module;
 #include <functional>
 #include <QImage>
 #include <QFont>
+#include <QColor>
 #include <QPainter>
 #include <QRectF>
 #include <QElapsedTimer>
@@ -39,12 +40,15 @@ import Graphics;
 import Graphics.Shader.Set;
 import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
+import Mesh;
+import Material.Material;
 import Layer.Blend;
 import Graphics.LayerBlendPipeline;
 import Core.Scale.Zoom;
 import Frame.Debug;
 import Image.MultiChannelImage;
 import Image.ImageF32x4_RGBA;
+import Graphics.MeshRenderer;
 import Artifact.Render.DiligentDeviceManager;
 import Artifact.Render.ShaderManager;
 import Artifact.Render.PrimitiveRenderer2D;
@@ -187,6 +191,8 @@ namespace {
   ShaderManager shaderManager_;
   PrimitiveRenderer2D primitiveRenderer_;
   mutable PrimitiveRenderer3D primitiveRenderer3D_;
+  mutable std::map<QString, std::unique_ptr<ArtifactCore::MeshRenderer>> meshRenderers_;
+  mutable std::map<QString, std::pair<size_t, size_t>> meshRendererGeometry_;
   std::unique_ptr<ArtifactCore::IRayTracingManager> rayTracingManager_;
   std::unique_ptr<ArtifactCore::GpuContext> gpuContext_;
   std::unique_ptr<ArtifactCore::ParticleRenderer> particleRenderer_;
@@ -223,6 +229,8 @@ namespace {
   int m_offlineHeight = 0;
   float m_viewportWidth  = 0.0f;
   float m_viewportHeight = 0.0f;
+  QMatrix4x4 meshViewMatrix_;
+  QMatrix4x4 meshProjMatrix_;
 
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
   bool m_multiChannelEnabled = false;
@@ -243,8 +251,128 @@ namespace {
    if (!ctx) {
     return;
    }
-   submitter_.submit(cmdBuf_, ctx);
+    submitter_.submit(cmdBuf_, ctx);
    primitiveRenderer3D_.flushGizmo3D();
+  }
+
+  ArtifactCore::MeshRenderer* meshRendererFor(const QString& key)
+  {
+    auto it = meshRenderers_.find(key);
+    if (it != meshRenderers_.end()) {
+      return it->second.get();
+    }
+    if (!gpuContext_) {
+      if (!deviceManager_.device() || !deviceManager_.immediateContext()) {
+        return nullptr;
+      }
+      gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(deviceManager_.device(),
+                                                               deviceManager_.immediateContext());
+    }
+    auto renderer = std::make_unique<ArtifactCore::MeshRenderer>(*gpuContext_);
+    auto* raw = renderer.get();
+    meshRenderers_.emplace(key, std::move(renderer));
+    return raw;
+  }
+
+  void drawMesh(const QString& cacheKey, const ArtifactCore::Mesh& mesh,
+                const ArtifactCore::Material& material,
+                const QMatrix4x4& modelMatrix, float opacity)
+  {
+    auto* renderer = meshRendererFor(cacheKey);
+    if (!renderer) {
+      return;
+    }
+
+    const auto data = mesh.generateRenderData();
+    if (data.positions.isEmpty()) {
+      return;
+    }
+
+    const size_t vertexCount = static_cast<size_t>(data.positions.size());
+    const size_t indexCount = static_cast<size_t>(data.indices.size());
+    const auto geometryIt = meshRendererGeometry_.find(cacheKey);
+    if (geometryIt == meshRendererGeometry_.end() ||
+        geometryIt->second.first != vertexCount ||
+        geometryIt->second.second != indexCount) {
+      renderer->setFrameCostStats(&m_currentFrameCostStats_);
+      renderer->initialize(1, vertexCount, indexCount);
+      meshRendererGeometry_[cacheKey] = {vertexCount, indexCount};
+    }
+
+    std::vector<float> positions;
+    positions.reserve(vertexCount * 3u);
+    for (const auto& p : data.positions) {
+      positions.push_back(p.x());
+      positions.push_back(p.y());
+      positions.push_back(p.z());
+    }
+
+    std::vector<float> normals(vertexCount * 3u, 0.0f);
+    const bool hasNormals = data.normals.size() == data.positions.size() && !data.normals.isEmpty();
+    if (hasNormals) {
+      normals.reserve(vertexCount * 3u);
+      normals.clear();
+      for (const auto& n : data.normals) {
+        normals.push_back(n.x());
+        normals.push_back(n.y());
+        normals.push_back(n.z());
+      }
+    } else {
+      for (size_t i = 0; i < vertexCount; ++i) {
+        normals[i * 3u + 0u] = 0.0f;
+        normals[i * 3u + 1u] = 0.0f;
+        normals[i * 3u + 2u] = 1.0f;
+      }
+    }
+
+    std::vector<float> uvs(vertexCount * 2u, 0.0f);
+    const bool hasUvs = data.uvs.size() == data.positions.size() && !data.uvs.isEmpty();
+    if (hasUvs) {
+      uvs.reserve(vertexCount * 2u);
+      uvs.clear();
+      for (const auto& uv : data.uvs) {
+        uvs.push_back(uv.x());
+        uvs.push_back(uv.y());
+      }
+    }
+
+    std::vector<uint32_t> indices;
+    indices.reserve(indexCount);
+    for (const auto idx : data.indices) {
+      indices.push_back(static_cast<uint32_t>(idx));
+    }
+
+    renderer->setViewMatrix(meshViewMatrix_.constData());
+    renderer->setProjectionMatrix(meshProjMatrix_.constData());
+    renderer->setBaseColorTexture(material.baseColorTexture().toQString());
+    renderer->updateMeshGeometry(positions.data(),
+                                 normals.data(),
+                                 uvs.data(),
+                                 indices.data());
+
+    ArtifactCore::InstanceData instance{};
+    const float* modelData = modelMatrix.constData();
+    for (int row = 0; row < 4; ++row) {
+      for (int col = 0; col < 4; ++col) {
+        instance.transform[row * 4 + col] = modelData[col * 4 + row];
+      }
+    }
+    const QColor color = material.baseColor();
+    const float alpha = std::clamp(opacity * material.opacity() * color.alphaF(), 0.0f, 1.0f);
+    instance.color[0] = color.redF();
+    instance.color[1] = color.greenF();
+    instance.color[2] = color.blueF();
+    instance.color[3] = alpha;
+    instance.weight = 1.0f;
+    instance.timeOffset = 0.0f;
+    renderer->updateInstanceData(&instance, 1);
+
+    auto* ctx = deviceManager_.immediateContext();
+    if (!ctx) {
+      return;
+    }
+    renderer->prepare(ctx);
+    renderer->draw(ctx, 1);
   }
 
  public:
@@ -313,19 +441,29 @@ namespace {
   void setDetailLevel(LODManager::DetailLevel lod) { detailLevel_ = lod; }
   LODManager::DetailLevel detailLevel() const { return detailLevel_; }
   void fillToViewport(float margin)      { primitiveRenderer_.fillToViewport(margin); }
-  void setViewMatrix(const QMatrix4x4& view) { primitiveRenderer_.setViewMatrix(view); primitiveRenderer3D_.setViewMatrix(view); }
-  void setProjectionMatrix(const QMatrix4x4& proj) { primitiveRenderer_.setProjectionMatrix(proj); primitiveRenderer3D_.setProjectionMatrix(proj); }
+  void setViewMatrix(const QMatrix4x4& view) {
+    primitiveRenderer_.setViewMatrix(view);
+    primitiveRenderer3D_.setViewMatrix(view);
+  }
+  void setProjectionMatrix(const QMatrix4x4& proj) {
+    primitiveRenderer_.setProjectionMatrix(proj);
+    primitiveRenderer3D_.setProjectionMatrix(proj);
+  }
   void setUseExternalMatrices(bool use)  { primitiveRenderer_.setUseExternalMatrices(use); }
   void setGizmoCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj) { primitiveRenderer3D_.setCameraMatrices(view, proj); }
   void resetGizmoCameraMatrices() { primitiveRenderer3D_.resetMatrices(); }
   void set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj) {
     primitiveRenderer3D_.setCameraMatrices(view, proj);
+    meshViewMatrix_ = view;
+    meshProjMatrix_ = proj;
     particle3DCameraActive_ = true;
     particleViewMatrix_ = view;
     particleProjMatrix_ = proj;
   }
   void reset3DCameraMatrices() {
     primitiveRenderer3D_.resetMatrices();
+    meshViewMatrix_.setToIdentity();
+    meshProjMatrix_.setToIdentity();
     particle3DCameraActive_ = false;
     particleViewMatrix_.setToIdentity();
     particleProjMatrix_.setToIdentity();
@@ -558,6 +696,9 @@ namespace {
    ScopedStartupTimer totalTimer("ArtifactIRenderer::initialize",
                                   StartupPhase::TotalStartup);
    widget_ = widget;
+   meshRenderers_.clear();
+   meshRendererGeometry_.clear();
+   gpuContext_.reset();
 
    {
     ScopedStartupTimer t("DeviceManager::initialize", StartupPhase::DeviceCreation);
@@ -594,6 +735,11 @@ namespace {
    primitiveRenderer_.setCommandBuffer(&cmdBuf_);
   }
 
+  gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(deviceManager_.device(),
+                                                           deviceManager_.immediateContext());
+  meshViewMatrix_.setToIdentity();
+  meshProjMatrix_.setToIdentity();
+
   {
     ScopedStartupTimer t("PrimitiveRenderer3D::init", StartupPhase::Custom);
     primitiveRenderer3D_.createBuffers(deviceManager_.device());
@@ -614,6 +760,9 @@ namespace {
  {
   m_offlineWidth  = width;
   m_offlineHeight = height;
+  meshRenderers_.clear();
+  meshRendererGeometry_.clear();
+  gpuContext_.reset();
 
   deviceManager_.initializeHeadless();
   if (!deviceManager_.isInitialized()) return;
@@ -633,6 +782,11 @@ namespace {
   submitter_.setDeferredContext(deviceManager_.deferredContext());
   submitter_.setPrimitiveRenderer3D(&primitiveRenderer3D_);
   primitiveRenderer_.setCommandBuffer(&cmdBuf_);
+
+  gpuContext_ = std::make_unique<ArtifactCore::GpuContext>(deviceManager_.device(),
+                                                           deviceManager_.immediateContext());
+  meshViewMatrix_.setToIdentity();
+  meshProjMatrix_.setToIdentity();
 
   primitiveRenderer3D_.createBuffers(deviceManager_.device());
   primitiveRenderer3D_.setPSOs(shaderManager_);
@@ -1325,6 +1479,8 @@ namespace {
   submitter_.setPrimitiveRenderer3D(nullptr);
   submitter_.destroy();
   cmdBuf_.reset();
+  meshRenderers_.clear();
+  meshRendererGeometry_.clear();
   m_readbackStagingTex= nullptr;
   m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
   m_readbackFence = nullptr;
@@ -1690,6 +1846,10 @@ void ArtifactIRenderer::draw3DCircle(Detail::float3 center, Detail::float3 norma
 { drawGizmoRing(center, normal, radius, color, thickness); }
 void ArtifactIRenderer::draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail::float3 v2, Detail::float3 v3, const FloatColor& color)
 { impl_->primitiveRenderer3D_.draw3DQuad({v0.x, v0.y, v0.z}, {v1.x, v1.y, v1.z}, {v2.x, v2.y, v2.z}, {v3.x, v3.y, v3.z}, color); }
+void ArtifactIRenderer::drawMesh(const QString& cacheKey, const ArtifactCore::Mesh& mesh,
+                                 const ArtifactCore::Material& material,
+                                 const QMatrix4x4& modelMatrix, float opacity)
+{ impl_->drawMesh(cacheKey, mesh, material, modelMatrix, opacity); }
  void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness)
  {
   impl_->m_upscaleEnabled = enable;
