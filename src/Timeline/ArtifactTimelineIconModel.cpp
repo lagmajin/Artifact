@@ -23,10 +23,10 @@ namespace Artifact
 
 
   setColumnCount(4);
-  //QIcon eyeIcon(resolveIconPath("visibility.png"));
+  // QIcon eyeIcon(resolveIconPath("MaterialVS/neutral/visibility.svg"));
   
-  setHorizontalHeaderItem(0, new QStandardItem(QIcon(resolveIconPath("visibility.png")), ""));
-  setHorizontalHeaderItem(1, new QStandardItem(QIcon(resolveIconPath("lock.png")), ""));
+  setHorizontalHeaderItem(0, new QStandardItem(QIcon(resolveIconPath("MaterialVS/neutral/visibility.svg")), ""));
+  setHorizontalHeaderItem(1, new QStandardItem(QIcon(resolveIconPath("MaterialVS/yellow/lock.svg")), ""));
  }
 
 

@@ -285,13 +285,15 @@ QVariant ArtifactHierarchyModel::data(const QModelIndex &index,
 
   if (role == Qt::DecorationRole) {
     if (index.column() == 0) {
-      return layer->isVisible() ? QIcon(resolveIconPath("visibility.png")) : QIcon(resolveIconPath("visibility_off.png"));
+      return layer->isVisible()
+                 ? QIcon(resolveIconPath("MaterialVS/neutral/visibility.svg"))
+                 : QIcon(resolveIconPath("MaterialVS/neutral/visibility_off.svg"));
     }
     if (index.column() == 2) {
       if (layer->isGroupLayer()) {
-        return QIcon(resolveIconPath("folder.png"));
+        return QIcon(resolveIconPath("MaterialVS/yellow/folder.svg"));
       }
-      return QIcon(resolveIconPath("image_layer.png"));
+      return QIcon(resolveIconPath("MaterialVS/green/photo_library.svg"));
     }
   }
 

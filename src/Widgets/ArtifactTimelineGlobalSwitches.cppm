@@ -63,7 +63,7 @@ public:
             "Hide Shy Layers",
             loadIconWithFallback(
                 QStringLiteral("MaterialVS/neutral/visibility_off.svg"),
-                QStringLiteral("visibility_off.png")));
+                QStringLiteral("MaterialVS/orange/visibility_off.svg")));
         motionBlurBtn = createBtn(
             "Enable Motion Blur",
             loadIconWithFallback(
