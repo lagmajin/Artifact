@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 #include <QComboBox>
 #include <QHBoxLayout>
 #include <QFrame>

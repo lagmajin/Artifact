@@ -116,3 +116,8 @@ public:
 - playback from a fully ready range is stable and deterministic
 - cache invalidation is explicit and explainable
 - failures are visible in diagnostics instead of being silent
+
+## Related Long-Term Planning
+
+- `docs/planned/MILESTONE_HIERARCHICAL_CACHE_SYSTEM_2026-05-16.md`
+- `docs/planned/MILESTONE_DISK_CACHE_SYSTEM_2026-03-26.md`

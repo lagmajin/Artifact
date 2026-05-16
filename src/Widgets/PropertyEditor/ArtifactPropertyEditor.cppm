@@ -2009,7 +2009,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   supplementaryLabel_->setVisible(false);
   supplementaryLabel_->setSizePolicy(QSizePolicy::Minimum,
                                      QSizePolicy::Fixed);
-  applyPropertyLabelPalette(supplementaryLabel_, 135);
+  applyPropertyLabelPalette(supplementaryLabel_, true);
 
   editor_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   applyPropertyFieldPalette(editor_);

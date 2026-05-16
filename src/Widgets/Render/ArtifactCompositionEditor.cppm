@@ -560,6 +560,15 @@ public:
         QTimer::singleShot(50, this, [this]() { scheduleInitialFit(); });
       }
     });
+
+    readinessTimer_ = new QTimer(this);
+    readinessTimer_->setSingleShot(true);
+    QObject::connect(readinessTimer_, &QTimer::timeout, this, [this]() {
+      readinessScheduled_ = false;
+      ensureViewportReady(pendingReadinessReason_.isEmpty()
+                              ? QStringLiteral("timer")
+                              : pendingReadinessReason_);
+    });
   }
 
   void requestInitialFit() {
@@ -609,43 +618,108 @@ public:
     });
   }
 
+  void scheduleViewportReadinessCheck(const QString &reason, int delayMs = 16) {
+    if (!controller_) {
+      return;
+    }
+    pendingReadinessReason_ = reason;
+    if (!readinessTimer_) {
+      ensureViewportReady(reason);
+      return;
+    }
+    readinessScheduled_ = true;
+    readinessTimer_->start(std::max(0, delayMs));
+  }
+
   void scheduleViewportInitializationRetry() {
     const int retryCount =
         property("artifactStartupViewportInitRetry").toInt();
     if (retryCount >= 20) {
       return;
     }
+    qInfo() << "[CompositionEditor][Startup] scheduleViewportInitializationRetry"
+            << "retry=" << retryCount
+            << "visible=" << isVisible()
+            << "minimized=" << window()->isMinimized();
     setProperty("artifactStartupViewportInitRetry", retryCount + 1);
     QTimer::singleShot(250, this, [this]() {
-      if (!controller_ || controller_->isInitialized()) {
+      qInfo() << "[CompositionEditor][Startup] retry fired"
+              << "visible=" << isVisible()
+              << "minimized=" << window()->isMinimized()
+              << "controllerInitialized="
+              << (controller_ ? controller_->isInitialized() : false);
+      if (!controller_) {
         return;
       }
       if (!isVisible() || window()->isMinimized()) {
         scheduleViewportInitializationRetry();
         return;
       }
+      if (!ensureViewportReady(QStringLiteral("startup-retry"))) {
+        scheduleViewportInitializationRetry();
+      }
+    });
+  }
+
+  bool ensureViewportReady(const QString &reason) {
+    if (!controller_) {
+      return false;
+    }
+
+    const bool visible = isVisible();
+    const bool minimized = window() ? window()->isMinimized() : false;
+    const quintptr hostWinId =
+        visible ? static_cast<quintptr>(winId()) : quintptr{0};
+
+    qInfo() << "[CompositionEditor][Readiness]"
+            << "reason=" << reason
+            << "visible=" << visible
+            << "minimized=" << minimized
+            << "size=" << size()
+            << "winId=" << hostWinId
+            << "initialized=" << controller_->isInitialized();
+
+    if (!visible || minimized || width() <= 0 || height() <= 0 ||
+        hostWinId == 0) {
+      return false;
+    }
+
+    bool initializedNow = false;
+    if (!controller_->isInitialized()) {
       QElapsedTimer initTimer;
       initTimer.start();
       controller_->initialize(this);
-      qInfo() << "[CompositionEditor][Startup] controller initialize ms="
+      qInfo() << "[CompositionEditor][Readiness] initialize ms="
               << initTimer.elapsed();
-      initTimer.restart();
+      if (!controller_->isInitialized()) {
+        return false;
+      }
+      initializedNow = true;
+    }
+
+    controller_->setViewportSize(static_cast<float>(width()),
+                                 static_cast<float>(height()));
+
+    auto *renderer = controller_->renderer();
+    const bool needsSwapChain =
+        initializedNow || !renderer || !renderer->hasSwapChain();
+    if (needsSwapChain) {
+      QElapsedTimer swapChainTimer;
+      swapChainTimer.start();
       controller_->recreateSwapChain(this);
-      qInfo() << "[CompositionEditor][Startup] recreateSwapChain ms="
-              << initTimer.elapsed();
-      controller_->setViewportSize((float)width(), (float)height());
-      QTimer::singleShot(250, this, [this]() {
-        if (!controller_ || !isVisible() || window()->isMinimized()) {
-          return;
-        }
-        if (syncPreferredComposition()) {
-          setProperty("artifactStartupViewportInitRetry", 0);
-          return;
-        }
-        schedulePreferredCompositionRetry();
-      });
+      qInfo() << "[CompositionEditor][Readiness] recreateSwapChain ms="
+              << swapChainTimer.elapsed();
+    }
+
+    if (syncPreferredComposition()) {
       setProperty("artifactStartupViewportInitRetry", 0);
-    });
+      setProperty("artifactStartupCompositionRetry", 0);
+    } else {
+      schedulePreferredCompositionRetry();
+    }
+
+    controller_->markRenderDirty();
+    return true;
   }
 
   void setOverlayWidget(QWidget *overlayWidget) {
@@ -1496,40 +1570,15 @@ public:
 protected:
   void showEvent(QShowEvent *event) override {
     QWidget::showEvent(event);
+    qInfo() << "[CompositionEditor][ShowEvent]"
+            << "visible=" << isVisible()
+            << "minimized=" << window()->isMinimized()
+            << "winId=" << static_cast<quintptr>(winId())
+            << "controller=" << controller_;
     if (controller_) {
-      const bool needsInitialize = !controller_->isInitialized();
-      if (needsInitialize) {
-        QTimer::singleShot(16, this, [this]() {
-          if (!controller_ || controller_->isInitialized()) {
-            return;
-          }
-          if (!isVisible() || window()->isMinimized()) {
-            scheduleViewportInitializationRetry();
-            return;
-          }
-          QElapsedTimer initTimer;
-          initTimer.start();
-          controller_->initialize(this);
-          qInfo() << "[CompositionEditor][Startup] controller initialize ms="
-                  << initTimer.elapsed();
-          initTimer.restart();
-          controller_->recreateSwapChain(this);
-          qInfo() << "[CompositionEditor][Startup] recreateSwapChain ms="
-                  << initTimer.elapsed();
-          controller_->setViewportSize((float)width(), (float)height());
-          QTimer::singleShot(250, this, [this]() {
-            if (!controller_ || !isVisible() || window()->isMinimized()) {
-              return;
-            }
-            if (syncPreferredComposition()) {
-              setProperty("artifactStartupViewportInitRetry", 0);
-              return;
-            }
-            schedulePreferredCompositionRetry();
-          });
-        });
-      } else {
-        syncPreferredComposition();
+      scheduleViewportReadinessCheck(QStringLiteral("show-event"), 16);
+      if (!controller_->isInitialized()) {
+        scheduleViewportInitializationRetry();
       }
     }
   }
@@ -1633,7 +1682,18 @@ protected:
 
   void resizeEvent(QResizeEvent *event) override {
     QWidget::resizeEvent(event);
-    if (controller_ && controller_->isInitialized()) {
+    if (!controller_) {
+      return;
+    }
+
+    if (!controller_->isInitialized()) {
+      pendingResizeSize_ = event->size();
+      resizePending_ = true;
+      scheduleViewportReadinessCheck(QStringLiteral("resize-uninitialized"), 32);
+      return;
+    }
+
+    if (controller_->isInitialized()) {
       controller_->setViewportSize(static_cast<float>(event->size().width()),
                                    static_cast<float>(event->size().height()));
       pendingResizeSize_ = event->size();
@@ -1645,6 +1705,34 @@ protected:
       // Render is deferred to the debounce timer — no immediate
       // renderOneFrame() to avoid redundant work during continuous resize.
     }
+  }
+
+  bool event(QEvent *event) override {
+    const bool handled = QWidget::event(event);
+
+    if (!controller_ || !event) {
+      return handled;
+    }
+
+    switch (event->type()) {
+    case QEvent::Show:
+      scheduleViewportReadinessCheck(QStringLiteral("event-show"), 16);
+      break;
+    case QEvent::ActivationChange:
+      if (window() && window()->isActiveWindow()) {
+        scheduleViewportReadinessCheck(QStringLiteral("event-activation"), 0);
+      }
+      break;
+    case QEvent::WindowStateChange:
+      if (!window() || !window()->isMinimized()) {
+        scheduleViewportReadinessCheck(QStringLiteral("event-window-state"), 16);
+      }
+      break;
+    default:
+      break;
+    }
+
+    return handled;
   }
 
   void wheelEvent(QWheelEvent *event) override {
@@ -2906,6 +2994,11 @@ protected:
       dropCandidateLabel_.clear();
     }
   }
+
+private:
+  QTimer *readinessTimer_ = nullptr;
+  QString pendingReadinessReason_;
+  bool readinessScheduled_ = false;
 };
 
 class CompositionOverlayWidget final : public QWidget {

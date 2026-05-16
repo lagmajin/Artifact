@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 #include <cmath>
 #include <vector>
 #include <wobjectdefs.h>

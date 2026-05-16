@@ -367,12 +367,12 @@ namespace {
     instance.timeOffset = 0.0f;
     renderer->updateInstanceData(&instance, 1);
 
-    auto* ctx = deviceManager_.immediateContext();
+    auto ctx = deviceManager_.immediateContext();
     if (!ctx) {
       return;
     }
-    renderer->prepare(ctx);
-    renderer->draw(ctx, 1);
+    renderer->prepare(ctx.RawPtr());
+    renderer->draw(ctx.RawPtr(), 1);
   }
 
  public:

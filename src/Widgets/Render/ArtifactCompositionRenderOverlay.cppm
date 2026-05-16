@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 
 #include <QApplication>
 #include <QColor>

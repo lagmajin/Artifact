@@ -203,36 +203,36 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
 {
     createProjectAction = new QAction("新規プロジェクト(&N)...");
     createProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_N));
-    createProjectAction->setIcon(QIcon(resolveIconPath("Material/create_new_folder.svg")));
+    createProjectAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/create_new_folder.svg")));
 
     openProjectAction = new QAction("プロジェクトを開く(&O)...");
     openProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
-    openProjectAction->setIcon(QIcon(resolveIconPath("Material/file_open.svg")));
+    openProjectAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/file_open.svg")));
 
     saveProjectAction = new QAction("保存(&S)");
     saveProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
-    saveProjectAction->setIcon(QIcon(resolveIconPath("Material/save.svg")));
+    saveProjectAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/save.svg")));
 
     saveProjectAsAction = new QAction("名前を付けて保存(&A)...");
     saveProjectAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-    saveProjectAsAction->setIcon(QIcon(resolveIconPath("Material/save.svg")));
+    saveProjectAsAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/save_as.svg")));
 
     closeProjectAction = new QAction("プロジェクトを閉じる");
-    closeProjectAction->setIcon(QIcon(resolveIconPath("Material/folder.svg")));
+    closeProjectAction->setIcon(QIcon(resolveIconPath("MaterialVS/yellow/folder.svg")));
 
     newCompositionAction = new QAction("新規コンポジション(&C)...");
     newCompositionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
-    newCompositionAction->setIcon(QIcon(resolveIconPath("Material/movie_creation.svg")));
+    newCompositionAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/movie_creation.svg")));
 
     importAssetsAction = new QAction("アセットを読み込み(&I)...");
     importAssetsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
-    importAssetsAction->setIcon(QIcon(resolveIconPath("Material/upload.svg")));
+    importAssetsAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/upload.svg")));
 
     revealProjectFolderAction = new QAction("プロジェクトフォルダを開く");
-    revealProjectFolderAction->setIcon(QIcon(resolveIconPath("Material/folder.svg")));
+    revealProjectFolderAction->setIcon(QIcon(resolveIconPath("MaterialVS/yellow/folder.svg")));
 
     restartAction = new QAction("再起動");
-    restartAction->setIcon(QIcon(resolveIconPath("Material/replay.svg")));
+    restartAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/replay.svg")));
     
     quitAction = new QAction("終了(&Q)");
     quitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));

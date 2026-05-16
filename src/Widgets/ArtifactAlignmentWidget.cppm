@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 #include <utility>
 #include <QWidget>
 #include <QPushButton>

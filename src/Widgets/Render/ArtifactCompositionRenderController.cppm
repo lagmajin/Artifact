@@ -5611,6 +5611,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   const bool frameOutOfRange =
       (framePos < 0 ||
        (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
+  ArtifactCore::ImageF32x4_RGBA ramPreviewFrameImage;
+  bool hasRamPreviewFrameImage = false;
+  bool useRamPreviewFallback = false;
+  if (auto *playback = ArtifactPlaybackService::instance()) {
+    const auto playbackComp = playback->currentComposition();
+    const bool sameComposition =
+        !playbackComp || playbackComp->id() == comp->id();
+    hasRamPreviewFrameImage =
+        sameComposition &&
+        playback->tryGetRamPreviewFrameImage(framePos, ramPreviewFrameImage);
+    useRamPreviewFallback = hasRamPreviewFrameImage && !playback->isPlaying() &&
+                            !viewportInteracting_ && !frameOutOfRange;
+  }
   float panX = 0.0f;
   float panY = 0.0f;
   renderer_->getPan(panX, panY);
@@ -5847,10 +5860,33 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     // バックバッファ全体をクリア (外側ゴミ表示修正)
     renderer_->clearRenderTarget(viewportClearColor_);
 
+    if (useRamPreviewFallback) {
+      if (backgroundMode == CompositionBackgroundMode::MayaGradient) {
+        drawViewportMayaGradientBackground(renderer_.get(), viewportW,
+                                           viewportH, layerBgColor,
+                                           cachedMayaGradientSprite_);
+      } else if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
+        drawViewportCheckerboardBackground(renderer_.get(), viewportW,
+                                           viewportH, checkerboardTileSize_);
+      }
+      renderer_->setUseExternalMatrices(false);
+      renderer_->resetGizmoCameraMatrices();
+      renderer_->reset3DCameraMatrices();
+      renderer_->setCanvasSize(cw, ch);
+      renderer_->setZoom(zoom);
+      renderer_->setPan(panX, panY);
+      drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
+                                      backgroundMode, checkerboardTileSize_,
+                                      cachedMayaGradientSprite_);
+      QMatrix4x4 identity;
+      renderer_->drawSpriteTransformed(0.0f, 0.0f, cw, ch, identity,
+                                       ramPreviewFrameImage, 1.0f);
+      basePassMs = markPhaseMs();
+      layerPassMs = 0;
+    } else if (pipelineEnabled) {
     // ============================================================
     // GPU パイプライン: レイヤー 0 枚でも frameOutOfRange でも常に描画
     // ============================================================
-    if (pipelineEnabled) {
       ArtifactCore::ProfileScope _profBase(
           "BasePass", ArtifactCore::ProfileCategory::Composite);
       auto accumSRV = renderPipeline_.accumSRV();

@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 #include <utility>
 #include <wobjectdefs.h>
 #include <QList>

@@ -70,6 +70,8 @@ namespace Artifact
   int cacheRangeStart_ = 0;
   int cacheRangeEnd_ = 0;
   std::vector<bool> cacheBitmap_;
+  std::vector<bool> failedBitmap_;
+  std::vector<bool> onDiskBitmap_;
   int fps_ = 30;
   double rulerPixelsPerFrame_ = 0.0;  // 0 = ruler無効
   double rulerHorizontalOffset_ = 0.0;
@@ -270,6 +272,23 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   }
  }
 
+ void ArtifactTimelineScrubBar::setFrameStateBitmaps(
+     const std::vector<bool>& readyBitmap,
+     const std::vector<bool>& failedBitmap,
+     const std::vector<bool>& onDiskBitmap)
+ {
+  const bool changed = impl_->cacheBitmap_ != readyBitmap ||
+                       impl_->failedBitmap_ != failedBitmap ||
+                       impl_->onDiskBitmap_ != onDiskBitmap;
+  if (!changed) {
+   return;
+  }
+  impl_->cacheBitmap_ = readyBitmap;
+  impl_->failedBitmap_ = failedBitmap;
+  impl_->onDiskBitmap_ = onDiskBitmap;
+  update();
+ }
+
  void ArtifactTimelineScrubBar::setInteractiveSeekingEnabled(bool enabled)
  {
   if (impl_->interactiveSeekingEnabled_ == enabled) {
@@ -416,37 +435,59 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    }
   }
 
-  bool hasAnyCachedFrame = false;
-  for (bool cached : impl_->cacheBitmap_) {
-   if (cached) {
-    hasAnyCachedFrame = true;
-    break;
+  const auto drawFrameRuns = [&](const std::vector<bool>& bitmap,
+                                 QColor color,
+                                 const int topInset,
+                                 const int bottomInset) {
+   bool hasAnyFrame = false;
+   for (const bool value : bitmap) {
+    if (value) {
+     hasAnyFrame = true;
+     break;
+    }
    }
-  }
+   if (!hasAnyFrame) {
+    return;
+   }
 
-  if (hasAnyCachedFrame) {
    p.setPen(Qt::NoPen);
-   QColor cachedColor = cacheBaseColor.lighter(112);
-   cachedColor.setAlpha(210);
-   p.setBrush(cachedColor);
+   p.setBrush(color);
 
    int startF = -1;
-   for (int f = 0; f < static_cast<int>(impl_->cacheBitmap_.size()); ++f) {
-    if (impl_->cacheBitmap_[f]) {
-     if (startF == -1) startF = f;
+   for (int f = 0; f < static_cast<int>(bitmap.size()); ++f) {
+    if (bitmap[f]) {
+     if (startF == -1) {
+      startF = f;
+     }
     } else if (startF != -1) {
      const int x1 = impl_->resolveFrameToX(startF, w);
      const int x2 = impl_->resolveFrameToX(f, w);
-     p.drawRect(QRect(x1, railRect.top() + 2, std::max(1, x2 - x1), railRect.height() - 4));
+     p.drawRect(QRect(x1, railRect.top() + topInset,
+                      std::max(1, x2 - x1),
+                      std::max(1, railRect.height() - topInset - bottomInset)));
      startF = -1;
     }
    }
    if (startF != -1) {
     const int x1 = impl_->resolveFrameToX(startF, w);
-    const int x2 = impl_->resolveFrameToX(static_cast<int>(impl_->cacheBitmap_.size()), w);
-    p.drawRect(QRect(x1, railRect.top() + 2, std::max(1, x2 - x1), railRect.height() - 4));
+    const int x2 = impl_->resolveFrameToX(static_cast<int>(bitmap.size()), w);
+    p.drawRect(QRect(x1, railRect.top() + topInset,
+                     std::max(1, x2 - x1),
+                     std::max(1, railRect.height() - topInset - bottomInset)));
    }
-  }
+  };
+
+  QColor onDiskColor(88, 148, 255);
+  onDiskColor.setAlpha(132);
+  drawFrameRuns(impl_->onDiskBitmap_, onDiskColor, 1, 1);
+
+  QColor cachedColor = cacheBaseColor.lighter(112);
+  cachedColor.setAlpha(210);
+  drawFrameRuns(impl_->cacheBitmap_, cachedColor, 2, 2);
+
+  QColor failedColor(232, 92, 92);
+  failedColor.setAlpha(220);
+  drawFrameRuns(impl_->failedBitmap_, failedColor, 4, 4);
 
   // ── 再生ヘッド描画 ──────────────────────
   const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());

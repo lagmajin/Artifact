@@ -85,19 +85,19 @@ private:
   // Basic edit actions
   undoAction = new QAction("元に戻す (&U)");
   undoAction->setShortcut(shortcuts.shortcut(ShortcutId::Undo));
-  undoAction->setIcon(QIcon(resolveIconPath("Material/undo.svg")));
+  undoAction->setIcon(QIcon(resolveIconPath("MaterialVS/yellow/undo.svg")));
 
   redoAction = new QAction("やり直し (&R)");
   redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
-  redoAction->setIcon(QIcon(resolveIconPath("Material/redo.svg")));
+  redoAction->setIcon(QIcon(resolveIconPath("MaterialVS/yellow/redo.svg")));
 
   duplicateAction = new QAction("複製 (&D)");
   duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
-  duplicateAction->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
+  duplicateAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/content_copy.svg")));
 
   splitAction = new QAction("レイヤーを分割 (&S)");
   splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
-  splitAction->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
+  splitAction->setIcon(QIcon(resolveIconPath("MaterialVS/orange/content_cut.svg")));
 
   trimInAction = new QAction("インポイントを現在の時間にトリム");
   trimOutAction = new QAction("アウトポイントを現在の時間にトリム");
@@ -114,26 +114,26 @@ private:
 
   findAction = new QAction("検索 (&F)...");
   findAction->setShortcut(QKeySequence::Find);
-  findAction->setIcon(QIcon(resolveIconPath("Material/search.svg")));
+  findAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/search.svg")));
 
   preferencesAction = new QAction("環境設定 (&P)...");
-  preferencesAction->setIcon(QIcon(resolveIconPath("Material/settings.svg")));
+  preferencesAction->setIcon(QIcon(resolveIconPath("MaterialVS/purple/settings.svg")));
 
   copyAction_ = new QAction("コピー (&C)");
   copyAction_->setShortcut(QKeySequence::Copy);
-  copyAction_->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
+  copyAction_->setIcon(QIcon(resolveIconPath("MaterialVS/blue/content_copy.svg")));
 
   cutAction_ = new QAction("切り取り (&T)");
   cutAction_->setShortcut(QKeySequence::Cut);
-  cutAction_->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
+  cutAction_->setIcon(QIcon(resolveIconPath("MaterialVS/orange/content_cut.svg")));
 
   pasteAction_ = new QAction("貼り付け (&P)");
   pasteAction_->setShortcut(QKeySequence::Paste);
-  pasteAction_->setIcon(QIcon(resolveIconPath("Material/content_paste.svg")));
+  pasteAction_->setIcon(QIcon(resolveIconPath("MaterialVS/green/content_paste.svg")));
 
   deleteAction_ = new QAction("削除 (&D)");
   deleteAction_->setShortcut(QKeySequence::Delete);
-  deleteAction_->setIcon(QIcon(resolveIconPath("Material/delete.svg")));
+  deleteAction_->setIcon(QIcon(resolveIconPath("MaterialVS/red/delete.svg")));
 
   // Build menu
   menu->addAction(undoAction);
