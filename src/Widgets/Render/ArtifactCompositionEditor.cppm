@@ -670,12 +670,21 @@ public:
     const bool minimized = window() ? window()->isMinimized() : false;
     const quintptr hostWinId =
         visible ? static_cast<quintptr>(winId()) : quintptr{0};
+    const QSize logicalSize(width(), height());
+    const float hostDpr = devicePixelRatioF();
+    const QSize physicalSize(
+        static_cast<int>(std::ceil(static_cast<float>(logicalSize.width()) *
+                                   hostDpr)),
+        static_cast<int>(std::ceil(static_cast<float>(logicalSize.height()) *
+                                   hostDpr)));
 
     qInfo() << "[CompositionEditor][Readiness]"
             << "reason=" << reason
             << "visible=" << visible
             << "minimized=" << minimized
-            << "size=" << size()
+            << "size=" << logicalSize
+            << "physicalSize=" << physicalSize
+            << "dpr=" << hostDpr
             << "winId=" << hostWinId
             << "initialized=" << controller_->isInitialized();
 
@@ -701,14 +710,24 @@ public:
                                  static_cast<float>(height()));
 
     auto *renderer = controller_->renderer();
-    const bool needsSwapChain =
-        initializedNow || !renderer || !renderer->hasSwapChain();
+    const bool hostChanged = lastReadyHostWinId_ != hostWinId;
+    const bool physicalSizeChanged = lastReadyPhysicalSize_ != physicalSize;
+    const bool dprChanged = std::abs(lastReadyDpr_ - hostDpr) > 0.001f;
+    const bool needsSwapChain = initializedNow || !renderer ||
+                                !renderer->hasSwapChain() || hostChanged ||
+                                physicalSizeChanged || dprChanged;
     if (needsSwapChain) {
       QElapsedTimer swapChainTimer;
       swapChainTimer.start();
       controller_->recreateSwapChain(this);
       qInfo() << "[CompositionEditor][Readiness] recreateSwapChain ms="
-              << swapChainTimer.elapsed();
+              << swapChainTimer.elapsed()
+              << "hostChanged=" << hostChanged
+              << "physicalSizeChanged=" << physicalSizeChanged
+              << "dprChanged=" << dprChanged;
+      lastReadyHostWinId_ = hostWinId;
+      lastReadyPhysicalSize_ = physicalSize;
+      lastReadyDpr_ = hostDpr;
     }
 
     if (syncPreferredComposition()) {
@@ -1717,6 +1736,15 @@ protected:
     switch (event->type()) {
     case QEvent::Show:
       scheduleViewportReadinessCheck(QStringLiteral("event-show"), 16);
+      break;
+    case QEvent::WinIdChange:
+      resetSwapChainReadinessTracking();
+      scheduleViewportReadinessCheck(QStringLiteral("event-winid-change"), 0);
+      break;
+    case QEvent::PlatformSurface:
+      resetSwapChainReadinessTracking();
+      scheduleViewportReadinessCheck(QStringLiteral("event-platform-surface"),
+                                     16);
       break;
     case QEvent::ActivationChange:
       if (window() && window()->isActiveWindow()) {
@@ -2999,6 +3027,15 @@ private:
   QTimer *readinessTimer_ = nullptr;
   QString pendingReadinessReason_;
   bool readinessScheduled_ = false;
+  quintptr lastReadyHostWinId_ = 0;
+  QSize lastReadyPhysicalSize_;
+  float lastReadyDpr_ = 0.0f;
+
+  void resetSwapChainReadinessTracking() {
+    lastReadyHostWinId_ = 0;
+    lastReadyPhysicalSize_ = QSize();
+    lastReadyDpr_ = 0.0f;
+  }
 };
 
 class CompositionOverlayWidget final : public QWidget {

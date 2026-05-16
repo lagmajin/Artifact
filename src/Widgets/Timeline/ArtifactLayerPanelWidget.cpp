@@ -795,8 +795,8 @@ namespace {
  public:
   Impl()
   {
-    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
-    lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
+    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"));
+    lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"));
     if (lockIcon.isNull()) lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
     soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
     shyIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/orange/visibility_off.svg"));
@@ -808,6 +808,8 @@ namespace {
   QPixmap soloIcon;
   QPixmap audioIcon;
   QPixmap shyIcon;
+  QIcon parentIcon;
+  QIcon blendIcon;
   
   QPushButton* visibilityButton = nullptr;
   QPushButton* lockButton = nullptr;
@@ -824,12 +826,14 @@ namespace {
  ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   : QWidget(parent), impl_(new Impl())
  {
-  impl_->visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"), QStringLiteral("visibility.png"));
-  impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"), QStringLiteral("lock.png"));
+  impl_->visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"));
+  impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"));
   if (impl_->lockIcon.isNull()) impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
   impl_->soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
   impl_->audioIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/volume.svg"),         QStringLiteral("volume.png"));
   impl_->shyIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/orange/visibility_off.svg"));
+  impl_->parentIcon = loadLayerPanelIcon(QStringLiteral("MaterialVS/yellow/link.svg"));
+  impl_->blendIcon = loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/merge_type.svg"));
 
   auto visButton = impl_->visibilityButton = new QPushButton();
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
@@ -867,14 +871,24 @@ namespace {
   layerNameButton->setEnabled(false);
   applyLayerPanelButtonPalette(layerNameButton);
   
-  auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
+  auto parentHeader = impl_->parentHeaderButton = new QPushButton();
   parentHeader->setFixedWidth(kInlineParentWidth);
-  parentHeader->setEnabled(false);
+  parentHeader->setIcon(impl_->parentIcon);
+  parentHeader->setIconSize(QSize(16, 16));
+  parentHeader->setToolTip(QStringLiteral("Parent Link"));
+  parentHeader->setFlat(true);
+  parentHeader->setFocusPolicy(Qt::NoFocus);
+  parentHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(parentHeader);
   
-  auto blendHeader = impl_->blendHeaderButton = new QPushButton("Blend");
+  auto blendHeader = impl_->blendHeaderButton = new QPushButton();
   blendHeader->setFixedWidth(kInlineBlendWidth);
-  blendHeader->setEnabled(false);
+  blendHeader->setIcon(impl_->blendIcon);
+  blendHeader->setIconSize(QSize(16, 16));
+  blendHeader->setToolTip(QStringLiteral("Blend Mode"));
+  blendHeader->setFlat(true);
+  blendHeader->setFocusPolicy(Qt::NoFocus);
+  blendHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(blendHeader);
 
   auto* layout = new QHBoxLayout(this);
@@ -1203,7 +1217,7 @@ public:
  Impl()
   {
     visibilityIcon    = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"),     QStringLiteral("eye.png"));
-    lockIcon          = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"),            QStringLiteral("lock.png"));
+    lockIcon          = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"));
     soloIcon          = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"),           QStringLiteral("solo.png"));
     audioIcon         = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/volume.svg"),         QStringLiteral("volume.png"));
     shyIcon           = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/shy.svg"),            QStringLiteral("shy.png"));
