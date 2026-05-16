@@ -35,6 +35,7 @@ import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
 import Event.Bus;
 import Artifact.Event.Types;
+import Image.ImageF32x4_RGBA;
 import InputEvent;
 import Input.Operator;
 import Undo.UndoManager;
@@ -285,10 +286,33 @@ int compositionPreviewIntervalMs(
   void renderOneFrame() {
    if (!initialized_ || !renderer_) return;
    auto comp = previewPipeline_.composition();
+   FramePosition targetFrame = comp ? comp->framePosition() : FramePosition(0);
+   ArtifactCore::ImageF32x4_RGBA ramPreviewFrameImage;
+   bool useRamPreviewFallback = false;
+   if (auto* playback = ArtifactPlaybackService::instance()) {
+    const auto playbackComp = playback->currentComposition();
+    if (!playbackComp || (comp && playbackComp->id() == comp->id())) {
+     targetFrame = playback->currentFrame();
+     useRamPreviewFallback =
+         !playback->isPlaying() &&
+         playback->tryGetRamPreviewFrameImage(targetFrame.framePosition(),
+                                              ramPreviewFrameImage);
+    }
+   }
    if (comp) {
     auto size = comp->settings().compositionSize();
     renderer_->setCanvasSize((float)size.width(), (float)size.height());
-    previewPipeline_.setCurrentFrame(comp->framePosition().framePosition());
+    previewPipeline_.setCurrentFrame(targetFrame.framePosition());
+   }
+   if (useRamPreviewFallback && comp) {
+    QMatrix4x4 identity;
+    renderer_->clear();
+    renderer_->drawSpriteTransformed(
+        0.0f, 0.0f, (float)comp->settings().compositionSize().width(),
+        (float)comp->settings().compositionSize().height(), identity,
+        ramPreviewFrameImage, 1.0f);
+    renderer_->present();
+    return;
    }
    previewPipeline_.render(renderer_.get());
    renderer_->present();

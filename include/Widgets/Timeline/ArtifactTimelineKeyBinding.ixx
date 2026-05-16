@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 
 #include <QKeyEvent>
 #include <QKeySequence>

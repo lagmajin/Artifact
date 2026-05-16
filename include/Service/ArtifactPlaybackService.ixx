@@ -2,6 +2,7 @@
 #include <functional>
 
 #include <QObject>
+#include <QString>
 #include <algorithm>
 #include <any>
 #include <array>
@@ -40,6 +41,7 @@ import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
 import Frame.Debug;
+import Image.ImageF32x4_RGBA;
 import Playback.State;
 import Artifact.Composition.PlaybackController;
 import Artifact.Composition.Abstract;
@@ -54,6 +56,26 @@ W_REGISTER_ARGTYPE(Artifact::PlaybackSkipMode)
 export namespace Artifact {
 
 using namespace ArtifactCore;
+
+struct ArtifactRamPreviewFrameCacheState {
+  bool requested = false;
+  bool ready = false;
+  bool failed = false;
+  bool inRam = false;
+  bool onDisk = false;
+  QString reason;
+};
+
+struct ArtifactRamPreviewSummary {
+  bool enabled = false;
+  FrameRange range{FramePosition(0), FramePosition(0)};
+  int requestedFrames = 0;
+  int readyFrames = 0;
+  int failedFrames = 0;
+  int inRamFrames = 0;
+  int onDiskFrames = 0;
+  float hitRate = 0.0f;
+};
 
 class ArtifactPlaybackService : public QObject {
   W_OBJECT(ArtifactPlaybackService)
@@ -148,7 +170,18 @@ public:
   int ramPreviewCachedFrameCount() const; // Updated to improve performance
   int ramPreviewRequestedFrameCount() const;
   int ramPreviewReadyFrameCountInRange() const;
+  int ramPreviewFailedFrameCountInRange() const;
+  int ramPreviewDiskFrameCountInRange() const;
   std::vector<bool> ramPreviewCacheBitmap() const;
+  ArtifactRamPreviewFrameCacheState ramPreviewFrameState(int64_t frame) const;
+  ArtifactRamPreviewSummary ramPreviewSummary() const;
+  bool tryGetRamPreviewFrameImage(int64_t frame,
+                                  ArtifactCore::ImageF32x4_RGBA &outImage) const;
+  void markRamPreviewFrameRequested(int64_t frame, const QString &reason = {});
+  void markRamPreviewFrameReady(int64_t frame);
+  void markRamPreviewFrameFailed(int64_t frame, const QString &reason);
+  void markRamPreviewFrameOnDisk(int64_t frame, bool onDisk = true);
+  void clearRamPreviewFrameFailure(int64_t frame);
 
   // Marker navigation
   void goToNextMarker();

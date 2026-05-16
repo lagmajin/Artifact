@@ -133,6 +133,37 @@ layerInsertionIndexForTrackDrop(const QVector<LayerID> &trackLayerIds,
   return targetLayerIndex;
 }
 
+struct TimelineCacheVisuals {
+  std::vector<bool> readyFrames;
+  std::vector<bool> failedFrames;
+  std::vector<bool> onDiskFrames;
+};
+
+TimelineCacheVisuals buildTimelineCacheVisuals(ArtifactPlaybackService *playback) {
+  TimelineCacheVisuals visuals;
+  if (!playback) {
+    return visuals;
+  }
+
+  const auto readyBitmap = playback->ramPreviewCacheBitmap();
+  const int64_t frameCount = static_cast<int64_t>(readyBitmap.size());
+  visuals.readyFrames = readyBitmap;
+  visuals.failedFrames.assign(readyBitmap.size(), false);
+  visuals.onDiskFrames.assign(readyBitmap.size(), false);
+
+  for (int64_t frame = 0; frame < frameCount; ++frame) {
+    const auto state = playback->ramPreviewFrameState(frame);
+    visuals.failedFrames[static_cast<size_t>(frame)] = state.failed;
+    visuals.onDiskFrames[static_cast<size_t>(frame)] = state.onDisk;
+    if (!visuals.readyFrames[static_cast<size_t>(frame)]) {
+      visuals.readyFrames[static_cast<size_t>(frame)] =
+          state.ready && state.inRam && !state.failed;
+    }
+  }
+
+  return visuals;
+}
+
 QColor layerTimelineColor(const ArtifactAbstractLayerPtr& layer)
 {
   if (!layer) {
@@ -1952,7 +1983,10 @@ void ArtifactTimelineWidget::updateCacheVisuals()
   }
 
   if (auto* svc = ArtifactPlaybackService::instance()) {
-    impl_->scrubBar_->setCacheBitmap(svc->ramPreviewCacheBitmap());
+    const auto visuals = buildTimelineCacheVisuals(svc);
+    impl_->scrubBar_->setFrameStateBitmaps(visuals.readyFrames,
+                                           visuals.failedFrames,
+                                           visuals.onDiskFrames);
     impl_->scrubBar_->setCachedFrameRange(
         static_cast<int>(svc->ramPreviewRange().start()),
         static_cast<int>(svc->ramPreviewRange().end()),
@@ -2675,7 +2709,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   scrubBar->update();
 
   if (auto *playback = ArtifactPlaybackService::instance()) {
-    scrubBar->setCacheBitmap(playback->ramPreviewCacheBitmap());
+    const auto visuals = buildTimelineCacheVisuals(playback);
+    scrubBar->setFrameStateBitmaps(visuals.readyFrames, visuals.failedFrames,
+                                   visuals.onDiskFrames);
     scrubBar->setCachedFrameRange(static_cast<int>(playback->ramPreviewRange().start()),
                                   static_cast<int>(playback->ramPreviewRange().end()),
                                   playback->isRamPreviewEnabled());
@@ -3161,6 +3197,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   };
   QObject::connect(impl_->playbackVisualTimer_, &QTimer::timeout, this,
                    updateSmoothPlaybackPlayhead);
+  if (auto *playback = ArtifactPlaybackService::instance()) {
+    QObject::connect(playback, &ArtifactPlaybackService::ramPreviewStateChanged,
+                     this, [this](bool, const FrameRange &) {
+                       updateCacheVisuals();
+                     });
+    QObject::connect(playback, &ArtifactPlaybackService::ramPreviewStatsChanged,
+                     this, [this](float, int) { updateCacheVisuals(); });
+  }
 
   const auto restartSmoothPlaybackPlayhead = [this]() {
     if (!impl_) {

@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 #include <QVector>
 #include <QWidget>
 #include <wobjectimpl.h>

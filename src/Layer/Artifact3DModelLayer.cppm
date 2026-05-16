@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QDir>
@@ -358,16 +357,6 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
 
   if (impl_->renderMode_ == RenderMode::Solid) {
     const QString cacheKey = sourcePath().isEmpty() ? id().toString() : sourcePath();
-    if (!impl_->material_.baseColorTexture().toQString().isEmpty()) {
-      renderer->setBaseColorTexture(impl_->material_.baseColorTexture().toQString());
-    } else {
-      renderer->clearBaseColorTexture();
-    }
-    if (!impl_->material_.opacityTexture().toQString().isEmpty()) {
-      renderer->setOpacityTexture(impl_->material_.opacityTexture().toQString());
-    } else {
-      renderer->clearOpacityTexture();
-    }
     renderer->drawMesh(cacheKey, impl_->mesh_, impl_->material_, modelMatrix,
                        opacity());
   } else {

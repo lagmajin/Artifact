@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 #include <iostream>
 #include <vector>
 #include <string>

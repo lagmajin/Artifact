@@ -197,27 +197,27 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu = new QMenu("新規(&N)", menu);
     createSolidAction = new QAction("平面(&Y)...", createMenu);
     createSolidAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
-    createSolidAction->setIcon(QIcon(resolveIconPath("Material/palette.svg")));
+    createSolidAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/palette.svg")));
 
     createNullAction = new QAction("ヌルオブジェクト(&N)", createMenu);
     createNullAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_Y));
-    createNullAction->setIcon(QIcon(resolveIconPath("Material/aspect_ratio.svg")));
+    createNullAction->setIcon(QIcon(resolveIconPath("MaterialVS/purple/aspect_ratio.svg")));
 
     createAdjustAction = new QAction("調整レイヤー(&A)", createMenu);
     createAdjustAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Y));
-    createAdjustAction->setIcon(QIcon(resolveIconPath("Material/blur_on.svg")));
+    createAdjustAction->setIcon(QIcon(resolveIconPath("MaterialVS/orange/blur_on.svg")));
 
     createTextAction = new QAction("テキスト(&T)", createMenu);
     createTextAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_T));
-    createTextAction->setIcon(QIcon(resolveIconPath("Material/title.svg")));
+    createTextAction->setIcon(QIcon(resolveIconPath("MaterialVS/purple/title.svg")));
 
     createParticleAction = new QAction("パーティクル(&P)", createMenu);
 
     createCameraAction = new QAction("カメラ(&C)", createMenu);
-    createCameraAction->setIcon(QIcon(resolveIconPath("Material/videocam.svg")));
+    createCameraAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/videocam.svg")));
 
     createAudioAction = new QAction("オーディオ(&U)...", createMenu);
-    createAudioAction->setIcon(QIcon(resolveIconPath("Material/audiotrack.svg")));
+    createAudioAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/audiotrack.svg")));
 
     createSvgAction = new QAction("SVG シェイプレイヤー(&V)...", createMenu);
     createModel3DAction = new QAction("3Dモデルレイヤー(&3)...", createMenu);
@@ -238,7 +238,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeMenu->addAction(createShapeStarAction);
 
     trackCameraAction = new QAction("3Dカメラトラッキング(&T)", menu);
-    trackCameraAction->setIcon(QIcon(resolveIconPath("Material/videocam.svg")));
+    trackCameraAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/videocam.svg")));
 
     createMenu->addAction(createSolidAction);
     createMenu->addAction(createNullAction);
@@ -253,20 +253,20 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
     duplicateLayerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
-    duplicateLayerAction->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
+    duplicateLayerAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/content_copy.svg")));
     renameLayerAction = new QAction("レイヤー名を変更(&R)...", menu);
     renameLayerAction->setShortcut(QKeySequence(Qt::Key_F2));
     deleteLayerAction = new QAction("削除(&X)", menu);
     deleteLayerAction->setShortcut(QKeySequence(Qt::Key_Delete));
-    deleteLayerAction->setIcon(QIcon(resolveIconPath("Material/delete.svg")));
+    deleteLayerAction->setIcon(QIcon(resolveIconPath("MaterialVS/red/delete.svg")));
 
     switchMenu = new QMenu("スイッチ(&S)", menu);
     toggleVisibleAction = new QAction("表示/非表示を切替", switchMenu);
-    toggleVisibleAction->setIcon(QIcon(resolveIconPath("Material/visibility.svg")));
+    toggleVisibleAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/visibility.svg")));
     toggleLockAction = new QAction("ロックを切替", switchMenu);
-    toggleLockAction->setIcon(QIcon(resolveIconPath("Material/lock.svg")));
+    toggleLockAction->setIcon(QIcon(resolveIconPath("MaterialVS/yellow/lock.svg")));
     toggleSoloAction = new QAction("ソロを切替", switchMenu);
-    toggleSoloAction->setIcon(QIcon(resolveIconPath("Material/headset.svg")));
+    toggleSoloAction->setIcon(QIcon(resolveIconPath("MaterialVS/purple/headset.svg")));
     toggleShyAction = new QAction("シャイを切替", switchMenu);
     soloOnlyAction = new QAction("選択レイヤーのみソロ", switchMenu);
     switchMenu->addAction(toggleVisibleAction);
@@ -284,12 +284,12 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
     precomposeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
-    precomposeAction->setIcon(QIcon(resolveIconPath("Material/view_comfy.svg")));
+    precomposeAction->setIcon(QIcon(resolveIconPath("MaterialVS/purple/view_comfy.svg")));
     groupSelectionAction = new QAction("グループ化(&G)...", menu);
     ungroupAction = new QAction("グループ解除(&U)", menu);
     splitAction = new QAction("レイヤー分割(&L)", menu);
     splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
-    splitAction->setIcon(QIcon(resolveIconPath("Material/content_cut.svg")));
+    splitAction->setIcon(QIcon(resolveIconPath("MaterialVS/orange/content_cut.svg")));
 
     menu->addMenu(createMenu);
     menu->addAction(trackCameraAction);

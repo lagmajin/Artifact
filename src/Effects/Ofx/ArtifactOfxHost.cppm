@@ -831,9 +831,9 @@ OfxStatus paramGetValueUnsupported(OfxParamHandle paramHandle, ...) {
 }
 
 OfxStatus paramGetValueAtTimeUnsupported(OfxParamHandle paramHandle,
-                                          OfxTime /*time*/, ...) {
+                                         OfxTime time, ...) {
   va_list args;
-  va_start(args, paramHandle);
+  va_start(args, time);
   const OfxStatus status = paramGetValueImpl(paramHandle, args);
   va_end(args);
   return status;
@@ -859,9 +859,9 @@ OfxStatus paramSetValueUnsupported(OfxParamHandle paramHandle, ...) {
 }
 
 OfxStatus paramSetValueAtTimeUnsupported(OfxParamHandle paramHandle,
-                                         OfxTime /*time*/, ...) {
+                                         OfxTime time, ...) {
   va_list args;
-  va_start(args, paramHandle);
+  va_start(args, time);
   const OfxStatus status = paramSetValueImpl(paramHandle, args);
   va_end(args);
   return status;

@@ -70,164 +70,164 @@ QIcon menuIcon(const QString& path)
 
  // Keyframe Assistant submenu
   keyframeAssistantMenu_ = new QMenu("キーフレーム補助(&K)", menu);
-  keyframeAssistantMenu_->setIcon(menuIcon(QStringLiteral("Material/tune.svg")));
-  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("Material/show_chart.svg")), "イージーイーズ");
-  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("Material/trending_up.svg")), "イージーイーズイン");
-  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("Material/trending_down.svg")), "イージーイーズアウト");
-  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("Material/stacked_line_chart.svg")), "指数スケール");
-  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("Material/sort.svg")), "レイヤーを順番に配置");
-  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("Material/replay.svg")), "時間反転キーフレーム");
-  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("Material/audiotrack.svg")), "オーディオをキーフレームに変換");
-  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("Material/code.svg")), "エクスプレッションをキーフレームに変換");
+  keyframeAssistantMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/yellow/tune.svg")));
+  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/show_chart.svg")), "イージーイーズ");
+  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/trending_up.svg")), "イージーイーズイン");
+  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/trending_down.svg")), "イージーイーズアウト");
+  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/show_chart.svg")), "指数スケール");
+  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/linear_scale.svg")), "レイヤーを順番に配置");
+  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/replay.svg")), "時間反転キーフレーム");
+  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/audiotrack.svg")), "オーディオをキーフレームに変換");
+  keyframeAssistantMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/code.svg")), "エクスプレッションをキーフレームに変換");
 
   // Expression Controls submenu
   expressionControlsMenu_ = new QMenu("エクスプレッション制御(&E)", menu);
-  expressionControlsMenu_->setIcon(menuIcon(QStringLiteral("Material/functions.svg")));
-  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("Material/rotate_right.svg")), "角度制御");
-  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("Material/check_box.svg")), "チェックボックス制御");
-  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("Material/palette.svg")), "カラー制御");
-  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("Material/layers.svg")), "レイヤー制御");
-  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("Material/fiber_manual_record.svg")), "ポイント制御");
-  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "スライダー制御");
+  expressionControlsMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/purple/functions.svg")));
+  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/redo.svg")), "角度制御");
+  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/check.svg")), "チェックボックス制御");
+  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")), "カラー制御");
+  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/layers.svg")), "レイヤー制御");
+  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/near_me.svg")), "ポイント制御");
+  expressionControlsMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/tune.svg")), "スライダー制御");
 
   // Channel submenu
   channelMenu_ = new QMenu("チャンネル(&C)", menu);
-  channelMenu_->setIcon(menuIcon(QStringLiteral("Material/compare_arrows.svg")));
-  channelMenu_->addAction(menuIcon(QStringLiteral("Material/mask.svg")), "マット設定");
-  channelMenu_->addAction(menuIcon(QStringLiteral("Material/functions.svg")), "算術");
-  channelMenu_->addAction(menuIcon(QStringLiteral("Material/layers.svg")), "ブレンド");
-  channelMenu_->addAction(menuIcon(QStringLiteral("Material/flip.svg")), "反転");
-  channelMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "ミニマックス");
-  channelMenu_->addAction(menuIcon(QStringLiteral("Material/merge_type.svg")), "チャンネルコンバイナー");
+  channelMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/linear_scale.svg")));
+  channelMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/visibility.svg")), "マット設定");
+  channelMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/functions.svg")), "算術");
+  channelMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/layers.svg")), "ブレンド");
+  channelMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/invert_colors.svg")), "反転");
+  channelMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/tune.svg")), "ミニマックス");
+  channelMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/merge_type.svg")), "チャンネルコンバイナー");
 
   // Stylize submenu
   stylizeMenu_ = new QMenu("スタイライズ(&S)", menu);
-  stylizeMenu_->setIcon(menuIcon(QStringLiteral("Material/style.svg")));
-  stylizeMenu_->addAction(menuIcon(QStringLiteral("Material/shadow.svg")), "ドロップシャドウ");
-  stylizeMenu_->addAction(menuIcon(QStringLiteral("Material/wb_sunny.svg")), "グロー");
-  stylizeMenu_->addAction(menuIcon(QStringLiteral("Material/draw.svg")), "ベベルアルファ");
-  stylizeMenu_->addAction(menuIcon(QStringLiteral("Material/texture.svg")), "ベベルエッジ");
+  stylizeMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/purple/auto_awesome.svg")));
+  stylizeMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/vignette.svg")), "ドロップシャドウ");
+  stylizeMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/wb_sunny.svg")), "グロー");
+  stylizeMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/draw.svg")), "ベベルアルファ");
+  stylizeMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/grid_view.svg")), "ベベルエッジ");
 
   // Color Correction submenu
   colorCorrectionMenu_ = new QMenu("カラー補正(&C)", menu);
-  colorCorrectionMenu_->setIcon(menuIcon(QStringLiteral("Material/palette.svg")));
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/brightness_6.svg")), "輝度＆コントラスト");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/show_chart.svg")), "トーンカーブ");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/tint.svg")), "Tint");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/filter.svg")), "Photo Filter");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/gradient.svg")), "Gradient Ramp");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/palette.svg")), "Fill");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/hdr_on.svg")), "色相/彩度");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/color_lens.svg")), "Color Wheels");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/show_chart.svg")), "Curves");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/gradient.svg")), "Tritone");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/palette.svg")), "Colorama");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/color_lens.svg")), "Color Balance");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "Levels");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/merge_type.svg")), "Channel Mixer");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/colorize.svg")), "Selective Color");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "レベル補正");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/color_lens.svg")), "カラーバランス");
-  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("Material/filter.svg")), "写真フィルター");
+  colorCorrectionMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")));
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/brightness_6.svg")), "輝度＆コントラスト");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/show_chart.svg")), "トーンカーブ");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/colorize.svg")), "Tint");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/photo_filter.svg")), "Photo Filter");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/tonality.svg")), "Gradient Ramp");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")), "Fill");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/hdr_on.svg")), "色相/彩度");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")), "Color Wheels");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/show_chart.svg")), "Curves");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/tonality.svg")), "Tritone");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")), "Colorama");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")), "Color Balance");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/tune.svg")), "Levels");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/merge_type.svg")), "Channel Mixer");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/colorize.svg")), "Selective Color");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/tune.svg")), "レベル補正");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")), "カラーバランス");
+  colorCorrectionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/photo_filter.svg")), "写真フィルター");
 
   // Distort submenu
   distortMenu_ = new QMenu("ディストーション(&D)", menu);
-  distortMenu_->setIcon(menuIcon(QStringLiteral("Material/transform.svg")));
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/lens_blur.svg")), "バルジ");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/crop.svg")), "コーナーピン");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/zoom_in.svg")), "レンズ補正");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/search.svg")), "マグニファイ");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/grid_on.svg")), "メッシュワープ");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/adjust.svg")), "オプティクス補償");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/transform.svg")), "トランスフォーム");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/waves.svg")), "タービュレントディスプレイス");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/tornado.svg")), "トワール");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/warp.svg")), "ワープ");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/waves.svg")), "波形ワープ");
-  distortMenu_->addAction(menuIcon(QStringLiteral("Material/camera.svg")), "レンズディストーション");
+  distortMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/orange/transform.svg")));
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/blur_on.svg")), "バルジ");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/crop.svg")), "コーナーピン");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/zoom_in.svg")), "レンズ補正");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/search.svg")), "マグニファイ");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/grid_on.svg")), "メッシュワープ");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/tune.svg")), "オプティクス補償");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/transform.svg")), "トランスフォーム");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/swirl.svg")), "タービュレントディスプレイス");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/swirl.svg")), "トワール");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/transform.svg")), "ワープ");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/swirl.svg")), "波形ワープ");
+  distortMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/camera_alt.svg")), "レンズディストーション");
 
   // Blur & Sharpen submenu
   blurSharpenMenu_ = new QMenu("ブラー＆シャープ(&B)", menu);
-  blurSharpenMenu_->setIcon(menuIcon(QStringLiteral("Material/blur_on.svg")));
-  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("Material/blur_on.svg")), "ブラー (ガウス)");
-  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("Material/blur_circular.svg")), "ブラー (滑らか)");
-  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("Material/blur_linear.svg")), "ブラー (方向)");
-  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("Material/radial_blur.svg")), "ブラー (放射状)");
-  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("Material/sharpen.svg")), "シャープ");
-  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("Material/auto_fix_high.svg")), "アンシャープマスク");
+  blurSharpenMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/orange/blur_on.svg")));
+  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/blur_on.svg")), "ブラー (ガウス)");
+  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/blur_on.svg")), "ブラー (滑らか)");
+  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/linear_scale.svg")), "ブラー (方向)");
+  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/filter_center_focus.svg")), "ブラー (放射状)");
+  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/auto_fix_high.svg")), "シャープ");
+  blurSharpenMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/auto_fix_high.svg")), "アンシャープマスク");
 
   // Noise & Grain submenu
   noiseGrainMenu_ = new QMenu("Noise & Grain", menu);
-  noiseGrainMenu_->setIcon(menuIcon(QStringLiteral("Material/grain.svg")));
-  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("Material/grain.svg")), "Add Grain");
-  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("Material/brush.svg")), "Dust & Scratches");
-  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("Material/auto_awesome.svg")), "Fractal Noise");
-  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "Median");
-  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("Material/noise_control_off.svg")), "Noise");
-  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("Material/hdr_auto.svg")), "Noise HLS");
-  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("Material/hdr_auto_select.svg")), "Noise HLS Auto");
-  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("Material/cleaning_services.svg")), "Remove Grain");
+  noiseGrainMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/yellow/graphic_eq.svg")));
+  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/graphic_eq.svg")), "Add Grain");
+  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/brush.svg")), "Dust & Scratches");
+  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/auto_awesome.svg")), "Fractal Noise");
+  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/tune.svg")), "Median");
+  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/graphic_eq.svg")), "Noise");
+  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/hdr_on.svg")), "Noise HLS");
+  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/hdr_on.svg")), "Noise HLS Auto");
+  noiseGrainMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/auto_fix_high.svg")), "Remove Grain");
 
   // Transition submenu
   transitionMenu_ = new QMenu("Transition", menu);
-  transitionMenu_->setIcon(menuIcon(QStringLiteral("Material/compare_arrows.svg")));
-  transitionMenu_->addAction(menuIcon(QStringLiteral("Material/straighten.svg")), "Linear Wipe");
-  transitionMenu_->addAction(menuIcon(QStringLiteral("Material/circle.svg")), "Radial Wipe");
-  transitionMenu_->addAction(menuIcon(QStringLiteral("Material/view_day.svg")), "Venetian Blinds");
-  transitionMenu_->addAction(menuIcon(QStringLiteral("Material/fade.svg")), "Dissolve");
-  transitionMenu_->addAction(menuIcon(QStringLiteral("Material/arrow_forward.svg")), "Fade In");
-  transitionMenu_->addAction(menuIcon(QStringLiteral("Material/arrow_back.svg")), "Fade Out");
+  transitionMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/linear_scale.svg")));
+  transitionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/straighten.svg")), "Linear Wipe");
+  transitionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/filter_center_focus.svg")), "Radial Wipe");
+  transitionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/view_sidebar.svg")), "Venetian Blinds");
+  transitionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/tonality.svg")), "Dissolve");
+  transitionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/arrow_right.svg")), "Fade In");
+  transitionMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/arrow_left.svg")), "Fade Out");
 
   // Utility submenu
   utilityMenu_ = new QMenu("Utility", menu);
-  utilityMenu_->setIcon(menuIcon(QStringLiteral("Material/settings.svg")));
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/color_lens.svg")), "Apply Color LUT");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/tonality.svg")), "Change Colorspace");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/palette.svg")), "Change To Color");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/link.svg")), "Color Link");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/grid_on.svg")), "Displacement Map");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/shadow.svg")), "Drop Shadow");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/content_cut.svg")), "Extract");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/wb_sunny.svg")), "Glow");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/hdr_auto.svg")), "HDR Tonemap");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/hdr_strong.svg")), "HDR Highlight Compression");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "Levels (Individual Controls)");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/crop_din.svg")), "Null Object");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/blur_on.svg")), "Particle Playground");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/tint.svg")), "White Balance");
-  utilityMenu_->addAction(menuIcon(QStringLiteral("Material/edit.svg")), "Write-on");
+  utilityMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/purple/settings.svg")));
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")), "Apply Color LUT");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/tonality.svg")), "Change Colorspace");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")), "Change To Color");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/link.svg")), "Color Link");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/grid_on.svg")), "Displacement Map");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/vignette.svg")), "Drop Shadow");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/content_cut.svg")), "Extract");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/wb_sunny.svg")), "Glow");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/hdr_on.svg")), "HDR Tonemap");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/hdr_on.svg")), "HDR Highlight Compression");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/tune.svg")), "Levels (Individual Controls)");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/aspect_ratio.svg")), "Null Object");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/blur_on.svg")), "Particle Playground");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/colorize.svg")), "White Balance");
+  utilityMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/edit.svg")), "Write-on");
 
   // Matte submenu
   matteMenu_ = new QMenu("Matte", menu);
-  matteMenu_->setIcon(menuIcon(QStringLiteral("Material/mask.svg")));
-  matteMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "Matte Choker");
-  matteMenu_->addAction(menuIcon(QStringLiteral("Material/tune.svg")), "Simple Choker");
-  matteMenu_->addAction(menuIcon(QStringLiteral("Material/opacity.svg")), "Alpha Levels");
-  matteMenu_->addAction(menuIcon(QStringLiteral("Material/opacity.svg")), "Alpha Matte");
-  matteMenu_->addAction(menuIcon(QStringLiteral("Material/compare.svg")), "Difference Matte");
-  matteMenu_->addAction(menuIcon(QStringLiteral("Material/contrast.svg")), "Luma Matte");
-  matteMenu_->addAction(menuIcon(QStringLiteral("Material/track_changes.svg")), "Track Matte");
+  matteMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/visibility.svg")));
+  matteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/tune.svg")), "Matte Choker");
+  matteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/tune.svg")), "Simple Choker");
+  matteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/opacity.svg")), "Alpha Levels");
+  matteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/opacity.svg")), "Alpha Matte");
+  matteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/contrast.svg")), "Difference Matte");
+  matteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/contrast.svg")), "Luma Matte");
+  matteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/blue/filter_center_focus.svg")), "Track Matte");
 
   // Perspective submenu
   perspectiveMenu_ = new QMenu("Perspective", menu);
-  perspectiveMenu_->setIcon(menuIcon(QStringLiteral("Material/view_in_ar.svg")));
-  perspectiveMenu_->addAction(menuIcon(QStringLiteral("Material/texture.svg")), "Bevel Alpha");
-  perspectiveMenu_->addAction(menuIcon(QStringLiteral("Material/texture.svg")), "Bevel Edges");
-  perspectiveMenu_->addAction(menuIcon(QStringLiteral("Material/shadow.svg")), "Drop Shadow");
+  perspectiveMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/view_in_ar.svg")));
+  perspectiveMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/grid_view.svg")), "Bevel Alpha");
+  perspectiveMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/purple/grid_view.svg")), "Bevel Edges");
+  perspectiveMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/orange/vignette.svg")), "Drop Shadow");
 
   // Keying submenu
   keyingMenu_ = new QMenu("Keying", menu);
-  keyingMenu_->setIcon(menuIcon(QStringLiteral("Material/verified_user.svg")));
-  keyingMenu_->addAction(menuIcon(QStringLiteral("Material/gradient.svg")), "Chroma Key");
-  keyingMenu_->addAction(menuIcon(QStringLiteral("Material/palette.svg")), "Color Key");
-  keyingMenu_->addAction(menuIcon(QStringLiteral("Material/brightness_6.svg")), "Luma Key");
+  keyingMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/green/check_circle.svg")));
+  keyingMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/tonality.svg")), "Chroma Key");
+  keyingMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/green/palette.svg")), "Color Key");
+  keyingMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/yellow/brightness_6.svg")), "Luma Key");
 
   // Obsolete submenu
   obsoleteMenu_ = new QMenu("Obsolete", menu);
-  obsoleteMenu_->setIcon(menuIcon(QStringLiteral("Material/history.svg")));
-  obsoleteMenu_->addAction(menuIcon(QStringLiteral("Material/view_in_ar.svg")), "3D Glasses");
-  obsoleteMenu_->addAction(menuIcon(QStringLiteral("Material/audiotrack.svg")), "Audio Spectrum");
-  obsoleteMenu_->addAction(menuIcon(QStringLiteral("Material/waves.svg")), "Audio Waveform");
+  obsoleteMenu_->setIcon(menuIcon(QStringLiteral("MaterialVS/neutral/history.svg")));
+  obsoleteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/neutral/view_sidebar.svg")), "3D Glasses");
+  obsoleteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/neutral/audiotrack.svg")), "Audio Spectrum");
+  obsoleteMenu_->addAction(menuIcon(QStringLiteral("MaterialVS/neutral/graphic_eq.svg")), "Audio Waveform");
   obsoleteMenu_->addAction("Backlight");
   obsoleteMenu_->addAction("Beam");
   obsoleteMenu_->addAction("Block Dissolve");

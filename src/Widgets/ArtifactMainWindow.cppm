@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 #include <algorithm>
 #include <utility>
 #if defined(_WIN32)
@@ -387,6 +386,12 @@ void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
   if (!floatingWidget) {
     return;
   }
+
+  qInfo() << "[MainWindow][Floating] prepare container"
+          << "object=" << floatingWidget
+          << "visible=" << floatingWidget->isVisible()
+          << "minimized=" << floatingWidget->isMinimized()
+          << "geometry=" << floatingWidget->geometry();
 
   if (eventFilterOwner) {
     floatingWidget->removeEventFilter(eventFilterOwner);
@@ -1124,6 +1129,11 @@ void ArtifactMainWindow::addDockedWidgetFloating(
   if (!impl_ || !impl_->dockManager || !widget)
     return;
 
+  qInfo() << "[MainWindow][Floating] addDockedWidgetFloating"
+          << "title=" << title << "dockId=" << dockId
+          << "widget=" << widget
+          << "geometry=" << floatingGeometry;
+
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
   dock->setWidget(widget);
@@ -1133,6 +1143,10 @@ void ArtifactMainWindow::addDockedWidgetFloating(
 
   auto *container = impl_->dockManager->addDockWidgetFloating(dock);
   if (container) {
+    qInfo() << "[MainWindow][Floating] dock container created"
+            << "dock=" << dock << "container=" << container
+            << "visible=" << container->isVisible()
+            << "geometry=" << container->geometry();
     container->setGeometry(floatingGeometry);
   }
 

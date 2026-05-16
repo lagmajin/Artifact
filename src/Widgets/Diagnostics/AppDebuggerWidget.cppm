@@ -1,5 +1,4 @@
 module;
-class tst_QList;
 #include <algorithm>
 #include <cmath>
 #include <QDateTime>
@@ -458,18 +457,17 @@ public:
         if (!playbackSvc) {
             return QStringLiteral("ramPreview=<no service>");
         }
-        const int requestedFrames = playbackSvc->ramPreviewRequestedFrameCount();
-        const int readyFrames = playbackSvc->ramPreviewReadyFrameCountInRange();
-        const int cachedFrames = playbackSvc->ramPreviewCachedFrameCount();
-        const float hitRate = playbackSvc->ramPreviewHitRate() * 100.0f;
-        const auto range = playbackSvc->ramPreviewRange();
-        return QStringLiteral("ramPreview ready=%1/%2 cached=%3 hit=%4%% range=%5-%6")
-                .arg(readyFrames)
-                .arg(requestedFrames)
-                .arg(cachedFrames)
-                .arg(QString::number(hitRate, 'f', 1))
-                .arg(range.start())
-                .arg(range.end());
+        const auto summary = playbackSvc->ramPreviewSummary();
+        return QStringLiteral(
+                   "ramPreview ready=%1/%2 failed=%3 inRam=%4 onDisk=%5 hit=%6%% range=%7-%8")
+                .arg(summary.readyFrames)
+                .arg(summary.requestedFrames)
+                .arg(summary.failedFrames)
+                .arg(summary.inRamFrames)
+                .arg(summary.onDiskFrames)
+                .arg(QString::number(summary.hitRate * 100.0f, 'f', 1))
+                .arg(summary.range.start())
+                .arg(summary.range.end());
     }
 
     static QString renderTimingText(const ArtifactCore::FrameDebugSnapshot& snapshot,

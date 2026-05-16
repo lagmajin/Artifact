@@ -238,12 +238,12 @@ namespace Artifact
         selectedSourceIndex(),
         reason
     });
-    eventBus_.drain();
+    (void)eventBus_.drain();
   }
 
   void postHistoryMessage(const QString& message, int sourceIndex = -1, bool alsoHistory = true) {
     eventBus_.post<RenderQueueLogEvent>(RenderQueueLogEvent{message, sourceIndex, alsoHistory});
-    eventBus_.drain();
+    (void)eventBus_.drain();
   }
 
   struct JobLineData {
