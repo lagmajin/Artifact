@@ -339,7 +339,7 @@ public:
                 previewLabel->setPixmap(QPixmap::fromImage(compositeImage));
             }
             if (infoLabel) {
-                infoLabel->setText("No composition selected");
+                infoLabel->setText("Open a composition to inspect the layer preview");
             }
             return;
         }

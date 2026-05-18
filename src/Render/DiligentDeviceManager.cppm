@@ -3,6 +3,7 @@ module;
 #include <algorithm>
 #include <QWidget>
 #include <QDebug>
+#include <QSize>
 #include <QString>
 #include <QStringList>
 #include <atomic>
@@ -367,6 +368,7 @@ public:
     RefCntAutoPtr<IDeviceContext> deferredContext_;
     RefCntAutoPtr<ISwapChain> swapChain_;
     HWND renderHwnd_ = nullptr;
+    HWND renderParentHwnd_ = nullptr;
     QWidget* widget_ = nullptr;
     bool initialized_ = false;
     bool usingSharedDevice_ = false;
@@ -396,6 +398,8 @@ public:
     void createSwapChain(QWidget* widget);
     void recreateSwapChain(QWidget* widget);
     void destroy();
+    bool ensureRenderChildWindow(QWidget* widget, int width, int height,
+                                 const char* reason);
     bool createSwapChainForBackend(HWND hwnd, int width, int height);
 };
 
@@ -473,16 +477,8 @@ void DiligentDeviceManager::Impl::initialize(QWidget* widget)
     currentPhysicalHeight_ = static_cast<int>(widget_->height() * widget_->devicePixelRatio());
     currentDevicePixelRatio_ = widget_->devicePixelRatio();
 
-    HWND parentHwnd = reinterpret_cast<HWND>(widget_->winId());
-    // WS_EX_TRANSPARENT: mouse hit-testing skips this HWND and falls through to
-    // the parent Qt widget HWND, so nativeEvent() on the viewport receives all
-    // mouse messages.  D3D12/Vulkan presentation is unaffected by this style.
-    renderHwnd_ = CreateWindowEx(
-        WS_EX_TRANSPARENT, ensureRenderWindowClass(), nullptr,
-        WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-        0, 0, (std::max)(currentPhysicalWidth_, 1),
-        (std::max)(currentPhysicalHeight_, 1),
-        parentHwnd, nullptr, GetModuleHandle(nullptr), nullptr);
+    ensureRenderChildWindow(widget_, currentPhysicalWidth_,
+                            currentPhysicalHeight_, "initialize");
 
     if (currentPhysicalWidth_ <= 0 || currentPhysicalHeight_ <= 0) {
         qWarning() << "[DiligentDeviceManager] swapchain deferred: widget is"
@@ -548,21 +544,8 @@ void DiligentDeviceManager::Impl::createSwapChain(QWidget* window)
     currentPhysicalHeight_ = static_cast<int>(window->height() * window->devicePixelRatio());
     currentDevicePixelRatio_ = window->devicePixelRatio();
 
-    if (!renderHwnd_) {
-        HWND parentHwnd = reinterpret_cast<HWND>(window->winId());
-        renderHwnd_ = CreateWindowEx(
-            WS_EX_TRANSPARENT, ensureRenderWindowClass(), nullptr,
-            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-            0, 0, (std::max)(currentPhysicalWidth_, 1),
-            (std::max)(currentPhysicalHeight_, 1),
-            parentHwnd, nullptr, GetModuleHandle(nullptr), nullptr);
-    } else {
-        // Ensure the HWND matches the current widget size
-        SetWindowPos(renderHwnd_, nullptr, 0, 0,
-                     (std::max)(currentPhysicalWidth_, 1),
-                     (std::max)(currentPhysicalHeight_, 1),
-                     SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
-    }
+    ensureRenderChildWindow(window, currentPhysicalWidth_,
+                            currentPhysicalHeight_, "createSwapChain");
 
     if (!swapChain_) {
         if (currentPhysicalWidth_ <= 0 || currentPhysicalHeight_ <= 0) {
@@ -613,6 +596,8 @@ void DiligentDeviceManager::Impl::recreateSwapChain(QWidget* widget)
     currentPhysicalWidth_ = newWidth;
     currentPhysicalHeight_ = newHeight;
     currentDevicePixelRatio_ = newDevicePixelRatio;
+    ensureRenderChildWindow(widget, currentPhysicalWidth_,
+                            currentPhysicalHeight_, "recreateSwapChain");
 
     qDebug() << "DiligentDeviceManager::recreateSwapChain - Logical:" << widget->width() << "x" << widget->height()
              << ", DPI:" << newDevicePixelRatio
@@ -620,10 +605,6 @@ void DiligentDeviceManager::Impl::recreateSwapChain(QWidget* widget)
     qDebug() << "Before Resize - SwapChain Desc:" << swapChain_->GetDesc().Width << "x" << swapChain_->GetDesc().Height;
 
     swapChain_->Resize(newWidth, newHeight);
-
-    if (renderHwnd_)
-        SetWindowPos(renderHwnd_, nullptr, 0, 0, newWidth, newHeight,
-                     SWP_NOZORDER | SWP_NOMOVE | SWP_NOACTIVATE);
 
     qDebug() << "After Resize - SwapChain Desc:" << swapChain_->GetDesc().Width << "x" << swapChain_->GetDesc().Height;
 
@@ -638,6 +619,64 @@ void DiligentDeviceManager::Impl::recreateSwapChain(QWidget* widget)
 
     qDebug() << "After SetViewports - Viewport WxH: " << VP.Width << "x" << VP.Height;
     qDebug() << "After SetViewports - Viewport TopLeftXY: " << VP.TopLeftX << ", " << VP.TopLeftY;
+}
+
+bool DiligentDeviceManager::Impl::ensureRenderChildWindow(
+    QWidget* widget, int width, int height, const char* reason)
+{
+    if (!widget) {
+        return false;
+    }
+
+    const HWND parentHwnd = reinterpret_cast<HWND>(widget->winId());
+    if (!parentHwnd) {
+        qWarning() << "[DiligentDeviceManager] render HWND parent missing"
+                   << "reason=" << reason << "widget=" << widget;
+        return false;
+    }
+
+    const int safeWidth = (std::max)(width, 1);
+    const int safeHeight = (std::max)(height, 1);
+    if (!renderHwnd_) {
+        // WS_EX_TRANSPARENT: mouse hit-testing skips this HWND and falls
+        // through to the parent Qt widget HWND, so nativeEvent() on the
+        // viewport receives all mouse messages.
+        renderHwnd_ = CreateWindowEx(
+            WS_EX_TRANSPARENT, ensureRenderWindowClass(), nullptr,
+            WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
+            0, 0, safeWidth, safeHeight,
+            parentHwnd, nullptr, GetModuleHandle(nullptr), nullptr);
+        renderParentHwnd_ = parentHwnd;
+        qInfo() << "[DiligentDeviceManager] render child HWND created"
+                << "reason=" << reason << "parent="
+                << reinterpret_cast<quintptr>(parentHwnd)
+                << "child=" << reinterpret_cast<quintptr>(renderHwnd_)
+                << "size=" << QSize(safeWidth, safeHeight);
+    } else if (renderParentHwnd_ != parentHwnd ||
+               GetParent(renderHwnd_) != parentHwnd) {
+        qWarning() << "[DiligentDeviceManager] render child HWND reparent"
+                   << "reason=" << reason
+                   << "oldParent=" << reinterpret_cast<quintptr>(renderParentHwnd_)
+                   << "actualParent="
+                   << reinterpret_cast<quintptr>(GetParent(renderHwnd_))
+                   << "newParent=" << reinterpret_cast<quintptr>(parentHwnd)
+                   << "child=" << reinterpret_cast<quintptr>(renderHwnd_);
+        SetParent(renderHwnd_, parentHwnd);
+        renderParentHwnd_ = parentHwnd;
+    }
+
+    if (!renderHwnd_) {
+        qWarning() << "[DiligentDeviceManager] render child HWND creation failed"
+                   << "reason=" << reason
+                   << "parent=" << reinterpret_cast<quintptr>(parentHwnd)
+                   << "size=" << QSize(safeWidth, safeHeight);
+        return false;
+    }
+
+    SetWindowPos(renderHwnd_, HWND_TOP, 0, 0, safeWidth, safeHeight,
+                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    ShowWindow(renderHwnd_, SW_SHOWNA);
+    return true;
 }
 
 bool DiligentDeviceManager::Impl::createSwapChainForBackend(HWND hwnd, int width, int height)
@@ -688,6 +727,7 @@ void DiligentDeviceManager::Impl::destroy()
         DestroyWindow(renderHwnd_);
         renderHwnd_ = nullptr;
     }
+    renderParentHwnd_ = nullptr;
 
     swapChain_.Release();
     deferredContext_.Release();

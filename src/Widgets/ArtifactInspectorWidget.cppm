@@ -458,7 +458,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     effectPropertyWidget->setVisible(false);
     if (effectParametersHintLabel) {
       effectParametersHintLabel->setText(
-          QStringLiteral("Select a layer and effect to edit parameters."));
+          QStringLiteral("Open a composition, then select a layer and effect to edit color controls."));
       effectParametersHintLabel->setVisible(true);
     }
     lastSyncedLayer_.reset();
@@ -472,7 +472,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     effectPropertyWidget->setVisible(false);
     if (effectParametersHintLabel) {
       effectParametersHintLabel->setText(
-          QStringLiteral("Select a layer and effect to edit parameters."));
+          QStringLiteral("Open a composition, then select a layer and effect to edit color controls."));
       effectParametersHintLabel->setVisible(true);
     }
     lastSyncedLayer_.reset();
@@ -486,7 +486,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     effectPropertyWidget->setVisible(false);
     if (effectParametersHintLabel) {
       effectParametersHintLabel->setText(
-          QStringLiteral("Select a layer and effect to edit parameters."));
+          QStringLiteral("Open a composition, then select a layer and effect to edit color controls."));
       effectParametersHintLabel->setVisible(true);
     }
     lastSyncedLayer_.reset();
@@ -500,7 +500,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     effectPropertyWidget->setVisible(false);
     if (effectParametersHintLabel) {
       effectParametersHintLabel->setText(
-          QStringLiteral("Select a layer and effect to edit parameters."));
+          QStringLiteral("Open a composition, then select a layer and effect to edit color controls."));
       effectParametersHintLabel->setVisible(true);
     }
     lastSyncedLayer_.reset();
@@ -537,7 +537,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   if (effectParametersHintLabel) {
     effectParametersHintLabel->setText(
         hasFocus ? QStringLiteral("Editing effect parameters.")
-                 : QStringLiteral("Select an effect to edit its parameters."));
+                 : QStringLiteral("Open a composition, then select an effect to edit its parameters."));
     effectParametersHintLabel->setVisible(!hasFocus);
   }
 }
@@ -1183,9 +1183,9 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
   if (layerNoteGroup) {
     layerNoteGroup->setEnabled(false);
   }
-  layerNameLabel->setText("Layer: (No project)");
+  layerNameLabel->setText("Layer: Open a project to inspect layers");
   layerTypeLabel->setText("Type: N/A");
-  statusLabel->setText("Status: Create or open a project");
+  statusLabel->setText("Status: Open a project to inspect layers");
   currentCompositionId_ = CompositionID();
   currentLayerId_ = LayerID();
   lastLayerInfoSignature_.clear();
@@ -1201,17 +1201,17 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
   }
   if (effectParametersHintLabel) {
     effectParametersHintLabel->setText(
-        QStringLiteral("Select a layer and effect to edit parameters."));
+        QStringLiteral("Open a project, then select a composition, layer, and effect to edit color controls."));
     effectParametersHintLabel->setVisible(true);
   }
   setEffectRackEnabled(false);
-  setEffectsStateText("Create or open a project to manage effects.", true);
+  setEffectsStateText("Open a project to manage color controls.", true);
 }
 
 void ArtifactInspectorWidget::Impl::setNoLayerState() {
-  layerNameLabel->setText("Layer: (No layer selected)");
+  layerNameLabel->setText("Layer: Select a layer to continue");
   layerTypeLabel->setText("Type: N/A");
-  statusLabel->setText("Status: Select a layer or create one");
+  statusLabel->setText("Status: Select a layer to inspect details");
   currentLayerId_ = LayerID();
   if (layerNoteConnection_) {
     QObject::disconnect(layerNoteConnection_);
@@ -1245,11 +1245,11 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
   }
   if (effectParametersHintLabel) {
     effectParametersHintLabel->setText(
-        QStringLiteral("Select an effect to edit its parameters."));
+        QStringLiteral("Select an effect row above to edit color controls."));
     effectParametersHintLabel->setVisible(true);
   }
   setEffectRackEnabled(false);
-  setEffectsStateText("Select a layer to manage effects.", true);
+  setEffectsStateText("Select a layer to manage color controls.", true);
   refreshRackButtons();
 }
 
@@ -1308,7 +1308,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   auto projectService = ArtifactProjectService::instance();
   if (!projectService) {
     setEffectRackEnabled(false);
-    setEffectsStateText("Create or open a project to manage effects.", true);
+    setEffectsStateText("Open a project to manage effects.", true);
     refreshRackButtons();
     return;
   }
@@ -1402,7 +1402,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   }
 
   if (effectCount == 0) {
-    setEffectsStateText("No effects on the selected layer yet.", true);
+    setEffectsStateText("No effects yet. Use + Add to create color controls.", true);
   } else {
     setEffectsStateText(QString(), false);
   }
@@ -1461,6 +1461,7 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
           ArtifactCore::UniString(std::to_string(std::rand()).c_str()));
       if (projectService->addEffectToLayerInCurrentComposition(currentLayerId_,
                                                                newEffect)) {
+        focusedEffectId_ = newEffect->effectID().toQString();
         updateEffectsList();
         if (statusLabel) {
           statusLabel->setText(QStringLiteral("Status: Effect added - %1")
@@ -1661,7 +1662,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   auto compositionNoteLayout = new QVBoxLayout();
   impl_->compositionNoteEdit = new QPlainTextEdit();
   impl_->compositionNoteEdit->setPlaceholderText(
-      "Write quick notes for this composition...");
+      "Open a composition and add a note for context.");
   impl_->compositionNoteEdit->setMinimumHeight(120);
   applyInspectorTextEdit(impl_->compositionNoteEdit);
   compositionNoteLayout->addWidget(impl_->compositionNoteEdit);
@@ -1677,7 +1678,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   auto layerNoteLayout = new QVBoxLayout();
   impl_->layerNoteEdit = new QPlainTextEdit();
   impl_->layerNoteEdit->setPlaceholderText(
-      "Write quick notes for the selected layer...");
+      "Select a layer, then add a note or reminder.");
   impl_->layerNoteEdit->setMinimumHeight(110);
   applyInspectorTextEdit(impl_->layerNoteEdit);
   layerNoteLayout->addWidget(impl_->layerNoteEdit);
@@ -1689,7 +1690,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   layerInfoLayout->addWidget(impl_->layerNoteGroup);
 
   // ステータスラベル
-  impl_->statusLabel = new QLabel("Status: No project");
+  impl_->statusLabel = new QLabel("Status: Open a project to inspect layers");
   {
     QFont f = impl_->statusLabel->font();
     f.setItalic(true);
@@ -1699,7 +1700,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   layerInfoLayout->addWidget(impl_->statusLabel);
 
   // レイヤー名ラベル
-  impl_->layerNameLabel = new QLabel("Layer: (No project)");
+  impl_->layerNameLabel = new QLabel("Layer: Open a project to inspect layers");
   {
     QFont f = impl_->layerNameLabel->font();
     f.setBold(true);
@@ -1776,13 +1777,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsTabWidget = new QWidget();
   auto effectsLayout = new QVBoxLayout();
   impl_->effectsStateLabel =
-      new QLabel("Create or open a project to manage effects.");
+      new QLabel("Open a composition to manage color correction effects.");
   impl_->effectsStateLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsStateLabel, false);
   effectsLayout->addWidget(impl_->effectsStateLabel);
 
   impl_->effectParametersHintLabel =
-      new QLabel("Select an effect to edit its parameters.");
+      new QLabel("Open a composition, then select a layer and effect to edit color controls.");
   impl_->effectParametersHintLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectParametersHintLabel, false);
   effectsLayout->addWidget(impl_->effectParametersHintLabel);
@@ -1806,6 +1807,9 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     impl_->racks[i].listWidget->setMinimumHeight(rasterizerRack ? 72 : 36);
     impl_->racks[i].listWidget->setMaximumHeight(rasterizerRack ? 100 : 56);
     impl_->racks[i].listWidget->setUniformItemSizes(true);
+    impl_->racks[i].listWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
+    impl_->racks[i].listWidget->setToolTip(
+        QStringLiteral("Select an effect row, then use the buttons below to add, reorder, or remove effects."));
     applyInspectorList(impl_->racks[i].listWidget);
     impl_->racks[i].listWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     if (impl_->racks[i].listWidget->viewport()) {
@@ -1823,9 +1827,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     applyInspectorButton(impl_->racks[i].moveUpButton, false);
     applyInspectorButton(impl_->racks[i].moveDownButton, false);
     btnLayout->addWidget(impl_->racks[i].addButton);
-    btnLayout->addWidget(impl_->racks[i].removeButton);
     btnLayout->addWidget(impl_->racks[i].moveUpButton);
     btnLayout->addWidget(impl_->racks[i].moveDownButton);
+    btnLayout->addWidget(impl_->racks[i].removeButton);
+    impl_->racks[i].addButton->setToolTip(QStringLiteral("Add a new effect to this rack."));
+    impl_->racks[i].removeButton->setToolTip(QStringLiteral("Remove the selected effect(s)."));
+    impl_->racks[i].moveUpButton->setToolTip(QStringLiteral("Move the selected effect up."));
+    impl_->racks[i].moveDownButton->setToolTip(QStringLiteral("Move the selected effect down."));
 
     rackLayout->addWidget(impl_->racks[i].listWidget);
     rackLayout->addLayout(btnLayout);

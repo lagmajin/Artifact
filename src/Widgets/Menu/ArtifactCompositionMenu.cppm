@@ -57,7 +57,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
 {
  createAction = new QAction("新規コンポジション(&N)...");
  createAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
- createAction->setIcon(QIcon(resolveIconPath("Material/movie_creation.svg")));
+ createAction->setIcon(QIcon(resolveIconPath("Material/composition.svg")));
 
  presetMenu = new QMenu("プリセットから作成(&P)", menu);
  presetHdAction = presetMenu->addAction("HD 1080p 30fps");

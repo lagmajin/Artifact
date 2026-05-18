@@ -373,9 +373,9 @@ void ArtifactReactiveEventEditorWindow::Impl::rebuildTargetTree()
  auto* svc = ArtifactProjectService::instance();
  if (!svc || !svc->hasProject()) {
   auto* item = new QTreeWidgetItem(targetTree);
-  item->setText(0, QStringLiteral("No project"));
+  item->setText(0, QStringLiteral("Open a project"));
   item->setData(0, kRoleTypeText, QStringLiteral("Empty"));
-  item->setData(0, kRoleDetailText, QStringLiteral("Create or open a project"));
+  item->setData(0, kRoleDetailText, QStringLiteral("Open a project to inspect reactive events"));
   item->setData(0, kRoleBadgeColor, QColor("#646C7A"));
   return;
  }
@@ -407,9 +407,9 @@ void ArtifactReactiveEventEditorWindow::Impl::rebuildTargetTree()
  if (comp) {
   auto* currentCompRoot = new QTreeWidgetItem(targetTree);
   const QString compName = comp->settings().compositionName().toQString();
-  currentCompRoot->setText(0, compName.isEmpty() ? QStringLiteral("Current Composition") : compName);
+  currentCompRoot->setText(0, compName.isEmpty() ? QStringLiteral("Current composition") : compName);
   currentCompRoot->setData(0, kRoleTypeText, QStringLiteral("Comp"));
-  currentCompRoot->setData(0, kRoleDetailText, QStringLiteral("Current composition layers"));
+  currentCompRoot->setData(0, kRoleDetailText, QStringLiteral("Inspect current composition layers"));
   currentCompRoot->setData(0, kRoleBadgeColor, QColor("#5FA8D3"));
   const auto layers = comp->allLayer();
   QHash<QString, QTreeWidgetItem*> layerNodes;

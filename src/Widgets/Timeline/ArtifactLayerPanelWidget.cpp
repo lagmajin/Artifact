@@ -3215,11 +3215,11 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     auto comp = safeCompositionLookup(impl_->compositionId);
     if (!comp) {
       p.setPen(text.darker(120));
-      p.drawText(rect(), Qt::AlignCenter, "No composition selected");
+      p.drawText(rect(), Qt::AlignCenter, "Open a composition to view layers");
       return;
     }
     p.setPen(text.darker(120));
-    p.drawText(rect(), Qt::AlignCenter, "No layers");
+    p.drawText(rect(), Qt::AlignCenter, "No layers yet");
     return;
   }
 

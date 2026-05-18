@@ -439,9 +439,9 @@ namespace Artifact
    if (typeBadgeLabel) {
     typeBadgeLabel->setText(QStringLiteral("Info"));
    }
-   if (metaLabel) {
-    metaLabel->setText(QStringLiteral("No content loaded"));
-   }
+  if (metaLabel) {
+    metaLabel->setText(QStringLiteral("Open a file or choose a recent source to inspect it"));
+  }
    if (stateLabel) {
     stateLabel->setText(QStringLiteral("State: Idle"));
    }
@@ -1167,7 +1167,7 @@ namespace Artifact
     }
     QPixmap pixmap(path);
     if (pixmap.isNull()) {
-     applyTextPanel(label, title, QStringLiteral("%1\n%2").arg(role, path.isEmpty() ? QStringLiteral("No file selected") : path));
+     applyTextPanel(label, title, QStringLiteral("%1\n%2").arg(role, path.isEmpty() ? QStringLiteral("Open a file to inspect it") : path));
      return;
     }
     label->setText({});
@@ -1180,9 +1180,9 @@ namespace Artifact
    };
 
    auto buildFallbackBody = [&](const QString& path, ArtifactCore::FileType type) {
-    if (path.isEmpty()) {
-     return QStringLiteral("No file selected");
-    }
+   if (path.isEmpty()) {
+     return QStringLiteral("Open a file or choose a recent source to inspect it");
+   }
     QFileInfo info(path);
     QStringList lines;
     lines << QStringLiteral("%1").arg(path);
@@ -1505,8 +1505,8 @@ namespace Artifact
    } else if (!currentFilePath.isEmpty()) {
     metaParts << QStringLiteral("Missing");
     metaParts << currentFilePath;
-   } else {
-    metaParts << QStringLiteral("No file selected");
+  } else {
+    metaParts << QStringLiteral("Open a file or choose a recent source to inspect it");
    }
 
    if (currentFileType == ArtifactCore::FileType::Image && !originalImage.isNull()) {
@@ -2049,7 +2049,7 @@ namespace Artifact
     pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
     viewerAssignmentCombo->setPalette(pal);
    }
-   metaLabel = new QLabel(QStringLiteral("No file selected"), headerWidget);
+   metaLabel = new QLabel(QStringLiteral("Open a file or choose a recent source to inspect it"), headerWidget);
    {
     QFont metaFont = metaLabel->font();
     metaFont.setPointSize(10);

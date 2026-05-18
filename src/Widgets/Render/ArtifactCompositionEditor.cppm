@@ -3338,6 +3338,10 @@ public:
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
     const int selectedCount =
         selection ? selection->selectedLayers().size() : 0;
+    auto *playback = ArtifactPlaybackService::instance();
+    const QString statusText =
+        playback && playback->isPlaying() ? QStringLiteral("Status: playback")
+                                          : QStringLiteral("Status: idle");
 
     // Guard: if the selection manager reports no current layer, but the
     // previously-selected layer still exists in the composition, preserve the
@@ -3362,21 +3366,24 @@ public:
           layerName.isEmpty() ? current->id().toString() : layerName;
       QString detail =
           selectedCount <= 1
-              ? QStringLiteral("Layer selected")
-              : QStringLiteral("%1 layers selected").arg(selectedCount);
+              ? QStringLiteral("Selection: 1 layer")
+              : QStringLiteral("Selection: %1 layers").arg(selectedCount);
       if (selectedCount == 1) {
         if (const auto shape =
                 std::dynamic_pointer_cast<ArtifactShapeLayer>(current)) {
-          detail = shapeSelectionDetail(shape);
+          detail = QStringLiteral("Selection: 1 layer | %1")
+                       .arg(shapeSelectionDetail(shape));
         }
       }
-      renderController_->setInfoOverlayText(title, detail);
+      renderController_->setInfoOverlayText(
+          QStringLiteral("Current: %1").arg(title),
+          QStringLiteral("%1 | %2").arg(detail, statusText));
     } else {
       renderController_->setInfoOverlayText(
-          QStringLiteral("Composition Editor"),
+          QStringLiteral("Current: Composition Editor"),
           selectedCount <= 0
-              ? QStringLiteral("No layer selected")
-              : QStringLiteral("%1 layers selected").arg(selectedCount));
+              ? QStringLiteral("Selection: 0 layers | Status: idle | Open a composition")
+              : QStringLiteral("Selection: %1 layers | %2").arg(selectedCount).arg(statusText));
     }
     if (editTextAction_) {
       editTextAction_->setEnabled(
