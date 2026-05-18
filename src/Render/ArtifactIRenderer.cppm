@@ -235,6 +235,11 @@ namespace {
   FloatColor clearColor_{ 0.10f, 0.10f, 0.10f, 1.0f };
   bool m_multiChannelEnabled = false;
   std::array<bool, kArtifactChannelCount> m_channelEnabled = makeDefaultChannelFlags();
+  quint64 presentAttemptCount_ = 0;
+  quint64 presentSuccessCount_ = 0;
+  quint64 presentFailureCount_ = 0;
+  quint64 presentSkippedCount_ = 0;
+  QString lastPresentStatus_ = QStringLiteral("never-presented");
   std::vector<ArtifactCore::Light> m_sceneLights;
   LODManager::DetailLevel detailLevel_ = LODManager::DetailLevel::High;
   bool particle3DCameraActive_ = false;
@@ -391,6 +396,11 @@ namespace {
   void beginFrameGpuProfiling();
   void endFrameGpuProfiling();
    double lastFrameGpuTimeMs() const;
+  quint64 presentAttemptCount() const { return presentAttemptCount_; }
+  quint64 presentSuccessCount() const { return presentSuccessCount_; }
+  quint64 presentFailureCount() const { return presentFailureCount_; }
+  quint64 presentSkippedCount() const { return presentSkippedCount_; }
+  QString lastPresentStatus() const { return lastPresentStatus_; }
   void beginFrameCostCapture();
   void endFrameCostCapture();
   ArtifactCore::RenderCostStats frameCostStats() const;
@@ -719,6 +729,9 @@ namespace {
    ScopedStartupTimer t("RayTracingManager::initialize", StartupPhase::RayTracingInit);
    rayTracingManager_ = ArtifactCore::createRayTracingManager();
    rayTracingManager_->initialize(deviceManager_.device());
+   rayTracingManager_->buildTLAS(deviceManager_.immediateContext());
+   rayTracingManager_->ensurePipelineAndSBT(deviceManager_.immediateContext());
+   rayTracingManager_->traceUnitQuad(deviceManager_.immediateContext(), 1, 1);
   }
 
   {
@@ -773,6 +786,9 @@ namespace {
 
   rayTracingManager_ = ArtifactCore::createRayTracingManager();
   rayTracingManager_->initialize(deviceManager_.device());
+  rayTracingManager_->buildTLAS(deviceManager_.immediateContext());
+  rayTracingManager_->ensurePipelineAndSBT(deviceManager_.immediateContext());
+  rayTracingManager_->traceUnitQuad(deviceManager_.immediateContext(), 1, 1);
 
   primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   primitiveRenderer_.setPSOs(shaderManager_);
@@ -1503,13 +1519,18 @@ namespace {
 
   void ArtifactIRenderer::Impl::present()
    {
+    ++presentAttemptCount_;
     if (auto sc = deviceManager_.swapChain())
     {
      submitQueuedDraws(deviceManager_.immediateContext());
       try {
        sc->Present();
+       ++presentSuccessCount_;
+       lastPresentStatus_ = QStringLiteral("ok");
      } catch (const std::exception& ex) {
+     ++presentFailureCount_;
      const QString msg = QString::fromLocal8Bit(ex.what());
+     lastPresentStatus_ = msg;
      qWarning() << "[ArtifactIRenderer] present() failed:" << msg;
 
      const bool surfaceLost =
@@ -1529,6 +1550,8 @@ namespace {
     }
    }
    else {
+    ++presentSkippedCount_;
+    lastPresentStatus_ = QStringLiteral("skipped-no-swapchain");
     static bool warned = false;
     if (!warned) {
      warned = true;
@@ -1566,6 +1589,11 @@ namespace {
  void ArtifactIRenderer::destroy()      { impl_->destroy(); }
  bool ArtifactIRenderer::isInitialized() const { return impl_->isInitialized(); }
  bool ArtifactIRenderer::hasSwapChain() const { return impl_->deviceManager_.swapChain() != nullptr; }
+ quint64 ArtifactIRenderer::presentAttemptCount() const { return impl_->presentAttemptCount(); }
+ quint64 ArtifactIRenderer::presentSuccessCount() const { return impl_->presentSuccessCount(); }
+ quint64 ArtifactIRenderer::presentFailureCount() const { return impl_->presentFailureCount(); }
+ quint64 ArtifactIRenderer::presentSkippedCount() const { return impl_->presentSkippedCount(); }
+ QString ArtifactIRenderer::lastPresentStatus() const { return impl_->lastPresentStatus(); }
  void ArtifactIRenderer::beginFrameCostCapture() { impl_->beginFrameCostCapture(); }
  void ArtifactIRenderer::endFrameCostCapture() { impl_->endFrameCostCapture(); }
  ArtifactCore::RenderCostStats ArtifactIRenderer::frameCostStats() const { return impl_->frameCostStats(); }
@@ -1826,6 +1854,83 @@ QString ArtifactIRenderer::glyphAtlasDebugState() const {
   const QString state = impl_->primitiveRenderer_.glyphAtlasDebugState();
   return state.isEmpty() ? QStringLiteral("<none>") : state;
 }
+
+namespace {
+QString rayTracingDeviceTypeName(Diligent::RENDER_DEVICE_TYPE type)
+{
+  switch (type) {
+  case Diligent::RENDER_DEVICE_TYPE_D3D12:
+    return QStringLiteral("D3D12");
+  case Diligent::RENDER_DEVICE_TYPE_VULKAN:
+    return QStringLiteral("Vulkan");
+  case Diligent::RENDER_DEVICE_TYPE_D3D11:
+    return QStringLiteral("D3D11");
+  case Diligent::RENDER_DEVICE_TYPE_GL:
+    return QStringLiteral("GL");
+  case Diligent::RENDER_DEVICE_TYPE_GLES:
+    return QStringLiteral("GLES");
+  case Diligent::RENDER_DEVICE_TYPE_METAL:
+    return QStringLiteral("Metal");
+  case Diligent::RENDER_DEVICE_TYPE_WEBGPU:
+    return QStringLiteral("WebGPU");
+  default:
+    return QStringLiteral("Undefined");
+  }
+}
+
+QString rayTracingFeatureStateName(Diligent::DEVICE_FEATURE_STATE state)
+{
+  switch (state) {
+  case Diligent::DEVICE_FEATURE_STATE_ENABLED:
+    return QStringLiteral("enabled");
+  case Diligent::DEVICE_FEATURE_STATE_OPTIONAL:
+    return QStringLiteral("optional");
+  case Diligent::DEVICE_FEATURE_STATE_DISABLED:
+  default:
+    return QStringLiteral("disabled");
+  }
+}
+} // namespace
+
+QString ArtifactIRenderer::rayTracingDebugState() const
+{
+  if (!impl_ || !impl_->rayTracingManager_) {
+    return QStringLiteral("<no rt manager>");
+  }
+
+  const auto caps = impl_->rayTracingManager_->capabilities();
+  return QStringLiteral(
+             "device=%1 feature=%2 supported=%3 unitQuadBLAS=%4 unitQuadBLASBuilt=%5 "
+             "TLAS=%6 TLASBuilt=%7 blasBuilds=%8 tlasBuilds=%9 "
+             "pipeline=%10 sbt=%11 sbtBound=%12 outputTexture=%13 outputBound=%14 "
+             "traceDispatches=%15 lastTrace=%16x%17 "
+             "maxDepth=%18 maxRayGen=%19 maxTLASInstances=%20 maxBLASPrimitives=%21 "
+             "maxBLASGeometries=%22 scratchAlign=%23 instanceAlign=%24")
+      .arg(rayTracingDeviceTypeName(caps.deviceType))
+      .arg(rayTracingFeatureStateName(caps.featureState))
+      .arg(caps.supported)
+      .arg(caps.unitQuadBLASCreated)
+      .arg(caps.unitQuadBLASBuilt)
+      .arg(caps.tlasCreated)
+      .arg(caps.tlasBuilt)
+      .arg(caps.blasBuildCount)
+      .arg(caps.tlasBuildCount)
+      .arg(caps.pipelineCreated)
+      .arg(caps.sbtCreated)
+      .arg(caps.sbtBound)
+      .arg(caps.outputTextureCreated)
+      .arg(caps.outputResourcesBound)
+      .arg(caps.traceDispatchCount)
+      .arg(caps.lastTraceWidth)
+      .arg(caps.lastTraceHeight)
+      .arg(caps.maxRecursionDepth)
+      .arg(caps.maxRayGenThreads)
+      .arg(caps.maxInstancesPerTLAS)
+      .arg(caps.maxPrimitivesPerBLAS)
+      .arg(caps.maxGeometriesPerBLAS)
+      .arg(caps.scratchBufferAlignment)
+      .arg(caps.instanceBufferAlignment);
+}
 void ArtifactIRenderer::drawGizmoLine(Detail::float3 start, Detail::float3 end, const FloatColor& color, float thickness)
 { impl_->primitiveRenderer3D_.draw3DLine({start.x, start.y, start.z}, {end.x, end.y, end.z}, color, thickness); }
 void ArtifactIRenderer::drawGizmoArrow(Detail::float3 start, Detail::float3 end, const FloatColor& color, float size)
@@ -1893,6 +1998,8 @@ bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
  { return impl_->m_layerRT ? impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE) : nullptr; }
  Diligent::ITextureView* ArtifactIRenderer::layerRenderTargetView() const
  { return impl_->m_layerRT ? impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET) : nullptr; }
+ Diligent::ITextureView* ArtifactIRenderer::rayTracingOutputTextureView() const
+ { return impl_->rayTracingManager_ ? impl_->rayTracingManager_->traceOutputSRV() : nullptr; }
  ArtifactCore::IRayTracingManager* ArtifactIRenderer::rayTracingManager() const
  { return impl_->rayTracingManager_.get(); }
  void ArtifactIRenderer::setOverrideRTV(Diligent::ITextureView* rtv)

@@ -222,7 +222,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
 
     newCompositionAction = new QAction("新規コンポジション(&C)...");
     newCompositionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
-    newCompositionAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/movie_creation.svg")));
+    newCompositionAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/composition.svg")));
 
     importAssetsAction = new QAction("アセットを読み込み(&I)...");
     importAssetsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));

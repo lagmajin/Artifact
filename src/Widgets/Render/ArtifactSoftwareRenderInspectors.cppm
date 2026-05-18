@@ -640,7 +640,7 @@ namespace {
 QString compositionSummaryText(const ArtifactCompositionPtr& composition)
 {
     if (!composition) {
-        return QStringLiteral("No composition selected");
+        return QStringLiteral("Open a composition to inspect the preview");
     }
 
     const QSize compSize = safeCompositionSize(composition);
@@ -756,7 +756,7 @@ QImage mergePreviewImages(std::initializer_list<QImage> images, const QSize& siz
 QString layerSummaryText(const ArtifactCompositionPtr& composition, const ArtifactAbstractLayerPtr& layer)
 {
     if (!layer) {
-        return QStringLiteral("No layer selected");
+        return QStringLiteral("Select a layer to inspect the preview");
     }
 
     const auto sourceSize = layer->sourceSize();
@@ -1128,7 +1128,7 @@ ArtifactSoftwareCompositionTestWidget::ArtifactSoftwareCompositionTestWidget(QWi
     controls->addWidget(saveButton, 0);
     root->addLayout(controls);
 
-    impl_->summaryLabel_ = new QLabel(QStringLiteral("No composition selected"), this);
+    impl_->summaryLabel_ = new QLabel(QStringLiteral("Open a composition to inspect the preview"), this);
     root->addWidget(impl_->summaryLabel_);
 
     impl_->previewLabel_ = new QLabel(this);
@@ -1286,7 +1286,7 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     controlGrid->addRow(QStringLiteral("Effect"), impl_->effectCombo_);
     root->addLayout(controlGrid);
 
-    impl_->infoLabel_ = new QLabel(QStringLiteral("No layer selected"), this);
+    impl_->infoLabel_ = new QLabel(QStringLiteral("Select a layer to inspect the preview"), this);
     root->addWidget(impl_->infoLabel_);
 
     impl_->previewLabel_ = new QLabel(this);

@@ -499,7 +499,7 @@ CurveEditorSnapshot buildCurveEditorSnapshot(
   CurveEditorSnapshot snapshot;
   const auto layers = selectedTimelineLayers(selectionManager);
   if (layers.isEmpty()) {
-    snapshot.summary = QStringLiteral("No selection");
+    snapshot.summary = QStringLiteral("Select a layer to continue");
     return snapshot;
   }
 
@@ -1285,7 +1285,7 @@ KeyframeNavigationState collectKeyframeNavigationState(
 QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
 {
   if (state.totalFrames <= 0) {
-    return QStringLiteral("Status: keyframes none");
+    return QStringLiteral("Status: keyframes -");
   }
 
   const QString currentMark =
@@ -1297,7 +1297,7 @@ QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
       state.nextKeyframe >= 0 ? QString::number(state.nextKeyframe)
                               : QStringLiteral("-");
 
-  return QStringLiteral("Status: keyframes %1 | Now: %2 | Prev: %3 | Next: %4")
+  return QStringLiteral("Status: keyframes %1 | Current: %2 | Prev: %3 | Next: %4")
       .arg(state.totalFrames)
       .arg(currentMark)
       .arg(previousMark)
@@ -1307,7 +1307,7 @@ QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
 QString formatRecentLayersText(const QStringList& recentLayerNames)
 {
   if (recentLayerNames.isEmpty()) {
-    return QStringLiteral("Recent: none");
+    return QStringLiteral("Recent: -");
   }
 
   return QStringLiteral("Recent: %1").arg(recentLayerNames.join(QStringLiteral(", ")));
@@ -2300,19 +2300,27 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     searchStatusLabel->setPalette(pal);
   }
   searchStatusLabel->setCursor(Qt::PointingHandCursor);
+  searchStatusLabel->setMaximumHeight(24);
   searchStatusLabel->setText("");
+  searchStatusLabel->setToolTip(
+      QStringLiteral("Click to jump between search hits. Enter jumps forward, Shift+Enter jumps backward."));
   keyframeStatusLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   keyframeStatusLabel->setMinimumWidth(180);
+  keyframeStatusLabel->setMaximumHeight(24);
   keyframeStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   {
     QPalette pal = keyframeStatusLabel->palette();
     pal.setColor(QPalette::WindowText, QColor(168, 214, 255));
     keyframeStatusLabel->setPalette(pal);
   }
+  keyframeStatusLabel->setCursor(Qt::PointingHandCursor);
+  keyframeStatusLabel->setToolTip(
+      QStringLiteral("Click to jump between selected keyframes. Enter jumps forward, Shift+Enter jumps backward."));
   keyframeStatusLabel->setText("");
   keyframeStatusLabel->setVisible(false);
   currentLayerLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   currentLayerLabel->setMinimumWidth(160);
+  currentLayerLabel->setMaximumHeight(24);
   currentLayerLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   {
     QFont font = currentLayerLabel->font();
@@ -2327,6 +2335,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   recentLayerLabel = new QLabel();
   recentLayerLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   recentLayerLabel->setMinimumWidth(280);
+  recentLayerLabel->setMaximumHeight(24);
   recentLayerLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   {
     QFont font = recentLayerLabel->font();
@@ -2340,6 +2349,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   recentLayerLabel->setVisible(false);
   frameSummaryLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   frameSummaryLabel->setMinimumWidth(180);
+  frameSummaryLabel->setMaximumHeight(24);
   frameSummaryLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   {
     QFont font = frameSummaryLabel->font();
@@ -2366,12 +2376,18 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   // Hide zoom percentage label on the left header — user prefers it not shown.
    zoomSummaryLabel->setVisible(false);
   currentLayerLabel->setCursor(Qt::PointingHandCursor);
+  currentLayerLabel->setToolTip(QStringLiteral("Click to focus the current layer and scroll it into view."));
   recentLayerLabel->setCursor(Qt::PointingHandCursor);
+  recentLayerLabel->setToolTip(QStringLiteral("Click to jump to the most recent layer name."));
   frameSummaryLabel->setCursor(Qt::PointingHandCursor);
+  frameSummaryLabel->setToolTip(QStringLiteral("Click to center the playhead in the timeline."));
   zoomSummaryLabel->setCursor(Qt::PointingHandCursor);
+  zoomSummaryLabel->setToolTip(QStringLiteral("Click to restore the current viewport to the playhead."));
   selectionSummaryLabel->setCursor(Qt::PointingHandCursor);
+  selectionSummaryLabel->setToolTip(QStringLiteral("Click to focus the current selection in the timeline."));
   selectionSummaryLabel->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   selectionSummaryLabel->setMinimumWidth(220);
+  selectionSummaryLabel->setMaximumHeight(24);
   selectionSummaryLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
   {
     QFont font = selectionSummaryLabel->font();
@@ -2398,9 +2414,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->addWidget(easingLabButton);
   searchBarLayout->addWidget(currentLayerLabel);
   searchBarLayout->addWidget(recentLayerLabel);
+  searchBarLayout->addWidget(selectionSummaryLabel);
   searchBarLayout->addWidget(frameSummaryLabel);
   searchBarLayout->addWidget(zoomSummaryLabel);
-  searchBarLayout->addWidget(selectionSummaryLabel);
   searchBarLayout->addWidget(globalSwitches);
   searchBarLayout->addStretch(1);
   searchBarLayout->setStretch(0, 0);
@@ -4107,7 +4123,7 @@ void ArtifactTimelineWidget::updateSelectionState()
                                           .arg(currentLayerName.isEmpty() ? QStringLiteral("(unnamed)")
                                                                           : currentLayerName));
   } else {
-    impl_->currentLayerLabel_->setText(QStringLiteral("Current: none"));
+    impl_->currentLayerLabel_->setText(QStringLiteral("Current: Open a composition"));
   }
   impl_->currentLayerLabel_->setVisible(true);
   if (impl_->recentLayerLabel_) {
@@ -4124,10 +4140,15 @@ void ArtifactTimelineWidget::updateSelectionState()
       selectedKeyframeCount = static_cast<int>(
           impl_->painterTrackView_->selectedKeyframeMarkers().size());
     }
-    impl_->selectionSummaryLabel_->setText(
-        QStringLiteral("Selection: %1 layer(s) | Keys: %2")
-            .arg(selectedCount)
-            .arg(selectedKeyframeCount));
+    if (selectedCount <= 0 && selectedKeyframeCount <= 0) {
+      impl_->selectionSummaryLabel_->setText(
+          QStringLiteral("Selection: 0 layers | Select a layer to continue"));
+    } else {
+      impl_->selectionSummaryLabel_->setText(
+          QStringLiteral("Selection: %1 layers | Keys: %2")
+              .arg(selectedCount)
+              .arg(selectedKeyframeCount));
+    }
     impl_->selectionSummaryLabel_->setVisible(true);
   }
   if (impl_->curveEditorSummaryLabel_) {

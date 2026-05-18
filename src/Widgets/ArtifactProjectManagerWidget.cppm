@@ -132,6 +132,24 @@ namespace Artifact {
 
 namespace {
 
+class ProjectActionLabel final : public QLabel
+{
+public:
+    using QLabel::QLabel;
+    std::function<void()> activated;
+
+protected:
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        if (event && event->button() == Qt::LeftButton && activated) {
+            activated();
+            event->accept();
+            return;
+        }
+        QLabel::mouseReleaseEvent(event);
+    }
+};
+
 void updateCompositionColorButtonPreview(QPushButton* button, const QColor& color)
 {
     if (!button) {
@@ -604,7 +622,7 @@ public:
             titleLabel->setPalette(pal);
         }
 
-        detailsLabel = new QLabel("Select an item to see details");
+        detailsLabel = new QLabel("Select an item to inspect details");
         {
             QPalette pal = detailsLabel->palette();
             pal.setColor(QPalette::WindowText, muted);
@@ -623,7 +641,7 @@ public:
     void updateInfo(const QModelIndex& index) {
         if (!index.isValid()) {
             titleLabel->setText("Project");
-            detailsLabel->setText("No selection");
+            detailsLabel->setText("Open a project or search to inspect details");
             thumbnail->setText("PREVIEW");
             thumbnail->setPixmap(QPixmap());
             return;
@@ -2082,7 +2100,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 if (idVar.isValid()) {
                     ArtifactProjectService::instance()->changeCurrentComposition(CompositionID(idVar.toString()));
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie_creation.svg")));
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/composition.svg")));
 
             addTrackedAction(QStringLiteral("composition_settings"), QStringLiteral("Composition Settings..."), [this, sourceIdx]() {
                 auto* svc = ArtifactProjectService::instance();
@@ -2361,7 +2379,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
              });
          }
          dialog->deleteLater();
-    }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/movie_creation.svg")));
+    }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/composition.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_solid"), QStringLiteral("Solid..."), [this, svc]() {
         if (!svc) return;
         if (!svc->currentComposition().lock()) {
@@ -3025,24 +3043,24 @@ public:
         const QString unusedText = unusedOnlyCheck && unusedOnlyCheck->isChecked()
             ? QStringLiteral("Unused only")
             : QStringLiteral("All items");
-        return QStringLiteral("Selection: %1 | Search: %2 | Type: %3 | State: %4")
+        return QStringLiteral("Recent: - | Selected: %1 | View: %2 / %3 | Search: %4")
             .arg(selectedCount)
-            .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText)
             .arg(typeText)
-            .arg(unusedText);
+            .arg(unusedText)
+            .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText);
     }
 
     QString syncStateText() const {
-        return QStringLiteral("Asset Browser linked");
+        return QStringLiteral("Status: Asset Browser linked");
     }
 
     QString projectHealthText() const {
         auto* svc = ArtifactProjectService::instance();
         if (!svc || !svc->hasProject()) {
-            return QStringLiteral("Project Health: <no project>");
+            return QStringLiteral("Status: Open a project to inspect details");
         }
         const auto report = svc->currentProjectHealthReport();
-        return QStringLiteral("Project Health: %1 (%2 issue%3)")
+        return QStringLiteral("Status: Project %1 (%2 issue%3)")
             .arg(report.isHealthy ? QStringLiteral("healthy") : QStringLiteral("issues"))
             .arg(static_cast<int>(report.issues.size()))
             .arg(report.issues.size() == 1 ? QString() : QStringLiteral("s"));
@@ -3057,6 +3075,8 @@ public:
         }
         if (selectionSummaryLabel) {
             selectionSummaryLabel->setText(selectionSummaryText());
+            selectionSummaryLabel->setToolTip(
+                QStringLiteral("Current selection count, active filter, and search text."));
         }
         ProjectItem* item = currentSelectedItem();
         const bool hasItem = item != nullptr;
@@ -3064,20 +3084,23 @@ public:
         const bool isFolder = item && item->type() == eProjectItemType::Folder;
         const bool isComposition = item && item->type() == eProjectItemType::Composition;
         const QString pathText = selectedItemPath();
-        const QString statusText = !item ? QStringLiteral("No selection")
+        const QString statusText = !item ? QStringLiteral("Select an item to inspect details")
             : isFootage ? (QFileInfo(static_cast<FootageItem*>(item)->filePath).exists() ? QStringLiteral("Available") : QStringLiteral("Missing"))
             : isFolder ? QStringLiteral("Folder")
             : isComposition ? QStringLiteral("Composition")
             : QStringLiteral("Item");
         if (selectionDetailLabel) {
             if (!hasItem) {
-                selectionDetailLabel->setText(QStringLiteral("Current: none | Use the search bar or click an item to inspect it."));
+                selectionDetailLabel->setText(QStringLiteral("Open a project or search to inspect details | Click an item to open it."));
+                selectionDetailLabel->setToolTip(QStringLiteral("Open a project or search, then click an item to inspect it."));
             } else {
                 const QString pathPart = pathText.isEmpty() ? QStringLiteral("-") : pathText;
                 if (isFootage) {
-                    selectionDetailLabel->setText(QStringLiteral("Current: %1 | %2 | Open previews in Contents Viewer").arg(statusText, pathPart));
+                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2 | Open previews in Contents Viewer").arg(statusText, pathPart));
+                    selectionDetailLabel->setToolTip(QStringLiteral("Open the selected footage, reveal it, or copy its path."));
                 } else {
-                    selectionDetailLabel->setText(QStringLiteral("Current: %1 | %2").arg(statusText, pathPart));
+                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2").arg(statusText, pathPart));
+                    selectionDetailLabel->setToolTip(QStringLiteral("Open the selected item or use the action buttons below."));
                 }
             }
         }
@@ -3366,11 +3389,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->infoPanel_ = new ProjectInfoPanel(chromePanel);
     chromeLayout->addWidget(impl_->infoPanel_);
 
-    impl_->projectNameLabel = new QLabel("PROJECT");
+    impl_->projectNameLabel = new QLabel(QStringLiteral("Current: Project View"));
     impl_->projectNameLabel->setObjectName(QStringLiteral("projectManagerSectionLabel"));
+    impl_->projectNameLabel->setMaximumHeight(24);
     chromeLayout->addWidget(impl_->projectNameLabel);
 
-    impl_->syncStateLabel = new QLabel(QStringLiteral("Asset Browser linked"), chromePanel);
+    impl_->syncStateLabel = new QLabel(QStringLiteral("Status: Asset Browser linked"), chromePanel);
     impl_->syncStateLabel->setObjectName(QStringLiteral("projectManagerSyncChip"));
     {
         QFont f = impl_->syncStateLabel->font();
@@ -3379,13 +3403,14 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->syncStateLabel->setFont(f);
         impl_->syncStateLabel->setAlignment(Qt::AlignCenter);
         impl_->syncStateLabel->setContentsMargins(8, 3, 8, 3);
+        impl_->syncStateLabel->setMaximumHeight(28);
         QPalette pal = impl_->syncStateLabel->palette();
         pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().accentColor));
         impl_->syncStateLabel->setPalette(pal);
     }
     chromeLayout->addWidget(impl_->syncStateLabel);
 
-    impl_->projectHealthLabel = new QLabel(QStringLiteral("Project Health: <no project>"), chromePanel);
+    impl_->projectHealthLabel = new QLabel(QStringLiteral("Status: Open a project to inspect details"), chromePanel);
     impl_->projectHealthLabel->setObjectName(QStringLiteral("projectManagerSyncChip"));
     {
         QFont f = impl_->projectHealthLabel->font();
@@ -3394,6 +3419,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->projectHealthLabel->setFont(f);
         impl_->projectHealthLabel->setAlignment(Qt::AlignCenter);
         impl_->projectHealthLabel->setContentsMargins(8, 3, 8, 3);
+        impl_->projectHealthLabel->setMaximumHeight(28);
         QPalette pal = impl_->projectHealthLabel->palette();
         pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(120));
         impl_->projectHealthLabel->setPalette(pal);
@@ -3404,8 +3430,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     auto* selectionChromeLayout = new QVBoxLayout(selectionChrome);
     selectionChromeLayout->setContentsMargins(10, 0, 10, 8);
     selectionChromeLayout->setSpacing(4);
-    impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Selection: 0 | Search: - | Type: All | State: All items"), selectionChrome);
+    impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Recent: - | Selection: 0 items | Status: All / All items | Search: -"), selectionChrome);
     impl_->selectionSummaryLabel->setWordWrap(true);
+    impl_->selectionSummaryLabel->setMaximumHeight(42);
+    impl_->selectionSummaryLabel->setToolTip(QStringLiteral("Current filters and selection count."));
     {
         QFont f = impl_->selectionSummaryLabel->font();
         f.setPointSize(10);
@@ -3415,8 +3443,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->selectionSummaryLabel->setPalette(pal);
     }
     selectionChromeLayout->addWidget(impl_->selectionSummaryLabel);
-    impl_->selectionDetailLabel = new QLabel(QStringLiteral("Current: none | Use the search bar or click an item to inspect it."), selectionChrome);
+    auto* selectionDetailLabel = new ProjectActionLabel(QStringLiteral("Open a project or search to inspect details | Select an item to inspect details"), selectionChrome);
+    impl_->selectionDetailLabel = selectionDetailLabel;
     impl_->selectionDetailLabel->setWordWrap(true);
+    impl_->selectionDetailLabel->setMaximumHeight(42);
+    impl_->selectionDetailLabel->setCursor(Qt::PointingHandCursor);
+    impl_->selectionDetailLabel->setToolTip(QStringLiteral("Click to open the selected item."));
     {
         QFont f = impl_->selectionDetailLabel->font();
         f.setPointSize(11);
@@ -3426,6 +3458,11 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->selectionDetailLabel->setPalette(pal);
     }
     selectionChromeLayout->addWidget(impl_->selectionDetailLabel);
+    static_cast<ProjectActionLabel*>(impl_->selectionDetailLabel)->activated = [this]() {
+        if (impl_) {
+            impl_->openSelectedItem(this);
+        }
+    };
 
     auto* selectionButtons = new QHBoxLayout();
     selectionButtons->setSpacing(6);
@@ -3435,11 +3472,17 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->deleteSelectionButton = new QPushButton(QStringLiteral("Delete"), selectionChrome);
     impl_->relinkSelectionButton = new QPushButton(QStringLiteral("Relink"), selectionChrome);
     impl_->copyPathButton = new QPushButton(QStringLiteral("Copy Path"), selectionChrome);
+    impl_->openSelectionButton->setToolTip(QStringLiteral("Open the selected item."));
+    impl_->revealSelectionButton->setToolTip(QStringLiteral("Reveal the selected footage file in the system file manager."));
+    impl_->renameSelectionButton->setToolTip(QStringLiteral("Rename the selected item."));
+    impl_->deleteSelectionButton->setToolTip(QStringLiteral("Delete the selected item."));
+    impl_->relinkSelectionButton->setToolTip(QStringLiteral("Relink the selected footage item."));
+    impl_->copyPathButton->setToolTip(QStringLiteral("Copy the selected item path."));
     selectionButtons->addWidget(impl_->openSelectionButton);
     selectionButtons->addWidget(impl_->revealSelectionButton);
+    selectionButtons->addWidget(impl_->relinkSelectionButton);
     selectionButtons->addWidget(impl_->renameSelectionButton);
     selectionButtons->addWidget(impl_->deleteSelectionButton);
-    selectionButtons->addWidget(impl_->relinkSelectionButton);
     selectionButtons->addWidget(impl_->copyPathButton);
     selectionButtons->addStretch();
     selectionChromeLayout->addLayout(selectionButtons);
@@ -3748,7 +3791,7 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
         return b;
     };
 
-    auto btnNew = createBtn("New Composition", QStringLiteral("MaterialVS/blue/movie_creation.svg"), QStyle::SP_FileDialogNewFolder, QStringLiteral("N"));
+    auto btnNew = createBtn("New Composition", QStringLiteral("MaterialVS/blue/composition.svg"), QStyle::SP_FileDialogNewFolder, QStringLiteral("N"));
     auto btnFolder = createBtn("New Folder", QStringLiteral("MaterialVS/yellow/folder.svg"), QStyle::SP_DirIcon, QStringLiteral("F"));
     auto btnProxy = createBtn("Generate Proxies", QStringLiteral("MaterialVS/green/replay.svg"), QStyle::SP_BrowserReload, QStringLiteral("P"));
     auto btnDel = createBtn("Delete", QStringLiteral("MaterialVS/red/delete.svg"), QStyle::SP_TrashIcon, QStringLiteral("D"));

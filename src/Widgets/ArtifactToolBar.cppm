@@ -27,6 +27,34 @@ import Application.AppSettings;
 
 namespace {
 
+constexpr auto kToolbarIconHome = "MaterialVS/toolbar/home_surface.svg";
+constexpr auto kToolbarIconSelect = "MaterialVS/toolbar/tool_select.svg";
+constexpr auto kToolbarIconHand = "MaterialVS/toolbar/tool_hand.svg";
+constexpr auto kToolbarIconZoom = "MaterialVS/toolbar/tool_zoom.svg";
+constexpr auto kToolbarIconMove = "MaterialVS/toolbar/tool_move.svg";
+constexpr auto kToolbarIconRotate = "MaterialVS/toolbar/tool_rotate.svg";
+constexpr auto kToolbarIconScale = "MaterialVS/toolbar/tool_scale.svg";
+constexpr auto kToolbarIconCamera = "MaterialVS/toolbar/tool_camera.svg";
+constexpr auto kToolbarIconAnchor = "MaterialVS/toolbar/tool_anchor.svg";
+constexpr auto kToolbarIconShape = "MaterialVS/toolbar/tool_shape.svg";
+constexpr auto kToolbarIconPen = "MaterialVS/toolbar/tool_pen.svg";
+constexpr auto kToolbarIconText = "MaterialVS/toolbar/tool_text.svg";
+constexpr auto kToolbarIconBrush = "MaterialVS/toolbar/tool_brush.svg";
+constexpr auto kToolbarIconClone = "MaterialVS/toolbar/tool_clone.svg";
+constexpr auto kToolbarIconEraser = "MaterialVS/toolbar/tool_eraser.svg";
+constexpr auto kToolbarIconPuppet = "MaterialVS/toolbar/tool_puppet.svg";
+constexpr auto kToolbarIconZoomIn = "MaterialVS/toolbar/zoom_in.svg";
+constexpr auto kToolbarIconZoomOut = "MaterialVS/toolbar/zoom_out.svg";
+constexpr auto kToolbarIconZoom100 = "MaterialVS/toolbar/zoom_100.svg";
+constexpr auto kToolbarIconZoomFit = "MaterialVS/toolbar/zoom_fit.svg";
+constexpr auto kToolbarIconGridOn = "MaterialVS/toolbar/grid_on.svg";
+constexpr auto kToolbarIconGridOff = "MaterialVS/toolbar/grid_off.svg";
+constexpr auto kToolbarIconGuidesOn = "MaterialVS/toolbar/guides_on.svg";
+constexpr auto kToolbarIconGuidesOff = "MaterialVS/toolbar/guides_off.svg";
+constexpr auto kToolbarIconViewNormal = "MaterialVS/toolbar/view_normal.svg";
+constexpr auto kToolbarIconViewGrid = "MaterialVS/toolbar/view_grid.svg";
+constexpr auto kToolbarIconViewDetail = "MaterialVS/toolbar/view_detail.svg";
+
 // ショートカットをリッチフォーマットに変換
 QString formatShortcutForTooltip(const QKeySequence &shortcut) {
   const QString text = shortcut.toString(QKeySequence::NativeText);
@@ -248,7 +276,8 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   // Main tool actions
   impl_->homeAction_ = new QAction(this);
   impl_->homeAction_->setIcon(loadIconWithFallback(
-      QStringList{QStringLiteral("MaterialVS/colored/E3E3E3/start.svg"),
+      QStringList{QString::fromLatin1(kToolbarIconHome),
+                  QStringLiteral("MaterialVS/colored/E3E3E3/start.svg"),
                   QStringLiteral("MaterialVS/neutral/start.svg"),
                   QStringLiteral("Png/home.png")}));
   impl_->homeAction_->setToolTip("ホーム");
@@ -257,68 +286,83 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   addSeparator();
 
   createTool(impl_->selectTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/arrow_right.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconSelect),
+                         QStringLiteral("MaterialVS/neutral/arrow_right.svg"),
                          QStringLiteral("Material/arrow_right.svg")},
              "選択", "選択ツール (V)", QKeySequence(Qt::Key_V));
   createTool(impl_->handTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/pan_tool_alt.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconHand),
+                         QStringLiteral("MaterialVS/neutral/pan_tool_alt.svg"),
                          QStringLiteral("Material/pan_tool_alt.svg")},
              "手のひら", "手のひらツール (H)", QKeySequence(Qt::Key_H));
   createTool(impl_->zoomTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/zoom_in.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconZoom),
+                         QStringLiteral("MaterialVS/neutral/zoom_in.svg"),
                          QStringLiteral("Material/zoom_in.svg")},
              "ズーム", "ズームツール (Z)", QKeySequence(Qt::Key_Z));
   createTool(impl_->moveTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/arrow_right.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconMove),
+                         QStringLiteral("MaterialVS/neutral/arrow_right.svg"),
                          QStringLiteral("Material/arrow_right.svg")},
              "移動", "移動ツール (W)", QKeySequence(Qt::Key_W));
   createTool(impl_->rotationTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/transform.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconRotate),
+                         QStringLiteral("MaterialVS/neutral/transform.svg"),
                          QStringLiteral("Material/transform.svg")},
              "回転", "回転ツール (E)", QKeySequence(Qt::Key_E));
   createTool(impl_->scaleTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/zoom_in.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconScale),
+                         QStringLiteral("MaterialVS/neutral/zoom_in.svg"),
                          QStringLiteral("Material/zoom_in.svg")},
              "スケール", "スケールツール (R)", QKeySequence(Qt::Key_R));
   createTool(impl_->cameraTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/camera_alt.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconCamera),
+                         QStringLiteral("MaterialVS/neutral/camera_alt.svg"),
                          QStringLiteral("Material/camera_alt.svg")},
              "カメラ", "統合カメラーツール (C)", QKeySequence(Qt::Key_C));
   createTool(impl_->panBehindTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/push_pin.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconAnchor),
+                         QStringLiteral("MaterialVS/neutral/push_pin.svg"),
                          QStringLiteral("Material/push_pin.svg")},
              "アンカー", "アンカーポイントツール (Y)", QKeySequence(Qt::Key_Y));
 
   addSeparator();
 
   createTool(impl_->shapeTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/crop.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconShape),
+                         QStringLiteral("MaterialVS/neutral/crop.svg"),
                          QStringLiteral("Material/crop.svg")},
              "シェイプ", "シェイプツール (Q)", QKeySequence(Qt::Key_Q));
   createTool(impl_->penTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/draw.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconPen),
+                         QStringLiteral("MaterialVS/neutral/draw.svg"),
                          QStringLiteral("Material/draw.svg")},
              "ペン", "ペンツール (G)", QKeySequence(Qt::Key_G));
   createTool(impl_->textTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/title.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconText),
+                         QStringLiteral("MaterialVS/neutral/title.svg"),
                          QStringLiteral("Material/title.svg")},
              "テキスト", "横書き文字ツール (Ctrl+T)",
              QKeySequence(Qt::CTRL | Qt::Key_T));
   createTool(impl_->brushTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/brush.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconBrush),
+                         QStringLiteral("MaterialVS/neutral/brush.svg"),
                          QStringLiteral("Material/brush.svg")},
              "ブラシ", "ブラシツール (Ctrl+B)",
              QKeySequence(Qt::CTRL | Qt::Key_B));
   createTool(impl_->cloneStampTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/content_copy.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconClone),
+                         QStringLiteral("MaterialVS/neutral/content_copy.svg"),
                          QStringLiteral("Material/content_copy.svg")},
              "コピースタンプ", "コピースタンプツール (Ctrl+B)", QKeySequence());
   createTool(impl_->eraserTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/delete.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconEraser),
+                         QStringLiteral("MaterialVS/neutral/delete.svg"),
                          QStringLiteral("Material/delete.svg")},
              "消しゴム", "消しゴムツール (Ctrl+B)", QKeySequence());
   createTool(impl_->puppetTool_,
-             QStringList{QStringLiteral("MaterialVS/neutral/push_pin.svg"),
+             QStringList{QString::fromLatin1(kToolbarIconPuppet),
+                         QStringLiteral("MaterialVS/neutral/push_pin.svg"),
                          QStringLiteral("Material/push_pin.svg")},
              "パペット", "パペットピンツール (Ctrl+P)",
              QKeySequence(Qt::CTRL | Qt::Key_P));
@@ -331,24 +375,30 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
 
   // Zoom actions
   impl_->zoomInAction_ = new QAction("+");
-  impl_->zoomInAction_->setIcon(loadIconWithFallback("Material/zoom_in.svg"));
+  impl_->zoomInAction_->setIcon(loadIconWithFallback(
+      QStringList{QString::fromLatin1(kToolbarIconZoomIn),
+                  QStringLiteral("Material/zoom_in.svg")}));
   impl_->zoomInAction_->setToolTip("Zoom In (Ctrl++)");
   impl_->zoomInAction_->setIconText("Zoom In");
 
   impl_->zoomOutAction_ = new QAction("-");
-  impl_->zoomOutAction_->setIcon(loadIconWithFallback("Material/zoom_out.svg"));
+  impl_->zoomOutAction_->setIcon(loadIconWithFallback(
+      QStringList{QString::fromLatin1(kToolbarIconZoomOut),
+                  QStringLiteral("Material/zoom_out.svg")}));
   impl_->zoomOutAction_->setToolTip("Zoom Out (Ctrl+-)");
   impl_->zoomOutAction_->setIconText("Zoom Out");
 
   impl_->zoom100Action_ = new QAction("100%");
-  impl_->zoom100Action_->setIcon(
-      loadIconWithFallback("Material/aspect_ratio.svg"));
+  impl_->zoom100Action_->setIcon(loadIconWithFallback(
+      QStringList{QString::fromLatin1(kToolbarIconZoom100),
+                  QStringLiteral("Material/aspect_ratio.svg")}));
   impl_->zoom100Action_->setToolTip("Reset Zoom (Ctrl+0)");
   impl_->zoom100Action_->setIconText("100%");
 
   impl_->zoomFitAction_ = new QAction("Fit");
-  impl_->zoomFitAction_->setIcon(
-      loadIconWithFallback("Material/fit_screen.svg"));
+  impl_->zoomFitAction_->setIcon(loadIconWithFallback(
+      QStringList{QString::fromLatin1(kToolbarIconZoomFit),
+                  QStringLiteral("Material/fit_screen.svg")}));
   impl_->zoomFitAction_->setToolTip("Fit Window");
   impl_->zoomFitAction_->setIconText("Fit");
 
@@ -364,14 +414,14 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   impl_->gridToggleAction_ = new QAction("Grid");
   impl_->gridToggleAction_->setCheckable(true);
   impl_->gridToggleAction_->setIcon(
-      loadIconWithFallback("Material/grid_on.svg"));
+      loadIconWithFallback(QString::fromLatin1(kToolbarIconGridOn)));
   impl_->gridToggleAction_->setToolTip("Show Grid");
   impl_->gridToggleAction_->setIconText("Grid");
 
   impl_->guideToggleAction_ = new QAction("Guide");
   impl_->guideToggleAction_->setCheckable(true);
   impl_->guideToggleAction_->setIcon(
-      loadIconWithFallback("Material/visibility.svg"));
+      loadIconWithFallback(QString::fromLatin1(kToolbarIconGuidesOn)));
   impl_->guideToggleAction_->setToolTip("Show Guide Lines");
   impl_->guideToggleAction_->setIconText("Guide");
 
@@ -388,20 +438,21 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   impl_->normalViewAction_->setCheckable(true);
   impl_->normalViewAction_->setChecked(true);
   impl_->normalViewAction_->setIcon(
-      loadIconWithFallback("Material/view_sidebar.svg"));
+      loadIconWithFallback(QString::fromLatin1(kToolbarIconViewNormal)));
   impl_->normalViewAction_->setToolTip("Normal View");
   impl_->normalViewAction_->setIconText("Normal");
 
   impl_->gridViewAction_ = new QAction("Grid");
   impl_->gridViewAction_->setCheckable(true);
   impl_->gridViewAction_->setIcon(
-      loadIconWithFallback("Material/grid_view.svg"));
+      loadIconWithFallback(QString::fromLatin1(kToolbarIconViewGrid)));
   impl_->gridViewAction_->setToolTip("Grid View");
   impl_->gridViewAction_->setIconText("Grid");
 
   impl_->detailViewAction_ = new QAction("Detail");
   impl_->detailViewAction_->setCheckable(true);
-  impl_->detailViewAction_->setIcon(loadIconWithFallback("Material/tune.svg"));
+  impl_->detailViewAction_->setIcon(
+      loadIconWithFallback(QString::fromLatin1(kToolbarIconViewDetail)));
   impl_->detailViewAction_->setToolTip("Detail View");
   impl_->detailViewAction_->setIconText("Detail");
 
@@ -491,7 +542,8 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
       impl_->gridToggleAction_, &QAction::triggered, this,
       [this](bool checked) {
         impl_->gridToggleAction_->setIcon(loadIconWithFallback(
-            checked ? "Material/grid_on.svg" : "Material/grid_off.svg"));
+            checked ? QString::fromLatin1(kToolbarIconGridOn)
+                    : QString::fromLatin1(kToolbarIconGridOff)));
         gridToggled(checked);
         if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
           settings->setToolbarShowGrid(checked);
@@ -501,8 +553,8 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
   QObject::connect(impl_->guideToggleAction_, &QAction::triggered, this,
                    [this](bool checked) {
                      impl_->guideToggleAction_->setIcon(loadIconWithFallback(
-                         checked ? "Material/visibility.svg"
-                                 : "Material/visibility_off.svg"));
+                         checked ? QString::fromLatin1(kToolbarIconGuidesOn)
+                                 : QString::fromLatin1(kToolbarIconGuidesOff)));
                      guideToggled(checked);
                      if (auto *settings =
                              ArtifactCore::ArtifactAppSettings::instance()) {
@@ -528,12 +580,12 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
     const bool showGuides = settings->toolbarShowGuide();
     impl_->gridToggleAction_->setChecked(showGrid);
     impl_->gridToggleAction_->setIcon(
-        loadIconWithFallback(showGrid ? "Material/grid_on.svg"
-                                      : "Material/grid_off.svg"));
+        loadIconWithFallback(showGrid ? QString::fromLatin1(kToolbarIconGridOn)
+                                      : QString::fromLatin1(kToolbarIconGridOff)));
     impl_->guideToggleAction_->setChecked(showGuides);
     impl_->guideToggleAction_->setIcon(loadIconWithFallback(
-        showGuides ? "Material/visibility.svg"
-                   : "Material/visibility_off.svg"));
+        showGuides ? QString::fromLatin1(kToolbarIconGuidesOn)
+                   : QString::fromLatin1(kToolbarIconGuidesOff)));
   } else {
     impl_->gridToggleAction_->setChecked(true);
     impl_->guideToggleAction_->setChecked(true);
@@ -569,7 +621,8 @@ void ArtifactToolBar::setGridVisible(bool visible) {
   if (impl_->gridToggleAction_) {
     impl_->gridToggleAction_->setChecked(visible);
     impl_->gridToggleAction_->setIcon(loadIconWithFallback(
-        visible ? "Material/grid_on.svg" : "Material/grid_off.svg"));
+        visible ? QString::fromLatin1(kToolbarIconGridOn)
+                : QString::fromLatin1(kToolbarIconGridOff)));
   }
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     settings->setToolbarShowGrid(visible);
@@ -581,8 +634,8 @@ void ArtifactToolBar::setGuideVisible(bool visible) {
   if (impl_->guideToggleAction_) {
     impl_->guideToggleAction_->setChecked(visible);
     impl_->guideToggleAction_->setIcon(loadIconWithFallback(
-        visible ? "Material/visibility.svg"
-                : "Material/visibility_off.svg"));
+        visible ? QString::fromLatin1(kToolbarIconGuidesOn)
+                : QString::fromLatin1(kToolbarIconGuidesOff)));
   }
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     settings->setToolbarShowGuide(visible);

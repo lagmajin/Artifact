@@ -810,6 +810,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
    QLabel* currentPathLabel_ = nullptr;
    QLabel* leftHubSummaryLabel_ = nullptr;
    QLabel* leftHubRecentLabel_ = nullptr;
+   QLabel* leftHubSelectionLabel_ = nullptr;
    QVector<RecentFolderButton*> recentFolderButtons_;
    QLabel* fileInfoLabel_ = nullptr;  // File details display
    QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
@@ -1075,7 +1076,7 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
 QString ArtifactAssetBrowser::Impl::syncStateText() const
 {
  auto* svc = ArtifactProjectService::instance();
- return svc ? QStringLiteral("Project View linked") : QStringLiteral("Project View offline");
+ return svc ? QStringLiteral("Status: Project linked") : QStringLiteral("Status: Select a folder to browse assets");
 }
 
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
@@ -1368,11 +1369,19 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
  void ArtifactAssetBrowser::Impl::refreshLeftHubSummary()
  {
   if (currentPathLabel_) {
-   const QString pathText = currentDirectoryPath_.isEmpty()
-                                ? QStringLiteral("Current: (none)")
-                                : QStringLiteral("Current: %1").arg(currentDirectoryPath_);
-   currentPathLabel_->setText(pathText);
-   currentPathLabel_->setToolTip(currentDirectoryPath_);
+   QString currentName;
+   if (currentDirectoryPath_.isEmpty()) {
+    currentName = QStringLiteral("(none)");
+   } else {
+    currentName = QFileInfo(currentDirectoryPath_).fileName();
+    if (currentName.isEmpty()) {
+     currentName = currentDirectoryPath_;
+    }
+   }
+   currentPathLabel_->setText(QStringLiteral("Current: Library Hub / %1").arg(currentName));
+   currentPathLabel_->setToolTip(currentDirectoryPath_.isEmpty()
+                                     ? QStringLiteral("Select a folder to browse assets")
+                                     : currentDirectoryPath_);
   }
   if (leftHubSummaryLabel_) {
    const int recentCount = directoryModel_ ? directoryModel_->recentEntries().size() : 0;
@@ -1380,17 +1389,26 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    const int sourceCount =
        (directoryModel_ && directoryModel_->indexFromGuid(QStringLiteral("assets")).isValid() ? 1 : 0) +
        (directoryModel_ && directoryModel_->indexFromGuid(QStringLiteral("packages")).isValid() ? 1 : 0);
+   QString statusText = QStringLiteral("All");
+   if (currentStatusFilter_ == QStringLiteral("imported")) {
+    statusText = QStringLiteral("Imported");
+   } else if (currentStatusFilter_ == QStringLiteral("missing")) {
+    statusText = QStringLiteral("Missing");
+   } else if (currentStatusFilter_ == QStringLiteral("unused")) {
+    statusText = QStringLiteral("Unused");
+   }
    leftHubSummaryLabel_->setText(
-       QStringLiteral("Recent %1  •  Favorites %2  •  Sources %3")
-           .arg(recentCount)
+       QStringLiteral("Favorites: %1  •  Sources: %2  •  Status: %3")
            .arg(favoriteCount)
-           .arg(sourceCount));
+           .arg(sourceCount)
+           .arg(statusText));
+   leftHubSummaryLabel_->setToolTip(QStringLiteral("Status follows the current asset filter."));
   }
   if (leftHubRecentLabel_) {
    const QVector<RecentEntry> entries = directoryModel_ ? directoryModel_->recentEntries() : QVector<RecentEntry>{};
    if (entries.isEmpty()) {
-    leftHubRecentLabel_->setText(QStringLiteral("Recent folders: none yet"));
-    leftHubRecentLabel_->setToolTip(QStringLiteral("Folders you visit will appear here."));
+    leftHubRecentLabel_->setText(QStringLiteral("Recent folders appear here | Open a folder to continue"));
+    leftHubRecentLabel_->setToolTip(QStringLiteral("Select a folder to browse assets."));
    } else {
     QStringList names;
     const int limit = static_cast<int>(std::min<qsizetype>(entries.size(), 3));
@@ -1407,6 +1425,21 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     }
     leftHubRecentLabel_->setText(QStringLiteral("Recent folders: %1").arg(names.join(QStringLiteral("  •  "))));
     leftHubRecentLabel_->setToolTip(entries.first().path);
+   }
+  }
+  if (leftHubSelectionLabel_) {
+   const QStringList paths = selectedAssetPaths();
+   if (paths.isEmpty()) {
+    leftHubSelectionLabel_->setText(QStringLiteral("Selection: 0 selected | Select an asset to inspect details"));
+    leftHubSelectionLabel_->setToolTip(QStringLiteral("Select an asset to inspect details."));
+   } else {
+    QString name = QFileInfo(paths.first()).fileName();
+    if (name.isEmpty()) {
+     name = paths.first();
+    }
+    leftHubSelectionLabel_->setText(
+        QStringLiteral("Selection: %1 selected | %2").arg(static_cast<int>(paths.size())).arg(name));
+    leftHubSelectionLabel_->setToolTip(paths.join(QStringLiteral("\n")));
    }
   }
   if (!recentFolderButtons_.isEmpty()) {
@@ -1665,6 +1698,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
      case 3: impl_->currentStatusFilter_ = "unused"; break;
     }
     impl_->applyFilters();
+    impl_->refreshLeftHubSummary();
    });
 
    connect(sortByCombo, &QComboBox::currentIndexChanged, this, [this, sortByCombo](int) {
@@ -1731,13 +1765,20 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   impl_->currentPathLabel_ = new QLabel(QStringLiteral("Current: %1").arg(desktopPath), leftHubCard);
   impl_->leftHubSummaryLabel_ = new QLabel(leftHubCard);
   impl_->leftHubRecentLabel_ = new QLabel(leftHubCard);
+  impl_->leftHubSelectionLabel_ = new QLabel(leftHubCard);
   impl_->recentFolderButtons_.clear();
-  impl_->currentPathLabel_->setWordWrap(true);
+  impl_->currentPathLabel_->setWordWrap(false);
   impl_->leftHubSummaryLabel_->setWordWrap(true);
   impl_->leftHubRecentLabel_->setWordWrap(true);
+  impl_->leftHubSelectionLabel_->setWordWrap(true);
+  impl_->currentPathLabel_->setMaximumHeight(24);
+  impl_->leftHubSummaryLabel_->setMaximumHeight(40);
+  impl_->leftHubRecentLabel_->setMaximumHeight(40);
+  impl_->leftHubSelectionLabel_->setMaximumHeight(40);
   impl_->currentPathLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   impl_->leftHubSummaryLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   impl_->leftHubRecentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  impl_->leftHubSelectionLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   {
    QPalette pal = leftHubCard->palette();
    pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
@@ -1749,10 +1790,12 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    impl_->currentPathLabel_->setPalette(pal);
    impl_->leftHubSummaryLabel_->setPalette(pal);
    impl_->leftHubRecentLabel_->setPalette(pal);
+   impl_->leftHubSelectionLabel_->setPalette(pal);
   }
   leftHubLayout->addWidget(impl_->currentPathLabel_);
-  leftHubLayout->addWidget(impl_->leftHubSummaryLabel_);
   leftHubLayout->addWidget(impl_->leftHubRecentLabel_);
+  leftHubLayout->addWidget(impl_->leftHubSelectionLabel_);
+  leftHubLayout->addWidget(impl_->leftHubSummaryLabel_);
   for (int i = 0; i < 3; ++i) {
    auto* recentButton = new RecentFolderButton(leftHubCard);
    recentButton->setVisible(false);
@@ -1884,9 +1927,10 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
      updateFileInfo(selectedFiles.first());
     }
    } else if (impl_->fileInfoLabel_) {
-    impl_->fileInfoLabel_->setText(QStringLiteral("No file selected"));
+    impl_->fileInfoLabel_->setText(QStringLiteral("Select a file to inspect details"));
    }
    selectionChanged(selectedFiles);
+   impl_->refreshLeftHubSummary();
   });
 
   // Create thumbnail size adjustment
@@ -1920,7 +1964,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   auto fileInfoGroup = new QGroupBox("File Details");
   auto fileInfoLayout = new QVBoxLayout();
 
-  auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel("No file selected");
+  auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel(QStringLiteral("Select a file to inspect details"));
   fileInfoLabel->setWordWrap(true);
   fileInfoLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
   {
@@ -2142,6 +2186,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    updateFileInfo(normalizedPaths.first());
    emit selectionChanged(normalizedPaths);
   }
+  impl_->refreshLeftHubSummary();
 }
 
  void ArtifactAssetBrowser::dropEvent(QDropEvent* event)
@@ -2204,6 +2249,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   {
    impl_->currentStatusFilter_ = status;
    impl_->applyFilters();
+   impl_->refreshLeftHubSummary();
   }
 
  void ArtifactAssetBrowser::navigateToFolder(const QString& folderPath)

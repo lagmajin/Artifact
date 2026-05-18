@@ -63,7 +63,7 @@ public:
      */
     void refresh() {
         if (!project_) {
-            statusLabel_->setText("No project loaded.");
+            statusLabel_->setText("Open a project to inspect health.");
             applyStatusColor(QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
             issuesTree_->clear();
             lastReport_ = {};

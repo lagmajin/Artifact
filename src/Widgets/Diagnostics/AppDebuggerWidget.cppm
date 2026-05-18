@@ -173,6 +173,7 @@ public:
         overviewSummary_->setTextFormat(Qt::PlainText);
         overviewSummary_->setWordWrap(true);
         overviewSummary_->setMinimumHeight(56);
+        overviewSummary_->setMaximumHeight(72);
         overviewLayout->addWidget(overviewSummary_);
         layout->addWidget(overviewPage_);
 
@@ -1012,14 +1013,6 @@ public:
             const QString backendText = controllerSnapshot.renderBackend.isEmpty()
                                             ? QStringLiteral("<none>")
                                             : controllerSnapshot.renderBackend;
-            QString hotThreadText = QStringLiteral("<none>");
-            int hotThreadDepth = 0;
-            for (const auto& thread : trace.threads) {
-                if (thread.lockDepth > hotThreadDepth) {
-                    hotThreadDepth = thread.lockDepth;
-                    hotThreadText = thread.threadName.isEmpty() ? QStringLiteral("<unnamed>") : thread.threadName;
-                }
-            }
             QString lastCrashText = QStringLiteral("<none>");
             if (!trace.crashes.isEmpty()) {
                 lastCrashText = trace.crashes.back().summary.isEmpty()
@@ -1034,33 +1027,33 @@ public:
                     ++failedPasses;
                 }
             }
-            const QString healthText = controllerSnapshot.failed
-                                           ? QStringLiteral("failed")
-                                           : (failedPasses > 0 ? QStringLiteral("pass failed") : QStringLiteral("ok"));
             const QString projectHealthText = projectSvc
                                                   ? (projectSvc->currentProjectHealthReport().isHealthy
                                                          ? QStringLiteral("healthy")
                                                          : QStringLiteral("issues"))
                                                   : QStringLiteral("<no service>");
-            const QString compareText = controllerSnapshot.compareMode == ArtifactCore::FrameDebugCompareMode::Disabled
-                                            ? QStringLiteral("off")
-                                            : ArtifactCore::toString(controllerSnapshot.compareMode);
-            overviewSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  backend=%6  health=%7  projectHealth=%8  compare=%9  passes=%10  crashes=%11  traceEvents=%12  hotThread=%13(%14)  lastCrash=%15")
+            QString warningText = QStringLiteral("none");
+            if (controllerSnapshot.failed) {
+                warningText = QStringLiteral("frame failed");
+            } else if (failedPasses > 0) {
+                warningText = QStringLiteral("%1 failed passes").arg(failedPasses);
+            } else if (projectHealthText == QStringLiteral("issues")) {
+                warningText = QStringLiteral("project health issues");
+            } else if (!trace.crashes.isEmpty()) {
+                warningText = QStringLiteral("recent crash: %1").arg(lastCrashText);
+            }
+            const QString nextText = warningText == QStringLiteral("none")
+                                         ? QStringLiteral("capture frame when behavior changes")
+                                         : QStringLiteral("open the relevant diagnostic tab");
+            overviewSummary_->setText(QStringLiteral("Goal: inspect current app state  |  Now: project=%1 composition=%2 layer=%3 frame=%4 playback=%5 backend=%6  |  Warning: %7  |  Next: %8")
                                           .arg(projectText,
                                                compositionText,
                                                layerText)
                                           .arg(controllerSnapshot.frame.framePosition())
                                           .arg(playbackText)
                                           .arg(backendText)
-                                          .arg(healthText)
-                                          .arg(projectHealthText)
-                                          .arg(compareText)
-                                          .arg(static_cast<int>(controllerSnapshot.passes.size()))
-                                          .arg(static_cast<int>(trace.crashes.size()))
-                                          .arg(static_cast<int>(trace.events.size()))
-                                          .arg(hotThreadText)
-                                          .arg(hotThreadDepth)
-                                          .arg(lastCrashText));
+                                          .arg(warningText)
+                                          .arg(nextText));
             overviewSummary_->setToolTip(QStringLiteral("failedPasses=%1 totalPassUs=%2 queueJobs=%3 traceThreads=%4")
                                              .arg(failedPasses)
                                              .arg(totalPassUs)

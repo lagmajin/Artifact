@@ -4,10 +4,12 @@
 #include <QVBoxLayout>
 #include <QSignalBlocker>
 #include <QFontDatabase>
+#include <QKeyEvent>
 #include <QShowEvent>
 #include <QPalette>
 #include <QColor>
 #include <QString>
+#include <functional>
 #include <vector>
 #include <compare>
 
@@ -36,6 +38,33 @@ QString targetLabel(MarkdownNoteTarget target)
   }
   return QStringLiteral("Note");
 }
+
+class MarkdownNoteTextEdit : public QPlainTextEdit {
+public:
+  using CommitCallback = std::function<void()>;
+
+  explicit MarkdownNoteTextEdit(QWidget* parent = nullptr)
+      : QPlainTextEdit(parent) {}
+
+  CommitCallback commitCallback;
+
+protected:
+  void keyPressEvent(QKeyEvent* event) override
+  {
+    const bool commitShortcut =
+        event && (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) &&
+        (event->modifiers() & Qt::ControlModifier || event->modifiers() & Qt::MetaModifier);
+    if (commitShortcut) {
+      if (commitCallback) {
+        commitCallback();
+      }
+      focusNextChild();
+      event->accept();
+      return;
+    }
+    QPlainTextEdit::keyPressEvent(event);
+  }
+};
 }
 
 class ArtifactMarkdownNoteEditorWidget::Impl {
@@ -65,16 +94,17 @@ public:
     titleLabel_->setObjectName(QStringLiteral("markdownNoteTitle"));
     subtitleLabel_ = new QLabel(QStringLiteral("Plain markdown editor"), owner_);
     subtitleLabel_->setObjectName(QStringLiteral("markdownNoteSubtitle"));
+    subtitleLabel_->setToolTip(
+        QStringLiteral("The note is saved as you type. Ctrl+Enter commits the current text and moves on."));
 
-    editor_ = new QPlainTextEdit(owner_);
+    editor_ = new MarkdownNoteTextEdit(owner_);
     editor_->setObjectName(QStringLiteral("markdownNoteEditor"));
-    editor_->setPlaceholderText(
-        target_ == MarkdownNoteTarget::Composition
-            ? QStringLiteral("Write composition notes in markdown...")
-            : QStringLiteral("Write layer notes in markdown..."));
+    editor_->setPlaceholderText(activePlaceholder());
     editor_->setLineWrapMode(QPlainTextEdit::WidgetWidth);
     editor_->setTabChangesFocus(false);
     editor_->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
+    editor_->setToolTip(QStringLiteral("Ctrl+Enter commits the current note and moves focus forward."));
+    static_cast<MarkdownNoteTextEdit*>(editor_)->commitCallback = [this]() { commitText(); };
 
     layout->addWidget(titleLabel_);
     layout->addWidget(subtitleLabel_);
@@ -161,8 +191,8 @@ public:
   QString activePlaceholder() const
   {
     return target_ == MarkdownNoteTarget::Composition
-        ? QStringLiteral("Write composition notes in markdown...")
-        : QStringLiteral("Write layer notes in markdown...");
+        ? QStringLiteral("Open a composition, then write notes in markdown...")
+        : QStringLiteral("Select a layer, then write notes in markdown...");
   }
 
   void setDisabledState(const QString& message)
@@ -183,7 +213,7 @@ public:
   {
     auto* service = ArtifactProjectService::instance();
     if (!service) {
-      setDisabledState(QStringLiteral("No project loaded."));
+      setDisabledState(QStringLiteral("Open a project to write notes."));
       return;
     }
 
@@ -191,7 +221,7 @@ public:
     if (!comp) {
       currentCompositionId_ = CompositionID();
       currentLayerId_ = LayerID();
-      setDisabledState(QStringLiteral("No composition selected."));
+      setDisabledState(QStringLiteral("Open a composition to write notes."));
       return;
     }
 
@@ -215,7 +245,7 @@ public:
     const auto layer = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
     if (!layer || !comp->containsLayerById(layer->id())) {
       currentLayerId_ = LayerID();
-      setDisabledState(QStringLiteral("No layer selected."));
+      setDisabledState(QStringLiteral("Select a layer to write notes."));
       return;
     }
 

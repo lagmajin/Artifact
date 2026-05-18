@@ -531,6 +531,17 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Sine")}, {1, QStringLiteral("Cosine")}};
   }
+  if (name == QStringLiteral("text.animatorPreset")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("None")},
+        {1, QStringLiteral("Typewriter")},
+        {2, QStringLiteral("Slide Up")},
+        {3, QStringLiteral("Scale In")},
+        {4, QStringLiteral("Rotation In")},
+        {5, QStringLiteral("Tracking Fade")},
+        {6, QStringLiteral("Wiggly Position")},
+        {7, QStringLiteral("Blur Reveal")}};
+  }
   if (name == QStringLiteral("orientation")) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Horizontal")}, {1, QStringLiteral("Vertical")}};

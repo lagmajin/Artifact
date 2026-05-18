@@ -1300,7 +1300,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   clearLayoutRecursive(mainLayout);
 
   if (!currentLayer) {
-    QLabel *emptyLabel = new QLabel("No layer selected");
+    QLabel *emptyLabel = new QLabel("Select a layer to edit properties");
     emptyLabel->setObjectName(QStringLiteral("propertyEmptyLabel"));
     emptyLabel->setAlignment(Qt::AlignCenter);
     applyPropertySectionLabel(emptyLabel, true);

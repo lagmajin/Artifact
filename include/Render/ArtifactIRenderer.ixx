@@ -86,12 +86,18 @@ public:
   void present();
   bool isInitialized() const;
   bool hasSwapChain() const;
+  quint64 presentAttemptCount() const;
+  quint64 presentSuccessCount() const;
+  quint64 presentFailureCount() const;
+  quint64 presentSkippedCount() const;
+  QString lastPresentStatus() const;
   void beginFrameCostCapture();
   void endFrameCostCapture();
   ArtifactCore::RenderCostStats frameCostStats() const;
   double lastFrameGpuTimeMs() const;
   QString particleDebugState() const;
   QString glyphAtlasDebugState() const;
+  QString rayTracingDebugState() const;
 
   QImage readbackToImage() const;
   QImage readbackDepthToImage() const;
@@ -314,6 +320,7 @@ public:
   Diligent::RefCntAutoPtr<Diligent::IDeviceContext> immediateContext() const;
   Diligent::ITextureView *layerTextureView() const;
   Diligent::ITextureView *layerRenderTargetView() const;
+  Diligent::ITextureView *rayTracingOutputTextureView() const;
   ArtifactCore::IRayTracingManager *rayTracingManager() const;
   void setOverrideRTV(Diligent::ITextureView *rtv);
 

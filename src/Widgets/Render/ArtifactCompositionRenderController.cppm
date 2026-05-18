@@ -498,6 +498,32 @@ QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType
   return vertex.position;
 }
 
+QPointF cubicBezierPoint(const QPointF &p0, const QPointF &p1,
+                         const QPointF &p2, const QPointF &p3, double t) {
+  const double u = 1.0 - t;
+  const double tt = t * t;
+  const double uu = u * u;
+  const double uuu = uu * u;
+  const double ttt = tt * t;
+  return p0 * uuu + p1 * (3.0 * uu * t) + p2 * (3.0 * u * tt) + p3 * ttt;
+}
+
+QVector<QPointF> maskSegmentPolyline(const MaskVertex &start,
+                                     const MaskVertex &end,
+                                     int subdivisions = 18) {
+  QVector<QPointF> points;
+  points.reserve(std::max(2, subdivisions + 1));
+  const QPointF p0 = start.position;
+  const QPointF p1 = start.position + start.outTangent;
+  const QPointF p2 = end.position + end.inTangent;
+  const QPointF p3 = end.position;
+  for (int i = 0; i <= subdivisions; ++i) {
+    const double t = static_cast<double>(i) / static_cast<double>(subdivisions);
+    points.push_back(cubicBezierPoint(p0, p1, p2, p3, t));
+  }
+  return points;
+}
+
 bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer,
                        const QPointF& canvasPos,
                        float threshold,
@@ -603,18 +629,38 @@ bool hitTestMaskSegment(const ArtifactAbstractLayerPtr& layer,
       for (int s = 0; s < segmentCount; ++s) {
         const MaskVertex startVertex = path.vertex(s);
         const MaskVertex endVertex = path.vertex((s + 1) % vertexCount);
-        if (distanceToSegmentSq(localPos, startVertex.position,
-                                endVertex.position) <= thresholdSq) {
-          outMaskIndex = m;
-          outPathIndex = p;
-          outSegmentIndex = s;
-          return true;
+        const QVector<QPointF> samples =
+            maskSegmentPolyline(startVertex, endVertex, 14);
+        for (int i = 1; i < samples.size(); ++i) {
+          if (distanceToSegmentSq(localPos, samples[i - 1], samples[i]) <=
+              thresholdSq) {
+            outMaskIndex = m;
+            outPathIndex = p;
+            outSegmentIndex = s;
+            return true;
+          }
         }
       }
     }
   }
 
   return false;
+}
+
+void setMaskVertexHandle(MaskVertex &vertex, MaskHandleType handleType,
+                         const QPointF &handleDelta, bool breakTangents) {
+  const QPointF mirroredDelta(-handleDelta.x(), -handleDelta.y());
+  if (handleType == MaskHandleType::InTangent) {
+    vertex.inTangent = handleDelta;
+    if (!breakTangents) {
+      vertex.outTangent = mirroredDelta;
+    }
+  } else if (handleType == MaskHandleType::OutTangent) {
+    vertex.outTangent = handleDelta;
+    if (!breakTangents) {
+      vertex.inTangent = mirroredDelta;
+    }
+  }
 }
 
 void drawMaskSquareMarker(ArtifactIRenderer *renderer,
@@ -4453,6 +4499,25 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                 return;
               }
 
+              if (event->modifiers().testFlag(Qt::ControlModifier)) {
+                impl_->isDraggingVertex_ = false;
+                impl_->resetLayerMutationNotify();
+                impl_->isDraggingMaskHandle_ = true;
+                impl_->draggingMaskIndex_ = m;
+                impl_->draggingPathIndex_ = p;
+                impl_->draggingVertexIndex_ = v;
+                impl_->draggingMaskHandleType_ =
+                    static_cast<int>(MaskHandleType::OutTangent);
+                impl_->hoveredMaskIndex_ = m;
+                impl_->hoveredPathIndex_ = p;
+                impl_->hoveredVertexIndex_ = v;
+                impl_->hoveredMaskHandleType_ =
+                    static_cast<int>(MaskHandleType::OutTangent);
+                qDebug() << "[PenTool] Started dragging bezier handle" << v;
+                event->accept();
+                return;
+              }
+
               impl_->isDraggingVertex_ = true;
               impl_->resetLayerMutationNotify();
               impl_->draggingMaskIndex_ = m;
@@ -4502,6 +4567,14 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       }
 
       impl_->beginPendingMaskCreation(selectedLayer, localPos);
+      impl_->isDraggingVertex_ = false;
+      impl_->isDraggingMaskHandle_ = true;
+      impl_->draggingMaskIndex_ = -1;
+      impl_->draggingPathIndex_ = -1;
+      impl_->draggingVertexIndex_ =
+          impl_->pendingMaskPath_.vertexCount() - 1;
+      impl_->draggingMaskHandleType_ =
+          static_cast<int>(MaskHandleType::OutTangent);
 
       qDebug() << "[PenTool] Added pending mask vertex at local:" << localPos
                << "layer:" << selectedLayer->id().toString()
@@ -4901,6 +4974,62 @@ void CompositionRenderController::handleMouseMove(
           impl_->markMaskEditDirty();
           impl_->publishLayerModified(selectedLayer);
           return;
+        }
+      }
+    }
+  }
+
+  if (activeTool == ToolType::Pen && impl_->isDraggingMaskHandle_) {
+    auto comp = impl_->previewPipeline_.composition();
+    if (comp && impl_->renderer_) {
+      auto selectedLayer = comp->layerById(impl_->selectedLayerId_);
+      if (selectedLayer) {
+        const auto cPos = impl_->renderer_->viewportToCanvas(
+            {(float)viewportPos.x(), (float)viewportPos.y()});
+        const QTransform globalTransform = selectedLayer->getGlobalTransform();
+        bool invertible = false;
+        const QTransform invTransform = globalTransform.inverted(&invertible);
+
+        if (invertible) {
+          const QPointF localPos = invTransform.map(QPointF(cPos.x, cPos.y));
+          const auto handleType =
+              static_cast<MaskHandleType>(impl_->draggingMaskHandleType_);
+          const bool breakTangents =
+              event->modifiers().testFlag(Qt::AltModifier);
+
+          if (impl_->draggingMaskIndex_ == -1 &&
+              impl_->pendingMaskCreation_ &&
+              impl_->draggingVertexIndex_ >= 0 &&
+              impl_->draggingVertexIndex_ <
+                  impl_->pendingMaskPath_.vertexCount()) {
+            MaskVertex vertex =
+                impl_->pendingMaskPath_.vertex(impl_->draggingVertexIndex_);
+            setMaskVertexHandle(vertex, handleType, localPos - vertex.position,
+                                breakTangents);
+            impl_->pendingMaskPath_.setVertex(impl_->draggingVertexIndex_,
+                                              vertex);
+            impl_->penMaskPreviewCanvasPos_ = {cPos.x, cPos.y};
+            impl_->penMaskPreviewValid_ = true;
+            impl_->invalidateOverlayComposite();
+            markRenderDirty();
+            return;
+          }
+
+          if (impl_->draggingMaskIndex_ >= 0 &&
+              impl_->draggingPathIndex_ >= 0 &&
+              impl_->draggingVertexIndex_ >= 0) {
+            LayerMask mask = selectedLayer->mask(impl_->draggingMaskIndex_);
+            MaskPath path = mask.maskPath(impl_->draggingPathIndex_);
+            MaskVertex vertex = path.vertex(impl_->draggingVertexIndex_);
+            setMaskVertexHandle(vertex, handleType, localPos - vertex.position,
+                                breakTangents);
+            path.setVertex(impl_->draggingVertexIndex_, vertex);
+            mask.setMaskPath(impl_->draggingPathIndex_, path);
+            selectedLayer->setMask(impl_->draggingMaskIndex_, mask);
+            impl_->markMaskEditDirty();
+            impl_->publishLayerModified(selectedLayer);
+            return;
+          }
         }
       }
     }
@@ -6625,9 +6754,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   }
 
                   if (showMaskPath && v > 0) {
-                    renderer_->drawThickLineLocal(lastCanvasPos,
-                                                  currentCanvasPos, maskStrokeWidth,
-                                                  handleStrokeColor);
+                    const MaskVertex previousVertex = path.vertex(v - 1);
+                    const QVector<QPointF> samples =
+                        maskSegmentPolyline(previousVertex, vertex, 18);
+                    for (int i = 1; i < samples.size(); ++i) {
+                      const QPointF a = globalTransform.map(samples[i - 1]);
+                      const QPointF b = globalTransform.map(samples[i]);
+                      renderer_->drawThickLineLocal(
+                          {static_cast<float>(a.x()),
+                           static_cast<float>(a.y())},
+                          {static_cast<float>(b.x()),
+                           static_cast<float>(b.y())},
+                          maskStrokeWidth, handleStrokeColor);
+                    }
                   }
 
                   FloatColor currentColor = maskPointColor;
@@ -6651,12 +6790,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
               if (showMaskPath && path.isClosed() && vertexCount > 1) {
                 MaskVertex firstVertex = path.vertex(0);
-                QPointF firstCanvasPos =
-                    globalTransform.map(firstVertex.position);
-                renderer_->drawThickLineLocal(
-                    lastCanvasPos,
-                    {(float)firstCanvasPos.x(), (float)firstCanvasPos.y()},
-                    maskStrokeWidth, handleStrokeColor);
+                MaskVertex lastVertex = path.vertex(vertexCount - 1);
+                const QVector<QPointF> samples =
+                    maskSegmentPolyline(lastVertex, firstVertex, 18);
+                for (int i = 1; i < samples.size(); ++i) {
+                  const QPointF a = globalTransform.map(samples[i - 1]);
+                  const QPointF b = globalTransform.map(samples[i]);
+                  renderer_->drawThickLineLocal(
+                      {static_cast<float>(a.x()), static_cast<float>(a.y())},
+                      {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                      maskStrokeWidth, handleStrokeColor);
+                }
               }
 
               {
@@ -6696,8 +6840,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 static_cast<float>(canvasPos.x()),
                 static_cast<float>(canvasPos.y())};
             if (v > 0) {
-              renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
-                                            pendingStrokeWidth, pendingLineColor);
+              const MaskVertex previousVertex = path.vertex(v - 1);
+              const QVector<QPointF> samples =
+                  maskSegmentPolyline(previousVertex, vertex, 18);
+              for (int i = 1; i < samples.size(); ++i) {
+                const QPointF a = globalTransform.map(samples[i - 1]);
+                const QPointF b = globalTransform.map(samples[i]);
+                renderer_->drawThickLineLocal(
+                    {static_cast<float>(a.x()), static_cast<float>(a.y())},
+                    {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                    pendingStrokeWidth, pendingLineColor);
+              }
             }
             drawMaskSquareMarker(renderer_.get(), currentCanvasPos, 7.5f,
                                  pendingPointColor, &pendingPointShadowColor,
@@ -7192,6 +7345,31 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     lastFlushMs_ = flushMs;
     lastSubmit2DMs_ = std::max<qint64>(lastSubmit2DMs_, 0);
     lastPresentMs_ = presentMs;
+    if (renderFrameCounter_ <= 5 ||
+        renderer_->lastPresentStatus() != QStringLiteral("ok")) {
+      quintptr hostWinId = 0;
+      QSize hostSize;
+      qreal hostDpr = 1.0;
+      bool hostVisible = false;
+      if (auto *host = hostWidget_.data()) {
+        hostWinId = static_cast<quintptr>(host->winId());
+        hostSize = host->size();
+        hostDpr = host->devicePixelRatio();
+        hostVisible = host->isVisible();
+      }
+      qInfo() << "[CompositionView][PresentProbe]"
+              << "frame=" << renderFrameCounter_
+              << "status=" << renderer_->lastPresentStatus()
+              << "attempts=" << renderer_->presentAttemptCount()
+              << "ok=" << renderer_->presentSuccessCount()
+              << "fail=" << renderer_->presentFailureCount()
+              << "skip=" << renderer_->presentSkippedCount()
+              << "hostVisible=" << hostVisible
+              << "hostWinId=" << hostWinId
+              << "hostSize=" << hostSize
+              << "hostDpr=" << hostDpr
+              << "hasSwapChain=" << renderer_->hasSwapChain();
+    }
     const auto textureCacheStats = gpuTextureCacheManager_
                                        ? gpuTextureCacheManager_->stats()
                                        : GPUTextureCacheStats{};
@@ -7200,7 +7378,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             "path=%1 gpuBlendEnabled=%2 gpuBlendReady=%3 layersTotal=%4 "
             "layersDrawn=%5 surfaceUploadLayers=%6 cpuRasterLayers=%7 "
             "frameOutOfRange=%8 previewDownsample=%9 effectiveDownsample=%10 "
-            "viewportInteracting=%11 cacheEntries=%12 cacheBytes=%13")
+            "viewportInteracting=%11 cacheEntries=%12 cacheBytes=%13 "
+            "presentStatus=%14 presentOk=%15 presentFail=%16 presentSkip=%17 "
+            "rayTracing={%18}")
             .arg(pipelineEnabled ? QStringLiteral("gpu-blend")
                                  : QStringLiteral("fallback"))
             .arg(gpuBlendEnabled_)
@@ -7214,7 +7394,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(effectivePreviewDownsample)
             .arg(viewportInteracting_)
             .arg(textureCacheStats.entryCount)
-            .arg(static_cast<qulonglong>(textureCacheStats.memoryBytes));
+            .arg(static_cast<qulonglong>(textureCacheStats.memoryBytes))
+            .arg(renderer_->lastPresentStatus())
+            .arg(static_cast<qulonglong>(renderer_->presentSuccessCount()))
+            .arg(static_cast<qulonglong>(renderer_->presentFailureCount()))
+            .arg(static_cast<qulonglong>(renderer_->presentSkippedCount()))
+            .arg(renderer_->rayTracingDebugState());
     const QString visibilityState =
         frameOutOfRange
             ? QStringLiteral("frameOutOfRange")
