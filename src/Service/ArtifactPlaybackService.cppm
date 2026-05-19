@@ -94,6 +94,19 @@ public:
   std::atomic_bool compositionFrameSyncQueued_{false};
   QString previewDiskCacheRoot_;
 
+  void applyCurrentPlaybackFrameRangeToEngine() {
+    if (!engine_ || !currentComposition_) {
+      return;
+    }
+    FrameRange range = currentComposition_->frameRange();
+    if (playbackRangeMode_ == PlaybackRangeMode::WorkArea) {
+      range = currentComposition_->workAreaRange();
+    } else if (playbackRangeMode_ == PlaybackRangeMode::Selection) {
+      // Selection range is intentionally left as a future extension.
+    }
+    engine_->setFrameRange(range);
+  }
+
   explicit Impl(ArtifactPlaybackService *owner) : owner_(owner) {
     controller_ = new ArtifactCompositionPlaybackController();
     engine_ = new ArtifactPlaybackEngine();
@@ -844,18 +857,7 @@ void ArtifactPlaybackService::setPlaybackRangeMode(PlaybackRangeMode mode) {
   impl_->playbackRangeMode_ = mode;
 
   // 再生範囲を更新
-  if (impl_->currentComposition_) {
-    FrameRange range = impl_->currentComposition_->frameRange();
-    if (mode == PlaybackRangeMode::WorkArea) {
-      range = impl_->currentComposition_->workAreaRange();
-    } else if (mode == PlaybackRangeMode::Selection) {
-      // 選択範囲の実装は将来的に拡張
-    }
-
-    if (impl_->engine_) {
-      impl_->engine_->setFrameRange(range);
-    }
-  }
+  impl_->applyCurrentPlaybackFrameRangeToEngine();
 
   ArtifactCore::globalEventBus().publish<PlaybackRangeModeChangedEvent>(
       PlaybackRangeModeChangedEvent{mode});
@@ -883,15 +885,7 @@ void ArtifactPlaybackService::play() {
   impl_->startAudioClock();
   
   // 再生開始直前に最新の範囲を適用
-  if (impl_->currentComposition_) {
-    FrameRange range = impl_->currentComposition_->frameRange();
-    if (impl_->playbackRangeMode_ == PlaybackRangeMode::WorkArea) {
-      range = impl_->currentComposition_->workAreaRange();
-    }
-    if (impl_->engine_) {
-      impl_->engine_->setFrameRange(range);
-    }
-  }
+  impl_->applyCurrentPlaybackFrameRangeToEngine();
 
   // 新しいエンジンを使用
   if (impl_->engine_) {
@@ -930,6 +924,39 @@ void ArtifactPlaybackService::togglePlayPause() {
   } else if (impl_->controller_) {
     impl_->controller_->togglePlayPause();
   }
+}
+
+void ArtifactPlaybackService::playFromFrame(const FramePosition &position) {
+  goToFrame(position);
+  play();
+}
+
+void ArtifactPlaybackService::pauseAndGoToFrame(const FramePosition &position) {
+  pause();
+  goToFrame(position);
+}
+
+void ArtifactPlaybackService::shuttleForward() {
+  const float speed = playbackSpeed();
+  if (speed >= 0.0f && speed < 8.0f) {
+    setPlaybackSpeed(speed <= 0.0f ? 1.0f : speed * 2.0f);
+  }
+  play();
+}
+
+void ArtifactPlaybackService::shuttleReverse() {
+  const float speed = playbackSpeed();
+  if (speed <= 0.0f && speed > -8.0f) {
+    setPlaybackSpeed(speed >= 0.0f ? -1.0f : speed * 2.0f);
+  } else {
+    setPlaybackSpeed(-1.0f);
+  }
+  play();
+}
+
+void ArtifactPlaybackService::shuttleStop() {
+  setPlaybackSpeed(0.0f);
+  stop();
 }
 
 void ArtifactPlaybackService::goToFrame(const FramePosition &position) {
@@ -1052,6 +1079,37 @@ void ArtifactPlaybackService::setFrameRate(const FrameRate &rate) {
   }
 }
 
+void ArtifactPlaybackService::setWorkAreaStartAtCurrentFrame() {
+  if (!impl_->currentComposition_) {
+    return;
+  }
+  const int64_t activeFrame = currentFrame().framePosition();
+  const int64_t outPoint = impl_->currentComposition_->workAreaRange().end();
+  impl_->currentComposition_->setWorkAreaRange(
+      FrameRange(activeFrame, std::max<int64_t>(activeFrame + 1, outPoint)));
+  ArtifactCore::globalEventBus().publish<WorkAreaChangedEvent>({
+      impl_->currentComposition_->id().toString(),
+      impl_->currentComposition_->workAreaRange().start(),
+      impl_->currentComposition_->workAreaRange().end()});
+  impl_->applyCurrentPlaybackFrameRangeToEngine();
+}
+
+void ArtifactPlaybackService::setWorkAreaEndAtCurrentFrame() {
+  if (!impl_->currentComposition_) {
+    return;
+  }
+  const int64_t activeFrame = currentFrame().framePosition();
+  const int64_t inPoint = impl_->currentComposition_->workAreaRange().start();
+  impl_->currentComposition_->setWorkAreaRange(
+      FrameRange(std::min<int64_t>(inPoint, activeFrame),
+                 std::max<int64_t>(activeFrame + 1, inPoint)));
+  ArtifactCore::globalEventBus().publish<WorkAreaChangedEvent>({
+      impl_->currentComposition_->id().toString(),
+      impl_->currentComposition_->workAreaRange().start(),
+      impl_->currentComposition_->workAreaRange().end()});
+  impl_->applyCurrentPlaybackFrameRangeToEngine();
+}
+
 float ArtifactPlaybackService::playbackSpeed() const {
   return impl_->engine_
              ? impl_->engine_->playbackSpeed()
@@ -1142,7 +1200,7 @@ void ArtifactPlaybackService::setCurrentComposition(
 
     // エンジンにコンポジションの設定を反映
     if (impl_->engine_ && composition) {
-      impl_->engine_->setFrameRange(composition->frameRange());
+      impl_->applyCurrentPlaybackFrameRangeToEngine();
       impl_->engine_->setFrameRate(composition->frameRate());
       impl_->engine_->setCurrentFrame(composition->framePosition());
       impl_->engine_->setComposition(composition);
@@ -1229,6 +1287,98 @@ ArtifactInOutPoints *ArtifactPlaybackService::inOutPoints() const {
   }
   return impl_ && impl_->controller_ ? impl_->controller_->inOutPoints()
                                      : nullptr;
+}
+
+std::optional<FramePosition> ArtifactPlaybackService::inPoint() const {
+  if (const auto *points = inOutPoints()) {
+    return points->inPoint();
+  }
+  return std::nullopt;
+}
+
+std::optional<FramePosition> ArtifactPlaybackService::outPoint() const {
+  if (const auto *points = inOutPoints()) {
+    return points->outPoint();
+  }
+  return std::nullopt;
+}
+
+bool ArtifactPlaybackService::hasInPoint() const {
+  return inPoint().has_value();
+}
+
+bool ArtifactPlaybackService::hasOutPoint() const {
+  return outPoint().has_value();
+}
+
+void ArtifactPlaybackService::setInPointAtCurrentFrame() {
+  if (auto *points = inOutPoints()) {
+    points->setInPoint(currentFrame());
+  }
+}
+
+void ArtifactPlaybackService::setOutPointAtCurrentFrame() {
+  if (auto *points = inOutPoints()) {
+    points->setOutPoint(currentFrame());
+  }
+}
+
+void ArtifactPlaybackService::clearInPoint() {
+  if (auto *points = inOutPoints()) {
+    points->clearInPoint();
+  }
+}
+
+void ArtifactPlaybackService::clearOutPoint() {
+  if (auto *points = inOutPoints()) {
+    points->clearOutPoint();
+  }
+}
+
+void ArtifactPlaybackService::clearInOutPoints() {
+  if (auto *points = inOutPoints()) {
+    points->clearAllPoints();
+  }
+}
+
+void ArtifactPlaybackService::goToInPoint() {
+  if (auto *points = inOutPoints()) {
+    if (const auto inPoint = points->inPoint()) {
+      goToFrame(*inPoint);
+    }
+  }
+}
+
+void ArtifactPlaybackService::goToOutPoint() {
+  if (auto *points = inOutPoints()) {
+    if (const auto outPoint = points->outPoint()) {
+      goToFrame(*outPoint);
+    }
+  }
+}
+
+void ArtifactPlaybackService::addMarkerAtCurrentFrame(const QString &comment) {
+  if (auto *points = inOutPoints()) {
+    points->addMarker(currentFrame(), comment, MarkerType::Comment);
+  }
+}
+
+void ArtifactPlaybackService::addChapterMarkerAtCurrentFrame(const QString &name) {
+  if (auto *points = inOutPoints()) {
+    points->addMarker(currentFrame(), name, MarkerType::Chapter);
+  }
+}
+
+void ArtifactPlaybackService::deleteMarkerAtCurrentFrame() {
+  if (auto *points = inOutPoints()) {
+    points->removeMarker(currentFrame());
+  }
+}
+
+void ArtifactPlaybackService::clearAllMarkers() {
+  if (auto *points = inOutPoints()) {
+    points->clearAllMarkers();
+  }
 }
 
 void ArtifactPlaybackService::goToNextMarker() {

@@ -94,6 +94,11 @@ public:
   void pause();
   void stop();
   void togglePlayPause();
+  void playFromFrame(const FramePosition &position);
+  void pauseAndGoToFrame(const FramePosition &position);
+  void shuttleForward();
+  void shuttleReverse();
+  void shuttleStop();
 
   // Frame navigation
   void goToFrame(const FramePosition &position);
@@ -119,6 +124,8 @@ public:
   // Frame rate
   FrameRate frameRate() const;
   void setFrameRate(const FrameRate &rate);
+  void setWorkAreaStartAtCurrentFrame();
+  void setWorkAreaEndAtCurrentFrame();
 
   // Playback speed
   float playbackSpeed() const;
@@ -156,6 +163,21 @@ public:
   // In/Out Points
   void setInOutPoints(ArtifactInOutPoints *inOutPoints);
   ArtifactInOutPoints *inOutPoints() const;
+  std::optional<FramePosition> inPoint() const;
+  std::optional<FramePosition> outPoint() const;
+  bool hasInPoint() const;
+  bool hasOutPoint() const;
+  void setInPointAtCurrentFrame();
+  void setOutPointAtCurrentFrame();
+  void clearInPoint();
+  void clearOutPoint();
+  void clearInOutPoints();
+  void goToInPoint();
+  void goToOutPoint();
+  void addMarkerAtCurrentFrame(const QString &comment = QString());
+  void addChapterMarkerAtCurrentFrame(const QString &name = QString());
+  void deleteMarkerAtCurrentFrame();
+  void clearAllMarkers();
 
   // RAM preview cache
   void setRamPreviewEnabled(bool enabled);
