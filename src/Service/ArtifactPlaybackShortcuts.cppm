@@ -345,50 +345,60 @@ void ArtifactPlaybackShortcuts::goToFrame(int frame) {
 // ==================== In/Out Point Actions ====================
 
 void ArtifactPlaybackShortcuts::setInPoint() {
-    if (!impl_->inOutPoints_) return;
-    auto frame = ArtifactPlaybackService::instance()
-                     ? ArtifactPlaybackService::instance()->currentFrame()
-                     : (impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0));
-    impl_->inOutPoints_->setInPoint(frame);
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->setInPointAtCurrentFrame();
+    } else if (impl_->inOutPoints_) {
+        auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
+        impl_->inOutPoints_->setInPoint(frame);
+    }
     // emit inPointSet(frame.value());
     emit shortcutExecuted(Impl::ACTION_SET_IN_POINT);
 }
 
 void ArtifactPlaybackShortcuts::setOutPoint() {
-    if (!impl_->inOutPoints_) return;
-    auto frame = ArtifactPlaybackService::instance()
-                     ? ArtifactPlaybackService::instance()->currentFrame()
-                     : (impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0));
-    impl_->inOutPoints_->setOutPoint(frame);
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->setOutPointAtCurrentFrame();
+    } else if (impl_->inOutPoints_) {
+        auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
+        impl_->inOutPoints_->setOutPoint(frame);
+    }
     // emit outPointSet(frame.value());
     emit shortcutExecuted(Impl::ACTION_SET_OUT_POINT);
 }
 
 void ArtifactPlaybackShortcuts::clearInPoint() {
-    if (!impl_->inOutPoints_) return;
-    impl_->inOutPoints_->clearInPoint();
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->clearInPoint();
+    } else if (impl_->inOutPoints_) {
+        impl_->inOutPoints_->clearInPoint();
+    }
     emit shortcutExecuted(Impl::ACTION_CLEAR_IN_POINT);
 }
 
 void ArtifactPlaybackShortcuts::clearOutPoint() {
-    if (!impl_->inOutPoints_) return;
-    impl_->inOutPoints_->clearOutPoint();
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->clearOutPoint();
+    } else if (impl_->inOutPoints_) {
+        impl_->inOutPoints_->clearOutPoint();
+    }
     emit shortcutExecuted(Impl::ACTION_CLEAR_OUT_POINT);
 }
 
 void ArtifactPlaybackShortcuts::clearInOutPoints() {
-    if (!impl_->inOutPoints_) return;
-    impl_->inOutPoints_->clearAllPoints();
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->clearInOutPoints();
+    } else if (impl_->inOutPoints_) {
+        impl_->inOutPoints_->clearAllPoints();
+    }
     emit shortcutExecuted(Impl::ACTION_CLEAR_IN_OUT);
 }
 
 void ArtifactPlaybackShortcuts::goToInPoint() {
-    if (!impl_->inOutPoints_) return;
-    auto inPoint = impl_->inOutPoints_->inPoint();
-    if (inPoint) {
-        if (auto* service = ArtifactPlaybackService::instance()) {
-            service->goToFrame(*inPoint);
-        } else if (impl_->controller_) {
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->goToInPoint();
+    } else if (impl_->inOutPoints_) {
+        auto inPoint = impl_->inOutPoints_->inPoint();
+        if (inPoint && impl_->controller_) {
             impl_->controller_->goToFrame(*inPoint);
         }
     }
@@ -396,12 +406,11 @@ void ArtifactPlaybackShortcuts::goToInPoint() {
 }
 
 void ArtifactPlaybackShortcuts::goToOutPoint() {
-    if (!impl_->inOutPoints_) return;
-    auto outPoint = impl_->inOutPoints_->outPoint();
-    if (outPoint) {
-        if (auto* service = ArtifactPlaybackService::instance()) {
-            service->goToFrame(*outPoint);
-        } else if (impl_->controller_) {
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->goToOutPoint();
+    } else if (impl_->inOutPoints_) {
+        auto outPoint = impl_->inOutPoints_->outPoint();
+        if (outPoint && impl_->controller_) {
             impl_->controller_->goToFrame(*outPoint);
         }
     }
@@ -411,23 +420,23 @@ void ArtifactPlaybackShortcuts::goToOutPoint() {
 // ==================== Marker Actions ====================
 
 void ArtifactPlaybackShortcuts::addMarker(const QString& comment) {
-    if (!impl_->inOutPoints_) return;
-    auto frame = ArtifactPlaybackService::instance()
-                     ? ArtifactPlaybackService::instance()->currentFrame()
-                     : (impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0));
-    auto* marker = impl_->inOutPoints_->addMarker(frame, comment, MarkerType::Comment);
-    Q_UNUSED(marker);
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->addMarkerAtCurrentFrame(comment);
+    } else if (impl_->inOutPoints_) {
+        auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
+        impl_->inOutPoints_->addMarker(frame, comment, MarkerType::Comment);
+    }
     // emit markerAdded(frame.value(), comment);
     emit shortcutExecuted(Impl::ACTION_ADD_MARKER);
 }
 
 void ArtifactPlaybackShortcuts::addChapterMarker(const QString& name) {
-    if (!impl_->inOutPoints_) return;
-    auto frame = ArtifactPlaybackService::instance()
-                     ? ArtifactPlaybackService::instance()->currentFrame()
-                     : (impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0));
-    auto* marker = impl_->inOutPoints_->addMarker(frame, name, MarkerType::Chapter);
-    Q_UNUSED(marker);
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->addChapterMarkerAtCurrentFrame(name);
+    } else if (impl_->inOutPoints_) {
+        auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
+        impl_->inOutPoints_->addMarker(frame, name, MarkerType::Chapter);
+    }
     // emit markerAdded(frame.value(), name);
     emit shortcutExecuted(Impl::ACTION_ADD_CHAPTER);
 }
@@ -469,17 +478,21 @@ void ArtifactPlaybackShortcuts::goToPreviousChapter() {
 }
 
 void ArtifactPlaybackShortcuts::deleteMarkerAtCurrent() {
-    if (!impl_->inOutPoints_) return;
-    auto frame = ArtifactPlaybackService::instance()
-                     ? ArtifactPlaybackService::instance()->currentFrame()
-                     : (impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0));
-    impl_->inOutPoints_->removeMarker(frame);
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->deleteMarkerAtCurrentFrame();
+    } else if (impl_->inOutPoints_) {
+        auto frame = impl_->controller_ ? impl_->controller_->currentFrame() : FramePosition(0);
+        impl_->inOutPoints_->removeMarker(frame);
+    }
     emit shortcutExecuted(Impl::ACTION_DELETE_MARKER);
 }
 
 void ArtifactPlaybackShortcuts::clearAllMarkers() {
-    if (!impl_->inOutPoints_) return;
-    impl_->inOutPoints_->clearAllMarkers();
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->clearAllMarkers();
+    } else if (impl_->inOutPoints_) {
+        impl_->inOutPoints_->clearAllMarkers();
+    }
     emit shortcutExecuted("playback.clear_markers");
 }
 

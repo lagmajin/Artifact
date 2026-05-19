@@ -72,7 +72,6 @@ import Frame.Range;
 import Playback.State;
 import Event.Bus;
 import Artifact.Event.Types;
-import Artifact.Composition.InOutPoints;
 import Widgets.StyleSurface;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
@@ -402,7 +401,6 @@ public:
     bool isStopped_ = true;
     bool isLooping_ = false;
     float playbackSpeed_ = 1.0f;
-    ArtifactInOutPoints* inOutPoints_ = nullptr;
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     QElapsedTimer frameWidgetUpdateTimer_;
@@ -782,13 +780,13 @@ public:
             QString outText = QStringLiteral("--:--:--:--");
             QString currentText = QStringLiteral("00:00:00:00");
             QString endText = QStringLiteral("00:00:00:00");
-            if (inOutPoints_) {
-                if (const auto inPoint = inOutPoints_->inPoint()) {
-                    inText = formatTimecode(inPoint->framePosition(), fps);
-                }
-                if (const auto outPoint = inOutPoints_->outPoint()) {
-                    outText = formatTimecode(outPoint->framePosition(), fps);
-                }
+            if (const auto inPoint =
+                    service ? service->inPoint() : std::optional<FramePosition>{}) {
+                inText = formatTimecode(inPoint->framePosition(), fps);
+            }
+            if (const auto outPoint =
+                    service ? service->outPoint() : std::optional<FramePosition>{}) {
+                outText = formatTimecode(outPoint->framePosition(), fps);
             }
             currentText = formatTimecode(clampedCurrent, fps);
             endText = formatTimecode(endFrame, fps);
@@ -829,15 +827,6 @@ public:
         updateFrameWidgets();
     }
 
-    void attachInOutPoints(ArtifactInOutPoints* points)
-    {
-        if (inOutPoints_ == points) {
-            return;
-        }
-        inOutPoints_ = points;
-        updateFrameWidgets();
-    }
-    
     void connectSignals()
     {
         // 再生制御
@@ -1061,27 +1050,21 @@ public:
     void handleInButtonClicked()
     {
         if (auto* service = ArtifactPlaybackService::instance()) {
-            if (auto* points = service->inOutPoints()) {
-                points->setInPoint(service->currentFrame());
-            }
+            service->setInPointAtCurrentFrame();
         }
     }
     
     void handleOutButtonClicked()
     {
         if (auto* service = ArtifactPlaybackService::instance()) {
-            if (auto* points = service->inOutPoints()) {
-                points->setOutPoint(service->currentFrame());
-            }
+            service->setOutPointAtCurrentFrame();
         }
     }
     
     void handleClearInOutClicked()
     {
         if (auto* service = ArtifactPlaybackService::instance()) {
-            if (auto* points = service->inOutPoints()) {
-                points->clearAllPoints();
-            }
+            service->clearInOutPoints();
         }
     }
 
@@ -1125,7 +1108,6 @@ public:
             isLooping_ = service->isLooping();
             playbackSpeed_ = service->playbackSpeed();
             updateSpeedPresetButtons(playbackSpeed_);
-            attachInOutPoints(service->inOutPoints());
             updateFrameWidgets();
             if (loopButton_) {
                 loopButton_->setChecked(isLooping_);

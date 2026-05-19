@@ -2838,8 +2838,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
         impl_->audioPreviewActive_ = true;
         impl_->audioPreviewFrame_ = previewFrame;
-        playback->goToFrame(FramePosition(previewFrame));
-        playback->play();
+        playback->playFromFrame(FramePosition(previewFrame));
         if (impl_->audioPreviewStopTimer_) {
           impl_->audioPreviewStopTimer_->start(350);
         }
@@ -3170,10 +3169,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      }
                      impl_->audioPreviewActive_ = false;
                      if (auto *playback = ArtifactPlaybackService::instance()) {
-                       if (playback->isPlaying()) {
-                         playback->pause();
-                       }
-                       playback->goToFrame(FramePosition(impl_->audioPreviewFrame_));
+                       playback->pauseAndGoToFrame(FramePosition(impl_->audioPreviewFrame_));
                      }
                    });
   const auto updateSmoothPlaybackPlayhead = [this]() {
@@ -3299,6 +3295,15 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                 updateKeyframeState();
               }
             }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<WorkAreaChangedEvent>(
+          [this](const WorkAreaChangedEvent &event) {
+            if (!impl_ || impl_->compositionId_.isNil() ||
+                event.compositionId != impl_->compositionId_.toString()) {
+              return;
+            }
+            syncWorkAreaFromCurrentComposition();
           }));
   QTimer::singleShot(0, this, [updateZoom]() { updateZoom(); });
 
@@ -3825,22 +3830,11 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
   if (event->key() == Qt::Key_J || event->key() == Qt::Key_K || event->key() == Qt::Key_L) {
     if (auto *svc = ArtifactPlaybackService::instance()) {
       if (event->key() == Qt::Key_K) {
-        svc->setPlaybackSpeed(0.0f);
-        svc->stop();
+        svc->shuttleStop();
       } else if (event->key() == Qt::Key_L) {
-        float spd = svc->playbackSpeed();
-        if (spd >= 0.0f && spd < 8.0f) {
-          svc->setPlaybackSpeed(spd <= 0.0f ? 1.0f : spd * 2.0f);
-        }
-        svc->play();
+        svc->shuttleForward();
       } else if (event->key() == Qt::Key_J) {
-        float spd = svc->playbackSpeed();
-        if (spd <= 0.0f && spd > -8.0f) {
-          svc->setPlaybackSpeed(spd >= 0.0f ? -1.0f : spd * 2.0f);
-        } else {
-          svc->setPlaybackSpeed(-1.0f);
-        }
-        svc->play();
+        svc->shuttleReverse();
       }
     }
     event->accept();
@@ -3849,22 +3843,11 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
 
   // I / O キーでワークエリアの IN / OUT を設定
   if (event->key() == Qt::Key_I || event->key() == Qt::Key_O) {
-    auto *svc = ArtifactProjectService::instance();
-    auto comp = svc ? svc->currentComposition().lock() : nullptr;
-    if (comp) {
-      const int64_t currentFrame =
-          static_cast<int64_t>(impl_->painterTrackView_->currentFrame());
-
+    if (auto *svc = ArtifactPlaybackService::instance()) {
       if (event->key() == Qt::Key_I) {
-        // IN ポイントを現在フレームに設定
-        const int64_t outPoint = comp->workAreaRange().end();
-        comp->setWorkAreaRange(
-            FrameRange(currentFrame, std::max(currentFrame + 1, outPoint)));
+        svc->setWorkAreaStartAtCurrentFrame();
       } else if (event->key() == Qt::Key_O) {
-        // OUT ポイントを現在フレームに設定
-        const int64_t inPoint = comp->workAreaRange().start();
-        comp->setWorkAreaRange(FrameRange(std::min(inPoint, currentFrame),
-                                          std::max(currentFrame + 1, inPoint)));
+        svc->setWorkAreaEndAtCurrentFrame();
       }
       event->accept();
       return;
@@ -3992,8 +3975,7 @@ void ArtifactTimelineWidget::keyReleaseEvent(QKeyEvent *event) {
 
   if (event->key() == Qt::Key_J || event->key() == Qt::Key_L) {
     if (auto *svc = ArtifactPlaybackService::instance()) {
-      svc->setPlaybackSpeed(0.0f);
-      svc->stop();
+      svc->shuttleStop();
     }
     event->accept();
     return;
