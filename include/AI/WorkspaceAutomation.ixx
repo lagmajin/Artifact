@@ -43,6 +43,8 @@ import Time.Rational;
 import Utils.String.UniString;
 import Event.Bus;
 import Artifact.Event.Types;
+import Artifact.Layer.Solid2D;
+import Artifact.Layer.Factory;
 
 export namespace Artifact {
 
@@ -232,7 +234,12 @@ public:
             {"exportCurrentCompositionAndWait", IDescribable::loc("Export active composition and wait until completed.", "Export active composition and wait until completed.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("outputPath"), QStringLiteral("format"), QStringLiteral("codec"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
             {"getSupportedExportFormats", IDescribable::loc("Get list of supported export file formats.", "Get list of supported export file formats.", {}), "QStringList"},
             {"getDefaultCodecForFormat", IDescribable::loc("Get the default export codec for a given format.", "Get the default export codec for a given format.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("format")}},
-            {"removeAllRenderQueues", IDescribable::loc("Clear the render queue.", "Clear the render queue.", {}), "bool"}
+            {"removeAllRenderQueues", IDescribable::loc("Clear the render queue.", "Clear the render queue.", {}), "bool"},
+            {"createSolidLayer", IDescribable::loc("Create a solid 2D layer and append it to the composition.", "Create a solid 2D layer and append it to the composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("compositionId"), QStringLiteral("name"), QStringLiteral("colorHex"), QStringLiteral("width"), QStringLiteral("height")}},
+            {"replaceLayerSource", IDescribable::loc("Replace a video/audio layer's media source file.", "Replace a video/audio layer's media source file.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("footageItemId")}},
+            {"splitLayerAtTime", IDescribable::loc("Split a layer into two layers at the specified frame time.", "Split a layer into two layers at the specified frame time.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("frameTime")}},
+            {"rippleDeleteLayer", IDescribable::loc("Delete a layer and shift all subsequent layers earlier in time.", "Delete a layer and shift all subsequent layers earlier in time.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"alignLayersSequentially", IDescribable::loc("Align a list of layers sequentially, end-to-end.", "Align a list of layers sequentially, end-to-end.", {}), "bool", {QStringLiteral("QStringList")}, {QStringLiteral("layerIds")}}
         };
     }
 
@@ -670,6 +677,21 @@ public:
         }
         if (name == QStringLiteral("removeAllRenderQueues")) {
             return renderQueueRemoveAll();
+        }
+        if (name == QStringLiteral("createSolidLayer")) {
+            return createSolidLayer(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), intArg(args, 3, 0), intArg(args, 4, 0));
+        }
+        if (name == QStringLiteral("replaceLayerSource")) {
+            return replaceLayerSource(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("splitLayerAtTime")) {
+            return splitLayerAtTime(stringArg(args, 0), intArg(args, 1, 0));
+        }
+        if (name == QStringLiteral("rippleDeleteLayer")) {
+            return rippleDeleteLayer(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("alignLayersSequentially")) {
+            return alignLayersSequentially(collectStringList(args));
         }
         return {};
     }
@@ -2018,6 +2040,282 @@ private:
             {QStringLiteral("success"), unGroupedCount > 0},
             {QStringLiteral("unGroupedCount"), unGroupedCount}
         };
+    }
+
+    // Create a solid 2D layer and append it to the composition
+    static QVariant createSolidLayer(const QString& compositionId, const QString& name, const QString& colorHex, int width, int height)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("ProjectService not available")}
+            };
+        }
+
+        std::shared_ptr<ArtifactComposition> comp;
+        if (compositionId.isEmpty() || compositionId == QStringLiteral("current")) {
+            comp = service->currentComposition().lock();
+        } else {
+            auto result = service->findComposition(CompositionID(compositionId));
+            if (result.success) {
+                comp = result.ptr.lock();
+            }
+        }
+
+        if (!comp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Composition not found")}
+            };
+        }
+
+        QColor qColor(colorHex);
+        if (!qColor.isValid()) {
+            qColor = Qt::white;
+        }
+        FloatColor color(qColor.redF(), qColor.greenF(), qColor.blueF(), qColor.alphaF());
+
+        auto solidLayer = std::make_shared<ArtifactSolid2DLayer>();
+        solidLayer->setLayerName(name.isEmpty() ? QStringLiteral("Solid Layer") : name);
+        solidLayer->setColor(color);
+        
+        QSize compSize = comp->settings().compositionSize();
+        solidLayer->setSize(width > 0 ? width : compSize.width(), height > 0 ? height : compSize.height());
+
+        auto result = comp->appendLayerTop(solidLayer);
+        if (!result.success) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Failed to add layer to composition")}
+            };
+        }
+
+        comp->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), solidLayer->id().toString(),
+                            LayerChangedEvent::ChangeType::Created});
+
+        return QVariantMap{
+            {QStringLiteral("success"), true},
+            {QStringLiteral("layerId"), solidLayer->id().toString()}
+        };
+    }
+
+    // Replace a video/audio layer's media source file
+    static QVariant replaceLayerSource(const QString& layerId, const QString& footageItemId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+
+        const auto* item = findProjectItemByIdPointer(footageItemId);
+        if (!item || item->type() != eProjectItemType::Footage) {
+            return false;
+        }
+
+        const auto* footage = static_cast<const FootageItem*>(item);
+        const QString filePath = footage->filePath.trimmed();
+        if (filePath.isEmpty()) {
+            return false;
+        }
+
+        return service->replaceLayerSourceInCurrentComposition(LayerID(layerId), filePath);
+    }
+
+    // Split a layer into two layers at the specified frame time
+    static QVariant splitLayerAtTime(const QString& layerId, int frameTime)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("ProjectService not available")}
+            };
+        }
+
+        auto comp = service->currentComposition().lock();
+        if (!comp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No active composition")}
+            };
+        }
+
+        auto originalLayer = comp->layerById(LayerID(layerId));
+        if (!originalLayer) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Layer not found")}
+            };
+        }
+
+        int64_t inFrame = originalLayer->inPoint().framePosition();
+        int64_t outFrame = originalLayer->outPoint().framePosition();
+
+        if (frameTime <= inFrame || frameTime >= outFrame) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Frame time outside layer boundaries")}
+            };
+        }
+
+        // 1. Adjust original layer outPoint
+        originalLayer->setOutPoint(FramePosition(frameTime));
+
+        // 2. Clone layer
+        QJsonObject layerJson = originalLayer->toJson();
+        layerJson.remove(QStringLiteral("id")); // Ensure new ID is generated
+
+        auto newLayer = ArtifactLayerFactory::createFromJson(layerJson);
+        if (!newLayer) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Failed to clone layer")}
+            };
+        }
+
+        // Adjust cloned layer inPoint
+        newLayer->setInPoint(FramePosition(frameTime));
+        newLayer->setOutPoint(FramePosition(outFrame));
+
+        // 3. Find original layer index and insert cloned layer next to it
+        QVector<ArtifactAbstractLayerPtr> layers = comp->allLayer();
+        int originalIndex = -1;
+        for (int i = 0; i < layers.size(); ++i) {
+            if (layers[i] && layers[i]->id() == originalLayer->id()) {
+                originalIndex = i;
+                break;
+            }
+        }
+
+        if (originalIndex != -1) {
+            comp->insertLayerAt(newLayer, originalIndex + 1);
+        } else {
+            comp->appendLayerTop(newLayer);
+        }
+
+        comp->changed();
+
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), originalLayer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), newLayer->id().toString(),
+                            LayerChangedEvent::ChangeType::Created});
+
+        return QVariantMap{
+            {QStringLiteral("success"), true},
+            {QStringLiteral("originalLayerId"), originalLayer->id().toString()},
+            {QStringLiteral("newLayerId"), newLayer->id().toString()}
+        };
+    }
+
+    // Delete a layer and shift all subsequent layers earlier in time
+    static QVariant rippleDeleteLayer(const QString& layerId)
+    {
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+
+        auto comp = service->currentComposition().lock();
+        if (!comp) {
+            return false;
+        }
+
+        auto targetLayer = comp->layerById(LayerID(layerId));
+        if (!targetLayer) {
+            return false;
+        }
+
+        int64_t inFrame = targetLayer->inPoint().framePosition();
+        int64_t outFrame = targetLayer->outPoint().framePosition();
+        int64_t duration = outFrame - inFrame;
+
+        if (duration <= 0) {
+            return false;
+        }
+
+        // Shift subsequent layers
+        QVector<ArtifactAbstractLayerPtr> layers = comp->allLayer();
+        for (const auto& layer : layers) {
+            if (layer && layer->id() != targetLayer->id()) {
+                int64_t layerIn = layer->inPoint().framePosition();
+                if (layerIn >= outFrame) {
+                    layer->setInPoint(FramePosition(layerIn - duration));
+                    layer->setOutPoint(FramePosition(layer->outPoint().framePosition() - duration));
+                    layer->setStartTime(FramePosition(layer->startTime().framePosition() - duration));
+
+                    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                        LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                                        LayerChangedEvent::ChangeType::Modified});
+                }
+            }
+        }
+
+        // Remove the target layer
+        comp->removeLayerById(targetLayer->id());
+        comp->changed();
+
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), layerId,
+                            LayerChangedEvent::ChangeType::Removed});
+
+        return true;
+    }
+
+    // Align a list of layers sequentially, end-to-end
+    static QVariant alignLayersSequentially(const QStringList& layerIds)
+    {
+        if (layerIds.size() < 2) {
+            return false;
+        }
+
+        auto* service = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        if (!service) {
+            return false;
+        }
+
+        auto comp = service->currentComposition().lock();
+        if (!comp) {
+            return false;
+        }
+
+        int64_t currentEndTime = 0;
+        bool first = true;
+
+        for (const QString& id : layerIds) {
+            auto layer = comp->layerById(LayerID(id));
+            if (!layer) {
+                continue;
+            }
+
+            if (first) {
+                currentEndTime = layer->outPoint().framePosition();
+                first = false;
+                continue;
+            }
+
+            int64_t layerIn = layer->inPoint().framePosition();
+            int64_t shift = currentEndTime - layerIn;
+
+            if (shift != 0) {
+                layer->setInPoint(FramePosition(layer->inPoint().framePosition() + shift));
+                layer->setOutPoint(FramePosition(layer->outPoint().framePosition() + shift));
+                layer->setStartTime(FramePosition(layer->startTime().framePosition() + shift));
+
+                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                    LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                                    LayerChangedEvent::ChangeType::Modified});
+            }
+
+            currentEndTime = layer->outPoint().framePosition();
+        }
+
+        comp->changed();
+        return true;
     }
 
     static ProjectItem* findProjectItemRecursive(ProjectItem* item, const QString& itemId)
