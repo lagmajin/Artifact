@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QAbstractTextDocumentLayout>
 #include <QColor>
 #include <QFont>
@@ -1879,7 +1879,23 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("text.animatorCount")) {
-    setAnimatorCount(value.toInt());
+    const int val = value.toInt();
+    if (val >= 100) {
+      const int presetId = val / 100;
+      if (presetId >= 1 && presetId <= 7) {
+        const auto presetAnimators = buildTextAnimatorPreset(presetId);
+        if (!presetAnimators.empty()) {
+          impl_->animators_.push_back(presetAnimators.front());
+          impl_->animators_.back().name = QStringLiteral("%1 %2")
+              .arg(presetAnimators.front().name)
+              .arg(animatorCount());
+        }
+      } else {
+        addAnimator();
+      }
+    } else {
+      setAnimatorCount(val);
+    }
     clearPresetSelection();
     setDirty(LayerDirtyFlag::Property);
     return true;

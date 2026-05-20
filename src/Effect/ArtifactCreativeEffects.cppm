@@ -10,6 +10,7 @@ module Artifact.Effect.Creative;
 import Artifact.Effect.Abstract;
 import Image.ImageF32x4RGBAWithCache;
 import Math.Noise;
+import Math.Random;
 
 namespace Artifact {
 
@@ -25,11 +26,15 @@ void ArtifactGlitchEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     auto srcImage = src.image();
     auto dstImage = srcImage.DeepCopy();
 
-    float shiftX = 5.0f;
+    ArtifactCore::RandomStream rng(0x474C49544348ull);
     
     for (int y = 0; y < h; ++y) {
-        float rowOffset = 0;
-        if (y % 15 < 3) rowOffset = 10.0f * (std::sin(y * 0.2f));
+        auto rowRng = rng.fork(static_cast<uint64_t>(y));
+        float rowOffset = 0.0f;
+        if (y % 15 < 4) {
+            rowOffset = rowRng.range(-12.0f, 12.0f);
+        }
+        float shiftX = 3.0f + rowRng.range(0.0f, 5.0f);
         
         for (int x = 0; x < w; ++x) {
             int sx = std::clamp(x + (int)rowOffset, 0, w - 1);
@@ -105,17 +110,17 @@ void ArtifactOldTVEffect::apply(const ImageF32x4RGBAWithCache& src, ImageF32x4RG
     auto srcImage = src.image();
     auto dstImage = srcImage.DeepCopy();
     
-    static std::mt19937 gen(42);
-    std::uniform_real_distribution<float> dis(-0.1f, 0.1f);
+    ArtifactCore::RandomStream rng(42);
     
     for (int y = 0; y < h; ++y) {
+        auto rowRng = rng.fork(static_cast<uint64_t>(y));
         float scanline = (y % 4 == 0) ? 0.7f : 1.0f;
-        float jitter = (dis(gen) > 0.08f) ? (dis(gen) * 5.0f) : 0.0f;
+        float jitter = (rowRng.chance(0.08f)) ? rowRng.range(-5.0f, 5.0f) : 0.0f;
         
         for (int x = 0; x < w; ++x) {
             int sx = std::clamp(x + (int)jitter, 0, w - 1);
             auto c = srcImage.getPixel(sx, y);
-            float noise = dis(gen) * 0.05f;
+            float noise = rowRng.range(-0.1f, 0.1f) * 0.05f;
             float r = std::clamp(c.r() * scanline + noise, 0.0f, 1.0f);
             float g = std::clamp(c.g() * scanline + noise, 0.0f, 1.0f);
             float b = std::clamp(c.b() * scanline + noise, 0.0f, 1.0f);

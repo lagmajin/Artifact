@@ -4995,7 +4995,7 @@ void CompositionRenderController::handleMouseMove(
           const auto handleType =
               static_cast<MaskHandleType>(impl_->draggingMaskHandleType_);
           const bool breakTangents =
-              event->modifiers().testFlag(Qt::AltModifier);
+              QGuiApplication::keyboardModifiers().testFlag(Qt::AltModifier);
 
           if (impl_->draggingMaskIndex_ == -1 &&
               impl_->pendingMaskCreation_ &&

@@ -728,10 +728,20 @@ namespace {
   {
    ScopedStartupTimer t("RayTracingManager::initialize", StartupPhase::RayTracingInit);
    rayTracingManager_ = ArtifactCore::createRayTracingManager();
-   rayTracingManager_->initialize(deviceManager_.device());
-   rayTracingManager_->buildTLAS(deviceManager_.immediateContext());
-   rayTracingManager_->ensurePipelineAndSBT(deviceManager_.immediateContext());
-   rayTracingManager_->traceUnitQuad(deviceManager_.immediateContext(), 1, 1);
+   if (rayTracingManager_->initialize(deviceManager_.device()) &&
+       rayTracingManager_->isSupported()) {
+    const bool builtTLAS = rayTracingManager_->buildTLAS(deviceManager_.immediateContext());
+    const bool prepared = rayTracingManager_->ensurePipelineAndSBT(deviceManager_.immediateContext());
+    const bool traced = rayTracingManager_->traceUnitQuad(deviceManager_.immediateContext(), 1, 1);
+    qDebug() << "[ArtifactIRenderer] RayTracing init"
+             << "supported=" << rayTracingManager_->isSupported()
+             << "tlas=" << builtTLAS
+             << "pipeline=" << prepared
+             << "traceWarmup=" << traced;
+   } else if (rayTracingManager_) {
+    qDebug() << "[ArtifactIRenderer] RayTracing init skipped"
+             << "supported=" << rayTracingManager_->isSupported();
+   }
   }
 
   {
@@ -785,10 +795,20 @@ namespace {
   shaderManager_.createPSOs();
 
   rayTracingManager_ = ArtifactCore::createRayTracingManager();
-  rayTracingManager_->initialize(deviceManager_.device());
-  rayTracingManager_->buildTLAS(deviceManager_.immediateContext());
-  rayTracingManager_->ensurePipelineAndSBT(deviceManager_.immediateContext());
-  rayTracingManager_->traceUnitQuad(deviceManager_.immediateContext(), 1, 1);
+  if (rayTracingManager_->initialize(deviceManager_.device()) &&
+      rayTracingManager_->isSupported()) {
+   const bool builtTLAS = rayTracingManager_->buildTLAS(deviceManager_.immediateContext());
+   const bool prepared = rayTracingManager_->ensurePipelineAndSBT(deviceManager_.immediateContext());
+   const bool traced = rayTracingManager_->traceUnitQuad(deviceManager_.immediateContext(), 1, 1);
+   qDebug() << "[ArtifactIRenderer] RayTracing init(headless)"
+            << "supported=" << rayTracingManager_->isSupported()
+            << "tlas=" << builtTLAS
+            << "pipeline=" << prepared
+            << "traceWarmup=" << traced;
+  } else if (rayTracingManager_) {
+   qDebug() << "[ArtifactIRenderer] RayTracing init(headless) skipped"
+            << "supported=" << rayTracingManager_->isSupported();
+  }
 
   primitiveRenderer_.createBuffers(deviceManager_.device(), RenderConfig::MainRTVFormat);
   primitiveRenderer_.setPSOs(shaderManager_);

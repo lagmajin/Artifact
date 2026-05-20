@@ -47,6 +47,55 @@ import Artifact.Layers.SolidImage;
 
 namespace {
 
+class DialogCloseButton final : public QPushButton {
+public:
+  explicit DialogCloseButton(QWidget* parent = nullptr) : QPushButton(u8"×", parent) {
+    setFixedSize(30, 30);
+    setAttribute(Qt::WA_Hover, true);
+    setCursor(Qt::PointingHandCursor);
+  }
+protected:
+  bool event(QEvent* event) override {
+    if (event->type() == QEvent::HoverEnter || event->type() == QEvent::HoverLeave) {
+      update();
+    }
+    return QPushButton::event(event);
+  }
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    
+    QColor textCol = underMouse() ? QColor(0xff, 0x44, 0x44) : QColor(0xaa, 0xaa, 0xaa);
+    painter.setPen(textCol);
+    QFont font = this->font();
+    font.setPointSize(18);
+    painter.setFont(font);
+    painter.drawText(rect(), Qt::AlignCenter, text());
+  }
+};
+
+class AspectLockButton final : public QPushButton {
+public:
+  explicit AspectLockButton(QWidget* parent = nullptr) : QPushButton(u8"🔒", parent) {
+    setFixedSize(20, 20);
+    setCheckable(true);
+    setChecked(false);
+    setToolTip(u8"縦横比をロック");
+  }
+protected:
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    
+    QColor textCol = isChecked() ? QColor(0xff, 0x99, 0x00) : QColor(0xaa, 0xaa, 0xaa);
+    painter.setPen(textCol);
+    QFont font = this->font();
+    font.setPointSize(12);
+    painter.setFont(font);
+    painter.drawText(rect(), Qt::AlignCenter, text());
+  }
+};
+
 QString nearestNamedColor(const QColor& color);
 
 void updateColorButtonPreview(QPushButton* button, const QColor& color)
@@ -243,7 +292,7 @@ public:
 
     DragSpinBox*  widthSpinBox    = nullptr;
     DragSpinBox*  heightSpinBox   = nullptr;
-    QPushButton*  lockButton      = nullptr;
+    AspectLockButton*  lockButton      = nullptr;
     bool          aspectLocked    = false;
     double        lockedRatio     = 16.0 / 9.0;
 
@@ -270,16 +319,7 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     impl_->heightSpinBox->setRange(1, 16384);
     impl_->heightSpinBox->setValue(1080);
 
-    impl_->lockButton = new QPushButton(this);
-    impl_->lockButton->setText(u8"🔒");
-    impl_->lockButton->setFixedSize(20, 20);
-    impl_->lockButton->setCheckable(true);
-    impl_->lockButton->setChecked(false);
-    impl_->lockButton->setToolTip(u8"縦横比をロック");
-    impl_->lockButton->setStyleSheet(
-        "QPushButton { background: transparent; border: none; font-size: 12px; }"
-        "QPushButton:checked { color: #ff9900; }"
-    );
+    impl_->lockButton = new AspectLockButton(this);
 
     impl_->unitCombo = new QComboBox(this);
     impl_->unitCombo->addItem(u8"ピクセル");
@@ -546,12 +586,7 @@ DialogChrome buildDialogChrome(QDialog* dlg)
         titleLabel->setPalette(pal);
     }
 
-    chrome.closeButton = new QPushButton(u8"×", header);
-    chrome.closeButton->setFixedSize(30, 30);
-    chrome.closeButton->setStyleSheet(
-        "QPushButton { background: transparent; color: #aaaaaa; border: none; font-size: 18px; }"
-        "QPushButton:hover { color: #ff4444; }"
-    );
+    chrome.closeButton = new DialogCloseButton(header);
 
     headerLayout->addWidget(titleLabel);
     headerLayout->addStretch();

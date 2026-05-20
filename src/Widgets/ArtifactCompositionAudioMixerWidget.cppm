@@ -133,6 +133,45 @@ private:
   float right_ = -60.0f;
 };
 
+class AudioStatusBadge final : public QLabel {
+public:
+  explicit AudioStatusBadge(QWidget *parent = nullptr) : QLabel(parent) {
+    setAttribute(Qt::WA_TranslucentBackground, true);
+  }
+
+  void setBadgeColor(const QColor &color) {
+    if (color_ != color) {
+      color_ = color;
+      update();
+    }
+  }
+
+  QColor badgeColor() const { return color_; }
+
+protected:
+  void paintEvent(QPaintEvent *event) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    if (color_.isValid() && color_ != Qt::transparent) {
+      painter.setPen(Qt::NoPen);
+      painter.setBrush(color_);
+      painter.drawEllipse(rect());
+    }
+
+    if (!text().isEmpty()) {
+      QFont font = this->font();
+      font.setBold(true);
+      painter.setFont(font);
+      painter.setPen(QColor(0, 0, 0));
+      painter.drawText(rect(), Qt::AlignCenter, text());
+    }
+  }
+
+private:
+  QColor color_ = Qt::transparent;
+};
+
 class AudioMixerStripRow final : public QFrame {
 public:
   explicit AudioMixerStripRow(AudioMixerChannelStrip *strip,
@@ -149,11 +188,9 @@ public:
     layout->setContentsMargins(8, 10, 8, 10);
     layout->setSpacing(8);
 
-    statusBadge_ = new QLabel(this);
+    statusBadge_ = new AudioStatusBadge(this);
     statusBadge_->setFixedSize(28, 28);
     statusBadge_->setAlignment(Qt::AlignCenter);
-    statusBadge_->setStyleSheet(
-        "QLabel { border-radius: 14px; font-weight: bold; }");
 
     nameLabel_ = new QLabel(this);
     nameLabel_->setAlignment(Qt::AlignCenter);
@@ -286,7 +323,7 @@ private:
 
     // 状態badge更新
     QString statusText;
-    QColor statusColor;
+    QColor statusColor = Qt::transparent;
     if (strip_->isMuted()) {
       statusText = "M";
       statusColor = QColor(220, 60, 60);
@@ -297,15 +334,7 @@ private:
       statusText = "";
     }
     statusBadge_->setText(statusText);
-    if (!statusText.isEmpty()) {
-      statusBadge_->setStyleSheet(
-          QString(
-              "QLabel { background-color: %1; color: black; border-radius: "
-              "14px; padding: 4px 8px; font-weight: bold; min-width: 28px; }")
-              .arg(statusColor.name()));
-    } else {
-      statusBadge_->setStyleSheet("QLabel { background-color: transparent; }");
-    }
+    statusBadge_->setBadgeColor(statusColor);
 
     const QSignalBlocker volumeBlocker(volumeSlider_);
     const QSignalBlocker muteBlocker(muteButton_);
@@ -341,7 +370,7 @@ private:
   }
 
   AudioMixerChannelStrip *strip_ = nullptr;
-  QLabel *statusBadge_ = nullptr;
+  AudioStatusBadge *statusBadge_ = nullptr;
   QLabel *nameLabel_ = nullptr;
   AudioLevelMeterWidget *meterWidget_ = nullptr;
   QSlider *volumeSlider_ = nullptr;
@@ -369,11 +398,9 @@ public:
     layout->setContentsMargins(8, 10, 8, 10);
     layout->setSpacing(8);
 
-    statusBadge_ = new QLabel(this);
+    statusBadge_ = new AudioStatusBadge(this);
     statusBadge_->setFixedSize(28, 28);
     statusBadge_->setAlignment(Qt::AlignCenter);
-    statusBadge_->setStyleSheet(
-        "QLabel { border-radius: 14px; font-weight: bold; }");
 
     nameLabel_ = new QLabel(QStringLiteral("Master"), this);
     nameLabel_->setAlignment(Qt::AlignCenter);
@@ -513,7 +540,7 @@ private:
   }
 
   AudioMixerMasterBus *masterBus_ = nullptr;
-  QLabel *statusBadge_ = nullptr;
+  AudioStatusBadge *statusBadge_ = nullptr;
   QLabel *nameLabel_ = nullptr;
   AudioLevelMeterWidget *meterWidget_ = nullptr;
   QSlider *volumeSlider_ = nullptr;
