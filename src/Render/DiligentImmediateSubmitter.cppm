@@ -599,6 +599,8 @@ void DiligentImmediateSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext
                 else if constexpr (std::is_same_v<T, RectOutlinePkt>)     submitRectOutline(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, SpritePkt>)          submitSprite(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, SpriteXformPkt>)     submitSpriteXform(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, AtlasSpritePkt>)     submitAtlasSprite(p, recordCtx, pRTV);
+                else if constexpr (std::is_same_v<T, AtlasSpriteXformPkt>)submitAtlasSpriteXform(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, MaskedSpritePkt>)    submitMaskedSprite(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, BillboardPkt>)       submitBillboard(p, recordCtx, pRTV);
                 else if constexpr (std::is_same_v<T, BillboardImagePkt>)  submitBillboardImage(p, recordCtx, pRTV);
@@ -1047,6 +1049,72 @@ void DiligentImmediateSubmitter::submitSpriteXform(const SpriteXformPkt& p, IDev
         mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
         vb = m_draw_sprite_vertex_buffer;
     }
+    mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat, sizeof(p.mat), m_frameCostStats_);
+
+    if (m_currentPSO_ != m_draw_sprite_transform_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_sprite_transform_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_sprite_transform_pso_and_srb.pPSO;
+    }
+    if (m_var_spriteXform_gTexture_) m_var_spriteXform_gTexture_->Set(p.pSRV);
+    recordShaderResourceCommit(m_frameCostStats_);
+    ctx->CommitShaderResources(m_draw_sprite_transform_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    IBuffer* pBufs[] = { vb };
+    Uint64   offs[]  = { 0 };
+    ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
+    recordDrawCall(m_frameCostStats_, true);
+    ctx->DrawIndexed(drawAttrs);
+}
+
+void DiligentImmediateSubmitter::submitAtlasSprite(const AtlasSpritePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    if (!pRTV || !p.pSRV || !m_draw_sprite_pso_and_srb.pPSO) return;
+    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_cb) return;
+
+    SpriteVertex vertices[4] = {
+        {{0.0f,0.0f}, {p.uvRect.x, p.uvRect.y}, p.color},
+        {{1.0f,0.0f}, {p.uvRect.z, p.uvRect.y}, p.color},
+        {{0.0f,1.0f}, {p.uvRect.x, p.uvRect.w}, p.color},
+        {{1.0f,1.0f}, {p.uvRect.z, p.uvRect.w}, p.color},
+    };
+    mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+    IBuffer* vb = m_draw_sprite_vertex_buffer;
+    
+    mapWriteDiscard(ctx, m_draw_sprite_cb, &p.xform, sizeof(p.xform), m_frameCostStats_);
+
+    if (m_currentPSO_ != m_draw_sprite_pso_and_srb.pPSO) {
+        recordPipelineStateSwitch(m_frameCostStats_);
+        ctx->SetPipelineState(m_draw_sprite_pso_and_srb.pPSO);
+        m_currentPSO_ = m_draw_sprite_pso_and_srb.pPSO;
+    }
+    if (m_var_sprite_gTexture_) m_var_sprite_gTexture_->Set(p.pSRV);
+    recordShaderResourceCommit(m_frameCostStats_);
+    ctx->CommitShaderResources(m_draw_sprite_pso_and_srb.pSRB, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    IBuffer* pBufs[] = { vb };
+    Uint64   offs[]  = { 0 };
+    ctx->SetVertexBuffers(0, 1, pBufs, offs, RESOURCE_STATE_TRANSITION_MODE_TRANSITION, SET_VERTEX_BUFFERS_FLAG_RESET);
+    ctx->SetIndexBuffer(m_draw_solid_rect_index_buffer, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    DrawIndexedAttribs drawAttrs(6, VT_UINT32, DRAW_FLAG_NONE);
+    recordDrawCall(m_frameCostStats_);
+    ctx->DrawIndexed(drawAttrs);
+}
+
+void DiligentImmediateSubmitter::submitAtlasSpriteXform(const AtlasSpriteXformPkt& p, IDeviceContext* ctx, ITextureView* pRTV)
+{
+    if (!pRTV || !p.pSRV || !m_draw_sprite_transform_pso_and_srb.pPSO) return;
+    if (!m_draw_sprite_vertex_buffer || !m_draw_sprite_transform_matrix_cb) return;
+
+    SpriteVertex vertices[4] = {
+        {{0,0}, {p.uvRect.x, p.uvRect.y}, p.color},
+        {{1,0}, {p.uvRect.z, p.uvRect.y}, p.color},
+        {{0,1}, {p.uvRect.x, p.uvRect.w}, p.color},
+        {{1,1}, {p.uvRect.z, p.uvRect.w}, p.color},
+    };
+    mapWriteDiscard(ctx, m_draw_sprite_vertex_buffer, vertices, sizeof(vertices), m_frameCostStats_);
+    IBuffer* vb = m_draw_sprite_vertex_buffer;
+    
     mapWriteDiscard(ctx, m_draw_sprite_transform_matrix_cb, &p.mat, sizeof(p.mat), m_frameCostStats_);
 
     if (m_currentPSO_ != m_draw_sprite_transform_pso_and_srb.pPSO) {

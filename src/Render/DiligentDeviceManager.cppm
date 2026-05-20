@@ -49,6 +49,19 @@ namespace {
         QStringList layers;
     };
 
+    bool rayTracingEnabledByConfig()
+    {
+        const QString value = qEnvironmentVariable("ARTIFACT_ENABLE_RAY_TRACING").trimmed().toLower();
+        if (value.isEmpty()) {
+            return false;
+        }
+        return value != "0" &&
+               value != "false" &&
+               value != "off" &&
+               value != "disabled" &&
+               value != "no";
+    }
+
     RenderBackendPreference getBackendPreferenceFromEnv()
     {
         const QString value = qEnvironmentVariable("ARTIFACT_RENDER_BACKEND").trimmed().toLower();
@@ -222,18 +235,24 @@ namespace {
         creationAttribs.SetValidationLevel(Diligent::VALIDATION_LEVEL_2);
         creationAttribs.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
         creationAttribs.NumAsyncShaderCompilationThreads = kAsyncShaderCompileThreads;
-        
-        // 1. Try with Ray Tracing enabled
-        creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
-        pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
-        
-        if (!outDevice) {
-            // 2. Fallback: Ray Tracing disabled
-            qDebug() << "[DiligentDeviceManager] D3D12: Ray Tracing not supported, falling back.";
-            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+
+        if (rayTracingEnabledByConfig()) {
+            // 1. Try with Ray Tracing enabled
+            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
             pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
+
+            if (!outDevice) {
+                // 2. Fallback: Ray Tracing disabled
+                qDebug() << "[DiligentDeviceManager] D3D12: Ray Tracing not supported, falling back.";
+                creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+                pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
+            } else {
+                qDebug() << "[DiligentDeviceManager] D3D12: Ray Tracing ENABLED.";
+            }
         } else {
-            qDebug() << "[DiligentDeviceManager] D3D12: Ray Tracing ENABLED.";
+            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+            qDebug() << "[DiligentDeviceManager] D3D12: Ray Tracing disabled by default. Set ARTIFACT_ENABLE_RAY_TRACING=1 to enable.";
+            pFactory->CreateDeviceAndContextsD3D12(creationAttribs, &outDevice, &outImmediateContext);
         }
 
         return outDevice && outImmediateContext;
@@ -257,17 +276,23 @@ namespace {
         creationAttribs.Features.MultithreadedResourceCreation = DEVICE_FEATURE_STATE_DISABLED;
         creationAttribs.NumAsyncShaderCompilationThreads = kAsyncShaderCompileThreads;
 
-        // 1. Try with Ray Tracing enabled
-        creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
-        pFactory->CreateDeviceAndContextsVk(creationAttribs, &outDevice, &outImmediateContext);
-
-        if (!outDevice) {
-            // 2. Fallback: Ray Tracing disabled
-            qDebug() << "[DiligentDeviceManager] Vulkan: Ray Tracing not supported, falling back.";
-            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+        if (rayTracingEnabledByConfig()) {
+            // 1. Try with Ray Tracing enabled
+            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_ENABLED;
             pFactory->CreateDeviceAndContextsVk(creationAttribs, &outDevice, &outImmediateContext);
+
+            if (!outDevice) {
+                // 2. Fallback: Ray Tracing disabled
+                qDebug() << "[DiligentDeviceManager] Vulkan: Ray Tracing not supported, falling back.";
+                creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+                pFactory->CreateDeviceAndContextsVk(creationAttribs, &outDevice, &outImmediateContext);
+            } else {
+                qDebug() << "[DiligentDeviceManager] Vulkan: Ray Tracing ENABLED.";
+            }
         } else {
-            qDebug() << "[DiligentDeviceManager] Vulkan: Ray Tracing ENABLED.";
+            creationAttribs.Features.RayTracing = DEVICE_FEATURE_STATE_DISABLED;
+            qDebug() << "[DiligentDeviceManager] Vulkan: Ray Tracing disabled by default. Set ARTIFACT_ENABLE_RAY_TRACING=1 to enable.";
+            pFactory->CreateDeviceAndContextsVk(creationAttribs, &outDevice, &outImmediateContext);
         }
 
         return outDevice && outImmediateContext;

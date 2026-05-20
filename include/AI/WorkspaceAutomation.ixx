@@ -14,6 +14,10 @@ module;
 #include <QStringList>
 #include <QStringView>
 #include <QVariant>
+#include <QCoreApplication>
+#include <QEventLoop>
+#include <thread>
+#include <chrono>
 
 export module Artifact.AI.WorkspaceAutomation;
 
@@ -603,25 +607,6 @@ public:
         if (name == QStringLiteral("playbackGetDuration")) {
             return playbackGetDuration();
         }
-        if (name == QStringLiteral("playbackGetFrameRange")) {
-            return playbackGetFrameRange();
-        }
-        if (name == QStringLiteral("playbackSetFrameRange")) {
-            if (args.size() < 2) return false;
-            return playbackSetFrameRange(intArg(args, 0, 0), intArg(args, 1, 0));
-        }
-        if (name == QStringLiteral("playbackGetFrameRate")) {
-            return playbackGetFrameRate();
-        }
-        if (name == QStringLiteral("playbackGetSpeed")) {
-            return playbackGetSpeed();
-        }
-        if (name == QStringLiteral("playbackSetSpeed")) {
-            if (args.isEmpty()) return false;
-            return playbackSetSpeed(doubleArg(args, 0, 1.0));
-        }
-        if (name == QStringLiteral("playbackGetLooping")) {
-            return playbackGetLooping();
         if (name == QStringLiteral("playbackGetFrameRange")) {
             return playbackGetFrameRange();
         }
@@ -2529,6 +2514,126 @@ private:
     }
 
     // Timeline Information
+    
+    // Get composition duration in frames.
+    // Returns: int (frame count)
+    static QVariant playbackGetDuration()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return 0;
+        }
+        const auto range = playback->frameRange();
+        return static_cast<int>(range.endPosition().framePosition());
+    }
+
+    // Get playback frame range (in/out points).
+    // Returns: {"start": int, "end": int}
+    static QVariant playbackGetFrameRange()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return QVariantMap();
+        }
+        const auto range = playback->frameRange();
+        return QVariantMap{
+            {QStringLiteral("start"), static_cast<int>(range.startPosition().framePosition())},
+            {QStringLiteral("end"), static_cast<int>(range.endPosition().framePosition())}
+        };
+    }
+
+    // Set playback frame range (work area).
+    // frameStart and frameEnd define the playback range.
+    // Returns: bool (success)
+    static QVariant playbackSetFrameRange(int frameStart, int frameEnd)
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback || frameStart < 0 || frameEnd < frameStart) {
+            return false;
+        }
+        playback->setFrameRange(FrameRange(FramePosition(frameStart), FramePosition(frameEnd)));
+        return true;
+    }
+
+    // Playback Settings
+    
+    // Get playback frame rate (fps).
+    // Returns: double (frames per second)
+    static QVariant playbackGetFrameRate()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return 0.0;
+        }
+        return static_cast<double>(playback->frameRate().framerate());
+    }
+
+    // Get playback speed multiplier.
+    // Returns: float (1.0 = normal, 2.0 = 2x speed, 0.5 = half speed)
+    static QVariant playbackGetSpeed()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return 1.0f;
+        }
+        return playback->playbackSpeed();
+    }
+
+    // Set playback speed multiplier.
+    // Speed of 1.0 is normal, 2.0 is double speed, 0.5 is half speed.
+    // Returns: bool (success)
+    static QVariant playbackSetSpeed(double speed)
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback || speed <= 0.0) {
+            return false;
+        }
+        playback->setPlaybackSpeed(static_cast<float>(speed));
+        return true;
+    }
+
+    // Get looping state.
+    // Returns: bool (true = looping enabled)
+    static QVariant playbackGetLooping()
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        return playback->isLooping();
+    }
+
+    // Enable or disable looping.
+    // Returns: bool (success)
+    static QVariant playbackSetLooping(bool enabled)
+    {
+        auto* playback = ArtifactPlaybackService::instance();
+        if (!playback) {
+            return false;
+        }
+        playback->setLooping(enabled);
+        return true;
+    }
+
+    // Phase 6: Export
+    //
+    // Add composition to export queue with specified settings.
+    // Supported formats: "mp4", "mov", "avi", "png", "jpg", "exr", "tiff"
+    // Returns: {"success": bool, "jobIndex": int (if added)}
+    static QVariant exportComposition(const QString& compositionId,
+                                     const QString& outputPath,
+                                     const QString& format,
+                                     const QString& codec,
+                                     int width,
+                                     int height,
+                                     double fps,
+                                     int bitrateKbps)
+    {
+        auto* renderService = ArtifactRenderQueueService::instance();
+        auto* projectService = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
+        
+        if (!renderService || !projectService) {
+            return QVariantMap{
                 {QStringLiteral("success"), false},
                 {QStringLiteral("error"), QStringLiteral("RenderQueue or Project service unavailable")}
             };
@@ -2606,6 +2711,95 @@ private:
         }
 
         return exportComposition(comp->id().toString(), outputPath, format, codec, width, height, fps, bitrateKbps);
+    }
+
+    // Export composition and wait until completed.
+    // Returns: {"success": bool, "jobIndex": int, "status": QString, "error": QString (if failed)}
+    static QVariant exportCompositionAndWait(const QString& compositionId,
+                                            const QString& outputPath,
+                                            const QString& format,
+                                            const QString& codec,
+                                            int width,
+                                            int height,
+                                            double fps,
+                                            int bitrateKbps)
+    {
+        QVariantMap result = exportComposition(compositionId, outputPath, format, codec, width, height, fps, bitrateKbps).toMap();
+        if (!result.value(QStringLiteral("success")).toBool()) {
+            return result;
+        }
+
+        int jobIndex = result.value(QStringLiteral("jobIndex")).toInt();
+        auto* renderService = ArtifactRenderQueueService::instance();
+        if (!renderService) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("RenderQueueService became unavailable")}
+            };
+        }
+
+        // Start the render job
+        renderService->startRenderQueueAt(jobIndex);
+
+        // Wait until completed (timeout of 5 minutes)
+        using namespace std::chrono_literals;
+        auto startTime = std::chrono::steady_clock::now();
+        const auto timeout = std::chrono::seconds(300);
+
+        while (true) {
+            QString status = renderService->jobStatusAt(jobIndex);
+            if (status == QStringLiteral("Completed")) {
+                return QVariantMap{
+                    {QStringLiteral("success"), true},
+                    {QStringLiteral("jobIndex"), jobIndex},
+                    {QStringLiteral("status"), status}
+                };
+            }
+            if (status == QStringLiteral("Failed") || status == QStringLiteral("Cancelled")) {
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("jobIndex"), jobIndex},
+                    {QStringLiteral("status"), status},
+                    {QStringLiteral("error"), renderService->jobErrorMessageAt(jobIndex)}
+                };
+            }
+
+            // Timeout check
+            if (std::chrono::steady_clock::now() - startTime > timeout) {
+                renderService->cancelRenderQueueAt(jobIndex);
+                return QVariantMap{
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("jobIndex"), jobIndex},
+                    {QStringLiteral("status"), status},
+                    {QStringLiteral("error"), QStringLiteral("Render timeout")}
+                };
+            }
+
+            // Process Qt events to keep UI responsive and allow rendering thread/events to run
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+    }
+
+    // Export active composition and wait until completed.
+    // Returns: {"success": bool, "jobIndex": int, "status": QString, "error": QString (if failed)}
+    static QVariant exportCurrentCompositionAndWait(const QString& outputPath,
+                                                   const QString& format,
+                                                   const QString& codec,
+                                                   int width,
+                                                   int height,
+                                                   double fps,
+                                                   int bitrateKbps)
+    {
+        const auto comp = currentComposition();
+        if (!comp) {
+            return QVariantMap{
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No active composition")}
+            };
+        }
+
+        return exportCompositionAndWait(comp->id().toString(), outputPath, format, codec, width, height, fps, bitrateKbps);
     }
 
     // Get list of supported export formats.

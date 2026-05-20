@@ -116,6 +116,20 @@ struct SpriteXformPkt {
     float                  _pad[3];
 };
 
+struct AtlasSpritePkt {
+    RenderSolidTransform2D xform;
+    ITextureView*      pSRV    = nullptr;
+    float4             uvRect; // x=u0, y=v0, z=u1, w=v1
+    float4             color;  // rgb=color, a=opacity
+};
+
+struct AtlasSpriteXformPkt {
+    RenderSolidRectTransform2D mat;
+    ITextureView*          pSRV    = nullptr;
+    float4                 uvRect;
+    float4                 color;
+};
+
 struct MaskedSpritePkt {
     RenderSolidTransform2D xform;
     ITextureView*      sceneSRV = nullptr;
@@ -178,6 +192,7 @@ using DrawPacket = std::variant<
     LinePkt, QuadPkt, DotLinePkt, SolidTriPkt, SolidCirclePkt,
     CheckerboardPkt, GridPkt, RectOutlinePkt,
     SpritePkt, SpriteXformPkt, MaskedSpritePkt,
+    AtlasSpritePkt, AtlasSpriteXformPkt,
     BillboardPkt, BillboardImagePkt, ParticlePkt,
     GlyphTextPkt, GlyphTextXformPkt
 >;

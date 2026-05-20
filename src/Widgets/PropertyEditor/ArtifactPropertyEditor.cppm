@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 
 #include <QAbstractButton>
@@ -1503,12 +1503,59 @@ ArtifactAnimatorCountPropertyEditor::ArtifactAnimatorCountPropertyEditor(
   applyPropertyLabelPalette(countLabel_, true);
 
   addButton_ = new PropertyCallbackButton(QStringLiteral("+"), this);
-  addButton_->setToolTip(QStringLiteral("Add animator"));
+  addButton_->setToolTip(QStringLiteral("Add animator (Click to select type)"));
   addButton_->setFixedHeight(24);
   addButton_->setMinimumWidth(28);
   applyPropertyButtonPalette(addButton_, true);
   static_cast<PropertyCallbackButton *>(addButton_)->setCallback(
-      [this]() { stepCount(1); });
+      [this]() {
+        QMenu menu(this);
+        QAction *defaultAct = menu.addAction(QStringLiteral("Default Animator"));
+        menu.addSeparator();
+        QAction *typewriterAct = menu.addAction(QStringLiteral("Typewriter Preset"));
+        QAction *slideUpAct = menu.addAction(QStringLiteral("Slide Up Preset"));
+        QAction *scaleInAct = menu.addAction(QStringLiteral("Scale In Preset"));
+        QAction *rotationInAct = menu.addAction(QStringLiteral("Rotation In Preset"));
+        QAction *trackingFadeAct = menu.addAction(QStringLiteral("Tracking Fade Preset"));
+        QAction *wigglyPositionAct = menu.addAction(QStringLiteral("Wiggly Position Preset"));
+        QAction *blurRevealAct = menu.addAction(QStringLiteral("Blur Reveal Preset"));
+
+        defaultAct->setToolTip(QStringLiteral("Standard animator with blank settings"));
+        typewriterAct->setToolTip(QStringLiteral("Typewriter animation: scale, opacity, tracking, blur"));
+        slideUpAct->setToolTip(QStringLiteral("Slide up animation: position, opacity"));
+        scaleInAct->setToolTip(QStringLiteral("Scale in animation: scale, opacity"));
+        rotationInAct->setToolTip(QStringLiteral("Rotation in animation: scale, rotation, opacity"));
+        trackingFadeAct->setToolTip(QStringLiteral("Tracking fade animation: tracking, scale, opacity"));
+        wigglyPositionAct->setToolTip(QStringLiteral("Wiggly selector: smooth position and rotation wiggles"));
+        blurRevealAct->setToolTip(QStringLiteral("Blur reveal animation: scale, opacity, blur"));
+
+        QAction *chosen = menu.exec(addButton_->mapToGlobal(QPoint(0, addButton_->height())));
+        if (!chosen) {
+          return;
+        }
+
+        const int nextCount = std::clamp(currentCount_ + 1, minCount_, maxCount_);
+        if (nextCount == currentCount_) {
+          return;
+        }
+        currentCount_ = nextCount;
+        syncUi();
+
+        int presetId = 0;
+        if (chosen == typewriterAct) presetId = 1;
+        else if (chosen == slideUpAct) presetId = 2;
+        else if (chosen == scaleInAct) presetId = 3;
+        else if (chosen == rotationInAct) presetId = 4;
+        else if (chosen == trackingFadeAct) presetId = 5;
+        else if (chosen == wigglyPositionAct) presetId = 6;
+        else if (chosen == blurRevealAct) presetId = 7;
+
+        if (presetId > 0) {
+          commitValue((presetId * 100) + currentCount_);
+        } else {
+          commitValue(currentCount_);
+        }
+      });
 
   layout->addWidget(removeButton_, 0);
   layout->addWidget(countLabel_, 1);

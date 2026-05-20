@@ -8,7 +8,6 @@ module;
 #include <QPainter>
 #include <QPainterPath>
 #include <QtMath>
-#include <QRandomGenerator>
 #include <cmath>
 #include <algorithm>
 #include <wobjectimpl.h>
@@ -47,6 +46,8 @@ module;
 #include <regex>
 #include <random>
 module Artifact.Effect.Transition;
+
+import Math.Random;
 
 
 
@@ -472,8 +473,12 @@ void GlitchTransition::process(const QImage& fromFrame,
     
     int w = output.width();
     int h = output.height();
+    if (w <= 0 || h <= 0) {
+        output = fromFrame.copy();
+        return;
+    }
     
-    QRandomGenerator rng(glitchParams_.seed);
+    ArtifactCore::RandomStream rng(static_cast<uint64_t>(glitchParams_.seed));
     
     // Glitch intensity peaks at middle of transition
     float intensity = glitchParams_.intensity * (1.0f - std::abs(2.0f * t - 1.0f));
@@ -486,15 +491,15 @@ void GlitchTransition::process(const QImage& fromFrame,
     if (glitchParams_.horizontalGlitch) {
         int numBlocks = static_cast<int>(intensity * 20);
         for (int i = 0; i < numBlocks; i++) {
-            int y = rng.bounded(h);
-            int blockHeight = rng.bounded(5, 30);
-            int shift = static_cast<int>(rng.bounded(-50, 50) * intensity);
+            int y = rng.rangeInclusive(0, h - 1);
+            int blockHeight = rng.rangeInclusive(5, 30);
+            int shift = static_cast<int>(rng.signedRange(50.0f) * intensity);
             
             QRect sourceRect(0, y, w, blockHeight);
             QRect destRect(shift, y, w, blockHeight);
             
             // Mix from and to frames
-            float blockMix = rng.bounded(1.0);
+            float blockMix = rng.unitFloat();
             if (blockMix < t) {
                 painter.drawImage(destRect, toFrame, sourceRect);
             } else {
@@ -507,14 +512,14 @@ void GlitchTransition::process(const QImage& fromFrame,
     if (glitchParams_.verticalGlitch) {
         int numBlocks = static_cast<int>(intensity * 10);
         for (int i = 0; i < numBlocks; i++) {
-            int x = rng.bounded(w);
-            int blockWidth = rng.bounded(5, 20);
-            int shift = static_cast<int>(rng.bounded(-30, 30) * intensity);
+            int x = rng.rangeInclusive(0, w - 1);
+            int blockWidth = rng.rangeInclusive(5, 20);
+            int shift = static_cast<int>(rng.signedRange(30.0f) * intensity);
             
             QRect sourceRect(x, 0, blockWidth, h);
             QRect destRect(x, shift, blockWidth, h);
             
-            float blockMix = rng.bounded(1.0);
+            float blockMix = rng.unitFloat();
             if (blockMix < t) {
                 painter.drawImage(destRect, toFrame, sourceRect);
             } else {
@@ -549,8 +554,8 @@ void GlitchTransition::process(const QImage& fromFrame,
     if (glitchParams_.noiseAmount > 0) {
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                if (rng.bounded(1.0) < glitchParams_.noiseAmount * intensity) {
-                    int noise = rng.bounded(-50, 50);
+                if (rng.unitFloat() < glitchParams_.noiseAmount * intensity) {
+                    int noise = rng.rangeInclusive(-50, 50);
                     QRgb pixel = output.pixel(x, y);
                     int r = std::clamp(qRed(pixel) + noise, 0, 255);
                     int g = std::clamp(qGreen(pixel) + noise, 0, 255);

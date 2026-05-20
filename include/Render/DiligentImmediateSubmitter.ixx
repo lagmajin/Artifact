@@ -131,6 +131,8 @@ private:
     void submitRectOutline   (const RectOutlinePkt&,    IDeviceContext*, ITextureView*);
     void submitSprite        (const SpritePkt&,         IDeviceContext*, ITextureView*);
     void submitSpriteXform   (const SpriteXformPkt&,    IDeviceContext*, ITextureView*);
+    void submitAtlasSprite   (const AtlasSpritePkt&,    IDeviceContext*, ITextureView*);
+    void submitAtlasSpriteXform(const AtlasSpriteXformPkt&, IDeviceContext*, ITextureView*);
     void submitMaskedSprite  (const MaskedSpritePkt&,   IDeviceContext*, ITextureView*);
     void submitBillboard     (const BillboardPkt&,      IDeviceContext*, ITextureView*);
     void submitBillboardImage(const BillboardImagePkt&, IDeviceContext*, ITextureView*);

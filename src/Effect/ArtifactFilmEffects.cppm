@@ -6,7 +6,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
-#include <QRandomGenerator>
 #include <QColor>
 #include <QDebug>
 #include <wobjectimpl.h>
@@ -45,6 +44,8 @@
 #include <regex>
 #include <random>
 module Artifact.Effect.Film;
+
+import Math.Random;
 
 
 
@@ -486,14 +487,14 @@ class FilmEffectProcessor::Impl {
 public:
     FilmEffectPreset* currentPreset_ = nullptr;
     int seed_ = 12345;
-    
-    // Random generators
-    std::mt19937 rng_;
-    std::uniform_real_distribution<float> dist01_{0.0f, 1.0f};
-    std::uniform_real_distribution<float> distMinus1_{-1.0f, 1.0f};
-    
-    Impl() {
-        rng_.seed(seed_);
+
+    Impl() = default;
+
+    ArtifactCore::RandomStream streamFor(float time, uint64_t salt) const
+    {
+        const uint64_t timeKey = static_cast<uint64_t>(std::llround(time * 1000.0f));
+        const uint64_t seedKey = static_cast<uint64_t>(static_cast<uint32_t>(seed_));
+        return ArtifactCore::RandomStream(ArtifactCore::RandomStream::mix(seedKey ^ (timeKey << 1) ^ salt));
     }
     
     // Apply film grain
@@ -503,18 +504,16 @@ public:
         const auto& g = currentPreset_->grain();
         if (g.intensity <= 0.0f) return;
         
-        // Animate seed based on time
-        std::mt19937 localRng(seed_ + static_cast<int>(time * g.speed * 100));
-        std::uniform_real_distribution<float> localDist(-g.intensity, g.intensity);
+        auto localRng = streamFor(time * g.speed, 0x47524F554Eull);
         
         for (int i = 0; i < width * height * 4; i += 4) {
-            float noise = localDist(localRng);
+            float noise = localRng.range(-g.intensity, g.intensity);
             
             if (g.colorGrain) {
                 // RGB noise
-                pixels[i] += noise * localDist(localRng);
-                pixels[i + 1] += noise * localDist(localRng);
-                pixels[i + 2] += noise * localDist(localRng);
+                pixels[i] += noise * localRng.range(-g.intensity, g.intensity);
+                pixels[i + 1] += noise * localRng.range(-g.intensity, g.intensity);
+                pixels[i + 2] += noise * localRng.range(-g.intensity, g.intensity);
             } else {
                 // Monochrome noise
                 float mono = noise;
@@ -608,9 +607,8 @@ public:
         
         if (f.random > 0.0f) {
             // Random flicker
-            std::mt19937 localRng(seed_ + static_cast<int>(time * f.speed));
-            std::uniform_real_distribution<float> dist(1.0f - f.intensity, 1.0f + f.intensity * f.random);
-            flicker = dist(localRng);
+            auto localRng = streamFor(time * f.speed, 0x464C49434Bull);
+            flicker = localRng.range(1.0f - f.intensity, 1.0f + f.intensity * f.random);
         } else {
             // Pattern flicker (sine wave)
             flicker = 1.0f + std::sin(time * f.speed * 6.28f) * f.intensity;
@@ -691,11 +689,10 @@ void FilmEffectProcessor::setFlickerIntensity(float intensity) {
 
 void FilmEffectProcessor::setSeed(int seed) {
     impl_->seed_ = seed;
-    impl_->rng_.seed(seed);
 }
 
 void FilmEffectProcessor::randomizeSeed() {
-    setSeed(QRandomGenerator::global()->bounded(100000));
+    setSeed(static_cast<int>(ArtifactCore::Random::instance().intRange(0, 99999)));
 }
 
 std::vector<FilmEffectPreset*> FilmEffectProcessor::allPresets() {

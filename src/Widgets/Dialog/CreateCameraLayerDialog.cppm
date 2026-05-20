@@ -44,6 +44,33 @@ W_OBJECT_IMPL(CreateCameraLayerDialog)
 // ─────────────────────────────────────────────────────────────────────────────
 namespace {
 
+class DialogCloseButton final : public QPushButton {
+public:
+  explicit DialogCloseButton(QWidget* parent = nullptr) : QPushButton(u8"×", parent) {
+    setFixedSize(30, 30);
+    setAttribute(Qt::WA_Hover, true);
+    setCursor(Qt::PointingHandCursor);
+  }
+protected:
+  bool event(QEvent* event) override {
+    if (event->type() == QEvent::HoverEnter || event->type() == QEvent::HoverLeave) {
+      update();
+    }
+    return QPushButton::event(event);
+  }
+  void paintEvent(QPaintEvent*) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    
+    QColor textCol = underMouse() ? QColor(0xff, 0x44, 0x44) : QColor(0xaa, 0xaa, 0xaa);
+    painter.setPen(textCol);
+    QFont font = this->font();
+    font.setPointSize(18);
+    painter.setFont(font);
+    painter.drawText(rect(), Qt::AlignCenter, text());
+  }
+};
+
 class LensDiagramWidget : public QWidget {
 public:
     explicit LensDiagramWidget(QWidget* parent = nullptr)
@@ -297,11 +324,7 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         pal.setColor(QPalette::WindowText, QColor("#e0e0e0"));
         titleLbl->setPalette(pal);
     }
-    auto* closeBtn = new QPushButton(u8"×", header);
-    closeBtn->setFixedSize(30, 30);
-    closeBtn->setStyleSheet(
-        "QPushButton { background: transparent; color: #aaaaaa; border: none; font-size: 18px; }"
-        "QPushButton:hover { color: #ff4444; }");
+    auto* closeBtn = new DialogCloseButton(header);
     hLay->addWidget(titleLbl);
     hLay->addStretch();
     hLay->addWidget(closeBtn);

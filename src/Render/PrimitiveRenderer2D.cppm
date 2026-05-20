@@ -160,6 +160,7 @@ public:
     RefCntAutoPtr<IRenderDevice> pDevice_;
     
     std::unique_ptr<GlyphAtlas>  pGlyphAtlas_;
+    RefCntAutoPtr<ITexture>      pGlyphAtlasTexture_;
 
     struct CachedTexture {
         RefCntAutoPtr<ITexture> pTexture;
@@ -1241,13 +1242,48 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
                                         const FloatColor& color,
                                         float opacity)
 {
-    if (!impl_->pGlyphAtlas_ || text.length() == 0) return;
+    if (!impl_->pGlyphAtlas_ || text.length() == 0 || !impl_->cmdBuf_) return;
     
-    // Simplified implementation: acquire each character from atlas
-    // Full implementation would use TextLayoutEngine for proper glyph positioning
+    // Manage GPU texture for GlyphAtlas
+    if (impl_->pGlyphAtlas_->isDirty() || !impl_->pGlyphAtlasTexture_) {
+        const QImage& img = impl_->pGlyphAtlas_->atlasImage();
+        if (!img.isNull() && impl_->pDevice_) {
+            TextureDesc texDesc;
+            texDesc.Name           = "GlyphAtlasTexture";
+            texDesc.Type           = RESOURCE_DIM_TEX_2D;
+            texDesc.Width          = img.width();
+            texDesc.Height         = img.height();
+            texDesc.MipLevels      = 1;
+            texDesc.Format         = TEX_FORMAT_RGBA8_UNORM;
+            texDesc.Usage          = USAGE_IMMUTABLE;
+            texDesc.BindFlags      = BIND_SHADER_RESOURCE;
+
+            TextureSubResData subData;
+            subData.pData  = img.constBits();
+            subData.Stride = img.bytesPerLine();
+
+            TextureData initData;
+            initData.pSubResources = &subData;
+            initData.NumSubresources = 1;
+
+            impl_->pGlyphAtlasTexture_.Release(); // Release old texture
+            impl_->pDevice_->CreateTexture(texDesc, &initData, &impl_->pGlyphAtlasTexture_);
+            impl_->pGlyphAtlas_->clearDirty();
+        }
+    }
+    
+    if (!impl_->pGlyphAtlasTexture_) return;
+    auto* pSRV = impl_->pGlyphAtlasTexture_->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!pSRV) return;
+
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const float atlasW = static_cast<float>(impl_->pGlyphAtlas_->width());
+    const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
+    
     float currentX = x;
-    
     auto u32 = text.toStdU32String();
+    
     for (char32_t codePoint : u32) {
         GlyphKey key;
         key.codePoint = codePoint;
@@ -1264,8 +1300,32 @@ void PrimitiveRenderer2D::drawGlyphText(float x, float y, const UniString& text,
         GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, qfont);
         if (!rect.valid) continue;
         
-        // TODO: Generate and append glyph quad
-        // currentX += rect.advance;
+        AtlasSpritePkt pkt;
+        pkt.pSRV = pSRV;
+        pkt.uvRect = { rect.u0(static_cast<int>(atlasW)), rect.v0(static_cast<int>(atlasH)), 
+                       rect.u1(static_cast<int>(atlasW)), rect.v1(static_cast<int>(atlasH)) };
+        pkt.color = { color.r(), color.g(), color.b(), opacity };
+
+        // Position & Scale setup
+        const float gw = static_cast<float>(rect.width);
+        const float gh = static_cast<float>(rect.height);
+        const float gx = currentX + rect.bearingX;
+        const float gy = y - rect.bearingY;
+        
+        if (impl_->useExternalMatrices_) {
+            // Simplified handling for external matrices (should really use Xform variant)
+            pkt.xform.offset = { gx, gy };
+            pkt.xform.scale  = { gw, gh };
+            pkt.xform.screenSize = viewportCB.screenSize;
+        } else {
+            // Standard canvas zoom & pan
+            pkt.xform.offset = { (gx * zoom) + viewportCB.offset.x, (gy * zoom) + viewportCB.offset.y };
+            pkt.xform.scale  = { gw * zoom, gh * zoom };
+            pkt.xform.screenSize = viewportCB.screenSize;
+        }
+        
+        impl_->cmdBuf_->append(pkt);
+        currentX += rect.advance;
     }
 }
 
