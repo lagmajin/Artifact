@@ -218,8 +218,14 @@ public:
             {"playbackSetSpeed", IDescribable::loc("Set playback speed multiplier.", "Set playback speed multiplier.", {}), "bool", {QStringLiteral("double")}, {QStringLiteral("speed")}},
             {"playbackGetLooping", IDescribable::loc("Get looping state.", "Get looping state.", {}), "bool"},
             {"playbackSetLooping", IDescribable::loc("Enable or disable looping.", "Enable or disable looping.", {}), "bool", {QStringLiteral("bool")}, {QStringLiteral("enabled")}},
+            {"seekTimeline", IDescribable::loc("Alias for playbackSetCurrentFrame.", "Alias for playbackSetCurrentFrame.", {}), "bool", {QStringLiteral("int")}, {QStringLiteral("frameNumber")}},
+            {"playTimeline", IDescribable::loc("Alias for playbackStart.", "Alias for playbackStart.", {}), "bool"},
+            {"pauseTimeline", IDescribable::loc("Alias for playbackPause.", "Alias for playbackPause.", {}), "bool"},
+            {"setWorkArea", IDescribable::loc("Alias for playbackSetFrameRange.", "Alias for playbackSetFrameRange.", {}), "bool", {QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("frameStart"), QStringLiteral("frameEnd")}},
             {"exportComposition", IDescribable::loc("Add composition to export queue with specified settings.", "Add composition to export queue with specified settings.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("compositionId"), QStringLiteral("outputPath"), QStringLiteral("format"), QStringLiteral("codec"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
             {"exportCurrentComposition", IDescribable::loc("Add active composition to export queue with specified settings.", "Add active composition to export queue with specified settings.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("outputPath"), QStringLiteral("format"), QStringLiteral("codec"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
+            {"exportCompositionAndWait", IDescribable::loc("Export composition and wait until completed.", "Export composition and wait until completed.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("compositionId"), QStringLiteral("outputPath"), QStringLiteral("format"), QStringLiteral("codec"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
+            {"exportCurrentCompositionAndWait", IDescribable::loc("Export active composition and wait until completed.", "Export active composition and wait until completed.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("double"), QStringLiteral("int")}, {QStringLiteral("outputPath"), QStringLiteral("format"), QStringLiteral("codec"), QStringLiteral("width"), QStringLiteral("height"), QStringLiteral("fps"), QStringLiteral("bitrateKbps")}},
             {"getSupportedExportFormats", IDescribable::loc("Get list of supported export file formats.", "Get list of supported export file formats.", {}), "QStringList"},
             {"getDefaultCodecForFormat", IDescribable::loc("Get the default export codec for a given format.", "Get the default export codec for a given format.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("format")}},
             {"removeAllRenderQueues", IDescribable::loc("Clear the render queue.", "Clear the render queue.", {}), "bool"}
@@ -616,20 +622,59 @@ public:
         }
         if (name == QStringLiteral("playbackGetLooping")) {
             return playbackGetLooping();
+        if (name == QStringLiteral("playbackGetFrameRange")) {
+            return playbackGetFrameRange();
+        }
+        if (name == QStringLiteral("playbackSetFrameRange")) {
+            if (args.size() < 2) return false;
+            return playbackSetFrameRange(intArg(args, 0, 0), intArg(args, 1, 0));
+        }
+        if (name == QStringLiteral("playbackGetFrameRate")) {
+            return playbackGetFrameRate();
+        }
+        if (name == QStringLiteral("playbackGetSpeed")) {
+            return playbackGetSpeed();
+        }
+        if (name == QStringLiteral("playbackSetSpeed")) {
+            if (args.isEmpty()) return false;
+            return playbackSetSpeed(doubleArg(args, 0, 1.0));
+        }
+        if (name == QStringLiteral("playbackGetLooping")) {
+            return playbackGetLooping();
         }
         if (name == QStringLiteral("playbackSetLooping")) {
             if (args.isEmpty()) return false;
             return playbackSetLooping(args.first().toBool());
         }
+        if (name == QStringLiteral("seekTimeline")) {
+            if (args.isEmpty()) return false;
+            return playbackSetCurrentFrame(intArg(args, 0, 0));
+        }
+        if (name == QStringLiteral("playTimeline")) {
+            return playbackStart();
+        }
+        if (name == QStringLiteral("pauseTimeline")) {
+            return playbackPause();
+        }
+        if (name == QStringLiteral("setWorkArea")) {
+            if (args.size() < 2) return false;
+            return playbackSetFrameRange(intArg(args, 0, 0), intArg(args, 1, 0));
+        }
         if (name == QStringLiteral("exportComposition")) {
-            if (args.size() < 8) return false;
             return exportComposition(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), stringArg(args, 3), 
-                                   intArg(args, 4, 1920), intArg(args, 5, 1080), doubleArg(args, 6, 30.0), intArg(args, 7, 5000));
+                                    intArg(args, 4, 1920), intArg(args, 5, 1080), doubleArg(args, 6, 60.0), intArg(args, 7, 5000));
         }
         if (name == QStringLiteral("exportCurrentComposition")) {
-            if (args.size() < 7) return false;
             return exportCurrentComposition(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), 
-                                          intArg(args, 3, 1920), intArg(args, 4, 1080), doubleArg(args, 5, 30.0), intArg(args, 6, 5000));
+                                           intArg(args, 3, 1920), intArg(args, 4, 1080), doubleArg(args, 5, 60.0), intArg(args, 6, 5000));
+        }
+        if (name == QStringLiteral("exportCompositionAndWait")) {
+            return exportCompositionAndWait(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), stringArg(args, 3), 
+                                           intArg(args, 4, 1920), intArg(args, 5, 1080), doubleArg(args, 6, 60.0), intArg(args, 7, 5000));
+        }
+        if (name == QStringLiteral("exportCurrentCompositionAndWait")) {
+            return exportCurrentCompositionAndWait(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), 
+                                                  intArg(args, 3, 1920), intArg(args, 4, 1080), doubleArg(args, 5, 60.0), intArg(args, 6, 5000));
         }
         if (name == QStringLiteral("getSupportedExportFormats")) {
             return getSupportedExportFormats();
@@ -2484,126 +2529,6 @@ private:
     }
 
     // Timeline Information
-    
-    // Get composition duration in frames.
-    // Returns: int (frame count)
-    static QVariant playbackGetDuration()
-    {
-        auto* playback = ArtifactPlaybackService::instance();
-        if (!playback) {
-            return 0;
-        }
-        const auto range = playback->frameRange();
-        return static_cast<int>(range.endPosition().framePosition());
-    }
-
-    // Get playback frame range (in/out points).
-    // Returns: {"start": int, "end": int}
-    static QVariant playbackGetFrameRange()
-    {
-        auto* playback = ArtifactPlaybackService::instance();
-        if (!playback) {
-            return QVariantMap();
-        }
-        const auto range = playback->frameRange();
-        return QVariantMap{
-            {QStringLiteral("start"), static_cast<int>(range.startPosition().framePosition())},
-            {QStringLiteral("end"), static_cast<int>(range.endPosition().framePosition())}
-        };
-    }
-
-    // Set playback frame range (work area).
-    // frameStart and frameEnd define the playback range.
-    // Returns: bool (success)
-    static QVariant playbackSetFrameRange(int frameStart, int frameEnd)
-    {
-        auto* playback = ArtifactPlaybackService::instance();
-        if (!playback || frameStart < 0 || frameEnd < frameStart) {
-            return false;
-        }
-        playback->setFrameRange(FrameRange(FramePosition(frameStart), FramePosition(frameEnd)));
-        return true;
-    }
-
-    // Playback Settings
-    
-    // Get playback frame rate (fps).
-    // Returns: double (frames per second)
-    static QVariant playbackGetFrameRate()
-    {
-        auto* playback = ArtifactPlaybackService::instance();
-        if (!playback) {
-            return 0.0;
-        }
-        return static_cast<double>(playback->frameRate().framerate());
-    }
-
-    // Get playback speed multiplier.
-    // Returns: float (1.0 = normal, 2.0 = 2x speed, 0.5 = half speed)
-    static QVariant playbackGetSpeed()
-    {
-        auto* playback = ArtifactPlaybackService::instance();
-        if (!playback) {
-            return 1.0f;
-        }
-        return playback->playbackSpeed();
-    }
-
-    // Set playback speed multiplier.
-    // Speed of 1.0 is normal, 2.0 is double speed, 0.5 is half speed.
-    // Returns: bool (success)
-    static QVariant playbackSetSpeed(double speed)
-    {
-        auto* playback = ArtifactPlaybackService::instance();
-        if (!playback || speed <= 0.0) {
-            return false;
-        }
-        playback->setPlaybackSpeed(static_cast<float>(speed));
-        return true;
-    }
-
-    // Get looping state.
-    // Returns: bool (true = looping enabled)
-    static QVariant playbackGetLooping()
-    {
-        auto* playback = ArtifactPlaybackService::instance();
-        if (!playback) {
-            return false;
-        }
-        return playback->isLooping();
-    }
-
-    // Enable or disable looping.
-    // Returns: bool (success)
-    static QVariant playbackSetLooping(bool enabled)
-    {
-        auto* playback = ArtifactPlaybackService::instance();
-        if (!playback) {
-            return false;
-        }
-        playback->setLooping(enabled);
-        return true;
-    }
-
-    // Phase 6: Export
-    //
-    // Add composition to export queue with specified settings.
-    // Supported formats: "mp4", "mov", "avi", "png", "jpg", "exr", "tiff"
-    // Returns: {"success": bool, "jobIndex": int (if added)}
-    static QVariant exportComposition(const QString& compositionId,
-                                     const QString& outputPath,
-                                     const QString& format,
-                                     const QString& codec,
-                                     int width,
-                                     int height,
-                                     double fps,
-                                     int bitrateKbps)
-    {
-        auto* renderService = ArtifactRenderQueueService::instance();
-        auto* projectService = ArtifactApplicationManager::instance() ? ArtifactApplicationManager::instance()->projectService() : nullptr;
-        
-        if (!renderService || !projectService) {
-            return QVariantMap{
                 {QStringLiteral("success"), false},
                 {QStringLiteral("error"), QStringLiteral("RenderQueue or Project service unavailable")}
             };
