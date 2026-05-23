@@ -5741,17 +5741,38 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       (framePos < 0 ||
        (effectiveEndFrame > 0 && framePos >= effectiveEndFrame));
   ArtifactCore::ImageF32x4_RGBA ramPreviewFrameImage;
-  bool hasRamPreviewFrameImage = false;
   bool useRamPreviewFallback = false;
+  QString ramPreviewFallbackReason = QStringLiteral("no-playback-service");
+  bool playbackSameComposition = false;
+  ArtifactRamPreviewFrameCacheState playbackPreviewState;
+  bool playbackPreviewStateValid = false;
   if (auto *playback = ArtifactPlaybackService::instance()) {
     const auto playbackComp = playback->currentComposition();
     const bool sameComposition =
         !playbackComp || playbackComp->id() == comp->id();
-    hasRamPreviewFrameImage =
-        sameComposition &&
-        playback->tryGetRamPreviewFrameImage(framePos, ramPreviewFrameImage);
-    useRamPreviewFallback = hasRamPreviewFrameImage && !playback->isPlaying() &&
-                            !viewportInteracting_ && !frameOutOfRange;
+    playbackSameComposition = sameComposition;
+    if (!sameComposition) {
+      ramPreviewFallbackReason = QStringLiteral("composition-mismatch");
+    } else {
+      playbackPreviewState = playback->ramPreviewFrameState(framePos);
+      playbackPreviewStateValid = true;
+      if (playback->isPlaying()) {
+        ramPreviewFallbackReason = QStringLiteral("playing");
+      } else if (frameOutOfRange) {
+        ramPreviewFallbackReason = QStringLiteral("frame-out-of-range");
+      } else if (!playbackPreviewState.ready) {
+        ramPreviewFallbackReason =
+            playbackPreviewState.failed ? QStringLiteral("failed")
+                                : QStringLiteral("not-ready");
+      } else if (!playback->tryGetRamPreviewFrameImage(framePos, ramPreviewFrameImage)) {
+        ramPreviewFallbackReason = QStringLiteral("no-image");
+      } else if (viewportInteracting_) {
+        ramPreviewFallbackReason = QStringLiteral("viewport-interacting");
+      } else {
+        useRamPreviewFallback = true;
+        ramPreviewFallbackReason = QStringLiteral("ready");
+      }
+    }
   }
   float panX = 0.0f;
   float panY = 0.0f;
@@ -5912,6 +5933,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     int blendFailureCount = 0;
     int blendRetryNormalCount = 0;
     int directBlendFallbackCount = 0;
+    int layerToFloatConvertCount = 0;
     int skipInvisibleCount = 0;
     int skipSoloCount = 0;
     int skipInactiveCount = 0;
@@ -5919,7 +5941,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     int skipLodCount = 0;
     int opacityZeroCount = 0;
     int compositedLayerCount = 0;
-    int firstLayerSeedCount = 0;
     QStringList blendMaskLayerNotes;
     const float targetViewportW = hostWidth_;
     const float targetViewportH = hostHeight_;
@@ -6022,6 +6043,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       auto tempUAV = renderPipeline_.tempUAV();
       auto layerRTV = renderPipeline_.layerRTV();
       auto layerSRV = renderPipeline_.layerSRV();
+      auto layerFloatSRV = renderPipeline_.layerFloatSRV();
+      auto layerFloatUAV = renderPipeline_.layerFloatUAV();
 
       // ==== オフスクリーン描画前の状態保存 ====
       const float origZoom = renderer_->getZoom();
@@ -6194,28 +6217,25 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // CS 実行前に RTV を解除
           renderer_->unbindColorTargetsForCompute();
 
-          if (compositedLayerCount == 1 &&
-              blendMode != ArtifactCore::BlendMode::Normal) {
-            ++firstLayerSeedCount;
-            renderer_->setOverrideRTV(renderPipeline_.accumRTV());
-            renderer_->drawSprite(0.0f, 0.0f, cw, ch, layerSRV, opacity);
-            renderer_->flush();
-            renderer_->setOverrideRTV(nullptr);
-            if (blendMaskLayerNotes.size() < 4) {
-              blendMaskLayerNotes
-                  << QStringLiteral(
-                         "%1:blend=%2 opacity=%3 masks=%4 seededAsNormal=1")
-                         .arg(layer->layerName(),
-                              ArtifactCore::BlendModeUtils::toString(blendMode),
-                              QString::number(opacity, 'f', 3))
-                         .arg(layerMaskCount);
-            }
-            continue;
-          }
-
           ++blendDispatchCount;
+          bool convertedLayerToFloat = renderer_->convertLayerToFloat(
+              blendPipeline_.get(), layerSRV, layerFloatUAV,
+              static_cast<Diligent::Uint32>(renderPipeline_.width()),
+              static_cast<Diligent::Uint32>(renderPipeline_.height()));
+          Diligent::ITextureView *blendSrcSRV =
+              convertedLayerToFloat ? layerFloatSRV : layerSRV;
+          if (convertedLayerToFloat) {
+            ++layerToFloatConvertCount;
+          }
+          if (!convertedLayerToFloat) {
+            qWarning() << "[CompositionView] layer-to-float conversion failed; "
+                          "falling back to legacy layer SRV"
+                       << "layer=" << layer->id().toString()
+                       << "layerName=" << layer->layerName()
+                       << "mode=" << static_cast<int>(blendMode);
+          }
           bool blendOk = renderer_->blendLayers(
-              blendPipeline_.get(), layerSRV, accumSRV, tempUAV, blendMode,
+              blendPipeline_.get(), blendSrcSRV, accumSRV, tempUAV, blendMode,
               opacity);
           if (!blendOk && blendMode != ArtifactCore::BlendMode::Normal) {
             ++blendRetryNormalCount;
@@ -6226,7 +6246,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                        << "opacity=" << opacity;
             ++blendDispatchCount;
             blendOk = renderer_->blendLayers(
-                blendPipeline_.get(), layerSRV, accumSRV, tempUAV,
+                blendPipeline_.get(), blendSrcSRV, accumSRV, tempUAV,
                 ArtifactCore::BlendMode::Normal, opacity);
           }
           if (!blendOk) {
@@ -7318,6 +7338,40 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           "Present", ArtifactCore::ProfileCategory::Render);
       renderer_->present();
     }
+
+    if (auto *playback = ArtifactPlaybackService::instance()) {
+      const auto previewSummary = playback->ramPreviewSummary();
+      const bool shouldCaptureRamPreview =
+          playback->isRamPreviewEnabled() && playbackPreviewStateValid &&
+          playbackSameComposition && !playback->isPlaying() &&
+          !viewportInteracting_ && !frameOutOfRange &&
+          !playbackPreviewState.ready;
+      if (shouldCaptureRamPreview) {
+        const QImage capturedFrame = renderer_->readbackToImage();
+        if (!capturedFrame.isNull()) {
+          const QString captureReason =
+              QStringLiteral("composition-preview-readback;queue=%1;gen=%2;range=%3-%4")
+                  .arg(previewSummary.buildQueueReason)
+                  .arg(static_cast<qulonglong>(previewSummary.buildQueueGeneration))
+                  .arg(previewSummary.range.start())
+                  .arg(previewSummary.range.end());
+          const bool stored = playback->storeRamPreviewFrameImage(
+              framePos, capturedFrame, captureReason, true);
+          if (stored && compositionViewLog().isDebugEnabled()) {
+            qCDebug(compositionViewLog)
+                << "[CompositionView][RamPreviewCapture]"
+                << "frame=" << framePos
+                << "reason=" << captureReason
+                << "path=" << (pipelineEnabled ? QStringLiteral("gpu-blend")
+                                              : QStringLiteral("fallback"));
+          }
+        } else if (compositionViewLog().isDebugEnabled()) {
+          qCDebug(compositionViewLog)
+              << "[CompositionView][RamPreviewCapture]"
+              << "frame=" << framePos << "result=empty";
+        }
+      }
+    }
     presentMs = markPhaseMs();
     lastSubmit2DMs_ = latestTimerMs("Submit2D");
 
@@ -7376,11 +7430,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     lastRenderPathSummary_ =
         QStringLiteral(
             "path=%1 gpuBlendEnabled=%2 gpuBlendReady=%3 layersTotal=%4 "
-            "layersDrawn=%5 surfaceUploadLayers=%6 cpuRasterLayers=%7 "
-            "frameOutOfRange=%8 previewDownsample=%9 effectiveDownsample=%10 "
-            "viewportInteracting=%11 cacheEntries=%12 cacheBytes=%13 "
-            "presentStatus=%14 presentOk=%15 presentFail=%16 presentSkip=%17 "
-            "rayTracing={%18}")
+             "layersDrawn=%5 surfaceUploadLayers=%6 cpuRasterLayers=%7 "
+             "frameOutOfRange=%8 previewDownsample=%9 effectiveDownsample=%10 "
+             "viewportInteracting=%11 cacheEntries=%12 cacheBytes=%13 "
+             "presentStatus=%14 presentOk=%15 presentFail=%16 presentSkip=%17 "
+             "ramPreviewFallback=%18 ramPreviewFallbackReason=%19 "
+             "rayTracing={%20}")
             .arg(pipelineEnabled ? QStringLiteral("gpu-blend")
                                  : QStringLiteral("fallback"))
             .arg(gpuBlendEnabled_)
@@ -7399,6 +7454,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(static_cast<qulonglong>(renderer_->presentSuccessCount()))
             .arg(static_cast<qulonglong>(renderer_->presentFailureCount()))
             .arg(static_cast<qulonglong>(renderer_->presentSkippedCount()))
+            .arg(useRamPreviewFallback ? 1 : 0)
+            .arg(ramPreviewFallbackReason)
             .arg(renderer_->rayTracingDebugState());
     const QString visibilityState =
         frameOutOfRange
@@ -7431,17 +7488,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(hasGpuBlendBlocker ? 1 : 0)
             .arg(forceContinuousRedraw ? 1 : 0)
             .arg(viewportInteracting_ ? 1 : 0)
-            .arg(firstLayerSeedCount)
+            .arg(layerToFloatConvertCount)
             .arg(hasGpuBlendBlocker
                      ? QStringLiteral("gpuBlendBlockedByCpuRasterizerWork")
                      : QStringLiteral("none"));
     lastBlendMaskSummary_ =
         QStringLiteral(
             "phase=blend-mask-smoke-v1 path=%1 blendContract=straight-src_over-premul-accum "
-            "maskContract=%2 pipelineFormat=RGBA32F layerFormat=RGBA8_sRGB "
+            "maskContract=%2 pipelineFormat=RGBA32F layerFormat=RGBA8_sRGB layerComputeFormat=RGBA32F "
             "layersDrawn=%3 nonNormal=%4 maskedLayers=%5 masks=%6 "
             "dispatch=%7 retryNormal=%8 failed=%9 directFallback=%10 "
-            "firstLayerSeed=%11 notes=%12")
+            "layerToFloatConvert=%11 notes=%12")
             .arg(pipelineEnabled ? QStringLiteral("gpu-blend")
                                  : QStringLiteral("fallback"))
             .arg(totalMaskCount > 0 ? QStringLiteral("pending")
@@ -7454,7 +7511,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(blendRetryNormalCount)
             .arg(blendFailureCount)
             .arg(directBlendFallbackCount)
-            .arg(firstLayerSeedCount)
+            .arg(layerToFloatConvertCount)
             .arg(blendMaskLayerNotes.isEmpty()
                      ? QStringLiteral("none")
                      : blendMaskLayerNotes.join(QStringLiteral("; ")));

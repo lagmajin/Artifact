@@ -1280,27 +1280,29 @@ void ArtifactMainWindow::setDockVisible(const QString &title,
     if (!dock)
       continue;
     if (dock->objectName() == title || dock->windowTitle() == title) {
-      const bool isOpen = dock->property("artifactLazyFloatingDock").toBool()
-                              ? (dock->isVisible() && !dock->isClosed())
-                              : !dock->isClosed();
-      if (isOpen == visible) {
-        if (visible && !dock->property("artifactLazyWidgetCreated").toBool() &&
-            !dock->property("artifactLazyWidgetCreationPending").toBool()) {
-          if (impl_->startupLayoutFrozen) {
-            dock->setProperty("artifactLazyWidgetStartupPending", true);
-          } else if (impl_->lazyDockFactories.contains(dock)) {
-            impl_->createLazyDockWidgetNow(this, dock);
-          }
-        }
-        return;
+      const bool isVisible = dock->isVisible() && !dock->isClosed();
+      if (isVisible != visible) {
+        dock->toggleView(visible);
       }
-      dock->toggleView(visible);
-      if (visible && !dock->property("artifactLazyWidgetCreated").toBool() &&
-          !dock->property("artifactLazyWidgetCreationPending").toBool()) {
+
+      const bool needsLazyWidget =
+          visible && impl_->lazyDockFactories.contains(dock) &&
+          !dock->property("artifactLazyWidgetCreated").toBool() &&
+          !dock->property("artifactLazyWidgetCreationPending").toBool();
+      if (needsLazyWidget) {
         if (impl_->startupLayoutFrozen) {
           dock->setProperty("artifactLazyWidgetStartupPending", true);
-        } else if (impl_->lazyDockFactories.contains(dock)) {
+        } else {
           impl_->createLazyDockWidgetNow(this, dock);
+        }
+      }
+
+      if (visible) {
+        dock->setAsCurrentTab();
+        dock->raise();
+        refreshDockWidgetSurface(dock);
+        if (auto *floatingWidget = findFloatingDockContainer(dock)) {
+          scheduleFloatingRefresh(floatingWidget);
         }
       }
       return;

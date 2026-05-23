@@ -15,6 +15,7 @@
 #include <any>
 #include <array>
 #include <atomic>
+#include <cstdint>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -89,6 +90,14 @@ public:
   std::vector<ArtifactRamPreviewFrameCacheState> frameCacheStates_;
   std::unordered_map<int64_t, ArtifactCore::ImageF32x4RGBAWithCache>
       ramPreviewImageCache_;
+  struct RamPreviewBuildQueue {
+    uint64_t generation = 0;
+    bool active = false;
+    FrameRange range{FramePosition(0), FramePosition(0)};
+    QString reason;
+    std::deque<int64_t> pendingFrames;
+  };
+  RamPreviewBuildQueue ramPreviewBuildQueue_;
   PlaybackRangeMode playbackRangeMode_ = PlaybackRangeMode::All;
   std::atomic<int64_t> pendingCompositionFrame_{0};
   std::atomic_bool compositionFrameSyncQueued_{false};
@@ -137,10 +146,10 @@ public:
           const QString compositionId =
               currentComposition_ ? currentComposition_->id().toString()
                                   : QString();
-          
-          markFrameReady(position.framePosition());
+
           const int64_t frameNumber = position.framePosition();
           const QImage frameCopy = frame;
+          const bool hasConcreteFrame = !frameCopy.isNull();
           const QString diskCacheFramePath =
               currentComposition_
                   ? previewDiskCacheFramePathForNamespace(
@@ -149,11 +158,21 @@ public:
 
           syncCurrentCompositionFrame(position);
           const auto publishFrame = [this, position, compositionId, frameNumber,
-                                     frameCopy, diskCacheFramePath]() {
-            storeFrameImageInRam(frameNumber, frameCopy);
-            const bool savedToDisk =
-                persistPreviewFrameToDisk(diskCacheFramePath, frameCopy);
-            markFrameOnDisk(frameNumber, savedToDisk);
+                                     frameCopy, hasConcreteFrame,
+                                     diskCacheFramePath]() {
+            if (hasConcreteFrame) {
+              storeFrameImageInRam(frameNumber, frameCopy,
+                                   QStringLiteral("playback-frame"));
+              const bool savedToDisk =
+                  persistPreviewFrameToDisk(diskCacheFramePath, frameCopy);
+              markFrameOnDisk(frameNumber, savedToDisk);
+            } else {
+              markFrameRequested(frameNumber, QStringLiteral("playback-tick"));
+              markFrameOnDisk(frameNumber, hasPreviewFrameOnDisk(frameNumber));
+              if (!hasFrameImageInRam(frameNumber)) {
+                clearFrameFailure(frameNumber);
+              }
+            }
             ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
                 FrameChangedEvent{QString(compositionId),
                                   position.framePosition()});
@@ -333,6 +352,73 @@ public:
                                           ramPreviewCachedFrameCount());
   }
 
+  void completeRamPreviewBuildFrame(const int64_t frame) {
+    if (!ramPreviewBuildQueue_.active ||
+        ramPreviewBuildQueue_.pendingFrames.empty()) {
+      return;
+    }
+
+    const auto it = std::find(ramPreviewBuildQueue_.pendingFrames.begin(),
+                              ramPreviewBuildQueue_.pendingFrames.end(), frame);
+    if (it != ramPreviewBuildQueue_.pendingFrames.end()) {
+      ramPreviewBuildQueue_.pendingFrames.erase(it);
+    }
+    if (ramPreviewBuildQueue_.pendingFrames.empty()) {
+      ramPreviewBuildQueue_.active = false;
+    }
+  }
+
+  void cancelRamPreviewBuild(const QString &reason = {}) {
+    ++ramPreviewBuildQueue_.generation;
+    ramPreviewBuildQueue_.active = false;
+    ramPreviewBuildQueue_.pendingFrames.clear();
+    if (!reason.trimmed().isEmpty()) {
+      ramPreviewBuildQueue_.reason = reason.trimmed();
+    } else {
+      ramPreviewBuildQueue_.reason.clear();
+    }
+  }
+
+  void requestRamPreviewBuild(const FrameRange &range,
+                              const QString &reason = {}) {
+    if (!currentComposition_) {
+      cancelRamPreviewBuild(reason);
+      return;
+    }
+
+    const QString normalizedReason =
+        reason.trimmed().isEmpty() ? QStringLiteral("ram-preview-build")
+                                   : reason.trimmed();
+    const bool sameRange =
+        ramPreviewBuildQueue_.active &&
+        ramPreviewBuildQueue_.range.start() == range.start() &&
+        ramPreviewBuildQueue_.range.end() == range.end() &&
+        ramPreviewBuildQueue_.reason == normalizedReason;
+    if (sameRange) {
+      return;
+    }
+
+    ++ramPreviewBuildQueue_.generation;
+    ramPreviewBuildQueue_.active = true;
+    ramPreviewBuildQueue_.range = range;
+    ramPreviewBuildQueue_.pendingFrames.clear();
+    ramPreviewBuildQueue_.reason = normalizedReason;
+
+    clearFrameRequestFlagsOutsideRange(range);
+
+    const int64_t start = std::max<int64_t>(0, range.start());
+    const int64_t endExclusive = std::max<int64_t>(
+        start, std::min<int64_t>(static_cast<int64_t>(frameCacheStates_.size()),
+                                 range.end()));
+    for (int64_t frame = start; frame < endExclusive; ++frame) {
+      ramPreviewBuildQueue_.pendingFrames.push_back(frame);
+      markFrameRequested(frame, normalizedReason);
+    }
+    if (ramPreviewBuildQueue_.pendingFrames.empty()) {
+      ramPreviewBuildQueue_.active = false;
+    }
+  }
+
   QString previewDiskCacheRoot() {
     if (!previewDiskCacheRoot_.trimmed().isEmpty()) {
       return previewDiskCacheRoot_;
@@ -456,13 +542,12 @@ public:
       state.requested = inRange;
       if (inRange) {
         state.onDisk = hasPreviewFrameOnDisk(frame);
-        if (!state.failed && !state.inRam) {
-          state.ready = state.onDisk;
-        }
+        state.ready = state.inRam && !state.failed;
       } else {
         state.onDisk = false;
         ramPreviewImageCache_.erase(frame);
         state.inRam = false;
+        state.ready = false;
         cacheBitmap_[static_cast<size_t>(frame)] = false;
       }
       if (!inRange && !state.ready) {
@@ -474,23 +559,47 @@ public:
     syncLegacyBitmapFromStates();
   }
 
-  void markFrameReady(const int64_t frame) {
-    if (frame < 0 || frame >= static_cast<int64_t>(frameCacheStates_.size())) {
+  bool isValidFrameIndex(const int64_t frame) const {
+    return frame >= 0 &&
+           frame < static_cast<int64_t>(frameCacheStates_.size());
+  }
+
+  void markFrameReady(const int64_t frame, const QString &reason = {}) {
+    if (!isValidFrameIndex(frame)) {
       return;
     }
 
     auto &state = frameCacheStates_[static_cast<size_t>(frame)];
+    if (!hasFrameImageInRam(frame)) {
+      state.requested = true;
+      state.ready = false;
+      state.failed = false;
+      state.inRam = false;
+      cacheBitmap_[static_cast<size_t>(frame)] = false;
+      if (!reason.trimmed().isEmpty()) {
+        state.reason = reason.trimmed();
+      } else {
+        state.reason.clear();
+      }
+      return;
+    }
+
     state.requested = true;
     state.ready = true;
     state.failed = false;
     state.inRam = true;
-    state.reason.clear();
+    if (!reason.trimmed().isEmpty()) {
+      state.reason = reason.trimmed();
+    } else {
+      state.reason.clear();
+    }
     cacheBitmap_[static_cast<size_t>(frame)] = true;
+    completeRamPreviewBuildFrame(frame);
   }
 
-  void storeFrameImageInRam(const int64_t frame, const QImage &image) {
-    if (frame < 0 || frame >= static_cast<int64_t>(frameCacheStates_.size()) ||
-        image.isNull()) {
+  void storeFrameImageInRam(const int64_t frame, const QImage &image,
+                            const QString &reason = {}) {
+    if (!isValidFrameIndex(frame) || image.isNull()) {
       return;
     }
 
@@ -507,11 +616,43 @@ public:
     state.ready = true;
     state.failed = false;
     state.inRam = true;
+    if (!reason.trimmed().isEmpty()) {
+      state.reason = reason.trimmed();
+    } else {
+      state.reason.clear();
+    }
     cacheBitmap_[static_cast<size_t>(frame)] = true;
+    completeRamPreviewBuildFrame(frame);
+  }
+
+  bool storeRamPreviewFrameImage(const int64_t frame, const QImage &image,
+                                 const QString &reason = {},
+                                 const bool persistToDisk = true) {
+    if (!isValidFrameIndex(frame) || image.isNull()) {
+      return false;
+    }
+
+    storeFrameImageInRam(frame, image, reason);
+    if (persistToDisk) {
+      const QString filePath = previewDiskCacheFramePath(frame);
+      const bool savedToDisk = persistPreviewFrameToDisk(filePath, image);
+      markFrameOnDisk(frame, savedToDisk);
+    } else {
+      markFrameOnDisk(frame, false);
+    }
+    clearFrameFailure(frame);
+    return true;
+  }
+
+  bool hasFrameImageInRam(const int64_t frame) const {
+    if (!isValidFrameIndex(frame)) {
+      return false;
+    }
+    return ramPreviewImageCache_.find(frame) != ramPreviewImageCache_.end();
   }
 
   void markFrameRequested(const int64_t frame, const QString &reason = {}) {
-    if (frame < 0 || frame >= static_cast<int64_t>(frameCacheStates_.size())) {
+    if (!isValidFrameIndex(frame)) {
       return;
     }
 
@@ -526,7 +667,7 @@ public:
   }
 
   void markFrameFailed(const int64_t frame, const QString &reason) {
-    if (frame < 0 || frame >= static_cast<int64_t>(frameCacheStates_.size())) {
+    if (!isValidFrameIndex(frame)) {
       return;
     }
 
@@ -538,22 +679,20 @@ public:
     state.reason = reason.trimmed().isEmpty() ? QStringLiteral("render-failed")
                                               : reason.trimmed();
     cacheBitmap_[static_cast<size_t>(frame)] = false;
+    completeRamPreviewBuildFrame(frame);
   }
 
   void markFrameOnDisk(const int64_t frame, const bool onDisk) {
-    if (frame < 0 || frame >= static_cast<int64_t>(frameCacheStates_.size())) {
+    if (!isValidFrameIndex(frame)) {
       return;
     }
 
     auto &state = frameCacheStates_[static_cast<size_t>(frame)];
     state.onDisk = onDisk;
-    if (!state.failed && !state.inRam) {
-      state.ready = onDisk;
-    }
   }
 
   void clearFrameFailure(const int64_t frame) {
-    if (frame < 0 || frame >= static_cast<int64_t>(frameCacheStates_.size())) {
+    if (!isValidFrameIndex(frame)) {
       return;
     }
 
@@ -565,7 +704,7 @@ public:
   }
 
   bool hydrateFrameFromDisk(const int64_t frame) {
-    if (frame < 0 || frame >= static_cast<int64_t>(frameCacheStates_.size())) {
+    if (!isValidFrameIndex(frame)) {
       return false;
     }
 
@@ -574,6 +713,7 @@ public:
       state.inRam = true;
       state.ready = true;
       cacheBitmap_[static_cast<size_t>(frame)] = true;
+      completeRamPreviewBuildFrame(frame);
       return true;
     }
 
@@ -592,8 +732,9 @@ public:
       return false;
     }
 
-    storeFrameImageInRam(frame, image);
+    storeFrameImageInRam(frame, image, QStringLiteral("disk-hydrated"));
     markFrameOnDisk(frame, true);
+    completeRamPreviewBuildFrame(frame);
     return true;
   }
 
@@ -664,13 +805,14 @@ public:
   }
 
   void prewarmRamPreviewAround(const FramePosition &position) {
-    if (!ramPreviewEnabled_ || !engine_) {
+    if (!ramPreviewEnabled_ || !engine_ || !currentComposition_) {
       return;
     }
 
     const FrameRange range = clampedRamPreviewRange(position);
     ramPreviewRange_ = range;
-    clearFrameRequestFlagsOutsideRange(ramPreviewRange_);
+    requestRamPreviewBuild(ramPreviewRange_,
+                           QStringLiteral("prewarm-around-current"));
     const int maxHydrationFrames =
         std::max(1, std::min(ramPreviewRadiusFrames_ * 2 + 1, 9));
     hydrateFramesFromDiskNear(position.framePosition(), ramPreviewRange_,
@@ -734,7 +876,7 @@ public:
     int ready = 0;
     for (int64_t frame = start; frame < endExclusive; ++frame) {
       const auto &state = frameCacheStates_[static_cast<size_t>(frame)];
-      if (state.ready && !state.failed) {
+      if (state.ready && state.inRam && !state.failed) {
         ++ready;
       }
     }
@@ -800,6 +942,11 @@ public:
     summary.failedFrames = ramPreviewFailedFrameCountInRange();
     summary.inRamFrames = ramPreviewCachedFrameCount();
     summary.onDiskFrames = ramPreviewDiskFrameCountInRange();
+    summary.buildQueuePendingFrames =
+        static_cast<int>(ramPreviewBuildQueue_.pendingFrames.size());
+    summary.buildQueueActive = ramPreviewBuildQueue_.active;
+    summary.buildQueueGeneration = ramPreviewBuildQueue_.generation;
+    summary.buildQueueReason = ramPreviewBuildQueue_.reason;
     summary.hitRate = ramPreviewHitRate();
     return summary;
   }
@@ -817,12 +964,12 @@ public:
   std::vector<bool> ramPreviewCacheBitmap() const { return cacheBitmap_; }
 
   void prewarmRamPreviewRange(const FrameRange &range) {
-    if (!ramPreviewEnabled_ || !engine_) {
+    if (!ramPreviewEnabled_ || !engine_ || !currentComposition_) {
       return;
     }
 
     ramPreviewRange_ = range;
-    clearFrameRequestFlagsOutsideRange(ramPreviewRange_);
+    requestRamPreviewBuild(ramPreviewRange_, QStringLiteral("prewarm-range"));
     const int64_t current =
         engine_ ? engine_->currentFrame().framePosition() : ramPreviewRange_.start();
     if (ramPreviewRange_.contains(current)) {
@@ -1060,6 +1207,8 @@ void ArtifactPlaybackService::setFrameRange(const FrameRange &range) {
     impl_->controller_->setFrameRange(range);
   }
   impl_->ramPreviewRange_ = range;
+  impl_->cancelRamPreviewBuild(QStringLiteral("frame-range-changed"));
+  impl_->emitRamPreviewStats();
   Q_EMIT ramPreviewStateChanged(impl_->ramPreviewEnabled_,
                                 impl_->ramPreviewRange_);
 }
@@ -1183,6 +1332,7 @@ void ArtifactPlaybackService::setCurrentComposition(
     ArtifactCompositionPtr composition) {
   if (impl_->currentComposition_ != composition) {
     impl_->currentComposition_ = composition;
+    impl_->cancelRamPreviewBuild(QStringLiteral("composition-changed"));
     
     // Clear and resize cache bitmap
     if (composition) {
@@ -1195,8 +1345,10 @@ void ArtifactPlaybackService::setCurrentComposition(
         impl_->resizeFrameCacheStateStorage(0);
         impl_->ramPreviewRange_ = FrameRange(FramePosition(0), FramePosition(0));
     }
-    impl_->clearFrameRequestFlagsOutsideRange(impl_->ramPreviewRange_);
-    impl_->emitRamPreviewStats();
+    if (!impl_->ramPreviewEnabled_) {
+      impl_->clearFrameRequestFlagsOutsideRange(impl_->ramPreviewRange_);
+      impl_->emitRamPreviewStats();
+    }
 
     // エンジンにコンポジションの設定を反映
     if (impl_->engine_ && composition) {
@@ -1423,11 +1575,16 @@ void ArtifactPlaybackService::setRamPreviewEnabled(bool enabled) {
 
   impl_->ramPreviewEnabled_ = enabled;
   if (!enabled) {
+    impl_->cancelRamPreviewBuild(QStringLiteral("ram-preview-disabled"));
+    impl_->emitRamPreviewStats();
     Q_EMIT ramPreviewStateChanged(false, impl_->ramPreviewRange_);
     return;
   }
 
   prewarmRamPreviewAroundCurrentFrame();
+  if (!impl_->currentComposition_) {
+    Q_EMIT ramPreviewStateChanged(true, impl_->ramPreviewRange_);
+  }
 }
 
 bool ArtifactPlaybackService::isRamPreviewEnabled() const {
@@ -1441,6 +1598,7 @@ void ArtifactPlaybackService::setRamPreviewRadius(int frames) {
 
   impl_->ramPreviewRadiusFrames_ = std::max(0, frames);
   if (impl_->ramPreviewEnabled_) {
+    impl_->cancelRamPreviewBuild(QStringLiteral("preview-quality-changed"));
     prewarmRamPreviewAroundCurrentFrame();
   }
 }
@@ -1456,8 +1614,10 @@ void ArtifactPlaybackService::setRamPreviewRange(const FrameRange &range) {
 
   impl_->ramPreviewRange_ = range;
   if (impl_->ramPreviewEnabled_) {
-    impl_->prewarmRamPreviewRange(range);
+    requestRamPreviewBuild(range, QStringLiteral("ram-preview-range-changed"));
   } else {
+    impl_->cancelRamPreviewBuild(QStringLiteral("ram-preview-range-changed"));
+    impl_->emitRamPreviewStats();
     Q_EMIT ramPreviewStateChanged(false, range);
   }
 }
@@ -1472,6 +1632,7 @@ void ArtifactPlaybackService::clearRamPreviewCache() {
     return;
   }
 
+  impl_->cancelRamPreviewBuild(QStringLiteral("cache-cleared"));
   impl_->resetRamPreviewCache();
   Q_EMIT ramPreviewStateChanged(impl_->ramPreviewEnabled_,
                                 impl_->ramPreviewRange_);
@@ -1483,6 +1644,27 @@ void ArtifactPlaybackService::prewarmRamPreviewAroundCurrentFrame() {
   }
 
   impl_->prewarmRamPreviewAround(currentFrame());
+}
+
+void ArtifactPlaybackService::requestRamPreviewBuild(
+    const FrameRange &range, const QString &reason) {
+  if (!impl_) {
+    return;
+  }
+
+  impl_->requestRamPreviewBuild(range, reason);
+  impl_->ramPreviewRange_ = range;
+  impl_->emitRamPreviewStats();
+  Q_EMIT ramPreviewStateChanged(impl_->ramPreviewEnabled_, range);
+}
+
+void ArtifactPlaybackService::cancelRamPreviewBuild(const QString &reason) {
+  if (!impl_) {
+    return;
+  }
+
+  impl_->cancelRamPreviewBuild(reason);
+  impl_->emitRamPreviewStats();
 }
 
 std::vector<bool> ArtifactPlaybackService::ramPreviewCacheBitmap() const {
@@ -1546,6 +1728,19 @@ void ArtifactPlaybackService::markRamPreviewFrameReady(const int64_t frame) {
   }
   impl_->markFrameReady(frame);
   impl_->emitRamPreviewStats();
+}
+
+bool ArtifactPlaybackService::storeRamPreviewFrameImage(
+    const int64_t frame, const QImage &image, const QString &reason,
+    const bool persistToDisk) {
+  if (!impl_) {
+    return false;
+  }
+
+  const bool stored =
+      impl_->storeRamPreviewFrameImage(frame, image, reason, persistToDisk);
+  impl_->emitRamPreviewStats();
+  return stored;
 }
 
 void ArtifactPlaybackService::markRamPreviewFrameFailed(const int64_t frame,

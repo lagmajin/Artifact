@@ -63,6 +63,26 @@ QIcon loadIconWithFallback(const QString& fileName)
   return QIcon(ArtifactCore::resolveIconPath(fileName));
 }
 
+QString ramPreviewStateNote(Artifact::ArtifactPlaybackService* playback)
+{
+  if (!playback) {
+    return QString();
+  }
+
+  const auto currentFrame = playback->currentFrame().framePosition();
+  const auto state = playback->ramPreviewFrameState(currentFrame);
+  if (!state.requested || state.ready) {
+    return QString();
+  }
+
+  const QString note = state.reason.trimmed();
+  if (note.isEmpty()) {
+    return QString();
+  }
+
+  return QStringLiteral(" | note %1").arg(note);
+}
+
 QString ramPreviewFooterText(Artifact::ArtifactPlaybackService* playback,
                              const float hitRateFallback,
                              const int cachedFrameCountFallback)
@@ -75,13 +95,15 @@ QString ramPreviewFooterText(Artifact::ArtifactPlaybackService* playback,
   const float hitRate = summary.hitRate > 0.0f ? summary.hitRate : hitRateFallback;
   const int inRamFrames =
       summary.inRamFrames > 0 ? summary.inRamFrames : cachedFrameCountFallback;
-  return QStringLiteral("RAM: ready %1/%2 | failed %3 | inRam %4 | onDisk %5 | %6 hit")
+  return QStringLiteral("RAM: ready %1 | requested %2 | pending %3 | failed %4 | inRam %5 | onDisk %6 | %7 hit%8")
       .arg(summary.readyFrames)
       .arg(summary.requestedFrames)
+      .arg(summary.buildQueuePendingFrames)
       .arg(summary.failedFrames)
       .arg(inRamFrames)
       .arg(summary.onDiskFrames)
-      .arg(QString::number(hitRate * 100.0f, 'f', 0) + QStringLiteral("%"));
+      .arg(QString::number(hitRate * 100.0f, 'f', 0) + QStringLiteral("%"))
+      .arg(ramPreviewStateNote(playback));
 }
 }
 

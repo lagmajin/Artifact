@@ -962,6 +962,7 @@ void DebugRenderHarnessWidget::paintEvent(QPaintEvent* event)
 void DebugRenderHarnessWidget::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
+    applyHarnessSurfacePalette(this, palette());
     if (impl_) {
         impl_->refresh();
     }

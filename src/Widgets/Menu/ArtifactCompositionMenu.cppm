@@ -57,23 +57,27 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
 {
  createAction = new QAction("新規コンポジション(&N)...");
  createAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
- createAction->setIcon(QIcon(resolveIconPath("Material/composition.svg")));
+ createAction->setIcon(QIcon(resolveIconPath("Studio/composition.svg")));
 
  presetMenu = new QMenu("プリセットから作成(&P)", menu);
+ presetMenu->setIcon(QIcon(resolveIconPath("Studio/presets.svg")));
  presetHdAction = presetMenu->addAction("HD 1080p 30fps");
+ presetHdAction->setIcon(QIcon(resolveIconPath("Studio/preset_hd.svg")));
  preset4kAction = presetMenu->addAction("4K UHD 30fps");
+ preset4kAction->setIcon(QIcon(resolveIconPath("Studio/preset_4k.svg")));
  presetVerticalAction = presetMenu->addAction("Vertical 1080x1920 30fps");
+ presetVerticalAction->setIcon(QIcon(resolveIconPath("Studio/preset_vertical.svg")));
 
  duplicateAction = new QAction("コンポジションを複製(&D)");
- duplicateAction->setIcon(QIcon(resolveIconPath("Material/content_copy.svg")));
+ duplicateAction->setIcon(QIcon(resolveIconPath("Studio/content_copy.svg")));
  renameAction = new QAction("名前を変更(&R)...");
- renameAction->setIcon(QIcon(resolveIconPath("Material/edit.svg")));
+ renameAction->setIcon(QIcon(resolveIconPath("Studio/edit.svg")));
  deleteAction = new QAction("コンポジションを削除(&X)...");
- deleteAction->setIcon(QIcon(resolveIconPath("Material/delete.svg")));
+ deleteAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
 
  colorAction = new QAction("背景色(&B)...");
  colorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
- colorAction->setIcon(QIcon(resolveIconPath("Material/palette.svg")));
+ colorAction->setIcon(QIcon(resolveIconPath("Studio/palette.svg")));
 
  menu->addAction(createAction);
  menu->addMenu(presetMenu);

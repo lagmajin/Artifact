@@ -13,6 +13,8 @@ module;
 #include <QSpinBox>
 #include <QTime>
 #include <QCheckBox>
+#include <QEvent>
+#include <QShowEvent>
 export module Artifact.Widgets.PlaybackControlWidget;
 
 export namespace Artifact
@@ -26,9 +28,12 @@ class ArtifactPlaybackControlWidget : public QWidget
 private:
     class Impl;
     Impl* impl_;
+    void refreshSurfaceAfterDockLifecycle();
 
 protected:
+    bool event(QEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 public:
     explicit ArtifactPlaybackControlWidget(QWidget* parent = nullptr);

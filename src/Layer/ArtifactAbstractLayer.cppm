@@ -78,6 +78,59 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   Q_EMIT layer->changed();
 }
 
+QString slugifyEffectId(const QString &text) {
+  QString slug;
+  slug.reserve(text.size());
+  bool lastWasDash = false;
+  for (const QChar ch : text.trimmed().toLower()) {
+    if (ch.isLetterOrNumber()) {
+      slug.append(ch);
+      lastWasDash = false;
+    } else if (!slug.isEmpty() && !lastWasDash) {
+      slug.append(QChar('-'));
+      lastWasDash = true;
+    }
+  }
+  while (slug.endsWith(QChar('-'))) {
+    slug.chop(1);
+  }
+  if (slug.isEmpty()) {
+    slug = QStringLiteral("effect");
+  }
+  return slug;
+}
+
+QString uniqueEffectIdForLayer(
+    const std::vector<std::shared_ptr<ArtifactAbstractEffect>> &effects,
+    const QString &displayName, const QString &preferredId) {
+  QString baseId = preferredId.trimmed();
+  if (baseId.isEmpty()) {
+    baseId = slugifyEffectId(displayName);
+  }
+  if (baseId.isEmpty()) {
+    baseId = QStringLiteral("effect");
+  }
+
+  auto idExists = [&effects](const QString &candidate) {
+    return std::any_of(
+        effects.begin(), effects.end(),
+        [&candidate](const std::shared_ptr<ArtifactAbstractEffect> &effect) {
+          return effect && effect->effectID().toQString() == candidate;
+        });
+  };
+
+  if (!idExists(baseId)) {
+    return baseId;
+  }
+
+  QString uniqueId = baseId;
+  int suffix = 2;
+  while (idExists(uniqueId)) {
+    uniqueId = QStringLiteral("%1-%2").arg(baseId).arg(suffix++);
+  }
+  return uniqueId;
+}
+
 double effectiveLayerFrameRate(const ArtifactAbstractLayer *layer) {
   if (!layer) {
     return 30.0;
@@ -1497,9 +1550,16 @@ void ArtifactAbstractLayer::Impl::addEffect(
     std::shared_ptr<ArtifactAbstractEffect> effect) {
   if (!effect)
     return;
+  const QString currentId = effect->effectID().toQString().trimmed();
+  const QString uniqueId = uniqueEffectIdForLayer(
+      effects_, effect->displayName().toQString(), currentId);
+  if (currentId.isEmpty() || currentId != uniqueId) {
+    effect->setEffectID(UniString::fromQString(uniqueId));
+  }
   effects_.push_back(effect);
   qDebug() << "[ArtifactAbstractLayer] Effect added:"
-           << effect->displayName().toQString();
+           << effect->displayName().toQString() << "id="
+           << effect->effectID().toQString();
 }
 
 void ArtifactAbstractLayer::Impl::removeEffect(const UniString &effectID) {

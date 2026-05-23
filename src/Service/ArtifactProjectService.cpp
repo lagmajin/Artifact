@@ -1,4 +1,5 @@
 module;
+#include <algorithm>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
@@ -29,6 +30,7 @@ import Artifact.Layer.Factory;
 import Artifact.Layer.Result;
 import Artifact.Composition.Abstract;
 import Artifact.Project.Items;
+import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Audio;
@@ -43,10 +45,60 @@ import Artifact.Render.Queue.Service;
 import Event.Bus;
 import Artifact.Event.Types;
 import Core.Diagnostics.SessionLedger;
+import Core.Diagnostics.ProjectDiagnostic;
 // import Artifact.Render.FrameCache;
 
 namespace Artifact {
 namespace {
+QString slugifyEffectId(const QString &text) {
+  QString slug;
+  slug.reserve(text.size());
+  bool lastWasDash = false;
+  for (const QChar ch : text.trimmed().toLower()) {
+    if (ch.isLetterOrNumber()) {
+      slug.append(ch);
+      lastWasDash = false;
+    } else if (!slug.isEmpty() && !lastWasDash) {
+      slug.append(QChar('-'));
+      lastWasDash = true;
+    }
+  }
+  while (slug.endsWith(QChar('-'))) {
+    slug.chop(1);
+  }
+  if (slug.isEmpty()) {
+    slug = QStringLiteral("effect");
+  }
+  return slug;
+}
+
+QString uniqueEffectIdForLayer(
+    const std::vector<std::shared_ptr<ArtifactAbstractEffect>> &effects,
+    const QString &displayName, const QString &preferredId) {
+  QString baseId = preferredId.trimmed();
+  if (baseId.isEmpty()) {
+    baseId = slugifyEffectId(displayName);
+  }
+  if (baseId.isEmpty()) {
+    baseId = QStringLiteral("effect");
+  }
+
+  auto idExists = [&effects](const QString &candidate) {
+    return std::any_of(
+        effects.begin(), effects.end(),
+        [&candidate](const std::shared_ptr<ArtifactAbstractEffect> &effect) {
+          return effect && effect->effectID().toQString() == candidate;
+        });
+  };
+
+  QString uniqueId = baseId;
+  int suffix = 2;
+  while (idExists(uniqueId)) {
+    uniqueId = QStringLiteral("%1-%2").arg(baseId).arg(suffix++);
+  }
+  return uniqueId;
+}
+
 QSize imageSizeForPath(const QString &path) {
   QImageReader reader(path);
   const QSize size = reader.size();
@@ -92,6 +144,54 @@ void notifyLayerMutation(const QString &compositionId, const LayerID &layerId) {
   ArtifactCore::globalEventBus().post<LayerChangedEvent>(
       LayerChangedEvent{compositionId, layerId.toString(),
                         LayerChangedEvent::ChangeType::Modified});
+}
+
+auto mapHealthSeverityToDiagnostic(HealthIssueSeverity severity)
+    -> ArtifactCore::DiagnosticSeverity {
+  switch (severity) {
+  case HealthIssueSeverity::Error:
+    return ArtifactCore::DiagnosticSeverity::Error;
+  case HealthIssueSeverity::Warning:
+    return ArtifactCore::DiagnosticSeverity::Warning;
+  case HealthIssueSeverity::Info:
+  default:
+    return ArtifactCore::DiagnosticSeverity::Info;
+  }
+}
+
+auto mapHealthCategoryToDiagnostic(const QString &category)
+    -> ArtifactCore::DiagnosticCategory {
+  if (category == QStringLiteral("CircularReference")) {
+    return ArtifactCore::DiagnosticCategory::CircularDep;
+  }
+  if (category == QStringLiteral("MissingAsset")) {
+    return ArtifactCore::DiagnosticCategory::File;
+  }
+  if (category == QStringLiteral("FrameRange")) {
+    return ArtifactCore::DiagnosticCategory::Configuration;
+  }
+  if (category == QStringLiteral("BrokenReference")) {
+    return ArtifactCore::DiagnosticCategory::Reference;
+  }
+  return ArtifactCore::DiagnosticCategory::Custom;
+}
+
+auto convertProjectHealthReportToDiagnostics(const ProjectHealthReport &report)
+    -> std::vector<ArtifactCore::ProjectDiagnostic> {
+  std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
+  diagnostics.reserve(static_cast<size_t>(report.issues.size()));
+
+  for (const auto &issue : report.issues) {
+    ArtifactCore::ProjectDiagnostic diagnostic(
+        mapHealthSeverityToDiagnostic(issue.severity),
+        mapHealthCategoryToDiagnostic(issue.category), issue.message);
+    diagnostic.setDescription(issue.message);
+    diagnostic.setSourceCompId(issue.targetName);
+    diagnostic.setFixAction(issue.category);
+    diagnostics.push_back(diagnostic);
+  }
+
+  return diagnostics;
 }
 } // namespace
 
@@ -1441,6 +1541,10 @@ bool ArtifactProjectService::addEffectToLayerInCurrentComposition(
   if (!layer) {
     return false;
   }
+  const QString uniqueId = uniqueEffectIdForLayer(
+      layer->getEffects(), effect->displayName().toQString(),
+      effect->effectID().toQString());
+  effect->setEffectID(UniString::fromQString(uniqueId));
   layer->addEffect(effect);
   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
       comp->id().toString(), layerId.toString(),
@@ -1788,6 +1892,11 @@ ProjectHealthReport ArtifactProjectService::currentProjectHealthReport() const {
     return {};
   }
   return ArtifactProjectHealthChecker::check(project.get());
+}
+
+std::vector<ArtifactCore::ProjectDiagnostic>
+ArtifactProjectService::currentProjectDiagnostics() const {
+  return convertProjectHealthReportToDiagnostics(currentProjectHealthReport());
 }
 
 ChangeCompositionResult

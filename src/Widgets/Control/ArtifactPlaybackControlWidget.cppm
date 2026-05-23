@@ -20,8 +20,10 @@ module;
 #include <QDoubleSpinBox>
 #include <QSignalBlocker>
 #include <QCheckBox>
+#include <QEvent>
 #include <QPainter>
 #include <QPaintEvent>
+#include <QShowEvent>
 #include <QStyle>
 #include <QIcon>
 #include <QFileInfo>
@@ -29,6 +31,7 @@ module;
 #include <QDebug>
 #include <QKeySequence>
 #include <QStringList>
+#include <QTimer>
 
 #include <iostream>
 #include <vector>
@@ -289,6 +292,19 @@ void applyPlaybackSurfacePalette(QWidget* root, const QPalette& palette)
             }
         }
     }
+}
+
+QPalette playbackSurfacePaletteForTheme(const QPalette& base)
+{
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    QPalette palette = base;
+    palette.setColor(QPalette::Window, QColor(theme.backgroundColor));
+    palette.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+    palette.setColor(QPalette::Text, QColor(theme.textColor));
+    palette.setColor(QPalette::WindowText, QColor(theme.textColor));
+    palette.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+    palette.setColor(QPalette::ButtonText, QColor(theme.textColor));
+    return palette;
 }
 
 QIcon loadIconWithFallback(const QString& fileName)
@@ -1160,20 +1176,10 @@ ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent)
     setMinimumHeight(165);
     setAutoFillBackground(true);
     setAttribute(Qt::WA_StyledBackground, true);
-    {
-        const auto& theme = ArtifactCore::currentDCCTheme();
-        QPalette palette = this->palette();
-        palette.setColor(QPalette::Window, QColor(theme.backgroundColor));
-        palette.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
-        palette.setColor(QPalette::Text, QColor(theme.textColor));
-        palette.setColor(QPalette::WindowText, QColor(theme.textColor));
-        palette.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
-        palette.setColor(QPalette::ButtonText, QColor(theme.textColor));
-        applyPlaybackSurfacePalette(this, palette);
-    }
+    applyPlaybackSurfacePalette(this, playbackSurfacePaletteForTheme(palette()));
     
     impl_->setupUI();
-    applyPlaybackSurfacePalette(this, palette());
+    refreshSurfaceAfterDockLifecycle();
     ensurePolished();
     if (auto* layout = this->layout()) {
         layout->activate();
@@ -1188,12 +1194,62 @@ ArtifactPlaybackControlWidget::~ArtifactPlaybackControlWidget()
     delete impl_;
 }
 
+bool ArtifactPlaybackControlWidget::event(QEvent* event)
+{
+    const bool handled = QWidget::event(event);
+    if (!event) {
+        return handled;
+    }
+
+    switch (event->type()) {
+    case QEvent::ParentChange:
+    case QEvent::Polish:
+    case QEvent::PolishRequest:
+    case QEvent::Show:
+    case QEvent::WinIdChange:
+        refreshSurfaceAfterDockLifecycle();
+        break;
+    default:
+        break;
+    }
+
+    return handled;
+}
+
 void ArtifactPlaybackControlWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
     const auto& theme = ArtifactCore::currentDCCTheme();
     painter.fillRect(rect(), QColor(theme.backgroundColor));
+}
+
+void ArtifactPlaybackControlWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    refreshSurfaceAfterDockLifecycle();
+    QTimer::singleShot(0, this, [this]() {
+        refreshSurfaceAfterDockLifecycle();
+        repaint();
+    });
+}
+
+void ArtifactPlaybackControlWidget::refreshSurfaceAfterDockLifecycle()
+{
+    setAutoFillBackground(true);
+    setAttribute(Qt::WA_StyledBackground, true);
+    applyPlaybackSurfacePalette(this, playbackSurfacePaletteForTheme(palette()));
+    if (auto* layout = this->layout()) {
+        layout->activate();
+    }
+    for (auto* child : findChildren<QWidget*>()) {
+        if (child) {
+            child->updateGeometry();
+            child->update();
+        }
+    }
+    updateGeometry();
+    update();
 }
 
 void ArtifactPlaybackControlWidget::play()

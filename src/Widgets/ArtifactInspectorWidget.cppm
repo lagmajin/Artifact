@@ -87,6 +87,7 @@ import Artifact.Effect.Render.PBRMaterial;
 import Artifact.Effect.LayerTransform.Transform2D;
 import Artifact.Effect.Rasterizer.Blur;
 import Artifact.Effect.Rasterizer.DropShadow;
+import Artifact.Effect.DirectionalGlow;
 import BrightnessEffect;
 import ExposureEffect;
 import HueAndSaturation;
@@ -104,6 +105,8 @@ import ChannelMixerEffect;
 import SelectiveColorEffect;
 import Artifact.Effect.Glow;
 import Artifact.Effect.GauusianBlur;
+import Artifact.Effect.LiftGammaGain;
+import Artifact.Effect.LensDistortion;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.Wave;
 import Artifact.Effect.Spherize;
@@ -1391,18 +1394,21 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
         continue;
       }
       QString effectName = effect->displayName().toQString();
-      QString effectStatus = effect->isEnabled() ? QStringLiteral("On")
-                                                 : QStringLiteral("Off");
+      QString effectStatus = effect->isEnabled() ? QStringLiteral("Enabled")
+                                                 : QStringLiteral("Disabled");
       QString itemText = QStringLiteral("%1 %2").arg(effectStatus, effectName);
       auto *item = new QListWidgetItem(itemText);
       item->setData(Qt::UserRole, effect->effectID().toQString());
+      item->setData(Qt::UserRole + 1, effect->isEnabled());
+      item->setToolTip(QStringLiteral("%1 on this layer. Double click to toggle. Right click for remove, duplicate, move, or enable/disable.")
+                           .arg(effectName));
       item->setForeground(effect->isEnabled() ? rackColor : rackColor.darker(140));
       racks[i].listWidget->addItem(item);
     }
   }
 
   if (effectCount == 0) {
-    setEffectsStateText("No effects yet. Use + Add to create color controls.", true);
+    setEffectsStateText("No effects yet. Use + Add to create an effect.", true);
   } else {
     setEffectsStateText(QString(), false);
   }
@@ -1456,9 +1462,6 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
   auto addAndRefresh = [this, projectService](
                            std::shared_ptr<ArtifactAbstractEffect> newEffect) {
     if (newEffect) {
-      // Generate a simple unique ID for the effect for now
-      newEffect->setEffectID(
-          ArtifactCore::UniString(std::to_string(std::rand()).c_str()));
       if (projectService->addEffectToLayerInCurrentComposition(currentLayerId_,
                                                                newEffect)) {
         focusedEffectId_ = newEffect->effectID().toQString();
@@ -1488,87 +1491,176 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
     break;
   case EffectPipelineStage::GeometryTransform:
     effectMenu.addAction("Twist", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<TwistTransform>());
+      auto effect = std::make_shared<TwistTransform>();
+      effect->setEffectID(ArtifactCore::UniString("twist"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Bend", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<BendTransform>());
+      auto effect = std::make_shared<BendTransform>();
+      effect->setEffectID(ArtifactCore::UniString("bend"));
+      addAndRefresh(effect);
     });
     break;
   case EffectPipelineStage::MaterialRender:
     effectMenu.addAction("PBR Material", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<PBRMaterialEffect>());
+      auto effect = std::make_shared<PBRMaterialEffect>();
+      effect->setEffectID(ArtifactCore::UniString("pbr_material"));
+      addAndRefresh(effect);
     });
     break;
   case EffectPipelineStage::Rasterizer:
     effectMenu.addAction("Blur", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<BlurEffect>());
+      auto effect = std::make_shared<BlurEffect>();
+      effect->setEffectID(ArtifactCore::UniString("blur"));
+      effect->setDisplayName(ArtifactCore::UniString("Blur"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Gaussian Blur", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<GaussianBlur>());
+      auto effect = std::make_shared<GaussianBlur>();
+      effect->setEffectID(ArtifactCore::UniString("effect.blur.gaussian"));
+      effect->setDisplayName(ArtifactCore::UniString("Gaussian Blur"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Glow", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<GlowEffect>());
+      auto effect = std::make_shared<GlowEffect>();
+      effect->setEffectID(ArtifactCore::UniString("glow"));
+      effect->setDisplayName(ArtifactCore::UniString("Glow"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Drop Shadow", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<DropShadowEffect>());
+      auto effect = std::make_shared<DropShadowEffect>();
+      effect->setEffectID(ArtifactCore::UniString("drop_shadow"));
+      effect->setDisplayName(ArtifactCore::UniString("Drop Shadow"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addAction("Directional Glow / Streaks", [addAndRefresh]() {
+      auto effect = std::make_shared<DirectionalGlowEffect>();
+      effect->setEffectID(ArtifactCore::UniString("directional_glow"));
+      effect->setDisplayName(ArtifactCore::UniString("Directional Glow / Streaks"));
+      addAndRefresh(effect);
     });
     effectMenu.addSeparator();
     effectMenu.addAction("Brightness / Contrast", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<BrightnessEffect>());
+      auto effect = std::make_shared<BrightnessEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.brightness"));
+      effect->setDisplayName(ArtifactCore::UniString("Brightness / Contrast"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Exposure", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<ExposureEffect>());
+      auto effect = std::make_shared<ExposureEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.exposure"));
+      effect->setDisplayName(ArtifactCore::UniString("Exposure"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Tint", [addAndRefresh]() {
       auto effect = std::make_shared<WhiteBalanceEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.tint"));
       effect->setDisplayName(ArtifactCore::UniString("Tint"));
       addAndRefresh(effect);
     });
     effectMenu.addAction("Photo Filter", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<PhotoFilterEffect>());
+      auto effect = std::make_shared<PhotoFilterEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.photofilter"));
+      effect->setDisplayName(ArtifactCore::UniString("Photo Filter"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Gradient Ramp", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<GradientRampEffect>());
+      auto effect = std::make_shared<GradientRampEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.gradientramp"));
+      effect->setDisplayName(ArtifactCore::UniString("Gradient Ramp"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Fill", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<FillEffect>());
+      auto effect = std::make_shared<FillEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.fill"));
+      effect->setDisplayName(ArtifactCore::UniString("Fill"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Hue / Saturation", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<HueAndSaturation>());
+      auto effect = std::make_shared<HueAndSaturation>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.hsl"));
+      effect->setDisplayName(ArtifactCore::UniString("Hue / Saturation"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Color Wheels", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<ColorWheelsEffect>());
+      auto effect = std::make_shared<ColorWheelsEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.colorwheels"));
+      effect->setDisplayName(ArtifactCore::UniString("Color Wheels"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Curves", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<CurvesEffect>());
+      auto effect = std::make_shared<CurvesEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.curves"));
+      effect->setDisplayName(ArtifactCore::UniString("Curves"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Tritone", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<TritoneEffect>());
+      auto effect = std::make_shared<TritoneEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.tritone"));
+      effect->setDisplayName(ArtifactCore::UniString("Tritone"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Colorama", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<ColoramaEffect>());
+      auto effect = std::make_shared<ColoramaEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.colorama"));
+      effect->setDisplayName(ArtifactCore::UniString("Colorama"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Color Balance", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<ColorBalanceEffect>());
+      auto effect = std::make_shared<ColorBalanceEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.colorbalance"));
+      effect->setDisplayName(ArtifactCore::UniString("Color Balance"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Levels", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<LevelsEffect>());
+      auto effect = std::make_shared<LevelsEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.levels"));
+      effect->setDisplayName(ArtifactCore::UniString("Levels"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Channel Mixer", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<ChannelMixerEffect>());
+      auto effect = std::make_shared<ChannelMixerEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.channelmixer"));
+      effect->setDisplayName(ArtifactCore::UniString("Channel Mixer"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Selective Color", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<SelectiveColorEffect>());
+      auto effect = std::make_shared<SelectiveColorEffect>();
+      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.selectivecolor"));
+      effect->setDisplayName(ArtifactCore::UniString("Selective Color"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addSeparator();
+    effectMenu.addAction("Lift / Gamma / Gain", [addAndRefresh]() {
+      auto effect = std::make_shared<LiftGammaGainEffect>();
+      effect->setEffectID(ArtifactCore::UniString("lift_gamma_gain"));
+      effect->setDisplayName(ArtifactCore::UniString("Lift / Gamma / Gain"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addAction("Lens Distortion", [addAndRefresh]() {
+      auto effect = std::make_shared<LensDistortionEffect>();
+      effect->setEffectID(ArtifactCore::UniString("lens_distortion"));
+      effect->setDisplayName(ArtifactCore::UniString("Lens Distortion"));
+      addAndRefresh(effect);
     });
     effectMenu.addSeparator();
     effectMenu.addAction("Chroma Key", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<ChromaKeyEffect>());
+      auto effect = std::make_shared<ChromaKeyEffect>();
+      effect->setEffectID(ArtifactCore::UniString("chroma_key"));
+      effect->setDisplayName(ArtifactCore::UniString("Chroma Key"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Wave", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<WaveEffect>());
+      auto effect = std::make_shared<WaveEffect>();
+      effect->setEffectID(ArtifactCore::UniString("wave"));
+      effect->setDisplayName(ArtifactCore::UniString("Wave"));
+      addAndRefresh(effect);
     });
     effectMenu.addAction("Spherize", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<SpherizeEffect>());
+      auto effect = std::make_shared<SpherizeEffect>();
+      effect->setEffectID(ArtifactCore::UniString("spherize"));
+      effect->setDisplayName(ArtifactCore::UniString("Spherize"));
+      addAndRefresh(effect);
     });
     break;
   case EffectPipelineStage::LayerTransform:
@@ -1937,7 +2029,10 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
           const QString effectId = item->data(Qt::UserRole).toString();
           if (effectId.trimmed().isEmpty())
             return;
-          const bool isEnabled = item->text().startsWith("[✓]");
+          const QVariant enabledData = item->data(Qt::UserRole + 1);
+          const bool isEnabled = enabledData.isValid()
+                                     ? enabledData.toBool()
+                                     : item->text().startsWith(QStringLiteral("Enabled"));
           if (impl_->setEffectEnabledById(effectId, !isEnabled)) {
             impl_->updateEffectsList();
             if (impl_->statusLabel) {

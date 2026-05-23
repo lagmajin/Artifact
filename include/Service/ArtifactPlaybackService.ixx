@@ -2,7 +2,9 @@
 #include <functional>
 
 #include <QObject>
+#include <QImage>
 #include <QString>
+#include <cstdint>
 #include <algorithm>
 #include <any>
 #include <array>
@@ -74,6 +76,10 @@ struct ArtifactRamPreviewSummary {
   int failedFrames = 0;
   int inRamFrames = 0;
   int onDiskFrames = 0;
+  int buildQueuePendingFrames = 0;
+  bool buildQueueActive = false;
+  uint64_t buildQueueGeneration = 0;
+  QString buildQueueReason;
   float hitRate = 0.0f;
 };
 
@@ -188,6 +194,9 @@ public:
   FrameRange ramPreviewRange() const;
   void clearRamPreviewCache();
   void prewarmRamPreviewAroundCurrentFrame();
+  void requestRamPreviewBuild(const FrameRange &range,
+                              const QString &reason = {});
+  void cancelRamPreviewBuild(const QString &reason = {});
   float ramPreviewHitRate() const;
   int ramPreviewCachedFrameCount() const; // Updated to improve performance
   int ramPreviewRequestedFrameCount() const;
@@ -201,6 +210,10 @@ public:
                                   ArtifactCore::ImageF32x4_RGBA &outImage) const;
   void markRamPreviewFrameRequested(int64_t frame, const QString &reason = {});
   void markRamPreviewFrameReady(int64_t frame);
+  bool storeRamPreviewFrameImage(int64_t frame,
+                                 const QImage &image,
+                                 const QString &reason = {},
+                                 bool persistToDisk = true);
   void markRamPreviewFrameFailed(int64_t frame, const QString &reason);
   void markRamPreviewFrameOnDisk(int64_t frame, bool onDisk = true);
   void clearRamPreviewFrameFailure(int64_t frame);

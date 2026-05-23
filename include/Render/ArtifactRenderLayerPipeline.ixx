@@ -48,6 +48,8 @@ export namespace Artifact
   ITextureView* layerSRV() const;
   ITextureView* layerUAV() const;
   ITextureView* layerRTV() const;
+  ITextureView* layerFloatSRV() const;
+  ITextureView* layerFloatUAV() const;
   Uint32 width() const;
   Uint32 height() const;
 

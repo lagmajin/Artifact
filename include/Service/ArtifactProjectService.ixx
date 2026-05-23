@@ -16,6 +16,7 @@ export module Artifact.Service.Project;
 import Utils;
 import Utils.String.Like;
 import Utils.String.UniString;
+import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Layer.InitParams;
 import Artifact.Project.Settings;
 import Artifact.Project.Health;
@@ -79,6 +80,7 @@ export namespace Artifact {
   FindCompositionResult findComposition(const CompositionID& id);
   QVector<ProjectItem*> projectItems() const;
   ProjectHealthReport currentProjectHealthReport() const;
+  std::vector<ArtifactCore::ProjectDiagnostic> currentProjectDiagnostics() const;
   
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);

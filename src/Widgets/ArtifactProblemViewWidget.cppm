@@ -249,7 +249,7 @@ void ArtifactProblemViewWidget::refreshFromCurrentProject()
     }
 
     if (auto* projectService = ArtifactProjectService::instance()) {
-        loadProjectHealth(projectService->currentProjectHealthReport());
+        loadDiagnostics(projectService->currentProjectDiagnostics());
         return;
     }
 

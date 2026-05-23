@@ -182,46 +182,46 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
   setTearOffEnabled(false);
 
   impl_->addKeyframeAction = addAction("キーフレームを追加");
-  impl_->addKeyframeAction->setIcon(menuIcon(QStringLiteral("MaterialVS/yellow/add_circle.svg")));
+  impl_->addKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/add_circle.svg")));
   impl_->addKeyframeAction->setShortcut(QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_K));
   impl_->removeKeyframeAction = addAction("キーフレームを削除");
-  impl_->removeKeyframeAction->setIcon(menuIcon(QStringLiteral("MaterialVS/red/remove_circle.svg")));
+  impl_->removeKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/remove_circle.svg")));
   impl_->removeKeyframeAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_K));
 
   impl_->selectAllKeyframesAction = addAction("すべてのキーフレームを選択");
-  impl_->selectAllKeyframesAction->setIcon(menuIcon(QStringLiteral("MaterialVS/yellow/select_all.svg")));
+  impl_->selectAllKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/select_all.svg")));
   impl_->selectAllKeyframesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_A));
 
   impl_->copyKeyframesAction = addAction("キーフレームをコピー");
-  impl_->copyKeyframesAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/content_copy.svg")));
+  impl_->copyKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/content_copy.svg")));
   impl_->copyKeyframesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_C));
 
   impl_->pasteKeyframesAction = addAction("キーフレームをペースト");
-  impl_->pasteKeyframesAction->setIcon(menuIcon(QStringLiteral("MaterialVS/green/content_paste.svg")));
+  impl_->pasteKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/content_paste.svg")));
   impl_->pasteKeyframesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_V));
 
   addSeparator();
 
   impl_->interpolationMenu = addMenu("キーフレーム補間(&I)");
-  impl_->interpolationMenu->setIcon(menuIcon(QStringLiteral("MaterialVS/yellow/timeline.svg")));
+  impl_->interpolationMenu->setIcon(menuIcon(QStringLiteral("Studio/timeline.svg")));
 
   impl_->linearInterpolationAction = impl_->interpolationMenu->addAction("リニア");
-  impl_->linearInterpolationAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/straighten.svg")));
+  impl_->linearInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/straighten.svg")));
   impl_->linearInterpolationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_1));
   impl_->easeInAction = impl_->interpolationMenu->addAction("イージーイーズイン");
-  impl_->easeInAction->setIcon(menuIcon(QStringLiteral("MaterialVS/orange/trending_up.svg")));
+  impl_->easeInAction->setIcon(menuIcon(QStringLiteral("Studio/trending_up.svg")));
   impl_->easeInAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_2));
   impl_->easeOutAction = impl_->interpolationMenu->addAction("イージーイーズアウト");
-  impl_->easeOutAction->setIcon(menuIcon(QStringLiteral("MaterialVS/orange/trending_down.svg")));
+  impl_->easeOutAction->setIcon(menuIcon(QStringLiteral("Studio/trending_down.svg")));
   impl_->easeOutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_3));
   impl_->easeInOutAction = impl_->interpolationMenu->addAction("イージーイーズ");
-  impl_->easeInOutAction->setIcon(menuIcon(QStringLiteral("MaterialVS/orange/show_chart.svg")));
+  impl_->easeInOutAction->setIcon(menuIcon(QStringLiteral("Studio/show_chart.svg")));
   impl_->easeInOutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_4));
   impl_->holdInterpolationAction = impl_->interpolationMenu->addAction("停止");
-  impl_->holdInterpolationAction->setIcon(menuIcon(QStringLiteral("MaterialVS/yellow/pause.svg")));
+  impl_->holdInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/pause.svg")));
   impl_->holdInterpolationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_5));
   impl_->bezierInterpolationAction = impl_->interpolationMenu->addAction("ベジェ");
-  impl_->bezierInterpolationAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/edit.svg")));
+  impl_->bezierInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/edit.svg")));
   impl_->bezierInterpolationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_6));
 
   impl_->linearInterpolationAction->setCheckable(true);
@@ -231,81 +231,81 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
   addSeparator();
 
   impl_->graphEditorMenu = addMenu("カーブエディタ(&G)");
-  impl_->graphEditorMenu->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/show_chart.svg")));
+  impl_->graphEditorMenu->setIcon(menuIcon(QStringLiteral("Studio/show_chart.svg")));
 
   impl_->showGraphEditorAction = impl_->graphEditorMenu->addAction("カーブエディタを表示");
-  impl_->showGraphEditorAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/query_stats.svg")));
+  impl_->showGraphEditorAction->setIcon(menuIcon(QStringLiteral("Studio/query_stats.svg")));
   impl_->showGraphEditorAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3));
   impl_->easingLabAction = impl_->graphEditorMenu->addAction("EasingLab を開く");
-  impl_->easingLabAction->setIcon(menuIcon(QStringLiteral("MaterialVS/purple/tune.svg")));
+  impl_->easingLabAction->setIcon(menuIcon(QStringLiteral("Studio/tune.svg")));
   impl_->graphEditorMenu->addSeparator();
 
   impl_->toggleVelocityGraphAction = impl_->graphEditorMenu->addAction("速度グラフ");
-  impl_->toggleVelocityGraphAction->setIcon(menuIcon(QStringLiteral("MaterialVS/orange/speed.svg")));
+  impl_->toggleVelocityGraphAction->setIcon(menuIcon(QStringLiteral("Studio/speed.svg")));
   impl_->toggleVelocityGraphAction->setCheckable(true);
   impl_->toggleValueGraphAction = impl_->graphEditorMenu->addAction("値グラフ");
-  impl_->toggleValueGraphAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/timeline.svg")));
+  impl_->toggleValueGraphAction->setIcon(menuIcon(QStringLiteral("Studio/timeline.svg")));
   impl_->toggleValueGraphAction->setCheckable(true);
   impl_->toggleValueGraphAction->setChecked(true);
 
   impl_->navigationMenu = addMenu("ナビゲーション(&N)");
-  impl_->navigationMenu->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/skip_next.svg")));
+  impl_->navigationMenu->setIcon(menuIcon(QStringLiteral("Studio/skip_next.svg")));
 
   impl_->goToNextKeyframeAction = impl_->navigationMenu->addAction("次のキーフレームに移動");
-  impl_->goToNextKeyframeAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/skip_next.svg")));
+  impl_->goToNextKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/skip_next.svg")));
   impl_->goToNextKeyframeAction->setShortcut(QKeySequence(Qt::Key_K));
   impl_->goToPreviousKeyframeAction = impl_->navigationMenu->addAction("前のキーフレームに移動");
-  impl_->goToPreviousKeyframeAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/skip_previous.svg")));
+  impl_->goToPreviousKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/skip_previous.svg")));
   impl_->goToPreviousKeyframeAction->setShortcut(QKeySequence(Qt::Key_J));
 
   impl_->navigationMenu->addSeparator();
 
   impl_->goToFirstKeyframeAction = impl_->navigationMenu->addAction("最初のキーフレームに移動");
-  impl_->goToFirstKeyframeAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/fast_rewind.svg")));
+  impl_->goToFirstKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/fast_rewind.svg")));
   impl_->goToFirstKeyframeAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_J));
   impl_->goToLastKeyframeAction = impl_->navigationMenu->addAction("最後のキーフレームに移動");
-  impl_->goToLastKeyframeAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/fast_forward.svg")));
+  impl_->goToLastKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/fast_forward.svg")));
   impl_->goToLastKeyframeAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_K));
 
   addSeparator();
 
   impl_->timeRemapMenu = addMenu("タイムリマップ(&T)");
-  impl_->timeRemapMenu->setIcon(menuIcon(QStringLiteral("MaterialVS/green/schedule.svg")));
+  impl_->timeRemapMenu->setIcon(menuIcon(QStringLiteral("Studio/schedule.svg")));
 
   impl_->enableTimeRemapAction = impl_->timeRemapMenu->addAction("タイムリマップ可能にする");
-  impl_->enableTimeRemapAction->setIcon(menuIcon(QStringLiteral("MaterialVS/green/schedule.svg")));
+  impl_->enableTimeRemapAction->setIcon(menuIcon(QStringLiteral("Studio/schedule.svg")));
   impl_->enableTimeRemapAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_T));
   impl_->freezeFrameAction = impl_->timeRemapMenu->addAction("フレームをフリーズ");
-  impl_->freezeFrameAction->setIcon(menuIcon(QStringLiteral("MaterialVS/green/pause_circle.svg")));
+  impl_->freezeFrameAction->setIcon(menuIcon(QStringLiteral("Studio/pause_circle.svg")));
   impl_->freezeFrameAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_J));
   impl_->timeReverseAction = impl_->timeRemapMenu->addAction("時間反転レイヤー");
-  impl_->timeReverseAction->setIcon(menuIcon(QStringLiteral("MaterialVS/green/swap_horiz.svg")));
+  impl_->timeReverseAction->setIcon(menuIcon(QStringLiteral("Studio/swap_horiz.svg")));
 
   impl_->expressionMenu = addMenu("エクスプレッション(&E)");
-  impl_->expressionMenu->setIcon(menuIcon(QStringLiteral("MaterialVS/purple/functions.svg")));
+  impl_->expressionMenu->setIcon(menuIcon(QStringLiteral("Studio/functions.svg")));
 
   impl_->addExpressionAction = impl_->expressionMenu->addAction("エクスプレッションを追加");
-  impl_->addExpressionAction->setIcon(menuIcon(QStringLiteral("MaterialVS/green/add.svg")));
+  impl_->addExpressionAction->setIcon(menuIcon(QStringLiteral("Studio/add.svg")));
   impl_->addExpressionAction->setShortcut(QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_Equal));
   impl_->editExpressionAction = impl_->expressionMenu->addAction("エクスプレッションを編集...");
-  impl_->editExpressionAction->setIcon(menuIcon(QStringLiteral("MaterialVS/blue/edit.svg")));
+  impl_->editExpressionAction->setIcon(menuIcon(QStringLiteral("Studio/edit.svg")));
   impl_->editExpressionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Equal));
   impl_->removeExpressionAction = impl_->expressionMenu->addAction("エクスプレッションを削除");
-  impl_->removeExpressionAction->setIcon(menuIcon(QStringLiteral("MaterialVS/red/delete.svg")));
+  impl_->removeExpressionAction->setIcon(menuIcon(QStringLiteral("Studio/delete.svg")));
 
   impl_->expressionMenu->addSeparator();
 
   impl_->convertToKeyframesAction = impl_->expressionMenu->addAction("エクスプレッションをキーフレームに変換...");
-  impl_->convertToKeyframesAction->setIcon(menuIcon(QStringLiteral("MaterialVS/purple/animation.svg")));
+  impl_->convertToKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animation.svg")));
   addSeparator();
 
   impl_->presetMenu = addMenu("アニメーションプリセット(&P)");
-  impl_->presetMenu->setIcon(menuIcon(QStringLiteral("MaterialVS/yellow/bookmarks.svg")));
+  impl_->presetMenu->setIcon(menuIcon(QStringLiteral("Studio/bookmarks.svg")));
 
   impl_->saveAnimationPresetAction = impl_->presetMenu->addAction("アニメーションプリセットを保存...");
-  impl_->saveAnimationPresetAction->setIcon(menuIcon(QStringLiteral("MaterialVS/green/save.svg")));
+  impl_->saveAnimationPresetAction->setIcon(menuIcon(QStringLiteral("Studio/save.svg")));
   impl_->loadAnimationPresetAction = impl_->presetMenu->addAction("アニメーションプリセットを適用...");
-  impl_->loadAnimationPresetAction->setIcon(menuIcon(QStringLiteral("MaterialVS/yellow/folder_open.svg")));
+  impl_->loadAnimationPresetAction->setIcon(menuIcon(QStringLiteral("Studio/folder_open.svg")));
   impl_->presetMenu->addSeparator();
 
   auto dispatchAction = [this](QAction* action) {

@@ -315,6 +315,11 @@ public:
                    Diligent::ITextureView *dstSRV,
                    Diligent::ITextureView *outUAV,
                    ArtifactCore::BlendMode mode, float opacity) const;
+  bool convertLayerToFloat(ArtifactCore::LayerBlendPipeline *pipeline,
+                           Diligent::ITextureView *srcSRV,
+                           Diligent::ITextureView *outUAV,
+                           Diligent::Uint32 width,
+                           Diligent::Uint32 height) const;
 
   Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device() const;
   Diligent::RefCntAutoPtr<Diligent::IDeviceContext> immediateContext() const;
