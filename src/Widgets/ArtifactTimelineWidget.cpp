@@ -1061,6 +1061,7 @@ bool applyKeyframeEditAtPlayhead(const ArtifactCompositionPtr& composition,
 
 struct KeyframeNavigationState {
   int totalFrames = 0;
+  int selectedLayerCount = 0;
   bool currentFrameHasKeyframe = false;
   qint64 previousKeyframe = -1;
   qint64 nextKeyframe = -1;
@@ -1262,6 +1263,10 @@ KeyframeNavigationState collectKeyframeNavigationState(
     const qint64 currentFrame)
 {
   KeyframeNavigationState state;
+  if (selectionManager) {
+    const auto layers = selectedTimelineLayers(selectionManager);
+    state.selectedLayerCount = layers.size();
+  }
   const auto frames = collectSelectedKeyframeFrames(composition, selectionManager);
   state.totalFrames = frames.size();
   if (frames.isEmpty()) {
@@ -1284,12 +1289,16 @@ KeyframeNavigationState collectKeyframeNavigationState(
 
 QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
 {
+  if (state.selectedLayerCount <= 0) {
+    return QStringLiteral("Keys: - | Select a layer");
+  }
+
   if (state.totalFrames <= 0) {
-    return QStringLiteral("Status: keyframes -");
+    return QStringLiteral("Keys: 0 | Current layer has no keyframes");
   }
 
   const QString currentMark =
-      state.currentFrameHasKeyframe ? QStringLiteral("Yes") : QStringLiteral("No");
+      state.currentFrameHasKeyframe ? QStringLiteral("Here") : QStringLiteral("Not here");
   const QString previousMark =
       state.previousKeyframe >= 0 ? QString::number(state.previousKeyframe)
                                   : QStringLiteral("-");
@@ -1297,7 +1306,7 @@ QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
       state.nextKeyframe >= 0 ? QString::number(state.nextKeyframe)
                               : QStringLiteral("-");
 
-  return QStringLiteral("Status: keyframes %1 | Current: %2 | Prev: %3 | Next: %4")
+  return QStringLiteral("Keys: %1 | Now: %2 | Prev: %3 | Next: %4")
       .arg(state.totalFrames)
       .arg(currentMark)
       .arg(previousMark)
@@ -1991,6 +2000,24 @@ void ArtifactTimelineWidget::updateCacheVisuals()
         static_cast<int>(svc->ramPreviewRange().start()),
         static_cast<int>(svc->ramPreviewRange().end()),
         svc->isRamPreviewEnabled());
+    const auto summary = svc->ramPreviewSummary();
+    const auto currentFrame = svc->currentFrame().framePosition();
+    const auto currentState = svc->ramPreviewFrameState(currentFrame);
+    const QString currentNote =
+        currentState.requested && !currentState.ready &&
+                !currentState.reason.trimmed().isEmpty()
+            ? currentState.reason.trimmed()
+            : QStringLiteral("-");
+    impl_->scrubBar_->setToolTip(
+        QStringLiteral("RAM preview cache | ready %1 | requested %2 | pending %3 | failed %4 | inRam %5 | onDisk %6 | current %7 note %8")
+            .arg(summary.readyFrames)
+            .arg(summary.requestedFrames)
+            .arg(summary.buildQueuePendingFrames)
+            .arg(summary.failedFrames)
+            .arg(summary.inRamFrames)
+            .arg(summary.onDiskFrames)
+            .arg(currentFrame)
+            .arg(currentNote));
   }
 }
 
@@ -2720,7 +2747,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   scrubBar->setTotalFrames(kDefaultTimelineFrames);
   scrubBar->setCurrentFrame(FramePosition(0));
   scrubBar->setInteractiveSeekingEnabled(false);
-  scrubBar->setToolTip(QStringLiteral("RAM preview cache range"));
+  scrubBar->setToolTip(QStringLiteral("RAM preview cache"));
   scrubBar->setVisible(true);
   scrubBar->update();
 
@@ -4125,6 +4152,10 @@ void ArtifactTimelineWidget::updateSelectionState()
     if (selectedCount <= 0 && selectedKeyframeCount <= 0) {
       impl_->selectionSummaryLabel_->setText(
           QStringLiteral("Selection: 0 layers | Select a layer to continue"));
+    } else if (selectedCount > 0 && selectedKeyframeCount <= 0) {
+      impl_->selectionSummaryLabel_->setText(
+          QStringLiteral("Selection: %1 layers | Keys: 0 selected | Read lane markers or add at current frame")
+              .arg(selectedCount));
     } else {
       impl_->selectionSummaryLabel_->setText(
           QStringLiteral("Selection: %1 layers | Keys: %2")

@@ -7,11 +7,14 @@ module;
 #include <QVBoxLayout>
 #include <QStringList>
 #include <wobjectimpl.h>
+#include <QShowEvent>
 
 module Artifact.Widgets.FrameDebugViewWidget;
 
 import Core.Diagnostics.Trace;
 import Frame.Debug;
+import Widgets.Utils.CSS;
+import Widgets.StyleSurface;
 
 namespace Artifact {
 
@@ -252,6 +255,30 @@ void FrameDebugViewWidget::setFrameDebugSnapshot(const ArtifactCore::FrameDebugS
         return;
     }
     impl_->showFrameDebugSnapshot(snapshot);
+}
+
+void FrameDebugViewWidget::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    if (impl_) {
+        const auto& theme = ArtifactCore::currentDCCTheme();
+        const QColor background(theme.backgroundColor);
+        const QColor surface(theme.secondaryBackgroundColor);
+        const QColor text(theme.textColor);
+
+        setAutoFillBackground(true);
+        QPalette ownerPalette = palette();
+        ownerPalette.setColor(QPalette::Window, background);
+        ownerPalette.setColor(QPalette::WindowText, text);
+        setPalette(ownerPalette);
+
+        if (impl_->text_) {
+            QPalette textPalette = impl_->text_->palette();
+            textPalette.setColor(QPalette::Base, surface);
+            textPalette.setColor(QPalette::Text, text);
+            impl_->text_->setPalette(textPalette);
+        }
+    }
+    update();
 }
 
 } // namespace Artifact

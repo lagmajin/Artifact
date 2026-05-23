@@ -98,6 +98,7 @@ namespace Artifact
   TextureBundle accum_;
   TextureBundle temp_;
   TextureBundle layer_;
+  TextureBundle layerFloat_;
   Uint32 width_ = 0;
   Uint32 height_ = 0;
   TEXTURE_FORMAT format_ = TEX_FORMAT_UNKNOWN;
@@ -175,6 +176,7 @@ namespace Artifact
   impl_->accum_ = {};
   impl_->temp_ = {};
   impl_->layer_ = {};
+  impl_->layerFloat_ = {};
   impl_->width_ = 0;
   impl_->height_ = 0;
   impl_->format_ = TEX_FORMAT_UNKNOWN;
@@ -185,9 +187,11 @@ namespace Artifact
  {
  return impl_->device_ != nullptr && impl_->width_ > 0 && impl_->height_ > 0 &&
          impl_->accum_.texture && impl_->temp_.texture && impl_->layer_.texture &&
+         impl_->layerFloat_.texture &&
          impl_->accum_.srv && impl_->accum_.uav && impl_->accum_.rtv &&
          impl_->temp_.srv && impl_->temp_.uav && impl_->temp_.rtv &&
-         impl_->layer_.srv && impl_->layer_.rtv;
+         impl_->layer_.srv && impl_->layer_.rtv &&
+         impl_->layerFloat_.srv && impl_->layerFloat_.uav;
  }
 
  bool RenderPipeline::renderComposition(
@@ -220,6 +224,8 @@ namespace Artifact
  ITextureView* RenderPipeline::layerSRV() const { return impl_->layer_.srv; }
  ITextureView* RenderPipeline::layerUAV() const { return impl_->layer_.uav; }
  ITextureView* RenderPipeline::layerRTV() const { return impl_->layer_.rtv; }
+ ITextureView* RenderPipeline::layerFloatSRV() const { return impl_->layerFloat_.srv; }
+ ITextureView* RenderPipeline::layerFloatUAV() const { return impl_->layerFloat_.uav; }
  Uint32 RenderPipeline::width() const { return impl_->width_; }
  Uint32 RenderPipeline::height() const { return impl_->height_; }
 
@@ -248,6 +254,12 @@ namespace Artifact
    if (!createTextureBundle(device, width, height, RenderConfig::MainRTVFormat,
                             BIND_RENDER_TARGET | BIND_SHADER_RESOURCE,
                             "RenderPipeline.Layer", impl_->layer_))
+  {
+   return false;
+  }
+  if (!createTextureBundle(device, width, height, format,
+                           BIND_RENDER_TARGET | BIND_SHADER_RESOURCE | BIND_UNORDERED_ACCESS,
+                           "RenderPipeline.LayerFloat", impl_->layerFloat_))
   {
    return false;
   }

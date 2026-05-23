@@ -171,6 +171,36 @@ int runAIToolBridgeTests()
     const QJsonObject addSolidLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addSolidLayerToCurrentComposition"));
     report.check(!addSolidLayerTool.isEmpty(), QStringLiteral("workspace automation exposes solid layer creation"));
 
+    const QJsonObject createProjectTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("createProject"));
+    report.check(!createProjectTool.isEmpty(), QStringLiteral("workspace automation exposes project creation"));
+    report.check(createProjectTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
+                 QStringLiteral("project creation returns a result map"));
+
+    const QJsonObject setKeyframeTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setKeyframe"));
+    report.check(!setKeyframeTool.isEmpty(), QStringLiteral("workspace automation exposes keyframe creation"));
+    report.check(setKeyframeTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
+                 QStringLiteral("keyframe creation returns a result map"));
+
+    const QJsonObject deleteKeyframeTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("deleteKeyframe"));
+    report.check(!deleteKeyframeTool.isEmpty(), QStringLiteral("workspace automation exposes keyframe deletion"));
+    report.check(deleteKeyframeTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
+                 QStringLiteral("keyframe deletion returns a result map"));
+
+    const QJsonObject createGroupLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("createGroupLayer"));
+    report.check(!createGroupLayerTool.isEmpty(), QStringLiteral("workspace automation exposes group creation"));
+    report.check(createGroupLayerTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
+                 QStringLiteral("group creation returns a result map"));
+
+    const QJsonObject moveLayersToGroupTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("moveLayersToGroup"));
+    report.check(!moveLayersToGroupTool.isEmpty(), QStringLiteral("workspace automation exposes group reparenting"));
+    report.check(moveLayersToGroupTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
+                 QStringLiteral("group reparenting returns a result map"));
+
+    const QJsonObject ungroupLayersTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("ungroupLayers"));
+    report.check(!ungroupLayersTool.isEmpty(), QStringLiteral("workspace automation exposes ungrouping"));
+    report.check(ungroupLayersTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
+                 QStringLiteral("ungrouping returns a result map"));
+
     const QJsonObject setVisibilityTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setLayerVisibleInCurrentComposition"));
     report.check(!setVisibilityTool.isEmpty(), QStringLiteral("workspace automation exposes layer visibility editing"));
 
@@ -470,6 +500,29 @@ int runAIToolBridgeTests()
                                                      {0});
     report.check(queueErrorVariant.typeId() == QMetaType::QString,
                  QStringLiteral("render queue job error lookup returns text"));
+
+    const QVariant createProjectVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("createProject"),
+                                                     {QStringLiteral("AI Test Project")});
+    report.check(createProjectVariant.typeId() == QMetaType::QVariantMap,
+                 QStringLiteral("project creation invocation returns a result map"));
+    report.check(createProjectVariant.toMap().contains(QStringLiteral("success")),
+                 QStringLiteral("project creation result exposes success"));
+
+    const QVariant createGroupLayerVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("createGroupLayer"),
+                                                     {QStringLiteral("AI Test Group")});
+    report.check(createGroupLayerVariant.typeId() == QMetaType::QVariantMap,
+                 QStringLiteral("group creation invocation returns a result map"));
+
+    const QVariant setKeyframeVariant =
+        Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("setKeyframe"),
+                                                     {QStringLiteral("missing-layer"),
+                                                      QStringLiteral("transform.position.x"),
+                                                      0,
+                                                      1.0});
+    report.check(setKeyframeVariant.typeId() == QMetaType::QVariantMap,
+                 QStringLiteral("keyframe creation invocation returns a result map"));
 
     const QVariant supportedExportFormatsVariant =
         Artifact::WorkspaceAutomation().invokeMethod(QStringLiteral("getSupportedExportFormats"),

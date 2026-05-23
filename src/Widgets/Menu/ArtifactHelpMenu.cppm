@@ -47,22 +47,22 @@ namespace Artifact {
  ArtifactHelpMenu::Impl::Impl()
  {
   versionInfoAction_ = new QAction(u8"Version Info");
-  versionInfoAction_->setIcon(QIcon(resolveIconPath("Material/info.svg")));
+  versionInfoAction_->setIcon(QIcon(resolveIconPath("Studio/info.svg")));
 
   aboutAction_ = new QAction(u8"About Artifact");
-  aboutAction_->setIcon(QIcon(resolveIconPath("Material/info.svg")));
+  aboutAction_->setIcon(QIcon(resolveIconPath("Studio/info.svg")));
 
   docsAction_ = new QAction(u8"Documentation");
-  docsAction_->setIcon(QIcon(resolveIconPath("Material/help.svg")));
+  docsAction_->setIcon(QIcon(resolveIconPath("Studio/help.svg")));
 
   checkUpdatesAction_ = new QAction(u8"Check for Updates");
-  checkUpdatesAction_->setIcon(QIcon(resolveIconPath("Material/history.svg")));
+  checkUpdatesAction_->setIcon(QIcon(resolveIconPath("Studio/history.svg")));
 
   exportDiagnosticsAction_ = new QAction(u8"Export Diagnostics...");
-  exportDiagnosticsAction_->setIcon(QIcon(resolveIconPath("Material/inventory.svg")));
+  exportDiagnosticsAction_->setIcon(QIcon(resolveIconPath("Studio/inventory.svg")));
 
   keyboardOverlayAction_ = new QAction(u8"Keyboard Shortcuts Overlay");
-  keyboardOverlayAction_->setIcon(QIcon(resolveIconPath("Material/keyboard.svg")));
+  keyboardOverlayAction_->setIcon(QIcon(resolveIconPath("Studio/keyboard.svg")));
   keyboardOverlayAction_->setShortcuts({QKeySequence(QStringLiteral("Ctrl+/")), QKeySequence::HelpContents});
  }
 

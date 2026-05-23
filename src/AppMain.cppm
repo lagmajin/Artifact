@@ -1308,53 +1308,59 @@ int main(int argc, char *argv[]) {
       0, mw,
       [=, &renderCenterWindow, &workspaceManager, &debugConsoleWidget,
        &frameDebugWidget, &debugHarnessWidget]() {
-    auto* playbackControlWidget = new ArtifactPlaybackControlWidget(mw);
-    mw->addDockedWidgetFloating(
+    mw->addLazyDockedWidgetFloating(
         QStringLiteral("Playback Control"), QStringLiteral("PlaybackControl"),
-        playbackControlWidget, QRect(120, 828, 720, 210));
-    mw->setDockVisible(QStringLiteral("Playback Control"), false);
-    auto* debugConsole = new ArtifactDebugConsoleWidget(mw);
-    debugConsoleWidget = debugConsole;
-    if (compositionEditor) {
-      if (auto* controller = compositionEditor->renderController()) {
-        debugConsole->setFrameDebugSnapshot(controller->frameDebugSnapshot());
-      }
-    }
-    mw->addDockedWidgetFloating(
+        [mw]() -> QWidget* { return new ArtifactPlaybackControlWidget(mw); },
+        QRect(120, 828, 720, 210));
+    mw->addLazyDockedWidgetFloating(
         QStringLiteral("Debug Console"), QStringLiteral("DebugConsole"),
-        debugConsole, QRect(200, 200, 800, 400));
-    mw->setDockVisible(QStringLiteral("Debug Console"), false);
-
-    auto* frameDebug = new FrameDebugViewWidget(mw);
-    frameDebugWidget = frameDebug;
-    if (compositionEditor) {
-      if (auto* controller = compositionEditor->renderController()) {
-        frameDebug->setFrameDebugSnapshot(controller->frameDebugSnapshot());
-      }
-    }
-    mw->addDockedWidgetFloating(
+        [mw, compositionEditor, &debugConsoleWidget]() mutable -> QWidget* {
+          auto* widget = new ArtifactDebugConsoleWidget(mw);
+          debugConsoleWidget = widget;
+          if (compositionEditor) {
+            if (auto* controller = compositionEditor->renderController()) {
+              widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
+            }
+          }
+          return widget;
+        },
+        QRect(200, 200, 800, 400));
+    mw->addLazyDockedWidgetFloating(
         QStringLiteral("Frame Debug"), QStringLiteral("FrameDebug"),
-        frameDebug, QRect(220, 240, 900, 520));
-    mw->setDockVisible(QStringLiteral("Frame Debug"), false);
-    auto* appDebuggerWidget = new AppDebuggerWidget(
-        compositionEditor ? compositionEditor->renderController() : nullptr, mw);
-    mw->addDockedWidgetFloating(
+        [mw, compositionEditor, &frameDebugWidget]() mutable -> QWidget* {
+          auto* widget = new FrameDebugViewWidget(mw);
+          frameDebugWidget = widget;
+          if (compositionEditor) {
+            if (auto* controller = compositionEditor->renderController()) {
+              widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
+            }
+          }
+          return widget;
+        },
+        QRect(220, 240, 900, 520));
+    mw->addLazyDockedWidgetFloating(
         QStringLiteral("App Debugger"), QStringLiteral("AppDebugger"),
-        appDebuggerWidget, QRect(140, 140, 1080, 640));
-    mw->setDockVisible(QStringLiteral("App Debugger"), false);
-
-    auto* debugRenderHarness = new DebugRenderHarnessWidget(mw);
-    debugRenderHarness->setScenePreset(QStringLiteral("mixed-media"));
-    if (compositionEditor) {
-      if (auto* controller = compositionEditor->renderController()) {
-        debugRenderHarness->setFrameDebugSnapshot(controller->frameDebugSnapshot());
-      }
-    }
-    debugHarnessWidget = debugRenderHarness;
-    mw->addDockedWidgetFloating(
-        QStringLiteral("Debug Render Harness"), QStringLiteral("DebugRenderHarness"),
-        debugRenderHarness, QRect(180, 180, 1100, 660));
-    mw->setDockVisible(QStringLiteral("Debug Render Harness"), false);
+        [mw, compositionEditor]() -> QWidget* {
+          auto* controller =
+              compositionEditor ? compositionEditor->renderController() : nullptr;
+          return new AppDebuggerWidget(controller, mw);
+        },
+        QRect(140, 140, 1080, 640));
+    mw->addLazyDockedWidgetFloating(
+        QStringLiteral("Debug Render Harness"),
+        QStringLiteral("DebugRenderHarness"),
+        [mw, compositionEditor, &debugHarnessWidget]() mutable -> QWidget* {
+          auto* widget = new DebugRenderHarnessWidget(mw);
+          debugHarnessWidget = widget;
+          widget->setScenePreset(QStringLiteral("mixed-media"));
+          if (compositionEditor) {
+            if (auto* controller = compositionEditor->renderController()) {
+              widget->setFrameDebugSnapshot(controller->frameDebugSnapshot());
+            }
+          }
+          return widget;
+        },
+        QRect(180, 180, 1100, 660));
     auto refreshFrameDebugWidgets = [compositionEditor, &debugConsoleWidget,
                                      &frameDebugWidget, &debugHarnessWidget]() mutable {
       if (!compositionEditor) {

@@ -3,6 +3,7 @@ module;
 
 #include <wobjectdefs.h>
 #include <QWidget>
+#include <QShowEvent>
 export module Artifact.Widgets.DebugConsoleWidget;
 
 import Frame.Debug;
@@ -17,6 +18,9 @@ public:
     int debugConsoleFontPointSize() const;
     void setDebugConsoleFontPointSize(int pointSize);
     void setFrameDebugSnapshot(const ArtifactCore::FrameDebugSnapshot& snapshot);
+
+protected:
+    void showEvent(QShowEvent* event) override;
 
 private:
     class Impl;

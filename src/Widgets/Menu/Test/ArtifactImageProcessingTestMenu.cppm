@@ -2,9 +2,11 @@ module;
 #include <utility>
 #include <QCoreApplication>
 #include <QDir>
+#include <QIcon>
 #include <wobjectimpl.h>
 module Menu.Test2;
 
+import Utils.Path;
 
 
 
@@ -49,6 +51,7 @@ namespace Artifact {
  {
   setTitle("ImageProcessing");
   auto test1 = addAction("Test1");
+  test1->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/test.svg")));
 
   connect(test1, SIGNAL(triggered), this, SLOT(imageProcessingTest));
  }

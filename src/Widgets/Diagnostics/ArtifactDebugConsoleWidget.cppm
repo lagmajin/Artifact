@@ -36,6 +36,7 @@ module;
 #include <QRegularExpression>
 #include <algorithm>
 #include <wobjectimpl.h>
+#include <QShowEvent>
 
 module Artifact.Widgets.DebugConsoleWidget;
 
@@ -60,6 +61,31 @@ QIcon loadIcon(const QString& path) {
         return QIcon();
     }
     return QIcon(filePath);
+}
+
+void applyConsoleSurfacePalette(QWidget* root, const QPalette& palette)
+{
+    if (!root) {
+        return;
+    }
+    root->setAutoFillBackground(true);
+    root->setAttribute(Qt::WA_StyledBackground, true);
+    root->setPalette(palette);
+    for (auto* child : root->findChildren<QWidget*>()) {
+        if (!child || child->testAttribute(Qt::WA_PaintOnScreen)) {
+            continue;
+        }
+        child->setAutoFillBackground(true);
+        child->setAttribute(Qt::WA_StyledBackground, true);
+        child->setPalette(palette);
+        if (auto* scroll = qobject_cast<QAbstractScrollArea*>(child)) {
+            if (auto* viewport = scroll->viewport()) {
+                viewport->setAutoFillBackground(true);
+                viewport->setAttribute(Qt::WA_StyledBackground, true);
+                viewport->setPalette(palette);
+            }
+        }
+    }
 }
 
 } // namespace
@@ -1268,6 +1294,12 @@ void ArtifactDebugConsoleWidget::setFrameDebugSnapshot(const ArtifactCore::Frame
         return;
     }
     impl_->showFrameDebugSnapshot(snapshot);
+}
+
+void ArtifactDebugConsoleWidget::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    applyConsoleSurfacePalette(this, palette());
+    update();
 }
 
 } // namespace Artifact

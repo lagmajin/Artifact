@@ -107,25 +107,30 @@ namespace Artifact {
   {
    zoomInAction = new QAction("ズームイン(&I)");
    zoomInAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Equal));
-   zoomInAction->setIcon(QIcon(resolveIconPath("Material/zoom_in.svg")));
+   zoomInAction->setIcon(QIcon(resolveIconPath("Studio/zoom_in.svg")));
    
    zoomOutAction = new QAction("ズームアウト(&O)");
    zoomOutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Minus));
-   zoomOutAction->setIcon(QIcon(resolveIconPath("Material/zoom_out.svg")));
+   zoomOutAction->setIcon(QIcon(resolveIconPath("Studio/zoom_out.svg")));
 
    defaultZoomAction = new QAction("100% ズーム");
    defaultZoomAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash));
-   defaultZoomAction->setIcon(QIcon(resolveIconPath("Material/aspect_ratio.svg")));
+   defaultZoomAction->setIcon(QIcon(resolveIconPath("Studio/aspect_ratio.svg")));
 
    fitToScreenAction = new QAction("画面に合わせる(&F)");
    fitToScreenAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Slash));
-   fitToScreenAction->setIcon(QIcon(resolveIconPath("Material/fit_screen.svg")));
+   fitToScreenAction->setIcon(QIcon(resolveIconPath("Studio/fit_screen.svg")));
 
    resolutionMenu = new QMenu("解像度(&R)");
+   resolutionMenu->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
    resFullAction = resolutionMenu->addAction("フル画質");
+   resFullAction->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
    resHalfAction = resolutionMenu->addAction("1/2画質");
+   resHalfAction->setIcon(QIcon(resolveIconPath("Studio/resolution_half.svg")));
    resThirdAction = resolutionMenu->addAction("1/3画質");
+   resThirdAction->setIcon(QIcon(resolveIconPath("Studio/resolution_third.svg")));
    resQuarterAction = resolutionMenu->addAction("1/4画質");
+   resQuarterAction->setIcon(QIcon(resolveIconPath("Studio/resolution_quarter.svg")));
    resFullAction->setCheckable(true);
    resFullAction->setChecked(true);
    resHalfAction->setCheckable(true);
@@ -135,35 +140,43 @@ namespace Artifact {
    showGridAction = new QAction("グリッドを表示(&G)");
    showGridAction->setShortcut(QKeySequence("Ctrl+'"));
    showGridAction->setCheckable(true);
-   showGridAction->setIcon(QIcon(resolveIconPath("Material/grid_on.svg")));
+   showGridAction->setIcon(QIcon(resolveIconPath("Studio/grid_on.svg")));
 
    snapToGridAction = new QAction("グリッドにスナップ(&S)");
    snapToGridAction->setShortcut(QKeySequence("Ctrl+Shift+'"));
    snapToGridAction->setCheckable(true);
+   snapToGridAction->setIcon(QIcon(resolveIconPath("Studio/grid_on.svg")));
 
    showGuidesAction = new QAction("ガイドを表示");
    showGuidesAction->setShortcut(QKeySequence("Ctrl+;"));
    showGuidesAction->setCheckable(true);
+   showGuidesAction->setIcon(QIcon(resolveIconPath("Studio/straighten.svg")));
 
    snapToGuidesAction = new QAction("ガイドにスナップ");
    snapToGuidesAction->setShortcut(QKeySequence("Ctrl+Shift+;"));
    snapToGuidesAction->setCheckable(true);
+   snapToGuidesAction->setIcon(QIcon(resolveIconPath("Studio/linear_scale.svg")));
 
    showRulersAction = new QAction("定規を表示(&R)");
    showRulersAction->setShortcut(QKeySequence("Ctrl+R"));
    showRulersAction->setCheckable(true);
-   showRulersAction->setIcon(QIcon(resolveIconPath("Material/straighten.svg")));
+   showRulersAction->setIcon(QIcon(resolveIconPath("Studio/straighten.svg")));
 
    useDisplayColorManagementAction = new QAction("ディスプレイのカラーマネジメントを使用");
    useDisplayColorManagementAction->setCheckable(true);
+   useDisplayColorManagementAction->setIcon(QIcon(resolveIconPath("Studio/color_palette.svg")));
 
    qualityPresetMenu = new QMenu("品質プリセット(&Q)");
+   qualityPresetMenu->setIcon(QIcon(resolveIconPath("Studio/quality_preview.svg")));
    qualityGroup = new QActionGroup(menu);
    qualityGroup->setExclusive(true);
 
    qualityDraftAction = qualityPresetMenu->addAction("Draft (編集優先)");
+   qualityDraftAction->setIcon(QIcon(resolveIconPath("Studio/quality_draft.svg")));
    qualityPreviewAction = qualityPresetMenu->addAction("Preview (標準)");
+   qualityPreviewAction->setIcon(QIcon(resolveIconPath("Studio/quality_preview.svg")));
    qualityFinalAction = qualityPresetMenu->addAction("Final (品質優先)");
+   qualityFinalAction->setIcon(QIcon(resolveIconPath("Studio/quality_final.svg")));
 
    qualityDraftAction->setCheckable(true);
    qualityPreviewAction->setCheckable(true);
@@ -215,14 +228,20 @@ namespace Artifact {
    }
 
    workspaceMenu = new QMenu("ワークスペース(&K)");
+   workspaceMenu->setIcon(QIcon(resolveIconPath("Studio/workspace.svg")));
    workspaceGroup = new QActionGroup(menu);
    workspaceGroup->setExclusive(true);
 
    workspaceDefaultAction = workspaceMenu->addAction("Default");
+   workspaceDefaultAction->setIcon(QIcon(resolveIconPath("Studio/workspace_default.svg")));
    workspaceAnimationAction = workspaceMenu->addAction("Animation");
+   workspaceAnimationAction->setIcon(QIcon(resolveIconPath("Studio/workspace_animation.svg")));
    workspaceVfxAction = workspaceMenu->addAction("VFX");
+   workspaceVfxAction->setIcon(QIcon(resolveIconPath("Studio/workspace_vfx.svg")));
    workspaceCompositingAction = workspaceMenu->addAction("Compositing");
+   workspaceCompositingAction->setIcon(QIcon(resolveIconPath("Studio/workspace_compositing.svg")));
    workspaceAudioAction = workspaceMenu->addAction("Audio");
+   workspaceAudioAction->setIcon(QIcon(resolveIconPath("Studio/workspace_audio.svg")));
 
    for (auto* action : {workspaceDefaultAction, workspaceAnimationAction,
                         workspaceVfxAction, workspaceCompositingAction,
@@ -248,8 +267,11 @@ namespace Artifact {
    });
 
    workspacePresetMenu = new QMenu("プリセット");
+   workspacePresetMenu->setIcon(QIcon(resolveIconPath("Studio/presets.svg")));
    saveWorkspacePresetAction = workspacePresetMenu->addAction("現在のレイアウトを保存...");
+   saveWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/save_layout.svg")));
    restoreWorkspaceSessionAction = workspacePresetMenu->addAction("最後のセッションを復元");
+   restoreWorkspaceSessionAction->setIcon(QIcon(resolveIconPath("Studio/restore_session.svg")));
    QObject::connect(saveWorkspacePresetAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     const QString defaultName = QStringLiteral("Custom");
@@ -294,6 +316,7 @@ namespace Artifact {
    menu->addAction(useDisplayColorManagementAction);
    menu->addSeparator();
    openContentsViewerAction = menu->addAction("Contents Viewer");
+   openContentsViewerAction->setIcon(QIcon(resolveIconPath("Studio/contents_viewer.svg")));
    QObject::connect(openContentsViewerAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     mainWindow->setDockVisible(QStringLiteral("Contents Viewer"), true);
@@ -301,6 +324,7 @@ namespace Artifact {
    });
 
    openColorPaletteAction = menu->addAction("カラーパレット(&P)");
+   openColorPaletteAction->setIcon(QIcon(resolveIconPath("Studio/color_palette.svg")));
    QObject::connect(openColorPaletteAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     const QString dockTitle = QStringLiteral("Color Palette");
@@ -328,6 +352,7 @@ namespace Artifact {
    menu->addAction(showRulersAction);
    menu->addSeparator();
     windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
+    windowPanelsMenu->setIcon(QIcon(resolveIconPath("Studio/panels.svg")));
 
     // Dynamically rebuild the panels menu each time it opens
    QObject::connect(windowPanelsMenu, &QMenu::aboutToShow, menu, [this]() {
@@ -336,6 +361,7 @@ namespace Artifact {
 
     menu->addSeparator();
     openReactiveEventEditorAction = menu->addAction("リアクティブイベントエディタ(&E)...");
+    openReactiveEventEditorAction->setIcon(QIcon(resolveIconPath("Studio/reactive_events.svg")));
     QObject::connect(openReactiveEventEditorAction, &QAction::triggered, menu, [this]() {
      if (!mainWindow) return;
      if (!reactiveEventEditorWindow) {
@@ -347,6 +373,7 @@ namespace Artifact {
 
     menu->addSeparator();
      auto* newBrowserAction = menu->addAction("新規アセットブラウザ(&A)");
+     newBrowserAction->setIcon(QIcon(resolveIconPath("Studio/asset_browser.svg")));
      QObject::connect(newBrowserAction, &QAction::triggered, menu, [this]() {
       if (!mainWindow) return;
       newBrowserCount_++;
@@ -362,6 +389,7 @@ namespace Artifact {
      menu->addSeparator();
      secondaryPreviewAction = menu->addAction("セカンドモニタープレビュー(&S)");
      secondaryPreviewAction->setShortcut(QKeySequence(Qt::Key_F12));
+     secondaryPreviewAction->setIcon(QIcon(resolveIconPath("Studio/secondary_preview.svg")));
       QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this, menu]() {
        if (!mainWindow) return;
        auto screens = QGuiApplication::screens();
@@ -454,8 +482,10 @@ namespace Artifact {
   workspacePresetMenu->clear();
   saveWorkspacePresetAction =
       workspacePresetMenu->addAction("現在のレイアウトを保存...");
+  saveWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/save_layout.svg")));
   restoreWorkspaceSessionAction =
       workspacePresetMenu->addAction("最後のセッションを復元");
+  restoreWorkspaceSessionAction->setIcon(QIcon(resolveIconPath("Studio/restore_session.svg")));
 
   QObject::connect(saveWorkspacePresetAction, &QAction::triggered, mainWindow,
                    [mw = mainWindow]() {
@@ -499,12 +529,14 @@ namespace Artifact {
 
   if (presets.isEmpty()) {
    QAction* empty = workspacePresetMenu->addAction("(no presets)");
+   empty->setIcon(QIcon(resolveIconPath("Studio/empty_state.svg")));
    empty->setEnabled(false);
    return;
   }
 
   for (const QString& preset : presets) {
    QAction* action = workspacePresetMenu->addAction(preset);
+   action->setIcon(QIcon(resolveIconPath("Studio/presets.svg")));
    QObject::connect(action, &QAction::triggered, mainWindow,
                     [mw = mainWindow, preset]() {
                      ArtifactWorkspaceManager manager;
@@ -536,6 +568,7 @@ namespace Artifact {
   if (!impl_ || !impl_->windowPanelsMenu || !view) return;
 
   QAction* action = impl_->windowPanelsMenu->addAction(name);
+  action->setIcon(QIcon(resolveIconPath("Studio/panels.svg")));
   action->setCheckable(true);
   action->setChecked(view->isVisible());
 
@@ -608,6 +641,7 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
 
   for (const QString& title : titles) {
    QAction* action = windowPanelsMenu->addAction(title);
+   action->setIcon(QIcon(resolveIconPath("Studio/panels.svg")));
    action->setCheckable(true);
    action->setChecked(mainWindow->isDockVisible(title));
 
@@ -621,6 +655,7 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
 
   if (titles.isEmpty()) {
    QAction* none = windowPanelsMenu->addAction("(no panels)");
+   none->setIcon(QIcon(resolveIconPath("Studio/empty_state.svg")));
    none->setEnabled(false);
   }
 }

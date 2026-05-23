@@ -110,7 +110,7 @@ public:
             {"listProjectItems", IDescribable::loc("Return the project item tree.", "Return the project item tree.", {}), "QVariantList"},
             {"listCurrentCompositionLayers", IDescribable::loc("Return the active composition layer list.", "Return the active composition layer list.", {}), "QVariantList"},
             {"listRenderQueueJobs", IDescribable::loc("Return the render queue job list.", "Return the render queue job list.", {}), "QVariantList"},
-            {"createProject", IDescribable::loc("Create a new project if one is not already open.", "Create a new project if one is not already open.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("projectName")}},
+            {"createProject", IDescribable::loc("Create a new project if one is not already open.", "Create a new project if one is not already open.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("projectName")}},
             {"createComposition", IDescribable::loc("Create a composition in the current project.", "Create a composition in the current project.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("name"), QStringLiteral("width"), QStringLiteral("height")}},
             {"changeCurrentComposition", IDescribable::loc("Switch the active composition by id.", "Switch the active composition by id.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"importAssetsFromPaths", IDescribable::loc("Import one or more asset paths into the project.", "Import one or more asset paths into the project.", {}), "QVariantMap", {QStringLiteral("QStringList")}, {QStringLiteral("paths")}},
@@ -152,13 +152,13 @@ public:
             {"getLayerEffects", IDescribable::loc("Get the list of effects applied to a layer in the active composition.", "Get the list of effects applied to a layer in the active composition.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
             {"addLayerEffect", IDescribable::loc("Add an effect to a layer in the active composition.", "Add an effect to a layer in the active composition.", {}), "QString", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectType")}},
             {"removeLayerEffect", IDescribable::loc("Remove an effect from a layer in the active composition.", "Remove an effect from a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId")}},
-            {"setLayerEffectParameter", IDescribable::loc("Set an effect parameter on a layer in the active composition.", "Set an effect parameter on a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("paramName"), QStringLiteral("value")}},
-            {"setKeyframe", IDescribable::loc("Set a keyframe for a layer property at a specific frame.", "Set a keyframe for a layer property at a specific frame.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber"), QStringLiteral("value")}},
+            {"setLayerEffectParameter", IDescribable::loc("Set an effect parameter on a layer in the active composition.", "Set an effect parameter on a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QVariant")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("paramName"), QStringLiteral("value")}},
+            {"setKeyframe", IDescribable::loc("Set a keyframe for a layer property at a specific frame.", "Set a keyframe for a layer property at a specific frame.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber"), QStringLiteral("value")}},
             {"getKeyframes", IDescribable::loc("Get all keyframes for a layer property.", "Get all keyframes for a layer property.", {}), "QVariantList", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath")}},
-            {"deleteKeyframe", IDescribable::loc("Delete a keyframe for a layer property at a specific frame.", "Delete a keyframe for a layer property at a specific frame.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber")}},
-            {"createGroupLayer", IDescribable::loc("Create a new group layer in the active composition.", "Create a new group layer in the active composition.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("name")}},
-            {"moveLayersToGroup", IDescribable::loc("Move multiple layers into a group layer.", "Move multiple layers into a group layer.", {}), "bool", {QStringLiteral("QStringList"), QStringLiteral("QString")}, {QStringLiteral("layerIds"), QStringLiteral("groupLayerId")}},
-            {"ungroupLayers", IDescribable::loc("Ungroup all layers in a group layer.", "Ungroup all layers in a group layer.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("groupLayerId")}},
+            {"deleteKeyframe", IDescribable::loc("Delete a keyframe for a layer property at a specific frame.", "Delete a keyframe for a layer property at a specific frame.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber")}},
+            {"createGroupLayer", IDescribable::loc("Create a new group layer in the active composition.", "Create a new group layer in the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
+            {"moveLayersToGroup", IDescribable::loc("Move multiple layers into a group layer.", "Move multiple layers into a group layer.", {}), "QVariantMap", {QStringLiteral("QStringList"), QStringLiteral("QString")}, {QStringLiteral("layerIds"), QStringLiteral("groupLayerId")}},
+            {"ungroupLayers", IDescribable::loc("Ungroup all layers in a group layer.", "Ungroup all layers in a group layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("groupLayerId")}},
             {"compositionRemovalConfirmationMessage", IDescribable::loc("Return the confirmation message for deleting a composition.", "Return the confirmation message for deleting a composition.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"removeCompositionWithRenderQueueCleanup", IDescribable::loc("Remove a composition and clear related render queue jobs.", "Remove a composition and clear related render queue jobs.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("compositionId")}},
             {"removeAllAssets", IDescribable::loc("Remove all imported assets from the project.", "Remove all imported assets from the project.", {}), "bool"},
@@ -411,7 +411,7 @@ public:
             return removeLayerEffect(stringArg(args, 0), stringArg(args, 1));
         }
         if (name == QStringLiteral("setLayerEffectParameter")) {
-            return setLayerEffectParameter(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), doubleArg(args, 3, 0.0));
+            return setLayerEffectParameter(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), args.value(3));
         }
         if (name == QStringLiteral("setKeyframe")) {
             return setKeyframe(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0), doubleArg(args, 3, 0.0));
@@ -1073,7 +1073,10 @@ private:
         auto& manager = projectManager();
         const QString name = projectName.trimmed().isEmpty() ? QStringLiteral("Untitled") : projectName.trimmed();
         const auto result = manager.createProject(ArtifactCore::UniString::fromQString(name), false);
-        return QVariantMap{{QStringLiteral("isSuccess"), result.isSuccess}};
+        return QVariantMap{
+            {QStringLiteral("success"), result.isSuccess},
+            {QStringLiteral("isSuccess"), result.isSuccess}
+        };
     }
 
     static QVariant createComposition(const QString& name, int width, int height)
@@ -1705,7 +1708,7 @@ private:
         return result.success;
     }
 
-    static QVariant setLayerEffectParameter(const QString& layerId, const QString& effectId, const QString& paramName, double value)
+    static QVariant setLayerEffectParameter(const QString& layerId, const QString& effectId, const QString& paramName, const QVariant& value)
     {
         auto* effectService = ArtifactEffectService::instance();
         if (!effectService) return false;
@@ -2053,7 +2056,7 @@ private:
             };
         }
 
-        std::shared_ptr<ArtifactComposition> comp;
+        std::shared_ptr<ArtifactAbstractComposition> comp;
         if (compositionId.isEmpty() || compositionId == QStringLiteral("current")) {
             comp = service->currentComposition().lock();
         } else {

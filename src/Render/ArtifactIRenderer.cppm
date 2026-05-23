@@ -2010,6 +2010,19 @@ bool ArtifactIRenderer::blendLayers(ArtifactCore::LayerBlendPipeline *pipeline,
   }
   return pipeline->blend(ctx, srcSRV, dstSRV, outUAV, mode, opacity);
  }
+bool ArtifactIRenderer::convertLayerToFloat(
+    ArtifactCore::LayerBlendPipeline *pipeline,
+    Diligent::ITextureView *srcSRV,
+    Diligent::ITextureView *outUAV,
+    Diligent::Uint32 width,
+    Diligent::Uint32 height) const
+{
+ auto ctx = impl_->deviceManager_.immediateContext();
+ if (!pipeline || !ctx) {
+  return false;
+ }
+ return pipeline->convertLayerToFloat(ctx, srcSRV, outUAV, width, height);
+}
  Diligent::RefCntAutoPtr<Diligent::IRenderDevice> ArtifactIRenderer::device() const
  { return impl_->deviceManager_.device(); }
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> ArtifactIRenderer::immediateContext() const

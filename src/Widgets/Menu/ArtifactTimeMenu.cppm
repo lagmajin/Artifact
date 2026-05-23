@@ -1,5 +1,7 @@
 module;
 #include <utility>
+#include <QAction>
+#include <QIcon>
 #include <QMenu>
 module Menu.Time;
 import std;
@@ -10,6 +12,7 @@ import std;
 
 
 import Artifact.Service.Project;
+import Utils.Path;
 
 
 
@@ -24,9 +27,10 @@ namespace Artifact {
   explicit KeyframeAssistantMenu(QWidget* parent = nullptr)
    : QMenu("キーフレーム補助", parent)
   {
-   addAction("イージーイーズ");
-   addAction("イージーイーズイン");
-   addAction("イージーイーズアウト");
+   setIcon(QIcon(resolveIconPath("Studio/timeline.svg")));
+   addAction(QIcon(resolveIconPath("Studio/show_chart.svg")), "イージーイーズ");
+   addAction(QIcon(resolveIconPath("Studio/trending_up.svg")), "イージーイーズイン");
+   addAction(QIcon(resolveIconPath("Studio/trending_down.svg")), "イージーイーズアウト");
   }
  };
 

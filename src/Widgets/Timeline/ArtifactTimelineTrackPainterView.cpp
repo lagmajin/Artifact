@@ -467,6 +467,12 @@ QRectF markerHitRectFor(
   return QRectF(center.x() - size, center.y() - size, size * 2.0, size * 2.0);
 }
 
+bool markerAtCurrentFrame(
+    const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual &marker,
+    const double currentFrame) {
+  return std::abs(marker.frame - currentFrame) < 0.5;
+}
+
 QRectF
 clipRectFor(const ArtifactTimelineTrackPainterView::TrackClipVisual &clip,
             const QVector<int> &heights, const QVector<int> &trackTops,
@@ -1376,6 +1382,36 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   }
 
   // Keyframe markers.
+  QSet<int> selectedMarkerTracks;
+  for (const auto &marker : impl_->keyframeMarkers_) {
+    if (marker.selectedLayer) {
+      selectedMarkerTracks.insert(marker.trackIndex);
+    }
+  }
+
+  for (const int trackIndex : selectedMarkerTracks) {
+    if (trackIndex < 0 || trackIndex >= impl_->trackHeights_.size()) {
+      continue;
+    }
+    const int trackTop =
+        trackTopAt(impl_->trackTops_, impl_->trackHeights_, trackIndex);
+    const int trackH = impl_->trackHeights_[trackIndex];
+    const QRectF laneRect(
+        0.0, trackTop + 2.0 - yOffset, static_cast<qreal>(width()),
+        std::max(8, trackH - 4));
+    if (!dirtyRect.intersects(laneRect.toAlignedRect().adjusted(0, -2, 0, 2))) {
+      continue;
+    }
+    QColor laneFill = theme.accent;
+    laneFill.setAlpha(24);
+    p.fillRect(laneRect, laneFill);
+    p.setPen(QPen(theme.accent.lighter(110), 1.0));
+    p.drawLine(QPointF(laneRect.left(), laneRect.top() + 0.5),
+               QPointF(laneRect.right(), laneRect.top() + 0.5));
+    p.drawLine(QPointF(laneRect.left(), laneRect.bottom() - 0.5),
+               QPointF(laneRect.right(), laneRect.bottom() - 0.5));
+  }
+
   for (int markerIndex = 0; markerIndex < impl_->keyframeMarkers_.size();
        ++markerIndex) {
     const auto &marker = impl_->keyframeMarkers_[markerIndex];
@@ -1390,7 +1426,9 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       continue;
     }
     const bool isHovered = markerIndex == impl_->hoverMarkerIndex_;
-    const int size = marker.laneCount > 1 ? 5 : 6;
+    const bool atCurrentFrame = markerAtCurrentFrame(marker, impl_->currentFrame_);
+    const int size = marker.selectedLayer ? (marker.laneCount > 1 ? 6 : 7)
+                                          : (marker.laneCount > 1 ? 5 : 6);
     const QRectF diamondRect(center.x() - size, center.y() - size, size * 2.0,
                              size * 2.0);
     QPolygonF diamond;
@@ -1398,6 +1436,15 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
             << QPointF(diamondRect.right(), diamondRect.center().y())
             << QPointF(diamondRect.center().x(), diamondRect.bottom())
             << QPointF(diamondRect.left(), diamondRect.center().y());
+    if (atCurrentFrame) {
+      const qreal haloRadius = marker.selectedLayer ? 9.0 : 7.0;
+      QColor haloColor = marker.selectedLayer ? theme.accent.lighter(120)
+                                              : marker.color.lighter(120);
+      haloColor.setAlpha(marker.selectedLayer ? 72 : 54);
+      p.setPen(Qt::NoPen);
+      p.setBrush(haloColor);
+      p.drawEllipse(center, haloRadius, haloRadius);
+    }
     if (marker.selected) {
       QPolygonF outer = diamond;
       p.setPen(QPen(theme.accent.lighter(isHovered ? 175 : 160),
@@ -1411,11 +1458,18 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.drawPolygon(diamond);
     } else if (marker.selectedLayer) {
       QPolygonF outer = diamond;
-      p.setPen(QPen(theme.background.darker(175), 2.0));
+      p.setPen(QPen(atCurrentFrame ? theme.accent.lighter(145)
+                                   : theme.background.darker(175),
+                    atCurrentFrame ? 2.4 : 2.0));
       p.setBrush(Qt::NoBrush);
       p.drawPolygon(outer);
-      p.setPen(QPen(theme.text.lighter(110), 1.0));
-      p.setBrush(isHovered ? theme.text.lighter(125) : theme.text.lighter(110));
+      p.setPen(QPen(atCurrentFrame ? theme.accent.lighter(130)
+                                   : theme.text.lighter(110),
+                    atCurrentFrame ? 1.3 : 1.0));
+      p.setBrush(atCurrentFrame
+                     ? theme.accent.lighter(isHovered ? 145 : 132)
+                     : (isHovered ? theme.text.lighter(125)
+                                  : theme.text.lighter(110)));
       p.drawPolygon(diamond);
     } else {
       p.setPen(QPen(isHovered ? theme.text.lighter(145)

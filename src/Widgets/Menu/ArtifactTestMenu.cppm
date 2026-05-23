@@ -3,6 +3,7 @@ module;
 #include <QMenu>
 #include <QWidget>
 #include <QAction>
+#include <QIcon>
 #include <QMessageBox>
 module Menu.Test;
 
@@ -13,6 +14,7 @@ import Artifact.Widgets.TimelineLayerTest;
 import Artifact.Service.Project;
 import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
+import Utils.Path;
 
 
 
@@ -33,6 +35,7 @@ namespace Artifact {
   setTitle("Test");
 
   auto* softwareRenderTestAction = new QAction("Software 3D Render Test...", this);
+  softwareRenderTestAction->setIcon(QIcon(resolveIconPath("Studio/software_render.svg")));
   addAction(softwareRenderTestAction);
   QObject::connect(softwareRenderTestAction, &QAction::triggered, this, []() {
       auto* w = new ArtifactSoftwareRenderTestWidget();
@@ -44,6 +47,7 @@ namespace Artifact {
   });
 
   auto* softwareCompositionTestAction = new QAction("Software Composition Test...", this);
+  softwareCompositionTestAction->setIcon(QIcon(resolveIconPath("Studio/software_composition.svg")));
   addAction(softwareCompositionTestAction);
   QObject::connect(softwareCompositionTestAction, &QAction::triggered, this, []() {
       auto* w = new ArtifactSoftwareCompositionTestWidget();
@@ -55,6 +59,7 @@ namespace Artifact {
   });
 
   auto* softwareLayerTestAction = new QAction("Software Layer Test...", this);
+  softwareLayerTestAction->setIcon(QIcon(resolveIconPath("Studio/software_layer.svg")));
   addAction(softwareLayerTestAction);
   QObject::connect(softwareLayerTestAction, &QAction::triggered, this, []() {
       auto* w = new ArtifactSoftwareLayerTestWidget();
@@ -66,6 +71,7 @@ namespace Artifact {
   });
 
   auto* layerCompositeTestAction = new QAction("Layer Composite Test...", this);
+  layerCompositeTestAction->setIcon(QIcon(resolveIconPath("Studio/layer_composite.svg")));
   addAction(layerCompositeTestAction);
   QObject::connect(layerCompositeTestAction, &QAction::triggered, this, []() {
       auto* w = new ArtifactLayerCompositeTestWidget();
@@ -76,6 +82,7 @@ namespace Artifact {
   });
 
   auto* timelineLayerTestAction = new QAction("Timeline Layer Test...", this);
+  timelineLayerTestAction->setIcon(QIcon(resolveIconPath("Studio/timeline_layer.svg")));
   addAction(timelineLayerTestAction);
   QObject::connect(timelineLayerTestAction, &QAction::triggered, this, []() {
       auto* w = new ArtifactTimelineLayerTestWidget();
@@ -89,6 +96,7 @@ namespace Artifact {
   addSeparator();
 
   auto* startSoftwareTestPipelineAction = new QAction("Software Test Pipeline を開始", this);
+  startSoftwareTestPipelineAction->setIcon(QIcon(resolveIconPath("Studio/pipeline.svg")));
   addAction(startSoftwareTestPipelineAction);
   QObject::connect(startSoftwareTestPipelineAction, &QAction::triggered, this, []() {
       auto* projectService = ArtifactProjectService::instance();

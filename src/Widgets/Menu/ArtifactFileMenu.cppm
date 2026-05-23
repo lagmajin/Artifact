@@ -203,40 +203,40 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
 {
     createProjectAction = new QAction("新規プロジェクト(&N)...");
     createProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_N));
-    createProjectAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/create_new_folder.svg")));
+    createProjectAction->setIcon(QIcon(resolveIconPath("Studio/create_new_folder.svg")));
 
     openProjectAction = new QAction("プロジェクトを開く(&O)...");
     openProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
-    openProjectAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/file_open.svg")));
+    openProjectAction->setIcon(QIcon(resolveIconPath("Studio/file_open.svg")));
 
     saveProjectAction = new QAction("保存(&S)");
     saveProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
-    saveProjectAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/save.svg")));
+    saveProjectAction->setIcon(QIcon(resolveIconPath("Studio/save.svg")));
 
     saveProjectAsAction = new QAction("名前を付けて保存(&A)...");
     saveProjectAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-    saveProjectAsAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/save_as.svg")));
+    saveProjectAsAction->setIcon(QIcon(resolveIconPath("Studio/save_as.svg")));
 
     closeProjectAction = new QAction("プロジェクトを閉じる");
-    closeProjectAction->setIcon(QIcon(resolveIconPath("MaterialVS/yellow/folder.svg")));
+    closeProjectAction->setIcon(QIcon(resolveIconPath("Studio/folder.svg")));
 
     newCompositionAction = new QAction("新規コンポジション(&C)...");
     newCompositionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
-    newCompositionAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/composition.svg")));
+    newCompositionAction->setIcon(QIcon(resolveIconPath("Studio/composition.svg")));
 
     importAssetsAction = new QAction("アセットを読み込み(&I)...");
     importAssetsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
-    importAssetsAction->setIcon(QIcon(resolveIconPath("MaterialVS/green/upload.svg")));
+    importAssetsAction->setIcon(QIcon(resolveIconPath("Studio/upload.svg")));
 
     revealProjectFolderAction = new QAction("プロジェクトフォルダを開く");
-    revealProjectFolderAction->setIcon(QIcon(resolveIconPath("MaterialVS/yellow/folder.svg")));
+    revealProjectFolderAction->setIcon(QIcon(resolveIconPath("Studio/folder.svg")));
 
     restartAction = new QAction("再起動");
-    restartAction->setIcon(QIcon(resolveIconPath("MaterialVS/blue/replay.svg")));
+    restartAction->setIcon(QIcon(resolveIconPath("Studio/replay.svg")));
     
     quitAction = new QAction("終了(&Q)");
     quitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
-    quitAction->setIcon(QIcon());
+    quitAction->setIcon(QIcon(resolveIconPath("Studio/quit.svg")));
 
     menu->addAction(createProjectAction);
     menu->addAction(openProjectAction);
@@ -250,6 +250,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addAction(closeProjectAction);
     menu->addAction(revealProjectFolderAction);
     recentProjectsMenu = menu->addMenu("最近使ったプロジェクト");
+    recentProjectsMenu->setIcon(QIcon(resolveIconPath("Studio/recent_projects.svg")));
     menu->addSeparator();
     menu->addAction(restartAction);
     menu->addAction(quitAction);
@@ -622,6 +623,7 @@ void ArtifactFileMenu::Impl::rebuildMenu()
             recentProjectsMenu->clear();
             if (recent.isEmpty()) {
                 auto* noRecent = recentProjectsMenu->addAction("なし");
+                noRecent->setIcon(QIcon(resolveIconPath("Studio/empty_state.svg")));
                 noRecent->setEnabled(false);
             } else {
                 for (const auto& path : recent) {
@@ -631,12 +633,14 @@ void ArtifactFileMenu::Impl::rebuildMenu()
 
                     // P0-1: Show full path in submenu for clarity
                     auto* fileAction = recentProjectsMenu->addAction(displayName);
+                    fileAction->setIcon(QIcon(resolveIconPath("Studio/file_open.svg")));
                     fileAction->setData(path);
                     fileAction->setStatusTip(path);
                     fileAction->setToolTip(path);
 
                     // P0-1: Add path as a disabled sub-item for visual clarity
                     auto* pathAction = recentProjectsMenu->addAction(QStringLiteral("  %1").arg(displayPath));
+                    pathAction->setIcon(QIcon(resolveIconPath("Studio/folder.svg")));
                     pathAction->setEnabled(false);
                     pathAction->setToolTip(path);
 

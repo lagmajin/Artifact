@@ -127,16 +127,18 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  : menu_(menu)
 {
  openScriptsFolderAction = new QAction(tr("Open Scripts Folder"));
- openScriptsFolderAction->setIcon(QIcon(resolveIconPath("Material/folder_open.svg")));
+ openScriptsFolderAction->setIcon(QIcon(resolveIconPath("Studio/folder_open.svg")));
 
  openHooksFolderAction = new QAction(tr("Open Hooks Folder"));
- openHooksFolderAction->setIcon(QIcon(resolveIconPath("Material/folder.svg")));
+ openHooksFolderAction->setIcon(QIcon(resolveIconPath("Studio/folder.svg")));
 
  hooksMenu = new QMenu(tr("Hooks"));
+ hooksMenu->setIcon(QIcon(resolveIconPath("Studio/hook.svg")));
 
  const QStringList hookNames = ArtifactPythonHookManager::knownHooks();
  for (const QString& hookName : hookNames) {
   QAction* action = hooksMenu->addAction(hookName);
+  action->setIcon(QIcon(resolveIconPath("Studio/hook.svg")));
   action->setData(hookName);
   action->setToolTip(hookName);
   hookActions.push_back(action);
