@@ -153,6 +153,8 @@ public:
     /// @param frameNumber Frame to decode
     /// @return Decoded frame as QImage
     QImage decodeFrameToQImage(int64_t frameNumber) const;
+
+    int64_t currentSourceFrameValue() const;
     
     /// Check if frame is available in cache
     bool isFrameCached(int64_t frameNumber) const;

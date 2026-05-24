@@ -33,6 +33,7 @@ module;
 #include <QFileInfo>
 #include <QStyle>
 #include <QApplication>
+#include <QEvent>
 #include <QMenu>
 #include <QDesktopServices>
 #include <QUrl>
@@ -739,7 +740,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   impl_->listViewButton->setText(QStringLiteral("List"));
   impl_->listViewButton->setToolTip(QStringLiteral("Show assets in list view"));
   impl_->listViewButton->setCheckable(true);
-  impl_->searchWidget->setPlaceholderText(QStringLiteral("Search assets..."));
+  impl_->searchWidget->setPlaceholderText(QStringLiteral("Search files..."));
   impl_->searchWidget->setClearButtonEnabled(true);
   impl_->searchWidget->setMinimumWidth(220);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -931,9 +932,12 @@ ArtifactAssetBrowser::Impl::~Impl()
 
   if (currentFileTypeFilter_ == "images") {
    return lower.endsWith(".png") || lower.endsWith(".jpg") ||
-          lower.endsWith(".jpeg") || lower.endsWith(".bmp") ||
+          lower.endsWith(".jpeg") || lower.endsWith(".jpe") ||
+          lower.endsWith(".jfif") || lower.endsWith(".bmp") ||
           lower.endsWith(".gif") || lower.endsWith(".tga") ||
-          lower.endsWith(".tiff") || lower.endsWith(".exr");
+          lower.endsWith(".tif") || lower.endsWith(".tiff") ||
+          lower.endsWith(".hdr") || lower.endsWith(".exr") ||
+          lower.endsWith(".webp");
   }
   else if (currentFileTypeFilter_ == "videos") {
    return lower.endsWith(".mp4") || lower.endsWith(".mov") ||
@@ -968,7 +972,12 @@ ArtifactAssetBrowser::Impl::~Impl()
 
  bool ArtifactAssetBrowser::Impl::isImageFile(const QString& fileName) const
  {
-  return fileType(fileName) == ArtifactCore::FileType::Image;
+  if (fileType(fileName) == ArtifactCore::FileType::Image) {
+    return true;
+  }
+  const QString suffix = QFileInfo(fileName).suffix().toLower();
+  return suffix == QStringLiteral("jpe") ||
+         suffix == QStringLiteral("jfif");
  }
 
  bool ArtifactAssetBrowser::Impl::isVideoFile(const QString& fileName) const
@@ -1076,7 +1085,7 @@ bool ArtifactAssetBrowser::Impl::isMissingAssetPath(const QString& filePath) con
 QString ArtifactAssetBrowser::Impl::syncStateText() const
 {
  auto* svc = ArtifactProjectService::instance();
- return svc ? QStringLiteral("Status: Project linked") : QStringLiteral("Status: Select a folder to browse assets");
+  return svc ? QStringLiteral("Status: Project linked") : QStringLiteral("Status: Open a folder to browse assets");
 }
 
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
@@ -1205,14 +1214,21 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
   QFuture<QImage> future = QtConcurrent::run([filePath, thumbSize]() -> QImage {
     const QFileInfo fileInfo(filePath);
     const QString suffix = fileInfo.suffix().toLower();
+    const auto isJpegExt = [&]() {
+      return suffix == QStringLiteral("jpg")
+          || suffix == QStringLiteral("jpeg")
+          || suffix == QStringLiteral("jpe")
+          || suffix == QStringLiteral("jfif");
+    };
     const auto isImageExt = [&]() {
       return suffix == QStringLiteral("png")
-          || suffix == QStringLiteral("jpg")
-          || suffix == QStringLiteral("jpeg")
+          || isJpegExt()
           || suffix == QStringLiteral("bmp")
           || suffix == QStringLiteral("gif")
           || suffix == QStringLiteral("tga")
+          || suffix == QStringLiteral("tif")
           || suffix == QStringLiteral("tiff")
+          || suffix == QStringLiteral("hdr")
           || suffix == QStringLiteral("exr")
           || suffix == QStringLiteral("webp");
     };
@@ -1236,6 +1252,16 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
         return image;
       }
 
+#ifdef _WIN32
+      if (isJpegExt()) {
+        QString wicError;
+        image = loadImageThumbnailViaWIC(filePath, thumbSize, &wicError);
+        if (!image.isNull()) {
+          return image;
+        }
+      }
+#endif
+
       QImageReader reader(filePath);
       reader.setAutoTransform(true);
       const QImage fallbackImage = reader.read();
@@ -1243,10 +1269,12 @@ void ArtifactAssetBrowser::Impl::startAsyncPreviewThumbnailGeneration(const QStr
         return fallbackImage.scaled(thumbSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
       }
 #ifdef _WIN32
-      QString wicError;
-      image = loadImageThumbnailViaWIC(filePath, thumbSize, &wicError);
-      if (!image.isNull()) {
-        return image;
+      if (!isJpegExt()) {
+        QString wicError;
+        image = loadImageThumbnailViaWIC(filePath, thumbSize, &wicError);
+        if (!image.isNull()) {
+          return image;
+        }
       }
       QString shellError;
       image = loadImageThumbnailViaWindowsShell(filePath, thumbSize, &shellError);
@@ -1407,7 +1435,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   if (leftHubRecentLabel_) {
    const QVector<RecentEntry> entries = directoryModel_ ? directoryModel_->recentEntries() : QVector<RecentEntry>{};
    if (entries.isEmpty()) {
-    leftHubRecentLabel_->setText(QStringLiteral("Recent folders appear here | Open a folder to continue"));
+    leftHubRecentLabel_->setText(QStringLiteral("Open a folder to continue | Recent folders appear here"));
     leftHubRecentLabel_->setToolTip(QStringLiteral("Select a folder to browse assets."));
    } else {
     QStringList names;
@@ -1430,7 +1458,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   if (leftHubSelectionLabel_) {
    const QStringList paths = selectedAssetPaths();
    if (paths.isEmpty()) {
-    leftHubSelectionLabel_->setText(QStringLiteral("Selection: 0 selected | Select an asset to inspect details"));
+    leftHubSelectionLabel_->setText(QStringLiteral("Select an asset to inspect details | Selection: 0 selected"));
     leftHubSelectionLabel_->setToolTip(QStringLiteral("Select an asset to inspect details."));
    } else {
     QString name = QFileInfo(paths.first()).fileName();
@@ -1586,6 +1614,9 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
   auto assetToolBar = new ArtifactAssetBrowserToolBar();
   impl_->searchEdit_ = assetToolBar->findChild<QLineEdit*>();
+  if (impl_->searchEdit_) {
+   impl_->searchEdit_->installEventFilter(this);
+  }
   impl_->upButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserUpButton"));
   impl_->refreshButton_ = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserRefreshButton"));
   auto* gridViewButton = assetToolBar->findChild<QToolButton*>(QStringLiteral("assetBrowserGridViewButton"));
@@ -1927,7 +1958,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
      updateFileInfo(selectedFiles.first());
     }
    } else if (impl_->fileInfoLabel_) {
-    impl_->fileInfoLabel_->setText(QStringLiteral("Select a file to inspect details"));
+    impl_->fileInfoLabel_->setText(QStringLiteral("Open a file to inspect details"));
    }
    selectionChanged(selectedFiles);
    impl_->refreshLeftHubSummary();
@@ -1964,7 +1995,7 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   auto fileInfoGroup = new QGroupBox("File Details");
   auto fileInfoLayout = new QVBoxLayout();
 
-  auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel(QStringLiteral("Select a file to inspect details"));
+  auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel(QStringLiteral("Open a file to inspect details"));
   fileInfoLabel->setWordWrap(true);
   fileInfoLabel->setAlignment(Qt::AlignTop | Qt::AlignLeft);
   {
@@ -2116,12 +2147,25 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   QWidget::keyPressEvent(event);
  }
 
- void ArtifactAssetBrowser::keyReleaseEvent(QKeyEvent* event)
- {
- }
+void ArtifactAssetBrowser::keyReleaseEvent(QKeyEvent* event)
+{
+}
 
- void ArtifactAssetBrowser::dragEnterEvent(QDragEnterEvent* event)
- {
+bool ArtifactAssetBrowser::eventFilter(QObject* watched, QEvent* event)
+{
+  if (watched == impl_->searchEdit_ && event && event->type() == QEvent::KeyPress) {
+   auto* keyEvent = static_cast<QKeyEvent*>(event);
+   if (keyEvent->key() == Qt::Key_Escape && impl_->searchEdit_ && !impl_->searchEdit_->text().isEmpty()) {
+    impl_->searchEdit_->clear();
+    return true;
+   }
+  }
+
+  return QWidget::eventFilter(watched, event);
+}
+
+void ArtifactAssetBrowser::dragEnterEvent(QDragEnterEvent* event)
+{
   // Accept file drops from external sources
   if (event->mimeData()->hasUrls()) {
    event->acceptProposedAction();

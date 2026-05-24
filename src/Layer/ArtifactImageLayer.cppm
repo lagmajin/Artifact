@@ -4,6 +4,7 @@ module;
 
 #include <QDebug>
 #include <QImage>
+#include <QJsonObject>
 #include <QMatrix4x4>
 #include <QPainter>
 #include <QFutureWatcher>
@@ -196,6 +197,17 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
 QString ArtifactImageLayer::sourcePath() const
 {
     return impl_->sourcePath_;
+}
+
+QJsonObject ArtifactImageLayer::toJson() const
+{
+    QJsonObject obj = ArtifactAbstract2DLayer::toJson();
+    obj["type"] = static_cast<int>(LayerType::Image);
+    obj["image.sourcePath"] = impl_->sourcePath_;
+    obj["image.fitToLayer"] = impl_->fitToLayer_;
+    obj["image.width"] = impl_->width_;
+    obj["image.height"] = impl_->height_;
+    return obj;
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGroups() const

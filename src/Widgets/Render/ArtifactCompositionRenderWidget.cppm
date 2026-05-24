@@ -68,6 +68,27 @@ struct LayerHitTestResult {
   QRectF bbox;
 };
 
+QString ramPreviewNotReadyReason(
+    const ArtifactRamPreviewFrameCacheState& state)
+{
+  if (state.failed) {
+   return QStringLiteral("failed");
+  }
+  if (!state.requested) {
+   return QStringLiteral("not-requested");
+  }
+  if (state.onDisk && !state.inRam) {
+   return QStringLiteral("on-disk-not-hydrated");
+  }
+  if (state.reason == QStringLiteral("playback-tick")) {
+   return QStringLiteral("playback-tick-not-playable");
+  }
+  if (!state.reason.trimmed().isEmpty()) {
+   return QStringLiteral("requested:%1").arg(state.reason.trimmed());
+  }
+  return QStringLiteral("requested-not-ready");
+}
+
 LayerDragMode hitTestLayerDragMode(const QRectF& bbox,
                                    const QPointF& viewportPos,
                                    ArtifactIRenderer* renderer)
@@ -292,34 +313,38 @@ int compositionPreviewIntervalMs(
     bool useRamPreviewFallback = false;
     QString ramPreviewFallbackReason = QStringLiteral("no-playback-service");
     bool playbackPlaying = false;
+    bool playbackAllowsRamFallbackWhilePlaying = false;
     if (auto* playback = ArtifactPlaybackService::instance()) {
      const auto playbackComp = playback->currentComposition();
      if (!playbackComp || (comp && playbackComp->id() == comp->id())) {
       targetFrame = playback->currentFrame();
       playbackPlaying = playback->isPlaying();
       const auto previewState = playback->ramPreviewFrameState(targetFrame.framePosition());
-      if (playbackPlaying) {
-       ramPreviewFallbackReason = QStringLiteral("playing");
-      } else if (!previewState.ready) {
-       ramPreviewFallbackReason =
-           previewState.failed ? QStringLiteral("failed")
-                               : QStringLiteral("not-ready");
+      playbackAllowsRamFallbackWhilePlaying =
+          playback->ramPreviewPlaybackFallbackWhilePlaying();
+      if (!previewState.ready) {
+       ramPreviewFallbackReason = ramPreviewNotReadyReason(previewState);
       } else if (!playback->tryGetRamPreviewFrameImage(
                          targetFrame.framePosition(), ramPreviewFrameImage)) {
-       ramPreviewFallbackReason = QStringLiteral("no-image");
+       ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
+      } else if (playbackPlaying && !playbackAllowsRamFallbackWhilePlaying) {
+       ramPreviewFallbackReason = QStringLiteral("playing-policy-disabled");
       } else {
        useRamPreviewFallback = true;
-       ramPreviewFallbackReason = QStringLiteral("ready");
+       ramPreviewFallbackReason =
+           playbackPlaying ? QStringLiteral("ready-playing")
+                           : QStringLiteral("ready");
       }
      } else {
       ramPreviewFallbackReason = QStringLiteral("composition-mismatch");
      }
     }
     const QString ramPreviewFallbackSummary =
-        QStringLiteral("ramPreviewFallback=%1 reason=%2 playing=%3")
+        QStringLiteral("ramPreviewFallback=%1 reason=%2 playing=%3 allowPlaying=%4")
             .arg(useRamPreviewFallback ? 1 : 0)
             .arg(ramPreviewFallbackReason)
-            .arg(playbackPlaying ? 1 : 0);
+            .arg(playbackPlaying ? 1 : 0)
+            .arg(playbackAllowsRamFallbackWhilePlaying ? 1 : 0);
     if (ramPreviewFallbackSummary != lastRamPreviewFallbackSummary_) {
      lastRamPreviewFallbackSummary_ = ramPreviewFallbackSummary;
      qCDebug(compositionWidgetLog) << "[CompositionRenderWidget][RamPreviewFallback]"

@@ -36,6 +36,7 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <QJsonObject>
 
 module Artifact.Layer.Composition;
 
@@ -63,6 +64,13 @@ CompositionID ArtifactCompositionLayer::sourceCompositionId() const {
 void ArtifactCompositionLayer::setCompositionId(const CompositionID &id) {
   impl_->id_ = id;
   Q_EMIT changed();
+}
+
+QJsonObject ArtifactCompositionLayer::toJson() const {
+  QJsonObject obj = ArtifactAbstractLayer::toJson();
+  obj["type"] = static_cast<int>(LayerType::Precomp);
+  obj["composition.sourceId"] = impl_->id_.toString();
+  return obj;
 }
 
 std::shared_ptr<ArtifactAbstractComposition>

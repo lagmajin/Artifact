@@ -244,6 +244,27 @@ QString playbackStateToString(PlaybackState state)
   }
 }
 
+QString ramPreviewNotReadyReason(
+    const ArtifactRamPreviewFrameCacheState &state)
+{
+  if (state.failed) {
+    return QStringLiteral("failed");
+  }
+  if (!state.requested) {
+    return QStringLiteral("not-requested");
+  }
+  if (state.onDisk && !state.inRam) {
+    return QStringLiteral("on-disk-not-hydrated");
+  }
+  if (state.reason == QStringLiteral("playback-tick")) {
+    return QStringLiteral("playback-tick-not-playable");
+  }
+  if (!state.reason.trimmed().isEmpty()) {
+    return QStringLiteral("requested:%1").arg(state.reason.trimmed());
+  }
+  return QStringLiteral("requested-not-ready");
+}
+
 bool floatColorEquals(const FloatColor &lhs, const FloatColor &rhs,
                       float epsilon = 0.0f) {
   if (epsilon <= 0.0f) {
@@ -2379,6 +2400,7 @@ public:
   QString contextMenuSubtitle_;
   QStringList contextMenuItems_;
   QVector<bool> contextMenuItemEnabled_;
+  int contextMenuSelectedIndex_ = -1;
   bool pieMenuVisible_ = false;
   PieMenuModel pieMenuModel_;
   QPointF pieMenuViewportPos_;
@@ -2743,6 +2765,7 @@ public:
   int viewportOverlayItemAt(const QPointF &viewportPos) const;
   int pieMenuItemAt(const QPointF &viewportPos) const;
   void drawPieMenuOverlay();
+  void updateContextMenuOverlayMousePos(const QPointF &viewportPos);
   void drawViewportUiOverlay();
 
   // 変更検出器へのアクセス (デバッグ用)
@@ -3179,6 +3202,10 @@ void CompositionRenderController::setPreviewQualityPreset(
 
   if (impl_->previewDownsample_ != factor) {
     impl_->previewDownsample_ = factor;
+    if (auto *playback = ArtifactPlaybackService::instance()) {
+      playback->invalidateRamPreviewCache(
+          QStringLiteral("preview-quality-changed"));
+    }
     if (impl_->hostWidth_ > 0 && impl_->hostHeight_ > 0) {
       // hostWidth_/hostHeight_ are already physical pixels; call renderer
       // directly
@@ -3786,6 +3813,7 @@ void CompositionRenderController::showCommandPaletteOverlay(
   impl_->contextMenuSubtitle_.clear();
   impl_->contextMenuItems_.clear();
   impl_->contextMenuItemEnabled_.clear();
+  impl_->contextMenuSelectedIndex_ = -1;
   impl_->pieMenuVisible_ = false;
   impl_->pieMenuModel_ = PieMenuModel{};
   impl_->pieMenuSelectedIndex_ = -1;
@@ -3810,6 +3838,7 @@ void CompositionRenderController::showContextMenuOverlay(
     impl_->contextMenuItemEnabled_.resize(impl_->contextMenuItems_.size());
     impl_->contextMenuItemEnabled_.fill(true);
   }
+  impl_->contextMenuSelectedIndex_ = impl_->viewportOverlayItemAt(viewportPos);
   impl_->commandPaletteVisible_ = false;
   impl_->commandPaletteItems_.clear();
   impl_->pieMenuVisible_ = false;
@@ -3836,6 +3865,7 @@ void CompositionRenderController::showPieMenuOverlay(
   impl_->contextMenuSubtitle_.clear();
   impl_->contextMenuItems_.clear();
   impl_->contextMenuItemEnabled_.clear();
+  impl_->contextMenuSelectedIndex_ = -1;
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
@@ -3854,6 +3884,7 @@ void CompositionRenderController::hideViewportOverlay() {
   impl_->contextMenuSubtitle_.clear();
   impl_->contextMenuItems_.clear();
   impl_->contextMenuItemEnabled_.clear();
+  impl_->contextMenuSelectedIndex_ = -1;
   impl_->pieMenuVisible_ = false;
   impl_->pieMenuModel_ = PieMenuModel{};
   impl_->pieMenuSelectedIndex_ = -1;
@@ -3864,6 +3895,10 @@ void CompositionRenderController::hideViewportOverlay() {
 bool CompositionRenderController::isViewportOverlayVisible() const {
   return impl_ && (impl_->commandPaletteVisible_ || impl_->contextMenuVisible_ ||
                    impl_->pieMenuVisible_);
+}
+
+bool CompositionRenderController::isContextMenuOverlayVisible() const {
+  return impl_ && impl_->contextMenuVisible_;
 }
 
 int CompositionRenderController::viewportOverlayItemAt(
@@ -3905,6 +3940,19 @@ void CompositionRenderController::updatePieMenuOverlayMousePos(
   }
 }
 
+void CompositionRenderController::updateContextMenuOverlayMousePos(
+    const QPointF &viewportPos) {
+  if (!impl_ || !impl_->contextMenuVisible_) {
+    return;
+  }
+  const int selected = impl_->viewportOverlayItemAt(viewportPos);
+  if (selected != impl_->contextMenuSelectedIndex_) {
+    impl_->contextMenuSelectedIndex_ = selected;
+    impl_->invalidateOverlayComposite();
+    markRenderDirty();
+  }
+}
+
 void CompositionRenderController::cancelPieMenuOverlay() {
   if (!impl_ || !impl_->pieMenuVisible_) {
     return;
@@ -3921,6 +3969,10 @@ void CompositionRenderController::setGpuBlendEnabled(bool enabled) {
     return;
   }
   impl_->gpuBlendEnabled_ = enabled;
+  if (auto *playback = ArtifactPlaybackService::instance()) {
+    playback->invalidateRamPreviewCache(
+        QStringLiteral("render-policy-changed"));
+  }
   impl_->invalidateBaseComposite();
   qWarning() << "[CompositionView] GPU blend user toggle changed"
              << "enabled=" << impl_->gpuBlendEnabled_ << "envDisable="
@@ -5656,10 +5708,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           ? std::max(previewDownsample_, interactivePreviewDownsampleFloor_)
           : (gpuBlendEnabled_ ? std::max(previewDownsample_, 2)
                               : previewDownsample_);
-  const float rcw = std::max(
+  const float previewRcw = std::max(
       1.0f, viewportW / static_cast<float>(effectivePreviewDownsample));
-  const float rch = std::max(
+  const float previewRch = std::max(
       1.0f, viewportH / static_cast<float>(effectivePreviewDownsample));
+  // GPU blend intermediates are composition images. Keeping them in viewport
+  // space makes the color result correct but shifts/scales the final blit.
+  const float rcw = gpuBlendEnabled_ ? std::max(1.0f, cw) : previewRcw;
+  const float rch = gpuBlendEnabled_ ? std::max(1.0f, ch) : previewRch;
 
   if (compositionRenderer_) {
     compositionRenderer_->SetCompositionSize(cw, ch);
@@ -5746,6 +5802,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   bool playbackSameComposition = false;
   ArtifactRamPreviewFrameCacheState playbackPreviewState;
   bool playbackPreviewStateValid = false;
+  bool playbackPreviewPendingBuild = false;
+  bool playbackAllowsRamFallbackWhilePlaying = false;
+  bool playbackPlaying = false;
   if (auto *playback = ArtifactPlaybackService::instance()) {
     const auto playbackComp = playback->currentComposition();
     const bool sameComposition =
@@ -5756,21 +5815,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     } else {
       playbackPreviewState = playback->ramPreviewFrameState(framePos);
       playbackPreviewStateValid = true;
-      if (playback->isPlaying()) {
-        ramPreviewFallbackReason = QStringLiteral("playing");
-      } else if (frameOutOfRange) {
+      playbackPreviewPendingBuild =
+          playback->isRamPreviewFramePendingBuild(framePos);
+      playbackAllowsRamFallbackWhilePlaying =
+          playback->ramPreviewPlaybackFallbackWhilePlaying();
+      playbackPlaying = playback->isPlaying();
+      if (frameOutOfRange) {
         ramPreviewFallbackReason = QStringLiteral("frame-out-of-range");
       } else if (!playbackPreviewState.ready) {
         ramPreviewFallbackReason =
-            playbackPreviewState.failed ? QStringLiteral("failed")
-                                : QStringLiteral("not-ready");
+            ramPreviewNotReadyReason(playbackPreviewState);
       } else if (!playback->tryGetRamPreviewFrameImage(framePos, ramPreviewFrameImage)) {
-        ramPreviewFallbackReason = QStringLiteral("no-image");
+        ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
       } else if (viewportInteracting_) {
         ramPreviewFallbackReason = QStringLiteral("viewport-interacting");
+      } else if (playbackPlaying && !playbackAllowsRamFallbackWhilePlaying) {
+        ramPreviewFallbackReason = QStringLiteral("playing-policy-disabled");
       } else {
         useRamPreviewFallback = true;
-        ramPreviewFallbackReason = QStringLiteral("ready");
+        ramPreviewFallbackReason =
+            playbackPlaying ? QStringLiteral("ready-playing")
+                            : QStringLiteral("ready");
       }
     }
   }
@@ -5778,6 +5843,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   float panY = 0.0f;
   renderer_->getPan(panX, panY);
   const float zoom = renderer_->getZoom();
+  const bool viewportTransformChangedSinceLastFrame =
+      std::abs(lastRenderKeyState_.zoom - zoom) > 0.0001f ||
+      std::abs(lastRenderKeyState_.panX - panX) > 0.5f ||
+      std::abs(lastRenderKeyState_.panY - panY) > 0.5f;
+  if (useRamPreviewFallback && viewportTransformChangedSinceLastFrame) {
+    useRamPreviewFallback = false;
+    ramPreviewFallbackReason = QStringLiteral("viewport-transform-changing");
+  }
   const QRectF visibleCanvasRect = viewportRectToCanvasRect(
       renderer_.get(), QPointF(0.0f, 0.0f), QPointF(viewportW, viewportH));
   const float roiPad = std::max(48.0f, 64.0f / std::max(0.001f, zoom));
@@ -6053,17 +6126,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->getPan(origPanX, origPanY);
       const float origViewW = hostWidth_;
       const float origViewH = hostHeight_;
-      const float offscreenScale =
-          (origViewW > 0.0f) ? (rcw / origViewW) : 1.0f;
 
       // -- 1: 背景を offscreen 座標系で準備 --
       // 背景矩形は一度 layerRTV に rasterize してから compute blend で
       // accum にシードする。これで accum/temp は Vulkan 互換の
       // linear storage image に保てる。
       renderer_->setViewportSize(rcw, rch);
-      renderer_->setCanvasSize(cw, ch);      // ← Composition Space に設定
-      renderer_->setZoom(origZoom);          // ← 現在のカメラズームを適用
-      renderer_->setPan(origPanX, origPanY); // ← 現在のカメラパンを適用
+      renderer_->setCanvasSize(cw, ch); // Composition-space offscreen target.
+      renderer_->setZoom(1.0f);
+      renderer_->setPan(0.0f, 0.0f);
       renderer_->setViewportRect(rcw, rch);
 
       const FloatColor layerBgColor = comp->backgroundColor();
@@ -6074,7 +6145,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << "rtSize=" << QSize(static_cast<int>(rcw), static_cast<int>(rch))
             << "viewport="
             << QSize(static_cast<int>(origViewW), static_cast<int>(origViewH))
-            << "zoom=" << origZoom << "pan=" << QPointF(origPanX, origPanY)
+            << "zoom=1 pan=(0,0)"
             << "bg="
             << QColor::fromRgbF(layerBgColor.r(), layerBgColor.g(),
                                 layerBgColor.b(), layerBgColor.a())
@@ -6087,22 +6158,58 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->setClearColor(viewportClearColor_);
         renderer_->setOverrideRTV(nullptr);
 
-      // Switch to offscreen-scaled coordinate system so the background aligns
-      // with the layer renders (both use offscreenScale-adjusted zoom/pan).
-      renderer_->setCanvasSize(rcw, rch);
-      renderer_->setZoom(origZoom * offscreenScale);
-      renderer_->setPan(origPanX * offscreenScale, origPanY * offscreenScale);
+      // Keep offscreen drawing in composition space. View zoom/pan is applied
+      // only when the completed accum texture is blitted to the visible FB.
+      renderer_->setCanvasSize(cw, ch);
+      renderer_->setZoom(1.0f);
+      renderer_->setPan(0.0f, 0.0f);
+
+      // Seed accum with the composition background through the same
+      // layerRTV -> LayerFloat -> blend path used by visible layers. This keeps
+      // GPU blend frames consistent with fallback/RAM preview frames.
+      renderer_->setOverrideRTV(layerRTV);
+      renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+      renderer_->clear();
+      drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
+                                      backgroundMode, checkerboardTileSize_,
+                                      cachedMayaGradientSprite_);
+      renderer_->flush();
+      renderer_->setOverrideRTV(nullptr);
+      renderer_->unbindColorTargetsForCompute();
+
+      ++layerToFloatConvertCount;
+      const bool convertedBackgroundToFloat = renderer_->convertLayerToFloat(
+          blendPipeline_.get(), layerSRV, layerFloatUAV,
+          static_cast<Diligent::Uint32>(renderPipeline_.width()),
+          static_cast<Diligent::Uint32>(renderPipeline_.height()));
+      Diligent::ITextureView *backgroundBlendSrc =
+          convertedBackgroundToFloat ? layerFloatSRV : layerSRV;
+      if (!convertedBackgroundToFloat) {
+        qWarning() << "[CompositionView] background-to-float conversion failed; "
+                      "falling back to legacy background SRV";
+      }
+      ++blendDispatchCount;
+      if (renderer_->blendLayers(blendPipeline_.get(), backgroundBlendSrc,
+                                 accumSRV, tempUAV,
+                                 ArtifactCore::BlendMode::Normal, 1.0f)) {
+        renderPipeline_.swapAccumAndTemp();
+        accumSRV = renderPipeline_.accumSRV();
+        tempUAV = renderPipeline_.tempUAV();
+      } else {
+        ++blendFailureCount;
+        qWarning() << "[CompositionView] background seed blend failed";
+      }
 
       basePassMs = markPhaseMs();
 
-      // Already in offscreen-scale coordinate system — layer loop uses it
+      // Already in composition-space offscreen coordinates; layer loop uses it
       // as-is.
 
       // -- 2: レイヤーブレンド（frameOutOfRange ならスキップ）--
       ArtifactCore::ProfileScope _profLayer(
           "LayerPass", ArtifactCore::ProfileCategory::Composite);
       if (!frameOutOfRange) {
-        const DetailLevel lod = detailLevelFromZoom(renderer_->getZoom());
+        const DetailLevel lod = detailLevelFromZoom(origZoom);
         renderer_->setDetailLevel(static_cast<LODManager::DetailLevel>(
             lod)); // Pass LOD to renderer/effects
         for (const auto &layer : layers) {
@@ -6128,12 +6235,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           // --- Feature 3: Layer Drawing Skip (LOD-based) ---
           // Skip rendering layers that are too small to be visible on screen.
           if (layerBounds.isValid()) {
-            const auto tl = renderer_->canvasToViewport(
-                {(float)layerBounds.left(), (float)layerBounds.top()});
-            const auto br = renderer_->canvasToViewport(
-                {(float)layerBounds.right(), (float)layerBounds.bottom()});
-            const float screenW = std::abs(br.x - tl.x);
-            const float screenH = std::abs(br.y - tl.y);
+            const float screenW =
+                std::abs(static_cast<float>(layerBounds.width()) * origZoom);
+            const float screenH =
+                std::abs(static_cast<float>(layerBounds.height()) * origZoom);
 
             if (lod == DetailLevel::Low) {
               if (screenW < 8.0f || screenH < 8.0f) {
@@ -7345,25 +7450,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           playback->isRamPreviewEnabled() && playbackPreviewStateValid &&
           playbackSameComposition && !playback->isPlaying() &&
           !viewportInteracting_ && !frameOutOfRange &&
-          !playbackPreviewState.ready;
+          !playbackPreviewState.ready && playbackPreviewPendingBuild;
       if (shouldCaptureRamPreview) {
         const QImage capturedFrame = renderer_->readbackToImage();
         if (!capturedFrame.isNull()) {
-          const QString captureReason =
-              QStringLiteral("composition-preview-readback;queue=%1;gen=%2;range=%3-%4")
-                  .arg(previewSummary.buildQueueReason)
-                  .arg(static_cast<qulonglong>(previewSummary.buildQueueGeneration))
-                  .arg(previewSummary.range.start())
-                  .arg(previewSummary.range.end());
-          const bool stored = playback->storeRamPreviewFrameImage(
-              framePos, capturedFrame, captureReason, true);
+          const QString renderPath = pipelineEnabled ? QStringLiteral("gpu-blend")
+                                                     : QStringLiteral("fallback");
+          const bool stored = playback->storeCompositionPreviewFrameImage(
+              framePos, capturedFrame, comp->id().toString(), previewDownsample_,
+              effectivePreviewDownsample, renderPath, QString(), true);
           if (stored && compositionViewLog().isDebugEnabled()) {
             qCDebug(compositionViewLog)
                 << "[CompositionView][RamPreviewCapture]"
                 << "frame=" << framePos
-                << "reason=" << captureReason
-                << "path=" << (pipelineEnabled ? QStringLiteral("gpu-blend")
-                                              : QStringLiteral("fallback"));
+                << "path=" << renderPath
+                << "rangeReady=" << previewSummary.buildRangeReady
+                << "queueNext=" << previewSummary.buildQueueNextFrame
+                << "queueGeneration="
+                << static_cast<qulonglong>(previewSummary.buildQueueGeneration);
           }
         } else if (compositionViewLog().isDebugEnabled()) {
           qCDebug(compositionViewLog)
@@ -7735,7 +7839,7 @@ void CompositionRenderController::Impl::drawViewportUiOverlay() {
     ::Artifact::drawViewportContextMenuOverlay(
         renderer_.get(), overlayWf, overlayHf, contextMenuRect(),
         contextMenuTitle_, contextMenuSubtitle_, contextMenuItems_,
-        contextMenuItemEnabled_);
+        contextMenuItemEnabled_, contextMenuSelectedIndex_);
   }
 
   if (pieMenuVisible_) {

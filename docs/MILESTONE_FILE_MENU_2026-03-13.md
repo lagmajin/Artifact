@@ -197,6 +197,8 @@ Done:
 - project 有無に応じた一部 enabled 切り替え
 - close/restart/quit の destructive confirmation
 - composition 作成と asset import の service bridge
+- recent project / contents viewer state の永続化は `QSettings` 直書きから `ArtifactAppSettings` 経由へ寄せ始めた
+- File Menu の状態保存は、薄い settings facade を経由する方向へ移行中
 
 未対応または弱い点は以下。
 

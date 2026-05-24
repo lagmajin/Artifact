@@ -224,7 +224,8 @@ __declspec(dllexport) void drawViewportContextMenuOverlay(ArtifactIRenderer *ren
                                    const QString &title,
                                    const QString &subtitle,
                                    const QStringList &items,
-                                   const QVector<bool> &enabledItems)
+                                   const QVector<bool> &enabledItems,
+                                   int selectedIndex)
 {
   if (!renderer) {
     return;
@@ -276,12 +277,14 @@ __declspec(dllexport) void drawViewportContextMenuOverlay(ArtifactIRenderer *ren
                               FloatColor{0.20f, 0.24f, 0.29f, 0.95f}, 1.0f);
       continue;
     }
-    if (i == 0 && enabled) {
+    if (i == selectedIndex) {
       renderer->drawSolidRect(static_cast<float>(row.left()),
                               static_cast<float>(row.top()),
                               static_cast<float>(row.width()),
                               static_cast<float>(row.height()),
-                              FloatColor{0.15f, 0.22f, 0.31f, 0.80f}, 1.0f);
+                              enabled ? FloatColor{0.15f, 0.22f, 0.31f, 0.80f}
+                                      : FloatColor{0.12f, 0.16f, 0.22f, 0.62f},
+                              1.0f);
     }
     renderer->drawText(row.adjusted(10.0, 0.0, -8.0, 0.0), items.at(i),
                        itemFont,

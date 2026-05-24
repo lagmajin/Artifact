@@ -10,6 +10,7 @@ module;
 #endif
 #include <DockAreaWidget.h>
 #include <DockManager.h>
+#include <DockOverlay.h>
 #include <DockWidget.h>
 #include <DockWidgetTab.h>
 #include <FloatingDockContainer.h>
@@ -253,6 +254,8 @@ void refreshFloatingWidgetTree(QWidget *widget) {
     return;
   }
 
+  applyLazyDockSurfacePalette(widget);
+
   // With WA_OpaquePaintEvent removed from the project panel hierarchy,
   // Qt's backing store now properly clears newly exposed areas during
   // resize.  We only need to ensure QTreeView's internal item layout
@@ -270,6 +273,19 @@ void refreshFloatingWidgetTree(QWidget *widget) {
   }
 
   widget->update();
+}
+
+void enableDockDropPreview(QObject *root) {
+  if (!root) {
+    return;
+  }
+
+  const auto overlays = root->findChildren<ads::CDockOverlay *>();
+  for (auto *overlay : overlays) {
+    if (overlay) {
+      overlay->enableDropPreview(true);
+    }
+  }
 }
 
 ads::CFloatingDockContainer *findFloatingDockContainer(QWidget *widget) {
@@ -399,6 +415,8 @@ void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
   }
 
   applyDarkNativeTitleBar(floatingWidget);
+  applyLazyDockSurfacePalette(floatingWidget);
+  enableDockDropPreview(floatingWidget);
   floatingWidget->ensurePolished();
   if (auto *layout = floatingWidget->layout()) {
     layout->activate();
@@ -463,7 +481,10 @@ public:
     dock->setProperty("artifactLazyWidgetCreationPending", false);
     dock->setProperty("artifactLazyWidgetStartupPending", false);
     applyLazyDockSurfacePalette(widget);
-    dock->setWidget(widget);
+    const auto insertMode = dock->property("artifactLazyFloatingDock").toBool()
+                                ? CDockWidget::ForceNoScrollArea
+                                : CDockWidget::AutoScrollArea;
+    dock->setWidget(widget, insertMode);
     if (auto *layout = widget->layout()) {
       layout->activate();
     }
@@ -867,6 +888,12 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->syncShapeToolOptions(this);
 
   impl_->dockManager = new CDockManager(this);
+  enableDockDropPreview(impl_->dockManager);
+  QTimer::singleShot(0, this, [this]() {
+    if (impl_ && impl_->dockManager) {
+      enableDockDropPreview(impl_->dockManager);
+    }
+  });
   impl_->dockStyleManager = new DockStyleManager(impl_->dockManager, this);
   if (qApp) {
     qApp->installEventFilter(this);
@@ -1136,7 +1163,7 @@ void ArtifactMainWindow::addDockedWidgetFloating(
 
   auto *dock = new CDockWidget(title, this);
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
-  dock->setWidget(widget);
+  dock->setWidget(widget, CDockWidget::ForceNoScrollArea);
   if (auto *aiWidget = qobject_cast<ArtifactAICloudWidget *>(widget)) {
     impl_->aiCloudWidget_ = aiWidget;
   }
@@ -1172,7 +1199,7 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
   dock->setObjectName(dockId.isEmpty() ? title : dockId);
   dock->setProperty("artifactLazyFloatingDock", true);
   auto *placeholder = createLazyDockPlaceholder(dock);
-  dock->setWidget(placeholder);
+  dock->setWidget(placeholder, CDockWidget::ForceNoScrollArea);
   impl_->lazyDockFactories.insert(dock, std::move(factory));
 
   QObject::connect(

@@ -70,6 +70,7 @@ import Core.AI.McpBridge;
 
 import Application.AppSettings;
 import Artifact.Widgets.PlaybackControlWidget;
+import Artifact.Widgets.PlaybackControlTestWidget;
 import Transform;
 import Draw;
 import Glow;
@@ -1304,14 +1305,20 @@ int main(int argc, char *argv[]) {
                    &ArtifactCompositionEditor::videoDebugMessage, status,
                    &ArtifactStatusBar::setTimelineDebugText);
 
+  const QRect playbackControlFloatingGeometry(120, 828, 720, 210);
+  mw->addDockedWidgetFloating(
+      QStringLiteral("Playback Control"), QStringLiteral("PlaybackControl"),
+      new ArtifactPlaybackControlWidget(mw), playbackControlFloatingGeometry);
+  mw->addDockedWidgetFloating(
+      QStringLiteral("Playback Control Test"),
+      QStringLiteral("PlaybackControlTest"),
+      new ArtifactPlaybackControlTestWidget(mw),
+      QRect(860, 828, 720, 210));
+
   QTimer::singleShot(
       0, mw,
       [=, &renderCenterWindow, &workspaceManager, &debugConsoleWidget,
        &frameDebugWidget, &debugHarnessWidget]() {
-    mw->addLazyDockedWidgetFloating(
-        QStringLiteral("Playback Control"), QStringLiteral("PlaybackControl"),
-        [mw]() -> QWidget* { return new ArtifactPlaybackControlWidget(mw); },
-        QRect(120, 828, 720, 210));
     mw->addLazyDockedWidgetFloating(
         QStringLiteral("Debug Console"), QStringLiteral("DebugConsole"),
         [mw, compositionEditor, &debugConsoleWidget]() mutable -> QWidget* {

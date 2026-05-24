@@ -201,6 +201,10 @@ Done:
 - `rebuildMenu()` は `ArtifactProjectManager::isProjectCreated()` だけで一括 enable/disable している
 - action handler は現状ほぼ `qDebug()` のみ
 - selection context や undo stack との接続はまだない
+- clipboard / selection / active composition の状態連動を少しずつ強化し始めた
+- 次の主題は `Paste` の実データ判定と、context-aware な enabled state の整理
+- `Paste` は layer clipboard payload を確認して enable する方向へ寄せた
+- `rebuildMenu()` は active composition の有無も見るようにしている
 
 したがって優先度が高いのは、まず `Undo/Redo` と `Clipboard/Delete` を本物のコマンドへつなぎ、その後に timeline 固有操作へ進む流れ。
 

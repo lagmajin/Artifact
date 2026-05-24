@@ -33,7 +33,6 @@ module;
 #include <QFileInfo>
 #include <QUrl>
 #include <QSignalBlocker>
-#include <QSettings>
 #include <QAudioFormat>
 #include <QAudioSink>
 #include <QMediaPlayer>
@@ -58,6 +57,8 @@ module;
 #include <cmath>
 #include <functional>
 #include <optional>
+
+import Application.AppSettings;
 #include <utility>
 #include <array>
 #include <mutex>
@@ -294,9 +295,9 @@ namespace Artifact
   void ArtifactContentsViewer::Impl::loadRecentSources()
   {
    recentSourcePaths.clear();
-   QSettings settings;
+   auto* settings = ArtifactCore::ArtifactAppSettings::instance();
    const QStringList stored =
-       settings.value(QStringLiteral("ContentsViewer/RecentSourcePaths")).toStringList();
+       settings ? settings->recentContentsViewerSourcePaths() : QStringList{};
    for (const auto& path : stored) {
     const QString trimmed = path.trimmed();
     if (trimmed.isEmpty() || recentSourcePaths.contains(trimmed)) {
@@ -326,9 +327,10 @@ namespace Artifact
     recentSourcePaths.removeLast();
    }
 
-   QSettings settings;
-   settings.setValue(QStringLiteral("ContentsViewer/RecentSourcePaths"), recentSourcePaths);
-   settings.setValue(QStringLiteral("ContentsViewer/LastSourcePath"), normalized);
+   if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    settings->setRecentContentsViewerSourcePaths(recentSourcePaths);
+    settings->setLastContentsViewerSourcePath(normalized);
+   }
    refreshRecentSourceCombo();
   }
 
@@ -345,10 +347,10 @@ namespace Artifact
    recentSourceCombo->clear();
    recentSourceCombo->setEnabled(!recentSourcePaths.isEmpty());
    if (recentSourcePaths.isEmpty()) {
-    recentSourceCombo->addItem(QStringLiteral("Recent Sources"));
+    recentSourceCombo->addItem(QStringLiteral("Select a recent source"));
     recentSourceCombo->setItemData(0, QString(), Qt::UserRole);
     recentSourceCombo->setCurrentIndex(0);
-    recentSourceCombo->setToolTip(QStringLiteral("No recent source files"));
+    recentSourceCombo->setToolTip(QStringLiteral("Open a file to add recent sources"));
     return;
    }
 
@@ -369,41 +371,43 @@ namespace Artifact
     }
    }
    recentSourceCombo->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
-   recentSourceCombo->setToolTip(QStringLiteral("Recent source files"));
+   recentSourceCombo->setToolTip(QStringLiteral("Select a recent source"));
   }
 
   void ArtifactContentsViewer::Impl::loadCompareSurfaceState()
   {
-   QSettings settings;
-   compareWipePercent = std::clamp(
-       settings.value(QStringLiteral("ContentsViewer/CompareWipePercent"), compareWipePercent).toInt(),
-       0, 100);
-   compareSidesSwapped = settings.value(
-       QStringLiteral("ContentsViewer/CompareSidesSwapped"),
-       compareSidesSwapped).toBool();
-   compareSourceAPath = settings.value(QStringLiteral("ContentsViewer/CompareSourceAPath")).toString().trimmed();
-   compareSourceBPath = settings.value(QStringLiteral("ContentsViewer/CompareSourceBPath")).toString().trimmed();
+   auto* settings = ArtifactCore::ArtifactAppSettings::instance();
+   if (!settings) {
+    return;
+   }
+   compareWipePercent = settings->contentsViewerCompareWipePercent();
+   compareSidesSwapped = settings->contentsViewerCompareSidesSwapped();
+   compareSourceAPath = settings->contentsViewerCompareSourceAPath().trimmed();
+   compareSourceBPath = settings->contentsViewerCompareSourceBPath().trimmed();
   }
 
   void ArtifactContentsViewer::Impl::saveCompareSurfaceState() const
   {
-   QSettings settings;
-   settings.setValue(QStringLiteral("ContentsViewer/CompareWipePercent"), compareWipePercent);
-   settings.setValue(QStringLiteral("ContentsViewer/CompareSidesSwapped"), compareSidesSwapped);
-   settings.setValue(QStringLiteral("ContentsViewer/CompareSourceAPath"), compareSourceAPath);
-   settings.setValue(QStringLiteral("ContentsViewer/CompareSourceBPath"), compareSourceBPath);
+   if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    settings->setContentsViewerCompareWipePercent(compareWipePercent);
+    settings->setContentsViewerCompareSidesSwapped(compareSidesSwapped);
+    settings->setContentsViewerCompareSourceAPath(compareSourceAPath);
+    settings->setContentsViewerCompareSourceBPath(compareSourceBPath);
+   }
   }
 
   void ArtifactContentsViewer::Impl::loadViewerAssignmentState()
   {
-   QSettings settings;
-   viewerAssignment = std::clamp(settings.value(QStringLiteral("ContentsViewer/ViewerAssignment"), viewerAssignment).toInt(), 1, 4);
+   if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    viewerAssignment = settings->contentsViewerAssignment();
+   }
   }
 
   void ArtifactContentsViewer::Impl::saveViewerAssignmentState() const
   {
-   QSettings settings;
-   settings.setValue(QStringLiteral("ContentsViewer/ViewerAssignment"), viewerAssignment);
+   if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    settings->setContentsViewerAssignment(viewerAssignment);
+   }
   }
 
   void ArtifactContentsViewer::Impl::updateViewerBadge()
@@ -440,7 +444,7 @@ namespace Artifact
     typeBadgeLabel->setText(QStringLiteral("Info"));
    }
   if (metaLabel) {
-    metaLabel->setText(QStringLiteral("Open a file or choose a recent source to inspect it"));
+    metaLabel->setText(QStringLiteral("Open a file to inspect it, or choose a recent source"));
   }
    if (stateLabel) {
     stateLabel->setText(QStringLiteral("State: Idle"));
@@ -1181,7 +1185,7 @@ namespace Artifact
 
    auto buildFallbackBody = [&](const QString& path, ArtifactCore::FileType type) {
    if (path.isEmpty()) {
-     return QStringLiteral("Open a file or choose a recent source to inspect it");
+     return QStringLiteral("Open a file to inspect it, or choose a recent source");
    }
     QFileInfo info(path);
     QStringList lines;
@@ -1506,7 +1510,7 @@ namespace Artifact
     metaParts << QStringLiteral("Missing");
     metaParts << currentFilePath;
   } else {
-    metaParts << QStringLiteral("Open a file or choose a recent source to inspect it");
+    metaParts << QStringLiteral("Open a file to inspect it, or choose a recent source");
    }
 
    if (currentFileType == ArtifactCore::FileType::Image && !originalImage.isNull()) {
@@ -2003,7 +2007,7 @@ namespace Artifact
     recentSourceCombo->setEditable(false);
     recentSourceCombo->setMinimumWidth(200);
     recentSourceCombo->setMaximumWidth(280);
-    recentSourceCombo->setToolTip(QStringLiteral("Recent source files"));
+   recentSourceCombo->setToolTip(QStringLiteral("Select a recent source"));
     QPalette pal = recentSourceCombo->palette();
     pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
     pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
@@ -2049,7 +2053,7 @@ namespace Artifact
     pal.setColor(QPalette::ButtonText, QColor(ArtifactCore::currentDCCTheme().textColor));
     viewerAssignmentCombo->setPalette(pal);
    }
-   metaLabel = new QLabel(QStringLiteral("Open a file or choose a recent source to inspect it"), headerWidget);
+   metaLabel = new QLabel(QStringLiteral("Open a file to inspect it, or choose a recent source"), headerWidget);
    {
     QFont metaFont = metaLabel->font();
     metaFont.setPointSize(10);
