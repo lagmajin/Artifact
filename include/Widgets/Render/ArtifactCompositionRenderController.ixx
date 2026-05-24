@@ -134,9 +134,11 @@ void showContextMenuOverlay(const QPointF& viewportPos, const QStringList& items
 void showPieMenuOverlay(const PieMenuModel& model, const QPointF& viewportPos);
 void hideViewportOverlay();
 bool isViewportOverlayVisible() const;
+bool isContextMenuOverlayVisible() const;
 int viewportOverlayItemAt(const QPointF& viewportPos) const;
 QString confirmPieMenuOverlaySelection();
 void updatePieMenuOverlayMousePos(const QPointF& viewportPos);
+void updateContextMenuOverlayMousePos(const QPointF& viewportPos);
 void cancelPieMenuOverlay();
 bool isPieMenuOverlayVisible() const;
 

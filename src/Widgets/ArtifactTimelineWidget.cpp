@@ -201,6 +201,43 @@ QColor layerTimelineColor(const ArtifactAbstractLayerPtr& layer)
   return QColor(94, 124, 189);
 }
 
+QString formatSelectedKeyframeSummary(
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers) {
+  if (markers.isEmpty()) {
+    return QStringLiteral("Keys: 0 selected");
+  }
+
+  qint64 minFrame = std::numeric_limits<qint64>::max();
+  qint64 maxFrame = std::numeric_limits<qint64>::min();
+  QSet<QString> propertyLabels;
+  for (const auto &marker : markers) {
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    minFrame = std::min(minFrame, frame);
+    maxFrame = std::max(maxFrame, frame);
+    propertyLabels.insert(
+        marker.label.isEmpty()
+            ? ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
+                  marker.propertyPath)
+            : marker.label);
+  }
+
+  QString propertyText;
+  if (propertyLabels.size() == 1) {
+    propertyText = *propertyLabels.begin();
+  } else {
+    propertyText = QStringLiteral("%1 properties").arg(propertyLabels.size());
+  }
+
+  const QString frameText =
+      minFrame == maxFrame
+          ? QStringLiteral("F%1").arg(minFrame)
+          : QStringLiteral("F%1-%2").arg(minFrame).arg(maxFrame);
+  return QStringLiteral("Keys: %1 | %2 | %3")
+      .arg(markers.size())
+      .arg(propertyText)
+      .arg(frameText);
+}
+
 struct CachedAudioWaveform {
   QString signature;
   QVector<float> peaks;
@@ -609,6 +646,20 @@ CurveEditorSnapshot buildCurveEditorSnapshot(
                           .arg(totalKeyCount);
   }
   return snapshot;
+}
+
+QString curveEditorSummaryForTracks(
+    const std::vector<ArtifactCore::CurveTrack> &tracks) {
+  int totalKeyCount = 0;
+  for (const auto &track : tracks) {
+    totalKeyCount += static_cast<int>(track.keys.size());
+  }
+  if (tracks.empty()) {
+    return QStringLiteral("No numeric keyframes");
+  }
+  return QStringLiteral("%1 curve track(s), %2 keyframe(s)")
+      .arg(tracks.size())
+      .arg(totalKeyCount);
 }
 
 std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
@@ -1959,6 +2010,7 @@ public:
   // ProjectChangedEvent と LayerChangedEvent が同一フレームで両方発火した場合に
   // refreshTracks() が 2 回実行されるのを防ぐ。
   bool pendingRefresh_ = false;
+  bool pendingKeyframeMoveRefresh_ = false;
   // selection sync の重複キューイング防止フラグ。
   // SelectionChangedEvent と LayerSelectionChangedEvent が同時に来ても
   // painter / labels 更新を 1 回にまとめる。
@@ -2003,20 +2055,28 @@ void ArtifactTimelineWidget::updateCacheVisuals()
     const auto summary = svc->ramPreviewSummary();
     const auto currentFrame = svc->currentFrame().framePosition();
     const auto currentState = svc->ramPreviewFrameState(currentFrame);
+    const bool currentPending =
+        svc->isRamPreviewFramePendingBuild(currentFrame);
     const QString currentNote =
         currentState.requested && !currentState.ready &&
                 !currentState.reason.trimmed().isEmpty()
             ? currentState.reason.trimmed()
             : QStringLiteral("-");
     impl_->scrubBar_->setToolTip(
-        QStringLiteral("RAM preview cache | ready %1 | requested %2 | pending %3 | failed %4 | inRam %5 | onDisk %6 | current %7 note %8")
+        QStringLiteral("RAM preview cache | ready %1/%2 | requested %3 | pending %4 | next %5 | rangeReady %6 | progress %7 | playFallback %8 | failed %9 | inRam %10 | onDisk %11 | current %12 | currentPending %13 | note %14")
             .arg(summary.readyFrames)
+            .arg(summary.rangeFrames)
             .arg(summary.requestedFrames)
             .arg(summary.buildQueuePendingFrames)
+            .arg(summary.buildQueueNextFrame)
+            .arg(summary.buildRangeReady ? 1 : 0)
+            .arg(QString::number(summary.buildRangeProgress * 100.0f, 'f', 0) + QStringLiteral("%"))
+            .arg(summary.playbackFallbackWhilePlaying ? 1 : 0)
             .arg(summary.failedFrames)
             .arg(summary.inRamFrames)
             .arg(summary.onDiskFrames)
             .arg(currentFrame)
+            .arg(currentPending ? 1 : 0)
             .arg(currentNote));
   }
 }
@@ -2038,42 +2098,45 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   }
 
   const auto payload = buildCurveEditorSnapshot(composition, selectionManager);
-  if (payload.signature == impl_->curveEditorSignature_) {
-    return;
+  const bool signatureChanged = payload.signature != impl_->curveEditorSignature_;
+  if (signatureChanged) {
+    impl_->curveEditorSignature_ = payload.signature;
+    impl_->curveTracks_ = payload.tracks;
+    impl_->curveBindings_ = payload.bindings;
+    qDebug() << "[CurveEditor] refresh"
+             << "tracks=" << payload.tracks.size()
+             << "bindings=" << payload.bindings.size()
+             << "summary=" << payload.summary;
+    impl_->curveEditor_->setTracks(payload.tracks);
   }
 
-  impl_->curveEditorSignature_ = payload.signature;
-  impl_->curveTracks_ = payload.tracks;
-  impl_->curveBindings_ = payload.bindings;
+  const auto markers = impl_->painterTrackView_
+                           ? impl_->painterTrackView_->selectedKeyframeMarkers()
+                           : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
+  const int selectionFocusTrack =
+      curveTrackIndexForSelection(impl_->curveBindings_, markers);
+  if (selectionFocusTrack >= 0) {
+    impl_->focusedCurveTrackIndex_ = selectionFocusTrack;
+  } else if (!markers.isEmpty()) {
+    impl_->focusedCurveTrackIndex_ = -1;
+  }
+
   if (impl_->curveEditorSummaryLabel_) {
-    QString summary = payload.summary;
-    if (impl_->graphEditorVisible_ && impl_->painterTrackView_) {
-      const auto markers = impl_->painterTrackView_->selectedKeyframeMarkers();
-      const int focusTrack =
-          curveTrackIndexForSelection(impl_->curveBindings_, markers);
-      if (focusTrack >= 0 && focusTrack < impl_->curveTracks_.size()) {
-        summary = QStringLiteral("%1 | Focus: %2")
-                      .arg(summary)
-                      .arg(impl_->curveTracks_[focusTrack].name);
-      }
+    QString summary =
+        signatureChanged ? payload.summary
+                         : curveEditorSummaryForTracks(impl_->curveTracks_);
+    if (impl_->graphEditorVisible_ &&
+        selectionFocusTrack >= 0 &&
+        selectionFocusTrack < impl_->curveTracks_.size()) {
+      summary = QStringLiteral("%1 | Focus: %2")
+                    .arg(summary)
+                    .arg(impl_->curveTracks_[selectionFocusTrack].name);
     }
     impl_->curveEditorSummaryLabel_->setText(summary);
   }
-  qDebug() << "[CurveEditor] refresh"
-           << "tracks=" << payload.tracks.size()
-           << "bindings=" << payload.bindings.size()
-           << "summary=" << payload.summary;
-  impl_->curveEditor_->setTracks(payload.tracks);
+
   impl_->curveEditor_->setCurrentFrame(
       static_cast<int64_t>(std::llround(std::max(0.0, impl_->currentFrame_))));
-  if (impl_->graphEditorVisible_ && impl_->painterTrackView_) {
-    const auto markers = impl_->painterTrackView_->selectedKeyframeMarkers();
-    const int focusTrack =
-        curveTrackIndexForSelection(impl_->curveBindings_, markers);
-    if (focusTrack >= 0) {
-      impl_->focusedCurveTrackIndex_ = focusTrack;
-    }
-  }
   if (impl_->graphEditorVisible_ && impl_->curveEditor_) {
     impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
   }
@@ -2081,6 +2144,7 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     impl_->curveEditor_->fitToContent();
     impl_->graphEditorNeedsFit_ = false;
   }
+  updateCurvePropertyList();
 }
 
 void ArtifactTimelineWidget::updateCurvePropertyList()
@@ -2903,27 +2967,66 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       this,
       [this](const LayerID &layerId, const QString &propertyPath,
              const qint64 fromFrame, const qint64 toFrame) {
+        const auto schedulePostMoveRefresh = [this]() {
+          if (!impl_->pendingKeyframeMoveRefresh_) {
+            impl_->pendingKeyframeMoveRefresh_ = true;
+            QMetaObject::invokeMethod(
+                this,
+                [this]() {
+                  if (!impl_) {
+                    return;
+                  }
+                  impl_->pendingKeyframeMoveRefresh_ = false;
+                  if (!impl_->painterTrackView_) {
+                    return;
+                  }
+                  refreshTracks();
+                  updateKeyframeState();
+                  updateSelectionState();
+                },
+                Qt::QueuedConnection);
+          }
+        };
         const auto composition = safeCompositionLookup(impl_->compositionId_);
         if (!composition || layerId.isNil() || propertyPath.trimmed().isEmpty()) {
+          schedulePostMoveRefresh();
+          Q_EMIT timelineDebugMessage(
+              QStringLiteral("Failed to move keyframe for invalid timeline target"));
           return;
         }
         const auto layer = composition->layerById(layerId);
         if (!layer) {
+          schedulePostMoveRefresh();
+          Q_EMIT timelineDebugMessage(
+              QStringLiteral("Failed to move keyframe because the layer was not found"));
           return;
         }
         const QString safePropertyPath =
             propertyPath.isNull() ? QStringLiteral("<null>") : propertyPath;
         if (moveTimelineKeyframe(composition, layer, propertyPath, fromFrame,
                                  toFrame)) {
-          refreshTracks();
-          updateKeyframeState();
+          schedulePostMoveRefresh();
           const QString safeFrom = QString::number(fromFrame);
           const QString safeTo = QString::number(toFrame);
           Q_EMIT timelineDebugMessage(
               QStringLiteral("Moved keyframe ") + safeFrom +
               QStringLiteral(" -> ") + safeTo +
               QStringLiteral(" for ") + safePropertyPath);
+        } else {
+          schedulePostMoveRefresh();
+          Q_EMIT timelineDebugMessage(
+              QStringLiteral("Failed to move keyframe ") +
+              QString::number(fromFrame) + QStringLiteral(" -> ") +
+              QString::number(toFrame) + QStringLiteral(" for ") +
+              safePropertyPath);
         }
+      });
+  QObject::connect(
+      painterTrackView,
+      &ArtifactTimelineTrackPainterView::keyframeSelectionChanged, this,
+      [this](int) {
+        updateKeyframeState();
+        updateSelectionState();
       });
   QObject::connect(
       layerTreeView, &ArtifactLayerTimelinePanelWrapper::propertyFocusChanged,
@@ -4084,7 +4187,16 @@ void ArtifactTimelineWidget::updateKeyframeState()
   const auto state = collectKeyframeNavigationState(
       composition, selectionManager,
       static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_))));
-  impl_->keyframeStatusLabel_->setText(formatKeyframeNavigationText(state));
+  const int selectedKeyframeCount =
+      impl_->painterTrackView_
+          ? static_cast<int>(
+                impl_->painterTrackView_->selectedKeyframeMarkers().size())
+          : 0;
+  QString summary = formatKeyframeNavigationText(state);
+  if (selectedKeyframeCount > 0) {
+    summary += QStringLiteral(" | Sel: %1").arg(selectedKeyframeCount);
+  }
+  impl_->keyframeStatusLabel_->setText(summary);
   if (impl_->easingLabButton_) {
     const bool hasSelection =
         impl_->painterTrackView_ &&
@@ -4121,6 +4233,9 @@ void ArtifactTimelineWidget::updateSelectionState()
     }
   }
 
+  const int effectiveSelectedCount =
+      selectedCount > 0 ? selectedCount : (currentLayer ? 1 : 0);
+
   if (currentLayer) {
     currentLayerName = currentLayer->layerName().trimmed();
     if (!impl_->lastCurrentLayerName_.isEmpty() &&
@@ -4145,22 +4260,24 @@ void ArtifactTimelineWidget::updateSelectionState()
     impl_->frameSummaryLabel_->setVisible(true);
   }
   if (impl_->selectionSummaryLabel_) {
+    QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
+        selectedMarkers;
     if (impl_->painterTrackView_) {
-      selectedKeyframeCount = static_cast<int>(
-          impl_->painterTrackView_->selectedKeyframeMarkers().size());
+      selectedMarkers = impl_->painterTrackView_->selectedKeyframeMarkers();
+      selectedKeyframeCount = static_cast<int>(selectedMarkers.size());
     }
-    if (selectedCount <= 0 && selectedKeyframeCount <= 0) {
+    if (effectiveSelectedCount <= 0 && selectedKeyframeCount <= 0) {
       impl_->selectionSummaryLabel_->setText(
           QStringLiteral("Selection: 0 layers | Select a layer to continue"));
-    } else if (selectedCount > 0 && selectedKeyframeCount <= 0) {
+    } else if (effectiveSelectedCount > 0 && selectedKeyframeCount <= 0) {
       impl_->selectionSummaryLabel_->setText(
           QStringLiteral("Selection: %1 layers | Keys: 0 selected | Read lane markers or add at current frame")
-              .arg(selectedCount));
+              .arg(effectiveSelectedCount));
     } else {
       impl_->selectionSummaryLabel_->setText(
-          QStringLiteral("Selection: %1 layers | Keys: %2")
-              .arg(selectedCount)
-              .arg(selectedKeyframeCount));
+          QStringLiteral("Selection: %1 layers | %2")
+              .arg(effectiveSelectedCount)
+              .arg(formatSelectedKeyframeSummary(selectedMarkers)));
     }
     impl_->selectionSummaryLabel_->setVisible(true);
   }
@@ -4176,8 +4293,9 @@ void ArtifactTimelineWidget::updateSelectionState()
     if (impl_->curveEditor_) {
       impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
     }
+  } else {
+    updateCurvePropertyList();
   }
-  updateCurvePropertyList();
 }
 
 void ArtifactTimelineWidget::syncPainterSelectionState(const bool forceRefresh)

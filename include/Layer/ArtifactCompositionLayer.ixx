@@ -30,6 +30,7 @@
 #include <utility>
 #include <variant>
 #include <vector>
+#include <QJsonObject>
 #include <QVariant>
 export module Artifact.Layer.Composition;
 
@@ -50,6 +51,7 @@ public:
   ~ArtifactCompositionLayer();
   CompositionID sourceCompositionId() const;
   void setCompositionId(const CompositionID &id);
+  QJsonObject toJson() const override;
 
   std::shared_ptr<ArtifactAbstractComposition> sourceComposition() const;
 

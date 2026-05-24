@@ -17,6 +17,11 @@ module;
 #include <QDateTime>
 #include <QElapsedTimer>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonParseError>
+#include <QSaveFile>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QPointF>
@@ -94,6 +99,7 @@ import Image.ExportOptions;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Composition;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
@@ -487,6 +493,9 @@ namespace Artifact
         }
         if (value == QLatin1String("cpu") || value == QLatin1String("software") || value == QLatin1String("qpainter") || value == QLatin1String("qpaint")) {
             return QStringLiteral("cpu");
+        }
+        if (value == QLatin1String("external") || value == QLatin1String("process") || value == QLatin1String("outofprocess")) {
+            return QStringLiteral("external");
         }
         return QStringLiteral("auto");
     }
@@ -1818,6 +1827,313 @@ namespace Artifact
             return renderBackend_;
         }
 
+        bool usesExternalRenderer(const ArtifactRenderJob& job) const
+        {
+            return normalizeRenderBackend(job.renderBackend) == QStringLiteral("external");
+        }
+
+        QString resolveExternalRendererExecutablePath() const
+        {
+            const QString exeName =
+#if defined(Q_OS_WIN)
+                QStringLiteral("artifact-renderer.exe");
+#else
+                QStringLiteral("artifact-renderer");
+#endif
+            const QString appDir = QCoreApplication::applicationDirPath();
+            const QString currentDir = QDir::currentPath();
+            const QStringList candidates = {
+                QDir(appDir).filePath(exeName),
+                QDir(appDir).filePath(QStringLiteral("../") + exeName),
+                QDir(currentDir).filePath(exeName),
+                QDir(currentDir).filePath(QStringLiteral("bin/") + exeName)
+            };
+            for (const QString& candidate : candidates) {
+                const QFileInfo info(candidate);
+                if (info.exists() && info.isFile()) {
+                    return info.absoluteFilePath();
+                }
+            }
+            return exeName;
+        }
+
+        QString externalRenderWorkDir(const ArtifactRenderJob& job, int index) const
+        {
+            QString tempRoot = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+            if (tempRoot.trimmed().isEmpty()) {
+                tempRoot = QDir::tempPath();
+            }
+            const QString safeId = job.compositionId.toString().trimmed().isEmpty()
+                ? QStringLiteral("composition")
+                : job.compositionId.toString();
+            const QString stamp = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
+            return QDir(tempRoot).filePath(
+                QStringLiteral("ArtifactStudio/external-render/%1_%2_%3")
+                    .arg(index)
+                    .arg(safeId)
+                    .arg(stamp));
+        }
+
+        static bool writeJsonDocumentFile(const QString& path, const QJsonObject& object, QString* errorMessage)
+        {
+            QDir dir(QFileInfo(path).absolutePath());
+            if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("Failed to create external renderer job directory: %1").arg(dir.absolutePath());
+                }
+                return false;
+            }
+
+            QSaveFile file(path);
+            if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("Failed to write external renderer job file: %1").arg(path);
+                }
+                return false;
+            }
+            file.write(QJsonDocument(object).toJson(QJsonDocument::Indented));
+            if (!file.commit()) {
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("Failed to commit external renderer job file: %1").arg(path);
+                }
+                return false;
+            }
+            return true;
+        }
+
+        QJsonObject buildExternalRendererJobJson(
+            const ArtifactRenderJob& job,
+            const QString& workDir,
+            QString* summaryPath,
+            QString* eventLogPath,
+            QString* cancelPath) const
+        {
+            const QString resolvedSummaryPath = QDir(workDir).filePath(QStringLiteral("summary.json"));
+            const QString resolvedEventLogPath = QDir(workDir).filePath(QStringLiteral("events.jsonl"));
+            const QString resolvedCancelPath = QDir(workDir).filePath(QStringLiteral("cancel"));
+            if (summaryPath) *summaryPath = resolvedSummaryPath;
+            if (eventLogPath) *eventLogPath = resolvedEventLogPath;
+            if (cancelPath) *cancelPath = resolvedCancelPath;
+
+            QJsonObject composition;
+            composition.insert(QStringLiteral("id"), job.compositionId.toString());
+            composition.insert(QStringLiteral("name"), job.compositionName);
+            composition.insert(QStringLiteral("frameStart"), job.startFrame);
+            composition.insert(QStringLiteral("frameEnd"), std::max(job.startFrame + 1, job.endFrame));
+            composition.insert(QStringLiteral("fps"), job.frameRate > 0.0 ? job.frameRate : 30.0);
+
+            QJsonObject output;
+            output.insert(QStringLiteral("path"), job.outputPath);
+            output.insert(QStringLiteral("format"), QStringLiteral("png"));
+            output.insert(QStringLiteral("width"), std::max(16, job.resolutionWidth));
+            output.insert(QStringLiteral("height"), std::max(16, job.resolutionHeight));
+
+            QJsonObject quality;
+            quality.insert(QStringLiteral("preset"), QStringLiteral("draft"));
+            quality.insert(QStringLiteral("backend"), QStringLiteral("diagnostic"));
+
+            auto collectCompositionSnapshot = [&](const ArtifactCompositionPtr& composition,
+                                                  auto&& self,
+                                                  std::vector<QString>& visitedIds) -> QJsonObject {
+                if (!composition) {
+                    return {};
+                }
+
+                const QString compositionId = composition->id().toString();
+                if (std::find(visitedIds.begin(), visitedIds.end(), compositionId) != visitedIds.end()) {
+                    return {};
+                }
+                visitedIds.push_back(compositionId);
+
+                QJsonObject snapshotObject = composition->toJson().object();
+                QJsonArray nestedCompositions;
+                const auto layers = composition->allLayerRef();
+                for (const auto& layer : layers) {
+                    const auto precompLayer = std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+                    if (!precompLayer) {
+                        continue;
+                    }
+
+                    const auto childComposition = precompLayer->sourceComposition();
+                    if (!childComposition) {
+                        continue;
+                    }
+
+                    const QJsonObject childSnapshot = self(childComposition, self, visitedIds);
+                    if (!childSnapshot.isEmpty()) {
+                        nestedCompositions.append(childSnapshot);
+                    }
+                }
+
+                snapshotObject.insert(QStringLiteral("compositions"), nestedCompositions);
+                return snapshotObject;
+            };
+
+            QJsonObject compositionSnapshot;
+            if (const ArtifactCompositionPtr composition = resolveComposition(job)) {
+                std::vector<QString> visitedIds;
+                compositionSnapshot = collectCompositionSnapshot(composition, collectCompositionSnapshot, visitedIds);
+            }
+
+            QJsonObject snapshot;
+            snapshot.insert(QStringLiteral("composition"), compositionSnapshot);
+            snapshot.insert(QStringLiteral("layers"), compositionSnapshot.value(QStringLiteral("layers")).toArray());
+            snapshot.insert(QStringLiteral("effects"), QJsonArray{});
+            snapshot.insert(QStringLiteral("assets"), QJsonArray{});
+
+            QJsonObject diagnostics;
+            diagnostics.insert(QStringLiteral("logLevel"), QStringLiteral("info"));
+            diagnostics.insert(QStringLiteral("saveCrashTrace"), true);
+            diagnostics.insert(QStringLiteral("cacheMode"), QStringLiteral("resume"));
+            diagnostics.insert(QStringLiteral("retryCount"), 1);
+            diagnostics.insert(QStringLiteral("cancelFile"), resolvedCancelPath);
+            diagnostics.insert(QStringLiteral("summaryFile"), resolvedSummaryPath);
+            diagnostics.insert(QStringLiteral("eventLogFile"), resolvedEventLogPath);
+
+            QJsonObject root;
+            root.insert(QStringLiteral("version"), 1);
+            root.insert(QStringLiteral("jobId"), QStringLiteral("render-queue-%1-%2").arg(job.compositionId.toString()).arg(job.startFrame));
+            root.insert(QStringLiteral("mode"), QStringLiteral("offline"));
+            root.insert(QStringLiteral("composition"), composition);
+            root.insert(QStringLiteral("output"), output);
+            root.insert(QStringLiteral("quality"), quality);
+            root.insert(QStringLiteral("snapshot"), snapshot);
+            root.insert(QStringLiteral("diagnostics"), diagnostics);
+            return root;
+        }
+
+        void applyExternalRendererEvent(int index, const QJsonObject& event)
+        {
+            const QString eventName = event.value(QStringLiteral("event")).toString();
+            if (eventName == QStringLiteral("renderProgress")) {
+                const int progress = std::clamp(event.value(QStringLiteral("progress")).toInt(0), 0, 100);
+                if (owner_) {
+                    QMetaObject::invokeMethod(owner_, [this, index, progress]() {
+                        queueManager.setJobProgress(index, progress);
+                    }, Qt::QueuedConnection);
+                }
+            } else if (eventName == QStringLiteral("renderCompleted")) {
+                if (owner_) {
+                    QMetaObject::invokeMethod(owner_, [this, index]() {
+                        queueManager.setJobProgress(index, 100);
+                    }, Qt::QueuedConnection);
+                }
+            }
+        }
+
+        void consumeExternalRendererJsonLines(int index, QByteArray* buffer)
+        {
+            if (!buffer) {
+                return;
+            }
+            for (;;) {
+                const int newline = buffer->indexOf('\n');
+                if (newline < 0) {
+                    break;
+                }
+                const QByteArray line = buffer->left(newline).trimmed();
+                buffer->remove(0, newline + 1);
+                if (line.isEmpty()) {
+                    continue;
+                }
+                QJsonParseError parseError;
+                const QJsonDocument doc = QJsonDocument::fromJson(line, &parseError);
+                if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+                    applyExternalRendererEvent(index, doc.object());
+                }
+            }
+        }
+
+        bool runExternalRendererJob(const ArtifactRenderJob& job, int index, QString* failureReason)
+        {
+            const QString format = deriveContainerFromJob(job);
+            if (format != QStringLiteral("png")) {
+                if (failureReason) {
+                    *failureReason = QStringLiteral("External renderer currently supports PNG sequence jobs only");
+                }
+                return false;
+            }
+
+            const QString workDir = externalRenderWorkDir(job, index);
+            QString summaryPath;
+            QString eventLogPath;
+            QString cancelPath;
+            const QJsonObject jobJson = buildExternalRendererJobJson(job, workDir, &summaryPath, &eventLogPath, &cancelPath);
+            const QString jobPath = QDir(workDir).filePath(QStringLiteral("job.json"));
+            if (!writeJsonDocumentFile(jobPath, jobJson, failureReason)) {
+                return false;
+            }
+
+            QProcess process;
+            process.setProcessChannelMode(QProcess::SeparateChannels);
+            QStringList args;
+            args << QStringLiteral("--job") << jobPath;
+
+            const QString executable = resolveExternalRendererExecutablePath();
+            process.start(executable, args);
+            if (!process.waitForStarted(10000)) {
+                if (failureReason) {
+                    *failureReason = QStringLiteral("Failed to start external renderer: %1").arg(executable);
+                }
+                return false;
+            }
+
+            QByteArray stdoutBuffer;
+            QByteArray stderrBuffer;
+            auto consumeOutput = [&]() {
+                stdoutBuffer.append(process.readAllStandardOutput());
+                stderrBuffer.append(process.readAllStandardError());
+                consumeExternalRendererJsonLines(index, &stdoutBuffer);
+                consumeExternalRendererJsonLines(index, &stderrBuffer);
+            };
+
+            while (!process.waitForFinished(100)) {
+                consumeOutput();
+                if (shutdownRequested_.load(std::memory_order_acquire) ||
+                    queueManager.getJob(index).status != ArtifactRenderJob::Status::Rendering) {
+                    QFile cancelFile(cancelPath);
+                    if (cancelFile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+                        cancelFile.write("cancel\n");
+                    }
+                    if (!process.waitForFinished(3000)) {
+                        process.terminate();
+                        if (!process.waitForFinished(3000)) {
+                            process.kill();
+                            process.waitForFinished(3000);
+                        }
+                    }
+                    if (failureReason) {
+                        *failureReason = QStringLiteral("External rendering cancelled");
+                    }
+                    return false;
+                }
+            }
+            consumeOutput();
+            consumeExternalRendererJsonLines(index, &stdoutBuffer);
+            consumeExternalRendererJsonLines(index, &stderrBuffer);
+
+            if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
+                if (failureReason) {
+                    const QString stderrText = QString::fromUtf8(stderrBuffer).trimmed();
+                    *failureReason = stderrText.isEmpty()
+                        ? QStringLiteral("External renderer failed with exit code %1").arg(process.exitCode())
+                        : stderrText;
+                }
+                return false;
+            }
+
+            QFile summaryFile(summaryPath);
+            if (summaryFile.open(QIODevice::ReadOnly)) {
+                QJsonParseError parseError;
+                const QJsonDocument summaryDoc = QJsonDocument::fromJson(summaryFile.readAll(), &parseError);
+                if (parseError.error == QJsonParseError::NoError && summaryDoc.isObject()) {
+                    applyExternalRendererEvent(index, summaryDoc.object());
+                }
+            }
+
+            return true;
+        }
+
         bool ensureGpuRendererInitialized(int width, int height, QString* failureReason)
         {
             if (!gpuRenderer_) {
@@ -2853,6 +3169,25 @@ namespace Artifact
                 std::atomic<bool> success = true;
                 std::atomic<int> framesRendered = 0;
                 QString failureReason;
+
+                if (impl_->usesExternalRenderer(job)) {
+                    const bool externalSuccess = impl_->runExternalRendererJob(job, i, &failureReason);
+                    QMetaObject::invokeMethod(this, [this, i, externalSuccess, failureReason, anyFailure]() {
+                        if (externalSuccess) {
+                            impl_->queueManager.setJobProgress(i, 100);
+                            impl_->queueManager.setJobCompleted(i);
+                        } else if (impl_->queueManager.getJob(i).status == ArtifactRenderJob::Status::Canceled) {
+                            impl_->queueManager.setJobProgress(i, 0);
+                        } else {
+                            const QString reason = failureReason.trimmed().isEmpty()
+                                ? QStringLiteral("External renderer failed")
+                                : failureReason;
+                            anyFailure->store(true, std::memory_order_release);
+                            impl_->queueManager.markJobFailed(i, reason);
+                        }
+                    }, Qt::QueuedConnection);
+                    continue;
+                }
 
                 const ArtifactCompositionPtr composition = impl_->resolveComposition(job);
                 const ArtifactCompositionPtr renderComposition = impl_->cloneCompositionSnapshot(composition);

@@ -1907,6 +1907,11 @@ protected:
       event->accept();
       return;
     }
+    if (controller_ && controller_->isContextMenuOverlayVisible()) {
+      controller_->updateContextMenuOverlayMousePos(event->position());
+      event->accept();
+      return;
+    }
 
     // Recover isPanning_ state if grabMouse() didn't work on WA_NativeWindow
     if (!isPanning_ && (event->buttons() & Qt::MiddleButton) && controller_) {

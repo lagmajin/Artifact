@@ -76,8 +76,13 @@ struct ArtifactRamPreviewSummary {
   int failedFrames = 0;
   int inRamFrames = 0;
   int onDiskFrames = 0;
+  int rangeFrames = 0;
+  float buildRangeProgress = 0.0f;
   int buildQueuePendingFrames = 0;
+  int64_t buildQueueNextFrame = -1;
   bool buildQueueActive = false;
+  bool buildRangeReady = false;
+  bool playbackFallbackWhilePlaying = false;
   uint64_t buildQueueGeneration = 0;
   QString buildQueueReason;
   float hitRate = 0.0f;
@@ -193,10 +198,13 @@ public:
   void setRamPreviewRange(const FrameRange &range);
   FrameRange ramPreviewRange() const;
   void clearRamPreviewCache();
+  void invalidateRamPreviewCache(const QString &reason = {});
   void prewarmRamPreviewAroundCurrentFrame();
   void requestRamPreviewBuild(const FrameRange &range,
                               const QString &reason = {});
   void cancelRamPreviewBuild(const QString &reason = {});
+  void setRamPreviewPlaybackFallbackWhilePlaying(bool enabled);
+  bool ramPreviewPlaybackFallbackWhilePlaying() const;
   float ramPreviewHitRate() const;
   int ramPreviewCachedFrameCount() const; // Updated to improve performance
   int ramPreviewRequestedFrameCount() const;
@@ -206,6 +214,8 @@ public:
   std::vector<bool> ramPreviewCacheBitmap() const;
   ArtifactRamPreviewFrameCacheState ramPreviewFrameState(int64_t frame) const;
   ArtifactRamPreviewSummary ramPreviewSummary() const;
+  bool isRamPreviewFramePendingBuild(int64_t frame) const;
+  int64_t nextRamPreviewBuildFrame() const;
   bool tryGetRamPreviewFrameImage(int64_t frame,
                                   ArtifactCore::ImageF32x4_RGBA &outImage) const;
   void markRamPreviewFrameRequested(int64_t frame, const QString &reason = {});
@@ -214,6 +224,14 @@ public:
                                  const QImage &image,
                                  const QString &reason = {},
                                  bool persistToDisk = true);
+  bool storeCompositionPreviewFrameImage(int64_t frame,
+                                         const QImage &image,
+                                         const QString &compositionId,
+                                         int previewDownsample,
+                                         int effectiveDownsample,
+                                         const QString &renderPath,
+                                         const QString &reason = {},
+                                         bool persistToDisk = true);
   void markRamPreviewFrameFailed(int64_t frame, const QString &reason);
   void markRamPreviewFrameOnDisk(int64_t frame, bool onDisk = true);
   void clearRamPreviewFrameFailure(int64_t frame);

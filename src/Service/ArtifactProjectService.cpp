@@ -426,11 +426,10 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
 
           if (selectedIndex >= 0 && newLayerIndex >= 0 &&
               newLayerIndex != selectedIndex) {
-            // appendLayerTop() で新規レイヤーは一旦先頭に入る。
-            // その後、元の選択レイヤーの index に戻すと「選択レイヤーの上」
-            // ちょうど 1 枚分に収まる。
+            // Internal order is back-to-front. Insert one slot after the
+            // selected layer so the new layer appears above it in the timeline.
             const int targetIndex =
-                std::clamp(selectedIndex, 0,
+                std::clamp(selectedIndex + 1, 0,
                            std::max(0, static_cast<int>(allLayers.size()) - 1));
             comp->moveLayerToIndex(result.layer->id(), targetIndex);
           }

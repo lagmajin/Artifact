@@ -353,6 +353,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
   if (value == QStringLiteral("cpu") || value == QStringLiteral("software") || value == QStringLiteral("qpainter")) {
     return QStringLiteral("cpu");
   }
+  if (value == QStringLiteral("external") || value == QStringLiteral("process") || value == QStringLiteral("outofprocess")) {
+    return QStringLiteral("external");
+  }
   return QStringLiteral("auto");
 }
 	
@@ -408,7 +411,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
 
     impl_->renderBackendCombo = new QComboBox();
     impl_->renderBackendCombo->addItems(QStringList{
-      "auto", "cpu", "gpu"
+      "auto", "cpu", "gpu", "external"
     });
     formLayout->addRow("Render Backend:", impl_->renderBackendCombo);
 

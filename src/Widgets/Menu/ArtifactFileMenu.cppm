@@ -18,7 +18,6 @@ module;
 #include <QProcess>
 #include <QCoreApplication>
 #include <QTimer>
-#include <QSettings>
 #include <QProgressDialog>
 #include <QPainter>
 #include <QImage>
@@ -31,6 +30,7 @@ import std;
 
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Application.AppSettings;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
 import Undo.UndoManager;
@@ -42,47 +42,40 @@ namespace Artifact {
 using namespace ArtifactCore;
 namespace {
 constexpr int kMaxRecentProjects = 5;
-constexpr const char* kRecentFilesKey = "recentProjects";
-
-QStringList readRecentProjects()
-{
-    QSettings settings;
-    return settings.value(kRecentFilesKey, QStringList()).toStringList();
-}
-
-void writeRecentProjects(const QStringList& paths)
-{
-    QSettings settings;
-    settings.setValue(kRecentFilesKey, paths);
-}
 
 void addRecentProject(const QString& path)
 {
-    auto recent = readRecentProjects();
+    if (path.isEmpty()) {
+        return;
+    }
+    auto* settings = ArtifactAppSettings::instance();
+    if (!settings) {
+        return;
+    }
+    auto recent = settings->recentProjectPaths();
     recent.removeAll(path);
     recent.prepend(path);
     while (recent.size() > kMaxRecentProjects) {
         recent.removeLast();
     }
-    writeRecentProjects(recent);
+    settings->setRecentProjectPaths(recent);
 }
 
-bool isSupportedAssetPath(const QString& path)
+QStringList pruneMissingRecentProjects(const QStringList& paths)
 {
-    static const QSet<QString> kExt = {
-        QStringLiteral("png"), QStringLiteral("jpg"), QStringLiteral("jpeg"),
-        QStringLiteral("bmp"), QStringLiteral("tif"), QStringLiteral("tiff"),
-        QStringLiteral("exr"), QStringLiteral("hdr"),
-        QStringLiteral("mp4"), QStringLiteral("mov"), QStringLiteral("mkv"),
-        QStringLiteral("avi"), QStringLiteral("webm"),
-        QStringLiteral("mp3"), QStringLiteral("wav"), QStringLiteral("flac"),
-        QStringLiteral("ogg"), QStringLiteral("aac"), QStringLiteral("m4a"),
-        QStringLiteral("obj"), QStringLiteral("fbx"),
-        QStringLiteral("gltf"), QStringLiteral("glb"),
-        QStringLiteral("abc"), QStringLiteral("usd"),
-        QStringLiteral("usda"), QStringLiteral("usdc")
-    };
-    return kExt.contains(QFileInfo(path).suffix().toLower());
+    QStringList pruned;
+    QSet<QString> seen;
+    pruned.reserve(paths.size());
+    for (const QString& path : paths) {
+        if (path.isEmpty() || seen.contains(path)) {
+            continue;
+        }
+        seen.insert(path);
+        if (QFileInfo(path).exists()) {
+            pruned.push_back(path);
+        }
+    }
+    return pruned;
 }
 
 QString supportedAssetFilter()
@@ -196,6 +189,7 @@ public:
     void handleExportCurrentFrame();
     void handleExportWorkArea();
     void handleExportProjectPackage();
+    void openProjectPath(const QString& path, bool addToRecent);
 };
 
 ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
@@ -270,30 +264,37 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
 void ArtifactFileMenu::Impl::handleCreateProject()
 {
     if (!menu_) return;
-    auto dir = QFileDialog::getExistingDirectory(menu_, "新規プロジェクトの保存先を選択");
-    if (dir.isEmpty()) return;
-    const QString name = QFileInfo(dir).fileName();
-    auto& manager = ArtifactProjectManager::getInstance();
-    auto result = manager.createProject(UniString(name), true);
-    if (!result.isSuccess) {
-        qWarning() << "Create project failed";
-    } else {
-        // プロジェクト作成に成功したら履歴に追加
-        // manager.currentProjectPath() はディレクトリパスまたはファイルパスを返す可能性がある
-        QString projectPath = manager.currentProjectPath();
-        if (!projectPath.isEmpty()) {
-            addRecentProject(projectPath);
-        }
+    if (!confirmUnsavedChanges(menu_, QStringLiteral("新規プロジェクトを作成"))) {
+        return;
     }
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        menu_, QStringLiteral("新規プロジェクト"),
+        QStringLiteral("プロジェクト名:"),
+        QLineEdit::Normal, QStringLiteral("UntitledProject"), &ok);
+    if (!ok || name.trimmed().isEmpty()) {
+        return;
+    }
+    auto& manager = ArtifactProjectManager::getInstance();
+    auto result = manager.createProject(UniString(name.trimmed()), true);
+    if (!result.isSuccess) {
+        QMessageBox::warning(menu_, QStringLiteral("新規プロジェクト"),
+                             QStringLiteral("プロジェクトを作成できませんでした。"));
+        return;
+    }
+    const QString projectPath = manager.currentProjectPath();
+    addRecentProject(projectPath);
 }
 
 void ArtifactFileMenu::Impl::handleOpenProject()
 {
     if (!menu_) return;
+    if (!confirmUnsavedChanges(menu_, QStringLiteral("別のプロジェクトを開く"))) {
+        return;
+    }
     const QString filePath = QFileDialog::getOpenFileName(menu_, "プロジェクトを開く", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
     if (filePath.isEmpty()) return;
-    addRecentProject(filePath);
-    ArtifactProjectManager::getInstance().loadFromFile(filePath);
+    openProjectPath(filePath, true);
 }
 
 void ArtifactFileMenu::Impl::handleSaveProject()
@@ -304,12 +305,13 @@ void ArtifactFileMenu::Impl::handleSaveProject()
     if (path.isEmpty()) {
         path = QFileDialog::getSaveFileName(menu_, "プロジェクトを保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
         if (path.isEmpty()) return;
-        addRecentProject(path);
     }
     auto result = manager.saveToFile(path);
     if (!result.success) {
         qWarning() << "Save project failed";
+        return;
     }
+    addRecentProject(path);
 }
 
 void ArtifactFileMenu::Impl::handleSaveProjectAs()
@@ -317,11 +319,12 @@ void ArtifactFileMenu::Impl::handleSaveProjectAs()
     if (!menu_) return;
     const QString path = QFileDialog::getSaveFileName(menu_, "名前を付けて保存", QString(), "Artifact Project (*.artifact *.json);;All Files (*.*)");
     if (path.isEmpty()) return;
-    addRecentProject(path);
     auto result = ArtifactProjectManager::getInstance().saveToFile(path);
     if (!result.success) {
         qWarning() << "Save project as failed";
+        return;
     }
+    addRecentProject(path);
 }
 
 void ArtifactFileMenu::Impl::handleNewComposition()
@@ -365,6 +368,12 @@ void ArtifactFileMenu::Impl::handleNewComposition()
 void ArtifactFileMenu::Impl::handleImportAssets()
 {
     if (!menu_) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || !svc->hasProject()) {
+        QMessageBox::warning(menu_, QStringLiteral("アセットを読み込み"),
+                             QStringLiteral("先にプロジェクトを開いてください。"));
+        return;
+    }
     const QStringList files = QFileDialog::getOpenFileNames(
         menu_,
         QStringLiteral("アセットを読み込み"),
@@ -372,19 +381,10 @@ void ArtifactFileMenu::Impl::handleImportAssets()
         supportedAssetFilter()
     );
     if (files.isEmpty()) return;
-    QStringList supported;
-    supported.reserve(files.size());
-    for (const QString& path : files) {
-        if (isSupportedAssetPath(path)) {
-            supported.push_back(path);
-        }
-    }
-    if (supported.isEmpty()) {
-        qWarning() << "No supported asset files selected";
-        return;
-    }
-    if (auto* svc = ArtifactProjectService::instance()) {
-        svc->importAssetsFromPaths(supported);
+    const QStringList imported = svc->importAssetsFromPaths(files);
+    if (imported.isEmpty()) {
+        QMessageBox::warning(menu_, QStringLiteral("アセットを読み込み"),
+                             QStringLiteral("読み込めるアセットがありませんでした。"));
     }
 }
 
@@ -393,6 +393,40 @@ void ArtifactFileMenu::Impl::handleRevealProjectFolder()
     const QString path = ArtifactProjectManager::getInstance().currentProjectPath();
     if (path.isEmpty()) return;
     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+}
+
+void ArtifactFileMenu::Impl::openProjectPath(const QString& path, bool addToRecent)
+{
+    if (!menu_ || path.isEmpty()) {
+        return;
+    }
+    if (!QFileInfo(path).exists()) {
+        QMessageBox::warning(menu_, QStringLiteral("プロジェクトを開く"),
+                             QStringLiteral("ファイルが見つかりません。\n%1").arg(path));
+        auto* settings = ArtifactAppSettings::instance();
+        if (!settings) {
+            return;
+        }
+        auto recent = settings->recentProjectPaths();
+        recent.removeAll(path);
+        settings->setRecentProjectPaths(recent);
+        cachedRecentProjects_.clear();
+        return;
+    }
+
+    auto& manager = ArtifactProjectManager::getInstance();
+    const QString beforePath = manager.currentProjectPath();
+    manager.loadFromFile(path);
+    const QString afterPath = manager.currentProjectPath();
+    const bool opened = afterPath == path || (beforePath != afterPath && !afterPath.isEmpty());
+    if (!opened) {
+        QMessageBox::warning(menu_, QStringLiteral("プロジェクトを開く"),
+                             QStringLiteral("プロジェクトを開けませんでした。\n%1").arg(path));
+        return;
+    }
+    if (addToRecent) {
+        addRecentProject(path);
+    }
 }
 
 void ArtifactFileMenu::Impl::handleExportCurrentFrame()
@@ -616,7 +650,12 @@ void ArtifactFileMenu::Impl::rebuildMenu()
 
     // 最近使ったプロジェクトメニューを更新
     if (recentProjectsMenu) {
-        auto recent = readRecentProjects();
+        auto* settings = ArtifactAppSettings::instance();
+        const auto currentRecent = settings ? settings->recentProjectPaths() : QStringList{};
+        auto recent = pruneMissingRecentProjects(currentRecent);
+        if (settings && recent != currentRecent) {
+            settings->setRecentProjectPaths(recent);
+        }
         // リストが変わっていなければ再構築しない
         if (recent != cachedRecentProjects_) {
             cachedRecentProjects_ = recent;
@@ -629,23 +668,18 @@ void ArtifactFileMenu::Impl::rebuildMenu()
                 for (const auto& path : recent) {
                     QFileInfo fi(path);
                     QString displayName = fi.fileName();
-                    QString displayPath = fi.absolutePath();
 
-                    // P0-1: Show full path in submenu for clarity
                     auto* fileAction = recentProjectsMenu->addAction(displayName);
                     fileAction->setIcon(QIcon(resolveIconPath("Studio/file_open.svg")));
                     fileAction->setData(path);
                     fileAction->setStatusTip(path);
                     fileAction->setToolTip(path);
 
-                    // P0-1: Add path as a disabled sub-item for visual clarity
-                    auto* pathAction = recentProjectsMenu->addAction(QStringLiteral("  %1").arg(displayPath));
-                    pathAction->setIcon(QIcon(resolveIconPath("Studio/folder.svg")));
-                    pathAction->setEnabled(false);
-                    pathAction->setToolTip(path);
-
-                    QObject::connect(fileAction, &QAction::triggered, menu_, [path]() {
-                        ArtifactProjectManager::getInstance().loadFromFile(path);
+                    QObject::connect(fileAction, &QAction::triggered, menu_, [this, path]() {
+                        if (!confirmUnsavedChanges(menu_, QStringLiteral("最近使ったプロジェクトを開く"))) {
+                            return;
+                        }
+                        openProjectPath(path, true);
                     });
                 }
             }
@@ -725,6 +759,12 @@ void ArtifactFileMenu::restartApplication()
 
 void ArtifactFileMenu::resetRecentFilesMenu()
 {
+    if (Impl_) {
+        Impl_->cachedRecentProjects_.clear();
+        if (Impl_->recentProjectsMenu) {
+            Impl_->recentProjectsMenu->clear();
+        }
+    }
 }
 
 } // namespace Artifact

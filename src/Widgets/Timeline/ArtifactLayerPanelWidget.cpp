@@ -36,6 +36,7 @@ module;
 #include <QWheelEvent>
 #include <QInputDialog>
 #include <QFileDialog>
+#include <QDesktopServices>
 #include <QTimer>
 #include <QDrag>
 #include <QMenu>
@@ -1700,9 +1701,8 @@ ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
           updateLayout();
         }
       } else if (event.changeType == LayerChangedEvent::ChangeType::Modified) {
-        // Per-property change: lightweight repaint only (no layout rebuild)
         if (event.compositionId == impl_->compositionId.toString()) {
-          update();
+          updateLayout();
         }
       }
     }));
@@ -2168,7 +2168,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
   //名前エリアまたはスイッチ列でドラッグを開始可能にするための準備
   if (event->button() == Qt::LeftButton) {
     impl_->dragStartPos = event->pos();
-    impl_->dragCandidateLayerId = layer->id();
+    impl_->dragCandidateLayerId = LayerID();
   } else {
     impl_->clearDragState();
   }
@@ -2335,14 +2335,19 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       event->accept();
       return;
     }
+    bool handledLayerSwitch = false;
     if (clickX < colW) {
       if (service) service->setLayerVisibleInCurrentComposition(layer->id(), !layer->isVisible());
+      handledLayerSwitch = true;
     } else if (clickX < colW * 2) {
       if (service) service->setLayerLockedInCurrentComposition(layer->id(), !layer->isLocked());
+      handledLayerSwitch = true;
     } else if (clickX < colW * 3) {
       if (service) service->setLayerSoloInCurrentComposition(layer->id(), !layer->isSolo());
+      handledLayerSwitch = true;
     } else if (clickX < colW * 4) {
       if (service) service->setLayerShyInCurrentComposition(layer->id(), !layer->isShy());
+      handledLayerSwitch = true;
     } else {
       const int toggleSize = 10;
       const int toggleX = nameX + 2;
@@ -2363,7 +2368,18 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           return;
       }
     }
-    // 名前エリアまたはスイッチ列でドラッグを開始可能に
+    if (handledLayerSwitch) {
+      if (service) {
+        service->selectLayer(layer->id());
+      }
+      impl_->clearDragState();
+      update();
+      event->accept();
+      return;
+    }
+
+    // 名前エリアだけをドラッグ開始候補にする。スイッチ操作の微小移動で
+    // レイヤー順序変更が走るのを避ける。
     if (service) {
       service->selectLayer(layer->id());
       impl_->dragStartPos = event->pos();
@@ -2556,6 +2572,59 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     };
 
+    auto videoSourcePath = [layer]() -> QString {
+      if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+        return videoLayer->sourcePath();
+      }
+      return {};
+    };
+
+    auto triggerReplaceVideoSource = [this, layer, videoSourcePath]() {
+      if (!layer) {
+        return;
+      }
+      const QString currentPath = videoSourcePath();
+      const QString selectedPath = QFileDialog::getOpenFileName(
+          this, QStringLiteral("Replace Video Source"),
+          currentPath.isEmpty() ? QString() : QFileInfo(currentPath).absolutePath(),
+          QStringLiteral("Video Files (*.mp4 *.mov *.mkv *.avi *.webm *.m4v *.mpg *.mpeg *.mxf *.gif);;All Files (*.*)"));
+      if (selectedPath.isEmpty()) {
+        return;
+      }
+      if (auto *svc = ArtifactProjectService::instance()) {
+        if (svc->replaceLayerSourceInCurrentComposition(layer->id(), selectedPath)) {
+          updateLayout();
+        }
+      }
+    };
+
+    auto triggerReloadVideoSource = [this, layer, videoSourcePath]() {
+      if (!layer) {
+        return;
+      }
+      const QString currentPath = videoSourcePath();
+      if (currentPath.trimmed().isEmpty()) {
+        return;
+      }
+      if (auto *svc = ArtifactProjectService::instance()) {
+        if (svc->replaceLayerSourceInCurrentComposition(layer->id(), currentPath)) {
+          updateLayout();
+        }
+      }
+    };
+
+    auto triggerRevealVideoSource = [layer, videoSourcePath]() {
+      const QString currentPath = videoSourcePath();
+      if (currentPath.trimmed().isEmpty()) {
+        return;
+      }
+      const QFileInfo info(currentPath);
+      const QString folder = info.absolutePath();
+      if (!folder.isEmpty()) {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(folder));
+      }
+    };
+
     auto triggerOpenComposition = [this, layer]() {
       if (!layer) {
         return;
@@ -2664,6 +2733,57 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (isImageLayer) {
       menu.addAction("Replace Image...", [triggerReplaceLayerSource]() {
         triggerReplaceLayerSource();
+      });
+      menu.addSeparator();
+    }
+    const bool isVideoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr;
+    if (isVideoLayer) {
+      QMenu* videoMenu = menu.addMenu(QStringLiteral("Video"));
+      videoMenu->setIcon(QIcon(resolveIconPath("Studio/videocam.svg")));
+      QAction* replaceVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/file_open.svg")),
+                                                      QStringLiteral("Replace Source..."));
+      QAction* reloadVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/replay.svg")),
+                                                    QStringLiteral("Reload Source"));
+      QAction* revealVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/folder_open.svg")),
+                                                    QStringLiteral("Reveal Source"));
+      videoMenu->addSeparator();
+      QAction* muteAudioAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/settings.svg")),
+                                                   QStringLiteral("Toggle Audio Mute"));
+      QAction* toggleVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/visibility.svg")),
+                                                     QStringLiteral("Toggle Video Enabled"));
+
+      const QString currentVideoPath = videoSourcePath();
+      reloadVideoAct->setEnabled(!currentVideoPath.trimmed().isEmpty());
+      revealVideoAct->setEnabled(!currentVideoPath.trimmed().isEmpty());
+      muteAudioAct->setEnabled(true);
+      toggleVideoAct->setEnabled(true);
+
+      QObject::connect(replaceVideoAct, &QAction::triggered, videoMenu, [triggerReplaceVideoSource](bool) {
+        triggerReplaceVideoSource();
+      });
+      QObject::connect(reloadVideoAct, &QAction::triggered, videoMenu, [triggerReloadVideoSource](bool) {
+        triggerReloadVideoSource();
+      });
+      QObject::connect(revealVideoAct, &QAction::triggered, videoMenu, [triggerRevealVideoSource](bool) {
+        triggerRevealVideoSource();
+      });
+      QObject::connect(muteAudioAct, &QAction::triggered, videoMenu, [this, layer](bool) {
+        if (!layer) {
+          return;
+        }
+        const bool muted = !layer->isAudioMuted();
+        if (layer->setLayerPropertyValue(QStringLiteral("video.audioMuted"), muted)) {
+          updateLayout();
+        }
+      });
+      QObject::connect(toggleVideoAct, &QAction::triggered, videoMenu, [this, layer](bool) {
+        if (!layer) {
+          return;
+        }
+        const bool enabled = !layer->hasVideo();
+        if (layer->setLayerPropertyValue(QStringLiteral("video.videoEnabled"), enabled)) {
+          updateLayout();
+        }
       });
       menu.addSeparator();
     }
@@ -3751,6 +3871,10 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
       } else if (type == LayerType::Audio) {
         ArtifactAudioInitParams params(QFileInfo(path).baseName());
         params.setAudioPath(path);
+        svc->addLayerToCurrentComposition(params);
+      } else if (type == LayerType::Video) {
+        ArtifactVideoInitParams params(QFileInfo(path).baseName());
+        params.setVideoPath(path);
         svc->addLayerToCurrentComposition(params);
       } else {
         ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);

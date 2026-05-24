@@ -9,6 +9,7 @@
 #include <QFrame>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QEvent>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QPoint>
@@ -70,6 +71,7 @@ protected:
   void mousePressEvent(QMouseEvent* event) override;
   void keyPressEvent(QKeyEvent* event) override;
   void keyReleaseEvent(QKeyEvent* event) override;
+  bool eventFilter(QObject* watched, QEvent* event) override;
   void dragEnterEvent(QDragEnterEvent* event) override;
   void dropEvent(QDropEvent* event) override;
 public:

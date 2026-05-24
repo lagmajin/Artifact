@@ -461,27 +461,43 @@ public:
         const auto summary = playbackSvc->ramPreviewSummary();
         const auto currentFrame = playbackSvc->currentFrame().framePosition();
         const auto currentState = playbackSvc->ramPreviewFrameState(currentFrame);
+        const bool currentPlayable =
+            currentState.ready && currentState.inRam && !currentState.failed;
+        const bool currentPending =
+            playbackSvc->isRamPreviewFramePendingBuild(currentFrame);
         const QString currentNote =
             currentState.requested && !currentState.ready &&
                     !currentState.reason.trimmed().isEmpty()
                 ? currentState.reason.trimmed()
                 : QStringLiteral("-");
         return QStringLiteral(
-                   "ramPreview ready=%1 requested=%2 pending=%3 failed=%4 inRam=%5 onDisk=%6 queue=%7 active=%8 gen=%9 reason=%10 hit=%11%% range=%12-%13 current=%14 note=%15")
+                   "ramPreview ready=%1/%2 requested=%3 pending=%4 failed=%5 inRam=%6 onDisk=%7 queue=%8 next=%9 active=%10 rangeReady=%11 progress=%12 playFallback=%13 gen=%14 reason=%15 hit=%16%% range=%17-%18 current=%19 playable=%20 pendingBuild=%21 currentState={requested:%22 ready:%23 inRam:%24 onDisk:%25 failed:%26} note=%27")
                 .arg(summary.readyFrames)
+                .arg(summary.rangeFrames)
                 .arg(summary.requestedFrames)
                 .arg(summary.buildQueuePendingFrames)
                 .arg(summary.failedFrames)
                 .arg(summary.inRamFrames)
                 .arg(summary.onDiskFrames)
                 .arg(summary.buildQueuePendingFrames)
+                .arg(summary.buildQueueNextFrame)
                 .arg(summary.buildQueueActive ? 1 : 0)
+                .arg(summary.buildRangeReady ? 1 : 0)
+                .arg(QString::number(summary.buildRangeProgress * 100.0f, 'f', 0) + QStringLiteral("%"))
+                .arg(summary.playbackFallbackWhilePlaying ? 1 : 0)
                 .arg(QString::number(static_cast<qulonglong>(summary.buildQueueGeneration)))
                 .arg(summary.buildQueueReason)
                 .arg(QString::number(summary.hitRate * 100.0f, 'f', 1))
                 .arg(summary.range.start())
                 .arg(summary.range.end())
                 .arg(currentFrame)
+                .arg(currentPlayable ? 1 : 0)
+                .arg(currentPending ? 1 : 0)
+                .arg(currentState.requested ? 1 : 0)
+                .arg(currentState.ready ? 1 : 0)
+                .arg(currentState.inRam ? 1 : 0)
+                .arg(currentState.onDisk ? 1 : 0)
+                .arg(currentState.failed ? 1 : 0)
                 .arg(currentNote);
     }
 

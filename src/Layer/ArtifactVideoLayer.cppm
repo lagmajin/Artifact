@@ -118,7 +118,7 @@ QString decoderBackendName(const ArtifactCore::MediaPlaybackController* controll
 
 int64_t currentSourceFrame(const ArtifactVideoLayer* layer)
 {
-    return layer ? timelineFrameToSourceFrame(layer, layer->currentFrame()) : 0;
+    return layer ? layer->currentSourceFrameValue() : 0;
 }
 
 ArtifactCore::ImageF32x4_RGBA toFrameBuffer(const QImage& frame)
@@ -374,6 +374,8 @@ public:
     ArtifactCore::ImageF32x4_RGBA currentFrameBuffer_;
     bool hasCurrentFrameBuffer_ = false;
     int64_t lastDecodedFrame_ = -1;
+    int64_t currentTimelineFrame_ = 0;
+    int64_t currentSourceFrame_ = 0;
     int64_t lastSyncFallbackSourceFrame_ = -1;
     bool lastSyncFallbackSucceeded_ = false;
     bool debugFrameSaved_ = false;
@@ -416,6 +418,7 @@ public:
     mutable QFuture<ArtifactCore::ImageF32x4_RGBA> decodeFuture_;
     mutable std::atomic<bool> decoding_{ false };
     mutable int64_t decodeTargetFrame_ = -1;
+    mutable bool decodeRetryPending_ = false;
     mutable QFuture<AsyncOpenResult> openFuture_;
     mutable std::atomic<bool> opening_{ false };
     mutable int openRequestId_ = 0;
@@ -480,10 +483,13 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     impl_->currentFrameBuffer_ = ArtifactCore::ImageF32x4_RGBA();
     impl_->hasCurrentFrameBuffer_ = false;
     impl_->lastDecodedFrame_ = -1;
+    impl_->currentTimelineFrame_ = 0;
+    impl_->currentSourceFrame_ = 0;
     impl_->lastSyncFallbackSourceFrame_ = -1;
     impl_->lastSyncFallbackSucceeded_ = false;
     impl_->decodeTargetFrame_ = -1;
     impl_->decoding_ = false;
+    impl_->decodeRetryPending_ = false;
     impl_->opening_ = true;
     impl_->isLoaded_ = false;
     impl_->lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
@@ -567,10 +573,13 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
         layer->impl_->currentFrameBuffer_ = ArtifactCore::ImageF32x4_RGBA();
         layer->impl_->hasCurrentFrameBuffer_ = false;
         layer->impl_->lastDecodedFrame_ = -1;
+        layer->impl_->currentSourceFrame_ =
+            timelineFrameToSourceFrame(layer, layer->impl_->currentTimelineFrame_);
         layer->impl_->lastSyncFallbackSourceFrame_ = -1;
         layer->impl_->lastSyncFallbackSucceeded_ = false;
         layer->impl_->decodeTargetFrame_ = -1;
         layer->impl_->decoding_ = false;
+        layer->impl_->decodeRetryPending_ = false;
         layer->impl_->lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
         layer->impl_->frameCache_.clear();
 
@@ -603,18 +612,25 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
             layer->setSourceSize(Size_2D(layer->impl_->streamInfo_.width, layer->impl_->streamInfo_.height));
         }
 
+        const int64_t initialSourceFrame = std::max<int64_t>(0, layer->impl_->currentSourceFrame_);
         layer->impl_->decoding_ = true;
-        layer->impl_->decodeTargetFrame_ = 0;
+        layer->impl_->decodeTargetFrame_ = initialSourceFrame;
         auto* ctrl = layer->impl_->playbackController_.get();
-        layer->impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, layer]() -> ArtifactCore::ImageF32x4_RGBA {
+        layer->impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, layer, initialSourceFrame]() -> ArtifactCore::ImageF32x4_RGBA {
             ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
-            const ArtifactCore::ImageF32x4_RGBA frame = decodedVideoFrameToImageF32x4_RGBA(ctrl->getVideoFrameAtFrameDirectRaw(0));
+            const ArtifactCore::ImageF32x4_RGBA frame =
+                decodedVideoFrameToImageF32x4_RGBA(ctrl->getVideoFrameAtFrameDirectRaw(initialSourceFrame));
             if (frame.isEmpty()) {
                 qWarning() << "[VideoLayer] initial decode FAILED"
-                           << "source=0"
+                           << "source=" << initialSourceFrame
                            << "backend=" << decoderBackendName(ctrl)
                            << "controller=" << ctrl->getDebugState()
                            << threadDiagnosticsTag();
+            } else {
+                layer->impl_->frameCache_.put(initialSourceFrame, frame);
+                layer->impl_->currentFrameBuffer_ = frame;
+                layer->impl_->hasCurrentFrameBuffer_ = true;
+                layer->impl_->lastDecodedFrame_ = initialSourceFrame;
             }
             layer->impl_->decoding_ = false;
             publishVideoLayerModifiedAsync(layer);
@@ -649,7 +665,7 @@ const VideoStreamInfo& ArtifactVideoLayer::streamInfo() const
 QString ArtifactVideoLayer::debugState() const
 {
     const auto* controller = impl_ ? impl_->playbackController_.get() : nullptr;
-    const int64_t timelineFrame = currentFrame();
+    const int64_t timelineFrame = impl_ ? impl_->currentTimelineFrame_ : 0;
     const int64_t sourceFrame = currentSourceFrame(this);
     const QSize currentBufferSize = impl_
         ? QSize(impl_->currentFrameBuffer_.width(), impl_->currentFrameBuffer_.height())
@@ -704,7 +720,7 @@ void ArtifactVideoLayer::seekToFrame(int64_t frame)
     const int64_t endFrameOnTimeline = outPoint();
     frame = std::max(startFrameOnTimeline, std::min(frame, endFrameOnTimeline - 1));
     
-    ArtifactAbstractLayer::goToFrame(frame);
+    goToFrame(frame);
     
     bool shouldDecode = false;
     {
@@ -755,6 +771,11 @@ int64_t ArtifactVideoLayer::currentFrame() const
     return ArtifactAbstractLayer::currentFrame();
 }
 
+int64_t ArtifactVideoLayer::currentSourceFrameValue() const
+{
+    return impl_ ? impl_->currentSourceFrame_ : 0;
+}
+
 double ArtifactVideoLayer::currentTime() const
 {
     if (impl_->playbackController_ && impl_->playbackController_->isMediaOpen()) {
@@ -794,7 +815,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     }
 
     const int64_t sourceFrame = currentSourceFrame(this);
-    const int64_t timelineFrame = sourceFrameToTimelineFrame(this, sourceFrame);
+    const int64_t timelineFrame = impl_->currentTimelineFrame_;
 
     // 同じフレームでキャッシュ済みの場合はスキップ
     if (sourceFrame == impl_->lastDecodedFrame_ && impl_->hasCurrentFrameBuffer_) {
@@ -805,6 +826,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     const bool inFlight = impl_->decoding_.load()
         || (impl_->decodeTargetFrame_ >= 0 && !impl_->decodeFuture_.isFinished());
     if (inFlight) {
+        impl_->decodeRetryPending_ = true;
         return;
     }
 
@@ -844,6 +866,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 
     // バックグラウンドでデコードを開始し、メインスレッドをブロックしない
     impl_->decoding_ = true;
+    impl_->decodeRetryPending_ = false;
     impl_->decodeTargetFrame_ = sourceFrame;
     auto* ctrl = impl_->playbackController_.get();
     const QString backendName = decoderBackendName(ctrl);
@@ -873,9 +896,20 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                        << threadIdTag();
         }
         impl_->decoding_ = false;
-        if (!decoded.isEmpty()) {
-            publishVideoLayerModifiedAsync(this);
-        }
+        QPointer<ArtifactVideoLayer> guarded(this);
+        QMetaObject::invokeMethod(
+            this,
+            [guarded]() {
+                if (!guarded || !guarded->impl_) {
+                    return;
+                }
+                publishVideoLayerModified(guarded.data());
+                if (guarded->impl_->decodeRetryPending_
+                    && currentSourceFrame(guarded.data()) != guarded->impl_->lastDecodedFrame_) {
+                    guarded->decodeCurrentFrame();
+                }
+            },
+            Qt::QueuedConnection);
         return decoded;
     });
 }
@@ -1142,18 +1176,33 @@ bool ArtifactVideoLayer::isAudioMuted() const
 QJsonObject ArtifactVideoLayer::toJson() const
 {
     QJsonObject obj;
-    obj["type"] = "VideoLayer";
+    obj["type"] = static_cast<int>(LayerType::Video);
+    obj["layerType"] = QStringLiteral("Video");
     obj["sourcePath"] = impl_->sourcePath_;
+    obj["video.sourcePath"] = impl_->sourcePath_;
     obj["inPoint"] = static_cast<qint64>(inPoint());
     obj["outPoint"] = static_cast<qint64>(outPoint());
     obj["playbackSpeed"] = impl_->playbackSpeed_;
+    obj["video.playbackSpeed"] = impl_->playbackSpeed_;
     obj["loopEnabled"] = impl_->loopEnabled_;
+    obj["video.loopEnabled"] = impl_->loopEnabled_;
     obj["audioVolume"] = impl_->audioVolume_;
+    obj["video.audioVolume"] = impl_->audioVolume_;
     obj["audioMuted"] = impl_->audioMuted_;
+    obj["video.audioMuted"] = impl_->audioMuted_;
     obj["audioEnabled"] = impl_->audioEnabled_;
+    obj["video.audioEnabled"] = impl_->audioEnabled_;
     obj["videoEnabled"] = impl_->videoEnabled_;
+    obj["video.videoEnabled"] = impl_->videoEnabled_;
     obj["proxyQuality"] = static_cast<int>(impl_->proxyQuality_);
+    obj["video.proxyQuality"] = static_cast<int>(impl_->proxyQuality_);
     obj["proxyPath"] = impl_->proxyPath_;
+    obj["video.proxyPath"] = impl_->proxyPath_;
+    obj["video.width"] = impl_->streamInfo_.width;
+    obj["video.height"] = impl_->streamInfo_.height;
+    obj["video.frameRate"] = impl_->streamInfo_.frameRate;
+    obj["video.hasAudio"] = impl_->streamInfo_.hasAudio;
+    obj["video.hasVideo"] = impl_->videoEnabled_;
     
     // Store layer name
     obj["layerName"] = layerName();
@@ -1165,8 +1214,11 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 {
     auto layer = std::make_shared<ArtifactVideoLayer>();
     
-    if (obj.contains("sourcePath")) {
-        layer->loadFromPath(obj["sourcePath"].toString());
+    const QString sourcePath = obj.contains("video.sourcePath")
+        ? obj["video.sourcePath"].toString()
+        : obj.value("sourcePath").toString();
+    if (!sourcePath.isEmpty()) {
+        layer->loadFromPath(sourcePath);
     }
     
     if (obj.contains("inPoint")) {
@@ -1175,26 +1227,29 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
     if (obj.contains("outPoint")) {
         layer->setOutPoint(obj["outPoint"].toVariant().toLongLong());
     }
-    if (obj.contains("playbackSpeed")) {
-        layer->setPlaybackSpeed(obj["playbackSpeed"].toDouble());
+    if (obj.contains("video.playbackSpeed") || obj.contains("playbackSpeed")) {
+        layer->setPlaybackSpeed(obj.value("video.playbackSpeed").toDouble(obj.value("playbackSpeed").toDouble(1.0)));
     }
-    if (obj.contains("loopEnabled")) {
-        layer->setLoopEnabled(obj["loopEnabled"].toBool());
+    if (obj.contains("video.loopEnabled") || obj.contains("loopEnabled")) {
+        layer->setLoopEnabled(obj.value("video.loopEnabled").toBool(obj.value("loopEnabled").toBool(true)));
     }
-    if (obj.contains("audioVolume")) {
-        layer->setAudioVolume(obj["audioVolume"].toDouble());
+    if (obj.contains("video.audioVolume") || obj.contains("audioVolume")) {
+        layer->setAudioVolume(obj.value("video.audioVolume").toDouble(obj.value("audioVolume").toDouble(1.0)));
     }
-    if (obj.contains("audioMuted")) {
-        layer->setAudioMuted(obj["audioMuted"].toBool());
+    if (obj.contains("video.audioMuted") || obj.contains("audioMuted")) {
+        layer->setAudioMuted(obj.value("video.audioMuted").toBool(obj.value("audioMuted").toBool(false)));
     }
-    if (obj.contains("audioEnabled")) {
-        layer->setHasAudio(obj["audioEnabled"].toBool());
+    if (obj.contains("video.audioEnabled") || obj.contains("audioEnabled")) {
+        layer->setHasAudio(obj.value("video.audioEnabled").toBool(obj.value("audioEnabled").toBool(true)));
     }
-    if (obj.contains("videoEnabled")) {
-        layer->setHasVideo(obj["videoEnabled"].toBool());
+    if (obj.contains("video.videoEnabled") || obj.contains("videoEnabled")) {
+        layer->setHasVideo(obj.value("video.videoEnabled").toBool(obj.value("videoEnabled").toBool(true)));
     }
-    if (obj.contains("proxyQuality")) {
-        layer->setProxyQuality(static_cast<ProxyQuality>(obj["proxyQuality"].toInt()));
+    if (obj.contains("video.proxyQuality") || obj.contains("proxyQuality")) {
+        layer->setProxyQuality(static_cast<ProxyQuality>(obj.value("video.proxyQuality").toInt(obj.value("proxyQuality").toInt(0))));
+    }
+    if (obj.contains("video.proxyPath") || obj.contains("proxyPath")) {
+        layer->setProxyPath(obj.value("video.proxyPath").toString(obj.value("proxyPath").toString()));
     }
     if (obj.contains("layerName")) {
         layer->setLayerName(obj["layerName"].toString());
@@ -1208,7 +1263,7 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_ || impl_->opening_.load()) return;
     const int64_t sourceFrame = currentSourceFrame(this);
-    const int64_t timelineFrame = sourceFrameToTimelineFrame(this, sourceFrame);
+    const int64_t timelineFrame = impl_->currentTimelineFrame_;
 
     if (!impl_->hasCurrentFrameBuffer_
         && !impl_->decoding_.load() && impl_->decodeFuture_.isFinished()) {
@@ -1239,9 +1294,11 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 
 void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
 {
+    impl_->currentTimelineFrame_ = frameNumber;
     ArtifactAbstractLayer::goToFrame(frameNumber);
+    impl_->currentSourceFrame_ = timelineFrameToSourceFrame(this, frameNumber);
     // 先読みデコード：次の render tick より先にバックグラウンドデコードを起動しておく
-    if (timelineFrameToSourceFrame(this, currentFrame()) != impl_->lastDecodedFrame_) {
+    if (impl_->currentSourceFrame_ != impl_->lastDecodedFrame_) {
         decodeCurrentFrame();
     }
 }

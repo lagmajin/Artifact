@@ -1,6 +1,7 @@
 ﻿module;
 #include <utility>
 #include <QImage>
+#include <QJsonObject>
 #include <QVariant>
 #include <wobjectimpl.h>
 export module Artifact.Layer.Image;
@@ -26,6 +27,7 @@ export namespace Artifact {
   bool hasCurrentFrameBuffer() const;
   bool loadFromPath(const QString& path);
   QString sourcePath() const;
+  QJsonObject toJson() const;
   void setFromQImage(const QImage& image);
   void setFromCvMat(const cv::Mat& mat);
   void setFromCvMat();

@@ -292,6 +292,9 @@ float2 PrimitiveRenderer2D::viewportToCanvas(float2 pos) const
 void PrimitiveRenderer2D::setOverrideRTV(ITextureView* rtv)
 {
     impl_->m_overrideRTV = rtv;
+    if (impl_->cmdBuf_) {
+        impl_->cmdBuf_->targetRTV = impl_->getCurrentRTV();
+    }
 }
 
 void PrimitiveRenderer2D::setCommandBuffer(RenderCommandBuffer* cmdBuf)

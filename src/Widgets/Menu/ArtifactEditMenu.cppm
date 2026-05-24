@@ -74,6 +74,7 @@ private:
   void handleSelectSameType();
   void handleFind();
   void handlePreferences();
+  bool hasLayerClipboard() const;
 
   ArtifactActiveContextService* getActiveContext();
  };
@@ -195,6 +196,22 @@ private:
   return ArtifactApplicationManager::instance()->activeContextService();
  }
 
+ bool ArtifactEditMenu::Impl::hasLayerClipboard() const {
+  const QClipboard* clipboard = QApplication::clipboard();
+  if (!clipboard) {
+   return false;
+  }
+  const QJsonDocument doc = QJsonDocument::fromJson(clipboard->text().toUtf8());
+  if (!doc.isObject()) {
+   return false;
+  }
+  const QJsonObject clipObj = doc.object();
+  if (clipObj.value(QStringLiteral("artifact_clipboard")).toString() != QStringLiteral("layer")) {
+   return false;
+  }
+  return clipObj.value(QStringLiteral("layers")).toArray().isEmpty() == false;
+ }
+
  void ArtifactEditMenu::Impl::handleUndo() {
   if (auto mgr = UndoManager::instance()) {
    const QString desc = mgr->undoDescription();
@@ -227,6 +244,7 @@ private:
                           : nullptr) {
    emit selMgr->activeCompositionChanged(selMgr->activeComposition());
   }
+  rebuildMenu();
  }
  void ArtifactEditMenu::Impl::handleCopyAction()
  {
@@ -253,6 +271,7 @@ private:
   QClipboard* clipboard = QApplication::clipboard();
   clipboard->setText(QJsonDocument(clipObj).toJson(QJsonDocument::Compact));
   qDebug() << "[Edit] Copied" << selected.size() << "layer(s)";
+  rebuildMenu();
  }
 
  void ArtifactEditMenu::Impl::handleCutAction()
@@ -335,11 +354,12 @@ private:
    }
   }
 
-  if (pasted > 0) {
+ if (pasted > 0) {
    qDebug().noquote() << "[Edit] Pasted" << pasted << "layer(s)";
    if (auto* sb = parentWidget_ ? parentWidget_->findChild<QStatusBar*>() : nullptr) {
     sb->showMessage(QString("Pasted %1 layer(s)").arg(pasted), 3000);
    }
+   rebuildMenu();
   }
  }
  void ArtifactEditMenu::Impl::handleDelete()
@@ -362,6 +382,7 @@ private:
    }
   }
   selMgr->clearSelection();
+  rebuildMenu();
  }
 
  void ArtifactEditMenu::Impl::handleDuplicate()
@@ -381,6 +402,7 @@ private:
     svc->duplicateLayerInCurrentComposition(layer->id());
    }
   }
+  rebuildMenu();
  }
  void ArtifactEditMenu::Impl::handleSplit() { 
   if (auto* ctx = getActiveContext()) {
@@ -414,6 +436,7 @@ private:
    }
   }
   qDebug() << "[Edit] Selected all" << comp->allLayer().size() << "layers";
+  rebuildMenu();
  }
 
  void ArtifactEditMenu::Impl::handleSelectNone() {
@@ -424,6 +447,7 @@ private:
 
   selMgr->clearSelection();
   qDebug() << "[Edit] Selection cleared";
+  rebuildMenu();
  }
 
  void ArtifactEditMenu::Impl::handleInvertSelection() {
@@ -446,6 +470,7 @@ private:
    }
   }
   qDebug() << "[Edit] Inverted selection:" << selMgr->selectedLayers().size() << "layers";
+  rebuildMenu();
  }
 
  void ArtifactEditMenu::Impl::handleSelectSameType() {
@@ -471,6 +496,7 @@ private:
    }
   }
   qDebug() << "[Edit] Selected same type:" << selMgr->selectedLayers().size() << "layers";
+  rebuildMenu();
  }
 
  void ArtifactEditMenu::Impl::handleFind() {
@@ -505,6 +531,7 @@ private:
    sb->showMessage(QString("Found %1 layer(s) matching \"%2\"").arg(foundCount).arg(searchText), 3000);
   }
   qDebug() << "[Edit] Found" << foundCount << "layers matching" << searchText;
+  rebuildMenu();
  }
  void ArtifactEditMenu::Impl::handlePreferences() { 
   auto* dialog = new ApplicationSettingDialog(parentWidget_);
@@ -534,23 +561,26 @@ void ArtifactEditMenu::Impl::rebuildMenu() {
   }
 
   bool hasSelection = false;
+  bool hasComposition = false;
   if (auto* sel = ArtifactApplicationManager::instance()->layerSelectionManager()) {
-   hasSelection = !sel->selectedLayers().isEmpty();
+   hasComposition = sel->activeComposition() != ArtifactCompositionPtr{};
+   hasSelection = hasComposition && !sel->selectedLayers().isEmpty();
   }
 
+  const bool layerClipboardReady = hasLayerClipboard();
   copyAction_->setEnabled(hasProject && hasSelection);
   cutAction_->setEnabled(hasProject && hasSelection);
-  pasteAction_->setEnabled(hasProject);
+  pasteAction_->setEnabled(hasProject && hasComposition && layerClipboardReady);
   deleteAction_->setEnabled(hasProject && hasSelection);
   duplicateAction->setEnabled(hasProject && hasSelection);
   splitAction->setEnabled(hasProject && hasSelection);
   trimInAction->setEnabled(hasProject && hasSelection);
   trimOutAction->setEnabled(hasProject && hasSelection);
-   selectAllAction->setEnabled(hasProject);
+   selectAllAction->setEnabled(hasProject && hasComposition);
    selectNoneAction->setEnabled(hasProject && hasSelection);
    invertSelectionAction->setEnabled(hasProject && hasSelection);
    selectSameTypeAction->setEnabled(hasProject && hasSelection);
-   findAction->setEnabled(hasProject);
+   findAction->setEnabled(hasProject && hasComposition);
  }
 
  W_OBJECT_IMPL(ArtifactEditMenu)

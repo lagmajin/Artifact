@@ -67,7 +67,7 @@ module;
 #include <regex>
 #include <random>
 
-module Artifact.Widgets.PlaybackControlWidget;
+module Artifact.Widgets.PlaybackControlTestWidget;
 
 import Utils;
 import Icon.SvgToIcon;
@@ -325,7 +325,7 @@ QIcon loadIconWithFallback(const QString& fileName)
     }
   }
 
-  qWarning().noquote() << "[ArtifactPlaybackControlWidget] icon load failed:"
+  qWarning().noquote() << "[ArtifactPlaybackControlTestWidget] icon load failed:"
                        << "resource=" << resourcePath
                        << "exists=" << QFileInfo::exists(resourcePath)
                        << "file=" << filePath
@@ -377,12 +377,12 @@ using namespace ArtifactCore;
 using PlaybackState = ::ArtifactCore::PlaybackState;
 
 // ============================================================================
-// ArtifactPlaybackControlWidget::Impl
+// ArtifactPlaybackControlTestWidget::Impl
 // ============================================================================
 
-class ArtifactPlaybackControlWidget::Impl {
+class ArtifactPlaybackControlTestWidget::Impl {
 public:
-    ArtifactPlaybackControlWidget* owner_;
+    ArtifactPlaybackControlTestWidget* owner_;
     
     // Buttons
     QToolButton* playButton_ = nullptr;
@@ -421,7 +421,7 @@ public:
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     QElapsedTimer frameWidgetUpdateTimer_;
     qint64 lastDisplayedFrame_ = std::numeric_limits<qint64>::min();
-    Impl(ArtifactPlaybackControlWidget* owner)
+    Impl(ArtifactPlaybackControlTestWidget* owner)
         : owner_(owner)
     {}
     
@@ -1169,12 +1169,12 @@ public:
 };
 
 // ============================================================================
-// ArtifactPlaybackControlWidget Implementation
+// ArtifactPlaybackControlTestWidget Implementation
 // ============================================================================
 
-W_OBJECT_IMPL(ArtifactPlaybackControlWidget)
+W_OBJECT_IMPL(ArtifactPlaybackControlTestWidget)
 
-ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent)
+ArtifactPlaybackControlTestWidget::ArtifactPlaybackControlTestWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this))
 {
     setWindowTitle("Playback Control");
@@ -1194,12 +1194,12 @@ ArtifactPlaybackControlWidget::ArtifactPlaybackControlWidget(QWidget* parent)
     update();
 }
 
-ArtifactPlaybackControlWidget::~ArtifactPlaybackControlWidget()
+ArtifactPlaybackControlTestWidget::~ArtifactPlaybackControlTestWidget()
 {
     delete impl_;
 }
 
-bool ArtifactPlaybackControlWidget::event(QEvent* event)
+bool ArtifactPlaybackControlTestWidget::event(QEvent* event)
 {
     const bool handled = QWidget::event(event);
     if (!event) {
@@ -1221,7 +1221,7 @@ bool ArtifactPlaybackControlWidget::event(QEvent* event)
     return handled;
 }
 
-void ArtifactPlaybackControlWidget::paintEvent(QPaintEvent* event)
+void ArtifactPlaybackControlTestWidget::paintEvent(QPaintEvent* event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
@@ -1229,7 +1229,7 @@ void ArtifactPlaybackControlWidget::paintEvent(QPaintEvent* event)
     painter.fillRect(rect(), QColor(theme.backgroundColor));
 }
 
-void ArtifactPlaybackControlWidget::showEvent(QShowEvent* event)
+void ArtifactPlaybackControlTestWidget::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
     refreshSurfaceAfterDockLifecycle();
@@ -1239,7 +1239,7 @@ void ArtifactPlaybackControlWidget::showEvent(QShowEvent* event)
     });
 }
 
-void ArtifactPlaybackControlWidget::refreshSurfaceAfterDockLifecycle()
+void ArtifactPlaybackControlTestWidget::refreshSurfaceAfterDockLifecycle()
 {
     setAutoFillBackground(true);
     setAttribute(Qt::WA_StyledBackground, true);
@@ -1257,22 +1257,22 @@ void ArtifactPlaybackControlWidget::refreshSurfaceAfterDockLifecycle()
     update();
 }
 
-void ArtifactPlaybackControlWidget::play()
+void ArtifactPlaybackControlTestWidget::play()
 {
     impl_->handlePlayButtonClicked();
 }
 
-void ArtifactPlaybackControlWidget::pause()
+void ArtifactPlaybackControlTestWidget::pause()
 {
     impl_->handlePauseButtonClicked();
 }
 
-void ArtifactPlaybackControlWidget::stop()
+void ArtifactPlaybackControlTestWidget::stop()
 {
     impl_->handleStopButtonClicked();
 }
 
-void ArtifactPlaybackControlWidget::togglePlayPause()
+void ArtifactPlaybackControlTestWidget::togglePlayPause()
 {
     if (impl_->isPlaying_ || impl_->isPaused_) {
         pause();
@@ -1281,37 +1281,37 @@ void ArtifactPlaybackControlWidget::togglePlayPause()
     }
 }
 
-void ArtifactPlaybackControlWidget::seekStart()
+void ArtifactPlaybackControlTestWidget::seekStart()
 {
     impl_->handleSeekStartClicked();
 }
 
-void ArtifactPlaybackControlWidget::seekEnd()
+void ArtifactPlaybackControlTestWidget::seekEnd()
 {
     impl_->handleSeekEndClicked();
 }
 
-void ArtifactPlaybackControlWidget::seekPrevious()
+void ArtifactPlaybackControlTestWidget::seekPrevious()
 {
     impl_->handleSeekPreviousClicked();
 }
 
-void ArtifactPlaybackControlWidget::seekNext()
+void ArtifactPlaybackControlTestWidget::seekNext()
 {
     impl_->handleSeekNextClicked();
 }
 
-void ArtifactPlaybackControlWidget::stepForward()
+void ArtifactPlaybackControlTestWidget::stepForward()
 {
     impl_->handleStepForwardClicked();
 }
 
-void ArtifactPlaybackControlWidget::stepBackward()
+void ArtifactPlaybackControlTestWidget::stepBackward()
 {
     impl_->handleStepBackwardClicked();
 }
 
-void ArtifactPlaybackControlWidget::setLoopEnabled(bool enabled)
+void ArtifactPlaybackControlTestWidget::setLoopEnabled(bool enabled)
 {
     if (impl_->loopButton_) {
         impl_->loopButton_->setChecked(enabled);
@@ -1319,12 +1319,12 @@ void ArtifactPlaybackControlWidget::setLoopEnabled(bool enabled)
     impl_->handleLoopToggled(enabled);
 }
 
-bool ArtifactPlaybackControlWidget::isLoopEnabled() const
+bool ArtifactPlaybackControlTestWidget::isLoopEnabled() const
 {
     return impl_->isLooping_;
 }
 
-void ArtifactPlaybackControlWidget::setPlaybackSpeed(float speed)
+void ArtifactPlaybackControlTestWidget::setPlaybackSpeed(float speed)
 {
     impl_->playbackSpeed_ = speed;
     if (auto* service = ArtifactPlaybackService::instance()) {
@@ -1332,306 +1332,41 @@ void ArtifactPlaybackControlWidget::setPlaybackSpeed(float speed)
     }
 }
 
-float ArtifactPlaybackControlWidget::playbackSpeed() const
+float ArtifactPlaybackControlTestWidget::playbackSpeed() const
 {
     return impl_->playbackSpeed_;
 }
 
-bool ArtifactPlaybackControlWidget::isPlaying() const
+bool ArtifactPlaybackControlTestWidget::isPlaying() const
 {
     return impl_->isPlaying_;
 }
 
-bool ArtifactPlaybackControlWidget::isPaused() const
+bool ArtifactPlaybackControlTestWidget::isPaused() const
 {
     return impl_->isPaused_;
 }
 
-bool ArtifactPlaybackControlWidget::isStopped() const
+bool ArtifactPlaybackControlTestWidget::isStopped() const
 {
     return impl_->isStopped_;
 }
 
-void ArtifactPlaybackControlWidget::setInPoint()
+void ArtifactPlaybackControlTestWidget::setInPoint()
 {
     impl_->handleInButtonClicked();
 }
 
-void ArtifactPlaybackControlWidget::setOutPoint()
+void ArtifactPlaybackControlTestWidget::setOutPoint()
 {
     impl_->handleOutButtonClicked();
 }
 
-void ArtifactPlaybackControlWidget::clearInOutPoints()
+void ArtifactPlaybackControlTestWidget::clearInOutPoints()
 {
     impl_->handleClearInOutClicked();
 }
 
-// ============================================================================
-// ArtifactPlaybackInfoWidget::Impl
-// ============================================================================
-
-class ArtifactPlaybackInfoWidget::Impl {
-public:
-    ArtifactPlaybackInfoWidget* owner_;
-    
-    QLabel* frameLabel_ = nullptr;
-    QLabel* speedLabel_ = nullptr;
-    QLabel* droppedLabel_ = nullptr;
-    
-    int64_t currentFrame_ = 0;
-    int64_t totalFrames_ = 300;
-    float speed_ = 1.0f;
-    int64_t droppedFrames_ = 0;
-    
-    Impl(ArtifactPlaybackInfoWidget* owner)
-        : owner_(owner)
-    {}
-    
-    void setupUI()
-    {
-        auto* layout = new QHBoxLayout(owner_);
-        layout->setSpacing(16);
-        layout->setContentsMargins(8, 4, 8, 4);
-        
-        // フレーム表示
-        frameLabel_ = createLabel("0 / 300", "現在のフレーム / 総フレーム数");
-        layout->addWidget(frameLabel_);
-        layout->addSpacing(24);
-        
-        // 速度表示
-        speedLabel_ = createLabel("1.00x", "再生速度");
-        layout->addWidget(speedLabel_);
-        
-        // ドロップフレーム表示
-        droppedLabel_ = createLabel("Dropped: 0", "ドロップフレーム数");
-        applyThemeTextPalette(droppedLabel_, QColor(ArtifactCore::currentDCCTheme().textColor), 90);
-        layout->addWidget(droppedLabel_);
-        
-        layout->addStretch();
-    }
-    
-    QLabel* createLabel(const QString& text, const QString& tooltip)
-    {
-        auto* label = new QLabel(text);
-        label->setToolTip(tooltip);
-        label->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-        QFont font = label->font();
-        font.setPointSize(12);
-        label->setFont(font);
-        applyThemeTextPalette(label, QColor(ArtifactCore::currentDCCTheme().textColor));
-        return label;
-    }
-};
-
-// ============================================================================
-// ArtifactPlaybackInfoWidget Implementation
-// ============================================================================
-
-W_OBJECT_IMPL(ArtifactPlaybackInfoWidget)
-
-ArtifactPlaybackInfoWidget::ArtifactPlaybackInfoWidget(QWidget* parent)
-    : QWidget(parent), impl_(new Impl(this))
-{
-    setMinimumHeight(32);
-    impl_->setupUI();
-    setAutoFillBackground(false);
-}
-
-ArtifactPlaybackInfoWidget::~ArtifactPlaybackInfoWidget()
-{
-    delete impl_;
-}
-
-void ArtifactPlaybackInfoWidget::paintEvent(QPaintEvent* event)
-{
-    Q_UNUSED(event);
-    QPainter painter(this);
-    const auto& theme = ArtifactCore::currentDCCTheme();
-    painter.fillRect(rect(), QColor(theme.secondaryBackgroundColor));
-}
-
-void ArtifactPlaybackInfoWidget::setCurrentFrame(int64_t frame)
-{
-    impl_->currentFrame_ = frame;
-    
-    if (impl_->frameLabel_) {
-        impl_->frameLabel_->setText(QString("%1 / %2").arg(frame).arg(impl_->totalFrames_));
-    }
-    
-    Q_EMIT frameChanged(frame);
-}
-
-void ArtifactPlaybackInfoWidget::setTotalFrames(int64_t frames)
-{
-    impl_->totalFrames_ = frames;
-    setCurrentFrame(impl_->currentFrame_);
-}
-
-void ArtifactPlaybackInfoWidget::setFrameRate(float fps)
-{
-    Q_UNUSED(fps);
-}
-
-void ArtifactPlaybackInfoWidget::setPlaybackSpeed(float speed)
-{
-    impl_->speed_ = speed;
-    if (impl_->speedLabel_) {
-        QString speedText = speed >= 0 ? QString("%1x").arg(speed, 0, 'f', 2)
-                                        : QString("%1x (REV)").arg(std::abs(speed), 0, 'f', 2);
-        impl_->speedLabel_->setText(speedText);
-    }
-}
-
-void ArtifactPlaybackInfoWidget::setDroppedFrames(int64_t count)
-{
-    impl_->droppedFrames_ = count;
-    if (impl_->droppedLabel_) {
-        impl_->droppedLabel_->setText(QString("Dropped: %1").arg(count));
-    }
-}
-
-void ArtifactPlaybackInfoWidget::setEditable(bool editable)
-{
-    // 将来的にはスピンボックスなどで直接入力可能に
-    Q_UNUSED(editable);
-}
-
-// ============================================================================
-// ArtifactPlaybackSpeedWidget::Impl
-// ============================================================================
-
-class ArtifactPlaybackSpeedWidget::Impl {
-public:
-    ArtifactPlaybackSpeedWidget* owner_;
-    
-    QSlider* speedSlider_ = nullptr;
-    QDoubleSpinBox* speedSpin_ = nullptr;
-    QComboBox* presetCombo_ = nullptr;
-    
-    float currentSpeed_ = 1.0f;
-    
-    Impl(ArtifactPlaybackSpeedWidget* owner)
-        : owner_(owner)
-    {}
-    
-    void setupUI()
-    {
-        auto* layout = new QHBoxLayout(owner_);
-        layout->setSpacing(8);
-        layout->setContentsMargins(8, 4, 8, 4);
-        
-        // プリセットコンボボックス
-        presetCombo_ = new QComboBox();
-        presetCombo_->addItem("0.25x", 0.25);
-        presetCombo_->addItem("0.5x", 0.5);
-        presetCombo_->addItem("1.0x", 1.0);
-        presetCombo_->addItem("2.0x", 2.0);
-        presetCombo_->addItem("-1.0x (REV)", -1.0);
-        presetCombo_->setCurrentIndex(2);  // 1.0x
-        presetCombo_->setFixedWidth(80);
-        layout->addWidget(new QLabel("Speed:"));
-        layout->addWidget(presetCombo_);
-        
-        // スライダー
-        speedSlider_ = new QSlider(Qt::Horizontal);
-        speedSlider_->setRange(-20, 20);  // -2.0x to 2.0x
-        speedSlider_->setValue(10);       // 1.0x
-        speedSlider_->setFixedWidth(150);
-        layout->addWidget(speedSlider_);
-        
-        // スピンボックス
-        speedSpin_ = new QDoubleSpinBox();
-        speedSpin_->setRange(-2.0, 2.0);
-        speedSpin_->setSingleStep(0.25);
-        speedSpin_->setValue(1.0);
-        speedSpin_->setSuffix("x");
-        speedSpin_->setFixedWidth(70);
-        layout->addWidget(speedSpin_);
-        
-        // シグナル接続
-        QObject::connect(presetCombo_, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            owner_, [this](int index) {
-                float speed = presetCombo_->itemData(index).toFloat();
-                setPlaybackSpeed(speed);
-            });
-        
-        QObject::connect(speedSlider_, &QSlider::valueChanged,
-            owner_, [this](int value) {
-                float speed = value / 10.0f;
-                if (speedSpin_) {
-                    speedSpin_->blockSignals(true);
-                    speedSpin_->setValue(speed);
-                    speedSpin_->blockSignals(false);
-                }
-                setPlaybackSpeed(speed);
-            });
-        
-        QObject::connect(speedSpin_, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            owner_, [this](double value) {
-                if (speedSlider_) {
-                    speedSlider_->blockSignals(true);
-                    speedSlider_->setValue(static_cast<int>(value * 10));
-                    speedSlider_->blockSignals(false);
-                }
-                setPlaybackSpeed(static_cast<float>(value));
-            });
-    }
-    
-    void setPlaybackSpeed(float speed)
-    {
-        currentSpeed_ = speed;
-        Q_EMIT owner_->speedChanged(speed);
-    }
-};
-
-// ============================================================================
-// ArtifactPlaybackSpeedWidget Implementation
-// ============================================================================
-
-W_OBJECT_IMPL(ArtifactPlaybackSpeedWidget)
-
-ArtifactPlaybackSpeedWidget::ArtifactPlaybackSpeedWidget(QWidget* parent)
-    : QWidget(parent), impl_(new Impl(this))
-{
-    setMinimumHeight(32);
-    impl_->setupUI();
-    setAutoFillBackground(false);
-}
-
-ArtifactPlaybackSpeedWidget::~ArtifactPlaybackSpeedWidget()
-{
-    delete impl_;
-}
-
-void ArtifactPlaybackSpeedWidget::paintEvent(QPaintEvent* event)
-{
-    Q_UNUSED(event);
-    QPainter painter(this);
-    const auto& theme = ArtifactCore::currentDCCTheme();
-    painter.fillRect(rect(), QColor(theme.secondaryBackgroundColor));
-}
-
-float ArtifactPlaybackSpeedWidget::playbackSpeed() const
-{
-    return impl_->currentSpeed_;
-}
-
-void ArtifactPlaybackSpeedWidget::setPlaybackSpeed(float speed)
-{
-    impl_->setPlaybackSpeed(speed);
-}
-
-void ArtifactPlaybackSpeedWidget::setSpeedPreset(float speed)
-{
-    if (impl_->presetCombo_) {
-        int index = impl_->presetCombo_->findData(speed);
-        if (index >= 0) {
-            impl_->presetCombo_->setCurrentIndex(index);
-        }
-    }
-    setPlaybackSpeed(speed);
-}
-
 } // namespace Artifact
 
+// ============================================================================

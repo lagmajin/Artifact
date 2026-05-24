@@ -95,10 +95,15 @@ QString ramPreviewFooterText(Artifact::ArtifactPlaybackService* playback,
   const float hitRate = summary.hitRate > 0.0f ? summary.hitRate : hitRateFallback;
   const int inRamFrames =
       summary.inRamFrames > 0 ? summary.inRamFrames : cachedFrameCountFallback;
-  return QStringLiteral("RAM: ready %1 | requested %2 | pending %3 | failed %4 | inRam %5 | onDisk %6 | %7 hit%8")
+  return QStringLiteral("RAM: ready %1/%2 | requested %3 | pending %4 | next %5 | range %6 | progress %7 | failed %8 | inRam %9 | onDisk %10 | %11 hit%12")
       .arg(summary.readyFrames)
+      .arg(summary.rangeFrames)
       .arg(summary.requestedFrames)
       .arg(summary.buildQueuePendingFrames)
+      .arg(summary.buildQueueNextFrame)
+      .arg(summary.buildRangeReady ? QStringLiteral("ready")
+                                   : QStringLiteral("building"))
+      .arg(QString::number(summary.buildRangeProgress * 100.0f, 'f', 0) + QStringLiteral("%"))
       .arg(summary.failedFrames)
       .arg(inRamFrames)
       .arg(summary.onDiskFrames)

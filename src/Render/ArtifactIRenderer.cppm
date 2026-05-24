@@ -2037,6 +2037,9 @@ bool ArtifactIRenderer::convertLayerToFloat(
  { return impl_->rayTracingManager_.get(); }
  void ArtifactIRenderer::setOverrideRTV(Diligent::ITextureView* rtv)
  {
+  if (auto ctx = impl_->deviceManager_.immediateContext()) {
+   impl_->submitQueuedDraws(ctx);
+  }
   impl_->primitiveRenderer_.setOverrideRTV(rtv);
   impl_->primitiveRenderer3D_.setOverrideRTV(rtv);
  }
