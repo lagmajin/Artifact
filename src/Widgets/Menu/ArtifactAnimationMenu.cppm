@@ -4,6 +4,8 @@ module;
 #include <QMenu>
 #include <QAction>
 #include <QKeySequence>
+#include <QCursor>
+#include <QPoint>
 #include <wobjectimpl.h>
 
 module Menu.Animation;
@@ -12,6 +14,8 @@ import std;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Service.Project;
+import Artifact.Widgets.ArtifactPropertyWidget;
+import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Widgets.Timeline;
 import Artifact.Widgets.Timeline.EasingLab;
 import Utils.Id;
@@ -47,6 +51,123 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
  }
  return widgets.isEmpty() ? nullptr : widgets.front();
 }
+
+bool openActiveExpressionCopilot(QWidget* root)
+{
+ if (!root) {
+  return false;
+ }
+
+ const auto propertyWidgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* propertyWidget : propertyWidgets) {
+  if (propertyWidget && propertyWidget->isVisible() &&
+      propertyWidget->hasActiveExpressionTarget() &&
+      propertyWidget->openActiveExpressionCopilot()) {
+   return true;
+  }
+ }
+
+ return false;
+}
+
+bool openNewExpressionCopilot(QWidget* root)
+{
+ if (!root) {
+  return false;
+ }
+
+ auto* copilot = new ArtifactExpressionCopilotWidget(root);
+ copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
+ copilot->setWindowTitle(QStringLiteral("Expression Copilot"));
+ copilot->setAttribute(Qt::WA_DeleteOnClose);
+ copilot->move(QCursor::pos() - QPoint(150, 200));
+ copilot->show();
+ return true;
+}
+
+bool clearActiveExpression(QWidget* root)
+{
+ if (!root) {
+  return false;
+ }
+
+ const auto propertyWidgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* propertyWidget : propertyWidgets) {
+  if (propertyWidget && propertyWidget->isVisible() &&
+      propertyWidget->hasActiveExpressionTarget() &&
+      propertyWidget->clearActiveExpression()) {
+   return true;
+  }
+ }
+ return false;
+}
+
+bool convertActiveExpressionToKeyframes(QWidget* root)
+{
+ if (!root) {
+  return false;
+ }
+
+ const auto propertyWidgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* propertyWidget : propertyWidgets) {
+  if (propertyWidget && propertyWidget->isVisible() &&
+      propertyWidget->hasActiveExpressionTarget() &&
+      propertyWidget->convertActiveExpressionToKeyframes()) {
+   return true;
+  }
+ }
+ return false;
+}
+
+bool saveActiveExpressionPreset(QWidget* root)
+{
+ if (!root) {
+  return false;
+ }
+
+ const auto propertyWidgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* propertyWidget : propertyWidgets) {
+  if (propertyWidget && propertyWidget->isVisible() &&
+      propertyWidget->hasActiveExpressionTarget() &&
+      propertyWidget->saveActiveExpressionPreset()) {
+   return true;
+  }
+ }
+ return false;
+}
+
+bool loadActiveExpressionPreset(QWidget* root)
+{
+ if (!root) {
+  return false;
+ }
+
+ const auto propertyWidgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* propertyWidget : propertyWidgets) {
+  if (propertyWidget && propertyWidget->isVisible() &&
+      propertyWidget->hasActiveExpressionTarget() &&
+      propertyWidget->loadActiveExpressionPreset()) {
+   return true;
+  }
+ }
+ return false;
+}
+
+bool hasActiveExpressionTarget(QWidget* root)
+{
+ if (!root) {
+  return false;
+ }
+
+ const auto propertyWidgets = root->findChildren<ArtifactPropertyWidget*>();
+ for (auto* propertyWidget : propertyWidgets) {
+  if (propertyWidget && propertyWidget->isVisible() &&
+      propertyWidget->hasActiveExpressionTarget()) {
+   return true;
+  }
+ }
+ return false;
+}
 }
 
  class ArtifactAnimationMenu::Impl {
@@ -71,8 +192,6 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
   QAction* easeOutAction = nullptr;
   QAction* easeInOutAction = nullptr;
 
-  QAction* toggleVelocityGraphAction = nullptr;
-  QAction* toggleValueGraphAction = nullptr;
   QAction* showGraphEditorAction = nullptr;
   QAction* easingLabAction = nullptr;
 
@@ -167,13 +286,32 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
   copyKeyframesAction->setEnabled(hasLayer);
   pasteKeyframesAction->setEnabled(hasLayer);
 
-  interpolationMenu->setEnabled(hasLayer);
-  graphEditorMenu->setEnabled(hasLayer);
-  navigationMenu->setEnabled(hasLayer);
-  timeRemapMenu->setEnabled(hasLayer);
-  expressionMenu->setEnabled(hasLayer);
-  presetMenu->setEnabled(hasLayer);
- }
+ interpolationMenu->setEnabled(hasLayer);
+ graphEditorMenu->setEnabled(hasLayer);
+ navigationMenu->setEnabled(hasLayer);
+ timeRemapMenu->setEnabled(hasLayer);
+ expressionMenu->setEnabled(hasLayer);
+ presetMenu->setEnabled(hasLayer);
+  const bool hasExpressionTarget = hasActiveExpressionTarget(menu_ ? menu_->window() : nullptr);
+  if (addExpressionAction) {
+   addExpressionAction->setEnabled(hasLayer);
+  }
+  if (editExpressionAction) {
+   editExpressionAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (removeExpressionAction) {
+   removeExpressionAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (convertToKeyframesAction) {
+   convertToKeyframesAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (saveAnimationPresetAction) {
+   saveAnimationPresetAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+  if (loadAnimationPresetAction) {
+   loadAnimationPresetAction->setEnabled(hasLayer && hasExpressionTarget);
+  }
+}
 
  ArtifactAnimationMenu::ArtifactAnimationMenu(QWidget* parent)
   : QMenu(parent), impl_(new Impl(this))
@@ -238,15 +376,6 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
   impl_->showGraphEditorAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3));
   impl_->easingLabAction = impl_->graphEditorMenu->addAction("EasingLab を開く");
   impl_->easingLabAction->setIcon(menuIcon(QStringLiteral("Studio/tune.svg")));
-  impl_->graphEditorMenu->addSeparator();
-
-  impl_->toggleVelocityGraphAction = impl_->graphEditorMenu->addAction("速度グラフ");
-  impl_->toggleVelocityGraphAction->setIcon(menuIcon(QStringLiteral("Studio/speed.svg")));
-  impl_->toggleVelocityGraphAction->setCheckable(true);
-  impl_->toggleValueGraphAction = impl_->graphEditorMenu->addAction("値グラフ");
-  impl_->toggleValueGraphAction->setIcon(menuIcon(QStringLiteral("Studio/timeline.svg")));
-  impl_->toggleValueGraphAction->setCheckable(true);
-  impl_->toggleValueGraphAction->setChecked(true);
 
   impl_->navigationMenu = addMenu("ナビゲーション(&N)");
   impl_->navigationMenu->setIcon(menuIcon(QStringLiteral("Studio/skip_next.svg")));
@@ -284,7 +413,7 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
   impl_->expressionMenu = addMenu("エクスプレッション(&E)");
   impl_->expressionMenu->setIcon(menuIcon(QStringLiteral("Studio/functions.svg")));
 
-  impl_->addExpressionAction = impl_->expressionMenu->addAction("エクスプレッションを追加");
+  impl_->addExpressionAction = impl_->expressionMenu->addAction("エクスプレッションを追加...");
   impl_->addExpressionAction->setIcon(menuIcon(QStringLiteral("Studio/add.svg")));
   impl_->addExpressionAction->setShortcut(QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_Equal));
   impl_->editExpressionAction = impl_->expressionMenu->addAction("エクスプレッションを編集...");
@@ -335,8 +464,6 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
     dialog.exec();
     return;
    }
-   if (action == impl_->toggleVelocityGraphAction) { Q_EMIT toggleVelocityGraphRequested(); return; }
-   if (action == impl_->toggleValueGraphAction) { Q_EMIT toggleValueGraphRequested(); return; }
    if (action == impl_->goToNextKeyframeAction) { Q_EMIT goToNextKeyframeRequested(); return; }
    if (action == impl_->goToPreviousKeyframeAction) { Q_EMIT goToPreviousKeyframeRequested(); return; }
    if (action == impl_->goToFirstKeyframeAction) { Q_EMIT goToFirstKeyframeRequested(); return; }
@@ -344,12 +471,12 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
    if (action == impl_->enableTimeRemapAction) { Q_EMIT enableTimeRemapRequested(); return; }
    if (action == impl_->freezeFrameAction) { Q_EMIT freezeFrameRequested(); return; }
    if (action == impl_->timeReverseAction) { Q_EMIT timeReverseRequested(); return; }
-   if (action == impl_->addExpressionAction) { Q_EMIT addExpressionRequested(); return; }
-   if (action == impl_->editExpressionAction) { Q_EMIT editExpressionRequested(); return; }
-   if (action == impl_->removeExpressionAction) { Q_EMIT removeExpressionRequested(); return; }
-   if (action == impl_->convertToKeyframesAction) { Q_EMIT convertToKeyframesRequested(); return; }
-   if (action == impl_->saveAnimationPresetAction) { Q_EMIT saveAnimationPresetRequested(); return; }
-   if (action == impl_->loadAnimationPresetAction) { Q_EMIT loadAnimationPresetRequested(); return; }
+   if (action == impl_->addExpressionAction) { openNewExpressionCopilot(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->editExpressionAction) { openActiveExpressionCopilot(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->removeExpressionAction) { clearActiveExpression(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->convertToKeyframesAction) { convertActiveExpressionToKeyframes(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->saveAnimationPresetAction) { saveActiveExpressionPreset(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
+   if (action == impl_->loadAnimationPresetAction) { loadActiveExpressionPreset(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr); return; }
   };
 
   QObject::connect(this, &QMenu::triggered, this, dispatchAction);

@@ -10,7 +10,6 @@ module;
 #include <QUrl>
 #include <QInputDialog>
 #include <QLineEdit>
-#include <QRegularExpression>
 #include <QFileInfo>
 #include <QSet>
 #include <QMessageBox>
@@ -21,6 +20,7 @@ module;
 #include <QProgressDialog>
 #include <QPainter>
 #include <QImage>
+#include <QVector>
 #include <QtConcurrent>
 #include <QFutureWatcher>
 #include <wobjectimpl.h>
@@ -29,6 +29,8 @@ module Artifact.Menu.File;
 import std;
 
 import Artifact.Project.Manager;
+import Artifact.Project.Packager;
+import Artifact.Composition.InitParams;
 import Artifact.Service.Project;
 import Application.AppSettings;
 import Utils.Path;
@@ -332,36 +334,49 @@ void ArtifactFileMenu::Impl::handleNewComposition()
     if (!menu_) return;
 
     // Preset selection
-    QStringList presets;
-    presets << "1920 x 1080  @ 30fps (Full HD)"
-            << "1920 x 1080  @ 24fps (Cinema)"
-            << "3840 x 2160  @ 30fps (4K UHD)"
-            << "1280 x 720   @ 30fps (HD)"
-            << "1080 x 1920  @ 30fps (Vertical HD)"
-            << "1080 x 1920  @ 60fps (Vertical 60)"
-            << "1080 x 1080  @ 30fps (Square)"
-            << "1920 x 1080  @ 60fps (Full HD 60)";
+    struct PresetEntry {
+        QString label;
+        ArtifactCompositionInitParams params;
+    };
+    ArtifactCompositionInitParams hd720Preset = ArtifactCompositionInitParams::hdPreset();
+    hd720Preset.setResolution(1280, 720);
+    hd720Preset.setFrameRate(30.0);
+    ArtifactCompositionInitParams vertical60Preset = ArtifactCompositionInitParams::verticalPreset();
+    vertical60Preset.setFrameRate(60.0);
+    const QVector<PresetEntry> presets = {
+        {QStringLiteral("1920 x 1080  @ 30fps (Full HD)"), ArtifactCompositionInitParams::hdPreset()},
+        {QStringLiteral("2048 x 858   @ 24fps (Cinema)"), ArtifactCompositionInitParams::cinemaPreset()},
+        {QStringLiteral("3840 x 2160  @ 30fps (4K UHD)"), ArtifactCompositionInitParams::fourKPreset()},
+        {QStringLiteral("1280 x 720   @ 30fps (HD)"), hd720Preset},
+        {QStringLiteral("1080 x 1920  @ 30fps (Vertical HD)"), ArtifactCompositionInitParams::verticalPreset()},
+        {QStringLiteral("1080 x 1920  @ 60fps (Vertical 60)"), vertical60Preset},
+        {QStringLiteral("1080 x 1080  @ 30fps (Square)"), ArtifactCompositionInitParams::squarePreset()},
+        {QStringLiteral("1920 x 1080  @ 60fps (Full HD 60)"), ArtifactCompositionInitParams::fullHd60Preset()}
+    };
 
     bool ok = false;
-    const QString preset = QInputDialog::getItem(menu_, "新規コンポジション", "プリセット:", presets, 0, false, &ok);
+    QStringList presetLabels;
+    presetLabels.reserve(presets.size());
+    for (const auto& preset : presets) {
+        presetLabels.push_back(preset.label);
+    }
+    const QString preset = QInputDialog::getItem(menu_, "新規コンポジション", "プリセット:", presetLabels, 0, false, &ok);
     if (!ok) return;
 
-    // Parse preset: "WxH @ fps (name)"
-    int w = 1920, h = 1080;
-    double fps = 30.0;
-    QRegularExpression re(R"((\d+)\s*x\s*(\d+)\s*@\s*(\d+)fps)");
-    auto match = re.match(preset);
-    if (match.hasMatch()) {
-        w = match.captured(1).toInt();
-        h = match.captured(2).toInt();
-        fps = match.captured(3).toDouble();
+    ArtifactCompositionInitParams params = ArtifactCompositionInitParams::hdPreset();
+    for (const auto& entry : presets) {
+        if (entry.label == preset) {
+            params = entry.params;
+            break;
+        }
     }
 
     const QString name = QInputDialog::getText(menu_, "コンポジション名", "名前:", QLineEdit::Normal, "Composition", &ok);
     if (!ok || name.trimmed().isEmpty()) return;
 
+    params.setCompositionName(UniString(name.trimmed()));
     if (auto* svc = ArtifactProjectService::instance()) {
-        svc->createComposition(UniString(name.trimmed()));
+        svc->createComposition(params);
     }
 }
 
@@ -425,7 +440,7 @@ void ArtifactFileMenu::Impl::openProjectPath(const QString& path, bool addToRece
         return;
     }
     if (addToRecent) {
-        addRecentProject(path);
+        addRecentProject(afterPath.isEmpty() ? path : afterPath);
     }
 }
 
@@ -632,9 +647,22 @@ void ArtifactFileMenu::Impl::handleExportProjectPackage()
     const QString dirPath = QFileDialog::getExistingDirectory(menu_, "プロジェクトをパッケージ化", 
         QString(), QFileDialog::ShowDirsOnly);
     if (dirPath.isEmpty()) return;
-    
-    // TODO: プロジェクトをパッケージ化
-    QMessageBox::information(menu_, "エクスポート", "プロジェクトのパッケージ化機能は現在開発中です。");
+
+    auto project = svc->getCurrentProjectSharedPtr();
+    if (!project) {
+        QMessageBox::warning(menu_, QStringLiteral("エクスポート"),
+                             QStringLiteral("プロジェクトデータを取得できませんでした。"));
+        return;
+    }
+
+    const PackageSettings settings{dirPath, false, false};
+    if (!ArtifactProjectPackager::collectAndPackage(project.get(), settings)) {
+        QMessageBox::warning(menu_, QStringLiteral("エクスポート"),
+                             QStringLiteral("プロジェクトのパッケージ化に失敗しました。"));
+        return;
+    }
+    QMessageBox::information(menu_, QStringLiteral("エクスポート"),
+                             QStringLiteral("プロジェクトをパッケージ化しました。\n%1").arg(dirPath));
 }
 
 void ArtifactFileMenu::Impl::rebuildMenu()

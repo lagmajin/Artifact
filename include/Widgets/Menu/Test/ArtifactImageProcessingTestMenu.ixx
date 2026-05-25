@@ -2,6 +2,7 @@ module;
 #include <utility>
 
 #include <wobjectdefs.h>
+#include <QScopedPointer>
 #include <QtWidgets/QMenu>
 export module Menu.Test2;
 

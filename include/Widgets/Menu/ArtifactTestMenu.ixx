@@ -47,6 +47,9 @@ export namespace Artifact {
  
 
  class ArtifactWidgetTestMenu :public QMenu {
+ public:
+  explicit ArtifactWidgetTestMenu(QWidget* parent = nullptr);
+  ~ArtifactWidgetTestMenu();
 
  };
 

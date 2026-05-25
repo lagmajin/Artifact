@@ -489,7 +489,11 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
 
     // Solid metadata
     if (item->type() == eProjectItemType::Solid) {
-        lines << QStringLiteral("Color: #FFFFFF"); // TODO: Get actual color
+        const auto* solid = static_cast<const SolidItem*>(item);
+        if (solid) {
+            lines << QStringLiteral("Color: %1")
+                          .arg(solid->color.name(QColor::HexArgb).toUpper());
+        }
     }
 
     return lines;

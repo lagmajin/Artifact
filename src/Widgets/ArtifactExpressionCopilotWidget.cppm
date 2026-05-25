@@ -143,6 +143,7 @@ public:
     QPushButton* wiggleBtn = nullptr;
     QPushButton* loopBtn = nullptr;
     QPushButton* driftBtn = nullptr;
+    std::function<void(const QString& expression)> applyHandler;
     QTimer* validateTimer = nullptr;
     std::unique_ptr<ExpressionSyntaxHighlighter> highlighter;
     ArtifactCore::ExpressionParser parser;
@@ -694,6 +695,9 @@ ArtifactExpressionCopilotWidget::ArtifactExpressionCopilotWidget(QWidget* parent
         impl_->validateExpression();
         const QString text = impl_->expressionEdit->toPlainText().trimmed();
         if (!text.isEmpty()) {
+            if (impl_->applyHandler) {
+                impl_->applyHandler(text);
+            }
             QApplication::clipboard()->setText(text);
         }
     });
@@ -779,6 +783,13 @@ void ArtifactExpressionCopilotWidget::setExpressionText(const QString& expressio
     impl_->expressionEdit->moveCursor(QTextCursor::End);
     impl_->validateExpression();
     impl_->showSuggestions(impl_->currentCompletionPrefix());
+}
+
+void ArtifactExpressionCopilotWidget::setApplyHandler(std::function<void(const QString& expression)> handler) {
+    if (!impl_) {
+        return;
+    }
+    impl_->applyHandler = std::move(handler);
 }
 
 QSize ArtifactExpressionCopilotWidget::sizeHint() const {

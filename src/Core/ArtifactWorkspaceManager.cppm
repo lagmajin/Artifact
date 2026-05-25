@@ -212,4 +212,12 @@ bool ArtifactWorkspaceManager::restorePreset(const QString &presetName,
   return applyWindowState(window, json, true);
 }
 
+bool ArtifactWorkspaceManager::deletePreset(const QString &presetName) const {
+  const QString path = presetPath(workspaceRoot_, presetName);
+  if (!QFileInfo::exists(path)) {
+    return false;
+  }
+  return QFile::remove(path);
+}
+
 } // namespace Artifact

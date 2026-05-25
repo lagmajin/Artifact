@@ -11,8 +11,10 @@ module;
 #include <QGuiApplication>
 #include <QTimer>
 #include <QImage>
+#include <QPixmap>
 #include <QPainter>
 #include <QKeyEvent>
+#include <QResizeEvent>
 #include <QApplication>
 #include <QStatusBar>
 #include <QStyle>
@@ -195,8 +197,13 @@ ArtifactSecondaryPreviewWindow::~ArtifactSecondaryPreviewWindow() {
 }
 
 void ArtifactSecondaryPreviewWindow::updatePreviewImage(const QImage& image) {
-    if (image.isNull()) return;
     impl_->currentImage_ = image;
+    if (image.isNull()) {
+        if (impl_->previewLabel_) {
+            impl_->previewLabel_->clear();
+        }
+        return;
+    }
 
     // Scale image to fit available space
     QSize availableSize = impl_->previewLabel_->size();
@@ -302,6 +309,14 @@ void ArtifactSecondaryPreviewWindow::keyPressEvent(QKeyEvent* event) {
 void ArtifactSecondaryPreviewWindow::closeEvent(QCloseEvent* event) {
     emit closed();
     QWidget::closeEvent(event);
+}
+
+void ArtifactSecondaryPreviewWindow::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    if (!impl_ || impl_->currentImage_.isNull()) {
+        return;
+    }
+    updatePreviewImage(impl_->currentImage_);
 }
 
 void ArtifactSecondaryPreviewWindow::paintEvent(QPaintEvent* event) {

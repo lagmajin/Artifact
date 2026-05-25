@@ -9,6 +9,7 @@ module;
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QMetaObject>
 #include <QtSVG/QSvgRenderer>
 #include <QTimer>
 #include <QSet>
@@ -28,6 +29,7 @@ import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Shape;
 import Artifact.Composition.Abstract;
+import Artifact.MainWindow;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
 import Artifact.Widgets.AppDialogs;
@@ -150,6 +152,8 @@ public:
 
     QAction* selectParentAction = nullptr;
     QAction* clearParentAction = nullptr;
+    QAction* openInspectorAction = nullptr;
+    QAction* openPropertiesAction = nullptr;
 
     QAction* precomposeAction = nullptr;
     QAction* groupSelectionAction = nullptr;
@@ -179,6 +183,8 @@ public:
 
     void handleSelectParent();
     void handleClearParent();
+    void handleOpenInspector();
+    void handleOpenProperties();
 
     void handlePrecompose();
     void handleGroupSelection();
@@ -300,6 +306,11 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     selectMenu->addAction(selectParentAction);
     selectMenu->addAction(clearParentAction);
 
+    openInspectorAction = new QAction("Inspector を開く", menu);
+    openInspectorAction->setIcon(QIcon(resolveIconPath("Studio/inspector.svg")));
+    openPropertiesAction = new QAction("Properties を開く", menu);
+    openPropertiesAction->setIcon(QIcon(resolveIconPath("Studio/settings.svg")));
+
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
     precomposeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
     precomposeAction->setIcon(QIcon(resolveIconPath("Studio/view_comfy.svg")));
@@ -320,6 +331,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addSeparator();
     menu->addMenu(switchMenu);
     menu->addMenu(selectMenu);
+    menu->addSeparator();
+    menu->addAction(openInspectorAction);
+    menu->addAction(openPropertiesAction);
     menu->addSeparator();
     menu->addAction(precomposeAction);
     menu->addAction(groupSelectionAction);
@@ -355,6 +369,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == soloOnlyAction) { handleSoloOnlySelected(); return; }
         if (action == selectParentAction) { handleSelectParent(); return; }
         if (action == clearParentAction) { handleClearParent(); return; }
+        if (action == openInspectorAction) { handleOpenInspector(); return; }
+        if (action == openPropertiesAction) { handleOpenProperties(); return; }
         if (action == precomposeAction) { handlePrecompose(); return; }
         if (action == groupSelectionAction) { handleGroupSelection(); return; }
         if (action == ungroupAction) { handleUngroup(); return; }
@@ -472,13 +488,42 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     duplicateLayerAction->setEnabled(hasLayer);
     renameLayerAction->setEnabled(hasLayer);
     deleteLayerAction->setEnabled(hasLayer);
+    if (hasLayer) {
+        const bool visible = service && service->isLayerVisibleInCurrentComposition(selectedLayerId_);
+        const bool locked = service && service->isLayerLockedInCurrentComposition(selectedLayerId_);
+        const bool solo = service && service->isLayerSoloInCurrentComposition(selectedLayerId_);
+        const bool shy = service && service->isLayerShyInCurrentComposition(selectedLayerId_);
+        toggleVisibleAction->setText(visible ? QStringLiteral("非表示にする") : QStringLiteral("表示する"));
+        toggleLockAction->setText(locked ? QStringLiteral("ロックを解除") : QStringLiteral("ロックする"));
+        toggleSoloAction->setText(solo ? QStringLiteral("ソロを解除") : QStringLiteral("ソロにする"));
+        toggleShyAction->setText(shy ? QStringLiteral("シャイを解除") : QStringLiteral("シャイにする"));
+    } else {
+        toggleVisibleAction->setText(QStringLiteral("表示/非表示を切替"));
+        toggleLockAction->setText(QStringLiteral("ロックを切替"));
+        toggleSoloAction->setText(QStringLiteral("ソロを切替"));
+        toggleShyAction->setText(QStringLiteral("シャイを切替"));
+    }
     toggleVisibleAction->setEnabled(hasLayer);
     toggleLockAction->setEnabled(hasLayer);
     toggleSoloAction->setEnabled(hasLayer);
     toggleShyAction->setEnabled(hasLayer);
     soloOnlyAction->setEnabled(hasLayer && hasComp);
+    if (hasLayer && hasParent) {
+        const auto parentId = service->layerParentIdInCurrentComposition(selectedLayerId_);
+        const QString parentName = service ? service->layerNameInCurrentComposition(parentId) : QString();
+        const QString displayName = parentName.trimmed().isEmpty()
+                                        ? QStringLiteral("Parent")
+                                        : parentName.trimmed();
+        selectParentAction->setText(QStringLiteral("親を選択 (%1)").arg(displayName));
+        clearParentAction->setText(QStringLiteral("親を解除 (%1)").arg(displayName));
+    } else {
+        selectParentAction->setText(QStringLiteral("親を選択"));
+        clearParentAction->setText(QStringLiteral("親を解除"));
+    }
     selectParentAction->setEnabled(hasParent);
     clearParentAction->setEnabled(hasParent);
+    openInspectorAction->setEnabled(hasLayer);
+    openPropertiesAction->setEnabled(hasLayer);
     precomposeAction->setEnabled(hasLayer);
     groupSelectionAction->setEnabled(hasLayer && hasComp);
     
@@ -543,6 +588,9 @@ void ArtifactLayerMenu::Impl::handleCreateNull()
         params.setHeight(size.height());
     }
     service->addLayerToCurrentComposition(params);
+    if (menu_) {
+        Q_EMIT menu_->nullLayerCreated();
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateAdjust()
@@ -806,6 +854,26 @@ void ArtifactLayerMenu::Impl::handleClearParent()
     service->clearLayerParentInCurrentComposition(selectedLayerId_);
 }
 
+void ArtifactLayerMenu::Impl::handleOpenInspector()
+{
+    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    if (!window) {
+        return;
+    }
+    window->setDockVisible(QStringLiteral("Inspector"), true);
+    window->activateDock(QStringLiteral("Inspector"));
+}
+
+void ArtifactLayerMenu::Impl::handleOpenProperties()
+{
+    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    if (!window) {
+        return;
+    }
+    window->setDockVisible(QStringLiteral("Properties"), true);
+    window->activateDock(QStringLiteral("Properties"));
+}
+
 void ArtifactLayerMenu::Impl::handlePrecompose()
 {
     auto* service = ArtifactProjectService::instance();
@@ -903,7 +971,20 @@ void ArtifactLayerMenu::Impl::handleUngroup()
 
 void ArtifactLayerMenu::Impl::handleSplitLayer()
 {
-    QMessageBox::information(menu_->window(), "Layer", "レイヤー分割は次のステップで実装します。");
+    if (selectedLayerId_.isNil()) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Layer"),
+                             QStringLiteral("分割するレイヤーが選択されていません。"));
+        return;
+    }
+    if (auto* ctx = ArtifactApplicationManager::instance()
+                        ? ArtifactApplicationManager::instance()->activeContextService()
+                        : nullptr) {
+        ctx->splitLayerAtCurrentTime();
+        refreshEnabledState();
+        return;
+    }
+    QMessageBox::warning(menu_->window(), QStringLiteral("Layer"),
+                         QStringLiteral("アクティブコンテキストが利用できません。"));
 }
 
 void ArtifactLayerMenu::Impl::handleTrackCamera()
@@ -921,10 +1002,28 @@ void ArtifactLayerMenu::Impl::handleTrackCamera()
     }
 
     // 実行
-    bool success = ArtifactCameraTrackerTool::run(comp.get(), layer, [this](const ArtifactCameraTrackerTool::ProgressUpdate& update) {
-        // TODO: ステータスバーへの表示など
-        qDebug() << "Tracking progress:" << update.currentFrame << "/" << update.totalFrames << update.message;
-    });
+    auto* window = qobject_cast<ArtifactMainWindow*>(menu_ ? menu_->window() : nullptr);
+    bool success = ArtifactCameraTrackerTool::run(
+        comp.get(), layer,
+        [window](const ArtifactCameraTrackerTool::ProgressUpdate& update) {
+            qDebug() << "Tracking progress:" << update.currentFrame << "/" << update.totalFrames
+                     << update.message;
+            if (!window) {
+                return;
+            }
+            const QString status = QStringLiteral("Tracking %1/%2: %3")
+                                       .arg(update.currentFrame)
+                                       .arg(update.totalFrames)
+                                       .arg(update.message);
+            QMetaObject::invokeMethod(
+                window,
+                [window, status]() {
+                    if (window) {
+                        window->showStatusMessage(status, 1500);
+                    }
+                },
+                Qt::QueuedConnection);
+        });
 
     if (success) {
         QMessageBox::information(menu_->window(), "3D Tracker", "トラッキングが完了しました。カメラと特徴点レイヤーが作成されました。");

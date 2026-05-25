@@ -1,5 +1,6 @@
 ﻿module;
 #include <utility>
+#include <algorithm>
 #include <QFont>
 #include <QSize>
 #include <QMenuBar>
@@ -10,6 +11,10 @@ module Menu.MenuBar;
 
 
 import Application.AppSettings;
+import Artifact.Application.Manager;
+import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
+import Artifact.Service.Project;
 import Artifact.Menu.File;
 import Artifact.Menu.Edit;
 import Menu.Composition;
@@ -24,6 +29,7 @@ import Menu.Option;
 import Menu.Test;
 import Menu.Help;
 import Artifact.Widgets.Timeline;
+import Artifact.Widgets.Timeline.GlobalSwitches;
 import Math.Interpolate;
 
 namespace Artifact {
@@ -58,6 +64,39 @@ ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
   }
  }
  return widgets.isEmpty() ? nullptr : widgets.front();
+}
+
+ArtifactTimelineGlobalSwitches* activeTimelineGlobalSwitches(QWidget* root)
+{
+ if (!root) {
+  return nullptr;
+ }
+
+ const auto widgets = root->findChildren<ArtifactTimelineGlobalSwitches*>();
+ for (auto* widget : widgets) {
+  if (widget && widget->hasFocus()) {
+   return widget;
+  }
+ }
+ for (auto* widget : widgets) {
+  if (widget && widget->isVisible()) {
+   return widget;
+  }
+ }
+ return widgets.isEmpty() ? nullptr : widgets.front();
+}
+
+ArtifactAbstractLayerPtr activeTimelineLayer()
+{
+ auto* app = ArtifactApplicationManager::instance();
+ auto* selection = app ? app->layerSelectionManager() : nullptr;
+ return selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+}
+
+ArtifactCompositionPtr currentComposition()
+{
+ auto* service = ArtifactProjectService::instance();
+ return service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
 }
 }
 
@@ -135,6 +174,52 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
            timeline->applyInterpolationToSelectedKeyframes(type);
           }
          });
+connect(animationMenu, &ArtifactAnimationMenu::showGraphEditorRequested, menuBar, [this]() {
+  if (auto* switches = activeTimelineGlobalSwitches(mainWindow_)) {
+   switches->setGraphEditorActive(true);
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::enableTimeRemapRequested, menuBar, [this]() {
+  auto layer = activeTimelineLayer();
+  if (!layer) {
+   return;
+  }
+  if (!layer->isTimeRemapEnabled()) {
+   layer->setTimeRemapEnabled(true);
+  }
+ });
+connect(animationMenu, &ArtifactAnimationMenu::freezeFrameRequested, menuBar, [this]() {
+  auto layer = activeTimelineLayer();
+  auto comp = currentComposition();
+  if (!layer || !comp) {
+   return;
+  }
+  const int64_t compFrame = comp->framePosition().framePosition();
+  const int64_t sourceFrame = layer->currentSourceFrameValue();
+  layer->clearTimeRemap();
+  layer->setTimeRemapEnabled(true);
+  layer->setTimeRemapKey(compFrame, static_cast<double>(sourceFrame));
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::timeReverseRequested, menuBar, [this]() {
+  auto layer = activeTimelineLayer();
+  auto comp = currentComposition();
+  if (!layer || !comp) {
+   return;
+  }
+  const int64_t compFrame = comp->framePosition().framePosition();
+  const int64_t clipStartSourceFrame = layer->startTime().framePosition();
+  const int64_t clipFrameCount =
+      std::max<int64_t>(1, layer->outPoint().framePosition() - layer->inPoint().framePosition());
+  const int64_t clipEndSourceFrame = clipStartSourceFrame + clipFrameCount - 1;
+  layer->clearTimeRemap();
+  layer->setTimeRemapEnabled(true);
+  if (clipFrameCount <= 1) {
+   layer->setTimeRemapKey(compFrame, static_cast<double>(clipStartSourceFrame));
+   return;
+  }
+  layer->setTimeRemapKey(layer->inPoint().framePosition(), static_cast<double>(clipEndSourceFrame));
+  layer->setTimeRemapKey(layer->outPoint().framePosition() - 1, static_cast<double>(clipStartSourceFrame));
+ });
  connect(animationMenu, &ArtifactAnimationMenu::removeKeyframeRequested, menuBar, [this]() {
   if (auto* timeline = activeTimelineWidget(mainWindow_)) {
    timeline->removeKeyframeAtPlayhead();

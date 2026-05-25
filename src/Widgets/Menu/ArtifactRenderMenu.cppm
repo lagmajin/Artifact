@@ -4,15 +4,20 @@ module;
 #include <QAction>
 #include <QMessageBox>
 #include <QApplication>
+#include <QDialog>
+#include <QRect>
 #include <wobjectimpl.h>
 
 module Menu.Render;
 import std;
 
+import Event.Bus;
+import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Artifact.Render.Queue.Service;
 import Artifact.MainWindow;
 import Artifact.Widgets.RenderCenterWindow;
+import Artifact.Widget.Dialog.RenderOutputSetting;
 import Utils.Path;
 import Artifact.Widgets.Test.ScrollPoC;
 
@@ -44,11 +49,14 @@ public:
  ArtifactRenderMenu* menu_ = nullptr;
  QWidget* mainWindow_ = nullptr;
  QAction* addCurrentToQueueAction = nullptr;
+ QAction* addAllCompositionsAction = nullptr;
  QAction* showQueueAction = nullptr;
  QAction* showRenderManagerAction = nullptr;
  QAction* renderSettingsAction = nullptr;
  QAction* startRenderAction = nullptr;
  QAction* clearAllAction = nullptr;
+ QAction* scrollPoCAction = nullptr;
+ std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
  void addCurrentToQueue();
  void addAllCompositions();
@@ -86,13 +94,13 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  clearAllAction = new QAction("すべてのジョブをクリア(&C)");
  clearAllAction->setIcon(QIcon(resolveIconPath("Studio/clear_all.svg")));
 
- auto* scrollPoCAction = new QAction("Scroll PoC (Floating)", menu);
+ scrollPoCAction = new QAction("Scroll PoC (Floating)", menu);
  scrollPoCAction->setIcon(QIcon(resolveIconPath("Studio/scroll.svg")));
 
  menu->addAction(addCurrentToQueueAction);
- auto* addAllCompsAction = new QAction("全コンポジションをキューに追加(&A)", menu);
- addAllCompsAction->setIcon(QIcon(resolveIconPath("Studio/playlist_add.svg")));
- menu->addAction(addAllCompsAction);
+ addAllCompositionsAction = new QAction("全コンポジションをキューに追加(&A)", menu);
+ addAllCompositionsAction->setIcon(QIcon(resolveIconPath("Studio/playlist_add.svg")));
+ menu->addAction(addAllCompositionsAction);
  menu->addSeparator();
  menu->addAction(showQueueAction);
  menu->addAction(showRenderManagerAction);
@@ -104,13 +112,23 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  menu->addAction(scrollPoCAction);
 
  QObject::connect(addCurrentToQueueAction, &QAction::triggered, menu, [this]() { addCurrentToQueue(); });
- QObject::connect(addAllCompsAction, &QAction::triggered, menu, [this]() { addAllCompositions(); });
+ QObject::connect(addAllCompositionsAction, &QAction::triggered, menu, [this]() { addAllCompositions(); });
  QObject::connect(showQueueAction, &QAction::triggered, menu, [this]() { showQueue(); });
  QObject::connect(showRenderManagerAction, &QAction::triggered, menu, [this]() { showRenderManager(); });
  QObject::connect(renderSettingsAction, &QAction::triggered, menu, [this]() { showRenderSettings(); });
  QObject::connect(startRenderAction, &QAction::triggered, menu, [this]() { startRender(); });
  QObject::connect(clearAllAction, &QAction::triggered, menu, [this]() { clearAll(); });
  QObject::connect(scrollPoCAction, &QAction::triggered, menu, [this]() { showScrollPoC(); });
+
+ auto& eventBus = ArtifactCore::globalEventBus();
+ eventBusSubscriptions_.push_back(eventBus.subscribe<ProjectChangedEvent>(
+     [this](const ProjectChangedEvent&) { rebuildMenu(); }));
+ eventBusSubscriptions_.push_back(eventBus.subscribe<CompositionCreatedEvent>(
+     [this](const CompositionCreatedEvent&) { rebuildMenu(); }));
+ eventBusSubscriptions_.push_back(eventBus.subscribe<CurrentCompositionChangedEvent>(
+     [this](const CurrentCompositionChangedEvent&) { rebuildMenu(); }));
+ eventBusSubscriptions_.push_back(eventBus.subscribe<RenderQueueChangedEvent>(
+     [this](const RenderQueueChangedEvent&) { rebuildMenu(); }));
 }
 
 void ArtifactRenderMenu::Impl::showScrollPoC()
@@ -181,7 +199,9 @@ void ArtifactRenderMenu::Impl::showRenderManager()
 
 void ArtifactRenderMenu::Impl::showRenderSettings()
 {
- QMessageBox::information(mainWindow_ ? mainWindow_ : menu_, "Render Settings", "出力設定ダイアログはレンダーキューパネルの「詳細設定」からアクセスできます。");
+ ArtifactRenderOutputSettingDialog dialog(mainWindow_ ? mainWindow_ : menu_);
+ dialog.setWindowTitle(QStringLiteral("Render Output Settings"));
+ dialog.exec();
 }
 
 void ArtifactRenderMenu::Impl::startRender()
@@ -218,11 +238,26 @@ void ArtifactRenderMenu::rebuildMenu()
  auto* projectService = ArtifactProjectService::instance();
  const bool hasComp = projectService && !projectService->currentComposition().expired();
  impl_->addCurrentToQueueAction->setEnabled(hasComp);
+ if (impl_->addAllCompositionsAction) {
+  impl_->addAllCompositionsAction->setEnabled(ArtifactRenderQueueService::instance() != nullptr);
+ }
+ if (impl_->showQueueAction) {
+  impl_->showQueueAction->setEnabled(true);
+ }
+ if (impl_->showRenderManagerAction) {
+  impl_->showRenderManagerAction->setEnabled(true);
+ }
+ if (impl_->renderSettingsAction) {
+  impl_->renderSettingsAction->setEnabled(true);
+ }
  
  auto* queueService = ArtifactRenderQueueService::instance();
  const bool hasJobs = queueService && queueService->jobCount() > 0;
  impl_->startRenderAction->setEnabled(hasJobs);
  impl_->clearAllAction->setEnabled(hasJobs);
+ if (impl_->scrollPoCAction) {
+  impl_->scrollPoCAction->setEnabled(static_cast<bool>(impl_->mainWindow_));
+ }
 }
 
 }
