@@ -265,6 +265,7 @@ public:
 
     QLabel* label() const;
     ArtifactAbstractPropertyEditor* editor() const;
+    QString propertyName() const;
     void setExpressionHandler(std::function<void()> handler);
     void setResetHandler(std::function<void()> handler);
     void setKeyframeHandler(KeyFrameHandler handler);

@@ -68,6 +68,12 @@ public:
     bool sliderBeforeValue() const;
 
     void updateProperties();
+    bool openActiveExpressionCopilot();
+    bool clearActiveExpression();
+    bool convertActiveExpressionToKeyframes();
+    bool saveActiveExpressionPreset();
+    bool loadActiveExpressionPreset();
+    bool hasActiveExpressionTarget() const;
 
 protected:
     void showEvent(QShowEvent* event) override;

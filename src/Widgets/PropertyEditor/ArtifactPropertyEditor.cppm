@@ -2207,6 +2207,8 @@ ArtifactPropertyEditorRowWidget::editor() const {
   return editor_;
 }
 
+QString ArtifactPropertyEditorRowWidget::propertyName() const { return propertyName_; }
+
 void ArtifactPropertyEditorRowWidget::setGlobalLayoutMode(
     const ArtifactPropertyRowLayoutMode mode) {
   g_propertyRowLayoutMode = mode;

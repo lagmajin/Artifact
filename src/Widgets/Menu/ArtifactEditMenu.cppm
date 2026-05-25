@@ -6,22 +6,25 @@ module;
 #include <QKeySequence>
 #include <QDebug>
 #include <QStatusBar>
-#include <QClipboard>
-#include <QApplication>
-#include <QJsonDocument>
 #include <QJsonArray>
-#include <QJsonObject>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QVBoxLayout>
 #include <QInputDialog>
 #include <QLineEdit>
 module Artifact.Menu.Edit;
 import std;
 
+import Event.Bus;
+import Artifact.Event.Types;
 import Artifact.Application.Manager;
 import Artifact.Project.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Clipboard.ClipboardManager;
+import Artifact.Widgets.UndoHistoryWidget;
 import Undo.UndoManager;
 import UI.ShortcutBindings;
 import ApplicationSettingDialog;
@@ -52,6 +55,7 @@ private:
   QAction* selectSameTypeAction = nullptr;
   QAction* findAction = nullptr;
   QAction* preferencesAction = nullptr;
+  QAction* undoHistoryAction = nullptr;
 
   QAction* copyAction_ = nullptr;
   QAction* cutAction_ = nullptr;
@@ -74,9 +78,10 @@ private:
   void handleSelectSameType();
   void handleFind();
   void handlePreferences();
-  bool hasLayerClipboard() const;
+  void handleUndoHistory();
 
   ArtifactActiveContextService* getActiveContext();
+  std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
  };
 
  ArtifactEditMenu::Impl::Impl(QMenu* menu, QWidget* mainWindow)
@@ -126,6 +131,9 @@ private:
   preferencesAction = new QAction("環境設定 (&P)...");
   preferencesAction->setIcon(QIcon(resolveIconPath("Studio/settings.svg")));
 
+  undoHistoryAction = new QAction("Undo 履歴 (&H)...");
+  undoHistoryAction->setIcon(QIcon(resolveIconPath("Studio/history.svg")));
+
   copyAction_ = new QAction("コピー (&C)");
   copyAction_->setShortcut(QKeySequence::Copy);
   copyAction_->setIcon(QIcon(resolveIconPath("Studio/content_copy.svg")));
@@ -169,6 +177,8 @@ private:
   menu->addSeparator();
   menu->addAction(findAction);
   menu->addSeparator();
+  menu->addAction(undoHistoryAction);
+  menu->addSeparator();
   menu->addAction(preferencesAction);
 
   // Connections
@@ -187,29 +197,25 @@ private:
   QObject::connect(invertSelectionAction, &QAction::triggered, menu, [this]() { handleInvertSelection(); });
   QObject::connect(selectSameTypeAction, &QAction::triggered, menu, [this]() { handleSelectSameType(); });
   QObject::connect(findAction, &QAction::triggered, menu, [this]() { handleFind(); });
+  QObject::connect(undoHistoryAction, &QAction::triggered, menu, [this]() { handleUndoHistory(); });
   QObject::connect(preferencesAction, &QAction::triggered, menu, [this]() { handlePreferences(); });
+
+  auto& eventBus = ArtifactCore::globalEventBus();
+  eventBusSubscriptions_.push_back(
+      eventBus.subscribe<LayerSelectionChangedEvent>(
+          [this](const LayerSelectionChangedEvent&) { rebuildMenu(); }));
+  eventBusSubscriptions_.push_back(
+      eventBus.subscribe<CurrentCompositionChangedEvent>(
+          [this](const CurrentCompositionChangedEvent&) { rebuildMenu(); }));
+  eventBusSubscriptions_.push_back(
+      eventBus.subscribe<ProjectChangedEvent>(
+          [this](const ProjectChangedEvent&) { rebuildMenu(); }));
 
   QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() { rebuildMenu(); });
  }
 
  ArtifactActiveContextService* ArtifactEditMenu::Impl::getActiveContext() {
   return ArtifactApplicationManager::instance()->activeContextService();
- }
-
- bool ArtifactEditMenu::Impl::hasLayerClipboard() const {
-  const QClipboard* clipboard = QApplication::clipboard();
-  if (!clipboard) {
-   return false;
-  }
-  const QJsonDocument doc = QJsonDocument::fromJson(clipboard->text().toUtf8());
-  if (!doc.isObject()) {
-   return false;
-  }
-  const QJsonObject clipObj = doc.object();
-  if (clipObj.value(QStringLiteral("artifact_clipboard")).toString() != QStringLiteral("layer")) {
-   return false;
-  }
-  return clipObj.value(QStringLiteral("layers")).toArray().isEmpty() == false;
  }
 
  void ArtifactEditMenu::Impl::handleUndo() {
@@ -242,6 +248,7 @@ private:
   if (auto* selMgr = ArtifactApplicationManager::instance()
                           ? ArtifactApplicationManager::instance()->layerSelectionManager()
                           : nullptr) {
+   emit selMgr->selectionChanged();
    emit selMgr->activeCompositionChanged(selMgr->activeComposition());
   }
   rebuildMenu();
@@ -256,7 +263,6 @@ private:
   const auto selected = selMgr->selectedLayers();
   if (selected.isEmpty()) return;
 
-  // Serialize selected layers to JSON
   QJsonArray layersArray;
   for (const auto& layer : selected) {
    if (layer) {
@@ -264,12 +270,8 @@ private:
    }
   }
 
-  QJsonObject clipObj;
-  clipObj["artifact_clipboard"] = QStringLiteral("layer");
-  clipObj["layers"] = layersArray;
-
-  QClipboard* clipboard = QApplication::clipboard();
-  clipboard->setText(QJsonDocument(clipObj).toJson(QJsonDocument::Compact));
+  ArtifactCore::ClipboardManager::instance().copyLayers(layersArray,
+                                                        layersArray.size());
   qDebug() << "[Edit] Copied" << selected.size() << "layer(s)";
   rebuildMenu();
  }
@@ -282,20 +284,13 @@ private:
 
  void ArtifactEditMenu::Impl::handlePasteAction()
  {
-  QClipboard* clipboard = QApplication::clipboard();
-  const QString text = clipboard->text();
-  if (text.isEmpty()) return;
-
-  QJsonDocument doc = QJsonDocument::fromJson(text.toUtf8());
-  if (!doc.isObject()) return;
-
-  QJsonObject clipObj = doc.object();
-  if (clipObj["artifact_clipboard"].toString() != QStringLiteral("layer")) {
+  ArtifactCore::ClipboardManager::instance().syncFromSystemClipboard();
+  if (!ArtifactCore::ClipboardManager::instance().hasLayerData()) {
    qWarning() << "[Edit] Paste: clipboard does not contain artifact layer data";
    return;
   }
 
-  QJsonArray layersArray = clipObj["layers"].toArray();
+  const QJsonArray layersArray = ArtifactCore::ClipboardManager::instance().pasteLayers();
   if (layersArray.isEmpty()) return;
 
   auto* svc = ArtifactProjectService::instance();
@@ -538,10 +533,32 @@ private:
   dialog->setAttribute(Qt::WA_DeleteOnClose);
   dialog->show();
  }
+
+ void ArtifactEditMenu::Impl::handleUndoHistory() {
+  auto* dialog = new QDialog(parentWidget_);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->setWindowTitle(QStringLiteral("Undo History"));
+  dialog->resize(860, 520);
+
+  auto* layout = new QVBoxLayout(dialog);
+  layout->setContentsMargins(8, 8, 8, 8);
+  layout->setSpacing(8);
+
+  auto* historyWidget = new ArtifactUndoHistoryWidget(dialog);
+  layout->addWidget(historyWidget, 1);
+
+  auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, Qt::Horizontal, dialog);
+  QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::close);
+  layout->addWidget(buttons);
+
+  dialog->show();
+ }
 void ArtifactEditMenu::Impl::rebuildMenu() { 
   bool hasProject = ArtifactProjectManager::getInstance().isProjectCreated();
   auto mgr = UndoManager::instance();
   auto& shortcuts = ShortcutBindings::instance();
+  auto& clipboard = ArtifactCore::ClipboardManager::instance();
+  clipboard.syncFromSystemClipboard();
   
   undoAction->setShortcut(shortcuts.shortcut(ShortcutId::Undo));
   redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
@@ -567,7 +584,12 @@ void ArtifactEditMenu::Impl::rebuildMenu() {
    hasSelection = hasComposition && !sel->selectedLayers().isEmpty();
   }
 
-  const bool layerClipboardReady = hasLayerClipboard();
+  const bool layerClipboardReady = clipboard.hasLayerData();
+  if (layerClipboardReady) {
+   pasteAction_->setText(QString("貼り付け (&P): %1").arg(clipboard.description()));
+  } else {
+   pasteAction_->setText("貼り付け (&P)");
+  }
   copyAction_->setEnabled(hasProject && hasSelection);
   cutAction_->setEnabled(hasProject && hasSelection);
   pasteAction_->setEnabled(hasProject && hasComposition && layerClipboardReady);

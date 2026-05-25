@@ -215,6 +215,7 @@ public:
   std::shared_ptr<ArtifactAbstractLayer> parentLayer() const;
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);
+  void clearTimeRemap();
   void setTimeRemapKey(int64_t compFrame, double sourceFrame);
 
   // Get source frame index for a given composition frame (applies time remap)

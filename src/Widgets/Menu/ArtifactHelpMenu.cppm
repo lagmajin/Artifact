@@ -6,6 +6,7 @@ module;
 #include <QMessageBox>
 #include <QDesktopServices>
 #include <QUrl>
+#include <QKeySequence>
 #include <QFileDialog>
 #include <QFile>
 #include <QFileInfo>
@@ -41,6 +42,7 @@ namespace Artifact {
   QAction* docsAction_ = nullptr;
   QAction* checkUpdatesAction_ = nullptr;
   QAction* exportDiagnosticsAction_ = nullptr;
+  QAction* openAppDataAction_ = nullptr;
   QAction* keyboardOverlayAction_ = nullptr;
  };
 
@@ -61,6 +63,9 @@ namespace Artifact {
   exportDiagnosticsAction_ = new QAction(u8"Export Diagnostics...");
   exportDiagnosticsAction_->setIcon(QIcon(resolveIconPath("Studio/inventory.svg")));
 
+  openAppDataAction_ = new QAction(u8"Open App Data Folder");
+  openAppDataAction_->setIcon(QIcon(resolveIconPath("Studio/folder_open.svg")));
+
   keyboardOverlayAction_ = new QAction(u8"Keyboard Shortcuts Overlay");
   keyboardOverlayAction_->setIcon(QIcon(resolveIconPath("Studio/keyboard.svg")));
   keyboardOverlayAction_->setShortcuts({QKeySequence(QStringLiteral("Ctrl+/")), QKeySequence::HelpContents});
@@ -73,6 +78,7 @@ namespace Artifact {
   delete docsAction_;
   delete checkUpdatesAction_;
   delete exportDiagnosticsAction_;
+  delete openAppDataAction_;
   delete keyboardOverlayAction_;
  }
 
@@ -89,6 +95,7 @@ namespace Artifact {
   addSeparator();
   addAction(impl_->checkUpdatesAction_);
   addAction(impl_->exportDiagnosticsAction_);
+  addAction(impl_->openAppDataAction_);
   addSeparator();
   addAction(impl_->keyboardOverlayAction_);
 
@@ -107,7 +114,7 @@ namespace Artifact {
   });
 
   connect(impl_->checkUpdatesAction_, &QAction::triggered, this, [this]() {
-    QMessageBox::information(this, tr("Updates"), tr("No updates available."));
+    QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/lagmajin/Artifact/releases")));
   });
 
   connect(impl_->keyboardOverlayAction_, &QAction::triggered, this, [this]() {
@@ -252,6 +259,13 @@ namespace Artifact {
     out.close();
 
     QMessageBox::information(this, tr("Diagnostics"), tr("Diagnostics exported:\n%1").arg(path));
+  });
+
+  connect(impl_->openAppDataAction_, &QAction::triggered, this, [this]() {
+    const QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(appData))) {
+      QMessageBox::warning(this, tr("App Data"), tr("Failed to open the app data folder."));
+    }
   });
  }
 

@@ -1,178 +1,175 @@
 module;
 #include <utility>
-#include <QMenu>
-#include <QWidget>
+#include <functional>
 #include <QAction>
 #include <QIcon>
 #include <QMessageBox>
+#include <QMenu>
+#include <QWidget>
+#include <wobjectimpl.h>
+
 module Menu.Test;
 
 import Artifact.Widgets.SoftwareRenderTest;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.LayerCompositeTest;
 import Artifact.Widgets.TimelineLayerTest;
+import Artifact.Widgets.PlaybackControlTestWidget;
+import Artifact.Widgets.Test.ScrollPoC;
+import Menu.Test2;
 import Artifact.Service.Project;
 import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Utils.Path;
 
-
-
 namespace Artifact {
 
- ArtifactRenderTestMenu::ArtifactRenderTestMenu(QWidget* parent /*= nullptr*/):QMenu(parent)
- {
-  setTitle("RenderTest");
+namespace {
+template <typename WidgetT>
+void openTestWidget(int width, int height)
+{
+ auto* widget = new WidgetT();
+ widget->setAttribute(Qt::WA_DeleteOnClose, true);
+ widget->resize(width, height);
+ widget->show();
+ widget->raise();
+ widget->activateWindow();
+}
+
+QAction* addOpenWidgetAction(QMenu* menu, const QString& text, const QString& iconPath, const std::function<void()>& openFn)
+{
+ auto* action = new QAction(text, menu);
+ if (!iconPath.isEmpty()) {
+  action->setIcon(QIcon(resolveIconPath(iconPath)));
  }
+ menu->addAction(action);
+ QObject::connect(action, &QAction::triggered, menu, [openFn]() { openFn(); });
+ return action;
+}
+}
 
- ArtifactRenderTestMenu::~ArtifactRenderTestMenu()
- {
+ArtifactRenderTestMenu::ArtifactRenderTestMenu(QWidget* parent /*= nullptr*/)
+ : QMenu(parent)
+{
+ setTitle("Render Test");
+ setIcon(QIcon(resolveIconPath("Studio/software_render.svg")));
 
- }
+ addOpenWidgetAction(this, "Software 3D Render Test...", "Studio/software_render.svg", []() {
+  openTestWidget<ArtifactSoftwareRenderTestWidget>(960, 600);
+ });
+ addOpenWidgetAction(this, "Software Composition Test...", "Studio/software_composition.svg", []() {
+  openTestWidget<ArtifactSoftwareCompositionTestWidget>(1100, 760);
+ });
+ addOpenWidgetAction(this, "Software Layer Test...", "Studio/software_layer.svg", []() {
+  openTestWidget<ArtifactSoftwareLayerTestWidget>(1100, 820);
+ });
+ addOpenWidgetAction(this, "Layer Composite Test...", "Studio/layer_composite.svg", []() {
+  openTestWidget<ArtifactLayerCompositeTestWidget>(900, 700);
+ });
+ addOpenWidgetAction(this, "Timeline Layer Test...", "Studio/timeline_layer.svg", []() {
+  openTestWidget<ArtifactTimelineLayerTestWidget>(1600, 1000);
+ });
+}
 
- ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/) :QMenu(parent)
- {
-  setTitle("Test");
+ArtifactRenderTestMenu::~ArtifactRenderTestMenu()
+{
+}
 
-  auto* softwareRenderTestAction = new QAction("Software 3D Render Test...", this);
-  softwareRenderTestAction->setIcon(QIcon(resolveIconPath("Studio/software_render.svg")));
-  addAction(softwareRenderTestAction);
-  QObject::connect(softwareRenderTestAction, &QAction::triggered, this, []() {
-      auto* w = new ArtifactSoftwareRenderTestWidget();
-      w->setAttribute(Qt::WA_DeleteOnClose, true);
-      w->resize(960, 600);
-      w->show();
-      w->raise();
-      w->activateWindow();
-  });
+ArtifactWidgetTestMenu::ArtifactWidgetTestMenu(QWidget* parent /*= nullptr*/)
+ : QMenu(parent)
+{
+ setTitle("Widget Test");
+ setIcon(QIcon(resolveIconPath("Studio/test.svg")));
 
-  auto* softwareCompositionTestAction = new QAction("Software Composition Test...", this);
-  softwareCompositionTestAction->setIcon(QIcon(resolveIconPath("Studio/software_composition.svg")));
-  addAction(softwareCompositionTestAction);
-  QObject::connect(softwareCompositionTestAction, &QAction::triggered, this, []() {
-      auto* w = new ArtifactSoftwareCompositionTestWidget();
-      w->setAttribute(Qt::WA_DeleteOnClose, true);
-      w->resize(1100, 760);
-      w->show();
-      w->raise();
-      w->activateWindow();
-  });
+ addOpenWidgetAction(this, "Scroll PoC...", "Studio/scroll.svg", []() {
+  openTestWidget<ArtifactScrollPoCWidget>(600, 500);
+ });
+}
 
-  auto* softwareLayerTestAction = new QAction("Software Layer Test...", this);
-  softwareLayerTestAction->setIcon(QIcon(resolveIconPath("Studio/software_layer.svg")));
-  addAction(softwareLayerTestAction);
-  QObject::connect(softwareLayerTestAction, &QAction::triggered, this, []() {
-      auto* w = new ArtifactSoftwareLayerTestWidget();
-      w->setAttribute(Qt::WA_DeleteOnClose, true);
-      w->resize(1100, 820);
-      w->show();
-      w->raise();
-      w->activateWindow();
-  });
+ArtifactWidgetTestMenu::~ArtifactWidgetTestMenu()
+{
+}
 
-  auto* layerCompositeTestAction = new QAction("Layer Composite Test...", this);
-  layerCompositeTestAction->setIcon(QIcon(resolveIconPath("Studio/layer_composite.svg")));
-  addAction(layerCompositeTestAction);
-  QObject::connect(layerCompositeTestAction, &QAction::triggered, this, []() {
-      auto* w = new ArtifactLayerCompositeTestWidget();
-      w->setAttribute(Qt::WA_DeleteOnClose, true);
-      w->show();
-      w->raise();
-      w->activateWindow();
-  });
+ArtifactMediaTestMenu::ArtifactMediaTestMenu(QWidget* parent /*= nullptr*/)
+ : QMenu(parent)
+{
+ setTitle("Media Test");
+ setIcon(QIcon(resolveIconPath("Studio/play_arrow.svg")));
 
-  auto* timelineLayerTestAction = new QAction("Timeline Layer Test...", this);
-  timelineLayerTestAction->setIcon(QIcon(resolveIconPath("Studio/timeline_layer.svg")));
-  addAction(timelineLayerTestAction);
-  QObject::connect(timelineLayerTestAction, &QAction::triggered, this, []() {
-      auto* w = new ArtifactTimelineLayerTestWidget();
-      w->setAttribute(Qt::WA_DeleteOnClose, true);
-      w->resize(1600, 1000);
-      w->show();
-      w->raise();
-      w->activateWindow();
-  });
+ addOpenWidgetAction(this, "Playback Control Test...", "Studio/replay.svg", []() {
+  openTestWidget<ArtifactPlaybackControlTestWidget>(1100, 760);
+ });
+}
 
-  addSeparator();
+ArtifactMediaTestMenu::~ArtifactMediaTestMenu()
+{
+}
 
-  auto* startSoftwareTestPipelineAction = new QAction("Software Test Pipeline を開始", this);
-  startSoftwareTestPipelineAction->setIcon(QIcon(resolveIconPath("Studio/pipeline.svg")));
-  addAction(startSoftwareTestPipelineAction);
-  QObject::connect(startSoftwareTestPipelineAction, &QAction::triggered, this, []() {
-      auto* projectService = ArtifactProjectService::instance();
-      if (!projectService) {
-          QMessageBox::warning(nullptr, "Software Test", "ProjectService が利用できません。");
-          return;
-      }
+ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
+ : QMenu(parent)
+{
+ setTitle("Test");
+ setIcon(QIcon(resolveIconPath("Studio/test.svg")));
 
-      // 1. コンポジション作成
-      ArtifactCompositionInitParams params = ArtifactCompositionInitParams::hdPreset();
-      params.setCompositionName(UniString(QStringLiteral("SoftwareTest")));
-      projectService->createComposition(params);
-      auto currentComp = projectService->currentComposition().lock();
-      if (!currentComp) {
-          QMessageBox::warning(nullptr, "Software Test", "コンポジション作成に失敗しました。");
-          return;
-      }
-      const int beforeLayerCount = currentComp->allLayer().size();
+ auto* renderMenu = new ArtifactRenderTestMenu(this);
+ auto* widgetMenu = new ArtifactWidgetTestMenu(this);
+ auto* mediaMenu = new ArtifactMediaTestMenu(this);
+ auto* imageProcessingMenu = new ArtifactImageProcessingTestMenu(this);
 
-      // 2. 平面レイヤー追加
-      ArtifactSolidLayerInitParams solidParams(QStringLiteral("Solid 1"));
-      solidParams.setWidth(params.width());
-      solidParams.setHeight(params.height());
-      solidParams.setColor(FloatColor(0.22f, 0.52f, 0.88f, 1.0f));
-      projectService->addLayerToCurrentComposition(solidParams);
-      currentComp = projectService->currentComposition().lock();
-      if (!currentComp || currentComp->allLayer().size() <= beforeLayerCount) {
-          QMessageBox::warning(nullptr, "Software Test", "平面レイヤー追加に失敗しました。");
-          return;
-      }
+ addMenu(renderMenu);
+ addMenu(widgetMenu);
+ addMenu(mediaMenu);
+ addMenu(imageProcessingMenu);
 
-      // 3. Software Composition Test を起動
-      auto* preview = new ArtifactSoftwareCompositionTestWidget();
-      preview->setAttribute(Qt::WA_DeleteOnClose, true);
-      preview->resize(1100, 760);
-      preview->show();
-      preview->raise();
-      preview->activateWindow();
+ addSeparator();
 
-      QMessageBox::information(
-          nullptr,
-          "Software Test",
-          QStringLiteral("Software Test Pipeline を初期化しました。\n\n"
-              "1) コンポジション作成\n"
-              "2) 平面レイヤー追加\n"
-              "3) Software Composition Test 起動\n\n"
-              "このウィンドウを閉じて、Test メニューからいつでも再起動できます。"));
-  });
+ auto* startSoftwareTestPipelineAction = new QAction("Software Test Pipeline を開始", this);
+ startSoftwareTestPipelineAction->setIcon(QIcon(resolveIconPath("Studio/pipeline.svg")));
+ addAction(startSoftwareTestPipelineAction);
+ QObject::connect(startSoftwareTestPipelineAction, &QAction::triggered, this, []() {
+  auto* projectService = ArtifactProjectService::instance();
+  if (!projectService) {
+   QMessageBox::warning(nullptr, "Software Test", "ProjectService が利用できません。");
+   return;
+  }
 
- }
+  ArtifactCompositionInitParams params = ArtifactCompositionInitParams::hdPreset();
+  params.setCompositionName(UniString(QStringLiteral("SoftwareTest")));
+  projectService->createComposition(params);
+  auto currentComp = projectService->currentComposition().lock();
+  if (!currentComp) {
+   QMessageBox::warning(nullptr, "Software Test", "コンポジション作成に失敗しました。");
+   return;
+  }
+  const int beforeLayerCount = currentComp->allLayer().size();
 
- ArtifactTestMenu::~ArtifactTestMenu()
- {
+  ArtifactSolidLayerInitParams solidParams(QStringLiteral("Solid 1"));
+  solidParams.setWidth(params.width());
+  solidParams.setHeight(params.height());
+  solidParams.setColor(FloatColor(0.22f, 0.52f, 0.88f, 1.0f));
+  projectService->addLayerToCurrentComposition(solidParams);
+  currentComp = projectService->currentComposition().lock();
+  if (!currentComp || currentComp->allLayer().size() <= beforeLayerCount) {
+   QMessageBox::warning(nullptr, "Software Test", "平面レイヤー追加に失敗しました。");
+   return;
+  }
 
- }
+  openTestWidget<ArtifactSoftwareCompositionTestWidget>(1100, 760);
 
- class ArtifactMediaTestMenuPrivate {
- private:
+  QMessageBox::information(
+      nullptr,
+      "Software Test",
+      QStringLiteral(
+          "Software Test Pipeline を初期化しました。\n\n"
+          "1) コンポジション作成\n"
+          "2) 平面レイヤー追加\n"
+          "3) Software Composition Test 起動\n\n"
+          "このメニューからいつでも再起動できます。"));
+ });
+}
 
- public:
-
- };
-
-
-
-
- ArtifactMediaTestMenu::ArtifactMediaTestMenu(QWidget* parent /*= nullptr*/) :QMenu(parent)
- {
-
- }
-
- ArtifactMediaTestMenu::~ArtifactMediaTestMenu()
- {
-
- }
-
-
+ArtifactTestMenu::~ArtifactTestMenu()
+{
+}
 
 };

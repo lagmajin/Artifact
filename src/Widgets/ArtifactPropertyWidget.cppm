@@ -1,7 +1,9 @@
 ﻿module;
 
 #include <QColor>
+#include <QApplication>
 #include <QCursor>
+#include <QPoint>
 #include <QFont>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -72,6 +74,17 @@ import Artifact.Service.Project;
 import Event.Bus;
 import Artifact.Event.Types;
 import Time.Rational;
+import Script.Expression.Evaluator;
+import Property.SerializationBridge;
+
+#include <QFileDialog>
+#include <QFile>
+#include <QFileInfo>
+#include <QIODevice>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QDir>
+#include <QStandardPaths>
 
 namespace Artifact {
 
@@ -426,6 +439,11 @@ public:
   void rebuildUI();
   void updatePropertyValues();
   void applyLockState();
+  ArtifactPropertyEditorRowWidget* activeExpressionRow() const;
+  void openExpressionCopilotForProperty(
+      const QString& propertyName,
+      const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
+      const QString& initialExpression);
 };
 
 void ArtifactPropertyWidget::showEvent(QShowEvent *event) {
@@ -614,6 +632,27 @@ void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer) 
       layer->id().toString(), LayerChangedEvent::ChangeType::Modified});
 }
 
+void launchExpressionCopilot(
+    QWidget *parent, const QString &propertyName,
+    const std::shared_ptr<ArtifactCore::AbstractProperty> &propertyPtr,
+    const QString &initialExpression,
+    const std::function<void(const QString &)> &applyHandler = {}) {
+  auto *copilot = new ArtifactExpressionCopilotWidget(parent);
+  copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
+  copilot->setWindowTitle(
+      QStringLiteral("Expression Copilot: %1").arg(propertyName));
+  copilot->setExpressionText(initialExpression);
+  if (propertyPtr && applyHandler) {
+    copilot->setApplyHandler([propertyPtr, applyHandler](const QString &expr) {
+      propertyPtr->setExpression(expr);
+      applyHandler(expr);
+    });
+  }
+  copilot->setAttribute(Qt::WA_DeleteOnClose);
+  copilot->move(QCursor::pos() - QPoint(150, 200));
+  copilot->show();
+}
+
 ArtifactPropertyEditorRowWidget *createPropertyRow(
     QWidget *parent,
     const std::shared_ptr<ArtifactCore::AbstractProperty> &propertyPtr,
@@ -622,6 +661,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
         {},
     const std::function<RationalTime()> &currentTimeProvider = {},
     const std::function<void(const QString &)> &keyframeChanged = {},
+    const ArtifactAbstractLayerPtr &layer = {},
     const std::function<void(
         ArtifactPropertyEditorRowWidget *,
         const std::shared_ptr<ArtifactCore::AbstractProperty> &,
@@ -800,18 +840,26 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   const bool showExpressionButton = animatable;
   row->setShowExpressionButton(showExpressionButton);
   if (showExpressionButton) {
-    row->setExpressionHandler([propertyName = property.getName(), editor]() {
-      auto *copilot = new ArtifactExpressionCopilotWidget();
-      copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
-      copilot->setWindowTitle(
-          QStringLiteral("Expression Copilot: %1").arg(propertyName));
-      if (editor) {
-        copilot->setExpressionText(editor->value().toString());
-      }
-      copilot->setAttribute(Qt::WA_DeleteOnClose);
-      copilot->move(QCursor::pos() - QPoint(150, 200));
-      copilot->show();
-    });
+    const QString initialExpression = propertyPtr && propertyPtr->hasExpression()
+        ? propertyPtr->getExpression()
+        : (editor ? editor->value().toString() : QString{});
+    row->setExpressionHandler(
+        [parent, propertyName = property.getName(), propertyPtr, layer, keyframeChanged,
+         initialExpression]() {
+          launchExpressionCopilot(
+              parent,
+              propertyName,
+              propertyPtr,
+              initialExpression,
+              [layer, keyframeChanged, propertyName]() {
+                if (keyframeChanged) {
+                  keyframeChanged(propertyName);
+                }
+                if (layer) {
+                  notifyLayerPropertyAnimationChanged(layer);
+                }
+              });
+        });
   }
 
   return row;
@@ -850,6 +898,7 @@ void addRowsFromProperties(
     const std::function<void(const QString &, const QVariant &)> &previewValue,
     const std::function<RationalTime()> &currentTimeProvider,
     const std::function<void(const QString &)> &keyframeChanged,
+    const ArtifactAbstractLayerPtr &layer,
     bool *addedAny,
     QHash<QString, ArtifactPropertyEditorRowWidget *> *registry = nullptr,
     std::vector<ArtifactPropertyEditorRowWidget *> *collectedRows = nullptr,
@@ -867,7 +916,7 @@ void addRowsFromProperties(
     if (auto *row =
             createPropertyRow(parent, ptr, commitValue, previewValue,
                               currentTimeProvider,
-                              keyframeChanged, rowValueChanged)) {
+                              keyframeChanged, layer, rowValueChanged)) {
       if (decorateRow) {
         decorateRow(row, ptr);
       }
@@ -1199,6 +1248,338 @@ bool ArtifactPropertyWidget::sliderBeforeValue() const {
 
 void ArtifactPropertyWidget::updateProperties() { impl_->scheduleRebuild(80); }
 
+bool ArtifactPropertyWidget::openActiveExpressionCopilot() {
+  if (!impl_) {
+    return false;
+  }
+
+  auto *row = impl_->activeExpressionRow();
+  if (!row || !impl_->currentLayer) {
+    return false;
+  }
+
+  const QString propertyName = row->propertyName();
+  auto propertyPtr = impl_->currentLayer->getProperty(propertyName);
+  if (!propertyPtr) {
+    const auto effects = impl_->currentLayer->getEffects();
+    for (const auto &effect : effects) {
+      if (!effect) {
+        continue;
+      }
+      if (!impl_->focusedEffectId.isEmpty() &&
+          effect->effectID().toQString() != impl_->focusedEffectId) {
+        continue;
+      }
+      for (const auto &property : effect->getProperties()) {
+        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = property;
+          break;
+        }
+      }
+      if (propertyPtr) {
+        break;
+      }
+    }
+  }
+  if (!propertyPtr) {
+    return false;
+  }
+
+  const QString initialExpression = propertyPtr->hasExpression()
+      ? propertyPtr->getExpression()
+      : (row->editor() ? row->editor()->value().toString() : QString{});
+  impl_->openExpressionCopilotForProperty(propertyName, propertyPtr,
+                                          initialExpression);
+  return true;
+}
+
+bool ArtifactPropertyWidget::clearActiveExpression() {
+  if (!impl_) {
+    return false;
+  }
+
+  auto *row = impl_->activeExpressionRow();
+  if (!row || !impl_->currentLayer) {
+    return false;
+  }
+
+  const QString propertyName = row->propertyName();
+  auto propertyPtr = impl_->currentLayer->getProperty(propertyName);
+  if (!propertyPtr) {
+    const auto effects = impl_->currentLayer->getEffects();
+    for (const auto &effect : effects) {
+      if (!effect) {
+        continue;
+      }
+      if (!impl_->focusedEffectId.isEmpty() &&
+          effect->effectID().toQString() != impl_->focusedEffectId) {
+        continue;
+      }
+      for (const auto &property : effect->getProperties()) {
+        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = property;
+          break;
+        }
+      }
+      if (propertyPtr) {
+        break;
+      }
+    }
+  }
+  if (!propertyPtr) {
+    return false;
+  }
+
+  propertyPtr->setExpression(QString{});
+  if (impl_->currentLayer) {
+    notifyLayerPropertyAnimationChanged(impl_->currentLayer);
+  }
+  impl_->scheduleRebuild(0);
+  impl_->scheduleUpdateValues();
+  return true;
+}
+
+bool ArtifactPropertyWidget::convertActiveExpressionToKeyframes() {
+  if (!impl_) {
+    return false;
+  }
+
+  auto *row = impl_->activeExpressionRow();
+  if (!row || !impl_->currentLayer) {
+    return false;
+  }
+
+  const QString propertyName = row->propertyName();
+  auto propertyPtr = impl_->currentLayer->getProperty(propertyName);
+  if (!propertyPtr) {
+    const auto effects = impl_->currentLayer->getEffects();
+    for (const auto &effect : effects) {
+      if (!effect) {
+        continue;
+      }
+      if (!impl_->focusedEffectId.isEmpty() &&
+          effect->effectID().toQString() != impl_->focusedEffectId) {
+        continue;
+      }
+      for (const auto &property : effect->getProperties()) {
+        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = property;
+          break;
+        }
+      }
+      if (propertyPtr) {
+        break;
+      }
+    }
+  }
+  if (!propertyPtr || !propertyPtr->hasExpression()) {
+    return false;
+  }
+
+  auto *composition =
+      static_cast<ArtifactAbstractComposition *>(impl_->currentLayer->composition());
+  const int fps = composition
+                      ? std::max<int>(1, static_cast<int>(
+                                              std::lround(composition->frameRate().framerate())))
+                      : 30;
+  int64_t startFrame = impl_->currentLayer->inPoint().framePosition();
+  int64_t endFrame = impl_->currentLayer->outPoint().framePosition();
+  if (endFrame <= startFrame) {
+    endFrame = startFrame + 1;
+  }
+
+  ArtifactCore::ExpressionEvaluator evaluator;
+  std::vector<std::pair<RationalTime, QVariant>> sampledKeyframes;
+  sampledKeyframes.reserve(static_cast<size_t>(endFrame - startFrame));
+  for (int64_t frame = startFrame; frame < endFrame; ++frame) {
+    const RationalTime time(frame, fps);
+    const QVariant sampledValue = propertyPtr->evaluateValue(time, &evaluator);
+    sampledKeyframes.emplace_back(time, sampledValue);
+  }
+
+  if (sampledKeyframes.empty()) {
+    return false;
+  }
+
+  propertyPtr->clearKeyFrames();
+  propertyPtr->setExpression(QString{});
+  for (const auto &[time, value] : sampledKeyframes) {
+    propertyPtr->addKeyFrame(time, value);
+  }
+
+  if (impl_->currentLayer) {
+    notifyLayerPropertyAnimationChanged(impl_->currentLayer);
+  }
+  impl_->scheduleRebuild(0);
+  impl_->scheduleUpdateValues();
+  return true;
+}
+
+bool ArtifactPropertyWidget::saveActiveExpressionPreset() {
+  if (!impl_) {
+    return false;
+  }
+
+  auto *row = impl_->activeExpressionRow();
+  if (!row || !impl_->currentLayer) {
+    return false;
+  }
+
+  const QString propertyName = row->propertyName();
+  auto propertyPtr = impl_->currentLayer->getProperty(propertyName);
+  if (!propertyPtr) {
+    const auto effects = impl_->currentLayer->getEffects();
+    for (const auto &effect : effects) {
+      if (!effect) {
+        continue;
+      }
+      if (!impl_->focusedEffectId.isEmpty() &&
+          effect->effectID().toQString() != impl_->focusedEffectId) {
+        continue;
+      }
+      for (const auto &property : effect->getProperties()) {
+        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = property;
+          break;
+        }
+      }
+      if (propertyPtr) {
+        break;
+      }
+    }
+  }
+  if (!propertyPtr) {
+    return false;
+  }
+
+  const QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+      + QStringLiteral("/presets");
+  QDir().mkpath(defaultDir);
+  const QString filePath = QFileDialog::getSaveFileName(
+      this,
+      QStringLiteral("Save Animation Preset"),
+      defaultDir,
+      QStringLiteral("Animation Preset (*.json)"));
+  if (filePath.isEmpty()) {
+    return false;
+  }
+
+  QJsonObject root;
+  root[QStringLiteral("kind")] = QStringLiteral("artifact.animation.property");
+  root[QStringLiteral("propertyName")] = propertyName;
+  root[QStringLiteral("layerId")] = impl_->currentLayer->id().toString();
+  root[QStringLiteral("focusedEffectId")] = impl_->focusedEffectId;
+
+  const auto serialized = ArtifactCore::PropertySerializationBridge::serializeProperty(propertyPtr);
+  QJsonObject propertyObj;
+  propertyObj[QStringLiteral("name")] = serialized.name;
+  propertyObj[QStringLiteral("type")] = serialized.type;
+  propertyObj[QStringLiteral("value")] = serialized.value;
+  if (!serialized.expression.isEmpty()) {
+    propertyObj[QStringLiteral("expression")] = serialized.expression;
+  }
+  if (!serialized.keyframes.isEmpty()) {
+    propertyObj[QStringLiteral("keyframes")] = serialized.keyframes;
+  }
+  if (!serialized.metadata.isEmpty()) {
+    propertyObj[QStringLiteral("metadata")] = serialized.metadata;
+  }
+  root[QStringLiteral("property")] = propertyObj;
+
+  QFile file(filePath);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    return false;
+  }
+  file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+  return true;
+}
+
+bool ArtifactPropertyWidget::loadActiveExpressionPreset() {
+  if (!impl_) {
+    return false;
+  }
+
+  auto *row = impl_->activeExpressionRow();
+  if (!row || !impl_->currentLayer) {
+    return false;
+  }
+
+  const QString propertyName = row->propertyName();
+  auto propertyPtr = impl_->currentLayer->getProperty(propertyName);
+  if (!propertyPtr) {
+    const auto effects = impl_->currentLayer->getEffects();
+    for (const auto &effect : effects) {
+      if (!effect) {
+        continue;
+      }
+      if (!impl_->focusedEffectId.isEmpty() &&
+          effect->effectID().toQString() != impl_->focusedEffectId) {
+        continue;
+      }
+      for (const auto &property : effect->getProperties()) {
+        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = property;
+          break;
+        }
+      }
+      if (propertyPtr) {
+        break;
+      }
+    }
+  }
+  if (!propertyPtr) {
+    return false;
+  }
+
+  const QString defaultDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation)
+      + QStringLiteral("/presets");
+  const QString filePath = QFileDialog::getOpenFileName(
+      this,
+      QStringLiteral("Load Animation Preset"),
+      defaultDir,
+      QStringLiteral("Animation Preset (*.json)"));
+  if (filePath.isEmpty()) {
+    return false;
+  }
+
+  QFile file(filePath);
+  if (!file.open(QIODevice::ReadOnly)) {
+    return false;
+  }
+  const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+  if (!doc.isObject()) {
+    return false;
+  }
+  const QJsonObject root = doc.object();
+  const QJsonObject propertyObj = root.value(QStringLiteral("property")).toObject();
+  if (propertyObj.isEmpty()) {
+    return false;
+  }
+
+  ArtifactCore::SerializedProperty serialized;
+  serialized.name = propertyObj.value(QStringLiteral("name")).toString();
+  serialized.type = propertyObj.value(QStringLiteral("type")).toInt();
+  serialized.value = propertyObj.value(QStringLiteral("value"));
+  serialized.expression = propertyObj.value(QStringLiteral("expression")).toString();
+  serialized.keyframes = propertyObj.value(QStringLiteral("keyframes")).toArray();
+  serialized.metadata = propertyObj.value(QStringLiteral("metadata")).toObject();
+
+  ArtifactCore::PropertySerializationBridge::deserializeProperty(propertyPtr, serialized);
+  if (impl_->currentLayer) {
+    notifyLayerPropertyAnimationChanged(impl_->currentLayer);
+  }
+  impl_->scheduleRebuild(0);
+  impl_->scheduleUpdateValues();
+  return true;
+}
+
+bool ArtifactPropertyWidget::hasActiveExpressionTarget() const {
+  if (!impl_) {
+    return false;
+  }
+  return impl_->activeExpressionRow() != nullptr;
+}
+
 void ArtifactPropertyWidget::Impl::updatePropertyValues() {
   if (!currentLayer || rebuilding)
     return;
@@ -1264,6 +1645,56 @@ void ArtifactPropertyWidget::Impl::applyLockState() {
                                             Qt::CaseInsensitive) == 0;
     row->setEnabled(!locked || isLockRow);
   }
+}
+
+ArtifactPropertyEditorRowWidget* ArtifactPropertyWidget::Impl::activeExpressionRow() const {
+  if (!currentLayer) {
+    return nullptr;
+  }
+
+  QWidget* focus = QApplication::focusWidget();
+  for (auto it = propertyEditors.begin(); it != propertyEditors.end(); ++it) {
+    auto* row = it.value();
+    if (!row || !row->isVisible()) {
+      continue;
+    }
+    auto property = currentLayer->getProperty(it.key());
+    if (!property || !property->isAnimatable()) {
+      continue;
+    }
+    if (focus && (row == focus || row->isAncestorOf(focus))) {
+      return row;
+    }
+    if (row->hasFocus()) {
+      return row;
+    }
+    if (row->editor() && row->editor()->hasFocus()) {
+      return row;
+    }
+  }
+  return nullptr;
+}
+
+void ArtifactPropertyWidget::Impl::openExpressionCopilotForProperty(
+    const QString& propertyName,
+    const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
+    const QString& initialExpression) {
+  if (!propertyPtr) {
+    return;
+  }
+
+  launchExpressionCopilot(
+      owner,
+      propertyName,
+      propertyPtr,
+      initialExpression,
+      [this]() {
+        if (currentLayer) {
+          notifyLayerPropertyAnimationChanged(currentLayer);
+        }
+        scheduleRebuild(0);
+        scheduleUpdateValues();
+      });
 }
 
 void ArtifactPropertyWidget::Impl::rebuildUI() {
@@ -1447,7 +1878,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                 notifyLayerPropertyAnimationChanged(layer);
               }
             },
-            {}, currentLayerTime)) {
+            {}, currentLayerTime, notifyLayerKeyframeChanged, layer)) {
       summaryLayout->addWidget(row);
       propertyEditors.insert(layerNameProperty->getName(), row);
       summaryRows.push_back(row);
@@ -1512,6 +1943,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       },
       currentLayerTime,
       notifyLayerKeyframeChanged,
+      layer,
       &hasSummaryProperties, &propertyEditors, &summaryRows,
       decorateLayerRow, updateLayerRowValue);
 
@@ -1553,6 +1985,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         {},
         currentLayerTime,
         {},
+        layer,
         &hasSummaryProperties, &propertyEditors, &effectSummaryRows,
         {});
     alignPropertyRowLabels(effectSummaryRows, 132, 176);
@@ -1620,6 +2053,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         },
         currentLayerTime,
         notifyLayerKeyframeChanged,
+        layer,
         &addedGroupProperties, &propertyEditors, &groupRows,
         decorateLayerRow, updateLayerRowValue);
     if (addedGroupProperties) {

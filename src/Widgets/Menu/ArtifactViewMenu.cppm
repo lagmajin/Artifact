@@ -7,8 +7,10 @@ module;
 #include <QActionGroup>
 #include <QPointer>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QImage>
 
 
 #include <wobjectimpl.h>
@@ -19,15 +21,19 @@ module Artifact.Menu.View;
 import std;
 
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
+import Application.AppSettings;
 import Artifact.MainWindow;
 import Artifact.Workspace.Manager;
 import Artifact.Widgets.ColorPaletteWidget;
+import Artifact.Widgets.SecondaryPreviewWindow;
 import Widgets.AssetBrowser;
 import Widgets.ToolBar;
 import Artifact.Widgets.ReactiveEventEditorWindow;
 import Utils.Path;
 import Event.Bus;
 import Artifact.Event.Types;
+import Image.ImageF32x4_RGBA;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -57,6 +63,7 @@ namespace Artifact {
    QAction* fitToScreenAction = nullptr;
    
    QMenu* resolutionMenu = nullptr;
+   QActionGroup* resolutionGroup = nullptr;
    QAction* resFullAction = nullptr;
    QAction* resHalfAction = nullptr;
    QAction* resThirdAction = nullptr;
@@ -83,6 +90,7 @@ namespace Artifact {
    QAction* workspaceCompositingAction = nullptr;
    QAction* workspaceAudioAction = nullptr;
    QAction* saveWorkspacePresetAction = nullptr;
+   QAction* deleteWorkspacePresetAction = nullptr;
    QAction* restoreWorkspaceSessionAction = nullptr;
    QMenu* windowPanelsMenu = nullptr;
    QStringList cachedWorkspacePresetNames_;
@@ -91,9 +99,11 @@ namespace Artifact {
    QPointer<ArtifactReactiveEventEditorWindow> reactiveEventEditorWindow;
      int newBrowserCount_ = 1;
      QAction* openContentsViewerAction = nullptr;
+     QAction* openProjectPanelAction = nullptr;
      QAction* openColorPaletteAction = nullptr;
      QAction* openReactiveEventEditorAction = nullptr;
      QAction* secondaryPreviewAction = nullptr;
+     QPointer<ArtifactSecondaryPreviewWindow> secondaryPreviewWindow;
      ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
      std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 
@@ -101,6 +111,9 @@ namespace Artifact {
    void refreshWorkspaceState();
    void refreshWorkspacePresetMenu();
    void rebuildWindowPanelsMenu();
+   void showProjectPanel();
+   void showSecondaryPreview();
+   void refreshSecondaryPreview();
    };
 
   ArtifactViewMenu::Impl::Impl(ArtifactViewMenu* menu)
@@ -123,6 +136,8 @@ namespace Artifact {
 
    resolutionMenu = new QMenu("解像度(&R)");
    resolutionMenu->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
+   resolutionGroup = new QActionGroup(menu);
+   resolutionGroup->setExclusive(true);
    resFullAction = resolutionMenu->addAction("フル画質");
    resFullAction->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
    resHalfAction = resolutionMenu->addAction("1/2画質");
@@ -136,6 +151,10 @@ namespace Artifact {
    resHalfAction->setCheckable(true);
    resThirdAction->setCheckable(true);
    resQuarterAction->setCheckable(true);
+   resolutionGroup->addAction(resFullAction);
+   resolutionGroup->addAction(resHalfAction);
+   resolutionGroup->addAction(resThirdAction);
+   resolutionGroup->addAction(resQuarterAction);
 
    showGridAction = new QAction("グリッドを表示(&G)");
    showGridAction->setShortcut(QKeySequence("Ctrl+'"));
@@ -187,6 +206,34 @@ namespace Artifact {
    qualityGroup->addAction(qualityPreviewAction);
    qualityGroup->addAction(qualityFinalAction);
 
+   QObject::connect(resFullAction, &QAction::triggered, menu, []() {
+    if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+     settings->setPreviewResolutionPercent(100);
+    }
+   });
+   QObject::connect(resHalfAction, &QAction::triggered, menu, []() {
+    if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+     settings->setPreviewResolutionPercent(50);
+    }
+   });
+   QObject::connect(resThirdAction, &QAction::triggered, menu, []() {
+    if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+     settings->setPreviewResolutionPercent(33);
+    }
+   });
+   QObject::connect(resQuarterAction, &QAction::triggered, menu, []() {
+    if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+     settings->setPreviewResolutionPercent(25);
+    }
+   });
+
+   if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged, menu,
+                     [this]() {
+                      refreshEnabledState();
+                     });
+   }
+
    auto* svc = ArtifactProjectService::instance();
    if (svc) {
     QObject::connect(qualityDraftAction, &QAction::triggered, menu, [svc]() {
@@ -204,15 +251,12 @@ namespace Artifact {
          switch (static_cast<::PreviewQualityPreset>(event.preset)) {
          case ::PreviewQualityPreset::Draft:
           qualityDraftAction->setChecked(true);
-          resQuarterAction->setChecked(true);
           break;
          case ::PreviewQualityPreset::Preview:
           qualityPreviewAction->setChecked(true);
-          resHalfAction->setChecked(true);
           break;
          case ::PreviewQualityPreset::Final:
           qualityFinalAction->setChecked(true);
-          resFullAction->setChecked(true);
           break;
          }
         }));
@@ -220,10 +264,20 @@ namespace Artifact {
     eventBusSubscriptions_.push_back(eventBus_.subscribe<ProjectChangedEvent>(
         [this](const ProjectChangedEvent&) {
          refreshEnabledState();
+         refreshSecondaryPreview();
         }));
     eventBusSubscriptions_.push_back(eventBus_.subscribe<CompositionCreatedEvent>(
         [this](const CompositionCreatedEvent&) {
          refreshEnabledState();
+         refreshSecondaryPreview();
+        }));
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<CurrentCompositionChangedEvent>(
+        [this](const CurrentCompositionChangedEvent&) {
+         refreshSecondaryPreview();
+        }));
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<FrameChangedEvent>(
+        [this](const FrameChangedEvent&) {
+         refreshSecondaryPreview();
         }));
    }
 
@@ -270,6 +324,8 @@ namespace Artifact {
    workspacePresetMenu->setIcon(QIcon(resolveIconPath("Studio/presets.svg")));
    saveWorkspacePresetAction = workspacePresetMenu->addAction("現在のレイアウトを保存...");
    saveWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/save_layout.svg")));
+   deleteWorkspacePresetAction = workspacePresetMenu->addAction("プリセットを削除...");
+   deleteWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
    restoreWorkspaceSessionAction = workspacePresetMenu->addAction("最後のセッションを復元");
    restoreWorkspaceSessionAction->setIcon(QIcon(resolveIconPath("Studio/restore_session.svg")));
    QObject::connect(saveWorkspacePresetAction, &QAction::triggered, menu, [this]() {
@@ -288,6 +344,35 @@ namespace Artifact {
     if (!manager.savePreset(presetName, mainWindow)) {
      QMessageBox::warning(mainWindow, QStringLiteral("ワークスペースを保存"),
                           QStringLiteral("ワークスペースの保存に失敗しました。"));
+    }
+                   });
+   QObject::connect(deleteWorkspacePresetAction, &QAction::triggered, menu, [this]() {
+    if (!mainWindow) return;
+    ArtifactWorkspaceManager manager;
+    const QStringList presets = manager.presetNames();
+    if (presets.isEmpty()) {
+     QMessageBox::information(mainWindow, QStringLiteral("ワークスペース"),
+                              QStringLiteral("削除できるプリセットがありません。"));
+     return;
+    }
+    bool ok = false;
+    const QString presetName = QInputDialog::getItem(
+        mainWindow, QStringLiteral("プリセットを削除"),
+        QStringLiteral("削除するプリセットを選択してください"),
+        presets, 0, false, &ok);
+    if (!ok || presetName.trimmed().isEmpty()) {
+     return;
+    }
+    const QString confirmMessage = QStringLiteral("プリセット「%1」を削除しますか？").arg(presetName);
+    if (QMessageBox::question(mainWindow, QStringLiteral("プリセットを削除"),
+                              confirmMessage,
+                              QMessageBox::Yes | QMessageBox::No,
+                              QMessageBox::No) != QMessageBox::Yes) {
+     return;
+    }
+    if (!manager.deletePreset(presetName)) {
+     QMessageBox::warning(mainWindow, QStringLiteral("プリセットを削除"),
+                          QStringLiteral("プリセットの削除に失敗しました。"));
     }
    });
    QObject::connect(restoreWorkspaceSessionAction, &QAction::triggered, menu, [this]() {
@@ -321,6 +406,12 @@ namespace Artifact {
     if (!mainWindow) return;
     mainWindow->setDockVisible(QStringLiteral("Contents Viewer"), true);
     mainWindow->activateDock(QStringLiteral("Contents Viewer"));
+   });
+
+   openProjectPanelAction = menu->addAction("Project パネル(&P)");
+   openProjectPanelAction->setIcon(QIcon(resolveIconPath("Studio/panels.svg")));
+   QObject::connect(openProjectPanelAction, &QAction::triggered, menu, [this]() {
+    showProjectPanel();
    });
 
    openColorPaletteAction = menu->addAction("カラーパレット(&P)");
@@ -390,18 +481,9 @@ namespace Artifact {
      secondaryPreviewAction = menu->addAction("セカンドモニタープレビュー(&S)");
      secondaryPreviewAction->setShortcut(QKeySequence(Qt::Key_F12));
      secondaryPreviewAction->setIcon(QIcon(resolveIconPath("Studio/secondary_preview.svg")));
-      QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this, menu]() {
-       if (!mainWindow) return;
-       auto screens = QGuiApplication::screens();
-       if (screens.size() < 2) {
-        QMessageBox::information(menu, "セカンドモニタープレビュー",
-         "2つ目のモニターが検出されていません。\n"
-         "マルチディスプレイ環境でご利用ください。");
-        return;
-       }
-       // TODO: Implement secondary preview on second screen
-       qWarning() << "[ViewMenu] Secondary preview not yet implemented";
-      });
+     QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this]() {
+      showSecondaryPreview();
+     });
     }
 
  ArtifactViewMenu::Impl::~Impl()
@@ -421,7 +503,36 @@ namespace Artifact {
   fitToScreenAction->setEnabled(hasComp);
   
   resolutionMenu->setEnabled(hasComp);
+  if (resFullAction) {
+    resFullAction->setEnabled(hasComp);
+  }
+  if (resHalfAction) {
+    resHalfAction->setEnabled(hasComp);
+  }
+  if (resThirdAction) {
+    resThirdAction->setEnabled(hasComp);
+  }
+  if (resQuarterAction) {
+    resQuarterAction->setEnabled(hasComp);
+  }
   qualityPresetMenu->setEnabled(hasComp);
+  if (hasComp) {
+    if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      const int percent = settings->previewResolutionPercent();
+      if (resFullAction) {
+        resFullAction->setChecked(percent >= 88);
+      }
+      if (resHalfAction) {
+        resHalfAction->setChecked(percent >= 42 && percent < 88);
+      }
+      if (resThirdAction) {
+        resThirdAction->setChecked(percent >= 28 && percent < 42);
+      }
+      if (resQuarterAction) {
+        resQuarterAction->setChecked(percent < 28);
+      }
+    }
+  }
   
   showGridAction->setEnabled(hasComp);
   snapToGridAction->setEnabled(hasComp);
@@ -431,6 +542,9 @@ namespace Artifact {
   useDisplayColorManagementAction->setEnabled(hasComp);
   if (openContentsViewerAction) {
    openContentsViewerAction->setEnabled(true);
+  }
+  if (openProjectPanelAction) {
+   openProjectPanelAction->setEnabled(static_cast<bool>(mainWindow));
   }
   if (openColorPaletteAction) {
    openColorPaletteAction->setEnabled(true);
@@ -483,6 +597,9 @@ namespace Artifact {
   saveWorkspacePresetAction =
       workspacePresetMenu->addAction("現在のレイアウトを保存...");
   saveWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/save_layout.svg")));
+  deleteWorkspacePresetAction =
+      workspacePresetMenu->addAction("プリセットを削除...");
+  deleteWorkspacePresetAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
   restoreWorkspaceSessionAction =
       workspacePresetMenu->addAction("最後のセッションを復元");
   restoreWorkspaceSessionAction->setIcon(QIcon(resolveIconPath("Studio/restore_session.svg")));
@@ -509,6 +626,42 @@ namespace Artifact {
                        QMessageBox::warning(
                            mw, QStringLiteral("ワークスペースを保存"),
                            QStringLiteral("ワークスペースの保存に失敗しました。"));
+                     }
+                   });
+
+  QObject::connect(deleteWorkspacePresetAction, &QAction::triggered,
+                   mainWindow, [mw = mainWindow]() {
+                     if (!mw) {
+                       return;
+                     }
+                     ArtifactWorkspaceManager manager;
+                     const QStringList presets = manager.presetNames();
+                     if (presets.isEmpty()) {
+                       QMessageBox::information(
+                           mw, QStringLiteral("ワークスペース"),
+                           QStringLiteral("削除できるプリセットがありません。"));
+                       return;
+                     }
+                     bool ok = false;
+                     const QString presetName = QInputDialog::getItem(
+                         mw, QStringLiteral("プリセットを削除"),
+                         QStringLiteral("削除するプリセットを選択してください"),
+                         presets, 0, false, &ok);
+                     if (!ok || presetName.trimmed().isEmpty()) {
+                       return;
+                     }
+                     const QString confirmMessage =
+                         QStringLiteral("プリセット「%1」を削除しますか？").arg(presetName);
+                     if (QMessageBox::question(
+                             mw, QStringLiteral("プリセットを削除"),
+                             confirmMessage, QMessageBox::Yes | QMessageBox::No,
+                             QMessageBox::No) != QMessageBox::Yes) {
+                       return;
+                     }
+                     if (!manager.deletePreset(presetName)) {
+                       QMessageBox::warning(
+                           mw, QStringLiteral("プリセットを削除"),
+                           QStringLiteral("プリセットの削除に失敗しました。"));
                      }
                    });
 
@@ -658,6 +811,73 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
    none->setIcon(QIcon(resolveIconPath("Studio/empty_state.svg")));
    none->setEnabled(false);
   }
+}
+
+void ArtifactViewMenu::Impl::showProjectPanel()
+{
+ if (!mainWindow) {
+  return;
+ }
+
+ const QString dockTitle = QStringLiteral("Project");
+ if (mainWindow->hasDock(dockTitle)) {
+  mainWindow->setDockVisible(dockTitle, true);
+  mainWindow->activateDock(dockTitle);
+  return;
+ }
+
+ QMessageBox::information(mainWindow, QStringLiteral("Project パネル"),
+                          QStringLiteral("Project パネルが見つかりません。"));
+}
+
+void ArtifactViewMenu::Impl::refreshSecondaryPreview()
+{
+ if (!secondaryPreviewWindow || !secondaryPreviewWindow->isVisible()) {
+  return;
+ }
+
+ auto* playback = ArtifactPlaybackService::instance();
+ if (!playback || !playback->currentComposition()) {
+  secondaryPreviewWindow->updatePreviewImage(QImage());
+  return;
+ }
+
+ const auto currentFrame = playback->currentFrame().framePosition();
+ const auto range = playback->frameRange();
+ const auto currentComp = playback->currentComposition();
+ const QString compName = currentComp ? currentComp->settings().compositionName().toQString()
+                                      : QString();
+
+ secondaryPreviewWindow->updateFrameInfo(currentFrame, range.duration(), compName);
+
+ ArtifactCore::ImageF32x4_RGBA previewImage;
+ if (playback->tryGetRamPreviewFrameImage(currentFrame, previewImage)) {
+  secondaryPreviewWindow->updatePreviewImage(previewImage.toQImage());
+ } else {
+  secondaryPreviewWindow->updatePreviewImage(QImage());
+ }
+}
+
+void ArtifactViewMenu::Impl::showSecondaryPreview()
+{
+ if (!mainWindow) {
+  return;
+ }
+
+ const auto screens = QGuiApplication::screens();
+ if (screens.size() < 2) {
+  QMessageBox::information(mainWindow, QStringLiteral("セカンドモニタープレビュー"),
+                           QStringLiteral("2つ目のモニターが検出されていません。\nマルチディスプレイ環境でご利用ください。"));
+  return;
+ }
+
+ if (!secondaryPreviewWindow) {
+  secondaryPreviewWindow = new ArtifactSecondaryPreviewWindow(mainWindow);
+  secondaryPreviewWindow->setAttribute(Qt::WA_DeleteOnClose, false);
+ }
+
+ secondaryPreviewWindow->showOnScreen(1);
+ refreshSecondaryPreview();
 }
 
 };

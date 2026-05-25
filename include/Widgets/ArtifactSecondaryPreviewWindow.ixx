@@ -11,6 +11,7 @@ module;
 #include <QGuiApplication>
 #include <QTimer>
 #include <QImage>
+#include <QResizeEvent>
 #include <QPainter>
 #include <QKeyEvent>
 #include <QApplication>
@@ -59,6 +60,7 @@ public:
 protected:
     void keyPressEvent(QKeyEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
     void paintEvent(QPaintEvent* event) override;
 };
 

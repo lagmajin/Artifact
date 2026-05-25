@@ -1057,7 +1057,17 @@ void ArtifactAbstractLayer::setTimeRemapEnabled(bool enabled) {
     }
     impl_->timeRemapEffect_->setEnabled(enabled);
     impl_->timeRemapEffect_->setHasAudio(hasAudio());
-    setDirty(LayerDirtyFlag::All);
+    notifyLayerMutation(this, LayerDirtyFlag::All,
+                        LayerDirtyReason::TimelineChanged);
+}
+
+void ArtifactAbstractLayer::clearTimeRemap() {
+    if (!impl_->timeRemapEffect_) {
+        return;
+    }
+    impl_->timeRemapEffect_.reset();
+    notifyLayerMutation(this, LayerDirtyFlag::All,
+                        LayerDirtyReason::TimelineChanged);
 }
 
 void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
@@ -1066,11 +1076,12 @@ void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
         impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
     }
 
-    // FrameRateを取得
     double fps = 30.0;
     if (impl_->composition_) {
-        // TODO: compositionからFrameRateを取得
-        fps = 30.0;
+        fps = impl_->composition_->frameRate().framerate();
+        if (fps <= 0.0) {
+            fps = 30.0;
+        }
     }
 
     const double outputTime = static_cast<double>(compFrame) / fps;
@@ -1083,7 +1094,8 @@ void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
 
     impl_->timeRemapEffect_->remap().addKeyframe(kf);
     impl_->timeRemapEffect_->remap().setFrameRate(ArtifactCore::FrameRate(fps));
-    setDirty(LayerDirtyFlag::All);
+    notifyLayerMutation(this, LayerDirtyFlag::All,
+                        LayerDirtyReason::TimelineChanged);
 }
 
 bool ArtifactAbstractLayer::isTimeRemapEnabled() const {
@@ -1097,7 +1109,10 @@ double ArtifactAbstractLayer::getSourceFrameAtCompFrame(int64_t compFrame) const
 
     double fps = 30.0;
     if (impl_->composition_) {
-        fps = 30.0; // TODO: compositionから取得
+        fps = impl_->composition_->frameRate().framerate();
+        if (fps <= 0.0) {
+            fps = 30.0;
+        }
     }
 
     const double outputTime = static_cast<double>(compFrame) / fps;
