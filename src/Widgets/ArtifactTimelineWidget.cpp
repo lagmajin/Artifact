@@ -1982,6 +1982,7 @@ public:
   QLabel *curvePropertySummaryLabel_ = nullptr;
   QListWidget *curvePropertyList_ = nullptr;
   int focusedCurveTrackIndex_ = -1;
+  bool curveFocusPinned_ = false;
   QLabel *curveEditorSummaryLabel_ = nullptr;
   QToolButton *curveEditorFitButton_ = nullptr;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
@@ -2117,7 +2118,11 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
       curveTrackIndexForSelection(impl_->curveBindings_, markers);
   if (selectionFocusTrack >= 0) {
     impl_->focusedCurveTrackIndex_ = selectionFocusTrack;
+    impl_->curveFocusPinned_ = false;
   } else if (!markers.isEmpty()) {
+    impl_->focusedCurveTrackIndex_ = -1;
+    impl_->curveFocusPinned_ = false;
+  } else if (!impl_->curveFocusPinned_) {
     impl_->focusedCurveTrackIndex_ = -1;
   }
 
@@ -2186,6 +2191,7 @@ void ArtifactTimelineWidget::updateCurvePropertyList()
 
   if (impl_->focusedCurveTrackIndex_ >= propertyCount) {
     impl_->focusedCurveTrackIndex_ = -1;
+    impl_->curveFocusPinned_ = false;
   }
   if (impl_->focusedCurveTrackIndex_ >= 0) {
     if (auto *item = impl_->curvePropertyList_->item(impl_->focusedCurveTrackIndex_)) {
@@ -2733,6 +2739,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      const int trackIndex = item->data(Qt::UserRole).toInt();
                      impl_->focusedCurveTrackIndex_ =
                          (impl_->focusedCurveTrackIndex_ == trackIndex) ? -1 : trackIndex;
+                     impl_->curveFocusPinned_ =
+                         impl_->focusedCurveTrackIndex_ >= 0;
                      impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
                      updateCurvePropertyList();
                      impl_->curveEditor_->setFocus(Qt::MouseFocusReason);
@@ -2748,6 +2756,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      } else {
                        impl_->focusedCurveTrackIndex_ = trackIndex;
                      }
+                     impl_->curveFocusPinned_ =
+                         impl_->focusedCurveTrackIndex_ >= 0;
                      impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
                      updateCurvePropertyList();
                      impl_->curveEditor_->setFocus(Qt::MouseFocusReason);
@@ -3102,6 +3112,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      if (!active) {
                        impl_->curveEditorDragging_ = false;
                        impl_->focusedCurveTrackIndex_ = -1;
+                       impl_->curveFocusPinned_ = false;
                        if (impl_->curveEditorRefreshTimer_) {
                          impl_->curveEditorRefreshTimer_->stop();
                        }
@@ -3132,6 +3143,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        return;
                      }
                      impl_->focusedCurveTrackIndex_ = trackIndex;
+                     impl_->curveFocusPinned_ =
+                         impl_->focusedCurveTrackIndex_ >= 0;
                      updateCurvePropertyList();
                      if (trackIndex >= 0 &&
                          trackIndex < impl_->curvePropertyList_->count()) {
