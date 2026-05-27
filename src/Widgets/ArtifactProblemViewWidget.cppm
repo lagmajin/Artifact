@@ -7,6 +7,12 @@ module;
 #include <QApplication>
 #include <QBrush>
 #include <QClipboard>
+#include <QDesktopServices>
+#include <QFileInfo>
+#include <QLineEdit>
+#include <QMap>
+#include <QRegularExpression>
+#include <QStringList>
 #include <QTreeWidget>
 #include <QComboBox>
 #include <QPushButton>
@@ -20,6 +26,7 @@ module;
 #include <QTreeWidgetItemIterator>
 #include <QEvent>
 #include <QTimer>
+#include <QUrl>
 module Artifact.Widgets.ProblemViewWidget;
 
 import Artifact.Widgets.ProblemViewWidget;
@@ -36,9 +43,11 @@ W_OBJECT_IMPL(ArtifactProblemViewWidget)
 class ArtifactProblemViewWidget::Impl {
 public:
     // UI Components
+    QLineEdit* searchFilter = nullptr;
     QTreeWidget* problemTree = nullptr;
     QComboBox* severityFilter = nullptr;
     QComboBox* categoryFilter = nullptr;
+    QComboBox* groupingFilter = nullptr;
     QPushButton* refreshButton = nullptr;
     QPushButton* clearButton = nullptr;
     QLabel* summaryLabel = nullptr;
@@ -48,6 +57,13 @@ public:
 };
 
 namespace {
+enum class ProblemGroupingMode {
+    Flat,
+    Severity,
+    Category,
+    Source
+};
+
 bool severityMatchesFilter(ArtifactCore::DiagnosticSeverity severity, int index)
 {
     switch (index) {
@@ -75,6 +91,12 @@ bool categoryMatchesFilter(ArtifactCore::DiagnosticCategory category, int index)
         return category == ArtifactCore::DiagnosticCategory::Expression;
     case 5:
         return category == ArtifactCore::DiagnosticCategory::Performance;
+    case 6:
+        return category == ArtifactCore::DiagnosticCategory::File;
+    case 7:
+        return category == ArtifactCore::DiagnosticCategory::Configuration;
+    case 8:
+        return category == ArtifactCore::DiagnosticCategory::Custom;
     default:
         return true;
     }
@@ -116,6 +138,108 @@ QString categoryText(ArtifactCore::DiagnosticCategory category)
     }
 }
 
+QString sourceLabelForDiagnostic(const ArtifactCore::ProjectDiagnostic& diag)
+{
+    const QString layerId = diag.getSourceLayerId().trimmed();
+    if (!layerId.isEmpty()) {
+        return QStringLiteral("Layer: %1").arg(layerId);
+    }
+
+    const QString compId = diag.getSourceCompId().trimmed();
+    if (!compId.isEmpty()) {
+        return QStringLiteral("Composition: %1").arg(compId);
+    }
+
+    const QString message = diag.getMessage().trimmed();
+    if (message.startsWith(QStringLiteral("Missing asset file:"), Qt::CaseInsensitive)) {
+        return QStringLiteral("Asset");
+    }
+
+    return QStringLiteral("Project");
+}
+
+QString assetPathFromDiagnostic(const ArtifactCore::ProjectDiagnostic& diag)
+{
+    const QString message = diag.getMessage().trimmed();
+    static const QRegularExpression missingAssetPattern(
+        QStringLiteral(R"(Missing asset file:\s*(.+)$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = missingAssetPattern.match(message);
+    if (!match.hasMatch()) {
+        return {};
+    }
+
+    return match.captured(1).trimmed();
+}
+
+QString searchHaystackForDiagnostic(const ArtifactCore::ProjectDiagnostic& diag)
+{
+    return QStringList{
+        diag.getMessage(),
+        diag.getDescription(),
+        diag.getFixAction(),
+        diag.getSourceLayerId(),
+        diag.getSourceCompId(),
+        sourceLabelForDiagnostic(diag),
+        categoryText(diag.getCategory())
+    }.join(QStringLiteral("\n"));
+}
+
+bool diagnosticMatchesSearch(const ArtifactCore::ProjectDiagnostic& diag, const QString& filterText)
+{
+    if (filterText.trimmed().isEmpty()) {
+        return true;
+    }
+
+    const QString needle = filterText.trimmed().toCaseFolded();
+    const QString haystack = searchHaystackForDiagnostic(diag).toCaseFolded();
+    return haystack.contains(needle);
+}
+
+ProblemGroupingMode groupingModeFromIndex(int index)
+{
+    switch (index) {
+    case 1:
+        return ProblemGroupingMode::Severity;
+    case 2:
+        return ProblemGroupingMode::Category;
+    case 3:
+        return ProblemGroupingMode::Source;
+    default:
+        return ProblemGroupingMode::Flat;
+    }
+}
+
+QString groupingLabel(ProblemGroupingMode mode)
+{
+    switch (mode) {
+    case ProblemGroupingMode::Severity:
+        return QStringLiteral("Severity");
+    case ProblemGroupingMode::Category:
+        return QStringLiteral("Category");
+    case ProblemGroupingMode::Source:
+        return QStringLiteral("Source");
+    case ProblemGroupingMode::Flat:
+    default:
+        return QStringLiteral("Flat");
+    }
+}
+
+QString groupKeyForDiagnostic(const ArtifactCore::ProjectDiagnostic& diag, ProblemGroupingMode mode)
+{
+    switch (mode) {
+    case ProblemGroupingMode::Severity:
+        return severityText(diag.getSeverity());
+    case ProblemGroupingMode::Category:
+        return categoryText(diag.getCategory());
+    case ProblemGroupingMode::Source:
+        return sourceLabelForDiagnostic(diag);
+    case ProblemGroupingMode::Flat:
+    default:
+        return {};
+    }
+}
+
 QColor severityColor(ArtifactCore::DiagnosticSeverity severity)
 {
     switch (severity) {
@@ -144,6 +268,60 @@ QIcon severityIcon(QWidget* widget, ArtifactCore::DiagnosticSeverity severity)
         return widget->style()->standardIcon(QStyle::SP_MessageBoxInformation);
     }
 }
+
+void populateDiagnosticItem(QTreeWidgetItem* item, const ArtifactCore::ProjectDiagnostic& diag)
+{
+    if (!item) {
+        return;
+    }
+
+    const QString sourceText = sourceLabelForDiagnostic(diag);
+    const QString assetPath = assetPathFromDiagnostic(diag);
+    const QString displaySource = !assetPath.isEmpty()
+        ? QStringLiteral("Asset: %1").arg(QFileInfo(assetPath).fileName().isEmpty() ? assetPath : QFileInfo(assetPath).fileName())
+        : sourceText;
+
+    item->setIcon(0, severityIcon(item->treeWidget() ? item->treeWidget()->window() : nullptr, diag.getSeverity()));
+    item->setText(0, severityText(diag.getSeverity()));
+    item->setText(1, categoryText(diag.getCategory()));
+    item->setText(2, diag.getMessage());
+    item->setText(3, displaySource);
+    item->setForeground(0, QBrush(severityColor(diag.getSeverity())));
+    item->setForeground(1, QBrush(severityColor(diag.getSeverity()).lighter(120)));
+    item->setToolTip(0, QStringLiteral("Severity: %1").arg(severityText(diag.getSeverity())));
+    item->setToolTip(1, QStringLiteral("Category: %1").arg(categoryText(diag.getCategory())));
+    item->setToolTip(2, diag.getDescription().isEmpty() ? diag.getMessage() : diag.getDescription());
+    item->setToolTip(3, assetPath.isEmpty()
+                            ? (diag.getFixAction().isEmpty() ? sourceText : diag.getFixAction())
+                            : assetPath);
+    item->setData(0, Qt::UserRole, diag.getId());
+    item->setData(0, Qt::UserRole + 1, diag.getSourceCompId());
+    item->setData(0, Qt::UserRole + 2, diag.getSourceLayerId());
+    item->setData(0, Qt::UserRole + 3, diag.getFixAction());
+    item->setData(0, Qt::UserRole + 4, assetPath);
+    item->setData(0, Qt::UserRole + 5, static_cast<int>(diag.getSeverity()));
+    item->setData(0, Qt::UserRole + 6, static_cast<int>(diag.getCategory()));
+}
+
+QTreeWidgetItem* ensureGroupItem(QTreeWidget* tree,
+                                 QMap<QString, QTreeWidgetItem*>& groupItems,
+                                 const QString& key,
+                                 const QString& label,
+                                 const QColor& color)
+{
+    if (groupItems.contains(key)) {
+        return groupItems.value(key);
+    }
+
+    auto* groupItem = new QTreeWidgetItem(tree);
+    groupItem->setFirstColumnSpanned(true);
+    groupItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+    groupItem->setChildIndicatorPolicy(QTreeWidgetItem::ShowIndicator);
+    groupItem->setText(0, label);
+    groupItem->setForeground(0, QBrush(color));
+    groupItems.insert(key, groupItem);
+    return groupItem;
+}
 } // namespace
 
 ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
@@ -164,15 +342,35 @@ ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
     auto* headerLayout = new QHBoxLayout();
     headerLayout->setSpacing(12);
 
+    impl_->searchFilter = new QLineEdit(this);
+    impl_->searchFilter->setPlaceholderText(QStringLiteral("Search diagnostics"));
+    impl_->searchFilter->installEventFilter(this);
+    headerLayout->addWidget(impl_->searchFilter, 2);
+
     impl_->severityFilter = new QComboBox(this);
     impl_->severityFilter->addItems({"All Severities", "Errors Only", "Warnings Only", "Info Only"});
     impl_->severityFilter->installEventFilter(this);
     headerLayout->addWidget(impl_->severityFilter, 1);
 
     impl_->categoryFilter = new QComboBox(this);
-    impl_->categoryFilter->addItems({"All Categories", "References", "Mattes", "Circular Deps", "Expressions", "Performance"});
+    impl_->categoryFilter->addItems({
+        "All Categories",
+        "References",
+        "Mattes",
+        "Circular Deps",
+        "Expressions",
+        "Performance",
+        "Files",
+        "Config",
+        "Custom"
+    });
     impl_->categoryFilter->installEventFilter(this);
     headerLayout->addWidget(impl_->categoryFilter, 1);
+
+    impl_->groupingFilter = new QComboBox(this);
+    impl_->groupingFilter->addItems({"Flat", "By Severity", "By Category", "By Source"});
+    impl_->groupingFilter->installEventFilter(this);
+    headerLayout->addWidget(impl_->groupingFilter, 1);
 
     root->addLayout(headerLayout);
 
@@ -206,7 +404,7 @@ ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
     impl_->problemTree->setColumnWidth(3, 150);
     impl_->problemTree->setAlternatingRowColors(true);
     impl_->problemTree->setSelectionMode(QTreeWidget::SingleSelection);
-    impl_->problemTree->setSortingEnabled(true);
+    impl_->problemTree->setSortingEnabled(false);
     QObject::connect(impl_->problemTree, &QTreeWidget::itemDoubleClicked,
                      this, &ArtifactProblemViewWidget::onNavigateToProblem);
 
@@ -218,7 +416,7 @@ ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
         QPalette summaryPal = impl_->summaryLabel->palette();
         summaryPal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
         summaryPal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
-        impl_->summaryLabel->setPalette(summaryPal);
+    impl_->summaryLabel->setPalette(summaryPal);
     }
     root->addWidget(impl_->summaryLabel);
 }
@@ -286,6 +484,10 @@ void ArtifactProblemViewWidget::loadProjectHealth(const ProjectHealthReport& rep
             category = ArtifactCore::DiagnosticCategory::Configuration;
         } else if (issue.category == QStringLiteral("BrokenReference")) {
             category = ArtifactCore::DiagnosticCategory::Reference;
+        } else if (issue.category == QStringLiteral("Naming")) {
+            category = ArtifactCore::DiagnosticCategory::Configuration;
+        } else if (issue.category == QStringLiteral("Spelling")) {
+            category = ArtifactCore::DiagnosticCategory::Custom;
         }
 
         ArtifactCore::ProjectDiagnostic diag(
@@ -294,6 +496,17 @@ void ArtifactProblemViewWidget::loadProjectHealth(const ProjectHealthReport& rep
             issue.message);
         diag.setDescription(issue.message);
         diag.setSourceCompId(issue.targetName);
+        if (issue.category == QStringLiteral("MissingAsset")) {
+            diag.setFixAction(QStringLiteral("Relink the missing asset or remove the footage entry"));
+        } else if (issue.category == QStringLiteral("BrokenReference")) {
+            diag.setFixAction(QStringLiteral("Open the composition and replace or remove the broken reference"));
+        } else if (issue.category == QStringLiteral("FrameRange")) {
+            diag.setFixAction(QStringLiteral("Normalize the composition or layer frame range"));
+        } else if (issue.category == QStringLiteral("Naming")) {
+            diag.setFixAction(QStringLiteral("Rename the item to a production-safe label"));
+        } else if (issue.category == QStringLiteral("Spelling")) {
+            diag.setFixAction(QStringLiteral("Review the suggested spelling correction"));
+        }
         diagnostics.push_back(diag);
     }
 
@@ -316,9 +529,16 @@ void ArtifactProblemViewWidget::rebuildProblemTree()
         return;
     }
 
+    impl_->problemTree->setUpdatesEnabled(false);
     impl_->problemTree->clear();
+    impl_->problemTree->setSortingEnabled(false);
+
+    const QString searchText = impl_->searchFilter ? impl_->searchFilter->text().trimmed() : QString();
+    const auto groupingMode = groupingModeFromIndex(impl_->groupingFilter ? impl_->groupingFilter->currentIndex() : 0);
     std::vector<ArtifactCore::ProjectDiagnostic> visibleDiagnostics;
     visibleDiagnostics.reserve(impl_->diagnostics.size());
+    QMap<QString, QTreeWidgetItem*> groupItems;
+    QMap<QString, int> groupCounts;
 
     for (const auto& diag : impl_->diagnostics) {
         const int severityIndex = impl_->severityFilter ? impl_->severityFilter->currentIndex() : 0;
@@ -329,31 +549,42 @@ void ArtifactProblemViewWidget::rebuildProblemTree()
         if (!categoryMatchesFilter(diag.getCategory(), categoryIndex)) {
             continue;
         }
+        if (!diagnosticMatchesSearch(diag, searchText)) {
+            continue;
+        }
 
-        auto* item = new QTreeWidgetItem(impl_->problemTree);
-        item->setIcon(0, severityIcon(this, diag.getSeverity()));
-        item->setText(0, severityText(diag.getSeverity()));
-        item->setText(1, categoryText(diag.getCategory()));
-        item->setText(2, diag.getMessage());
-        item->setText(3, diag.getSourceLayerId().isEmpty()
-                              ? diag.getSourceCompId()
-                              : diag.getSourceLayerId());
-        item->setForeground(0, QBrush(severityColor(diag.getSeverity())));
-        item->setForeground(1, QBrush(severityColor(diag.getSeverity()).lighter(120)));
-        item->setToolTip(2, diag.getDescription().isEmpty()
-                                ? diag.getMessage()
-                                : diag.getDescription());
-        item->setToolTip(3, diag.getFixAction().isEmpty()
-                                ? QStringLiteral("Double-click to navigate")
-                                : diag.getFixAction());
-        item->setData(0, Qt::UserRole, diag.getId());
-        item->setData(0, Qt::UserRole + 1, diag.getSourceCompId());
-        item->setData(0, Qt::UserRole + 2, diag.getSourceLayerId());
-        item->setData(0, Qt::UserRole + 3, diag.getFixAction());
+        QTreeWidgetItem* parentItem = impl_->problemTree;
+        const QString groupKey = groupKeyForDiagnostic(diag, groupingMode);
+        if (groupingMode != ProblemGroupingMode::Flat) {
+            const QString label = groupKey.isEmpty() ? QStringLiteral("Uncategorized") : groupKey;
+            parentItem = ensureGroupItem(
+                impl_->problemTree,
+                groupItems,
+                label,
+                label,
+                severityColor(diag.getSeverity()).darker(120));
+            groupCounts[label] += 1;
+        }
+
+        auto* item = new QTreeWidgetItem(parentItem);
+        populateDiagnosticItem(item, diag);
         visibleDiagnostics.push_back(diag);
     }
 
+    if (groupingMode != ProblemGroupingMode::Flat) {
+        for (auto it = groupItems.begin(); it != groupItems.end(); ++it) {
+            const QString key = it.key();
+            auto* groupItem = it.value();
+            const int count = groupCounts.value(key, 0);
+            groupItem->setText(0, QStringLiteral("%1 (%2)").arg(key).arg(count));
+            groupItem->setToolTip(0, QStringLiteral("%1 diagnostics grouped by %2").arg(count).arg(groupingLabel(groupingMode)));
+            groupItem->setExpanded(true);
+        }
+    }
+
     updateSummary(visibleDiagnostics);
+    impl_->problemTree->setUpdatesEnabled(true);
+    impl_->problemTree->viewport()->update();
 }
 
 void ArtifactProblemViewWidget::onRefresh()
@@ -368,11 +599,17 @@ void ArtifactProblemViewWidget::onNavigateToProblem(QTreeWidgetItem* item, int c
         return;
     }
 
+    if (item->childCount() > 0) {
+        item->setExpanded(!item->isExpanded());
+        return;
+    }
+
     const QString compIdText = item->data(0, Qt::UserRole + 1).toString();
     const QString layerIdText = item->data(0, Qt::UserRole + 2).toString();
+    const QString assetPath = item->data(0, Qt::UserRole + 4).toString();
     const QString message = item->text(2);
 
-    if (compIdText.isEmpty() && layerIdText.isEmpty()) {
+    if (compIdText.isEmpty() && layerIdText.isEmpty() && assetPath.isEmpty()) {
         if (!message.isEmpty()) {
             if (auto* clipboard = QApplication::clipboard()) {
                 clipboard->setText(message);
@@ -382,16 +619,21 @@ void ArtifactProblemViewWidget::onNavigateToProblem(QTreeWidgetItem* item, int c
     }
 
     auto* projectService = ArtifactProjectService::instance();
-    if (!projectService) {
-        return;
-    }
-
-    if (!compIdText.isEmpty()) {
+    if (!compIdText.isEmpty() && projectService) {
         projectService->changeCurrentComposition(CompositionID(compIdText));
     }
 
-    if (!layerIdText.isEmpty()) {
+    if (!layerIdText.isEmpty() && projectService) {
         projectService->selectLayer(LayerID(layerIdText));
+    }
+
+    if (!assetPath.isEmpty()) {
+        const QFileInfo assetInfo(assetPath);
+        if (assetInfo.exists()) {
+            QDesktopServices::openUrl(QUrl::fromLocalFile(assetInfo.absoluteFilePath()));
+        } else if (auto* clipboard = QApplication::clipboard()) {
+            clipboard->setText(assetPath);
+        }
     }
 }
 
@@ -402,8 +644,10 @@ bool ArtifactProblemViewWidget::eventFilter(QObject* watched, QEvent* event)
     }
 
     const bool isFilterWidget =
+        watched == impl_->searchFilter ||
         watched == impl_->severityFilter ||
         watched == impl_->categoryFilter ||
+        watched == impl_->groupingFilter ||
         watched == impl_->refreshButton ||
         watched == impl_->clearButton;
     if (!isFilterWidget) {
@@ -422,6 +666,12 @@ bool ArtifactProblemViewWidget::eventFilter(QObject* watched, QEvent* event)
         if (watched == impl_->clearButton) {
             loadDiagnostics(std::vector<ArtifactCore::ProjectDiagnostic>{});
             return true;
+        }
+        if (watched == impl_->searchFilter || watched == impl_->groupingFilter) {
+            QTimer::singleShot(0, this, [this]() {
+                rebuildProblemTree();
+            });
+            break;
         }
         QTimer::singleShot(0, this, [this]() {
             rebuildProblemTree();
@@ -454,10 +704,12 @@ void ArtifactProblemViewWidget::updateSummary(const std::vector<ArtifactCore::Pr
     }
 
     impl_->summaryLabel->setText(
-        QStringLiteral("%1 Errors, %2 Warnings, %3 Info")
+        QStringLiteral("%1 visible | %2 Errors, %3 Warnings, %4 Info | %5 view")
+            .arg(static_cast<int>(diagnostics.size()))
             .arg(errors)
             .arg(warnings)
-            .arg(infos));
+            .arg(infos)
+            .arg(groupingLabel(groupingModeFromIndex(impl_->groupingFilter ? impl_->groupingFilter->currentIndex() : 0))));
 }
 
 } // namespace Artifact

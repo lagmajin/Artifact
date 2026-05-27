@@ -13,6 +13,8 @@ module;
 #include <QPixmap>
 #include <QPainter>
 #include <QPalette>
+#include <QStringList>
+#include <QRegularExpression>
 #include <QtSVG/QSvgRenderer>
 #include <QHeaderView>
 #include <QStyle>
@@ -29,11 +31,112 @@ import std;
 import Artifact.Project;
 import Artifact.Project.Health;
 import Artifact.Service.Project;
+import Core.Diagnostics.ProjectDiagnostic;
 import Widgets.Utils.CSS;
 import Utils.Path;
 import Utils.String.UniString;
 
 namespace Artifact {
+
+namespace {
+QString categoryText(ArtifactCore::DiagnosticCategory category)
+{
+    switch (category) {
+    case ArtifactCore::DiagnosticCategory::Reference:
+        return QStringLiteral("Reference");
+    case ArtifactCore::DiagnosticCategory::Matte:
+        return QStringLiteral("Matte");
+    case ArtifactCore::DiagnosticCategory::CircularDep:
+        return QStringLiteral("Circular");
+    case ArtifactCore::DiagnosticCategory::Expression:
+        return QStringLiteral("Expression");
+    case ArtifactCore::DiagnosticCategory::Performance:
+        return QStringLiteral("Performance");
+    case ArtifactCore::DiagnosticCategory::File:
+        return QStringLiteral("File");
+    case ArtifactCore::DiagnosticCategory::Configuration:
+        return QStringLiteral("Configuration");
+    case ArtifactCore::DiagnosticCategory::Custom:
+    default:
+        return QStringLiteral("Custom");
+    }
+}
+
+QString sourceLabelForDiagnostic(const ArtifactCore::ProjectDiagnostic& diag)
+{
+    const QString layerId = diag.getSourceLayerId().trimmed();
+    if (!layerId.isEmpty()) {
+        return QStringLiteral("Layer: %1").arg(layerId);
+    }
+
+    const QString compId = diag.getSourceCompId().trimmed();
+    if (!compId.isEmpty()) {
+        return QStringLiteral("Composition: %1").arg(compId);
+    }
+
+    const QString message = diag.getMessage().trimmed();
+    if (message.startsWith(QStringLiteral("Missing asset file:"), Qt::CaseInsensitive)) {
+        return QStringLiteral("Asset");
+    }
+
+    return QStringLiteral("Project");
+}
+
+QString assetPathFromDiagnostic(const ArtifactCore::ProjectDiagnostic& diag)
+{
+    static const QRegularExpression missingAssetPattern(
+        QStringLiteral(R"(Missing asset file:\s*(.+)$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = missingAssetPattern.match(diag.getMessage().trimmed());
+    if (!match.hasMatch()) {
+        return {};
+    }
+    return match.captured(1).trimmed();
+}
+
+std::vector<ArtifactCore::ProjectDiagnostic> diagnosticsFromHealthReport(const ProjectHealthReport& report)
+{
+    std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
+    diagnostics.reserve(static_cast<size_t>(report.issues.size()));
+
+    for (const auto& issue : report.issues) {
+        ArtifactCore::DiagnosticSeverity severity = ArtifactCore::DiagnosticSeverity::Info;
+        ArtifactCore::DiagnosticCategory category = ArtifactCore::DiagnosticCategory::Custom;
+
+        switch (issue.severity) {
+        case HealthIssueSeverity::Error:
+            severity = ArtifactCore::DiagnosticSeverity::Error;
+            break;
+        case HealthIssueSeverity::Warning:
+            severity = ArtifactCore::DiagnosticSeverity::Warning;
+            break;
+        case HealthIssueSeverity::Info:
+        default:
+            severity = ArtifactCore::DiagnosticSeverity::Info;
+            break;
+        }
+
+        if (issue.category == QStringLiteral("CircularReference")) {
+            category = ArtifactCore::DiagnosticCategory::CircularDep;
+        } else if (issue.category == QStringLiteral("MissingAsset")) {
+            category = ArtifactCore::DiagnosticCategory::File;
+        } else if (issue.category == QStringLiteral("FrameRange")) {
+            category = ArtifactCore::DiagnosticCategory::Configuration;
+        } else if (issue.category == QStringLiteral("BrokenReference")) {
+            category = ArtifactCore::DiagnosticCategory::Reference;
+        } else if (issue.category == QStringLiteral("Naming")) {
+            category = ArtifactCore::DiagnosticCategory::Configuration;
+        }
+
+        ArtifactCore::ProjectDiagnostic diag(severity, category, issue.message);
+        diag.setDescription(issue.message);
+        diag.setSourceCompId(issue.targetName);
+        diagnostics.push_back(diag);
+    }
+
+    return diagnostics;
+}
+} // namespace
 
 /**
  * @brief Artifact Project Health Dashboard
@@ -71,14 +174,18 @@ public:
         }
 
         issuesTree_->clear();
-        ProjectHealthReport report = ArtifactProjectService::instance()
-                                          ? ArtifactProjectService::instance()->currentProjectHealthReport()
-                                          : ArtifactProjectHealthChecker::check(project_);
-        lastReport_ = report;
+        std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
+        if (ArtifactProjectService::instance()) {
+            diagnostics = ArtifactProjectService::instance()->currentProjectDiagnostics();
+            lastReport_ = ArtifactProjectService::instance()->currentProjectHealthReport();
+        } else {
+            lastReport_ = ArtifactProjectHealthChecker::check(project_);
+            diagnostics = diagnosticsFromHealthReport(lastReport_);
+        }
 
         // Update overall status
-        if (report.isHealthy) {
-            if (report.issues.isEmpty()) {
+        if (lastReport_.isHealthy) {
+            if (lastReport_.issues.isEmpty()) {
                 statusLabel_->setText("Project is Healthy");
                 applyStatusColor(QColor(QStringLiteral("#4CAF50")));
             } else {
@@ -91,34 +198,46 @@ public:
         }
 
         // Add issues to tree
-        for (const auto& issue : report.issues) {
+        for (const auto& diagnostic : diagnostics) {
             auto item = new QTreeWidgetItem(issuesTree_);
             
             // Set Icon based on severity
             QIcon icon;
-            if (issue.severity == HealthIssueSeverity::Error) {
-                icon = loadHealthSeverityIcon(issue.severity);
+            const auto severity = diagnostic.getSeverity();
+            if (severity == ArtifactCore::DiagnosticSeverity::Error) {
+                icon = loadHealthSeverityIcon(HealthIssueSeverity::Error);
                 item->setForeground(0, QBrush(QColor(QStringLiteral("#F44336"))));
-            } else if (issue.severity == HealthIssueSeverity::Warning) {
-                icon = loadHealthSeverityIcon(issue.severity);
+            } else if (severity == ArtifactCore::DiagnosticSeverity::Warning) {
+                icon = loadHealthSeverityIcon(HealthIssueSeverity::Warning);
                 item->setForeground(0, QBrush(QColor(QStringLiteral("#FF9800"))));
             } else {
-                icon = loadHealthSeverityIcon(issue.severity);
+                icon = loadHealthSeverityIcon(HealthIssueSeverity::Info);
                 item->setForeground(0, QBrush(QColor(QStringLiteral("#4FA8FF"))));
             }
             item->setIcon(0, icon);
             
-            item->setText(1, issue.message);
-            item->setText(2, issue.targetName);
-            item->setText(3, issue.category);
+            item->setText(1, diagnostic.getMessage());
+            item->setText(2, sourceLabelForDiagnostic(diagnostic));
+            item->setText(3, categoryText(diagnostic.getCategory()));
+            item->setData(0, Qt::UserRole, diagnostic.getId());
+            item->setData(0, Qt::UserRole + 1, diagnostic.getSourceCompId());
+            item->setData(0, Qt::UserRole + 2, diagnostic.getSourceLayerId());
+            item->setData(0, Qt::UserRole + 3, assetPathFromDiagnostic(diagnostic));
             
             // Add tooltip for full message
-            item->setToolTip(1, issue.message);
+            item->setToolTip(1, diagnostic.getDescription().isEmpty()
+                                    ? diagnostic.getMessage()
+                                    : diagnostic.getDescription());
+            item->setToolTip(2, item->data(0, Qt::UserRole + 3).toString().isEmpty()
+                                    ? QStringLiteral("Double-click to inspect")
+                                    : item->data(0, Qt::UserRole + 3).toString());
         }
 
         issuesTree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+        issuesTree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+        issuesTree_->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
         if (fixBtn_) {
-            fixBtn_->setEnabled(!report.isHealthy || !report.issues.isEmpty());
+            fixBtn_->setEnabled(!lastReport_.isHealthy || !lastReport_.issues.isEmpty());
         }
     }
 
@@ -219,7 +338,7 @@ private:
 
         // Issues Tree
         issuesTree_ = new QTreeWidget();
-        QStringList headers = {"", "Issue Description", "Target Object", "Category"};
+        QStringList headers = {"", "Issue Description", "Source", "Category"};
         issuesTree_->setHeaderLabels(headers);
         issuesTree_->setColumnWidth(0, 30);
         issuesTree_->setColumnWidth(2, 120);
