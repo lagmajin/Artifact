@@ -181,13 +181,35 @@ auto convertProjectHealthReportToDiagnostics(const ProjectHealthReport &report)
   std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
   diagnostics.reserve(static_cast<size_t>(report.issues.size()));
 
+  const auto fixActionForCategory = [](const QString &category) {
+    if (category == QStringLiteral("MissingAsset")) {
+      return QStringLiteral("Relink the missing asset or remove the footage entry");
+    }
+    if (category == QStringLiteral("BrokenReference")) {
+      return QStringLiteral("Open the composition and replace or remove the broken reference");
+    }
+    if (category == QStringLiteral("CircularReference")) {
+      return QStringLiteral("Break the composition nesting cycle");
+    }
+    if (category == QStringLiteral("FrameRange")) {
+      return QStringLiteral("Normalize the composition or layer frame range");
+    }
+    if (category == QStringLiteral("Naming")) {
+      return QStringLiteral("Rename the item to a production-safe label");
+    }
+    if (category == QStringLiteral("Spelling")) {
+      return QStringLiteral("Review the suggested spelling correction");
+    }
+    return QStringLiteral("Inspect the reported issue");
+  };
+
   for (const auto &issue : report.issues) {
     ArtifactCore::ProjectDiagnostic diagnostic(
         mapHealthSeverityToDiagnostic(issue.severity),
         mapHealthCategoryToDiagnostic(issue.category), issue.message);
     diagnostic.setDescription(issue.message);
     diagnostic.setSourceCompId(issue.targetName);
-    diagnostic.setFixAction(issue.category);
+    diagnostic.setFixAction(fixActionForCategory(issue.category));
     diagnostics.push_back(diagnostic);
   }
 
