@@ -166,6 +166,61 @@ void applyLazyDockSurfacePalette(QWidget *widget) {
   }
 }
 
+void restoreInheritedUpdates(QWidget *widget) {
+  if (!widget) {
+    return;
+  }
+
+  const auto restoreOne = [](QWidget *candidate) {
+    if (!candidate || candidate->testAttribute(Qt::WA_ForceUpdatesDisabled)) {
+      return;
+    }
+    if (!candidate->updatesEnabled()) {
+      candidate->setUpdatesEnabled(true);
+    }
+    candidate->update();
+  };
+
+  restoreOne(widget);
+  for (auto *child : widget->findChildren<QWidget *>()) {
+    if (!child || child->isWindow()) {
+      continue;
+    }
+    restoreOne(child);
+    if (auto *scrollArea = qobject_cast<QAbstractScrollArea *>(child)) {
+      if (auto *viewport = scrollArea->viewport()) {
+        restoreOne(viewport);
+      }
+    }
+  }
+}
+
+void enableDockDropPreview(QObject *root);
+
+void prepareDockDropOverlayWindow(QWidget *widget) {
+  if (!widget) {
+    return;
+  }
+
+  widget->setAttribute(Qt::WA_ShowWithoutActivating, true);
+#if defined(_WIN32)
+  widget->setWindowFlag(Qt::WindowStaysOnTopHint, true);
+#endif
+}
+
+void prepareDockDropOverlays(ads::CDockManager *dockManager) {
+  if (!dockManager) {
+    return;
+  }
+
+  enableDockDropPreview(dockManager);
+  prepareDockDropOverlayWindow(dockManager->containerOverlay());
+  prepareDockDropOverlayWindow(dockManager->dockAreaOverlay());
+  for (auto *cross : dockManager->findChildren<ads::CDockOverlayCross *>()) {
+    prepareDockDropOverlayWindow(cross);
+  }
+}
+
 void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
   if (!window) {
     return;
@@ -254,6 +309,7 @@ void refreshFloatingWidgetTree(QWidget *widget) {
     return;
   }
 
+  restoreInheritedUpdates(widget);
   applyLazyDockSurfacePalette(widget);
 
   // With WA_OpaquePaintEvent removed from the project panel hierarchy,
@@ -414,9 +470,9 @@ void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
     floatingWidget->installEventFilter(eventFilterOwner);
   }
 
+  restoreInheritedUpdates(floatingWidget);
   applyDarkNativeTitleBar(floatingWidget);
   applyLazyDockSurfacePalette(floatingWidget);
-  enableDockDropPreview(floatingWidget);
   floatingWidget->ensurePolished();
   if (auto *layout = floatingWidget->layout()) {
     layout->activate();
@@ -888,10 +944,10 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->syncShapeToolOptions(this);
 
   impl_->dockManager = new CDockManager(this);
-  enableDockDropPreview(impl_->dockManager);
+  prepareDockDropOverlays(impl_->dockManager);
   QTimer::singleShot(0, this, [this]() {
     if (impl_ && impl_->dockManager) {
-      enableDockDropPreview(impl_->dockManager);
+      prepareDockDropOverlays(impl_->dockManager);
     }
   });
   impl_->dockStyleManager = new DockStyleManager(impl_->dockManager, this);

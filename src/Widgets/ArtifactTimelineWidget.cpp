@@ -1,6 +1,7 @@
 module;
 
 #include <QBoxLayout>
+#include <QApplication>
 #include <QBrush>
 #include <QComboBox>
 #include <QElapsedTimer>
@@ -2152,6 +2153,86 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   updateCurvePropertyList();
 }
 
+bool ArtifactTimelineWidget::isGraphEditorFocusWidget(const QWidget *widget) const
+{
+  if (!impl_ || !widget) {
+    return false;
+  }
+
+  const QWidget *cursor = widget;
+  while (cursor) {
+    if (cursor == impl_->curveEditor_ || cursor == impl_->curveEditorPage_ ||
+        cursor == impl_->curvePropertyList_ ||
+        cursor == impl_->curveEditorFitButton_) {
+      return true;
+    }
+    cursor = cursor->parentWidget();
+  }
+  return false;
+}
+
+void ArtifactTimelineWidget::advanceGraphEditorFocus(const bool reverse)
+{
+  if (!impl_ || !impl_->graphEditorVisible_) {
+    return;
+  }
+
+  QVector<QWidget *> focusOrder;
+  if (impl_->curvePropertyList_) {
+    focusOrder.push_back(impl_->curvePropertyList_);
+  }
+  if (impl_->curveEditor_) {
+    focusOrder.push_back(impl_->curveEditor_);
+  }
+  if (impl_->curveEditorFitButton_) {
+    focusOrder.push_back(impl_->curveEditorFitButton_);
+  }
+  if (focusOrder.isEmpty()) {
+    return;
+  }
+
+  QWidget *currentFocus = QApplication::focusWidget();
+  int currentIndex = -1;
+  for (int i = 0; i < focusOrder.size(); ++i) {
+    if (focusOrder[i] == currentFocus ||
+        (currentFocus && focusOrder[i]->isAncestorOf(currentFocus))) {
+      currentIndex = i;
+      break;
+    }
+  }
+
+  const int nextIndex =
+      currentIndex < 0
+          ? (reverse ? focusOrder.size() - 1 : 0)
+          : (currentIndex + (reverse ? focusOrder.size() - 1 : 1)) %
+                focusOrder.size();
+  if (auto *target = focusOrder[nextIndex]) {
+    target->setFocus(Qt::TabFocusReason);
+  }
+}
+
+void ArtifactTimelineWidget::toggleGraphEditorMode(const bool active,
+                                                   const Qt::FocusReason reason)
+{
+  if (!impl_ || !impl_->globalSwitches_) {
+    return;
+  }
+
+  impl_->globalSwitches_->setGraphEditorActive(active);
+  if (!impl_->graphEditorVisible_) {
+    if (impl_->painterTrackView_) {
+      impl_->painterTrackView_->setFocus(reason);
+    }
+    return;
+  }
+
+  if (impl_->curveEditor_) {
+    impl_->curveEditor_->setFocus(reason);
+  } else if (impl_->curvePropertyList_) {
+    impl_->curvePropertyList_->setFocus(reason);
+  }
+}
+
 void ArtifactTimelineWidget::updateCurvePropertyList()
 {
   if (!impl_ || !impl_->curvePropertyList_ || !impl_->curvePropertySummaryLabel_) {
@@ -2304,26 +2385,49 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     if (!impl_ || !globalSwitches) {
       return;
     }
-    globalSwitches->setGraphEditorActive(!impl_->graphEditorVisible_);
-    if (impl_->graphEditorVisible_ && impl_->curveEditor_) {
-      impl_->curveEditor_->setFocus(Qt::ShortcutFocusReason);
-    } else if (impl_->painterTrackView_) {
-      impl_->painterTrackView_->setFocus(Qt::ShortcutFocusReason);
-    }
+    toggleGraphEditorMode(!impl_->graphEditorVisible_, Qt::ShortcutFocusReason);
   });
   auto *tabCurveEditorShortcut = new QShortcut(QKeySequence(Qt::Key_Tab), this);
   tabCurveEditorShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(tabCurveEditorShortcut, &QShortcut::activated, this, [this]() {
-    if (!impl_ || !impl_->globalSwitches_) {
+    if (!impl_) {
       return;
     }
-    impl_->globalSwitches_->setGraphEditorActive(!impl_->graphEditorVisible_);
-    if (impl_->graphEditorVisible_ && impl_->curveEditor_) {
-      impl_->curveEditor_->setFocus(Qt::ShortcutFocusReason);
-    } else if (impl_->painterTrackView_) {
-      impl_->painterTrackView_->setFocus(Qt::ShortcutFocusReason);
+    QWidget *currentFocus = QApplication::focusWidget();
+    if (impl_->graphEditorVisible_ && isGraphEditorFocusWidget(currentFocus)) {
+      advanceGraphEditorFocus(false);
+      return;
     }
+    toggleGraphEditorMode(!impl_->graphEditorVisible_, Qt::ShortcutFocusReason);
   });
+  auto *backtabCurveEditorShortcut =
+      new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Tab), this);
+  backtabCurveEditorShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  QObject::connect(backtabCurveEditorShortcut, &QShortcut::activated, this,
+                   [this]() {
+                     if (!impl_ || !impl_->graphEditorVisible_) {
+                       return;
+                     }
+                     if (isGraphEditorFocusWidget(QApplication::focusWidget())) {
+                       advanceGraphEditorFocus(true);
+                     }
+                   });
+  auto applyInterpolationShortcut =
+      [this](const QKeySequence &sequence,
+             const ArtifactCore::InterpolationType interpolation) {
+        auto *shortcut = new QShortcut(sequence, this);
+        shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+        QObject::connect(shortcut, &QShortcut::activated, this,
+                         [this, interpolation]() {
+                           applyInterpolationToSelectedKeyframes(interpolation);
+                         });
+      };
+  applyInterpolationShortcut(QKeySequence(Qt::Key_F9),
+                             ArtifactCore::InterpolationType::EaseInOut);
+  applyInterpolationShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F9),
+                             ArtifactCore::InterpolationType::EaseIn);
+  applyInterpolationShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F9),
+                             ArtifactCore::InterpolationType::EaseOut);
   searchModeCombo->addItem(QStringLiteral("All Visible"), static_cast<int>(SearchMatchMode::AllVisible));
   searchModeCombo->addItem(QStringLiteral("Highlight Only"), static_cast<int>(SearchMatchMode::HighlightOnly));
   searchModeCombo->addItem(QStringLiteral("Filter Only"), static_cast<int>(SearchMatchMode::FilterOnly));
@@ -2722,7 +2826,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     curvePropertySummary->setPalette(pal);
   }
   curvePropertyList->setSelectionMode(QAbstractItemView::SingleSelection);
-  curvePropertyList->setFocusPolicy(Qt::NoFocus);
+  curvePropertyList->setFocusPolicy(Qt::StrongFocus);
   curvePropertyList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   curvePropertyList->setMinimumHeight(108);
   curvePropertyList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::MinimumExpanding);
@@ -3963,6 +4067,16 @@ void ArtifactTimelineWidget::syncWorkAreaFromCurrentComposition() {
 }
 
 void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
+  if (event && !event->isAutoRepeat()) {
+    const Qt::KeyboardModifiers modifiers = event->modifiers();
+    if (event->key() == Qt::Key_Tab && impl_ && impl_->graphEditorVisible_ &&
+        isGraphEditorFocusWidget(QApplication::focusWidget())) {
+      advanceGraphEditorFocus(modifiers.testFlag(Qt::ShiftModifier));
+      event->accept();
+      return;
+    }
+  }
+
   const ArtifactTimelineAction action = resolveTimelineAction(event);
   if (action != ArtifactTimelineAction::None && handleTimelineAction(action)) {
     event->accept();

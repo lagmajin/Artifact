@@ -36,6 +36,9 @@ class ArtifactTimelineWidget :public QWidget {
   void updateSearchState();
   void updateKeyframeState();
   void updateSelectionState();
+  void toggleGraphEditorMode(bool active, Qt::FocusReason reason = Qt::OtherFocusReason);
+  void advanceGraphEditorFocus(bool reverse);
+  bool isGraphEditorFocusWidget(const QWidget* widget) const;
  protected:
   void paintEvent(QPaintEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
