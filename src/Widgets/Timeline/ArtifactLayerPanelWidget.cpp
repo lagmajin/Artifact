@@ -1325,6 +1325,26 @@ public:
    selectedMaskIndex = -1;
   }
 
+  void focusMaskSelection(const ArtifactAbstractLayerPtr& layer, const int maskIndex)
+  {
+   if (!layer) {
+    clearMaskSelection();
+    currentPropertyPath.clear();
+    return;
+   }
+
+   if (maskIndex < 0 || maskIndex >= layer->maskCount()) {
+    clearMaskSelection();
+    currentPropertyPath.clear();
+    return;
+   }
+
+   selectedLayerId = layer->id();
+   selectedMaskLayerId = layer->id();
+   selectedMaskIndex = maskIndex;
+   currentPropertyPath = maskSelectionPropertyPath(maskIndex);
+  }
+
   int maxVerticalOffset(const ArtifactLayerPanelWidget* owner) const
   {
    if (!owner) {
@@ -1896,6 +1916,26 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
     updateGeometry();
     impl_->lastContentHeight = contentHeight;
   }
+
+  if (!impl_->selectedMaskLayerId.isNil() &&
+      impl_->selectedMaskLayerId == impl_->selectedLayerId) {
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    auto layer = comp ? comp->layerById(impl_->selectedMaskLayerId)
+                      : ArtifactAbstractLayerPtr{};
+    if (!layer || layer->maskCount() <= 0) {
+      if (impl_->selectedMaskIndex >= 0 ||
+          !impl_->currentPropertyPath.isEmpty()) {
+        impl_->clearMaskSelection();
+        impl_->currentPropertyPath.clear();
+        propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+      }
+    } else if (impl_->selectedMaskIndex >= layer->maskCount()) {
+      const int clampedIndex = layer->maskCount() - 1;
+      impl_->focusMaskSelection(layer, clampedIndex);
+      propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+    }
+  }
+
   impl_->setVerticalOffset(impl_->verticalOffset, this);
   update();
   if (structureChanged) {
@@ -3119,7 +3159,17 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
           undo->push(std::make_unique<MaskEditCommand>(layer, std::move(beforeMasks),
                                                        std::move(afterMasks)));
         }
-        impl_->clearMaskSelection();
+        const int nextMaskCount = layer->maskCount();
+        if (nextMaskCount > 0) {
+          const int nextMaskIndex =
+              std::min(impl_->selectedMaskIndex, nextMaskCount - 1);
+          impl_->focusMaskSelection(layer, nextMaskIndex);
+          propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+        } else {
+          impl_->clearMaskSelection();
+          impl_->currentPropertyPath.clear();
+          propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+        }
         updateLayout();
         event->accept();
         return;
@@ -3391,6 +3441,18 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     }
     else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, rowHover); // Subtle grey hover
     else p.fillRect(0, y, width(), rowH, rowBase);
+
+    if (isPropertyRow) {
+      if (propertyFocused) {
+        QColor focusStrip = accent;
+        focusStrip.setAlpha(propertyKeyframed ? 180 : 110);
+        p.fillRect(0, y, 3, rowH, focusStrip);
+      } else if (propertyKeyframed) {
+        QColor keyStrip = accent.lighter(120);
+        keyStrip.setAlpha(96);
+        p.fillRect(0, y, 2, rowH, keyStrip);
+      }
+    }
 
     if (maskSelected) {
       p.fillRect(0, y, 4, rowH, accent);

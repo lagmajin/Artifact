@@ -1366,6 +1366,13 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   const double yOffset = impl_->verticalOffset_;
 
   // Track rows (Virtualization)
+  QSet<int> keyframeTracksWithMarkers;
+  for (const auto &marker : impl_->keyframeMarkers_) {
+    if (marker.trackIndex >= 0 && marker.trackIndex < impl_->trackHeights_.size()) {
+      keyframeTracksWithMarkers.insert(marker.trackIndex);
+    }
+  }
+
   for (int i = 0; i < impl_->trackHeights_.size(); ++i) {
     const int rowH = impl_->trackHeights_[i];
     const double rowTop =
@@ -1387,8 +1394,27 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         laneTint.setAlpha(22);
         p.fillRect(QRectF(0.0, rowTop, fullRect.width(), rowH), laneTint);
         QColor laneStrip = theme.accent;
-        laneStrip.setAlpha(96);
+        laneStrip.setAlpha(112);
         p.fillRect(QRectF(0.0, rowTop, 3.0, rowH), laneStrip);
+
+        if (!keyframeTracksWithMarkers.contains(i)) {
+          const QString laneText = QStringLiteral("No keyframes");
+          const QFontMetrics fm = p.fontMetrics();
+          const int badgeW = std::min(118, std::max(74, fm.horizontalAdvance(laneText) + 16));
+          const QRect badgeRect(fullRect.width() - badgeW - 10,
+                                static_cast<int>(std::round(rowTop)) + 5,
+                                badgeW, std::max(14, rowH - 10));
+          QColor badgeBg = theme.surface;
+          badgeBg.setAlpha(180);
+          QColor badgeBorder = theme.border.darker(140);
+          QColor badgeText = theme.text.lighter(120);
+          p.setPen(QPen(badgeBorder, 1.0));
+          p.setBrush(badgeBg);
+          p.drawRoundedRect(badgeRect, 4, 4);
+          p.setPen(badgeText);
+          p.drawText(badgeRect.adjusted(8, 0, -8, 0),
+                     Qt::AlignVCenter | Qt::AlignLeft, laneText);
+        }
       }
       p.setPen(QPen(theme.border.darker(160), 1));
       p.drawLine(0, rowTop + rowH, fullRect.width(), rowTop + rowH);
