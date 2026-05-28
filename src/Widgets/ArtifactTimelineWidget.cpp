@@ -203,18 +203,21 @@ QColor layerTimelineColor(const ArtifactAbstractLayerPtr& layer)
 }
 
 QString formatSelectedKeyframeSummary(
-    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers) {
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
+    const qint64 currentFrame) {
   if (markers.isEmpty()) {
-    return QStringLiteral("Keys: 0 selected");
+    return QStringLiteral("Keys: 0 selected | Lane: empty");
   }
 
   qint64 minFrame = std::numeric_limits<qint64>::max();
   qint64 maxFrame = std::numeric_limits<qint64>::min();
   QSet<QString> propertyLabels;
+  bool hitsCurrentFrame = false;
   for (const auto &marker : markers) {
     const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
     minFrame = std::min(minFrame, frame);
     maxFrame = std::max(maxFrame, frame);
+    hitsCurrentFrame |= (frame == currentFrame);
     propertyLabels.insert(
         marker.label.isEmpty()
             ? ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
@@ -233,10 +236,14 @@ QString formatSelectedKeyframeSummary(
       minFrame == maxFrame
           ? QStringLiteral("F%1").arg(minFrame)
           : QStringLiteral("F%1-%2").arg(minFrame).arg(maxFrame);
-  return QStringLiteral("Keys: %1 | %2 | %3")
+  const QString currentText =
+      hitsCurrentFrame ? QStringLiteral("Current: here")
+                       : QStringLiteral("Current: off");
+  return QStringLiteral("Keys: %1 | %2 | %3 | %4")
       .arg(markers.size())
       .arg(propertyText)
-      .arg(frameText);
+      .arg(frameText)
+      .arg(currentText);
 }
 
 struct CachedAudioWaveform {
@@ -4398,13 +4405,14 @@ void ArtifactTimelineWidget::updateSelectionState()
           QStringLiteral("Selection: 0 layers | Select a layer to continue"));
     } else if (effectiveSelectedCount > 0 && selectedKeyframeCount <= 0) {
       impl_->selectionSummaryLabel_->setText(
-          QStringLiteral("Selection: %1 layers | Keys: 0 selected | Read lane markers or add at current frame")
-              .arg(effectiveSelectedCount));
+          QStringLiteral("Selection: %1 layers | Keys: 0 selected | Lane: empty at F%2 | Add a keyframe at the playhead")
+              .arg(effectiveSelectedCount)
+              .arg(frameLabelValue));
     } else {
       impl_->selectionSummaryLabel_->setText(
           QStringLiteral("Selection: %1 layers | %2")
               .arg(effectiveSelectedCount)
-              .arg(formatSelectedKeyframeSummary(selectedMarkers)));
+              .arg(formatSelectedKeyframeSummary(selectedMarkers, frameLabelValue)));
     }
     impl_->selectionSummaryLabel_->setVisible(true);
   }
