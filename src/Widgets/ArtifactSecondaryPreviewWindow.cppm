@@ -28,6 +28,8 @@ module;
 
 module Artifact.Widgets.SecondaryPreviewWindow;
 
+import Artifact.Service.Playback;
+import Image.ImageF32x4_RGBA;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
@@ -63,6 +65,47 @@ public:
     QWidget* osdContainer_ = nullptr;
     QStatusBar* statusBar_ = nullptr;
 
+    void refreshFromPlayback() {
+        auto* playback = Artifact::ArtifactPlaybackService::instance();
+        if (!playback || !playback->currentComposition()) {
+            if (previewLabel_) {
+                previewLabel_->clear();
+                previewLabel_->setText(QStringLiteral("No RAM preview image"));
+            }
+            setStatusMessage(QStringLiteral("RAM preview: unavailable"));
+            return;
+        }
+
+        const auto currentFrame = playback->currentFrame().framePosition();
+        const auto range = playback->frameRange();
+        const auto currentComp = playback->currentComposition();
+        const QString compName =
+            currentComp ? currentComp->settings().compositionName().toQString() : QString();
+        const auto state = playback->ramPreviewFrameState(currentFrame);
+        const QString stateReason = Artifact::ramPreviewNotReadyReason(state);
+
+        updateStatusBar();
+        setStatusMessage(QStringLiteral("RAM preview: frame %1 / %2 | %3%4")
+                             .arg(currentFrame)
+                             .arg(range.duration())
+                             .arg(state.playable ? QStringLiteral("ready") : stateReason)
+                             .arg(compName.isEmpty() ? QString()
+                                                     : QStringLiteral(" | %1").arg(compName)));
+
+        ArtifactCore::ImageF32x4_RGBA previewImage;
+        if (playback->tryGetRamPreviewFrameImage(currentFrame, previewImage)) {
+            updatePreviewImage(previewImage.toQImage());
+        } else {
+            updatePreviewImage(QImage());
+            if (!state.playable) {
+                setStatusMessage(QStringLiteral("RAM preview: frame %1 / %2 | %3")
+                                     .arg(currentFrame)
+                                     .arg(range.duration())
+                                     .arg(stateReason));
+            }
+        }
+    }
+
     void showOSD(const QString& text) {
         if (!osdLabel_) return;
         osdText_ = text;
@@ -88,6 +131,11 @@ public:
                 .arg(compName_)
                 .arg(currentFrame_)
                 .arg(totalFrames_));
+    }
+
+    void setStatusMessage(const QString& message) {
+        if (!statusBar_) return;
+        statusBar_->showMessage(message);
     }
 
     QSize scaledImageSize(const QSize& imageSize, const QSize& availableSize) const {
@@ -182,7 +230,12 @@ ArtifactSecondaryPreviewWindow::ArtifactSecondaryPreviewWindow(QWidget* parent)
     // Auto-update timer
     impl_->updateTimer_ = new QTimer(this);
     impl_->updateTimer_->setInterval(1000 / impl_->updateRate_);
-    // Update timer is controlled externally via setAutoUpdate
+    connect(impl_->updateTimer_, &QTimer::timeout, this, [this]() {
+        if (impl_->autoUpdate_) {
+            impl_->refreshFromPlayback();
+        }
+    });
+    impl_->updateTimer_->start();
 
     // Show initial OSD
     impl_->showOSD("Secondary Preview Ready");
@@ -201,6 +254,7 @@ void ArtifactSecondaryPreviewWindow::updatePreviewImage(const QImage& image) {
     if (image.isNull()) {
         if (impl_->previewLabel_) {
             impl_->previewLabel_->clear();
+            impl_->previewLabel_->setText(QStringLiteral("No RAM preview image"));
         }
         return;
     }
@@ -213,6 +267,7 @@ void ArtifactSecondaryPreviewWindow::updatePreviewImage(const QImage& image) {
         QPixmap pixmap = QPixmap::fromImage(image.scaled(
             scaledSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
         impl_->previewLabel_->setPixmap(pixmap);
+        impl_->previewLabel_->setText(QString());
     }
 }
 
@@ -221,6 +276,10 @@ void ArtifactSecondaryPreviewWindow::updateFrameInfo(int64_t frame, int64_t tota
     impl_->totalFrames_ = totalFrames;
     impl_->compName_ = compName;
     impl_->updateStatusBar();
+}
+
+void ArtifactSecondaryPreviewWindow::setStatusMessage(const QString& message) {
+    impl_->setStatusMessage(message);
 }
 
 void ArtifactSecondaryPreviewWindow::showOnScreen(int screenIndex) {
@@ -240,6 +299,12 @@ void ArtifactSecondaryPreviewWindow::showOnScreen(int screenIndex) {
         .arg(screen->name())
         .arg(geo.width())
         .arg(geo.height()));
+    if (impl_->autoUpdate_) {
+        if (impl_->updateTimer_ && !impl_->updateTimer_->isActive()) {
+            impl_->updateTimer_->start();
+        }
+        impl_->refreshFromPlayback();
+    }
 }
 
 void ArtifactSecondaryPreviewWindow::setFullscreen(bool fullscreen) {
@@ -272,6 +337,7 @@ void ArtifactSecondaryPreviewWindow::setAutoUpdate(bool enabled) {
     impl_->autoUpdate_ = enabled;
     if (enabled) {
         impl_->updateTimer_->start();
+        impl_->refreshFromPlayback();
     } else {
         impl_->updateTimer_->stop();
     }
@@ -284,6 +350,9 @@ bool ArtifactSecondaryPreviewWindow::autoUpdate() const {
 void ArtifactSecondaryPreviewWindow::setUpdateRate(int fps) {
     impl_->updateRate_ = std::max(1, std::min(120, fps));
     impl_->updateTimer_->setInterval(1000 / impl_->updateRate_);
+    if (impl_->autoUpdate_) {
+        impl_->updateTimer_->start();
+    }
 }
 
 int ArtifactSecondaryPreviewWindow::updateRate() const {
@@ -307,6 +376,9 @@ void ArtifactSecondaryPreviewWindow::keyPressEvent(QKeyEvent* event) {
 }
 
 void ArtifactSecondaryPreviewWindow::closeEvent(QCloseEvent* event) {
+    if (impl_ && impl_->updateTimer_) {
+        impl_->updateTimer_->stop();
+    }
     emit closed();
     QWidget::closeEvent(event);
 }

@@ -38,6 +38,9 @@ public:
     // フレーム情報を更新
     void updateFrameInfo(int64_t frame, int64_t totalFrames, const QString& compName);
 
+    // ステータスメッセージを更新
+    void setStatusMessage(const QString& message);
+
     // 画面を選択して表示
     void showOnScreen(int screenIndex);
 

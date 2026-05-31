@@ -448,9 +448,20 @@ public:
             return QStringLiteral("none");
         };
 
-        return QStringLiteral("media video=%1 particle=%2")
+        auto resourceNote = [&snapshot](const QString& typeName, const QString& labelName) {
+            for (const auto& resource : snapshot.resources) {
+                if (resource.type == typeName || resource.label == labelName) {
+                    const QString note = resource.note.trimmed();
+                    return note.isEmpty() ? QStringLiteral("none") : note;
+                }
+            }
+            return QStringLiteral("none");
+        };
+
+        return QStringLiteral("media video=%1 particle=%2 particleDetail=%3")
                 .arg(resourceState(QStringLiteral("video"), QStringLiteral("Video Decode")))
-                .arg(resourceState(QStringLiteral("particle"), QStringLiteral("Particle Draw")));
+                .arg(resourceState(QStringLiteral("particle"), QStringLiteral("Particle Draw")))
+                .arg(resourceNote(QStringLiteral("particle"), QStringLiteral("Particle Draw")));
     }
 
     static QString ramPreviewText(ArtifactPlaybackService* playbackSvc)
@@ -461,24 +472,22 @@ public:
         const auto summary = playbackSvc->ramPreviewSummary();
         const auto currentFrame = playbackSvc->currentFrame().framePosition();
         const auto currentState = playbackSvc->ramPreviewFrameState(currentFrame);
-        const bool currentPlayable =
-            currentState.ready && currentState.inRam && !currentState.failed;
+        const auto currentPriority = playbackSvc->ramPreviewPriorityState(currentFrame);
+        const bool currentPlayable = currentState.playable;
         const bool currentPending =
             playbackSvc->isRamPreviewFramePendingBuild(currentFrame);
-        const QString currentNote =
-            currentState.requested && !currentState.ready &&
-                    !currentState.reason.trimmed().isEmpty()
-                ? currentState.reason.trimmed()
-                : QStringLiteral("-");
+        const QString currentNote = ramPreviewStatusNote(currentState);
+        const QString currentPriorityNote = ramPreviewPriorityNote(currentPriority);
         return QStringLiteral(
-                   "ramPreview ready=%1/%2 requested=%3 pending=%4 failed=%5 inRam=%6 onDisk=%7 queue=%8 next=%9 active=%10 rangeReady=%11 progress=%12 playFallback=%13 gen=%14 reason=%15 hit=%16%% range=%17-%18 current=%19 playable=%20 pendingBuild=%21 currentState={requested:%22 ready:%23 inRam:%24 onDisk:%25 failed:%26} note=%27")
-                .arg(summary.readyFrames)
+                   "ramPreview playable=%1/%2 requested=%3 pending=%4 failed=%5 inRam=%6 onDisk=%7 readyMissingImage=%8 queue=%9 next=%10 active=%11 rangeReady=%12 progress=%13 playFallback=%14 gen=%15 reason=%16 hit=%17%% range=%18-%19 current=%20 playable=%21 pendingBuild=%22 currentState={requested:%23 ready:%24 image:%25 playable:%26 inRam:%27 onDisk:%28 failed:%29} note=%30 priority=%31 priorityState={inComp:%32 inWork:%33 current:%34 next:%35 reverse:%36 dist:%37}")
+                .arg(summary.playableFrames)
                 .arg(summary.rangeFrames)
                 .arg(summary.requestedFrames)
                 .arg(summary.buildQueuePendingFrames)
                 .arg(summary.failedFrames)
                 .arg(summary.inRamFrames)
                 .arg(summary.onDiskFrames)
+                .arg(summary.readyMissingImageFrames)
                 .arg(summary.buildQueuePendingFrames)
                 .arg(summary.buildQueueNextFrame)
                 .arg(summary.buildQueueActive ? 1 : 0)
@@ -495,10 +504,19 @@ public:
                 .arg(currentPending ? 1 : 0)
                 .arg(currentState.requested ? 1 : 0)
                 .arg(currentState.ready ? 1 : 0)
+                .arg(currentState.imageAvailable ? 1 : 0)
+                .arg(currentState.playable ? 1 : 0)
                 .arg(currentState.inRam ? 1 : 0)
                 .arg(currentState.onDisk ? 1 : 0)
                 .arg(currentState.failed ? 1 : 0)
-                .arg(currentNote);
+                .arg(currentNote)
+                .arg(currentPriorityNote)
+                .arg(currentPriority.inCompositionRange ? 1 : 0)
+                .arg(currentPriority.inWorkArea ? 1 : 0)
+                .arg(currentPriority.currentFrame ? 1 : 0)
+                .arg(currentPriority.nextQueued ? 1 : 0)
+                .arg(currentPriority.reverse ? 1 : 0)
+                .arg(currentPriority.distanceFromCurrent);
     }
 
     static QString renderTimingText(const ArtifactCore::FrameDebugSnapshot& snapshot,

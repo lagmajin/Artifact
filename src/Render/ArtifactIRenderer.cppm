@@ -586,15 +586,17 @@ namespace {
 
   void drawParticles(const ArtifactCore::ParticleRenderData& data) {
     if (data.particles.empty()) {
-      lastParticleDebug_ = QStringLiteral("skipped=empty count=0");
+      lastParticleDebug_ = QStringLiteral(
+          "stage=queued skipped=empty count=0 path=particle render=none");
       qDebug() << "[ParticleRenderer] drawParticles skipped: empty particle buffer";
       return;
     }
 
     if (!particleRenderer_) {
       if (!deviceManager_.device()) {
-        lastParticleDebug_ = QStringLiteral("skipped=device-null count=%1")
-                                 .arg(data.particles.size());
+        lastParticleDebug_ =
+            QStringLiteral("stage=queued skipped=device-null count=%1 path=particle")
+                .arg(data.particles.size());
         qWarning() << "[ParticleRenderer] drawParticles skipped: device is null"
                    << "count=" << data.particles.size();
         return;
@@ -611,7 +613,8 @@ namespace {
     }
 
     if (m_viewportWidth <= 0.0f || m_viewportHeight <= 0.0f) {
-      lastParticleDebug_ = QStringLiteral("skipped=invalid-viewport count=%1 viewport=%2x%3")
+      lastParticleDebug_ = QStringLiteral(
+                               "stage=queued skipped=invalid-viewport count=%1 viewport=%2x%3 path=particle")
                                .arg(data.particles.size())
                                .arg(m_viewportWidth)
                                .arg(m_viewportHeight);
@@ -647,7 +650,8 @@ namespace {
 
     auto* pRTV = primitiveRenderer_.currentRTV();
     if (!pRTV) {
-      lastParticleDebug_ = QStringLiteral("skipped=no-rtv count=%1 camera3D=%2 viewport=%3x%4")
+      lastParticleDebug_ = QStringLiteral(
+                               "stage=queued skipped=no-rtv count=%1 camera3D=%2 viewport=%3x%4 path=particle")
                                .arg(data.particles.size())
                                .arg(particle3DCameraActive_ ? QStringLiteral("true")
                                                             : QStringLiteral("false"))
@@ -660,16 +664,18 @@ namespace {
       return;
     }
 
-    lastParticleDebug_ =
-        QStringLiteral("drawn count=%1 camera3D=%2 zoom=%3 pan=%4,%5 viewport=%6x%7")
-            .arg(data.particles.size())
-            .arg(particle3DCameraActive_ ? QStringLiteral("true")
-                                         : QStringLiteral("false"))
-            .arg(QString::number(zoom, 'f', 3))
-            .arg(QString::number(panX, 'f', 1))
-            .arg(QString::number(panY, 'f', 1))
-            .arg(m_viewportWidth)
-            .arg(m_viewportHeight);
+    lastParticleDebug_ = QStringLiteral(
+                             "stage=queued count=%1 camera3D=%2 zoom=%3 pan=%4,%5 viewport=%6x%7 rtv=bound matrix=%8 path=particle")
+                             .arg(data.particles.size())
+                             .arg(particle3DCameraActive_ ? QStringLiteral("true")
+                                                          : QStringLiteral("false"))
+                             .arg(QString::number(zoom, 'f', 3))
+                             .arg(QString::number(panX, 'f', 1))
+                             .arg(QString::number(panY, 'f', 1))
+                             .arg(m_viewportWidth)
+                             .arg(m_viewportHeight)
+                             .arg(particle3DCameraActive_ ? QStringLiteral("3d")
+                                                          : QStringLiteral("2d"));
     cmdBuf_.targetRTV = pRTV;
     ParticlePkt pkt;
     pkt.data = data;
@@ -1862,9 +1868,21 @@ QString ArtifactIRenderer::particleDebugState() const {
   if (!impl_) {
     return QStringLiteral("<no renderer>");
   }
-  return impl_->lastParticleDebug_.isEmpty()
-             ? QStringLiteral("<none>")
-             : impl_->lastParticleDebug_;
+  QString state = impl_->lastParticleDebug_.isEmpty()
+                      ? QStringLiteral("<none>")
+                      : impl_->lastParticleDebug_;
+  if (impl_->particleRenderer_) {
+    const QString rendererState = impl_->particleRenderer_->debugState();
+    if (!rendererState.isEmpty()) {
+      if (state == QStringLiteral("<none>")) {
+        state = rendererState;
+      } else {
+        state.append(QStringLiteral(" | "));
+        state.append(rendererState);
+      }
+    }
+  }
+  return state;
 }
 
 QString ArtifactIRenderer::glyphAtlasDebugState() const {
