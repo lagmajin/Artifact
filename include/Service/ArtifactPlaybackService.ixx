@@ -65,6 +65,8 @@ struct ArtifactRamPreviewFrameCacheState {
   bool failed = false;
   bool inRam = false;
   bool onDisk = false;
+  bool imageAvailable = false;
+  bool playable = false;
   QString reason;
 };
 
@@ -73,6 +75,8 @@ struct ArtifactRamPreviewSummary {
   FrameRange range{FramePosition(0), FramePosition(0)};
   int requestedFrames = 0;
   int readyFrames = 0;
+  int playableFrames = 0;
+  int readyMissingImageFrames = 0;
   int failedFrames = 0;
   int inRamFrames = 0;
   int onDiskFrames = 0;
@@ -87,6 +91,24 @@ struct ArtifactRamPreviewSummary {
   QString buildQueueReason;
   float hitRate = 0.0f;
 };
+
+struct ArtifactRamPreviewPriorityState {
+  bool inCompositionRange = false;
+  bool inWorkArea = false;
+  bool currentFrame = false;
+  bool pendingBuild = false;
+  bool nextQueued = false;
+  bool playing = false;
+  bool reverse = false;
+  int distanceFromCurrent = 0;
+  QString band;
+};
+
+QString ramPreviewStatusNote(const ArtifactRamPreviewFrameCacheState &state);
+
+QString ramPreviewNotReadyReason(const ArtifactRamPreviewFrameCacheState &state);
+
+QString ramPreviewPriorityNote(const ArtifactRamPreviewPriorityState &state);
 
 class ArtifactPlaybackService : public QObject {
   W_OBJECT(ArtifactPlaybackService)
@@ -213,6 +235,7 @@ public:
   int ramPreviewDiskFrameCountInRange() const;
   std::vector<bool> ramPreviewCacheBitmap() const;
   ArtifactRamPreviewFrameCacheState ramPreviewFrameState(int64_t frame) const;
+  ArtifactRamPreviewPriorityState ramPreviewPriorityState(int64_t frame) const;
   ArtifactRamPreviewSummary ramPreviewSummary() const;
   bool isRamPreviewFramePendingBuild(int64_t frame) const;
   int64_t nextRamPreviewBuildFrame() const;

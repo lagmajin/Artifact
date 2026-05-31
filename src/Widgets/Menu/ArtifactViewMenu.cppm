@@ -279,6 +279,10 @@ namespace Artifact {
         [this](const FrameChangedEvent&) {
          refreshSecondaryPreview();
         }));
+    eventBusSubscriptions_.push_back(eventBus_.subscribe<PlaybackStateChangedEvent>(
+        [this](const PlaybackStateChangedEvent&) {
+         refreshSecondaryPreview();
+        }));
    }
 
    workspaceMenu = new QMenu("ワークスペース(&K)");
@@ -839,6 +843,8 @@ void ArtifactViewMenu::Impl::refreshSecondaryPreview()
  auto* playback = ArtifactPlaybackService::instance();
  if (!playback || !playback->currentComposition()) {
   secondaryPreviewWindow->updatePreviewImage(QImage());
+  secondaryPreviewWindow->setStatusMessage(
+      QStringLiteral("RAM preview: unavailable"));
   return;
  }
 
@@ -847,14 +853,29 @@ void ArtifactViewMenu::Impl::refreshSecondaryPreview()
  const auto currentComp = playback->currentComposition();
  const QString compName = currentComp ? currentComp->settings().compositionName().toQString()
                                       : QString();
+ const auto state = playback->ramPreviewFrameState(currentFrame);
+ const QString stateReason = ramPreviewNotReadyReason(state);
 
  secondaryPreviewWindow->updateFrameInfo(currentFrame, range.duration(), compName);
+ secondaryPreviewWindow->setStatusMessage(
+     QStringLiteral("RAM preview: frame %1 / %2 | %3%4")
+         .arg(currentFrame)
+         .arg(range.duration())
+         .arg(state.playable ? QStringLiteral("ready") : stateReason)
+         .arg(compName.isEmpty() ? QString() : QStringLiteral(" | %1").arg(compName)));
 
  ArtifactCore::ImageF32x4_RGBA previewImage;
  if (playback->tryGetRamPreviewFrameImage(currentFrame, previewImage)) {
   secondaryPreviewWindow->updatePreviewImage(previewImage.toQImage());
  } else {
   secondaryPreviewWindow->updatePreviewImage(QImage());
+  if (!state.playable) {
+    secondaryPreviewWindow->setStatusMessage(
+        QStringLiteral("RAM preview: frame %1 / %2 | %3")
+            .arg(currentFrame)
+            .arg(range.duration())
+            .arg(stateReason));
+  }
  }
 }
 
@@ -871,7 +892,7 @@ void ArtifactViewMenu::Impl::showSecondaryPreview()
   return;
  }
 
- if (!secondaryPreviewWindow) {
+  if (!secondaryPreviewWindow) {
   secondaryPreviewWindow = new ArtifactSecondaryPreviewWindow(mainWindow);
   secondaryPreviewWindow->setAttribute(Qt::WA_DeleteOnClose, false);
  }

@@ -68,18 +68,12 @@ QString ramPreviewStateNote(Artifact::ArtifactPlaybackService* playback)
   if (!playback) {
     return QString();
   }
-
   const auto currentFrame = playback->currentFrame().framePosition();
   const auto state = playback->ramPreviewFrameState(currentFrame);
-  if (!state.requested || state.ready) {
+  const QString note = Artifact::ramPreviewStatusNote(state);
+  if (note == QStringLiteral("-")) {
     return QString();
   }
-
-  const QString note = state.reason.trimmed();
-  if (note.isEmpty()) {
-    return QString();
-  }
-
   return QStringLiteral(" | note %1").arg(note);
 }
 
@@ -92,11 +86,12 @@ QString ramPreviewFooterText(Artifact::ArtifactPlaybackService* playback,
   }
 
   const auto summary = playback->ramPreviewSummary();
+  const auto currentFrame = playback->currentFrame().framePosition();
   const float hitRate = summary.hitRate > 0.0f ? summary.hitRate : hitRateFallback;
   const int inRamFrames =
       summary.inRamFrames > 0 ? summary.inRamFrames : cachedFrameCountFallback;
-  return QStringLiteral("RAM: ready %1/%2 | requested %3 | pending %4 | next %5 | range %6 | progress %7 | failed %8 | inRam %9 | onDisk %10 | %11 hit%12")
-      .arg(summary.readyFrames)
+  return QStringLiteral("RAM: playable %1/%2 | requested %3 | pending %4 | next %5 | range %6 | progress %7 | failed %8 | inRam %9 | onDisk %10 | readyMissingImage %11 | current %12%13 | hit%14")
+      .arg(summary.playableFrames)
       .arg(summary.rangeFrames)
       .arg(summary.requestedFrames)
       .arg(summary.buildQueuePendingFrames)
@@ -107,8 +102,10 @@ QString ramPreviewFooterText(Artifact::ArtifactPlaybackService* playback,
       .arg(summary.failedFrames)
       .arg(inRamFrames)
       .arg(summary.onDiskFrames)
-      .arg(QString::number(hitRate * 100.0f, 'f', 0) + QStringLiteral("%"))
-      .arg(ramPreviewStateNote(playback));
+      .arg(summary.readyMissingImageFrames)
+      .arg(currentFrame)
+      .arg(ramPreviewStateNote(playback))
+      .arg(QString::number(hitRate * 100.0f, 'f', 0) + QStringLiteral("%"));
 }
 }
 
@@ -137,7 +134,7 @@ namespace Artifact {
   float ramPreviewHitRate_ = 0.0f;
   int ramPreviewCachedFrameCount_ = 0;
   int ramPreviewRequestedFrameCount_ = 0;
-  int ramPreviewReadyFrameCount_ = 0;
+  int ramPreviewPlayableFrameCount_ = 0;
   bool isPlaying_ = false;
   QTimer* refreshTimer = nullptr;
  };
@@ -260,7 +257,7 @@ namespace Artifact {
     if (playback) {
       const auto summary = playback->ramPreviewSummary();
       impl_->ramPreviewRequestedFrameCount_ = summary.requestedFrames;
-      impl_->ramPreviewReadyFrameCount_ = summary.readyFrames;
+      impl_->ramPreviewPlayableFrameCount_ = summary.playableFrames;
       impl_->ramPreviewCachedFrameCount_ = summary.inRamFrames;
       impl_->ramPreviewHitRate_ = summary.hitRate;
     }
@@ -314,7 +311,7 @@ void ArtifactCompositionViewerFooter::setRamPreviewStats(float hitRate, int cach
   if (playback) {
     const auto summary = playback->ramPreviewSummary();
     impl_->ramPreviewRequestedFrameCount_ = summary.requestedFrames;
-    impl_->ramPreviewReadyFrameCount_ = summary.readyFrames;
+    impl_->ramPreviewPlayableFrameCount_ = summary.playableFrames;
     impl_->ramPreviewCachedFrameCount_ = summary.inRamFrames;
     impl_->ramPreviewHitRate_ = summary.hitRate;
   }

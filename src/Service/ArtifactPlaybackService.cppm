@@ -64,6 +64,51 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+QString ramPreviewStatusNote(const ArtifactRamPreviewFrameCacheState &state) {
+  if (state.failed) {
+    return QStringLiteral("failed");
+  }
+  if (state.ready && !state.imageAvailable) {
+    return QStringLiteral("ready-missing-image");
+  }
+  if (!state.requested) {
+    return QStringLiteral("-");
+  }
+  if (state.requested && !state.ready && !state.reason.trimmed().isEmpty()) {
+    return state.reason.trimmed();
+  }
+  return QStringLiteral("-");
+}
+
+QString ramPreviewNotReadyReason(const ArtifactRamPreviewFrameCacheState &state) {
+  if (state.failed) {
+    return QStringLiteral("failed");
+  }
+  if (!state.requested) {
+    return QStringLiteral("not-requested");
+  }
+  if (state.onDisk && !state.inRam) {
+    return QStringLiteral("on-disk-not-hydrated");
+  }
+  if (state.ready && !state.imageAvailable) {
+    return QStringLiteral("ready-missing-image");
+  }
+  if (state.reason == QStringLiteral("playback-tick")) {
+    return QStringLiteral("playback-tick-not-playable");
+  }
+  if (!state.reason.trimmed().isEmpty()) {
+    return QStringLiteral("requested:%1").arg(state.reason.trimmed());
+  }
+  return QStringLiteral("requested-not-ready");
+}
+
+QString ramPreviewPriorityNote(const ArtifactRamPreviewPriorityState &state) {
+  if (!state.band.trimmed().isEmpty()) {
+    return state.band.trimmed();
+  }
+  return QStringLiteral("unknown");
+}
+
 class ArtifactPlaybackService; // forward declaration to use pointer in Impl
 
 W_OBJECT_IMPL(ArtifactPlaybackService)
@@ -586,8 +631,7 @@ public:
   void syncLegacyBitmapFromStates() {
     cacheBitmap_.assign(frameCacheStates_.size(), false);
     for (size_t i = 0; i < frameCacheStates_.size(); ++i) {
-      const auto &state = frameCacheStates_[i];
-      cacheBitmap_[i] = state.ready && state.inRam && !state.failed;
+      cacheBitmap_[i] = isFrameReadyForRamPreview(static_cast<int64_t>(i));
     }
   }
 
@@ -910,8 +954,8 @@ public:
       return 0.0f;
     }
     size_t hits = 0;
-    for (const auto &state : frameCacheStates_) {
-      if (state.ready && state.inRam && !state.failed) {
+    for (size_t i = 0; i < frameCacheStates_.size(); ++i) {
+      if (isFrameReadyForRamPreview(static_cast<int64_t>(i))) {
         ++hits;
       }
     }
@@ -920,11 +964,13 @@ public:
   }
 
   int ramPreviewCachedFrameCount() const {
-    return static_cast<int>(std::count_if(
-        frameCacheStates_.begin(), frameCacheStates_.end(),
-        [](const ArtifactRamPreviewFrameCacheState &state) {
-          return state.ready && state.inRam && !state.failed;
-        }));
+    int cached = 0;
+    for (size_t i = 0; i < frameCacheStates_.size(); ++i) {
+      if (isFrameReadyForRamPreview(static_cast<int64_t>(i))) {
+        ++cached;
+      }
+    }
+    return cached;
   }
 
   int ramPreviewRequestedFrameCount() const {
@@ -958,12 +1004,37 @@ public:
 
     int ready = 0;
     for (int64_t frame = start; frame < endExclusive; ++frame) {
-      const auto &state = frameCacheStates_[static_cast<size_t>(frame)];
-      if (state.ready && state.inRam && !state.failed) {
+      if (isFrameReadyForRamPreview(frame)) {
         ++ready;
       }
     }
     return ready;
+  }
+
+  int ramPreviewPlayableFrameCountInRange() const {
+    return ramPreviewReadyFrameCountInRange();
+  }
+
+  int ramPreviewReadyMissingImageFrameCountInRange() const {
+    if (frameCacheStates_.empty()) {
+      return 0;
+    }
+
+    const int64_t start = std::max<int64_t>(0, ramPreviewRange_.start());
+    const int64_t endExclusive = std::min<int64_t>(
+        static_cast<int64_t>(frameCacheStates_.size()), ramPreviewRange_.end());
+    if (endExclusive <= start) {
+      return 0;
+    }
+
+    int missing = 0;
+    for (int64_t frame = start; frame < endExclusive; ++frame) {
+      const auto &state = frameCacheStates_[static_cast<size_t>(frame)];
+      if (state.ready && !state.failed && !hasFrameImageInRam(frame)) {
+        ++missing;
+      }
+    }
+    return missing;
   }
 
   int ramPreviewFailedFrameCountInRange() const {
@@ -1034,7 +1105,70 @@ public:
     if (frame < 0 || frame >= static_cast<int64_t>(frameCacheStates_.size())) {
       return {};
     }
-    return frameCacheStates_[static_cast<size_t>(frame)];
+    auto state = frameCacheStates_[static_cast<size_t>(frame)];
+    state.imageAvailable = hasFrameImageInRam(frame);
+    state.playable =
+        state.ready && state.inRam && !state.failed && state.imageAvailable;
+    return state;
+  }
+
+  ArtifactRamPreviewPriorityState ramPreviewPriorityState(
+      const int64_t frame) const {
+    ArtifactRamPreviewPriorityState state;
+
+    const int64_t currentFrame =
+        engine_ ? engine_->currentFrame().framePosition()
+                : (controller_ ? controller_->currentFrame().framePosition() : 0);
+    state.distanceFromCurrent =
+        static_cast<int>(std::clamp<int64_t>(std::llabs(frame - currentFrame), 0,
+                                             static_cast<int64_t>(
+                                                 std::numeric_limits<int>::max())));
+    state.currentFrame = frame == currentFrame;
+    state.pendingBuild = isRamPreviewFramePendingBuild(frame);
+    state.nextQueued = nextRamPreviewBuildFrame() == frame;
+    state.playing = owner_ && owner_->state() == PlaybackState::Playing;
+    state.reverse = owner_ && owner_->playbackSpeed() < 0.0f;
+
+    if (currentComposition_) {
+      const FrameRange compositionRange = currentComposition_->frameRange();
+      state.inCompositionRange =
+          frame >= compositionRange.start() && frame < compositionRange.end();
+
+      const FrameRange workAreaRange = currentComposition_->workAreaRange();
+      const int64_t workAreaStart =
+          std::min<int64_t>(workAreaRange.start(), workAreaRange.end());
+      const int64_t workAreaEnd =
+          std::max<int64_t>(workAreaRange.start(), workAreaRange.end());
+      state.inWorkArea = frame >= workAreaStart && frame < workAreaEnd;
+    } else {
+      state.inCompositionRange = isValidFrameIndex(frame);
+      state.inWorkArea = state.inCompositionRange;
+    }
+
+    const int nearRadius = std::clamp(ramPreviewRadiusFrames_ / 4, 1, 6);
+    const bool directionalSide =
+        state.reverse ? frame < currentFrame : frame > currentFrame;
+
+    if (!state.inCompositionRange) {
+      state.band = QStringLiteral("out-of-range");
+    } else if (state.currentFrame) {
+      state.band = QStringLiteral("immediate");
+    } else if (!state.inWorkArea) {
+      state.band = QStringLiteral("outside-work-area");
+    } else if (state.nextQueued ||
+               (state.pendingBuild && state.playing && directionalSide)) {
+      state.band = QStringLiteral("directional");
+    } else if (state.distanceFromCurrent <= nearRadius) {
+      state.band = QStringLiteral("near");
+    } else if (state.pendingBuild) {
+      state.band = QStringLiteral("safety-backfill");
+    } else if (state.inWorkArea) {
+      state.band = QStringLiteral("work-area-preferred");
+    } else {
+      state.band = QStringLiteral("unknown");
+    }
+
+    return state;
   }
 
   ArtifactRamPreviewSummary ramPreviewSummary() const {
@@ -1043,6 +1177,9 @@ public:
     summary.range = ramPreviewRange_;
     summary.requestedFrames = ramPreviewRequestedFrameCount();
     summary.readyFrames = ramPreviewReadyFrameCountInRange();
+    summary.playableFrames = ramPreviewPlayableFrameCountInRange();
+    summary.readyMissingImageFrames =
+        ramPreviewReadyMissingImageFrameCountInRange();
     summary.failedFrames = ramPreviewFailedFrameCountInRange();
     summary.inRamFrames = ramPreviewCachedFrameCount();
     summary.onDiskFrames = ramPreviewDiskFrameCountInRange();
@@ -1088,8 +1225,7 @@ public:
   std::vector<bool> ramPreviewCacheBitmap() const {
     std::vector<bool> bitmap(frameCacheStates_.size(), false);
     for (size_t i = 0; i < frameCacheStates_.size(); ++i) {
-      const auto &state = frameCacheStates_[i];
-      bitmap[i] = state.ready && state.inRam && !state.failed;
+      bitmap[i] = isFrameReadyForRamPreview(static_cast<int64_t>(i));
     }
     return bitmap;
   }
@@ -1858,6 +1994,12 @@ ArtifactRamPreviewFrameCacheState
 ArtifactPlaybackService::ramPreviewFrameState(const int64_t frame) const {
   return impl_ ? impl_->ramPreviewFrameState(frame)
                : ArtifactRamPreviewFrameCacheState{};
+}
+
+ArtifactRamPreviewPriorityState
+ArtifactPlaybackService::ramPreviewPriorityState(const int64_t frame) const {
+  return impl_ ? impl_->ramPreviewPriorityState(frame)
+               : ArtifactRamPreviewPriorityState{};
 }
 
 ArtifactRamPreviewSummary ArtifactPlaybackService::ramPreviewSummary() const {

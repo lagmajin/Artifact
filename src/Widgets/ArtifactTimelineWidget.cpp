@@ -157,8 +157,7 @@ TimelineCacheVisuals buildTimelineCacheVisuals(ArtifactPlaybackService *playback
     visuals.failedFrames[static_cast<size_t>(frame)] = state.failed;
     visuals.onDiskFrames[static_cast<size_t>(frame)] = state.onDisk;
     if (!visuals.readyFrames[static_cast<size_t>(frame)]) {
-      visuals.readyFrames[static_cast<size_t>(frame)] =
-          state.ready && state.inRam && !state.failed;
+      visuals.readyFrames[static_cast<size_t>(frame)] = state.playable;
     }
   }
 
@@ -2064,16 +2063,14 @@ void ArtifactTimelineWidget::updateCacheVisuals()
     const auto summary = svc->ramPreviewSummary();
     const auto currentFrame = svc->currentFrame().framePosition();
     const auto currentState = svc->ramPreviewFrameState(currentFrame);
+    const auto currentPriority = svc->ramPreviewPriorityState(currentFrame);
     const bool currentPending =
         svc->isRamPreviewFramePendingBuild(currentFrame);
-    const QString currentNote =
-        currentState.requested && !currentState.ready &&
-                !currentState.reason.trimmed().isEmpty()
-            ? currentState.reason.trimmed()
-            : QStringLiteral("-");
+    const QString currentNote = ramPreviewStatusNote(currentState);
+    const QString currentPriorityNote = ramPreviewPriorityNote(currentPriority);
     impl_->scrubBar_->setToolTip(
-        QStringLiteral("RAM preview cache | ready %1/%2 | requested %3 | pending %4 | next %5 | rangeReady %6 | progress %7 | playFallback %8 | failed %9 | inRam %10 | onDisk %11 | current %12 | currentPending %13 | note %14")
-            .arg(summary.readyFrames)
+        QStringLiteral("RAM preview cache | playable %1/%2 | requested %3 | pending %4 | next %5 | rangeReady %6 | progress %7 | playFallback %8 | failed %9 | inRam %10 | onDisk %11 | readyMissingImage %12 | current %13 | currentPending %14 | currentReady %15 | currentPlayable %16 | note %17 | priority %18")
+            .arg(summary.playableFrames)
             .arg(summary.rangeFrames)
             .arg(summary.requestedFrames)
             .arg(summary.buildQueuePendingFrames)
@@ -2084,9 +2081,13 @@ void ArtifactTimelineWidget::updateCacheVisuals()
             .arg(summary.failedFrames)
             .arg(summary.inRamFrames)
             .arg(summary.onDiskFrames)
+            .arg(summary.readyMissingImageFrames)
             .arg(currentFrame)
             .arg(currentPending ? 1 : 0)
-            .arg(currentNote));
+            .arg(currentState.ready ? 1 : 0)
+            .arg(currentState.playable ? 1 : 0)
+            .arg(currentNote)
+            .arg(currentPriorityNote));
   }
 }
 

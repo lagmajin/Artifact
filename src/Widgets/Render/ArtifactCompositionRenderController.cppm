@@ -101,6 +101,7 @@ import Core.Diagnostics.Trace;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback; // 追加
+import Application.AppSettings;
 import Playback.State;
 import Thread.Helper;
 import Event.Bus;
@@ -242,27 +243,6 @@ QString playbackStateToString(PlaybackState state)
   default:
     return QStringLiteral("stopped");
   }
-}
-
-QString ramPreviewNotReadyReason(
-    const ArtifactRamPreviewFrameCacheState &state)
-{
-  if (state.failed) {
-    return QStringLiteral("failed");
-  }
-  if (!state.requested) {
-    return QStringLiteral("not-requested");
-  }
-  if (state.onDisk && !state.inRam) {
-    return QStringLiteral("on-disk-not-hydrated");
-  }
-  if (state.reason == QStringLiteral("playback-tick")) {
-    return QStringLiteral("playback-tick-not-playable");
-  }
-  if (!state.reason.trimmed().isEmpty()) {
-    return QStringLiteral("requested:%1").arg(state.reason.trimmed());
-  }
-  return QStringLiteral("requested-not-ready");
 }
 
 bool floatColorEquals(const FloatColor &lhs, const FloatColor &rhs,
@@ -5825,6 +5805,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       } else if (!playbackPreviewState.ready) {
         ramPreviewFallbackReason =
             ramPreviewNotReadyReason(playbackPreviewState);
+      } else if (!playbackPreviewState.imageAvailable) {
+        ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
       } else if (!playback->tryGetRamPreviewFrameImage(framePos, ramPreviewFrameImage)) {
         ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
       } else if (viewportInteracting_) {
@@ -6733,10 +6715,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
           {
             ArtifactCore::ProfileScope _profG2DDrawCall(
-                "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
+                  "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
+            const bool showDuringDrag =
+                ArtifactCore::ArtifactAppSettings::instance()
+                    ? ArtifactCore::ArtifactAppSettings::instance()
+                          ->compositionShowGizmoDuringDrag()
+                    : false;
             const bool suppressMoveDragVisual =
                 gizmo_->isDragging() &&
-                gizmo_->activeHandle() == TransformGizmo::HandleType::Move;
+                gizmo_->activeHandle() == TransformGizmo::HandleType::Move &&
+                !showDuringDrag;
             if (!suppressMoveDragVisual) {
               gizmo_->draw(renderer_.get());
             }
