@@ -214,10 +214,14 @@ void prepareDockDropOverlays(ads::CDockManager *dockManager) {
   }
 
   enableDockDropPreview(dockManager);
-  prepareDockDropOverlayWindow(dockManager->containerOverlay());
-  prepareDockDropOverlayWindow(dockManager->dockAreaOverlay());
-  for (auto *cross : dockManager->findChildren<ads::CDockOverlayCross *>()) {
-    prepareDockDropOverlayWindow(cross);
+  for (auto *widget : dockManager->findChildren<QWidget *>()) {
+    if (!widget) {
+      continue;
+    }
+    const QString className = QString::fromLatin1(widget->metaObject()->className());
+    if (className.contains(QStringLiteral("DockOverlay"), Qt::CaseInsensitive)) {
+      prepareDockDropOverlayWindow(widget);
+    }
   }
 }
 

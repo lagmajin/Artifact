@@ -40,14 +40,21 @@ export namespace Artifact {
 
 class ArtifactPythonHookManager {
 public:
- static QStringList knownHooks();
- static QString hookScriptPath(const QString& hookName);
- static bool hookScriptExists(const QString& hookName);
+    static QStringList knownHooks();
+    static QString hookScriptPath(const QString& hookName);
+    static bool hookScriptExists(const QString& hookName);
 
- static bool isHookEnabled(const QString& hookName);
- static void setHookEnabled(const QString& hookName, bool enabled);
+    static bool isHookEnabled(const QString& hookName);
+    static void setHookEnabled(const QString& hookName, bool enabled);
 
- static bool runHook(const QString& hookName, const QStringList& args = {});
+    static bool runHook(const QString& hookName, const QStringList& args = {});
+
+    // Python Composition API registration (calls WorkspaceAutomation methods)
+    static void registerWorkspaceAutomationPythonAPI();
+
+private:
+    static void registerWorkspaceMethod(const std::string& name, std::function<QString()> func);
+    static void registerWorkspaceMethod(const std::string& name, std::function<QString(const std::vector<std::string>&)> func);
 };
 
 }

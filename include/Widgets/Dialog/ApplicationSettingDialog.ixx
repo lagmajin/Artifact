@@ -81,6 +81,19 @@ public:
   QList<SettingItemInfo> searchableItems() const override;
 };
 
+class CompositionSettingPage : public QWidget, public ISettingPage {
+private:
+  class Impl;
+  Impl *impl_;
+
+public:
+  explicit CompositionSettingPage(QWidget *parent = nullptr);
+  ~CompositionSettingPage();
+  void loadSettings() override;
+  void saveSettings() override;
+  QList<SettingItemInfo> searchableItems() const override;
+};
+
 class LabelColorSettingWidget : public QWidget {
 public:
   explicit LabelColorSettingWidget(const QString &labelname, const QColor &color,

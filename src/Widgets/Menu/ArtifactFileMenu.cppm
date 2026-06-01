@@ -199,40 +199,40 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
 {
     createProjectAction = new QAction("新規プロジェクト(&N)...");
     createProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_N));
-    createProjectAction->setIcon(QIcon(resolveIconPath("Studio/create_new_folder.svg")));
+    createProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_new_project.svg")));
 
     openProjectAction = new QAction("プロジェクトを開く(&O)...");
     openProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_O));
-    openProjectAction->setIcon(QIcon(resolveIconPath("Studio/file_open.svg")));
+    openProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_open_project.svg")));
 
     saveProjectAction = new QAction("保存(&S)");
     saveProjectAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_S));
-    saveProjectAction->setIcon(QIcon(resolveIconPath("Studio/save.svg")));
+    saveProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_save_project.svg")));
 
     saveProjectAsAction = new QAction("名前を付けて保存(&A)...");
     saveProjectAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_S));
-    saveProjectAsAction->setIcon(QIcon(resolveIconPath("Studio/save_as.svg")));
+    saveProjectAsAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_save_project_as.svg")));
 
     closeProjectAction = new QAction("プロジェクトを閉じる");
-    closeProjectAction->setIcon(QIcon(resolveIconPath("Studio/folder.svg")));
+    closeProjectAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_close_project.svg")));
 
     newCompositionAction = new QAction("新規コンポジション(&C)...");
     newCompositionAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
-    newCompositionAction->setIcon(QIcon(resolveIconPath("Studio/composition.svg")));
+    newCompositionAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_new_composition.svg")));
 
     importAssetsAction = new QAction("アセットを読み込み(&I)...");
     importAssetsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
-    importAssetsAction->setIcon(QIcon(resolveIconPath("Studio/upload.svg")));
+    importAssetsAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_import_assets.svg")));
 
     revealProjectFolderAction = new QAction("プロジェクトフォルダを開く");
-    revealProjectFolderAction->setIcon(QIcon(resolveIconPath("Studio/folder.svg")));
+    revealProjectFolderAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_reveal_folder.svg")));
 
     restartAction = new QAction("再起動");
-    restartAction->setIcon(QIcon(resolveIconPath("Studio/replay.svg")));
+    restartAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_restart.svg")));
     
     quitAction = new QAction("終了(&Q)");
     quitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Q));
-    quitAction->setIcon(QIcon(resolveIconPath("Studio/quit.svg")));
+    quitAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_quit.svg")));
 
     menu->addAction(createProjectAction);
     menu->addAction(openProjectAction);
@@ -246,7 +246,7 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addAction(closeProjectAction);
     menu->addAction(revealProjectFolderAction);
     recentProjectsMenu = menu->addMenu("最近使ったプロジェクト");
-    recentProjectsMenu->setIcon(QIcon(resolveIconPath("Studio/recent_projects.svg")));
+    recentProjectsMenu->setIcon(QIcon(resolveIconPath("Studio/filemenu_recent_projects.svg")));
     menu->addSeparator();
     menu->addAction(restartAction);
     menu->addAction(quitAction);
@@ -269,6 +269,21 @@ void ArtifactFileMenu::Impl::handleCreateProject()
     if (!confirmUnsavedChanges(menu_, QStringLiteral("新規プロジェクトを作成"))) {
         return;
     }
+
+    const QStringList starterChoices = {
+        QStringLiteral("Blank Project"),
+        QStringLiteral("Starter: Full HD Composition"),
+        QStringLiteral("Starter: Vertical Ad Composition"),
+        QStringLiteral("Starter: Square Social Composition")
+    };
+    bool starterOk = false;
+    const QString starterChoice = QInputDialog::getItem(
+        menu_, QStringLiteral("新規プロジェクト"),
+        QStringLiteral("スターター:"), starterChoices, 0, false, &starterOk);
+    if (!starterOk || starterChoice.trimmed().isEmpty()) {
+        return;
+    }
+
     bool ok = false;
     const QString name = QInputDialog::getText(
         menu_, QStringLiteral("新規プロジェクト"),
@@ -286,6 +301,27 @@ void ArtifactFileMenu::Impl::handleCreateProject()
     }
     const QString projectPath = manager.currentProjectPath();
     addRecentProject(projectPath);
+
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || starterChoice == starterChoices.front()) {
+        return;
+    }
+
+    ArtifactCompositionInitParams starterParams = ArtifactCompositionInitParams::hdPreset();
+    QString compName = QStringLiteral("Main");
+    if (starterChoice == starterChoices.at(1)) {
+        starterParams = ArtifactCompositionInitParams::hdPreset();
+        compName = QStringLiteral("Main");
+    } else if (starterChoice == starterChoices.at(2)) {
+        starterParams = ArtifactCompositionInitParams::verticalPreset();
+        compName = QStringLiteral("Vertical Ad");
+    } else if (starterChoice == starterChoices.at(3)) {
+        starterParams = ArtifactCompositionInitParams::squarePreset();
+        compName = QStringLiteral("Square Social");
+    }
+
+    starterParams.setCompositionName(UniString(compName));
+    svc->createComposition(starterParams);
 }
 
 void ArtifactFileMenu::Impl::handleOpenProject()
@@ -690,7 +726,7 @@ void ArtifactFileMenu::Impl::rebuildMenu()
             recentProjectsMenu->clear();
             if (recent.isEmpty()) {
                 auto* noRecent = recentProjectsMenu->addAction("なし");
-                noRecent->setIcon(QIcon(resolveIconPath("Studio/empty_state.svg")));
+                noRecent->setIcon(QIcon(resolveIconPath("Studio/filemenu_empty_recent.svg")));
                 noRecent->setEnabled(false);
             } else {
                 for (const auto& path : recent) {
@@ -698,7 +734,7 @@ void ArtifactFileMenu::Impl::rebuildMenu()
                     QString displayName = fi.fileName();
 
                     auto* fileAction = recentProjectsMenu->addAction(displayName);
-                    fileAction->setIcon(QIcon(resolveIconPath("Studio/file_open.svg")));
+                    fileAction->setIcon(QIcon(resolveIconPath("Studio/filemenu_open_project.svg")));
                     fileAction->setData(path);
                     fileAction->setStatusTip(path);
                     fileAction->setToolTip(path);

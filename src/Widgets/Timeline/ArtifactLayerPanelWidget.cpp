@@ -2808,19 +2808,23 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         triggerRevealVideoSource();
       });
       QObject::connect(muteAudioAct, &QAction::triggered, videoMenu, [this, layer](bool) {
-        if (!layer) {
+        auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+        if (!videoLayer) {
           return;
         }
-        const bool muted = !layer->isAudioMuted();
+        const bool muted = !videoLayer->isAudioMuted();
+        videoLayer->setAudioMuted(muted);
         if (layer->setLayerPropertyValue(QStringLiteral("video.audioMuted"), muted)) {
           updateLayout();
         }
       });
       QObject::connect(toggleVideoAct, &QAction::triggered, videoMenu, [this, layer](bool) {
-        if (!layer) {
+        auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+        if (!videoLayer) {
           return;
         }
-        const bool enabled = !layer->hasVideo();
+        const bool enabled = !videoLayer->hasVideo();
+        videoLayer->setHasVideo(enabled);
         if (layer->setLayerPropertyValue(QStringLiteral("video.videoEnabled"), enabled)) {
           updateLayout();
         }

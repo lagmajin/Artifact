@@ -239,7 +239,12 @@ public:
             {"replaceLayerSource", IDescribable::loc("Replace a video/audio layer's media source file.", "Replace a video/audio layer's media source file.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("footageItemId")}},
             {"splitLayerAtTime", IDescribable::loc("Split a layer into two layers at the specified frame time.", "Split a layer into two layers at the specified frame time.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("frameTime")}},
             {"rippleDeleteLayer", IDescribable::loc("Delete a layer and shift all subsequent layers earlier in time.", "Delete a layer and shift all subsequent layers earlier in time.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
-            {"alignLayersSequentially", IDescribable::loc("Align a list of layers sequentially, end-to-end.", "Align a list of layers sequentially, end-to-end.", {}), "bool", {QStringLiteral("QStringList")}, {QStringLiteral("layerIds")}}
+            {"alignLayersSequentially", IDescribable::loc("Align a list of layers sequentially, end-to-end.", "Align a list of layers sequentially, end-to-end.", {}), "bool", {QStringLiteral("QStringList")}, {QStringLiteral("layerIds")}},
+            {"defineTemplateSlot", IDescribable::loc("Define a template slot on a layer.", "Define a template slot on a layer.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("slotName"), QStringLiteral("defaultValue")}},
+            {"listTemplateSlots", IDescribable::loc("List all template slots in current composition.", "List all template slots in current composition.", {}), "QVariantList"},
+            {"applyTemplateVariation", IDescribable::loc("Apply a template variation to current composition.", "Apply a template variation to current composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("variationJson")}},
+            {"createTemplateFromVariation", IDescribable::loc("Create batch export jobs from variations.", "Create batch export jobs from variations.", {}), "int", {QStringLiteral("QVariantList"), QStringLiteral("QString")}, {QStringLiteral("variations"), QStringLiteral("outputPreset")}},
+            {"listAvailableEffects", IDescribable::loc("List all available effects.", "List all available effects.", {}), "QVariantList"}
         };
     }
 
@@ -692,6 +697,18 @@ public:
         }
         if (name == QStringLiteral("alignLayersSequentially")) {
             return alignLayersSequentially(collectStringList(args));
+        }
+        if (name == QStringLiteral("defineTemplateSlot")) {
+            return defineTemplateSlot(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2));
+        }
+        if (name == QStringLiteral("listTemplateSlots")) {
+            return listTemplateSlots();
+        }
+        if (name == QStringLiteral("applyTemplateVariation")) {
+            return applyTemplateVariation(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("createTemplateFromVariation")) {
+            return createTemplateFromVariation(args, stringArg(args, 1));
         }
         return {};
     }
@@ -3388,6 +3405,128 @@ private:
         }
         service->removeAllRenderQueues();
         return true;
+    }
+
+    // Template Slot Definition
+    static QVariant defineTemplateSlot(const QString& layerId, const QString& slotName, const QString& defaultValue)
+    {
+        const auto comp = currentComposition();
+        if (!comp) {
+            return false;
+        }
+        const auto layer = comp->layerById(LayerID(layerId));
+        if (!layer) {
+            return false;
+        }
+        // Store slot metadata in layer note (simple approach)
+        QString note = layer->layerNote();
+        QJsonObject obj;
+        if (!note.isEmpty()) {
+            QJsonParseError err;
+            obj = QJsonDocument::fromJson(note.toUtf8(), &err).object();
+        }
+        if (!obj.contains(QStringLiteral("templateSlots"))) {
+            obj[QStringLiteral("templateSlots")] = QJsonObject{};
+        }
+        auto slotsObj = obj[QStringLiteral("templateSlots")].toObject();
+        QJsonObject slot;
+        slot[QStringLiteral("name")] = slotName;
+        slot[QStringLiteral("defaultValue")] = defaultValue;
+        slot[QStringLiteral("required")] = true;
+        slotsObj[slotName] = slot;
+        obj[QStringLiteral("templateSlots")] = slotsObj;
+        layer->setLayerNote(QString::fromUtf8(QJsonDocument(obj).toJson(QJsonDocument::Compact)));
+        return true;
+    }
+
+    static QVariantList listTemplateSlots()
+    {
+        const auto comp = currentComposition();
+        QVariantList result;
+        if (!comp) return result;
+        const auto layers = comp->allLayer();
+
+        for (const auto& layer : layers) {
+            if (!layer) continue;
+            const QString note = layer->layerNote();
+            if (note.isEmpty()) continue;
+            QJsonParseError err;
+            const auto obj = QJsonDocument::fromJson(note.toUtf8(), &err).object();
+            if (err.error != QJsonParseError::NoError) continue;
+            auto slots = obj[QStringLiteral("templateSlots")];
+            if (!slots.isObject()) continue;
+
+            const auto slotsObj = slots.toObject();
+            for (auto it = slotsObj.begin(); it != slotsObj.end(); ++it) {
+                QJsonObject slot;
+                slot[QStringLiteral("layerId")] = layer->id().toString();
+                slot[QStringLiteral("slotName")] = it.key();
+                auto slotData = it.value().toObject();
+                slot[QStringLiteral("defaultValue")] = slotData[QStringLiteral("defaultValue")];
+                result.append(QVariant(slot));
+            }
+        }
+        return result;
+    }
+
+    static QVariant applyTemplateVariation(const QString& variationJson)
+    {
+        const auto comp = currentComposition();
+        if (!comp) {
+            return false;
+        }
+        QJsonParseError err;
+        const auto variationObj = QJsonDocument::fromJson(variationJson.toUtf8(), &err).object();
+        if (err.error != QJsonParseError::NoError) {
+            return false;
+        }
+
+        const auto slotValues = variationObj[QStringLiteral("slotValues")].toArray();
+        for (const auto& sv : slotValues) {
+            if (!sv.isObject()) continue;
+            const auto entry = sv.toObject();
+            const QString layerId = entry[QStringLiteral("layerId")].toString();
+            const QString slotName = entry[QStringLiteral("slotName")].toString();
+            const QString value = entry[QStringLiteral("value")].toString();
+
+            const auto layer = comp->layerById(LayerID(layerId));
+            if (!layer) continue;
+
+            // Apply value based on slot type (for now, treat as text replacement)
+            // This would need to be extended for image/media/color slots
+            layer->setLayerNote(QStringLiteral("%1=%2").arg(slotName, value));
+        }
+        return true;
+    }
+
+    static QVariant createTemplateFromVariation(const QVariantList& variations, const QString& outputPreset)
+    {
+        int count = 0;
+        for (const auto& v : variations) {
+            QJsonParseError err;
+            const auto varObj = QJsonDocument::fromVariant(v).object();
+            if (err.error != QJsonParseError::NoError) continue;
+
+            // Add to render queue
+            WorkspaceAutomation::instance().invokeMethod("addRenderQueueForCurrentComposition", {});
+            count++;
+        }
+        return count;
+    }
+
+    static QVariantList listAvailableEffects()
+    {
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return {};
+        const auto effects = effectService->availableEffects();
+        QVariantList list;
+        for (const auto& eff : effects) {
+            QJsonObject obj;
+            obj[QStringLiteral("id")] = eff.id.toString();
+            obj[QStringLiteral("displayName")] = eff.displayName;
+            list.append(obj);
+        }
+        return list;
     }
 };
 

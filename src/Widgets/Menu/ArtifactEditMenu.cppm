@@ -91,64 +91,64 @@ private:
   // Basic edit actions
   undoAction = new QAction("元に戻す (&U)");
   undoAction->setShortcut(shortcuts.shortcut(ShortcutId::Undo));
-  undoAction->setIcon(QIcon(resolveIconPath("Studio/undo.svg")));
+  undoAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_undo.svg")));
 
   redoAction = new QAction("やり直し (&R)");
   redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
-  redoAction->setIcon(QIcon(resolveIconPath("Studio/redo.svg")));
+  redoAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_redo.svg")));
 
   duplicateAction = new QAction("複製 (&D)");
   duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
-  duplicateAction->setIcon(QIcon(resolveIconPath("Studio/content_copy.svg")));
+  duplicateAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_duplicate.svg")));
 
   splitAction = new QAction("レイヤーを分割 (&S)");
   splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
-  splitAction->setIcon(QIcon(resolveIconPath("Studio/content_cut.svg")));
+  splitAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_split.svg")));
 
   trimInAction = new QAction("インポイントを現在の時間にトリム");
-  trimInAction->setIcon(QIcon(resolveIconPath("Studio/trim_in.svg")));
+  trimInAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_trim_in.svg")));
   trimOutAction = new QAction("アウトポイントを現在の時間にトリム");
-  trimOutAction->setIcon(QIcon(resolveIconPath("Studio/trim_out.svg")));
+  trimOutAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_trim_out.svg")));
 
   selectAllAction = new QAction("すべて選択 (&A)");
   selectAllAction->setShortcut(QKeySequence::SelectAll);
-  selectAllAction->setIcon(QIcon(resolveIconPath("Studio/select_all.svg")));
+  selectAllAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_all.svg")));
 
   selectNoneAction = new QAction("選択解除");
   selectNoneAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
-  selectNoneAction->setIcon(QIcon(resolveIconPath("Studio/select_none.svg")));
+  selectNoneAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_none.svg")));
 
   invertSelectionAction = new QAction("選択を反転");
-  invertSelectionAction->setIcon(QIcon(resolveIconPath("Studio/select_invert.svg")));
+  invertSelectionAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_invert.svg")));
 
   selectSameTypeAction = new QAction("同じ種類を選択");
-  selectSameTypeAction->setIcon(QIcon(resolveIconPath("Studio/select_same_type.svg")));
+  selectSameTypeAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_same_type.svg")));
 
   findAction = new QAction("検索 (&F)...");
   findAction->setShortcut(QKeySequence::Find);
-  findAction->setIcon(QIcon(resolveIconPath("Studio/search.svg")));
+  findAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_find.svg")));
 
   preferencesAction = new QAction("環境設定 (&P)...");
-  preferencesAction->setIcon(QIcon(resolveIconPath("Studio/settings.svg")));
+  preferencesAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_preferences.svg")));
 
   undoHistoryAction = new QAction("Undo 履歴 (&H)...");
-  undoHistoryAction->setIcon(QIcon(resolveIconPath("Studio/history.svg")));
+  undoHistoryAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_history.svg")));
 
   copyAction_ = new QAction("コピー (&C)");
   copyAction_->setShortcut(QKeySequence::Copy);
-  copyAction_->setIcon(QIcon(resolveIconPath("Studio/content_copy.svg")));
+  copyAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_copy.svg")));
 
   cutAction_ = new QAction("切り取り (&T)");
   cutAction_->setShortcut(QKeySequence::Cut);
-  cutAction_->setIcon(QIcon(resolveIconPath("Studio/content_cut.svg")));
+  cutAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_cut.svg")));
 
   pasteAction_ = new QAction("貼り付け (&P)");
   pasteAction_->setShortcut(QKeySequence::Paste);
-  pasteAction_->setIcon(QIcon(resolveIconPath("Studio/content_paste.svg")));
+  pasteAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_paste.svg")));
 
   deleteAction_ = new QAction("削除 (&D)");
   deleteAction_->setShortcut(QKeySequence::Delete);
-  deleteAction_->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
+  deleteAction_->setIcon(QIcon(resolveIconPath("Studio/editmenu_delete.svg")));
 
   // Build menu
   menu->addAction(undoAction);
@@ -167,7 +167,7 @@ private:
   
   // Select submenu
   QMenu* selectMenu = menu->addMenu("選択");
-  selectMenu->setIcon(QIcon(resolveIconPath("Studio/select_all.svg")));
+  selectMenu->setIcon(QIcon(resolveIconPath("Studio/editmenu_select_all.svg")));
   selectMenu->addAction(selectAllAction);
   selectMenu->addAction(selectNoneAction);
   selectMenu->addAction(invertSelectionAction);
