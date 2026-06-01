@@ -49,25 +49,25 @@ namespace Artifact {
  ArtifactHelpMenu::Impl::Impl()
  {
   versionInfoAction_ = new QAction(u8"Version Info");
-  versionInfoAction_->setIcon(QIcon(resolveIconPath("Studio/info.svg")));
+  versionInfoAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_version.svg")));
 
   aboutAction_ = new QAction(u8"About Artifact");
-  aboutAction_->setIcon(QIcon(resolveIconPath("Studio/info.svg")));
+  aboutAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_about.svg")));
 
   docsAction_ = new QAction(u8"Documentation");
-  docsAction_->setIcon(QIcon(resolveIconPath("Studio/help.svg")));
+  docsAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_docs.svg")));
 
   checkUpdatesAction_ = new QAction(u8"Check for Updates");
-  checkUpdatesAction_->setIcon(QIcon(resolveIconPath("Studio/history.svg")));
+  checkUpdatesAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_updates.svg")));
 
   exportDiagnosticsAction_ = new QAction(u8"Export Diagnostics...");
-  exportDiagnosticsAction_->setIcon(QIcon(resolveIconPath("Studio/inventory.svg")));
+  exportDiagnosticsAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_diagnostics.svg")));
 
   openAppDataAction_ = new QAction(u8"Open App Data Folder");
-  openAppDataAction_->setIcon(QIcon(resolveIconPath("Studio/folder_open.svg")));
+  openAppDataAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_app_data.svg")));
 
   keyboardOverlayAction_ = new QAction(u8"Keyboard Shortcuts Overlay");
-  keyboardOverlayAction_->setIcon(QIcon(resolveIconPath("Studio/keyboard.svg")));
+  keyboardOverlayAction_->setIcon(QIcon(resolveIconPath("Studio/helpmenu_keyboard.svg")));
   keyboardOverlayAction_->setShortcuts({QKeySequence(QStringLiteral("Ctrl+/")), QKeySequence::HelpContents});
  }
 
