@@ -319,7 +319,7 @@ void ArtifactScriptMenu::Impl::refreshMacroActions()
 
  for (const QFileInfo& fileInfo : files) {
   QAction* action = macrosMenu->addAction(fileInfo.baseName());
-  action->setIcon(QIcon(resolveIconPath("Studio/code.svg")));
+  action->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_run_macro.svg")));
   action->setData(fileInfo.absoluteFilePath());
   action->setToolTip(fileInfo.absoluteFilePath());
   QObject::connect(action, &QAction::triggered, menu_, [this, path = fileInfo.absoluteFilePath()]() {
@@ -333,35 +333,35 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  : menu_(menu)
 {
  openScriptsFolderAction = new QAction(tr("Open User Scripts Workspace"));
- openScriptsFolderAction->setIcon(QIcon(resolveIconPath("Studio/folder_open.svg")));
+ openScriptsFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_workspace.svg")));
  openScriptsFolderAction->setToolTip(
      tr("Open the canonical user scripts root and scaffold menu.py, hooks, and macros folders."));
 
  openMenuScriptAction = new QAction(tr("Open menu.py"));
- openMenuScriptAction->setIcon(QIcon(resolveIconPath("Studio/code.svg")));
+ openMenuScriptAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_menu_py.svg")));
  openMenuScriptAction->setToolTip(
      tr("Open the script menu entry file from the user scripts workspace."));
 
  openHooksFolderAction = new QAction(tr("Open Hook Scripts Folder"));
- openHooksFolderAction->setIcon(QIcon(resolveIconPath("Studio/folder.svg")));
+ openHooksFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks_folder.svg")));
  openHooksFolderAction->setToolTip(
      tr("Open the hooks folder inside the user scripts workspace."));
 
  openMacrosFolderAction = new QAction(tr("Open Macros Folder"));
- openMacrosFolderAction->setIcon(QIcon(resolveIconPath("Studio/folder.svg")));
+ openMacrosFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros_folder.svg")));
  openMacrosFolderAction->setToolTip(
      tr("Open the macros folder inside the user scripts workspace."));
 
  hooksMenu = new QMenu(tr("Hook Commands"));
- hooksMenu->setIcon(QIcon(resolveIconPath("Studio/hook.svg")));
+ hooksMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks.svg")));
 
  macrosMenu = new QMenu(tr("Macro Commands"));
- macrosMenu->setIcon(QIcon(resolveIconPath("Studio/code.svg")));
+ macrosMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros.svg")));
 
  const QStringList hookNames = ArtifactPythonHookManager::knownHooks();
  for (const QString& hookName : hookNames) {
   QAction* action = hooksMenu->addAction(hookName);
-  action->setIcon(QIcon(resolveIconPath("Studio/hook.svg")));
+  action->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks.svg")));
   action->setData(hookName);
   action->setToolTip(hookName);
   hookActions.push_back(action);

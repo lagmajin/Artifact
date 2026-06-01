@@ -73,33 +73,33 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
 {
  addCurrentToQueueAction = new QAction("現在のコンポジションをレンダーキューに追加(&A)");
  addCurrentToQueueAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
- addCurrentToQueueAction->setIcon(QIcon(resolveIconPath("Studio/playlist_add.svg")));
+ addCurrentToQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
 
  showQueueAction = new QAction("レンダーキューを表示(&Q)...");
  showQueueAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_R));
- showQueueAction->setIcon(QIcon(resolveIconPath("Studio/view_list.svg")));
+ showQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_queue.svg")));
 
  showRenderManagerAction = new QAction("レンダーマネージャーを表示(&M)...");
  showRenderManagerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
- showRenderManagerAction->setIcon(QIcon(resolveIconPath("Studio/settings_suggest.svg")));
+ showRenderManagerAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_manager.svg")));
 
  renderSettingsAction = new QAction("レンダー出力設定(&S)...");
  renderSettingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
- renderSettingsAction->setIcon(QIcon(resolveIconPath("Studio/settings.svg")));
+ renderSettingsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_settings.svg")));
 
  startRenderAction = new QAction("レンダリングを開始(&S)");
  startRenderAction->setShortcut(QKeySequence(Qt::Key_F12));
- startRenderAction->setIcon(QIcon(resolveIconPath("Studio/play_arrow.svg")));
+ startRenderAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_start.svg")));
 
  clearAllAction = new QAction("すべてのジョブをクリア(&C)");
- clearAllAction->setIcon(QIcon(resolveIconPath("Studio/clear_all.svg")));
+ clearAllAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_clear_all.svg")));
 
  scrollPoCAction = new QAction("Scroll PoC (Floating)", menu);
- scrollPoCAction->setIcon(QIcon(resolveIconPath("Studio/scroll.svg")));
+ scrollPoCAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_scroll_poc.svg")));
 
  menu->addAction(addCurrentToQueueAction);
  addAllCompositionsAction = new QAction("全コンポジションをキューに追加(&A)", menu);
- addAllCompositionsAction->setIcon(QIcon(resolveIconPath("Studio/playlist_add.svg")));
+ addAllCompositionsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_all.svg")));
  menu->addAction(addAllCompositionsAction);
  menu->addSeparator();
  menu->addAction(showQueueAction);
