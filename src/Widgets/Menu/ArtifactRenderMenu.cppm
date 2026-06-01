@@ -121,14 +121,14 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  QObject::connect(scrollPoCAction, &QAction::triggered, menu, [this]() { showScrollPoC(); });
 
  auto& eventBus = ArtifactCore::globalEventBus();
- eventBusSubscriptions_.push_back(eventBus.subscribe<ProjectChangedEvent>(
-     [this](const ProjectChangedEvent&) { rebuildMenu(); }));
- eventBusSubscriptions_.push_back(eventBus.subscribe<CompositionCreatedEvent>(
-     [this](const CompositionCreatedEvent&) { rebuildMenu(); }));
- eventBusSubscriptions_.push_back(eventBus.subscribe<CurrentCompositionChangedEvent>(
-     [this](const CurrentCompositionChangedEvent&) { rebuildMenu(); }));
- eventBusSubscriptions_.push_back(eventBus.subscribe<RenderQueueChangedEvent>(
-     [this](const RenderQueueChangedEvent&) { rebuildMenu(); }));
+eventBusSubscriptions_.push_back(eventBus.subscribe<ProjectChangedEvent>(
+     [this](const ProjectChangedEvent&) { menu_->rebuildMenu(); }));
+eventBusSubscriptions_.push_back(eventBus.subscribe<CompositionCreatedEvent>(
+     [this](const CompositionCreatedEvent&) { menu_->rebuildMenu(); }));
+eventBusSubscriptions_.push_back(eventBus.subscribe<CurrentCompositionChangedEvent>(
+     [this](const CurrentCompositionChangedEvent&) { menu_->rebuildMenu(); }));
+eventBusSubscriptions_.push_back(eventBus.subscribe<RenderQueueChangedEvent>(
+     [this](const RenderQueueChangedEvent&) { menu_->rebuildMenu(); }));
 }
 
 void ArtifactRenderMenu::Impl::showScrollPoC()

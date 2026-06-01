@@ -1,6 +1,7 @@
 ﻿module;
 #include <utility>
 #include <algorithm>
+#include <cmath>
 #include <QFont>
 #include <QSize>
 #include <QMenuBar>
@@ -195,7 +196,8 @@ connect(animationMenu, &ArtifactAnimationMenu::freezeFrameRequested, menuBar, [t
    return;
   }
   const int64_t compFrame = comp->framePosition().framePosition();
-  const int64_t sourceFrame = layer->currentSourceFrameValue();
+  const int64_t sourceFrame = static_cast<int64_t>(
+      std::llround(layer->getSourceFrameAtCompFrame(compFrame)));
   layer->clearTimeRemap();
   layer->setTimeRemapEnabled(true);
   layer->setTimeRemapKey(compFrame, static_cast<double>(sourceFrame));

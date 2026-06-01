@@ -553,7 +553,7 @@ void ArtifactProblemViewWidget::rebuildProblemTree()
             continue;
         }
 
-        QTreeWidgetItem* parentItem = impl_->problemTree;
+        QTreeWidgetItem* parentItem = nullptr;
         const QString groupKey = groupKeyForDiagnostic(diag, groupingMode);
         if (groupingMode != ProblemGroupingMode::Flat) {
             const QString label = groupKey.isEmpty() ? QStringLiteral("Uncategorized") : groupKey;
@@ -566,7 +566,7 @@ void ArtifactProblemViewWidget::rebuildProblemTree()
             groupCounts[label] += 1;
         }
 
-        auto* item = new QTreeWidgetItem(parentItem);
+        auto* item = parentItem ? new QTreeWidgetItem(parentItem) : new QTreeWidgetItem(impl_->problemTree);
         populateDiagnosticItem(item, diag);
         visibleDiagnostics.push_back(diag);
     }

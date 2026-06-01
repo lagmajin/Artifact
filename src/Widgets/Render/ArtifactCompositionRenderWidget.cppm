@@ -68,27 +68,6 @@ struct LayerHitTestResult {
   QRectF bbox;
 };
 
-QString ramPreviewNotReadyReason(
-    const ArtifactRamPreviewFrameCacheState& state)
-{
-  if (state.failed) {
-   return QStringLiteral("failed");
-  }
-  if (!state.requested) {
-   return QStringLiteral("not-requested");
-  }
-  if (state.onDisk && !state.inRam) {
-   return QStringLiteral("on-disk-not-hydrated");
-  }
-  if (state.reason == QStringLiteral("playback-tick")) {
-   return QStringLiteral("playback-tick-not-playable");
-  }
-  if (!state.reason.trimmed().isEmpty()) {
-   return QStringLiteral("requested:%1").arg(state.reason.trimmed());
-  }
-  return QStringLiteral("requested-not-ready");
-}
-
 LayerDragMode hitTestLayerDragMode(const QRectF& bbox,
                                    const QPointF& viewportPos,
                                    ArtifactIRenderer* renderer)
@@ -324,6 +303,8 @@ int compositionPreviewIntervalMs(
           playback->ramPreviewPlaybackFallbackWhilePlaying();
       if (!previewState.ready) {
        ramPreviewFallbackReason = ramPreviewNotReadyReason(previewState);
+      } else if (!previewState.imageAvailable) {
+       ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
       } else if (!playback->tryGetRamPreviewFrameImage(
                          targetFrame.framePosition(), ramPreviewFrameImage)) {
        ramPreviewFallbackReason = QStringLiteral("ready-missing-image");

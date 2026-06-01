@@ -9,6 +9,7 @@ export module Menu.Time;
 export namespace Artifact {
 
  class ArtifactTimeMenu :public QMenu{
+  W_OBJECT(ArtifactTimeMenu)
  private:
   class Impl;
   Impl* impl_;

@@ -4,6 +4,7 @@
 #include <QVector3D>
 #include <QColor>
 #include <QImage>
+#include <QLinearGradient>
 #include <QPainter>
 #include <QRandomGenerator>
 #include <QtMath>
@@ -64,6 +65,16 @@ module Artifact.Generator.Particle;
 
 
 namespace Artifact {
+
+namespace {
+
+float particleStretchFactor(const QVector3D& velocity)
+{
+    const float speed = velocity.length();
+    return std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
+}
+
+} // namespace
 
 // ==================== ParticleEffector Base ====================
 
@@ -824,6 +835,7 @@ ParticleRenderData ParticleSystem::captureRenderData() const
                 v.b  = p.color.blueF();
                 v.a  = p.color.alphaF() * p.opacity;
                 v.size = p.scale;
+                v.stretch = particleStretchFactor(p.velocity);
                 v.rotation = p.rotation;
                 v.age = p.age;
                 v.lifetime = p.maxLife;
@@ -918,7 +930,10 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
         const int py = static_cast<int>(std::round(sy));
 
         const float projectedRadius = std::max(1.0f, p->scale * 12.0f * focal * invDepth);
-        const int radius = static_cast<int>(projectedRadius);
+        const float stretch = particleStretchFactor(p->velocity);
+        const float radiusX = std::max(1.0f, projectedRadius * 0.20f);
+        const float radiusY = std::max(radiusX, projectedRadius * stretch);
+        const int radius = static_cast<int>(std::ceil(std::max(radiusX, radiusY)));
         if (radius <= 0) continue;
 
         const int minX = std::max(0, px - radius);
@@ -936,19 +951,21 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
         const int baseR = p->color.red();
         const int baseG = p->color.green();
         const int baseB = p->color.blue();
-        const float radius2 = static_cast<float>(radius * radius);
+        const float radiusX2 = radiusX * radiusX;
+        const float radiusY2 = radiusY * radiusY;
 
         for (int y = minY; y <= maxY; ++y) {
             const int dy = y - py;
             auto* row = scan + y * stride;
             for (int x = minX; x <= maxX; ++x) {
                 const int dx = x - px;
-                const float dist2 = static_cast<float>(dx * dx + dy * dy);
-                if (dist2 > radius2) {
+                const float dist2 = (static_cast<float>(dx * dx) / radiusX2) +
+                                    (static_cast<float>(dy * dy) / radiusY2);
+                if (dist2 > 1.0f) {
                     continue;
                 }
 
-                const float falloff = 1.0f - (dist2 / radius2);
+                const float falloff = 1.0f - dist2;
                 const int a = static_cast<int>(baseA * falloff);
                 if (a <= 0) continue;
 
@@ -1047,18 +1064,36 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
         
         QPointF pos(p->position.x(), p->position.y());
         float size = p->scale * 10.0f;  // Base size
+        const float stretch = particleStretchFactor(p->velocity);
         
         painter.save();
         painter.translate(pos);
         painter.rotate(p->rotation);
-        
-        QRadialGradient gradient(QPointF(0, 0), size);
-        gradient.setColorAt(0, color);
-        gradient.setColorAt(1, QColor(color.red(), color.green(), color.blue(), 0));
-        
-        painter.setBrush(gradient);
-        painter.setPen(Qt::NoPen);
-        painter.drawEllipse(QPointF(0, 0), size, size);
+
+        if (stretch > 1.05f) {
+            const float width = std::max(0.75f, size * 0.18f);
+            const float height = std::max(width, size * stretch);
+
+            QLinearGradient gradient(QPointF(0, -height * 0.5f), QPointF(0, height * 0.5f));
+            gradient.setColorAt(0.0, QColor(color.red(), color.green(), color.blue(), 0));
+            gradient.setColorAt(0.15, color);
+            gradient.setColorAt(0.85, color);
+            gradient.setColorAt(1.0, QColor(color.red(), color.green(), color.blue(), 0));
+
+            painter.setBrush(gradient);
+            painter.setPen(Qt::NoPen);
+            painter.drawRoundedRect(QRectF(-width * 0.5f, -height * 0.5f, width, height),
+                                    width * 0.5f,
+                                    width * 0.5f);
+        } else {
+            QRadialGradient gradient(QPointF(0, 0), size);
+            gradient.setColorAt(0, color);
+            gradient.setColorAt(1, QColor(color.red(), color.green(), color.blue(), 0));
+
+            painter.setBrush(gradient);
+            painter.setPen(Qt::NoPen);
+            painter.drawEllipse(QPointF(0, 0), size, size);
+        }
         
         painter.restore();
     }
@@ -1218,22 +1253,28 @@ EmitterParams ParticlePresets::rain()
 {
     EmitterParams params;
     params.shape = EmitterShape::Rectangle;
-    params.width = 1000.0f;
-    params.height = 10.0f;
+    params.width = 1400.0f;
+    params.height = 24.0f;
     params.mode = EmissionMode::Continuous;
-    params.rate = 200.0f;
-    params.lifeMin = 1.0f;
-    params.lifeMax = 2.0f;
-    params.speedMin = 400.0f;
-    params.speedMax = 600.0f;
+    params.rate = 320.0f;
+    params.lifeMin = 0.35f;
+    params.lifeMax = 0.9f;
+    params.speedMin = 650.0f;
+    params.speedMax = 950.0f;
     params.direction = QVector3D(0, 1, 0);  // Down
-    params.directionSpread = 5.0f;
-    params.scaleMin = 2.0f;
-    params.scaleMax = 3.0f;
-    params.scaleEndMin = 2.0f;
-    params.scaleEndMax = 3.0f;
-    params.colorStart = QColor(150, 180, 255, 100);
-    params.colorEnd = QColor(150, 180, 255, 50);
+    params.directionSpread = 2.5f;
+    params.rotationMin = 0.0f;
+    params.rotationMax = 0.0f;
+    params.scaleMin = 0.9f;
+    params.scaleMax = 2.0f;
+    params.scaleEndMin = 0.9f;
+    params.scaleEndMax = 2.0f;
+    params.colorStart = QColor(180, 205, 255, 90);
+    params.colorEnd = QColor(180, 205, 255, 0);
+    params.opacityMin = 0.45f;
+    params.opacityMax = 0.75f;
+    params.opacityEndMin = 0.0f;
+    params.opacityEndMax = 0.0f;
     return params;
 }
 

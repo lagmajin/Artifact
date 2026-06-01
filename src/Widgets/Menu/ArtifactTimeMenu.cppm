@@ -70,29 +70,29 @@ ArtifactTimeMenu::Impl::Impl(ArtifactTimeMenu* menu)
   menu_->setMinimumWidth(220);
 
   showControlAction = menu_->addAction("Playback Control...");
-  showControlAction->setIcon(QIcon(resolveIconPath("Studio/play_circle.svg")));
+  showControlAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/play_circle.svg")));
 
   playPauseAction = menu_->addAction("再生");
-  playPauseAction->setIcon(QIcon(resolveIconPath("Studio/play_arrow.svg")));
+  playPauseAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/play_arrow.svg")));
   stopAction = menu_->addAction("停止");
-  stopAction->setIcon(QIcon(resolveIconPath("Studio/stop.svg")));
+  stopAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/stop.svg")));
 
   menu_->addSeparator();
   stepBackwardAction = menu_->addAction("1 フレーム戻る");
-  stepBackwardAction->setIcon(QIcon(resolveIconPath("Studio/skip_previous.svg")));
+  stepBackwardAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/skip_previous.svg")));
   stepForwardAction = menu_->addAction("1 フレーム進む");
-  stepForwardAction->setIcon(QIcon(resolveIconPath("Studio/skip_next.svg")));
+  stepForwardAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/skip_next.svg")));
 
   seekStartAction = menu_->addAction("先頭へ移動");
-  seekStartAction->setIcon(QIcon(resolveIconPath("Studio/fast_rewind.svg")));
+  seekStartAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/fast_rewind.svg")));
   seekEndAction = menu_->addAction("末尾へ移動");
-  seekEndAction->setIcon(QIcon(resolveIconPath("Studio/fast_forward.svg")));
+  seekEndAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/fast_forward.svg")));
 
   menu_->addSeparator();
   prevMarkerAction = menu_->addAction("前のマーカーへ");
-  prevMarkerAction->setIcon(QIcon(resolveIconPath("Studio/keyboard_double_arrow_left.svg")));
+  prevMarkerAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/keyboard_double_arrow_left.svg")));
   nextMarkerAction = menu_->addAction("次のマーカーへ");
-  nextMarkerAction->setIcon(QIcon(resolveIconPath("Studio/keyboard_double_arrow_right.svg")));
+  nextMarkerAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/keyboard_double_arrow_right.svg")));
 
   menu_->addSeparator();
   setInPointAction = menu_->addAction("In Point を現在位置に設定");
@@ -279,7 +279,7 @@ ArtifactTimeMenu::ArtifactTimeMenu(QWidget* parent /*= nullptr*/)
   :QMenu(parent),impl_(new Impl(this))
 {
   setTitle("Time(&T)");
-  setIcon(QIcon(resolveIconPath("Studio/timer.svg")));
+  setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timer.svg")));
   impl_->refreshState();
 }
 

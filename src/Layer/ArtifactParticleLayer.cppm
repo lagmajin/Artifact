@@ -89,6 +89,7 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         v.b = src.b;
         v.a = src.a;
         v.size = src.size;
+        v.stretch = src.stretch;
         v.rotation = src.rotation;
         v.age = src.age;
         v.lifetime = src.lifetime;
@@ -97,6 +98,10 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         v.py = static_cast<float>(mapped.y());
         v.a = std::clamp(v.a * opacity, 0.0f, 1.0f);
         v.size = src.size * scale;
+        if (v.stretch <= 0.0f) {
+            const float speed = std::hypot(src.vx, src.vy);
+            v.stretch = std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
+        }
         transformed.particles.push_back(v);
     }
 

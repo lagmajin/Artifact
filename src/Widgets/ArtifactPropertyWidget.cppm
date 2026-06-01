@@ -10,9 +10,17 @@
 #include <QLabel>
 #include <QLayout>
 #include <QLineEdit>
+#include <QFileDialog>
+#include <QFile>
+#include <QFileInfo>
+#include <QIODevice>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMenu>
 #include <QMetaObject>
+#include <QDir>
 #include <QPalette>
+#include <QStandardPaths>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -76,15 +84,6 @@ import Artifact.Event.Types;
 import Time.Rational;
 import Script.Expression.Evaluator;
 import Property.SerializationBridge;
-
-#include <QFileDialog>
-#include <QFile>
-#include <QFileInfo>
-#include <QIODevice>
-#include <QJsonDocument>
-#include <QJsonObject>
-#include <QDir>
-#include <QStandardPaths>
 
 namespace Artifact {
 
@@ -851,7 +850,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
               propertyName,
               propertyPtr,
               initialExpression,
-              [layer, keyframeChanged, propertyName]() {
+              [layer, keyframeChanged, propertyName](const QString &) {
                 if (keyframeChanged) {
                   keyframeChanged(propertyName);
                 }
@@ -1271,8 +1270,8 @@ bool ArtifactPropertyWidget::openActiveExpressionCopilot() {
         continue;
       }
       for (const auto &property : effect->getProperties()) {
-        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
-          propertyPtr = property;
+        if (property.getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = std::make_shared<ArtifactCore::AbstractProperty>(property);
           break;
         }
       }
@@ -1316,8 +1315,8 @@ bool ArtifactPropertyWidget::clearActiveExpression() {
         continue;
       }
       for (const auto &property : effect->getProperties()) {
-        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
-          propertyPtr = property;
+        if (property.getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = std::make_shared<ArtifactCore::AbstractProperty>(property);
           break;
         }
       }
@@ -1362,8 +1361,8 @@ bool ArtifactPropertyWidget::convertActiveExpressionToKeyframes() {
         continue;
       }
       for (const auto &property : effect->getProperties()) {
-        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
-          propertyPtr = property;
+        if (property.getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = std::make_shared<ArtifactCore::AbstractProperty>(property);
           break;
         }
       }
@@ -1438,8 +1437,8 @@ bool ArtifactPropertyWidget::saveActiveExpressionPreset() {
         continue;
       }
       for (const auto &property : effect->getProperties()) {
-        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
-          propertyPtr = property;
+        if (property.getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = std::make_shared<ArtifactCore::AbstractProperty>(property);
           break;
         }
       }
@@ -1517,8 +1516,8 @@ bool ArtifactPropertyWidget::loadActiveExpressionPreset() {
         continue;
       }
       for (const auto &property : effect->getProperties()) {
-        if (property && property->getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
-          propertyPtr = property;
+        if (property.getName().compare(propertyName, Qt::CaseInsensitive) == 0) {
+          propertyPtr = std::make_shared<ArtifactCore::AbstractProperty>(property);
           break;
         }
       }
@@ -1688,7 +1687,7 @@ void ArtifactPropertyWidget::Impl::openExpressionCopilotForProperty(
       propertyName,
       propertyPtr,
       initialExpression,
-      [this]() {
+      [this](const QString &) {
         if (currentLayer) {
           notifyLayerPropertyAnimationChanged(currentLayer);
         }
@@ -2117,6 +2116,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         {},
         currentLayerTime,
         {},
+        layer,
         &addedGroupProperties, &propertyEditors, &effectRows);
 
     if (addedGroupProperties) {

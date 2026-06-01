@@ -33,6 +33,7 @@ import Artifact.Widgets.SoftwareRenderInspectors;
 import Dialog.Composition;
 import FloatColorPickerDialog;
 import Artifact.Widgets.AppDialogs;
+import Widgets.Utils.CSS;
 
 namespace Artifact {
 using namespace ArtifactCore;

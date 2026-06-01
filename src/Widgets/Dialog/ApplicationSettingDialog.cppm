@@ -683,6 +683,67 @@ QList<SettingItemInfo> ProjectDefaultsSettingPage::searchableItems() const {
 
 ProjectDefaultsSettingPage::~ProjectDefaultsSettingPage() { delete impl_; }
 
+// CompositionSettingPage Implementation
+class CompositionSettingPage::Impl {
+public:
+  Impl();
+  ~Impl();
+
+  QCheckBox *showGizmoDuringDragCheckBox_;
+};
+
+CompositionSettingPage::Impl::Impl() : showGizmoDuringDragCheckBox_(nullptr) {}
+
+CompositionSettingPage::Impl::~Impl() {}
+
+CompositionSettingPage::CompositionSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  auto *mainLayout = new QVBoxLayout(this);
+
+  auto *group = new QGroupBox("Composition View", this);
+  auto *groupLayout = new QVBoxLayout(group);
+
+  impl_->showGizmoDuringDragCheckBox_ = new QCheckBox(
+      "Show transform gizmo while dragging", this);
+  groupLayout->addWidget(impl_->showGizmoDuringDragCheckBox_);
+
+  mainLayout->addWidget(group);
+  mainLayout->addStretch();
+
+  loadSettings();
+}
+
+void CompositionSettingPage::loadSettings() {
+  auto *settings = ArtifactAppSettings::instance();
+  if (!settings || !impl_) {
+    return;
+  }
+  impl_->showGizmoDuringDragCheckBox_->setChecked(
+      settings->compositionShowGizmoDuringDrag());
+}
+
+void CompositionSettingPage::saveSettings() {
+  auto *settings = ArtifactAppSettings::instance();
+  if (!settings || !impl_) {
+    return;
+  }
+  settings->setCompositionShowGizmoDuringDrag(
+      impl_->showGizmoDuringDragCheckBox_->isChecked());
+}
+
+QList<SettingItemInfo> CompositionSettingPage::searchableItems() const {
+  QList<SettingItemInfo> items;
+  if (!impl_) {
+    return items;
+  }
+  items.push_back({"Show transform gizmo while dragging",
+                   "Keep the transform gizmo visible while moving layers",
+                   "Composition View", impl_->showGizmoDuringDragCheckBox_});
+  return items;
+}
+
+CompositionSettingPage::~CompositionSettingPage() { delete impl_; }
+
 LabelColorSettingWidget::LabelColorSettingWidget(const QString &labelname,
                                                  const QColor &color,
                                                  QWidget *parent /*= NULL*/) {}
@@ -1333,6 +1394,7 @@ public:
   ImportSettingPage *importPage_;
   PreviewSettingPage *previewPage_;
   ProjectDefaultsSettingPage *projectPage_;
+  CompositionSettingPage *compositionPage_;
   MemoryAndCpuSettingPage *memoryPage_;
   ShortcutSettingPage *shortcutPage_;
   PluginSettingPage *pluginPage_;
@@ -1344,8 +1406,8 @@ public:
 ApplicationSettingDialog::Impl::Impl()
     : categoryList_(nullptr), settingPages_(nullptr), buttonBox_(nullptr),
       generalPage_(nullptr), importPage_(nullptr), previewPage_(nullptr),
-      projectPage_(nullptr), memoryPage_(nullptr), shortcutPage_(nullptr),
-      pluginPage_(nullptr) {}
+      projectPage_(nullptr), compositionPage_(nullptr), memoryPage_(nullptr),
+      shortcutPage_(nullptr), pluginPage_(nullptr) {}
 
 ApplicationSettingDialog::Impl::~Impl() {}
 
@@ -1363,6 +1425,7 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   categoryList_->addItem("Import");
   categoryList_->addItem("Preview");
   categoryList_->addItem("Project Defaults");
+  categoryList_->addItem("Composition View");
   categoryList_->addItem("Memory & Performance");
   categoryList_->addItem("Shortcuts");
   categoryList_->addItem("Plugins");
@@ -1377,6 +1440,7 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   importPage_ = new ImportSettingPage(dialog);
   previewPage_ = new PreviewSettingPage(dialog);
   projectPage_ = new ProjectDefaultsSettingPage(dialog);
+  compositionPage_ = new CompositionSettingPage(dialog);
   memoryPage_ = new MemoryAndCpuSettingPage(dialog);
   shortcutPage_ = new ShortcutSettingPage(dialog);
 
@@ -1384,6 +1448,7 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   settingPages_->addWidget(importPage_);
   settingPages_->addWidget(previewPage_);
   settingPages_->addWidget(projectPage_);
+  settingPages_->addWidget(compositionPage_);
   settingPages_->addWidget(memoryPage_);
   settingPages_->addWidget(shortcutPage_);
   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
@@ -1430,6 +1495,7 @@ void ApplicationSettingDialog::loadSettings() {
   impl_->importPage_->loadSettings();
   impl_->previewPage_->loadSettings();
   impl_->projectPage_->loadSettings();
+  impl_->compositionPage_->loadSettings();
   impl_->memoryPage_->loadSettings();
   if (impl_->shortcutPage_) {
     impl_->shortcutPage_->loadSettings();
@@ -1441,6 +1507,7 @@ void ApplicationSettingDialog::saveSettings() {
   impl_->importPage_->saveSettings();
   impl_->previewPage_->saveSettings();
   impl_->projectPage_->saveSettings();
+  impl_->compositionPage_->saveSettings();
   impl_->memoryPage_->saveSettings();
   if (impl_->shortcutPage_) {
     impl_->shortcutPage_->saveSettings();
