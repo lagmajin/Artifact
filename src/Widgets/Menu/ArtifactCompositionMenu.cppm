@@ -72,30 +72,30 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
 {
  createAction = new QAction("新規コンポジション(&N)...");
  createAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
- createAction->setIcon(QIcon(resolveIconPath("Studio/composition.svg")));
+ createAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_new.svg")));
 
  presetMenu = new QMenu("プリセットから作成(&P)", menu);
- presetMenu->setIcon(QIcon(resolveIconPath("Studio/presets.svg")));
+ presetMenu->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_presets.svg")));
  presetHdAction = presetMenu->addAction("HD 1080p 30fps");
- presetHdAction->setIcon(QIcon(resolveIconPath("Studio/preset_hd.svg")));
+ presetHdAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_preset_hd.svg")));
  preset4kAction = presetMenu->addAction("4K UHD 30fps");
- preset4kAction->setIcon(QIcon(resolveIconPath("Studio/preset_4k.svg")));
+ preset4kAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_preset_4k.svg")));
  presetVerticalAction = presetMenu->addAction("Vertical 1080x1920 30fps");
- presetVerticalAction->setIcon(QIcon(resolveIconPath("Studio/preset_vertical.svg")));
+ presetVerticalAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_preset_vertical.svg")));
 
  duplicateAction = new QAction("コンポジションを複製(&D)");
- duplicateAction->setIcon(QIcon(resolveIconPath("Studio/content_copy.svg")));
+ duplicateAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_duplicate.svg")));
  renameAction = new QAction("名前を変更(&R)...");
- renameAction->setIcon(QIcon(resolveIconPath("Studio/edit.svg")));
+ renameAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_rename.svg")));
  deleteAction = new QAction("コンポジションを削除(&X)...");
- deleteAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
+ deleteAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_delete.svg")));
 
  settingsAction = new QAction("設定 (&S)...", menu);
- settingsAction->setIcon(QIcon(resolveIconPath("Studio/settings.svg")));
+ settingsAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_settings.svg")));
 
  colorAction = new QAction("背景色(&B)...");
  colorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
- colorAction->setIcon(QIcon(resolveIconPath("Studio/palette.svg")));
+ colorAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_background.svg")));
 
  menu->addAction(createAction);
  menu->addMenu(presetMenu);
