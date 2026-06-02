@@ -2832,6 +2832,24 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   setToolShortcut(QKeySequence(Qt::Key_H), ToolType::Hand);
   setToolShortcut(QKeySequence(Qt::Key_Z), ToolType::Zoom);
   setToolShortcut(QKeySequence(Qt::Key_R), ToolType::Rotation);
+  auto *markerShortcut = new QShortcut(QKeySequence(Qt::Key_M), this);
+  QObject::connect(markerShortcut, &QShortcut::activated, this, []() {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->addMarkerAtCurrentFrame();
+    }
+  });
+  auto *nextMarkerShortcut = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_M), this);
+  QObject::connect(nextMarkerShortcut, &QShortcut::activated, this, []() {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->goToNextMarker();
+    }
+  });
+  auto *prevMarkerShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M), this);
+  QObject::connect(prevMarkerShortcut, &QShortcut::activated, this, []() {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->goToPreviousMarker();
+    }
+  });
   searchModeCombo->addItem(QStringLiteral("All Visible"), static_cast<int>(SearchMatchMode::AllVisible));
   searchModeCombo->addItem(QStringLiteral("Highlight Only"), static_cast<int>(SearchMatchMode::HighlightOnly));
   searchModeCombo->addItem(QStringLiteral("Filter Only"), static_cast<int>(SearchMatchMode::FilterOnly));
