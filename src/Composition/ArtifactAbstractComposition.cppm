@@ -625,7 +625,11 @@ void ArtifactAbstractComposition::setCompositionContext(const CompositionContext
 
 void ArtifactAbstractComposition::setCompositionName(const UniString& name)
 {
+    if (impl_->settings_.compositionName() == name) {
+        return;
+    }
     impl_->settings_.setCompositionName(name);
+    Q_EMIT changed();
 }
 
 QString ArtifactAbstractComposition::compositionNote() const
@@ -645,7 +649,12 @@ void ArtifactAbstractComposition::setCompositionNote(const QString& note)
 
 void ArtifactAbstractComposition::setCompositionSize(const QSize& size)
 {
+    if (impl_->settings_.compositionSize() == size) {
+        return;
+    }
     impl_->settings_.setCompositionSize(size);
+    impl_->invalidateThumbnailCache();
+    Q_EMIT changed();
 }
 
 bool ArtifactAbstractComposition::isVisual() const
@@ -702,11 +711,15 @@ void ArtifactAbstractComposition::setLooping(bool loop)
 void ArtifactAbstractComposition::setFrameRange(const FrameRange& range)
 {
     const FrameRange normalized = range.normalized();
+    if (impl_->frameRange_ == normalized) {
+        return;
+    }
     impl_->frameRange_ = normalized;
     impl_->workAreaRange_.clip(impl_->frameRange_);
     if (!impl_->workAreaRange_.isValid() || impl_->workAreaRange_.isEmpty()) {
         impl_->workAreaRange_ = impl_->frameRange_;
     }
+    Q_EMIT changed();
 }
 
 FrameRange ArtifactAbstractComposition::workAreaRange() const
@@ -721,12 +734,20 @@ void ArtifactAbstractComposition::setWorkAreaRange(const FrameRange& range)
     if (!normalized.isValid() || normalized.isEmpty()) {
         normalized = impl_->frameRange_;
     }
+    if (impl_->workAreaRange_ == normalized) {
+        return;
+    }
     impl_->workAreaRange_ = normalized;
+    Q_EMIT changed();
 }
 
 void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
 {
+    if (impl_->frameRate_ == rate) {
+        return;
+    }
     impl_->frameRate_ = rate;
+    Q_EMIT changed();
 }
 
 QJsonDocument ArtifactAbstractComposition::toJson() const{

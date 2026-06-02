@@ -2701,6 +2701,17 @@ public:
       QObject::disconnect(compositionChangedConnection_);
       compositionChangedConnection_ = {};
     }
+    if (!owner || !composition) {
+      return;
+    }
+    compositionChangedConnection_ =
+        QObject::connect(composition.get(), &ArtifactAbstractComposition::changed,
+                         owner, [this, owner, composition]() {
+                           applyCompositionState(composition);
+                           invalidateBaseComposite();
+                           invalidateOverlayComposite();
+                           owner->markRenderDirty();
+                         });
   }
 
   void invalidateLayerSurfaceCache(const ArtifactAbstractLayerPtr &layer) {

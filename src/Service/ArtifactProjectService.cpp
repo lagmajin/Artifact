@@ -1468,6 +1468,87 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
   return true;
 }
 
+bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
+    const LayerID &layerId, bool keepComposition) {
+  auto project = getCurrentProjectSharedPtr();
+  auto comp = currentComposition().lock();
+  if (!project || !comp || layerId.isNil()) {
+    return false;
+  }
+
+  auto layer = comp->layerById(layerId);
+  auto compLayer = layer ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer)
+                         : nullptr;
+  if (!compLayer) {
+    return false;
+  }
+
+  const CompositionID childCompId = compLayer->sourceCompositionId();
+  if (childCompId.isNil() || childCompId == comp->id()) {
+    return false;
+  }
+
+  auto childFind = findComposition(childCompId);
+  auto childComp = childFind.ptr.lock();
+  if (!childFind.success || !childComp) {
+    return false;
+  }
+
+  const auto childLayers = childComp->allLayer();
+  int insertIndex = -1;
+  const auto parentLayers = comp->allLayer();
+  for (int i = 0; i < parentLayers.size(); ++i) {
+    const auto &candidate = parentLayers[i];
+    if (candidate && candidate->id() == layerId) {
+      insertIndex = i;
+      break;
+    }
+  }
+  if (insertIndex < 0) {
+    return false;
+  }
+
+  QVector<LayerID> movedLayerIds;
+  movedLayerIds.reserve(childLayers.size());
+  for (const auto &childLayer : childLayers) {
+    if (!childLayer) {
+      continue;
+    }
+    movedLayerIds.push_back(childLayer->id());
+    if (!project->addLayerToComposition(comp->id(), childLayer).success) {
+      return false;
+    }
+  }
+
+  if (!project->removeLayerFromComposition(comp->id(), layerId)) {
+    return false;
+  }
+
+  for (int i = 0; i < movedLayerIds.size(); ++i) {
+    const LayerID &movedId = movedLayerIds[i];
+    if (!project->removeLayerFromComposition(childCompId, movedId)) {
+      return false;
+    }
+    auto movedLayer = comp->layerById(movedId);
+    if (movedLayer) {
+      movedLayer->setComposition(comp.get());
+    }
+    comp->moveLayerToIndex(movedId, std::max(0, insertIndex + i));
+  }
+
+  if (!keepComposition) {
+    removeComposition(childCompId);
+  }
+
+  if (!movedLayerIds.isEmpty()) {
+    selectLayer(movedLayerIds.front());
+  } else {
+    selectLayer(LayerID());
+  }
+  ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+  return true;
+}
+
 void ArtifactProjectService::splitLayerAtCurrentTime(
     const CompositionID &compositionId, const LayerID &layerId) {
   auto comp = findComposition(compositionId).ptr.lock();

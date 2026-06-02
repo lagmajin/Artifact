@@ -22,6 +22,7 @@
 module Artifact.Timeline.TrackPainterView;
 
 import std;
+import Application.AppSettings;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
@@ -70,6 +71,32 @@ double clampDurationFrames(const double value) { return std::max(1.0, value); }
 
 double clampPixelsPerFrame(const double value) {
   return std::clamp(value, 0.05, 64.0);
+}
+
+bool timelineAllowOverscroll() {
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    return settings->timelineAllowOverscroll();
+  }
+  return false;
+}
+
+double timelineOverscrollPaddingPx(const QWidget *widget) {
+  const double widthHint = widget ? static_cast<double>(widget->width()) : 640.0;
+  return std::clamp(std::max(96.0, widthHint * 0.25), 96.0, 320.0);
+}
+
+double clampTimelineHorizontalOffset(const QWidget *widget,
+                                     const double durationFrames,
+                                     const double pixelsPerFrame,
+                                     const double offset) {
+  const double maxOffset =
+      std::max(0.0, durationFrames * std::max(0.001, pixelsPerFrame) -
+                        static_cast<double>(std::max(1, widget ? widget->width() : 1)));
+  if (timelineAllowOverscroll()) {
+    const double pad = timelineOverscrollPaddingPx(widget);
+    return std::clamp(offset, -pad, maxOffset + pad);
+  }
+  return std::clamp(offset, 0.0, maxOffset);
 }
 
 int trackTopAt(const QVector<int> &heights, const int trackIndex) {
@@ -195,6 +222,8 @@ bool sameKeyframeMarkerVisual(
          lhs.laneIndex == rhs.laneIndex && lhs.laneCount == rhs.laneCount &&
          lhs.selectedLayer == rhs.selectedLayer &&
          lhs.selected == rhs.selected && lhs.eased == rhs.eased &&
+         lhs.bezier == rhs.bezier &&
+         lhs.roving == rhs.roving &&
          lhs.color == rhs.color && lhs.label == rhs.label;
 }
 
@@ -344,6 +373,138 @@ int applyInterpolationToSelectedKeyframesImpl(
   const int appliedCount = static_cast<int>(records.size());
   if (auto *mgr = UndoManager::instance()) {
     mgr->push(std::make_unique<ApplyInterpolationCommand>(std::move(records)));
+    return appliedCount;
+  }
+  return 0;
+}
+
+struct RovingChangeRecord {
+  ArtifactAbstractLayerWeak layer;
+  QString propertyPath;
+  RationalTime time;
+  ArtifactCore::KeyFrame before;
+  ArtifactCore::KeyFrame after;
+};
+
+class ApplyRovingCommand final : public UndoCommand {
+public:
+  explicit ApplyRovingCommand(QVector<RovingChangeRecord> records)
+      : records_(std::move(records)) {}
+
+  void undo() override { apply(false); }
+  void redo() override { apply(true); }
+  QString label() const override { return QStringLiteral("Apply Roving"); }
+
+private:
+  void apply(const bool useAfter) {
+    QSet<QString> changedLayerIds;
+    for (const auto &record : records_) {
+      auto layer = record.layer.lock();
+      if (!layer) {
+        continue;
+      }
+      const auto property = findLayerPropertyByPath(layer, record.propertyPath);
+      if (!property) {
+        continue;
+      }
+      const auto &keyframe = useAfter ? record.after : record.before;
+      property->addKeyFrame(keyframe.time,
+                            keyframe.value.isValid() ? keyframe.value : property->getValue(),
+                            keyframe.interpolation,
+                            keyframe.cp1_x,
+                            keyframe.cp1_y,
+                            keyframe.cp2_x,
+                            keyframe.cp2_y,
+                            keyframe.roving);
+      layer->changed();
+      changedLayerIds.insert(layer->id().toString());
+    }
+
+    for (const auto &record : records_) {
+      auto layer = record.layer.lock();
+      if (!layer) {
+        continue;
+      }
+      const QString layerKey = layer->id().toString();
+      if (!changedLayerIds.contains(layerKey)) {
+        continue;
+      }
+      if (auto *comp = static_cast<ArtifactAbstractComposition *>(layer->composition())) {
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+      }
+    }
+
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QVector<RovingChangeRecord> records_;
+};
+
+int applyRovingToSelectedKeyframesImpl(
+    const ArtifactCompositionPtr &composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
+    const bool roving) {
+  if (!composition || markers.isEmpty()) {
+    return 0;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  QSet<QString> seen;
+  QVector<RovingChangeRecord> records;
+
+  for (const auto &marker : markers) {
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    const QString dedupeKey =
+        QStringLiteral("%1|%2|%3").arg(marker.layerId.toString(), marker.propertyPath,
+                                        QString::number(frame));
+    if (seen.contains(dedupeKey)) {
+      continue;
+    }
+    seen.insert(dedupeKey);
+
+    const auto layer = composition->layerById(marker.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property || !property->isAnimatable()) {
+      continue;
+    }
+
+    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const auto keyframes = property->getKeyFrames();
+    const auto it = std::find_if(keyframes.cbegin(), keyframes.cend(),
+                                 [&time](const ArtifactCore::KeyFrame &keyframe) {
+                                   return keyframe.time == time;
+                                 });
+    if (it == keyframes.cend()) {
+      continue;
+    }
+
+    const ArtifactCore::KeyFrame before = *it;
+    ArtifactCore::KeyFrame after = before;
+    after.roving = roving;
+    records.push_back(RovingChangeRecord{
+        layer,
+        marker.propertyPath,
+        time,
+        before,
+        after,
+    });
+  }
+
+  if (records.isEmpty()) {
+    return 0;
+  }
+
+  const int appliedCount = static_cast<int>(records.size());
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<ApplyRovingCommand>(std::move(records)));
     return appliedCount;
   }
   return 0;
@@ -713,6 +874,7 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
           keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)));
       const bool eased = keyframe.interpolation != InterpolationType::Linear &&
                          keyframe.interpolation != InterpolationType::Constant;
+      const bool bezier = keyframe.interpolation == InterpolationType::Bezier;
       QColor color = selectedLayer ? QColor(255, 255, 255)
                                    : (eased ? QColor(82, 208, 255)
                                             : QColor(247, 204, 83));
@@ -729,6 +891,8 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
       marker.color = color;
       marker.selectedLayer = selectedLayer;
       marker.eased = eased;
+      marker.bezier = bezier;
+      marker.roving = keyframe.roving;
       marker.laneCount = 1;
       marker.laneIndex = 0;
       markers.push_back(std::move(marker));
@@ -877,7 +1041,7 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
               RationalTime(newFrame, frameScale),
               keyframe.value.isValid() ? keyframe.value : property->getValue(),
               keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
-              keyframe.cp2_x, keyframe.cp2_y);
+              keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
         }
       }
     }
@@ -1046,10 +1210,12 @@ double ArtifactTimelineTrackPainterView::pixelsPerFrame() const {
 }
 
 void ArtifactTimelineTrackPainterView::setHorizontalOffset(const double value) {
-  if (std::abs(impl_->horizontalOffset_ - value) < 0.0001) {
+  const double clamped = clampTimelineHorizontalOffset(
+      this, impl_->durationFrames_, impl_->pixelsPerFrame_, value);
+  if (std::abs(impl_->horizontalOffset_ - clamped) < 0.0001) {
     return;
   }
-  impl_->horizontalOffset_ = value;
+  impl_->horizontalOffset_ = clamped;
   update();
 }
 
@@ -1523,7 +1689,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                  QPointF(clipRect.right() - 4.0, gripY2));
     }
 
-    if (clip.kind == ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio &&
+    if (!clip.waveformPeaks.isEmpty() &&
         clipRect.width() > 20.0 && clipRect.height() > 10.0) {
       const QColor waveformColor = isSelected ? theme.background.darker(140)
                                               : theme.text.lighter(110);
@@ -1697,6 +1863,22 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                            : (marker.eased ? marker.color.lighter(102)
                                            : marker.color));
       p.drawPolygon(diamond);
+    }
+    if (marker.bezier) {
+      QColor bezierColor = marker.selectedLayer ? theme.accent.lighter(135)
+                                                : marker.color.lighter(135);
+      bezierColor.setAlpha(marker.selected ? 190 : 130);
+      p.setPen(QPen(bezierColor, marker.selected ? 1.7 : 1.3));
+      p.setBrush(Qt::NoBrush);
+      p.drawRoundedRect(diamondRect.adjusted(-2.0, -2.0, 2.0, 2.0), 2, 2);
+    }
+    if (marker.roving) {
+      QColor rovingColor = marker.selectedLayer ? theme.accent.lighter(140)
+                                                : theme.text.lighter(145);
+      rovingColor.setAlpha(marker.selected ? 180 : 120);
+      p.setPen(QPen(rovingColor, marker.selected ? 1.6 : 1.2, Qt::DashLine));
+      p.setBrush(Qt::NoBrush);
+      p.drawEllipse(center, size + 5.0, size + 5.0);
     }
     if (nearestToCurrent && !atCurrentFrame && !marker.selected) {
       QColor guideColor = marker.selectedLayer ? theme.accent.lighter(135)
@@ -2177,8 +2359,8 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     const QPoint delta = current - impl_->lastPanPoint_;
     impl_->lastPanPoint_ = current;
     if (delta.x() != 0) {
-      setHorizontalOffset(std::max(0.0, impl_->horizontalOffset_ -
-                                            static_cast<double>(delta.x())));
+      setHorizontalOffset(impl_->horizontalOffset_ -
+                          static_cast<double>(delta.x()));
     }
     if (delta.y() != 0) {
       setVerticalOffset(std::max(0.0, impl_->verticalOffset_ -
@@ -2498,6 +2680,22 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     interpHoldAct = interpolationMenu->addAction(QStringLiteral("Hold"));
     interpBezierAct = interpolationMenu->addAction(QStringLiteral("Bezier"));
   }
+  QAction *rovingOnAct = nullptr;
+  QAction *rovingOffAct = nullptr;
+  QMenu *rovingMenu = nullptr;
+  if (!interpolationTargets.isEmpty()) {
+    rovingMenu = menu.addMenu(QStringLiteral("Roving"));
+    const bool anyRoving = std::any_of(interpolationTargets.cbegin(), interpolationTargets.cend(),
+                                       [](const auto &marker) { return marker.roving; });
+    const bool allRoving = std::all_of(interpolationTargets.cbegin(), interpolationTargets.cend(),
+                                       [](const auto &marker) { return marker.roving; });
+    rovingOnAct = rovingMenu->addAction(QStringLiteral("Mark as Roving"));
+    rovingOffAct = rovingMenu->addAction(QStringLiteral("Clear Roving"));
+    rovingOnAct->setCheckable(true);
+    rovingOffAct->setCheckable(true);
+    rovingOnAct->setChecked(allRoving);
+    rovingOffAct->setChecked(!anyRoving);
+  }
   QAction *addMarkerFrameAct = nullptr;
   QAction *removeMarkerFrameAct = nullptr;
   if (markerUnderCursor && canEditFocusedProperty) {
@@ -2586,6 +2784,29 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       Q_EMIT timelineDebugMessage(
           QStringLiteral("Applied %1 interpolation to %2 keyframe(s)")
               .arg(typeLabel)
+              .arg(applied));
+      update();
+    }
+    event->accept();
+    return;
+  }
+
+  if (rovingMenu && (chosen == rovingOnAct || chosen == rovingOffAct)) {
+    ArtifactCompositionPtr currentComposition = composition;
+    if (!currentComposition) {
+      if (auto *svc = ArtifactProjectService::instance()) {
+        currentComposition = svc->currentComposition().lock();
+      }
+    }
+    const bool roving = chosen == rovingOnAct;
+    int applied = 0;
+    if (currentComposition) {
+      applied = applyRovingToSelectedKeyframesImpl(currentComposition, interpolationTargets, roving);
+    }
+    if (applied > 0) {
+      Q_EMIT timelineDebugMessage(
+          QStringLiteral("%1 roving on %2 keyframe(s)")
+              .arg(roving ? QStringLiteral("Enabled") : QStringLiteral("Disabled"))
               .arg(applied));
       update();
     }
@@ -2728,7 +2949,7 @@ void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent *event) {
     const double anchorFrame = (mouseX + impl_->horizontalOffset_) / oldPpf;
     const double scale = std::pow(1.12, steps);
     const double newPpf = std::clamp(oldPpf * scale, 0.05, 64.0);
-    const double newOffset = std::max(0.0, anchorFrame * newPpf - mouseX);
+    const double newOffset = anchorFrame * newPpf - mouseX;
 
     setPixelsPerFrame(newPpf);
     setHorizontalOffset(newOffset);
@@ -2739,7 +2960,7 @@ void ArtifactTimelineTrackPainterView::wheelEvent(QWheelEvent *event) {
 
   const double delta = static_cast<double>(angle.y()) / 120.0 * 40.0;
   if (event->modifiers() & Qt::ShiftModifier) {
-    setHorizontalOffset(std::max(0.0, impl_->horizontalOffset_ - delta));
+    setHorizontalOffset(impl_->horizontalOffset_ - delta);
   } else {
     setVerticalOffset(std::max(0.0, impl_->verticalOffset_ - delta));
   }

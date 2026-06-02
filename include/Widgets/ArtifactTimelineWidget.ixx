@@ -66,6 +66,8 @@ class ArtifactTimelineWidget :public QWidget {
   void selectAllKeyframes();
   void copySelectedKeyframes();
   void pasteKeyframesAtPlayhead();
+  void showValueGraph();
+  void showSpeedGraph();
   void jumpToSearchHit(int step);
   void jumpToKeyframeHit(int step);
   void jumpToFirstKeyframe();

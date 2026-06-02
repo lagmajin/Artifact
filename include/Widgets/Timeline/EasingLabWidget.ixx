@@ -38,7 +38,8 @@ class EasingLabDialog : public QDialog {
     W_OBJECT(EasingLabDialog)
 public:
     explicit EasingLabDialog(QWidget* parent = nullptr,
-                             std::function<void(ArtifactCore::InterpolationType)> applyCallback = {});
+                             std::function<void(ArtifactCore::InterpolationType)> applyCallback = {},
+                             ArtifactCore::InterpolationType initialInterpolation = ArtifactCore::InterpolationType::EaseInOut);
     ~EasingLabDialog() override;
 
     void setCandidates(const QVector<ArtifactCore::EasingCandidate>& candidates);

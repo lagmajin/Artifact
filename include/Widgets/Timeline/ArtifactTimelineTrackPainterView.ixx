@@ -41,6 +41,8 @@ export namespace Artifact
    bool selectedLayer = false;
    bool selected = false;
    bool eased = false;
+   bool bezier = false;
+   bool roving = false;
    QColor color = QColor(247, 204, 83);
    QString label;
   };

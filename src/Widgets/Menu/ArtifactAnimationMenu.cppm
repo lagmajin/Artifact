@@ -3,15 +3,18 @@ module;
 #include <QIcon>
 #include <QMenu>
 #include <QAction>
+#include <QActionGroup>
 #include <QKeySequence>
 #include <QCursor>
 #include <QPoint>
+#include <QSignalBlocker>
 #include <wobjectimpl.h>
 
 module Menu.Animation;
 import std;
 
 import Event.Bus;
+import Application.AppSettings;
 import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Artifact.Widgets.ArtifactPropertyWidget;
@@ -193,7 +196,10 @@ bool hasActiveExpressionTarget(QWidget* root)
   QAction* easeInOutAction = nullptr;
 
   QAction* showGraphEditorAction = nullptr;
+  QAction* toggleValueGraphAction = nullptr;
+  QAction* toggleVelocityGraphAction = nullptr;
   QAction* easingLabAction = nullptr;
+  QActionGroup* graphModeGroup = nullptr;
 
   QAction* goToNextKeyframeAction = nullptr;
   QAction* goToPreviousKeyframeAction = nullptr;
@@ -374,6 +380,19 @@ bool hasActiveExpressionTarget(QWidget* root)
   impl_->showGraphEditorAction = impl_->graphEditorMenu->addAction("カーブエディタを表示");
   impl_->showGraphEditorAction->setIcon(menuIcon(QStringLiteral("Studio/query_stats.svg")));
   impl_->showGraphEditorAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3));
+  impl_->graphEditorMenu->addSeparator();
+  impl_->graphModeGroup = new QActionGroup(impl_->menu_);
+  impl_->graphModeGroup->setExclusive(true);
+  impl_->toggleValueGraphAction = impl_->graphEditorMenu->addAction("値グラフを表示");
+  impl_->toggleValueGraphAction->setIcon(menuIcon(QStringLiteral("Studio/show_chart.svg")));
+  impl_->toggleValueGraphAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_G));
+  impl_->toggleValueGraphAction->setCheckable(true);
+  impl_->graphModeGroup->addAction(impl_->toggleValueGraphAction);
+  impl_->toggleVelocityGraphAction = impl_->graphEditorMenu->addAction("速度グラフを表示");
+  impl_->toggleVelocityGraphAction->setIcon(menuIcon(QStringLiteral("Studio/speed.svg")));
+  impl_->toggleVelocityGraphAction->setShortcut(QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_G));
+  impl_->toggleVelocityGraphAction->setCheckable(true);
+  impl_->graphModeGroup->addAction(impl_->toggleVelocityGraphAction);
   impl_->easingLabAction = impl_->graphEditorMenu->addAction("EasingLab を開く");
   impl_->easingLabAction->setIcon(menuIcon(QStringLiteral("Studio/tune.svg")));
 
@@ -453,6 +472,8 @@ bool hasActiveExpressionTarget(QWidget* root)
    if (action == impl_->holdInterpolationAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::Constant); return; }
    if (action == impl_->bezierInterpolationAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::Bezier); return; }
    if (action == impl_->showGraphEditorAction) { Q_EMIT showGraphEditorRequested(); return; }
+   if (action == impl_->toggleValueGraphAction) { Q_EMIT toggleValueGraphRequested(); return; }
+   if (action == impl_->toggleVelocityGraphAction) { Q_EMIT toggleVelocityGraphRequested(); return; }
    if (action == impl_->easingLabAction) {
     EasingLabDialog dialog(
         this,
@@ -480,6 +501,30 @@ bool hasActiveExpressionTarget(QWidget* root)
   };
 
   QObject::connect(this, &QMenu::triggered, this, dispatchAction);
+
+  if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged, impl_->menu_, [this]() {
+      if (!impl_ || !impl_->toggleValueGraphAction || !impl_->toggleVelocityGraphAction) {
+        return;
+      }
+      if (auto* appSettings = ArtifactCore::ArtifactAppSettings::instance()) {
+        const bool speedMode =
+            appSettings->timelineGraphEditorModeText().compare(
+                QStringLiteral("Speed"), Qt::CaseInsensitive) == 0;
+        const QSignalBlocker blockValue(impl_->toggleValueGraphAction);
+        const QSignalBlocker blockSpeed(impl_->toggleVelocityGraphAction);
+        impl_->toggleValueGraphAction->setChecked(!speedMode);
+        impl_->toggleVelocityGraphAction->setChecked(speedMode);
+      }
+    });
+    const bool speedMode =
+        settings->timelineGraphEditorModeText().compare(
+            QStringLiteral("Speed"), Qt::CaseInsensitive) == 0;
+    const QSignalBlocker blockValue(impl_->toggleValueGraphAction);
+    const QSignalBlocker blockSpeed(impl_->toggleVelocityGraphAction);
+    impl_->toggleValueGraphAction->setChecked(!speedMode);
+    impl_->toggleVelocityGraphAction->setChecked(speedMode);
+  }
 
   impl_->refreshEnabledState();
  }

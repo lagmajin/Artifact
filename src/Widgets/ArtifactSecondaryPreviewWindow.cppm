@@ -38,9 +38,10 @@ namespace Artifact {
 
 class ArtifactSecondaryPreviewWindow::Impl {
 public:
-    Impl() = default;
+    explicit Impl(ArtifactSecondaryPreviewWindow* owner) : owner_(owner) {}
     ~Impl() = default;
 
+    ArtifactSecondaryPreviewWindow* owner_ = nullptr;
     QImage currentImage_;
     QString compName_;
     int64_t currentFrame_ = 0;
@@ -94,9 +95,13 @@ public:
 
         ArtifactCore::ImageF32x4_RGBA previewImage;
         if (playback->tryGetRamPreviewFrameImage(currentFrame, previewImage)) {
-            updatePreviewImage(previewImage.toQImage());
+            if (owner_) {
+                owner_->updatePreviewImage(previewImage.toQImage());
+            }
         } else {
-            updatePreviewImage(QImage());
+            if (owner_) {
+                owner_->updatePreviewImage(QImage());
+            }
             if (!state.playable) {
                 setStatusMessage(QStringLiteral("RAM preview: frame %1 / %2 | %3")
                                      .arg(currentFrame)
@@ -147,7 +152,7 @@ public:
 
 ArtifactSecondaryPreviewWindow::ArtifactSecondaryPreviewWindow(QWidget* parent)
     : QWidget(parent, Qt::Window)
-    , impl_(new Impl())
+    , impl_(new Impl(this))
 {
     setWindowTitle("Secondary Preview");
     setMinimumSize(320, 240);
@@ -388,7 +393,9 @@ void ArtifactSecondaryPreviewWindow::resizeEvent(QResizeEvent* event) {
     if (!impl_ || impl_->currentImage_.isNull()) {
         return;
     }
-    updatePreviewImage(impl_->currentImage_);
+    if (impl_->owner_) {
+        impl_->owner_->updatePreviewImage(impl_->currentImage_);
+    }
 }
 
 void ArtifactSecondaryPreviewWindow::paintEvent(QPaintEvent* event) {

@@ -184,6 +184,11 @@ public:
   ~ArtifactProjectManagerWidget();
   ArtifactProjectView* projectView() const;
   bool selectItemsByFilePaths(const QStringList& filePaths);
+  void generateProxyForSelection();
+  void revealProxyForSelection();
+  void generateProxyForFilePath(const QString& sourceFilePath);
+  void revealProxyForFilePath(const QString& sourceFilePath);
+  bool clearProxyForFilePath(const QString& sourceFilePath);
   void setFilter();
   void triggerUpdate();
   void setThumbnailEnabled(bool b = true);

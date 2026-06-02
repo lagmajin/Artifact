@@ -182,6 +182,32 @@ RationalTime effectiveTextTimelineTime(const ArtifactTextLayer *layer) {
                       effectiveTextTimelineFps(layer));
 }
 
+QString resolvedSourceTextAtTime(const ArtifactTextLayer *layer) {
+  if (!layer) {
+    return QString();
+  }
+  if (const auto property = layer->getProperty(QStringLiteral("text.value"));
+      property && !property->getKeyFrames().empty()) {
+    const QVariant value =
+        property->interpolateValue(effectiveTextTimelineTime(layer));
+    if (value.isValid()) {
+      return value.toString();
+    }
+  }
+  return layer->text().toQString();
+}
+
+bool sourceTextIsAnimated(const ArtifactTextLayer *layer) {
+  if (!layer) {
+    return false;
+  }
+  if (const auto property = layer->getProperty(QStringLiteral("text.value"));
+      property) {
+    return !property->getKeyFrames().empty();
+  }
+  return false;
+}
+
 bool isAnimatorPropertyAnimatable(const QString &suffix) {
   return suffix == QStringLiteral("start") ||
          suffix == QStringLiteral("end") ||
@@ -1210,7 +1236,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
                   [](const TextAnimatorState &animator) {
                     return animator.enabled;
                   });
-  QString displayText = impl_->text_.toQString();
+  QString displayText = resolvedSourceTextAtTime(this);
   const bool isRichText = Qt::mightBeRichText(displayText);
   const bool containsCjk = FontManager::containsCjkCharacters(displayText);
   if (impl_->textStyle_.allCaps && !isRichText) {
@@ -1308,7 +1334,8 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
     return;
   }
 
-  if (impl_->isDirty_ || impl_->renderedImage_.isNull()) {
+  if (impl_->isDirty_ || impl_->renderedImage_.isNull() ||
+      sourceTextIsAnimated(this)) {
     updateImage();
   }
   const auto size = sourceSize();
@@ -1341,6 +1368,12 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   textGroup.addProperty(makeProp(QStringLiteral("text.value"),
                                  ArtifactCore::PropertyType::String,
                                  text().toQString(), -120));
+  if (const auto textProp = getProperty(QStringLiteral("text.value"))) {
+    textProp->setDisplayLabel(QStringLiteral("Source Text"));
+    textProp->setTooltip(
+        QStringLiteral("Animate this text string over time."));
+    textProp->setAnimatable(true);
+  }
   textGroup.addProperty(makeProp(QStringLiteral("text.fontFamily"),
                                  ArtifactCore::PropertyType::String,
                                  fontFamily().toQString(), -110));
@@ -1745,6 +1778,9 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
   if (propertyPath == QStringLiteral("text.value")) {
     setText(UniString(value.toString()));
     setDirty(LayerDirtyFlag::Property);
+    addDirtyReason(LayerDirtyReason::PropertyChanged);
+    markDirty();
+    Q_EMIT changed();
     return true;
   }
   if (propertyPath == QStringLiteral("text.fontFamily")) {
@@ -2009,15 +2045,16 @@ void ArtifactTextLayer::updateImage() {
                     return animator.enabled;
                   });
   const bool boxLayout = isBoxText();
-  Impl::CacheKey currentKey{impl_->text_, impl_->textStyle_,
+  QString displayText = resolvedSourceTextAtTime(this);
+  const bool sourceTextAnimated = sourceTextIsAnimated(this);
+  Impl::CacheKey currentKey{UniString(displayText), impl_->textStyle_,
                             impl_->paragraphStyle_};
-  if (!hasAnimators && !impl_->isDirty_ && impl_->lastCacheKey_ &&
+  if (!hasAnimators && !sourceTextAnimated && !impl_->isDirty_ && impl_->lastCacheKey_ &&
       *impl_->lastCacheKey_ == currentKey && !impl_->renderedImage_.isNull()) {
     return;
   }
   impl_->lastCacheKey_ = currentKey;
 
-  QString displayText = impl_->text_.toQString();
   const bool isRichText = Qt::mightBeRichText(displayText);
   if (impl_->textStyle_.allCaps && !isRichText) {
     displayText = displayText.toUpper();

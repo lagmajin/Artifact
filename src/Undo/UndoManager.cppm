@@ -48,6 +48,7 @@ import Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 import Animation.Transform3D;
@@ -204,6 +205,16 @@ void applyMaskSnapshot(const ArtifactAbstractLayerPtr& layer, const std::vector<
     }
     layer->changed();
 }
+
+void applyMatteSnapshot(const ArtifactAbstractLayerPtr& layer,
+                        const std::vector<LayerMatteReference>& mattes) {
+    if (!layer) {
+        return;
+    }
+
+    layer->setMatteReferences(mattes);
+    layer->changed();
+}
 } // namespace
 
 // --- MaskEditCommand ---
@@ -228,6 +239,33 @@ void MaskEditCommand::redo() {
 
 QString MaskEditCommand::label() const {
     return QStringLiteral("Edit Mask");
+}
+
+// --- ChangeLayerMatteReferencesCommand ---
+ChangeLayerMatteReferencesCommand::ChangeLayerMatteReferencesCommand(
+    ArtifactAbstractLayerPtr layer,
+    std::vector<LayerMatteReference> beforeRefs,
+    std::vector<LayerMatteReference> afterRefs)
+    : layer_(layer),
+      beforeRefs_(std::move(beforeRefs)),
+      afterRefs_(std::move(afterRefs)) {}
+
+void ChangeLayerMatteReferencesCommand::undo() {
+    applyMatteSnapshot(layer_.lock(), beforeRefs_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void ChangeLayerMatteReferencesCommand::redo() {
+    applyMatteSnapshot(layer_.lock(), afterRefs_);
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString ChangeLayerMatteReferencesCommand::label() const {
+    return QStringLiteral("Edit Track Mattes");
 }
 
 

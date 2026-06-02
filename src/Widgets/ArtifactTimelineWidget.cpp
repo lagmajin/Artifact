@@ -64,9 +64,11 @@ import Clipboard.ClipboardManager;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Application.Manager;
+import Application.AppSettings;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Audio;
+import Artifact.Audio.Waveform;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Image;
 import Artifact.Layer.Light;
@@ -117,6 +119,34 @@ inline int wheelScrollDelta(const QWheelEvent *event, const bool horizontal) {
   const QPoint angleDelta = event->angleDelta();
   return horizontal ? angleDelta.x() : angleDelta.y();
 }
+
+bool timelineAllowOverscroll() {
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    return settings->timelineAllowOverscroll();
+  }
+  return false;
+}
+
+double timelineOverscrollPaddingPx(const QWidget *widget) {
+  const double widthHint = widget ? static_cast<double>(widget->width()) : 640.0;
+  return std::clamp(std::max(96.0, widthHint * 0.25), 96.0, 320.0);
+}
+
+double clampTimelineHorizontalOffset(const ArtifactTimelineTrackPainterView *trackView,
+                                     const double offset) {
+  if (!trackView) {
+    return std::max(0.0, offset);
+  }
+  const double maxOffset = std::max(
+      0.0, trackView->durationFrames() * std::max(0.001, trackView->pixelsPerFrame()) -
+               static_cast<double>(std::max(1, trackView->width())));
+  if (timelineAllowOverscroll()) {
+    const double pad = timelineOverscrollPaddingPx(trackView);
+    return std::clamp(offset, -pad, maxOffset + pad);
+  }
+  return std::clamp(offset, 0.0, maxOffset);
+}
+
 inline int
 layerInsertionIndexForTrackDrop(const QVector<LayerID> &trackLayerIds,
                                 const LayerID &draggedLayerId,
@@ -256,32 +286,82 @@ QString audioWaveformCacheKey(const CompositionID &compositionId,
   return QStringLiteral("%1|%2").arg(compositionId.toString(), layerId.toString());
 }
 
-QString audioWaveformSignatureForLayer(const ArtifactAudioLayer &layer) {
-  return QStringLiteral("%1|%2|%3|%4|%5|%6|%7")
-      .arg(layer.sourcePath().trimmed(),
-           QString::number(layer.inPoint().framePosition()),
-           QString::number(layer.outPoint().framePosition()),
-           QString::number(layer.startTime().framePosition()),
-           QString::number(layer.totalFrames()),
-           QString::number(layer.sampleRate()),
-           QString::number(layer.channelCount()));
+QString audioWaveformSignatureForLayer(const ArtifactAbstractLayer &layer,
+                                       const double fps) {
+  QString signature = QStringLiteral("%1|%2|%3|%4|%5|%6")
+                          .arg(layer.className().toQString(),
+                               QString::number(layer.inPoint().framePosition()),
+                               QString::number(layer.outPoint().framePosition()),
+                               QString::number(layer.startTime().framePosition()),
+                               QString::number(fps, 'f', 3),
+                               layer.hasAudio() ? QStringLiteral("1")
+                                                : QStringLiteral("0"));
+
+  if (const auto *audioLayer = dynamic_cast<const ArtifactAudioLayer *>(&layer)) {
+    signature += QStringLiteral("|audio:%1:%2:%3:%4")
+                     .arg(audioLayer->sourcePath().trimmed(),
+                          QString::number(audioLayer->totalFrames()),
+                          QString::number(audioLayer->sampleRate()),
+                          QString::number(audioLayer->channelCount()));
+  } else if (const auto *videoLayer = dynamic_cast<const ArtifactVideoLayer *>(&layer)) {
+    const auto &streamInfo = videoLayer->streamInfo();
+    signature += QStringLiteral("|video:%1:%2:%3:%4:%5")
+                     .arg(videoLayer->sourcePath().trimmed(),
+                          QString::number(streamInfo.duration, 'f', 3),
+                          QString::number(streamInfo.audioSampleRate),
+                          QString::number(streamInfo.audioChannels),
+                          videoLayer->isAudioMuted() ? QStringLiteral("muted")
+                                                     : QStringLiteral("audible"));
+  }
+
+  return signature;
 }
 
 std::optional<CachedAudioWaveform> buildAudioWaveformForLayer(
-    const ArtifactAudioLayer &layer,
+    const ArtifactAbstractLayer &layer,
+    const double fps,
     const int waveformBins = 128) {
-  if (!layer.isLoaded() || layer.sourcePath().trimmed().isEmpty() ||
-      layer.sampleRate() <= 0 || layer.duration() <= 0.0) {
+  if (!layer.hasAudio() || fps <= 0.0) {
     return std::nullopt;
   }
 
-  const auto waveform = layer.buildWaveformData(std::clamp(waveformBins, 64, 256));
+  const int bins = std::clamp(waveformBins, 64, 256);
+  CachedAudioWaveform cached;
+  cached.signature = audioWaveformSignatureForLayer(layer, fps);
+
+  if (const auto *audioLayer = dynamic_cast<const ArtifactAudioLayer *>(&layer)) {
+    if (!audioLayer->isLoaded() || audioLayer->sourcePath().trimmed().isEmpty() ||
+        audioLayer->sampleRate() <= 0 || audioLayer->duration() <= 0.0) {
+      return std::nullopt;
+    }
+
+    const auto waveform = audioLayer->buildWaveformData(bins);
+    if (waveform.peaks.isEmpty()) {
+      return std::nullopt;
+    }
+
+    cached.peaks = waveform.peaks;
+    cached.rms = waveform.rms;
+    return cached;
+  }
+
+  AudioSegment segment;
+  const int64_t clipFrames = std::max<int64_t>(
+      1, layer.outPoint().framePosition() - layer.inPoint().framePosition());
+  const int sampleRate = 48000;
+  const int frameCount = std::max<int>(
+      1, static_cast<int>(std::ceil((static_cast<double>(clipFrames) / fps) * sampleRate)));
+  if (!layer.getAudio(segment, layer.inPoint(), frameCount, sampleRate) ||
+      segment.frameCount() <= 0) {
+    return std::nullopt;
+  }
+
+  AudioWaveformGenerator generator;
+  const auto waveform = generator.generate(segment, bins);
   if (waveform.peaks.isEmpty()) {
     return std::nullopt;
   }
 
-  CachedAudioWaveform cached;
-  cached.signature = audioWaveformSignatureForLayer(layer);
   cached.peaks = waveform.peaks;
   cached.rms = waveform.rms;
   return cached;
@@ -364,7 +444,7 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
               RationalTime(newFrame, frameScale),
               keyframe.value.isValid() ? keyframe.value : property->getValue(),
               keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
-              keyframe.cp2_x, keyframe.cp2_y);
+              keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
         }
       }
     }
@@ -951,7 +1031,8 @@ private:
                             keyframe.cp1_x,
                             keyframe.cp1_y,
                             keyframe.cp2_x,
-                            keyframe.cp2_y);
+                            keyframe.cp2_y,
+                            keyframe.roving);
       layer->changed();
       changedLayerIds.insert(layer->id().toString());
     }
@@ -1026,6 +1107,13 @@ int applyInterpolationToSelectedKeyframesImpl(
     const ArtifactCore::KeyFrame before = *it;
     ArtifactCore::KeyFrame after = before;
     after.interpolation = interpolationType;
+    if (interpolationType == ArtifactCore::InterpolationType::Bezier &&
+        before.interpolation != ArtifactCore::InterpolationType::Bezier) {
+      after.cp1_x = 0.42f;
+      after.cp1_y = 0.0f;
+      after.cp2_x = 0.58f;
+      after.cp2_y = 1.0f;
+    }
     records.push_back(InterpolationChangeRecord{
         layer,
         marker.propertyPath,
@@ -1135,6 +1223,11 @@ struct CurveEditorPayload {
   std::vector<CurveEditorBinding> bindings;
 };
 
+enum class CurveEditorGraphMode {
+  Value,
+  Speed,
+};
+
 std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer, const QString& propertyPath)
 {
@@ -1154,6 +1247,54 @@ std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
     }
   }
   return {};
+}
+
+ArtifactCore::InterpolationType selectedKeyframeInterpolationType(
+    const ArtifactCompositionPtr& composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers)
+{
+  if (!composition || markers.isEmpty()) {
+    return ArtifactCore::InterpolationType::EaseInOut;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  QHash<int, int> interpolationCounts;
+  for (const auto& marker : markers) {
+    const auto layer = composition->layerById(marker.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property) {
+      continue;
+    }
+
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const auto keyframes = property->getKeyFrames();
+    const auto it = std::find_if(keyframes.cbegin(), keyframes.cend(),
+                                 [&time](const ArtifactCore::KeyFrame& keyframe) {
+                                   return keyframe.time == time;
+                                 });
+    if (it != keyframes.cend()) {
+      interpolationCounts[static_cast<int>(it->interpolation)] += 1;
+    }
+  }
+
+  if (!interpolationCounts.isEmpty()) {
+    int bestInterpolation = static_cast<int>(ArtifactCore::InterpolationType::EaseInOut);
+    int bestCount = -1;
+    for (auto it = interpolationCounts.cbegin(); it != interpolationCounts.cend(); ++it) {
+      if (it.value() > bestCount) {
+        bestCount = it.value();
+        bestInterpolation = it.key();
+      }
+    }
+    return static_cast<ArtifactCore::InterpolationType>(bestInterpolation);
+  }
+
+  return ArtifactCore::InterpolationType::EaseInOut;
 }
 
 QColor curveTrackColorForKey(const QString& key)
@@ -1278,6 +1419,153 @@ CurveEditorPayload collectCurveEditorPayload(
   return payload;
 }
 
+CurveEditorPayload collectCurveEditorSpeedPayload(
+    const ArtifactCompositionPtr& composition,
+    ArtifactLayerSelectionManager* selectionManager)
+{
+  CurveEditorPayload payload;
+  if (!composition || !selectionManager) {
+    return payload;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+
+  const auto layers = selectedTimelineLayers(selectionManager);
+  if (layers.isEmpty()) {
+    return payload;
+  }
+
+  for (const auto& layer : layers) {
+    if (!layer) {
+      continue;
+    }
+
+    const auto groups = layer->getLayerPropertyGroups();
+    for (const auto& group : groups) {
+      for (const auto& property : group.sortedProperties()) {
+        if (!property || !property->isAnimatable()) {
+          continue;
+        }
+
+        const auto keyframes = property->getKeyFrames();
+        if (keyframes.size() < 2) {
+          continue;
+        }
+
+        QVector<double> frames;
+        QVector<double> values;
+        QVector<ArtifactCore::InterpolationType> interpolations;
+        frames.reserve(static_cast<int>(keyframes.size()));
+        values.reserve(static_cast<int>(keyframes.size()));
+        interpolations.reserve(static_cast<int>(keyframes.size()));
+
+        bool supported = true;
+        for (const auto& keyframe : keyframes) {
+          const QVariant value = keyframe.value;
+          if (!value.canConvert<double>()) {
+            supported = false;
+            break;
+          }
+          frames.push_back(static_cast<double>(
+              keyframe.time.rescaledTo(static_cast<int64_t>(std::round(fps)))));
+          values.push_back(value.toDouble());
+          interpolations.push_back(keyframe.interpolation);
+        }
+
+        if (!supported || frames.isEmpty()) {
+          continue;
+        }
+
+        CurveTrack track;
+        track.name = QStringLiteral("%1 / %2 (speed)")
+                         .arg(layer->layerName())
+                         .arg(property->metadata().displayLabel.isEmpty()
+                                  ? property->getName()
+                                  : property->metadata().displayLabel);
+        track.color = curveTrackColorForKey(layer->id().toString() + QLatin1Char('/') +
+                                            property->getName() + QStringLiteral("/speed"));
+        track.visible = true;
+
+        for (int i = 0; i < frames.size(); ++i) {
+          const double frame = frames[i];
+          const double value = values[i];
+          const auto interpolation = interpolations[i];
+
+          double speedSum = 0.0;
+          int speedSamples = 0;
+
+          if (interpolation != ArtifactCore::InterpolationType::Constant && i > 0) {
+            const double prevFrame = frames[i - 1];
+            const double prevValue = values[i - 1];
+            const double deltaFrame = std::max(1.0, frame - prevFrame);
+            speedSum += std::abs((value - prevValue) / deltaFrame) * fps;
+            ++speedSamples;
+          }
+          if (interpolation != ArtifactCore::InterpolationType::Constant &&
+              i + 1 < frames.size()) {
+            const double nextFrame = frames[i + 1];
+            const double nextValue = values[i + 1];
+            const double deltaFrame = std::max(1.0, nextFrame - frame);
+            speedSum += std::abs((nextValue - value) / deltaFrame) * fps;
+            ++speedSamples;
+          }
+
+          CurveKey curveKey;
+          curveKey.frame = static_cast<int64_t>(std::llround(frame));
+          curveKey.value =
+              static_cast<float>(speedSamples > 0 ? speedSum / speedSamples : 0.0);
+          curveKey.inHandleFrame = 0;
+          curveKey.outHandleFrame = 0;
+          curveKey.inHandleValue = 0.0f;
+          curveKey.outHandleValue = 0.0f;
+          track.keys.push_back(curveKey);
+        }
+
+        for (int i = 0; i < track.keys.size(); ++i) {
+          auto& key = track.keys[i];
+          if (key.value != key.value) {
+            continue;
+          }
+          const double currentFrame = static_cast<double>(key.frame);
+          const double prevFrame = (i > 0) ? static_cast<double>(track.keys[i - 1].frame)
+                                           : currentFrame;
+          const double nextFrame = (i + 1 < track.keys.size())
+                                       ? static_cast<double>(track.keys[i + 1].frame)
+                                       : currentFrame;
+          const double prevValue = (i > 0) ? static_cast<double>(track.keys[i - 1].value)
+                                           : static_cast<double>(key.value);
+          const double nextValue = (i + 1 < track.keys.size())
+                                       ? static_cast<double>(track.keys[i + 1].value)
+                                       : static_cast<double>(key.value);
+
+          const double inSpan = std::max(1.0, (currentFrame - prevFrame) / 3.0);
+          const double outSpan = std::max(1.0, (nextFrame - currentFrame) / 3.0);
+          const double inSlope =
+              (currentFrame > prevFrame) ? ((static_cast<double>(key.value) - prevValue) /
+                                            (currentFrame - prevFrame))
+                                         : 0.0;
+          const double outSlope =
+              (nextFrame > currentFrame) ? ((nextValue - static_cast<double>(key.value)) /
+                                            (nextFrame - currentFrame))
+                                         : 0.0;
+
+          key.inHandleFrame = -static_cast<int64_t>(std::llround(inSpan));
+          key.outHandleFrame = static_cast<int64_t>(std::llround(outSpan));
+          key.inHandleValue = static_cast<float>(-inSlope * inSpan);
+          key.outHandleValue = static_cast<float>(outSlope * outSpan);
+          key.smooth = true;
+        }
+
+        payload.bindings.push_back(CurveTrackBinding{layer->id(), property->getName()});
+        payload.tracks.push_back(std::move(track));
+      }
+    }
+  }
+
+  return payload;
+}
+
 bool applyCurveEditorMove(
     const ArtifactCompositionPtr& composition,
     const CurveTrackBinding& binding,
@@ -1311,7 +1599,8 @@ bool applyCurveEditorMove(
     property->removeKeyFrame(oldTime);
   }
   property->addKeyFrame(newTime, QVariant(newValue),
-                        oldKey.smooth ? ArtifactCore::InterpolationType::Bezier : ArtifactCore::InterpolationType::Linear);
+                        oldKey.smooth ? ArtifactCore::InterpolationType::Bezier : ArtifactCore::InterpolationType::Linear,
+                        0.42f, 0.0f, 0.58f, 1.0f, oldKey.roving);
   return true;
 }
 
@@ -1618,8 +1907,7 @@ protected:
           delta = wheelScrollDelta(wheelEvent, false);
         }
         if (delta != 0) {
-          const double offset =
-              std::max(0.0, trackView_->horizontalOffset() - delta);
+          const double offset = trackView_->horizontalOffset() - delta;
           if (horizontalOffsetSync_) {
             horizontalOffsetSync_(offset);
           } else {
@@ -1662,8 +1950,7 @@ protected:
       const QPoint currentGlobalPos = mouseEvent->globalPosition().toPoint();
       const QPoint delta = currentGlobalPos - lastGlobalPos_;
       lastGlobalPos_ = currentGlobalPos;
-      const double offset =
-          std::max(0.0, trackView_->horizontalOffset() - delta.x());
+      const double offset = trackView_->horizontalOffset() - delta.x();
       if (horizontalOffsetSync_) {
         horizontalOffsetSync_(offset);
       } else {
@@ -1991,6 +2278,7 @@ public:
   int focusedCurveTrackIndex_ = -1;
   bool curveFocusPinned_ = false;
   QLabel *curveEditorSummaryLabel_ = nullptr;
+  QToolButton *curveEditorModeButton_ = nullptr;
   QToolButton *curveEditorFitButton_ = nullptr;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   WorkAreaControl *workArea_ = nullptr;
@@ -2007,6 +2295,7 @@ public:
   std::vector<CurveTrack> curveTracks_;
   QVector<CurveTrackBinding> curveBindings_;
   QString curveEditorSignature_;
+  CurveEditorGraphMode curveEditorGraphMode_ = CurveEditorGraphMode::Value;
   bool syncingLayerSelection_ = false;
   bool syncingVerticalOffset_ = false;
   double currentFrame_ = 0.0;
@@ -2040,6 +2329,26 @@ public:
   int lastPlayheadTrackX_ = -9999;
   QHash<QString, CachedAudioWaveform> audioWaveformCache_;
 };
+
+CurveEditorGraphMode curveEditorGraphModeFromSettings()
+{
+  if (const auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    return settings->timelineGraphEditorModeText().compare(
+               QStringLiteral("Speed"), Qt::CaseInsensitive) == 0
+               ? CurveEditorGraphMode::Speed
+               : CurveEditorGraphMode::Value;
+  }
+  return CurveEditorGraphMode::Value;
+}
+
+void persistCurveEditorGraphMode(CurveEditorGraphMode mode)
+{
+  if (auto* settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    settings->setTimelineGraphEditorModeText(
+        mode == CurveEditorGraphMode::Speed ? QStringLiteral("Speed")
+                                            : QStringLiteral("Value"));
+  }
+}
 
 ArtifactTimelineWidget::Impl::Impl() {}
 
@@ -2107,13 +2416,21 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     selectionManager = app->layerSelectionManager();
   }
 
-  const auto payload = buildCurveEditorSnapshot(composition, selectionManager);
-  const bool signatureChanged = payload.signature != impl_->curveEditorSignature_;
+  const auto payload = (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed)
+                           ? collectCurveEditorSpeedPayload(composition, selectionManager)
+                           : collectCurveEditorPayload(composition, selectionManager);
+  const QString modeTag = (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed)
+                              ? QStringLiteral("speed")
+                              : QStringLiteral("value");
+  const QString combinedSignature =
+      payload.signature + QLatin1Char('|') + modeTag;
+  const bool signatureChanged = combinedSignature != impl_->curveEditorSignature_;
   if (signatureChanged) {
-    impl_->curveEditorSignature_ = payload.signature;
+    impl_->curveEditorSignature_ = combinedSignature;
     impl_->curveTracks_ = payload.tracks;
     impl_->curveBindings_ = payload.bindings;
     qDebug() << "[CurveEditor] refresh"
+             << "mode=" << modeTag
              << "tracks=" << payload.tracks.size()
              << "bindings=" << payload.bindings.size()
              << "summary=" << payload.summary;
@@ -2139,6 +2456,11 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     QString summary =
         signatureChanged ? payload.summary
                          : curveEditorSummaryForTracks(impl_->curveTracks_);
+    summary = QStringLiteral("%1 | %2")
+                  .arg(impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
+                           ? QStringLiteral("Speed Graph")
+                           : QStringLiteral("Value Graph"),
+                       summary);
     if (impl_->graphEditorVisible_ &&
         selectionFocusTrack >= 0 &&
         selectionFocusTrack < impl_->curveTracks_.size()) {
@@ -2147,6 +2469,18 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
                     .arg(impl_->curveTracks_[selectionFocusTrack].name);
     }
     impl_->curveEditorSummaryLabel_->setText(summary);
+  }
+
+  if (impl_->curveEditorModeButton_) {
+    const QSignalBlocker blocker(impl_->curveEditorModeButton_);
+    impl_->curveEditorModeButton_->setText(
+        impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
+            ? QStringLiteral("Speed")
+            : QStringLiteral("Value"));
+    impl_->curveEditorModeButton_->setToolTip(
+        impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
+            ? QStringLiteral("Speed graph mode (click to switch to Value)")
+            : QStringLiteral("Value graph mode (click to switch to Speed)"));
   }
 
   impl_->curveEditor_->setCurrentFrame(
@@ -2159,6 +2493,30 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     impl_->graphEditorNeedsFit_ = false;
   }
   updateCurvePropertyList();
+}
+
+void ArtifactTimelineWidget::showValueGraph()
+{
+  if (!impl_) {
+    return;
+  }
+  impl_->curveEditorGraphMode_ = CurveEditorGraphMode::Value;
+  persistCurveEditorGraphMode(impl_->curveEditorGraphMode_);
+  impl_->graphEditorNeedsFit_ = true;
+  toggleGraphEditorMode(true, Qt::ShortcutFocusReason);
+  refreshCurveEditorTracks();
+}
+
+void ArtifactTimelineWidget::showSpeedGraph()
+{
+  if (!impl_) {
+    return;
+  }
+  impl_->curveEditorGraphMode_ = CurveEditorGraphMode::Speed;
+  persistCurveEditorGraphMode(impl_->curveEditorGraphMode_);
+  impl_->graphEditorNeedsFit_ = true;
+  toggleGraphEditorMode(true, Qt::ShortcutFocusReason);
+  refreshCurveEditorTracks();
 }
 
 bool ArtifactTimelineWidget::isGraphEditorFocusWidget(const QWidget *widget) const
@@ -2394,6 +2752,18 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       return;
     }
     toggleGraphEditorMode(!impl_->graphEditorVisible_, Qt::ShortcutFocusReason);
+  });
+  auto *toggleGraphModeShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_G), this);
+  QObject::connect(toggleGraphModeShortcut, &QShortcut::activated, this, [this]() {
+    if (!impl_) {
+      return;
+    }
+    if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed) {
+      showValueGraph();
+    } else {
+      showSpeedGraph();
+    }
   });
   auto *tabCurveEditorShortcut = new QShortcut(QKeySequence(Qt::Key_Tab), this);
   tabCurveEditorShortcut->setContext(Qt::WidgetWithChildrenShortcut);
@@ -2796,12 +3166,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     
     auto comp = safeCompositionLookup(impl_->compositionId_);
     if (!comp) return;
+    const auto initialInterpolation =
+        selectedKeyframeInterpolationType(comp, markers);
 
     auto *dialog = new EasingLabDialog(this, [this, markers, comp](ArtifactCore::InterpolationType type) {
        applyInterpolationToSelectedKeyframesImpl(comp, markers, type);
        refreshTracks();
        updateKeyframeState();
-    });
+    }, initialInterpolation);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     dialog->show();
   });
@@ -2902,6 +3274,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveEditor->setMinimumHeight(180);
   curveEditor->setHandleEditingEnabled(false);
   curveEditor->setVisible(true);
+  impl_->curveEditorGraphMode_ = curveEditorGraphModeFromSettings();
 
   auto *curveHeader = new QWidget();
   curveHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -2911,6 +3284,24 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->curveEditorSummaryLabel_ = new QLabel(QStringLiteral("カーブエディタ"));
   impl_->curveEditorSummaryLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   impl_->curveEditorSummaryLabel_->setToolTip(QStringLiteral("選択したキーフレームのカーブ編集ビュー"));
+  impl_->curveEditorModeButton_ = new QToolButton(curveHeader);
+  impl_->curveEditorModeButton_->setAutoRaise(true);
+  impl_->curveEditorModeButton_->setCursor(Qt::PointingHandCursor);
+  impl_->curveEditorModeButton_->setToolTip(QStringLiteral("Switch between Value and Speed graph modes"));
+  QObject::connect(impl_->curveEditorModeButton_, &QToolButton::clicked, this, [this]() {
+    if (!impl_) {
+      return;
+    }
+    if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed) {
+      showValueGraph();
+    } else {
+      showSpeedGraph();
+    }
+  });
+  impl_->curveEditorModeButton_->setText(
+      impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
+          ? QStringLiteral("Speed")
+          : QStringLiteral("Value"));
   impl_->curveEditorFitButton_ = new QToolButton(curveHeader);
   impl_->curveEditorFitButton_->setText(QStringLiteral("Fit"));
   impl_->curveEditorFitButton_->setAutoRaise(true);
@@ -2921,6 +3312,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     }
   });
   curveHeaderLayout->addWidget(impl_->curveEditorSummaryLabel_);
+  curveHeaderLayout->addWidget(impl_->curveEditorModeButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFitButton_);
   timeNavigatorWidget->setTotalFrames(kDefaultTimelineFrames);
   timeNavigatorWidget->setFixedHeight(kTimelineTopRowHeight);
@@ -3013,6 +3405,22 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         if (auto *app = ArtifactApplicationManager::instance()) {
           if (auto *ctx = app->activeContextService()) {
             ctx->seekToFrame(clampedFrame);
+          }
+        }
+        auto *playback = ArtifactPlaybackService::instance();
+        const auto composition = safeCompositionLookup(impl_->compositionId_);
+        if (playback && composition && composition->hasAudio() &&
+            !playback->isPlaying()) {
+          if (!impl_->audioPreviewActive_) {
+            impl_->audioPreviewActive_ = true;
+            impl_->audioPreviewFrame_ = clampedFrame;
+            playback->playFromFrame(FramePosition(clampedFrame));
+          } else {
+            impl_->audioPreviewFrame_ = clampedFrame;
+            playback->goToFrame(FramePosition(clampedFrame));
+          }
+          if (impl_->audioPreviewStopTimer_) {
+            impl_->audioPreviewStopTimer_->start(220);
           }
         }
       });
@@ -3239,6 +3647,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        updateCurvePropertyList();
                      }
                    });
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    globalSwitches->setShyActive(settings->timelineShyActive());
+    globalSwitches->setGraphEditorActive(settings->timelineGraphEditorActive());
+  }
   QObject::connect(curveEditor, &ArtifactCurveEditorWidget::interactionStarted, this,
                    [this]() {
                      if (!impl_) {
@@ -3875,6 +4287,8 @@ void ArtifactTimelineWidget::refreshTracks() {
     return;
 
   const auto composition = safeCompositionLookup(impl_->compositionId_);
+  const double compositionFps = std::max(
+      1.0, static_cast<double>(composition ? composition->frameRate().framerate() : 30.0));
 
   QVector<TimelineRowDescriptor> visibleRows;
   if (impl_->layerTimelinePanel_) {
@@ -3940,15 +4354,16 @@ void ArtifactTimelineWidget::refreshTracks() {
       visual.durationFrame = clipDuration;
       visual.title = layer->layerName();
       visual.fillColor = layerTimelineColor(layer);
-      const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer);
-      if (audioLayer) {
-        visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio;
+      if (layer->hasAudio()) {
+        visual.kind = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)
+                          ? ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio
+                          : ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video;
         const QString cacheKey = audioWaveformCacheKey(impl_->compositionId_, row.layerId);
-        const QString signature = audioWaveformSignatureForLayer(*audioLayer);
+        const QString signature = audioWaveformSignatureForLayer(*layer, compositionFps);
         auto cachedIt = impl_->audioWaveformCache_.find(cacheKey);
         if (cachedIt == impl_->audioWaveformCache_.end() ||
             cachedIt->signature != signature) {
-          if (auto waveform = buildAudioWaveformForLayer(*audioLayer)) {
+          if (auto waveform = buildAudioWaveformForLayer(*layer, compositionFps)) {
             cachedIt = impl_->audioWaveformCache_.insert(cacheKey, std::move(*waveform));
           } else {
             impl_->audioWaveformCache_.remove(cacheKey);
@@ -4454,14 +4869,16 @@ void ArtifactTimelineWidget::syncTimelineHorizontalOffset(const double offset)
   if (!impl_) {
     return;
   }
+  const double clampedOffset =
+      clampTimelineHorizontalOffset(impl_->painterTrackView_, offset);
   if (impl_->painterTrackView_) {
-    impl_->painterTrackView_->setHorizontalOffset(offset);
+    impl_->painterTrackView_->setHorizontalOffset(clampedOffset);
   }
   if (impl_->scrubBar_) {
-    impl_->scrubBar_->setRulerHorizontalOffset(offset);
+    impl_->scrubBar_->setRulerHorizontalOffset(clampedOffset);
   }
   if (impl_->workArea_) {
-    impl_->workArea_->setRulerHorizontalOffset(offset);
+    impl_->workArea_->setRulerHorizontalOffset(clampedOffset);
   }
   syncPlayheadOverlay();
 }
