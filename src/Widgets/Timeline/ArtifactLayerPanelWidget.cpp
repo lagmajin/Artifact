@@ -3729,7 +3729,7 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
      break;
     }
    }
-  if (selectedIdx >= 0) {
+   if (selectedIdx >= 0) {
     const int y = impl_->rowViewportY(selectedIdx) + kLayerRowHeight / 2;
     const int x = kLayerColumnWidth * kLayerPropertyColumnCount + 20;
     QMouseEvent fakeEvent(QEvent::MouseButtonDblClick, QPointF(x, y), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
@@ -3737,25 +3737,25 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     event->accept();
     return;
    }
-   } else if (event->key() == Qt::Key_Escape && impl_->inlineNameEditor) {
-    impl_->clearInlineEditors();
-    update();
-    event->accept();
-    return;
-   } else if (event->key() == Qt::Key_Escape) {
-    if (auto* selectionManager = currentLayerSelectionManager()) {
-     selectionManager->clearSelection();
-    }
-    impl_->selectedMaskLayerId = LayerID();
-    impl_->selectedMaskIndex = -1;
-    impl_->selectedLayerId = LayerID();
-    impl_->currentPropertyPath.clear();
-    propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
-    update();
-    event->accept();
-    return;
+  } else if (event->key() == Qt::Key_Escape && impl_->inlineNameEditor) {
+   impl_->clearInlineEditors();
+   update();
+   event->accept();
+   return;
+  } else if (event->key() == Qt::Key_Escape) {
+   if (auto* selectionManager = currentLayerSelectionManager()) {
+    selectionManager->clearSelection();
    }
-   QWidget::keyPressEvent(event);
+   impl_->selectedMaskLayerId = LayerID();
+   impl_->selectedMaskIndex = -1;
+   impl_->selectedLayerId = LayerID();
+   impl_->currentPropertyPath.clear();
+   propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+   update();
+   event->accept();
+   return;
+  }
+  QWidget::keyPressEvent(event);
   }
 
 void ArtifactLayerPanelWidget::wheelEvent(QWheelEvent* event)
