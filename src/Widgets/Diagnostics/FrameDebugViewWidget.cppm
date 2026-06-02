@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <array>
 #include <QColor>
 #include <QLabel>
 #include <QPlainTextEdit>
@@ -27,6 +28,81 @@ public:
     QPlainTextEdit* text_ = nullptr;
 
     explicit Impl(FrameDebugViewWidget* owner) : owner_(owner) {}
+
+    static const ArtifactCore::FrameDebugResourceRecord* findResource(
+        const ArtifactCore::FrameDebugSnapshot& snapshot, const QString& label)
+    {
+        for (const auto& resource : snapshot.resources) {
+            if (resource.label == label) {
+                return &resource;
+            }
+        }
+        return nullptr;
+    }
+
+    static QStringList buildDifferenceLeakageNotes(
+        const ArtifactCore::FrameDebugSnapshot& snapshot)
+    {
+        QStringList notes;
+        notes << QStringLiteral("differenceMode=%1")
+                     .arg(ArtifactCore::toString(snapshot.compareMode));
+        if (!snapshot.compareTargetId.isEmpty()) {
+            notes << QStringLiteral("differenceTarget=%1")
+                         .arg(snapshot.compareTargetId);
+        } else if (snapshot.compareMode == ArtifactCore::FrameDebugCompareMode::Disabled) {
+            notes << QStringLiteral("differenceTarget=<none>");
+        }
+
+        if (const auto* visibility = findResource(
+                snapshot, QStringLiteral("Composition Visibility"))) {
+            if (visibility->note.contains(QStringLiteral("state=allSkipped"))) {
+                notes << QStringLiteral("differenceAlert=all layers skipped");
+            } else if (visibility->note.contains(QStringLiteral("state=noLayers"))) {
+                notes << QStringLiteral("differenceAlert=no visible layers");
+            } else if (visibility->note.contains(QStringLiteral("frameOutOfRange=1"))) {
+                notes << QStringLiteral("differenceAlert=frame out of range");
+            }
+        }
+
+        if (const auto* contract = findResource(
+                snapshot, QStringLiteral("Blend / Mask Contract"))) {
+            if (contract->note.contains(QStringLiteral("failed=1")) ||
+                (contract->note.contains(QStringLiteral("directFallback=")) &&
+                 !contract->note.contains(QStringLiteral("directFallback=0")))) {
+                notes << QStringLiteral("alphaLeakageRisk=blend fallback or failure");
+            } else if (contract->note.contains(QStringLiteral("maskContract=pending"))) {
+                notes << QStringLiteral("alphaLeakageRisk=mask contract pending");
+            } else {
+                notes << QStringLiteral("alphaLeakageRisk=none detected");
+            }
+        }
+
+        const int staleResourceCount = static_cast<int>(std::count_if(
+            snapshot.resources.begin(), snapshot.resources.end(),
+            [](const auto& resource) { return resource.stale; }));
+        const int cacheMissCount = static_cast<int>(std::count_if(
+            snapshot.resources.begin(), snapshot.resources.end(),
+            [](const auto& resource) { return !resource.cacheHit; }));
+        const int textureMismatchCount = static_cast<int>(std::count_if(
+            snapshot.resources.begin(), snapshot.resources.end(),
+            [](const auto& resource) {
+                return resource.texture.valid &&
+                       (resource.texture.width <= 0 || resource.texture.height <= 0);
+            }));
+        notes << QStringLiteral("leakageSignals=stale:%1 cacheMiss:%2 invalidTexture:%3")
+                     .arg(staleResourceCount)
+                     .arg(cacheMissCount)
+                     .arg(textureMismatchCount);
+
+        const auto* selected = findResource(snapshot, snapshot.selectedLayerName);
+        if (selected && selected->texture.valid) {
+            notes << QStringLiteral("selectedProxy=%1x%2")
+                         .arg(selected->texture.width)
+                         .arg(selected->texture.height);
+        }
+
+        return notes;
+    }
 
     void setupUI() {
         auto* layout = new QVBoxLayout(owner_);
@@ -71,8 +147,14 @@ public:
             snapshot.failed
                 ? QStringLiteral("Failed")
                 : (failedPassCount > 0 ? QStringLiteral("Degraded") : QStringLiteral("Healthy"));
+        const QStringList diffLeakageNotes = buildDifferenceLeakageNotes(snapshot);
         if (summary_) {
-            const QString summaryText = QStringLiteral("%1 | frame %2 | comp %3 | layer %4 | backend %5 | passes %6 | resources %7 | video %8 | particle %9")
+            const QString diffModeText =
+                snapshot.compareMode == ArtifactCore::FrameDebugCompareMode::Disabled
+                    ? QStringLiteral("diff off")
+                    : QStringLiteral("diff %1")
+                          .arg(ArtifactCore::toString(snapshot.compareMode));
+            const QString summaryText = QStringLiteral("%1 | frame %2 | comp %3 | layer %4 | backend %5 | passes %6 | resources %7 | %8 | video %9 | particle %10")
                                             .arg(statusText)
                                             .arg(snapshot.frame.framePosition())
                                             .arg(snapshot.compositionName.isEmpty() ? QStringLiteral("<none>") : snapshot.compositionName)
@@ -80,6 +162,7 @@ public:
                                             .arg(snapshot.renderBackend.isEmpty() ? QStringLiteral("<none>") : snapshot.renderBackend)
                                             .arg(static_cast<int>(snapshot.passes.size()))
                                             .arg(static_cast<int>(snapshot.resources.size()))
+                                            .arg(diffModeText)
                                             .arg(resourceState(QStringLiteral("video"), QStringLiteral("Video Decode")))
                                             .arg(resourceState(QStringLiteral("particle"), QStringLiteral("Particle Draw")));
             summary_->setText(summaryText);
@@ -132,6 +215,11 @@ public:
         }
         if (warningResourceCount > 0) {
             lines << QStringLiteral("  - warning resources: %1").arg(warningResourceCount);
+        }
+        lines << QString();
+        lines << QStringLiteral("Difference / Leakage:");
+        for (const auto& note : diffLeakageNotes) {
+            lines << QStringLiteral("  - %1").arg(note);
         }
 
         lines << QString();
