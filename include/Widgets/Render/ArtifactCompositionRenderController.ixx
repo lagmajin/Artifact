@@ -106,6 +106,8 @@ void setShowMotionPathOverlay(bool show);
 bool isShowMotionPathOverlay() const;
 void setShowEffectHitboxOverlay(bool show);
 bool isShowEffectHitboxOverlay() const;
+void setShowDensityHeatmapOverlay(bool show);
+bool isShowDensityHeatmapOverlay() const;
 bool setSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool removeSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool setSelectedLayerMotionPathInterpolationAtCurrentFrame(int interpolationType);
