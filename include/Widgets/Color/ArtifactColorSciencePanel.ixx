@@ -20,6 +20,9 @@ public:
   explicit ArtifactColorSciencePanel(QWidget *parent = nullptr);
   ~ArtifactColorSciencePanel();
 
+  void analyzeCurrentFrame();
+  void clearAnalysis();
+
   ArtifactColorScienceManager *colorScienceManager() const;
 };
 

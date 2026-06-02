@@ -26,6 +26,7 @@ import Application.AppSettings;
 import Artifact.MainWindow;
 import Artifact.Workspace.Manager;
 import Artifact.Widgets.ColorPaletteWidget;
+import Artifact.Widgets.ColorSciencePanel;
 import Artifact.Widgets.SecondaryPreviewWindow;
 import Widgets.AssetBrowser;
 import Widgets.ToolBar;
@@ -101,6 +102,7 @@ namespace Artifact {
      QAction* openContentsViewerAction = nullptr;
      QAction* openProjectPanelAction = nullptr;
      QAction* openColorPaletteAction = nullptr;
+     QAction* openAutoColorGradingAction = nullptr;
      QAction* openReactiveEventEditorAction = nullptr;
      QAction* secondaryPreviewAction = nullptr;
      QPointer<ArtifactSecondaryPreviewWindow> secondaryPreviewWindow;
@@ -436,6 +438,25 @@ namespace Artifact {
         QRect(120, 120, 560, 640));
    });
 
+   openAutoColorGradingAction = menu->addAction("自動カラーグレーディング(&G)");
+   openAutoColorGradingAction->setIcon(QIcon(resolveIconPath("Studio/color_palette.svg")));
+   QObject::connect(openAutoColorGradingAction, &QAction::triggered, menu, [this]() {
+    if (!mainWindow) return;
+    const QString dockTitle = QStringLiteral("Auto Color Grading");
+    if (mainWindow->hasDock(dockTitle)) {
+     mainWindow->setDockVisible(dockTitle, true);
+     mainWindow->activateDock(dockTitle);
+     return;
+    }
+    auto* gradingWidget = new ArtifactColorSciencePanel(mainWindow);
+    gradingWidget->analyzeCurrentFrame();
+    mainWindow->addDockedWidgetFloating(
+        dockTitle,
+        QStringLiteral("auto_color_grading_dock"),
+        gradingWidget,
+        QRect(150, 150, 580, 720));
+   });
+
    menu->addSeparator();
    menu->addMenu(workspaceMenu);
    menu->addMenu(workspacePresetMenu);
@@ -552,6 +573,9 @@ namespace Artifact {
   }
   if (openColorPaletteAction) {
    openColorPaletteAction->setEnabled(true);
+  }
+  if (openAutoColorGradingAction) {
+   openAutoColorGradingAction->setEnabled(hasComp);
   }
   if (openReactiveEventEditorAction) {
    openReactiveEventEditorAction->setEnabled(true);
