@@ -2805,7 +2805,19 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   applyInterpolationShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F9),
                              ArtifactCore::InterpolationType::EaseIn);
   applyInterpolationShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F9),
-                             ArtifactCore::InterpolationType::EaseOut);
+                              ArtifactCore::InterpolationType::EaseOut);
+  auto *undoShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z), this);
+  QObject::connect(undoShortcut, &QShortcut::activated, this, []() {
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->undo();
+    }
+  });
+  auto *redoShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y), this);
+  QObject::connect(redoShortcut, &QShortcut::activated, this, []() {
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->redo();
+    }
+  });
   searchModeCombo->addItem(QStringLiteral("All Visible"), static_cast<int>(SearchMatchMode::AllVisible));
   searchModeCombo->addItem(QStringLiteral("Highlight Only"), static_cast<int>(SearchMatchMode::HighlightOnly));
   searchModeCombo->addItem(QStringLiteral("Filter Only"), static_cast<int>(SearchMatchMode::FilterOnly));

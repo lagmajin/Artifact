@@ -3421,6 +3421,23 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
 
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
+  if ((event->modifiers() & Qt::ControlModifier) &&
+      !(event->modifiers() & (Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier))) {
+    if (event->key() == Qt::Key_Z) {
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->undo();
+        event->accept();
+        return;
+      }
+    } else if (event->key() == Qt::Key_Y) {
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->redo();
+        event->accept();
+        return;
+      }
+    }
+  }
+
   if (event->matches(QKeySequence::SelectAll)) {
     auto* selectionManager = currentLayerSelectionManager();
     auto comp = safeCompositionLookup(impl_->compositionId);
