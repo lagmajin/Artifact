@@ -670,15 +670,44 @@ public:
         return QStringLiteral("topPasses=%1").arg(items.join(QStringLiteral(" | ")));
     }
 
+    static QString densitySummaryText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    {
+        return QStringLiteral("%1 v=%2 i=%3 l=%4 m=%5")
+                .arg(snapshot.densityLabel.isEmpty() ? QStringLiteral("low")
+                                                    : snapshot.densityLabel)
+                .arg(QString::number(snapshot.visualDensityScore, 'f', 2))
+                .arg(QString::number(snapshot.informationDensityScore, 'f', 2))
+                .arg(QString::number(snapshot.luminanceDensityScore, 'f', 2))
+                .arg(QString::number(snapshot.motionDensityScore, 'f', 2));
+    }
+
+    static QString densityWarningText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    {
+        if (!snapshot.densityWarning.isEmpty()) {
+            return snapshot.densityWarning;
+        }
+        if (snapshot.densityLabel.isEmpty()) {
+            return QStringLiteral("density is readable");
+        }
+        if (snapshot.densityLabel == QStringLiteral("high")) {
+            return QStringLiteral("density is high");
+        }
+        if (snapshot.densityLabel == QStringLiteral("medium")) {
+            return QStringLiteral("density is moderate");
+        }
+        return QStringLiteral("density is readable");
+    }
+
     static QString captureEntryLabel(const ArtifactCore::FrameDebugCapture& capture, bool isCurrent)
     {
         const auto& snapshot = capture.snapshot;
-        return QStringLiteral("%1 frame=%2  comp=%3  layer=%4  backend=%5  passes=%6  res=%7  att=%8")
+        return QStringLiteral("%1 frame=%2  comp=%3  layer=%4  backend=%5  density=%6  passes=%7  res=%8  att=%9")
                 .arg(isCurrent ? QStringLiteral("[current]") : (capture.pinned ? QStringLiteral("[pinned]") : QStringLiteral("[history]")))
                 .arg(snapshot.frame.framePosition())
                 .arg(snapshot.compositionName.isEmpty() ? QStringLiteral("<none>") : snapshot.compositionName)
                 .arg(snapshot.selectedLayerName.isEmpty() ? QStringLiteral("<none>") : snapshot.selectedLayerName)
                 .arg(snapshot.renderBackend.isEmpty() ? QStringLiteral("<none>") : snapshot.renderBackend)
+                .arg(snapshot.densityLabel.isEmpty() ? QStringLiteral("low") : snapshot.densityLabel)
                 .arg(static_cast<int>(snapshot.passes.size()))
                 .arg(static_cast<int>(snapshot.resources.size()))
                 .arg(static_cast<int>(snapshot.attachments.size()));
@@ -737,25 +766,8 @@ public:
         if (!hasCaptureBundle_) {
             captureHistoryText_->setPlainText(QStringLiteral("No capture yet."));
             if (captureDetailView_) {
-                captureDetailView_->setFrameDebugSnapshot(ArtifactCore::FrameDebugSnapshot{
-                    ArtifactCore::FramePosition(0),
-                    0,
-                    QString(),
-                    QString(),
-                    QString(),
-                    QString(),
-                    0.0,
-                    0.0,
-                    0.0,
-                    ArtifactCore::RenderCostStats{},
-                    ArtifactCore::FrameDebugCompareMode::Disabled,
-                    QString(),
-                    {},
-                    {},
-                    {},
-                    false,
-                    QString()
-                });
+                ArtifactCore::FrameDebugSnapshot emptySnapshot;
+                captureDetailView_->setFrameDebugSnapshot(emptySnapshot);
             }
             return;
         }
@@ -954,6 +966,12 @@ public:
             lines << QStringLiteral("renderBackend: %1")
                           .arg(controllerSnapshot.renderBackend.isEmpty() ? QStringLiteral("<none>")
                                                                           : controllerSnapshot.renderBackend);
+            lines << QStringLiteral("density: %1").arg(densitySummaryText(controllerSnapshot));
+            lines << QStringLiteral("densityWarning: %1").arg(densityWarningText(controllerSnapshot));
+            lines << QStringLiteral("densityNext: %1")
+                          .arg(controllerSnapshot.densityNextAction.isEmpty()
+                                   ? QStringLiteral("<none>")
+                                   : controllerSnapshot.densityNextAction);
             lines << QStringLiteral("queueJobs: %1")
                           .arg(queueSvc ? queueSvc->jobCount() : 0);
             lines << QStringLiteral("queueBackend: %1")
@@ -995,6 +1013,17 @@ public:
                                        .arg(qualityText)
                                        .arg(backendText)
                                        .arg(queueText));
+            if (!controllerSnapshot.densityLabel.isEmpty() ||
+                !controllerSnapshot.densityWarning.isEmpty()) {
+                stateSummary_->setToolTip(QStringLiteral("density=%1  warning=%2  next=%3")
+                                             .arg(densitySummaryText(controllerSnapshot))
+                                             .arg(densityWarningText(controllerSnapshot))
+                                             .arg(controllerSnapshot.densityNextAction.isEmpty()
+                                                      ? QStringLiteral("<none>")
+                                                      : controllerSnapshot.densityNextAction));
+            } else {
+                stateSummary_->setToolTip(QString());
+            }
         }
 
         if (playbackText_ || playbackSummary_) {
@@ -1089,17 +1118,22 @@ public:
                 warningText = QStringLiteral("project health issues");
             } else if (!trace.crashes.isEmpty()) {
                 warningText = QStringLiteral("recent crash: %1").arg(lastCrashText);
+            } else if (controllerSnapshot.densityLabel == QStringLiteral("high")) {
+                warningText = controllerSnapshot.densityWarning.isEmpty()
+                                  ? QStringLiteral("density is high")
+                                  : controllerSnapshot.densityWarning;
             }
             const QString nextText = warningText == QStringLiteral("none")
                                          ? QStringLiteral("capture frame when behavior changes")
                                          : QStringLiteral("open the relevant diagnostic tab");
-            overviewSummary_->setText(QStringLiteral("Goal: inspect current app state  |  Now: project=%1 composition=%2 layer=%3 frame=%4 playback=%5 backend=%6  |  Warning: %7  |  Next: %8")
+            overviewSummary_->setText(QStringLiteral("Goal: inspect current app state  |  Now: project=%1 composition=%2 layer=%3 frame=%4 playback=%5 backend=%6  |  Density: %7  |  Warning: %8  |  Next: %9")
                                           .arg(projectText,
                                                compositionText,
                                                layerText)
                                           .arg(controllerSnapshot.frame.framePosition())
                                           .arg(playbackText)
                                           .arg(backendText)
+                                          .arg(densitySummaryText(controllerSnapshot))
                                           .arg(warningText)
                                           .arg(nextText));
             overviewSummary_->setToolTip(QStringLiteral("failedPasses=%1 totalPassUs=%2 queueJobs=%3 traceThreads=%4")
@@ -1131,7 +1165,8 @@ public:
                                          .arg(compositionText)
                                          .arg(layerText)
                                          .arg(backendText)
-                                         .arg(compareText)
+                                         .arg(QStringLiteral("%1  density=%2")
+                                                  .arg(compareText, densitySummaryText(controllerSnapshot)))
                                          .arg(static_cast<int>(controllerSnapshot.passes.size()))
                                          .arg(static_cast<int>(controllerSnapshot.resources.size()))
                                          .arg(static_cast<int>(controllerSnapshot.attachments.size()))
@@ -1402,20 +1437,24 @@ public:
                 hint = QStringLiteral("frame looks stable");
             }
 
-            frameSummary_->setText(QStringLiteral("Frame %1 | %2 | %3 | passes=%4 resources=%5 attachments=%6 totalPassUs=%7")
+            frameSummary_->setText(QStringLiteral("Frame %1 | %2 | %3 | density=%4 | passes=%5 resources=%6 attachments=%7 totalPassUs=%8")
                                        .arg(frameIndex)
                                        .arg(controllerSnapshot.compositionName.isEmpty()
                                                 ? QStringLiteral("<no composition>")
                                                 : controllerSnapshot.compositionName)
                                        .arg(compareText)
+                                       .arg(densitySummaryText(controllerSnapshot))
                                        .arg(passCount)
                                        .arg(resourceCount)
                                        .arg(attachmentCount)
                                        .arg(totalPassUs));
-            frameSummary_->setToolTip(QStringLiteral("%1\nfailedPasses=%2\n%3")
+            frameSummary_->setToolTip(QStringLiteral("%1\nfailedPasses=%2\n%3\nnext=%4")
                                           .arg(hint)
                                           .arg(failedPasses)
-                                          .arg(mediaHealthText(controllerSnapshot)));
+                                          .arg(mediaHealthText(controllerSnapshot))
+                                          .arg(controllerSnapshot.densityNextAction.isEmpty()
+                                                   ? QStringLiteral("<none>")
+                                                   : controllerSnapshot.densityNextAction));
         }
 
         if (harnessWidget_) {

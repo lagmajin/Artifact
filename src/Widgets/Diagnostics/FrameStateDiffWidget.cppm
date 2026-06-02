@@ -123,6 +123,31 @@ public:
                      .arg(relationDriftCount)
                      .arg(textureShapeDriftCount);
 
+        lines << QStringLiteral("densityDelta=visual %1 -> %2 info %3 -> %4 luminance %5 -> %6 motion %7 -> %8")
+                     .arg(QString::number(previous.visualDensityScore, 'f', 2))
+                     .arg(QString::number(current.visualDensityScore, 'f', 2))
+                     .arg(QString::number(previous.informationDensityScore, 'f', 2))
+                     .arg(QString::number(current.informationDensityScore, 'f', 2))
+                     .arg(QString::number(previous.luminanceDensityScore, 'f', 2))
+                     .arg(QString::number(current.luminanceDensityScore, 'f', 2))
+                     .arg(QString::number(previous.motionDensityScore, 'f', 2))
+                     .arg(QString::number(current.motionDensityScore, 'f', 2));
+        if (previous.densityLabel != current.densityLabel) {
+            lines << QStringLiteral("densityLevel=%1 -> %2")
+                         .arg(previous.densityLabel.isEmpty() ? QStringLiteral("<none>") : previous.densityLabel,
+                              current.densityLabel.isEmpty() ? QStringLiteral("<none>") : current.densityLabel);
+        }
+        if (previous.densityWarning != current.densityWarning) {
+            lines << QStringLiteral("densityWarning=%1 -> %2")
+                         .arg(previous.densityWarning.isEmpty() ? QStringLiteral("<none>") : previous.densityWarning,
+                              current.densityWarning.isEmpty() ? QStringLiteral("<none>") : current.densityWarning);
+        }
+        if (previous.densityNextAction != current.densityNextAction) {
+            lines << QStringLiteral("densityNext=%1 -> %2")
+                         .arg(previous.densityNextAction.isEmpty() ? QStringLiteral("<none>") : previous.densityNextAction,
+                              current.densityNextAction.isEmpty() ? QStringLiteral("<none>") : current.densityNextAction);
+        }
+
         return lines;
     }
 
@@ -255,6 +280,21 @@ public:
         lines << QStringLiteral("Difference / Leakage:");
         for (const auto& note : buildDifferenceLeakageDelta(previous_, snapshot, hasPrevious_)) {
             lines << QStringLiteral("  %1").arg(note);
+        }
+
+        lines << QString();
+        lines << QStringLiteral("Density:");
+        lines << QStringLiteral("  visual=%1 info=%2 luminance=%3 motion=%4 level=%5")
+                      .arg(QString::number(snapshot.visualDensityScore, 'f', 2))
+                      .arg(QString::number(snapshot.informationDensityScore, 'f', 2))
+                      .arg(QString::number(snapshot.luminanceDensityScore, 'f', 2))
+                      .arg(QString::number(snapshot.motionDensityScore, 'f', 2))
+                      .arg(snapshot.densityLabel.isEmpty() ? QStringLiteral("low") : snapshot.densityLabel);
+        if (!snapshot.densityWarning.isEmpty()) {
+            lines << QStringLiteral("  warning: %1").arg(snapshot.densityWarning);
+        }
+        if (!snapshot.densityNextAction.isEmpty()) {
+            lines << QStringLiteral("  next: %1").arg(snapshot.densityNextAction);
         }
 
         lines << QString();
