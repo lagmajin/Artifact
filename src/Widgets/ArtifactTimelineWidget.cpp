@@ -64,6 +64,7 @@ import Clipboard.ClipboardManager;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Application.Manager;
+import Artifact.Tool.Manager;
 import Application.AppSettings;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -2818,6 +2819,19 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       mgr->redo();
     }
   });
+  auto setToolShortcut = [this](QKeySequence seq, ToolType type) {
+    auto *shortcut = new QShortcut(seq, this);
+    shortcut->setContext(Qt::WidgetWithChildrenShortcut);
+    QObject::connect(shortcut, &QShortcut::activated, this, [this, type]() {
+      if (auto *app = ArtifactApplicationManager::instance()) {
+        app->toolManager()->setActiveTool(type);
+      }
+    });
+  };
+  setToolShortcut(QKeySequence(Qt::Key_V), ToolType::Selection);
+  setToolShortcut(QKeySequence(Qt::Key_H), ToolType::Hand);
+  setToolShortcut(QKeySequence(Qt::Key_Z), ToolType::Zoom);
+  setToolShortcut(QKeySequence(Qt::Key_R), ToolType::Rotation);
   searchModeCombo->addItem(QStringLiteral("All Visible"), static_cast<int>(SearchMatchMode::AllVisible));
   searchModeCombo->addItem(QStringLiteral("Highlight Only"), static_cast<int>(SearchMatchMode::HighlightOnly));
   searchModeCombo->addItem(QStringLiteral("Filter Only"), static_cast<int>(SearchMatchMode::FilterOnly));
