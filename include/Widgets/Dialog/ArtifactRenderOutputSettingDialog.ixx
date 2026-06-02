@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <QDialog>
 #include <QString>
+#include <QStringList>
 #include <wobjectdefs.h>
 export module Artifact.Widget.Dialog.RenderOutputSetting;
 
@@ -43,6 +44,8 @@ export namespace Artifact
   [[nodiscard]] QString audioCodec() const;
   void setAudioBitrateKbps(int bitrateKbps);
   [[nodiscard]] int audioBitrateKbps() const;
+  void setPreflightSummary(const QString& summary);
+  void setPreflightDetails(const QStringList& details);
  };
 
 };

@@ -69,6 +69,9 @@ public:
     static inline const QString ACTION_STOP = "playback.stop";
     static inline const QString ACTION_GOTO_START = "playback.goto_start";
     static inline const QString ACTION_GOTO_END = "playback.goto_end";
+    static inline const QString ACTION_SHUTTLE_FORWARD = "playback.shuttle_forward";
+    static inline const QString ACTION_SHUTTLE_REVERSE = "playback.shuttle_reverse";
+    static inline const QString ACTION_SHUTTLE_STOP = "playback.shuttle_stop";
     static inline const QString ACTION_NEXT_FRAME = "playback.next_frame";
     static inline const QString ACTION_PREV_FRAME = "playback.prev_frame";
     
@@ -113,6 +116,9 @@ ArtifactPlaybackShortcuts::ArtifactPlaybackShortcuts(QObject* parent)
     am->registerAction(Impl::ACTION_STOP, "Stop", "Stop playback and go to start");
     am->registerAction(Impl::ACTION_GOTO_START, "Go to Start", "Go to start frame");
     am->registerAction(Impl::ACTION_GOTO_END, "Go to End", "Go to end frame");
+    am->registerAction(Impl::ACTION_SHUTTLE_FORWARD, "Shuttle Forward", "Shuttle playback forward", "Playback");
+    am->registerAction(Impl::ACTION_SHUTTLE_REVERSE, "Shuttle Reverse", "Shuttle playback reverse", "Playback");
+    am->registerAction(Impl::ACTION_SHUTTLE_STOP, "Shuttle Stop", "Stop shuttle playback", "Playback");
     am->registerAction(Impl::ACTION_NEXT_FRAME, "Next Frame", "Go to next frame");
     am->registerAction(Impl::ACTION_PREV_FRAME, "Previous Frame", "Go to previous frame");
     
@@ -182,11 +188,11 @@ void ArtifactPlaybackShortcuts::registerDefaultBindings(KeyMap* keyMap) {
     
     // J/K/L shuttle (After Effects style)
     keyMap->addBinding(Qt::Key_J, InputEvent::Modifiers(),
-                      am->getAction(Impl::ACTION_PREV_FRAME), "Shuttle Left");
+                      am->getAction(Impl::ACTION_SHUTTLE_REVERSE), "Shuttle Left");
     keyMap->addBinding(Qt::Key_K, InputEvent::Modifiers(),
-                      am->getAction(Impl::ACTION_PLAY_PAUSE), "Shuttle Stop");
+                      am->getAction(Impl::ACTION_SHUTTLE_STOP), "Shuttle Stop");
     keyMap->addBinding(Qt::Key_L, InputEvent::Modifiers(),
-                      am->getAction(Impl::ACTION_NEXT_FRAME), "Shuttle Right");
+                      am->getAction(Impl::ACTION_SHUTTLE_FORWARD), "Shuttle Right");
     
     // ==================== In/Out Points ====================
     
@@ -313,6 +319,36 @@ void ArtifactPlaybackShortcuts::goToEnd() {
         impl_->controller_->goToEndFrame();
     }
     emit shortcutExecuted(Impl::ACTION_GOTO_END);
+}
+
+void ArtifactPlaybackShortcuts::shuttleForward() {
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->shuttleForward();
+    } else if (impl_->controller_) {
+        impl_->controller_->setPlaybackSpeed(std::max(1.0f, impl_->controller_->playbackSpeed() * 2.0f));
+        impl_->controller_->play();
+    }
+    emit shortcutExecuted(Impl::ACTION_SHUTTLE_FORWARD);
+}
+
+void ArtifactPlaybackShortcuts::shuttleReverse() {
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->shuttleReverse();
+    } else if (impl_->controller_) {
+        impl_->controller_->setPlaybackSpeed(-1.0f);
+        impl_->controller_->play();
+    }
+    emit shortcutExecuted(Impl::ACTION_SHUTTLE_REVERSE);
+}
+
+void ArtifactPlaybackShortcuts::shuttleStop() {
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->shuttleStop();
+    } else if (impl_->controller_) {
+        impl_->controller_->setPlaybackSpeed(0.0f);
+        impl_->controller_->stop();
+    }
+    emit shortcutExecuted(Impl::ACTION_SHUTTLE_STOP);
 }
 
 void ArtifactPlaybackShortcuts::nextFrame() {

@@ -71,17 +71,22 @@ ArtifactTimeMenu::Impl::Impl(ArtifactTimeMenu* menu)
 
   showControlAction = menu_->addAction("Playback Control...");
   showControlAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/play_circle.svg")));
+  showControlAction->setStatusTip(QStringLiteral("Open the playback control panel."));
 
   playPauseAction = menu_->addAction("再生");
   playPauseAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/play_arrow.svg")));
+  playPauseAction->setStatusTip(QStringLiteral("Space toggles playback. J/K/L controls shuttle playback."));
   stopAction = menu_->addAction("停止");
   stopAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/stop.svg")));
+  stopAction->setStatusTip(QStringLiteral("Stop playback and return shuttle speed to zero."));
 
   menu_->addSeparator();
   stepBackwardAction = menu_->addAction("1 フレーム戻る");
   stepBackwardAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/skip_previous.svg")));
+  stepBackwardAction->setStatusTip(QStringLiteral("Left Arrow steps back one frame. J shuttles reverse."));
   stepForwardAction = menu_->addAction("1 フレーム進む");
   stepForwardAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/skip_next.svg")));
+  stepForwardAction->setStatusTip(QStringLiteral("Right Arrow steps forward one frame. L shuttles forward."));
 
   seekStartAction = menu_->addAction("先頭へ移動");
   seekStartAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/fast_rewind.svg")));
@@ -100,6 +105,7 @@ ArtifactTimeMenu::Impl::Impl(ArtifactTimeMenu* menu)
   clearInOutAction = menu_->addAction("In/Out をクリア");
   loopAction = menu_->addAction("ループ再生");
   loopAction->setCheckable(true);
+  loopAction->setStatusTip(QStringLiteral("Alt+L toggles loop playback."));
 
   QObject::connect(showControlAction, &QAction::triggered, menu_, [this]() {
     showPlaybackControl();

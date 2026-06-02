@@ -39,6 +39,7 @@ module;
 export module Artifact.Render.Queue.Service;
 
 import Utils.Id;
+import Core.Diagnostics.ProjectDiagnostic;
 import Core.Diagnostics.SessionLedger;
 import Artifact.Render.Queue.Presets;
 import Frame.Debug;
@@ -152,6 +153,10 @@ public:
   // ArtifactRenderJob getJob(int index) const;  // Commented out -
   // ArtifactRenderJob not exported
   int getTotalProgress() const;
+
+  // Static render preflight
+  auto preflightRenderQueueAt(int index) const -> ArtifactCore::DiagnosticResult;
+  auto preflightAllRenderQueues() const -> ArtifactCore::DiagnosticResult;
 
 public:
   void jobAdded(int index) W_SIGNAL(jobAdded, index) void jobRemoved(int index)
