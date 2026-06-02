@@ -3737,13 +3737,25 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     event->accept();
     return;
    }
-  } else if (event->key() == Qt::Key_Escape && impl_->inlineNameEditor) {
-   impl_->clearInlineEditors();
-   update();
-   event->accept();
-   return;
-  }
-  QWidget::keyPressEvent(event);
+   } else if (event->key() == Qt::Key_Escape && impl_->inlineNameEditor) {
+    impl_->clearInlineEditors();
+    update();
+    event->accept();
+    return;
+   } else if (event->key() == Qt::Key_Escape) {
+    if (auto* selectionManager = currentLayerSelectionManager()) {
+     selectionManager->clearSelection();
+    }
+    impl_->selectedMaskLayerId = LayerID();
+    impl_->selectedMaskIndex = -1;
+    impl_->selectedLayerId = LayerID();
+    impl_->currentPropertyPath.clear();
+    propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+    update();
+    event->accept();
+    return;
+   }
+   QWidget::keyPressEvent(event);
   }
 
 void ArtifactLayerPanelWidget::wheelEvent(QWheelEvent* event)

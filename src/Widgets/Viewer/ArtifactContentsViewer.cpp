@@ -2693,6 +2693,50 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
    }
   }
 
+  void ArtifactContentsViewer::keyPressEvent(QKeyEvent* event)
+  {
+   if (!event || !impl_) {
+    QWidget::keyPressEvent(event);
+    return;
+   }
+   if ((event->modifiers() & Qt::ControlModifier) &&
+       !(event->modifiers() & (Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier))) {
+    if (event->key() == Qt::Key_0) {
+     impl_->fitImageToWindow();
+     event->accept();
+     return;
+    }
+    if (event->key() == Qt::Key_1) {
+     impl_->zoomLevel = 1.0;
+     impl_->imageFitMode = false;
+     impl_->applyImageTransform();
+     event->accept();
+     return;
+    }
+   }
+   if (event->key() == Qt::Key_Plus || event->key() == Qt::Key_Equal) {
+    if (impl_->currentFileType == ArtifactCore::FileType::Image && !impl_->originalImage.isNull()) {
+     impl_->zoomLevel *= 1.15;
+     impl_->zoomLevel = qBound(0.05, impl_->zoomLevel, 10.0);
+     impl_->imageFitMode = false;
+     impl_->applyImageTransform();
+     event->accept();
+     return;
+    }
+   }
+   if (event->key() == Qt::Key_Minus) {
+    if (impl_->currentFileType == ArtifactCore::FileType::Image && !impl_->originalImage.isNull()) {
+     impl_->zoomLevel /= 1.15;
+     impl_->zoomLevel = qBound(0.05, impl_->zoomLevel, 10.0);
+     impl_->imageFitMode = false;
+     impl_->applyImageTransform();
+     event->accept();
+     return;
+    }
+   }
+   QWidget::keyPressEvent(event);
+  }
+
   void ArtifactContentsViewer::focusInEvent(QFocusEvent* event)
   {
    if (impl_) {
