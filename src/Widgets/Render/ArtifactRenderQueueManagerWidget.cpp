@@ -230,6 +230,7 @@ namespace Artifact
     if (jobListWidget && selectedSource >= 0 && selectedSource < jobListWidget->count()) {
       jobListWidget->setCurrentRow(selectedSource);
     }
+    updateSummary();
   }
 
   void postQueueChanged(const QString& reason = QString()) {
@@ -350,7 +351,19 @@ namespace Artifact
         else if (s == "Rendering") running++;
         totalProgress += std::clamp(j.progress, 0, 100);
     }
-    summaryLabel->setText(QString("Jobs: %1 | Running: %2 | Done: %3").arg(jobs.size()).arg(running).arg(done));
+    QString preflightText;
+    const int selected = selectedSourceIndex();
+    if (service && selected >= 0 && selected < service->jobCount()) {
+      const auto preflight = service->preflightRenderQueueAt(selected);
+      preflightText = QStringLiteral(" | Preflight: %1E/%2W")
+          .arg(preflight.getErrorCount())
+          .arg(preflight.getWarningCount());
+    }
+    summaryLabel->setText(QString("Jobs: %1 | Running: %2 | Done: %3%4")
+                              .arg(jobs.size())
+                              .arg(running)
+                              .arg(done)
+                              .arg(preflightText));
     if (totalProgressBar) {
       totalProgressBar->setRange(0, 100);
       totalProgressBar->setValue(jobs.isEmpty() ? 0 : totalProgress / jobs.size());
@@ -363,6 +376,7 @@ namespace Artifact
     if (removeButton) removeButton->setEnabled(has);
     if (duplicateButton) duplicateButton->setEnabled(has);
     if (outputSettingsButton) outputSettingsButton->setEnabled(has);
+    updateSummary();
   }
 
   void syncDetailEditorsFromJob(int index) {
@@ -395,14 +409,17 @@ namespace Artifact
       const QString audioInfo = audioEnabled
           ? QStringLiteral(" | Audio: %1@%2kbps").arg(service->jobAudioCodecAt(index)).arg(service->jobAudioBitrateKbpsAt(index))
           : QStringLiteral(" | Audio: off");
+      const auto preflight = service->preflightRenderQueueAt(index);
       outputSettingsSummaryLabel->setText(
-          QString("Format: %1 | Codec: %2%3 | Encode: %4 | Render: %5%6")
+          QString("Format: %1 | Codec: %2%3 | Encode: %4 | Render: %5%6 | Preflight: %7E/%8W")
               .arg(outputFormat.isEmpty() ? QStringLiteral("MP4") : outputFormat)
               .arg(codec.isEmpty() ? QStringLiteral("H.264") : codec)
               .arg(codecProfile.trimmed().isEmpty() ? QString() : QStringLiteral(" (%1)").arg(codecProfile))
               .arg(encoderBackend)
               .arg(renderBackend)
-              .arg(audioInfo));
+              .arg(audioInfo)
+              .arg(preflight.getErrorCount())
+              .arg(preflight.getWarningCount()));
     }
 
     int startFrame = 0;
@@ -619,6 +636,26 @@ namespace Artifact
     dialog.setIncludeAudio(impl_->service->jobIntegratedRenderEnabledAt(index));
     dialog.setAudioCodec(impl_->service->jobAudioCodecAt(index));
     dialog.setAudioBitrateKbps(impl_->service->jobAudioBitrateKbpsAt(index));
+    const auto preflight = impl_->service->preflightRenderQueueAt(index);
+    dialog.setPreflightSummary(QStringLiteral("Preflight: %1E / %2W")
+        .arg(preflight.getErrorCount())
+        .arg(preflight.getWarningCount()));
+    QStringList preflightDetails;
+    for (const auto& diagnostic : preflight.getDiagnostics()) {
+      const QString severity = diagnostic.isError()
+          ? QStringLiteral("ERROR")
+          : diagnostic.isWarning()
+              ? QStringLiteral("WARNING")
+              : QStringLiteral("INFO");
+      preflightDetails << QStringLiteral("%1: %2").arg(severity, diagnostic.getMessage());
+      if (!diagnostic.getDescription().isEmpty()) {
+        preflightDetails << QStringLiteral("  %1").arg(diagnostic.getDescription());
+      }
+      if (!diagnostic.getFixAction().isEmpty()) {
+        preflightDetails << QStringLiteral("  Fix: %1").arg(diagnostic.getFixAction());
+      }
+    }
+    dialog.setPreflightDetails(preflightDetails);
 
     if (dialog.exec() == QDialog::Accepted) {
       impl_->service->setJobOutputPathAt(index, dialog.outputPath());

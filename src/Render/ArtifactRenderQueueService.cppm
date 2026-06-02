@@ -77,6 +77,7 @@ import Render.Queue.Manager;
 import Frame.Range;
 import Frame.Debug;
 import Core.Diagnostics.Trace;
+import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
 import Artifact.Service.Project;
@@ -319,6 +320,111 @@ namespace Artifact
             }
 
             return writeAudioSegmentAsWav(wavPath, segment, errorMessage);
+        }
+
+        ArtifactCore::ProjectDiagnostic makePreflightDiagnostic(
+            ArtifactCore::DiagnosticSeverity severity,
+            ArtifactCore::DiagnosticCategory category,
+            const QString& message,
+            const QString& description = QString(),
+            const QString& fixAction = QString(),
+            const QString& compId = QString(),
+            const QString& layerId = QString())
+        {
+            ArtifactCore::ProjectDiagnostic diag(severity, category, message);
+            if (!description.isEmpty()) {
+                diag.setDescription(description);
+            }
+            if (!fixAction.isEmpty()) {
+                diag.setFixAction(fixAction);
+            }
+            if (!compId.isEmpty()) {
+                diag.setSourceCompId(compId);
+            }
+            if (!layerId.isEmpty()) {
+                diag.setSourceLayerId(layerId);
+            }
+            return diag;
+        }
+
+        void appendMissingAssetDiagnostics(const ArtifactCompositionPtr& composition,
+                                           const QString& compId,
+                                           ArtifactCore::DiagnosticResult& result)
+        {
+            if (!composition) {
+                return;
+            }
+
+            const auto layers = composition->allLayer();
+            for (const auto& layer : layers) {
+                if (!layer) {
+                    continue;
+                }
+
+                const auto json = layer->toJson();
+                QString sourcePath;
+                if (json.contains(QStringLiteral("video.sourcePath"))) {
+                    sourcePath = json.value(QStringLiteral("video.sourcePath")).toString();
+                } else if (json.contains(QStringLiteral("image.sourcePath"))) {
+                    sourcePath = json.value(QStringLiteral("image.sourcePath")).toString();
+                } else if (json.contains(QStringLiteral("svg.sourcePath"))) {
+                    sourcePath = json.value(QStringLiteral("svg.sourcePath")).toString();
+                } else if (json.contains(QStringLiteral("sourcePath"))) {
+                    sourcePath = json.value(QStringLiteral("sourcePath")).toString();
+                }
+
+                if (!sourcePath.isEmpty() && !QFileInfo::exists(sourcePath)) {
+                    auto diag = ArtifactCore::ProjectDiagnostic::createMissingFile(
+                        sourcePath,
+                        layer->id().toString());
+                    diag.setSourceCompId(compId);
+                    result.addDiagnostic(diag);
+                }
+            }
+        }
+
+        void appendCompositionMismatchWarnings(const ArtifactRenderJob& job,
+                                               const ArtifactCompositionPtr& composition,
+                                               const QString& compId,
+                                               ArtifactCore::DiagnosticResult& result)
+        {
+            if (!composition) {
+                return;
+            }
+
+            const QSize compSize = composition->settings().compositionSize();
+            const int compWidth = std::max(1, compSize.width());
+            const int compHeight = std::max(1, compSize.height());
+            if (compWidth > 0 && compHeight > 0 &&
+                (job.resolutionWidth != compWidth || job.resolutionHeight != compHeight)) {
+                auto diag = makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Warning,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Render size differs from composition size"),
+                    QStringLiteral("Job output is %1x%2 while the composition is %3x%4.")
+                        .arg(job.resolutionWidth)
+                        .arg(job.resolutionHeight)
+                        .arg(compWidth)
+                        .arg(compHeight),
+                    QStringLiteral("Confirm whether the mismatch is intentional"),
+                    compId);
+                result.addDiagnostic(diag);
+            }
+
+            const double compFps = composition->frameRate().framerate();
+            if (compFps > 0.0 && job.frameRate > 0.0 &&
+                std::abs(job.frameRate - compFps) > 0.01) {
+                auto diag = makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Warning,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Render frame rate differs from composition frame rate"),
+                    QStringLiteral("Job frame rate is %1 fps while the composition is %2 fps.")
+                        .arg(job.frameRate, 0, 'f', 3)
+                        .arg(compFps, 0, 'f', 3),
+                    QStringLiteral("Confirm whether the mismatch is intentional"),
+                    compId);
+                result.addDiagnostic(diag);
+            }
         }
     }
 
@@ -3055,6 +3161,152 @@ namespace Artifact
     QString ArtifactRenderQueueService::jobErrorMessageAt(int index) const
     {
         return impl_->queueManager.jobErrorMessageAt(index);
+    }
+
+    ArtifactCore::DiagnosticResult ArtifactRenderQueueService::preflightRenderQueueAt(int index) const
+    {
+        ArtifactCore::DiagnosticResult result;
+        const int count = impl_->queueManager.jobCount();
+        if (index < 0 || index >= count) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Render queue job index is out of range"),
+                QStringLiteral("The requested job index %1 is outside the current queue size of %2.")
+                    .arg(index)
+                    .arg(count),
+                QStringLiteral("Select a valid render queue job")));
+            return result;
+        }
+
+        const auto job = impl_->queueManager.getJob(index);
+        const QString compId = job.compositionId.toString();
+        const QString jobName = job.jobName.trimmed().isEmpty() ? job.compositionName.trimmed() : job.jobName.trimmed();
+
+        const QString outputPath = job.outputPath.trimmed();
+        if (outputPath.isEmpty()) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Render output path is empty"),
+                QStringLiteral("Job '%1' does not have an output path.").arg(jobName),
+                QStringLiteral("Set an output file path"),
+                compId));
+        } else {
+            const QFileInfo outputInfo(outputPath);
+            if (!outputInfo.dir().exists()) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Error,
+                    ArtifactCore::DiagnosticCategory::File,
+                    QStringLiteral("Render output directory does not exist"),
+                    QStringLiteral("The output directory '%1' is missing.").arg(outputInfo.absolutePath()),
+                    QStringLiteral("Choose an existing output directory"),
+                    compId));
+            }
+        }
+
+        if (job.resolutionWidth <= 0 || job.resolutionHeight <= 0) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Render resolution is invalid"),
+                QStringLiteral("The job resolution is %1x%2.").arg(job.resolutionWidth).arg(job.resolutionHeight),
+                QStringLiteral("Set a valid render resolution"),
+                compId));
+        }
+
+        if (job.frameRate <= 0.0) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Render frame rate is invalid"),
+                QStringLiteral("The job frame rate must be greater than 0."),
+                QStringLiteral("Set a valid frame rate"),
+                compId));
+        }
+
+        if (job.startFrame >= job.endFrame) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Render frame range is empty"),
+                QStringLiteral("Start frame %1 must be smaller than end frame %2.")
+                    .arg(job.startFrame)
+                    .arg(job.endFrame),
+                QStringLiteral("Adjust the frame range"),
+                compId));
+        }
+
+        if (job.outputFormat.trimmed().isEmpty()) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Warning,
+                ArtifactCore::DiagnosticCategory::Configuration,
+                QStringLiteral("Render output format is not set"),
+                QStringLiteral("The job relies on the file extension or default container."),
+                QStringLiteral("Choose an explicit output format"),
+                compId));
+        }
+
+        auto* projectService = ArtifactProjectService::instance();
+        ArtifactCompositionPtr composition;
+        if (projectService) {
+            const auto found = projectService->findComposition(job.compositionId);
+            if (found.success) {
+                composition = found.ptr.lock();
+            }
+        }
+        if (!composition) {
+            const auto found = ArtifactProjectManager::getInstance().findComposition(job.compositionId);
+            composition = found.ptr.lock();
+        }
+
+        if (!composition) {
+            result.addDiagnostic(makePreflightDiagnostic(
+                ArtifactCore::DiagnosticSeverity::Error,
+                ArtifactCore::DiagnosticCategory::Reference,
+                QStringLiteral("Render composition could not be found"),
+                QStringLiteral("The queue job references composition '%1', but it is no longer available.")
+                    .arg(job.compositionName),
+                QStringLiteral("Relink the job to an existing composition"),
+                compId));
+            return result;
+        }
+
+        if (job.integratedRenderEnabled) {
+            const QString audioPath = job.audioSourcePath.trimmed();
+            const bool hasExternalAudioSource = !audioPath.isEmpty() && QFileInfo(audioPath).isFile();
+            const bool hasCompositionAudio = composition->hasAudio();
+
+            if (!hasExternalAudioSource && !hasCompositionAudio) {
+                result.addDiagnostic(makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Warning,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Integrated audio is enabled but no audio source is available"),
+                    QStringLiteral("The job is marked for integrated audio, but neither the composition nor an external file provides audio."),
+                    QStringLiteral("Attach an audio source or disable integrated audio"),
+                    compId));
+            }
+
+            if (!audioPath.isEmpty() && !hasExternalAudioSource) {
+                auto diag = ArtifactCore::ProjectDiagnostic::createMissingFile(audioPath, QString());
+                diag.setSourceCompId(compId);
+                result.addDiagnostic(diag);
+            }
+        }
+
+        appendMissingAssetDiagnostics(composition, compId, result);
+        appendCompositionMismatchWarnings(job, composition, compId, result);
+        return result;
+    }
+
+    ArtifactCore::DiagnosticResult ArtifactRenderQueueService::preflightAllRenderQueues() const
+    {
+        ArtifactCore::DiagnosticResult result;
+        const int count = impl_->queueManager.jobCount();
+        for (int i = 0; i < count; ++i) {
+            result.merge(preflightRenderQueueAt(i));
+        }
+        return result;
     }
 
     bool ArtifactRenderQueueService::jobOverlayTransformAt(int index, float* offsetX, float* offsetY, float* scale, float* rotationDeg) const

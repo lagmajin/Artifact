@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256" fill="none">
+  <rect width="256" height="256" rx="12" fill="#111418"/>
+  <rect x="9" y="9" width="238" height="238" rx="7" stroke="#353B42" stroke-width="4"/>
+
+  <path d="M20 20h216v24H20z" fill="#20262C"/>
+  <path d="M26 20h18L26 44H20V38zm36 0h18L56 44H38zm36 0h18L92 44H74zm36 0h18l-24 24h-18zm36 0h18l-24 24h-18zm36 0h18l-24 24h-18zm30 6v18h-18z" fill="#FFB020"/>
+
+  <rect x="28" y="61" width="200" height="134" fill="#171B20" stroke="#D8D8D8" stroke-width="5"/>
+  <path d="M28 161l48-46 32 31 27-28 62 77H28z" fill="#25313A"/>
+  <path d="m28 161 48-46 32 31 27-28 62 77" stroke="#D8D8D8" stroke-width="6" stroke-linejoin="miter"/>
+  <circle cx="73" cy="92" r="15" fill="#35B8FF"/>
+
+  <path d="m147 61-22 40 24 17-20 31 22 16-17 30" fill="#111418"/>
+  <path d="m147 61-22 40 24 17-20 31 22 16-17 30" stroke="#FF4050" stroke-width="10" stroke-linecap="square" stroke-linejoin="miter"/>
+  <path d="m132 101-26 6m43 11 29-10m-49 41-27 13m49 3 29 16" stroke="#FF4050" stroke-width="7" stroke-linecap="square"/>
+
+  <rect x="20" y="211" width="216" height="25" fill="#20262C"/>
+  <rect x="29" y="217" width="12" height="12" fill="#FF4050"/>
+  <path d="m31.5 219.5 7 7m0-7-7 7" stroke="#202020" stroke-width="2.5"/>
+  <text x="51" y="228" fill="#F0F2F4" font-family="Arial, sans-serif" font-size="14" font-weight="700" letter-spacing="1.2">MEDIA OFFLINE</text>
+</svg>

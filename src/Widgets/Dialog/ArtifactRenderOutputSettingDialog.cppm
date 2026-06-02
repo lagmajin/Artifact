@@ -47,6 +47,8 @@ namespace Artifact
     QString codecProfile;
     QComboBox* backendCombo = nullptr;
     QLabel* backendInfoLabel = nullptr;
+    QLabel* preflightSummaryLabel = nullptr;
+    QLabel* preflightDetailsLabel = nullptr;
     QComboBox* renderBackendCombo = nullptr;
     QComboBox* resolutionCombo = nullptr;
   QSpinBox* widthSpin = nullptr;
@@ -415,6 +417,15 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     });
     formLayout->addRow("Render Backend:", impl_->renderBackendCombo);
 
+    impl_->preflightSummaryLabel = new QLabel(QStringLiteral("Preflight: not checked yet"), this);
+    impl_->preflightSummaryLabel->setTextFormat(Qt::PlainText);
+    impl_->preflightSummaryLabel->setWordWrap(true);
+    impl_->preflightDetailsLabel = new QLabel(QStringLiteral("Open this dialog from the render queue to see job-specific warnings and errors."), this);
+    impl_->preflightDetailsLabel->setTextFormat(Qt::PlainText);
+    impl_->preflightDetailsLabel->setWordWrap(true);
+    formLayout->addRow("Preflight:", impl_->preflightSummaryLabel);
+    formLayout->addRow(QString(), impl_->preflightDetailsLabel);
+
     // Resolution presets + custom width/height
     impl_->resolutionCombo = new QComboBox();
     impl_->resolutionCombo->addItem("3840 x 2160");
@@ -781,6 +792,27 @@ QString ArtifactRenderOutputSettingDialog::renderBackend() const
  int ArtifactRenderOutputSettingDialog::audioBitrateKbps() const
  {
    return impl_->audioBitrateSpin ? impl_->audioBitrateSpin->value() : 128;
+ }
+
+ void ArtifactRenderOutputSettingDialog::setPreflightSummary(const QString& summary)
+ {
+   if (impl_->preflightSummaryLabel) {
+     impl_->preflightSummaryLabel->setText(summary.isEmpty()
+         ? QStringLiteral("Preflight: none")
+         : summary);
+   }
+ }
+
+ void ArtifactRenderOutputSettingDialog::setPreflightDetails(const QStringList& details)
+ {
+   if (!impl_->preflightDetailsLabel) {
+     return;
+   }
+   if (details.isEmpty()) {
+     impl_->preflightDetailsLabel->setText(QStringLiteral("No preflight issues were detected."));
+     return;
+   }
+   impl_->preflightDetailsLabel->setText(details.join(QStringLiteral("\n")));
  }
 
 };

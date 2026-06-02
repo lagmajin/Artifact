@@ -2,20 +2,17 @@
 
 このドキュメントは、AssetBrowserやAssetDirectoryModel等で使用するアイコンの種類と対応するファイル名を列挙するためのものです。
 
-## アイコン種類とファイル名（例）
+## 格納場所
 
-| アイコン種別         | ファイル名例           |
-|----------------------|-----------------------|
-| フォルダ             | folder.svg            |
-| 画像ファイル         | image.svg             |
-| 動画ファイル         | video.svg             |
-| 音声ファイル         | audio.svg             |
-| テキストファイル     | text.svg              |
-| PDFファイル          | pdf.svg               |
-| アーカイブ           | archive.svg           |
-| 不明/その他          | file.svg              |
+Asset Browser と Project View で使うオリジナル SVG は
+[`App/Icon/Studio/`](../App/Icon/Studio/) に格納する。
 
-> **注:** 実際のファイル名やパスは今後の実装で決定します。
+## アイコン種類とファイル名
+
+| アイコン種別 | ファイル |
+|---|---|
+| 画像アセット欠損サムネイル / プレビュー | [`asset_missing.svg`](../App/Icon/Studio/asset_missing.svg) |
+| 画像アセット欠損小アイコン | [`asset_missing_small.svg`](../App/Icon/Studio/asset_missing_small.svg) |
 
 ## アイコン方針
 

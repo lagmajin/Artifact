@@ -90,6 +90,9 @@ public: // Actions - can be triggered manually
     void stop();
     void goToStart();
     void goToEnd();
+    void shuttleForward();
+    void shuttleReverse();
+    void shuttleStop();
     
     // Frame navigation
     void nextFrame();

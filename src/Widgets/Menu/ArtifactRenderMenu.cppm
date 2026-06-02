@@ -6,6 +6,7 @@ module;
 #include <QApplication>
 #include <QDialog>
 #include <QRect>
+#include <QStringList>
 #include <wobjectimpl.h>
 
 module Menu.Render;
@@ -201,6 +202,28 @@ void ArtifactRenderMenu::Impl::showRenderSettings()
 {
  ArtifactRenderOutputSettingDialog dialog(mainWindow_ ? mainWindow_ : menu_);
  dialog.setWindowTitle(QStringLiteral("Render Output Settings"));
+ if (auto* queueService = ArtifactRenderQueueService::instance()) {
+  const auto preflight = queueService->preflightAllRenderQueues();
+  dialog.setPreflightSummary(QStringLiteral("Preflight: %1E / %2W")
+      .arg(preflight.getErrorCount())
+      .arg(preflight.getWarningCount()));
+  QStringList details;
+  for (const auto& diagnostic : preflight.getDiagnostics()) {
+   const QString severity = diagnostic.isError()
+       ? QStringLiteral("ERROR")
+       : diagnostic.isWarning()
+           ? QStringLiteral("WARNING")
+           : QStringLiteral("INFO");
+   details << QStringLiteral("%1: %2").arg(severity, diagnostic.getMessage());
+   if (!diagnostic.getDescription().isEmpty()) {
+    details << QStringLiteral("  %1").arg(diagnostic.getDescription());
+   }
+   if (!diagnostic.getFixAction().isEmpty()) {
+    details << QStringLiteral("  Fix: %1").arg(diagnostic.getFixAction());
+   }
+  }
+  dialog.setPreflightDetails(details);
+ }
  dialog.exec();
 }
 
