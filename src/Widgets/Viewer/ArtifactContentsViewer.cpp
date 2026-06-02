@@ -347,10 +347,10 @@ namespace Artifact
    recentSourceCombo->clear();
    recentSourceCombo->setEnabled(!recentSourcePaths.isEmpty());
    if (recentSourcePaths.isEmpty()) {
-    recentSourceCombo->addItem(QStringLiteral("Select a recent source"));
+    recentSourceCombo->addItem(QStringLiteral("Open a file to inspect"));
     recentSourceCombo->setItemData(0, QString(), Qt::UserRole);
     recentSourceCombo->setCurrentIndex(0);
-    recentSourceCombo->setToolTip(QStringLiteral("Open a file to add recent sources"));
+    recentSourceCombo->setToolTip(QStringLiteral("Open a file to add recent sources and inspect it"));
     return;
    }
 
@@ -371,7 +371,7 @@ namespace Artifact
     }
    }
    recentSourceCombo->setCurrentIndex(selectedIndex >= 0 ? selectedIndex : 0);
-   recentSourceCombo->setToolTip(QStringLiteral("Select a recent source"));
+   recentSourceCombo->setToolTip(QStringLiteral("Open a file or select a recent source"));
   }
 
   void ArtifactContentsViewer::Impl::loadCompareSurfaceState()
@@ -2007,7 +2007,7 @@ namespace Artifact
     recentSourceCombo->setEditable(false);
     recentSourceCombo->setMinimumWidth(200);
     recentSourceCombo->setMaximumWidth(280);
-   recentSourceCombo->setToolTip(QStringLiteral("Select a recent source"));
+   recentSourceCombo->setToolTip(QStringLiteral("Open a file or select a recent source"));
     QPalette pal = recentSourceCombo->palette();
     pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
     pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));

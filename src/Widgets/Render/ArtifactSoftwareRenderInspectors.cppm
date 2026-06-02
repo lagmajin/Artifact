@@ -756,7 +756,7 @@ QImage mergePreviewImages(std::initializer_list<QImage> images, const QSize& siz
 QString layerSummaryText(const ArtifactCompositionPtr& composition, const ArtifactAbstractLayerPtr& layer)
 {
     if (!layer) {
-        return QStringLiteral("Select a layer to inspect the preview");
+        return QStringLiteral("Open a project or select a layer to inspect the preview");
     }
 
     const auto sourceSize = layer->sourceSize();
@@ -1286,7 +1286,7 @@ ArtifactSoftwareLayerTestWidget::ArtifactSoftwareLayerTestWidget(QWidget* parent
     controlGrid->addRow(QStringLiteral("Effect"), impl_->effectCombo_);
     root->addLayout(controlGrid);
 
-    impl_->infoLabel_ = new QLabel(QStringLiteral("Select a layer to inspect the preview"), this);
+    impl_->infoLabel_ = new QLabel(QStringLiteral("Open a project or select a layer to inspect the preview"), this);
     root->addWidget(impl_->infoLabel_);
 
     impl_->previewLabel_ = new QLabel(this);

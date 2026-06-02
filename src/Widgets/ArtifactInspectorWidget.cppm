@@ -1212,9 +1212,9 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
 }
 
 void ArtifactInspectorWidget::Impl::setNoLayerState() {
-  layerNameLabel->setText("Layer: Select a layer to continue");
+  layerNameLabel->setText("Layer: Open a project or select a layer to continue");
   layerTypeLabel->setText("Type: N/A");
-  statusLabel->setText("Status: Select a layer to inspect details");
+  statusLabel->setText("Status: Open a project or select a layer to inspect details");
   currentLayerId_ = LayerID();
   if (layerNoteConnection_) {
     QObject::disconnect(layerNoteConnection_);
@@ -1248,11 +1248,11 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
   }
   if (effectParametersHintLabel) {
     effectParametersHintLabel->setText(
-        QStringLiteral("Select an effect row above to edit color controls."));
+        QStringLiteral("Select an effect row above to edit color controls, or open a project first."));
     effectParametersHintLabel->setVisible(true);
   }
   setEffectRackEnabled(false);
-  setEffectsStateText("Select a layer to manage color controls.", true);
+  setEffectsStateText("Open a project or select a layer to manage color controls.", true);
   refreshRackButtons();
 }
 
@@ -1303,7 +1303,7 @@ void ArtifactInspectorWidget::Impl::refreshRackButtons() {
 void ArtifactInspectorWidget::Impl::updateEffectsList() {
   if (currentLayerId_.isNil()) {
     setEffectRackEnabled(false);
-    setEffectsStateText("Select a layer to manage effects.", true);
+    setEffectsStateText("Open a project or select a layer to manage effects.", true);
     refreshRackButtons();
     return;
   }
@@ -1342,7 +1342,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   auto layer = comp->layerById(currentLayerId_);
   if (!layer) {
     setEffectRackEnabled(false);
-    setEffectsStateText("Select a layer to manage effects.", true);
+    setEffectsStateText("Open a project or select a layer to manage effects.", true);
     refreshRackButtons();
     return;
   }

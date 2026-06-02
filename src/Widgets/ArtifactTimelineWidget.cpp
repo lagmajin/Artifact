@@ -543,7 +543,7 @@ CurveEditorSnapshot buildCurveEditorSnapshot(
   CurveEditorSnapshot snapshot;
   const auto layers = selectedTimelineLayers(selectionManager);
   if (layers.isEmpty()) {
-    snapshot.summary = QStringLiteral("Select a layer to continue");
+    snapshot.summary = QStringLiteral("Open a project or select a layer to continue");
     return snapshot;
   }
 
@@ -1348,7 +1348,7 @@ KeyframeNavigationState collectKeyframeNavigationState(
 QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
 {
   if (state.selectedLayerCount <= 0) {
-    return QStringLiteral("Keys: - | Select a layer");
+    return QStringLiteral("Keys: - | Open a project or select a layer");
   }
 
   if (state.totalFrames <= 0) {
@@ -4403,7 +4403,7 @@ void ArtifactTimelineWidget::updateSelectionState()
     }
     if (effectiveSelectedCount <= 0 && selectedKeyframeCount <= 0) {
       impl_->selectionSummaryLabel_->setText(
-          QStringLiteral("Selection: 0 layers | Select a layer to continue"));
+          QStringLiteral("Selection: 0 layers | Open a project or select a layer to continue"));
     } else if (effectiveSelectedCount > 0 && selectedKeyframeCount <= 0) {
       impl_->selectionSummaryLabel_->setText(
           QStringLiteral("Selection: %1 layers | Keys: 0 selected | Lane: empty at F%2 | Add a keyframe at the playhead")

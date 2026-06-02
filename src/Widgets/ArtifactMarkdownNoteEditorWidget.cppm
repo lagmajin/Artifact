@@ -192,7 +192,7 @@ public:
   {
     return target_ == MarkdownNoteTarget::Composition
         ? QStringLiteral("Open a composition, then write notes in markdown...")
-        : QStringLiteral("Select a layer, then write notes in markdown...");
+        : QStringLiteral("Open a project or select a layer, then write notes in markdown...");
   }
 
   void setDisabledState(const QString& message)
@@ -245,7 +245,7 @@ public:
     const auto layer = selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
     if (!layer || !comp->containsLayerById(layer->id())) {
       currentLayerId_ = LayerID();
-      setDisabledState(QStringLiteral("Select a layer to write notes."));
+      setDisabledState(QStringLiteral("Open a project or select a layer to write notes."));
       return;
     }
 

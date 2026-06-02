@@ -24,6 +24,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QStringList>
 #include <wobjectimpl.h>
 
 
@@ -592,6 +593,19 @@ QString scaleSupplementaryText(const ArtifactAbstractLayerPtr &layer,
       .arg(actualSize);
 }
 
+QString compactExpressionSummary(const QString& expression)
+{
+  QString summary = expression.simplified();
+  if (summary.isEmpty()) {
+    return QStringLiteral("linked");
+  }
+  constexpr int kMaxLength = 48;
+  if (summary.size() > kMaxLength) {
+    summary = summary.left(kMaxLength - 3) + QStringLiteral("...");
+  }
+  return summary;
+}
+
 void updateScaleSupplementaryText(
     ArtifactPropertyEditorRowWidget *row, const ArtifactAbstractLayerPtr &layer,
     const std::shared_ptr<ArtifactCore::AbstractProperty> &property,
@@ -599,8 +613,16 @@ void updateScaleSupplementaryText(
   if (!row || !property) {
     return;
   }
-  row->setSupplementaryText(
-      scaleSupplementaryText(layer, property->getName(), value));
+  QStringList parts;
+  const QString scaleText = scaleSupplementaryText(layer, property->getName(), value);
+  if (!scaleText.isEmpty()) {
+    parts << scaleText;
+  }
+  if (property->hasExpression()) {
+    parts << QStringLiteral("Expr: %1").arg(
+        compactExpressionSummary(property->getExpression()));
+  }
+  row->setSupplementaryText(parts.join(QStringLiteral(" · ")));
 }
 
 std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
@@ -1730,7 +1752,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   clearLayoutRecursive(mainLayout);
 
   if (!currentLayer) {
-    QLabel *emptyLabel = new QLabel("Select a layer to edit properties");
+    QLabel *emptyLabel = new QLabel("Open a project or select a layer to edit properties");
     emptyLabel->setObjectName(QStringLiteral("propertyEmptyLabel"));
     emptyLabel->setAlignment(Qt::AlignCenter);
     applyPropertySectionLabel(emptyLabel, true);
@@ -1812,13 +1834,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   const auto ownerSnapshots =
       ArtifactCore::PropertyRegistryReadOnlyAdapter::queryAllOwners();
   if (!ownerSnapshots.isEmpty()) {
-    QString ownerSummaryText = QStringLiteral("Snapshot owners:");
+    QString ownerSummaryText = QStringLiteral("Reference catalog:");
     int validOwnerCount = 0;
+    int totalPropertyCount = 0;
     for (const auto &ownerSnapshot : ownerSnapshots) {
       if (!ownerSnapshot.isValid) {
         continue;
       }
       ++validOwnerCount;
+      totalPropertyCount += ownerSnapshot.propertyCount;
       ownerSummaryText += QLatin1Char('\n');
       ownerSummaryText += QStringLiteral("* ");
       ownerSummaryText += ownerSnapshot.displayName.isEmpty()
@@ -1834,6 +1858,16 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       ownerLabel->setWordWrap(true);
       applyPropertySectionLabel(ownerLabel, false);
       summaryLayout->addWidget(ownerLabel);
+
+      auto *hintLabel = new QLabel(
+          QStringLiteral("Read-only target resolution is available from the current property catalog (%1 owners, %2 properties).")
+              .arg(validOwnerCount)
+              .arg(totalPropertyCount),
+          summaryGroup);
+      hintLabel->setObjectName(QStringLiteral("propertySectionNote"));
+      hintLabel->setWordWrap(true);
+      applyPropertySectionLabel(hintLabel, false);
+      summaryLayout->addWidget(hintLabel);
     }
   }
   std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
