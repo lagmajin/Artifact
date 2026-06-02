@@ -25,6 +25,107 @@ public:
         : owner_(owner)
     {}
 
+    static const ArtifactCore::FrameDebugResourceRecord* findResource(
+        const ArtifactCore::FrameDebugSnapshot& snapshot, const QString& label)
+    {
+        for (const auto& resource : snapshot.resources) {
+            if (resource.label == label) {
+                return &resource;
+            }
+        }
+        return nullptr;
+    }
+
+    static QStringList buildDifferenceLeakageDelta(
+        const ArtifactCore::FrameDebugSnapshot& previous,
+        const ArtifactCore::FrameDebugSnapshot& current,
+        bool hasPrevious)
+    {
+        QStringList lines;
+        if (!hasPrevious) {
+            lines << QStringLiteral("baselinePending=need another snapshot");
+            return lines;
+        }
+
+        const bool compareChanged =
+            previous.compareMode != current.compareMode ||
+            previous.compareTargetId != current.compareTargetId;
+        lines << QStringLiteral("compareState=%1 -> %2")
+                     .arg(ArtifactCore::toString(previous.compareMode),
+                          ArtifactCore::toString(current.compareMode));
+        if (compareChanged) {
+            lines << QStringLiteral("compareTarget=%1 -> %2")
+                         .arg(previous.compareTargetId.isEmpty() ? QStringLiteral("<none>") : previous.compareTargetId,
+                              current.compareTargetId.isEmpty() ? QStringLiteral("<none>") : current.compareTargetId);
+        }
+
+        const int staleBefore = static_cast<int>(std::count_if(
+            previous.resources.begin(), previous.resources.end(),
+            [](const auto& resource) { return resource.stale; }));
+        const int staleNow = static_cast<int>(std::count_if(
+            current.resources.begin(), current.resources.end(),
+            [](const auto& resource) { return resource.stale; }));
+        const int cacheMissBefore = static_cast<int>(std::count_if(
+            previous.resources.begin(), previous.resources.end(),
+            [](const auto& resource) { return !resource.cacheHit; }));
+        const int cacheMissNow = static_cast<int>(std::count_if(
+            current.resources.begin(), current.resources.end(),
+            [](const auto& resource) { return !resource.cacheHit; }));
+        lines << QStringLiteral("resourceRisk=stale %1 -> %2 cacheMiss %3 -> %4")
+                     .arg(staleBefore)
+                     .arg(staleNow)
+                     .arg(cacheMissBefore)
+                     .arg(cacheMissNow);
+
+        if (const auto* prevVisibility = findResource(
+                previous, QStringLiteral("Composition Visibility"));
+            prevVisibility) {
+            if (const auto* nowVisibility = findResource(
+                    current, QStringLiteral("Composition Visibility"));
+                nowVisibility && prevVisibility->note != nowVisibility->note) {
+                lines << QStringLiteral("visibilityDelta=%1 -> %2")
+                             .arg(prevVisibility->note, nowVisibility->note);
+            }
+        }
+
+        if (const auto* prevContract = findResource(
+                previous, QStringLiteral("Blend / Mask Contract"));
+            prevContract) {
+            if (const auto* nowContract = findResource(
+                    current, QStringLiteral("Blend / Mask Contract"));
+                nowContract && prevContract->note != nowContract->note) {
+                lines << QStringLiteral("contractDelta=%1 -> %2")
+                             .arg(prevContract->note, nowContract->note);
+            }
+        }
+
+        int relationDriftCount = 0;
+        int textureShapeDriftCount = 0;
+        for (const auto& currentResource : current.resources) {
+            for (const auto& previousResource : previous.resources) {
+                if (currentResource.label != previousResource.label) {
+                    continue;
+                }
+                if (currentResource.relation != previousResource.relation) {
+                    ++relationDriftCount;
+                }
+                if (currentResource.texture.valid && previousResource.texture.valid &&
+                    (currentResource.texture.width != previousResource.texture.width ||
+                     currentResource.texture.height != previousResource.texture.height ||
+                     currentResource.texture.arrayLayers != previousResource.texture.arrayLayers ||
+                     currentResource.texture.mipLevels != previousResource.texture.mipLevels)) {
+                    ++textureShapeDriftCount;
+                }
+                break;
+            }
+        }
+        lines << QStringLiteral("leakageDrift=relation %1 textureShape %2")
+                     .arg(relationDriftCount)
+                     .arg(textureShapeDriftCount);
+
+        return lines;
+    }
+
     void setupUI()
     {
         auto* layout = new QVBoxLayout(owner_);
@@ -148,6 +249,12 @@ public:
                               .arg(hotThread.isEmpty() ? QStringLiteral("<unnamed>") : hotThread)
                               .arg(hotDepth);
             }
+        }
+
+        lines << QString();
+        lines << QStringLiteral("Difference / Leakage:");
+        for (const auto& note : buildDifferenceLeakageDelta(previous_, snapshot, hasPrevious_)) {
+            lines << QStringLiteral("  %1").arg(note);
         }
 
         lines << QString();

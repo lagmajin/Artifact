@@ -3290,6 +3290,7 @@ public:
   QAction *quickScreenshotAction_ = nullptr;
   QAction *advancedScreenshotAction_ = nullptr;
   QAction *motionPathAction_ = nullptr;
+  QAction *effectHitboxAction_ = nullptr;
   QToolButton *toolModeButton_ = nullptr;
   QToolButton *gizmoModeButton_ = nullptr;
   QToolButton *pivotModeButton_ = nullptr;
@@ -3688,6 +3689,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->motionPathAction_->setCheckable(true);
   impl_->motionPathAction_->setToolTip(
       QStringLiteral("Show motion path overlay for the selected layer"));
+  impl_->effectHitboxAction_ = impl_->topToolbar_->addAction("Hitbox");
+  impl_->effectHitboxAction_->setCheckable(true);
+  impl_->effectHitboxAction_->setToolTip(
+      QStringLiteral("Show selected layer bounds, masks, and matte source hitboxes"));
 
   auto *toolMenu = new QMenu(this);
   polishEditorMenu(toolMenu, this);
@@ -4118,6 +4123,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     gpuBlendAct->setChecked(impl_->renderController_->isGpuBlendEnabled());
     impl_->motionPathAction_->setChecked(
         impl_->renderController_->isShowMotionPathOverlay());
+    impl_->effectHitboxAction_->setChecked(
+        impl_->renderController_->isShowEffectHitboxOverlay());
     const float checkerboardSize = impl_->renderController_->checkerboardSize();
     for (QAction *action : checkerboardSizeMenu->actions()) {
       const float size = action->data().toFloat();
@@ -4185,6 +4192,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
             settings->setCompositionShowMotionPathOverlay(checked);
           }
+        }
+      });
+  QObject::connect(
+      impl_->effectHitboxAction_, &QAction::toggled, this,
+      [this](bool checked) {
+        if (impl_->renderController_) {
+          impl_->renderController_->setShowEffectHitboxOverlay(checked);
         }
       });
   auto *immersiveExitShortcut =

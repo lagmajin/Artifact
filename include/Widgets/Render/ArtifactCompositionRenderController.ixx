@@ -104,6 +104,8 @@ void setGpuBlendEnabled(bool enabled);
 bool isGpuBlendEnabled() const;
 void setShowMotionPathOverlay(bool show);
 bool isShowMotionPathOverlay() const;
+void setShowEffectHitboxOverlay(bool show);
+bool isShowEffectHitboxOverlay() const;
 bool setSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool removeSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool setSelectedLayerMotionPathInterpolationAtCurrentFrame(int interpolationType);

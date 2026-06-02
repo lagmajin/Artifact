@@ -170,6 +170,167 @@ void drawTaggedRectOutline(ArtifactIRenderer *renderer, const QRectF &rect,
   drawTaggedSolidLine(renderer, bl, tl, color, 1.0f, enabled);
 }
 
+void drawRectOutline(ArtifactIRenderer *renderer, const QRectF &rect,
+                     const FloatColor &color, float thickness)
+{
+  if (!renderer || !rect.isValid() || rect.width() <= 0.0 ||
+      rect.height() <= 0.0) {
+    return;
+  }
+
+  const QPointF tl = rect.topLeft();
+  const QPointF tr = rect.topRight();
+  const QPointF br = rect.bottomRight();
+  const QPointF bl = rect.bottomLeft();
+  renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          color, thickness);
+  renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          color, thickness);
+  renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          color, thickness);
+  renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          color, thickness);
+}
+
+QRectF maskPathCanvasBounds(const MaskPath &path, const QTransform &globalTransform)
+{
+  QRectF bounds;
+  bool hasPoint = false;
+  const int vertexCount = path.vertexCount();
+  if (vertexCount <= 0) {
+    return bounds;
+  }
+
+  const auto includePoint = [&bounds, &globalTransform, &hasPoint](const QPointF &point) {
+    const QPointF canvasPoint = globalTransform.map(point);
+    if (!hasPoint) {
+      bounds = QRectF(canvasPoint, QSizeF(0.0, 0.0));
+      hasPoint = true;
+    } else {
+      bounds = bounds.united(QRectF(canvasPoint, QSizeF(0.0, 0.0)));
+    }
+  };
+
+  for (int v = 0; v < vertexCount; ++v) {
+    const MaskVertex vertex = path.vertex(v);
+    includePoint(vertex.position);
+    includePoint(vertex.position + vertex.inTangent);
+    includePoint(vertex.position + vertex.outTangent);
+    if (v > 0) {
+      const QVector<QPointF> samples =
+          maskSegmentPolyline(path.vertex(v - 1), vertex, 18);
+      for (const QPointF &sample : samples) {
+        includePoint(sample);
+      }
+    }
+  }
+
+  if (path.isClosed() && vertexCount > 1) {
+    const QVector<QPointF> samples =
+        maskSegmentPolyline(path.vertex(vertexCount - 1), path.vertex(0), 18);
+    for (const QPointF &sample : samples) {
+      includePoint(sample);
+    }
+  }
+
+  return bounds.normalized();
+}
+
+void drawEffectHitboxOverlay(ArtifactIRenderer *renderer,
+                             const ArtifactCompositionPtr &comp,
+                             const ArtifactAbstractLayerPtr &selectedLayer)
+{
+  if (!renderer || !comp || !selectedLayer) {
+    return;
+  }
+
+  const FloatColor layerColor{1.0f, 0.78f, 0.24f, 0.96f};
+  const FloatColor layerFill{1.0f, 0.78f, 0.24f, 0.10f};
+  const FloatColor maskColor{0.28f, 0.88f, 1.0f, 0.95f};
+  const FloatColor maskFill{0.28f, 0.88f, 1.0f, 0.08f};
+  const FloatColor matteColor{1.0f, 0.42f, 0.88f, 0.92f};
+  const FloatColor matteFill{1.0f, 0.42f, 0.88f, 0.07f};
+  const QTransform globalTransform = selectedLayer->getGlobalTransform();
+
+  const QRectF localBounds = selectedLayer->localBounds();
+  if (localBounds.isValid() && localBounds.width() > 0.0 &&
+      localBounds.height() > 0.0) {
+    const QPointF tl = globalTransform.map(localBounds.topLeft());
+    const QPointF tr = globalTransform.map(localBounds.topRight());
+    const QPointF br = globalTransform.map(localBounds.bottomRight());
+    const QPointF bl = globalTransform.map(localBounds.bottomLeft());
+    renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            layerColor, 2.2f);
+    renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            layerColor, 2.2f);
+    renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            layerColor, 2.2f);
+    renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            layerColor, 2.2f);
+    renderer->drawSolidRectTransformed(
+        static_cast<float>(localBounds.left()),
+        static_cast<float>(localBounds.top()),
+        static_cast<float>(localBounds.width()),
+        static_cast<float>(localBounds.height()), globalTransform, layerFill,
+        1.0f);
+  }
+
+  for (int maskIndex = 0; maskIndex < selectedLayer->maskCount(); ++maskIndex) {
+    const LayerMask mask = selectedLayer->mask(maskIndex);
+    if (!mask.isEnabled()) {
+      continue;
+    }
+
+    for (int pathIndex = 0; pathIndex < mask.maskPathCount(); ++pathIndex) {
+      const QRectF maskBounds =
+          maskPathCanvasBounds(mask.maskPath(pathIndex), globalTransform);
+      if (!maskBounds.isValid() || maskBounds.width() <= 0.0 ||
+          maskBounds.height() <= 0.0) {
+        continue;
+      }
+      renderer->drawSolidRect(static_cast<float>(maskBounds.left()),
+                              static_cast<float>(maskBounds.top()),
+                              static_cast<float>(maskBounds.width()),
+                              static_cast<float>(maskBounds.height()),
+                              maskFill, 1.0f);
+      drawRectOutline(renderer, maskBounds, maskColor, 1.4f);
+    }
+  }
+
+  const auto matteRefs = selectedLayer->matteReferences();
+  for (const auto &matteRef : matteRefs) {
+    if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) {
+      continue;
+    }
+
+    const auto matteLayer = comp->layerById(matteRef.sourceLayerId);
+    if (!matteLayer) {
+      continue;
+    }
+
+    const QRectF matteBounds = matteLayer->transformedBoundingBox().normalized();
+    if (!matteBounds.isValid() || matteBounds.width() <= 0.0 ||
+        matteBounds.height() <= 0.0) {
+      continue;
+    }
+
+    renderer->drawSolidRect(static_cast<float>(matteBounds.left()),
+                            static_cast<float>(matteBounds.top()),
+                            static_cast<float>(matteBounds.width()),
+                            static_cast<float>(matteBounds.height()),
+                            matteFill, 1.0f);
+    drawRectOutline(renderer, matteBounds, matteColor, 1.6f);
+  }
+}
+
 QString renderBackendToString(ArtifactRenderQueueService::RenderBackend backend)
 {
   switch (backend) {
@@ -2244,6 +2405,7 @@ public:
   bool showGuides_ = false;
   bool showSafeMargins_ = false;
   bool showMotionPathOverlay_ = false;
+  bool showEffectHitboxOverlay_ = false;
   bool showAnchorCenterOverlay_ = false;
   bool showCameraFrustumOverlay_ = false;
   bool showFrameInfo_ = false; // Changed to false by default
@@ -3551,6 +3713,19 @@ void CompositionRenderController::setShowMotionPathOverlay(bool show) {
 
 bool CompositionRenderController::isShowMotionPathOverlay() const {
   return impl_ ? impl_->showMotionPathOverlay_ : false;
+}
+
+void CompositionRenderController::setShowEffectHitboxOverlay(bool show) {
+  if (impl_->showEffectHitboxOverlay_ == show) {
+    return;
+  }
+  impl_->showEffectHitboxOverlay_ = show;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isShowEffectHitboxOverlay() const {
+  return impl_ ? impl_->showEffectHitboxOverlay_ : false;
 }
 
 bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFrame() {
@@ -7414,6 +7589,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             activeCamera && activeCamera->id() == selectedLayer->id();
         ::Artifact::drawCameraSelectionOverlay(
             renderer_.get(), selectedLayer, selectedLayerIsActiveCamera);
+        if (showEffectHitboxOverlay_) {
+          drawEffectHitboxOverlay(renderer_.get(), comp, selectedLayer);
+        }
       }
       const bool anchorOverlayToolActive =
           gizmoMode_ == TransformGizmo::Mode::AnchorPoint ||
