@@ -3435,6 +3435,35 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
         event->accept();
         return;
       }
+    } else if (event->key() == Qt::Key_D) {
+      if (auto* svc = ArtifactProjectService::instance()) {
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+        if (!compId.isNil()) {
+          const QVector<LayerID> selectedIds =
+              selectedLayerIdsInVisibleOrder(impl_->visibleRows);
+          if (!selectedIds.isEmpty()) {
+            for (const auto& layerId : selectedIds) {
+              svc->duplicateLayerInCurrentComposition(layerId);
+            }
+            updateLayout();
+            event->accept();
+            return;
+          }
+        }
+      }
+    } else if (event->key() == Qt::Key_G) {
+      if (auto* svc = ArtifactProjectService::instance()) {
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+        if (!compId.isNil()) {
+          if (svc->groupSelectedLayersInCurrentComposition()) {
+            updateLayout();
+            event->accept();
+            return;
+          }
+        }
+      }
     }
   }
 
