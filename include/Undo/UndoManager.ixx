@@ -43,6 +43,7 @@ export module Undo.UndoManager;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 
@@ -119,6 +120,20 @@ private:
     ArtifactAbstractLayerWeak layer_;
     std::vector<LayerMask> beforeMasks_;
     std::vector<LayerMask> afterMasks_;
+};
+
+class ChangeLayerMatteReferencesCommand : public UndoCommand {
+public:
+    ChangeLayerMatteReferencesCommand(ArtifactAbstractLayerPtr layer,
+                                       std::vector<LayerMatteReference> beforeRefs,
+                                       std::vector<LayerMatteReference> afterRefs);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    std::vector<LayerMatteReference> beforeRefs_;
+    std::vector<LayerMatteReference> afterRefs_;
 };
 
 // 新規コマンド：レイヤー移動（インデックス変更）

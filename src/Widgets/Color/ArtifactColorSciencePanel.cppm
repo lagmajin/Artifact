@@ -1,15 +1,27 @@
 module;
 #include <utility>
+#include <array>
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDesktopServices>
 #include <QFileDialog>
+#include <QFileInfo>
+#include <QDir>
+#include <QAbstractItemView>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QPainter>
+#include <QPixmap>
 #include <QPushButton>
+#include <QFrame>
+#include <QStandardPaths>
 #include <QSlider>
+#include <QUrl>
 #include <QVBoxLayout>
 #include <wobjectimpl.h>
 
@@ -18,26 +30,48 @@ module;
 
 module Artifact.Widgets.ColorSciencePanel;
 import Color.ScienceManager;
+import Color.LUT;
 namespace Artifact {
 
 class ArtifactColorSciencePanel::Impl {
 public:
+  struct LutEntry {
+    QString displayName;
+    QString source;
+    bool builtin = false;
+  };
+
   ArtifactColorScienceManager *manager_ = nullptr;
 
   // UI elements
   QComboBox *inputSpaceCombo_ = nullptr;
   QComboBox *workingSpaceCombo_ = nullptr;
   QComboBox *outputSpaceCombo_ = nullptr;
-  QComboBox *lutCombo_ = nullptr;
+  QLineEdit *lutFilterEdit_ = nullptr;
+  QListWidget *lutList_ = nullptr;
+  QLabel *lutPreviewLabel_ = nullptr;
+  QLabel *lutDetailsLabel_ = nullptr;
   QSlider *lutIntensitySlider_ = nullptr;
   QLabel *lutIntensityLabel_ = nullptr;
   QPushButton *loadLUTButton_ = nullptr;
+  QPushButton *applySelectedButton_ = nullptr;
   QPushButton *clearLUTButton_ = nullptr;
+  QPushButton *reloadLUTButton_ = nullptr;
+  QPushButton *openLUTFolderButton_ = nullptr;
   QCheckBox *hdrCheckBox_ = nullptr;
+
+  std::vector<LutEntry> lutEntries_;
 
   void setupUI(QWidget *parent);
   void updateUI();
   void connectSignals();
+  void refreshLUTBrowser();
+  void updateSelectedLUTPreview();
+  ArtifactCore::ColorLUT lutForSource(const QString &source) const;
+  QPixmap buildPreviewPixmap(const ArtifactCore::ColorLUT &lut,
+                             const QString &title) const;
+  QString lutDescriptionForSource(const QString &source) const;
+  QString defaultLUTDirectory() const;
 };
 
 ArtifactColorSciencePanel::ArtifactColorSciencePanel(QWidget *parent)
@@ -48,7 +82,10 @@ ArtifactColorSciencePanel::ArtifactColorSciencePanel(QWidget *parent)
   impl_->updateUI();
 }
 
-ArtifactColorSciencePanel::~ArtifactColorSciencePanel() { delete impl_; }
+ArtifactColorSciencePanel::~ArtifactColorSciencePanel() {
+  delete impl_->manager_;
+  delete impl_;
+}
 
 void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
   auto *layout = new QVBoxLayout(parent);
@@ -67,12 +104,34 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
 
   layout->addWidget(colorSpaceGroup);
 
-  // LUT Group
-  auto *lutGroup = new QGroupBox("LUT");
+  // LUT Browser Group
+  auto *lutGroup = new QGroupBox("LUT Browser");
   auto *lutLayout = new QVBoxLayout(lutGroup);
 
-  lutCombo_ = new QComboBox();
-  lutCombo_->setEditable(false);
+  auto *browserHeaderLayout = new QHBoxLayout();
+  lutFilterEdit_ = new QLineEdit();
+  lutFilterEdit_->setPlaceholderText("Search LUTs...");
+  reloadLUTButton_ = new QPushButton("Rescan");
+  openLUTFolderButton_ = new QPushButton("Open Folder");
+  browserHeaderLayout->addWidget(lutFilterEdit_, 1);
+  browserHeaderLayout->addWidget(reloadLUTButton_);
+  browserHeaderLayout->addWidget(openLUTFolderButton_);
+  lutLayout->addLayout(browserHeaderLayout);
+
+  lutList_ = new QListWidget();
+  lutList_->setSelectionMode(QAbstractItemView::SingleSelection);
+  lutLayout->addWidget(lutList_, 1);
+
+  lutPreviewLabel_ = new QLabel();
+  lutPreviewLabel_->setMinimumHeight(120);
+  lutPreviewLabel_->setAlignment(Qt::AlignCenter);
+  lutPreviewLabel_->setFrameShape(QFrame::StyledPanel);
+  lutPreviewLabel_->setText("Select a LUT to preview");
+  lutLayout->addWidget(lutPreviewLabel_);
+
+  lutDetailsLabel_ = new QLabel();
+  lutDetailsLabel_->setWordWrap(true);
+  lutLayout->addWidget(lutDetailsLabel_);
 
   auto *lutControlsLayout = new QHBoxLayout();
   lutIntensitySlider_ = new QSlider(Qt::Horizontal);
@@ -86,12 +145,13 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
 
   auto *lutButtonsLayout = new QHBoxLayout();
   loadLUTButton_ = new QPushButton("Load LUT...");
+  applySelectedButton_ = new QPushButton("Apply Selected");
   clearLUTButton_ = new QPushButton("Clear");
 
   lutButtonsLayout->addWidget(loadLUTButton_);
+  lutButtonsLayout->addWidget(applySelectedButton_);
   lutButtonsLayout->addWidget(clearLUTButton_);
 
-  lutLayout->addWidget(lutCombo_);
   lutLayout->addLayout(lutControlsLayout);
   lutLayout->addLayout(lutButtonsLayout);
 
@@ -156,14 +216,6 @@ void ArtifactColorSciencePanel::Impl::updateUI() {
   outputSpaceCombo_->addItems(spaceNames);
   outputSpaceCombo_->setCurrentIndex(static_cast<int>(settings.outputSpace));
 
-  // LUT combo
-  lutCombo_->clear();
-  auto availableLUTs = manager_->getAvailableLUTs();
-  for (const auto &lut : availableLUTs) {
-    QFileInfo info(QString::fromStdString(lut));
-    lutCombo_->addItem(info.baseName(), QString::fromStdString(lut));
-  }
-
   // LUT intensity
   int intensityPercent = static_cast<int>(manager_->getLUTIntensity() * 100);
   lutIntensitySlider_->setValue(intensityPercent);
@@ -171,6 +223,8 @@ void ArtifactColorSciencePanel::Impl::updateUI() {
 
   // HDR
   hdrCheckBox_->setChecked(manager_->isHDREnabled());
+
+  refreshLUTBrowser();
 }
 
 void ArtifactColorSciencePanel::Impl::connectSignals() {
@@ -201,6 +255,27 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
             manager_->setSettings(settings);
           });
 
+  connect(lutFilterEdit_, &QLineEdit::textChanged, [this](const QString &) {
+    refreshLUTBrowser();
+  });
+
+  connect(lutList_, &QListWidget::currentItemChanged, [this](QListWidgetItem *,
+                                                           QListWidgetItem *) {
+    updateSelectedLUTPreview();
+  });
+
+  connect(reloadLUTButton_, &QPushButton::clicked, [this]() {
+    refreshLUTBrowser();
+  });
+
+  connect(openLUTFolderButton_, &QPushButton::clicked, [this]() {
+    const QString directory = defaultLUTDirectory();
+    if (!directory.isEmpty()) {
+      QDir().mkpath(directory);
+      QDesktopServices::openUrl(QUrl::fromLocalFile(directory));
+    }
+  });
+
   // LUT controls
   connect(lutIntensitySlider_, &QSlider::valueChanged, [this](int value) {
     manager_->setLUTIntensity(value / 100.0f);
@@ -218,6 +293,23 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
     }
   });
 
+  connect(applySelectedButton_, &QPushButton::clicked, [this]() {
+    if (!lutList_) {
+      return;
+    }
+    auto *item = lutList_->currentItem();
+    if (!item) {
+      return;
+    }
+    const QString source = item->data(Qt::UserRole).toString();
+    if (source.isEmpty()) {
+      return;
+    }
+    if (manager_->loadLUT(source.toStdString())) {
+      updateUI();
+    }
+  });
+
   connect(clearLUTButton_, &QPushButton::clicked, [this]() {
     manager_->clearLUT();
     updateUI();
@@ -231,6 +323,188 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
 ArtifactColorScienceManager *
 ArtifactColorSciencePanel::colorScienceManager() const {
   return impl_->manager_;
+}
+
+void ArtifactColorSciencePanel::Impl::refreshLUTBrowser() {
+  if (!lutList_ || !manager_) {
+    return;
+  }
+
+  const QString filter = lutFilterEdit_ ? lutFilterEdit_->text().trimmed().toLower() : QString();
+  const QString activeSource = QString::fromStdString(manager_->getSettings().lutPath);
+
+  lutEntries_.clear();
+  const auto available = manager_->getAvailableLUTs();
+  lutEntries_.reserve(static_cast<size_t>(available.size()));
+  for (const auto &lut : available) {
+    const QString source = QString::fromStdString(lut);
+    const bool builtin = source.startsWith(QStringLiteral("builtin:"));
+    const QString displayName = builtin
+                                    ? QStringLiteral("[Built-in] %1").arg(source.mid(8))
+                                    : QFileInfo(source).baseName();
+    const QString searchable = (displayName + QStringLiteral(" ") + source).toLower();
+    if (!filter.isEmpty() && !searchable.contains(filter)) {
+      continue;
+    }
+    lutEntries_.push_back({displayName, source, builtin});
+  }
+
+  lutList_->blockSignals(true);
+  lutList_->clear();
+  for (const auto &entry : lutEntries_) {
+    auto *item = new QListWidgetItem(entry.displayName, lutList_);
+    item->setData(Qt::UserRole, entry.source);
+    item->setToolTip(entry.source);
+    if (entry.source == activeSource) {
+      item->setSelected(true);
+      lutList_->setCurrentItem(item);
+    }
+  }
+  lutList_->blockSignals(false);
+
+  if (!lutList_->currentItem() && lutList_->count() > 0) {
+    lutList_->setCurrentRow(0);
+  }
+
+  updateSelectedLUTPreview();
+}
+
+ArtifactCore::ColorLUT ArtifactColorSciencePanel::Impl::lutForSource(const QString &source) const {
+  if (source.startsWith(QStringLiteral("builtin:"))) {
+    const QString name = source.mid(QStringLiteral("builtin:").size());
+    return ArtifactCore::LUTManager::instance().getLUT(name);
+  }
+  return ArtifactCore::ColorLUT(source);
+}
+
+QPixmap ArtifactColorSciencePanel::Impl::buildPreviewPixmap(const ArtifactCore::ColorLUT &lut,
+                                                            const QString &title) const {
+  QPixmap pixmap(480, 150);
+  pixmap.fill(QColor(25, 28, 34));
+
+  QPainter painter(&pixmap);
+  painter.setRenderHint(QPainter::Antialiasing, true);
+  painter.setPen(QColor(235, 235, 240));
+  painter.drawText(QRect(12, 10, pixmap.width() - 24, 18), Qt::AlignLeft | Qt::AlignVCenter, title);
+
+  const std::array<QColor, 8> samples = {
+      QColor::fromRgbF(0.0f, 0.0f, 0.0f),
+      QColor::fromRgbF(0.18f, 0.18f, 0.18f),
+      QColor::fromRgbF(0.50f, 0.50f, 0.50f),
+      QColor::fromRgbF(0.80f, 0.80f, 0.80f),
+      QColor::fromRgbF(0.95f, 0.95f, 0.95f),
+      QColor::fromRgbF(0.82f, 0.58f, 0.42f),
+      QColor::fromRgbF(0.22f, 0.46f, 0.84f),
+      QColor::fromRgbF(0.20f, 0.72f, 0.56f),
+  };
+
+  const int margin = 12;
+  const int top = 36;
+  const int cellH = 34;
+  const int cellW = (pixmap.width() - margin * 2) / samples.size();
+
+  painter.setPen(QColor(160, 165, 175));
+  painter.drawText(QRect(margin, top - 16, 120, 14), Qt::AlignLeft, "Original");
+  painter.drawText(QRect(margin, top + cellH - 2, 120, 14), Qt::AlignLeft, "LUT");
+
+  for (int i = 0; i < samples.size(); ++i) {
+    const QRect cellRect(margin + i * cellW, top, cellW - 4, cellH);
+    const QColor original = samples[i];
+    const QColor transformed = lut.isValid() ? lut.apply(original) : original;
+
+    painter.fillRect(cellRect, original);
+    painter.setPen(QColor(40, 40, 45, 140));
+    painter.drawRect(cellRect.adjusted(0, 0, -1, -1));
+
+    const QRect transformedRect(cellRect.left(), cellRect.bottom() + 6, cellRect.width(), cellRect.height());
+    painter.fillRect(transformedRect, transformed);
+    painter.setPen(QColor(40, 40, 45, 140));
+    painter.drawRect(transformedRect.adjusted(0, 0, -1, -1));
+  }
+
+  painter.setPen(QColor(190, 195, 205));
+  painter.drawText(QRect(margin, 116, pixmap.width() - margin * 2, 18),
+                   Qt::AlignLeft | Qt::AlignVCenter,
+                   lut.isValid() ? QStringLiteral("Preview generated from sample swatches")
+                                 : QStringLiteral("No LUT loaded"));
+  return pixmap;
+}
+
+QString ArtifactColorSciencePanel::Impl::lutDescriptionForSource(const QString &source) const {
+  if (source.isEmpty()) {
+    return QStringLiteral("No LUT selected");
+  }
+
+  const ArtifactCore::ColorLUT lut = lutForSource(source);
+  if (!lut.isValid()) {
+    return QStringLiteral("Failed to load LUT: %1").arg(lut.errorMessage());
+  }
+
+  const QString formatName = [lut]() {
+    switch (lut.format()) {
+    case ArtifactCore::LUTFormat::Cube:
+      return QStringLiteral("CUBE");
+    case ArtifactCore::LUTFormat::Csp:
+      return QStringLiteral("CSP");
+    case ArtifactCore::LUTFormat::_3dl:
+      return QStringLiteral("3DL");
+    case ArtifactCore::LUTFormat::Mga:
+      return QStringLiteral("MGA");
+    case ArtifactCore::LUTFormat::Look:
+      return QStringLiteral("LOOK");
+    case ArtifactCore::LUTFormat::PNG:
+      return QStringLiteral("PNG / HaldCLUT");
+    default:
+      return QStringLiteral("Unknown");
+    }
+  }();
+
+  const auto size = lut.size();
+  const QString sourceLabel = source.startsWith(QStringLiteral("builtin:"))
+                                  ? QStringLiteral("Built-in LUT: %1").arg(source.mid(8))
+                                  : QStringLiteral("File LUT: %1").arg(source);
+  return QStringLiteral("%1\nFormat: %2\nSize: %3 x %4 x %5")
+      .arg(sourceLabel)
+      .arg(formatName)
+      .arg(size.dimX)
+      .arg(size.dimY)
+      .arg(size.dimZ);
+}
+
+QString ArtifactColorSciencePanel::Impl::defaultLUTDirectory() const {
+  const QString baseDir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  if (baseDir.isEmpty()) {
+    return {};
+  }
+  return QDir(baseDir).absoluteFilePath(QStringLiteral("LUTs"));
+}
+
+void ArtifactColorSciencePanel::Impl::updateSelectedLUTPreview() {
+  if (!lutList_ || !lutPreviewLabel_ || !lutDetailsLabel_) {
+    return;
+  }
+
+  const auto *item = lutList_->currentItem();
+  if (!item) {
+    lutPreviewLabel_->clear();
+    lutPreviewLabel_->setText(QStringLiteral("Select a LUT to preview"));
+    lutDetailsLabel_->setText(QStringLiteral("No LUT selected"));
+    return;
+  }
+
+  const QString source = item->data(Qt::UserRole).toString();
+  const ArtifactCore::ColorLUT lut = lutForSource(source);
+  if (!lut.isValid()) {
+    lutPreviewLabel_->clear();
+    lutPreviewLabel_->setText(QStringLiteral("Failed to load LUT"));
+    lutDetailsLabel_->setText(lut.errorMessage().isEmpty()
+                                  ? QStringLiteral("Unable to load the selected LUT.")
+                                  : lut.errorMessage());
+    return;
+  }
+
+  lutPreviewLabel_->setPixmap(buildPreviewPixmap(lut, item->text()));
+  lutDetailsLabel_->setText(lutDescriptionForSource(source));
 }
 
 } // namespace Artifact

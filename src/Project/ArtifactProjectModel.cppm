@@ -337,7 +337,29 @@ void ArtifactProjectModel::Impl::refreshTree()
     } else {
       item->setData(QString(), assetRole);
       if (it->type() == Artifact::eProjectItemType::Composition) {
-        idItem->setText(static_cast<Artifact::CompositionItem*>(it)->compositionId.toString());
+        auto* compItem = static_cast<Artifact::CompositionItem*>(it);
+        idItem->setText(compItem->compositionId.toString());
+        if (auto* svc = ArtifactProjectService::instance()) {
+          const auto found = svc->findComposition(compItem->compositionId);
+          if (auto comp = found.ptr.lock()) {
+            const QSize compSize = comp->settings().compositionSize();
+            const FrameRange frameRange = comp->frameRange().normalized();
+            const float fps = comp->frameRate().framerate();
+            sizeItem->setText(QStringLiteral("%1 x %2")
+                                  .arg(compSize.width())
+                                  .arg(compSize.height()));
+            durationItem->setText(QStringLiteral("%1 frames")
+                                      .arg(frameRange.duration()));
+            frameRateItem->setText(
+                fps > 0.0f
+                    ? QStringLiteral("%1 fps")
+                          .arg(QString::number(
+                              fps, 'f',
+                              std::abs(fps - std::round(fps)) <= 0.0005f ? 0
+                                                                           : 3))
+                    : QStringLiteral("-"));
+          }
+        }
       }
     }
 

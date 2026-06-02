@@ -283,10 +283,11 @@ void ArtifactCompositionMenu::Impl::showSettings()
  rangeLayout->addWidget(endSpin);
  layout->addLayout(rangeLayout);
 
- auto backgroundColor = QColor::fromRgbF(current->backgroundColor().r(),
-                                         current->backgroundColor().g(),
-                                         current->backgroundColor().b(),
-                                         current->backgroundColor().a());
+ const QColor originalBackgroundColor = QColor::fromRgbF(current->backgroundColor().r(),
+                                                         current->backgroundColor().g(),
+                                                         current->backgroundColor().b(),
+                                                         current->backgroundColor().a());
+ auto backgroundColor = originalBackgroundColor;
  auto* bgRow = new QHBoxLayout();
  auto* bgLabel = new QLabel(QStringLiteral("Background"), &dialog);
  auto* bgButton = new QPushButton(QStringLiteral("Change..."), &dialog);
@@ -304,13 +305,34 @@ void ArtifactCompositionMenu::Impl::showSettings()
  QObject::connect(bgButton, &QPushButton::clicked, &dialog, [&]() {
   ArtifactWidgets::FloatColorPicker picker(&dialog);
   picker.setWindowTitle(QStringLiteral("Background Color"));
+  picker.setColor(FloatColor(backgroundColor.redF(),
+                             backgroundColor.greenF(),
+                             backgroundColor.blueF(),
+                             backgroundColor.alphaF()));
   picker.setInitialColor(FloatColor(backgroundColor.redF(),
                                     backgroundColor.greenF(),
                                     backgroundColor.blueF(),
                                     backgroundColor.alphaF()));
+  QObject::connect(&picker, &ArtifactWidgets::FloatColorPicker::colorChanged,
+                   &dialog, [&](const FloatColor& picked) {
+    backgroundColor = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
+    current->setBackGroundColor(FloatColor(
+        backgroundColor.redF(),
+        backgroundColor.greenF(),
+        backgroundColor.blueF(),
+        backgroundColor.alphaF()));
+    updateBgPreview();
+  });
   if (picker.exec() == QDialog::Accepted) {
    const FloatColor picked = picker.getColor();
    backgroundColor = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
+   updateBgPreview();
+  } else {
+   backgroundColor = originalBackgroundColor;
+   current->setBackGroundColor(FloatColor(backgroundColor.redF(),
+                                          backgroundColor.greenF(),
+                                          backgroundColor.blueF(),
+                                          backgroundColor.alphaF()));
    updateBgPreview();
   }
  });
@@ -355,7 +377,7 @@ void ArtifactCompositionMenu::Impl::showSettings()
   current->setCompositionSize(QSize(widthSpin->value(), heightSpin->value()));
   current->setFrameRate(FrameRate(static_cast<float>(fpsSpin->value())));
   current->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
-  current->setBackGroundColor(FloatColor(backgroundColor.redF(),
+ current->setBackGroundColor(FloatColor(backgroundColor.redF(),
                                          backgroundColor.greenF(),
                                          backgroundColor.blueF(),
                                          backgroundColor.alphaF()));
@@ -375,7 +397,13 @@ void ArtifactCompositionMenu::Impl::showSettings()
    playback->setFrameRate(current->frameRate());
   }
 
-  dialog.accept();
+ dialog.accept();
+ });
+ QObject::connect(&dialog, &QDialog::rejected, &dialog, [&]() {
+  current->setBackGroundColor(FloatColor(originalBackgroundColor.redF(),
+                                         originalBackgroundColor.greenF(),
+                                         originalBackgroundColor.blueF(),
+                                         originalBackgroundColor.alphaF()));
  });
  QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
 

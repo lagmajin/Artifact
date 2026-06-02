@@ -19,6 +19,8 @@ export namespace Artifact {
         void setMotionBlurActive(bool active);
         void setFrameBlendingActive(bool active);
         void setGraphEditorActive(bool active);
+        void setMotionPathActive(bool active);
+        void setTimelineOverscrollActive(bool active);
 
         // Verdigris Signals
         void shyChanged(bool active) W_SIGNAL(shyChanged, active);

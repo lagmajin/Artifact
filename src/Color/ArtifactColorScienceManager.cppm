@@ -4,6 +4,8 @@ module;
 #include <QDir>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <algorithm>
+#include <unordered_set>
 #include <wobjectimpl.h>
 
 module Color.ScienceManager;
@@ -16,6 +18,10 @@ import Color.ColorSpace;
 namespace Artifact {
 
 using namespace ArtifactCore;
+
+namespace {
+constexpr const char* kBuiltinLutPrefix = "builtin:";
+}
 
 class ArtifactColorScienceManager::Impl {
 public:
@@ -34,6 +40,12 @@ public:
 
 ArtifactColorScienceManager::ArtifactColorScienceManager()
     : QObject(nullptr), impl_(new Impl()) {
+  static const bool builtinsRegistered = []() {
+    ArtifactCore::BuiltinLUTs::registerBuiltins(ArtifactCore::LUTManager::instance());
+    return true;
+  }();
+  (void)builtinsRegistered;
+
   // Initialize with default global settings
   impl_->globalSettings_.mode = ColorScienceMode::Basic;
   impl_->globalSettings_.inputSpace = ArtifactCore::ColorSpace::sRGB;
@@ -55,9 +67,20 @@ ColorScienceSettings ArtifactColorScienceManager::getSettings() const {
 }
 
 bool ArtifactColorScienceManager::loadLUT(const std::string &path) {
+  if (path.rfind(kBuiltinLutPrefix, 0) == 0) {
+    return loadBuiltinLUT(path.substr(std::string(kBuiltinLutPrefix).size()));
+  }
+
   try {
     impl_->currentLUT_ =
         std::make_unique<ColorLUT>(QString::fromStdString(path));
+    if (!impl_->currentLUT_ || !impl_->currentLUT_->isValid()) {
+      qWarning() << "Failed to load LUT:" << QString::fromStdString(path)
+                 << (impl_->currentLUT_ ? impl_->currentLUT_->errorMessage() : QString());
+      impl_->currentLUT_.reset();
+      impl_->lutLoaded_ = false;
+      return false;
+    }
     impl_->lutLoaded_ = true;
     impl_->globalSettings_.lutPath = path;
     Q_EMIT lutChanged();
@@ -66,6 +89,28 @@ bool ArtifactColorScienceManager::loadLUT(const std::string &path) {
     qWarning() << "Failed to load LUT:" << e.what();
   }
   return false;
+}
+
+bool ArtifactColorScienceManager::loadBuiltinLUT(const std::string &name) {
+  const QString qName = QString::fromStdString(name);
+  const auto& manager = ArtifactCore::LUTManager::instance();
+  if (!manager.hasLUT(qName)) {
+    qWarning() << "Builtin LUT not found:" << qName;
+    return false;
+  }
+
+  impl_->currentLUT_ = std::make_unique<ColorLUT>(manager.getLUT(qName));
+  if (!impl_->currentLUT_ || !impl_->currentLUT_->isValid()) {
+    qWarning() << "Builtin LUT is invalid:" << qName;
+    impl_->currentLUT_.reset();
+    impl_->lutLoaded_ = false;
+    return false;
+  }
+  impl_->currentLUT_->setName(qName);
+  impl_->lutLoaded_ = true;
+  impl_->globalSettings_.lutPath = std::string(kBuiltinLutPrefix) + name;
+  Q_EMIT lutChanged();
+  return true;
 }
 
 void ArtifactColorScienceManager::setLUTIntensity(float intensity) {
@@ -83,6 +128,61 @@ void ArtifactColorScienceManager::clearLUT() {
   impl_->globalSettings_.lutPath.clear();
   impl_->globalSettings_.lutIntensity = 1.0f;
   Q_EMIT lutChanged();
+}
+
+bool ArtifactColorScienceManager::hasActiveLUT() const {
+  return impl_->lutLoaded_ && static_cast<bool>(impl_->currentLUT_);
+}
+
+QString ArtifactColorScienceManager::currentLUTName() const {
+  if (!impl_->currentLUT_) {
+    return {};
+  }
+  return impl_->currentLUT_->name();
+}
+
+QString ArtifactColorScienceManager::currentLUTPath() const {
+  return QString::fromStdString(impl_->globalSettings_.lutPath);
+}
+
+QString ArtifactColorScienceManager::currentLUTFormatName() const {
+  if (!impl_->currentLUT_) {
+    return {};
+  }
+  switch (impl_->currentLUT_->format()) {
+  case LUTFormat::Cube:
+    return QStringLiteral("CUBE");
+  case LUTFormat::Csp:
+    return QStringLiteral("CSP");
+  case LUTFormat::_3dl:
+    return QStringLiteral("3DL");
+  case LUTFormat::Mga:
+    return QStringLiteral("MGA");
+  case LUTFormat::Look:
+    return QStringLiteral("LOOK");
+  case LUTFormat::PNG:
+    return QStringLiteral("PNG / HaldCLUT");
+  default:
+    return QStringLiteral("Unknown");
+  }
+}
+
+QString ArtifactColorScienceManager::currentLUTSizeLabel() const {
+  if (!impl_->currentLUT_) {
+    return {};
+  }
+  const auto size = impl_->currentLUT_->size();
+  return QStringLiteral("%1 x %2 x %3")
+      .arg(size.dimX)
+      .arg(size.dimY)
+      .arg(size.dimZ);
+}
+
+QString ArtifactColorScienceManager::currentLUTError() const {
+  if (!impl_->currentLUT_) {
+    return {};
+  }
+  return impl_->currentLUT_->errorMessage();
 }
 
 ArtifactCore::FloatColor
@@ -143,6 +243,7 @@ void ArtifactColorScienceManager::setHDREnabled(bool enabled) {
 
 std::vector<std::string> ArtifactColorScienceManager::getAvailableLUTs() const {
   std::vector<std::string> luts;
+  std::unordered_set<std::string> seen;
 
   // Search in standard LUT directories
   QStringList searchPaths = {
@@ -156,10 +257,22 @@ std::vector<std::string> ArtifactColorScienceManager::getAvailableLUTs() const {
       QStringList filters = {"*.cube", "*.3dl", "*.lut"};
       QFileInfoList files = dir.entryInfoList(filters, QDir::Files);
       for (const QFileInfo &file : files) {
-        luts.push_back(file.absoluteFilePath().toStdString());
+        const std::string absolute = file.absoluteFilePath().toStdString();
+        if (seen.insert(absolute).second) {
+          luts.push_back(absolute);
+        }
       }
     }
   }
+
+  for (const QString &builtinName : ArtifactCore::BuiltinLUTs::builtinLUTNames()) {
+    const std::string source = std::string(kBuiltinLutPrefix) + builtinName.toStdString();
+    if (seen.insert(source).second) {
+      luts.push_back(source);
+    }
+  }
+
+  std::sort(luts.begin(), luts.end());
 
   return luts;
 }

@@ -172,7 +172,7 @@ bool ArtifactTimelineKeyframeModel::addKeyframeWithBezier(const CompositionID& c
   if (!prop) return false;
 
   prop->setAnimatable(true);
-  prop->addKeyFrame(time, value, InterpolationType::Bezier, cp1_x, cp1_y, cp2_x, cp2_y);
+  prop->addKeyFrame(time, value, InterpolationType::Bezier, cp1_x, cp1_y, cp2_x, cp2_y, false);
 
   layer->setDirty();
   layer->changed();
@@ -214,8 +214,10 @@ bool ArtifactTimelineKeyframeModel::moveKeyframe(const CompositionID& compId,
   const float cp1_y = it->cp1_y;
   const float cp2_x = it->cp2_x;
   const float cp2_y = it->cp2_y;
+  const bool roving = it->roving;
   prop->removeKeyFrame(fromTime);
-  prop->addKeyFrame(toTime, value, interpolation, cp1_x, cp1_y, cp2_x, cp2_y);
+  prop->addKeyFrame(toTime, value, interpolation, cp1_x, cp1_y, cp2_x, cp2_y,
+                    roving);
 
   layer->setDirty();
   layer->changed();

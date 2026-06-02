@@ -71,9 +71,16 @@ public:
 
   // LUT operations
   bool loadLUT(const std::string &path);
+  bool loadBuiltinLUT(const std::string &name);
   void setLUTIntensity(float intensity);
   float getLUTIntensity() const;
   void clearLUT();
+  bool hasActiveLUT() const;
+  QString currentLUTName() const;
+  QString currentLUTPath() const;
+  QString currentLUTFormatName() const;
+  QString currentLUTSizeLabel() const;
+  QString currentLUTError() const;
 
   // Color space operations
   ArtifactCore::FloatColor convertColor(const ArtifactCore::FloatColor &color,

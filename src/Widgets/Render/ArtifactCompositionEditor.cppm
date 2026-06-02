@@ -3610,6 +3610,23 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     impl_->renderController_->setShowMotionPathOverlay(
         settings->compositionShowMotionPathOverlay());
   }
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
+                     this, [this]() {
+                       if (!impl_ || !impl_->renderController_) {
+                         return;
+                       }
+                       if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+                         impl_->renderController_->setShowMotionPathOverlay(
+                             settings->compositionShowMotionPathOverlay());
+                         if (impl_->motionPathAction_) {
+                           const QSignalBlocker blocker(impl_->motionPathAction_);
+                           impl_->motionPathAction_->setChecked(
+                               impl_->renderController_->isShowMotionPathOverlay());
+                         }
+                       }
+                     });
+  }
 
   QObject::connect(impl_->renderController_,
                    &CompositionRenderController::videoDebugMessage, this,

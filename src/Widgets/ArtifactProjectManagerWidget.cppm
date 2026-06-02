@@ -4,6 +4,7 @@ module;
 #include <wobjectimpl.h>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 #include <QBoxLayout>
+#include <QCryptographicHash>
 #include <QLabel>
 #include <QClipboard>
 #include <QEvent>
@@ -36,6 +37,7 @@ module;
 #include <QApplication>
 #include <QCursor>
 #include <QGuiApplication>
+#include <QFile>
 #include <QScreen>
 #include <QShortcut>
 #include <QRegularExpression>
@@ -116,6 +118,7 @@ import Artifact.Project.Items;
 import Artifact.Project.Roles;
 import Artifact.Project.Cleanup;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Video;
 import Artifact.Layer.Search.Query;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -173,6 +176,8 @@ void updateCompositionColorButtonPreview(QPushButton* button, const QColor& colo
 class CompositionBackgroundColorButton final : public QPushButton
 {
 public:
+    std::function<void(const QColor&)> previewChanged;
+
     explicit CompositionBackgroundColorButton(const QColor& initialColor,
                                               QWidget* parent = nullptr)
         : QPushButton(parent), color_(initialColor)
@@ -198,14 +203,35 @@ protected:
     void mousePressEvent(QMouseEvent* event) override
     {
         if (event && event->button() == Qt::LeftButton) {
+            const QColor originalColor = color_;
             ArtifactWidgets::FloatColorPicker picker(this);
             picker.setWindowTitle(QStringLiteral("Background Color"));
             picker.setInitialColor(ArtifactCore::FloatColor(
                 color_.redF(), color_.greenF(), color_.blueF(), color_.alphaF()));
+            picker.setColor(ArtifactCore::FloatColor(
+                color_.redF(), color_.greenF(), color_.blueF(), color_.alphaF()));
+            QObject::connect(&picker, &ArtifactWidgets::FloatColorPicker::colorChanged,
+                             this, [this](const ArtifactCore::FloatColor& picked) {
+                const QColor liveColor = QColor::fromRgbF(
+                    picked.r(), picked.g(), picked.b(), picked.a());
+                setSelectedColor(liveColor);
+                if (previewChanged) {
+                    previewChanged(liveColor);
+                }
+            });
             if (picker.exec() == QDialog::Accepted) {
                 const ArtifactCore::FloatColor picked = picker.getColor();
-                setSelectedColor(QColor::fromRgbF(
+                const QColor acceptedColor = QColor::fromRgbF(
                     picked.r(), picked.g(), picked.b(), picked.a()));
+                setSelectedColor(acceptedColor);
+                if (previewChanged) {
+                    previewChanged(acceptedColor);
+                }
+            } else {
+                setSelectedColor(originalColor);
+                if (previewChanged) {
+                    previewChanged(originalColor);
+                }
             }
             event->accept();
             return;
@@ -310,6 +336,80 @@ QString projectItemTypeLabel(const eProjectItemType type)
         return QStringLiteral("Solid");
     default:
         return QStringLiteral("Item");
+    }
+}
+
+QString proxyFilePathForFootage(const QString& sourceFilePath)
+{
+    const QFileInfo src(sourceFilePath);
+    if (src.filePath().isEmpty() || src.completeBaseName().isEmpty()) {
+        return {};
+    }
+    const QString appDataRoot = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    if (appDataRoot.isEmpty()) {
+        return {};
+    }
+    QDir proxyDir(appDataRoot);
+    const QString proxyRoot = proxyDir.filePath(QStringLiteral("ProxyCache"));
+    const QByteArray digest = QCryptographicHash::hash(src.absoluteFilePath().toUtf8(), QCryptographicHash::Sha1).toHex();
+    const QString proxyName = QStringLiteral("%1_%2.proxy.jpg")
+                                  .arg(src.completeBaseName(),
+                                       QString::fromLatin1(digest.left(10)));
+    return QDir(proxyRoot).filePath(proxyName);
+}
+
+void syncProxyPathToProject(const QString& sourceFilePath, const QString& proxyPath)
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    auto project = service->getCurrentProjectSharedPtr();
+    if (!project) {
+        return;
+    }
+    const QString targetPath = QFileInfo(sourceFilePath).absoluteFilePath();
+    if (targetPath.isEmpty() || proxyPath.isEmpty()) {
+        return;
+    }
+    const auto roots = project->projectItems();
+    std::function<void(ProjectItem*)> visit = [&](ProjectItem* item) {
+        if (!item) {
+            return;
+        }
+        if (item->type() == eProjectItemType::Composition) {
+            auto* compItem = static_cast<CompositionItem*>(item);
+            auto found = service->findComposition(compItem->compositionId);
+            auto comp = found.ptr.lock();
+            if (!found.success || !comp) {
+                return;
+            }
+            const auto layers = comp->allLayer();
+            for (const auto& layer : layers) {
+                auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+                if (!videoLayer) {
+                    continue;
+                }
+                const QString layerSourcePath = videoLayer->sourcePath().trimmed();
+                if (layerSourcePath.isEmpty() || QFileInfo(layerSourcePath).absoluteFilePath() != targetPath) {
+                    continue;
+                }
+                if (videoLayer->proxyPath() == proxyPath) {
+                    continue;
+                }
+                videoLayer->setProxyPath(proxyPath);
+                videoLayer->changed();
+                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                    LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
+                                      LayerChangedEvent::ChangeType::Modified});
+            }
+        }
+        for (auto* child : item->children) {
+            visit(child);
+        }
+    };
+    for (auto* root : roots) {
+        visit(root);
     }
 }
 
@@ -420,8 +520,6 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
         lines << QStringLiteral("Name: %1").arg(itemName.isEmpty()
                                                     ? QStringLiteral("Composition")
                                                     : itemName);
-        lines << QStringLiteral("Composition ID: %1").arg(composition->compositionId.toString());
-        lines << QStringLiteral("Kind: Composition");
         if (auto* svc = ArtifactProjectService::instance()) {
             const auto found = svc->findComposition(composition->compositionId);
             if (auto comp = found.ptr.lock()) {
@@ -431,11 +529,21 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
                 lines << QStringLiteral("Resolution: %1 x %2")
                              .arg(compSize.width())
                              .arg(compSize.height());
-                lines << QStringLiteral("Frame Rate: %1 fps")
-                             .arg(QString::number(comp->frameRate().framerate(), 'f', 2));
-                lines << QStringLiteral("Duration: %1 frames").arg(frameRange.duration());
-                lines << QStringLiteral("Work Area: %1 frames").arg(workAreaRange.duration());
-                lines << QStringLiteral("Layers: %1").arg(comp->allLayer().size());
+                lines << QStringLiteral("Timing: %1 fps • %2 frames")
+                             .arg(QString::number(comp->frameRate().framerate(), 'f', 2))
+                             .arg(frameRange.duration());
+                lines << QStringLiteral("Work Area: %1 frames • %2 layers")
+                             .arg(workAreaRange.duration())
+                             .arg(comp->allLayer().size());
+                const QColor bgColor = QColor::fromRgbF(
+                    comp->backgroundColor().r(),
+                    comp->backgroundColor().g(),
+                    comp->backgroundColor().b(),
+                    comp->backgroundColor().a());
+                lines << QStringLiteral("Background: %1")
+                             .arg(bgColor.name(QColor::HexArgb).toUpper());
+                lines << QStringLiteral("Composition ID: %1")
+                             .arg(composition->compositionId.toString());
             } else {
                 lines << QStringLiteral("Status: Composition data unavailable");
             }
@@ -2176,13 +2284,17 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 layout->addLayout(rangeLayout);
 
                 auto* bgLayout = new QHBoxLayout();
+                const QColor originalBackgroundColor = QColor::fromRgbF(
+                    composition->backgroundColor().r(),
+                    composition->backgroundColor().g(),
+                    composition->backgroundColor().b(),
+                    composition->backgroundColor().a());
                 auto* bgButton = new CompositionBackgroundColorButton(
-                    QColor::fromRgbF(
-                        composition->backgroundColor().r(),
-                        composition->backgroundColor().g(),
-                        composition->backgroundColor().b(),
-                        composition->backgroundColor().a()),
-                    dialog);
+                    originalBackgroundColor, dialog);
+                bgButton->previewChanged = [composition](const QColor& color) {
+                    composition->setBackGroundColor(FloatColor(
+                        color.redF(), color.greenF(), color.blueF(), color.alphaF()));
+                };
                 bgLayout->addWidget(new QLabel(QStringLiteral("Background"), dialog));
                 bgLayout->addWidget(bgButton);
                 bgLayout->addStretch();
@@ -2200,6 +2312,13 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 const DialogButtonRow buttons = createWindowsDialogButtonRow(dialog);
                 layout->addWidget(buttons.widget);
 
+                QObject::connect(dialog, &QDialog::rejected, dialog, [composition, originalBackgroundColor]() {
+                    composition->setBackGroundColor(FloatColor(
+                        originalBackgroundColor.redF(),
+                        originalBackgroundColor.greenF(),
+                        originalBackgroundColor.blueF(),
+                        originalBackgroundColor.alphaF()));
+                });
                 QObject::connect(buttons.cancelButton, &QPushButton::clicked, dialog, &QDialog::reject);
                 QObject::connect(buttons.okButton, &QPushButton::clicked, dialog, [this, dialog, svc, compositionId, composition, nameEdit, widthSpin, heightSpin, fpsSpin, startSpin, endSpin, bgButton]() {
                     const QString trimmedName = nameEdit->text().trimmed();
@@ -2257,9 +2376,44 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
 
         if (type == eProjectItemType::Footage) {
+            const QString footagePath = item && item->type() == eProjectItemType::Footage
+                ? static_cast<FootageItem*>(item)->filePath
+                : QString();
+            const QStringList selectedFootagePaths = selectedFootageFilePaths();
             addTrackedAction(QStringLiteral("preview_in_contents_viewer"), QStringLiteral("Preview in Contents Viewer"), [this, idx]() {
                 itemDoubleClicked(idx);
             }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/visibility.svg")));
+            addTrackedAction(QStringLiteral("generate_proxy_selected"), QStringLiteral("Generate Proxy"), [this, footagePath]() {
+                if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
+                    manager->generateProxyForFilePath(footagePath);
+                }
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/green/replay.svg")));
+            addTrackedAction(QStringLiteral("reveal_proxy"), QStringLiteral("Reveal Proxy"), [this, footagePath]() {
+                if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
+                    manager->revealProxyForFilePath(footagePath);
+                }
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
+            addTrackedAction(QStringLiteral("clear_proxy"), QStringLiteral("Clear Proxy"), [this, footagePath]() {
+                if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
+                    manager->clearProxyForFilePath(footagePath);
+                }
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/red/delete.svg")));
+            if (selectedFootagePaths.size() > 1) {
+                addTrackedAction(QStringLiteral("generate_selected_proxies"), QStringLiteral("Generate Selected Proxies"), [this, selectedFootagePaths]() {
+                    if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
+                        for (const QString& path : selectedFootagePaths) {
+                            manager->generateProxyForFilePath(path);
+                        }
+                    }
+                }, loadProjectViewIcon(QStringLiteral("MaterialVS/green/replay.svg")));
+                addTrackedAction(QStringLiteral("clear_selected_proxies"), QStringLiteral("Clear Selected Proxies"), [this, selectedFootagePaths]() {
+                    if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
+                        for (const QString& path : selectedFootagePaths) {
+                            manager->clearProxyForFilePath(path);
+                        }
+                    }
+                }, loadProjectViewIcon(QStringLiteral("MaterialVS/red/delete.svg")));
+            }
             addTrackedAction(QStringLiteral("reveal_in_explorer"), QStringLiteral("Reveal in Explorer (R)"), [item]() {
                 if (item && item->type() == eProjectItemType::Footage) {
                     QString path = static_cast<FootageItem*>(item)->filePath;
@@ -2754,6 +2908,11 @@ public:
     QLabel* selectionDetailLabel = nullptr;
     QPushButton* openSelectionButton = nullptr;
     QPushButton* revealSelectionButton = nullptr;
+    QPushButton* generateProxyButton = nullptr;
+    QPushButton* revealProxyButton = nullptr;
+    QPushButton* clearProxyButton = nullptr;
+    QPushButton* generateSelectedProxiesButton = nullptr;
+    QPushButton* clearSelectedProxiesButton = nullptr;
     QPushButton* renameSelectionButton = nullptr;
     QPushButton* deleteSelectionButton = nullptr;
     QPushButton* relinkSelectionButton = nullptr;
@@ -2828,6 +2987,63 @@ public:
         const QModelIndex sourceIdx = currentSourceIndexFromSelection();
         const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
         return ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+    }
+
+    QStringList selectedFootageFilePaths() const {
+        QStringList filePaths;
+        if (!projectView_ || !projectView_->selectionModel()) {
+            return filePaths;
+        }
+        const auto rows = projectView_->selectionModel()->selectedRows(0);
+        QSet<QString> seen;
+        for (const auto& row : rows) {
+            QModelIndex sourceIdx = row;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+                sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+            }
+            const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+            if (!typeVar.isValid() || typeVar.toInt() != static_cast<int>(eProjectItemType::Footage)) {
+                continue;
+            }
+            const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            auto* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+            if (!item || item->type() != eProjectItemType::Footage) {
+                continue;
+            }
+            const QString path = QFileInfo(static_cast<FootageItem*>(item)->filePath).absoluteFilePath();
+            if (path.isEmpty() || seen.contains(path)) {
+                continue;
+            }
+            seen.insert(path);
+            filePaths.push_back(path);
+        }
+        return filePaths;
+    }
+
+    QString proxySummaryForSelectedFootage() const {
+        const QStringList footagePaths = selectedFootageFilePaths();
+        if (footagePaths.isEmpty()) {
+            return {};
+        }
+        int readyCount = 0;
+        QString firstReadyFileName;
+        for (const QString& path : footagePaths) {
+            const QString proxyPath = proxyFilePathForFootage(path);
+            if (!proxyPath.isEmpty() && QFileInfo(proxyPath).exists()) {
+                ++readyCount;
+                if (firstReadyFileName.isEmpty()) {
+                    firstReadyFileName = QFileInfo(proxyPath).fileName();
+                }
+            }
+        }
+        if (footagePaths.size() == 1) {
+            return readyCount > 0
+                ? QStringLiteral("Proxy: Ready (%1)").arg(firstReadyFileName)
+                : QStringLiteral("Proxy: Missing");
+        }
+        return readyCount > 0
+            ? QStringLiteral("Proxy: Ready %1/%2").arg(readyCount).arg(footagePaths.size())
+            : QStringLiteral("Proxy: Missing %1").arg(footagePaths.size());
     }
 
     static QString normalizeFilePathForProjectSelection(const QString& path) {
@@ -3047,11 +3263,14 @@ public:
         const QString unusedText = unusedOnlyCheck && unusedOnlyCheck->isChecked()
             ? QStringLiteral("Unused only")
             : QStringLiteral("All items");
-        return QStringLiteral("Recent: - | Selected: %1 | View: %2 / %3 | Search: %4")
+        const QString proxyText = proxySummaryForSelectedFootage();
+        const QString proxyPart = proxyText.isEmpty() ? QString() : QStringLiteral(" | %1").arg(proxyText);
+        return QStringLiteral("Recent: - | Selected: %1 | View: %2 / %3 | Search: %4%5")
             .arg(selectedCount)
             .arg(typeText)
             .arg(unusedText)
-            .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText);
+            .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText)
+            .arg(proxyPart);
     }
 
     QString syncStateText() const {
@@ -3088,6 +3307,9 @@ public:
         const bool isFolder = item && item->type() == eProjectItemType::Folder;
         const bool isComposition = item && item->type() == eProjectItemType::Composition;
         const QString pathText = selectedItemPath();
+        const QString proxyPath = isFootage ? proxyFilePathForFootage(static_cast<FootageItem*>(item)->filePath) : QString();
+        const bool hasProxy = !proxyPath.isEmpty() && QFileInfo(proxyPath).exists();
+        const QString proxySummaryText = isFootage ? proxySummaryForSelectedFootage() : QString();
         const QString statusText = !item ? QStringLiteral("Select an item to inspect details")
             : isFootage ? (QFileInfo(static_cast<FootageItem*>(item)->filePath).exists() ? QStringLiteral("Available") : QStringLiteral("Missing"))
             : isFolder ? QStringLiteral("Folder")
@@ -3100,8 +3322,13 @@ public:
             } else {
                 const QString pathPart = pathText.isEmpty() ? QStringLiteral("-") : pathText;
                 if (isFootage) {
-                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2 | Open previews in Contents Viewer").arg(statusText, pathPart));
-                    selectionDetailLabel->setToolTip(QStringLiteral("Open the selected footage, reveal it, or copy its path."));
+                    const QString proxyPart = proxySummaryText.isEmpty()
+                        ? (hasProxy ? QStringLiteral("Proxy: Ready (%1)").arg(QFileInfo(proxyPath).fileName())
+                                    : QStringLiteral("Proxy: Missing"))
+                        : proxySummaryText;
+                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2 | %3 | Preview")
+                                                      .arg(statusText, pathPart, proxyPart));
+                    selectionDetailLabel->setToolTip(QStringLiteral("Open the selected footage, reveal it, generate a proxy, or copy its path."));
                 } else {
                     selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2").arg(statusText, pathPart));
                     selectionDetailLabel->setToolTip(QStringLiteral("Open the selected item or use the action buttons below."));
@@ -3110,6 +3337,20 @@ public:
         }
         if (openSelectionButton) openSelectionButton->setEnabled(hasItem);
         if (revealSelectionButton) revealSelectionButton->setEnabled(isFootage);
+        if (generateProxyButton) generateProxyButton->setEnabled(isFootage);
+        if (revealProxyButton) {
+            revealProxyButton->setEnabled(isFootage && hasProxy);
+        }
+        if (clearProxyButton) {
+            clearProxyButton->setEnabled(isFootage && hasProxy);
+        }
+        const int selectedFootageCount = selectedFootageFilePaths().size();
+        if (generateSelectedProxiesButton) {
+            generateSelectedProxiesButton->setEnabled(selectedFootageCount > 1);
+        }
+        if (clearSelectedProxiesButton) {
+            clearSelectedProxiesButton->setEnabled(selectedFootageCount > 1);
+        }
         if (renameSelectionButton) renameSelectionButton->setEnabled(hasItem);
         if (deleteSelectionButton) deleteSelectionButton->setEnabled(hasItem);
         if (copyPathButton) copyPathButton->setEnabled(isFootage);
@@ -3147,6 +3388,138 @@ public:
                 QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
             }
         }
+    }
+
+    void generateProxyForSelectedItem() {
+        auto* svc = ArtifactProjectService::instance();
+        ProjectItem* item = currentSelectedItem();
+        if (!svc || !item || item->type() != eProjectItemType::Footage) {
+            return;
+        }
+        QVector<FootageItem*> footage;
+        auto* footageItem = static_cast<FootageItem*>(item);
+        footage.append(footageItem);
+        queueProxyGeneration(footage);
+        syncProxyPathToProject(footageItem->filePath, proxyFilePathForFootage(footageItem->filePath));
+    }
+
+    void generateProxyForFilePath(const QString& sourceFilePath) {
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return;
+        }
+        const QString targetPath = QFileInfo(sourceFilePath).absoluteFilePath();
+        if (targetPath.isEmpty()) {
+            return;
+        }
+        auto project = svc->getCurrentProjectSharedPtr();
+        if (!project) {
+            return;
+        }
+        QVector<FootageItem*> footage;
+        const auto roots = project->projectItems();
+        for (auto* root : roots) {
+            if (!root) {
+                continue;
+            }
+            std::function<void(ProjectItem*)> collect = [&](ProjectItem* item) {
+                if (!item) {
+                    return;
+                }
+                if (item->type() == eProjectItemType::Footage) {
+                    auto* footageItem = static_cast<FootageItem*>(item);
+                    if (QFileInfo(footageItem->filePath).absoluteFilePath() == targetPath) {
+                        footage.append(footageItem);
+                    }
+                }
+                for (auto* child : item->children) {
+                    collect(child);
+                }
+            };
+            collect(root);
+        }
+        if (footage.isEmpty()) {
+            return;
+        }
+        queueProxyGeneration(footage);
+        syncProxyPathToProject(targetPath, proxyFilePathForFootage(targetPath));
+        updateRequested();
+    }
+
+    void revealProxyForSelectedItem(QWidget* parent) {
+        Q_UNUSED(parent);
+        ProjectItem* item = currentSelectedItem();
+        if (!item || item->type() != eProjectItemType::Footage) {
+            return;
+        }
+        const QString proxyPath = proxyFilePathForFootage(static_cast<FootageItem*>(item)->filePath);
+        if (proxyPath.isEmpty() || !QFileInfo(proxyPath).exists()) {
+            QMessageBox::information(parent, QStringLiteral("Proxy"), QStringLiteral("Proxy file is not available yet."));
+            return;
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(proxyPath).absolutePath()));
+    }
+
+    void revealProxyForFilePath(const QString& sourceFilePath, QWidget* parent) {
+        Q_UNUSED(parent);
+        const QString proxyPath = proxyFilePathForFootage(sourceFilePath);
+        if (proxyPath.isEmpty() || !QFileInfo(proxyPath).exists()) {
+            QMessageBox::information(parent, QStringLiteral("Proxy"), QStringLiteral("Proxy file is not available yet."));
+            return;
+        }
+        QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(proxyPath).absolutePath()));
+    }
+
+    bool clearProxyForFilePath(const QString& sourceFilePath, QWidget* parent) {
+        const QString proxyPath = proxyFilePathForFootage(sourceFilePath);
+        if (proxyPath.isEmpty()) {
+            return false;
+        }
+        if (QFileInfo::exists(proxyPath) && !QFile::remove(proxyPath)) {
+            QMessageBox::warning(parent, QStringLiteral("Proxy"), QStringLiteral("Proxy file could not be removed."));
+            return false;
+        }
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return true;
+        }
+        auto currentComp = svc->currentComposition().lock();
+        if (!currentComp) {
+            return true;
+        }
+        const QString targetPath = QFileInfo(sourceFilePath).absoluteFilePath();
+        const auto layers = currentComp->allLayer();
+        for (const auto& layer : layers) {
+            auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+            if (!videoLayer) {
+                continue;
+            }
+            const QString layerSourcePath = videoLayer->sourcePath().trimmed();
+            if (layerSourcePath.isEmpty() || QFileInfo(layerSourcePath).absoluteFilePath() != targetPath) {
+                continue;
+            }
+            if (!videoLayer->proxyPath().isEmpty()) {
+                videoLayer->clearProxy();
+                videoLayer->changed();
+                ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+                    LayerChangedEvent{currentComp->id().toString(), videoLayer->id().toString(),
+                                      LayerChangedEvent::ChangeType::Modified});
+            }
+        }
+        return true;
+    }
+
+    void clearProxyForSelectedItem(QWidget* parent) {
+        ProjectItem* item = currentSelectedItem();
+        if (!item || item->type() != eProjectItemType::Footage) {
+            return;
+        }
+        const auto* footage = static_cast<FootageItem*>(item);
+        if (!clearProxyForFilePath(footage->filePath, parent)) {
+            return;
+        }
+        refreshSelectionChrome();
+        updateRequested();
     }
 
     void copySelectedPathToClipboard() {
@@ -3247,13 +3620,15 @@ public:
         const QString appDataRoot = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
         QDir proxyDir(appDataRoot);
         proxyDir.mkpath(QStringLiteral("ProxyCache"));
-        const QString proxyRoot = proxyDir.filePath(QStringLiteral("ProxyCache"));
 
         for (auto* f : footageItems) {
             if (!f || f->filePath.isEmpty()) continue;
             const QFileInfo src(f->filePath);
             if (!src.exists()) continue;
-            const QString out = QDir(proxyRoot).filePath(src.completeBaseName() + QStringLiteral(".proxy.jpg"));
+            const QString out = proxyFilePathForFootage(src.absoluteFilePath());
+            if (out.isEmpty()) {
+                continue;
+            }
             proxyJobs_.push_back({src.absoluteFilePath(), out});
         }
         if (!proxyQueueTimer_) {
@@ -3472,18 +3847,33 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     selectionButtons->setSpacing(6);
     impl_->openSelectionButton = new QPushButton(QStringLiteral("Open"), selectionChrome);
     impl_->revealSelectionButton = new QPushButton(QStringLiteral("Reveal"), selectionChrome);
+    impl_->generateProxyButton = new QPushButton(QStringLiteral("Proxy"), selectionChrome);
+    impl_->revealProxyButton = new QPushButton(QStringLiteral("Reveal Proxy"), selectionChrome);
+    impl_->clearProxyButton = new QPushButton(QStringLiteral("Clear Proxy"), selectionChrome);
+    impl_->generateSelectedProxiesButton = new QPushButton(QStringLiteral("Generate Selected Proxies"), selectionChrome);
+    impl_->clearSelectedProxiesButton = new QPushButton(QStringLiteral("Clear Selected Proxies"), selectionChrome);
     impl_->renameSelectionButton = new QPushButton(QStringLiteral("Rename"), selectionChrome);
     impl_->deleteSelectionButton = new QPushButton(QStringLiteral("Delete"), selectionChrome);
     impl_->relinkSelectionButton = new QPushButton(QStringLiteral("Relink"), selectionChrome);
     impl_->copyPathButton = new QPushButton(QStringLiteral("Copy Path"), selectionChrome);
     impl_->openSelectionButton->setToolTip(QStringLiteral("Open the selected item."));
     impl_->revealSelectionButton->setToolTip(QStringLiteral("Reveal the selected footage file in the system file manager."));
+    impl_->generateProxyButton->setToolTip(QStringLiteral("Generate a proxy for the selected footage item."));
+    impl_->revealProxyButton->setToolTip(QStringLiteral("Reveal the generated proxy file in the system file manager."));
+    impl_->clearProxyButton->setToolTip(QStringLiteral("Clear the generated proxy for the selected footage item."));
+    impl_->generateSelectedProxiesButton->setToolTip(QStringLiteral("Generate proxies for the selected footage items."));
+    impl_->clearSelectedProxiesButton->setToolTip(QStringLiteral("Clear proxies for the selected footage items."));
     impl_->renameSelectionButton->setToolTip(QStringLiteral("Rename the selected item."));
     impl_->deleteSelectionButton->setToolTip(QStringLiteral("Delete the selected item."));
     impl_->relinkSelectionButton->setToolTip(QStringLiteral("Relink the selected footage item."));
     impl_->copyPathButton->setToolTip(QStringLiteral("Copy the selected item path."));
     selectionButtons->addWidget(impl_->openSelectionButton);
     selectionButtons->addWidget(impl_->revealSelectionButton);
+    selectionButtons->addWidget(impl_->generateProxyButton);
+    selectionButtons->addWidget(impl_->revealProxyButton);
+    selectionButtons->addWidget(impl_->clearProxyButton);
+    selectionButtons->addWidget(impl_->generateSelectedProxiesButton);
+    selectionButtons->addWidget(impl_->clearSelectedProxiesButton);
     selectionButtons->addWidget(impl_->relinkSelectionButton);
     selectionButtons->addWidget(impl_->renameSelectionButton);
     selectionButtons->addWidget(impl_->deleteSelectionButton);
@@ -3547,6 +3937,25 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     });
     connect(impl_->revealSelectionButton, &QPushButton::clicked, this, [this]() {
         impl_->revealSelectedItem(this);
+    });
+    connect(impl_->generateProxyButton, &QPushButton::clicked, this, [this]() {
+        impl_->generateProxyForSelectedItem();
+    });
+    connect(impl_->revealProxyButton, &QPushButton::clicked, this, [this]() {
+        impl_->revealProxyForSelectedItem(this);
+    });
+    connect(impl_->clearProxyButton, &QPushButton::clicked, this, [this]() {
+        impl_->clearProxyForSelectedItem(this);
+    });
+    connect(impl_->generateSelectedProxiesButton, &QPushButton::clicked, this, [this]() {
+        for (const QString& path : impl_->selectedFootageFilePaths()) {
+            impl_->generateProxyForFilePath(path);
+        }
+    });
+    connect(impl_->clearSelectedProxiesButton, &QPushButton::clicked, this, [this]() {
+        for (const QString& path : impl_->selectedFootageFilePaths()) {
+            impl_->clearProxyForFilePath(path, this);
+        }
     });
     connect(impl_->renameSelectionButton, &QPushButton::clicked, this, [this]() {
         if (!impl_->renameSelectedItem(this)) {
@@ -3689,6 +4098,45 @@ ArtifactProjectView* ArtifactProjectManagerWidget::projectView() const
 bool ArtifactProjectManagerWidget::selectItemsByFilePaths(const QStringList& filePaths)
 {
     return impl_ ? impl_->selectItemsByFilePaths(filePaths) : false;
+}
+
+void ArtifactProjectManagerWidget::generateProxyForSelection()
+{
+    if (impl_) {
+        impl_->generateProxyForSelectedItem();
+        updateRequested();
+    }
+}
+
+void ArtifactProjectManagerWidget::revealProxyForSelection()
+{
+    if (impl_) {
+        impl_->revealProxyForSelectedItem(this);
+    }
+}
+
+void ArtifactProjectManagerWidget::generateProxyForFilePath(const QString& sourceFilePath)
+{
+    if (impl_) {
+        impl_->generateProxyForFilePath(sourceFilePath);
+        updateRequested();
+    }
+}
+
+void ArtifactProjectManagerWidget::revealProxyForFilePath(const QString& sourceFilePath)
+{
+    if (impl_) {
+        impl_->revealProxyForFilePath(sourceFilePath, this);
+    }
+}
+
+bool ArtifactProjectManagerWidget::clearProxyForFilePath(const QString& sourceFilePath)
+{
+    const bool ok = impl_ ? impl_->clearProxyForFilePath(sourceFilePath, this) : false;
+    if (ok) {
+        updateRequested();
+    }
+    return ok;
 }
 
 void ArtifactProjectManagerWidget::paintEvent(QPaintEvent* event)

@@ -4,6 +4,7 @@
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QCursor>
+#include <QDesktopServices>
 #include <QDoubleSpinBox>
 #include <QFont>
 #include <QFormLayout>
@@ -15,6 +16,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMetaObject>
+#include <QFileInfo>
 #include <QObject>
 #include <QPalette>
 #include <QPlainTextEdit>
@@ -26,6 +28,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QVariant>
+#include <QUrl>
 #include <QWidget>
 #include <cstdlib>
 #include <wobjectimpl.h>
@@ -74,6 +77,8 @@ import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
+import Artifact.Layer.Matte;
+import Artifact.Layer.Video;
 import Artifact.Event.Types;
 import Event.Bus;
 import Undo.UndoManager;
@@ -302,6 +307,331 @@ LayerPresentationBadgeTone toneFromRackIndex(int rackIndex) {
     return LayerPresentationBadgeTone::Neutral;
   }
 }
+
+QString matteTypeToText(MatteType type) {
+  switch (type) {
+  case MatteType::Alpha:
+    return QStringLiteral("Alpha");
+  case MatteType::Luma:
+    return QStringLiteral("Luma");
+  case MatteType::InverseAlpha:
+    return QStringLiteral("Inverted Alpha");
+  case MatteType::InverseLuma:
+    return QStringLiteral("Inverted Luma");
+  }
+  return QStringLiteral("Matte");
+}
+
+QString matteReferenceSummary(const ArtifactCompositionPtr &comp,
+                              const ArtifactAbstractLayerPtr &layer,
+                              bool *hasInvalid = nullptr) {
+  if (hasInvalid) {
+    *hasInvalid = false;
+  }
+  if (!layer) {
+    return QStringLiteral("Matte: none");
+  }
+
+  const auto refs = layer->matteReferences();
+  if (refs.empty()) {
+    return QStringLiteral("Matte: none");
+  }
+
+  QStringList parts;
+  parts.reserve(static_cast<int>(refs.size()));
+  for (const auto &ref : refs) {
+    QString sourceName = QStringLiteral("<missing>");
+    if (comp && !ref.sourceLayerId.isNil()) {
+      if (auto source = comp->layerById(ref.sourceLayerId)) {
+        sourceName = source->layerName().trimmed().isEmpty()
+                         ? ref.sourceLayerId.toString()
+                         : source->layerName();
+      } else if (hasInvalid) {
+        *hasInvalid = true;
+      }
+    } else if (hasInvalid) {
+      *hasInvalid = true;
+    }
+
+    if (ref.sourceLayerId == layer->id() || ref.sourceLayerId.isNil()) {
+      if (hasInvalid) {
+        *hasInvalid = true;
+      }
+    }
+
+    QString entry = QStringLiteral("%1 (%2)").arg(sourceName, matteTypeToText(ref.type));
+    if (!ref.enabled) {
+      entry += QStringLiteral(" off");
+    }
+    if (ref.invert) {
+      entry += QStringLiteral(" inverted");
+    }
+    parts.push_back(entry);
+  }
+
+  return QStringLiteral("Matte: %1").arg(parts.join(QStringLiteral(", ")));
+}
+
+QString proxySummary(const ArtifactAbstractLayerPtr &layer,
+                     QString *proxyPathOut = nullptr,
+                     bool *hasProxyOut = nullptr) {
+  if (proxyPathOut) {
+    proxyPathOut->clear();
+  }
+  if (hasProxyOut) {
+    *hasProxyOut = false;
+  }
+  const auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+  if (!videoLayer) {
+    return QStringLiteral("Proxy: not available");
+  }
+
+  if (proxyPathOut) {
+    *proxyPathOut = videoLayer->proxyPath();
+  }
+  const bool hasProxy = videoLayer->hasProxy();
+  if (hasProxyOut) {
+    *hasProxyOut = hasProxy;
+  }
+
+  const QString qualityText = [&]() -> QString {
+    switch (videoLayer->proxyQuality()) {
+    case ProxyQuality::Quarter:
+      return QStringLiteral("1/4");
+    case ProxyQuality::Half:
+      return QStringLiteral("1/2");
+    case ProxyQuality::Full:
+      return QStringLiteral("Full");
+    case ProxyQuality::None:
+    default:
+      return QStringLiteral("None");
+    }
+  }();
+
+  if (!hasProxy) {
+    return QStringLiteral("Proxy: none");
+  }
+
+  const QString path = videoLayer->proxyPath();
+  const QString fileName = path.isEmpty() ? QStringLiteral("<unknown>") : QFileInfo(path).fileName();
+  return QStringLiteral("Proxy: %1 | %2").arg(qualityText, fileName);
+}
+
+ArtifactCompositionPtr resolveCompositionForId(const CompositionID &compositionId) {
+  auto *service = ArtifactProjectService::instance();
+  if (!service || compositionId.isNil()) {
+    return {};
+  }
+  auto result = service->findComposition(compositionId);
+  if (!result.success) {
+    return {};
+  }
+  return result.ptr.lock();
+}
+
+bool applyMatteTypeToLayer(const CompositionID &compositionId,
+                           const LayerID &layerId,
+                           int matteIndex,
+                           MatteType matteType) {
+  auto comp = resolveCompositionForId(compositionId);
+  if (!comp || layerId.isNil() || matteIndex < 0) {
+    return false;
+  }
+
+  auto layer = comp->layerById(layerId);
+  if (!layer) {
+    return false;
+  }
+
+  auto beforeRefs = layer->matteReferences();
+  if (matteIndex >= static_cast<int>(beforeRefs.size())) {
+    return false;
+  }
+
+  auto afterRefs = beforeRefs;
+  auto &ref = afterRefs[matteIndex];
+  const MatteType previousType = ref.type;
+  const bool previousInvert = ref.invert;
+  ref.type = matteType;
+  ref.invert = false;
+  if (ref.type == previousType && ref.invert == previousInvert) {
+    return false;
+  }
+
+  auto *cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                    std::move(beforeRefs),
+                                                    std::move(afterRefs));
+  UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+  return true;
+}
+
+class MatteInfoLabel final : public QLabel {
+public:
+  explicit MatteInfoLabel(QWidget *parent = nullptr)
+      : QLabel(parent) {
+    setCursor(Qt::PointingHandCursor);
+    setToolTip(QStringLiteral("Left click: focus matte source. Right click: change matte type."));
+  }
+
+  void setMatteContext(const CompositionID &compositionId,
+                       const ArtifactAbstractLayerPtr &layer,
+                       const ArtifactCompositionPtr &composition) {
+    compositionId_ = compositionId;
+    layerId_ = layer ? layer->id() : LayerID();
+    composition_ = composition;
+    const bool hasMatteRefs = layer && !layer->matteReferences().empty();
+    setCursor(hasMatteRefs ? Qt::PointingHandCursor : Qt::ArrowCursor);
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    if (!event) {
+      QLabel::mousePressEvent(event);
+      return;
+    }
+
+    auto composition = composition_ ? composition_ : resolveCompositionForId(compositionId_);
+    if (!composition || layerId_.isNil()) {
+      QLabel::mousePressEvent(event);
+      return;
+    }
+
+    auto layer = composition->layerById(layerId_);
+    if (!layer) {
+      QLabel::mousePressEvent(event);
+      return;
+    }
+
+    const auto refs = layer->matteReferences();
+    if (refs.empty()) {
+      QLabel::mousePressEvent(event);
+      return;
+    }
+
+    if (event->button() == Qt::LeftButton) {
+      const auto &ref = refs.front();
+      if (!ref.sourceLayerId.isNil()) {
+        if (auto *service = ArtifactProjectService::instance()) {
+          service->selectLayer(ref.sourceLayerId);
+        }
+        event->accept();
+        return;
+      }
+    }
+
+    if (event->button() == Qt::RightButton) {
+      QMenu menu(this);
+      const QStringList typeLabels = {
+          QStringLiteral("Alpha"),
+          QStringLiteral("Luma"),
+          QStringLiteral("Inverted Alpha"),
+          QStringLiteral("Inverted Luma")};
+
+      for (int i = 0; i < refs.size(); ++i) {
+        const auto &ref = refs[i];
+        QString sourceName = QStringLiteral("<missing>");
+        if (!ref.sourceLayerId.isNil()) {
+          if (auto source = composition->layerById(ref.sourceLayerId)) {
+            const QString name = source->layerName().trimmed();
+            sourceName = name.isEmpty() ? ref.sourceLayerId.toString() : name;
+          } else {
+            sourceName = ref.sourceLayerId.toString();
+          }
+        }
+
+        QMenu *refMenu = menu.addMenu(QStringLiteral("Matte %1: %2").arg(i + 1).arg(sourceName));
+        if (ref.sourceLayerId.isNil()) {
+          QAction *disabled = refMenu->addAction(QStringLiteral("Missing source"));
+          disabled->setEnabled(false);
+          continue;
+        }
+
+        QAction *focusAction = refMenu->addAction(QStringLiteral("Focus source"));
+        focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("focus")},
+                                         {QStringLiteral("index"), i}});
+
+        QMenu *typeMenu = refMenu->addMenu(QStringLiteral("Set matte type"));
+        for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
+          QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
+          typeAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("type")},
+                                          {QStringLiteral("index"), i},
+                                          {QStringLiteral("type"), typeIndex}});
+        }
+      }
+
+      if (QAction *chosen = menu.exec(QCursor::pos())) {
+        const QVariantMap data = chosen->data().toMap();
+        const QString kind = data.value(QStringLiteral("kind")).toString();
+        const int index = data.value(QStringLiteral("index")).toInt(-1);
+        if (kind == QStringLiteral("focus")) {
+          if (index >= 0 && index < static_cast<int>(refs.size())) {
+            const auto &ref = refs[index];
+            if (!ref.sourceLayerId.isNil()) {
+              if (auto *service = ArtifactProjectService::instance()) {
+                service->selectLayer(ref.sourceLayerId);
+              }
+            }
+          }
+        } else if (kind == QStringLiteral("type")) {
+          const int typeValue = data.value(QStringLiteral("type")).toInt(-1);
+          if (index >= 0 && index < static_cast<int>(refs.size()) &&
+              typeValue >= 0 && typeValue <= static_cast<int>(MatteType::InverseLuma)) {
+            applyMatteTypeToLayer(compositionId_, layerId_, index,
+                                  static_cast<MatteType>(typeValue));
+          }
+        }
+      }
+      event->accept();
+      return;
+    }
+
+    QLabel::mousePressEvent(event);
+  }
+
+private:
+  CompositionID compositionId_;
+  LayerID layerId_;
+  ArtifactCompositionPtr composition_;
+};
+
+class ProxyInfoLabel final : public QLabel {
+public:
+  explicit ProxyInfoLabel(QWidget *parent = nullptr)
+      : QLabel(parent) {
+    setCursor(Qt::PointingHandCursor);
+    setToolTip(QStringLiteral("Left click: open proxy folder."));
+  }
+
+  void setProxyContext(const ArtifactAbstractLayerPtr &layer) {
+    layer_ = layer;
+    const bool hasProxy = layer && std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) &&
+                          std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)->hasProxy();
+    setCursor(hasProxy ? Qt::PointingHandCursor : Qt::ArrowCursor);
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    if (!event) {
+      QLabel::mousePressEvent(event);
+      return;
+    }
+    if (event->button() == Qt::LeftButton) {
+      const auto videoLayer = layer_ ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer_) : nullptr;
+      if (videoLayer && videoLayer->hasProxy()) {
+        const QString proxyPath = videoLayer->proxyPath();
+        if (!proxyPath.isEmpty() && QFileInfo::exists(proxyPath)) {
+          QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(proxyPath).absolutePath()));
+          event->accept();
+          return;
+        }
+      }
+    }
+    QLabel::mousePressEvent(event);
+  }
+
+private:
+  ArtifactAbstractLayerPtr layer_;
+};
 } // namespace
 
 W_OBJECT_IMPL(ArtifactInspectorWidget)
@@ -321,6 +651,8 @@ public:
   QPlainTextEdit *layerNoteEdit = nullptr;
   QLabel *layerNameLabel = nullptr;
   QLabel *layerTypeLabel = nullptr;
+  MatteInfoLabel *matteInfoLabel = nullptr;
+  ProxyInfoLabel *proxyInfoLabel = nullptr;
   QLabel *statusLabel = nullptr;
 
   // Effects Pipeline Tab
@@ -350,6 +682,7 @@ public:
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   QString lastLayerInfoSignature_;
+  QString lastMatteInfoSignature_;
   std::array<QString, kEffectRackCount> lastRackSignatures_{};
   QString lastCompositionNoteText_;
   QString lastLayerNoteText_;
@@ -576,6 +909,24 @@ QString ArtifactInspectorWidget::Impl::computeLayerInfoSignature(
   signature += QString::number(layer->maskCount());
   signature += QLatin1Char('|');
   signature += layer->layerNote();
+  signature += QLatin1Char('|');
+  const auto mattes = layer->matteReferences();
+  for (const auto &ref : mattes) {
+    signature += ref.id.toString();
+    signature += QLatin1Char(':');
+    signature += ref.sourceLayerId.toString();
+    signature += QLatin1Char(':');
+    signature += QString::number(static_cast<int>(ref.type));
+    signature += QLatin1Char(':');
+    signature += QString::number(static_cast<int>(ref.blendMode));
+    signature += QLatin1Char(':');
+    signature += QString::number(static_cast<int>(ref.fitMode));
+    signature += QLatin1Char(':');
+    signature += ref.enabled ? QStringLiteral("1") : QStringLiteral("0");
+    signature += QLatin1Char(':');
+    signature += ref.invert ? QStringLiteral("1") : QStringLiteral("0");
+    signature += QLatin1Char('|');
+  }
   return signature;
 }
 
@@ -1108,7 +1459,7 @@ void ArtifactInspectorWidget::Impl::updateLayerInfo() {
 
   const QString nextSignature = computeLayerInfoSignature(layer);
   if (nextSignature == lastLayerInfoSignature_) {
-    return;
+    // matte 表示も同じ更新経路で同期するため、ここでは止めない
   }
   lastLayerInfoSignature_ = nextSignature;
 
@@ -1138,6 +1489,27 @@ void ArtifactInspectorWidget::Impl::updateLayerInfo() {
   const QString maskText = maskCount > 0
                                ? QStringLiteral("Masks: %1").arg(maskCount)
                                : QStringLiteral("Masks: none");
+  bool matteHasInvalid = false;
+  const QString matteText = matteReferenceSummary(comp, layer, &matteHasInvalid);
+  if (matteInfoLabel) {
+    matteInfoLabel->setMatteContext(currentCompositionId_, layer, comp);
+    if (matteText != lastMatteInfoSignature_) {
+      lastMatteInfoSignature_ = matteText;
+      matteInfoLabel->setText(matteText);
+    }
+    matteInfoLabel->setEnabled(true);
+    QFont matteFont = matteInfoLabel->font();
+    matteFont.setBold(matteHasInvalid);
+    matteInfoLabel->setFont(matteFont);
+    applyInspectorLabelPalette(matteInfoLabel, matteHasInvalid);
+  }
+  const QString proxyText = proxySummary(layer);
+  if (proxyInfoLabel) {
+    proxyInfoLabel->setProxyContext(layer);
+    proxyInfoLabel->setText(proxyText);
+    proxyInfoLabel->setEnabled(true);
+    applyInspectorLabelPalette(proxyInfoLabel, proxyText.contains(QStringLiteral("none"), Qt::CaseInsensitive));
+  }
   const QString capabilityText = presentation.capabilitySummaryText.isEmpty()
                                      ? QString()
                                      : QStringLiteral(" | %1").arg(presentation.capabilitySummaryText);
@@ -1188,10 +1560,21 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
   }
   layerNameLabel->setText("Layer: Open a project to inspect layers");
   layerTypeLabel->setText("Type: N/A");
+  if (matteInfoLabel) {
+    matteInfoLabel->setText("Matte: none");
+    matteInfoLabel->setEnabled(false);
+    matteInfoLabel->setMatteContext(CompositionID(), ArtifactAbstractLayerPtr{}, ArtifactCompositionPtr{});
+  }
+  if (proxyInfoLabel) {
+    proxyInfoLabel->setText("Proxy: not available");
+    proxyInfoLabel->setEnabled(false);
+    proxyInfoLabel->setProxyContext(ArtifactAbstractLayerPtr{});
+  }
   statusLabel->setText("Status: Open a project to inspect layers");
   currentCompositionId_ = CompositionID();
   currentLayerId_ = LayerID();
   lastLayerInfoSignature_.clear();
+  lastMatteInfoSignature_.clear();
   lastCompositionNoteText_.clear();
   lastLayerNoteText_.clear();
   lastRackSignatures_.fill(QString());
@@ -1214,6 +1597,16 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
 void ArtifactInspectorWidget::Impl::setNoLayerState() {
   layerNameLabel->setText("Layer: Select a layer to continue");
   layerTypeLabel->setText("Type: N/A");
+  if (matteInfoLabel) {
+    matteInfoLabel->setText("Matte: none");
+    matteInfoLabel->setEnabled(false);
+    matteInfoLabel->setMatteContext(CompositionID(), ArtifactAbstractLayerPtr{}, ArtifactCompositionPtr{});
+  }
+  if (proxyInfoLabel) {
+    proxyInfoLabel->setText("Proxy: not available");
+    proxyInfoLabel->setEnabled(false);
+    proxyInfoLabel->setProxyContext(ArtifactAbstractLayerPtr{});
+  }
   statusLabel->setText("Status: Select a layer to inspect details");
   currentLayerId_ = LayerID();
   if (layerNoteConnection_) {
@@ -1237,6 +1630,7 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
     }
   }
   lastLayerInfoSignature_.clear();
+  lastMatteInfoSignature_.clear();
   lastLayerNoteText_.clear();
   lastRackSignatures_.fill(QString());
   refreshMask_ = 0;
@@ -1805,6 +2199,18 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->layerTypeLabel = new QLabel("Type: N/A");
   applyInspectorLabelPalette(impl_->layerTypeLabel, false);
   layerInfoLayout->addWidget(impl_->layerTypeLabel);
+
+  impl_->matteInfoLabel = new MatteInfoLabel();
+  impl_->matteInfoLabel->setText("Matte: none");
+  impl_->matteInfoLabel->setWordWrap(true);
+  applyInspectorLabelPalette(impl_->matteInfoLabel, false);
+  layerInfoLayout->addWidget(impl_->matteInfoLabel);
+
+  impl_->proxyInfoLabel = new ProxyInfoLabel();
+  impl_->proxyInfoLabel->setText("Proxy: not available");
+  impl_->proxyInfoLabel->setWordWrap(true);
+  applyInspectorLabelPalette(impl_->proxyInfoLabel, false);
+  layerInfoLayout->addWidget(impl_->proxyInfoLabel);
 
   layerInfoLayout->setAlignment(Qt::AlignTop);
   layerInfoLayout->setContentsMargins(

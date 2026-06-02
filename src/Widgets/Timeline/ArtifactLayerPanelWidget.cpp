@@ -37,6 +37,7 @@ module;
 #include <QInputDialog>
 #include <QFileDialog>
 #include <QDesktopServices>
+#include <QToolTip>
 #include <QTimer>
 #include <QDrag>
 #include <QMenu>
@@ -445,6 +446,7 @@ namespace {
   constexpr int kInlineComboReserve = kInlineParentWidth + kInlineBlendWidth + kInlineComboGap + 10;
   constexpr int kLayerNameMinWidth = 120;
   constexpr char kLayerReorderMimeType[] = "application/x-artifact-layer-reorder";
+  constexpr char kLayerMatteLinkMimeType[] = "application/x-artifact-layer-matte-link";
 
  QIcon loadSvgAsIcon(const QString& path, int size = 16)
  {
@@ -1189,6 +1191,130 @@ QString matteSummaryLabel(const LayerMatteReference& ref, int index)
  return tags.isEmpty() ? base : base + QStringLiteral("  ") + tags.join(QStringLiteral(" / "));
 }
 
+QString matteSourceBadgeLabel(const ArtifactCompositionPtr& comp, const ArtifactAbstractLayerPtr& layer)
+{
+ if (!layer) {
+  return QStringLiteral("Matte");
+ }
+
+ const auto matteRefs = layer->matteReferences();
+ if (matteRefs.empty()) {
+  return QStringLiteral("Matte");
+ }
+
+ const auto resolveSourceName = [&](const LayerMatteReference& ref) -> QString {
+  if (!comp || ref.sourceLayerId.isNil()) {
+   return QStringLiteral("<missing>");
+  }
+  auto source = comp->layerById(ref.sourceLayerId);
+  if (!source) {
+   return QStringLiteral("<missing>");
+  }
+  const QString name = source->layerName().trimmed();
+  return name.isEmpty() ? ref.sourceLayerId.toString() : name;
+ };
+
+ const QString sourceName = resolveSourceName(matteRefs.front());
+ const QString matteType = matteTypeToText(matteRefs.front().type);
+ if (matteRefs.size() == 1) {
+  return QStringLiteral("Matte: %1 (%2)").arg(sourceName, matteType);
+ }
+ return QStringLiteral("Matte: %1 (%2) +%3").arg(sourceName, matteType).arg(matteRefs.size() - 1);
+}
+
+LayerMatteReference makeDefaultMatteReference(const LayerID& sourceLayerId)
+{
+ LayerMatteReference ref;
+ ref.sourceLayerId = sourceLayerId;
+ ref.enabled = true;
+ ref.type = MatteType::Alpha;
+ ref.blendMode = MatteBlendMode::Add;
+ ref.fitMode = MatteFitMode::Stretch;
+ ref.opacity = 1.0f;
+ ref.invert = false;
+ return ref;
+}
+
+bool matteDropWouldCreateCycle(const ArtifactCompositionPtr& comp,
+                               const ArtifactAbstractLayerPtr& targetLayer,
+                               const LayerID& sourceLayerId)
+{
+ if (!comp || !targetLayer || sourceLayerId.isNil()) {
+  return true;
+ }
+
+ const LayerID targetLayerId = targetLayer->id();
+ if (targetLayerId == sourceLayerId) {
+  return true;
+ }
+
+ QSet<QString> visited;
+ QVector<LayerID> pending;
+ pending.push_back(sourceLayerId);
+
+ while (!pending.isEmpty()) {
+  const LayerID currentId = pending.back();
+  pending.pop_back();
+  if (currentId.isNil()) {
+   continue;
+  }
+
+  const QString key = currentId.toString();
+  if (visited.contains(key)) {
+   continue;
+  }
+  visited.insert(key);
+
+  if (currentId == targetLayerId) {
+   return true;
+  }
+
+  auto currentLayer = comp->layerById(currentId);
+  if (!currentLayer) {
+   continue;
+  }
+
+  for (const auto& ref : currentLayer->matteReferences()) {
+   if (!ref.enabled || ref.sourceLayerId.isNil()) {
+    continue;
+   }
+   pending.push_back(ref.sourceLayerId);
+  }
+ }
+
+ return false;
+}
+
+bool applyMatteTypeToLayer(const ArtifactCompositionPtr& comp,
+                           const ArtifactAbstractLayerPtr& layer,
+                           int matteIndex,
+                           MatteType matteType)
+{
+ if (!comp || !layer || matteIndex < 0) {
+  return false;
+ }
+ auto beforeRefs = layer->matteReferences();
+ if (matteIndex >= static_cast<int>(beforeRefs.size())) {
+  return false;
+ }
+
+ auto afterRefs = beforeRefs;
+ auto& ref = afterRefs[matteIndex];
+ const MatteType previousType = ref.type;
+ const bool previousInvert = ref.invert;
+ ref.type = matteType;
+ ref.invert = false;
+ if (ref.type == previousType && ref.invert == previousInvert) {
+  return false;
+ }
+
+ auto* cmd = new ChangeLayerMatteReferencesCommand(layer,
+                                                   std::move(beforeRefs),
+                                                   std::move(afterRefs));
+ UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+ return true;
+}
+
 QString maskSummaryLabel(const LayerMask& mask, int index)
 {
  const QString base = QStringLiteral("Mask %1").arg(index + 1);
@@ -1283,6 +1409,8 @@ public:
   LayerID dragCandidateLayerId;
   LayerID draggedLayerId;
   int dragInsertVisibleRow = -1;
+  int dragMatteHoverVisibleRow = -1;
+  bool dragMatteLinkMode = false;
   bool dragStarted_ = false;
   bool updatingLayout = false;  // 再帰呼び出し防止フラグ
   QTimer* layoutDebounceTimer = nullptr;
@@ -1407,6 +1535,8 @@ public:
    dragCandidateLayerId = LayerID();
    draggedLayerId = LayerID();
    dragInsertVisibleRow = -1;
+   dragMatteHoverVisibleRow = -1;
+   dragMatteLinkMode = false;
    dragStarted_ = false;
   }
 
@@ -2184,6 +2314,56 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       impl_->currentPropertyPath.clear();
       propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
       update();
+    } else if (event->button() == Qt::RightButton) {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      if (comp && layer) {
+        bool ok = false;
+        const int matteIndex = row.propertyPath.trimmed().toInt(&ok);
+        if (ok && matteIndex >= 0) {
+          const auto matteRefs = layer->matteReferences();
+          if (matteIndex < static_cast<int>(matteRefs.size())) {
+            QMenu menu(this);
+            QAction *focusAction = menu.addAction(QStringLiteral("Focus source"));
+            focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_focus")},
+                                             {QStringLiteral("index"), matteIndex}});
+
+            QMenu *typeMenu = menu.addMenu(QStringLiteral("Set matte type"));
+            const QStringList typeLabels = {
+                QStringLiteral("Alpha"),
+                QStringLiteral("Luma"),
+                QStringLiteral("Inverted Alpha"),
+                QStringLiteral("Inverted Luma")};
+            for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
+              QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
+              typeAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_type")},
+                                              {QStringLiteral("index"), matteIndex},
+                                              {QStringLiteral("type"), typeIndex}});
+            }
+
+            if (QAction *chosenAction = menu.exec(event->globalPos())) {
+              const QVariantMap data = chosenAction->data().toMap();
+              const QString kind = data.value(QStringLiteral("kind")).toString();
+              const int index = data.value(QStringLiteral("index")).toInt(-1);
+              if (kind == QStringLiteral("matte_focus") && index >= 0 && index < static_cast<int>(matteRefs.size())) {
+                const auto &chosenRef = matteRefs[index];
+                if (!chosenRef.sourceLayerId.isNil()) {
+                  if (auto *service = ArtifactProjectService::instance()) {
+                    service->selectLayer(chosenRef.sourceLayerId);
+                  }
+                }
+              } else if (kind == QStringLiteral("matte_type")) {
+                const int typeIndex = data.value(QStringLiteral("type")).toInt(-1);
+                if (typeIndex >= 0 && typeIndex <= static_cast<int>(MatteType::InverseLuma)) {
+                  if (applyMatteTypeToLayer(comp, layer, matteIndex,
+                                            static_cast<MatteType>(typeIndex))) {
+                    updateLayout();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
     event->accept();
     return;
@@ -2749,6 +2929,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       return;
     }
 
+    auto comp = safeCompositionLookup(impl_->compositionId);
     QMenu menu(this);
     if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
       QMenu *precompMenu = menu.addMenu(QStringLiteral("プリコンポーズ"));
@@ -2837,6 +3018,39 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       });
       menu.addSeparator();
     }
+    const auto matteRefs = layer->matteReferences();
+    if (!matteRefs.empty()) {
+      QMenu *matteMenu = menu.addMenu(QStringLiteral("Track Matte"));
+      const QStringList typeLabels = {
+          QStringLiteral("Alpha"),
+          QStringLiteral("Luma"),
+          QStringLiteral("Inverted Alpha"),
+          QStringLiteral("Inverted Luma")};
+      for (int matteIndex = 0; matteIndex < static_cast<int>(matteRefs.size()); ++matteIndex) {
+        const auto &ref = matteRefs[matteIndex];
+        QString sourceName = QStringLiteral("<missing>");
+        if (comp && !ref.sourceLayerId.isNil()) {
+          if (auto source = comp->layerById(ref.sourceLayerId)) {
+            const QString name = source->layerName().trimmed();
+            sourceName = name.isEmpty() ? ref.sourceLayerId.toString() : name;
+          }
+        }
+        QMenu *refMenu = matteMenu->addMenu(
+            QStringLiteral("Matte %1: %2").arg(matteIndex + 1).arg(sourceName));
+        QAction *focusAction = refMenu->addAction(QStringLiteral("Focus source"));
+        focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_focus")},
+                                         {QStringLiteral("index"), matteIndex}});
+
+        QMenu *typeMenu = refMenu->addMenu(QStringLiteral("Set matte type"));
+        for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
+          QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
+          typeAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_type")},
+                                          {QStringLiteral("index"), matteIndex},
+                                          {QStringLiteral("type"), typeIndex}});
+        }
+      }
+      menu.addSeparator();
+    }
     if (selectedIds.size() > 1) {
       menu.addAction(QStringLiteral("Duplicate Selected Layers"), [triggerDuplicateSelectedLayers]() {
         triggerDuplicateSelectedLayers();
@@ -2885,7 +3099,31 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     menu.addAction("Delete Layer", [triggerDeleteLayer]() {
       triggerDeleteLayer();
     });
-    menu.exec(event->globalPos());
+    QAction *chosenAction = menu.exec(event->globalPos());
+    if (chosenAction) {
+      const QVariantMap data = chosenAction->data().toMap();
+      const QString kind = data.value(QStringLiteral("kind")).toString();
+      const int matteIndex = data.value(QStringLiteral("index")).toInt(-1);
+      if (kind == QStringLiteral("matte_focus")) {
+        if (matteIndex >= 0 && matteIndex < static_cast<int>(matteRefs.size())) {
+          const auto &ref = matteRefs[matteIndex];
+          if (!ref.sourceLayerId.isNil()) {
+            if (auto *svc = ArtifactProjectService::instance()) {
+              svc->selectLayer(ref.sourceLayerId);
+            }
+          }
+        }
+      } else if (kind == QStringLiteral("matte_type")) {
+        const int matteTypeIndex = data.value(QStringLiteral("type")).toInt(-1);
+        if (comp && matteIndex >= 0 && matteIndex < static_cast<int>(matteRefs.size()) &&
+            matteTypeIndex >= 0 && matteTypeIndex <= static_cast<int>(MatteType::InverseLuma)) {
+          if (applyMatteTypeToLayer(comp, layer, matteIndex,
+                                    static_cast<MatteType>(matteTypeIndex))) {
+            updateLayout();
+          }
+        }
+      }
+    }
 
     event->accept();
     return;
@@ -2986,17 +3224,35 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
   event->accept();
  }
 
- void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
- {
+void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
+{
   if ((event->buttons() & Qt::LeftButton) && !impl_->dragCandidateLayerId.isNil()) {
     const int dragDistance = (event->pos() - impl_->dragStartPos).manhattanLength();
     if (!impl_->dragStarted_ && dragDistance >= QApplication::startDragDistance()) {
       impl_->dragStarted_ = true;
       impl_->draggedLayerId = impl_->dragCandidateLayerId;
+      impl_->dragMatteLinkMode = (event->modifiers() & Qt::AltModifier) &&
+                                 !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier | Qt::MetaModifier));
     }
     if (impl_->dragStarted_) {
-      impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(static_cast<int>(event->pos().y() + impl_->verticalOffset));
-      setCursor(Qt::DragMoveCursor);
+      if (impl_->dragMatteLinkMode) {
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        const auto sourceLayer = comp ? comp->layerById(impl_->draggedLayerId) : ArtifactAbstractLayerPtr{};
+        impl_->dragMatteHoverVisibleRow = impl_->rowIndexFromViewportY(event->pos().y());
+        impl_->dragInsertVisibleRow = -1;
+        const bool validDropTarget =
+            impl_->dragMatteHoverVisibleRow >= 0 &&
+            impl_->dragMatteHoverVisibleRow < impl_->visibleRows.size() &&
+            impl_->visibleRows[impl_->dragMatteHoverVisibleRow].layer &&
+            !matteDropWouldCreateCycle(comp,
+                                       impl_->visibleRows[impl_->dragMatteHoverVisibleRow].layer,
+                                       sourceLayer ? sourceLayer->id() : LayerID());
+        setCursor(validDropTarget ? Qt::CrossCursor : Qt::ForbiddenCursor);
+      } else {
+        impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(static_cast<int>(event->pos().y() + impl_->verticalOffset));
+        impl_->dragMatteHoverVisibleRow = -1;
+        setCursor(Qt::DragMoveCursor);
+      }
       update();
       event->accept();
       return;
@@ -3031,6 +3287,23 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
       pointer = keyframeRect.contains(event->pos());
     }
   }
+
+  QString toolTipText;
+  if (idx >= 0 && idx < impl_->visibleRows.size()) {
+    const auto& row = impl_->visibleRows[idx];
+    if (row.layer && row.kind == RowKind::Layer) {
+      const auto mattes = row.layer->matteReferences();
+      if (!mattes.empty()) {
+        QStringList parts;
+        parts.reserve(static_cast<int>(mattes.size()));
+        for (size_t i = 0; i < mattes.size(); ++i) {
+          parts << matteSummaryLabel(mattes[i], static_cast<int>(i));
+        }
+        toolTipText = QStringLiteral("Track Mattes: %1").arg(parts.join(QStringLiteral(" | ")));
+      }
+    }
+  }
+  setToolTip(toolTipText);
   setCursor(pointer ? Qt::PointingHandCursor : Qt::ArrowCursor);
  }
 
@@ -3042,42 +3315,94 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
       auto comp = safeCompositionLookup(impl_->compositionId);
       const LayerID dragLayerId = impl_->draggedLayerId;
       if (svc && comp && !dragLayerId.isNil()) {
-        QVector<LayerID> visibleLayerIds;
-        visibleLayerIds.reserve(impl_->visibleRows.size());
-        for (const auto& row : impl_->visibleRows) {
-     if (row.kind == RowKind::Layer && row.layer) {
-            visibleLayerIds.push_back(row.layer->id());
-          }
-        }
-        const auto allLayers = comp->allLayer();
-        int oldIndex = -1;
-        for (int i = 0; i < allLayers.size(); ++i) {
-          if (allLayers[i] && allLayers[i]->id() == dragLayerId) {
-            oldIndex = i;
-            break;
-          }
-        }
-        if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
-          QVector<LayerID> remainingVisibleLayerIds;
-          remainingVisibleLayerIds.reserve(visibleLayerIds.size());
-          for (const auto& layerId : visibleLayerIds) {
-            if (layerId != dragLayerId) {
-              remainingVisibleLayerIds.push_back(layerId);
+        if (impl_->dragMatteLinkMode) {
+          const int targetVisibleRow = impl_->dragMatteHoverVisibleRow;
+          if (targetVisibleRow >= 0 && targetVisibleRow < impl_->visibleRows.size()) {
+            const auto& targetRow = impl_->visibleRows[targetVisibleRow];
+            auto targetLayer = targetRow.layer;
+            auto sourceLayer = comp->layerById(dragLayerId);
+            if (targetLayer && sourceLayer && !matteDropWouldCreateCycle(comp, targetLayer, dragLayerId)) {
+              auto beforeRefs = targetLayer->matteReferences();
+              auto afterRefs = beforeRefs;
+
+              const auto replaceSource = [dragLayerId](LayerMatteReference ref) {
+                ref.sourceLayerId = dragLayerId;
+                ref.enabled = true;
+                return ref;
+              };
+
+              bool changed = false;
+              if (targetRow.kind == RowKind::Matte) {
+                bool ok = false;
+                const int matteIndex = targetRow.propertyPath.trimmed().toInt(&ok);
+                if (ok && matteIndex >= 0 && matteIndex < static_cast<int>(afterRefs.size())) {
+                  auto updated = afterRefs[matteIndex];
+                  updated = replaceSource(updated);
+                  if (updated.sourceLayerId != beforeRefs[matteIndex].sourceLayerId ||
+                      updated.enabled != beforeRefs[matteIndex].enabled) {
+                    afterRefs[matteIndex] = updated;
+                    changed = true;
+                  }
+                }
+              } else if (targetRow.kind == RowKind::Layer || targetRow.kind == RowKind::MatteStack) {
+                if (afterRefs.empty()) {
+                  afterRefs.push_back(makeDefaultMatteReference(dragLayerId));
+                  changed = true;
+                } else {
+                  auto updated = replaceSource(afterRefs.front());
+                  if (updated.sourceLayerId != beforeRefs.front().sourceLayerId ||
+                      updated.enabled != beforeRefs.front().enabled) {
+                    afterRefs.front() = updated;
+                    changed = true;
+                  }
+                }
+              }
+
+              if (changed) {
+                auto* cmd = new ChangeLayerMatteReferencesCommand(targetLayer, std::move(beforeRefs), std::move(afterRefs));
+                UndoManager::instance()->push(std::unique_ptr<ChangeLayerMatteReferencesCommand>(cmd));
+                updateLayout();
+              }
             }
           }
-          const int targetVisibleIndex = std::clamp(
-            impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, dragLayerId),
-            0,
-            static_cast<int>(remainingVisibleLayerIds.size()));
-          int newIndex = static_cast<int>(remainingVisibleLayerIds.size()) -
-                         targetVisibleIndex;
-          newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
-           if (newIndex != oldIndex) {
-            auto layer = comp->layerById(dragLayerId);
-            auto* cmd = new MoveLayerIndexCommand(comp, layer, oldIndex, newIndex);
-            UndoManager::instance()->push(std::unique_ptr<MoveLayerIndexCommand>(cmd));
-            updateLayout();
-           }
+        } else {
+          QVector<LayerID> visibleLayerIds;
+          visibleLayerIds.reserve(impl_->visibleRows.size());
+          for (const auto& row : impl_->visibleRows) {
+            if (row.kind == RowKind::Layer && row.layer) {
+              visibleLayerIds.push_back(row.layer->id());
+            }
+          }
+          const auto allLayers = comp->allLayer();
+          int oldIndex = -1;
+          for (int i = 0; i < allLayers.size(); ++i) {
+            if (allLayers[i] && allLayers[i]->id() == dragLayerId) {
+              oldIndex = i;
+              break;
+            }
+          }
+          if (oldIndex >= 0 && !visibleLayerIds.isEmpty()) {
+            QVector<LayerID> remainingVisibleLayerIds;
+            remainingVisibleLayerIds.reserve(visibleLayerIds.size());
+            for (const auto& layerId : visibleLayerIds) {
+              if (layerId != dragLayerId) {
+                remainingVisibleLayerIds.push_back(layerId);
+              }
+            }
+            const int targetVisibleIndex = std::clamp(
+              impl_->layerCountBeforeVisibleRowExcluding(impl_->dragInsertVisibleRow, dragLayerId),
+              0,
+              static_cast<int>(remainingVisibleLayerIds.size()));
+            int newIndex = static_cast<int>(remainingVisibleLayerIds.size()) -
+                           targetVisibleIndex;
+            newIndex = std::clamp(newIndex, 0, std::max(0, static_cast<int>(allLayers.size()) - 1));
+            if (newIndex != oldIndex) {
+              auto layer = comp->layerById(dragLayerId);
+              auto* cmd = new MoveLayerIndexCommand(comp, layer, oldIndex, newIndex);
+              UndoManager::instance()->push(std::unique_ptr<MoveLayerIndexCommand>(cmd));
+              updateLayout();
+            }
+          }
         }
       }
       impl_->clearDragState();
@@ -3090,6 +3415,7 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
 
   impl_->clearDragState();
   unsetCursor();
+  setToolTip(QString());
   QWidget::mouseReleaseEvent(event);
  }
 
@@ -3446,6 +3772,15 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, rowHover); // Subtle grey hover
     else p.fillRect(0, y, width(), rowH, rowBase);
 
+    if (impl_->dragMatteLinkMode && i == impl_->dragMatteHoverVisibleRow) {
+      const bool validMatteTarget =
+          (row.kind == RowKind::Layer || row.kind == RowKind::MatteStack || row.kind == RowKind::Matte);
+      if (validMatteTarget) {
+        p.fillRect(0, y, width(), rowH, mixColor(background, accent, 0.22));
+        p.fillRect(0, y, 4, rowH, accent);
+      }
+    }
+
     if (isPropertyRow) {
       if (propertyFocused) {
         QColor focusStrip = accent;
@@ -3646,12 +3981,37 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     } else {
      const bool isPrecompLayer = dynamic_cast<ArtifactCompositionLayer *>(l.get()) != nullptr;
      const bool isModel3DLayer = l->is3D() && !isPrecompLayer;
+     const auto matteRefs = l->matteReferences();
+     const bool hasMatteRefs = !matteRefs.empty();
+     bool matteBroken = false;
+     if (hasMatteRefs) {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      for (const auto& ref : matteRefs) {
+       if (ref.sourceLayerId.isNil() || ref.sourceLayerId == l->id()) {
+        matteBroken = true;
+        break;
+       }
+       auto sourceLayer = comp ? comp->layerById(ref.sourceLayerId) : ArtifactAbstractLayerPtr{};
+       if (!sourceLayer || matteDropWouldCreateCycle(comp, sourceLayer, l->id())) {
+        matteBroken = true;
+        break;
+       }
+      }
+     }
      const auto variants = l->getVariants();
      const int variantChipW = kVariantChipWidth;
-     const int textWidth = std::max(20, width() - textX - 8 - (showInlineCombos ? kInlineComboReserve : 0) - variantChipW);
+     const QFontMetrics fm(p.font());
+     const int iconGap = ((isPrecompLayer || isModel3DLayer) ? 18 : 0) + (hasMatteRefs ? 18 : 0);
      const QString layerName = l->layerName();
      const QString layerAux = row.auxiliaryText.trimmed();
-     const int layerTextX = textX + 4 + ((isPrecompLayer || isModel3DLayer) ? 18 : 0);
+     const QString matteBadgeText = hasMatteRefs ? matteSourceBadgeLabel(safeCompositionLookup(impl_->compositionId), l)
+                                                 : QString();
+     const int matteBadgeW = hasMatteRefs
+                                 ? std::min(160, std::max(66, fm.horizontalAdvance(matteBadgeText) + 16))
+                                 : 0;
+     const int matteBadgeX = textX + 4 + ((isPrecompLayer || isModel3DLayer) ? 18 : 0) + 18;
+     const QRect matteBadgeRect(matteBadgeX, y + 5, matteBadgeW, rowH - 10);
+     const int layerTextX = hasMatteRefs ? (matteBadgeRect.right() + 8) : (textX + 4 + iconGap);
      if (isPrecompLayer) {
       const QRect iconRect(textX + 4, y + 7, 12, 12);
       const QColor iconFill = mixColor(background, accent, 0.34);
@@ -3672,8 +4032,26 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         p.drawRoundedRect(iconRect, 2, 2);
       }
      }
+     if (hasMatteRefs) {
+      const QRect iconRect(textX + 4 + ((isPrecompLayer || isModel3DLayer) ? 18 : 0), y + 6, 14, 14);
+      const QIcon& matteIcon = matteBroken ? impl_->iconLinkOff : impl_->iconLink;
+      if (!matteIcon.isNull()) {
+        p.setOpacity(matteBroken ? 0.95 : 1.0);
+        p.drawPixmap(iconRect, matteIcon.pixmap(iconRect.size()));
+        p.setOpacity(1.0);
+      } else {
+        p.setPen(QPen(matteBroken ? accent.darker(120) : border, 1.2));
+        p.setBrush(mixColor(background, accent, matteBroken ? 0.18 : 0.10));
+        p.drawEllipse(iconRect);
+      }
+      p.setPen(matteBroken ? accent.darker(130) : text.darker(118));
+      p.setBrush(matteBroken ? mixColor(background, accent, 0.20) : mixColor(background, surface, 0.26));
+      p.drawRoundedRect(matteBadgeRect, 4, 4);
+      p.setPen(matteBroken ? accent.lighter(120) : text);
+      p.drawText(matteBadgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                 fm.elidedText(matteBadgeText, Qt::ElideRight, matteBadgeRect.width() - 16));
+     }
      if (!layerAux.isEmpty()) {
-      const QFontMetrics fm(p.font());
       const int badgeTextWidth = fm.horizontalAdvance(layerAux) + 16;
       const int badgeWidth = std::min(120, std::max(52, badgeTextWidth));
       const int badgeX = std::max(layerTextX, width() - (showInlineCombos ? kInlineComboReserve : 0) - variantChipW - badgeWidth - 10);
@@ -3702,8 +4080,8 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      p.setPen(layerSelected ? accent.darker(180) : border);
      p.drawRoundedRect(chipRect, 4, 4);
      p.setPen(text);
-     const QFontMetrics fm(p.font());
-     const QString elidedChip = fm.elidedText(chipText, Qt::ElideRight, chipRect.width() - 8);
+     const QFontMetrics chipFm(p.font());
+     const QString elidedChip = chipFm.elidedText(chipText, Qt::ElideRight, chipRect.width() - 8);
      p.drawText(chipRect.adjusted(6, 0, -6, 0), Qt::AlignVCenter | Qt::AlignLeft, elidedChip);
      p.restore();
     }
@@ -3808,6 +4186,8 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
  {
   e->accept();
   impl_->dragInsertVisibleRow = -1;
+  impl_->dragMatteHoverVisibleRow = -1;
+  setToolTip(QString());
   update();  // ビジュアルフィードバック解除
  }
 

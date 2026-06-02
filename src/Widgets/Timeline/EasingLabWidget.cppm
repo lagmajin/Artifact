@@ -47,7 +47,7 @@ static QString interpolationLabelForCandidate(const ArtifactCore::EasingCandidat
     case ArtifactCore::InterpolationType::EaseOut:
         return QStringLiteral("maps to ease-out");
     case ArtifactCore::InterpolationType::EaseInOut:
-        return QStringLiteral("maps to ease-in-out");
+        return QStringLiteral("maps to easy ease");
     case ArtifactCore::InterpolationType::BackOut:
         return QStringLiteral("maps to back-out");
     case ArtifactCore::InterpolationType::Exponential:
@@ -56,9 +56,22 @@ static QString interpolationLabelForCandidate(const ArtifactCore::EasingCandidat
         return QStringLiteral("maps to back-in");
     case ArtifactCore::InterpolationType::BackInOut:
         return QStringLiteral("maps to back-in-out");
+    case ArtifactCore::InterpolationType::Bezier:
+        return QStringLiteral("maps to bezier");
     default:
         return QStringLiteral("maps to interpolation");
     }
+}
+
+static int candidateIndexForInterpolation(const QVector<ArtifactCore::EasingCandidate>& candidates,
+                                          const ArtifactCore::InterpolationType type)
+{
+    for (int i = 0; i < candidates.size(); ++i) {
+        if (ArtifactCore::easingTypeToInterpolation(candidates[i].type) == type) {
+            return i;
+        }
+    }
+    return -1;
 }
 } // namespace
 
@@ -171,6 +184,7 @@ class EasingLabDialog::Impl {
 public:
     QVector<ArtifactCore::EasingCandidate> candidates;
     QVector<EasingPreviewWidget*> previews;
+    ArtifactCore::InterpolationType initialInterpolation = ArtifactCore::InterpolationType::EaseInOut;
     QSlider* scrubSlider = nullptr;
     QComboBox* candidateCombo = nullptr;
     QPushButton* applyButton = nullptr;
@@ -219,12 +233,14 @@ void EasingLabDialog::rebuildPreviewGrid()
 }
 
 EasingLabDialog::EasingLabDialog(QWidget* parent,
-                                 std::function<void(ArtifactCore::InterpolationType)> applyCallback)
+                                 std::function<void(ArtifactCore::InterpolationType)> applyCallback,
+                                 ArtifactCore::InterpolationType initialInterpolation)
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle(QStringLiteral("Easing Lab"));
     resize(920, 620);
     impl_->applyCallback = std::move(applyCallback);
+    impl_->initialInterpolation = initialInterpolation;
 
     auto* root = new QVBoxLayout(this);
     root->setContentsMargins(14, 14, 14, 14);
@@ -270,7 +286,9 @@ EasingLabDialog::EasingLabDialog(QWidget* parent,
         for (const auto& candidate : impl_->candidates) {
             impl_->candidateCombo->addItem(titleForCandidate(candidate));
         }
-        impl_->candidateCombo->setCurrentIndex(0);
+        const int initialIndex = candidateIndexForInterpolation(impl_->candidates,
+                                                                impl_->initialInterpolation);
+        impl_->candidateCombo->setCurrentIndex(std::max(0, initialIndex));
     }
     rebuildPreviewGrid();
     if (impl_->countLabel) {
@@ -320,6 +338,12 @@ EasingLabDialog::~EasingLabDialog()
 
 void EasingLabDialog::setCandidates(const QVector<ArtifactCore::EasingCandidate>& candidates)
 {
+    const ArtifactCore::InterpolationType selectedInterpolation =
+        (impl_ && impl_->candidateCombo && impl_->candidateCombo->currentIndex() >= 0 &&
+         impl_->candidateCombo->currentIndex() < impl_->candidates.size())
+            ? ArtifactCore::easingTypeToInterpolation(
+                  impl_->candidates[impl_->candidateCombo->currentIndex()].type)
+            : impl_->initialInterpolation;
     impl_->candidates = candidates;
     if (impl_->candidateCombo) {
         const QSignalBlocker blocker(impl_->candidateCombo);
@@ -327,7 +351,9 @@ void EasingLabDialog::setCandidates(const QVector<ArtifactCore::EasingCandidate>
         for (const auto& candidate : impl_->candidates) {
             impl_->candidateCombo->addItem(titleForCandidate(candidate));
         }
-        impl_->candidateCombo->setCurrentIndex(0);
+        const int currentIndex = candidateIndexForInterpolation(impl_->candidates,
+                                                                selectedInterpolation);
+        impl_->candidateCombo->setCurrentIndex(std::max(0, currentIndex));
     }
     rebuildPreviewGrid();
     if (impl_->countLabel) {

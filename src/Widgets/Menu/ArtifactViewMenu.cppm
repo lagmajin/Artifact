@@ -26,6 +26,7 @@ import Application.AppSettings;
 import Artifact.MainWindow;
 import Artifact.Workspace.Manager;
 import Artifact.Widgets.ColorPaletteWidget;
+import Artifact.Widgets.ColorSciencePanel;
 import Artifact.Widgets.SecondaryPreviewWindow;
 import Widgets.AssetBrowser;
 import Widgets.ToolBar;
@@ -101,6 +102,7 @@ namespace Artifact {
      QAction* openContentsViewerAction = nullptr;
      QAction* openProjectPanelAction = nullptr;
      QAction* openColorPaletteAction = nullptr;
+     QAction* openColorScienceAction = nullptr;
      QAction* openReactiveEventEditorAction = nullptr;
      QAction* secondaryPreviewAction = nullptr;
      QPointer<ArtifactSecondaryPreviewWindow> secondaryPreviewWindow;
@@ -436,6 +438,24 @@ namespace Artifact {
         QRect(120, 120, 560, 640));
    });
 
+   openColorScienceAction = menu->addAction("Color Science");
+   openColorScienceAction->setIcon(QIcon(resolveIconPath("Studio/color_palette.svg")));
+   QObject::connect(openColorScienceAction, &QAction::triggered, menu, [this]() {
+    if (!mainWindow) return;
+    const QString dockTitle = QStringLiteral("Color Science");
+    if (mainWindow->hasDock(dockTitle)) {
+     mainWindow->setDockVisible(dockTitle, true);
+     mainWindow->activateDock(dockTitle);
+     return;
+    }
+    auto* colorScienceWidget = new ArtifactColorSciencePanel(mainWindow);
+    mainWindow->addDockedWidgetFloating(
+        dockTitle,
+        QStringLiteral("color_science_dock"),
+        colorScienceWidget,
+        QRect(140, 140, 720, 720));
+   });
+
    menu->addSeparator();
    menu->addMenu(workspaceMenu);
    menu->addMenu(workspacePresetMenu);
@@ -445,6 +465,7 @@ namespace Artifact {
    menu->addAction(showGuidesAction);
    menu->addAction(snapToGuidesAction);
    menu->addAction(showRulersAction);
+   menu->addAction(openColorScienceAction);
    menu->addSeparator();
     windowPanelsMenu = menu->addMenu("ウィンドウパネル(&W)");
     windowPanelsMenu->setIcon(QIcon(resolveIconPath("Studio/panels.svg")));
@@ -552,6 +573,9 @@ namespace Artifact {
   }
   if (openColorPaletteAction) {
    openColorPaletteAction->setEnabled(true);
+  }
+  if (openColorScienceAction) {
+   openColorScienceAction->setEnabled(true);
   }
   if (openReactiveEventEditorAction) {
    openReactiveEventEditorAction->setEnabled(true);

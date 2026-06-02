@@ -1,6 +1,9 @@
 module;
 #include <utility>
 #include <QAction>
+#include <QActionGroup>
+#include <QDesktopServices>
+#include <QFile>
 #include <QInputDialog>
 #include <QKeySequence>
 #include <QDialog>
@@ -10,9 +13,11 @@ module;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QUrl>
 #include <QtSVG/QSvgRenderer>
 #include <QTimer>
 #include <QSet>
+#include <QVariant>
 #include <wobjectimpl.h>
 
 module Artifact.Menu.Layer;
@@ -25,9 +30,13 @@ import Utils.Path;
 import Utils.Id;
 import Utils.String.UniString;
 import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Factory;
+import Artifact.Layer.Composition;
 import Artifact.Layer.Shape;
+import Artifact.Layer.Video;
+import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Composition.Abstract;
 import Artifact.MainWindow;
 import Artifact.Widgets.PrecomposeDialog;
@@ -122,6 +131,8 @@ public:
     QMenu* createShapeMenu = nullptr;
     QMenu* switchMenu = nullptr;
     QMenu* selectMenu = nullptr;
+    QMenu* proxyMenu = nullptr;
+    QActionGroup* proxyQualityGroup = nullptr;
 
     QAction* createSolidAction = nullptr;
     QAction* createNullAction = nullptr;
@@ -149,6 +160,15 @@ public:
     QAction* toggleSoloAction = nullptr;
     QAction* toggleShyAction = nullptr;
     QAction* soloOnlyAction = nullptr;
+    QAction* proxyNoneAction = nullptr;
+    QAction* proxyQuarterAction = nullptr;
+    QAction* proxyHalfAction = nullptr;
+    QAction* proxyFullAction = nullptr;
+    QAction* generateProxyAction = nullptr;
+    QAction* revealProxyAction = nullptr;
+    QAction* clearProxyAction = nullptr;
+    QAction* generateSelectedProxyAction = nullptr;
+    QAction* clearSelectedProxyAction = nullptr;
 
     QAction* selectParentAction = nullptr;
     QAction* clearParentAction = nullptr;
@@ -156,6 +176,7 @@ public:
     QAction* openPropertiesAction = nullptr;
 
     QAction* precomposeAction = nullptr;
+    QAction* unprecomposeAction = nullptr;
     QAction* groupSelectionAction = nullptr;
     QAction* ungroupAction = nullptr;
     QAction* splitAction = nullptr;
@@ -180,6 +201,12 @@ public:
     void handleToggleSolo();
     void handleToggleShy();
     void handleSoloOnlySelected();
+    void handleSetProxyQuality(ProxyQuality quality);
+    void handleGenerateProxy();
+    void handleRevealProxy();
+    void handleClearProxy();
+    void handleGenerateSelectedProxies();
+    void handleClearSelectedProxies();
 
     void handleSelectParent();
     void handleClearParent();
@@ -187,6 +214,7 @@ public:
     void handleOpenProperties();
 
     void handlePrecompose();
+    void handleUnprecompose();
     void handleGroupSelection();
     void handleUngroup();
     void handleSplitLayer();
@@ -195,6 +223,7 @@ public:
     bool hasCurrentComposition() const;
     bool ensureCurrentComposition();
     bool hasSelectedLayer() const;
+    QStringList selectedVideoSourcePathsInCurrentComposition() const;
     void refreshEnabledState();
 };
 
@@ -306,6 +335,34 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     selectMenu->addAction(selectParentAction);
     selectMenu->addAction(clearParentAction);
 
+    proxyMenu = new QMenu("Proxy 画質(&Q)", menu);
+    proxyMenu->setIcon(QIcon(resolveIconPath("Studio/resolution_half.svg")));
+    proxyQualityGroup = new QActionGroup(menu);
+    proxyQualityGroup->setExclusive(true);
+    proxyNoneAction = proxyMenu->addAction("無効");
+    proxyNoneAction->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
+    proxyQuarterAction = proxyMenu->addAction("1/4 画質");
+    proxyQuarterAction->setIcon(QIcon(resolveIconPath("Studio/resolution_quarter.svg")));
+    proxyHalfAction = proxyMenu->addAction("1/2 画質");
+    proxyHalfAction->setIcon(QIcon(resolveIconPath("Studio/resolution_half.svg")));
+    proxyFullAction = proxyMenu->addAction("フル画質");
+    proxyFullAction->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
+    generateProxyAction = proxyMenu->addAction("プロキシを生成");
+    generateProxyAction->setIcon(QIcon(resolveIconPath("Studio/replay.svg")));
+    generateSelectedProxyAction = proxyMenu->addAction("選択レイヤーのプロキシを生成");
+    generateSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/replay.svg")));
+    proxyMenu->addSeparator();
+    revealProxyAction = proxyMenu->addAction("プロキシを表示");
+    revealProxyAction->setIcon(QIcon(resolveIconPath("Studio/folder_open.svg")));
+    clearProxyAction = proxyMenu->addAction("プロキシを削除");
+    clearProxyAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
+    clearSelectedProxyAction = proxyMenu->addAction("選択レイヤーのプロキシを削除");
+    clearSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
+    for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyHalfAction, proxyFullAction}) {
+        action->setCheckable(true);
+        proxyQualityGroup->addAction(action);
+    }
+
     openInspectorAction = new QAction("Inspector を開く", menu);
     openInspectorAction->setIcon(QIcon(resolveIconPath("Studio/inspector.svg")));
     openPropertiesAction = new QAction("Properties を開く", menu);
@@ -314,6 +371,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
     precomposeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
     precomposeAction->setIcon(QIcon(resolveIconPath("Studio/view_comfy.svg")));
+    unprecomposeAction = new QAction("プリコンポーズを解除", menu);
+    unprecomposeAction->setIcon(QIcon(resolveIconPath("Studio/ungroup.svg")));
     groupSelectionAction = new QAction("グループ化(&G)...", menu);
     groupSelectionAction->setIcon(QIcon(resolveIconPath("Studio/group.svg")));
     ungroupAction = new QAction("グループ解除(&U)", menu);
@@ -331,11 +390,13 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addSeparator();
     menu->addMenu(switchMenu);
     menu->addMenu(selectMenu);
+    menu->addMenu(proxyMenu);
     menu->addSeparator();
     menu->addAction(openInspectorAction);
     menu->addAction(openPropertiesAction);
     menu->addSeparator();
     menu->addAction(precomposeAction);
+    menu->addAction(unprecomposeAction);
     menu->addAction(groupSelectionAction);
     menu->addAction(ungroupAction);
     menu->addAction(splitAction);
@@ -369,9 +430,19 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == soloOnlyAction) { handleSoloOnlySelected(); return; }
         if (action == selectParentAction) { handleSelectParent(); return; }
         if (action == clearParentAction) { handleClearParent(); return; }
+        if (action == proxyNoneAction) { handleSetProxyQuality(ProxyQuality::None); return; }
+        if (action == proxyQuarterAction) { handleSetProxyQuality(ProxyQuality::Quarter); return; }
+        if (action == proxyHalfAction) { handleSetProxyQuality(ProxyQuality::Half); return; }
+        if (action == proxyFullAction) { handleSetProxyQuality(ProxyQuality::Full); return; }
+        if (action == generateProxyAction) { handleGenerateProxy(); return; }
+        if (action == generateSelectedProxyAction) { handleGenerateSelectedProxies(); return; }
+        if (action == revealProxyAction) { handleRevealProxy(); return; }
+        if (action == clearProxyAction) { handleClearProxy(); return; }
+        if (action == clearSelectedProxyAction) { handleClearSelectedProxies(); return; }
         if (action == openInspectorAction) { handleOpenInspector(); return; }
         if (action == openPropertiesAction) { handleOpenProperties(); return; }
         if (action == precomposeAction) { handlePrecompose(); return; }
+        if (action == unprecomposeAction) { handleUnprecompose(); return; }
         if (action == groupSelectionAction) { handleGroupSelection(); return; }
         if (action == ungroupAction) { handleUngroup(); return; }
         if (action == splitAction) { handleSplitLayer(); return; }
@@ -525,6 +596,17 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     openInspectorAction->setEnabled(hasLayer);
     openPropertiesAction->setEnabled(hasLayer);
     precomposeAction->setEnabled(hasLayer);
+    bool isPrecomposeLayer = false;
+    if (hasLayer) {
+        if (auto *svc = ArtifactProjectService::instance()) {
+            auto comp = svc->currentComposition().lock();
+            auto compLayer = comp ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(
+                                        comp->layerById(selectedLayerId_))
+                                  : nullptr;
+            isPrecomposeLayer = compLayer && !compLayer->sourceCompositionId().isNil();
+        }
+    }
+    unprecomposeAction->setEnabled(isPrecomposeLayer);
     groupSelectionAction->setEnabled(hasLayer && hasComp);
     
     // Ungroup: 選択中のレイヤーがグループの場合のみ有効
@@ -540,14 +622,73 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
 
     // 3Dカメラトラッキング: 動画レイヤーが選択されている場合のみ有効
     bool isVideoSelected = false;
+    bool hasProxy = false;
+    int selectedVideoCount = 0;
+    int selectedVideoProxyCount = 0;
+    ProxyQuality proxyQuality = ProxyQuality::None;
     if (hasLayer && hasComp) {
         if (auto comp = service->currentComposition().lock()) {
             if (auto layer = comp->layerById(selectedLayerId_)) {
                 isVideoSelected = layer->hasVideo();
+                if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+                    proxyQuality = videoLayer->proxyQuality();
+                    hasProxy = videoLayer->hasProxy();
+                }
+            }
+        }
+    }
+
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    if (hasComp && selectionManager) {
+        const auto selected = selectionManager->selectedLayers();
+        auto isSelected = [&selected](const LayerID& id) {
+            for (const auto& layer : selected) {
+                if (layer && layer->id() == id) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (auto comp = service->currentComposition().lock()) {
+            QSet<QString> seen;
+            for (const auto& layer : comp->allLayer()) {
+                if (!layer || !isSelected(layer->id())) {
+                    continue;
+                }
+                auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+                if (!videoLayer) {
+                    continue;
+                }
+                const QString sourcePath = videoLayer->sourcePath().trimmed();
+                if (sourcePath.isEmpty() || seen.contains(sourcePath)) {
+                    continue;
+                }
+                seen.insert(sourcePath);
+                ++selectedVideoCount;
+                if (videoLayer->hasProxy()) {
+                    ++selectedVideoProxyCount;
+                }
             }
         }
     }
     trackCameraAction->setEnabled(isVideoSelected);
+    proxyMenu->setEnabled(isVideoSelected);
+    generateProxyAction->setEnabled(isVideoSelected);
+    revealProxyAction->setEnabled(isVideoSelected && hasProxy);
+    clearProxyAction->setEnabled(isVideoSelected && hasProxy);
+    generateSelectedProxyAction->setEnabled(selectedVideoCount > 1);
+    clearSelectedProxyAction->setEnabled(selectedVideoCount > 1 && selectedVideoProxyCount > 0);
+    if (isVideoSelected) {
+        proxyNoneAction->setChecked(proxyQuality == ProxyQuality::None);
+        proxyQuarterAction->setChecked(proxyQuality == ProxyQuality::Quarter);
+        proxyHalfAction->setChecked(proxyQuality == ProxyQuality::Half);
+        proxyFullAction->setChecked(proxyQuality == ProxyQuality::Full);
+    } else {
+        proxyNoneAction->setChecked(false);
+        proxyQuarterAction->setChecked(false);
+        proxyHalfAction->setChecked(false);
+        proxyFullAction->setChecked(false);
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateSolid()
@@ -838,6 +979,251 @@ void ArtifactLayerMenu::Impl::handleSoloOnlySelected()
     service->soloOnlyLayerInCurrentComposition(selectedLayerId_);
 }
 
+void ArtifactLayerMenu::Impl::handleSetProxyQuality(ProxyQuality quality)
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return;
+    }
+    auto layer = comp->layerById(selectedLayerId_);
+    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    if (!videoLayer || videoLayer->proxyQuality() == quality) {
+        return;
+    }
+    videoLayer->setLayerPropertyValue(QStringLiteral("video.proxyQuality"),
+                                      QVariant::fromValue(static_cast<int>(quality)));
+    videoLayer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+}
+
+void ArtifactLayerMenu::Impl::handleGenerateProxy()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return;
+    }
+    auto layer = comp->layerById(selectedLayerId_);
+    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    if (!videoLayer) {
+        return;
+    }
+    const QString sourcePath = videoLayer->sourcePath().trimmed();
+    if (sourcePath.isEmpty()) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Source file が見つかりません。"));
+        return;
+    }
+
+    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    if (!window) {
+        return;
+    }
+    window->setDockVisible(QStringLiteral("Project"), true);
+    window->activateDock(QStringLiteral("Project"));
+
+    auto* projectDock = window->findChild<ArtifactProjectManagerWidget*>(QStringLiteral("artifactProjectManagerWidget"));
+    if (!projectDock) {
+        const auto docks = window->findChildren<ArtifactProjectManagerWidget*>();
+        if (!docks.isEmpty()) {
+            projectDock = docks.first();
+        }
+    }
+    if (!projectDock) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Project dock が見つかりません。"));
+        return;
+    }
+
+    const auto found = projectDock->selectItemsByFilePaths(QStringList{sourcePath});
+    if (!found) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Source file を Project で選択できませんでした。"));
+        return;
+    }
+    projectDock->generateProxyForSelection();
+}
+
+void ArtifactLayerMenu::Impl::handleRevealProxy()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return;
+    }
+    auto layer = comp->layerById(selectedLayerId_);
+    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    if (!videoLayer) {
+        return;
+    }
+    const QString proxyPath = videoLayer->proxyPath();
+    if (proxyPath.isEmpty() || !QFileInfo::exists(proxyPath)) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("表示できるプロキシがありません。"));
+        return;
+    }
+    const QString folder = QFileInfo(proxyPath).absolutePath();
+    if (!QDesktopServices::openUrl(QUrl::fromLocalFile(folder))) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("プロキシフォルダを開けませんでした。"));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleClearProxy()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return;
+    }
+    auto layer = comp->layerById(selectedLayerId_);
+    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    if (!videoLayer) {
+        return;
+    }
+    const QString proxyPath = videoLayer->proxyPath();
+    if (proxyPath.isEmpty()) {
+        return;
+    }
+    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    auto* manager = window ? window->findChild<ArtifactProjectManagerWidget*>(QStringLiteral("artifactProjectManagerWidget")) : nullptr;
+    if (manager) {
+        if (!manager->clearProxyForFilePath(videoLayer->sourcePath())) {
+            QMessageBox::warning(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("プロキシファイルを削除できませんでした。"));
+        }
+        return;
+    }
+    if (QFileInfo::exists(proxyPath) && !QFile::remove(proxyPath)) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("プロキシファイルを削除できませんでした。"));
+        return;
+    }
+    videoLayer->clearProxy();
+    videoLayer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+}
+
+QStringList ArtifactLayerMenu::Impl::selectedVideoSourcePathsInCurrentComposition() const
+{
+    QStringList sourcePaths;
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    auto* service = ArtifactProjectService::instance();
+    if (!selectionManager || !service) {
+        return sourcePaths;
+    }
+
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return sourcePaths;
+    }
+
+    const auto selected = selectionManager->selectedLayers();
+    auto isSelected = [&selected](const LayerID& id) {
+        for (const auto& layer : selected) {
+            if (layer && layer->id() == id) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    QSet<QString> seen;
+    for (const auto& layer : comp->allLayer()) {
+        if (!layer || !isSelected(layer->id())) {
+            continue;
+        }
+        auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+        if (!videoLayer) {
+            continue;
+        }
+        const QString sourcePath = videoLayer->sourcePath().trimmed();
+        if (sourcePath.isEmpty() || seen.contains(sourcePath)) {
+            continue;
+        }
+        seen.insert(sourcePath);
+        sourcePaths.push_back(sourcePath);
+    }
+
+    return sourcePaths;
+}
+
+void ArtifactLayerMenu::Impl::handleGenerateSelectedProxies()
+{
+    const QStringList sourcePaths = selectedVideoSourcePathsInCurrentComposition();
+    if (sourcePaths.size() <= 1) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("複数の動画レイヤーを選択してください。"));
+        return;
+    }
+
+    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    if (!window) {
+        return;
+    }
+    window->setDockVisible(QStringLiteral("Project"), true);
+    window->activateDock(QStringLiteral("Project"));
+
+    auto* projectDock = window->findChild<ArtifactProjectManagerWidget*>(QStringLiteral("artifactProjectManagerWidget"));
+    if (!projectDock) {
+        const auto docks = window->findChildren<ArtifactProjectManagerWidget*>();
+        if (!docks.isEmpty()) {
+            projectDock = docks.first();
+        }
+    }
+    if (!projectDock) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Project dock が見つかりません。"));
+        return;
+    }
+
+    for (const QString& sourcePath : sourcePaths) {
+        projectDock->generateProxyForFilePath(sourcePath);
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleClearSelectedProxies()
+{
+    const QStringList sourcePaths = selectedVideoSourcePathsInCurrentComposition();
+    if (sourcePaths.size() <= 1) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("複数の動画レイヤーを選択してください。"));
+        return;
+    }
+
+    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    if (!window) {
+        return;
+    }
+    auto* projectDock = window->findChild<ArtifactProjectManagerWidget*>(QStringLiteral("artifactProjectManagerWidget"));
+    if (!projectDock) {
+        const auto docks = window->findChildren<ArtifactProjectManagerWidget*>();
+        if (!docks.isEmpty()) {
+            projectDock = docks.first();
+        }
+    }
+    if (!projectDock) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("Project dock が見つかりません。"));
+        return;
+    }
+
+    bool anyCleared = false;
+    for (const QString& sourcePath : sourcePaths) {
+        anyCleared = projectDock->clearProxyForFilePath(sourcePath) || anyCleared;
+    }
+    if (!anyCleared) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("削除できるプロキシがありませんでした。"));
+    }
+}
+
 void ArtifactLayerMenu::Impl::handleSelectParent()
 {
     auto* service = ArtifactProjectService::instance();
@@ -930,6 +1316,37 @@ void ArtifactLayerMenu::Impl::handlePrecompose()
             selectedIds, UniString(dialog.newCompositionName()),
             dialog.openNewComposition(), dialog.matchWorkspaceDuration())) {
         QMessageBox::warning(menu_->window(), "プリコンポーズ", "プリコンポーズに失敗しました。");
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleUnprecompose()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+
+    auto comp = service->currentComposition().lock();
+    auto compLayer = comp ? std::dynamic_pointer_cast<ArtifactCompositionLayer>(
+                                comp->layerById(selectedLayerId_))
+                          : nullptr;
+    if (!compLayer || compLayer->sourceCompositionId().isNil()) {
+        return;
+    }
+
+    const auto reply = QMessageBox::question(
+        menu_->window(),
+        QStringLiteral("プリコンポーズを解除"),
+        QStringLiteral("選択したプリコンポーズを解除しますか？"),
+        QMessageBox::Yes | QMessageBox::No,
+        QMessageBox::No);
+    if (reply != QMessageBox::Yes) {
+        return;
+    }
+
+    if (!service->unprecomposeLayerInCurrentComposition(selectedLayerId_, true)) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("プリコンポーズを解除"),
+                             QStringLiteral("プリコンポーズの解除に失敗しました。"));
     }
 }
 

@@ -169,17 +169,29 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
    timeline->addKeyframeAtPlayhead();
   }
  });
- connect(animationMenu, &ArtifactAnimationMenu::applyInterpolationRequested, menuBar,
+connect(animationMenu, &ArtifactAnimationMenu::applyInterpolationRequested, menuBar,
          [this](const ArtifactCore::InterpolationType type) {
           if (auto* timeline = activeTimelineWidget(mainWindow_)) {
            timeline->applyInterpolationToSelectedKeyframes(type);
           }
          });
-connect(animationMenu, &ArtifactAnimationMenu::showGraphEditorRequested, menuBar, [this]() {
+ connect(animationMenu, &ArtifactAnimationMenu::showGraphEditorRequested, menuBar, [this]() {
   if (auto* switches = activeTimelineGlobalSwitches(mainWindow_)) {
    switches->setGraphEditorActive(true);
   }
  });
+ connect(animationMenu, &ArtifactAnimationMenu::toggleValueGraphRequested, menuBar,
+         [this]() {
+          if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+           timeline->showValueGraph();
+          }
+         });
+ connect(animationMenu, &ArtifactAnimationMenu::toggleVelocityGraphRequested, menuBar,
+         [this]() {
+          if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+           timeline->showSpeedGraph();
+          }
+         });
  connect(animationMenu, &ArtifactAnimationMenu::enableTimeRemapRequested, menuBar, [this]() {
   auto layer = activeTimelineLayer();
   if (!layer) {
