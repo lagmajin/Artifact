@@ -3497,6 +3497,61 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     }
   }
 
+  auto toggleSelectedSolo = [this]() {
+    if (impl_->selectedLayerId.isNil()) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+    if (compId.isNil()) return;
+    auto layer = comp->layerById(impl_->selectedLayerId);
+    if (!layer) return;
+    svc->setLayerSoloInCurrentComposition(impl_->selectedLayerId, !layer->isSolo());
+    updateLayout();
+  };
+  auto toggleSelectedLock = [this]() {
+    if (impl_->selectedLayerId.isNil()) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+    if (compId.isNil()) return;
+    auto layer = comp->layerById(impl_->selectedLayerId);
+    if (!layer) return;
+    svc->setLayerLockedInCurrentComposition(impl_->selectedLayerId, !layer->isLocked());
+    updateLayout();
+  };
+  auto toggleSelectedShy = [this]() {
+    if (impl_->selectedLayerId.isNil()) return;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    auto comp = safeCompositionLookup(impl_->compositionId);
+    const CompositionID compId = comp ? comp->id() : impl_->compositionId;
+    if (compId.isNil()) return;
+    auto layer = comp->layerById(impl_->selectedLayerId);
+    if (!layer) return;
+    svc->setLayerShyInCurrentComposition(impl_->selectedLayerId, !layer->isShy());
+    updateLayout();
+  };
+
+  if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
+    if (event->key() == Qt::Key_S) {
+      toggleSelectedSolo();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_L) {
+      toggleSelectedLock();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_P) {
+      toggleSelectedShy();
+      event->accept();
+      return;
+    }
+  }
+
   if (event->key() == Qt::Key_U &&
       !(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
     const auto nextMode =
