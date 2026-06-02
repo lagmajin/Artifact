@@ -344,6 +344,61 @@ QString renderBackendToString(ArtifactRenderQueueService::RenderBackend backend)
   }
 }
 
+double clamp01(double value)
+{
+  return std::clamp(value, 0.0, 1.0);
+}
+
+QString densityLevelFromScore(double score)
+{
+  if (score >= 0.85) {
+    return QStringLiteral("high");
+  }
+  if (score >= 0.55) {
+    return QStringLiteral("medium");
+  }
+  return QStringLiteral("low");
+}
+
+QString densityWarningForDominantAxis(const QString &axis, double score)
+{
+  const QString level = densityLevelFromScore(score);
+  if (level == QStringLiteral("low")) {
+    return QStringLiteral("density is readable");
+  }
+
+  if (axis == QStringLiteral("visual")) {
+    return QStringLiteral("visual density is high");
+  }
+  if (axis == QStringLiteral("information")) {
+    return QStringLiteral("information density is high");
+  }
+  if (axis == QStringLiteral("luminance")) {
+    return QStringLiteral("luminance density is high");
+  }
+  if (axis == QStringLiteral("motion")) {
+    return QStringLiteral("motion density is high");
+  }
+  return QStringLiteral("density is high");
+}
+
+QString densityNextActionForAxis(const QString &axis)
+{
+  if (axis == QStringLiteral("visual")) {
+    return QStringLiteral("collapse repeated regions or add spacing");
+  }
+  if (axis == QStringLiteral("information")) {
+    return QStringLiteral("reduce labels or move notes into debugger");
+  }
+  if (axis == QStringLiteral("luminance")) {
+    return QStringLiteral("soften bright clusters or separate highlights");
+  }
+  if (axis == QStringLiteral("motion")) {
+    return QStringLiteral("spread key activity or add rest frames");
+  }
+  return QStringLiteral("reduce the busiest region");
+}
+
 QString toolTypeToOverlayLabel(ToolType toolType)
 {
   switch (toolType) {
@@ -4288,9 +4343,30 @@ CompositionRenderController::frameDebugSnapshot() const {
   }
 
   snapshot.selectedLayerName = QStringLiteral("<none>");
+  const auto selectedLayer = (comp && !selectedLayerId.isNil())
+                                 ? comp->layerById(selectedLayerId)
+                                 : ArtifactAbstractLayerPtr{};
+  if (comp) {
+    const auto &layers = comp->allLayerRef();
+    snapshot.totalLayerCount = static_cast<int>(layers.size());
+    for (const auto &layer : layers) {
+      if (!layer) {
+        continue;
+      }
+      if (dynamic_cast<ArtifactTextLayer *>(layer.get())) {
+        ++snapshot.textLayerCount;
+      }
+      if (isLayerEffectivelyVisible(layer) && layer->isActiveAt(snapshot.frame)) {
+        ++snapshot.visibleLayerCount;
+      }
+    }
+  }
   if (comp && !selectedLayerId.isNil()) {
-    if (auto layer = comp->layerById(selectedLayerId)) {
+    if (auto layer = selectedLayer) {
       snapshot.selectedLayerName = layer->layerName();
+      snapshot.selectedLayerMaskCount = layer->maskCount();
+      snapshot.selectedLayerEffectCount = layer->effectCount();
+      snapshot.selectedLayerMatteCount = static_cast<int>(layer->matteReferences().size());
     }
   }
 
@@ -4540,6 +4616,42 @@ CompositionRenderController::frameDebugSnapshot() const {
     snapshot.passes.push_back(flushPass);
     snapshot.passes.push_back(presentPass);
   }
+
+  const double visualRaw = snapshot.visibleLayerCount * 0.08 +
+                           snapshot.selectedLayerMaskCount * 0.16 +
+                           snapshot.selectedLayerEffectCount * 0.12 +
+                           snapshot.selectedLayerMatteCount * 0.10;
+  const double informationRaw = snapshot.resources.size() * 0.08 +
+                                snapshot.attachments.size() * 0.12 +
+                                snapshot.passes.size() * 0.10 +
+                                snapshot.textLayerCount * 0.05;
+  const double luminanceRaw = snapshot.textLayerCount * 0.06 +
+                              (selectedLayer ? 0.10 : 0.0) +
+                              (snapshot.renderBackend == QStringLiteral("gpu") ? 0.04 : 0.0);
+  const double motionRaw = clamp01(snapshot.renderLastFrameMs / 24.0) * 0.45 +
+                           clamp01(snapshot.renderGpuFrameMs / 24.0) * 0.25 +
+                           clamp01(static_cast<double>(snapshot.renderCost.drawCalls) / 5000.0) * 0.30;
+
+  snapshot.visualDensityScore = clamp01(visualRaw);
+  snapshot.informationDensityScore = clamp01(informationRaw);
+  snapshot.luminanceDensityScore = clamp01(luminanceRaw);
+  snapshot.motionDensityScore = clamp01(motionRaw);
+
+  const std::array<std::pair<const char *, double>, 4> densityScores{{
+      {"visual", snapshot.visualDensityScore},
+      {"information", snapshot.informationDensityScore},
+      {"luminance", snapshot.luminanceDensityScore},
+      {"motion", snapshot.motionDensityScore},
+  }};
+  const auto dominantIt = std::max_element(
+      densityScores.begin(), densityScores.end(),
+      [](const auto &a, const auto &b) { return a.second < b.second; });
+  const QString dominantAxis = QString::fromLatin1(dominantIt->first);
+  const double dominantScore = dominantIt->second;
+  snapshot.densityLabel = densityLevelFromScore(dominantScore);
+  snapshot.densityWarning =
+      densityWarningForDominantAxis(dominantAxis, dominantScore);
+  snapshot.densityNextAction = densityNextActionForAxis(dominantAxis);
 
   ArtifactCore::TraceRecorder::instance().recordFrameDebugSnapshot(snapshot);
   return snapshot;

@@ -104,6 +104,17 @@ public:
         return notes;
     }
 
+    static QString densitySummaryText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    {
+        return QStringLiteral("density=%1 visual=%2 info=%3 luminance=%4 motion=%5")
+                .arg(snapshot.densityLabel.isEmpty() ? QStringLiteral("low")
+                                                    : snapshot.densityLabel)
+                .arg(QString::number(snapshot.visualDensityScore, 'f', 2))
+                .arg(QString::number(snapshot.informationDensityScore, 'f', 2))
+                .arg(QString::number(snapshot.luminanceDensityScore, 'f', 2))
+                .arg(QString::number(snapshot.motionDensityScore, 'f', 2));
+    }
+
     void setupUI() {
         auto* layout = new QVBoxLayout(owner_);
         layout->setContentsMargins(0, 0, 0, 0);
@@ -162,7 +173,7 @@ public:
                                             .arg(snapshot.renderBackend.isEmpty() ? QStringLiteral("<none>") : snapshot.renderBackend)
                                             .arg(static_cast<int>(snapshot.passes.size()))
                                             .arg(static_cast<int>(snapshot.resources.size()))
-                                            .arg(diffModeText)
+                                            .arg(QStringLiteral("%1 | %2").arg(diffModeText, densitySummaryText(snapshot)))
                                             .arg(resourceState(QStringLiteral("video"), QStringLiteral("Video Decode")))
                                             .arg(resourceState(QStringLiteral("particle"), QStringLiteral("Particle Draw")));
             summary_->setText(summaryText);
@@ -193,6 +204,18 @@ public:
                       .arg(static_cast<qulonglong>(snapshot.renderCost.psoSwitches))
                       .arg(static_cast<qulonglong>(snapshot.renderCost.srbCommits))
                       .arg(static_cast<qulonglong>(snapshot.renderCost.bufferUpdates));
+        lines << QStringLiteral("density: %1").arg(densitySummaryText(snapshot));
+        if (snapshot.totalLayerCount > 0 || snapshot.visibleLayerCount > 0 ||
+            snapshot.selectedLayerMaskCount > 0 || snapshot.selectedLayerEffectCount > 0 ||
+            snapshot.selectedLayerMatteCount > 0) {
+            lines << QStringLiteral("densityCounts: layers=%1 visible=%2 text=%3 mask=%4 effects=%5 mattes=%6")
+                          .arg(snapshot.totalLayerCount)
+                          .arg(snapshot.visibleLayerCount)
+                          .arg(snapshot.textLayerCount)
+                          .arg(snapshot.selectedLayerMaskCount)
+                          .arg(snapshot.selectedLayerEffectCount)
+                          .arg(snapshot.selectedLayerMatteCount);
+        }
         lines << QStringLiteral("failed: %1").arg(snapshot.failed ? QStringLiteral("true") : QStringLiteral("false"));
         if (!snapshot.failureReason.isEmpty()) {
             lines << QStringLiteral("failureReason: %1").arg(snapshot.failureReason);
@@ -215,6 +238,12 @@ public:
         }
         if (warningResourceCount > 0) {
             lines << QStringLiteral("  - warning resources: %1").arg(warningResourceCount);
+        }
+        if (!snapshot.densityWarning.isEmpty()) {
+            lines << QStringLiteral("  - density warning: %1").arg(snapshot.densityWarning);
+        }
+        if (!snapshot.densityNextAction.isEmpty()) {
+            lines << QStringLiteral("  - next: %1").arg(snapshot.densityNextAction);
         }
         lines << QString();
         lines << QStringLiteral("Difference / Leakage:");
