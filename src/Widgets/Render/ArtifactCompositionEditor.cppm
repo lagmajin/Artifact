@@ -3084,14 +3084,29 @@ public:
 
   void setOrientation(ArtifactCore::ViewOrientationHotspot hotspot) {
     if (hotspot_ == hotspot) {
+      if (activeCameraMode_) {
+        activeCameraMode_ = false;
+        update();
+      }
       return;
     }
     hotspot_ = hotspot;
+    activeCameraMode_ = false;
     navigator_.snapTo(hotspot_, true);
     update();
   }
 
   ArtifactCore::ViewOrientationHotspot orientation() const { return hotspot_; }
+
+  void setActiveCameraMode(bool enabled) {
+    if (activeCameraMode_ == enabled) {
+      return;
+    }
+    activeCameraMode_ = enabled;
+    update();
+  }
+
+  bool activeCameraMode() const { return activeCameraMode_; }
 
   void setEnabledState(bool enabled) {
     setEnabled(enabled);
@@ -3099,11 +3114,11 @@ public:
   }
 
   void setActivatedCallback(
-      std::function<void(ArtifactCore::ViewOrientationHotspot)> callback) {
+      std::function<void(bool, ArtifactCore::ViewOrientationHotspot)> callback) {
     activatedCallback_ = std::move(callback);
   }
 
-  QSize sizeHint() const override { return {132, 168}; }
+  QSize sizeHint() const override { return {160, 196}; }
 
 protected:
   void paintEvent(QPaintEvent *) override {
@@ -3116,14 +3131,33 @@ protected:
     p.drawRoundedRect(panelRect, 12.0, 12.0);
 
     p.setPen(QColor(210, 225, 240, isEnabled() ? 168 : 80));
-    p.drawText(QRectF(0.0, 8.0, width(), 18.0), Qt::AlignCenter,
-               QStringLiteral("View"));
+    const QRectF modeRect(12.0, 8.0, width() - 24.0, 20.0);
+    const QRectF cameraRect(12.0, 30.0, width() - 24.0, 24.0);
+    const bool cameraSelected = activeCameraMode_;
+    QColor cameraFill = cameraSelected ? QColor(78, 126, 170, 220)
+                                       : QColor(51, 72, 96, 168);
+    QColor cameraBorder = cameraSelected ? QColor(200, 232, 255, 230)
+                                          : QColor(125, 180, 230, 150);
+    QColor cameraText = cameraSelected ? QColor(240, 250, 255, 230)
+                                       : QColor(233, 242, 248, 210);
+    if (!isEnabled()) {
+      cameraFill.setAlpha(70);
+      cameraBorder.setAlpha(70);
+      cameraText.setAlpha(90);
+    }
+    p.setPen(QPen(cameraBorder, cameraSelected ? 2.0 : 1.2));
+    p.setBrush(cameraFill);
+    p.drawRoundedRect(cameraRect, 8.0, 8.0);
+    p.setPen(cameraText);
+    p.drawText(cameraRect, Qt::AlignCenter, QStringLiteral("Active Camera"));
+    p.setPen(QColor(210, 225, 240, isEnabled() ? 168 : 80));
+    p.drawText(modeRect, Qt::AlignCenter, QStringLiteral("View"));
 
     const float margin = 12.0f;
     const float gap = 8.0f;
     const float faceW = (width() - margin * 2.0f - gap) * 0.5f;
-    const float faceH = (height() - 44.0f - margin * 2.0f - gap * 2.0f) / 3.0f;
-    const float topY = 28.0f;
+    const float faceH = (height() - 64.0f - margin * 2.0f - gap * 2.0f) / 3.0f;
+    const float topY = 58.0f;
     const float row2Y = topY + faceH + gap;
     const float row3Y = row2Y + faceH + gap;
     const float leftX = margin;
@@ -3144,7 +3178,7 @@ protected:
                    QRectF(rightX, row3Y, faceW, faceH)}}};
 
     for (const auto &[hotspot, faceRect] : faces) {
-      const bool selected = hotspot == hotspot_;
+      const bool selected = !activeCameraMode_ && hotspot == hotspot_;
       const bool hovered = hotspot == hoverHotspot_;
       QColor fill(51, 72, 96, 190);
       QColor border(125, 180, 230, 180);
@@ -3194,21 +3228,35 @@ protected:
       QWidget::mousePressEvent(event);
       return;
     }
+    if (cameraButtonRect().contains(event->position())) {
+      activeCameraMode_ = true;
+      update();
+      if (activatedCallback_) {
+        activatedCallback_(true, hotspot_);
+      }
+      event->accept();
+      return;
+    }
     const auto hotspot = hotspotAt(event->position());
     if (hotspot == ArtifactCore::ViewOrientationHotspot::None) {
       QWidget::mousePressEvent(event);
       return;
     }
     hotspot_ = hotspot;
+    activeCameraMode_ = false;
     navigator_.snapTo(hotspot_, true);
     update();
     if (activatedCallback_) {
-      activatedCallback_(hotspot_);
+      activatedCallback_(false, hotspot_);
     }
     event->accept();
   }
 
 private:
+  QRectF cameraButtonRect() const {
+    return QRectF(12.0, 30.0, width() - 24.0, 24.0);
+  }
+
   static QString hotspotLabel(ArtifactCore::ViewOrientationHotspot hotspot) {
     switch (hotspot) {
     case ArtifactCore::ViewOrientationHotspot::Top:
@@ -3264,11 +3312,12 @@ private:
   }
 
   ArtifactCore::ViewOrientationNavigator navigator_;
+  bool activeCameraMode_ = true;
   ArtifactCore::ViewOrientationHotspot hotspot_ =
       ArtifactCore::ViewOrientationHotspot::Front;
   ArtifactCore::ViewOrientationHotspot hoverHotspot_ =
       ArtifactCore::ViewOrientationHotspot::None;
-  std::function<void(ArtifactCore::ViewOrientationHotspot)> activatedCallback_;
+  std::function<void(bool, ArtifactCore::ViewOrientationHotspot)> activatedCallback_;
 };
 } // namespace
 
@@ -3623,10 +3672,21 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->overlayView_->hide();
   impl_->viewOrientationWidget_ =
       new ViewOrientationWidget(impl_->overlayView_);
+  if (impl_->renderController_) {
+    impl_->viewOrientationWidget_->setOrientation(
+        impl_->renderController_->viewportOrientation());
+    impl_->viewOrientationWidget_->setActiveCameraMode(
+        impl_->renderController_->isViewportUsingActiveCamera());
+  }
   impl_->viewOrientationWidget_->setActivatedCallback(
-      [this](ArtifactCore::ViewOrientationHotspot hotspot) {
+      [this](bool activeCamera,
+             ArtifactCore::ViewOrientationHotspot hotspot) {
         if (impl_->renderController_) {
-          impl_->renderController_->setViewportOrientation(hotspot);
+          if (activeCamera) {
+            impl_->renderController_->setViewportUseActiveCamera(true);
+          } else {
+            impl_->renderController_->setViewportOrientation(hotspot);
+          }
         }
       });
   impl_->viewOrientationWidget_->show();

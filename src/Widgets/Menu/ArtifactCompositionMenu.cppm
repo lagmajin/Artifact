@@ -25,6 +25,8 @@ import std;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.MainWindow;
+import Artifact.Widgets.CompositionEditor;
 import Artifact.Composition.Abstract;
 import Utils.Path;
 import Artifact.Composition.InitParams;
@@ -53,6 +55,7 @@ public:
  QAction* preset4kAction = nullptr;
  QAction* presetVerticalAction = nullptr;
  QAction* duplicateAction = nullptr;
+ QAction* newViewerAction = nullptr;
  QAction* renameAction = nullptr;
  QAction* deleteAction = nullptr;
  QAction* settingsAction = nullptr;
@@ -61,6 +64,7 @@ public:
  void showCreate();
  void createFromPreset(const ArtifactCompositionInitParams& params);
  void duplicateCurrent();
+ void openNewViewer();
  void renameCurrent();
  void removeCurrent();
  void showSettings();
@@ -85,6 +89,8 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
 
  duplicateAction = new QAction("コンポジションを複製(&D)");
  duplicateAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_duplicate.svg")));
+ newViewerAction = new QAction("新規ビューア(&V)");
+ newViewerAction->setIcon(QIcon(resolveIconPath("Studio/view_comfy.svg")));
  renameAction = new QAction("名前を変更(&R)...");
  renameAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_rename.svg")));
  deleteAction = new QAction("コンポジションを削除(&X)...");
@@ -101,6 +107,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  menu->addMenu(presetMenu);
  menu->addSeparator();
  menu->addAction(duplicateAction);
+ menu->addAction(newViewerAction);
  menu->addAction(renameAction);
  menu->addAction(deleteAction);
  menu->addSeparator();
@@ -113,6 +120,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  QObject::connect(preset4kAction, &QAction::triggered, menu, [this]() { createFromPreset(ArtifactCompositionInitParams::fourKPreset()); });
  QObject::connect(presetVerticalAction, &QAction::triggered, menu, [this]() { createFromPreset(ArtifactCompositionInitParams::verticalPreset()); });
  QObject::connect(duplicateAction, &QAction::triggered, menu, [this]() { duplicateCurrent(); });
+ QObject::connect(newViewerAction, &QAction::triggered, menu, [this]() { openNewViewer(); });
  QObject::connect(renameAction, &QAction::triggered, menu, [this]() { renameCurrent(); });
  QObject::connect(deleteAction, &QAction::triggered, menu, [this]() { removeCurrent(); });
  QObject::connect(settingsAction, &QAction::triggered, menu, [this]() { showSettings(); });
@@ -156,8 +164,71 @@ void ArtifactCompositionMenu::Impl::duplicateCurrent()
  if (!service->duplicateComposition(current->id())) {
   QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
    "Composition",
-   "コンポジションの複製に失敗しました。");
+  "コンポジションの複製に失敗しました。");
  }
+}
+
+void ArtifactCompositionMenu::Impl::openNewViewer()
+{
+ auto* service = ArtifactProjectService::instance();
+ auto current = service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
+ auto* mainWindow = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+ if (!service || !current || !mainWindow) {
+  QMessageBox::information(mainWindow_ ? mainWindow_ : menu_,
+                           QStringLiteral("Composition Viewer"),
+                           QStringLiteral("表示するコンポジションがありません。"));
+  return;
+ }
+
+ int viewerIndex = 2;
+ QString dockTitle;
+ QString dockId;
+ while (true) {
+  dockTitle = QStringLiteral("Composition Viewer %1").arg(viewerIndex);
+  dockId = QStringLiteral("CompositionViewer_%1").arg(viewerIndex);
+  if (!mainWindow->hasDock(dockTitle) && !mainWindow->hasDock(dockId)) {
+   break;
+  }
+  ++viewerIndex;
+ }
+
+ auto *viewer = new ArtifactCompositionEditor(mainWindow);
+ viewer->setComposition(current);
+
+ const auto editors = mainWindow->findChildren<ArtifactCompositionEditor *>();
+ ArtifactCompositionEditor *sourceViewer = nullptr;
+ for (ArtifactCompositionEditor *candidate : editors) {
+  if (candidate && candidate != viewer && candidate->isVisible()) {
+   sourceViewer = candidate;
+   break;
+  }
+ }
+ if (!sourceViewer) {
+  for (ArtifactCompositionEditor *candidate : editors) {
+   if (candidate && candidate != viewer) {
+    sourceViewer = candidate;
+    break;
+   }
+  }
+ }
+ if (sourceViewer) {
+  if (auto *sourceController = sourceViewer->renderController()) {
+   if (auto *targetController = viewer->renderController()) {
+    if (sourceController->isViewportUsingActiveCamera()) {
+     targetController->setViewportUseActiveCamera(true);
+    } else {
+     targetController->setViewportOrientation(sourceController->viewportOrientation());
+    }
+   }
+  }
+ }
+
+ mainWindow->addDockedWidgetFloating(
+     dockTitle, dockId, viewer,
+     QRect(mainWindow->geometry().x() + 40 * viewerIndex,
+           mainWindow->geometry().y() + 40 * viewerIndex, 1024, 720));
+ mainWindow->setDockVisible(dockTitle, true);
+ mainWindow->activateDock(dockTitle);
 }
 
 void ArtifactCompositionMenu::Impl::renameCurrent()
@@ -429,6 +500,7 @@ void ArtifactCompositionMenu::rebuildMenu()
   impl_->presetMenu->setEnabled(service != nullptr);
  }
  impl_->duplicateAction->setEnabled(hasComp);
+ impl_->newViewerAction->setEnabled(hasComp && mainWindow_ != nullptr);
  impl_->renameAction->setEnabled(hasComp);
  impl_->deleteAction->setEnabled(hasComp);
  impl_->settingsAction->setEnabled(hasComp);

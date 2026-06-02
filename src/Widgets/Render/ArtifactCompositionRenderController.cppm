@@ -1260,6 +1260,53 @@ QMatrix4x4 viewportOrientationProjectionMatrix(const float viewportW,
   return proj;
 }
 
+void buildFixedViewport3DCameraMatrices(
+    const ArtifactCore::ViewOrientationHotspot hotspot, const float cw,
+    const float ch, QMatrix4x4 &viewMatrix, QMatrix4x4 &projectionMatrix) {
+  const float width = std::max(1.0f, cw);
+  const float height = std::max(1.0f, ch);
+  const float extent = std::max(width, height);
+  const float distance = std::max(extent * 4.0f, 1000.0f);
+  const QVector3D center(width * 0.5f, height * 0.5f, 0.0f);
+
+  QVector3D eye;
+  QVector3D up;
+  switch (hotspot) {
+  case ArtifactCore::ViewOrientationHotspot::Top:
+    eye = center + QVector3D(0.0f, distance, 0.0f);
+    up = QVector3D(0.0f, 0.0f, -1.0f);
+    break;
+  case ArtifactCore::ViewOrientationHotspot::Bottom:
+    eye = center + QVector3D(0.0f, -distance, 0.0f);
+    up = QVector3D(0.0f, 0.0f, 1.0f);
+    break;
+  case ArtifactCore::ViewOrientationHotspot::Left:
+    eye = center + QVector3D(-distance, 0.0f, 0.0f);
+    up = QVector3D(0.0f, 1.0f, 0.0f);
+    break;
+  case ArtifactCore::ViewOrientationHotspot::Right:
+    eye = center + QVector3D(distance, 0.0f, 0.0f);
+    up = QVector3D(0.0f, 1.0f, 0.0f);
+    break;
+  case ArtifactCore::ViewOrientationHotspot::Back:
+    eye = center + QVector3D(0.0f, 0.0f, -distance);
+    up = QVector3D(0.0f, 1.0f, 0.0f);
+    break;
+  case ArtifactCore::ViewOrientationHotspot::Front:
+  default:
+    eye = center + QVector3D(0.0f, 0.0f, distance);
+    up = QVector3D(0.0f, 1.0f, 0.0f);
+    break;
+  }
+
+  viewMatrix.setToIdentity();
+  viewMatrix.lookAt(eye, center, up);
+
+  projectionMatrix.setToIdentity();
+  projectionMatrix.ortho(-width * 0.5f, width * 0.5f, height * 0.5f,
+                         -height * 0.5f, -distance * 8.0f, distance * 8.0f);
+}
+
 // Forward declaration
 FramePosition currentFrameForComposition(const ArtifactCompositionPtr &comp);
 
@@ -2261,7 +2308,7 @@ public:
       false, // DebugProbe
   };
   ArtifactCore::ViewOrientationNavigator viewportOrientationNavigator_;
-  bool viewportOrientationActive_ = false;
+  bool viewportUseActiveCamera_ = true;
   int currentFrameForOverlay_ = 0;
   quint64 renderFrameCounter_ = 0;
   std::deque<double> recentFrameTimesMs_;
@@ -5361,12 +5408,12 @@ void CompositionRenderController::setViewportOrientation(
   if (!impl_) {
     return;
   }
-  if (impl_->viewportOrientationActive_ &&
+  if (!impl_->viewportUseActiveCamera_ &&
       impl_->viewportOrientationNavigator_.activeHotspot() == hotspot) {
     return;
   }
   impl_->viewportOrientationNavigator_.snapTo(hotspot, true);
-  impl_->viewportOrientationActive_ = true;
+  impl_->viewportUseActiveCamera_ = false;
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
@@ -5377,6 +5424,22 @@ CompositionRenderController::viewportOrientation() const {
     return ArtifactCore::ViewOrientationHotspot::Front;
   }
   return impl_->viewportOrientationNavigator_.activeHotspot();
+}
+
+void CompositionRenderController::setViewportUseActiveCamera(bool enabled) {
+  if (!impl_) {
+    return;
+  }
+  if (impl_->viewportUseActiveCamera_ == enabled) {
+    return;
+  }
+  impl_->viewportUseActiveCamera_ = enabled;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isViewportUsingActiveCamera() const {
+  return impl_ && impl_->viewportUseActiveCamera_;
 }
 
 // ROI Debug
@@ -5749,11 +5812,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
   }
 
-  // Compute camera matrices if we have a visible camera
+  // Compute camera matrices for the viewport mode.
   bool has3DCamera = false;
   QMatrix4x4 cameraViewMatrix;
   QMatrix4x4 cameraProjMatrix;
-  if (activeCamera) {
+  if (impl_->viewportUseActiveCamera_ && activeCamera) {
     const QSize compSize = comp->settings().compositionSize();
     const float cw =
         static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
@@ -5763,6 +5826,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     cameraViewMatrix = activeCamera->viewMatrix();
     cameraProjMatrix = activeCamera->projectionMatrix(aspect);
+    has3DCamera = true;
+  } else {
+    buildFixedViewport3DCameraMatrices(
+        impl_->viewportOrientationNavigator_.activeHotspot(), cw, ch,
+        cameraViewMatrix, cameraProjMatrix);
     has3DCamera = true;
   }
   int64_t effectiveEndFrame = 0;

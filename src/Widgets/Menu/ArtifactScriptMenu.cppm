@@ -2,13 +2,17 @@ module;
 #include <utility>
 #include <QAction>
 #include <QApplication>
+#include <QDateTime>
 #include <QIcon>
 #include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QInputDialog>
 #include <QMessageBox>
+#include <QRegularExpression>
+#include <QLineEdit>
 #include <QTextStream>
 #include <QUrl>
 #include <wobjectimpl.h>
@@ -45,6 +49,7 @@ public:
  QString scriptsRootPath() const;
  QString menuScriptPath() const;
  QString macrosRootPath() const;
+ QString batchRootPath() const;
  QString hooksRootPath() const;
  bool ensureScriptsWorkspaceScaffold() const;
  bool ensureTextFile(const QString& path, const QString& contents) const;
@@ -52,6 +57,8 @@ public:
  void openFile(const QString& path) const;
  void runHook(const QString& hookName);
  void runMacroFile(const QString& filePath);
+ void createMacroTemplate();
+ void reloadEntries();
  void refreshHookActions();
  void refreshMacroActions();
 };
@@ -83,6 +90,11 @@ QString ArtifactScriptMenu::Impl::menuScriptPath() const
 QString ArtifactScriptMenu::Impl::macrosRootPath() const
 {
  return QDir(scriptsRootPath()).filePath(QStringLiteral("macros"));
+}
+
+QString ArtifactScriptMenu::Impl::batchRootPath() const
+{
+ return QDir(scriptsRootPath()).filePath(QStringLiteral("batch"));
 }
 
 bool ArtifactScriptMenu::Impl::ensureTextFile(const QString& path,
@@ -117,6 +129,7 @@ bool ArtifactScriptMenu::Impl::ensureScriptsWorkspaceScaffold() const
 
  QDir(root).mkpath(QStringLiteral("hooks"));
  QDir(root).mkpath(QStringLiteral("macros"));
+ QDir(root).mkpath(QStringLiteral("batch"));
 
  const QString menuStub =
      QStringLiteral(
@@ -139,6 +152,18 @@ bool ArtifactScriptMenu::Impl::ensureScriptsWorkspaceScaffold() const
          "Future Script menu / macro entry integration will pick them up from here.\n");
  if (!ensureTextFile(QDir(macrosRootPath()).filePath(QStringLiteral("README.txt")),
                      macroReadme)) {
+  return false;
+ }
+
+ const QString batchReadme =
+     QStringLiteral(
+         "ArtifactStudio batch scripts\n"
+         "============================\n"
+         "\n"
+         "Put project / asset / render batch helpers in this folder.\n"
+         "These are grouped separately from single-shot menu commands.\n");
+ if (!ensureTextFile(QDir(batchRootPath()).filePath(QStringLiteral("README.txt")),
+                     batchReadme)) {
   return false;
  }
 
@@ -264,6 +289,72 @@ void ArtifactScriptMenu::Impl::runMacroFile(const QString& filePath)
  }
 }
 
+void ArtifactScriptMenu::Impl::createMacroTemplate()
+{
+ if (!ensureScriptsWorkspaceScaffold()) {
+  QMessageBox::warning(menu_, tr("Script"), tr("Failed to prepare the scripts workspace."));
+  return;
+ }
+ bool ok = false;
+ const QString requestedName = QInputDialog::getText(
+     menu_, tr("New Macro Template"), tr("Macro file name:"),
+     QLineEdit::Normal, QStringLiteral("new_macro"), &ok)
+                                   .trimmed();
+ if (!ok) {
+  return;
+ }
+
+ QString baseName = requestedName;
+ baseName.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9_\\-]+")),
+                  QStringLiteral("_"));
+ if (baseName.isEmpty()) {
+  baseName = QStringLiteral("new_macro");
+ }
+ if (!baseName.endsWith(QStringLiteral(".py"), Qt::CaseInsensitive)) {
+  baseName += QStringLiteral(".py");
+ }
+
+ QDir dir(macrosRootPath());
+ if (!dir.exists()) {
+  dir.mkpath(QStringLiteral("."));
+ }
+ QString filePath = dir.filePath(baseName);
+ if (QFileInfo::exists(filePath)) {
+  const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd_hhmmss"));
+  filePath = dir.filePath(QStringLiteral("%1_%2.py").arg(baseName.left(baseName.size() - 3), stamp));
+ }
+
+ const QString stem = QFileInfo(filePath).completeBaseName();
+ const QString templateText =
+     QStringLiteral(
+         "# ArtifactStudio macro template\n"
+         "# name: %1\n"
+         "# description: \n"
+         "# target_scope: composition / timeline / selection / render_queue\n"
+         "# action_sequence_ref: \n"
+         "# preset_ref: \n"
+         "\n"
+         "def run(context):\n"
+         "    \"\"\"Entry point for macro execution.\"\"\"\n"
+         "    print(\"Running macro: %1\")\n")
+         .arg(stem);
+
+ if (!ensureTextFile(filePath, templateText)) {
+  QMessageBox::warning(menu_, tr("Script"), tr("Failed to create macro template."));
+  return;
+ }
+
+ openFile(filePath);
+ refreshMacroActions();
+}
+
+void ArtifactScriptMenu::Impl::reloadEntries()
+{
+ ensureScriptsWorkspaceScaffold();
+ refreshMacroActions();
+ refreshHookActions();
+}
+
 void ArtifactScriptMenu::Impl::refreshHookActions()
 {
  for (QAction* action : hookActions) {
@@ -332,30 +423,44 @@ void ArtifactScriptMenu::Impl::refreshMacroActions()
 ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  : menu_(menu)
 {
- openScriptsFolderAction = new QAction(tr("Open User Scripts Workspace"));
+ openScriptsFolderAction = new QAction(tr("Open User Scripts Workspace"), menu);
  openScriptsFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_workspace.svg")));
  openScriptsFolderAction->setToolTip(
      tr("Open the canonical user scripts root and scaffold menu.py, hooks, and macros folders."));
 
- openMenuScriptAction = new QAction(tr("Open menu.py"));
+ openMenuScriptAction = new QAction(tr("Open menu.py"), menu);
  openMenuScriptAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_menu_py.svg")));
  openMenuScriptAction->setToolTip(
      tr("Open the script menu entry file from the user scripts workspace."));
 
- openHooksFolderAction = new QAction(tr("Open Hook Scripts Folder"));
+ QAction* reloadAction = new QAction(tr("Reload Command Entries"), menu);
+ reloadAction->setIcon(QIcon(resolveIconPath("Studio/reactive_events.svg")));
+ reloadAction->setToolTip(tr("Refresh macro and hook entries after editing scripts."));
+
+ openHooksFolderAction = new QAction(tr("Open Hook Scripts Folder"), menu);
  openHooksFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks_folder.svg")));
  openHooksFolderAction->setToolTip(
      tr("Open the hooks folder inside the user scripts workspace."));
 
- openMacrosFolderAction = new QAction(tr("Open Macros Folder"));
+ openMacrosFolderAction = new QAction(tr("Open Macros Folder"), menu);
  openMacrosFolderAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros_folder.svg")));
  openMacrosFolderAction->setToolTip(
      tr("Open the macros folder inside the user scripts workspace."));
 
- hooksMenu = new QMenu(tr("Hook Commands"));
+ QAction* newMacroTemplateAction = new QAction(tr("New Macro Template..."), menu);
+ newMacroTemplateAction->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_run_macro.svg")));
+ newMacroTemplateAction->setToolTip(
+     tr("Create a macro starter file with a standard metadata header."));
+
+ QAction* openBatchFolderAction = new QAction(tr("Open Batch Folder"), menu);
+ openBatchFolderAction->setIcon(QIcon(resolveIconPath("Studio/create_new_folder.svg")));
+ openBatchFolderAction->setToolTip(
+     tr("Open the batch scripts folder inside the user scripts workspace."));
+
+ hooksMenu = new QMenu(tr("Hook Commands"), menu);
  hooksMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_hooks.svg")));
 
- macrosMenu = new QMenu(tr("Macro Commands"));
+ macrosMenu = new QMenu(tr("Macro Commands"), menu);
  macrosMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros.svg")));
 
  const QStringList hookNames = ArtifactPythonHookManager::knownHooks();
@@ -370,13 +475,20 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
   });
  }
 
+ menu->addSection(tr("Built-in Utilities"));
  menu->addAction(openScriptsFolderAction);
  menu->addAction(openMenuScriptAction);
- menu->addAction(openHooksFolderAction);
+ menu->addAction(reloadAction);
+ menu->addSection(tr("Macro Commands"));
  menu->addAction(openMacrosFolderAction);
+ menu->addAction(newMacroTemplateAction);
+ menu->addSection(tr("Hook Commands"));
+ menu->addAction(openHooksFolderAction);
  menu->addSeparator();
  menu->addMenu(macrosMenu);
  menu->addMenu(hooksMenu);
+ menu->addSection(tr("Batch Commands"));
+ menu->addAction(openBatchFolderAction);
  refreshMacroActions();
  refreshHookActions();
 
@@ -386,11 +498,20 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  QObject::connect(openMenuScriptAction, &QAction::triggered, menu, [this]() {
   openFile(menuScriptPath());
  });
+ QObject::connect(reloadAction, &QAction::triggered, menu, [this]() {
+  reloadEntries();
+ });
  QObject::connect(openHooksFolderAction, &QAction::triggered, menu, [this]() {
   openFolder(hooksRootPath());
  });
  QObject::connect(openMacrosFolderAction, &QAction::triggered, menu, [this]() {
   openFolder(macrosRootPath());
+ });
+ QObject::connect(newMacroTemplateAction, &QAction::triggered, menu, [this]() {
+  createMacroTemplate();
+ });
+ QObject::connect(openBatchFolderAction, &QAction::triggered, menu, [this]() {
+  openFolder(batchRootPath());
  });
  QObject::connect(macrosMenu, &QMenu::aboutToShow, menu, [this]() {
   refreshMacroActions();

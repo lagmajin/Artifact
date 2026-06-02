@@ -165,8 +165,16 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Video Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Video");
     descriptor.badgeTone = LayerPresentationBadgeTone::Media;
-    return descriptor;
   }
+
+  const auto matteRefs = layer->matteReferences();
+  if (!matteRefs.empty()) {
+    descriptor.timelineBadgeText = QStringLiteral("%1 · Mat").arg(descriptor.timelineBadgeText);
+    descriptor.capabilitySummaryText = descriptor.capabilitySummaryText.isEmpty()
+                                           ? QStringLiteral("Track Matte")
+                                           : QStringLiteral("%1 · Track Matte").arg(descriptor.capabilitySummaryText);
+  }
+
   return descriptor;
 }
 
@@ -1280,10 +1288,12 @@ public:
   LayerID editingLayerId;
   bool layerNameEditable = true;
   QPoint dragStartPos;
-  LayerID dragCandidateLayerId;
-  LayerID draggedLayerId;
+ LayerID dragCandidateLayerId;
+ LayerID draggedLayerId;
+  LayerID matteDropTargetLayerId;
   int dragInsertVisibleRow = -1;
   bool dragStarted_ = false;
+  bool dragMatteLinkMode = false;
   bool updatingLayout = false;  // 再帰呼び出し防止フラグ
   QTimer* layoutDebounceTimer = nullptr;
   int lastContentHeight = -1;
@@ -1406,8 +1416,10 @@ public:
   {
    dragCandidateLayerId = LayerID();
    draggedLayerId = LayerID();
+   matteDropTargetLayerId = LayerID();
    dragInsertVisibleRow = -1;
    dragStarted_ = false;
+   dragMatteLinkMode = false;
   }
 
   int insertionVisibleRowForY(const int y) const
@@ -1662,7 +1674,61 @@ public:
   }
  };
 
- W_OBJECT_IMPL(ArtifactLayerPanelWidget)
+ namespace {
+ class SetMatteReferencesCommand final : public UndoCommand {
+ public:
+  SetMatteReferencesCommand(ArtifactAbstractLayerPtr layer,
+                            std::vector<LayerMatteReference> beforeRefs,
+                            std::vector<LayerMatteReference> afterRefs)
+      : layer_(std::move(layer)), beforeRefs_(std::move(beforeRefs)),
+        afterRefs_(std::move(afterRefs)) {}
+
+  void undo() override {
+    if (auto layer = layer_.lock()) {
+      layer->setMatteReferences(beforeRefs_);
+      layer->changed();
+    }
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void redo() override {
+    if (auto layer = layer_.lock()) {
+      layer->setMatteReferences(afterRefs_);
+      layer->changed();
+    }
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Edit Track Matte"); }
+
+ private:
+  ArtifactAbstractLayerWeak layer_;
+  std::vector<LayerMatteReference> beforeRefs_;
+  std::vector<LayerMatteReference> afterRefs_;
+ };
+
+ ArtifactAbstractLayerPtr visibleLayerAtRow(const QVector<VisibleRow> &rows,
+                                           int index) {
+  if (index < 0 || index >= rows.size()) {
+    return {};
+  }
+  const auto &row = rows[index];
+  return row.kind == RowKind::Layer ? row.layer : ArtifactAbstractLayerPtr{};
+ }
+
+ bool containsMatteSource(const std::vector<LayerMatteReference> &refs,
+                          const LayerID &sourceId) {
+  return std::any_of(refs.begin(), refs.end(), [&sourceId](const LayerMatteReference &ref) {
+    return ref.sourceLayerId == sourceId;
+  });
+ }
+ } // namespace
+
+W_OBJECT_IMPL(ArtifactLayerPanelWidget)
 
 ArtifactLayerPanelWidget::ArtifactLayerPanelWidget(QWidget* parent)
  : QWidget(parent), impl_(new Impl())
@@ -2995,8 +3061,24 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
       impl_->draggedLayerId = impl_->dragCandidateLayerId;
     }
     if (impl_->dragStarted_) {
-      impl_->dragInsertVisibleRow = impl_->insertionVisibleRowForY(static_cast<int>(event->pos().y() + impl_->verticalOffset));
-      setCursor(Qt::DragMoveCursor);
+      const bool matteLinkMode =
+          (QApplication::keyboardModifiers() & Qt::AltModifier) &&
+          !(QApplication::keyboardModifiers() &
+            (Qt::ControlModifier | Qt::ShiftModifier | Qt::MetaModifier));
+      impl_->dragMatteLinkMode = matteLinkMode;
+      if (matteLinkMode) {
+        impl_->dragInsertVisibleRow = -1;
+        impl_->hoveredLayerIndex = impl_->rowIndexFromViewportY(event->pos().y());
+        const auto targetLayer = visibleLayerAtRow(impl_->visibleRows, impl_->hoveredLayerIndex);
+        impl_->matteDropTargetLayerId = targetLayer ? targetLayer->id() : LayerID();
+        setCursor(Qt::CrossCursor);
+      } else {
+        impl_->dragMatteLinkMode = false;
+        impl_->matteDropTargetLayerId = LayerID();
+        impl_->dragInsertVisibleRow =
+            impl_->insertionVisibleRowForY(static_cast<int>(event->pos().y() + impl_->verticalOffset));
+        setCursor(Qt::DragMoveCursor);
+      }
       update();
       event->accept();
       return;
@@ -3042,6 +3124,49 @@ void ArtifactLayerPanelWidget::mouseDoubleClickEvent(QMouseEvent* event)
       auto comp = safeCompositionLookup(impl_->compositionId);
       const LayerID dragLayerId = impl_->draggedLayerId;
       if (svc && comp && !dragLayerId.isNil()) {
+        if (impl_->dragMatteLinkMode) {
+          const ArtifactAbstractLayerPtr sourceLayer = comp->layerById(dragLayerId);
+          const ArtifactAbstractLayerPtr targetLayer =
+              visibleLayerAtRow(impl_->visibleRows, impl_->hoveredLayerIndex);
+          if (sourceLayer && targetLayer && sourceLayer->id() != targetLayer->id()) {
+            auto beforeRefs = targetLayer->matteReferences();
+            const bool alreadyLinked =
+                containsMatteSource(beforeRefs, sourceLayer->id());
+            if (!alreadyLinked) {
+              auto afterRefs = beforeRefs;
+              LayerMatteReference ref;
+              ref.sourceLayerId = sourceLayer->id();
+              ref.enabled = true;
+              ref.type = MatteType::Alpha;
+              ref.blendMode = MatteBlendMode::Add;
+              ref.fitMode = MatteFitMode::Stretch;
+              ref.opacity = 1.0f;
+              ref.invert = false;
+              afterRefs.push_back(ref);
+              UndoManager::instance()->push(std::make_unique<SetMatteReferencesCommand>(
+                  targetLayer, std::move(beforeRefs), std::move(afterRefs)));
+              if (svc) {
+                svc->selectLayer(targetLayer->id());
+              }
+              impl_->selectedLayerId = targetLayer->id();
+              impl_->selectionAnchorLayerId = targetLayer->id();
+              impl_->selectedMaskLayerId = LayerID();
+              impl_->selectedMaskIndex = -1;
+              impl_->currentPropertyPath.clear();
+              propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+              impl_->clearDragState();
+              unsetCursor();
+              updateLayout();
+              event->accept();
+              return;
+            }
+          }
+          impl_->clearDragState();
+          unsetCursor();
+          update();
+          event->accept();
+          return;
+        }
         QVector<LayerID> visibleLayerIds;
         visibleLayerIds.reserve(impl_->visibleRows.size());
         for (const auto& row : impl_->visibleRows) {
@@ -3442,6 +3567,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.fillRect(0, y, width(), rowH, mixColor(background, accent, 0.30));
     } else if (layerSelected) {
       p.fillRect(0, y, width(), rowH, rowSelected); // Modo-like Amber selection
+    }
+    else if (impl_->dragMatteLinkMode && i == impl_->hoveredLayerIndex) {
+      p.fillRect(0, y, width(), rowH, mixColor(background, accent, 0.22));
+      p.fillRect(0, y, 4, rowH, accent);
     }
     else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, rowHover); // Subtle grey hover
     else p.fillRect(0, y, width(), rowH, rowBase);

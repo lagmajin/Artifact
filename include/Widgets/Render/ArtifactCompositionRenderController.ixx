@@ -109,8 +109,8 @@ bool removeSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool setSelectedLayerMotionPathInterpolationAtCurrentFrame(int interpolationType);
 void setShowAnchorCenterOverlay(bool show);
 bool isShowAnchorCenterOverlay() const;
-void setShowCameraFrustumOverlay(bool show);
-bool isShowCameraFrustumOverlay() const;
+ void setShowCameraFrustumOverlay(bool show);
+ bool isShowCameraFrustumOverlay() const;
 
    // Render Queue support: when active, composition changed signals do not invalidate caches
    void setRenderQueueActive(bool active);
@@ -189,6 +189,8 @@ TransformGizmo* gizmo() const;
  CameraFrustumVisual cameraFrustumVisual() const;
  void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
  ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
+ void setViewportUseActiveCamera(bool enabled);
+ bool isViewportUsingActiveCamera() const;
  Ray createPickingRay(const QPointF& viewportPos) const;
  Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
 
