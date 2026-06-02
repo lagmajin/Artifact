@@ -2192,15 +2192,13 @@ namespace Artifact
    headerLayout->addLayout(buttonRow);
    headerLayout->addLayout(surfaceMetaRow);
 
-    QObject::connect(fitButton, &QToolButton::clicked, parent, [this]() {
-     if (currentFileType == ArtifactCore::FileType::Image) {
-      fitImageToWindow();
-     } else if (currentFileType == ArtifactCore::FileType::Model3D && modelViewer) {
-      modelViewer->resetView();
-     }
-     updateHeader();
-     updatePlaybackState();
-    });
+     QObject::connect(fitButton, &QToolButton::clicked, parent, [this]() {
+       fitImageToWindow();
+     });
+     auto *fitShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_0), parent);
+     QObject::connect(fitShortcut, &QShortcut::activated, parent, [this]() {
+       fitImageToWindow();
+     });
 
    QObject::connect(rotateLeftButton, &QToolButton::clicked, parent, [this]() {
     if (currentFileType == ArtifactCore::FileType::Image) {
