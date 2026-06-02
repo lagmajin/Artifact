@@ -331,6 +331,188 @@ void drawEffectHitboxOverlay(ArtifactIRenderer *renderer,
   }
 }
 
+FloatColor densityHeatmapColor(float normalized)
+{
+  const float t = std::clamp(normalized, 0.0f, 1.0f);
+  const FloatColor cool{0.18f, 0.76f, 1.0f, 1.0f};
+  const FloatColor mid{1.0f, 0.76f, 0.24f, 1.0f};
+  const FloatColor hot{1.0f, 0.24f, 0.22f, 1.0f};
+  if (t < 0.5f) {
+    const float u = t / 0.5f;
+    return FloatColor{
+        cool.r() + (mid.r() - cool.r()) * u,
+        cool.g() + (mid.g() - cool.g()) * u,
+        cool.b() + (mid.b() - cool.b()) * u,
+        1.0f};
+  }
+  const float u = (t - 0.5f) / 0.5f;
+  return FloatColor{
+      mid.r() + (hot.r() - mid.r()) * u,
+      mid.g() + (hot.g() - mid.g()) * u,
+      mid.b() + (hot.b() - mid.b()) * u,
+      1.0f};
+}
+
+void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
+                              const ArtifactCompositionPtr &comp,
+                              const ArtifactAbstractLayerPtr &selectedLayer,
+                              const FramePosition &currentFrame)
+{
+  if (!renderer || !comp) {
+    return;
+  }
+
+  const QSize compSize = comp->settings().compositionSize();
+  const float canvasW = static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
+  const float canvasH = static_cast<float>(compSize.height() > 0 ? compSize.height() : 1080);
+  if (canvasW <= 0.0f || canvasH <= 0.0f) {
+    return;
+  }
+
+  constexpr int kColumns = 12;
+  constexpr int kRows = 8;
+  std::array<float, kColumns * kRows> density{};
+  float peakDensity = 0.0f;
+
+  const QRectF canvasRect(0.0, 0.0, canvasW, canvasH);
+  const float cellW = canvasW / static_cast<float>(kColumns);
+  const float cellH = canvasH / static_cast<float>(kRows);
+  const float cellArea = std::max(1.0f, cellW * cellH);
+
+  const auto &layers = comp->allLayerRef();
+  for (const auto &layer : layers) {
+    if (!layer || !isLayerEffectivelyVisible(layer) ||
+        !layer->isActiveAt(currentFrame)) {
+      continue;
+    }
+
+    const QRectF layerBounds = layer->transformedBoundingBox().normalized();
+    if (!layerBounds.isValid() || layerBounds.width() <= 0.0 ||
+        layerBounds.height() <= 0.0) {
+      continue;
+    }
+
+    const QRectF clippedBounds = layerBounds.intersected(canvasRect);
+    if (clippedBounds.isEmpty()) {
+      continue;
+    }
+
+    float weight = 1.0f;
+    if (dynamic_cast<ArtifactTextLayer *>(layer.get())) {
+      weight += 0.35f;
+    }
+    weight += std::min(0.65f, static_cast<float>(layer->maskCount()) * 0.10f);
+    weight += std::min(0.70f, static_cast<float>(layer->effectCount()) * 0.08f);
+    weight += std::min(0.45f,
+                       static_cast<float>(layer->matteReferences().size()) * 0.12f);
+    if (selectedLayer && selectedLayer->id() == layer->id()) {
+      weight += 0.35f;
+    }
+
+    const int minCol = std::clamp(
+        static_cast<int>(std::floor(clippedBounds.left() / cellW)), 0,
+        kColumns - 1);
+    const int maxCol = std::clamp(
+        static_cast<int>(std::floor((clippedBounds.right() - 1.0) / cellW)), 0,
+        kColumns - 1);
+    const int minRow = std::clamp(
+        static_cast<int>(std::floor(clippedBounds.top() / cellH)), 0,
+        kRows - 1);
+    const int maxRow = std::clamp(
+        static_cast<int>(std::floor((clippedBounds.bottom() - 1.0) / cellH)), 0,
+        kRows - 1);
+
+    for (int row = minRow; row <= maxRow; ++row) {
+      for (int col = minCol; col <= maxCol; ++col) {
+        const QRectF cellRect(static_cast<float>(col) * cellW,
+                              static_cast<float>(row) * cellH, cellW, cellH);
+        const QRectF overlap = cellRect.intersected(clippedBounds);
+        if (overlap.isEmpty()) {
+          continue;
+        }
+        const float coverage =
+            static_cast<float>((overlap.width() * overlap.height()) / cellArea);
+        const int index = row * kColumns + col;
+        density[static_cast<std::size_t>(index)] += weight * coverage;
+        peakDensity = std::max(peakDensity, density[static_cast<std::size_t>(index)]);
+      }
+    }
+  }
+
+  if (peakDensity <= 0.0f) {
+    return;
+  }
+
+  const float panelW = canvasW > 260.0f
+                           ? std::min(310.0f, std::max(220.0f, canvasW * 0.28f))
+                           : std::max(140.0f, canvasW - 24.0f);
+  const float panelH = canvasH > 120.0f ? 90.0f : std::max(64.0f, canvasH - 24.0f);
+  const float panelX = std::max(12.0f, canvasW - panelW - 12.0f);
+  const float panelY = 12.0f;
+
+  renderer->drawOverlayPanel(panelX, panelY, panelW, panelH,
+                             FloatColor{0.05f, 0.07f, 0.11f, 0.90f},
+                             FloatColor{0.34f, 0.54f, 0.76f, 0.92f});
+
+  QFont titleFont = QApplication::font();
+  titleFont.setPointSizeF(std::max(10.0, static_cast<double>(titleFont.pointSizeF()) + 1.0));
+  titleFont.setWeight(QFont::DemiBold);
+  QFont detailFont = QApplication::font();
+  detailFont.setPointSizeF(std::max(8.5, static_cast<double>(detailFont.pointSizeF())));
+
+  renderer->drawText(QRectF(panelX + 12.0f, panelY + 8.0f, panelW - 24.0f, 18.0f),
+                     QStringLiteral("Visual Density Heatmap"), titleFont,
+                     FloatColor{0.94f, 0.97f, 1.0f, 1.0f},
+                     Qt::AlignLeft | Qt::AlignVCenter);
+  renderer->drawText(
+      QRectF(panelX + 12.0f, panelY + 26.0f, panelW - 24.0f, 15.0f),
+      QStringLiteral("%1 layers  |  hot spots show overlap and active detail")
+          .arg(static_cast<int>(layers.size())),
+      detailFont, FloatColor{0.70f, 0.78f, 0.86f, 1.0f},
+      Qt::AlignLeft | Qt::AlignVCenter);
+
+  const float heatTop = panelY + 46.0f;
+  const float heatLeft = panelX + 12.0f;
+  const float heatWidth = panelW - 24.0f;
+  const float heatHeight = std::max(12.0f, panelH - 54.0f);
+  const float legendCellW = heatWidth / static_cast<float>(kColumns);
+  const float legendCellH = heatHeight / static_cast<float>(kRows);
+  for (int row = 0; row < kRows; ++row) {
+    for (int col = 0; col < kColumns; ++col) {
+      const int index = row * kColumns + col;
+      const float value = density[static_cast<std::size_t>(index)];
+      if (value <= 0.0f) {
+        continue;
+      }
+      const float normalized = std::clamp(value / peakDensity, 0.0f, 1.0f);
+      const FloatColor color = densityHeatmapColor(normalized);
+      const float alpha = 0.06f + normalized * 0.32f;
+      renderer->drawSolidRect(
+          heatLeft + static_cast<float>(col) * legendCellW,
+          heatTop + static_cast<float>(row) * legendCellH, legendCellW + 0.5f,
+          legendCellH + 0.5f,
+          FloatColor{color.r(), color.g(), color.b(), alpha}, 1.0f);
+    }
+  }
+
+  renderer->drawSolidRect(panelX + 12.0f, panelY + 76.0f, 12.0f, 6.0f,
+                          FloatColor{0.18f, 0.76f, 1.0f, 0.92f}, 1.0f);
+  renderer->drawText(QRectF(panelX + 28.0f, panelY + 69.0f, 84.0f, 18.0f),
+                     QStringLiteral("low"), detailFont,
+                     FloatColor{0.72f, 0.81f, 0.90f, 1.0f}, Qt::AlignLeft);
+  renderer->drawSolidRect(panelX + 72.0f, panelY + 76.0f, 12.0f, 6.0f,
+                          FloatColor{1.0f, 0.76f, 0.24f, 0.92f}, 1.0f);
+  renderer->drawText(QRectF(panelX + 88.0f, panelY + 69.0f, 84.0f, 18.0f),
+                     QStringLiteral("medium"), detailFont,
+                     FloatColor{0.72f, 0.81f, 0.90f, 1.0f}, Qt::AlignLeft);
+  renderer->drawSolidRect(panelX + 158.0f, panelY + 76.0f, 12.0f, 6.0f,
+                          FloatColor{1.0f, 0.24f, 0.22f, 0.94f}, 1.0f);
+  renderer->drawText(QRectF(panelX + 174.0f, panelY + 69.0f,
+                            std::max(12.0f, panelW - 186.0f), 18.0f),
+                     QStringLiteral("high"), detailFont,
+                     FloatColor{0.72f, 0.81f, 0.90f, 1.0f}, Qt::AlignLeft);
+}
+
 QString renderBackendToString(ArtifactRenderQueueService::RenderBackend backend)
 {
   switch (backend) {
@@ -2461,6 +2643,7 @@ public:
   bool showSafeMargins_ = false;
   bool showMotionPathOverlay_ = false;
   bool showEffectHitboxOverlay_ = false;
+  bool showDensityHeatmapOverlay_ = false;
   bool showAnchorCenterOverlay_ = false;
   bool showCameraFrustumOverlay_ = false;
   bool showFrameInfo_ = false; // Changed to false by default
@@ -3781,6 +3964,18 @@ void CompositionRenderController::setShowEffectHitboxOverlay(bool show) {
 
 bool CompositionRenderController::isShowEffectHitboxOverlay() const {
   return impl_ ? impl_->showEffectHitboxOverlay_ : false;
+}
+
+void CompositionRenderController::setShowDensityHeatmapOverlay(bool show) {
+  if (impl_->showDensityHeatmapOverlay_ == show) {
+    return;
+  }
+  impl_->showDensityHeatmapOverlay_ = show;
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isShowDensityHeatmapOverlay() const {
+  return impl_ ? impl_->showDensityHeatmapOverlay_ : false;
 }
 
 bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFrame() {
@@ -7692,6 +7887,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         ::Artifact::drawCameraFrustumOverlay(
             renderer_.get(), cameraOverlayVisual,
             activeCamera->id() == selectedLayerId_);
+      }
+      if (showDensityHeatmapOverlay_) {
+        drawVisualDensityOverlay(renderer_.get(), comp, selectedLayer,
+                                 currentFrame);
       }
       if (selectedLayer) {
         if (!showGizmoOverlay_) {

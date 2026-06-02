@@ -3291,6 +3291,7 @@ public:
   QAction *advancedScreenshotAction_ = nullptr;
   QAction *motionPathAction_ = nullptr;
   QAction *effectHitboxAction_ = nullptr;
+  QAction *densityHeatmapAction_ = nullptr;
   QToolButton *toolModeButton_ = nullptr;
   QToolButton *gizmoModeButton_ = nullptr;
   QToolButton *pivotModeButton_ = nullptr;
@@ -3610,6 +3611,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         settings->compositionShowCameraFrustumOverlay());
     impl_->renderController_->setShowMotionPathOverlay(
         settings->compositionShowMotionPathOverlay());
+    impl_->renderController_->setShowDensityHeatmapOverlay(
+        settings->compositionShowDensityHeatmapOverlay());
   }
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
@@ -3624,6 +3627,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                            const QSignalBlocker blocker(impl_->motionPathAction_);
                            impl_->motionPathAction_->setChecked(
                                impl_->renderController_->isShowMotionPathOverlay());
+                         }
+                         impl_->renderController_->setShowDensityHeatmapOverlay(
+                             settings->compositionShowDensityHeatmapOverlay());
+                         if (impl_->densityHeatmapAction_) {
+                           const QSignalBlocker blocker(impl_->densityHeatmapAction_);
+                           impl_->densityHeatmapAction_->setChecked(
+                               impl_->renderController_->isShowDensityHeatmapOverlay());
                          }
                        }
                      });
@@ -3964,8 +3974,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
   QAction *anchorCenterAct = displayMenu->addAction("Anchor / Center");
   QAction *cameraOverlayAct = displayMenu->addAction("Camera Frustum");
+  QAction *densityHeatmapAct = displayMenu->addAction("Density Heatmap");
   displayMenu->addSeparator();
   QAction *gpuBlendAct = displayMenu->addAction("GPU Blend Path");
+  impl_->densityHeatmapAction_ = densityHeatmapAct;
   const std::array<float, 8> checkerboardSizes{
       8.0f, 12.0f, 16.0f, 24.0f, 32.0f, 48.0f, 64.0f, 96.0f};
   checkerboardAct->setCheckable(true);
@@ -3974,9 +3986,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   safeMarginsAct->setCheckable(true);
   anchorCenterAct->setCheckable(true);
   cameraOverlayAct->setCheckable(true);
+  densityHeatmapAct->setCheckable(true);
   gpuBlendAct->setCheckable(true);
   anchorCenterAct->setToolTip(
       QStringLiteral("Show the selected layer anchor point and center point"));
+  densityHeatmapAct->setToolTip(
+      QStringLiteral("Show a grid-based visual density heatmap on the composition"));
   gpuBlendAct->setToolTip(
       QStringLiteral("Enable the compute-shader blend path when the composition needs masks, non-normal blending, or rasterizer effects"));
   gpuBlendAct->setStatusTip(
@@ -4095,6 +4110,18 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        }
                      }
                    });
+  QObject::connect(densityHeatmapAct, &QAction::toggled, this,
+                   [this](bool checked) {
+                     if (impl_->renderController_) {
+                       impl_->renderController_->setShowDensityHeatmapOverlay(
+                           checked);
+                       if (auto *settings =
+                               ArtifactCore::ArtifactAppSettings::instance()) {
+                         settings->setCompositionShowDensityHeatmapOverlay(
+                             checked);
+                       }
+                     }
+                   });
   QObject::connect(gpuBlendAct, &QAction::toggled, this, [this](bool checked) {
     if (impl_->renderController_) {
       impl_->renderController_->setGpuBlendEnabled(checked);
@@ -4120,6 +4147,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     safeMarginsAct->setChecked(impl_->renderController_->isShowSafeMargins());
     anchorCenterAct->setChecked(impl_->renderController_->isShowAnchorCenterOverlay());
     cameraOverlayAct->setChecked(impl_->renderController_->isShowCameraFrustumOverlay());
+    densityHeatmapAct->setChecked(
+        impl_->renderController_->isShowDensityHeatmapOverlay());
     gpuBlendAct->setChecked(impl_->renderController_->isGpuBlendEnabled());
     impl_->motionPathAction_->setChecked(
         impl_->renderController_->isShowMotionPathOverlay());
