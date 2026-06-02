@@ -4635,6 +4635,30 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     }
   }
 
+  if (event->key() == Qt::Key_PageUp || event->key() == Qt::Key_PageDown) {
+   if (auto *svc = ArtifactProjectService::instance()) {
+    auto comp = svc->currentComposition().lock();
+    if (comp) {
+     const int64_t delta = event->key() == Qt::Key_PageDown ? 10 : -10;
+     comp->goToFrame(ArtifactCore::FramePosition(comp->framePosition().framePosition() + delta));
+     event->accept();
+     return;
+    }
+   }
+  }
+
+  if (event->key() == Qt::Key_Comma || event->key() == Qt::Key_Period) {
+   if (auto *svc = ArtifactPlaybackService::instance()) {
+    if (event->key() == Qt::Key_Comma) {
+     svc->previousFrame();
+    } else {
+     svc->nextFrame();
+    }
+    event->accept();
+    return;
+   }
+  }
+
   QWidget::keyPressEvent(event);
 }
 

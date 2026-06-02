@@ -340,6 +340,7 @@ void ArtifactPlaybackShortcuts::goToFrame(int frame) {
         impl_->controller_->goToFrame(FramePosition(frame));
     }
     emit shortcutExecuted("playback.goto_frame");
+    // TODO: register "playback.goto_frame" with ActionManager + KeyMap so it has a default key binding
 }
 
 // ==================== In/Out Point Actions ====================
@@ -494,6 +495,7 @@ void ArtifactPlaybackShortcuts::clearAllMarkers() {
         impl_->inOutPoints_->clearAllMarkers();
     }
     emit shortcutExecuted("playback.clear_markers");
+    // TODO: register "playback.clear_markers" with ActionManager + KeyMap so it has a default key binding
 }
 
 // ==================== Speed Actions ====================
