@@ -2845,47 +2845,177 @@ void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event) {
     QWidget::mouseReleaseEvent(event);
 }
 
-void ArtifactProjectView::keyPressEvent(QKeyEvent* event)
-{
-    if (!impl_ || impl_->visibleRows.isEmpty()) { QWidget::keyPressEvent(event); return; }
-    if (event->key() == Qt::Key_F2) { if (currentIndex().isValid()) editIndex(currentIndex()); return; }
-    
-    // R キーで選択フッテージをエクスプローラーで表示
-    if (event->key() == Qt::Key_R) {
-        QModelIndex idx = currentIndex();
-        if (idx.isValid()) {
-            QModelIndex sourceIdx = idx;
-            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
-                sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
-            }
-            QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
-            ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
-            if (item && item->type() == eProjectItemType::Footage) {
-                QString path = static_cast<FootageItem*>(item)->filePath;
-                QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
-                event->accept();
-                return;
-            }
-        }
-    }
-    
-    QModelIndex target = currentIndex();
-    int currRow = impl_->rowForIndex(target);
-    if (currRow < 0) { currRow = 0; target = impl_->visibleRows.front().index0; }
-    const int vRows = (height() - impl_->headerHeight) / impl_->rowHeight;
-    const int lastRow = static_cast<int>(impl_->visibleRows.size()) - 1;
-    switch (event->key()) {
-    case Qt::Key_Up: target = impl_->visibleRows[std::max(0, currRow - 1)].index0; break;
-    case Qt::Key_Down: target = impl_->visibleRows[std::min(currRow + 1, lastRow)].index0; break;
-    case Qt::Key_PageUp: target = impl_->visibleRows[std::max(0, currRow - vRows)].index0; break;
-    case Qt::Key_PageDown: target = impl_->visibleRows[std::min(currRow + vRows, lastRow)].index0; break;
-    case Qt::Key_Left: if (target.isValid() && impl_->hasChildren(target) && impl_->isExpanded(target)) collapse(target); else if (target.parent().isValid()) target = target.parent().siblingAtColumn(0); return;
-    case Qt::Key_Right: if (target.isValid() && impl_->hasChildren(target) && !impl_->isExpanded(target)) expand(target); else if (target.isValid() && impl_->hasChildren(target)) target = impl_->model->index(0, 0, target); return;
-    case Qt::Key_Return: case Qt::Key_Enter: handleItemDoubleClicked(target); return;
-    default: QWidget::keyPressEvent(event); return;
-    }
-    if (target.isValid()) { setCurrentIndex(target); itemSelected(target); }
-}
+ void ArtifactProjectView::keyPressEvent(QKeyEvent* event)
+ {
+     if (!impl_ || impl_->visibleRows.isEmpty()) { QWidget::keyPressEvent(event); return; }
+     if (event->key() == Qt::Key_F2) { if (currentIndex().isValid()) editIndex(currentIndex()); return; }
+     
+     // Ctrl+A で全選択
+     if (event->matches(QKeySequence::SelectAll)) {
+         if (selectionModel()) {
+             QItemSelection selection;
+             for (const auto& row : impl_->visibleRows) {
+                 selection.select(row.index0, row.index0);
+             }
+             selectionModel()->select(selection, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+         }
+         event->accept();
+         return;
+     }
+
+     const bool shift = event->modifiers() & Qt::ShiftModifier;
+
+     if (event->key() == Qt::Key_Home && !shift) {
+         if (!impl_->visibleRows.isEmpty()) {
+             setCurrentIndex(impl_->visibleRows.front().index0);
+             itemSelected(impl_->visibleRows.front().index0);
+         }
+         event->accept();
+         return;
+     }
+     if (event->key() == Qt::Key_End && !shift) {
+         if (!impl_->visibleRows.isEmpty()) {
+             const auto& last = impl_->visibleRows.back();
+             setCurrentIndex(last.index0);
+             itemSelected(last.index0);
+         }
+         event->accept();
+         return;
+     }
+     
+     // R キーで選択フッテージをエクスプローラーで表示
+     if (event->key() == Qt::Key_R) {
+         QModelIndex idx = currentIndex();
+         if (idx.isValid()) {
+             QModelIndex sourceIdx = idx;
+             if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
+                 sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
+             }
+             QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+             ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+             if (item && item->type() == eProjectItemType::Footage) {
+                 QString path = static_cast<FootageItem*>(item)->filePath;
+                 QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
+                 event->accept();
+                 return;
+             }
+         }
+     }
+
+     // * で全て展開 / Shift+* で全て折りたたみ
+     if (event->key() == Qt::Key_Asterisk && !shift) {
+         expandAll();
+         event->accept();
+         return;
+     }
+     if (event->key() == Qt::Key_Asterisk && shift) {
+         collapseAll();
+         event->accept();
+         return;
+     }
+     
+     QModelIndex target = currentIndex();
+     int currRow = impl_->rowForIndex(target);
+     if (currRow < 0) { currRow = 0; target = impl_->visibleRows.front().index0; }
+     const int vRows = (height() - impl_->headerHeight) / impl_->rowHeight;
+     const int lastRow = static_cast<int>(impl_->visibleRows.size()) - 1;
+     switch (event->key()) {
+     case Qt::Key_Up: {
+         int next = std::max(0, currRow - 1);
+         target = impl_->visibleRows[next].index0;
+         if (shift && selectionModel()) {
+             QItemSelection sel;
+             const int from = std::min(currRow, next);
+             const int to = std::max(currRow, next);
+             for (int i = from; i <= to; ++i) {
+                 sel.select(impl_->visibleRows[i].index0, impl_->visibleRows[i].index0);
+             }
+             selectionModel()->select(sel, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+         } else if (selectionModel()) {
+             selectionModel()->setCurrentIndex(target, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+         }
+         itemSelected(target);
+         event->accept();
+         return;
+     }
+     case Qt::Key_Down: {
+         int next = std::min(currRow + 1, lastRow);
+         target = impl_->visibleRows[next].index0;
+         if (shift && selectionModel()) {
+             QItemSelection sel;
+             const int from = std::min(currRow, next);
+             const int to = std::max(currRow, next);
+             for (int i = from; i <= to; ++i) {
+                 sel.select(impl_->visibleRows[i].index0, impl_->visibleRows[i].index0);
+             }
+             selectionModel()->select(sel, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+         } else if (selectionModel()) {
+             selectionModel()->setCurrentIndex(target, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+         }
+         itemSelected(target);
+         event->accept();
+         return;
+     }
+     case Qt::Key_PageUp: {
+         int next = std::max(0, currRow - vRows);
+         target = impl_->visibleRows[next].index0;
+         if (shift && selectionModel()) {
+             QItemSelection sel;
+             const int from = std::min(currRow, next);
+             const int to = std::max(currRow, next);
+             for (int i = from; i <= to; ++i) {
+                 sel.select(impl_->visibleRows[i].index0, impl_->visibleRows[i].index0);
+             }
+             selectionModel()->select(sel, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+         } else if (selectionModel()) {
+             selectionModel()->setCurrentIndex(target, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+         }
+         itemSelected(target);
+         event->accept();
+         return;
+     }
+     case Qt::Key_PageDown: {
+         int next = std::min(currRow + vRows, lastRow);
+         target = impl_->visibleRows[next].index0;
+         if (shift && selectionModel()) {
+             QItemSelection sel;
+             const int from = std::min(currRow, next);
+             const int to = std::max(currRow, next);
+             for (int i = from; i <= to; ++i) {
+                 sel.select(impl_->visibleRows[i].index0, impl_->visibleRows[i].index0);
+             }
+             selectionModel()->select(sel, QItemSelectionModel::Select | QItemSelectionModel::Rows);
+         } else if (selectionModel()) {
+             selectionModel()->setCurrentIndex(target, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+         }
+         itemSelected(target);
+         event->accept();
+         return;
+     }
+     case Qt::Key_Left:
+         if (target.isValid() && impl_->hasChildren(target) && impl_->isExpanded(target)) {
+             collapse(target);
+         } else if (target.parent().isValid()) {
+             target = target.parent().siblingAtColumn(0);
+             if (selectionModel()) selectionModel()->setCurrentIndex(target, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+             itemSelected(target);
+         }
+         event->accept();
+         return;
+     case Qt::Key_Right:
+         if (target.isValid() && impl_->hasChildren(target) && !impl_->isExpanded(target)) {
+             expand(target);
+         } else if (target.isValid() && impl_->hasChildren(target)) {
+             target = impl_->model->index(0, 0, target);
+             if (selectionModel()) selectionModel()->setCurrentIndex(target, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows);
+             itemSelected(target);
+         }
+         event->accept();
+         return;
+     case Qt::Key_Return: case Qt::Key_Enter: handleItemDoubleClicked(target); event->accept(); return;
+     default: QWidget::keyPressEvent(event); return;
+     }
+ }
 
 QSize ArtifactProjectView::sizeHint() const { return QSize(400, 400); }
 
@@ -3955,6 +4085,18 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     connect(impl_->clearSelectedProxiesButton, &QPushButton::clicked, this, [this]() {
         for (const QString& path : impl_->selectedFootageFilePaths()) {
             impl_->clearProxyForFilePath(path, this);
+        }
+    });
+    auto* expandAllShortcut = new QShortcut(QKeySequence(Qt::Key_Asterisk), this);
+    connect(expandAllShortcut, &QShortcut::activated, this, [this]() {
+        if (impl_->projectView_) {
+            impl_->projectView_->expandAll();
+        }
+    });
+    auto* collapseAllShortcut = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Asterisk), this);
+    connect(collapseAllShortcut, &QShortcut::activated, this, [this]() {
+        if (impl_->projectView_) {
+            impl_->projectView_->collapseAll();
         }
     });
     connect(impl_->renameSelectionButton, &QPushButton::clicked, this, [this]() {
