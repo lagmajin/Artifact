@@ -331,6 +331,8 @@ void drawEffectHitboxOverlay(ArtifactIRenderer *renderer,
   }
 }
 
+double clamp01(double value);
+
 FloatColor densityHeatmapColor(float normalized)
 {
   const float t = std::clamp(normalized, 0.0f, 1.0f);
@@ -351,6 +353,40 @@ FloatColor densityHeatmapColor(float normalized)
       mid.g() + (hot.g() - mid.g()) * u,
       mid.b() + (hot.b() - mid.b()) * u,
       1.0f};
+}
+
+QString densityAxisDisplayName(const QString &axis)
+{
+  if (axis == QStringLiteral("visual")) {
+    return QStringLiteral("visual");
+  }
+  if (axis == QStringLiteral("information")) {
+    return QStringLiteral("info");
+  }
+  if (axis == QStringLiteral("luminance")) {
+    return QStringLiteral("luma");
+  }
+  if (axis == QStringLiteral("motion")) {
+    return QStringLiteral("motion");
+  }
+  return QStringLiteral("density");
+}
+
+FloatColor densityAxisColor(const QString &axis)
+{
+  if (axis == QStringLiteral("visual")) {
+    return FloatColor{0.18f, 0.76f, 1.0f, 1.0f};
+  }
+  if (axis == QStringLiteral("information")) {
+    return FloatColor{1.0f, 0.76f, 0.24f, 1.0f};
+  }
+  if (axis == QStringLiteral("luminance")) {
+    return FloatColor{0.92f, 0.94f, 0.98f, 1.0f};
+  }
+  if (axis == QStringLiteral("motion")) {
+    return FloatColor{1.0f, 0.24f, 0.22f, 1.0f};
+  }
+  return FloatColor{0.72f, 0.80f, 0.88f, 1.0f};
 }
 
 void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
@@ -380,10 +416,25 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
   const float cellArea = std::max(1.0f, cellW * cellH);
 
   const auto &layers = comp->allLayerRef();
+  int visibleLayerCount = 0;
+  int textLayerCount = 0;
+  int videoLayerCount = 0;
+  int particleLayerCount = 0;
   for (const auto &layer : layers) {
     if (!layer || !isLayerEffectivelyVisible(layer) ||
         !layer->isActiveAt(currentFrame)) {
       continue;
+    }
+
+    ++visibleLayerCount;
+    if (dynamic_cast<ArtifactTextLayer *>(layer.get())) {
+      ++textLayerCount;
+    }
+    if (dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
+      ++videoLayerCount;
+    }
+    if (dynamic_cast<ArtifactParticleLayer *>(layer.get())) {
+      ++particleLayerCount;
     }
 
     const QRectF layerBounds = layer->transformedBoundingBox().normalized();
@@ -439,6 +490,35 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
     }
   }
 
+  const double visualScore =
+      clamp01(visibleLayerCount * 0.05 + textLayerCount * 0.03 +
+              (selectedLayer ? 0.08 : 0.0) +
+              (selectedLayer ? static_cast<double>(selectedLayer->effectCount()) * 0.04
+                             : 0.0) +
+              (selectedLayer ? static_cast<double>(selectedLayer->maskCount()) * 0.05
+                             : 0.0) +
+              (selectedLayer ? static_cast<double>(selectedLayer->matteReferences().size()) * 0.05
+                             : 0.0));
+  const double informationScore =
+      clamp01(textLayerCount * 0.06 + layers.size() * 0.02 +
+              (visibleLayerCount > 12 ? 0.08 : 0.0));
+  const double luminanceScore =
+      clamp01(textLayerCount * 0.07 + (selectedLayer ? 0.10 : 0.0));
+  const double motionScore =
+      clamp01(videoLayerCount * 0.08 + particleLayerCount * 0.10 +
+              std::min(1.0, static_cast<double>(layers.size()) / 20.0) * 0.15);
+  const std::array<std::pair<const char *, double>, 4> densityScores{{
+      {"visual", visualScore},
+      {"information", informationScore},
+      {"luminance", luminanceScore},
+      {"motion", motionScore},
+  }};
+  const auto dominantIt = std::max_element(
+      densityScores.begin(), densityScores.end(),
+      [](const auto &a, const auto &b) { return a.second < b.second; });
+  const QString dominantAxis = QString::fromLatin1(dominantIt->first);
+  const double dominantScore = dominantIt->second;
+
   if (peakDensity <= 0.0f) {
     return;
   }
@@ -446,7 +526,7 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
   const float panelW = canvasW > 260.0f
                            ? std::min(310.0f, std::max(220.0f, canvasW * 0.28f))
                            : std::max(140.0f, canvasW - 24.0f);
-  const float panelH = canvasH > 120.0f ? 90.0f : std::max(64.0f, canvasH - 24.0f);
+  const float panelH = canvasH > 140.0f ? 126.0f : std::max(92.0f, canvasH - 24.0f);
   const float panelX = std::max(12.0f, canvasW - panelW - 12.0f);
   const float panelY = 12.0f;
 
@@ -466,15 +546,30 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
                      Qt::AlignLeft | Qt::AlignVCenter);
   renderer->drawText(
       QRectF(panelX + 12.0f, panelY + 26.0f, panelW - 24.0f, 15.0f),
-      QStringLiteral("%1 layers  |  hot spots show overlap and active detail")
-          .arg(static_cast<int>(layers.size())),
+      QStringLiteral("%1 layers  |  dominant: %2 (%3)")
+          .arg(static_cast<int>(layers.size()))
+          .arg(densityAxisDisplayName(dominantAxis))
+          .arg(QString::number(dominantScore * 100.0, 'f', 0)),
       detailFont, FloatColor{0.70f, 0.78f, 0.86f, 1.0f},
       Qt::AlignLeft | Qt::AlignVCenter);
+  if (selectedLayer) {
+    renderer->drawText(
+        QRectF(panelX + 12.0f, panelY + 41.0f, panelW - 24.0f, 13.0f),
+        QStringLiteral("focus: %1  |  masks %2  effects %3  mattes %4")
+            .arg(selectedLayer->layerName().trimmed().isEmpty()
+                     ? QStringLiteral("<selected>")
+                     : selectedLayer->layerName().trimmed())
+            .arg(selectedLayer->maskCount())
+            .arg(selectedLayer->effectCount())
+            .arg(static_cast<int>(selectedLayer->matteReferences().size())),
+        detailFont, FloatColor{0.62f, 0.72f, 0.82f, 1.0f},
+        Qt::AlignLeft | Qt::AlignVCenter);
+  }
 
-  const float heatTop = panelY + 46.0f;
+  const float heatTop = panelY + (selectedLayer ? 58.0f : 44.0f);
   const float heatLeft = panelX + 12.0f;
   const float heatWidth = panelW - 24.0f;
-  const float heatHeight = std::max(12.0f, panelH - 54.0f);
+  const float heatHeight = std::max(18.0f, panelH - (selectedLayer ? 78.0f : 64.0f));
   const float legendCellW = heatWidth / static_cast<float>(kColumns);
   const float legendCellH = heatHeight / static_cast<float>(kRows);
   for (int row = 0; row < kRows; ++row) {
@@ -486,7 +581,7 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
       }
       const float normalized = std::clamp(value / peakDensity, 0.0f, 1.0f);
       const FloatColor color = densityHeatmapColor(normalized);
-      const float alpha = 0.06f + normalized * 0.32f;
+      const float alpha = 0.05f + normalized * 0.30f;
       renderer->drawSolidRect(
           heatLeft + static_cast<float>(col) * legendCellW,
           heatTop + static_cast<float>(row) * legendCellH, legendCellW + 0.5f,
@@ -495,22 +590,62 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
     }
   }
 
-  renderer->drawSolidRect(panelX + 12.0f, panelY + 76.0f, 12.0f, 6.0f,
-                          FloatColor{0.18f, 0.76f, 1.0f, 0.92f}, 1.0f);
-  renderer->drawText(QRectF(panelX + 28.0f, panelY + 69.0f, 84.0f, 18.0f),
-                     QStringLiteral("low"), detailFont,
-                     FloatColor{0.72f, 0.81f, 0.90f, 1.0f}, Qt::AlignLeft);
-  renderer->drawSolidRect(panelX + 72.0f, panelY + 76.0f, 12.0f, 6.0f,
-                          FloatColor{1.0f, 0.76f, 0.24f, 0.92f}, 1.0f);
-  renderer->drawText(QRectF(panelX + 88.0f, panelY + 69.0f, 84.0f, 18.0f),
-                     QStringLiteral("medium"), detailFont,
-                     FloatColor{0.72f, 0.81f, 0.90f, 1.0f}, Qt::AlignLeft);
-  renderer->drawSolidRect(panelX + 158.0f, panelY + 76.0f, 12.0f, 6.0f,
-                          FloatColor{1.0f, 0.24f, 0.22f, 0.94f}, 1.0f);
-  renderer->drawText(QRectF(panelX + 174.0f, panelY + 69.0f,
-                            std::max(12.0f, panelW - 186.0f), 18.0f),
-                     QStringLiteral("high"), detailFont,
-                     FloatColor{0.72f, 0.81f, 0.90f, 1.0f}, Qt::AlignLeft);
+  if (selectedLayer) {
+    const QRectF selectedBounds = selectedLayer->transformedBoundingBox().normalized();
+    const QRectF clippedSelected = selectedBounds.intersected(canvasRect);
+    if (clippedSelected.isValid() && clippedSelected.width() > 0.0 &&
+        clippedSelected.height() > 0.0) {
+      const FloatColor focusColor =
+          selectedLayer->maskCount() > 0
+              ? FloatColor{1.0f, 0.78f, 0.24f, 0.96f}
+              : FloatColor{0.96f, 0.96f, 0.98f, 0.92f};
+      renderer->drawRectOutline(static_cast<float>(clippedSelected.left()),
+                                static_cast<float>(clippedSelected.top()),
+                                static_cast<float>(clippedSelected.width()),
+                                static_cast<float>(clippedSelected.height()),
+                                focusColor, 2.2f);
+      renderer->drawSolidRect(
+          static_cast<float>(clippedSelected.left()),
+          static_cast<float>(clippedSelected.top()),
+          static_cast<float>(clippedSelected.width()),
+          static_cast<float>(clippedSelected.height()),
+          FloatColor{focusColor.r(), focusColor.g(), focusColor.b(), 0.05f}, 1.0f);
+    }
+  }
+
+  const float barY = heatTop + heatHeight + 6.0f;
+  const float barX = panelX + 12.0f;
+  const float barW = panelW - 24.0f;
+  const float barH = 10.0f;
+  const float labelW = 54.0f;
+  const float meterW = std::max(18.0f, barW - labelW - 6.0f);
+  const std::array<std::pair<const char *, double>, 4> densityMeters{{
+      {"visual", visualScore},
+      {"info", informationScore},
+      {"luma", luminanceScore},
+      {"motion", motionScore},
+  }};
+  for (std::size_t i = 0; i < densityMeters.size(); ++i) {
+    const QString axis = QString::fromLatin1(densityMeters[i].first);
+    const double score = densityMeters[i].second;
+    const FloatColor axisColor = densityAxisColor(axis);
+    const float y = barY + static_cast<float>(i) * 12.0f;
+    renderer->drawText(QRectF(barX, y - 1.0f, labelW, 11.0f), axis,
+                       detailFont, FloatColor{0.72f, 0.81f, 0.90f, 1.0f},
+                       Qt::AlignLeft | Qt::AlignVCenter);
+    renderer->drawSolidRect(barX + labelW, y, meterW, barH,
+                            FloatColor{0.10f, 0.14f, 0.19f, 0.88f}, 1.0f);
+    renderer->drawSolidRect(barX + labelW, y, meterW * static_cast<float>(score),
+                            barH, FloatColor{axisColor.r(), axisColor.g(),
+                                             axisColor.b(), 0.78f},
+                            1.0f);
+    if (axis == densityAxisDisplayName(dominantAxis)) {
+      renderer->drawRectOutline(barX + labelW, y, meterW, barH,
+                                FloatColor{axisColor.r(), axisColor.g(),
+                                           axisColor.b(), 0.96f},
+                                1.1f);
+    }
+  }
 }
 
 QString renderBackendToString(ArtifactRenderQueueService::RenderBackend backend)
