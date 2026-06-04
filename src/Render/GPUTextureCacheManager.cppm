@@ -1,6 +1,8 @@
 module;
 #include <algorithm>
+#include <cstdint>
 #include <cstring>
+#include <variant>
 #include <vector>
 #include <utility>
 #include <QHash>
@@ -13,10 +15,12 @@ module;
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
+#include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/RenderDeviceVk.h>
 
 module Artifact.Render.GPUTextureCacheManager;
 
 import Image.ImageF32x4_RGBA;
+import Video.VideoFrame;
 
 namespace Artifact {
 
@@ -84,6 +88,51 @@ UploadImageData makeUploadImageData(const ArtifactCore::ImageF32x4_RGBA& image)
     }
 
     return upload;
+}
+
+Diligent::TEXTURE_FORMAT textureFormatFromVulkanNativeFormat(std::uint32_t nativeFormat)
+{
+    switch (static_cast<VkFormat>(nativeFormat)) {
+    case VK_FORMAT_R8G8B8A8_UNORM:
+        return Diligent::TEX_FORMAT_RGBA8_UNORM;
+    case VK_FORMAT_R8G8B8A8_SRGB:
+        return Diligent::TEX_FORMAT_RGBA8_UNORM_SRGB;
+    case VK_FORMAT_B8G8R8A8_UNORM:
+        return Diligent::TEX_FORMAT_BGRA8_UNORM;
+    case VK_FORMAT_B8G8R8A8_SRGB:
+        return Diligent::TEX_FORMAT_BGRA8_UNORM_SRGB;
+    case VK_FORMAT_R32G32B32A32_SFLOAT:
+        return Diligent::TEX_FORMAT_RGBA32_FLOAT;
+    default:
+        return Diligent::TEX_FORMAT_UNKNOWN;
+    }
+}
+
+Diligent::TEXTURE_FORMAT textureFormatFromGpuFrame(const ArtifactCore::GpuVideoFrame& frame,
+                                                   const ArtifactCore::VulkanVideoFrameHandle& handle)
+{
+    if (handle.nativeFormat != 0u) {
+        return textureFormatFromVulkanNativeFormat(handle.nativeFormat);
+    }
+
+    switch (frame.meta.pixelFormat) {
+    case ArtifactCore::VideoFramePixelFormat::RGBA8:
+        return Diligent::TEX_FORMAT_RGBA8_UNORM;
+    case ArtifactCore::VideoFramePixelFormat::BGRA8:
+        return Diligent::TEX_FORMAT_BGRA8_UNORM;
+    case ArtifactCore::VideoFramePixelFormat::RGBA32F:
+        return Diligent::TEX_FORMAT_RGBA32_FLOAT;
+    default:
+        return Diligent::TEX_FORMAT_UNKNOWN;
+    }
+}
+
+Diligent::RESOURCE_STATE resourceStateFromVulkanLayout(std::uint32_t layout)
+{
+    if (static_cast<VkImageLayout>(layout) == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        return Diligent::RESOURCE_STATE_SHADER_RESOURCE;
+    }
+    return Diligent::RESOURCE_STATE_UNKNOWN;
 }
 
 } // namespace
@@ -167,6 +216,105 @@ GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& own
                                         upload.stride,
                                         upload.bytes.data(),
                                         upload.bytes.size());
+}
+
+GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreate(const QString& ownerId,
+                                                             const QString& cacheKey,
+                                                             const ArtifactCore::GpuVideoFrame& frame)
+{
+    if (ownerId.isEmpty() || cacheKey.isEmpty() || !frame.isValid() ||
+        frame.storage != ArtifactCore::VideoFrameStorageKind::VulkanImage) {
+        QMutexLocker locker(&mutex_);
+        ++missCount_;
+        return {};
+    }
+
+    const auto* handle = std::get_if<ArtifactCore::VulkanVideoFrameHandle>(&frame.handle);
+    if (!handle || !handle->image || handle->planeCount != 1u) {
+        QMutexLocker locker(&mutex_);
+        ++missCount_;
+        return {};
+    }
+
+    const auto format = textureFormatFromGpuFrame(frame, *handle);
+    if (format == TEX_FORMAT_UNKNOWN) {
+        QMutexLocker locker(&mutex_);
+        ++missCount_;
+        return {};
+    }
+
+    QMutexLocker locker(&mutex_);
+    if (!device_) {
+        ++missCount_;
+        return {};
+    }
+
+    RefCntAutoPtr<IRenderDeviceVk> deviceVk{device_, IID_RenderDeviceVk};
+    if (!deviceVk) {
+        ++missCount_;
+        return {};
+    }
+
+    const QString key = makeKey(ownerId, cacheKey);
+    const auto existingIdIt = keyToId_.find(key);
+    if (existingIdIt != keyToId_.end()) {
+        auto entryIt = entries_.find(existingIdIt.value());
+        if (entryIt != entries_.end() && entryIt->generation == generation_ && entryIt->texture) {
+            entryIt->lastUsedTick = usageTick_++;
+            ++hitCount_;
+            return {entryIt->id, entryIt->generation};
+        }
+        if (entryIt != entries_.end()) {
+            eraseEntryByIdLocked(entryIt->id);
+        } else {
+            keyToId_.erase(existingIdIt);
+        }
+    }
+
+    TextureDesc texDesc;
+    texDesc.Name = "GPUTextureCacheManager.VulkanVideoFrame";
+    texDesc.Type = RESOURCE_DIM_TEX_2D;
+    texDesc.Width = static_cast<Uint32>(frame.meta.width);
+    texDesc.Height = static_cast<Uint32>(frame.meta.height);
+    texDesc.MipLevels = 1;
+    texDesc.Format = format;
+    texDesc.Usage = USAGE_DEFAULT;
+    texDesc.BindFlags = BIND_SHADER_RESOURCE;
+    texDesc.CPUAccessFlags = CPU_ACCESS_NONE;
+
+    RefCntAutoPtr<ITexture> texture;
+    deviceVk->CreateTextureFromVulkanImage(reinterpret_cast<VkImage>(handle->image),
+                                           texDesc,
+                                           resourceStateFromVulkanLayout(handle->imageLayout),
+                                           &texture);
+    if (!texture) {
+        qWarning() << "[GPUTextureCache] CreateTextureFromVulkanImage failed"
+                   << "owner=" << ownerId
+                   << "cacheKey=" << cacheKey
+                   << "size=" << frame.meta.width << "x" << frame.meta.height
+                   << "format=" << static_cast<int>(frame.meta.pixelFormat);
+        ++missCount_;
+        return {};
+    }
+
+    Entry entry;
+    entry.id = nextId_++;
+    entry.generation = generation_;
+    entry.ownerId = ownerId;
+    entry.cacheKey = cacheKey;
+    entry.texture = texture;
+    entry.srv = texture->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    entry.sourceGpuFrame = frame;
+    entry.memoryBytes = 0;
+    entry.lastUsedTick = usageTick_++;
+
+    entries_.insert(entry.id, entry);
+    keyToId_.insert(key, entry.id);
+    ownerToIds_[ownerId].insert(entry.id);
+    ++missCount_;
+
+    pruneLocked();
+    return {entry.id, entry.generation};
 }
 
 GPUTextureCacheHandle GPUTextureCacheManager::acquireOrCreateFromRgbaBytes(const QString& ownerId,

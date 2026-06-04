@@ -1122,6 +1122,8 @@ double ArtifactAbstractLayer::getSourceFrameAtCompFrame(int64_t compFrame) const
 
 bool ArtifactAbstractLayer::isNullLayer() const { return false; }
 
+bool ArtifactAbstractLayer::isConstructionLayer() const { return false; }
+
 bool ArtifactAbstractLayer::isCloneLayer() const { return false; }
 
 bool ArtifactAbstractLayer::hasAudio() const { return false; }

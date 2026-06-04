@@ -136,6 +136,7 @@ public:
 
     QAction* createSolidAction = nullptr;
     QAction* createNullAction = nullptr;
+    QAction* createConstructionAction = nullptr;
     QAction* createAdjustAction = nullptr;
     QAction* createTextAction = nullptr;
     QAction* createParticleAction = nullptr;
@@ -183,6 +184,7 @@ public:
 
     void handleCreateSolid();
     void handleCreateNull();
+    void handleCreateConstruction();
     void handleCreateAdjust();
     void handleCreateText();
     void handleCreateParticle();
@@ -239,6 +241,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createNullAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_Y));
     createNullAction->setIcon(QIcon(resolveIconPath("Studio/aspect_ratio.svg")));
 
+    createConstructionAction = new QAction("Construction Layer", createMenu);
+    createConstructionAction->setIcon(QIcon(resolveIconPath("Studio/grid_on.svg")));
+    createConstructionAction->setToolTip(QStringLiteral("Create a renderless construction layer"));
+
     createAdjustAction = new QAction("調整レイヤー(&A)", createMenu);
     createAdjustAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Y));
     createAdjustAction->setIcon(QIcon(resolveIconPath("Studio/blur_on.svg")));
@@ -288,6 +294,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     createMenu->addAction(createSolidAction);
     createMenu->addAction(createNullAction);
+    createMenu->addAction(createConstructionAction);
     createMenu->addAction(createAdjustAction);
     createMenu->addAction(createTextAction);
     createMenu->addAction(createParticleAction);
@@ -317,8 +324,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     toggleSoloAction->setIcon(QIcon(resolveIconPath("Studio/headset.svg")));
     toggleShyAction = new QAction("シャイを切替", switchMenu);
     toggleShyAction->setIcon(QIcon(resolveIconPath("Studio/shy.svg")));
-    soloOnlyAction = new QAction("選択レイヤーのみソロ", switchMenu);
+    soloOnlyAction = new QAction("Smart Solo", switchMenu);
     soloOnlyAction->setIcon(QIcon(resolveIconPath("Studio/solo_only.svg")));
+    soloOnlyAction->setToolTip(QStringLiteral("選択レイヤーと必要な Parent / Matte をまとめてソロ表示します"));
     switchMenu->addAction(toggleVisibleAction);
     switchMenu->addAction(toggleLockAction);
     switchMenu->addAction(toggleSoloAction);
@@ -407,6 +415,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         }
         if (action == createSolidAction) { handleCreateSolid(); return; }
         if (action == createNullAction) { handleCreateNull(); return; }
+        if (action == createConstructionAction) { handleCreateConstruction(); return; }
         if (action == createAdjustAction) { handleCreateAdjust(); return; }
         if (action == createTextAction) { handleCreateText(); return; }
         if (action == createParticleAction) { handleCreateParticle(); return; }
@@ -542,6 +551,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     // Creation actions can auto-create first composition when a project exists.
     createSolidAction->setEnabled(hasProject);
     createNullAction->setEnabled(hasProject);
+    createConstructionAction->setEnabled(hasProject);
     createAdjustAction->setEnabled(hasProject);
     createTextAction->setEnabled(hasProject);
     createParticleAction->setEnabled(hasProject);
@@ -731,6 +741,19 @@ void ArtifactLayerMenu::Impl::handleCreateNull()
     service->addLayerToCurrentComposition(params);
     if (menu_) {
         Q_EMIT menu_->nullLayerCreated();
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleCreateConstruction()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+
+    ArtifactLayerInitParams params(uniqueLayerName(u8"Construction Layer 1"), LayerType::Construction);
+    if (auto* service = ArtifactProjectService::instance()) {
+        service->addLayerToCurrentComposition(params);
     }
 }
 
@@ -976,7 +999,7 @@ void ArtifactLayerMenu::Impl::handleSoloOnlySelected()
 {
     auto* service = ArtifactProjectService::instance();
     if (!service || selectedLayerId_.isNil()) return;
-    service->soloOnlyLayerInCurrentComposition(selectedLayerId_);
+    service->smartSoloOnlyLayerInCurrentComposition(selectedLayerId_);
 }
 
 void ArtifactLayerMenu::Impl::handleSetProxyQuality(ProxyQuality quality)
@@ -1454,6 +1477,7 @@ ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)
 {
     impl_->mainWindow_ = mainWindow ? mainWindow->window() : nullptr;
     setTitle("レイヤー(&L)");
+    setIcon(QIcon(resolveIconPath("Studio/layers.svg")));
 }
 
 ArtifactLayerMenu::~ArtifactLayerMenu()

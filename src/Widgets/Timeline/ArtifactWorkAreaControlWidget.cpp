@@ -168,20 +168,24 @@ void WorkAreaControl::setEnd(float e) {
 
   const float safeLastFrame = std::max(1.0f, totalFrames - 1.0f);
   const float clampedFrame = std::clamp(currentFrame, 0.0f, safeLastFrame);
-  int playheadX = 0;
+  double playheadX = 0.0;
   if (impl_->rulerPixelsPerFrame > 0.001) {
-    playheadX = static_cast<int>(std::round(
-        static_cast<double>(clampedFrame) * impl_->rulerPixelsPerFrame -
-        impl_->rulerHorizontalOffset));
+    playheadX = static_cast<double>(clampedFrame) *
+                    impl_->rulerPixelsPerFrame -
+                impl_->rulerHorizontalOffset;
   } else {
-    const float playheadNorm =
-        std::clamp(clampedFrame / safeLastFrame, 0.0f, 1.0f);
-    playheadX = handleHalfW + static_cast<int>(playheadNorm * usableWidth);
+   const float playheadNorm =
+       std::clamp(clampedFrame / safeLastFrame, 0.0f, 1.0f);
+    playheadX = static_cast<double>(handleHalfW) +
+                static_cast<double>(playheadNorm) * usableWidth;
   }
-  playheadX = std::clamp(playheadX, 0, std::max(0, width() - 1));
-  TimelinePlayheadDraw::drawPlayhead(
-      p, static_cast<qreal>(playheadX), 0.0,
-      static_cast<qreal>(height()) - 1.0, false);
+  playheadX = std::clamp(playheadX, 0.0, static_cast<double>(std::max(0, width() - 1)));
+  const auto drawPlayheadProperty = property("timelineDrawPlayhead");
+  if (!drawPlayheadProperty.isValid() || drawPlayheadProperty.toBool()) {
+    TimelinePlayheadDraw::drawPlayhead(
+        p, static_cast<qreal>(playheadX), 0.0,
+        static_cast<qreal>(height()) - 1.0, false);
+  }
 }
 
  void WorkAreaControl::mouseMoveEvent(QMouseEvent* ev)

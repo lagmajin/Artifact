@@ -112,7 +112,8 @@ enum class LayerType {
   Particle = 15,   // パーティクルレイヤー
   Clone = 16,      // クローンレイヤー (MoGraph)
   SDF = 17,        // SDFレイマーチングレイヤー
-  Model3D = 18     // 3Dモデルレイヤー
+  Model3D = 18,    // 3Dモデルレイヤー
+  Construction = 19 // 作業用の非レンダー設計レイヤー
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -253,6 +254,7 @@ public:
 
   virtual bool isAdjustmentLayer() const;
   void setAdjustmentLayer(bool isAdjustment);
+  virtual bool isConstructionLayer() const;
 
   bool is3D() const;
 

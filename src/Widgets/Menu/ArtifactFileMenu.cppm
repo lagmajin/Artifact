@@ -757,6 +757,7 @@ ArtifactFileMenu::ArtifactFileMenu(QWidget* parent)
     : QMenu(parent), Impl_(new Impl(this))
 {
     setTitle("ファイル(&F)");
+    setIcon(QIcon(resolveIconPath("Studio/file_open.svg")));
     connect(this, &QMenu::aboutToShow, this, &ArtifactFileMenu::rebuildMenu);
 }
 

@@ -7,8 +7,10 @@
 
 #include <wobjectdefs.h>
 #include <QObject>
+#include <QStringList>
 #include <QPointer>
 #include <QJsonObject>
+#include <QJsonArray>
 
 export module Artifact.Project;
 
@@ -88,6 +90,7 @@ export namespace Artifact {
 
   void addAssetFile();
   void addAssetFromPath(const QString& filepath);
+  void addAssetFromPath(const QString& filepath, const QStringList& sequencePaths, double frameRate);
   QVector<ProjectItem*> projectItems() const;
   bool isNull() const;
   bool hasComposition(const CompositionID& id) const;
@@ -100,10 +103,11 @@ export namespace Artifact {
   bool moveItem(ProjectItem* item, ProjectItem* newParent);
   bool removeItem(ProjectItem* item);
   void setDirty(bool dirty);
-   bool validateProjectTree(QString* errorMessage = nullptr) const;
+  bool validateProjectTree(QString* errorMessage = nullptr) const;
    std::vector<ProjectValidationIssue> validate() const;
 bool isDirty() const;
    QJsonObject toJson() const;
+   bool addProjectItemsFromJson(const QJsonArray& items, ProjectItem* parent = nullptr);
    void restoreProjectItems(const QJsonArray& items);
    void removeAllAssets();
     

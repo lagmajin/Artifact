@@ -3,6 +3,7 @@
 #include <QProxyStyle>
 #include <QPainter>
 #include <QPalette>
+#include <QSize>
 #include <QStyleOption>
 #include <QWidget>
 
@@ -19,6 +20,9 @@ public:
   void polish(QPalette& palette) override;
   int pixelMetric(PixelMetric metric, const QStyleOption* option = nullptr,
                   const QWidget* widget = nullptr) const override;
+  QSize sizeFromContents(ContentsType type, const QStyleOption* option,
+                         const QSize& contentsSize,
+                         const QWidget* widget = nullptr) const override;
   void drawControl(ControlElement element, const QStyleOption* option,
                    QPainter* painter, const QWidget* widget = nullptr) const override;
   void drawPrimitive(PrimitiveElement element, const QStyleOption* option,

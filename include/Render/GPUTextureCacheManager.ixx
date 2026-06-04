@@ -17,6 +17,7 @@
 export module Artifact.Render.GPUTextureCacheManager;
 
 import Image.ImageF32x4_RGBA;
+import Video.VideoFrame;
 
 export namespace Artifact {
 
@@ -69,6 +70,9 @@ public:
     GPUTextureCacheHandle acquireOrCreate(const QString& ownerId,
                                           const QString& cacheKey,
                                           const ArtifactCore::ImageF32x4_RGBA& image);
+    GPUTextureCacheHandle acquireOrCreate(const QString& ownerId,
+                                          const QString& cacheKey,
+                                          const ArtifactCore::GpuVideoFrame& frame);
 
     Diligent::ITextureView* textureView(const GPUTextureCacheHandle& handle) const;
     GPUTextureBindingRecord bindingRecord(const GPUTextureCacheHandle& handle) const;
@@ -87,6 +91,7 @@ private:
         QString cacheKey;
         Diligent::RefCntAutoPtr<Diligent::ITexture> texture;
         Diligent::RefCntAutoPtr<Diligent::ITextureView> srv;
+        ArtifactCore::GpuVideoFrame sourceGpuFrame;
         size_t memoryBytes = 0;
         quint64 lastUsedTick = 0;
     };

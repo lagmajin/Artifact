@@ -405,6 +405,7 @@ ArtifactScriptMenu::ArtifactScriptMenu(QWidget* parent)
 {
  setObjectName(QStringLiteral("ScriptMenu"));
  setTitle(tr("Script(&S)"));
+ setIcon(QIcon(resolveIconPath("Studio/code.svg")));
  setTearOffEnabled(true);
 }
 

@@ -28,6 +28,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
+import Video.VideoFrame;
 import Artifact.Layer.Text;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
@@ -514,6 +515,10 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     return;
   }
 
+  if (layer->isConstructionLayer()) {
+    return;
+  }
+
   const QRectF localRect = layer->localBounds();
   if (!localRect.isValid() || localRect.width() <= 0.0 ||
       localRect.height() <= 0.0) {
@@ -749,27 +754,73 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       return;
     }
 
+    ArtifactCore::ImageF32x4_RGBA frameBuffer;
     QImage frame;
     bool usedSyncFallback = false;
     bool usedBufferFallback = false;
     QString reason;
+    if (!hasRasterizer && gpuTextureCacheManager && !offlineRender) {
+      const int64_t targetFrame =
+          cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame();
+      const ArtifactCore::GpuVideoFrame gpuFrame =
+          videoLayer->decodeFrameToGpuFrame(targetFrame);
+      if (gpuFrame.isValid()) {
+        const QString gpuCacheSignature =
+            QStringLiteral("video-gpu:%1").arg(targetFrame);
+        const auto handle = gpuTextureCacheManager->acquireOrCreate(
+            layer->id().toString(), gpuCacheSignature, gpuFrame);
+        const auto binding = gpuTextureCacheManager->bindingRecord(handle);
+        if (binding.isValid()) {
+          const float baseOpacity =
+              (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+          if (videoDebugOut) {
+            const QSize source = QSize(std::max(0, layer->sourceSize().width),
+                                       std::max(0, layer->sourceSize().height));
+            *videoDebugOut = QString("[Video] branch=gpu-frame loaded=%1 "
+                                     "size=%2x%3 hasBuffer=%4 rasterizer=%5 "
+                                     "active=%6 range=[%7,%8] curFrame=%9")
+                                 .arg(loaded)
+                                 .arg(source.width())
+                                 .arg(source.height())
+                                 .arg(hasBuffer)
+                                 .arg(hasRasterizer)
+                                 .arg(active)
+                                 .arg(ip.framePosition())
+                                 .arg(op.framePosition())
+                                 .arg(layer->currentFrame());
+          }
+          drawWithClonerEffect(layer, globalTransform4x4,
+            [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+              renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                                   static_cast<float>(localRect.y()),
+                                   static_cast<float>(localRect.width()),
+                                   static_cast<float>(localRect.height()),
+                                   instanceTransform,
+                                   binding.srv,
+                                   baseOpacity * instanceWeight);
+          });
+          return;
+        }
+      }
+    }
     if (loaded) {
-      frame = downsampleForLOD(offlineRender
-          ? videoLayer->decodeFrameToQImage(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
-          : videoLayer->currentFrameToQImage(), lod);
+      frameBuffer = offlineRender
+          ? videoLayer->decodeFrameToImageBuffer(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
+          : videoLayer->currentFrameImageBuffer();
     } else {
       reason = QStringLiteral("notLoaded");
     }
-    if (frame.isNull() && hasBuffer) {
-      frame = downsampleForLOD(videoLayer->currentFrameBuffer().toQImage(), lod);
-      usedBufferFallback = !frame.isNull();
+    if (frameBuffer.isEmpty() && hasBuffer) {
+      frameBuffer = videoLayer->currentFrameBuffer();
+      usedBufferFallback = !frameBuffer.isEmpty();
     }
-    if (frame.isNull() && loaded) {
-      frame = downsampleForLOD(
-          videoLayer->decodeFrameToQImage(
-              cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame()),
-          lod);
-      usedSyncFallback = !frame.isNull();
+    if (frameBuffer.isEmpty() && loaded) {
+      frameBuffer = videoLayer->decodeFrameToImageBuffer(
+          cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame());
+      usedSyncFallback = !frameBuffer.isEmpty();
+    }
+    if (!frameBuffer.isEmpty()) {
+      frame = downsampleForLOD(frameBuffer.toQImage(), lod);
     }
     if (videoDebugOut) {
       if (reason.isEmpty()) {
@@ -779,7 +830,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           reason = QStringLiteral("syncDecode");
         } else if (usedBufferFallback) {
           reason = QStringLiteral("bufferFallback");
-        } else if (frame.isNull()) {
+        } else if (frameBuffer.isEmpty()) {
           reason = hasBuffer ? QStringLiteral("decodeNull")
                              : QStringLiteral("noBuffer");
         } else {

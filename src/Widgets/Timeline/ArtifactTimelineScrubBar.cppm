@@ -111,12 +111,12 @@ namespace Artifact
 
   // When the ruler overlay is active, use zoom-based coordinates so that
   // the handle position and mouse-seek both align with the ruler tick marks.
-  int resolveFrameToX(int frame, int width) const
+  int resolveFrameToX(double frame, int width) const
   {
    if (rulerPixelsPerFrame_ > 0.001) {
     return static_cast<int>(std::round(frame * rulerPixelsPerFrame_ - rulerHorizontalOffset_));
    }
-   return frameToX(frame, width);
+   return frameToX(static_cast<int>(std::lround(frame)), width);
   }
 
   int resolveXToFrame(int x, int width) const
@@ -340,8 +340,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
       impl_->visualFrame_ >= 0.0
           ? impl_->visualFrame_
           : static_cast<double>(impl_->currentFrame_.framePosition());
-  const int currentX = impl_->resolveFrameToX(
-      std::max(0, static_cast<int>(std::lround(visualFrame))), w);
+  const int currentX = impl_->resolveFrameToX(std::max(0.0, visualFrame), w);
   const int railHalfH = std::max(3, h / 7);
   const int railBottomInset = std::max(3, h / 10);
   const int centerY = h - railBottomInset - railHalfH;
@@ -491,7 +490,9 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
 
   // ── 再生ヘッド描画 ──────────────────────
   const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());
-  if (railRect.width() > 0) {
+  const auto drawPlayheadProperty = property("timelineDrawPlayhead");
+  if (railRect.width() > 0 &&
+      (!drawPlayheadProperty.isValid() || drawPlayheadProperty.toBool())) {
    TimelinePlayheadDraw::drawPlayhead(
        p, static_cast<qreal>(clampedX), 0.0, static_cast<qreal>(h) - 1.0, false);
   }

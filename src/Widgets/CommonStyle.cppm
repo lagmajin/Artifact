@@ -27,6 +27,7 @@ module;
 #include <QStyleFactory>
 #include <QBitmap>
 #include <QEvent>
+#include <QFontMetrics>
 #include <cmath>
 #ifdef _WIN32
 #include <qt_windows.h>
@@ -295,6 +296,26 @@ int ArtifactCommonStyle::pixelMetric(PixelMetric metric, const QStyleOption* opt
   return QProxyStyle::pixelMetric(metric, option, widget);
 }
 
+QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
+                                            const QStyleOption* option,
+                                            const QSize& contentsSize,
+                                            const QWidget* widget) const
+{
+  if (type == CT_MenuBarItem) {
+    if (const auto* menuItem = qstyleoption_cast<const QStyleOptionMenuItem*>(option)) {
+      const QFontMetrics& fm = menuItem->fontMetrics;
+      const int textWidth = fm.horizontalAdvance(menuItem->text);
+      const int textHeight = fm.height();
+      const int iconWidth = menuItem->icon.isNull() ? 0 : 18;
+      const int spacing = menuItem->icon.isNull() ? 0 : 6;
+      return QSize(std::max(contentsSize.width(), textWidth + iconWidth + spacing + 24),
+                   std::max(contentsSize.height(), textHeight + 10));
+    }
+  }
+
+  return QProxyStyle::sizeFromContents(type, option, contentsSize, widget);
+}
+
 void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption* option,
                                       QPainter* painter, const QWidget* widget) const
 {
@@ -359,9 +380,24 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
         painter->drawRoundedRect(itemRect, 4.0, 4.0);
       }
 
+      const QFontMetrics& fm = menuItem->fontMetrics;
+      const int textWidth = fm.horizontalAdvance(menuItem->text);
+      const bool hasIcon = !menuItem->icon.isNull();
+      const int iconSize = hasIcon ? std::min(16, std::max(12, itemRect.height() - 6)) : 0;
+      const int spacing = hasIcon ? 6 : 0;
+      const int contentWidth = textWidth + iconSize + spacing;
+      int x = itemRect.left() + std::max(0, (itemRect.width() - contentWidth) / 2);
+
+      if (hasIcon) {
+        const QRect iconRect(x, itemRect.center().y() - iconSize / 2, iconSize, iconSize);
+        const QIcon::Mode mode = enabled ? QIcon::Normal : QIcon::Disabled;
+        menuItem->icon.paint(painter, iconRect, Qt::AlignCenter, mode);
+        x += iconSize + spacing;
+      }
+
       painter->setPen(enabled ? menuText : disabledText);
-      painter->drawText(itemRect, Qt::AlignCenter | Qt::TextShowMnemonic,
-                        menuItem->text);
+      painter->drawText(QRect(x, itemRect.top(), textWidth, itemRect.height()),
+                        Qt::AlignVCenter | Qt::TextShowMnemonic, menuItem->text);
       painter->restore();
       return;
     }

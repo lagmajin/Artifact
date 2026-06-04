@@ -1322,6 +1322,7 @@ void ArtifactPlaybackService::pause() {
 
 void ArtifactPlaybackService::stop() {
   impl_->stopAudioClock();
+  impl_->cancelRamPreviewBuild(QStringLiteral("playback-stopped"));
   if (impl_->engine_) {
     impl_->engine_->stop();
   }

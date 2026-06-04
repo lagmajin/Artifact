@@ -18,6 +18,7 @@ enum class ArtifactTimelineAction {
   SelectAllKeyframes,
   AddKeyframeAtPlayhead,
   RemoveKeyframeAtPlayhead,
+  CleanKeyframes,
   JumpToFirstKeyframe,
   JumpToLastKeyframe,
   JumpToNextKeyframe,
@@ -38,6 +39,8 @@ inline ArtifactCore::ShortcutId timelineShortcutIdForAction(ArtifactTimelineActi
     return ShortcutId::TimelineAddKeyframeAtPlayhead;
   case ArtifactTimelineAction::RemoveKeyframeAtPlayhead:
     return ShortcutId::TimelineRemoveKeyframeAtPlayhead;
+  case ArtifactTimelineAction::CleanKeyframes:
+    return ShortcutId::TimelineCleanKeyframes;
   case ArtifactTimelineAction::JumpToFirstKeyframe:
     return ShortcutId::TimelineJumpToFirstKeyframe;
   case ArtifactTimelineAction::JumpToLastKeyframe:
@@ -60,6 +63,7 @@ inline QVector<ArtifactTimelineAction> allTimelineActions()
       ArtifactTimelineAction::SelectAllKeyframes,
       ArtifactTimelineAction::AddKeyframeAtPlayhead,
       ArtifactTimelineAction::RemoveKeyframeAtPlayhead,
+      ArtifactTimelineAction::CleanKeyframes,
       ArtifactTimelineAction::JumpToFirstKeyframe,
       ArtifactTimelineAction::JumpToLastKeyframe,
       ArtifactTimelineAction::JumpToNextKeyframe,
@@ -80,6 +84,8 @@ inline QString timelineActionLabel(ArtifactTimelineAction action)
     return QStringLiteral("Add Keyframe at Playhead");
   case ArtifactTimelineAction::RemoveKeyframeAtPlayhead:
     return QStringLiteral("Remove Keyframe at Playhead");
+  case ArtifactTimelineAction::CleanKeyframes:
+    return QStringLiteral("Clean Keyframes");
   case ArtifactTimelineAction::JumpToFirstKeyframe:
     return QStringLiteral("Jump to First Keyframe");
   case ArtifactTimelineAction::JumpToLastKeyframe:

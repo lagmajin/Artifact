@@ -20,6 +20,8 @@ module;
 #include <QRectF>
 #include <QSizeF>
 #include <opencv2/opencv.hpp>
+#include <RenderDeviceVk.h>
+#include <CommandQueueVk.h>
 #include <mutex>
 #include <unordered_map>
 #include <deque>
@@ -149,8 +151,37 @@ ArtifactCore::ImageF32x4_RGBA toFrameBuffer(const QImage& frame)
 
 QImage cpuVideoFrameToQImage(const ArtifactCore::CpuVideoFrame& frame)
 {
-    if (!frame.isValid() || frame.meta.width <= 0 || frame.meta.height <= 0) {
+    if (!frame.isValid() || frame.meta.width <= 0 || frame.meta.height <= 0 ||
+        frame.strideBytes <= 0) {
         return QImage();
+    }
+
+    const size_t requiredBytes =
+        static_cast<size_t>(frame.strideBytes) *
+        static_cast<size_t>(frame.meta.height);
+    if (frame.bytes.size() < requiredBytes) {
+        qWarning() << "[VideoLayer] cpuVideoFrameToQImage rejected undersized buffer"
+                   << "pixelFormat=" << static_cast<int>(frame.meta.pixelFormat)
+                   << "width=" << frame.meta.width
+                   << "height=" << frame.meta.height
+                   << "strideBytes=" << frame.strideBytes
+                   << "bytes=" << frame.bytes.size()
+                   << "requiredBytes=" << requiredBytes;
+        return QImage();
+    }
+
+    if (frame.meta.pixelFormat == ArtifactCore::VideoFramePixelFormat::RGBA32F) {
+        cv::Mat wrapped(frame.meta.height, frame.meta.width, CV_32FC4,
+                        const_cast<std::uint8_t*>(frame.bytes.data()),
+                        frame.strideBytes);
+        return ArtifactCore::CvUtils::cvMatToQImage(wrapped);
+    }
+
+    if (frame.meta.pixelFormat == ArtifactCore::VideoFramePixelFormat::BGRA8) {
+        cv::Mat wrapped(frame.meta.height, frame.meta.width, CV_8UC4,
+                        const_cast<std::uint8_t*>(frame.bytes.data()),
+                        frame.strideBytes);
+        return ArtifactCore::CvUtils::cvMatToQImage(wrapped);
     }
 
     const QImage::Format format =
@@ -231,6 +262,22 @@ ArtifactCore::ImageF32x4_RGBA decodedVideoFrameToImageF32x4_RGBA(const ArtifactC
         return cpuVideoFrameToImageF32x4_RGBA(*cpu);
     }
     return ArtifactCore::ImageF32x4_RGBA();
+}
+
+ArtifactCore::GpuVideoFrame decodedVideoFrameToGpuFrame(const ArtifactCore::DecodedVideoFrame& decoded)
+{
+    if (const auto* gpu = std::get_if<ArtifactCore::GpuVideoFrame>(&decoded)) {
+        return *gpu;
+    }
+    return {};
+}
+
+bool decodedVideoFrameHasGpuPayload(const ArtifactCore::DecodedVideoFrame& decoded)
+{
+    if (const auto* gpu = std::get_if<ArtifactCore::GpuVideoFrame>(&decoded)) {
+        return gpu->isValid();
+    }
+    return false;
 }
 
 QRect sourceCropToRect(const Artifact::SourceCrop& crop, const QSize& sourceSize)
@@ -409,6 +456,7 @@ public:
     int64_t lastSyncFallbackSourceFrame_ = -1;
     bool lastSyncFallbackSucceeded_ = false;
     QString lastDecodeState_ = QStringLiteral("idle");
+    bool vulkanDeviceConfigured_ = false;
 
     Impl() : playbackController_(std::make_shared<ArtifactCore::MediaPlaybackController>()), frameCache_(30) {}
     ~Impl() {
@@ -490,6 +538,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     impl_->lastSyncFallbackSourceFrame_ = -1;
     impl_->lastSyncFallbackSucceeded_ = false;
     impl_->lastDecodeState_ = QStringLiteral("opening");
+    impl_->vulkanDeviceConfigured_ = false;
     impl_->decodeTargetFrame_ = -1;
     impl_->decoding_ = false;
     impl_->decodeRetryPending_ = false;
@@ -895,8 +944,10 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     const QString backendName = decoderBackendName(ctrl);
     impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, timelineFrame, sourceFrame, backendName, this]() -> ArtifactCore::ImageF32x4_RGBA {
         ArtifactCore::ScopedThreadName threadName(QStringLiteral("VideoLayer/decode"));
-        const ArtifactCore::ImageF32x4_RGBA decoded = decodedVideoFrameToImageF32x4_RGBA(
-            ctrl->getVideoFrameAtFrameDirectRaw(sourceFrame));
+        const ArtifactCore::DecodedVideoFrame rawDecoded =
+            ctrl->getVideoFrameAtFrameDirectRaw(sourceFrame);
+        const ArtifactCore::ImageF32x4_RGBA decoded =
+            decodedVideoFrameToImageF32x4_RGBA(rawDecoded);
         if (!decoded.isEmpty()) {
             impl_->frameCache_.put(sourceFrame, decoded);
             impl_->currentFrameBuffer_ = decoded;
@@ -908,6 +959,8 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                                    << "source=" << sourceFrame
                                    << "size=" << decoded.width() << "x" << decoded.height()
                                    << threadIdTag();
+        } else if (decodedVideoFrameHasGpuPayload(rawDecoded)) {
+            impl_->lastDecodeState_ = QStringLiteral("gpu-ready");
         } else {
             impl_->lastDecodeState_ = QStringLiteral("decode-failed");
             qWarning() << "[VideoLayer] DECODE FAILED"
@@ -940,9 +993,15 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 
 QImage ArtifactVideoLayer::currentFrameToQImage() const
 {
+    const ArtifactCore::ImageF32x4_RGBA frame = currentFrameImageBuffer();
+    return frame.isEmpty() ? QImage() : frame.toQImage();
+}
+
+ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::currentFrameImageBuffer() const
+{
     if (impl_->opening_.load()) {
         impl_->lastDecodeState_ = QStringLiteral("opening");
-        return impl_->currentFrameBuffer_.isEmpty() ? QImage() : impl_->currentFrameBuffer_.toQImage();
+        return impl_->currentFrameBuffer_;
     }
 
     const int64_t sourceFrame = currentSourceFrame(this);
@@ -970,14 +1029,16 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
                 }
             }
         } else {
-            qWarning() << "[VideoLayer] async decode null frame"
-                       << "timeline=" << sourceFrameToTimelineFrame(this, impl_->decodeTargetFrame_)
-                       << "source=" << impl_->decodeTargetFrame_
-                       << "backend=" << decoderBackendName(impl_->playbackController_.get())
-                       << "backendLastError=" << impl_->playbackController_->getLastError()
-                       << "controller=" << impl_->playbackController_->getDebugState()
-                       << threadDiagnosticsTag();
-            impl_->lastDecodeState_ = QStringLiteral("sync-fallback-miss");
+            if (impl_->lastDecodeState_ != QStringLiteral("gpu-ready")) {
+                qWarning() << "[VideoLayer] async decode null frame"
+                           << "timeline=" << sourceFrameToTimelineFrame(this, impl_->decodeTargetFrame_)
+                           << "source=" << impl_->decodeTargetFrame_
+                           << "backend=" << decoderBackendName(impl_->playbackController_.get())
+                           << "backendLastError=" << impl_->playbackController_->getLastError()
+                           << "controller=" << impl_->playbackController_->getDebugState()
+                           << threadDiagnosticsTag();
+                impl_->lastDecodeState_ = QStringLiteral("sync-fallback-miss");
+            }
         }
         impl_->decodeTargetFrame_ = -1;
     }
@@ -988,27 +1049,33 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
         const_cast<ArtifactVideoLayer*>(this)->decodeCurrentFrame();
     }
 
-    return impl_->currentFrameBuffer_.isEmpty() ? QImage() : impl_->currentFrameBuffer_.toQImage();
+    return impl_->currentFrameBuffer_;
 }
 
 QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
 {
+    const ArtifactCore::ImageF32x4_RGBA frame = decodeFrameToImageBuffer(frameNumber);
+    return frame.isEmpty() ? QImage() : frame.toQImage();
+}
+
+ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64_t frameNumber) const
+{
     if (!impl_->isLoaded_) {
         impl_->lastDecodeState_ = QStringLiteral("not-loaded");
-        return QImage();
+        return ArtifactCore::ImageF32x4_RGBA();
     }
     if (impl_->opening_.load()) {
         impl_->lastDecodeState_ = QStringLiteral("opening");
-        return QImage();
+        return ArtifactCore::ImageF32x4_RGBA();
     }
 
     if (!impl_->playbackController_ || !impl_->playbackController_->isMediaOpen()) {
-        return QImage();
+        return ArtifactCore::ImageF32x4_RGBA();
     }
     
     const int64_t sourceFrame = timelineFrameToSourceFrame(this, frameNumber);
     if (sourceFrame < 0 || (impl_->streamInfo_.frameCount > 0 && sourceFrame >= impl_->streamInfo_.frameCount)) {
-        return QImage();
+        return ArtifactCore::ImageF32x4_RGBA();
     }
 
     // キャッシュにあれば返す
@@ -1020,20 +1087,22 @@ QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
             impl_->hasCurrentFrameBuffer_ = true;
             impl_->lastDecodedFrame_ = sourceFrame;
         }
-        return frame.isEmpty() ? QImage() : frame.toQImage();
+        return frame;
     }
 
     if (sourceFrame == impl_->lastDecodedFrame_ && impl_->hasCurrentFrameBuffer_) {
         impl_->lastDecodeState_ = QStringLiteral("ready");
-        return impl_->currentFrameBuffer_.isEmpty() ? QImage() : impl_->currentFrameBuffer_.toQImage();
+        return impl_->currentFrameBuffer_;
     }
     if (impl_->decoding_.load()) {
         impl_->lastDecodeState_ = QStringLiteral("decode-pending");
-        return QImage();
+        return ArtifactCore::ImageF32x4_RGBA();
     }
 
-    const ArtifactCore::ImageF32x4_RGBA decoded = decodedVideoFrameToImageF32x4_RGBA(
-        impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame));
+    const ArtifactCore::DecodedVideoFrame rawDecoded =
+        impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame);
+    const ArtifactCore::ImageF32x4_RGBA decoded =
+        decodedVideoFrameToImageF32x4_RGBA(rawDecoded);
     if (!decoded.isEmpty()) {
         impl_->frameCache_.put(sourceFrame, decoded);
         if (sourceFrame == currentSourceFrame(this)) {
@@ -1042,17 +1111,38 @@ QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
             impl_->lastDecodedFrame_ = sourceFrame;
         }
         impl_->lastDecodeState_ = QStringLiteral("sync-fallback-ready");
-        return decoded.toQImage();
+        return decoded;
+    } else if (decodedVideoFrameHasGpuPayload(rawDecoded)) {
+        impl_->lastDecodeState_ = QStringLiteral("gpu-ready");
+        return ArtifactCore::ImageF32x4_RGBA();
     } else {
         impl_->lastDecodeState_ = QStringLiteral("sync-fallback-miss");
-        qWarning() << "[VideoLayer] decodeFrameToQImage failed"
+        qWarning() << "[VideoLayer] decodeFrameToImageBuffer failed"
                    << "source=" << sourceFrame
                    << "backend=" << decoderBackendName(impl_->playbackController_.get())
                    << "backendLastError=" << impl_->playbackController_->getLastError()
                    << "controller=" << impl_->playbackController_->getDebugState()
                    << threadDiagnosticsTag();
     }
-    return decoded.toQImage();
+    return decoded;
+}
+
+ArtifactCore::GpuVideoFrame ArtifactVideoLayer::decodeFrameToGpuFrame(int64_t frameNumber) const
+{
+    if (!impl_->isLoaded_ || impl_->opening_.load()) {
+        return {};
+    }
+    if (!impl_->playbackController_ || !impl_->playbackController_->isMediaOpen()) {
+        return {};
+    }
+
+    const int64_t sourceFrame = timelineFrameToSourceFrame(this, frameNumber);
+    if (sourceFrame < 0 || (impl_->streamInfo_.frameCount > 0 && sourceFrame >= impl_->streamInfo_.frameCount)) {
+        return {};
+    }
+
+    return decodedVideoFrameToGpuFrame(
+        impl_->playbackController_->getVideoFrameAtFrameDirectRaw(sourceFrame));
 }
 
 bool ArtifactVideoLayer::isFrameCached(int64_t frameNumber) const
@@ -1322,6 +1412,28 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_ || impl_->opening_.load()) return;
+    if (renderer && !impl_->vulkanDeviceConfigured_ && impl_->playbackController_) {
+        auto device = renderer->device();
+        auto context = renderer->immediateContext();
+        if (device && context && device->GetDeviceInfo().Type == Diligent::RENDER_DEVICE_TYPE_VULKAN) {
+            auto commandQueue = context->LockCommandQueue();
+            if (commandQueue) {
+                Diligent::RefCntAutoPtr<Diligent::ICommandQueueVk> queueVk{commandQueue, Diligent::IID_CommandQueueVk};
+                if (queueVk) {
+                    auto deviceVk = Diligent::RefCntAutoPtr<Diligent::IRenderDeviceVk>{device, Diligent::IID_RenderDeviceVk};
+                    if (deviceVk) {
+                        impl_->playbackController_->setVulkanDevice(
+                            deviceVk->GetVkInstance(),
+                            deviceVk->GetVkPhysicalDevice(),
+                            deviceVk->GetVkDevice(),
+                            queueVk->GetQueueFamilyIndex());
+                        impl_->vulkanDeviceConfigured_ = true;
+                    }
+                }
+                context->UnlockCommandQueue();
+            }
+        }
+    }
     const int64_t sourceFrame = currentSourceFrame(this);
     const int64_t timelineFrame = impl_->currentTimelineFrame_;
 

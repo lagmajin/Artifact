@@ -1,15 +1,19 @@
 module;
 #include <algorithm>
+#include <QApplication>
 #include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QFutureWatcher>
+#include <QInputDialog>
 #include <QImage>
 #include <QImageReader>
 #include <QList>
 #include <QPointer>
 #include <QRectF>
+#include <QSet>
 #include <QVector3D>
 #include <QtConcurrent>
 #include <QtSvg/QSvgRenderer>
@@ -37,6 +41,7 @@ import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import Artifact.Layer.Group;
 import Artifact.Project.Health;
+import Asset.Sequence;
 import Artifact.Diagnostics.AppValidationRules;
 import Core.Diagnostics.DiagnosticEngine;
 import Image.PSDDocument;
@@ -99,6 +104,135 @@ QString uniqueEffectIdForLayer(
     uniqueId = QStringLiteral("%1-%2").arg(baseId).arg(suffix++);
   }
   return uniqueId;
+}
+
+void collectSmartSoloLayerIds(const ArtifactCompositionPtr& comp,
+                              const ArtifactAbstractLayerPtr& layer,
+                              QSet<QString>& visited,
+                              QSet<QString>& included)
+{
+  if (!comp || !layer) {
+    return;
+  }
+
+  const LayerID layerId = layer->id();
+  if (layerId.isNil()) {
+    return;
+  }
+
+  const QString layerKey = layerId.toString();
+  if (visited.contains(layerKey)) {
+    return;
+  }
+  visited.insert(layerKey);
+  included.insert(layerKey);
+
+  const LayerID parentId = layer->parentLayerId();
+  if (!parentId.isNil()) {
+    auto parent = comp->layerById(parentId);
+    if (parent) {
+      collectSmartSoloLayerIds(comp, parent, visited, included);
+    }
+  }
+
+  for (const auto& matteRef : layer->matteReferences()) {
+    if (!matteRef.enabled || matteRef.sourceLayerId.isNil()) {
+      continue;
+    }
+    auto matteSource = comp->layerById(matteRef.sourceLayerId);
+    if (matteSource) {
+      collectSmartSoloLayerIds(comp, matteSource, visited, included);
+    }
+  }
+}
+
+QSet<QString> resolveSmartSoloLayerIds(const ArtifactCompositionPtr& comp,
+                                      const LayerID& layerId)
+{
+  QSet<QString> included;
+  if (!comp || layerId.isNil()) {
+    return included;
+  }
+
+  auto layer = comp->layerById(layerId);
+  if (!layer) {
+    return included;
+  }
+
+  QSet<QString> visited;
+  collectSmartSoloLayerIds(comp, layer, visited, included);
+  return included;
+}
+
+struct SequenceImportGroup {
+  QString representativePath;
+  QStringList sequencePaths;
+};
+
+bool isImageImportCandidate(const QString &path)
+{
+  ArtifactCore::FileTypeDetector detector;
+  return detector.detect(path) == ArtifactCore::FileType::Image;
+}
+
+QVector<SequenceImportGroup> detectSequenceImportGroups(
+    const QStringList &importedPaths,
+    QSet<QString> *consumedPaths = nullptr)
+{
+  QVector<SequenceImportGroup> groups;
+  QHash<QString, QStringList> imagePathsByDirectory;
+
+  for (const QString &path : importedPaths) {
+    if (path.isEmpty() || !isImageImportCandidate(path)) {
+      continue;
+    }
+    const QFileInfo info(path);
+    imagePathsByDirectory[info.absolutePath()].append(info.absoluteFilePath());
+  }
+
+  for (auto it = imagePathsByDirectory.begin(); it != imagePathsByDirectory.end(); ++it) {
+    const QStringList &paths = it.value();
+    if (paths.size() < 2) {
+      continue;
+    }
+
+    std::vector<std::string> filenames;
+    filenames.reserve(static_cast<size_t>(paths.size()));
+    QHash<QString, QString> pathByFileName;
+    for (const QString &path : paths) {
+      const QString fileName = QFileInfo(path).fileName();
+      filenames.push_back(fileName.toStdString());
+      pathByFileName.insert(fileName, path);
+    }
+
+    const auto detection = ArtifactCore::detectSequences(filenames, 2);
+    for (const auto &sequence : detection.sequences) {
+      QStringList sequencePaths;
+      sequencePaths.reserve(static_cast<int>(sequence.filenames.size()));
+      for (const std::string &filename : sequence.filenames) {
+        const QString key = QString::fromStdString(filename);
+        const auto pathIt = pathByFileName.constFind(key);
+        if (pathIt == pathByFileName.constEnd()) {
+          continue;
+        }
+        sequencePaths.append(pathIt.value());
+      }
+
+      if (sequencePaths.size() < 2) {
+        continue;
+      }
+
+      groups.push_back(SequenceImportGroup{sequencePaths.first(), sequencePaths});
+
+      if (consumedPaths) {
+        for (const QString &path : sequencePaths) {
+          consumedPaths->insert(path);
+        }
+      }
+    }
+  }
+
+  return groups;
 }
 
 QSize imageSizeForPath(const QString &path) {
@@ -590,15 +724,20 @@ void ArtifactProjectService::Impl::addAssetFromPath(const UniString &path) {
 
 QStringList ArtifactProjectService::Impl::importAssetsFromPaths(
     const QStringList &sourcePaths) {
-  QStringList importedPaths;
   if (sourcePaths.isEmpty()) {
-    return importedPaths;
+    return {};
   }
 
   auto &manager = ArtifactProjectService::Impl::projectManager();
+  auto project = manager.getCurrentProjectSharedPtr();
+  if (!project) {
+    return {};
+  }
   QString assetsRoot = manager.currentProjectAssetsPath();
+  QStringList validSources;
   QStringList toCopy;
-  QStringList alreadyInProject;
+  QStringList toCopySources;
+  QStringList alreadySources;
 
   for (const auto &src : sourcePaths) {
     if (src.isEmpty())
@@ -608,27 +747,86 @@ QStringList ArtifactProjectService::Impl::importAssetsFromPaths(
       continue;
 
     QString abs = info.absoluteFilePath();
+    validSources.append(abs);
     if (!assetsRoot.isEmpty() &&
         abs.startsWith(assetsRoot, Qt::CaseInsensitive)) {
-      alreadyInProject.append(abs);
+      alreadySources.append(abs);
     } else {
       toCopy.append(abs);
+      toCopySources.append(abs);
+    }
+  }
+
+  if (validSources.isEmpty()) {
+    return {};
+  }
+
+  QSet<QString> sourceSequenceConsumed;
+  const QVector<SequenceImportGroup> sourceSequenceGroups =
+      detectSequenceImportGroups(validSources, &sourceSequenceConsumed);
+  double sequenceFrameRate = 0.0;
+  if (!sourceSequenceGroups.isEmpty()) {
+    bool ok = false;
+    sequenceFrameRate = QInputDialog::getDouble(
+        QApplication::activeWindow(),
+        QStringLiteral("Image Sequence Frame Rate"),
+        QStringLiteral("Frame rate for imported image sequences:"),
+        24.0, 1.0, 240.0, 3, &ok);
+    if (!ok) {
+      return {};
     }
   }
 
   QStringList copied = manager.copyFilesToProjectAssets(toCopy);
-  importedPaths.append(copied);
-  importedPaths.append(alreadyInProject);
-
-  if (!importedPaths.isEmpty()) {
-    manager.addAssetsFromFilePaths(importedPaths);
-    // [Fix 2] importAssetsFromPathsAsync の非同期ブロック内で既に
-    // QImageReader::size() によるチェックが完了しているため、
-    // ここで同期実行すると同じファイルに対して 3 回 QImageReader が走る。
-    // checkImportedAssetCompatibility(importedPaths);
+  QHash<QString, QString> finalPathBySource;
+  for (int i = 0; i < toCopySources.size() && i < copied.size(); ++i) {
+    finalPathBySource.insert(toCopySources.at(i), copied.at(i));
+  }
+  for (const QString &src : alreadySources) {
+    finalPathBySource.insert(src, src);
   }
 
-  return importedPaths;
+  QStringList finalImported;
+  finalImported.reserve(validSources.size());
+
+  for (const SequenceImportGroup &group : sourceSequenceGroups) {
+    QStringList resolvedSequencePaths;
+    resolvedSequencePaths.reserve(group.sequencePaths.size());
+    for (const QString &sourcePath : group.sequencePaths) {
+      const QString resolvedPath = finalPathBySource.value(sourcePath);
+      if (!resolvedPath.isEmpty()) {
+        resolvedSequencePaths.append(resolvedPath);
+      }
+    }
+    if (resolvedSequencePaths.size() < 2) {
+      continue;
+    }
+    project->addAssetFromPath(resolvedSequencePaths.first(), resolvedSequencePaths,
+                              sequenceFrameRate);
+    finalImported.append(resolvedSequencePaths.first());
+  }
+
+  for (const QString &sourcePath : validSources) {
+    if (sourceSequenceConsumed.contains(sourcePath)) {
+      continue;
+    }
+    const QString resolvedPath = finalPathBySource.value(sourcePath);
+    if (resolvedPath.isEmpty()) {
+      continue;
+    }
+    project->addAssetFromPath(resolvedPath);
+    finalImported.append(resolvedPath);
+  }
+
+  if (!finalImported.isEmpty()) {
+    project->projectChanged();
+  }
+
+  // [Fix 2] importAssetsFromPathsAsync の非同期ブロック内で既に
+  // QImageReader::size() によるチェックが完了しているため、
+  // ここで同期実行すると同じファイルに対して 3 回 QImageReader が走る。
+  // checkImportedAssetCompatibility(importedPaths);
+  return finalImported;
 }
 
 void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
@@ -1370,6 +1568,34 @@ bool ArtifactProjectService::soloOnlyLayerInCurrentComposition(
     if (!candidate)
       continue;
     candidate->setSolo(candidate->id() == layerId);
+  }
+  notifyProjectMutation(impl_->projectManager());
+  return true;
+}
+
+bool ArtifactProjectService::smartSoloOnlyLayerInCurrentComposition(
+    const LayerID &layerId) {
+  auto comp = currentComposition().lock();
+  if (!comp || layerId.isNil()) {
+    return false;
+  }
+
+  auto selected = comp->layerById(layerId);
+  if (!selected) {
+    return false;
+  }
+
+  const QSet<QString> smartSoloLayerIds =
+      resolveSmartSoloLayerIds(comp, layerId);
+  if (smartSoloLayerIds.isEmpty()) {
+    return false;
+  }
+
+  for (const auto &candidate : comp->allLayer()) {
+    if (!candidate) {
+      continue;
+    }
+    candidate->setSolo(smartSoloLayerIds.contains(candidate->id().toString()));
   }
   notifyProjectMutation(impl_->projectManager());
   return true;

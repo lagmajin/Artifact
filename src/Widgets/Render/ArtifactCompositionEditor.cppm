@@ -2486,7 +2486,7 @@ protected:
     }
 
     temporarySoloActive_ = true;
-    svc->soloOnlyLayerInCurrentComposition(layer->id());
+    svc->smartSoloOnlyLayerInCurrentComposition(layer->id());
   }
 
   void beginTemporaryPlayback() {
@@ -2556,7 +2556,7 @@ protected:
     if (!svc || !layer) {
       return;
     }
-    svc->soloOnlyLayerInCurrentComposition(layer->id());
+    svc->smartSoloOnlyLayerInCurrentComposition(layer->id());
   }
 
   void centerCurrentLayer() {

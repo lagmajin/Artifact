@@ -121,6 +121,8 @@ export namespace Artifact
   void setSelectedKeyframeKeys(const QSet<QString>& selectedKeys);
   bool deleteSelectedKeyframeMarkers();
   bool duplicateSelectedKeyframeMarkersAtCurrentFrame();
+  bool distributeSelectedKeyframeMarkersEvenly();
+  bool repeatSelectedKeyframeMarkersAtCurrentFrame();
   bool hasSelectedKeyframes() const;
   void syncSelectionState(const ArtifactCompositionPtr& composition,
                           ArtifactLayerSelectionManager* selectionManager,
