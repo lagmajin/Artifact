@@ -44,6 +44,10 @@ namespace Artifact
   {
    return;
   }
+  const auto result = exportProject();
+  if (!result.success) {
+   qWarning() << "[Exporter] exportProject2() failed:" << result.errorStage << result.errorMessage;
+  }
  }
 
  ArtifactProjectExporterResult ArtifactProjectExporter::Impl::exportProject()
@@ -52,14 +56,20 @@ namespace Artifact
   result.success = false;
 
   if (!projectPtr_ || projectPtr_->isNull()) {
+   result.errorStage = "precondition";
+   result.errorMessage = "Project is null";
    return result;
   }
   if (outputPath_.isEmpty()) {
+   result.errorStage = "precondition";
+   result.errorMessage = "Output path is empty";
    return result;
   }
 
   QString treeError;
   if (!projectPtr_->validateProjectTree(&treeError)) {
+   result.errorStage = "validation";
+   result.errorMessage = treeError;
    qWarning() << "[Exporter] Project tree validation failed:" << treeError;
    return result;
   }
@@ -114,13 +124,19 @@ namespace Artifact
 
   QSaveFile file(outputPath_);
   if (!file.open(QIODevice::WriteOnly)) {
+   result.errorStage = "file_open";
+   result.errorMessage = file.errorString();
    return result;
   }
   if (file.write(jsonData) != jsonData.size()) {
    file.cancelWriting();
+   result.errorStage = "file_write";
+   result.errorMessage = file.errorString();
    return result;
   }
   if (!file.commit()) {
+   result.errorStage = "file_commit";
+   result.errorMessage = file.errorString();
    return result;
   }
 
