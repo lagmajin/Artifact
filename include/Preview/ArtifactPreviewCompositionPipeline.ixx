@@ -13,7 +13,7 @@ export namespace Artifact
  {
  private:
      class Impl;
-     Impl* impl_;
+     Impl* impl_ = nullptr;
  public:
  
   ArtifactPreviewCompositionPipeline();

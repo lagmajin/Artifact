@@ -81,6 +81,8 @@ export namespace Artifact {
   QVector<ProjectItem*> projectItems() const;
   ProjectHealthReport currentProjectHealthReport() const;
   std::vector<ArtifactCore::ProjectDiagnostic> currentProjectDiagnostics() const;
+  QString currentProjectHealthSummaryText() const;
+  QString currentProjectHealthStateToken() const;
   
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);

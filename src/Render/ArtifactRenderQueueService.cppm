@@ -347,6 +347,48 @@ namespace Artifact
             return diag;
         }
 
+        QString summarizePreflightDiagnostics(const ArtifactCore::DiagnosticResult& result)
+        {
+            const auto diagnostics = result.getDiagnostics();
+            if (diagnostics.empty()) {
+                return QStringLiteral("Preflight blocked");
+            }
+
+            const auto& first = diagnostics.front();
+            const QString prefix = first.isError()
+                ? QStringLiteral("Preflight error")
+                : first.isWarning()
+                    ? QStringLiteral("Preflight warning")
+                    : QStringLiteral("Preflight info");
+            if (diagnostics.size() == 1) {
+                return QStringLiteral("%1: %2").arg(prefix, first.getMessage());
+            }
+            return QStringLiteral("%1: %2 (+%3 more)")
+                .arg(prefix)
+                .arg(first.getMessage())
+                .arg(static_cast<int>(diagnostics.size()) - 1);
+        }
+
+        QStringList buildPreflightDetails(const ArtifactCore::DiagnosticResult& result)
+        {
+            QStringList details;
+            for (const auto& diagnostic : result.getDiagnostics()) {
+                const QString severity = diagnostic.isError()
+                    ? QStringLiteral("ERROR")
+                    : diagnostic.isWarning()
+                        ? QStringLiteral("WARNING")
+                        : QStringLiteral("INFO");
+                details << QStringLiteral("%1: %2").arg(severity, diagnostic.getMessage());
+                if (!diagnostic.getDescription().isEmpty()) {
+                    details << QStringLiteral("  %1").arg(diagnostic.getDescription());
+                }
+                if (!diagnostic.getFixAction().isEmpty()) {
+                    details << QStringLiteral("  Fix: %1").arg(diagnostic.getFixAction());
+                }
+            }
+            return details;
+        }
+
         void appendMissingAssetDiagnostics(const ArtifactCompositionPtr& composition,
                                            const QString& compId,
                                            ArtifactCore::DiagnosticResult& result)
@@ -2924,6 +2966,12 @@ namespace Artifact
         if (index < 0 || index >= impl_->queueManager.jobCount()) {
             return;
         }
+        const auto preflight = preflightRenderQueueAt(index);
+        if (preflight.hasErrors()) {
+            impl_->queueManager.markJobFailed(index, summarizePreflightDiagnostics(preflight));
+            impl_->syncCoreQueueModel();
+            return;
+        }
         impl_->queueManager.startRendering(index);
         impl_->syncCoreQueueModel();
     }
@@ -3309,6 +3357,18 @@ namespace Artifact
         return result;
     }
 
+    QString ArtifactRenderQueueService::formatPreflightSummary(const ArtifactCore::DiagnosticResult& result)
+    {
+        return QStringLiteral("Preflight: %1E / %2W")
+            .arg(result.getErrorCount())
+            .arg(result.getWarningCount());
+    }
+
+    QStringList ArtifactRenderQueueService::formatPreflightDetails(const ArtifactCore::DiagnosticResult& result)
+    {
+        return buildPreflightDetails(result);
+    }
+
     bool ArtifactRenderQueueService::jobOverlayTransformAt(int index, float* offsetX, float* offsetY, float* scale, float* rotationDeg) const
     {
         return impl_->queueManager.jobOverlayTransformAt(index, offsetX, offsetY, scale, rotationDeg);
@@ -3373,8 +3433,6 @@ namespace Artifact
         if (impl_->isRendering_.exchange(true, std::memory_order_acq_rel)) return;
         impl_->shutdownRequested_.store(false, std::memory_order_release);
 
-        impl_->queueManager.startAllJobs();
-
         // 既存のワーカースレッドがあれば待機
         if (impl_->workerThread_.joinable()) {
             impl_->workerThread_.join();
@@ -3394,7 +3452,18 @@ namespace Artifact
                     continue;
                 }
 
+                const auto preflight = preflightRenderQueueAt(i);
+                if (preflight.hasErrors()) {
+                    const QString reason = summarizePreflightDiagnostics(preflight);
+                    QMetaObject::invokeMethod(this, [this, i, reason, anyFailure]() {
+                        anyFailure->store(true, std::memory_order_release);
+                        impl_->queueManager.markJobFailed(i, reason);
+                    }, Qt::QueuedConnection);
+                    continue;
+                }
+
                 QMetaObject::invokeMethod(this, [this, i]() {
+                    impl_->queueManager.setJobStatus(i, ArtifactRenderJob::Status::Rendering);
                     impl_->queueManager.setJobProgress(i, 0);
                 }, Qt::QueuedConnection);
 

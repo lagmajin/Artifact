@@ -4,6 +4,7 @@ module;
 #include <algorithm>
 #include <cctype>
 #include <regex>
+#include <iomanip>
 //#include "DSLTypes.ixx"
 
 export module AIToolDSL.Parser;
@@ -14,6 +15,73 @@ import std;
 namespace AIToolDSL {
 
 namespace {
+
+std::string escapeJson(const std::string& input)
+{
+    std::ostringstream out;
+    for (const char c : input) {
+        switch (c) {
+        case '\\': out << "\\\\"; break;
+        case '"': out << "\\\""; break;
+        case '\b': out << "\\b"; break;
+        case '\f': out << "\\f"; break;
+        case '\n': out << "\\n"; break;
+        case '\r': out << "\\r"; break;
+        case '\t': out << "\\t"; break;
+        default:
+            if (static_cast<unsigned char>(c) < 0x20) {
+                out << "\\u"
+                    << std::hex << std::uppercase << std::setw(4) << std::setfill('0')
+                    << static_cast<int>(static_cast<unsigned char>(c))
+                    << std::nouppercase << std::dec;
+            } else {
+                out << c;
+            }
+        }
+    }
+    return out.str();
+}
+
+std::string jsonString(const std::string& value)
+{
+    return "\"" + escapeJson(value) + "\"";
+}
+
+std::string jsonBool(const bool value)
+{
+    return value ? "true" : "false";
+}
+
+std::string jsonArray(const std::vector<std::string>& values)
+{
+    std::ostringstream out;
+    out << '[';
+    for (size_t i = 0; i < values.size(); ++i) {
+        if (i > 0) {
+            out << ',';
+        }
+        out << jsonString(values[i]);
+    }
+    out << ']';
+    return out.str();
+}
+
+std::string summarizeScript(const DSLScript& script, const std::string& mode)
+{
+    std::ostringstream out;
+    out << '{'
+        << "\"mode\":" << jsonString(mode) << ','
+        << "\"hasError\":" << jsonBool(script.hasError) << ','
+        << "\"parseError\":" << jsonString(script.parseError) << ','
+        << "\"hasUseComp\":" << jsonBool(script.useComp.has_value()) << ','
+        << "\"commandCount\":" << script.commands.size() << ','
+        << "\"queryCount\":" << script.queries.size();
+    if (script.useComp.has_value()) {
+        out << ",\"useComp\":" << jsonString(script.useComp->compName);
+    }
+    out << '}';
+    return out.str();
+}
 
 // Trim whitespace
 std::string trim(const std::string& s) {
@@ -439,42 +507,105 @@ std::string QuerySelectedLayers::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return R"({"status":"not_implemented"})";
+    std::vector<std::string> ids;
+    for (const auto& [name, layerIds] : layerMap) {
+        (void)name;
+        for (const auto& layerId : layerIds) {
+            ids.push_back(layerId);
+        }
+    }
+    std::ostringstream out;
+    out << "{\"status\":\"partial\",\"selectedLayerIds\":" << jsonArray(ids)
+        << ",\"availableCompCount\":" << compMap.size()
+        << ",\"note\":\"selection state is not tracked separately yet\"}";
+    return out.str();
 }
 
 std::string QueryActiveComp::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return R"({"status":"not_implemented"})";
+    std::string active = compMap.empty() ? std::string() : compMap.begin()->second;
+    std::ostringstream out;
+    out << "{\"status\":\"partial\",\"activeCompId\":" << jsonString(active)
+        << ",\"availableCompCount\":" << compMap.size()
+        << ",\"availableLayerGroupCount\":" << layerMap.size() << "}";
+    return out.str();
 }
 
 std::string QueryCompSize::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return R"({"status":"not_implemented"})";
+    bool known = false;
+    for (const auto& [name, knownCompId] : compMap) {
+        (void)name;
+        if (knownCompId == this->compId) {
+            known = true;
+            break;
+        }
+    }
+    std::ostringstream out;
+    out << "{\"status\":\"partial\",\"compId\":" << jsonString(this->compId)
+        << ",\"knownComp\":" << jsonBool(known)
+        << ",\"availableLayerGroupCount\":" << layerMap.size() << "}";
+    return out.str();
 }
 
 std::string QueryFindLayers::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return R"({"status":"not_implemented"})";
+    std::vector<std::string> ids;
+    for (const auto& [name, layerIds] : layerMap) {
+        (void)name;
+        for (const auto& layerId : layerIds) {
+            ids.push_back(layerId);
+        }
+    }
+    std::ostringstream out;
+    out << "{\"status\":\"partial\",\"matchedLayerIds\":" << jsonArray(ids)
+        << ",\"availableCompCount\":" << compMap.size()
+        << ",\"note\":\"filter evaluation is still pending\"}";
+    return out.str();
 }
 
 std::string QueryDescribeLayer::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return R"({"status":"not_implemented"})";
+    bool known = false;
+    for (const auto& [name, layerIds] : layerMap) {
+        (void)name;
+        if (std::find(layerIds.begin(), layerIds.end(), layerId) != layerIds.end()) {
+            known = true;
+            break;
+        }
+    }
+    std::ostringstream out;
+    out << "{\"status\":\"partial\",\"layerId\":" << jsonString(layerId)
+        << ",\"knownLayer\":" << jsonBool(known)
+        << ",\"availableCompCount\":" << compMap.size() << "}";
+    return out.str();
 }
 
 std::string QueryListProperties::execute(
     const std::unordered_map<std::string, CompID>& compMap,
     const std::unordered_map<std::string, std::vector<LayerID>>& layerMap
 ) const {
-    return R"({"status":"not_implemented"})";
+    bool known = false;
+    for (const auto& [name, layerIds] : layerMap) {
+        (void)name;
+        if (std::find(layerIds.begin(), layerIds.end(), layerId) != layerIds.end()) {
+            known = true;
+            break;
+        }
+    }
+    std::ostringstream out;
+    out << "{\"status\":\"partial\",\"layerId\":" << jsonString(layerId)
+        << ",\"knownLayer\":" << jsonBool(known)
+        << ",\"properties\":[]}";
+    return out.str();
 }
 
 // Implementation stubs for AIDSLInterpreter
@@ -482,14 +613,49 @@ AIDSLInterpreter::AIDSLInterpreter() = default;
 AIDSLInterpreter::~AIDSLInterpreter() = default;
 
 std::string AIDSLInterpreter::dryRun(const DSLScript& script) const {
-    return R"({"dry_run":"not_implemented"})";
+    std::ostringstream out;
+    out << '{'
+        << "\"mode\":\"dry_run\","
+        << "\"script\":" << summarizeScript(script, "dry_run") << ','
+        << "\"knownCompCount\":" << compNameToId_.size() << ','
+        << "\"knownLayerGroupCount\":" << layerNameToIds_.size()
+        << '}';
+    return out.str();
 }
 
 std::string AIDSLInterpreter::execute(const DSLScript& script) {
-    return R"({"status":"not_implemented"})";
+    std::vector<std::string> queryResults;
+    queryResults.reserve(script.queries.size());
+    for (const auto& query : script.queries) {
+        if (query) {
+            queryResults.push_back(executeQuery(*query));
+        }
+    }
+
+    std::ostringstream out;
+    out << '{'
+        << "\"mode\":\"execute\","
+        << "\"script\":" << summarizeScript(script, "execute") << ','
+        << "\"queryResults\":" << jsonArray(queryResults) << ','
+        << "\"knownCompCount\":" << compNameToId_.size() << ','
+        << "\"knownLayerGroupCount\":" << layerNameToIds_.size() << ','
+        << "\"note\":\"command execution remains to be wired to host actions\""
+        << '}';
+    return out.str();
 }
 
 std::string AIDSLInterpreter::executeQuery(const QueryNode& query) {
+    if (const auto* activeQuery = dynamic_cast<const QueryActiveComp*>(&query)) {
+        (void)activeQuery;
+        std::string active = activeCompId_.isNil()
+                                 ? std::string()
+                                 : activeCompId_.toString().toStdString();
+        std::ostringstream out;
+        out << "{\"status\":\"ok\",\"activeCompId\":" << jsonString(active)
+            << ",\"availableCompCount\":" << compNameToId_.size()
+            << ",\"availableLayerGroupCount\":" << layerNameToIds_.size() << "}";
+        return out.str();
+    }
     return query.execute(compNameToId_, layerNameToIds_);
 }
 
@@ -532,7 +698,7 @@ LayerID AIDSLInterpreter::resolveLayerRef(const std::string& ref, const std::uno
     if (it != layerMap.end() && !it->second.empty()) {
         return it->second[0];  // Return first if multiple
     }
-    return "#L0";  // invalid placeholder
+    return {};  // unresolved reference
 }
 
 CompID AIDSLInterpreter::resolveCompRef(const std::string& ref) const {
@@ -543,7 +709,7 @@ CompID AIDSLInterpreter::resolveCompRef(const std::string& ref) const {
     if (it != compNameToId_.end()) {
         return it->second;
     }
-    return "#C0";  // invalid placeholder
+    return {};  // unresolved reference
 }
 
 std::unique_ptr<TransactionAction> AIDSLInterpreter::compileTransaction(const TransactionCommand& cmd) const {

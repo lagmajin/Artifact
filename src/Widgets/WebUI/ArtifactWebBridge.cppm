@@ -44,9 +44,12 @@ module Artifact.Widgets.WebBridge;
 
 
 import Artifact.Service.Project;
+import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
+import Property.Group;
+import Property.Abstract;
 import Event.Bus;
 import Artifact.Event.Types;
 
@@ -71,8 +74,7 @@ namespace Artifact {
     {
         qDebug() << "[WebBridge] selectLayer called from JS:" << layerId;
         if (auto* service = ArtifactProjectService::instance()) {
-            LayerID lid;
-            // TODO: construct LayerID from string
+            const LayerID lid(layerId);
             service->selectLayer(lid);
         }
     }
@@ -81,7 +83,6 @@ namespace Artifact {
     {
         qDebug() << "[WebBridge] setEffectProperty:" << effectId << propertyName << jsonValue;
 
-        // Parse JSON value
         QJsonDocument doc = QJsonDocument::fromJson(jsonValue.toUtf8());
         QVariant val;
         if (doc.isObject()) {
@@ -90,8 +91,29 @@ namespace Artifact {
             val = QVariant(jsonValue);
         }
 
-        // TODO: Look up effect by ID from the current layer and call setPropertyValue()
-        // For now, emit the signal back to notify any listeners
+        if (auto* service = ArtifactProjectService::instance()) {
+            const auto comp = service->currentComposition().lock();
+            if (comp) {
+                for (const auto& layer : comp->allLayerRef()) {
+                    if (!layer) {
+                        continue;
+                    }
+                    for (const auto& effect : layer->getEffects()) {
+                        if (!effect) {
+                            continue;
+                        }
+                        const QString currentEffectId = QString(effect->effectID());
+                        const QString currentEffectName = QString(effect->displayName());
+                        if (currentEffectId == effectId || currentEffectName == effectId) {
+                            effect->setPropertyValue(ArtifactCore::UniString(propertyName.toStdString()), val);
+                            emit propertyUpdated(effectId, propertyName, jsonValue);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+
         emit propertyUpdated(effectId, propertyName, jsonValue);
     }
 
@@ -105,7 +127,10 @@ namespace Artifact {
         auto* service = ArtifactProjectService::instance();
         if (service) {
             info["hasProject"] = true;
-            // TODO: add composition count, layer count, etc.
+            const auto comp = service->currentComposition().lock();
+            info["hasComposition"] = static_cast<bool>(comp);
+            info["compositionCount"] = comp ? 1 : 0;
+            info["layerCount"] = comp ? static_cast<int>(comp->allLayerRef().size()) : 0;
         } else {
             info["hasProject"] = false;
         }
@@ -118,9 +143,74 @@ namespace Artifact {
         QJsonObject result;
         result["layerId"] = "";
         result["effects"] = QJsonArray();
+        result["properties"] = QJsonArray();
 
-        // TODO: Get current selected layer and serialize its effects/properties to JSON
-        // This will be the main data source for the web-based inspector UI
+        auto* service = ArtifactProjectService::instance();
+        if (!service) {
+            return QJsonDocument(result).toJson(QJsonDocument::Compact);
+        }
+
+        const auto comp = service->currentComposition().lock();
+        if (!comp) {
+            return QJsonDocument(result).toJson(QJsonDocument::Compact);
+        }
+
+        auto *selection = ArtifactApplicationManager::instance()
+                               ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                               : nullptr;
+        const ArtifactAbstractLayerPtr layer =
+            selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+        if (!layer) {
+            return QJsonDocument(result).toJson(QJsonDocument::Compact);
+        }
+
+        result["layerId"] = layer->id().toString();
+        result["layerName"] = layer->layerName();
+        result["layerType"] = QString(layer->className());
+        result["effectCount"] = layer->effectCount();
+
+        QJsonArray effects;
+        for (const auto& effect : layer->getEffects()) {
+            if (!effect) {
+                continue;
+            }
+            QJsonObject effectJson;
+            effectJson["effectId"] = QString(effect->effectID());
+            effectJson["displayName"] = QString(effect->displayName());
+            effectJson["enabled"] = effect->isEnabled();
+            QJsonArray properties;
+            for (const auto& property : effect->getProperties()) {
+                QJsonObject prop;
+                prop["name"] = property.getName();
+                prop["type"] = QString::fromUtf8(ArtifactCore::propertyTypeToString(property.getType()).toUtf8());
+                prop["value"] = QJsonValue::fromVariant(property.getValue());
+                properties.push_back(prop);
+            }
+            effectJson["properties"] = properties;
+            effects.push_back(effectJson);
+        }
+        result["effects"] = effects;
+
+        QJsonArray properties;
+        for (const auto& group : layer->getLayerPropertyGroups()) {
+            QJsonObject groupJson;
+            groupJson["name"] = group.name();
+            QJsonArray entries;
+            for (const auto& property : group.allProperties()) {
+                if (!property) {
+                    continue;
+                }
+                QJsonObject prop;
+                prop["name"] = property->getName();
+                prop["type"] = QString::fromUtf8(ArtifactCore::propertyTypeToString(property->getType()).toUtf8());
+                prop["value"] = QJsonValue::fromVariant(property->getValue());
+                prop["displayPriority"] = property->displayPriority();
+                entries.push_back(prop);
+            }
+            groupJson["properties"] = entries;
+            properties.push_back(groupJson);
+        }
+        result["properties"] = properties;
 
         return QJsonDocument(result).toJson(QJsonDocument::Compact);
     }

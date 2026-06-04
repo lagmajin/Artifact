@@ -115,8 +115,12 @@ export namespace Artifact
   void setKeyframeMarkers(const QVector<KeyframeMarkerVisual>& markers);
   QVector<KeyframeMarkerVisual> keyframeMarkers() const;
   QVector<KeyframeMarkerVisual> selectedKeyframeMarkers() const;
+  KeyframeMarkerVisual hoveredKeyframeMarker() const;
   void selectAllKeyframeMarkers();
   void clearKeyframeSelection();
+  void setSelectedKeyframeKeys(const QSet<QString>& selectedKeys);
+  bool deleteSelectedKeyframeMarkers();
+  bool duplicateSelectedKeyframeMarkersAtCurrentFrame();
   bool hasSelectedKeyframes() const;
   void syncSelectionState(const ArtifactCompositionPtr& composition,
                           ArtifactLayerSelectionManager* selectionManager,

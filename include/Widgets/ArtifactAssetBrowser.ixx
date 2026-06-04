@@ -9,6 +9,7 @@
 #include <QFrame>
 #include <QMouseEvent>
 #include <QKeyEvent>
+#include <QFocusEvent>
 #include <QEvent>
 #include <QDragEnterEvent>
 #include <QDropEvent>
@@ -69,6 +70,8 @@ private:
   Impl* impl_;
 protected:
   void mousePressEvent(QMouseEvent* event) override;
+  void focusInEvent(QFocusEvent* event) override;
+  void focusOutEvent(QFocusEvent* event) override;
   void keyPressEvent(QKeyEvent* event) override;
   void keyReleaseEvent(QKeyEvent* event) override;
   bool eventFilter(QObject* watched, QEvent* event) override;

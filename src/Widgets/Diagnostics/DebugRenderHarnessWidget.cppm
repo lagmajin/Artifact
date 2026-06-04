@@ -84,7 +84,11 @@ QString mediaStateFromResource(const ArtifactCore::FrameDebugSnapshot& snapshot,
 {
     for (const auto& resource : snapshot.resources) {
         if (resource.type == typeName || resource.label == labelName) {
-            if (resource.note.contains(QStringLiteral("skipped="))) {
+            const QString note = resource.note.trimmed();
+            if (note.startsWith(QStringLiteral("state="))) {
+                return note.section(QChar::Space, 0, 0);
+            }
+            if (note.contains(QStringLiteral("skipped="))) {
                 return QStringLiteral("skipped");
             }
             if (!resource.cacheHit || resource.stale) {
@@ -651,14 +655,14 @@ public:
         const QString blendState = hasSnapshot_
             ? mediaStateFromResource(snapshot_, QStringLiteral("composition"), QStringLiteral("Render Path"))
             : QStringLiteral("none");
-        const QString glyphAtlasState = hasSnapshot_
+        const QString glyphState = hasSnapshot_
             ? mediaStateFromResource(snapshot_, QStringLiteral("glyphAtlas"), QStringLiteral("Glyph Atlas"))
             : QStringLiteral("none");
         const QString particleDetail = hasSnapshot_
             ? resourceNoteFromResource(snapshot_, QStringLiteral("particle"), QStringLiteral("Particle Draw"))
             : QStringLiteral("none");
 
-        summary_->setText(QStringLiteral("preset=%1  fixture=%2  frame=%3  comp=%4  layer=%5  particle=%6  particleDetail=%7  text=%8  video=%9  blend=%10  glyph=%11")
+        summary_->setText(QStringLiteral("preset=%1  fixture=%2  frame=%3  comp=%4  layer=%5  particleState=%6  particleDetail=%7  textState=%8  videoState=%9  blendState=%10  glyphState=%11")
                               .arg(scenePreset_)
                               .arg(previewImage.isNull() ? QStringLiteral("pending") : QStringLiteral("ready"))
                               .arg(hasSnapshot_ ? snapshot_.frame.framePosition() : -1)
@@ -669,7 +673,7 @@ public:
                               .arg(textState)
                               .arg(videoState)
                               .arg(blendState)
-                              .arg(glyphAtlasState));
+                              .arg(glyphState));
 
         report_->setPlainText(reportText);
     }
@@ -720,7 +724,7 @@ public:
         lines << QStringLiteral("particleDetail: %1").arg(particleDetail);
         lines << QStringLiteral("blendState: %1").arg(hasSnapshot_ ? blendStateText() : QStringLiteral("none"));
         lines << QStringLiteral("blendMaskContract: %1").arg(hasSnapshot_ ? blendMaskContractText() : QStringLiteral("none"));
-        lines << QStringLiteral("glyphAtlasState: %1").arg(hasSnapshot_ ? glyphAtlasStateText() : QStringLiteral("none"));
+        lines << QStringLiteral("glyphState: %1").arg(hasSnapshot_ ? glyphStateText() : QStringLiteral("none"));
 
         lines << QString();
         lines << QStringLiteral("Summary");
@@ -733,13 +737,13 @@ public:
 
         lines << QString();
         lines << QStringLiteral("Media States");
-        lines << QStringLiteral("particle: %1").arg(hasSnapshot_ ? particleStateText() : QStringLiteral("none"));
+        lines << QStringLiteral("particleState: %1").arg(hasSnapshot_ ? particleStateText() : QStringLiteral("none"));
         lines << QStringLiteral("particleDetail: %1").arg(particleDetail);
-        lines << QStringLiteral("text: %1").arg(hasSnapshot_ ? textStateText() : QStringLiteral("none"));
-        lines << QStringLiteral("video: %1").arg(hasSnapshot_ ? videoStateText() : QStringLiteral("none"));
-        lines << QStringLiteral("blend: %1").arg(hasSnapshot_ ? blendStateText() : QStringLiteral("none"));
-        lines << QStringLiteral("blendMask: %1").arg(hasSnapshot_ ? blendMaskContractText() : QStringLiteral("none"));
-        lines << QStringLiteral("glyphAtlas: %1").arg(hasSnapshot_ ? glyphAtlasStateText() : QStringLiteral("none"));
+        lines << QStringLiteral("textState: %1").arg(hasSnapshot_ ? textStateText() : QStringLiteral("none"));
+        lines << QStringLiteral("videoState: %1").arg(hasSnapshot_ ? videoStateText() : QStringLiteral("none"));
+        lines << QStringLiteral("blendState: %1").arg(hasSnapshot_ ? blendStateText() : QStringLiteral("none"));
+        lines << QStringLiteral("blendMaskContract: %1").arg(hasSnapshot_ ? blendMaskContractText() : QStringLiteral("none"));
+        lines << QStringLiteral("glyphState: %1").arg(hasSnapshot_ ? glyphStateText() : QStringLiteral("none"));
         lines << QStringLiteral("viewportNotes: %1").arg(previewImage.isNull()
                                                             ? QStringLiteral("preview missing or not yet rendered")
                                                             : QStringLiteral("preview available"));
@@ -834,7 +838,7 @@ public:
         return QStringLiteral("none");
     }
 
-    QString glyphAtlasStateText() const
+    QString glyphStateText() const
     {
         return mediaStateFromResource(snapshot_, QStringLiteral("glyphAtlas"), QStringLiteral("Glyph Atlas"));
     }

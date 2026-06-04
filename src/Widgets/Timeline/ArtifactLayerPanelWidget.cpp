@@ -33,6 +33,7 @@ module;
 #include <QPointer>
 #include <QLineEdit>
 #include <QKeyEvent>
+#include <QFocusEvent>
 #include <QWheelEvent>
 #include <QInputDialog>
 #include <QFileDialog>
@@ -68,11 +69,16 @@ import Artifact.Layer.InitParams;
 import File.TypeDetector;
 import Event.Bus;
 import Artifact.Event.Types;
+import Input.Operator;
 import Widgets.Utils.CSS;
 
 namespace Artifact
 {
  using namespace ArtifactCore;
+
+namespace {
+constexpr auto kLayerPanelContext = "Panel.LayerTree";
+}
 
 LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLayerPtr& layer)
 {
@@ -3419,8 +3425,34 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
   QWidget::mouseReleaseEvent(event);
  }
 
+void ArtifactLayerPanelWidget::focusInEvent(QFocusEvent* event)
+{
+  if (auto* input = InputOperator::instance()) {
+    input->setActiveContext(QString::fromLatin1(kLayerPanelContext));
+  }
+  QWidget::focusInEvent(event);
+}
+
+void ArtifactLayerPanelWidget::focusOutEvent(QFocusEvent* event)
+{
+  if (auto* input = InputOperator::instance()) {
+    if (input->activeContext() == QString::fromLatin1(kLayerPanelContext)) {
+      input->setActiveContext(QStringLiteral("Global"));
+    }
+  }
+  QWidget::focusOutEvent(event);
+}
+
 void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
 {
+  if (auto* input = InputOperator::instance()) {
+    input->setActiveContext(QString::fromLatin1(kLayerPanelContext));
+    if (event && input->processKeyPress(this, event->key(), event->modifiers())) {
+      event->accept();
+      return;
+    }
+  }
+
   if ((event->modifiers() & Qt::ControlModifier) &&
       !(event->modifiers() & (Qt::ShiftModifier | Qt::AltModifier | Qt::MetaModifier))) {
     if (event->key() == Qt::Key_Z) {

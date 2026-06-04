@@ -27,6 +27,7 @@ import Application.AppSettings;
 import Artifact.Project.Exporter;
 import Artifact.Project.Importer;
 import Artifact.Project.Health;
+import Artifact.Diagnostics.AppValidationRules;
 import Artifact.Composition.Result;
 import Artifact.Composition.Abstract;
 import Composition.Settings;
@@ -34,6 +35,7 @@ import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
 import Artifact.Layer.Factory;
+import Core.Diagnostics.DiagnosticEngine;
 import Artifact.Script.Hooks;
 
 
@@ -53,6 +55,11 @@ namespace Artifact {
     QStringLiteral("Scenes"),
     QStringLiteral("Settings")
   };
+
+  auto projectValidationEngine() -> ArtifactCore::DiagnosticEngine&;
+  void appendProjectValidationDiagnostics(const std::shared_ptr<ArtifactProject>& projectPtr,
+                                          QStringList& warnings,
+                                          QStringList& errors);
 
   QString defaultProjectDisplayName()
   {
@@ -486,6 +493,14 @@ void ArtifactProjectManager::loadFromFile(const QString& fullpath)
    if (!report.isHealthy) {
     qWarning() << "[loadFromFile] health issues detected:" << report.issues.size();
    }
+   QStringList validationWarnings;
+   QStringList validationErrors;
+   appendProjectValidationDiagnostics(impl_->currentProjectPtr_, validationWarnings, validationErrors);
+   if (!validationErrors.isEmpty() || !validationWarnings.isEmpty()) {
+     qWarning() << "[loadFromFile] app validation issues:"
+                << validationErrors.size() << "errors,"
+                << validationWarnings.size() << "warnings";
+   }
   }
  }
 
@@ -527,6 +542,61 @@ namespace {
     QStringList errors;
   };
 
+  auto projectValidationEngine() -> ArtifactCore::DiagnosticEngine&
+  {
+    static ArtifactCore::DiagnosticEngine engine;
+    static const bool initialized = []() {
+      engine.ruleRegistry().clearRules();
+      engine.ruleRegistry().registerRule(std::make_unique<ArtifactMissingFileRule>());
+      engine.ruleRegistry().registerRule(std::make_unique<ArtifactPerformanceRule>());
+      engine.ruleRegistry().registerRule(std::make_unique<ArtifactMatteReferenceRule>());
+      return true;
+    }();
+    (void)initialized;
+    return engine;
+  }
+
+  void appendProjectValidationDiagnostics(const std::shared_ptr<ArtifactProject>& projectPtr,
+                                          QStringList& warnings,
+                                          QStringList& errors)
+  {
+    if (!projectPtr) {
+      return;
+    }
+
+    const auto items = projectPtr->projectItems();
+    for (auto* root : items) {
+      std::function<void(ProjectItem*)> walk = [&](ProjectItem* item) {
+        if (!item) {
+          return;
+        }
+
+        if (item->type() == eProjectItemType::Composition) {
+          auto* compItem = static_cast<CompositionItem*>(item);
+          auto res = projectPtr->findComposition(compItem->compositionId);
+          if (res.success) {
+            if (auto comp = res.ptr.lock()) {
+              const auto appValidation = projectValidationEngine().validateAll(comp.get());
+              for (const auto& diagnostic : appValidation.getDiagnostics()) {
+                if (diagnostic.isError()) {
+                  errors.append(diagnostic.getMessage());
+                } else if (diagnostic.isWarning()) {
+                  warnings.append(diagnostic.getMessage());
+                }
+              }
+            }
+          }
+        }
+
+        for (auto* child : item->children) {
+          walk(child);
+        }
+      };
+
+      walk(root);
+    }
+  }
+
   SaveValidationResult validateBeforeSave(const std::shared_ptr<ArtifactProject>& projectPtr)
   {
     SaveValidationResult result;
@@ -548,6 +618,8 @@ namespace {
         result.warnings.append(issue.message);
       }
     }
+
+    appendProjectValidationDiagnostics(projectPtr, result.warnings, result.errors);
 
     // Phase 4: Composition/Layer の整合性チェック
     auto items = projectPtr->projectItems();
@@ -704,6 +776,14 @@ void ArtifactProjectManager::loadFromFileAsync(const QString& fullpath,
     if (!report.isHealthy) {
       qWarning() << "[loadFromFileAsync] health issues detected:" << report.issues.size();
       (void)ArtifactProjectHealthChecker::checkAndRepair(importResult.project.get());
+    }
+    QStringList validationWarnings;
+    QStringList validationErrors;
+    appendProjectValidationDiagnostics(importResult.project, validationWarnings, validationErrors);
+    if (!validationErrors.isEmpty() || !validationWarnings.isEmpty()) {
+      qWarning() << "[loadFromFileAsync] app validation issues:"
+                 << validationErrors.size() << "errors,"
+                 << validationWarnings.size() << "warnings";
     }
 
     if (onProgress) onProgress(90, 100, QStringLiteral("Restoring items..."));

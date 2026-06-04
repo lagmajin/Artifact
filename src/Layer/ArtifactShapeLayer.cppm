@@ -390,7 +390,18 @@ public:
 
 ArtifactShapeLayer::ArtifactShapeLayer() : impl_(new Impl()) {}
 ArtifactShapeLayer::~ArtifactShapeLayer() { delete impl_; }
-void ArtifactShapeLayer::addShape() { impl_->addShape(); }
+void ArtifactShapeLayer::addShape()
+{
+  if (!impl_) {
+    return;
+  }
+  // This layer is still a single-primitive shape layer, so "add" currently
+  // means "materialize the current primitive definition and invalidate caches".
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+}
 bool ArtifactShapeLayer::isShapeLayer() const { return true; }
 
 // ============================================================

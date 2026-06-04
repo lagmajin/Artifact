@@ -4,8 +4,12 @@ module;
 
 #include <QWidget>
 #include <QKeyEvent>
+#include <QVector>
 #include <wobjectdefs.h>
 export module Widget.CurveEditor;
+
+import Frame.Rate;
+import Time.TimeRemap;
 
 export namespace ArtifactCore {
 
@@ -28,6 +32,11 @@ export namespace ArtifactCore {
   bool visible = true;
  };
 
+ CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
+                             int64_t startFrame,
+                             int64_t endFrame,
+                             const FrameRate& frameRate);
+
  class ArtifactCurveEditorWidget : public QWidget {
   W_OBJECT(ArtifactCurveEditorWidget)
  private:
@@ -40,6 +49,10 @@ export namespace ArtifactCore {
   void setTracks(const std::vector<CurveTrack>& tracks);
   void setViewRange(float xMin, float xMax, float yMin, float yMax);
   void setCurrentFrame(int64_t frame);
+  void setSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
+                     int64_t startFrame,
+                     int64_t endFrame,
+                     const FrameRate& frameRate);
   void fitToContent();
   void focusTrack(int trackIndex);
   void setHandleEditingEnabled(bool enabled);

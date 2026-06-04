@@ -3,6 +3,7 @@
 #include <wobjectdefs.h>
 //#include <QtWidgets/QtWidgets>
 #include <QMouseEvent>
+#include <QFocusEvent>
 #include <QWheelEvent>
 #include <QKeyEvent>
 
@@ -41,6 +42,8 @@ class ArtifactTimelineWidget :public QWidget {
   bool isGraphEditorFocusWidget(const QWidget* widget) const;
  protected:
   void paintEvent(QPaintEvent* event) override;
+  void focusInEvent(QFocusEvent* event) override;
+  void focusOutEvent(QFocusEvent* event) override;
   void mousePressEvent(QMouseEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;

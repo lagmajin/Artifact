@@ -16,6 +16,9 @@ module;
 #include <QtConcurrent>
 #include <QMetaObject>
 #include <QPointer>
+#include <QRect>
+#include <QRectF>
+#include <QSizeF>
 #include <opencv2/opencv.hpp>
 #include <mutex>
 #include <unordered_map>
@@ -69,6 +72,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import CvUtils;
 import Image.ImageF32x4_RGBA;
+import Artifact.Layer.SourceCrop;
 import Utils.String.UniString;
 import Utils.Id;
 import Property.Group;
@@ -229,6 +233,21 @@ ArtifactCore::ImageF32x4_RGBA decodedVideoFrameToImageF32x4_RGBA(const ArtifactC
     return ArtifactCore::ImageF32x4_RGBA();
 }
 
+QRect sourceCropToRect(const Artifact::SourceCrop& crop, const QSize& sourceSize)
+{
+    if (!crop.enabled() || sourceSize.width() <= 0 || sourceSize.height() <= 0) {
+        return {};
+    }
+
+    const QRectF cropRect = crop.effectiveCropRect(QSizeF(sourceSize));
+    if (!cropRect.isValid() || cropRect.width() <= 0.0 || cropRect.height() <= 0.0) {
+        return {};
+    }
+
+    return cropRect.toAlignedRect().intersected(
+        QRect(0, 0, sourceSize.width(), sourceSize.height()));
+}
+
 void publishVideoLayerModified(ArtifactVideoLayer* layer)
 {
     if (!layer) {
@@ -282,16 +301,21 @@ public:
 
     void put(int64_t frame, const ArtifactCore::ImageF32x4_RGBA& frameData) {
         std::lock_guard<std::mutex> lock(mutex_);
-        
-        // Remove oldest if at capacity
-        while (cacheOrder_.size() >= maxFrames_) {
-            int64_t oldest = cacheOrder_.back();
+        auto it = cache_.find(frame);
+        if (it != cache_.end()) {
+            it->second.data = frameData;
+            touch(it);
+            return;
+        }
+
+        while (cache_.size() >= maxFrames_ && !cacheOrder_.empty()) {
+            const int64_t oldest = cacheOrder_.back();
             cacheOrder_.pop_back();
             cache_.erase(oldest);
         }
-        
-        cache_[frame] = frameData;
+
         cacheOrder_.push_front(frame);
+        cache_.emplace(frame, CacheEntry{frameData, cacheOrder_.begin()});
     }
 
     bool get(int64_t frame, ArtifactCore::ImageF32x4_RGBA& outFrame) {
@@ -299,13 +323,8 @@ public:
 
         auto it = cache_.find(frame);
         if (it != cache_.end()) {
-            outFrame = it->second;
-            // Move to front (most recently used)
-            auto orderIt = std::find(cacheOrder_.begin(), cacheOrder_.end(), frame);
-            if (orderIt != cacheOrder_.end()) {
-                cacheOrder_.erase(orderIt);
-            }
-            cacheOrder_.push_front(frame);
+            outFrame = it->second.data;
+            touch(it);
             return true;
         }
         return false;
@@ -328,10 +347,20 @@ public:
     }
 
 private:
+    struct CacheEntry {
+        ArtifactCore::ImageF32x4_RGBA data;
+        std::list<int64_t>::iterator orderIt;
+    };
+
     mutable std::mutex mutex_;
-    std::unordered_map<int64_t, ArtifactCore::ImageF32x4_RGBA> cache_;
-    std::deque<int64_t> cacheOrder_;
+    std::unordered_map<int64_t, CacheEntry> cache_;
+    std::list<int64_t> cacheOrder_;
     size_t maxFrames_;
+
+    void touch(std::unordered_map<int64_t, CacheEntry>::iterator it) {
+        cacheOrder_.splice(cacheOrder_.begin(), cacheOrder_, it->second.orderIt);
+        it->second.orderIt = cacheOrder_.begin();
+    }
 };
 
 // ============================================================================
@@ -370,6 +399,7 @@ public:
     bool audioMuted_ = false;
     bool audioEnabled_ = true;
     bool videoEnabled_ = true;
+    SourceCrop sourceCrop_;
     
     ArtifactCore::ImageF32x4_RGBA currentFrameBuffer_;
     bool hasCurrentFrameBuffer_ = false;
@@ -378,35 +408,7 @@ public:
     int64_t currentSourceFrame_ = 0;
     int64_t lastSyncFallbackSourceFrame_ = -1;
     bool lastSyncFallbackSucceeded_ = false;
-    bool debugFrameSaved_ = false;
-    
-    void saveDebugFrame(const QImage& frame, int64_t frameNumber) {
-        if (frameNumber != 0 || debugFrameSaved_ || frame.isNull()) {
-            return;
-        }
-        debugFrameSaved_ = true;
-        QString assetsPath = ArtifactProjectManager::getInstance().currentProjectAssetsPath();
-        
-        // Fallback if no project assets path is available
-        if (assetsPath.isEmpty()) {
-            assetsPath = QDir::currentPath();
-            qDebug() << "[VideoLayer] currentProjectAssetsPath is empty, falling back to current path:" << assetsPath;
-        }
-
-        QDir assetsDir(assetsPath);
-        if (!assetsDir.exists()) {
-            assetsDir.mkpath(QStringLiteral("."));
-        }
-        
-        // If we are at the root or current path, we might want to ensure an Assets folder exists
-        // but let's just save it to whatever assetsDir is for now to be sure it saves somewhere.
-        const QString savePath = assetsDir.filePath(QStringLiteral("debug_decode_frame_0.png"));
-        if (frame.save(savePath, "PNG")) {
-            qDebug() << "[VideoLayer] Debug frame 0 SUCCESS saved to:" << savePath;
-        } else {
-            qWarning() << "[VideoLayer] Debug frame 0 FAILED to save to:" << savePath;
-        }
-    }
+    QString lastDecodeState_ = QStringLiteral("idle");
 
     Impl() : playbackController_(std::make_shared<ArtifactCore::MediaPlaybackController>()), frameCache_(30) {}
     ~Impl() {
@@ -487,6 +489,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     impl_->currentSourceFrame_ = 0;
     impl_->lastSyncFallbackSourceFrame_ = -1;
     impl_->lastSyncFallbackSucceeded_ = false;
+    impl_->lastDecodeState_ = QStringLiteral("opening");
     impl_->decodeTargetFrame_ = -1;
     impl_->decoding_ = false;
     impl_->decodeRetryPending_ = false;
@@ -495,6 +498,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
     impl_->lastAudioRequestTimelineFrame_ = std::numeric_limits<int64_t>::min();
     impl_->frameCache_.clear();
     setSourceSize(Size_2D(0, 0));
+    impl_->sourceCrop_.clampToSource(QSizeF(0.0, 0.0));
 
     const int requestId = ++impl_->openRequestId_;
     auto* layer = this;
@@ -562,6 +566,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                                   << "requestId=" << requestId
                                   << "thread=" << threadIdTag();
             layer->impl_->isLoaded_ = false;
+            layer->impl_->lastDecodeState_ = QStringLiteral("open-failed");
             publishVideoLayerModified(layer);
             return;
         }
@@ -577,6 +582,7 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
             timelineFrameToSourceFrame(layer, layer->impl_->currentTimelineFrame_);
         layer->impl_->lastSyncFallbackSourceFrame_ = -1;
         layer->impl_->lastSyncFallbackSucceeded_ = false;
+        layer->impl_->lastDecodeState_ = QStringLiteral("decode-pending");
         layer->impl_->decodeTargetFrame_ = -1;
         layer->impl_->decoding_ = false;
         layer->impl_->decodeRetryPending_ = false;
@@ -610,6 +616,8 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
 
         if (layer->impl_->streamInfo_.width > 0 && layer->impl_->streamInfo_.height > 0) {
             layer->setSourceSize(Size_2D(layer->impl_->streamInfo_.width, layer->impl_->streamInfo_.height));
+            layer->impl_->sourceCrop_.clampToSource(
+                QSizeF(layer->impl_->streamInfo_.width, layer->impl_->streamInfo_.height));
         }
 
         const int64_t initialSourceFrame = std::max<int64_t>(0, layer->impl_->currentSourceFrame_);
@@ -626,11 +634,13 @@ bool ArtifactVideoLayer::loadFromPath(const QString& path)
                            << "backend=" << decoderBackendName(ctrl)
                            << "controller=" << ctrl->getDebugState()
                            << threadDiagnosticsTag();
+                layer->impl_->lastDecodeState_ = QStringLiteral("decode-failed");
             } else {
                 layer->impl_->frameCache_.put(initialSourceFrame, frame);
                 layer->impl_->currentFrameBuffer_ = frame;
                 layer->impl_->hasCurrentFrameBuffer_ = true;
                 layer->impl_->lastDecodedFrame_ = initialSourceFrame;
+                layer->impl_->lastDecodeState_ = QStringLiteral("ready");
             }
             layer->impl_->decoding_ = false;
             publishVideoLayerModifiedAsync(layer);
@@ -671,10 +681,11 @@ QString ArtifactVideoLayer::debugState() const
         ? QSize(impl_->currentFrameBuffer_.width(), impl_->currentFrameBuffer_.height())
         : QSize();
     return QStringLiteral(
-               "loaded=%1 opening=%2 decoding=%3 timeline=%4 source=%5 "
-               "decodeTarget=%6 lastDecoded=%7 cachedFrames=%8 "
-               "hasBuffer=%9 bufferSize=%10 syncFallbackFrame=%11 syncFallbackOk=%12 "
-               "backend=%13 lastError=%14 state={%15}")
+        "state=%1 loaded=%2 opening=%3 decoding=%4 timeline=%5 source=%6 "
+        "decodeTarget=%7 lastDecoded=%8 cachedFrames=%9 "
+        "hasBuffer=%10 bufferSize=%11 syncFallbackFrame=%12 syncFallbackOk=%13 "
+        "backend=%14 lastError=%15 detail={%16}")
+        .arg(impl_ ? impl_->lastDecodeState_ : QStringLiteral("idle"))
         .arg(impl_ && impl_->isLoaded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->opening_.load() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->decoding_.load() ? QStringLiteral("true") : QStringLiteral("false"))
@@ -696,7 +707,8 @@ QString ArtifactVideoLayer::decodeState() const
 {
     const auto* controller = impl_ ? impl_->playbackController_.get() : nullptr;
     const int64_t sourceFrame = currentSourceFrame(this);
-    return QStringLiteral("loaded=%1 opening=%2 decoding=%3 source=%4 target=%5 last=%6 hasBuffer=%7 syncOk=%8 backend=%9 err=%10")
+    return QStringLiteral("state=%1 loaded=%2 opening=%3 decoding=%4 source=%5 target=%6 last=%7 hasBuffer=%8 syncOk=%9 backend=%10 err=%11")
+        .arg(impl_ ? impl_->lastDecodeState_ : QStringLiteral("idle"))
         .arg(impl_ && impl_->isLoaded_ ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->opening_.load() ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_ && impl_->decoding_.load() ? QStringLiteral("true") : QStringLiteral("false"))
@@ -810,7 +822,12 @@ bool ArtifactVideoLayer::hasCurrentFrameBuffer() const
 // === Frame Decoding ===
 void ArtifactVideoLayer::decodeCurrentFrame()
 {
-    if (!impl_->isLoaded_ || impl_->opening_.load()) {
+    if (!impl_->isLoaded_) {
+        impl_->lastDecodeState_ = QStringLiteral("not-loaded");
+        return;
+    }
+    if (impl_->opening_.load()) {
+        impl_->lastDecodeState_ = QStringLiteral("opening");
         return;
     }
 
@@ -819,6 +836,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 
     // 同じフレームでキャッシュ済みの場合はスキップ
     if (sourceFrame == impl_->lastDecodedFrame_ && impl_->hasCurrentFrameBuffer_) {
+        impl_->lastDecodeState_ = QStringLiteral("cached");
         return;
     }
 
@@ -827,6 +845,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         || (impl_->decodeTargetFrame_ >= 0 && !impl_->decodeFuture_.isFinished());
     if (inFlight) {
         impl_->decodeRetryPending_ = true;
+        impl_->lastDecodeState_ = QStringLiteral("decode-pending");
         return;
     }
 
@@ -842,6 +861,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                    << threadIdTag()
                    << threadDiagnosticsTag()
                    << "streamFrames=" << impl_->streamInfo_.frameCount;
+        impl_->lastDecodeState_ = QStringLiteral("range-rejected");
         return;
     }
 
@@ -851,6 +871,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         impl_->currentFrameBuffer_ = cachedFrame;
         impl_->hasCurrentFrameBuffer_ = true;
         impl_->lastDecodedFrame_ = sourceFrame;
+        impl_->lastDecodeState_ = QStringLiteral("cached");
         return;
     }
 
@@ -868,6 +889,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
     impl_->decoding_ = true;
     impl_->decodeRetryPending_ = false;
     impl_->decodeTargetFrame_ = sourceFrame;
+    impl_->lastDecodeState_ = QStringLiteral("decode-pending");
     auto* ctrl = impl_->playbackController_.get();
     const QString backendName = decoderBackendName(ctrl);
     impl_->decodeFuture_ = QtConcurrent::run(&sharedBackgroundThreadPool(), [ctrl, timelineFrame, sourceFrame, backendName, this]() -> ArtifactCore::ImageF32x4_RGBA {
@@ -879,13 +901,14 @@ void ArtifactVideoLayer::decodeCurrentFrame()
             impl_->currentFrameBuffer_ = decoded;
             impl_->hasCurrentFrameBuffer_ = true;
             impl_->lastDecodedFrame_ = sourceFrame;
-            impl_->saveDebugFrame(decoded.toQImage(), sourceFrame);
+            impl_->lastDecodeState_ = QStringLiteral("ready");
             qCDebug(videoLayerLog) << "[VideoLayer] bg decoded frame"
                                    << "timeline=" << timelineFrame
                                    << "source=" << sourceFrame
                                    << "size=" << decoded.width() << "x" << decoded.height()
                                    << threadIdTag();
         } else {
+            impl_->lastDecodeState_ = QStringLiteral("decode-failed");
             qWarning() << "[VideoLayer] DECODE FAILED"
                        << "timeline=" << timelineFrame
                        << "source=" << sourceFrame
@@ -917,6 +940,7 @@ void ArtifactVideoLayer::decodeCurrentFrame()
 QImage ArtifactVideoLayer::currentFrameToQImage() const
 {
     if (impl_->opening_.load()) {
+        impl_->lastDecodeState_ = QStringLiteral("opening");
         return impl_->currentFrameBuffer_.isEmpty() ? QImage() : impl_->currentFrameBuffer_.toQImage();
     }
 
@@ -930,6 +954,7 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
     if (!inFlight && impl_->decodeTargetFrame_ >= 0) {
         ArtifactCore::ImageF32x4_RGBA loaded = impl_->decodeFuture_.result();
         if (!loaded.isEmpty()) {
+            impl_->lastDecodeState_ = QStringLiteral("ready");
             if (impl_->decodeTargetFrame_ != impl_->lastDecodedFrame_) {
                 impl_->currentFrameBuffer_ = loaded;
                 impl_->hasCurrentFrameBuffer_ = true;
@@ -939,6 +964,8 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
                     impl_->streamInfo_.height = loaded.height();
                     const_cast<ArtifactVideoLayer*>(this)->setSourceSize(
                         Size_2D(loaded.width(), loaded.height()));
+                    const_cast<ArtifactVideoLayer*>(this)->impl_->sourceCrop_.clampToSource(
+                        QSizeF(loaded.width(), loaded.height()));
                 }
             }
         } else {
@@ -949,12 +976,14 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
                        << "backendLastError=" << impl_->playbackController_->getLastError()
                        << "controller=" << impl_->playbackController_->getDebugState()
                        << threadDiagnosticsTag();
+            impl_->lastDecodeState_ = QStringLiteral("sync-fallback-miss");
         }
         impl_->decodeTargetFrame_ = -1;
     }
 
     // 現在フレームがまだデコードされていなければ非同期デコードを起動する
     if (!inFlight && sourceFrame != impl_->lastDecodedFrame_) {
+        impl_->lastDecodeState_ = QStringLiteral("decode-pending");
         const_cast<ArtifactVideoLayer*>(this)->decodeCurrentFrame();
     }
 
@@ -963,7 +992,14 @@ QImage ArtifactVideoLayer::currentFrameToQImage() const
 
 QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
 {
-    if (!impl_->isLoaded_ || impl_->opening_.load()) return QImage();
+    if (!impl_->isLoaded_) {
+        impl_->lastDecodeState_ = QStringLiteral("not-loaded");
+        return QImage();
+    }
+    if (impl_->opening_.load()) {
+        impl_->lastDecodeState_ = QStringLiteral("opening");
+        return QImage();
+    }
 
     if (!impl_->playbackController_ || !impl_->playbackController_->isMediaOpen()) {
         return QImage();
@@ -977,6 +1013,7 @@ QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
     // キャッシュにあれば返す
     ArtifactCore::ImageF32x4_RGBA frame;
     if (impl_->frameCache_.get(sourceFrame, frame)) {
+        impl_->lastDecodeState_ = QStringLiteral("cached");
         if (sourceFrame == currentSourceFrame(this)) {
             impl_->currentFrameBuffer_ = frame;
             impl_->hasCurrentFrameBuffer_ = true;
@@ -986,9 +1023,11 @@ QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
     }
 
     if (sourceFrame == impl_->lastDecodedFrame_ && impl_->hasCurrentFrameBuffer_) {
+        impl_->lastDecodeState_ = QStringLiteral("ready");
         return impl_->currentFrameBuffer_.isEmpty() ? QImage() : impl_->currentFrameBuffer_.toQImage();
     }
     if (impl_->decoding_.load()) {
+        impl_->lastDecodeState_ = QStringLiteral("decode-pending");
         return QImage();
     }
 
@@ -1001,8 +1040,10 @@ QImage ArtifactVideoLayer::decodeFrameToQImage(int64_t frameNumber) const
             impl_->hasCurrentFrameBuffer_ = true;
             impl_->lastDecodedFrame_ = sourceFrame;
         }
+        impl_->lastDecodeState_ = QStringLiteral("sync-fallback-ready");
         return decoded.toQImage();
     } else {
+        impl_->lastDecodeState_ = QStringLiteral("sync-fallback-miss");
         qWarning() << "[VideoLayer] decodeFrameToQImage failed"
                    << "source=" << sourceFrame
                    << "backend=" << decoderBackendName(impl_->playbackController_.get())
@@ -1203,6 +1244,19 @@ QJsonObject ArtifactVideoLayer::toJson() const
     obj["video.frameRate"] = impl_->streamInfo_.frameRate;
     obj["video.hasAudio"] = impl_->streamInfo_.hasAudio;
     obj["video.hasVideo"] = impl_->videoEnabled_;
+    obj["sourceCrop.enabled"] = impl_->sourceCrop_.enabled();
+    obj["sourceCrop.cropX"] = impl_->sourceCrop_.cropRect().x();
+    obj["sourceCrop.cropY"] = impl_->sourceCrop_.cropRect().y();
+    obj["sourceCrop.cropWidth"] = impl_->sourceCrop_.cropRect().width();
+    obj["sourceCrop.cropHeight"] = impl_->sourceCrop_.cropRect().height();
+    obj["sourceCrop.panX"] = impl_->sourceCrop_.pan().x();
+    obj["sourceCrop.panY"] = impl_->sourceCrop_.pan().y();
+    obj["sourceCrop.zoom"] = impl_->sourceCrop_.zoom();
+    obj["sourceCrop.rotation"] = impl_->sourceCrop_.rotation();
+    obj["sourceCrop.anchorX"] = impl_->sourceCrop_.anchor().x();
+    obj["sourceCrop.anchorY"] = impl_->sourceCrop_.anchor().y();
+    obj["sourceCrop.preserveAspect"] = impl_->sourceCrop_.preserveAspect();
+    obj["sourceCrop"] = impl_->sourceCrop_.toJson();
     
     // Store layer name
     obj["layerName"] = layerName();
@@ -1251,6 +1305,11 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
     if (obj.contains("video.proxyPath") || obj.contains("proxyPath")) {
         layer->setProxyPath(obj.value("video.proxyPath").toString(obj.value("proxyPath").toString()));
     }
+    if (obj.contains("sourceCrop") && obj.value("sourceCrop").isObject()) {
+        layer->impl_->sourceCrop_.fromJson(obj.value("sourceCrop").toObject());
+        layer->impl_->sourceCrop_.clampToSource(
+            QSizeF(layer->impl_->streamInfo_.width, layer->impl_->streamInfo_.height));
+    }
     if (obj.contains("layerName")) {
         layer->setLayerName(obj["layerName"].toString());
     }
@@ -1282,14 +1341,40 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     if (size.width <= 0 || size.height <= 0) {
         size = Size_2D(impl_->currentFrameBuffer_.width(), impl_->currentFrameBuffer_.height());
     }
+    const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
+    const bool useCrop = cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0;
+    if (useCrop) {
+        size = Size_2D(cropRect.width(), cropRect.height());
+    }
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
-    drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
+    const ArtifactCore::ImageF32x4_RGBA renderBuffer =
+        useCrop ? impl_->currentFrameBuffer_.crop(cropRect.x(), cropRect.y(), cropRect.width(), cropRect.height())
+                : impl_->currentFrameBuffer_;
+    drawWithClonerEffect(this, baseTransform, [renderer, renderBuffer, size, this](const QMatrix4x4& transform, float weight) {
         renderer->drawSpriteTransformed(0.0f, 0.0f,
                                         static_cast<float>(size.width),
                                         static_cast<float>(size.height),
-                                        transform, impl_->currentFrameBuffer_,
+                                        transform, renderBuffer,
                                         this->opacity() * weight);
     });
+}
+
+QRectF ArtifactVideoLayer::localBounds() const
+{
+    auto size = sourceSize();
+    if (size.width <= 0 || size.height <= 0) {
+        size = Size_2D(impl_->currentFrameBuffer_.width(), impl_->currentFrameBuffer_.height());
+    }
+    if (size.width <= 0 || size.height <= 0) {
+        return QRectF();
+    }
+
+    const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
+    if (cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0) {
+        return QRectF(0.0, 0.0, static_cast<qreal>(cropRect.width()), static_cast<qreal>(cropRect.height()));
+    }
+
+    return QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
 }
 
 void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
@@ -1442,6 +1527,103 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGro
     videoGroup.addProperty(proxyProp);
 
     groups.push_back(videoGroup);
+
+    ArtifactCore::PropertyGroup sourceCropGroup(QStringLiteral("Source Reframe"));
+    auto enabledProp = makeProp(QStringLiteral("sourceCrop.enabled"),
+                                ArtifactCore::PropertyType::Boolean,
+                                impl_->sourceCrop_.enabled(), -240);
+    enabledProp->setDisplayLabel(QStringLiteral("Enabled"));
+    sourceCropGroup.addProperty(enabledProp);
+
+    auto cropXProp = makeProp(QStringLiteral("sourceCrop.cropX"),
+                              ArtifactCore::PropertyType::Float,
+                              impl_->sourceCrop_.cropRect().x(), -239);
+    cropXProp->setDisplayLabel(QStringLiteral("Crop X"));
+    cropXProp->setUnit(QStringLiteral("px"));
+    cropXProp->setSoftRange(-10000.0, 10000.0);
+    sourceCropGroup.addProperty(cropXProp);
+
+    auto cropYProp = makeProp(QStringLiteral("sourceCrop.cropY"),
+                              ArtifactCore::PropertyType::Float,
+                              impl_->sourceCrop_.cropRect().y(), -238);
+    cropYProp->setDisplayLabel(QStringLiteral("Crop Y"));
+    cropYProp->setUnit(QStringLiteral("px"));
+    cropYProp->setSoftRange(-10000.0, 10000.0);
+    sourceCropGroup.addProperty(cropYProp);
+
+    auto cropWProp = makeProp(QStringLiteral("sourceCrop.cropWidth"),
+                              ArtifactCore::PropertyType::Float,
+                              impl_->sourceCrop_.cropRect().width(), -237);
+    cropWProp->setDisplayLabel(QStringLiteral("Crop W"));
+    cropWProp->setUnit(QStringLiteral("px"));
+    cropWProp->setSoftRange(0.0, 10000.0);
+    sourceCropGroup.addProperty(cropWProp);
+
+    auto cropHProp = makeProp(QStringLiteral("sourceCrop.cropHeight"),
+                              ArtifactCore::PropertyType::Float,
+                              impl_->sourceCrop_.cropRect().height(), -236);
+    cropHProp->setDisplayLabel(QStringLiteral("Crop H"));
+    cropHProp->setUnit(QStringLiteral("px"));
+    cropHProp->setSoftRange(0.0, 10000.0);
+    sourceCropGroup.addProperty(cropHProp);
+
+    auto panXProp = makeProp(QStringLiteral("sourceCrop.panX"),
+                             ArtifactCore::PropertyType::Float,
+                             impl_->sourceCrop_.pan().x(), -235);
+    panXProp->setDisplayLabel(QStringLiteral("Pan X"));
+    panXProp->setUnit(QStringLiteral("px"));
+    panXProp->setSoftRange(-10000.0, 10000.0);
+    sourceCropGroup.addProperty(panXProp);
+
+    auto panYProp = makeProp(QStringLiteral("sourceCrop.panY"),
+                             ArtifactCore::PropertyType::Float,
+                             impl_->sourceCrop_.pan().y(), -234);
+    panYProp->setDisplayLabel(QStringLiteral("Pan Y"));
+    panYProp->setUnit(QStringLiteral("px"));
+    panYProp->setSoftRange(-10000.0, 10000.0);
+    sourceCropGroup.addProperty(panYProp);
+
+    auto zoomProp = makeProp(QStringLiteral("sourceCrop.zoom"),
+                             ArtifactCore::PropertyType::Float,
+                             impl_->sourceCrop_.zoom(), -233);
+    zoomProp->setDisplayLabel(QStringLiteral("Zoom"));
+    zoomProp->setUnit(QStringLiteral("x"));
+    zoomProp->setSoftRange(0.1, 8.0);
+    zoomProp->setStep(0.05);
+    sourceCropGroup.addProperty(zoomProp);
+
+    auto rotationProp = makeProp(QStringLiteral("sourceCrop.rotation"),
+                                 ArtifactCore::PropertyType::Float,
+                                 impl_->sourceCrop_.rotation(), -232);
+    rotationProp->setDisplayLabel(QStringLiteral("Rotation"));
+    rotationProp->setUnit(QStringLiteral("deg"));
+    rotationProp->setSoftRange(-360.0, 360.0);
+    rotationProp->setStep(0.5);
+    sourceCropGroup.addProperty(rotationProp);
+
+    auto anchorXProp = makeProp(QStringLiteral("sourceCrop.anchorX"),
+                                ArtifactCore::PropertyType::Float,
+                                impl_->sourceCrop_.anchor().x(), -231);
+    anchorXProp->setDisplayLabel(QStringLiteral("Anchor X"));
+    anchorXProp->setSoftRange(0.0, 1.0);
+    anchorXProp->setStep(0.01);
+    sourceCropGroup.addProperty(anchorXProp);
+
+    auto anchorYProp = makeProp(QStringLiteral("sourceCrop.anchorY"),
+                                ArtifactCore::PropertyType::Float,
+                                impl_->sourceCrop_.anchor().y(), -230);
+    anchorYProp->setDisplayLabel(QStringLiteral("Anchor Y"));
+    anchorYProp->setSoftRange(0.0, 1.0);
+    anchorYProp->setStep(0.01);
+    sourceCropGroup.addProperty(anchorYProp);
+
+    auto preserveProp = makeProp(QStringLiteral("sourceCrop.preserveAspect"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 impl_->sourceCrop_.preserveAspect(), -229);
+    preserveProp->setDisplayLabel(QStringLiteral("Preserve Aspect"));
+    sourceCropGroup.addProperty(preserveProp);
+
+    groups.push_back(sourceCropGroup);
     return groups;
 }
 
@@ -1486,6 +1668,73 @@ bool ArtifactVideoLayer::setLayerPropertyValue(const QString& propertyPath, cons
     }
     if (propertyPath == QStringLiteral("video.proxyQuality")) {
         setProxyQuality(static_cast<ProxyQuality>(value.toInt()));
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.enabled")) {
+        impl_->sourceCrop_.setEnabled(value.toBool());
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.cropX") ||
+        propertyPath == QStringLiteral("sourceCrop.cropY") ||
+        propertyPath == QStringLiteral("sourceCrop.cropWidth") ||
+        propertyPath == QStringLiteral("sourceCrop.cropHeight")) {
+        const auto size = sourceSize();
+        QRectF rect = impl_->sourceCrop_.cropRect();
+        if (!rect.isValid() || rect.width() <= 0.0 || rect.height() <= 0.0) {
+            rect = QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
+        }
+        if (propertyPath == QStringLiteral("sourceCrop.cropX")) {
+            rect.moveLeft(value.toDouble());
+        } else if (propertyPath == QStringLiteral("sourceCrop.cropY")) {
+            rect.moveTop(value.toDouble());
+        } else if (propertyPath == QStringLiteral("sourceCrop.cropWidth")) {
+            rect.setWidth(std::max(1.0, value.toDouble()));
+        } else {
+            rect.setHeight(std::max(1.0, value.toDouble()));
+        }
+        impl_->sourceCrop_.setCropRect(rect);
+        impl_->sourceCrop_.clampToSource(QSizeF(size.width, size.height));
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.panX") ||
+        propertyPath == QStringLiteral("sourceCrop.panY")) {
+        QPointF pan = impl_->sourceCrop_.pan();
+        if (propertyPath == QStringLiteral("sourceCrop.panX")) {
+            pan.setX(value.toDouble());
+        } else {
+            pan.setY(value.toDouble());
+        }
+        impl_->sourceCrop_.setPan(pan);
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.zoom")) {
+        impl_->sourceCrop_.setZoom(value.toDouble());
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.rotation")) {
+        impl_->sourceCrop_.setRotation(value.toDouble());
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.anchorX") ||
+        propertyPath == QStringLiteral("sourceCrop.anchorY")) {
+        QPointF anchor = impl_->sourceCrop_.anchor();
+        if (propertyPath == QStringLiteral("sourceCrop.anchorX")) {
+            anchor.setX(value.toDouble());
+        } else {
+            anchor.setY(value.toDouble());
+        }
+        impl_->sourceCrop_.setAnchor(anchor);
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.preserveAspect")) {
+        impl_->sourceCrop_.setPreserveAspect(value.toBool());
         setDirty(LayerDirtyFlag::Property);
         return true;
     }

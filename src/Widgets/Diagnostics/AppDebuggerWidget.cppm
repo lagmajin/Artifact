@@ -435,33 +435,44 @@ public:
                 .arg(staleCount);
     }
 
+    static QString resourceStateText(const ArtifactCore::FrameDebugSnapshot& snapshot,
+                                     const QString& typeName,
+                                     const QString& labelName)
+    {
+        for (const auto& resource : snapshot.resources) {
+            if (resource.type == typeName || resource.label == labelName) {
+                const QString note = resource.note.trimmed();
+                if (note.startsWith(QStringLiteral("state="))) {
+                    return note.section(QChar::Space, 0, 0);
+                }
+                const bool skipped = note.contains(QStringLiteral("skipped=")) ||
+                                     resource.stale || !resource.cacheHit;
+                return skipped ? QStringLiteral("skipped") : QStringLiteral("ok");
+            }
+        }
+        return QStringLiteral("none");
+    }
+
+    static QString resourceNoteText(const ArtifactCore::FrameDebugSnapshot& snapshot,
+                                    const QString& typeName,
+                                    const QString& labelName)
+    {
+        for (const auto& resource : snapshot.resources) {
+            if (resource.type == typeName || resource.label == labelName) {
+                const QString note = resource.note.trimmed();
+                return note.isEmpty() ? QStringLiteral("none") : note;
+            }
+        }
+        return QStringLiteral("none");
+    }
+
     static QString mediaHealthText(const ArtifactCore::FrameDebugSnapshot& snapshot)
     {
-        auto resourceState = [&snapshot](const QString& typeName, const QString& labelName) {
-            for (const auto& resource : snapshot.resources) {
-                if (resource.type == typeName || resource.label == labelName) {
-                    const bool skipped = resource.note.contains(QStringLiteral("skipped=")) ||
-                                         resource.stale || !resource.cacheHit;
-                    return skipped ? QStringLiteral("skipped") : QStringLiteral("ok");
-                }
-            }
-            return QStringLiteral("none");
-        };
-
-        auto resourceNote = [&snapshot](const QString& typeName, const QString& labelName) {
-            for (const auto& resource : snapshot.resources) {
-                if (resource.type == typeName || resource.label == labelName) {
-                    const QString note = resource.note.trimmed();
-                    return note.isEmpty() ? QStringLiteral("none") : note;
-                }
-            }
-            return QStringLiteral("none");
-        };
-
-        return QStringLiteral("media video=%1 particle=%2 particleDetail=%3")
-                .arg(resourceState(QStringLiteral("video"), QStringLiteral("Video Decode")))
-                .arg(resourceState(QStringLiteral("particle"), QStringLiteral("Particle Draw")))
-                .arg(resourceNote(QStringLiteral("particle"), QStringLiteral("Particle Draw")));
+        return QStringLiteral("media videoState=%1 particleState=%2 particleDetail=%3 blendMaskContract=%4")
+                .arg(resourceStateText(snapshot, QStringLiteral("video"), QStringLiteral("Video Decode")))
+                .arg(resourceStateText(snapshot, QStringLiteral("particle"), QStringLiteral("Particle Draw")))
+                .arg(resourceNoteText(snapshot, QStringLiteral("particle"), QStringLiteral("Particle Draw")))
+                .arg(resourceStateText(snapshot, QStringLiteral("blendMask"), QStringLiteral("Blend / Mask Contract")));
     }
 
     static QString ramPreviewText(ArtifactPlaybackService* playbackSvc)
@@ -1105,9 +1116,7 @@ public:
                 }
             }
             const QString projectHealthText = projectSvc
-                                                  ? (projectSvc->currentProjectHealthReport().isHealthy
-                                                         ? QStringLiteral("healthy")
-                                                         : QStringLiteral("issues"))
+                                                  ? projectSvc->currentProjectHealthStateToken()
                                                   : QStringLiteral("<no service>");
             QString warningText = QStringLiteral("none");
             if (controllerSnapshot.failed) {
@@ -1661,10 +1670,18 @@ public:
             lines << QStringLiteral("playbackState: %1")
                           .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
             if (projectSvc) {
-                const auto projectHealth = projectSvc->currentProjectHealthReport();
+                const auto projectHealth = projectSvc->currentProjectDiagnostics();
+                const int projectErrorCount = static_cast<int>(std::count_if(
+                    projectHealth.begin(), projectHealth.end(),
+                    [](const auto& diagnostic) { return diagnostic.isError(); }));
+                const int projectWarningCount = static_cast<int>(std::count_if(
+                    projectHealth.begin(), projectHealth.end(),
+                    [](const auto& diagnostic) { return diagnostic.isWarning(); }));
                 lines << QStringLiteral("projectHealth: %1/%2")
-                              .arg(projectHealth.isHealthy ? QStringLiteral("healthy") : QStringLiteral("issues"))
-                              .arg(static_cast<int>(projectHealth.issues.size()));
+                              .arg((projectErrorCount > 0 || projectWarningCount > 0)
+                                       ? QStringLiteral("issues")
+                                       : QStringLiteral("healthy"))
+                              .arg(projectErrorCount + projectWarningCount);
             } else {
                 lines << QStringLiteral("projectHealth: <no service>");
             }
@@ -1696,10 +1713,8 @@ public:
             diagnosticsSummary_->setToolTip(QStringLiteral("lastCrash=%1\n%2\nprojectHealth=%3")
                                                 .arg(lastCrashText)
                                                 .arg(mediaHealthText(controllerSnapshot))
-                                                .arg(projectSvc ? (projectSvc->currentProjectHealthReport().isHealthy
-                                                                       ? QStringLiteral("healthy")
-                                                                       : QStringLiteral("issues"))
-                                                              : QStringLiteral("<no service>")));
+                                                .arg(projectSvc ? projectSvc->currentProjectHealthSummaryText()
+                                                               : QStringLiteral("Status: <no service>")));
         }
 
         if (exportText_) {
@@ -1725,6 +1740,26 @@ public:
                           .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>"));
             lines << QStringLiteral("  captureHistory: %1")
                           .arg(hasCaptureBundle_ ? static_cast<int>(captureBundle_.history.size()) : 0);
+            lines << QStringLiteral("  particleState: %1")
+                          .arg(resourceStateText(controllerSnapshot, QStringLiteral("particle"), QStringLiteral("Particle Draw")));
+            lines << QStringLiteral("  particleDetail: %1")
+                          .arg(resourceNoteText(controllerSnapshot, QStringLiteral("particle"), QStringLiteral("Particle Draw")));
+            lines << QStringLiteral("  textState: %1")
+                          .arg(resourceStateText(controllerSnapshot, QStringLiteral("text"), QStringLiteral("Glyph Atlas")));
+            lines << QStringLiteral("  videoState: %1")
+                          .arg(resourceStateText(controllerSnapshot, QStringLiteral("video"), QStringLiteral("Video Decode")));
+            const QString blendState =
+                resourceStateText(controllerSnapshot, QStringLiteral("blendMask"), QStringLiteral("Blend / Mask Contract"));
+            lines << QStringLiteral("  blendState: %1")
+                          .arg(blendState != QStringLiteral("none")
+                                   ? blendState
+                                   : resourceStateText(controllerSnapshot, QStringLiteral("composition"), QStringLiteral("Render Path")));
+            lines << QStringLiteral("  blendMaskContract: %1")
+                          .arg(resourceStateText(controllerSnapshot,
+                                                 QStringLiteral("blendMask"),
+                                                 QStringLiteral("Blend / Mask Contract")));
+            lines << QStringLiteral("  glyphState: %1")
+                          .arg(resourceStateText(controllerSnapshot, QStringLiteral("glyphAtlas"), QStringLiteral("Glyph Atlas")));
             if (hasCaptureBundle_) {
                 lines << QStringLiteral("CaptureBundle JSON:");
                 lines << QString::fromUtf8(QJsonDocument(captureBundle_.toJson()).toJson(QJsonDocument::Indented));

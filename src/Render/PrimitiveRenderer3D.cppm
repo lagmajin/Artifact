@@ -15,6 +15,7 @@
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Sampler.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <numbers>
 
 module Artifact.Render.PrimitiveRenderer3D;
 
@@ -31,6 +32,9 @@ using namespace Diligent;
 using namespace ArtifactCore;
 
 namespace {
+constexpr float kDegreesToRadians = std::numbers::pi_v<float> / 180.0f;
+constexpr float kTwoPi = std::numbers::pi_v<float> * 2.0f;
+
 constexpr std::array<float, 16> kIdentityMatrix = {
     1.0f, 0.0f, 0.0f, 0.0f,
     0.0f, 1.0f, 0.0f, 0.0f,
@@ -448,7 +452,7 @@ public:
         constants_.centerAndRoll[0] = center.x();
         constants_.centerAndRoll[1] = center.y();
         constants_.centerAndRoll[2] = center.z();
-        constants_.centerAndRoll[3] = rollDegrees * 0.017453292519943295f;
+        constants_.centerAndRoll[3] = rollDegrees * kDegreesToRadians;
 
         constants_.sizeAndOpacity[0] = size.x();
         constants_.sizeAndOpacity[1] = size.y();
@@ -730,8 +734,8 @@ public:
         vertices.reserve(kSegments * 2);
 
         for (int i = 0; i < kSegments; ++i) {
-            const float angle0 = (static_cast<float>(i) / kSegments) * 6.2831853071795864769f;
-            const float angle1 = (static_cast<float>(i + 1) / kSegments) * 6.2831853071795864769f;
+            const float angle0 = (static_cast<float>(i) / kSegments) * kTwoPi;
+            const float angle1 = (static_cast<float>(i + 1) / kSegments) * kTwoPi;
             const QVector3D p0 = center + (u * std::cos(angle0) + v * std::sin(angle0)) * clampedRadius;
             const QVector3D p1 = center + (u * std::cos(angle1) + v * std::sin(angle1)) * clampedRadius;
             vertices.push_back(makeGizmoLineVertex(p0, color));
@@ -770,8 +774,6 @@ public:
         constexpr int kTubeSegments = 12;
         std::vector<GizmoLineVertex> vertices;
         vertices.reserve(kRingSegments * kTubeSegments * 6);
-
-        constexpr float kTwoPi = 6.2831853071795864769f;
 
         for (int i = 0; i < kRingSegments; ++i) {
             const float theta0 = (static_cast<float>(i) / kRingSegments) * kTwoPi;

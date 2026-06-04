@@ -221,17 +221,9 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
 
  CreateCompositionResult ArtifactProject::Impl::createComposition(const UniString& str)
  {
-  auto id = CompositionID();
- 	
   ArtifactCompositionInitParams params;
- 	
- 	
-  auto newComposition = new ArtifactComposition(id,params);
-
-  CreateCompositionResult result;
-
-
-  return result;
+  params.setCompositionName(str);
+  return createComposition(params);
  }
 
 CreateCompositionResult ArtifactProject::Impl::createComposition(const ArtifactCompositionInitParams& settings)
@@ -335,8 +327,6 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
  }
 
 
-  // bool ArtifactProject::Impl::removeById(const CompositionID& id) - TODO: container_.remove() not implemented
-  // Commented out - use alternative removal method
   bool ArtifactProject::Impl::removeById(CompositionID id)
   {
    // Check existence
@@ -1039,6 +1029,18 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
     return false;
   }
 
+ void ArtifactProject::setDirty(bool dirty)
+ {
+  if (!impl_) {
+   return;
+  }
+  const bool before = impl_->isDirty();
+  impl_->setDirty(dirty);
+  if (before != dirty) {
+   Q_EMIT projectDirtyChanged(dirty);
+  }
+ }
+
  bool ArtifactProject::addImportedComposition(ArtifactCompositionPtr comp, const QString& name)
  {
  if (!impl_->addImportedComposition(comp, name)) return false;
@@ -1135,11 +1137,6 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
  {
   return impl_->isDirty();
  }
-
- // void ArtifactProject::setDirty(bool dirty) - TODO: impl_->setDirty not available
- // {
- //  impl_->setDirty(dirty);
- // }
 
 	  QJsonObject ArtifactProject::toJson() const
 	  {

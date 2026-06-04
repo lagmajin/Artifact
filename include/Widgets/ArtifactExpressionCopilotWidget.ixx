@@ -4,6 +4,9 @@ module;
 #include <QObject>
 #include <QEvent>
 #include <QWidget>
+#include <QSize>
+#include <QStringList>
+#include <QVariant>
 #include <QString>
 #include <functional>
 export module Artifact.Widgets.ExpressionCopilotWidget;
@@ -21,6 +24,14 @@ export namespace Artifact {
         void setExpressionText(const QString& expression);
         QString expressionText() const;
         void setApplyHandler(std::function<void(const QString& expression)> handler);
+        void setPreviewContext(const QString& compositionName,
+                               const QSize& compositionSize,
+                               const QStringList& layerNames,
+                               int currentLayerIndex,
+                               const QString& layerName,
+                               const QVariant& propertyValue,
+                               double timeSeconds);
+        void clearPreviewContext();
 
         QSize sizeHint() const override;
         bool eventFilter(QObject* watched, QEvent* event) override;

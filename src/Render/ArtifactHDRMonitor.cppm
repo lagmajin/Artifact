@@ -20,7 +20,11 @@ public:
 ArtifactHDRMonitor::ArtifactHDRMonitor()
     : QObject(nullptr), impl_(new Impl()) {}
 
-ArtifactHDRMonitor::~ArtifactHDRMonitor() { delete impl_; }
+ArtifactHDRMonitor::~ArtifactHDRMonitor()
+{
+  delete impl_;
+  impl_ = nullptr;
+}
 
 void ArtifactHDRMonitor::setSettings(const HDRMonitorSettings &settings) {
   impl_->settings_ = settings;

@@ -11,7 +11,13 @@ module;
 #include <QString>
 #include <QJsonObject>
 #include <QJsonArray>
+#include <QJsonValue>
 #include <QDebug>
+#include <QSet>
+#include <QCryptographicHash>
+#include <QDir>
+#include <QFileInfo>
+#include <QUuid>
 
 module Artifact.Composition.Abstract;
 
@@ -32,6 +38,57 @@ import Event.Bus;
 
 namespace Artifact {
  using namespace ArtifactCore;
+
+namespace {
+
+void collectAssetSourcePaths(const QJsonValue& value, QSet<QString>& out)
+{
+  if (value.isObject()) {
+    const QJsonObject obj = value.toObject();
+    for (auto it = obj.begin(); it != obj.end(); ++it) {
+      const QString key = it.key();
+      const QString loweredKey = key.toLower();
+      if ((loweredKey == QStringLiteral("sourcepath")) ||
+          (loweredKey == QStringLiteral("filepath")) ||
+          loweredKey.endsWith(QStringLiteral(".sourcepath")) ||
+          loweredKey.endsWith(QStringLiteral(".filepath")) ||
+          loweredKey.contains(QStringLiteral("sourcepath")) ||
+          loweredKey.contains(QStringLiteral("filepath"))) {
+        const QString candidate = it.value().toString().trimmed();
+        if (!candidate.isEmpty()) {
+          out.insert(candidate);
+        }
+      }
+      collectAssetSourcePaths(it.value(), out);
+    }
+    return;
+  }
+
+  if (value.isArray()) {
+    const QJsonArray array = value.toArray();
+    for (const auto& child : array) {
+      collectAssetSourcePaths(child, out);
+    }
+  }
+}
+
+ArtifactCore::AssetID assetIdForPath(const QString& path)
+{
+  const QFileInfo info(path);
+  QString normalized = info.canonicalFilePath();
+  if (normalized.isEmpty()) {
+    normalized = info.absoluteFilePath();
+  }
+  if (normalized.isEmpty()) {
+    normalized = QDir::cleanPath(path.trimmed());
+  }
+
+  const QByteArray digest = QCryptographicHash::hash(normalized.toUtf8(), QCryptographicHash::Md5);
+  const QUuid uuid = QUuid::fromRfc4122(digest);
+  return ArtifactCore::AssetID(uuid.toString(QUuid::WithoutBraces));
+}
+
+} // namespace
 	
 
 
@@ -353,18 +410,16 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() cons
   QVector<ArtifactCore::AssetID> ArtifactAbstractComposition::Impl::getUsedAssets() const
   {
     QVector<ArtifactCore::AssetID> usedAssets;
+    QSet<QString> sourcePaths;
 
     // Collect assets from all layers
     for (const auto& layer : layerMultiIndex_.all()) {
       if (!layer) continue;
+      collectAssetSourcePaths(layer->toJson(), sourcePaths);
+    }
 
-      // TODO: Implement asset collection based on layer type
-      // For now, return empty list - will be expanded in future
-      // Example: if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
-      //   if (auto assetId = videoLayer->sourceAssetId()) {
-      //     usedAssets.append(assetId);
-      //   }
-      // }
+    for (const auto& path : sourcePaths) {
+      usedAssets.append(assetIdForPath(path));
     }
 
     return usedAssets;
@@ -782,7 +837,7 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
 
 void ArtifactAbstractComposition::removeLayerById(const ArtifactCore::LayerID& id)
 {
-    // Placeholder for removing layer by ID
+    removeLayer(id);
 }
 
 std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJson(const QJsonDocument& doc){

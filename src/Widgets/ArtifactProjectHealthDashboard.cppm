@@ -1,5 +1,6 @@
 module;
 #include <utility>
+#include <algorithm>
 #include <QWidget>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -13,11 +14,13 @@ module;
 #include <QPixmap>
 #include <QPainter>
 #include <QPalette>
+#include <QShowEvent>
 #include <QStringList>
 #include <QRegularExpression>
 #include <QtSVG/QSvgRenderer>
 #include <QHeaderView>
 #include <QStyle>
+#include <QTimer>
 #include <QMessageBox>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
@@ -31,6 +34,8 @@ import std;
 import Artifact.Project;
 import Artifact.Project.Health;
 import Artifact.Service.Project;
+import Event.Bus;
+import Artifact.Event.Types;
 import Core.Diagnostics.ProjectDiagnostic;
 import Widgets.Utils.CSS;
 import Utils.Path;
@@ -151,6 +156,24 @@ public:
         : QWidget(parent), project_(project) 
     {
         setupUI();
+        eventBusSubscriptions_.push_back(
+            eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+                QTimer::singleShot(0, this, [this]() {
+                    refresh();
+                });
+            }));
+        eventBusSubscriptions_.push_back(
+            eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
+                QTimer::singleShot(0, this, [this]() {
+                    refresh();
+                });
+            }));
+        eventBusSubscriptions_.push_back(
+            eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
+                QTimer::singleShot(0, this, [this]() {
+                    refresh();
+                });
+            }));
         if (project_) {
             refresh();
         }
@@ -177,25 +200,34 @@ public:
         std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
         if (ArtifactProjectService::instance()) {
             diagnostics = ArtifactProjectService::instance()->currentProjectDiagnostics();
-            lastReport_ = ArtifactProjectService::instance()->currentProjectHealthReport();
+            lastReport_ = {};
         } else {
             lastReport_ = ArtifactProjectHealthChecker::check(project_);
             diagnostics = diagnosticsFromHealthReport(lastReport_);
         }
 
         // Update overall status
-        if (lastReport_.isHealthy) {
-            if (lastReport_.issues.isEmpty()) {
-                statusLabel_->setText("Project is Healthy");
-                applyStatusColor(QColor(QStringLiteral("#4CAF50")));
-            } else {
-                statusLabel_->setText("Project has Minor Warnings");
-                applyStatusColor(QColor(QStringLiteral("#FF9800")));
-            }
-        } else {
+        const bool hasErrors = std::any_of(diagnostics.begin(), diagnostics.end(),
+                                           [](const auto& diagnostic) {
+                                               return diagnostic.isError();
+                                           });
+        const bool hasWarnings = std::any_of(diagnostics.begin(), diagnostics.end(),
+                                             [](const auto& diagnostic) {
+                                                 return diagnostic.isWarning();
+                                             });
+
+        if (hasErrors) {
             statusLabel_->setText("Project has Critical Issues");
             applyStatusColor(QColor(QStringLiteral("#F44336")));
+        } else if (hasWarnings || (!ArtifactProjectService::instance() && !lastReport_.issues.isEmpty())) {
+            statusLabel_->setText("Project has Minor Warnings");
+            applyStatusColor(QColor(QStringLiteral("#FF9800")));
+        } else {
+            statusLabel_->setText("Project is Healthy");
+            applyStatusColor(QColor(QStringLiteral("#4CAF50")));
         }
+
+        const bool canRepair = hasErrors || hasWarnings || (!ArtifactProjectService::instance() && !lastReport_.issues.isEmpty());
 
         // Add issues to tree
         for (const auto& diagnostic : diagnostics) {
@@ -237,8 +269,13 @@ public:
         issuesTree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
         issuesTree_->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
         if (fixBtn_) {
-            fixBtn_->setEnabled(!lastReport_.isHealthy || !lastReport_.issues.isEmpty());
+            fixBtn_->setEnabled(canRepair);
         }
+    }
+
+    void showEvent(QShowEvent* event) override {
+        QWidget::showEvent(event);
+        refresh();
     }
 
 private:
@@ -407,6 +444,8 @@ private:
     QLabel* statusLabel_ = nullptr;
     QPushButton* fixBtn_ = nullptr;
     ProjectHealthReport lastReport_;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 };
 
 W_OBJECT_IMPL(ArtifactProjectHealthDashboard)

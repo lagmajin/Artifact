@@ -22,6 +22,7 @@ import Frame.Rate;
 import Frame.Range;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InOutPoints;
+import Artifact.Widgets.SoftwareRenderInspectors;
 import AudioRenderer;
 import Audio.Segment;
 import Playback.State;
@@ -310,9 +311,9 @@ public:
     /// フレーム更新処理
     void updateFrame(int64_t targetFrame) {
         // PlaybackService owns composition-frame sync and viewport rendering.
-        // Keep this worker path as a lightweight clock tick only.
+        // Emit the current frame preview so playback consumers can show a real image.
         QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame)]() {
-            Q_EMIT owner_->frameChanged(pos, QImage());
+            Q_EMIT owner_->frameChanged(pos, renderFrame(pos));
         }, Qt::QueuedConnection);
     }
 
@@ -324,21 +325,43 @@ public:
             sz = QSize(compSz.width(), compSz.height());
         }
 
-        // Re-use frontBuffer if size matches to avoid allocations
-        if (backBuffer_.size() != sz || backBuffer_.format() != QImage::Format_ARGB32_Premultiplied) {
+        FramePosition previousPosition;
+        const bool restorePosition = composition_ &&
+                                     composition_->framePosition() != position;
+        if (restorePosition) {
+            previousPosition = composition_->framePosition();
+            composition_->setFramePosition(position);
+        }
+
+        if (composition_) {
+            QImage preview = generateCompositionThumbnail(composition_, sz);
+            if (!preview.isNull()) {
+                if (preview.size() != sz) {
+                    preview = preview.scaled(sz, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                }
+                if (restorePosition) {
+                    composition_->setFramePosition(previousPosition);
+                }
+                return preview;
+            }
+        }
+
+        if (backBuffer_.size() != sz ||
+            backBuffer_.format() != QImage::Format_ARGB32_Premultiplied) {
             backBuffer_ = QImage(sz, QImage::Format_ARGB32_Premultiplied);
         }
-        
-        backBuffer_.fill(QColor(32, 34, 38));
-        
+
+        backBuffer_.fill(QColor(24, 26, 30));
+
         QPainter painter(&backBuffer_);
         painter.setRenderHint(QPainter::Antialiasing);
-        painter.setPen(Qt::white);
-        painter.setFont(QFont("Segoe UI", 24, QFont::Bold));
-        painter.drawText(backBuffer_.rect(), Qt::AlignCenter, 
-            QString("Frame %1").arg(position.framePosition()));
-        painter.end();
-        
+        painter.setPen(QColor(229, 231, 235));
+        painter.setFont(QFont(QStringLiteral("Segoe UI"), 20, QFont::Bold));
+        painter.drawText(backBuffer_.rect(), Qt::AlignCenter,
+                         QStringLiteral("Preview unavailable"));
+        if (restorePosition) {
+            composition_->setFramePosition(previousPosition);
+        }
         return backBuffer_;
     }
     
@@ -632,7 +655,8 @@ void ArtifactPlaybackEngine::stop() {
     impl_->currentFrame_ = impl_->effectiveStartFrame().framePosition();
     impl_->audioNextFrame_ = impl_->currentFrame_.load();
     Q_EMIT playbackStateChanged(PlaybackState::Stopped);
-    Q_EMIT frameChanged(FramePosition(impl_->currentFrame_), QImage());
+    const FramePosition position(impl_->currentFrame_.load());
+    Q_EMIT frameChanged(position, renderPreviewFrame(position));
 }
 
 void ArtifactPlaybackEngine::togglePlayPause() {
@@ -653,7 +677,7 @@ void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
     if (impl_->audioRenderer_) {
         impl_->audioRenderer_->clearBuffer();
     }
-    Q_EMIT frameChanged(position, QImage());
+    Q_EMIT frameChanged(position, renderPreviewFrame(position));
 }
 
 void ArtifactPlaybackEngine::goToNextFrame() {
@@ -681,19 +705,43 @@ void ArtifactPlaybackEngine::goToEndFrame() {
 }
 
 void ArtifactPlaybackEngine::goToNextMarker() {
-    // TODO: マーカー実装時に実装
+    if (!impl_->inOutPoints_) {
+        return;
+    }
+    const auto next = impl_->inOutPoints_->nextMarker(currentFrame());
+    if (next) {
+        goToFrame(*next);
+    }
 }
 
 void ArtifactPlaybackEngine::goToPreviousMarker() {
-    // TODO: マーカー実装時に実装
+    if (!impl_->inOutPoints_) {
+        return;
+    }
+    const auto prev = impl_->inOutPoints_->previousMarker(currentFrame());
+    if (prev) {
+        goToFrame(*prev);
+    }
 }
 
 void ArtifactPlaybackEngine::goToNextChapter() {
-    // TODO: チャプター実装時に実装
+    if (!impl_->inOutPoints_) {
+        return;
+    }
+    const auto next = impl_->inOutPoints_->nextChapter(currentFrame());
+    if (next) {
+        goToFrame(*next);
+    }
 }
 
 void ArtifactPlaybackEngine::goToPreviousChapter() {
-    // TODO: チャプター実装時に実装
+    if (!impl_->inOutPoints_) {
+        return;
+    }
+    const auto prev = impl_->inOutPoints_->previousChapter(currentFrame());
+    if (prev) {
+        goToFrame(*prev);
+    }
 }
 
 bool ArtifactPlaybackEngine::isPlaying() const {

@@ -2,6 +2,7 @@
 #include <utility>
 #include <QImage>
 #include <QJsonObject>
+#include <QRectF>
 #include <QVariant>
 #include <wobjectimpl.h>
 export module Artifact.Layer.Image;

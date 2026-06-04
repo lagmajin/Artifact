@@ -37,6 +37,8 @@ import Artifact.Layer.Audio;
 import Artifact.Layer.Video;
 import Artifact.Layer.Group;
 import Artifact.Project.Health;
+import Artifact.Diagnostics.AppValidationRules;
+import Core.Diagnostics.DiagnosticEngine;
 import Image.PSDDocument;
 import File.TypeDetector;
 import Artifact.Layers.Selection.Manager;
@@ -214,6 +216,107 @@ auto convertProjectHealthReportToDiagnostics(const ProjectHealthReport &report)
   }
 
   return diagnostics;
+}
+
+auto appValidationEngine() -> ArtifactCore::DiagnosticEngine&
+{
+  static ArtifactCore::DiagnosticEngine engine;
+  static const bool initialized = []() {
+    engine.ruleRegistry().clearRules();
+    engine.ruleRegistry().registerRule(std::make_unique<ArtifactMissingFileRule>());
+    engine.ruleRegistry().registerRule(std::make_unique<ArtifactPerformanceRule>());
+    engine.ruleRegistry().registerRule(std::make_unique<ArtifactMatteReferenceRule>());
+    return true;
+  }();
+  (void)initialized;
+  return engine;
+}
+
+auto convertDiagnosticResultToDiagnostics(const ArtifactCore::DiagnosticResult& result)
+    -> std::vector<ArtifactCore::ProjectDiagnostic> {
+  return result.getDiagnostics();
+}
+
+QString projectHealthSummaryFromDiagnostics(const std::vector<ArtifactCore::ProjectDiagnostic>& diagnostics)
+{
+  const int errorCount = static_cast<int>(std::count_if(
+      diagnostics.begin(), diagnostics.end(),
+      [](const auto& diagnostic) { return diagnostic.isError(); }));
+  const int warningCount = static_cast<int>(std::count_if(
+      diagnostics.begin(), diagnostics.end(),
+      [](const auto& diagnostic) { return diagnostic.isWarning(); }));
+  const int issueCount = errorCount + warningCount;
+  return QStringLiteral("Status: Project %1 (%2 issue%3)")
+      .arg(issueCount == 0 ? QStringLiteral("healthy") : QStringLiteral("issues"))
+      .arg(issueCount)
+      .arg(issueCount == 1 ? QString() : QStringLiteral("s"));
+}
+
+void appendAppValidationDiagnostics(
+    const std::shared_ptr<ArtifactProject>& project,
+    std::vector<ArtifactCore::ProjectDiagnostic>& diagnostics)
+{
+  if (!project) {
+    return;
+  }
+
+  const auto items = project->projectItems();
+  for (auto* root : items) {
+    std::function<void(ProjectItem*)> walk = [&](ProjectItem* item) {
+      if (!item) {
+        return;
+      }
+
+      if (item->type() == eProjectItemType::Composition) {
+        auto* compItem = static_cast<CompositionItem*>(item);
+        const auto found = project->findComposition(compItem->compositionId);
+        if (found.success) {
+          if (auto comp = found.ptr.lock()) {
+            const auto result = appValidationEngine().validateAll(comp.get());
+            const auto validationDiagnostics = convertDiagnosticResultToDiagnostics(result);
+            diagnostics.insert(diagnostics.end(),
+                               validationDiagnostics.begin(),
+                               validationDiagnostics.end());
+          }
+        }
+      }
+
+      for (auto* child : item->children) {
+        walk(child);
+      }
+    };
+
+    walk(root);
+  }
+}
+
+void appendUniqueDiagnostic(
+    std::vector<ArtifactCore::ProjectDiagnostic>& diagnostics,
+    const ArtifactCore::ProjectDiagnostic& diagnostic)
+{
+  const auto signature = [&diagnostic]() {
+    return QStringLiteral("%1|%2|%3|%4|%5")
+        .arg(static_cast<int>(diagnostic.getSeverity()))
+        .arg(static_cast<int>(diagnostic.getCategory()))
+        .arg(diagnostic.getMessage())
+        .arg(diagnostic.getSourceCompId())
+        .arg(diagnostic.getSourceLayerId());
+  }();
+
+  const bool alreadyPresent = std::any_of(
+      diagnostics.begin(), diagnostics.end(),
+      [&signature](const ArtifactCore::ProjectDiagnostic& existing) {
+        return QStringLiteral("%1|%2|%3|%4|%5")
+            .arg(static_cast<int>(existing.getSeverity()))
+            .arg(static_cast<int>(existing.getCategory()))
+            .arg(existing.getMessage())
+            .arg(existing.getSourceCompId())
+            .arg(existing.getSourceLayerId()) == signature;
+      });
+
+  if (!alreadyPresent) {
+    diagnostics.push_back(diagnostic);
+  }
 }
 } // namespace
 
@@ -1998,7 +2101,42 @@ ProjectHealthReport ArtifactProjectService::currentProjectHealthReport() const {
 
 std::vector<ArtifactCore::ProjectDiagnostic>
 ArtifactProjectService::currentProjectDiagnostics() const {
-  return convertProjectHealthReportToDiagnostics(currentProjectHealthReport());
+  std::vector<ArtifactCore::ProjectDiagnostic> diagnostics =
+      convertProjectHealthReportToDiagnostics(currentProjectHealthReport());
+
+  const auto project = getCurrentProjectSharedPtr();
+  if (project) {
+    std::vector<ArtifactCore::ProjectDiagnostic> appDiagnostics;
+    appendAppValidationDiagnostics(project, appDiagnostics);
+    for (const auto& diagnostic : appDiagnostics) {
+      appendUniqueDiagnostic(diagnostics, diagnostic);
+    }
+  }
+
+  return diagnostics;
+}
+
+QString ArtifactProjectService::currentProjectHealthSummaryText() const
+{
+  const auto project = getCurrentProjectSharedPtr();
+  if (!project) {
+    return QStringLiteral("Status: Open a project to inspect details");
+  }
+  return projectHealthSummaryFromDiagnostics(currentProjectDiagnostics());
+}
+
+QString ArtifactProjectService::currentProjectHealthStateToken() const
+{
+  const auto project = getCurrentProjectSharedPtr();
+  if (!project) {
+    return QStringLiteral("none");
+  }
+
+  const auto diagnostics = currentProjectDiagnostics();
+  const bool hasIssues = std::any_of(
+      diagnostics.begin(), diagnostics.end(),
+      [](const auto& diagnostic) { return diagnostic.isError() || diagnostic.isWarning(); });
+  return hasIssues ? QStringLiteral("issues") : QStringLiteral("healthy");
 }
 
 ChangeCompositionResult

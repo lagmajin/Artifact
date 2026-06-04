@@ -85,7 +85,7 @@ ProjectStats ArtifactProjectStatistics::collect(ArtifactProject* project) {
     if (!project) return {};
 
     ProjectStats stats;
-    // stats.projectName = project->projectName(); // Need to check if this exists
+    stats.projectName = project->settings().projectName();
 
     auto items = project->projectItems();
     

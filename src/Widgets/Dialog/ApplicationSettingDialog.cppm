@@ -1045,7 +1045,6 @@ MemoryAndCpuSettingPage::~MemoryAndCpuSettingPage() {
   }
 }
 
-// Add loadSettings/saveSettings stubs for other pages if not yet implemented
 void ImportSettingPage::loadSettings() {
   auto *settings = ArtifactAppSettings::instance();
   if (!settings || !impl_) {
@@ -1117,6 +1116,7 @@ public:
 
   QVBoxLayout *layout_ = nullptr;
   QLabel *descriptionLabel_ = nullptr;
+  QLabel *contextsLabel_ = nullptr;
   QTableWidget *table_ = nullptr;
   QPushButton *importPresetButton_ = nullptr;
   QPushButton *exportPresetButton_ = nullptr;
@@ -1135,8 +1135,15 @@ ShortcutSettingPage::ShortcutSettingPage(QWidget *parent)
   impl_->descriptionLabel_ = new QLabel(this);
   impl_->descriptionLabel_->setWordWrap(true);
   impl_->descriptionLabel_->setText(
-      QStringLiteral("Shared shortcut bindings used by timeline and app-level commands."));
+      QStringLiteral("Shared shortcut bindings used by timeline, viewport, and app-level commands."));
   impl_->layout_->addWidget(impl_->descriptionLabel_);
+
+  impl_->contextsLabel_ = new QLabel(this);
+  impl_->contextsLabel_->setWordWrap(true);
+  impl_->contextsLabel_->setText(QStringLiteral(
+      "Active shortcut contexts: Global, Workspace.Timeline, Workspace.Project, "
+      "Viewport.Composition, Panel.LayerTree, Panel.AssetBrowser, Panel.Inspector."));
+  impl_->layout_->addWidget(impl_->contextsLabel_);
 
   impl_->table_ = new QTableWidget(this);
   impl_->table_->setColumnCount(4);

@@ -99,6 +99,7 @@ export namespace Artifact {
   void createFolder(const QString& name, FolderItem* parentFolder);
   bool moveItem(ProjectItem* item, ProjectItem* newParent);
   bool removeItem(ProjectItem* item);
+  void setDirty(bool dirty);
    bool validateProjectTree(QString* errorMessage = nullptr) const;
    std::vector<ProjectValidationIssue> validate() const;
 bool isDirty() const;

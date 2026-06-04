@@ -35,6 +35,7 @@ module;
 #include <QImage>
 #include <QString>
 #include <QJsonObject>
+#include <QRectF>
 export module Artifact.Layer.Video;
 
 
@@ -248,6 +249,7 @@ public:
     // === Overrides ===
     
     void draw(ArtifactIRenderer* renderer) override;
+    QRectF localBounds() const override;
     void goToFrame(int64_t frameNumber) override;
     bool hasVideo() const override;
     bool getAudio(ArtifactCore::AudioSegment &outSegment, const FramePosition &start,

@@ -17,7 +17,7 @@ export namespace Artifact {
 
  private:
     class Impl;
-    Impl* impl_;
+    Impl* impl_ = nullptr;
 
  public:
     ArtifactRenderer(QObject* parent = nullptr);
@@ -39,6 +39,7 @@ export namespace Artifact {
 
  inline ArtifactRenderer::~ArtifactRenderer() {
     delete impl_;
+    impl_ = nullptr;
  }
 
  inline ArtifactRenderer::Impl::Impl() {

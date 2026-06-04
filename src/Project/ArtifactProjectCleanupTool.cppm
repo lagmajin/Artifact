@@ -99,9 +99,45 @@ QStringList ArtifactProjectCleanupTool::findUnusedAssetPaths(ArtifactProject* pr
 }
 
 int ArtifactProjectCleanupTool::removeUnusedAssets(ArtifactProject* project) {
-    // 実際のリセットロジック（現在未実装）
-    qDebug() << "ArtifactProjectCleanupTool::removeUnusedAssets: Not fully implemented yet.";
-    return 0;
+    if (!project) {
+        return 0;
+    }
+
+    const QStringList unusedPaths = findUnusedAssetPaths(project);
+    if (unusedPaths.isEmpty()) {
+        return 0;
+    }
+
+    QSet<QString> unusedSet(unusedPaths.begin(), unusedPaths.end());
+    QVector<ProjectItem*> roots = project->projectItems();
+    QVector<ProjectItem*> removableItems;
+
+    std::function<void(ProjectItem*)> collectRemovable = [&](ProjectItem* item) {
+        if (!item) return;
+        if (item->type() == eProjectItemType::Footage) {
+            auto* footage = static_cast<FootageItem*>(item);
+            if (unusedSet.contains(footage->filePath)) {
+                removableItems.append(item);
+            }
+        }
+        for (auto* child : item->children) {
+            collectRemovable(child);
+        }
+    };
+
+    for (auto* root : roots) {
+        collectRemovable(root);
+    }
+
+    int removed = 0;
+    for (auto* item : removableItems) {
+        if (project->removeItem(item)) {
+            ++removed;
+        }
+    }
+
+    qDebug() << "ArtifactProjectCleanupTool::removeUnusedAssets removed" << removed << "items";
+    return removed;
 }
 
 } // namespace Artifact

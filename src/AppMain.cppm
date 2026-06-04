@@ -102,9 +102,9 @@ import Artifact.PythonAPI;
 import Script.Python.Engine;
 import Diagnostics.CrashHandler;
 import Translation.Manager;
-import Artifact.Diagnostics.AppValidationRules;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Playback;
+import Artifact.Service.PlaybackShortcuts;
 import Artifact.Service.Project;
 import Artifact.Project.Roles;
 import EnvironmentVariable;
@@ -1002,25 +1002,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
-  // ============================================================
-  // Problem View 検証ルールの登録
-  // ============================================================
-  {
-    // ルールエンジンとルールのインスタンスを作成
-    // 実際にはシングルトンかグローバルな場所に保持する必要があるが、
-    // ここではデモ用に main 関数スコープで登録する（本来は App クラスなどで管理）
-    // TODO: 診断エンジンをグローバルに保持する仕組みを用意する
-    
-    // 簡易的にルールのインスタンス化だけ行っておく
-    // validateAll() はプロジェクト読み込み時などに呼び出す
-    auto missingFileRule = std::make_unique<ArtifactMissingFileRule>();
-    auto perfRule = std::make_unique<ArtifactPerformanceRule>();
-    
-    // デバッグ出力
-    qInfo() << "[AppMain] Validation Rules initialized:" 
-            << QString::fromStdString(missingFileRule->name().toStdString()) 
-            << QString::fromStdString(perfRule->name().toStdString());
-  }
+  qInfo() << "[AppMain] Validation diagnostics will be initialized on demand";
 
   if (qEnvironmentVariableIsSet("ARTIFACT_RUN_BUILTIN_TESTS")) {
     const int builtinTestFailures = Artifact::runAllTests();
@@ -1255,6 +1237,10 @@ int main(int argc, char *argv[]) {
     launchOpenFilter->enqueueLaunchPath(filePath);
   }
   auto *playbackService = ArtifactPlaybackService::instance();
+  auto *playbackShortcuts = new Artifact::ArtifactPlaybackShortcuts(mw);
+  if (playbackService && playbackService->controller()) {
+    playbackShortcuts->setup(playbackService->controller(), nullptr);
+  }
   // Enable output monitoring for debugging
   if (playbackService->controller()) {
     playbackService->controller()->enableOutputMonitoring(true);

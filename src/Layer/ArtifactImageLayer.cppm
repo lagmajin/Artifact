@@ -7,6 +7,9 @@ module;
 #include <QJsonObject>
 #include <QMatrix4x4>
 #include <QPainter>
+#include <QRect>
+#include <QRectF>
+#include <QSizeF>
 #include <QFutureWatcher>
 #include <QThread>
 #include <QCoreApplication>
@@ -25,6 +28,7 @@ import Artifact.Layers.Abstract._2D;
 import Thread.Helper;
 import CvUtils;
 import Artifact.Render.IRenderer;
+import Artifact.Layer.SourceCrop;
 import Image.ImageF32x4_RGBA;
 import Size;
 
@@ -49,6 +53,21 @@ ArtifactCore::ImageF32x4_RGBA toFrameBuffer(const QImage& image)
 
     buffer.setFromCVMat(mat);
     return buffer;
+}
+
+QRect sourceCropToRect(const Artifact::SourceCrop& crop, const QSize& sourceSize)
+{
+    if (!crop.enabled() || sourceSize.width() <= 0 || sourceSize.height() <= 0) {
+        return {};
+    }
+
+    const QRectF cropRect = crop.effectiveCropRect(QSizeF(sourceSize));
+    if (!cropRect.isValid() || cropRect.width() <= 0.0 || cropRect.height() <= 0.0) {
+        return {};
+    }
+
+    return cropRect.toAlignedRect().intersected(
+        QRect(0, 0, sourceSize.width(), sourceSize.height()));
 }
 
 QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* errorOut = nullptr)
@@ -122,6 +141,7 @@ public:
     int width_ = 0;
     int height_ = 0;
     QString sourcePath_;
+    SourceCrop sourceCrop_;
     mutable std::shared_ptr<QImage> cache_;
     mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> cacheBuffer_;
     // [Fix 1] バックグラウンド先読み用
@@ -145,6 +165,7 @@ ArtifactImageLayer::ArtifactImageLayer() : impl_(new Impl()) {
             impl_->width_ = impl_->cache_->width();
             impl_->height_ = impl_->cache_->height();
             setSourceSize(Size_2D(impl_->width_, impl_->height_));
+            impl_->sourceCrop_.clampToSource(QSizeF(impl_->width_, impl_->height_));
         }
         impl_->prefetchDone_ = true;
         Q_EMIT changed();
@@ -188,6 +209,7 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
         return loadImageViaOIIO(path);
     });
     impl_->prefetchWatcher_.setFuture(impl_->prefetchFuture_);
+    impl_->sourceCrop_.clampToSource(QSizeF(impl_->width_, impl_->height_));
 
     qDebug() << "[ArtifactImageLayer] OIIO prefetch started:" << path
              << "sizeHint=" << QSize(spec.width, spec.height);
@@ -207,6 +229,19 @@ QJsonObject ArtifactImageLayer::toJson() const
     obj["image.fitToLayer"] = impl_->fitToLayer_;
     obj["image.width"] = impl_->width_;
     obj["image.height"] = impl_->height_;
+    obj["sourceCrop.enabled"] = impl_->sourceCrop_.enabled();
+    obj["sourceCrop.cropX"] = impl_->sourceCrop_.cropRect().x();
+    obj["sourceCrop.cropY"] = impl_->sourceCrop_.cropRect().y();
+    obj["sourceCrop.cropWidth"] = impl_->sourceCrop_.cropRect().width();
+    obj["sourceCrop.cropHeight"] = impl_->sourceCrop_.cropRect().height();
+    obj["sourceCrop.panX"] = impl_->sourceCrop_.pan().x();
+    obj["sourceCrop.panY"] = impl_->sourceCrop_.pan().y();
+    obj["sourceCrop.zoom"] = impl_->sourceCrop_.zoom();
+    obj["sourceCrop.rotation"] = impl_->sourceCrop_.rotation();
+    obj["sourceCrop.anchorX"] = impl_->sourceCrop_.anchor().x();
+    obj["sourceCrop.anchorY"] = impl_->sourceCrop_.anchor().y();
+    obj["sourceCrop.preserveAspect"] = impl_->sourceCrop_.preserveAspect();
+    obj["sourceCrop"] = impl_->sourceCrop_.toJson();
     return obj;
 }
 
@@ -228,6 +263,103 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactImageLayer::getLayerPropertyGro
                                     impl_->fitToLayer_, -140));
 
     groups.push_back(imageGroup);
+
+    ArtifactCore::PropertyGroup sourceCropGroup(QStringLiteral("Source Reframe"));
+    auto enabledProp = makeProp(QStringLiteral("sourceCrop.enabled"),
+                                ArtifactCore::PropertyType::Boolean,
+                                impl_->sourceCrop_.enabled(), -240);
+    enabledProp->setDisplayLabel(QStringLiteral("Enabled"));
+    sourceCropGroup.addProperty(enabledProp);
+
+    auto cropXProp = makeProp(QStringLiteral("sourceCrop.cropX"),
+                              ArtifactCore::PropertyType::Float,
+                              impl_->sourceCrop_.cropRect().x(), -239);
+    cropXProp->setDisplayLabel(QStringLiteral("Crop X"));
+    cropXProp->setUnit(QStringLiteral("px"));
+    cropXProp->setSoftRange(-10000.0, 10000.0);
+    sourceCropGroup.addProperty(cropXProp);
+
+    auto cropYProp = makeProp(QStringLiteral("sourceCrop.cropY"),
+                              ArtifactCore::PropertyType::Float,
+                              impl_->sourceCrop_.cropRect().y(), -238);
+    cropYProp->setDisplayLabel(QStringLiteral("Crop Y"));
+    cropYProp->setUnit(QStringLiteral("px"));
+    cropYProp->setSoftRange(-10000.0, 10000.0);
+    sourceCropGroup.addProperty(cropYProp);
+
+    auto cropWProp = makeProp(QStringLiteral("sourceCrop.cropWidth"),
+                              ArtifactCore::PropertyType::Float,
+                              impl_->sourceCrop_.cropRect().width(), -237);
+    cropWProp->setDisplayLabel(QStringLiteral("Crop W"));
+    cropWProp->setUnit(QStringLiteral("px"));
+    cropWProp->setSoftRange(0.0, 10000.0);
+    sourceCropGroup.addProperty(cropWProp);
+
+    auto cropHProp = makeProp(QStringLiteral("sourceCrop.cropHeight"),
+                              ArtifactCore::PropertyType::Float,
+                              impl_->sourceCrop_.cropRect().height(), -236);
+    cropHProp->setDisplayLabel(QStringLiteral("Crop H"));
+    cropHProp->setUnit(QStringLiteral("px"));
+    cropHProp->setSoftRange(0.0, 10000.0);
+    sourceCropGroup.addProperty(cropHProp);
+
+    auto panXProp = makeProp(QStringLiteral("sourceCrop.panX"),
+                             ArtifactCore::PropertyType::Float,
+                             impl_->sourceCrop_.pan().x(), -235);
+    panXProp->setDisplayLabel(QStringLiteral("Pan X"));
+    panXProp->setUnit(QStringLiteral("px"));
+    panXProp->setSoftRange(-10000.0, 10000.0);
+    sourceCropGroup.addProperty(panXProp);
+
+    auto panYProp = makeProp(QStringLiteral("sourceCrop.panY"),
+                             ArtifactCore::PropertyType::Float,
+                             impl_->sourceCrop_.pan().y(), -234);
+    panYProp->setDisplayLabel(QStringLiteral("Pan Y"));
+    panYProp->setUnit(QStringLiteral("px"));
+    panYProp->setSoftRange(-10000.0, 10000.0);
+    sourceCropGroup.addProperty(panYProp);
+
+    auto zoomProp = makeProp(QStringLiteral("sourceCrop.zoom"),
+                             ArtifactCore::PropertyType::Float,
+                             impl_->sourceCrop_.zoom(), -233);
+    zoomProp->setDisplayLabel(QStringLiteral("Zoom"));
+    zoomProp->setUnit(QStringLiteral("x"));
+    zoomProp->setSoftRange(0.1, 8.0);
+    zoomProp->setStep(0.05);
+    sourceCropGroup.addProperty(zoomProp);
+
+    auto rotationProp = makeProp(QStringLiteral("sourceCrop.rotation"),
+                                 ArtifactCore::PropertyType::Float,
+                                 impl_->sourceCrop_.rotation(), -232);
+    rotationProp->setDisplayLabel(QStringLiteral("Rotation"));
+    rotationProp->setUnit(QStringLiteral("deg"));
+    rotationProp->setSoftRange(-360.0, 360.0);
+    rotationProp->setStep(0.5);
+    sourceCropGroup.addProperty(rotationProp);
+
+    auto anchorXProp = makeProp(QStringLiteral("sourceCrop.anchorX"),
+                                ArtifactCore::PropertyType::Float,
+                                impl_->sourceCrop_.anchor().x(), -231);
+    anchorXProp->setDisplayLabel(QStringLiteral("Anchor X"));
+    anchorXProp->setSoftRange(0.0, 1.0);
+    anchorXProp->setStep(0.01);
+    sourceCropGroup.addProperty(anchorXProp);
+
+    auto anchorYProp = makeProp(QStringLiteral("sourceCrop.anchorY"),
+                                ArtifactCore::PropertyType::Float,
+                                impl_->sourceCrop_.anchor().y(), -230);
+    anchorYProp->setDisplayLabel(QStringLiteral("Anchor Y"));
+    anchorYProp->setSoftRange(0.0, 1.0);
+    anchorYProp->setStep(0.01);
+    sourceCropGroup.addProperty(anchorYProp);
+
+    auto preserveProp = makeProp(QStringLiteral("sourceCrop.preserveAspect"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 impl_->sourceCrop_.preserveAspect(), -229);
+    preserveProp->setDisplayLabel(QStringLiteral("Preserve Aspect"));
+    sourceCropGroup.addProperty(preserveProp);
+
+    groups.push_back(sourceCropGroup);
     return groups;
 }
 
@@ -238,6 +370,73 @@ bool ArtifactImageLayer::setLayerPropertyValue(const QString& propertyPath, cons
     }
     if (propertyPath == QStringLiteral("image.fitToLayer")) {
         setFitToLayer(value.toBool());
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.enabled")) {
+        impl_->sourceCrop_.setEnabled(value.toBool());
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.cropX") ||
+        propertyPath == QStringLiteral("sourceCrop.cropY") ||
+        propertyPath == QStringLiteral("sourceCrop.cropWidth") ||
+        propertyPath == QStringLiteral("sourceCrop.cropHeight")) {
+        const auto size = sourceSize();
+        QRectF rect = impl_->sourceCrop_.cropRect();
+        if (!rect.isValid() || rect.width() <= 0.0 || rect.height() <= 0.0) {
+            rect = QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
+        }
+        if (propertyPath == QStringLiteral("sourceCrop.cropX")) {
+            rect.moveLeft(value.toDouble());
+        } else if (propertyPath == QStringLiteral("sourceCrop.cropY")) {
+            rect.moveTop(value.toDouble());
+        } else if (propertyPath == QStringLiteral("sourceCrop.cropWidth")) {
+            rect.setWidth(std::max(1.0, value.toDouble()));
+        } else {
+            rect.setHeight(std::max(1.0, value.toDouble()));
+        }
+        impl_->sourceCrop_.setCropRect(rect);
+        impl_->sourceCrop_.clampToSource(QSizeF(size.width, size.height));
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.panX") ||
+        propertyPath == QStringLiteral("sourceCrop.panY")) {
+        QPointF pan = impl_->sourceCrop_.pan();
+        if (propertyPath == QStringLiteral("sourceCrop.panX")) {
+            pan.setX(value.toDouble());
+        } else {
+            pan.setY(value.toDouble());
+        }
+        impl_->sourceCrop_.setPan(pan);
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.zoom")) {
+        impl_->sourceCrop_.setZoom(value.toDouble());
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.rotation")) {
+        impl_->sourceCrop_.setRotation(value.toDouble());
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.anchorX") ||
+        propertyPath == QStringLiteral("sourceCrop.anchorY")) {
+        QPointF anchor = impl_->sourceCrop_.anchor();
+        if (propertyPath == QStringLiteral("sourceCrop.anchorX")) {
+            anchor.setX(value.toDouble());
+        } else {
+            anchor.setY(value.toDouble());
+        }
+        impl_->sourceCrop_.setAnchor(anchor);
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("sourceCrop.preserveAspect")) {
+        impl_->sourceCrop_.setPreserveAspect(value.toBool());
+        setDirty(LayerDirtyFlag::Property);
         return true;
     }
     
@@ -272,14 +471,23 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
         size = Size_2D(impl_->width_, impl_->height_);
     }
 
+    const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
+    const bool useCrop = cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0;
+    if (useCrop) {
+        size = Size_2D(cropRect.width(), cropRect.height());
+    }
+
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
     if (hasCurrentFrameBuffer()) {
         const ArtifactCore::ImageF32x4_RGBA& buffer = currentFrameBuffer();
-        drawWithClonerEffect(this, baseTransform, [renderer, &buffer, size, this](const QMatrix4x4& transform, float weight) {
+        const ArtifactCore::ImageF32x4_RGBA renderBuffer =
+            useCrop ? buffer.crop(cropRect.x(), cropRect.y(), cropRect.width(), cropRect.height())
+                    : buffer;
+        drawWithClonerEffect(this, baseTransform, [renderer, renderBuffer, size, this](const QMatrix4x4& transform, float weight) {
             renderer->drawSpriteTransformed(0.0f, 0.0f,
                                             static_cast<float>(size.width),
                                             static_cast<float>(size.height),
-                                            transform, buffer,
+                                            transform, renderBuffer,
                                             this->opacity() * weight);
         });
         return;
@@ -287,8 +495,11 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 
     QImage img = toQImage();
     if (img.isNull()) return;
+    if (useCrop) {
+        img = img.copy(cropRect);
+    }
 
-    drawWithClonerEffect(this, baseTransform, [renderer, &img, size, this](const QMatrix4x4& transform, float weight) {
+    drawWithClonerEffect(this, baseTransform, [renderer, img, size, this](const QMatrix4x4& transform, float weight) {
         renderer->drawSpriteTransformed(0.0f, 0.0f,
                                         static_cast<float>(size.width),
                                         static_cast<float>(size.height),
@@ -399,6 +610,7 @@ void ArtifactImageLayer::setFromQImage(const QImage& image)
     impl_->hasImage_ = true;
 
     setSourceSize(Size_2D(image.width(), image.height()));
+    impl_->sourceCrop_.clampToSource(QSizeF(image.width(), image.height()));
 }
 
 void ArtifactImageLayer::setFitToLayer(bool fit)
@@ -413,14 +625,20 @@ bool ArtifactImageLayer::fitToLayer() const
 
 QRectF ArtifactImageLayer::localBounds() const
 {
-    if (!impl_->fitToLayer_ && impl_->width_ > 0 && impl_->height_ > 0) {
-        return QRectF(0.0, 0.0, static_cast<qreal>(impl_->width_), static_cast<qreal>(impl_->height_));
-    }
-
     const auto size = sourceSize();
     if (size.width <= 0 || size.height <= 0) {
         return QRectF();
     }
+
+    const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
+    if (cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0) {
+        return QRectF(0.0, 0.0, static_cast<qreal>(cropRect.width()), static_cast<qreal>(cropRect.height()));
+    }
+
+    if (!impl_->fitToLayer_ && impl_->width_ > 0 && impl_->height_ > 0) {
+        return QRectF(0.0, 0.0, static_cast<qreal>(impl_->width_), static_cast<qreal>(impl_->height_));
+    }
+
     return QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
 }
 

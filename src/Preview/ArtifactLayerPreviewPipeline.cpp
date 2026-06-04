@@ -13,12 +13,13 @@ namespace Artifact {
 
  LayerPreviewPipeline::LayerPreviewPipeline()
  {
-
+  impl_ = new Impl();
  }
 
  LayerPreviewPipeline::~LayerPreviewPipeline()
  {
-
+  delete impl_;
+  impl_ = nullptr;
  }
 
 };
