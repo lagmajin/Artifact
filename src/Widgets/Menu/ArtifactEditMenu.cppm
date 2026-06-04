@@ -609,6 +609,7 @@ void ArtifactEditMenu::Impl::rebuildMenu() {
 
  ArtifactEditMenu::ArtifactEditMenu(QWidget* mainWindow, QWidget* parent) : QMenu(parent), impl_(new Impl(this, mainWindow)) {
   setTitle("編集 (&E)");
+  setIcon(QIcon(resolveIconPath("Studio/edit.svg")));
  }
 
  ArtifactEditMenu::~ArtifactEditMenu() { delete impl_; }

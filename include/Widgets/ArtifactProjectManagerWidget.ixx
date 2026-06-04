@@ -50,6 +50,8 @@ W_REGISTER_ARGTYPE(QFileInfo)
 
 export namespace Artifact {
 
+ class QPainter;
+
  /*
 class ArtifactToolBar :public QToolBar {
 private:
@@ -76,6 +78,11 @@ public:
 
  class ArtifactProjectView :public QWidget {
   W_OBJECT(ArtifactProjectView)
+ public:
+  enum class PresentationMode {
+   List,
+   Tile
+  };
  private:
   class Impl;
   Impl* impl_;
@@ -103,6 +110,8 @@ public:
   void setModel(QAbstractItemModel* model);
   QAbstractItemModel* model() const;
   QItemSelectionModel* selectionModel() const;
+  void setPresentationMode(PresentationMode mode);
+  PresentationMode presentationMode() const;
   QModelIndex currentIndex() const;
   void setCurrentIndex(const QModelIndex& index);
   void setSortingEnabled(bool enabled);
@@ -123,13 +132,15 @@ public:
   QModelIndex indexAt(const QPoint& pos) const;
   QRect visualRect(const QModelIndex& index) const;
 
-  QSize sizeHint() const override;
+ QSize sizeHint() const override;
 
  public /*signals*/:
   void itemSelected(const QModelIndex& index) W_SIGNAL(itemSelected, index);
   void itemDoubleClicked(const QModelIndex& index) W_SIGNAL(itemDoubleClicked, index);
 
  private:
+  void paintListMode(QPaintEvent* event);
+  void paintTileMode(QPaintEvent* event);
   void updateScrollRange();
   QScrollBar* verticalScrollBar_;
   int scrollY_ = 0;

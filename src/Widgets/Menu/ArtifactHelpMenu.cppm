@@ -86,6 +86,7 @@ namespace Artifact {
  {
   setObjectName("HelpMenu");
   setTitle(tr("Help(&H)"));
+  setIcon(QIcon(resolveIconPath("Studio/help.svg")));
   setTearOffEnabled(true);
 
   // add actions

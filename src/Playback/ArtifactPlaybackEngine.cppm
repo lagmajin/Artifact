@@ -72,6 +72,10 @@ public:
     int audioSampleRate_ = 48000;
     float audioMasterVolume_ = 1.0f;
     bool audioMasterMuted_ = false;
+    // PERF: setMasterVolume/setMute は std::pow 計算 + atomic store を伴うため、
+    // 変化時のみ呼び出す。sentinel 値 (-999.0f) で初回の強制送信を保証。
+    float audioLastSentVolume_ = -999.0f;
+    bool audioLastSentMuted_ = false;
     int64_t audioNextFrame_ = 0;
     size_t audioTargetBufferedFrames_ = 0;
     double audioSampleAccumulator_ = 0.0;
@@ -111,8 +115,8 @@ public:
     
     ~Impl() {
         stop();
-        if (workerThread_->isRunning()) {
-            workerThread_->quit();
+        // stop() requests the worker to quit; destruction is the only place that waits.
+        if (workerThread_ && workerThread_->isRunning()) {
             workerThread_->wait(3000);
         }
         delete workerThread_;
@@ -156,11 +160,16 @@ public:
         condition_.notify_one();
         audioNextFrame_ = currentFrame_.load();
         audioSeekPending_ = true;
+
+        // Keep stop responsive: closing the backend device can block on some
+        // drivers, so stop playback and drain our buffer without tearing down.
         if (audioRenderer_) {
             audioRenderer_->stop();
-            audioRenderer_->closeDevice();
+            audioRenderer_->clearBuffer();
         }
-        if (workerThread_) {
+        audioTargetBufferedFrames_ = 0;
+
+        if (workerThread_ && workerThread_->isRunning()) {
             workerThread_->quit();
         }
     }
@@ -172,6 +181,8 @@ public:
 
         playbackStartFrame_ = currentFrame_.load();
         playbackStartTime_ = std::chrono::steady_clock::now();
+        // ポーズ時にaudioTargetBufferedFrames_をリセットして再開時の同期問題を防ぐ
+        audioTargetBufferedFrames_ = 0;
     }
     
     /// メイン再生ループ（ワーカースレッドで実行）
@@ -230,7 +241,6 @@ public:
                 if (targetFrame > endPos.framePosition()) {
                     if (looping_) {
                         // ループ時はベース時間をリセットして、最初から回す
-                        qDebug() << "[PlaybackEngine] Loop wrap (end -> start)" << targetFrame << "->" << startPos.framePosition();
                         playbackStartTime_ = now;
                         playbackStartFrame_ = startPos.framePosition();
                         targetFrame = startPos.framePosition();
@@ -272,6 +282,9 @@ public:
 
             // 音声バッファが十分あるときだけ軽く待機する。
             // 充填が追いついていない間は sleep を飛ばして先読みを優先する。
+            // PERF: バッファ半分以下の場合は 500us の最小スリープを挿入し、
+            // 完全な tight spin を防いで UI スレッドの応答性を維持する。
+            // 48kHz/30fps の場合 1 フレーム = 33ms なので 0.5ms は許容範囲。
             if (!emittedFrame) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             } else if (audioRenderer_) {
@@ -290,30 +303,27 @@ public:
                 } else if (buffered >= halfTarget) {
                     std::this_thread::yield();
                 } else {
-                    // バッファ半分以下 — sleep せずに即デコード続行
+                    // バッファ半分以下 — 最小限の待機で CPU 独占を防止しつつ先読みを優先
+                    std::this_thread::sleep_for(std::chrono::microseconds(500));
                 }
             } else {
                 std::this_thread::sleep_for(std::chrono::milliseconds(1));
             }
         }
 
-        audioSeekPending_ = true;
-        if (audioRenderer_) {
-            audioRenderer_->clearBuffer();  // drain 中の不安定な部分アンダーランを防止
-            audioRenderer_->stop();
-            audioRenderer_->closeDevice();
+        // Cleanup after exiting the playback loop（stop() で既に処理済み）
+        if (audioRenderer_ && !audioRenderer_->isActive()) {
+            audioRenderer_->clearBuffer();
         }
-        if (workerThread_) {
-            workerThread_->quit();
-        }
+        // workerThread_ は stop() で既に quit() されているため不要
     }
     
     /// フレーム更新処理
     void updateFrame(int64_t targetFrame) {
         // PlaybackService owns composition-frame sync and viewport rendering.
-        // Emit the current frame preview so playback consumers can show a real image.
+        // Do not render a QImage here: playback ticks must stay lightweight.
         QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame)]() {
-            Q_EMIT owner_->frameChanged(pos, renderFrame(pos));
+            Q_EMIT owner_->frameChanged(pos, QImage());
         }, Qt::QueuedConnection);
     }
 
@@ -367,6 +377,8 @@ public:
     
     /// オーディオ更新
     void updateAudio() {
+        // 停止状態なら何もしない（競合防止）
+        if (state_.load() == PlaybackState::Stopped) return;
         if (!composition_ || !audioRenderer_) return;
 
         const auto fillStart = std::chrono::high_resolution_clock::now();
@@ -394,10 +406,17 @@ public:
             audioSampleRate_ = std::max(1, audioRenderer_->sampleRate());
         }
 
-        audioRenderer_->setMasterVolume(std::clamp(audioMasterVolume_, 0.0f, 2.0f) <= 0.0001f
+        const float targetDb = std::clamp(audioMasterVolume_, 0.0f, 2.0f) <= 0.0001f
             ? -144.0f
-            : 20.0f * std::log10(std::clamp(audioMasterVolume_, 0.0f, 2.0f)));
-        audioRenderer_->setMute(audioMasterMuted_);
+            : 20.0f * std::log10(std::clamp(audioMasterVolume_, 0.0f, 2.0f));
+        if (targetDb != audioLastSentVolume_) {
+            audioRenderer_->setMasterVolume(targetDb);
+            audioLastSentVolume_ = targetDb;
+        }
+        if (audioMasterMuted_ != audioLastSentMuted_) {
+            audioRenderer_->setMute(audioMasterMuted_);
+            audioLastSentMuted_ = audioMasterMuted_;
+        }
 
         const double safeFrameRate = std::max<double>(1e-6, static_cast<double>(frameRate_.framerate()));
         const int samplesPerFrame = static_cast<int>(std::round(static_cast<double>(audioSampleRate_) / safeFrameRate));
@@ -418,11 +437,13 @@ public:
         const int64_t currentFrame = currentFrame_.load();
         if (audioSeekPending_.exchange(false)) {
             ++audioResyncClearCount_;
-            qWarning() << "[PlaybackEngine][Audio] resetting audio stream state"
-                       << "count=" << audioResyncClearCount_
-                       << "audioNextFrame(before)=" << audioNextFrame_
-                       << "currentFrame=" << currentFrame
-                       << "bufferedFrames=" << audioRenderer_->bufferedFrames();
+            if (audioResyncClearCount_ <= 4 || (audioResyncClearCount_ % 200) == 0) {
+                qWarning() << "[PlaybackEngine][Audio] resetting audio stream state"
+                           << "count=" << audioResyncClearCount_
+                           << "audioNextFrame(before)=" << audioNextFrame_
+                           << "currentFrame=" << currentFrame
+                           << "bufferedFrames=" << audioRenderer_->bufferedFrames();
+            }
             audioRenderer_->clearBuffer();
             audioNextFrame_ = currentFrame;
             audioSampleAccumulator_ = 0.0;
@@ -436,6 +457,8 @@ public:
 
         bool audioExhausted = false;
         while (audioRenderer_->bufferedFrames() < audioTargetBufferedFrames_) {
+            // 停止信号をチェック（競合防止）
+            if (state_.load() == PlaybackState::Stopped) return;
             audioSampleAccumulator_ += exactSamplesPerFrame;
             int samplesThisFrame = static_cast<int>(audioSampleAccumulator_);
             audioSampleAccumulator_ -= static_cast<double>(samplesThisFrame);
@@ -489,10 +512,13 @@ public:
                 return;
             }
         } else if (audioRenderer_->bufferedFrames() < static_cast<size_t>(samplesPerFrame * 2)) {
-            qWarning() << "[PlaybackEngine][Audio] low buffered frames during playback"
-                       << "bufferedFrames=" << audioRenderer_->bufferedFrames()
-                       << "samplesPerFrame=" << samplesPerFrame
-                       << "targetBufferedFrames=" << audioTargetBufferedFrames_;
+            static size_t lowBufWarnCount = 0;
+            if (++lowBufWarnCount <= 4 || (lowBufWarnCount % 100) == 0) {
+                qWarning() << "[PlaybackEngine][Audio] low buffered frames during playback"
+                           << "bufferedFrames=" << audioRenderer_->bufferedFrames()
+                           << "samplesPerFrame=" << samplesPerFrame
+                           << "targetBufferedFrames=" << audioTargetBufferedFrames_;
+            }
         }
 
         // Record fill-loop timing and buffer level for the profiler
@@ -509,12 +535,17 @@ public:
     
     /// オーディオ同期
     void syncWithAudioClock() {
-        if (!audioClockProvider_) return;
-        if (state_ != PlaybackState::Playing) return;
+        std::function<double()> provider;
+        {
+            // ロックなしで provider を読み取り（停止信号は audioClockProvider_ = {} で送信）
+            provider = audioClockProvider_;
+        }
+        if (!provider) return;
+        if (state_.load() != PlaybackState::Playing) return;
         if (!audioRenderer_ || !audioRenderer_->isActive()) return;
         if (composition_ && !composition_->hasAudio()) return;
         
-        double audioTime = audioClockProvider_();
+        double audioTime = provider();
         if (audioTime <= 0.001) return;
 
         const double safeFrameRate = std::max(1e-6, static_cast<double>(frameRate_.framerate()));
@@ -656,7 +687,7 @@ void ArtifactPlaybackEngine::stop() {
     impl_->audioNextFrame_ = impl_->currentFrame_.load();
     Q_EMIT playbackStateChanged(PlaybackState::Stopped);
     const FramePosition position(impl_->currentFrame_.load());
-    Q_EMIT frameChanged(position, renderPreviewFrame(position));
+    Q_EMIT frameChanged(position, QImage());
 }
 
 void ArtifactPlaybackEngine::togglePlayPause() {
@@ -674,6 +705,8 @@ void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
     impl_->lastEmittedFrame_ = std::numeric_limits<int64_t>::min();
     impl_->audioNextFrame_ = impl_->currentFrame_.load();
     impl_->audioSeekPending_ = true;
+    impl_->audioTargetBufferedFrames_ = 0;
+    impl_->audioExhausted_ = false;
     if (impl_->audioRenderer_) {
         impl_->audioRenderer_->clearBuffer();
     }
@@ -804,6 +837,9 @@ void ArtifactPlaybackEngine::setComposition(ArtifactCompositionPtr composition) 
     impl_->audioTargetBufferedFrames_ = 0;
     impl_->audioSampleAccumulator_ = 0.0;
     impl_->audioSeekPending_ = true;
+    impl_->audioExhausted_ = false;
+    impl_->audioLastSentVolume_ = -999.0f;
+    impl_->audioLastSentMuted_ = false;
     if (impl_->audioRenderer_) {
         impl_->audioRenderer_->clearBuffer();
     }

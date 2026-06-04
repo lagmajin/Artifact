@@ -24,6 +24,7 @@ import Artifact.Layer.Text;
  import Artifact.Layer.Group;
  import Artifact.Layer.Clone;
 import Artifact.Layer.SDF;
+import Artifact.Layer.Construction;
 import Artifact.Layers.Model3D;
 //import Artifact.Layer.Video;
 
@@ -151,6 +152,9 @@ namespace Artifact {
   case LayerType::SDF:
    ptr = std::make_shared<ArtifactSDFLayer>();
    break;
+  case LayerType::Construction:
+   ptr = std::make_shared<ArtifactConstructionLayer>();
+   break;
   case LayerType::Model3D: {
    auto modelLayer = std::make_shared<Artifact3DLayer>();
    if (auto* modelParams =
@@ -196,8 +200,13 @@ namespace Artifact {
 
   ArtifactAbstractLayerPtr ArtifactLayerFactory::createFromJson(const QJsonObject& json) noexcept
   {
-      if (!json.contains("type")) return nullptr;
-      LayerType type = static_cast<LayerType>(json["type"].toInt());
+      if (!json.contains("type") && !json.value("isConstruction").toBool(false)) return nullptr;
+      LayerType type = json.contains("type")
+          ? static_cast<LayerType>(json["type"].toInt())
+          : LayerType::Construction;
+      if (json.value("isConstruction").toBool(false)) {
+          type = LayerType::Construction;
+      }
       QString name = json.value("name").toString("Layer");
   ArtifactLayerFactory factory;
       if (type == LayerType::Model3D &&

@@ -2,8 +2,11 @@
 #include <utility>
 #include <algorithm>
 #include <cmath>
+#include <QAction>
 #include <QFont>
+#include <QFontMetrics>
 #include <QSize>
+#include <QSizePolicy>
 #include <QMenuBar>
 #include <QMenu>
 #include <QWidget>
@@ -45,6 +48,25 @@ QFont scaledMenuFont(const QFont& baseFont)
  const qreal pointSize = font.pointSizeF() > 0 ? font.pointSizeF() : 10.0;
  font.setPointSizeF(pointSize * factor);
  return font;
+}
+
+int requiredMenuBarWidth(const QMenuBar* menuBar, const QFont& font)
+{
+ if (!menuBar) {
+  return 0;
+ }
+
+ const QFontMetrics fm(font);
+ int width = 0;
+ for (const QAction* action : menuBar->actions()) {
+  if (!action || !action->isVisible()) {
+   continue;
+  }
+  const int iconWidth = action->icon().isNull() ? 0 : 18;
+  const int spacing = action->icon().isNull() ? 0 : 6;
+  width += fm.horizontalAdvance(action->text()) + iconWidth + spacing + 24;
+ }
+ return width + 12;
 }
 
 ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)
@@ -280,6 +302,7 @@ ArtifactMenuBar::ArtifactMenuBar(QWidget* mainWindow, QWidget* parent)
  : QMenuBar(parent), impl_(new Impl(mainWindow, this))
 {
  setAutoFillBackground(true);
+ setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
  impl_->baseFont_ = font();
  refreshFontFromSettings();
 }
@@ -300,11 +323,13 @@ void ArtifactMenuBar::refreshFontFromSettings()
  if (!impl_) return;
  const QFont f = scaledMenuFont(impl_->baseFont_);
  setFont(f);
+ setMinimumWidth(requiredMenuBarWidth(this, f));
  for (auto* menu : findChildren<QMenu*>()) {
   if (menu) {
    menu->setFont(f);
   }
  }
+ updateGeometry();
 }
 
 }

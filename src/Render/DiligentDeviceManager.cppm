@@ -12,6 +12,9 @@ module;
 #include <vulkan/vulkan.h>
 #include <RenderDevice.h>
 #include <DeviceContext.h>
+#include <CommandQueue.h>
+#include <RenderDeviceVk.h>
+#include <CommandQueueVk.h>
 #include <SwapChain.h>
 #include <RefCntAutoPtr.hpp>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
@@ -872,6 +875,67 @@ RefCntAutoPtr<ISwapChain> DiligentDeviceManager::swapChain() const
 HWND DiligentDeviceManager::renderHwnd() const
 {
     return impl_->renderHwnd_;
+}
+
+VkDevice DiligentDeviceManager::vkDevice() const
+{
+    if (!impl_ || !impl_->device_ || impl_->device_->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_VULKAN) {
+        return VK_NULL_HANDLE;
+    }
+    RefCntAutoPtr<IRenderDeviceVk> deviceVk{impl_->device_, IID_RenderDeviceVk};
+    return deviceVk ? deviceVk->GetVkDevice() : VK_NULL_HANDLE;
+}
+
+VkPhysicalDevice DiligentDeviceManager::vkPhysicalDevice() const
+{
+    if (!impl_ || !impl_->device_ || impl_->device_->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_VULKAN) {
+        return VK_NULL_HANDLE;
+    }
+    RefCntAutoPtr<IRenderDeviceVk> deviceVk{impl_->device_, IID_RenderDeviceVk};
+    return deviceVk ? deviceVk->GetVkPhysicalDevice() : VK_NULL_HANDLE;
+}
+
+VkInstance DiligentDeviceManager::vkInstance() const
+{
+    if (!impl_ || !impl_->device_ || impl_->device_->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_VULKAN) {
+        return VK_NULL_HANDLE;
+    }
+    RefCntAutoPtr<IRenderDeviceVk> deviceVk{impl_->device_, IID_RenderDeviceVk};
+    return deviceVk ? deviceVk->GetVkInstance() : VK_NULL_HANDLE;
+}
+
+VkQueue DiligentDeviceManager::vkQueue() const
+{
+    if (!impl_ || !impl_->immediateContext_ || !impl_->device_ || impl_->device_->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_VULKAN) {
+        return VK_NULL_HANDLE;
+    }
+
+    RefCntAutoPtr<ICommandQueue> queue{impl_->immediateContext_->LockCommandQueue()};
+    if (!queue) {
+        return VK_NULL_HANDLE;
+    }
+
+    RefCntAutoPtr<ICommandQueueVk> queueVk{queue, IID_CommandQueueVk};
+    const VkQueue vkQueue = queueVk ? queueVk->GetVkQueue() : VK_NULL_HANDLE;
+    impl_->immediateContext_->UnlockCommandQueue();
+    return vkQueue;
+}
+
+uint32_t DiligentDeviceManager::vkQueueFamilyIndex() const
+{
+    if (!impl_ || !impl_->immediateContext_ || !impl_->device_ || impl_->device_->GetDeviceInfo().Type != RENDER_DEVICE_TYPE_VULKAN) {
+        return 0;
+    }
+
+    RefCntAutoPtr<ICommandQueue> queue{impl_->immediateContext_->LockCommandQueue()};
+    if (!queue) {
+        return 0;
+    }
+
+    RefCntAutoPtr<ICommandQueueVk> queueVk{queue, IID_CommandQueueVk};
+    const uint32_t familyIndex = queueVk ? queueVk->GetQueueFamilyIndex() : 0;
+    impl_->immediateContext_->UnlockCommandQueue();
+    return familyIndex;
 }
 
 bool DiligentDeviceManager::isInitialized() const

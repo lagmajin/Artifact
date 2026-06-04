@@ -40,6 +40,11 @@ public:
     RefCntAutoPtr<IDeviceContext> deferredContext() const;
     RefCntAutoPtr<ISwapChain> swapChain() const;
     HWND renderHwnd() const;
+    VkDevice vkDevice() const;
+    VkPhysicalDevice vkPhysicalDevice() const;
+    VkInstance vkInstance() const;
+    VkQueue vkQueue() const;
+    uint32_t vkQueueFamilyIndex() const;
 
     bool isInitialized() const;
     bool isRayTracingSupported() const;

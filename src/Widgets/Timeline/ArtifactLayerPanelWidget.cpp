@@ -129,6 +129,15 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.badgeTone = LayerPresentationBadgeTone::Special;
     return descriptor;
   }
+  if (layer->isConstructionLayer()) {
+    descriptor.typeText = QStringLiteral("Construction Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Const");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Construction Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Construction Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Renderless");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    return descriptor;
+  }
   if (layer->is3D()) {
     descriptor.typeText = QStringLiteral("3D Model Layer");
     descriptor.timelineBadgeText = QStringLiteral("3D");

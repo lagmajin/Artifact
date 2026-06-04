@@ -1,12 +1,17 @@
 module;
 #include <utility>
+#include <algorithm>
 #include <QPainter>
 #include <QPainterPath>
 #include <QColor>
+#include <QBrush>
+#include <QLinearGradient>
 #include <QImage>
 #include <QRectF>
+#include <QLineF>
 #include <QMatrix4x4>
 #include <QVector4D>
+#include <QPolygonF>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <cmath>
@@ -22,6 +27,18 @@ import Shape.Path;
 
 namespace {
 
+constexpr float kStrokeEffectEpsilon = 0.0001f;
+using ArtifactCore::FloatColor;
+using ArtifactCore::ShapePath;
+
+static ArtifactCore::ShapePath buildShapePath(Artifact::ShapeType shapeType,
+                                int width,
+                                int height,
+                                float cornerRadius,
+                                int starPoints,
+                                float starInnerRadius,
+                                int polygonSides);
+
 QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
  QVector4D v = transform * QVector4D(static_cast<float>(point.x()),
                                      static_cast<float>(point.y()), 0.0f, 1.0f);
@@ -29,6 +46,214 @@ QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
   return QPointF(v.x() / v.w(), v.y() / v.w());
  }
  return QPointF(v.x(), v.y());
+}
+
+FloatColor mixColor(const FloatColor& a, const FloatColor& b, const float t) {
+ const float clampedT = std::clamp(t, 0.0f, 1.0f);
+ return FloatColor(
+     a.r() + (b.r() - a.r()) * clampedT,
+     a.g() + (b.g() - a.g()) * clampedT,
+     a.b() + (b.b() - a.b()) * clampedT,
+     a.a() + (b.a() - a.a()) * clampedT);
+}
+
+QColor toQColor(const FloatColor& color) {
+ return QColor::fromRgbF(
+     std::clamp(color.r(), 0.0f, 1.0f),
+     std::clamp(color.g(), 0.0f, 1.0f),
+     std::clamp(color.b(), 0.0f, 1.0f),
+     std::clamp(color.a(), 0.0f, 1.0f));
+}
+
+QPainterPath buildLayerPath(const Artifact::ShapeType shapeType,
+                            const int width,
+                            const int height,
+                            const float cornerRadius,
+                            const int starPoints,
+                            const float starInnerRadius,
+                            const int polygonSides,
+                            const std::vector<QPointF>& customPolygonPoints,
+                            const bool customPolygonClosed,
+                            const std::vector<Artifact::CustomPathVertex>& customPathVertices,
+                            const bool customPathClosed) {
+ QPainterPath path;
+ if (customPathVertices.size() >= 3) {
+  path.moveTo(customPathVertices.front().pos);
+  const size_t count = customPathVertices.size();
+  for (size_t i = 0; i < count; ++i) {
+   const size_t next = (i + 1) % count;
+   if (!customPathClosed && next == 0) {
+    break;
+   }
+   const auto& v0 = customPathVertices[i];
+   const auto& v1 = customPathVertices[next];
+   path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
+  }
+  if (customPathClosed) {
+   path.closeSubpath();
+  }
+  return path;
+ }
+
+ if (customPolygonPoints.size() >= 3) {
+  ShapePath sp;
+  sp.setPolygon(customPolygonPoints, customPolygonClosed);
+  return sp.toPainterPath();
+ }
+
+ return buildShapePath(shapeType, width, height, cornerRadius,
+                       starPoints, starInnerRadius, polygonSides)
+     .toPainterPath();
+}
+
+std::vector<QPointF> polygonToPoints(const QPolygonF& polygon) {
+ std::vector<QPointF> points;
+ points.reserve(static_cast<size_t>(polygon.size()));
+ for (const auto& point : polygon) {
+  points.push_back(point);
+ }
+ if (points.size() >= 2 && points.front() == points.back()) {
+  points.pop_back();
+ }
+ return points;
+}
+
+void drawStrokeSegment(QPainter& painter,
+                       const QPointF& p0,
+                       const QPointF& p1,
+                       const float width0,
+                       const float width1,
+                       const FloatColor& color0,
+                       const FloatColor& color1) {
+ const QLineF line(p0, p1);
+ const qreal length = line.length();
+ if (length <= 1e-5) {
+  return;
+ }
+
+ const QPointF direction = line.unitVector().p2() - line.p1();
+ const QPointF normal(-direction.y(), direction.x());
+ const QPointF n0 = normal * (static_cast<qreal>(width0) * 0.5);
+ const QPointF n1 = normal * (static_cast<qreal>(width1) * 0.5);
+
+ QPolygonF quad;
+ quad << QPointF(p0.x() + n0.x(), p0.y() + n0.y())
+      << QPointF(p0.x() - n0.x(), p0.y() - n0.y())
+      << QPointF(p1.x() - n1.x(), p1.y() - n1.y())
+      << QPointF(p1.x() + n1.x(), p1.y() + n1.y());
+
+ QLinearGradient gradient(p0, p1);
+ gradient.setColorAt(0.0, toQColor(color0));
+ gradient.setColorAt(1.0, toQColor(color1));
+ painter.setPen(Qt::NoPen);
+ painter.setBrush(QBrush(gradient));
+ painter.drawPolygon(quad);
+}
+
+void drawStrokePath(QPainter& painter,
+                    const std::vector<QPointF>& points,
+                    const bool closed,
+                    const float strokeWidth,
+                    const float taperStart,
+                    const float taperEnd,
+                    const bool gradientEnabled,
+                    const FloatColor& baseStrokeColor,
+                    const FloatColor& gradientStartColor,
+                    const FloatColor& gradientEndColor,
+                    const Artifact::StrokeCap strokeCap) {
+ if (points.size() < 2 || strokeWidth <= 0.0f) {
+  return;
+ }
+
+ std::vector<QPointF> polyline = points;
+ if (polyline.size() >= 2 && polyline.front() == polyline.back()) {
+  polyline.pop_back();
+ }
+ if (polyline.size() < 2) {
+  return;
+ }
+
+ const size_t segmentCount = closed ? polyline.size() : (polyline.size() - 1);
+ if (segmentCount == 0) {
+  return;
+ }
+
+ std::vector<qreal> cumulative;
+ cumulative.reserve(segmentCount + 1);
+ cumulative.push_back(0.0);
+ qreal totalLength = 0.0;
+ for (size_t i = 0; i < segmentCount; ++i) {
+  const size_t next = (i + 1) % polyline.size();
+  const qreal segLength = QLineF(polyline[i], polyline[next]).length();
+  totalLength += segLength;
+  cumulative.push_back(totalLength);
+ }
+
+ if (totalLength <= 1e-5) {
+  return;
+ }
+
+ auto widthAt = [&](const qreal t) -> float {
+  const float clampedT = std::clamp(static_cast<float>(t), 0.0f, 1.0f);
+  const float scale = taperStart + (taperEnd - taperStart) * clampedT;
+  return std::max(0.0f, strokeWidth * scale);
+ };
+ auto colorAt = [&](const qreal t) -> FloatColor {
+  if (!gradientEnabled) {
+   return baseStrokeColor;
+  }
+  return mixColor(gradientStartColor, gradientEndColor,
+                  static_cast<float>(std::clamp(t, 0.0, 1.0)));
+ };
+
+ for (size_t i = 0; i < segmentCount; ++i) {
+  const size_t next = (i + 1) % polyline.size();
+  const QPointF p0 = polyline[i];
+  const QPointF p1 = polyline[next];
+  const qreal segLength = cumulative[i + 1] - cumulative[i];
+  if (segLength <= 1e-5) {
+   continue;
+  }
+
+  const qreal t0 = cumulative[i] / totalLength;
+  const qreal t1 = cumulative[i + 1] / totalLength;
+  const float w0 = widthAt(t0);
+  const float w1 = widthAt(t1);
+  if (w0 <= 0.0f && w1 <= 0.0f) {
+   continue;
+  }
+
+  QPointF drawP0 = p0;
+  QPointF drawP1 = p1;
+  if (!closed && strokeCap == Artifact::StrokeCap::Square) {
+   const QLineF line(p0, p1);
+   const QPointF direction = line.unitVector().p2() - line.p1();
+   if (i == 0) {
+    drawP0 -= direction * (static_cast<qreal>(w0) * 0.5);
+   }
+   if (i + 1 == segmentCount) {
+    drawP1 += direction * (static_cast<qreal>(w1) * 0.5);
+   }
+  }
+
+  drawStrokeSegment(painter, drawP0, drawP1, std::max(w0, 0.0f), std::max(w1, 0.0f),
+                    colorAt(t0), colorAt(t1));
+ }
+
+ if (!closed && strokeCap == Artifact::StrokeCap::Round) {
+  const float startWidth = widthAt(0.0);
+  const float endWidth = widthAt(1.0);
+  if (startWidth > 0.0f) {
+   painter.setPen(Qt::NoPen);
+   painter.setBrush(toQColor(colorAt(0.0)));
+   painter.drawEllipse(polyline.front(), startWidth * 0.5, startWidth * 0.5);
+  }
+  if (endWidth > 0.0f) {
+   painter.setPen(Qt::NoPen);
+   painter.setBrush(toQColor(colorAt(1.0)));
+   painter.drawEllipse(polyline.back(), endWidth * 0.5, endWidth * 0.5);
+  }
+ }
 }
 
 void appendArcPoints(std::vector<QPointF>& points,
@@ -251,6 +476,11 @@ public:
  float strokeWidth_ = 0.0f;
  bool fillEnabled_ = true;
  bool strokeEnabled_ = false;
+ float strokeTaperStart_ = 1.0f;
+ float strokeTaperEnd_ = 1.0f;
+ bool strokeGradientEnabled_ = false;
+ FloatColor strokeGradientStartColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+ FloatColor strokeGradientEndColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
 
  // Rect
  float cornerRadius_ = 0.0f;
@@ -270,6 +500,12 @@ public:
  StrokeAlign strokeAlign_ = StrokeAlign::Center;
  std::vector<float> dashPattern_;
 
+ bool hasCustomStrokeEffects() const {
+  return std::abs(strokeTaperStart_ - 1.0f) > kStrokeEffectEpsilon ||
+         std::abs(strokeTaperEnd_ - 1.0f) > kStrokeEffectEpsilon ||
+         strokeGradientEnabled_;
+ }
+
  // Phase 5: Bezier path override
  std::vector<CustomPathVertex> customPathVertices_;
  bool customPathClosed_ = true;
@@ -279,7 +515,8 @@ public:
          strokeCap_ != StrokeCap::Flat ||
          strokeJoin_ != StrokeJoin::Miter ||
          strokeAlign_ != StrokeAlign::Center ||
-         !dashPattern_.empty();
+         !dashPattern_.empty() ||
+         hasCustomStrokeEffects();
  }
 
     QImage cachedImage_;
@@ -302,26 +539,11 @@ public:
     QPainter painter(&img);
     painter.setRenderHint(QPainter::Antialiasing, true);
 
-    QPainterPath path;
-    if (customPathVertices_.size() >= 3) {
-     path.moveTo(customPathVertices_[0].pos);
-     const size_t n = customPathVertices_.size();
-     for (size_t i = 0; i < n; ++i) {
-      const size_t next = (i + 1) % n;
-      if (!customPathClosed_ && next == 0) break;
-      const CustomPathVertex& v0 = customPathVertices_[i];
-      const CustomPathVertex& v1 = customPathVertices_[next];
-      path.cubicTo(v0.pos + v0.outTangent, v1.pos + v1.inTangent, v1.pos);
-     }
-     if (customPathClosed_) path.closeSubpath();
-    } else if (customPolygonPoints_.size() >= 3) {
-     ShapePath sp;
-     sp.setPolygon(customPolygonPoints_, customPolygonClosed_);
-     path = sp.toPainterPath();
-    } else {
-     path = buildShapePath(shapeType_, width_, height_, cornerRadius_,
-                           starPoints_, starInnerRadius_, polygonSides_).toPainterPath();
-    }
+    const QPainterPath path = buildLayerPath(shapeType_, width_, height_,
+                                             cornerRadius_, starPoints_,
+                                             starInnerRadius_, polygonSides_,
+                                             customPolygonPoints_, customPolygonClosed_,
+                                             customPathVertices_, customPathClosed_);
 
     if (fillEnabled_) {
      QColor fc(static_cast<int>(fillColor_.r() * 255),
@@ -332,50 +554,76 @@ public:
     }
 
     if (strokeEnabled_ && strokeWidth_ > 0) {
-     QColor sc(static_cast<int>(strokeColor_.r() * 255),
-               static_cast<int>(strokeColor_.g() * 255),
-               static_cast<int>(strokeColor_.b() * 255),
-               static_cast<int>(strokeColor_.a() * 255));
-     QPen pen(sc, strokeWidth_);
-     switch (strokeCap_) {
-      case StrokeCap::Round:  pen.setCapStyle(Qt::RoundCap);  break;
-      case StrokeCap::Square: pen.setCapStyle(Qt::SquareCap); break;
-      default:                pen.setCapStyle(Qt::FlatCap);   break;
-    }
-    switch (strokeJoin_) {
-     case StrokeJoin::Round: pen.setJoinStyle(Qt::RoundJoin); break;
-     case StrokeJoin::Bevel: pen.setJoinStyle(Qt::BevelJoin); break;
-     default:                pen.setJoinStyle(Qt::MiterJoin); break;
-    }
-    if (!dashPattern_.empty()) {
-     QVector<qreal> qDash;
-     qDash.reserve(static_cast<int>(dashPattern_.size()));
-     for (float v : dashPattern_) qDash.push_back(static_cast<qreal>(v));
-     pen.setDashPattern(qDash);
-    }
-    if (strokeAlign_ == StrokeAlign::Inside) {
-     painter.save();
-     painter.setClipPath(path);
-     QPen widePen = pen;
-     widePen.setWidthF(static_cast<qreal>(strokeWidth_) * 2.0);
-     painter.setPen(widePen);
-     painter.drawPath(path);
-     painter.restore();
-    } else if (strokeAlign_ == StrokeAlign::Outside) {
-     painter.save();
-     QPainterPath outside;
-     outside.addRect(QRectF(-1, -1, width_ + 2, height_ + 2));
-     outside = outside.subtracted(path);
-     painter.setClipPath(outside);
-     QPen widePen = pen;
-     widePen.setWidthF(static_cast<qreal>(strokeWidth_) * 2.0);
-     painter.setPen(widePen);
-     painter.drawPath(path);
-     painter.restore();
-    } else {
-     painter.setPen(pen);
-     painter.drawPath(path);
-    }
+     const bool canUseCustomStroke =
+         hasCustomStrokeEffects() &&
+         strokeAlign_ == StrokeAlign::Center &&
+         strokeJoin_ == StrokeJoin::Miter &&
+         dashPattern_.empty();
+
+     if (canUseCustomStroke) {
+      const auto subpaths = path.toSubpathPolygons();
+      const FloatColor gradientStart = strokeGradientEnabled_ ? strokeGradientStartColor_ : strokeColor_;
+      const FloatColor gradientEnd = strokeGradientEnabled_ ? strokeGradientEndColor_ : strokeColor_;
+      bool pathClosed = shapeType_ != Artifact::ShapeType::Line;
+      if (customPolygonPoints_.size() >= 3) {
+       pathClosed = customPolygonClosed_;
+      }
+      if (customPathVertices_.size() >= 3) {
+       pathClosed = customPathClosed_;
+      }
+      for (const QPolygonF& subpath : subpaths) {
+       const std::vector<QPointF> points = polygonToPoints(subpath);
+       drawStrokePath(painter, points, pathClosed, strokeWidth_,
+                      strokeTaperStart_, strokeTaperEnd_,
+                      strokeGradientEnabled_, strokeColor_,
+                      gradientStart, gradientEnd, strokeCap_);
+      }
+     } else {
+      QColor sc(static_cast<int>(strokeColor_.r() * 255),
+                static_cast<int>(strokeColor_.g() * 255),
+                static_cast<int>(strokeColor_.b() * 255),
+                static_cast<int>(strokeColor_.a() * 255));
+      QPen pen(sc, strokeWidth_);
+      switch (strokeCap_) {
+       case StrokeCap::Round:  pen.setCapStyle(Qt::RoundCap);  break;
+       case StrokeCap::Square: pen.setCapStyle(Qt::SquareCap); break;
+       default:                pen.setCapStyle(Qt::FlatCap);   break;
+      }
+      switch (strokeJoin_) {
+       case StrokeJoin::Round: pen.setJoinStyle(Qt::RoundJoin); break;
+       case StrokeJoin::Bevel: pen.setJoinStyle(Qt::BevelJoin); break;
+       default:                pen.setJoinStyle(Qt::MiterJoin); break;
+      }
+      if (!dashPattern_.empty()) {
+       QVector<qreal> qDash;
+       qDash.reserve(static_cast<int>(dashPattern_.size()));
+       for (float v : dashPattern_) qDash.push_back(static_cast<qreal>(v));
+       pen.setDashPattern(qDash);
+      }
+      if (strokeAlign_ == StrokeAlign::Inside) {
+       painter.save();
+       painter.setClipPath(path);
+       QPen widePen = pen;
+       widePen.setWidthF(static_cast<qreal>(strokeWidth_) * 2.0);
+       painter.setPen(widePen);
+       painter.drawPath(path);
+       painter.restore();
+      } else if (strokeAlign_ == StrokeAlign::Outside) {
+       painter.save();
+       QPainterPath outside;
+       outside.addRect(QRectF(-1, -1, width_ + 2, height_ + 2));
+       outside = outside.subtracted(path);
+       painter.setClipPath(outside);
+       QPen widePen = pen;
+       widePen.setWidthF(static_cast<qreal>(strokeWidth_) * 2.0);
+       painter.setPen(widePen);
+       painter.drawPath(path);
+       painter.restore();
+      } else {
+       painter.setPen(pen);
+       painter.drawPath(path);
+      }
+     }
    }
 
    painter.end();
@@ -448,7 +696,16 @@ int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
 
 void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillColor() const { return impl_->fillColor_; }
-void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) { impl_->strokeColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) {
+ impl_->strokeColor_ = c;
+ if (!impl_->strokeGradientEnabled_) {
+  impl_->strokeGradientStartColor_ = c;
+  impl_->strokeGradientEndColor_ = c;
+ }
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 FloatColor ArtifactShapeLayer::strokeColor() const { return impl_->strokeColor_; }
 void ArtifactShapeLayer::setStrokeWidth(float w) { impl_->strokeWidth_ = w; impl_->markDirty(); impl_->localBoundsCacheDirty_ = true; impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 float ArtifactShapeLayer::strokeWidth() const { return impl_->strokeWidth_; }
@@ -456,6 +713,37 @@ void ArtifactShapeLayer::setFillEnabled(bool e) { impl_->fillEnabled_ = e; impl_
 bool ArtifactShapeLayer::fillEnabled() const { return impl_->fillEnabled_; }
 void ArtifactShapeLayer::setStrokeEnabled(bool e) { impl_->strokeEnabled_ = e; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 bool ArtifactShapeLayer::strokeEnabled() const { return impl_->strokeEnabled_; }
+void ArtifactShapeLayer::setStrokeTaper(float startScale, float endScale) {
+ impl_->strokeTaperStart_ = std::clamp(startScale, 0.0f, 1.0f);
+ impl_->strokeTaperEnd_ = std::clamp(endScale, 0.0f, 1.0f);
+ impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+float ArtifactShapeLayer::strokeTaperStart() const { return impl_->strokeTaperStart_; }
+float ArtifactShapeLayer::strokeTaperEnd() const { return impl_->strokeTaperEnd_; }
+void ArtifactShapeLayer::setStrokeGradientEnabled(bool enabled) {
+ impl_->strokeGradientEnabled_ = enabled;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+bool ArtifactShapeLayer::strokeGradientEnabled() const { return impl_->strokeGradientEnabled_; }
+void ArtifactShapeLayer::setStrokeGradientStartColor(const FloatColor& color) {
+ impl_->strokeGradientStartColor_ = color;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+FloatColor ArtifactShapeLayer::strokeGradientStartColor() const { return impl_->strokeGradientStartColor_; }
+void ArtifactShapeLayer::setStrokeGradientEndColor(const FloatColor& color) {
+ impl_->strokeGradientEndColor_ = color;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+FloatColor ArtifactShapeLayer::strokeGradientEndColor() const { return impl_->strokeGradientEndColor_; }
 
 // ============================================================
 // Shape Params
@@ -753,23 +1041,67 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  strokeEnabledProp->setDisplayLabel(QStringLiteral("Stroke Enabled"));
   appearanceGroup.addProperty(strokeEnabledProp);
 
+ auto strokeTaperStartProp = makeProp(QStringLiteral("shape.strokeTaperStart"),
+                                      ArtifactCore::PropertyType::Float,
+                                      impl_->strokeTaperStart_, -205, false);
+ strokeTaperStartProp->setDisplayLabel(QStringLiteral("Taper Start"));
+ strokeTaperStartProp->setTooltip(QStringLiteral("0.0 = thin, 1.0 = full width"));
+ appearanceGroup.addProperty(strokeTaperStartProp);
+
+ auto strokeTaperEndProp = makeProp(QStringLiteral("shape.strokeTaperEnd"),
+                                    ArtifactCore::PropertyType::Float,
+                                    impl_->strokeTaperEnd_, -204, false);
+ strokeTaperEndProp->setDisplayLabel(QStringLiteral("Taper End"));
+ strokeTaperEndProp->setTooltip(QStringLiteral("0.0 = thin, 1.0 = full width"));
+ appearanceGroup.addProperty(strokeTaperEndProp);
+
+ auto strokeGradientEnabledProp = makeProp(QStringLiteral("shape.strokeGradientEnabled"),
+                                           ArtifactCore::PropertyType::Boolean,
+                                           impl_->strokeGradientEnabled_, -203);
+ strokeGradientEnabledProp->setDisplayLabel(QStringLiteral("Stroke Gradient"));
+ appearanceGroup.addProperty(strokeGradientEnabledProp);
+
+ auto strokeGradientStartProp = makeProp(QStringLiteral("shape.strokeGradientStartColor"),
+                                         ArtifactCore::PropertyType::Color,
+                                         QColor(
+  static_cast<int>(impl_->strokeGradientStartColor_.r() * 255),
+  static_cast<int>(impl_->strokeGradientStartColor_.g() * 255),
+  static_cast<int>(impl_->strokeGradientStartColor_.b() * 255),
+  static_cast<int>(impl_->strokeGradientStartColor_.a() * 255)
+  ),
+  -202);
+ strokeGradientStartProp->setDisplayLabel(QStringLiteral("Gradient Start"));
+ appearanceGroup.addProperty(strokeGradientStartProp);
+
+ auto strokeGradientEndProp = makeProp(QStringLiteral("shape.strokeGradientEndColor"),
+                                       ArtifactCore::PropertyType::Color,
+                                       QColor(
+  static_cast<int>(impl_->strokeGradientEndColor_.r() * 255),
+  static_cast<int>(impl_->strokeGradientEndColor_.g() * 255),
+  static_cast<int>(impl_->strokeGradientEndColor_.b() * 255),
+  static_cast<int>(impl_->strokeGradientEndColor_.a() * 255)
+  ),
+  -201);
+ strokeGradientEndProp->setDisplayLabel(QStringLiteral("Gradient End"));
+ appearanceGroup.addProperty(strokeGradientEndProp);
+
  auto strokeCapProp = makeProp(QStringLiteral("shape.strokeCap"),
                                ArtifactCore::PropertyType::Integer,
-                               static_cast<int>(impl_->strokeCap_), -205, false);
+                               static_cast<int>(impl_->strokeCap_), -200, false);
  strokeCapProp->setDisplayLabel(QStringLiteral("Stroke Cap"));
  strokeCapProp->setTooltip(QStringLiteral("0=Flat, 1=Round, 2=Square"));
   appearanceGroup.addProperty(strokeCapProp);
 
  auto strokeJoinProp = makeProp(QStringLiteral("shape.strokeJoin"),
                                 ArtifactCore::PropertyType::Integer,
-                                static_cast<int>(impl_->strokeJoin_), -204, false);
+                                static_cast<int>(impl_->strokeJoin_), -199, false);
  strokeJoinProp->setDisplayLabel(QStringLiteral("Stroke Join"));
  strokeJoinProp->setTooltip(QStringLiteral("0=Miter, 1=Round, 2=Bevel"));
   appearanceGroup.addProperty(strokeJoinProp);
 
  auto strokeAlignProp = makeProp(QStringLiteral("shape.strokeAlign"),
                                  ArtifactCore::PropertyType::Integer,
-                                 static_cast<int>(impl_->strokeAlign_), -203, false);
+                                 static_cast<int>(impl_->strokeAlign_), -198, false);
  strokeAlignProp->setDisplayLabel(QStringLiteral("Stroke Align"));
  strokeAlignProp->setTooltip(QStringLiteral("0=Center, 1=Inside, 2=Outside"));
   appearanceGroup.addProperty(strokeAlignProp);
@@ -834,6 +1166,28 @@ if (propertyPath == "shape.type") {
   setStrokeEnabled(value.toBool());
   return true;
  }
+ if (propertyPath == "shape.strokeTaperStart") {
+  setStrokeTaper(value.toFloat(), impl_->strokeTaperEnd_);
+  return true;
+ }
+ if (propertyPath == "shape.strokeTaperEnd") {
+  setStrokeTaper(impl_->strokeTaperStart_, value.toFloat());
+  return true;
+ }
+ if (propertyPath == "shape.strokeGradientEnabled") {
+  setStrokeGradientEnabled(value.toBool());
+  return true;
+ }
+ if (propertyPath == "shape.strokeGradientStartColor") {
+  const auto c = value.value<QColor>();
+  setStrokeGradientStartColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+  return true;
+ }
+ if (propertyPath == "shape.strokeGradientEndColor") {
+  const auto c = value.value<QColor>();
+  setStrokeGradientEndColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+  return true;
+ }
  if (propertyPath == "shape.width") {
   setSize(value.toInt(), impl_->height_);
   return true;
@@ -894,6 +1248,17 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   obj["strokeA"] = static_cast<double>(impl_->strokeColor_.a());
   obj["strokeWidth"] = static_cast<double>(impl_->strokeWidth_);
   obj["strokeEnabled"] = impl_->strokeEnabled_;
+  obj["strokeTaperStart"] = static_cast<double>(impl_->strokeTaperStart_);
+  obj["strokeTaperEnd"] = static_cast<double>(impl_->strokeTaperEnd_);
+  obj["strokeGradientEnabled"] = impl_->strokeGradientEnabled_;
+  obj["strokeGradientStartR"] = static_cast<double>(impl_->strokeGradientStartColor_.r());
+  obj["strokeGradientStartG"] = static_cast<double>(impl_->strokeGradientStartColor_.g());
+  obj["strokeGradientStartB"] = static_cast<double>(impl_->strokeGradientStartColor_.b());
+  obj["strokeGradientStartA"] = static_cast<double>(impl_->strokeGradientStartColor_.a());
+  obj["strokeGradientEndR"] = static_cast<double>(impl_->strokeGradientEndColor_.r());
+  obj["strokeGradientEndG"] = static_cast<double>(impl_->strokeGradientEndColor_.g());
+  obj["strokeGradientEndB"] = static_cast<double>(impl_->strokeGradientEndColor_.b());
+  obj["strokeGradientEndA"] = static_cast<double>(impl_->strokeGradientEndColor_.a());
   obj["strokeCap"] = static_cast<int>(impl_->strokeCap_);
   obj["strokeJoin"] = static_cast<int>(impl_->strokeJoin_);
   obj["strokeAlign"] = static_cast<int>(impl_->strokeAlign_);
@@ -945,6 +1310,21 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
  ));
  layer->setStrokeWidth(static_cast<float>(obj["strokeWidth"].toDouble(0.0)));
  layer->setStrokeEnabled(obj["strokeEnabled"].toBool(false));
+ layer->setStrokeTaper(static_cast<float>(obj["strokeTaperStart"].toDouble(1.0)),
+                       static_cast<float>(obj["strokeTaperEnd"].toDouble(1.0)));
+ layer->setStrokeGradientEnabled(obj["strokeGradientEnabled"].toBool(false));
+ layer->setStrokeGradientStartColor(FloatColor(
+  static_cast<float>(obj["strokeGradientStartR"].toDouble(layer->strokeColor().r())),
+  static_cast<float>(obj["strokeGradientStartG"].toDouble(layer->strokeColor().g())),
+  static_cast<float>(obj["strokeGradientStartB"].toDouble(layer->strokeColor().b())),
+  static_cast<float>(obj["strokeGradientStartA"].toDouble(layer->strokeColor().a()))
+  ));
+ layer->setStrokeGradientEndColor(FloatColor(
+  static_cast<float>(obj["strokeGradientEndR"].toDouble(layer->strokeColor().r())),
+  static_cast<float>(obj["strokeGradientEndG"].toDouble(layer->strokeColor().g())),
+  static_cast<float>(obj["strokeGradientEndB"].toDouble(layer->strokeColor().b())),
+  static_cast<float>(obj["strokeGradientEndA"].toDouble(layer->strokeColor().a()))
+  ));
  layer->setStrokeCap(static_cast<StrokeCap>(obj["strokeCap"].toInt(0)));
  layer->setStrokeJoin(static_cast<StrokeJoin>(obj["strokeJoin"].toInt(0)));
  layer->setStrokeAlign(static_cast<StrokeAlign>(obj["strokeAlign"].toInt(0)));

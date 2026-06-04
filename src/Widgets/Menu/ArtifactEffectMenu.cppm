@@ -375,6 +375,7 @@ QAction* addObsoleteEffect(QMenu* menu, const QString& label)
  ArtifactEffectMenu::ArtifactEffectMenu(QWidget* parent /*= nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
   setTitle("エフェクト(&T)");
+  setIcon(menuIcon(QStringLiteral("Studio/auto_awesome.svg")));
   setTearOffEnabled(false);
 
   // Menu is built in Impl constructor

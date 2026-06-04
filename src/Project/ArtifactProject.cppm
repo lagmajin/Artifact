@@ -7,6 +7,7 @@ module;
 #include <QDateTime>
 #include <QHash>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QVector>
 #include <QDir>
 #include <QSet>
@@ -95,15 +96,17 @@ namespace Artifact {
   Impl();
   ~Impl();
   void addAssetFromPath(const QString& string);
+  void addAssetFromPath(const QString& string, const QStringList& sequencePaths, double frameRate);
   CreateCompositionResult createComposition(const UniString& str);
   CreateCompositionResult createComposition(const ArtifactCompositionInitParams& settings);
   //CreateCompositionResult createComposition(const Composition)
 
-  void createCompositions(const QStringList& names);
+   void createCompositions(const QStringList& names);
    FindCompositionResult findComposition(const CompositionID& id);
    bool removeById(CompositionID id);
    void removeAllCompositions();
   bool addImportedComposition(ArtifactCompositionPtr comp, const QString& name);
+  bool addProjectItemsFromJson(const QJsonArray& items, ProjectItem* parent = nullptr);
    void setProjectName(const QString& name);
    void setAuthor(const QString& author);
    ArtifactProjectSettings projectSettings() const { return projectSettings_; }
@@ -160,6 +163,11 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
 
  void ArtifactProject::Impl::addAssetFromPath(const QString& string)
  {
+  addAssetFromPath(string, {}, 0.0);
+ }
+
+ void ArtifactProject::Impl::addAssetFromPath(const QString& string, const QStringList& sequencePaths, double frameRate)
+ {
   if (string.isEmpty()) return;
   QFileInfo fiInput(string);
   QString canonicalPath = fiInput.canonicalFilePath();
@@ -186,6 +194,9 @@ QVector<ProjectItem*> ArtifactProject::projectItems() const
   auto footageUp = std::make_unique<FootageItem>();
   footageUp->filePath = canonicalPath;
   footageUp->name.setQString(fi.fileName());
+  footageUp->sequencePaths = sequencePaths;
+  footageUp->frameRate = frameRate > 0.0 ? frameRate : 0.0;
+  footageUp->isSequence = sequencePaths.size() > 1;
 
   // attach to project root if exists
   ProjectItem* projectRoot = nullptr;
@@ -314,6 +325,153 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
     currentCompositionId_ = id;
   }
   return true;
+ }
+
+ bool ArtifactProject::Impl::addProjectItemsFromJson(const QJsonArray& items, ProjectItem* parent)
+ {
+  if (ownedItems_.empty()) {
+   return false;
+  }
+
+  ProjectItem* targetParent = parent ? parent : ownedItems_.front().get();
+  if (!targetParent || targetParent->type() != eProjectItemType::Folder) {
+   return false;
+  }
+
+  bool changed = false;
+
+  std::function<bool(const QJsonObject&, ProjectItem*)> appendItem =
+      [&](const QJsonObject& obj, ProjectItem* currentParent) -> bool {
+    if (!currentParent || currentParent->type() != eProjectItemType::Folder) {
+      return false;
+    }
+
+    const QString type = obj.value(QStringLiteral("type")).toString();
+    const QString name = obj.value(QStringLiteral("name")).toString();
+    const QString idStr = obj.value(QStringLiteral("id")).toString();
+
+    auto appendChild = [&](auto&& uniquePtr) -> bool {
+      uniquePtr->parent = currentParent;
+      currentParent->children.append(uniquePtr.get());
+      ownedItems_.push_back(std::move(uniquePtr));
+      changed = true;
+      return true;
+    };
+
+    if (type == QStringLiteral("folder")) {
+      auto folderUp = std::make_unique<FolderItem>();
+      folderUp->name.setQString(name);
+      if (!idStr.isEmpty()) {
+        folderUp->id = Id(idStr);
+      }
+      auto* rawFolder = folderUp.get();
+      if (!appendChild(std::move(folderUp))) {
+        return false;
+      }
+
+      const QJsonArray children = obj.value(QStringLiteral("children")).toArray();
+      for (const auto& childVal : children) {
+        if (!childVal.isObject()) {
+          continue;
+        }
+        appendItem(childVal.toObject(), rawFolder);
+      }
+      return true;
+    }
+
+    if (type == QStringLiteral("footage")) {
+      auto footageUp = std::make_unique<FootageItem>();
+      footageUp->name.setQString(name);
+      if (!idStr.isEmpty()) {
+        footageUp->id = Id(idStr);
+      }
+      footageUp->filePath = obj.value(QStringLiteral("filePath")).toString();
+      footageUp->isSequence = obj.value(QStringLiteral("isSequence")).toBool(false);
+      footageUp->frameRate = obj.value(QStringLiteral("frameRate")).toDouble(0.0);
+      const QJsonArray sequenceArray = obj.value(QStringLiteral("sequencePaths")).toArray();
+      if (!sequenceArray.isEmpty()) {
+        QStringList sequencePaths;
+        sequencePaths.reserve(sequenceArray.size());
+        for (const auto& value : sequenceArray) {
+          if (value.isString()) {
+            sequencePaths.append(value.toString());
+          }
+        }
+        footageUp->sequencePaths = sequencePaths;
+        if (sequencePaths.size() > 1) {
+          footageUp->isSequence = true;
+        }
+      }
+      return appendChild(std::move(footageUp));
+    }
+
+    if (type == QStringLiteral("solid")) {
+      auto solidUp = std::make_unique<SolidItem>();
+      solidUp->name.setQString(name);
+      if (!idStr.isEmpty()) {
+        solidUp->id = Id(idStr);
+      }
+      const QString colorStr = obj.value(QStringLiteral("color")).toString();
+      if (!colorStr.isEmpty()) {
+        solidUp->color = QColor(colorStr);
+      }
+      return appendChild(std::move(solidUp));
+    }
+
+    if (type == QStringLiteral("composition")) {
+      ArtifactCompositionPtr comp;
+      const QJsonObject compJsonObj = obj.value(QStringLiteral("compositionJson")).toObject();
+      if (!compJsonObj.isEmpty()) {
+        comp = ArtifactAbstractComposition::fromJson(QJsonDocument(compJsonObj));
+      }
+      if (!comp) {
+        // Fallback to a placeholder composition item if the payload does not
+        // contain a full composition snapshot.
+        auto compItemUp = std::make_unique<CompositionItem>();
+        compItemUp->name.setQString(name.isEmpty() ? QStringLiteral("Composition") : name);
+        if (!idStr.isEmpty()) {
+          compItemUp->id = Id(idStr);
+        }
+        const QString compIdStr = obj.value(QStringLiteral("compositionId")).toString();
+        if (!compIdStr.isEmpty()) {
+          compItemUp->compositionId = CompositionID(compIdStr);
+        }
+        return appendChild(std::move(compItemUp));
+      }
+
+      const QString importedName = name.isEmpty()
+                                       ? QStringLiteral("Composition")
+                                       : name;
+      const CompositionID compId = comp->id();
+      container_.add(comp, compId, std::type_index(typeid(ArtifactAbstractComposition)));
+
+      auto compItemUp = std::make_unique<CompositionItem>();
+      compItemUp->compositionId = compId;
+      compItemUp->name.setQString(importedName);
+      if (!idStr.isEmpty()) {
+        compItemUp->id = Id(idStr);
+      }
+      compItemUp->parent = currentParent;
+      currentParent->children.append(compItemUp.get());
+      ownedItems_.push_back(std::move(compItemUp));
+      changed = true;
+      return true;
+    }
+
+    return false;
+  };
+
+  for (const auto& val : items) {
+    if (!val.isObject()) {
+      continue;
+    }
+    appendItem(val.toObject(), targetParent);
+  }
+
+  if (changed) {
+    setDirty(true);
+  }
+  return changed;
  }
 
  void ArtifactProject::Impl::setProjectName(const QString& name)
@@ -451,6 +609,7 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   if (typeName.find("camera") != std::string::npos) return LayerType::Camera;
   if (typeName.find("audio") != std::string::npos) return LayerType::Audio;
   if (typeName.find("video") != std::string::npos) return LayerType::Video;
+  if (typeName.find("construction") != std::string::npos) return LayerType::Construction;
   if (typeName.find("3dlayer") != std::string::npos) return LayerType::Model3D;
   if (typeName.find("model3d") != std::string::npos) return LayerType::Model3D;
   if (typeName.find("3dmodel") != std::string::npos) return LayerType::Model3D;
@@ -551,6 +710,19 @@ QJsonArray compsArray;
        const auto* footage = static_cast<const FootageItem*>(item);
        obj["filePath"] = footage->filePath;
        obj["filePathExists"] = QFileInfo(footage->filePath).exists();
+       if (footage->isSequence) {
+        obj["isSequence"] = true;
+       }
+       if (!footage->sequencePaths.isEmpty()) {
+        QJsonArray sequenceArray;
+        for (const QString& sequencePath : footage->sequencePaths) {
+         sequenceArray.append(sequencePath);
+        }
+        obj["sequencePaths"] = sequenceArray;
+       }
+       if (footage->frameRate > 0.0) {
+        obj["frameRate"] = footage->frameRate;
+       }
        break;
       }
       case eProjectItemType::Solid: {
@@ -921,6 +1093,14 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
  {
   impl_->addAssetFromPath(filepath);
 
+ }
+
+ void ArtifactProject::addAssetFromPath(const QString& filepath, const QStringList& sequencePaths, double frameRate)
+ {
+  if (!impl_) {
+   return;
+  }
+  impl_->addAssetFromPath(filepath, sequencePaths, frameRate);
  }
 
 
@@ -1504,6 +1684,18 @@ void ArtifactProject::restoreProjectItems(const QJsonArray& items)
   // Mark as dirty (since we modified the project)
   impl_->setDirty(true);
   publishProjectChangedEvent();
+}
+
+bool ArtifactProject::addProjectItemsFromJson(const QJsonArray& items, ProjectItem* parent)
+{
+  if (!impl_) {
+    return false;
+  }
+  const bool ok = impl_->addProjectItemsFromJson(items, parent);
+  if (ok) {
+    publishProjectChangedEvent();
+  }
+  return ok;
 }
 
 

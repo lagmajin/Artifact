@@ -307,7 +307,18 @@ void ArtifactProjectModel::Impl::refreshTree()
 
         const QString suffix = info.suffix().toLower();
         if (isImageFile(suffix)) {
-          frameRateItem->setText(QStringLiteral("Image"));
+          if (footage->isSequence) {
+            durationItem->setText(!footage->sequencePaths.isEmpty()
+                                      ? QStringLiteral("%1 frames").arg(footage->sequencePaths.size())
+                                      : QStringLiteral("-"));
+            frameRateItem->setText(footage->frameRate > 0.0
+                                       ? QStringLiteral("Sequence • %1 fps")
+                                             .arg(QString::number(footage->frameRate, 'f',
+                                                                  std::abs(footage->frameRate - std::round(footage->frameRate)) <= 0.0005 ? 0 : 3))
+                                       : QStringLiteral("Image Sequence"));
+          } else {
+            frameRateItem->setText(QStringLiteral("Image"));
+          }
         } else if (isVideoFile(suffix)) {
           cv::VideoCapture cap(footage->filePath.toLocal8Bit().constData());
           if (cap.isOpened()) {

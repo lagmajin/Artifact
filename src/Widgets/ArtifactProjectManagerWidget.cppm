@@ -1,6 +1,7 @@
 module;
 #include <QVector>
 #include <QWidget>
+#include <QFormLayout>
 #include <wobjectimpl.h>
 #include <Widgets/Dialog/ArtifactDialogButtons.hpp>
 #include <QBoxLayout>
@@ -52,6 +53,9 @@ module;
 #include <QStandardPaths>
 #include <QSet>
 #include <QDialog>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonDocument>
 #include <QTreeWidget>
 #include <QSpinBox>
 #include <QDoubleSpinBox>
@@ -125,6 +129,7 @@ import Artifact.Layer.Search.Query;
 import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Layer.InitParams;
+import Clipboard.ClipboardManager;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.CreatePlaneLayerDialog;
 import Artifact.Widgets.AppDialogs;
@@ -1149,6 +1154,16 @@ public:
     int headerHeight = 24;
     int rowHeight = 28;
     int indentWidth = 16;
+    ArtifactProjectView::PresentationMode presentationMode = ArtifactProjectView::PresentationMode::List;
+    QHash<QString, QPixmap> tilePreviewCache;
+    int tileMargin = 12;
+    int tileSpacing = 14;
+    int tileWidth = 190;
+    int tileHeight = 204;
+    int tilePreviewHeight = 112;
+    int tileContentTop = 34;
+    int tileContentBottom = 8;
+    int tileTextLines = 3;
 
     QString keyForIndex(QModelIndex index) const {
         index = index.siblingAtColumn(0);
@@ -1201,6 +1216,96 @@ public:
             total += width;
         }
         return total;
+    }
+
+    bool isTileMode() const {
+        return presentationMode == ArtifactProjectView::PresentationMode::Tile;
+    }
+
+    int tileColumns(const int viewWidth) const {
+        const int usable = std::max(1, viewWidth - tileMargin * 2 + tileSpacing);
+        return std::max(1, usable / std::max(1, tileWidth + tileSpacing));
+    }
+
+    QRect tileRectForRow(const int row, const int viewWidth) const {
+        if (row < 0) {
+            return {};
+        }
+        const int columns = tileColumns(viewWidth);
+        const int col = row % columns;
+        const int gridRow = row / columns;
+        const int x = tileMargin + col * (tileWidth + tileSpacing);
+        const int y = tileContentTop + gridRow * (tileHeight + tileSpacing);
+        return QRect(x, y, tileWidth, tileHeight);
+    }
+
+    int tileRowForPoint(const QPoint& point, const int viewWidth, const int scrollOffsetY) const {
+        const QPoint contentPoint(point.x(), point.y() + scrollOffsetY);
+        if (contentPoint.x() < tileMargin || contentPoint.y() < tileContentTop) {
+            return -1;
+        }
+        const int columns = tileColumns(viewWidth);
+        const int col = (contentPoint.x() - tileMargin) / std::max(1, tileWidth + tileSpacing);
+        const int gridRow = (contentPoint.y() - tileContentTop) / std::max(1, tileHeight + tileSpacing);
+        if (col < 0 || col >= columns || gridRow < 0) {
+            return -1;
+        }
+        const int row = gridRow * columns + col;
+        if (row < 0 || row >= visibleRows.size()) {
+            return -1;
+        }
+        return row;
+    }
+
+    QRect tilePreviewRect(const QRect& tileRect) const {
+        return QRect(tileRect.left() + 10, tileRect.top() + 10,
+                     tileRect.width() - 20, std::max(72, tilePreviewHeight));
+    }
+
+    QRect tileTitleRect(const QRect& tileRect) const {
+        return QRect(tileRect.left() + 10,
+                     tileRect.top() + 10 + std::max(72, tilePreviewHeight) + 6,
+                     tileRect.width() - 20, 20);
+    }
+
+    QRect tileMetadataRect(const QRect& tileRect) const {
+        return QRect(tileRect.left() + 10,
+                     tileRect.top() + 10 + std::max(72, tilePreviewHeight) + 28,
+                     tileRect.width() - 20,
+                     tileRect.height() - (10 + std::max(72, tilePreviewHeight) + 36 + tileContentBottom));
+    }
+
+    QPixmap previewForIndex(const QModelIndex& index, const QSize& targetSize) {
+        QModelIndex sourceIdx = index;
+        if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+            sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+        }
+        const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+        if (!item) {
+            return {};
+        }
+
+        QString itemKey = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::AssetId)).toString();
+        if (itemKey.isEmpty()) {
+            itemKey = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId)).toString();
+        }
+        if (itemKey.isEmpty()) {
+            itemKey = QStringLiteral("ptr:%1").arg(QString::number(reinterpret_cast<quintptr>(item)));
+        }
+        const QString cacheKey = QStringLiteral("%1|%2x%3")
+                                     .arg(itemKey,
+                                          QString::number(targetSize.width()),
+                                          QString::number(targetSize.height()));
+
+        if (auto it = tilePreviewCache.constFind(cacheKey); it != tilePreviewCache.constEnd()) {
+            return *it;
+        }
+        const QPixmap pix = projectItemPreviewPixmap(item, targetSize);
+        if (!pix.isNull()) {
+            tilePreviewCache.insert(cacheKey, pix);
+        }
+        return pix;
     }
 
     void rebuildVisibleRows() {
@@ -1488,6 +1593,26 @@ void ArtifactProjectView::setModel(QAbstractItemModel* model)
     refreshVisibleContent();
 }
 
+void ArtifactProjectView::setPresentationMode(const PresentationMode mode)
+{
+    if (!impl_) {
+        return;
+    }
+    if (impl_->presentationMode == mode) {
+        return;
+    }
+    impl_->presentationMode = mode;
+    impl_->hoverHeaderColumn = -1;
+    impl_->hoverBranchIndex = QModelIndex();
+    impl_->hoverIndex = QModelIndex();
+    refreshVisibleContent();
+}
+
+ArtifactProjectView::PresentationMode ArtifactProjectView::presentationMode() const
+{
+    return impl_ ? impl_->presentationMode : PresentationMode::List;
+}
+
 QAbstractItemModel* ArtifactProjectView::model() const
 {
     return impl_ ? impl_->model : nullptr;
@@ -1627,6 +1752,13 @@ QModelIndex ArtifactProjectView::indexAt(const QPoint& pos) const
     if (!impl_) {
         return {};
     }
+    if (impl_->isTileMode()) {
+        const int row = impl_->tileRowForPoint(pos, width(), scrollY_);
+        if (row < 0 || row >= impl_->visibleRows.size()) {
+            return {};
+        }
+        return impl_->visibleRows[row].index0;
+    }
     const int y = pos.y() + scrollY_;
     if (y < impl_->headerHeight) {
         return {};
@@ -1643,6 +1775,13 @@ QRect ArtifactProjectView::visualRect(const QModelIndex& index) const
     if (!impl_) {
         return {};
     }
+    if (impl_->isTileMode()) {
+        const int row = impl_->rowForIndex(index);
+        if (row < 0) {
+            return {};
+        }
+        return impl_->tileRectForRow(row, width()).translated(0, -scrollY_);
+    }
     const int row = impl_->rowForIndex(index);
     if (row < 0) {
         return {};
@@ -1655,6 +1794,21 @@ QRect ArtifactProjectView::visualRect(const QModelIndex& index) const
 void ArtifactProjectView::ensureIndexVisible(const QModelIndex& index)
 {
     if (!impl_) {
+        return;
+    }
+    if (impl_->isTileMode()) {
+        const int row = impl_->rowForIndex(index);
+        if (row < 0) {
+            return;
+        }
+        const QRect tileRect = impl_->tileRectForRow(row, width());
+        const int viewTop = scrollY_;
+        const int viewBottom = scrollY_ + height();
+        if (tileRect.top() < viewTop) {
+            verticalScrollBar_->setValue(std::max(0, tileRect.top()));
+        } else if (tileRect.bottom() > viewBottom) {
+            verticalScrollBar_->setValue(std::max(0, tileRect.bottom() - height()));
+        }
         return;
     }
     const int row = impl_->rowForIndex(index);
@@ -1679,6 +1833,20 @@ void ArtifactProjectView::paintEvent(QPaintEvent* event)
     if (!impl_) {
         return;
     }
+
+    if (impl_->isTileMode()) {
+        paintTileMode(event);
+    } else {
+        paintListMode(event);
+    }
+}
+
+void ArtifactProjectView::paintListMode(QPaintEvent* event)
+{
+    if (!impl_) {
+        return;
+    }
+    Q_UNUSED(event);
 
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -1846,6 +2014,152 @@ void ArtifactProjectView::paintEvent(QPaintEvent* event)
     painter.drawLine(0, impl_->headerHeight - 1, width(), impl_->headerHeight - 1);
 }
 
+void ArtifactProjectView::paintTileMode(QPaintEvent* event)
+{
+    if (!impl_) {
+        return;
+    }
+
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    painter.fillRect(rect(), QColor(0x28, 0x28, 0x28));
+
+    const QRect dirtyRect = event ? event->rect() : rect();
+    const int viewWidth = std::max(1, width());
+    const QFontMetrics fm = painter.fontMetrics();
+
+    for (int row = 0; row < impl_->visibleRows.size(); ++row) {
+        const auto& visibleRow = impl_->visibleRows[row];
+        const QModelIndex index0 = visibleRow.index0;
+        const QRect tileRect = impl_->tileRectForRow(row, viewWidth).translated(0, -scrollY_);
+        if (!dirtyRect.adjusted(-16, -16, 16, 16).intersects(tileRect)) {
+            continue;
+        }
+
+        QModelIndex sourceIdx = index0;
+        if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(index0.model())) {
+            sourceIdx = proxy->mapToSource(index0).siblingAtColumn(0);
+        }
+
+        const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+        ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+        const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+        const eProjectItemType type = typeVar.isValid()
+                                          ? static_cast<eProjectItemType>(typeVar.toInt())
+                                          : eProjectItemType::Footage;
+        const bool selected = selectionModel() &&
+                              selectionModel()->isRowSelected(index0.row(), index0.parent());
+        const bool hovered = impl_->hoverIndex.isValid() && impl_->hoverIndex == index0;
+        const bool hasChildren = impl_->hasChildren(index0);
+
+        QColor tileFill = selected ? Impl::Colors::RowSelected
+                                   : (hovered ? Impl::Colors::RowHover : QColor(0x2B, 0x2B, 0x2D));
+        if (type == eProjectItemType::Folder) {
+            tileFill = tileFill.lighter(selected ? 110 : 104);
+        }
+
+        QColor border = selected ? Impl::Colors::RowSelectedText
+                                 : QColor(0x44, 0x44, 0x49);
+        border.setAlpha(hovered ? 220 : 170);
+
+        painter.setPen(QPen(border, selected ? 2.0 : 1.0));
+        painter.setBrush(tileFill);
+        painter.drawRoundedRect(tileRect.adjusted(0, 0, -1, -1), 8, 8);
+
+        const QRect previewRect = impl_->tilePreviewRect(tileRect);
+        const QRect titleRect = impl_->tileTitleRect(tileRect);
+        const QRect metadataRect = impl_->tileMetadataRect(tileRect);
+
+        QPixmap preview = impl_->previewForIndex(index0, previewRect.size());
+        if (!preview.isNull()) {
+            painter.save();
+            painter.setClipPath([&]() {
+                QPainterPath clip;
+                clip.addRoundedRect(previewRect, 6, 6);
+                return clip;
+            }());
+            const QPoint previewTopLeft =
+                previewRect.center() -
+                QPoint(preview.width() / 2, preview.height() / 2);
+            painter.drawPixmap(previewTopLeft, preview);
+            painter.restore();
+            painter.setPen(QPen(QColor(18, 18, 18, 160), 1.0));
+            painter.setBrush(Qt::NoBrush);
+            painter.drawRoundedRect(previewRect.adjusted(0, 0, -1, -1), 6, 6);
+        } else {
+            QColor placeholder = QColor(70, 74, 84);
+            if (type == eProjectItemType::Composition) {
+                placeholder = QColor(74, 128, 191);
+            } else if (type == eProjectItemType::Folder) {
+                placeholder = QColor(176, 138, 46);
+            } else if (type == eProjectItemType::Solid) {
+                placeholder = QColor(110, 88, 170);
+            } else if (type == eProjectItemType::Footage) {
+                placeholder = QColor(66, 148, 98);
+            }
+            painter.setBrush(placeholder);
+            painter.setPen(QPen(QColor(18, 18, 18, 170), 1.0));
+            painter.drawRoundedRect(previewRect.adjusted(0, 0, -1, -1), 6, 6);
+            painter.setPen(QColor(245, 245, 245));
+            QFont badgeFont = painter.font();
+            badgeFont.setBold(true);
+            badgeFont.setPointSize(std::max(8, badgeFont.pointSize()));
+            painter.setFont(badgeFont);
+            painter.drawText(previewRect, Qt::AlignCenter,
+                             projectItemTypeLabel(type).left(1).toUpper());
+        }
+
+        const QString title = sourceIdx.data(Qt::DisplayRole).toString();
+        painter.setPen(selected ? Impl::Colors::RowSelectedText : QColor(240, 240, 240));
+        QFont titleFont = painter.font();
+        titleFont.setPointSize(std::max(10, titleFont.pointSize()));
+        titleFont.setBold(true);
+        painter.setFont(titleFont);
+        painter.drawText(titleRect, Qt::AlignLeft | Qt::AlignVCenter,
+                         fm.elidedText(title, Qt::ElideRight, titleRect.width()));
+
+        const QStringList metadata = projectItemMetadataLines(sourceIdx, item);
+        painter.setFont(font());
+        painter.setPen(selected ? QColor(235, 238, 242) : QColor(185, 188, 196));
+
+        const int maxLines = std::min(impl_->tileTextLines, metadata.size());
+        for (int i = 0; i < maxLines; ++i) {
+            const QRect lineRect(metadataRect.left(),
+                                 metadataRect.top() + i * fm.height(),
+                                 metadataRect.width(),
+                                 fm.height());
+            painter.drawText(lineRect, Qt::AlignLeft | Qt::AlignVCenter,
+                             fm.elidedText(metadata[i], Qt::ElideRight, lineRect.width()));
+        }
+
+        QString badgeText = projectItemTypeLabel(type);
+        if (type == eProjectItemType::Footage && item) {
+            const QFileInfo info(static_cast<FootageItem*>(item)->filePath);
+            if (!info.exists()) {
+                badgeText = QStringLiteral("Missing");
+            }
+        }
+        if (selected || hovered || hasChildren) {
+            const QFontMetrics badgeFm(painter.font());
+            const int badgeW = std::min(tileRect.width() - 20,
+                                        badgeFm.horizontalAdvance(badgeText) + 12);
+            const QRect badgeRect(tileRect.right() - badgeW - 10,
+                                  tileRect.top() + 10,
+                                  badgeW,
+                                  std::max(18, badgeFm.height() + 4));
+            QColor badgeBg = selected ? QColor(255, 255, 255, 24) : QColor(0, 0, 0, 38);
+            QColor badgePen = selected ? QColor(245, 247, 250) : QColor(210, 214, 220);
+            painter.setBrush(badgeBg);
+            painter.setPen(QPen(badgePen, 1.0));
+            painter.drawRoundedRect(badgeRect, 6, 6);
+            painter.setPen(badgePen);
+            painter.drawText(badgeRect.adjusted(6, 0, -6, 0),
+                             Qt::AlignCenter, badgeText);
+        }
+    }
+}
+
 void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index) {
     if (!index.isValid()) return;
     QModelIndex actualIdx = index;
@@ -1877,7 +2191,7 @@ void ArtifactProjectView::handleItemDoubleClicked(const QModelIndex& index) {
 
 void ArtifactProjectView::mouseDoubleClickEvent(QMouseEvent* event) {
     const QPoint mousePos = event->position().toPoint();
-    if (mousePos.y() < impl_->headerHeight) {
+    if (!impl_->isTileMode() && mousePos.y() < impl_->headerHeight) {
         const HeaderResizeHit resizeHit = headerResizeHit(impl_->columnWidths, mousePos, impl_->headerHeight);
         if (resizeHit.column >= 0 && std::abs(mousePos.x() - resizeHit.boundaryX) <= kHeaderResizeHitRadius) {
             const QFontMetrics fm(font());
@@ -1972,7 +2286,7 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
         return;
     }
 
-    if (mousePos.y() < impl_->headerHeight) {
+    if (!impl_->isTileMode() && mousePos.y() < impl_->headerHeight) {
         int x = 0;
         int hoveredCol = -1;
         for (int i = 0; i < impl_->columnWidths.size(); ++i) {
@@ -1993,7 +2307,7 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
 
     const QModelIndex idx = indexAt(mousePos);
     QModelIndex branchIdx;
-    if (idx.isValid() && mousePos.y() >= impl_->headerHeight) {
+    if (!impl_->isTileMode() && idx.isValid() && mousePos.y() >= impl_->headerHeight) {
         const QRect rowRect = visualRect(idx);
         const int row = impl_->rowForIndex(idx);
         const int depth = (row >= 0 && row < impl_->visibleRows.size()) ? impl_->visibleRows[row].depth : 0;
@@ -2139,7 +2453,16 @@ bool ArtifactProjectView::event(QEvent* event)
 void ArtifactProjectView::updateScrollRange()
 {
     if (!impl_ || !verticalScrollBar_) return;
-    const int contentHeight = impl_->headerHeight + static_cast<int>(impl_->visibleRows.size()) * impl_->rowHeight;
+    int contentHeight = impl_->headerHeight + static_cast<int>(impl_->visibleRows.size()) * impl_->rowHeight;
+    if (impl_->isTileMode()) {
+        const int columns = impl_->tileColumns(width());
+        const int rowCount = columns > 0
+                                 ? static_cast<int>((impl_->visibleRows.size() + columns - 1) / columns)
+                                 : 0;
+        contentHeight = impl_->tileContentTop +
+                        rowCount * (impl_->tileHeight + impl_->tileSpacing) +
+                        impl_->tileContentBottom;
+    }
     verticalScrollBar_->setPageStep(height());
     verticalScrollBar_->setRange(0, std::max(0, contentHeight - height()));
     verticalScrollBar_->setVisible(contentHeight > height());
@@ -2150,6 +2473,7 @@ void ArtifactProjectView::refreshVisibleContent()
     if (!impl_) {
         return;
     }
+    impl_->tilePreviewCache.clear();
     impl_->rebuildVisibleRows();
     updateScrollRange();
     update();
@@ -2163,6 +2487,9 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     QHash<QString, QString> availableContextLabels;
     QHash<QString, std::function<void()>> availableNewCommands;
     QHash<QString, QString> availableNewLabels;
+    ProjectItem* contextItem = nullptr;
+    QModelIndex sourceIdx;
+    eProjectItemType contextType = eProjectItemType::Footage;
 
     auto addTrackedAction = [this, &menu, &availableContextCommands, &availableContextLabels](const QString& id, const QString& label, std::function<void()> run, const QIcon& icon = QIcon()) {
         availableContextCommands.insert(id, run);
@@ -2191,19 +2518,19 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
     };
 
     if (idx.isValid()) {
-        QModelIndex sourceIdx = idx;
+        sourceIdx = idx;
         if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
             sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
         }
 
         QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
-        ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+        contextItem = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
         
         QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
-        eProjectItemType type = typeVar.isValid() ? static_cast<eProjectItemType>(typeVar.toInt()) : eProjectItemType::Footage;
+        contextType = typeVar.isValid() ? static_cast<eProjectItemType>(typeVar.toInt()) : eProjectItemType::Footage;
 
-        addTrackedAction(QStringLiteral("open"), QStringLiteral("Open"), [this, idx, type]() {
-            if (type == eProjectItemType::Footage) {
+        addTrackedAction(QStringLiteral("open"), QStringLiteral("Open"), [this, idx, contextType]() {
+            if (contextType == eProjectItemType::Footage) {
                 itemDoubleClicked(idx);
             }
             handleItemDoubleClicked(idx);
@@ -2211,8 +2538,80 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         addTrackedAction(QStringLiteral("copy_name"), QStringLiteral("Copy Name"), [sourceIdx]() {
             QApplication::clipboard()->setText(sourceIdx.data(Qt::DisplayRole).toString());
         }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
+        addTrackedAction(QStringLiteral("copy_item_snapshot"), QStringLiteral("Copy Item Snapshot"), [this, contextItem, svc]() {
+            if (!contextItem) {
+                return;
+            }
+
+            auto serializeItem = [&](const ProjectItem* item, const auto& self) -> QJsonObject {
+                QJsonObject obj;
+                if (!item) {
+                    return obj;
+                }
+
+                obj[QStringLiteral("name")] = item->name.toQString();
+                obj[QStringLiteral("id")] = item->id.toString();
+
+                switch (item->type()) {
+                case eProjectItemType::Folder: {
+                    obj[QStringLiteral("type")] = QStringLiteral("folder");
+                    QJsonArray children;
+                    for (const auto* child : item->children) {
+                        children.append(self(child, self));
+                    }
+                    obj[QStringLiteral("children")] = children;
+                    break;
+                }
+                case eProjectItemType::Footage: {
+                    obj[QStringLiteral("type")] = QStringLiteral("footage");
+                    const auto* footage = static_cast<const FootageItem*>(item);
+                    obj[QStringLiteral("filePath")] = footage->filePath;
+                    obj[QStringLiteral("filePathExists")] = QFileInfo(footage->filePath).exists();
+                    obj[QStringLiteral("isSequence")] = footage->isSequence;
+                    if (!footage->sequencePaths.isEmpty()) {
+                        QJsonArray sequenceArray;
+                        for (const QString& sequencePath : footage->sequencePaths) {
+                            sequenceArray.append(sequencePath);
+                        }
+                        obj[QStringLiteral("sequencePaths")] = sequenceArray;
+                    }
+                    if (footage->frameRate > 0.0) {
+                        obj[QStringLiteral("frameRate")] = footage->frameRate;
+                    }
+                    break;
+                }
+                case eProjectItemType::Solid: {
+                    obj[QStringLiteral("type")] = QStringLiteral("solid");
+                    const auto* solid = static_cast<const SolidItem*>(item);
+                    obj[QStringLiteral("color")] = solid->color.name(QColor::HexArgb);
+                    break;
+                }
+                case eProjectItemType::Composition: {
+                    obj[QStringLiteral("type")] = QStringLiteral("composition");
+                    const auto* compItem = static_cast<const CompositionItem*>(item);
+                    obj[QStringLiteral("compositionId")] = compItem->compositionId.toString();
+                    if (svc) {
+                        const auto found = svc->findComposition(compItem->compositionId);
+                        auto composition = found.ptr.lock();
+                        if (found.success && composition) {
+                            obj[QStringLiteral("compositionJson")] = composition->toJson().object();
+                        }
+                    }
+                    break;
+                }
+                default:
+                    obj[QStringLiteral("type")] = QStringLiteral("unknown");
+                    break;
+                }
+                return obj;
+            };
+
+            QJsonArray items;
+            items.append(serializeItem(contextItem, serializeItem));
+            ClipboardManager::instance().copyProjectItems(items, contextItem->name.toQString());
+        }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
         
-        if (type == eProjectItemType::Composition) {
+        if (contextType == eProjectItemType::Composition) {
             addTrackedAction(QStringLiteral("set_active_composition"), QStringLiteral("Set as Active Composition"), [sourceIdx]() {
                 QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
                 if (idVar.isValid()) {
@@ -2376,14 +2775,62 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 dialog->exec();
             }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/settings.svg")));
             
-            addTrackedAction(QStringLiteral("interpret_footage"), QStringLiteral("Interpret Footage..."), []() {
-                // Placeholder for footage settings
+            addTrackedAction(QStringLiteral("interpret_footage"), QStringLiteral("Interpret Footage..."), [this, svc, selectedFootagePaths, contextItem]() {
+                auto* projectService = svc ? svc : ArtifactProjectService::instance();
+                if (!projectService) {
+                    return;
+                }
+
+                QStringList targetPaths = selectedFootagePaths;
+                if (targetPaths.isEmpty() && contextItem && contextItem->type() == eProjectItemType::Footage) {
+                    targetPaths.append(QFileInfo(static_cast<FootageItem*>(contextItem)->filePath).absoluteFilePath());
+                }
+                targetPaths.removeDuplicates();
+                if (targetPaths.isEmpty()) {
+                    return;
+                }
+
+                double currentFrameRate = 24.0;
+                if (auto* firstFootage = projectService->findFootageItemByPath(targetPaths.first())) {
+                    if (firstFootage->frameRate > 0.0) {
+                        currentFrameRate = firstFootage->frameRate;
+                    }
+                }
+
+                bool ok = false;
+                const double frameRate = QInputDialog::getDouble(
+                    this,
+                    QStringLiteral("Interpret Footage"),
+                    QStringLiteral("Frame rate:"),
+                    currentFrameRate,
+                    1.0,
+                    240.0,
+                    3,
+                    &ok);
+                if (!ok) {
+                    return;
+                }
+
+                bool updatedAny = false;
+                for (const QString& path : targetPaths) {
+                    auto* footage = projectService->findFootageItemByPath(path);
+                    if (!footage) {
+                        continue;
+                    }
+                    footage->frameRate = frameRate;
+                    footage->isSequence = footage->isSequence || footage->sequencePaths.size() > 1;
+                    updatedAny = true;
+                }
+
+                if (updatedAny) {
+                    projectService->projectChanged();
+                }
             }, loadProjectViewIcon(QStringLiteral("MaterialVS/purple/info.svg")));
         }
 
-        if (type == eProjectItemType::Footage) {
-            const QString footagePath = item && item->type() == eProjectItemType::Footage
-                ? static_cast<FootageItem*>(item)->filePath
+        if (contextType == eProjectItemType::Footage) {
+            const QString footagePath = contextItem && contextItem->type() == eProjectItemType::Footage
+                ? static_cast<FootageItem*>(contextItem)->filePath
                 : QString();
             QStringList selectedFootagePaths;
             if (selectionModel()) {
@@ -2445,23 +2892,23 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     }
                 }, loadProjectViewIcon(QStringLiteral("MaterialVS/red/delete.svg")));
             }
-            addTrackedAction(QStringLiteral("reveal_in_explorer"), QStringLiteral("Reveal in Explorer (R)"), [item]() {
-                if (item && item->type() == eProjectItemType::Footage) {
-                    QString path = static_cast<FootageItem*>(item)->filePath;
+            addTrackedAction(QStringLiteral("reveal_in_explorer"), QStringLiteral("Reveal in Explorer (R)"), [contextItem]() {
+                if (contextItem && contextItem->type() == eProjectItemType::Footage) {
+                    QString path = static_cast<FootageItem*>(contextItem)->filePath;
                     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
                 }
             }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/folder.svg")));
-            addTrackedAction(QStringLiteral("copy_file_path"), QStringLiteral("Copy File Path"), [item]() {
-                if (item && item->type() == eProjectItemType::Footage) {
-                    QApplication::clipboard()->setText(static_cast<FootageItem*>(item)->filePath);
+            addTrackedAction(QStringLiteral("copy_file_path"), QStringLiteral("Copy File Path"), [contextItem]() {
+                if (contextItem && contextItem->type() == eProjectItemType::Footage) {
+                    QApplication::clipboard()->setText(static_cast<FootageItem*>(contextItem)->filePath);
                 }
             }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
-            addTrackedAction(QStringLiteral("relink_selected_footage"), QStringLiteral("Relink Selected Footage..."), [this, item, svc]() {
-                if (!svc || !item || item->type() != eProjectItemType::Footage) return;
+            addTrackedAction(QStringLiteral("relink_selected_footage"), QStringLiteral("Relink Selected Footage..."), [this, contextItem, svc]() {
+                if (!svc || !contextItem || contextItem->type() != eProjectItemType::Footage) return;
                 const QString root = QFileDialog::getExistingDirectory(this, "Relink Selected Footage - Search Root");
                 if (root.isEmpty()) return;
                 QVector<FootageItem*> targets;
-                targets.append(static_cast<FootageItem*>(item));
+                targets.append(static_cast<FootageItem*>(contextItem));
                 const int relinked = Impl::relinkMissingFootage(root, targets);
                 if (relinked > 0) {
                     svc->projectChanged();
@@ -2469,6 +2916,53 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 QMessageBox::information(this, "Relink Result",
                                          QString("Relinked %1 file(s).").arg(relinked));
             }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/link.svg")));
+        }
+
+        auto& clipboard = ClipboardManager::instance();
+        clipboard.syncFromSystemClipboard();
+        if (clipboard.hasProjectItemData()) {
+            auto resolvePasteParent = [svc, contextItem]() -> ProjectItem* {
+                ProjectItem* target = contextItem;
+                if (target && target->type() != eProjectItemType::Folder) {
+                    target = target->parent;
+                }
+                if (target) {
+                    return target;
+                }
+                if (!svc) {
+                    return nullptr;
+                }
+                auto project = svc->getCurrentProjectSharedPtr();
+                if (!project) {
+                    return nullptr;
+                }
+                const auto roots = project->projectItems();
+                for (auto* root : roots) {
+                    if (root && root->type() == eProjectItemType::Folder) {
+                        return root;
+                    }
+                }
+                return nullptr;
+            };
+            addTrackedAction(QStringLiteral("paste_project_items"), QStringLiteral("Paste Items Here"), [this, svc, resolvePasteParent]() {
+                if (!svc) {
+                    return;
+                }
+                auto& clipboard = ClipboardManager::instance();
+                const QJsonArray items = clipboard.pasteProjectItems();
+                if (items.isEmpty()) {
+                    return;
+                }
+                auto project = svc->getCurrentProjectSharedPtr();
+                if (!project) {
+                    return;
+                }
+                ProjectItem* targetParent = resolvePasteParent();
+                if (!project->addProjectItemsFromJson(items, targetParent)) {
+                    QMessageBox::warning(this, QStringLiteral("Paste Items"),
+                        QStringLiteral("Could not paste the copied project items."));
+                }
+            }, loadProjectViewIcon(QStringLiteral("MaterialVS/green/content_paste.svg")));
         }
 
         menu.addSeparator();
@@ -2492,7 +2986,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         QMenu* moveToFolderMenu = menu.addMenu(QStringLiteral("Move to Folder"));
         moveToFolderMenu->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
         bool hasMoveTarget = false;
-        if (svc && item) {
+        if (svc && contextItem) {
             if (auto project = svc->getCurrentProjectSharedPtr()) {
                 QVector<FolderItem*> folders;
                 const auto roots = project->projectItems();
@@ -2505,17 +2999,17 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     }
                     QAction* moveAction = moveToFolderMenu->addAction(folderDisplayPath(folder));
                     moveAction->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
-                    const bool canMove = (folder != item) && !isDescendantOf(folder, item);
+                    const bool canMove = (folder != contextItem) && !isDescendantOf(folder, contextItem);
                     moveAction->setEnabled(canMove);
                     if (!canMove) {
                         continue;
                     }
                     hasMoveTarget = true;
-                    QObject::connect(moveAction, &QAction::triggered, this, [this, svc, item, folder]() {
-                        if (!svc || !item || !folder) {
+                    QObject::connect(moveAction, &QAction::triggered, this, [this, svc, contextItem, folder]() {
+                        if (!svc || !contextItem || !folder) {
                             return;
                         }
-                        if (!svc->moveProjectItem(item, folder)) {
+                        if (!svc->moveProjectItem(contextItem, folder)) {
                             QMessageBox::warning(this, QStringLiteral("Move Failed"),
                                 QStringLiteral("Could not move the selected item to the target folder."));
                         }
@@ -2529,15 +3023,15 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             emptyAction->setEnabled(false);
         }
 
-        addTrackedAction(QStringLiteral("delete"), QStringLiteral("Delete"), [this, item, svc]() {
-            if (!svc || !item) {
+        addTrackedAction(QStringLiteral("delete"), QStringLiteral("Delete"), [this, contextItem, svc]() {
+            if (!svc || !contextItem) {
                 return;
             }
-            const QString message = svc->projectItemRemovalConfirmationMessage(item);
+            const QString message = svc->projectItemRemovalConfirmationMessage(contextItem);
             if (!ArtifactMessageBox::confirmDelete(this, QStringLiteral("項目削除"), message)) {
                 return;
             }
-            if (!svc->removeProjectItem(item)) {
+            if (!svc->removeProjectItem(contextItem)) {
                 QMessageBox::warning(this, QStringLiteral("削除失敗"),
                     QStringLiteral("項目の削除に失敗しました。"));
             }
@@ -2825,7 +3319,7 @@ void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
     if (impl_->hoverPopup) impl_->hoverPopup->hide();
     if (impl_->nameEditor && impl_->nameEditor->isVisible()) { impl_->nameEditor->hide(); impl_->editingIndex = QModelIndex(); update(); }
     const QPoint mousePos = event->position().toPoint();
-    if (mousePos.y() < impl_->headerHeight) {
+    if (!impl_->isTileMode() && mousePos.y() < impl_->headerHeight) {
         const HeaderResizeHit resizeHit = headerResizeHit(impl_->columnWidths, mousePos, impl_->headerHeight);
         if (resizeHit.column >= 0) {
             impl_->resizingColumn = resizeHit.column;
@@ -3084,6 +3578,7 @@ public:
     ProjectInfoPanel* infoPanel_ = nullptr;
     QLineEdit* searchBar = nullptr;
     QComboBox* typeFilterBox = nullptr;
+    QComboBox* viewModeBox = nullptr;
     QCheckBox* unusedOnlyCheck = nullptr;
     QProgressBar* proxyQueueProgress = nullptr;
     ArtifactProjectManagerToolBox* toolBox = nullptr;
@@ -3103,6 +3598,18 @@ public:
     QPushButton* deleteSelectionButton = nullptr;
     QPushButton* relinkSelectionButton = nullptr;
     QPushButton* copyPathButton = nullptr;
+    QWidget* compositionEditorPanel = nullptr;
+    QLabel* compositionEditorTitleLabel = nullptr;
+    QLabel* compositionEditorModeLabel = nullptr;
+    QLineEdit* compositionNameEdit = nullptr;
+    QSpinBox* compositionWidthSpin = nullptr;
+    QSpinBox* compositionHeightSpin = nullptr;
+    QDoubleSpinBox* compositionFrameRateSpin = nullptr;
+    QSpinBox* compositionStartFrameSpin = nullptr;
+    QSpinBox* compositionEndFrameSpin = nullptr;
+    CompositionBackgroundColorButton* compositionBackgroundButton = nullptr;
+    QPushButton* compositionApplyButton = nullptr;
+    QPushButton* compositionApplyFrameRateButton = nullptr;
     bool thumbnailEnabled = true;
     QSet<QString> unusedAssetPaths_;
     struct ProxyJob {
@@ -3116,6 +3623,212 @@ public:
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     QTimer* thumbnailUpdateDebounce_ = nullptr;
+
+    QVector<CompositionItem*> selectedCompositionItems() const {
+        QVector<CompositionItem*> items;
+        if (!projectView_ || !projectView_->selectionModel()) {
+            return items;
+        }
+        const auto rows = projectView_->selectionModel()->selectedRows(0);
+        QSet<QString> seen;
+        for (const auto& row : rows) {
+            QModelIndex sourceIdx = row;
+            if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+                sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+            }
+            const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+            if (!typeVar.isValid() || typeVar.toInt() != static_cast<int>(eProjectItemType::Composition)) {
+                continue;
+            }
+            const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            auto* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+            auto* compItem = item && item->type() == eProjectItemType::Composition ? static_cast<CompositionItem*>(item) : nullptr;
+            if (!compItem) {
+                continue;
+            }
+            const QString compKey = compItem->compositionId.toString();
+            if (seen.contains(compKey)) {
+                continue;
+            }
+            seen.insert(compKey);
+            items.append(compItem);
+        }
+        return items;
+    }
+
+    int selectedCompositionCount() const {
+        return selectedCompositionItems().size();
+    }
+
+    bool applySelectedCompositionFrameRate(const double frameRate) {
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc) {
+            return false;
+        }
+        const QVector<CompositionItem*> items = selectedCompositionItems();
+        if (items.isEmpty()) {
+            return false;
+        }
+
+        bool applied = false;
+        for (auto* compItem : items) {
+            if (!compItem) {
+                continue;
+            }
+            const auto found = svc->findComposition(compItem->compositionId);
+            auto comp = found.ptr.lock();
+            if (!found.success || !comp) {
+                continue;
+            }
+            comp->setFrameRate(FrameRate(static_cast<float>(std::max(1.0, frameRate))));
+            applied = true;
+            if (auto current = svc->currentComposition().lock(); current && current->id() == comp->id()) {
+                if (auto* playback = ArtifactPlaybackService::instance()) {
+                    playback->setFrameRate(comp->frameRate());
+                }
+            }
+        }
+
+        if (applied) {
+            if (auto project = svc->getCurrentProjectSharedPtr()) {
+                project->projectChanged();
+            }
+        }
+        return applied;
+    }
+
+    bool applySelectedCompositionSettings() {
+        auto* svc = ArtifactProjectService::instance();
+        if (!svc || !compositionNameEdit || !compositionWidthSpin || !compositionHeightSpin ||
+            !compositionFrameRateSpin || !compositionStartFrameSpin || !compositionEndFrameSpin ||
+            !compositionBackgroundButton) {
+            return false;
+        }
+        const QVector<CompositionItem*> items = selectedCompositionItems();
+        if (items.size() != 1) {
+            return false;
+        }
+
+        auto* compItem = items.first();
+        if (!compItem) {
+            return false;
+        }
+        const auto found = svc->findComposition(compItem->compositionId);
+        auto comp = found.ptr.lock();
+        if (!found.success || !comp) {
+            return false;
+        }
+
+        const QString trimmedName = compositionNameEdit->text().trimmed();
+        if (trimmedName.isEmpty()) {
+            return false;
+        }
+        const int startFrame = compositionStartFrameSpin->value();
+        const int endFrame = compositionEndFrameSpin->value();
+        if (startFrame > endFrame) {
+            return false;
+        }
+
+        comp->setCompositionName(UniString::fromQString(trimmedName));
+        comp->setCompositionSize(QSize(compositionWidthSpin->value(), compositionHeightSpin->value()));
+        comp->setFrameRate(FrameRate(static_cast<float>(std::max(1.0, compositionFrameRateSpin->value()))));
+        comp->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
+        const QColor bg = compositionBackgroundButton->selectedColor();
+        comp->setBackGroundColor(FloatColor(bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF()));
+
+        if (!svc->renameComposition(compItem->compositionId, UniString::fromQString(trimmedName))) {
+            return false;
+        }
+
+        if (auto project = svc->getCurrentProjectSharedPtr()) {
+            project->projectChanged();
+        }
+        if (auto current = svc->currentComposition().lock(); current && current->id() == comp->id()) {
+            if (auto* playback = ArtifactPlaybackService::instance()) {
+                playback->setFrameRange(comp->frameRange());
+                playback->setFrameRate(comp->frameRate());
+            }
+        }
+        return true;
+    }
+
+    void refreshCompositionEditor() {
+        const QVector<CompositionItem*> items = selectedCompositionItems();
+        const int count = items.size();
+        const bool hasSingleComposition = count == 1;
+        const bool hasAnyComposition = count > 0;
+        const QString panelTitle = count > 1
+            ? QStringLiteral("Batch Composition Edit")
+            : QStringLiteral("Composition Edit");
+        if (compositionEditorTitleLabel) {
+            compositionEditorTitleLabel->setText(panelTitle);
+        }
+        if (compositionEditorModeLabel) {
+            compositionEditorModeLabel->setText(count == 0
+                ? QStringLiteral("Select a composition to edit its settings here.")
+                : count == 1
+                    ? QStringLiteral("Editing the selected composition in place.")
+                    : QStringLiteral("Editing frame rate for %1 selected compositions.").arg(count));
+        }
+
+        if (!hasAnyComposition) {
+            if (compositionNameEdit) compositionNameEdit->clear();
+            if (compositionWidthSpin) compositionWidthSpin->setValue(1);
+            if (compositionHeightSpin) compositionHeightSpin->setValue(1);
+            if (compositionFrameRateSpin) compositionFrameRateSpin->setValue(30.0);
+            if (compositionStartFrameSpin) compositionStartFrameSpin->setValue(0);
+            if (compositionEndFrameSpin) compositionEndFrameSpin->setValue(0);
+            if (compositionBackgroundButton) {
+                compositionBackgroundButton->setSelectedColor(QColor(0, 0, 0));
+            }
+        } else if (hasSingleComposition) {
+            auto* compItem = items.first();
+            auto* svc = ArtifactProjectService::instance();
+            const auto found = svc ? svc->findComposition(compItem->compositionId) : FindCompositionResult{};
+            auto comp = found.ptr.lock();
+            if (comp) {
+                const QSize size = comp->settings().compositionSize();
+                const FrameRange range = comp->frameRange().normalized();
+                const QColor bg = QColor::fromRgbF(
+                    comp->backgroundColor().r(),
+                    comp->backgroundColor().g(),
+                    comp->backgroundColor().b(),
+                    comp->backgroundColor().a());
+
+                if (compositionNameEdit) compositionNameEdit->setText(comp->settings().compositionName().toQString());
+                if (compositionWidthSpin) compositionWidthSpin->setValue(std::max(1, size.width()));
+                if (compositionHeightSpin) compositionHeightSpin->setValue(std::max(1, size.height()));
+                if (compositionFrameRateSpin) compositionFrameRateSpin->setValue(std::max(1.0, static_cast<double>(comp->frameRate().framerate())));
+                if (compositionStartFrameSpin) compositionStartFrameSpin->setValue(static_cast<int>(range.start()));
+                if (compositionEndFrameSpin) compositionEndFrameSpin->setValue(static_cast<int>(range.end()));
+                if (compositionBackgroundButton) {
+                    compositionBackgroundButton->setSelectedColor(bg);
+                }
+            }
+        } else {
+            auto* compItem = items.first();
+            auto* svc = ArtifactProjectService::instance();
+            const auto found = svc ? svc->findComposition(compItem->compositionId) : FindCompositionResult{};
+            auto comp = found.ptr.lock();
+            if (comp && compositionFrameRateSpin) {
+                compositionFrameRateSpin->setValue(std::max(1.0, static_cast<double>(comp->frameRate().framerate())));
+            }
+        }
+
+        const bool editableSingle = hasSingleComposition;
+        if (compositionNameEdit) compositionNameEdit->setEnabled(editableSingle);
+        if (compositionWidthSpin) compositionWidthSpin->setEnabled(editableSingle);
+        if (compositionHeightSpin) compositionHeightSpin->setEnabled(editableSingle);
+        if (compositionStartFrameSpin) compositionStartFrameSpin->setEnabled(editableSingle);
+        if (compositionEndFrameSpin) compositionEndFrameSpin->setEnabled(editableSingle);
+        if (compositionBackgroundButton) compositionBackgroundButton->setEnabled(editableSingle);
+        if (compositionApplyButton) compositionApplyButton->setEnabled(editableSingle);
+        if (compositionFrameRateSpin) compositionFrameRateSpin->setEnabled(hasAnyComposition);
+        if (compositionApplyFrameRateButton) compositionApplyFrameRateButton->setEnabled(hasAnyComposition);
+        if (compositionEditorPanel) {
+            compositionEditorPanel->setVisible(hasAnyComposition);
+        }
+    }
 
     QModelIndex currentSelectionIndex0() const {
         if (!projectView_ || !projectView_->selectionModel()) {
@@ -3444,6 +4157,7 @@ public:
         const int selectedCount = projectView_ && projectView_->selectionModel()
             ? projectView_->selectionModel()->selectedRows(0).size()
             : 0;
+        const int selectedCompositionCountValue = selectedCompositionCount();
         const QString searchText = searchBar ? searchBar->text().trimmed() : QString();
         const QString typeText = typeFilterBox ? typeFilterBox->currentText() : QStringLiteral("All");
         const QString unusedText = unusedOnlyCheck && unusedOnlyCheck->isChecked()
@@ -3451,12 +4165,20 @@ public:
             : QStringLiteral("All items");
         const QString proxyText = proxySummaryForSelectedFootage();
         const QString proxyPart = proxyText.isEmpty() ? QString() : QStringLiteral(" | %1").arg(proxyText);
-        return QStringLiteral("Recent: - | Selected: %1 | View: %2 / %3 | Search: %4%5")
+        const QString viewModeText = projectView_ && projectView_->presentationMode() == ArtifactProjectView::PresentationMode::Tile
+            ? QStringLiteral("Tile")
+            : QStringLiteral("List");
+        const QString compositionPart = selectedCompositionCountValue > 0
+            ? QStringLiteral(" | Comps: %1").arg(selectedCompositionCountValue)
+            : QString();
+        return QStringLiteral("Recent: - | Selected: %1 | View: %2 / %3 / %4 | Search: %5%6%7")
             .arg(selectedCount)
+            .arg(viewModeText)
             .arg(typeText)
             .arg(unusedText)
             .arg(searchText.isEmpty() ? QStringLiteral("-") : searchText)
-            .arg(proxyPart);
+            .arg(proxyPart)
+            .arg(compositionPart);
     }
 
     QString syncStateText() const {
@@ -3468,10 +4190,21 @@ public:
         if (!svc || !svc->hasProject()) {
             return QStringLiteral("Status: Open a project to inspect details");
         }
-        return svc->currentProjectHealthSummaryText();
+        const QString health = svc->currentProjectHealthSummaryText();
+        const QString unused = QStringLiteral("Unused: %1").arg(unusedAssetPaths_.size());
+        return health.isEmpty() ? unused : QStringLiteral("%1 | %2").arg(health, unused);
     }
 
     void refreshSelectionChrome() {
+        if (viewModeBox && projectView_) {
+            const QString desiredMode = projectView_->presentationMode() == ArtifactProjectView::PresentationMode::Tile
+                                            ? QStringLiteral("Tile")
+                                            : QStringLiteral("List");
+            if (viewModeBox->currentText() != desiredMode) {
+                const QSignalBlocker blocker(viewModeBox);
+                viewModeBox->setCurrentText(desiredMode);
+            }
+        }
         if (syncStateLabel) {
             syncStateLabel->setText(syncStateText());
         }
@@ -3483,11 +4216,13 @@ public:
             selectionSummaryLabel->setToolTip(
                 QStringLiteral("Current selection count, active filter, and search text."));
         }
+        refreshCompositionEditor();
         ProjectItem* item = currentSelectedItem();
         const bool hasItem = item != nullptr;
         const bool isFootage = item && item->type() == eProjectItemType::Footage;
         const bool isFolder = item && item->type() == eProjectItemType::Folder;
         const bool isComposition = item && item->type() == eProjectItemType::Composition;
+        const int selectedCompositionCountValue = selectedCompositionCount();
         const QString pathText = selectedItemPath();
         const QString proxyPath = isFootage ? proxyFilePathForFootage(static_cast<FootageItem*>(item)->filePath) : QString();
         const bool hasProxy = !proxyPath.isEmpty() && QFileInfo(proxyPath).exists();
@@ -3512,7 +4247,10 @@ public:
                                                       .arg(statusText, pathPart, proxyPart));
                     selectionDetailLabel->setToolTip(QStringLiteral("Open the selected footage, reveal it, generate a proxy, or copy its path."));
                 } else {
-                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2").arg(statusText, pathPart));
+                    const QString batchPart = isComposition && selectedCompositionCountValue > 1
+                        ? QStringLiteral(" | Batch FPS: %1 comps").arg(selectedCompositionCountValue)
+                        : QString();
+                    selectionDetailLabel->setText(QStringLiteral("Status: %1 | %2%3").arg(statusText, pathPart, batchPart));
                     selectionDetailLabel->setToolTip(QStringLiteral("Open the selected item or use the action buttons below."));
                 }
             }
@@ -3907,7 +4645,6 @@ public:
                         refreshSelectionChrome();
                     });
             }
-            refreshSelectionChrome();
         }
         refreshUnusedAssetCache();
         if (proxyModel_) {
@@ -3916,6 +4653,7 @@ public:
                 typeFilterBox ? typeFilterBox->currentText() : QString(),
                 unusedOnlyCheck ? unusedOnlyCheck->isChecked() : false);
         }
+        refreshSelectionChrome();
         syncSelectionToCurrentComposition();
     }
 
@@ -4068,6 +4806,107 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     selectionChromeLayout->addLayout(selectionButtons);
     chromeLayout->addWidget(selectionChrome);
 
+    impl_->compositionEditorPanel = new QWidget(chromePanel);
+    impl_->compositionEditorPanel->setObjectName(QStringLiteral("projectCompositionEditorPanel"));
+    auto* compositionEditorLayout = new QVBoxLayout(impl_->compositionEditorPanel);
+    compositionEditorLayout->setContentsMargins(10, 0, 10, 8);
+    compositionEditorLayout->setSpacing(6);
+
+    impl_->compositionEditorTitleLabel = new QLabel(QStringLiteral("Composition Edit"), impl_->compositionEditorPanel);
+    {
+        QFont f = impl_->compositionEditorTitleLabel->font();
+        f.setPointSize(10);
+        f.setBold(true);
+        impl_->compositionEditorTitleLabel->setFont(f);
+        impl_->compositionEditorTitleLabel->setPalette(impl_->selectionSummaryLabel->palette());
+    }
+    compositionEditorLayout->addWidget(impl_->compositionEditorTitleLabel);
+
+    impl_->compositionEditorModeLabel = new QLabel(
+        QStringLiteral("Select a composition to edit its settings here."), impl_->compositionEditorPanel);
+    impl_->compositionEditorModeLabel->setWordWrap(true);
+    {
+        QPalette pal = impl_->compositionEditorModeLabel->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(125));
+        impl_->compositionEditorModeLabel->setPalette(pal);
+    }
+    compositionEditorLayout->addWidget(impl_->compositionEditorModeLabel);
+
+    auto* compositionForm = new QFormLayout();
+    compositionForm->setContentsMargins(0, 0, 0, 0);
+    compositionForm->setHorizontalSpacing(10);
+    compositionForm->setVerticalSpacing(6);
+
+    impl_->compositionNameEdit = new QLineEdit(impl_->compositionEditorPanel);
+    impl_->compositionWidthSpin = new QSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionWidthSpin->setRange(1, 32768);
+    impl_->compositionHeightSpin = new QSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionHeightSpin->setRange(1, 32768);
+    impl_->compositionFrameRateSpin = new QDoubleSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionFrameRateSpin->setRange(1.0, 240.0);
+    impl_->compositionFrameRateSpin->setDecimals(3);
+    impl_->compositionFrameRateSpin->setSingleStep(0.5);
+    impl_->compositionStartFrameSpin = new QSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionStartFrameSpin->setRange(-1000000, 1000000);
+    impl_->compositionEndFrameSpin = new QSpinBox(impl_->compositionEditorPanel);
+    impl_->compositionEndFrameSpin->setRange(-1000000, 1000000);
+    impl_->compositionBackgroundButton = new CompositionBackgroundColorButton(QColor(0, 0, 0), impl_->compositionEditorPanel);
+
+    auto* sizeRow = new QWidget(impl_->compositionEditorPanel);
+    auto* sizeLayout = new QHBoxLayout(sizeRow);
+    sizeLayout->setContentsMargins(0, 0, 0, 0);
+    sizeLayout->setSpacing(6);
+    sizeLayout->addWidget(new QLabel(QStringLiteral("W"), sizeRow));
+    sizeLayout->addWidget(impl_->compositionWidthSpin);
+    sizeLayout->addWidget(new QLabel(QStringLiteral("H"), sizeRow));
+    sizeLayout->addWidget(impl_->compositionHeightSpin);
+
+    auto* rangeRow = new QWidget(impl_->compositionEditorPanel);
+    auto* rangeLayout = new QHBoxLayout(rangeRow);
+    rangeLayout->setContentsMargins(0, 0, 0, 0);
+    rangeLayout->setSpacing(6);
+    rangeLayout->addWidget(new QLabel(QStringLiteral("Start"), rangeRow));
+    rangeLayout->addWidget(impl_->compositionStartFrameSpin);
+    rangeLayout->addWidget(new QLabel(QStringLiteral("End"), rangeRow));
+    rangeLayout->addWidget(impl_->compositionEndFrameSpin);
+
+    compositionForm->addRow(QStringLiteral("Name"), impl_->compositionNameEdit);
+    compositionForm->addRow(QStringLiteral("Size"), sizeRow);
+    compositionForm->addRow(QStringLiteral("Frame Rate"), impl_->compositionFrameRateSpin);
+    compositionForm->addRow(QStringLiteral("Range"), rangeRow);
+    compositionForm->addRow(QStringLiteral("Background"), impl_->compositionBackgroundButton);
+    compositionEditorLayout->addLayout(compositionForm);
+
+    auto* compositionActionRow = new QHBoxLayout();
+    compositionActionRow->setSpacing(6);
+    impl_->compositionApplyButton = new QPushButton(QStringLiteral("Apply Settings"), impl_->compositionEditorPanel);
+    impl_->compositionApplyFrameRateButton = new QPushButton(
+        QStringLiteral("Apply FPS to Selection"), impl_->compositionEditorPanel);
+    impl_->compositionApplyButton->setToolTip(
+        QStringLiteral("Apply the inline composition settings to the selected composition."));
+    impl_->compositionApplyFrameRateButton->setToolTip(
+        QStringLiteral("Apply the frame rate to every selected composition."));
+    compositionActionRow->addWidget(impl_->compositionApplyButton);
+    compositionActionRow->addWidget(impl_->compositionApplyFrameRateButton);
+    compositionActionRow->addStretch();
+    compositionEditorLayout->addLayout(compositionActionRow);
+
+    {
+        QPalette pal = impl_->compositionNameEdit->palette();
+        pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
+        pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
+        pal.setColor(QPalette::Highlight, QColor(ArtifactCore::currentDCCTheme().accentColor));
+        impl_->compositionNameEdit->setPalette(pal);
+        impl_->compositionWidthSpin->setPalette(pal);
+        impl_->compositionHeightSpin->setPalette(pal);
+        impl_->compositionFrameRateSpin->setPalette(pal);
+        impl_->compositionStartFrameSpin->setPalette(pal);
+        impl_->compositionEndFrameSpin->setPalette(pal);
+    }
+
+    impl_->compositionEditorPanel->setVisible(false);
+    chromeLayout->addWidget(impl_->compositionEditorPanel);
+
     impl_->searchBar = new QLineEdit(chromePanel);
     impl_->searchBar->setPlaceholderText("Search (type:footage tag:png regex:shot_.* unused:true)...");
     impl_->searchBar->setClearButtonEnabled(true);
@@ -4092,12 +4931,15 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     filterBar->setSpacing(8);
     impl_->typeFilterBox = new QComboBox(filterBarHost);
     impl_->typeFilterBox->addItems(QStringList() << "All" << "Composition" << "Footage" << "Folder" << "Solid");
+    impl_->viewModeBox = new QComboBox(filterBarHost);
+    impl_->viewModeBox->addItems(QStringList() << "List" << "Tile");
     impl_->unusedOnlyCheck = new QCheckBox("Unused only", filterBarHost);
     impl_->proxyQueueProgress = new QProgressBar(filterBarHost);
     impl_->proxyQueueProgress->setVisible(false);
     impl_->proxyQueueProgress->setTextVisible(true);
     impl_->proxyQueueProgress->setFormat("Proxy queue %v/%m");
     filterBar->addWidget(impl_->typeFilterBox);
+    filterBar->addWidget(impl_->viewModeBox);
     filterBar->addWidget(impl_->unusedOnlyCheck);
     filterBar->addStretch();
     filterBar->addWidget(impl_->proxyQueueProgress, 1);
@@ -4114,6 +4956,17 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     connect(impl_->searchBar, &QLineEdit::textChanged, [this](const QString& t) { impl_->handleSearch(t); });
     connect(impl_->typeFilterBox, &QComboBox::currentTextChanged, [this](const QString&) {
         impl_->handleSearch(impl_->searchBar ? impl_->searchBar->text() : QString());
+    });
+    connect(impl_->viewModeBox, &QComboBox::currentTextChanged, [this](const QString& modeText) {
+        if (!impl_ || !impl_->projectView_) {
+            return;
+        }
+        const bool tileMode = modeText.compare(QStringLiteral("Tile"), Qt::CaseInsensitive) == 0;
+        impl_->projectView_->setPresentationMode(tileMode
+                                                     ? ArtifactProjectView::PresentationMode::Tile
+                                                     : ArtifactProjectView::PresentationMode::List);
+        impl_->refreshSelectionChrome();
+        scheduleProjectViewRefresh(impl_->projectView_);
     });
     connect(impl_->unusedOnlyCheck, &QCheckBox::toggled, [this](bool) {
         impl_->handleSearch(impl_->searchBar ? impl_->searchBar->text() : QString());
@@ -4170,6 +5023,19 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     });
     connect(impl_->copyPathButton, &QPushButton::clicked, this, [this]() {
         impl_->copySelectedPathToClipboard();
+    });
+    connect(impl_->compositionApplyButton, &QPushButton::clicked, this, [this]() {
+        if (!impl_ || !impl_->applySelectedCompositionSettings()) {
+            QMessageBox::information(this, QStringLiteral("Composition Edit"),
+                                     QStringLiteral("Select one composition to edit its full settings."));
+        }
+    });
+    connect(impl_->compositionApplyFrameRateButton, &QPushButton::clicked, this, [this]() {
+        if (!impl_ || !impl_->applySelectedCompositionFrameRate(
+                         impl_->compositionFrameRateSpin ? impl_->compositionFrameRateSpin->value() : 30.0)) {
+            QMessageBox::information(this, QStringLiteral("Composition Edit"),
+                                     QStringLiteral("Select one or more compositions to update their frame rate."));
+        }
     });
     connect(impl_->projectView_, &ArtifactProjectView::itemSelected, [this](const QModelIndex& idx) {
         if (!impl_) {

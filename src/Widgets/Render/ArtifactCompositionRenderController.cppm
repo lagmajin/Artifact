@@ -68,6 +68,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
+import Video.VideoFrame;
 import Artifact.Layer.Particle;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
@@ -2266,6 +2267,10 @@ void drawLayerForCompositionView(
     return;
   }
 
+  if (layer->isConstructionLayer()) {
+    return;
+  }
+
   if (const auto parent = layer->parentLayer();
       parent && parent->isGroupLayer()) {
     return;
@@ -2569,23 +2574,67 @@ void drawLayerForCompositionView(
       return;
     }
 
+    ArtifactCore::ImageF32x4_RGBA frameBuffer;
     QImage frame;
     bool usedSyncFallback = false;
     bool usedBufferFallback = false;
     QString reason;
+    if (!hasRasterizer && gpuTextureCacheManager) {
+      const ArtifactCore::GpuVideoFrame gpuFrame =
+          videoLayer->decodeFrameToGpuFrame(layer->currentFrame());
+      if (gpuFrame.isValid()) {
+        const QString gpuCacheSignature =
+            QStringLiteral("video-gpu:%1").arg(layer->currentFrame());
+        const auto handle = gpuTextureCacheManager->acquireOrCreate(
+            layer->id().toString(), gpuCacheSignature, gpuFrame);
+        const auto binding = gpuTextureCacheManager->bindingRecord(handle);
+        if (binding.isValid()) {
+          const float baseOpacity =
+              (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+          if (videoDebugOut) {
+            *videoDebugOut = QStringLiteral(
+                                 "[Video] branch=gpu-frame loaded=%1 "
+                                 "hasBuffer=%2 rasterizer=%3 active=%4 "
+                                 "frameReady=%5 range=[%6,%7] curFrame=%8")
+                                 .arg(loaded)
+                                 .arg(hasBuffer)
+                                 .arg(hasRasterizer)
+                                 .arg(active)
+                                 .arg(currentFrameReady)
+                                 .arg(ip.framePosition())
+                                 .arg(op.framePosition())
+                                 .arg(layer->currentFrame());
+          }
+          drawWithClonerEffect(
+              layer, globalTransform4x4,
+              [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+                renderer->drawSpriteTransformed(
+                    static_cast<float>(localRect.x()),
+                    static_cast<float>(localRect.y()),
+                    static_cast<float>(localRect.width()),
+                    static_cast<float>(localRect.height()), instanceTransform,
+                    binding.srv, baseOpacity * instanceWeight);
+              });
+          return;
+        }
+      }
+    }
     if (loaded) {
-      frame = videoLayer->currentFrameToQImage();
+      frameBuffer = videoLayer->currentFrameImageBuffer();
     } else {
       reason = QStringLiteral("notLoaded");
     }
-    if (frame.isNull() && currentFrameReady &&
+    if (frameBuffer.isEmpty() && currentFrameReady &&
         videoLayer->hasCurrentFrameBuffer()) {
-      frame = videoLayer->currentFrameBuffer().toQImage();
-      usedBufferFallback = !frame.isNull();
+      frameBuffer = videoLayer->currentFrameBuffer();
+      usedBufferFallback = !frameBuffer.isEmpty();
     }
-    if (frame.isNull() && loaded) {
-      frame = videoLayer->decodeFrameToQImage(layer->currentFrame());
-      usedSyncFallback = !frame.isNull();
+    if (frameBuffer.isEmpty() && loaded) {
+      frameBuffer = videoLayer->decodeFrameToImageBuffer(layer->currentFrame());
+      usedSyncFallback = !frameBuffer.isEmpty();
+    }
+    if (!frameBuffer.isEmpty()) {
+      frame = frameBuffer.toQImage();
     }
     if (videoDebugOut) {
       if (reason.isEmpty()) {
@@ -2595,7 +2644,7 @@ void drawLayerForCompositionView(
           reason = QStringLiteral("syncDecode");
         } else if (usedBufferFallback) {
           reason = QStringLiteral("bufferFallback");
-        } else if (frame.isNull()) {
+        } else if (frameBuffer.isEmpty()) {
           reason = hasBuffer ? QStringLiteral("decodeNull")
                              : QStringLiteral("noBuffer");
         } else {
@@ -3712,9 +3761,6 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
   impl_->renderTickTimer_->setInterval(
       compositionPreviewIntervalMs(impl_->previewPipeline_.composition()));
   connect(impl_->renderTickTimer_, &QTimer::timeout, this, [this]() {
-    if (!impl_->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
-      return; // No state change since last tick — skip
-    }
     // Guard: skip if host is hidden or not initialized
     if (!impl_->initialized_ || !impl_->renderer_ || !impl_->running_) {
       return;
@@ -3723,6 +3769,9 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
       if (!host->isVisible()) {
         return;
       }
+    }
+    if (!impl_->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
+      return; // No state change since last tick — skip
     }
     if (impl_->renderInProgress_) {
       // A render is already in progress — mark dirty so next tick retries
@@ -3818,6 +3867,9 @@ void CompositionRenderController::start() {
     return;
   }
   impl_->running_ = true;
+  if (impl_->renderTickTimer_ && !impl_->renderTickTimer_->isActive()) {
+    impl_->renderTickTimer_->start();
+  }
   impl_->invalidateBaseComposite();
   // Continuous timer removed for performance.
   // Rendering is now event-driven (frameChanged, propertyChanged, etc.)
@@ -6422,6 +6474,10 @@ void CompositionRenderController::renderOneFrame() {
 
 void CompositionRenderController::markRenderDirty() {
   impl_->renderDirty_.store(true, std::memory_order_release);
+  if (impl_->running_ && impl_->renderTickTimer_ &&
+      !impl_->renderTickTimer_->isActive()) {
+    impl_->renderTickTimer_->start();
+  }
 }
 
 void CompositionRenderController::Impl::clearPendingMaskCreation() {
@@ -7807,6 +7863,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const FloatColor handlePointColor = {0.70f, 0.90f, 1.0f, 0.95f};
           const FloatColor handleHoverColor = {1.0f, 0.78f, 0.32f, 1.0f};
           const FloatColor handleDragColor = {1.0f, 0.44f, 0.24f, 1.0f};
+          const FloatColor activeMaskStrokeColor = {1.0f, 0.86f, 0.42f, 0.60f};
+          const FloatColor activeMaskPointColor = {1.0f, 0.90f, 0.54f, 1.0f};
+          const FloatColor activeMaskHandleColor = {1.0f, 0.82f, 0.40f, 1.0f};
           constexpr float maskStrokeWidth = 4.2f;
           constexpr float handleStrokeWidth = 3.0f;
           const bool showMaskPath =
@@ -7818,6 +7877,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             LayerMask mask = selectedLayer->mask(m);
             if (!mask.isEnabled())
               continue;
+            const bool isActiveMask =
+                (isDraggingMaskHandle_ && draggingMaskIndex_ == m) ||
+                (isDraggingVertex_ && draggingMaskIndex_ == m) ||
+                (hoveredMaskIndex_ == m);
 
             for (int p = 0; p < mask.maskPathCount(); ++p) {
               MaskPath path = mask.maskPath(p);
@@ -7849,8 +7912,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   const Detail::float2 outHandleCanvas = {(float)outHandlePos.x(), (float)outHandlePos.y()};
 
                   if (showMaskHandle && vertex.inTangent != QPointF(0, 0)) {
-                    renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, handleStrokeWidth, handleStrokeColor);
+                    const FloatColor strokeColor =
+                        isActiveMask ? activeMaskStrokeColor : handleStrokeColor;
+                    renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas,
+                                                  handleStrokeWidth, strokeColor);
                     FloatColor handleColor = handlePointColor;
+                    if (isActiveMask) {
+                      handleColor = activeMaskHandleColor;
+                    }
                     if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
                         draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
                       handleColor = handleDragColor;
@@ -7863,8 +7932,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                          4.0f);
                   }
                   if (showMaskHandle && vertex.outTangent != QPointF(0, 0)) {
-                    renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, handleStrokeWidth, handleStrokeColor);
+                    const FloatColor strokeColor =
+                        isActiveMask ? activeMaskStrokeColor : handleStrokeColor;
+                    renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas,
+                                                  handleStrokeWidth, strokeColor);
                     FloatColor handleColor = handlePointColor;
+                    if (isActiveMask) {
+                      handleColor = activeMaskHandleColor;
+                    }
                     if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
                         draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
                       handleColor = handleDragColor;
@@ -7884,6 +7959,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                     for (int i = 1; i < samples.size(); ++i) {
                       const QPointF a = globalTransform.map(samples[i - 1]);
                       const QPointF b = globalTransform.map(samples[i]);
+                      if (isActiveMask) {
+                        renderer_->drawThickLineLocal(
+                            {static_cast<float>(a.x()), static_cast<float>(a.y())},
+                            {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                            maskStrokeWidth + 2.0f, activeMaskStrokeColor);
+                      }
                       renderer_->drawThickLineLocal(
                           {static_cast<float>(a.x()),
                            static_cast<float>(a.y())},
@@ -7904,6 +7985,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                              hoveredVertexIndex_ == v) {
                     currentColor = hoverColor;
                     currentPointRadius = 17.0f;
+                  } else if (isActiveMask) {
+                    currentColor = activeMaskPointColor;
+                    currentPointRadius = 16.0f;
                   }
 
                   markers.push_back(
@@ -7920,6 +8004,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                 for (int i = 1; i < samples.size(); ++i) {
                   const QPointF a = globalTransform.map(samples[i - 1]);
                   const QPointF b = globalTransform.map(samples[i]);
+                  if (isActiveMask) {
+                    renderer_->drawThickLineLocal(
+                        {static_cast<float>(a.x()), static_cast<float>(a.y())},
+                        {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                        maskStrokeWidth + 2.0f, activeMaskStrokeColor);
+                  }
                   renderer_->drawThickLineLocal(
                       {static_cast<float>(a.x()), static_cast<float>(a.y())},
                       {static_cast<float>(b.x()), static_cast<float>(b.y())},

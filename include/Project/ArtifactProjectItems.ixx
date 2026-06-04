@@ -31,6 +31,7 @@ module;
 #include <random>
 #include <QVector>
 #include <QColor>
+#include <QStringList>
 export module Artifact.Project.Items;
 
 
@@ -70,6 +71,9 @@ export namespace Artifact {
  public:
   eProjectItemType type() const override { return eProjectItemType::Footage; }
   QString filePath;
+  QStringList sequencePaths;
+  double frameRate = 0.0;
+  bool isSequence = false;
   
  };
 

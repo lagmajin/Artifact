@@ -61,6 +61,15 @@ public:
   bool fillEnabled() const;
   void setStrokeEnabled(bool enabled);
   bool strokeEnabled() const;
+  void setStrokeTaper(float startScale, float endScale);
+  float strokeTaperStart() const;
+  float strokeTaperEnd() const;
+  void setStrokeGradientEnabled(bool enabled);
+  bool strokeGradientEnabled() const;
+  void setStrokeGradientStartColor(const FloatColor &color);
+  FloatColor strokeGradientStartColor() const;
+  void setStrokeGradientEndColor(const FloatColor &color);
+  FloatColor strokeGradientEndColor() const;
 
   // Stroke styles (cap, join, align, dash) — Phase 3
   void setStrokeCap(StrokeCap cap);

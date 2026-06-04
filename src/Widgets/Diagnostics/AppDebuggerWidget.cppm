@@ -236,8 +236,74 @@ QString debugMcpPropertyPreviewText(const QJsonArray& properties, int limit = 3)
     return lines.join(QStringLiteral("\n"));
 }
 
-QString debugMcpHistoryPreviewText(const QJsonArray& history, int limit = 2)
+QString debugMcpHistoryActionLabel(const QString& type)
 {
+    return type == QStringLiteral("break-hit") ? QStringLiteral("hit")
+        : type == QStringLiteral("resume") ? QStringLiteral("resume")
+        : type == QStringLiteral("step") ? QStringLiteral("step")
+        : type == QStringLiteral("reset-session") ? QStringLiteral("reset")
+        : type == QStringLiteral("clear-history") ? QStringLiteral("clear")
+        : type == QStringLiteral("read-last-break-hit") ? QStringLiteral("read-hit")
+        : type == QStringLiteral("read-session-summary") ? QStringLiteral("read-summary")
+        : type == QStringLiteral("read-history") ? QStringLiteral("read-history")
+        : type == QStringLiteral("snapshot-read") ? QStringLiteral("snapshot")
+        : type == QStringLiteral("set-mock-snapshot") ? QStringLiteral("mock")
+        : type == QStringLiteral("set-break-condition") ? QStringLiteral("set")
+        : type == QStringLiteral("update-break-condition") ? QStringLiteral("update")
+        : type == QStringLiteral("clear-break-condition") ? QStringLiteral("clear-one")
+        : type == QStringLiteral("clear-all-break-conditions") ? QStringLiteral("clear-all")
+        : type == QStringLiteral("list-break-conditions") ? QStringLiteral("list")
+        : type;
+}
+
+QString debugMcpBreakHistorySummaryText(const QJsonObject& state)
+{
+    const QJsonObject sessionSummary = state.value(QStringLiteral("sessionSummary")).toObject();
+    const QString sharedSummary = sessionSummary.value(QStringLiteral("breakHistorySummary")).toString().trimmed();
+    if (!sharedSummary.isEmpty()) {
+        return sharedSummary;
+    }
+    const QJsonArray history = state.value(QStringLiteral("history")).toArray();
+    const QString mode = sessionSummary.value(QStringLiteral("mode")).toString(QStringLiteral("<none>")).trimmed();
+    const QString bridgePath = sessionSummary.value(QStringLiteral("bridgePath")).toString(QStringLiteral("<none>")).trimmed();
+    const QString recentAction = sessionSummary.value(QStringLiteral("recentAction")).toString().trimmed().isEmpty()
+                                     ? sessionSummary.value(QStringLiteral("lastAction")).toString().trimmed()
+                                     : sessionSummary.value(QStringLiteral("recentAction")).toString().trimmed();
+    const QString priorRecentAction = !sessionSummary.value(QStringLiteral("priorRecentAction")).toString().trimmed().isEmpty()
+                                          ? sessionSummary.value(QStringLiteral("priorRecentAction")).toString().trimmed()
+                                          : history.size() > 1
+                                                ? debugMcpHistoryActionLabel(
+                                                      history.at(history.size() - 2).toObject().value(QStringLiteral("type"))
+                                                          .toString(QStringLiteral("<unknown>")))
+                                                : QStringLiteral("<none>");
+    const QString lastHit = debugMcpLastHitText(state);
+    return QStringLiteral("mode=%1  bridge=%2  history=%3  recent=%4  prior=%5  lastHit=%6")
+        .arg(mode.isEmpty() ? QStringLiteral("<none>") : mode)
+        .arg(bridgePath.isEmpty() ? QStringLiteral("<none>") : bridgePath)
+        .arg(history.size())
+        .arg(recentAction.isEmpty() ? QStringLiteral("<none>") : recentAction)
+        .arg(priorRecentAction)
+        .arg(lastHit);
+}
+
+QString debugMcpSummaryPreviewText(const QJsonArray& history, const QJsonArray& summaryLines, int limit = 2)
+{
+    // Prefer the compact summary lines from the MCP server; raw history is the fallback.
+    if (!summaryLines.isEmpty()) {
+        QStringList lines;
+        const int count = std::min(limit, static_cast<int>(summaryLines.size()));
+        for (int i = 0; i < count; ++i) {
+            const QString entry = summaryLines.at(static_cast<int>(summaryLines.size()) - 1 - i).toString().trimmed();
+            lines << QStringLiteral("  %1. %2")
+                          .arg(i + 1)
+                          .arg(entry.isEmpty() ? QStringLiteral("<none>") : entry);
+        }
+        if (summaryLines.size() > count) {
+            lines << QStringLiteral("  ... %1 more").arg(summaryLines.size() - count);
+        }
+        return lines.join(QStringLiteral("\n"));
+    }
+
     if (history.isEmpty()) {
         return QStringLiteral("<none>");
     }
@@ -251,18 +317,7 @@ QString debugMcpHistoryPreviewText(const QJsonArray& history, int limit = 2)
                                         ? QString::number(entry.value(QStringLiteral("conditionId")).toInt())
                                         : QStringLiteral("-");
         const QString conditionKind = entry.value(QStringLiteral("conditionKind")).toString();
-        const QString label =
-            type == QStringLiteral("break-hit") ? QStringLiteral("hit")
-            : type == QStringLiteral("resume") ? QStringLiteral("resume")
-            : type == QStringLiteral("step") ? QStringLiteral("step")
-            : type == QStringLiteral("reset-session") ? QStringLiteral("reset")
-            : type == QStringLiteral("clear-history") ? QStringLiteral("clear")
-            : type == QStringLiteral("read-last-break-hit") ? QStringLiteral("read-hit")
-            : type == QStringLiteral("read-session-summary") ? QStringLiteral("read-summary")
-            : type == QStringLiteral("read-history") ? QStringLiteral("read-history")
-            : type == QStringLiteral("snapshot-read") ? QStringLiteral("snapshot")
-            : type == QStringLiteral("set-mock-snapshot") ? QStringLiteral("mock")
-            : type;
+        const QString label = debugMcpHistoryActionLabel(type);
         const bool isBreakHit = type == QStringLiteral("break-hit");
         if (isBreakHit) {
             lines << QStringLiteral("  %1. %2  [%3/%4]")
@@ -1144,6 +1199,8 @@ public:
             debugMcpState.value(QStringLiteral("properties")).toArray();
         const QJsonArray debugMcpHistory =
             debugMcpState.value(QStringLiteral("history")).toArray();
+        const QJsonArray debugMcpHistorySummary =
+            debugMcpState.value(QStringLiteral("summary")).toArray();
         const QJsonObject debugMcpSessionSummary =
             debugMcpState.value(QStringLiteral("sessionSummary")).toObject();
         const QString debugMcpStatus = debugMcpStatusSummaryText(debugMcpState);
@@ -1152,8 +1209,8 @@ public:
             debugMcpBreakConditionsPreviewText(debugMcpBreakConditions);
         const QString debugMcpPropertyPreview =
             debugMcpPropertyPreviewText(debugMcpProperties);
-        const QString debugMcpHistoryPreview =
-            debugMcpHistoryPreviewText(debugMcpHistory);
+        const QString debugMcpSummaryPreview =
+            debugMcpSummaryPreviewText(debugMcpHistory, debugMcpHistorySummary);
 
         ArtifactCore::FrameDebugSnapshot controllerSnapshot;
         bool hasControllerSnapshot = false;
@@ -1202,6 +1259,10 @@ public:
                                        : debugMcpSessionSummary.value(QStringLiteral("bridgePath")).toString());
             }
             lines << QStringLiteral("lastHit: %1").arg(debugMcpLastHitText(debugMcpState));
+            lines << QStringLiteral("lastAction: %1")
+                          .arg(debugMcpSessionSummary.value(QStringLiteral("lastAction")).toString().isEmpty()
+                                   ? QStringLiteral("<none>")
+                                   : debugMcpSessionSummary.value(QStringLiteral("lastAction")).toString());
             lines << QStringLiteral("stateFile: %1").arg(debugMcpStateFilePath());
             lines << QStringLiteral("counts: breakConditions=%1  history=%2")
                           .arg(debugMcpBreakConditions.size())
@@ -1211,8 +1272,8 @@ public:
             lines << QStringLiteral("propertySnapshot: %1").arg(debugMcpProperties.size());
             lines << QStringLiteral("propertiesPreview:");
             lines << debugMcpPropertyPreview;
-            lines << QStringLiteral("historyPreview:");
-            lines << debugMcpHistoryPreview;
+            lines << QStringLiteral("summaryPreview:");
+            lines << debugMcpSummaryPreview;
             lines << QString();
             lines << QStringLiteral("Playback Quality");
             lines << QStringLiteral("previewQuality: %1").arg(previewQualityText());
@@ -1270,20 +1331,33 @@ public:
             const QString recentActionText = debugMcpSessionSummary.value(QStringLiteral("recentAction")).toString().isEmpty()
                                                  ? debugMcpSessionSummary.value(QStringLiteral("lastAction")).toString()
                                                  : debugMcpSessionSummary.value(QStringLiteral("recentAction")).toString();
-            stateSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  status=%6  lastHit=%7  recent=%8  quality=%9  backend=%10  queueJobs=%11")
+            const QString priorRecentActionText = debugMcpSessionSummary.value(QStringLiteral("priorRecentAction")).toString().trimmed();
+            const QString breakHistorySummaryText = debugMcpSessionSummary.value(QStringLiteral("breakHistorySummary")).toString().trimmed();
+            stateSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  status=%5  recent=%6  prior=%7  lastHit=%8  breakHistorySummary=%9  playback=%10  quality=%11  backend=%12  queueJobs=%13")
                                        .arg(projectText,
                                             compositionText,
                                             layerText)
                                        .arg(controllerSnapshot.frame.framePosition())
-                                       .arg(playbackText)
                                        .arg(debugMcpStatus)
-                                       .arg(debugMcpHit)
                                        .arg(recentActionText)
+                                       .arg(priorRecentActionText.isEmpty() ? QStringLiteral("<none>") : priorRecentActionText)
+                                       .arg(debugMcpHit)
+                                       .arg(breakHistorySummaryText.isEmpty() ? QStringLiteral("<none>") : breakHistorySummaryText)
+                                       .arg(playbackText)
                                        .arg(qualityText)
                                        .arg(backendText)
                                        .arg(queueText));
-            if (!controllerSnapshot.densityLabel.isEmpty() ||
-                !controllerSnapshot.densityWarning.isEmpty()) {
+            if (!breakHistorySummaryText.isEmpty()) {
+                stateSummary_->setToolTip(QStringLiteral("breakHistorySummary=%1\ndensity=%2  warning=%3  next=%4  status=%5  lastHit=%6  act=%7")
+                                             .arg(breakHistorySummaryText)
+                                             .arg(densitySummaryText(controllerSnapshot))
+                                             .arg(densityWarningText(controllerSnapshot))
+                                             .arg(controllerSnapshot.densityNextAction.isEmpty()
+                                                      ? QStringLiteral("<none>")
+                                                      : controllerSnapshot.densityNextAction)
+                                             .arg(debugMcpStatus, debugMcpHit, recentActionText));
+            } else if (!controllerSnapshot.densityLabel.isEmpty() ||
+                       !controllerSnapshot.densityWarning.isEmpty()) {
                 stateSummary_->setToolTip(QStringLiteral("density=%1  warning=%2  next=%3  status=%4  lastHit=%5  act=%6")
                                              .arg(densitySummaryText(controllerSnapshot))
                                              .arg(densityWarningText(controllerSnapshot))
