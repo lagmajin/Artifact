@@ -3453,15 +3453,15 @@ private:
             QJsonParseError err;
             const auto obj = QJsonDocument::fromJson(note.toUtf8(), &err).object();
             if (err.error != QJsonParseError::NoError) continue;
-            auto slots = obj[QStringLiteral("templateSlots")];
-            if (!slots.isObject()) continue;
+            const auto templateSlotsValue = obj[QStringLiteral("templateSlots")];
+            if (!templateSlotsValue.isObject()) continue;
 
-            const auto slotsObj = slots.toObject();
-            for (auto it = slotsObj.begin(); it != slotsObj.end(); ++it) {
+            const auto templateSlotsObj = templateSlotsValue.toObject();
+            for (auto it = templateSlotsObj.begin(); it != templateSlotsObj.end(); ++it) {
                 QJsonObject slot;
                 slot[QStringLiteral("layerId")] = layer->id().toString();
                 slot[QStringLiteral("slotName")] = it.key();
-                auto slotData = it.value().toObject();
+                const auto slotData = it.value().toObject();
                 slot[QStringLiteral("defaultValue")] = slotData[QStringLiteral("defaultValue")];
                 result.append(QVariant(slot));
             }
@@ -3508,7 +3508,7 @@ private:
             if (err.error != QJsonParseError::NoError) continue;
 
             // Add to render queue
-            WorkspaceAutomation::instance().invokeMethod("addRenderQueueForCurrentComposition", {});
+            WorkspaceAutomation::instance().invokeMethod(QStringLiteral("addRenderQueueForCurrentComposition"), {});
             count++;
         }
         return count;

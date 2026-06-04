@@ -253,7 +253,7 @@ QString formatSelectedKeyframeSummary(
     const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
     const qint64 currentFrame) {
   if (markers.isEmpty()) {
-    return QStringLiteral("Keys: 0 selected | Lane: empty");
+    return QStringLiteral("Keys: 0 selected | Lane: empty | Current: off");
   }
 
   qint64 minFrame = std::numeric_limits<qint64>::max();
@@ -272,21 +272,19 @@ QString formatSelectedKeyframeSummary(
             : marker.label);
   }
 
-  QString propertyText;
-  if (propertyLabels.size() == 1) {
-    propertyText = *propertyLabels.begin();
-  } else {
-    propertyText = QStringLiteral("%1 properties").arg(propertyLabels.size());
-  }
+  const QString propertyText =
+      propertyLabels.size() == 1
+          ? QStringLiteral("Property: %1")
+                .arg(*propertyLabels.begin())
+          : QStringLiteral("Properties: %1").arg(propertyLabels.size());
 
   const QString frameText =
-      minFrame == maxFrame
-          ? QStringLiteral("F%1").arg(minFrame)
-          : QStringLiteral("F%1-%2").arg(minFrame).arg(maxFrame);
+      minFrame == maxFrame ? QStringLiteral("Frame: F%1").arg(minFrame)
+                           : QStringLiteral("Frames: F%1-F%2").arg(minFrame).arg(maxFrame);
   const QString currentText =
       hitsCurrentFrame ? QStringLiteral("Current: here")
                        : QStringLiteral("Current: off");
-  return QStringLiteral("Keys: %1 | %2 | %3 | %4")
+  return QStringLiteral("Keys: %1 selected | %2 | %3 | %4")
       .arg(markers.size())
       .arg(propertyText)
       .arg(frameText)
@@ -336,7 +334,7 @@ QString audioWaveformSignatureForLayer(const ArtifactAbstractLayer &layer,
 }
 
 std::optional<CachedAudioWaveform> buildAudioWaveformForLayer(
-    const ArtifactAbstractLayer &layer,
+    ArtifactAbstractLayer &layer,
     const double fps,
     const int waveformBins = 128) {
   if (!layer.hasAudio() || fps <= 0.0) {
@@ -739,7 +737,7 @@ void applyKeyframePropertySnapshots(const ArtifactCompositionPtr& composition,
         std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
     for (const auto& keyframe : snapshot.keyframes) {
       const int64_t scale = static_cast<int64_t>(std::llround(fps));
-      property->addKeyFrame(keyframe.time.rescaledTo(scale), keyframe.value,
+      property->addKeyFrame(RationalTime(keyframe.time.rescaledTo(scale), scale), keyframe.value,
                             keyframe.interpolation, keyframe.cp1_x,
                             keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
                             keyframe.roving);
@@ -1110,6 +1108,9 @@ struct CurveEditorSnapshot {
   QString signature;
   QString summary;
 };
+
+QString formatKeyframeCountSummary(int count);
+QString formatCurveTrackCountSummary(int count);
 
 int curveTrackIndexForSelection(
     const QVector<CurveTrackBinding>& bindings,
@@ -1772,7 +1773,9 @@ struct CurveEditorBinding {
 
 struct CurveEditorPayload {
   std::vector<CurveTrack> tracks;
-  std::vector<CurveEditorBinding> bindings;
+  QVector<CurveTrackBinding> bindings;
+  QString signature;
+  QString summary;
 };
 
 enum class CurveEditorGraphMode {
@@ -1962,7 +1965,7 @@ CurveEditorPayload collectCurveEditorPayload(
           track.keys.push_back(curveKey);
         }
 
-        payload.bindings.push_back({layer->id(), property->getName()});
+        payload.bindings.push_back(CurveTrackBinding{layer->id(), property->getName()});
         payload.tracks.push_back(std::move(track));
       }
     }
@@ -2147,12 +2150,13 @@ bool applyCurveEditorMove(
   const RationalTime oldTime(oldKey.frame, static_cast<int64_t>(std::llround(fps)));
   const RationalTime newTime(newFrame, static_cast<int64_t>(std::llround(fps)));
 
+  const bool roving = property->getKeyFrameRovingAt(oldTime);
   if (property->hasKeyFrameAt(oldTime)) {
     property->removeKeyFrame(oldTime);
   }
   property->addKeyFrame(newTime, QVariant(newValue),
                         oldKey.smooth ? ArtifactCore::InterpolationType::Bezier : ArtifactCore::InterpolationType::Linear,
-                        0.42f, 0.0f, 0.58f, 1.0f, oldKey.roving);
+                        0.42f, 0.0f, 0.58f, 1.0f, roving);
   return true;
 }
 
@@ -2264,8 +2268,10 @@ class HeaderSeekFilter final : public QObject {
 public:
   HeaderSeekFilter(ArtifactTimelineTrackPainterView *trackView,
                    ArtifactTimelineScrubBar *scrubBar,
+                   std::function<void(double)> seekCallback,
                    QObject *parent = nullptr)
-      : QObject(parent), trackView_(trackView), scrubBar_(scrubBar) {}
+      : QObject(parent), trackView_(trackView), scrubBar_(scrubBar),
+        seekCallback_(std::move(seekCallback)) {}
 
   void setDebugCallback(std::function<void(const QString&)> callback) {
     debugCallback_ = std::move(callback);
@@ -2350,6 +2356,9 @@ protected:
         trackView_->setCurrentFrame(clamped);
         scrubBar_->setCurrentFrame(FramePosition(frame));
         scrubBar_->setVisualFrame(clamped);
+        if (seekCallback_) {
+          seekCallback_(clamped);
+        }
         
         if (debugCallback_) {
           debugCallback_(QStringLiteral("Playhead: %1 (Seek)").arg(frame));
@@ -2400,6 +2409,9 @@ protected:
     trackView_->setCurrentFrame(clamped);
     scrubBar_->setCurrentFrame(FramePosition(frame));
     scrubBar_->setVisualFrame(clamped);
+    if (seekCallback_) {
+      seekCallback_(clamped);
+    }
 
     if (debugCallback_) {
       debugCallback_(QStringLiteral("Playhead: %1 (Scrubbing)").arg(frame));
@@ -2440,6 +2452,7 @@ private:
 
   ArtifactTimelineTrackPainterView *trackView_ = nullptr;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
+  std::function<void(double)> seekCallback_;
   bool seeking_ = false;
   QWidget *seekSource_ = nullptr;
   bool reservedClickCandidate_ = false;
@@ -4091,34 +4104,50 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         comp->setWorkAreaRange(FrameRange(
             startFrame, std::max<int64_t>(startFrame + 1, endFrame)));
       });
+  auto applyTimelineSeek = [this, scrubBar, painterTrackView](double frame) {
+    if (!impl_ || !painterTrackView || !scrubBar) {
+      return;
+    }
+    const double maxFrame =
+        std::max(0.0, painterTrackView->durationFrames() - 1.0);
+    const double clamped = std::clamp(frame, 0.0, maxFrame);
+    const int clampedFrame =
+        std::clamp(static_cast<int>(std::llround(clamped)), 0,
+                   std::max(0, scrubBar->totalFrames() - 1));
+
+    impl_->currentFrame_ = clamped;
+    painterTrackView->setCurrentFrame(clamped);
+    scrubBar->setCurrentFrame(FramePosition(clampedFrame));
+    scrubBar->setVisualFrame(clamped);
+    syncPlayheadOverlay();
+
+    if (auto *app = ArtifactApplicationManager::instance()) {
+      if (auto *ctx = app->activeContextService()) {
+        ctx->seekToFrame(clampedFrame);
+      }
+    }
+    auto *playback = ArtifactPlaybackService::instance();
+    const auto composition = safeCompositionLookup(impl_->compositionId_);
+    if (playback && composition && composition->hasAudio() &&
+        !playback->isPlaying()) {
+      if (!impl_->audioPreviewActive_) {
+        impl_->audioPreviewActive_ = true;
+        impl_->audioPreviewFrame_ = clampedFrame;
+        playback->playFromFrame(FramePosition(clampedFrame));
+      } else {
+        impl_->audioPreviewFrame_ = clampedFrame;
+        playback->goToFrame(FramePosition(clampedFrame));
+      }
+      if (impl_->audioPreviewStopTimer_) {
+        impl_->audioPreviewStopTimer_->start(220);
+      }
+    }
+  };
+
   QObject::connect(
       painterTrackView, &ArtifactTimelineTrackPainterView::seekRequested, this,
-      [this, scrubBar](double frame) {
-        const int clampedFrame =
-            std::clamp(static_cast<int>(std::llround(frame)), 0,
-                       std::max(0, scrubBar->totalFrames() - 1));
-        scrubBar->setCurrentFrame(FramePosition(clampedFrame));
-        if (auto *app = ArtifactApplicationManager::instance()) {
-          if (auto *ctx = app->activeContextService()) {
-            ctx->seekToFrame(clampedFrame);
-          }
-        }
-        auto *playback = ArtifactPlaybackService::instance();
-        const auto composition = safeCompositionLookup(impl_->compositionId_);
-        if (playback && composition && composition->hasAudio() &&
-            !playback->isPlaying()) {
-          if (!impl_->audioPreviewActive_) {
-            impl_->audioPreviewActive_ = true;
-            impl_->audioPreviewFrame_ = clampedFrame;
-            playback->playFromFrame(FramePosition(clampedFrame));
-          } else {
-            impl_->audioPreviewFrame_ = clampedFrame;
-            playback->goToFrame(FramePosition(clampedFrame));
-          }
-          if (impl_->audioPreviewStopTimer_) {
-            impl_->audioPreviewStopTimer_->start(220);
-          }
-        }
+      [applyTimelineSeek](double frame) {
+        applyTimelineSeek(frame);
       });
   QObject::connect(
       scrubBar, &ArtifactTimelineScrubBar::frameDragStarted, this, [this]() {
@@ -4526,7 +4555,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->timelineModeStack_ = rightPanel->timelineModeStack();
 
   auto *headerSeekFilter =
-      new HeaderSeekFilter(painterTrackView, scrubBar, rightPanel);
+      new HeaderSeekFilter(painterTrackView, scrubBar, applyTimelineSeek,
+                           rightPanel);
   headerSeekFilter->setDebugCallback([this](const QString &msg) {
     Q_EMIT timelineDebugMessage(msg);
   });
@@ -5444,7 +5474,7 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     auto comp = svc->currentComposition().lock();
     if (comp) {
      const int64_t delta = event->key() == Qt::Key_PageDown ? 10 : -10;
-     comp->goToFrame(ArtifactCore::FramePosition(comp->framePosition().framePosition() + delta));
+     comp->goToFrame(comp->framePosition().framePosition() + delta);
      event->accept();
      return;
     }
@@ -5452,11 +5482,11 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
   }
 
   if (event->key() == Qt::Key_Comma || event->key() == Qt::Key_Period) {
-   if (auto *svc = ArtifactPlaybackService::instance()) {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
     if (event->key() == Qt::Key_Comma) {
-     svc->previousFrame();
+     svc->goToPreviousFrame();
     } else {
-     svc->nextFrame();
+     svc->goToNextFrame();
     }
     event->accept();
     return;
@@ -5598,7 +5628,7 @@ void ArtifactTimelineWidget::updateKeyframeState()
           : 0;
   QString summary = formatKeyframeNavigationText(state);
   if (selectedKeyframeCount > 0) {
-    summary += QStringLiteral(" | Sel: %1").arg(selectedKeyframeCount);
+    summary += QStringLiteral(" | Selected keys: %1").arg(selectedKeyframeCount);
   }
   impl_->keyframeStatusLabel_->setText(summary);
   if (impl_->easingLabButton_) {

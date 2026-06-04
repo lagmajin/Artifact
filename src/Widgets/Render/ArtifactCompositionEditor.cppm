@@ -2781,6 +2781,8 @@ protected:
   bool isPanningWithMiddle_ = false;
   bool isAltZooming_ = false;
   bool spacePressed_ = false;
+  std::chrono::steady_clock::time_point lastMaskShortcutPressTime_{};
+  bool lastMaskShortcutPressValid_ = false;
   bool pendingInitialFit_ = true;
   QTimer *resizeDebounceTimer_ = nullptr;
   QSize pendingResizeSize_;

@@ -283,19 +283,14 @@ QString ArtifactProjectManager::Impl::makeUniqueAssetPath(const QString& directo
 
  Id ArtifactProjectManager::Impl::createNewComposition()
  {
-  if (currentProjectPtr_)
-  {
-   currentProjectPtr_->createComposition("");
+  if (!currentProjectPtr_) {
+   return Id{};
   }
 
-
-
-
-  Id id;
-
-
-
-  return id;
+ ArtifactCompositionInitParams params;
+ const CreateCompositionResult result =
+      currentProjectPtr_->createComposition(params);
+  return result.success ? Id(result.id) : Id{};
  }
 
  void ArtifactProjectManager::Impl::addAssetFromFilePath(const QString& filePath)
@@ -1102,7 +1097,7 @@ ArtifactCompositionPtr ArtifactProjectManager::currentComposition()
 
  bool ArtifactProjectManager::isProjectClosed() const
  {
-  return true;
+  return !impl_->currentProjectPtr_;
  }
 
  int ArtifactProjectManager::compositionCount() const

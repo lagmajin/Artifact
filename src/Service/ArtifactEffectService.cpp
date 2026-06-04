@@ -369,12 +369,6 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Linear Wipe"));
    return effect;
   }
-  if (effectId == QStringLiteral("emboss")) {
-   auto effect = std::make_unique<EmbossEffect>();
-   effect->setEffectID(UniString::fromQString(effectId));
-   effect->setDisplayName(QStringLiteral("Emboss"));
-   return effect;
-  }
   if (effectId.startsWith(QStringLiteral("ofx."))) {
    const QString pluginId = effectId.mid(QStringLiteral("ofx.").size());
    Artifact::Ofx::ArtifactOfxHost::instance().initialize();
@@ -443,7 +437,6 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("turbulent_displace"), "Turbulent Displace"});
   effects.push_back({EffectID("bevel"), "Bevel"});
   effects.push_back({EffectID("linear_wipe"), "Linear Wipe"});
-  effects.push_back({EffectID("emboss"), "Emboss"});
 
   Artifact::Ofx::ArtifactOfxHost::instance().initialize();
   for (const auto& plugin : Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins()) {

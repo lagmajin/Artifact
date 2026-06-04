@@ -70,6 +70,7 @@ export namespace Artifact {
   template <StringLike T>
   void setProjectName(const T& name);
   UniString author() const;
+  void setAuthor(const UniString& name);
   template <StringLike T>
   void setAuthor(const T& name);
   QJsonObject toJson() const;
@@ -86,18 +87,6 @@ export namespace Artifact {
   //void projectSettingChanged();
   //W_SLOT(projectChanged);
  };
-
- template <StringLike T>
- void Artifact::ArtifactProjectSettings::setAuthor(const T& name)
- {
-  //impl_->setAuthor(UniString(name));
- }
-
- 
-
-
-
-
 
 };
 W_REGISTER_ARGTYPE(Artifact::ArtifactProjectSettings)

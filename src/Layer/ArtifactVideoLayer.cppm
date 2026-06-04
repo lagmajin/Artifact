@@ -840,15 +840,6 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         return;
     }
 
-    // decoding_ は lambda 内の return 直前にクリアされるため isFinished() も合わせて確認する
-    const bool inFlight = impl_->decoding_.load()
-        || (impl_->decodeTargetFrame_ >= 0 && !impl_->decodeFuture_.isFinished());
-    if (inFlight) {
-        impl_->decodeRetryPending_ = true;
-        impl_->lastDecodeState_ = QStringLiteral("decode-pending");
-        return;
-    }
-
     if (timelineFrame < inPoint() || timelineFrame >= outPoint() ||
         sourceFrame < 0 ||
         (impl_->streamInfo_.frameCount > 0 && sourceFrame >= impl_->streamInfo_.frameCount)) {
@@ -865,13 +856,23 @@ void ArtifactVideoLayer::decodeCurrentFrame()
         return;
     }
 
-    // キャッシュに存在すれば即座に返す
+    // キャッシュに存在すれば即座に返す。再生中に別フレームの decode が
+    // 走っていても、目的フレームが既にあるなら stale buffer に留まらない。
     ArtifactCore::ImageF32x4_RGBA cachedFrame;
     if (impl_->frameCache_.get(sourceFrame, cachedFrame)) {
         impl_->currentFrameBuffer_ = cachedFrame;
         impl_->hasCurrentFrameBuffer_ = true;
         impl_->lastDecodedFrame_ = sourceFrame;
         impl_->lastDecodeState_ = QStringLiteral("cached");
+        return;
+    }
+
+    // decoding_ は lambda 内の return 直前にクリアされるため isFinished() も合わせて確認する
+    const bool inFlight = impl_->decoding_.load()
+        || (impl_->decodeTargetFrame_ >= 0 && !impl_->decodeFuture_.isFinished());
+    if (inFlight) {
+        impl_->decodeRetryPending_ = true;
+        impl_->lastDecodeState_ = QStringLiteral("decode-pending");
         return;
     }
 

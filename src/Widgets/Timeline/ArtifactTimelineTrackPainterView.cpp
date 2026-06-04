@@ -139,6 +139,11 @@ int totalTrackContentHeight(const QVector<int> &heights) {
   return h;
 }
 
+bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
+                                 qint64 startFrame,
+                                 qint64 durationFrame,
+                                 bool preserveExistingDuration);
+
 constexpr int kEdgeHitZone = 6;
 
 enum class DragMode { None, MoveBody, ResizeLeft, ResizeRight };
@@ -276,7 +281,7 @@ void applyKeyframePropertySnapshots(
 
     property->clearKeyFrames();
     for (const auto &keyframe : snapshot.keyframes) {
-      property->addKeyFrame(keyframe.time.rescaledTo(scale), keyframe.value,
+      property->addKeyFrame(RationalTime(keyframe.time.rescaledTo(scale), scale), keyframe.value,
                             keyframe.interpolation, keyframe.cp1_x,
                             keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
                             keyframe.roving);
@@ -2566,7 +2571,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
         p.fillRect(QRectF(0.0, rowTop, 3.0, rowH), laneStrip);
 
         if (!keyframeTracksWithMarkers.contains(i)) {
-          const QString laneText = QStringLiteral("No keyframes");
+          const QString laneText = QStringLiteral("No keyframes here");
           const QFontMetrics fm = p.fontMetrics();
           const int badgeW = std::min(118, std::max(74, fm.horizontalAdvance(laneText) + 16));
           const QRect badgeRect(fullRect.width() - badgeW - 10,

@@ -2385,7 +2385,32 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             const QString footagePath = item && item->type() == eProjectItemType::Footage
                 ? static_cast<FootageItem*>(item)->filePath
                 : QString();
-            const QStringList selectedFootagePaths = selectedFootageFilePaths();
+            QStringList selectedFootagePaths;
+            if (selectionModel()) {
+                const auto rows = selectionModel()->selectedRows(0);
+                QSet<QString> seen;
+                for (const auto& row : rows) {
+                    QModelIndex sourceIdx = row;
+                    if (auto proxy = qobject_cast<const QSortFilterProxyModel*>(sourceIdx.model())) {
+                        sourceIdx = proxy->mapToSource(sourceIdx).siblingAtColumn(0);
+                    }
+                    const QVariant typeVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+                    if (!typeVar.isValid() || typeVar.toInt() != static_cast<int>(eProjectItemType::Footage)) {
+                        continue;
+                    }
+                    const QVariant ptrVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+                    auto* item2 = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+                    if (!item2 || item2->type() != eProjectItemType::Footage) {
+                        continue;
+                    }
+                    const QString path = QFileInfo(static_cast<FootageItem*>(item2)->filePath).absoluteFilePath();
+                    if (path.isEmpty() || seen.contains(path)) {
+                        continue;
+                    }
+                    seen.insert(path);
+                    selectedFootagePaths.push_back(path);
+                }
+            }
             addTrackedAction(QStringLiteral("preview_in_contents_viewer"), QStringLiteral("Preview in Contents Viewer"), [this, idx]() {
                 itemDoubleClicked(idx);
             }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/visibility.svg")));
@@ -3600,7 +3625,9 @@ public:
         }
         queueProxyGeneration(footage);
         syncProxyPathToProject(targetPath, proxyFilePathForFootage(targetPath));
-        updateRequested();
+        if (auto* widget = projectView_ ? qobject_cast<ArtifactProjectManagerWidget*>(projectView_->parentWidget()) : nullptr) {
+            widget->updateRequested();
+        }
     }
 
     void revealProxyForSelectedItem(QWidget* parent) {
@@ -3676,7 +3703,9 @@ public:
             return;
         }
         refreshSelectionChrome();
-        updateRequested();
+        if (auto* widget = projectView_ ? qobject_cast<ArtifactProjectManagerWidget*>(projectView_->parentWidget()) : nullptr) {
+            widget->updateRequested();
+        }
     }
 
     void copySelectedPathToClipboard() {

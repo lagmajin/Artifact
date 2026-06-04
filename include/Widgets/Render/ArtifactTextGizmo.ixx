@@ -49,6 +49,9 @@ public:
     bool handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* renderer);
     void handleMouseRelease();
 
+    bool isDragging() const { return isDragging_; }
+    HandleType activeHandle() const { return activeHandle_; }
+
 private:
     ArtifactAbstractLayerPtr layer_;
     bool isDragging_ = false;

@@ -30,6 +30,7 @@ namespace {
 float clampSpeedPercent(float value) {
  return std::clamp(value, -1000.0f, 1000.0f);
 }
+}
 
 CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
                             int64_t startFrame,
@@ -158,8 +159,6 @@ CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
 
  return track;
 }
-
-} // namespace
 
 W_OBJECT_IMPL(ArtifactCurveEditorWidget)
 

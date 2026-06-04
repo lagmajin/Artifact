@@ -428,46 +428,7 @@ namespace Artifact
         void appendCompositionMismatchWarnings(const ArtifactRenderJob& job,
                                                const ArtifactCompositionPtr& composition,
                                                const QString& compId,
-                                               ArtifactCore::DiagnosticResult& result)
-        {
-            if (!composition) {
-                return;
-            }
-
-            const QSize compSize = composition->settings().compositionSize();
-            const int compWidth = std::max(1, compSize.width());
-            const int compHeight = std::max(1, compSize.height());
-            if (compWidth > 0 && compHeight > 0 &&
-                (job.resolutionWidth != compWidth || job.resolutionHeight != compHeight)) {
-                auto diag = makePreflightDiagnostic(
-                    ArtifactCore::DiagnosticSeverity::Warning,
-                    ArtifactCore::DiagnosticCategory::Configuration,
-                    QStringLiteral("Render size differs from composition size"),
-                    QStringLiteral("Job output is %1x%2 while the composition is %3x%4.")
-                        .arg(job.resolutionWidth)
-                        .arg(job.resolutionHeight)
-                        .arg(compWidth)
-                        .arg(compHeight),
-                    QStringLiteral("Confirm whether the mismatch is intentional"),
-                    compId);
-                result.addDiagnostic(diag);
-            }
-
-            const double compFps = composition->frameRate().framerate();
-            if (compFps > 0.0 && job.frameRate > 0.0 &&
-                std::abs(job.frameRate - compFps) > 0.01) {
-                auto diag = makePreflightDiagnostic(
-                    ArtifactCore::DiagnosticSeverity::Warning,
-                    ArtifactCore::DiagnosticCategory::Configuration,
-                    QStringLiteral("Render frame rate differs from composition frame rate"),
-                    QStringLiteral("Job frame rate is %1 fps while the composition is %2 fps.")
-                        .arg(job.frameRate, 0, 'f', 3)
-                        .arg(compFps, 0, 'f', 3),
-                    QStringLiteral("Confirm whether the mismatch is intentional"),
-                    compId);
-                result.addDiagnostic(diag);
-            }
-        }
+                                               ArtifactCore::DiagnosticResult& result);
     }
 
     // レンダリングジョブクラス
@@ -533,6 +494,50 @@ namespace Artifact
     };
 
     namespace {
+        void appendCompositionMismatchWarnings(const ArtifactRenderJob& job,
+                                               const ArtifactCompositionPtr& composition,
+                                               const QString& compId,
+                                               ArtifactCore::DiagnosticResult& result)
+        {
+            if (!composition) {
+                return;
+            }
+
+            const QSize compSize = composition->settings().compositionSize();
+            const int compWidth = std::max(1, compSize.width());
+            const int compHeight = std::max(1, compSize.height());
+            if (compWidth > 0 && compHeight > 0 &&
+                (job.resolutionWidth != compWidth || job.resolutionHeight != compHeight)) {
+                auto diag = makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Warning,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Render size differs from composition size"),
+                    QStringLiteral("Job output is %1x%2 while the composition is %3x%4.")
+                        .arg(job.resolutionWidth)
+                        .arg(job.resolutionHeight)
+                        .arg(compWidth)
+                        .arg(compHeight),
+                    QStringLiteral("Confirm whether the mismatch is intentional"),
+                    compId);
+                result.addDiagnostic(diag);
+            }
+
+            const double compFps = composition->frameRate().framerate();
+            if (compFps > 0.0 && job.frameRate > 0.0 &&
+                std::abs(job.frameRate - compFps) > 0.01) {
+                auto diag = makePreflightDiagnostic(
+                    ArtifactCore::DiagnosticSeverity::Warning,
+                    ArtifactCore::DiagnosticCategory::Configuration,
+                    QStringLiteral("Render frame rate differs from composition frame rate"),
+                    QStringLiteral("Job frame rate is %1 fps while the composition is %2 fps.")
+                        .arg(job.frameRate, 0, 'f', 3)
+                        .arg(compFps, 0, 'f', 3),
+                    QStringLiteral("Confirm whether the mismatch is intentional"),
+                    compId);
+                result.addDiagnostic(diag);
+            }
+        }
+    }
     static QString registerRenderQueueContextSnapshot(const ArtifactRenderJob& job,
                                                       const ArtifactCompositionPtr& composition,
                                                       int frameNumber)
@@ -1309,8 +1314,6 @@ namespace Artifact
             return tryPipe();
         }
     }
-    } // namespace
-
     // レンダリングキューマネージャクラス
     class ArtifactRenderQueueManager {
     public:
@@ -4087,4 +4090,4 @@ namespace Artifact
         return impl_->sessionLedger_;
     }
 
-};
+}

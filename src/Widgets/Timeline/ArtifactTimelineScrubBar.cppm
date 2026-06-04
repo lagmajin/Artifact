@@ -493,7 +493,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   const int clampedX = std::clamp(currentX, railRect.left(), railRect.right());
   if (railRect.width() > 0) {
    TimelinePlayheadDraw::drawPlayhead(
-       p, static_cast<qreal>(clampedX), 0.0, static_cast<qreal>(h) - 1.0, true);
+       p, static_cast<qreal>(clampedX), 0.0, static_cast<qreal>(h) - 1.0, false);
   }
 
   // ── 目盛り描画 ──────────────────────

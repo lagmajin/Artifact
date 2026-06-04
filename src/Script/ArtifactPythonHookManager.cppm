@@ -165,79 +165,79 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
 
     // Register C++ callbacks for key WorkspaceAutomation methods
     registerWorkspaceMethod("workspaceSnapshot", []() {
-        const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod("workspaceSnapshot", {}).toMap();
+        const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("workspaceSnapshot"), {}).toMap();
         return QString::fromUtf8(QJsonDocument::fromVariant(snap).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("projectSnapshot", []() {
-        const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod("projectSnapshot", {}).toMap();
+        const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("projectSnapshot"), {}).toMap();
         return QString::fromUtf8(QJsonDocument::fromVariant(snap).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("currentCompositionSnapshot", []() {
-        const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod("currentCompositionSnapshot", {}).toMap();
+        const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("currentCompositionSnapshot"), {}).toMap();
         return QString::fromUtf8(QJsonDocument::fromVariant(snap).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("listCompositions", []() {
-        const QVariantList comps = WorkspaceAutomation::instance().invokeMethod("listCompositions", {}).toList();
+        const QVariantList comps = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("listCompositions"), {}).toList();
         return QString::fromUtf8(QJsonDocument::fromVariant(comps).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("listCurrentCompositionLayers", []() {
-        const QVariantList layers = WorkspaceAutomation::instance().invokeMethod("listCurrentCompositionLayers", {}).toList();
+        const QVariantList layers = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("listCurrentCompositionLayers"), {}).toList();
         return QString::fromUtf8(QJsonDocument::fromVariant(layers).toJson(QJsonDocument::Compact));
     });
 
     // Layer manipulation methods (with arguments)
     registerWorkspaceMethod("selectLayer", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.empty() ? QString() : QString::fromStdString(args[0]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("selectLayer", {layerId});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("selectLayer"), {layerId});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("setLayerPosition", [](const std::vector<std::string>& args) -> QString {
         double x = args.size() > 1 ? QString::fromStdString(args[1]).toDouble() : 0.0;
         double y = args.size() > 2 ? QString::fromStdString(args[2]).toDouble() : 0.0;
         QString layerId = args.empty() ? QString() : QString::fromStdString(args[0]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("setLayerPosition", {layerId, x, y});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("setLayerPosition"), {layerId, x, y});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("setLayerScale", [](const std::vector<std::string>& args) -> QString {
         double sx = args.size() > 1 ? QString::fromStdString(args[1]).toDouble() : 1.0;
         double sy = args.size() > 2 ? QString::fromStdString(args[2]).toDouble() : 1.0;
         QString layerId = args.empty() ? QString() : QString::fromStdString(args[0]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("setLayerScale", {layerId, sx, sy});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("setLayerScale"), {layerId, sx, sy});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("setLayerRotation", [](const std::vector<std::string>& args) -> QString {
         double rot = args.size() > 1 ? QString::fromStdString(args[1]).toDouble() : 0.0;
         QString layerId = args.empty() ? QString() : QString::fromStdString(args[0]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("setLayerRotation", {layerId, rot});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("setLayerRotation"), {layerId, rot});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("setLayerOpacity", [](const std::vector<std::string>& args) -> QString {
         double opacity = args.size() > 1 ? QString::fromStdString(args[1]).toDouble() : 100.0;
         QString layerId = args.empty() ? QString() : QString::fromStdString(args[0]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("setLayerOpacity", {layerId, opacity});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("setLayerOpacity"), {layerId, opacity});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("addTextLayer", [](const std::vector<std::string>& args) -> QString {
         QString name = args.empty() ? QStringLiteral("Text") : QString::fromStdString(args[0]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("addTextLayerToCurrentComposition", {name});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("addTextLayerToCurrentComposition"), {name});
         return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("addSolidLayer", [](const std::vector<std::string>& args) -> QString {
         QString name = args.empty() ? QStringLiteral("Solid") : QString::fromStdString(args[0]);
         int w = args.size() > 1 ? QString::fromStdString(args[1]).toInt() : 1920;
         int h = args.size() > 2 ? QString::fromStdString(args[2]).toInt() : 1080;
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("addSolidLayerToCurrentComposition", {name, w, h});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("addSolidLayerToCurrentComposition"), {name, w, h});
         return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("renameLayer", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.size() < 1 ? QString() : QString::fromStdString(args[0]);
         QString newName = args.size() < 2 ? QString() : QString::fromStdString(args[1]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("renameLayerInCurrentComposition", {layerId, newName});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("renameLayerInCurrentComposition"), {layerId, newName});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("removeLayer", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.empty() ? QString() : QString::fromStdString(args[0]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("removeLayerFromCurrentComposition", {layerId});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("removeLayerFromCurrentComposition"), {layerId});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
 
@@ -245,13 +245,13 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
     registerWorkspaceMethod("addEffect", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.size() < 1 ? QString() : QString::fromStdString(args[0]);
         QString effectType = args.size() < 2 ? QString() : QString::fromStdString(args[1]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("addLayerEffect", {layerId, effectType});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("addLayerEffect"), {layerId, effectType});
         return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("removeEffect", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.size() < 1 ? QString() : QString::fromStdString(args[0]);
         QString effectId = args.size() < 2 ? QString() : QString::fromStdString(args[1]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("removeLayerEffect", {layerId, effectId});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("removeLayerEffect"), {layerId, effectId});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("setEffectParam", [](const std::vector<std::string>& args) -> QString {
@@ -259,7 +259,7 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
         QString effectId = args.size() < 2 ? QString() : QString::fromStdString(args[1]);
         QString paramName = args.size() < 3 ? QString() : QString::fromStdString(args[2]);
         QVariant value = args.size() < 4 ? QVariant() : QVariant(QString::fromStdString(args[3]));
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("setLayerEffectParameter", {layerId, effectId, paramName, value});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("setLayerEffectParameter"), {layerId, effectId, paramName, value});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
 
@@ -269,46 +269,46 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
         QString propPath = args.size() < 2 ? QString() : QString::fromStdString(args[1]);
         int frame = args.size() < 3 ? 0 : QString::fromStdString(args[2]).toInt();
         double value = args.size() < 4 ? 0.0 : QString::fromStdString(args[3]).toDouble();
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("setKeyframe", {layerId, propPath, frame, value});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("setKeyframe"), {layerId, propPath, frame, value});
         return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("getKeyframes", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.size() < 1 ? QString() : QString::fromStdString(args[0]);
         QString propPath = args.size() < 2 ? QString() : QString::fromStdString(args[1]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("getKeyframes", {layerId, propPath});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("getKeyframes"), {layerId, propPath});
         return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
 
     // Playback API
     registerWorkspaceMethod("playbackStart", []() -> QString {
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("playbackStart", {});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("playbackStart"), {});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("playbackPause", []() -> QString {
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("playbackPause", {});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("playbackPause"), {});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("playbackStop", []() -> QString {
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("playbackStop", {});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("playbackStop"), {});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("playbackSetFrame", [](const std::vector<std::string>& args) -> QString {
         int frame = args.empty() ? 0 : QString::fromStdString(args[0]).toInt();
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("playbackSetCurrentFrame", {frame});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("playbackSetCurrentFrame"), {frame});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("playbackGetFrame", []() -> QString {
-        return QString::number(WorkspaceAutomation::instance().invokeMethod("playbackGetCurrentFrame", {}).toInt());
+        return QString::number(WorkspaceAutomation::instance().invokeMethod(QStringLiteral("playbackGetCurrentFrame"), {}).toInt());
     });
 
     // Render Queue API
     registerWorkspaceMethod("renderQueueAddCurrent", []() -> QString {
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("addRenderQueueForCurrentComposition", {});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("addRenderQueueForCurrentComposition"), {});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("renderQueueStart", [](const std::vector<std::string>& args) -> QString {
         int index = args.empty() ? 0 : QString::fromStdString(args[0]).toInt();
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("startRenderQueueAt", {index});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("startRenderQueueAt"), {index});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("exportComp", [](const std::vector<std::string>& args) -> QString {
@@ -320,7 +320,7 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
         int h = args.size() < 6 ? 1080 : QString::fromStdString(args[5]).toInt();
         double fps = args.size() < 7 ? 60.0 : QString::fromStdString(args[6]).toDouble();
         int bitrate = args.size() < 8 ? 5000 : QString::fromStdString(args[7]).toInt();
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("exportComposition", 
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("exportComposition"), 
             {compId, outputPath, fmt, codec, w, h, fps, bitrate});
         return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
@@ -330,16 +330,16 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
         QString layerId = args.size() < 1 ? QString() : QString::fromStdString(args[0]);
         QString slotName = args.size() < 2 ? QString() : QString::fromStdString(args[1]);
         QString defaultValue = args.size() < 3 ? QString() : QString::fromStdString(args[2]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("defineTemplateSlot", {layerId, slotName, defaultValue});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("defineTemplateSlot"), {layerId, slotName, defaultValue});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("listTemplateSlots", []() -> QString {
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("listTemplateSlots", {});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("listTemplateSlots"), {});
         return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
     registerWorkspaceMethod("applyTemplateVariation", [](const std::vector<std::string>& args) -> QString {
         QString variationJson = args.empty() ? QString() : QString::fromStdString(args[0]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("applyTemplateVariation", {variationJson});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("applyTemplateVariation"), {variationJson});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
 
@@ -347,27 +347,41 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
     registerWorkspaceMethod("setLayerParent", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.size() < 1 ? QString() : QString::fromStdString(args[0]);
         QString parentId = args.size() < 2 ? QString() : QString::fromStdString(args[1]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("setLayerParentInCurrentComposition", {layerId, parentId});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("setLayerParentInCurrentComposition"), {layerId, parentId});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("clearLayerParent", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.empty() ? QString() : QString::fromStdString(args[0]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("clearLayerParentInCurrentComposition", {layerId});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("clearLayerParentInCurrentComposition"), {layerId});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
     registerWorkspaceMethod("setLayerBlendMode", [](const std::vector<std::string>& args) -> QString {
         QString layerId = args.size() < 1 ? QString() : QString::fromStdString(args[0]);
         QString mode = args.size() < 2 ? QStringLiteral("normal") : QString::fromStdString(args[1]);
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("setLayerBlendModeInCurrentComposition", {layerId, mode});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("setLayerBlendModeInCurrentComposition"), {layerId, mode});
         return result.toBool() ? QStringLiteral("true") : QStringLiteral("false");
     });
 
     // Effect listing API
     registerWorkspaceMethod("listAvailableEffects", []() -> QString {
-        const QVariant result = WorkspaceAutomation::instance().invokeMethod("listAvailableEffects", {});
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("listAvailableEffects"), {});
         return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
     });
 };
+
+void ArtifactPythonHookManager::registerWorkspaceMethod(const std::string& name, std::function<QString()> func)
+{
+    ArtifactCore::PythonEngine::instance().registerFunction(
+        std::string("workspace_") + name,
+        [func](const std::vector<std::string>&) -> std::string {
+            return func().toStdString();
+        });
+
+    ArtifactCore::PythonEngine::instance().execute(
+        QString("import artifact.workspace\n"
+                "artifact.workspace.%1 = workspace_%1\n")
+            .arg(QString::fromStdString(name)).toStdString());
+}
 
 void ArtifactPythonHookManager::registerWorkspaceMethod(const std::string& name, std::function<QString(const std::vector<std::string>&)> func)
 {
