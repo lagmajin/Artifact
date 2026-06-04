@@ -17,6 +17,7 @@ module;
 #include <QPainter>
 #include <QResizeEvent>
 #include <QSignalBlocker>
+#include <QShowEvent>
 #include <QSplitter>
 #include <QListWidget>
 #include <QKeySequence>
@@ -37,6 +38,7 @@ module;
 #include <qtmetamacros.h>
 #include <wobjectdefs.h>
 #include <wobjectimpl.h>
+#include "Timeline/TimelinePlayheadDraw.hpp"
 
 module Artifact.Widgets.Timeline;
 
@@ -58,6 +60,7 @@ import Artifact.Timeline.NavigatorWidget;
 import Artifact.Timeline.TrackPainterView;
 import Artifact.Timeline.TimeCodeWidget;
 import Artifact.Widgets.Timeline.EasingLab;
+import Artifact.Widgets.Timeline.KeyPatternDialog;
 import Artifact.Layers.Selection.Manager;
 import Panel.DraggableSplitter;
 import Artifact.Widgets.Timeline.GlobalSwitches;
@@ -573,6 +576,12 @@ struct KeyframePropertySnapshot {
   std::vector<ArtifactCore::KeyFrame> keyframes;
 };
 
+struct KeyPatternTarget {
+  ArtifactAbstractLayerPtr layer;
+  LayerID layerId;
+  QString propertyPath;
+};
+
 QSet<QString> keyframeSelectionKeysFromMarkers(
     const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>& markers)
 {
@@ -677,6 +686,158 @@ QVector<KeyframePropertyRef> collectPropertyRefsFromClipboardRecords(
     }
   }
   return refs;
+}
+
+QVector<KeyPatternTarget> collectKeyPatternTargets(
+    const QVector<ArtifactAbstractLayerPtr>& layers, const QString& propertyPath)
+{
+  QVector<KeyPatternTarget> targets;
+  const QString trimmedPath = propertyPath.trimmed();
+  if (layers.isEmpty() || trimmedPath.isEmpty()) {
+    return targets;
+  }
+
+  for (const auto& layer : layers) {
+    if (!layer) {
+      continue;
+    }
+    targets.push_back({layer, layer->id(), trimmedPath});
+  }
+
+  return targets;
+}
+
+class TimelineKeyframeSnapshotCommand final : public UndoCommand {
+public:
+  TimelineKeyframeSnapshotCommand(QString label, std::function<void()> redoFunc,
+                                  std::function<void()> undoFunc)
+      : label_(std::move(label)), redoFunc_(std::move(redoFunc)),
+        undoFunc_(std::move(undoFunc)) {}
+
+  void undo() override {
+    if (undoFunc_) {
+      undoFunc_();
+    }
+  }
+
+  void redo() override {
+    if (redoFunc_) {
+      redoFunc_();
+    }
+  }
+
+  QString label() const override { return label_; }
+
+private:
+  QString label_;
+  std::function<void()> redoFunc_;
+  std::function<void()> undoFunc_;
+};
+
+bool applyKeyPatternToTargets(
+    const ArtifactCompositionPtr& composition,
+    const QVector<KeyPatternTarget>& targets,
+    const ArtifactCore::KeyframePatternRequest& request,
+    QString* outMessage = nullptr,
+    std::function<void()> afterChange = {})
+{
+  if (!composition || targets.isEmpty()) {
+    if (outMessage) {
+      *outMessage = QStringLiteral("No valid key pattern targets were found.");
+    }
+    return false;
+  }
+
+  QVector<KeyframePropertyRef> refs;
+  refs.reserve(targets.size());
+  for (const auto& target : targets) {
+    refs.push_back({target.layerId, target.propertyPath});
+  }
+  const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
+
+  const int frameScale = std::max(
+      1, static_cast<int>(std::llround(composition->frameRate().framerate())));
+  bool appliedAny = false;
+  int targetIndex = 0;
+  for (const auto& target : targets) {
+    if (!target.layer) {
+      ++targetIndex;
+      continue;
+    }
+    const auto property = target.layer->getProperty(target.propertyPath);
+    if (!property) {
+      ++targetIndex;
+      continue;
+    }
+
+    ArtifactCore::KeyframePatternRequest perTarget = request;
+    perTarget.frameScale = frameScale;
+    perTarget.selectionIndex = targetIndex;
+    perTarget.selectionCount = std::max(1, static_cast<int>(targets.size()));
+    perTarget.baseValue = property->getValue();
+    if (!perTarget.targetValue.isValid()) {
+      bool ok = false;
+      const double baseNumeric = perTarget.baseValue.toDouble(&ok);
+      if (ok) {
+        perTarget.targetValue = baseNumeric + std::max(1.0, perTarget.amplitude);
+      } else {
+        perTarget.targetValue = perTarget.baseValue;
+      }
+    }
+
+    const auto generated = ArtifactCore::KeyframePatternGenerator::generate(perTarget);
+    if (generated.keyframes.isEmpty()) {
+      ++targetIndex;
+      continue;
+    }
+
+    property->setAnimatable(true);
+    property->clearKeyFrames();
+    for (const auto& keyframe : generated.keyframes) {
+      property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation,
+                            keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
+                            keyframe.cp2_y, keyframe.roving);
+    }
+    target.layer->setDirty();
+    target.layer->changed();
+    appliedAny = true;
+    ++targetIndex;
+  }
+
+  if (!appliedAny) {
+    if (outMessage) {
+      *outMessage = QStringLiteral("No animatable properties were updated.");
+    }
+    return false;
+  }
+
+  if (auto* mgr = UndoManager::instance()) {
+    const auto afterSnapshots = captureKeyframePropertySnapshots(composition, refs);
+    mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+        QStringLiteral("Generate Key Pattern"),
+        [composition, afterSnapshots, afterChange]() {
+          applyKeyframePropertySnapshots(composition, afterSnapshots);
+          if (afterChange) {
+            afterChange();
+          }
+        },
+        [composition, beforeSnapshots, afterChange]() {
+          applyKeyframePropertySnapshots(composition, beforeSnapshots);
+          if (afterChange) {
+            afterChange();
+          }
+        }));
+  }
+
+  if (afterChange) {
+    afterChange();
+  }
+
+  if (outMessage) {
+    *outMessage = QStringLiteral("Generated key pattern for %1 target(s).")
+                      .arg(static_cast<int>(targets.size()));
+  }
+  return true;
 }
 
 QVector<KeyframePropertySnapshot> captureKeyframePropertySnapshots(
@@ -1021,33 +1182,6 @@ private:
   LayerID layerId_;
   qint64 currentFrame_ = 0;
   QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
-};
-
-class TimelineKeyframeSnapshotCommand final : public UndoCommand {
-public:
-  TimelineKeyframeSnapshotCommand(QString label, std::function<void()> redoFunc,
-                                  std::function<void()> undoFunc)
-      : label_(std::move(label)), redoFunc_(std::move(redoFunc)),
-        undoFunc_(std::move(undoFunc)) {}
-
-  void undo() override {
-    if (undoFunc_) {
-      undoFunc_();
-    }
-  }
-
-  void redo() override {
-    if (redoFunc_) {
-      redoFunc_();
-    }
-  }
-
-  QString label() const override { return label_; }
-
-private:
-  QString label_;
-  std::function<void()> redoFunc_;
-  std::function<void()> undoFunc_;
 };
 
 bool propertyValueAsCurveNumber(const ArtifactCore::AbstractProperty &property,
@@ -2676,6 +2810,95 @@ private:
   bool updating_ = false;
 };
 
+class TimelinePlayheadOverlayWidget final : public QWidget {
+public:
+  TimelinePlayheadOverlayWidget(ArtifactTimelineScrubBar *scrubBar,
+                                ArtifactTimelineTrackPainterView *trackView,
+                                QWidget *parent)
+      : QWidget(parent), scrubBar_(scrubBar), trackView_(trackView) {
+    setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    setAttribute(Qt::WA_NoSystemBackground, true);
+    setAttribute(Qt::WA_TranslucentBackground, true);
+    setAutoFillBackground(false);
+    setFocusPolicy(Qt::NoFocus);
+  }
+
+  void syncGeometryToPanel() {
+    auto *panel = parentWidget();
+    if (!panel || !scrubBar_ || !trackView_) {
+      hide();
+      return;
+    }
+
+    const int top = scrubBar_->mapTo(panel, QPoint(0, 0)).y();
+    const int panelHeight = std::max(0, panel->height());
+    const QRect nextGeometry(0, std::clamp(top, 0, panelHeight),
+                             std::max(0, panel->width()),
+                             std::max(0, panelHeight - top));
+    if (geometry() != nextGeometry) {
+      setGeometry(nextGeometry);
+      lastX_ = -9999;
+      update();
+    }
+    show();
+    raise();
+  }
+
+  void updatePlayhead() {
+    syncGeometryToPanel();
+    if (!isVisible()) {
+      return;
+    }
+
+    const int newX = currentPlayheadX();
+    constexpr int kMargin = 16;
+    if (lastX_ == -9999) {
+      update();
+    } else {
+      const int left = std::min(lastX_, newX) - kMargin;
+      const int right = std::max(lastX_, newX) + kMargin + 1;
+      update(QRect(left, 0, right - left, height()));
+    }
+    lastX_ = newX;
+  }
+
+protected:
+  void paintEvent(QPaintEvent *event) override {
+    Q_UNUSED(event);
+    if (!trackView_ || width() <= 0 || height() <= 0) {
+      return;
+    }
+
+    const int x = currentPlayheadX();
+    if (x < -16 || x > width() + 16) {
+      return;
+    }
+
+    QPainter painter(this);
+    TimelinePlayheadDraw::drawPlayhead(
+        painter, static_cast<qreal>(x), 0.0,
+        static_cast<qreal>(height()) - 1.0, true, 0.0, 12.0, 14.0);
+  }
+
+private:
+  int currentPlayheadX() const {
+    if (!trackView_ || !parentWidget()) {
+      return 0;
+    }
+
+    const double ppf = std::max(0.01, trackView_->pixelsPerFrame());
+    const double frame = std::max(0.0, trackView_->currentFrame());
+    const double localTrackX = frame * ppf - trackView_->horizontalOffset();
+    const QPoint panelPoint = trackView_->mapTo(
+        parentWidget(), QPoint(static_cast<int>(std::round(localTrackX)), 0));
+    return panelPoint.x() - x();
+  }
+
+  ArtifactTimelineScrubBar *scrubBar_ = nullptr;
+  ArtifactTimelineTrackPainterView *trackView_ = nullptr;
+  int lastX_ = -9999;
+};
+
 class TimelineRightPanelWidget final : public QWidget {
 public:
   TimelineRightPanelWidget(ArtifactTimelineNavigatorWidget *navigator,
@@ -2729,16 +2952,36 @@ public:
       rightPanelLayout->addWidget(workArea_);
     }
     rightPanelLayout->addWidget(timelineModeStack_, 1);
+
+    playheadOverlay_ =
+        new TimelinePlayheadOverlayWidget(scrubBar_, painterTrackView_, this);
+    playheadOverlay_->syncGeometryToPanel();
   }
 
   QWidget *timelinePainterPage() const { return timelinePainterPage_; }
   QWidget *curveEditorPage() const { return curveEditorPage_; }
   QStackedWidget *timelineModeStack() const { return timelineModeStack_; }
+  void syncPlayheadOverlay() {
+    if (playheadOverlay_) {
+      playheadOverlay_->updatePlayhead();
+    }
+  }
 
 protected:
   void resizeEvent(QResizeEvent *event) override
   {
     QWidget::resizeEvent(event);
+    if (playheadOverlay_) {
+      playheadOverlay_->syncGeometryToPanel();
+    }
+  }
+
+  void showEvent(QShowEvent *event) override
+  {
+    QWidget::showEvent(event);
+    if (playheadOverlay_) {
+      playheadOverlay_->syncGeometryToPanel();
+    }
   }
 
   void paintEvent(QPaintEvent *event) override {
@@ -2770,6 +3013,7 @@ private:
   QWidget *timelinePainterPage_ = nullptr;
   QWidget *curveEditorPage_ = nullptr;
   QStackedWidget *timelineModeStack_ = nullptr;
+  TimelinePlayheadOverlayWidget *playheadOverlay_ = nullptr;
 };
 
 class TimelineStatusClickFilter final : public QObject {
@@ -2851,6 +3095,7 @@ public:
   QLabel *searchStatusLabel_ = nullptr;
   QLabel *keyframeStatusLabel_ = nullptr;
   QToolButton *easingLabButton_ = nullptr;
+  QToolButton *keyPatternButton_ = nullptr;
   QLabel *currentLayerLabel_ = nullptr;
   QLabel *recentLayerLabel_ = nullptr;
   QLabel *frameSummaryLabel_ = nullptr;
@@ -2872,6 +3117,7 @@ public:
   QToolButton *curveEditorFitButton_ = nullptr;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   WorkAreaControl *workArea_ = nullptr;
+  TimelineRightPanelWidget *rightPanel_ = nullptr;
   ArtifactTimelineNavigatorWidget *navigator_ = nullptr;
   ArtifactTimelineGlobalSwitches *globalSwitches_ = nullptr;
   CompositionID compositionId_;
@@ -2914,9 +3160,6 @@ public:
   bool graphEditorVisible_ = false;
   bool graphEditorNeedsFit_ = false;
   bool audioPreviewActive_ = false;
-  // Last playhead x-position in track-view coordinates, used to dirty the
-  // correct strip when the playhead moves.
-  int lastPlayheadTrackX_ = -9999;
   QHash<QString, CachedAudioWaveform> audioWaveformCache_;
 };
 
@@ -3109,6 +3352,133 @@ void ArtifactTimelineWidget::showSpeedGraph()
   refreshCurveEditorTracks();
 }
 
+void ArtifactTimelineWidget::showKeyPatternDialog()
+{
+  if (!impl_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition || !impl_->layerTimelinePanel_) {
+    return;
+  }
+
+  ArtifactLayerSelectionManager *selectionManager = nullptr;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+
+  const auto selectedLayers = selectedTimelineLayers(selectionManager);
+  const QString propertyPath = impl_->layerTimelinePanel_->currentPropertyPath().trimmed();
+  const auto targets = collectKeyPatternTargets(selectedLayers, propertyPath);
+  if (targets.isEmpty()) {
+    Q_EMIT timelineDebugMessage(QStringLiteral("Key Pattern Dialog needs a selected property and at least one layer."));
+    return;
+  }
+
+  ArtifactCore::KeyframePatternRequest request;
+  request.preset = ArtifactCore::KeyframePatternPreset::Ramp;
+  request.startFrame = std::max(0.0, impl_->currentFrame_);
+  request.endFrame = request.startFrame + 24.0;
+  request.cycles = 1.0;
+  request.amplitude = 60.0;
+  request.phase = 0.0;
+  request.delayFrames = 2.0;
+  request.bpm = composition->frameRate().framerate() > 0.0
+                    ? composition->frameRate().framerate() * 2.0
+                    : 120.0;
+  request.damping = 4.0;
+  request.settleOscillation = 3.0;
+  request.stepCount = 6;
+  request.sampleCount = 12;
+  request.seed = 1;
+  request.frameScale = std::max(
+      1, static_cast<int>(std::llround(composition->frameRate().framerate())));
+
+  if (const auto firstLayer = targets.front().layer) {
+    if (const auto property = firstLayer->getProperty(propertyPath)) {
+      request.baseValue = property->getValue();
+      bool ok = false;
+      const double baseNumeric = request.baseValue.toDouble(&ok);
+      if (ok) {
+        request.targetValue = baseNumeric + request.amplitude;
+      } else {
+        request.targetValue = request.baseValue;
+      }
+    }
+  }
+
+  auto *dialog = new KeyPatternDialog(
+      this,
+      [this, composition, targets](const ArtifactCore::KeyframePatternRequest &request) {
+        QString message;
+        QPointer<ArtifactTimelineWidget> self(this);
+        if (applyKeyPatternToTargets(
+                composition, targets, request, &message,
+                [self]() {
+                  if (!self) {
+                    return;
+                  }
+                  self->refreshTracks();
+                  self->updateKeyframeState();
+                  self->updateSelectionState();
+                })) {
+          if (!message.isEmpty()) {
+            Q_EMIT timelineDebugMessage(message);
+          }
+        } else if (!message.isEmpty()) {
+          Q_EMIT timelineDebugMessage(message);
+        }
+      },
+      request);
+  dialog->setAttribute(Qt::WA_DeleteOnClose);
+  dialog->show();
+}
+
+void ArtifactTimelineWidget::applyKeyPattern(
+    const ArtifactCore::KeyframePatternRequest &request)
+{
+  if (!impl_) {
+    return;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition || !impl_->layerTimelinePanel_) {
+    return;
+  }
+
+  ArtifactLayerSelectionManager *selectionManager = nullptr;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+
+  const auto selectedLayers = selectedTimelineLayers(selectionManager);
+  const QString propertyPath = impl_->layerTimelinePanel_->currentPropertyPath().trimmed();
+  const auto targets = collectKeyPatternTargets(selectedLayers, propertyPath);
+  QString message;
+  QPointer<ArtifactTimelineWidget> self(this);
+  if (applyKeyPatternToTargets(
+          composition, targets, request, &message,
+          [self]() {
+            if (!self) {
+              return;
+            }
+            self->refreshTracks();
+            self->updateKeyframeState();
+            self->updateSelectionState();
+          })) {
+    Q_EMIT timelineDebugMessage(message);
+  } else if (!message.isEmpty()) {
+    Q_EMIT timelineDebugMessage(message);
+  }
+}
+
 bool ArtifactTimelineWidget::isGraphEditorFocusWidget(const QWidget *widget) const
 {
   if (!impl_ || !widget) {
@@ -3280,10 +3650,15 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto searchStatusLabel = new QLabel();
   auto keyframeStatusLabel = new QLabel();
   auto easingLabButton = new QToolButton();
+  auto keyPatternButton = new QToolButton();
   easingLabButton->setText(QStringLiteral("Ease+"));
   easingLabButton->setToolTip(QStringLiteral("Open Easing Lab (Comparison Tool)"));
   easingLabButton->setAutoRaise(true);
   easingLabButton->setVisible(false);
+  keyPatternButton->setText(QStringLiteral("Pattern+"));
+  keyPatternButton->setToolTip(QStringLiteral("Open Key Pattern Dialog"));
+  keyPatternButton->setAutoRaise(true);
+  keyPatternButton->setVisible(false);
   auto currentLayerLabel = new QLabel();
   auto recentLayerLabel = new QLabel();
   auto frameSummaryLabel = new QLabel();
@@ -3294,6 +3669,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->searchStatusLabel_ = searchStatusLabel;
   impl_->keyframeStatusLabel_ = keyframeStatusLabel;
   impl_->easingLabButton_ = easingLabButton;
+  impl_->keyPatternButton_ = keyPatternButton;
   impl_->currentLayerLabel_ = currentLayerLabel;
   impl_->recentLayerLabel_ = recentLayerLabel;
   impl_->frameSummaryLabel_ = frameSummaryLabel;
@@ -3700,6 +4076,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->addWidget(searchStatusLabel);
   searchBarLayout->addWidget(keyframeStatusLabel);
   searchBarLayout->addWidget(easingLabButton);
+  searchBarLayout->addWidget(keyPatternButton);
   searchBarLayout->addWidget(currentLayerLabel);
   searchBarLayout->addWidget(recentLayerLabel);
   searchBarLayout->addWidget(selectionSummaryLabel);
@@ -3719,7 +4096,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setStretch(9, 0);
   searchBarLayout->setStretch(10, 0);
   searchBarLayout->setStretch(11, 0);
-  searchBarLayout->setStretch(12, 1);
+  searchBarLayout->setStretch(12, 0);
+  searchBarLayout->setStretch(13, 1);
 
   // legacy direct signal connection disabled — prefer EventBus
   if (false) QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
@@ -3887,6 +4265,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     dialog->show();
   });
 
+  QObject::connect(keyPatternButton, &QToolButton::clicked, this,
+                   [this]() { showKeyPatternDialog(); });
+
   auto leftTopSpacer = new QWidget();
   leftTopSpacer->setFixedHeight(kTimelineTopRowHeight);
   leftTopSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -3975,6 +4356,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto painterTrackView = impl_->painterTrackView_ =
       new ArtifactTimelineTrackPainterView();
+  workAreaWidget->setProperty("timelineDrawPlayhead", false);
+  scrubBar->setProperty("timelineDrawPlayhead", false);
+  painterTrackView->setProperty("timelineDrawPlayhead", false);
   auto curveEditor = impl_->curveEditor_ = new ArtifactCurveEditorWidget();
   painterTrackView->setDurationFrames(kDefaultTimelineFrames);
   painterTrackView->setTrackCount(1);
@@ -4333,6 +4717,11 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           painterTrackView->setKeyframeContext(layerId, propertyPath);
         }
       });
+  QObject::connect(
+      layerTreeView, &ArtifactLayerTimelinePanelWrapper::propertyFocusChanged, this,
+      [this](const LayerID &, const QString &) {
+        updateSelectionState();
+      });
   painterTrackView->setKeyframeContext(layerTreeView->selectedLayerId(),
                                        layerTreeView->currentPropertyPath());
   QObject::connect(
@@ -4550,6 +4939,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto rightPanel = new TimelineRightPanelWidget(
       timeNavigatorWidget, scrubBar, workAreaWidget, painterTrackView,
       curveHeader, curveEditor);
+  impl_->rightPanel_ = rightPanel;
   impl_->timelinePainterPage_ = rightPanel->timelinePainterPage();
   impl_->curveEditorPage_ = rightPanel->curveEditorPage();
   impl_->timelineModeStack_ = rightPanel->timelineModeStack();
@@ -5637,6 +6027,12 @@ void ArtifactTimelineWidget::updateKeyframeState()
         !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
     impl_->easingLabButton_->setVisible(hasSelection);
   }
+  if (impl_->keyPatternButton_) {
+    const bool hasPropertyContext = impl_->layerTimelinePanel_ &&
+                                    !impl_->layerTimelinePanel_->currentPropertyPath().trimmed().isEmpty();
+    const bool hasLayerSelection = selectedCount > 0 || static_cast<bool>(currentLayer);
+    impl_->keyPatternButton_->setVisible(hasPropertyContext && hasLayerSelection);
+  }
 }
 
 void ArtifactTimelineWidget::updateSelectionState()
@@ -5833,10 +6229,7 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
   if (!impl_ || !impl_->painterTrackView_) {
     return;
   }
-  const double ppf = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
-  const double xOff = impl_->painterTrackView_->horizontalOffset();
   const double frame = std::max(0.0, impl_->currentFrame_);
-  const int newX = static_cast<int>(frame * ppf - xOff);
 
   if (impl_->navigator_) {
     impl_->navigator_->setCurrentFrame(frame);
@@ -5847,15 +6240,9 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
     impl_->workArea_->setCurrentFrame(static_cast<float>(frame));
   }
 
-  constexpr int kMargin = 12;
-  const int oldX = impl_->lastPlayheadTrackX_;
-  impl_->lastPlayheadTrackX_ = newX;
-
-  const int left = std::min(oldX, newX) - kMargin;
-  const int right = std::max(oldX, newX) + kMargin + 1;
-  const QRect strip(left, 0, right - left,
-                    impl_->painterTrackView_->height());
-  impl_->painterTrackView_->update(strip);
+  if (impl_->rightPanel_) {
+    impl_->rightPanel_->syncPlayheadOverlay();
+  }
 }
 
  void ArtifactTimelineWidget::jumpToSearchHit(int step)

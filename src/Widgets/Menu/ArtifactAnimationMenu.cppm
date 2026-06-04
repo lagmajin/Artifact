@@ -199,6 +199,7 @@ bool hasActiveExpressionTarget(QWidget* root)
   QAction* toggleValueGraphAction = nullptr;
   QAction* toggleVelocityGraphAction = nullptr;
   QAction* easingLabAction = nullptr;
+  QAction* keyPatternAction = nullptr;
   QActionGroup* graphModeGroup = nullptr;
 
   QAction* goToNextKeyframeAction = nullptr;
@@ -317,12 +318,16 @@ bool hasActiveExpressionTarget(QWidget* root)
   if (loadAnimationPresetAction) {
    loadAnimationPresetAction->setEnabled(hasLayer && hasExpressionTarget);
   }
+  if (keyPatternAction) {
+   keyPatternAction->setEnabled(hasLayer);
+  }
 }
 
  ArtifactAnimationMenu::ArtifactAnimationMenu(QWidget* parent)
   : QMenu(parent), impl_(new Impl(this))
  {
   setTitle("アニメーション(&A)");
+  setIcon(menuIcon(QStringLiteral("Studio/animation.svg")));
   setTearOffEnabled(false);
 
   impl_->addKeyframeAction = addAction("キーフレームを追加");
@@ -395,6 +400,8 @@ bool hasActiveExpressionTarget(QWidget* root)
   impl_->graphModeGroup->addAction(impl_->toggleVelocityGraphAction);
   impl_->easingLabAction = impl_->graphEditorMenu->addAction("EasingLab を開く");
   impl_->easingLabAction->setIcon(menuIcon(QStringLiteral("Studio/tune.svg")));
+  impl_->keyPatternAction = impl_->graphEditorMenu->addAction("Key Pattern Dialog を開く");
+  impl_->keyPatternAction->setIcon(menuIcon(QStringLiteral("Studio/animation.svg")));
 
   impl_->navigationMenu = addMenu("ナビゲーション(&N)");
   impl_->navigationMenu->setIcon(menuIcon(QStringLiteral("Studio/skip_next.svg")));
@@ -474,7 +481,7 @@ bool hasActiveExpressionTarget(QWidget* root)
    if (action == impl_->showGraphEditorAction) { Q_EMIT showGraphEditorRequested(); return; }
    if (action == impl_->toggleValueGraphAction) { Q_EMIT toggleValueGraphRequested(); return; }
    if (action == impl_->toggleVelocityGraphAction) { Q_EMIT toggleVelocityGraphRequested(); return; }
-   if (action == impl_->easingLabAction) {
+  if (action == impl_->easingLabAction) {
     EasingLabDialog dialog(
         this,
         [this](ArtifactCore::InterpolationType type) {
@@ -484,7 +491,13 @@ bool hasActiveExpressionTarget(QWidget* root)
         });
     dialog.exec();
     return;
-   }
+  }
+  if (action == impl_->keyPatternAction) {
+    if (auto* timeline = activeTimelineWidget(impl_ && impl_->menu_ ? impl_->menu_->window() : nullptr)) {
+      timeline->showKeyPatternDialog();
+    }
+    return;
+  }
    if (action == impl_->goToNextKeyframeAction) { Q_EMIT goToNextKeyframeRequested(); return; }
    if (action == impl_->goToPreviousKeyframeAction) { Q_EMIT goToPreviousKeyframeRequested(); return; }
    if (action == impl_->goToFirstKeyframeAction) { Q_EMIT goToFirstKeyframeRequested(); return; }

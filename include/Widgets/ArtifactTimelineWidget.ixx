@@ -13,6 +13,7 @@ export module Artifact.Widgets.Timeline;
 import std;
 import Utils.Id;
 import Math.Interpolate;
+import Animation.KeyframePatternGenerator;
 import Artifact.Timeline.KeyBinding;
 
 W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
@@ -71,6 +72,8 @@ class ArtifactTimelineWidget :public QWidget {
   void pasteKeyframesAtPlayhead();
   void showValueGraph();
   void showSpeedGraph();
+  void showKeyPatternDialog();
+  void applyKeyPattern(const ArtifactCore::KeyframePatternRequest& request);
   void jumpToSearchHit(int step);
   void jumpToKeyframeHit(int step);
   void jumpToFirstKeyframe();
