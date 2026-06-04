@@ -878,14 +878,17 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
         : (editor ? editor->value().toString() : QString{});
     row->setExpressionHandler(
         [parent, propertyName = property.getName(), propertyPtr, layer, keyframeChanged,
-         initialExpression]() {
+         initialExpression, currentTimeProvider, playback]() {
+          const auto nowTime = currentTimeProvider
+                                   ? currentTimeProvider()
+                                   : currentPlaybackTime(playback);
           launchExpressionCopilot(
               parent,
               propertyName,
               propertyPtr,
               initialExpression,
               layer,
-              currentTime,
+              nowTime,
               [layer, keyframeChanged, propertyName](const QString &) {
                 if (keyframeChanged) {
                   keyframeChanged(propertyName);

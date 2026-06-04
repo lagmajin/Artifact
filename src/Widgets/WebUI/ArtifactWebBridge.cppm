@@ -48,6 +48,7 @@ import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
+import Property;
 import Property.Group;
 import Property.Abstract;
 import Event.Bus;

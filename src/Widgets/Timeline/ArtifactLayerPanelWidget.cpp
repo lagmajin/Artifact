@@ -2349,7 +2349,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
             if (QAction *chosenAction = menu.exec(event->globalPos())) {
               const QVariantMap data = chosenAction->data().toMap();
               const QString kind = data.value(QStringLiteral("kind")).toString();
-              const int index = data.value(QStringLiteral("index")).toInt(-1);
+              bool indexOk = false;
+              const int index = data.value(QStringLiteral("index")).toInt(&indexOk);
+              if (!indexOk) {
+                return;
+              }
               if (kind == QStringLiteral("matte_focus") && index >= 0 && index < static_cast<int>(matteRefs.size())) {
                 const auto &chosenRef = matteRefs[index];
                 if (!chosenRef.sourceLayerId.isNil()) {
@@ -2358,7 +2362,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                   }
                 }
               } else if (kind == QStringLiteral("matte_type")) {
-                const int typeIndex = data.value(QStringLiteral("type")).toInt(-1);
+                bool typeOk = false;
+                const int typeIndex = data.value(QStringLiteral("type")).toInt(&typeOk);
+                if (!typeOk) {
+                  return;
+                }
                 if (typeIndex >= 0 && typeIndex <= static_cast<int>(MatteType::InverseLuma)) {
                   if (applyMatteTypeToLayer(comp, layer, matteIndex,
                                             static_cast<MatteType>(typeIndex))) {
@@ -3109,7 +3117,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     if (chosenAction) {
       const QVariantMap data = chosenAction->data().toMap();
       const QString kind = data.value(QStringLiteral("kind")).toString();
-      const int matteIndex = data.value(QStringLiteral("index")).toInt(-1);
+      bool matteIndexOk = false;
+      const int matteIndex = data.value(QStringLiteral("index")).toInt(&matteIndexOk);
+      if (!matteIndexOk) {
+        return;
+      }
       if (kind == QStringLiteral("matte_focus")) {
         if (matteIndex >= 0 && matteIndex < static_cast<int>(matteRefs.size())) {
           const auto &ref = matteRefs[matteIndex];
@@ -3120,7 +3132,11 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           }
         }
       } else if (kind == QStringLiteral("matte_type")) {
-        const int matteTypeIndex = data.value(QStringLiteral("type")).toInt(-1);
+        bool matteTypeOk = false;
+        const int matteTypeIndex = data.value(QStringLiteral("type")).toInt(&matteTypeOk);
+        if (!matteTypeOk) {
+          return;
+        }
         if (comp && matteIndex >= 0 && matteIndex < static_cast<int>(matteRefs.size()) &&
             matteTypeIndex >= 0 && matteTypeIndex <= static_cast<int>(MatteType::InverseLuma)) {
           if (applyMatteTypeToLayer(comp, layer, matteIndex,
@@ -4213,7 +4229,8 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                  fm.elidedText(layerAux, Qt::ElideRight, badgeRect.width() - 16));
      } else {
       p.setPen(maskSelected ? accent.lighter(135) : text);
-      p.drawText(layerTextX, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, layerName);
+      const int nameWidth = std::max(20, width() - layerTextX - variantChipW - 10);
+      p.drawText(layerTextX, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, layerName);
      }
 
      const QRect chipRect = variantChipRect(QRect(0, y, width(), rowH), l,

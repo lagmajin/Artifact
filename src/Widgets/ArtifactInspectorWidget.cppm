@@ -566,7 +566,11 @@ protected:
       if (QAction *chosen = menu.exec(QCursor::pos())) {
         const QVariantMap data = chosen->data().toMap();
         const QString kind = data.value(QStringLiteral("kind")).toString();
-        const int index = data.value(QStringLiteral("index")).toInt(-1);
+        bool indexOk = false;
+        const int index = data.value(QStringLiteral("index")).toInt(&indexOk);
+        if (!indexOk) {
+          return;
+        }
         if (kind == QStringLiteral("focus")) {
           if (index >= 0 && index < static_cast<int>(refs.size())) {
             const auto &ref = refs[index];
@@ -577,7 +581,11 @@ protected:
             }
           }
         } else if (kind == QStringLiteral("type")) {
-          const int typeValue = data.value(QStringLiteral("type")).toInt(-1);
+          bool typeOk = false;
+          const int typeValue = data.value(QStringLiteral("type")).toInt(&typeOk);
+          if (!typeOk) {
+            return;
+          }
           if (index >= 0 && index < static_cast<int>(refs.size()) &&
               typeValue >= 0 && typeValue <= static_cast<int>(MatteType::InverseLuma)) {
             applyMatteTypeToLayer(compositionId_, layerId_, index,

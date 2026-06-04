@@ -181,7 +181,7 @@ void WorkAreaControl::setEnd(float e) {
   playheadX = std::clamp(playheadX, 0, std::max(0, width() - 1));
   TimelinePlayheadDraw::drawPlayhead(
       p, static_cast<qreal>(playheadX), 0.0,
-      static_cast<qreal>(height()) - 1.0, true);
+      static_cast<qreal>(height()) - 1.0, false);
 }
 
  void WorkAreaControl::mouseMoveEvent(QMouseEvent* ev)

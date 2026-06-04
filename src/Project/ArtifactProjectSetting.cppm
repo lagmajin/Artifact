@@ -154,9 +154,10 @@ namespace Artifact {
 
  }
 
- ArtifactProjectSettings::ArtifactProjectSettings(const ArtifactProjectSettings& setting) :impl_(new Impl())
- {
-
+ ArtifactProjectSettings::ArtifactProjectSettings(const ArtifactProjectSettings& setting)
+     : impl_(new Impl()) {
+  setProjectName(setting.projectName());
+  setAuthor(setting.author());
  }
 
  ArtifactProjectSettings::~ArtifactProjectSettings()
@@ -183,18 +184,31 @@ template void Artifact::ArtifactProjectSettings::setProjectName<QString>(const Q
   return impl_->author();
  }
 
- ArtifactProjectSettings& ArtifactProjectSettings::operator=(const ArtifactProjectSettings& settings)
+ void ArtifactProjectSettings::setAuthor(const UniString& name)
  {
+  impl_->setAuthor(name);
+ }
 
+ template <StringLike T>
+ void ArtifactProjectSettings::setAuthor(const T& name)
+ {
+  impl_->setAuthor(UniString(name));
+ }
+
+ template void ArtifactProjectSettings::setAuthor<QString>(const QString&);
+
+ ArtifactProjectSettings& ArtifactProjectSettings::operator=(
+     const ArtifactProjectSettings& settings) {
+  if (this != &settings) {
+    setProjectName(settings.projectName());
+    setAuthor(settings.author());
+  }
   return *this;
  }
 
  bool ArtifactProjectSettings::operator==(const ArtifactProjectSettings& other) const
  {
-
-
-  return false;
-
+  return projectName() == other.projectName() && author() == other.author();
  }
 
  bool ArtifactProjectSettings::operator!=(const ArtifactProjectSettings& other) const

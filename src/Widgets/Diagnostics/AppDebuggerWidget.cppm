@@ -6,7 +6,13 @@ module;
 #include <QHBoxLayout>
 #include <QHash>
 #include <QColor>
+#include <QIODevice>
+#include <QDir>
+#include <QFile>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QLabel>
 #include <QListWidget>
 #include <QAbstractScrollArea>
@@ -20,6 +26,7 @@ module;
 #include <QShowEvent>
 #include <QVBoxLayout>
 #include <QTimerEvent>
+#include <QStandardPaths>
 #include <QVector>
 #include <QStringList>
 #include <cstdint>
@@ -72,6 +79,207 @@ void applyDebuggerSurfacePalette(QWidget* root, const QPalette& palette)
             }
         }
     }
+}
+
+QString debugMcpStateFilePath()
+{
+    const QString envPath = qEnvironmentVariable("ARTIFACT_DEBUG_MCP_STATE_FILE");
+    if (!envPath.trimmed().isEmpty()) {
+        return envPath;
+    }
+
+    const QString tempRoot = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    QDir rootDir(tempRoot);
+    if (!rootDir.exists(QStringLiteral("ArtifactStudio"))) {
+        rootDir.mkpath(QStringLiteral("ArtifactStudio"));
+    }
+    return rootDir.filePath(QStringLiteral("ArtifactStudio/debug-mcp-state.json"));
+}
+
+QJsonObject readDebugMcpStateObject()
+{
+    QFile file(debugMcpStateFilePath());
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    return doc.isObject() ? doc.object() : QJsonObject{};
+}
+
+QString debugMcpFrameText(const QJsonObject& state)
+{
+    const QJsonObject session = state.value(QStringLiteral("session")).toObject();
+    const QJsonValue pausedAtFrame = session.value(QStringLiteral("pausedAtFrame"));
+    if (pausedAtFrame.isDouble()) {
+        return QString::number(pausedAtFrame.toInt());
+    }
+    const QJsonObject lastBreakHit = state.value(QStringLiteral("lastBreakHit")).toObject();
+    const QJsonObject snapshot = lastBreakHit.value(QStringLiteral("snapshot")).toObject();
+    const QJsonObject playback = snapshot.value(QStringLiteral("playback")).toObject();
+    const QJsonValue frameValue = playback.value(QStringLiteral("frame"));
+    return frameValue.isDouble() ? QString::number(frameValue.toInt()) : QStringLiteral("<none>");
+}
+
+QString debugMcpLastHitText(const QJsonObject& state)
+{
+    const QJsonObject lastBreakHit = state.value(QStringLiteral("lastBreakHit")).toObject();
+    if (lastBreakHit.isEmpty()) {
+        return QStringLiteral("<none>");
+    }
+
+    const QJsonObject condition = lastBreakHit.value(QStringLiteral("condition")).toObject();
+    const QString kind = condition.value(QStringLiteral("kind")).toString(QStringLiteral("<unknown>"));
+    const QString label = condition.value(QStringLiteral("label")).toString().trimmed();
+    const QString suffix = label.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(label);
+    const QString reason = lastBreakHit.value(QStringLiteral("reason")).toString();
+    const QString resumedAt = lastBreakHit.value(QStringLiteral("resumedAt")).toString();
+    return resumedAt.isEmpty()
+               ? QStringLiteral("%1%2  %3").arg(kind, suffix, reason)
+               : QStringLiteral("%1%2  %3  resumed=%4")
+                     .arg(kind, suffix, reason, resumedAt);
+}
+
+QString debugMcpStatusSummaryText(const QJsonObject& state)
+{
+    const QJsonObject sessionSummary = state.value(QStringLiteral("sessionSummary")).toObject();
+    const QString summaryText = sessionSummary.value(QStringLiteral("text")).toString().trimmed();
+    if (!summaryText.isEmpty()) {
+        return summaryText;
+    }
+
+    const QJsonObject session = state.value(QStringLiteral("session")).toObject();
+    const bool paused = session.value(QStringLiteral("paused")).toBool(false);
+    const QString reason = session.value(QStringLiteral("pauseReason")).toString().trimmed();
+    const QString frame = debugMcpFrameText(state);
+    const QString lastAction = session.value(QStringLiteral("lastAction")).toString().trimmed();
+    const QString tickCount = session.value(QStringLiteral("tickCount")).isDouble()
+                                  ? QString::number(session.value(QStringLiteral("tickCount")).toInt(0))
+                                  : QStringLiteral("0");
+    return QStringLiteral("%1  reason=%2  frame=%3  action=%4  ticks=%5")
+        .arg(paused ? QStringLiteral("paused") : QStringLiteral("running"))
+        .arg(reason.isEmpty() ? QStringLiteral("<none>") : reason)
+        .arg(frame)
+        .arg(lastAction.isEmpty() ? QStringLiteral("<none>") : lastAction)
+        .arg(tickCount);
+}
+
+QString debugMcpConditionValueText(const QJsonValue& value)
+{
+    if (value.isObject()) {
+        return QString::fromUtf8(QJsonDocument(value.toObject()).toJson(QJsonDocument::Compact));
+    }
+    if (value.isArray()) {
+        return QString::fromUtf8(QJsonDocument(value.toArray()).toJson(QJsonDocument::Compact));
+    }
+    if (value.isString()) {
+        return value.toString();
+    }
+    if (value.isBool()) {
+        return value.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    }
+    if (value.isDouble()) {
+        return QString::number(value.toDouble());
+    }
+    return QStringLiteral("<none>");
+}
+
+QString debugMcpBreakConditionSummary(const QJsonObject& condition)
+{
+    const QString kind = condition.value(QStringLiteral("kind")).toString(QStringLiteral("<unknown>"));
+    const QString label = condition.value(QStringLiteral("label")).toString().trimmed();
+    const QString suffix = label.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(label);
+    const bool enabled = condition.value(QStringLiteral("enabled")).toBool(true);
+    return QStringLiteral("#%1 %2%3  %4  value=%5")
+        .arg(condition.value(QStringLiteral("id")).toInt(-1))
+        .arg(kind)
+        .arg(suffix)
+        .arg(enabled ? QStringLiteral("on") : QStringLiteral("off"))
+        .arg(debugMcpConditionValueText(condition.value(QStringLiteral("value"))));
+}
+
+QString debugMcpBreakConditionsPreviewText(const QJsonArray& conditions, int limit = 3)
+{
+    if (conditions.isEmpty()) {
+        return QStringLiteral("<none>");
+    }
+
+    QStringList lines;
+    const int count = std::min(limit, static_cast<int>(conditions.size()));
+    for (int i = 0; i < count; ++i) {
+        lines << QStringLiteral("  - %1").arg(debugMcpBreakConditionSummary(conditions.at(i).toObject()));
+    }
+    if (conditions.size() > count) {
+        lines << QStringLiteral("  ... %1 more").arg(conditions.size() - count);
+    }
+    return lines.join(QStringLiteral("\n"));
+}
+
+QString debugMcpPropertyPreviewText(const QJsonArray& properties, int limit = 3)
+{
+    if (properties.isEmpty()) {
+        return QStringLiteral("<none>");
+    }
+
+    QStringList lines;
+    const int count = std::min(limit, static_cast<int>(properties.size()));
+    for (int i = 0; i < count; ++i) {
+        const QJsonObject property = properties.at(i).toObject();
+        const QString path = property.value(QStringLiteral("path")).toString(QStringLiteral("<unknown>"));
+        const QString type = property.value(QStringLiteral("type")).toString(QStringLiteral("<unknown>"));
+        const QString value = debugMcpConditionValueText(property.value(QStringLiteral("value")));
+        lines << QStringLiteral("  - %1 [%2] = %3").arg(path, type, value);
+    }
+    if (properties.size() > count) {
+        lines << QStringLiteral("  ... %1 more").arg(properties.size() - count);
+    }
+    return lines.join(QStringLiteral("\n"));
+}
+
+QString debugMcpHistoryPreviewText(const QJsonArray& history, int limit = 2)
+{
+    if (history.isEmpty()) {
+        return QStringLiteral("<none>");
+    }
+
+    QStringList lines;
+    const int count = std::min(limit, static_cast<int>(history.size()));
+    for (int i = 0; i < count; ++i) {
+        const QJsonObject entry = history.at(static_cast<int>(history.size()) - 1 - i).toObject();
+        const QString type = entry.value(QStringLiteral("type")).toString(QStringLiteral("<unknown>"));
+        const QString conditionId = entry.value(QStringLiteral("conditionId")).isDouble()
+                                        ? QString::number(entry.value(QStringLiteral("conditionId")).toInt())
+                                        : QStringLiteral("-");
+        const QString conditionKind = entry.value(QStringLiteral("conditionKind")).toString();
+        const QString label =
+            type == QStringLiteral("break-hit") ? QStringLiteral("hit")
+            : type == QStringLiteral("resume") ? QStringLiteral("resume")
+            : type == QStringLiteral("step") ? QStringLiteral("step")
+            : type == QStringLiteral("reset-session") ? QStringLiteral("reset")
+            : type == QStringLiteral("clear-history") ? QStringLiteral("clear")
+            : type == QStringLiteral("read-last-break-hit") ? QStringLiteral("read-hit")
+            : type == QStringLiteral("read-session-summary") ? QStringLiteral("read-summary")
+            : type == QStringLiteral("read-history") ? QStringLiteral("read-history")
+            : type == QStringLiteral("snapshot-read") ? QStringLiteral("snapshot")
+            : type == QStringLiteral("set-mock-snapshot") ? QStringLiteral("mock")
+            : type;
+        const bool isBreakHit = type == QStringLiteral("break-hit");
+        if (isBreakHit) {
+            lines << QStringLiteral("  %1. %2  [%3/%4]")
+                          .arg(i + 1)
+                          .arg(label)
+                          .arg(conditionId)
+                          .arg(conditionKind.isEmpty() ? QStringLiteral("-") : conditionKind);
+        } else {
+            lines << QStringLiteral("  %1. %2")
+                          .arg(i + 1)
+                          .arg(label);
+        }
+    }
+    if (history.size() > count) {
+        lines << QStringLiteral("  ... %1 more").arg(history.size() - count);
+    }
+    return lines.join(QStringLiteral("\n"));
 }
 }
 
@@ -928,6 +1136,24 @@ public:
         const auto projectSvc = ArtifactProjectService::instance();
         const auto playbackSvc = ArtifactPlaybackService::instance();
         const auto queueSvc = ArtifactRenderQueueService::instance();
+        const QJsonObject debugMcpState = readDebugMcpStateObject();
+        const QJsonObject debugMcpSession = debugMcpState.value(QStringLiteral("session")).toObject();
+        const QJsonArray debugMcpBreakConditions =
+            debugMcpState.value(QStringLiteral("breakConditions")).toArray();
+        const QJsonArray debugMcpProperties =
+            debugMcpState.value(QStringLiteral("properties")).toArray();
+        const QJsonArray debugMcpHistory =
+            debugMcpState.value(QStringLiteral("history")).toArray();
+        const QJsonObject debugMcpSessionSummary =
+            debugMcpState.value(QStringLiteral("sessionSummary")).toObject();
+        const QString debugMcpStatus = debugMcpStatusSummaryText(debugMcpState);
+        const QString debugMcpHit = debugMcpLastHitText(debugMcpState);
+        const QString debugMcpConditionPreview =
+            debugMcpBreakConditionsPreviewText(debugMcpBreakConditions);
+        const QString debugMcpPropertyPreview =
+            debugMcpPropertyPreviewText(debugMcpProperties);
+        const QString debugMcpHistoryPreview =
+            debugMcpHistoryPreviewText(debugMcpHistory);
 
         ArtifactCore::FrameDebugSnapshot controllerSnapshot;
         bool hasControllerSnapshot = false;
@@ -960,6 +1186,33 @@ public:
                           .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
             lines << QStringLiteral("currentFrame: %1")
                           .arg(controllerSnapshot.frame.framePosition());
+            lines << QString();
+            lines << QStringLiteral("Pseudo Breakpoints");
+            lines << QStringLiteral("mode: %1")
+                          .arg(debugMcpSessionSummary.value(QStringLiteral("mode")).toString().isEmpty()
+                                   ? (debugMcpSessionSummary.value(QStringLiteral("source")).toString() == QStringLiteral("bridge")
+                                          ? QStringLiteral("live")
+                                          : QStringLiteral("mock"))
+                                   : debugMcpSessionSummary.value(QStringLiteral("mode")).toString());
+            if (debugMcpSessionSummary.value(QStringLiteral("mode")).toString() == QStringLiteral("live") ||
+                debugMcpSessionSummary.value(QStringLiteral("source")).toString() == QStringLiteral("bridge")) {
+                lines << QStringLiteral("bridgePath: %1")
+                              .arg(debugMcpSessionSummary.value(QStringLiteral("bridgePath")).toString().isEmpty()
+                                       ? QStringLiteral("<none>")
+                                       : debugMcpSessionSummary.value(QStringLiteral("bridgePath")).toString());
+            }
+            lines << QStringLiteral("lastHit: %1").arg(debugMcpLastHitText(debugMcpState));
+            lines << QStringLiteral("stateFile: %1").arg(debugMcpStateFilePath());
+            lines << QStringLiteral("counts: breakConditions=%1  history=%2")
+                          .arg(debugMcpBreakConditions.size())
+                          .arg(debugMcpHistory.size());
+            lines << QStringLiteral("conditionsPreview:");
+            lines << debugMcpConditionPreview;
+            lines << QStringLiteral("propertySnapshot: %1").arg(debugMcpProperties.size());
+            lines << QStringLiteral("propertiesPreview:");
+            lines << debugMcpPropertyPreview;
+            lines << QStringLiteral("historyPreview:");
+            lines << debugMcpHistoryPreview;
             lines << QString();
             lines << QStringLiteral("Playback Quality");
             lines << QStringLiteral("previewQuality: %1").arg(previewQualityText());
@@ -1014,26 +1267,35 @@ public:
                                                : QStringLiteral("<no service>");
             const QString projectText = projectSvc ? projectSvc->projectName().toQString()
                                                    : QStringLiteral("<no service>");
-
-            stateSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  quality=%6  backend=%7  queueJobs=%8")
+            const QString recentActionText = debugMcpSessionSummary.value(QStringLiteral("recentAction")).toString().isEmpty()
+                                                 ? debugMcpSessionSummary.value(QStringLiteral("lastAction")).toString()
+                                                 : debugMcpSessionSummary.value(QStringLiteral("recentAction")).toString();
+            stateSummary_->setText(QStringLiteral("project=%1  composition=%2  layer=%3  frame=%4  playback=%5  status=%6  lastHit=%7  recent=%8  quality=%9  backend=%10  queueJobs=%11")
                                        .arg(projectText,
                                             compositionText,
                                             layerText)
                                        .arg(controllerSnapshot.frame.framePosition())
                                        .arg(playbackText)
+                                       .arg(debugMcpStatus)
+                                       .arg(debugMcpHit)
+                                       .arg(recentActionText)
                                        .arg(qualityText)
                                        .arg(backendText)
                                        .arg(queueText));
             if (!controllerSnapshot.densityLabel.isEmpty() ||
                 !controllerSnapshot.densityWarning.isEmpty()) {
-                stateSummary_->setToolTip(QStringLiteral("density=%1  warning=%2  next=%3")
+                stateSummary_->setToolTip(QStringLiteral("density=%1  warning=%2  next=%3  status=%4  lastHit=%5  act=%6")
                                              .arg(densitySummaryText(controllerSnapshot))
                                              .arg(densityWarningText(controllerSnapshot))
                                              .arg(controllerSnapshot.densityNextAction.isEmpty()
                                                       ? QStringLiteral("<none>")
-                                                      : controllerSnapshot.densityNextAction));
+                                                      : controllerSnapshot.densityNextAction)
+                                             .arg(debugMcpStatus, debugMcpHit, recentActionText));
             } else {
-                stateSummary_->setToolTip(QString());
+                stateSummary_->setToolTip(QStringLiteral("status=%1  lastHit=%2  act=%3")
+                                              .arg(debugMcpStatus,
+                                                   debugMcpHit,
+                                                   recentActionText));
             }
         }
 

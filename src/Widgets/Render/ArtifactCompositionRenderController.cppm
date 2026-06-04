@@ -82,6 +82,7 @@ import Frame.Position;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.TransformGizmo;
+import Artifact.Widgets.TextGizmo;
 import Artifact.Widgets.Gizmo3D;
 import Artifact.Widgets.PieMenu;
 import UI.View.Orientation.Navigator;
@@ -117,8 +118,14 @@ namespace Artifact {
 
 W_OBJECT_IMPL(CompositionRenderController)
 
+bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer);
+
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
+
+QVector<QPointF> maskSegmentPolyline(const MaskVertex &start,
+                                     const MaskVertex &end,
+                                     int subdivisions);
 
 constexpr size_t lineDebugKindCount()
 {
@@ -603,7 +610,7 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
                                 static_cast<float>(clippedSelected.top()),
                                 static_cast<float>(clippedSelected.width()),
                                 static_cast<float>(clippedSelected.height()),
-                                focusColor, 2.2f);
+                                focusColor);
       renderer->drawSolidRect(
           static_cast<float>(clippedSelected.left()),
           static_cast<float>(clippedSelected.top()),
@@ -642,8 +649,7 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
     if (axis == densityAxisDisplayName(dominantAxis)) {
       renderer->drawRectOutline(barX + labelW, y, meterW, barH,
                                 FloatColor{axisColor.r(), axisColor.g(),
-                                           axisColor.b(), 0.96f},
-                                1.1f);
+                                           axisColor.b(), 0.96f});
     }
   }
 }
@@ -1254,6 +1260,68 @@ bool hitTestMaskSegment(const ArtifactAbstractLayerPtr& layer,
   return false;
 }
 
+QPointF closestPointOnMaskSegment(const MaskVertex &start, const MaskVertex &end,
+                                  const QPointF &localPos) {
+  const QVector<QPointF> samples = maskSegmentPolyline(start, end, 18);
+  QPointF best = start.position;
+  double bestDistSq = std::numeric_limits<double>::max();
+  for (int i = 1; i < samples.size(); ++i) {
+    const QPointF a = samples[i - 1];
+    const QPointF b = samples[i];
+    const QPointF ab = b - a;
+    const double abLenSq = QPointF::dotProduct(ab, ab);
+    QPointF proj;
+    if (abLenSq <= std::numeric_limits<double>::epsilon()) {
+      proj = a;
+    } else {
+      const QPointF ap = localPos - a;
+      const double t =
+          std::clamp(QPointF::dotProduct(ap, ab) / abLenSq, 0.0, 1.0);
+      proj = a + ab * t;
+    }
+    const QPointF delta = localPos - proj;
+    const double distSq = QPointF::dotProduct(delta, delta);
+    if (distSq < bestDistSq) {
+      bestDistSq = distSq;
+      best = proj;
+    }
+  }
+  return best;
+}
+
+bool insertVertexOnMaskSegment(const ArtifactAbstractLayerPtr &layer,
+                               int maskIndex, int pathIndex, int segmentIndex,
+                               const QPointF &localPos) {
+  if (!layer || maskIndex < 0 || pathIndex < 0 || segmentIndex < 0) {
+    return false;
+  }
+
+  LayerMask mask = layer->mask(maskIndex);
+  MaskPath path = mask.maskPath(pathIndex);
+  const int vertexCount = path.vertexCount();
+  if (vertexCount < 2 || segmentIndex >= vertexCount) {
+    return false;
+  }
+
+  const MaskVertex startVertex = path.vertex(segmentIndex);
+  const MaskVertex endVertex = path.vertex((segmentIndex + 1) % vertexCount);
+  const QPointF insertPos =
+      closestPointOnMaskSegment(startVertex, endVertex, localPos);
+
+  MaskVertex newVertex;
+  newVertex.position = insertPos;
+  newVertex.inTangent = QPointF(0, 0);
+  newVertex.outTangent = QPointF(0, 0);
+  path.insertVertex(segmentIndex + 1, newVertex);
+  mask.setMaskPath(pathIndex, path);
+  layer->setMask(maskIndex, mask);
+  return true;
+}
+
+bool layerUsesTextGizmo(const ArtifactAbstractLayerPtr &layer) {
+  return layer && dynamic_cast<ArtifactTextLayer *>(layer.get()) != nullptr;
+}
+
 void setMaskVertexHandle(MaskVertex &vertex, MaskHandleType handleType,
                          const QPointF &handleDelta, bool breakTangents) {
   const QPointF mirroredDelta(-handleDelta.x(), -handleDelta.y());
@@ -1366,6 +1434,19 @@ bool layerNeedsFrameSyncForCompositionView(ArtifactAbstractLayer *layer) {
   return false;
 }
 } // namespace
+
+bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer) {
+  ArtifactAbstractLayerPtr current = layer;
+  int guard = 0;
+  while (current && guard < 64) {
+    if (!current->isVisible()) {
+      return false;
+    }
+    current = current->parentLayer();
+    ++guard;
+  }
+  return static_cast<bool>(layer);
+}
 
 QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
                                   const QImage &surface, int64_t frameNumber) {
@@ -1548,19 +1629,6 @@ bool isLayerSelected(const QStringList &selectedIds,
     }
   }
   return false;
-}
-
-bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer) {
-  ArtifactAbstractLayerPtr current = layer;
-  int guard = 0;
-  while (current && guard < 64) {
-    if (!current->isVisible()) {
-      return false;
-    }
-    current = current->parentLayer();
-    ++guard;
-  }
-  return static_cast<bool>(layer);
 }
 
 enum class MotionPathSampleKind { Keyframe, Current };
@@ -2462,12 +2530,14 @@ void drawLayerForCompositionView(
   if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
     const bool hasRasterizer = hasRasterizerEffectsOrMasks(layer);
     const bool hasBuffer = videoLayer->hasCurrentFrameBuffer();
+    const bool currentFrameReady =
+        videoLayer->isFrameCached(layer->currentFrame());
     const bool loaded = videoLayer->isLoaded();
     const bool active =
         layer->isActiveAt(FramePosition(static_cast<int>(layer->currentFrame())));
     const FramePosition ip = layer->inPoint();
     const FramePosition op = layer->outPoint();
-    if (!hasRasterizer && hasBuffer) {
+    if (!hasRasterizer && hasBuffer && currentFrameReady) {
       const ArtifactCore::ImageF32x4_RGBA &buffer =
           videoLayer->currentFrameBuffer();
       const float baseOpacity =
@@ -2475,11 +2545,13 @@ void drawLayerForCompositionView(
       if (videoDebugOut) {
         *videoDebugOut = QStringLiteral(
                              "[Video] branch=buffer loaded=%1 hasBuffer=%2 "
-                             "rasterizer=%3 active=%4 range=[%5,%6] curFrame=%7")
+                             "rasterizer=%3 active=%4 frameReady=%5 "
+                             "range=[%6,%7] curFrame=%8")
                              .arg(loaded)
                              .arg(hasBuffer)
                              .arg(hasRasterizer)
                              .arg(active)
+                             .arg(currentFrameReady)
                              .arg(ip.framePosition())
                              .arg(op.framePosition())
                              .arg(layer->currentFrame());
@@ -2506,7 +2578,8 @@ void drawLayerForCompositionView(
     } else {
       reason = QStringLiteral("notLoaded");
     }
-    if (frame.isNull() && videoLayer->hasCurrentFrameBuffer()) {
+    if (frame.isNull() && currentFrameReady &&
+        videoLayer->hasCurrentFrameBuffer()) {
       frame = videoLayer->currentFrameBuffer().toQImage();
       usedBufferFallback = !frame.isNull();
     }
@@ -2531,12 +2604,14 @@ void drawLayerForCompositionView(
       }
       *videoDebugOut = QStringLiteral(
                           "[Video] branch=decode loaded=%1 hasBuffer=%2 "
-                          "rasterizer=%3 active=%4 syncFallback=%5 "
-                          "bufferFallback=%6 reason=%7 range=[%8,%9] curFrame=%10")
+                          "rasterizer=%3 active=%4 frameReady=%5 "
+                          "syncFallback=%6 bufferFallback=%7 reason=%8 "
+                          "range=[%9,%10] curFrame=%11")
                           .arg(loaded)
                           .arg(hasBuffer)
                           .arg(hasRasterizer)
                           .arg(active)
+                          .arg(currentFrameReady)
                           .arg(usedSyncFallback)
                           .arg(usedBufferFallback)
                           .arg(reason)
@@ -2765,6 +2840,7 @@ public:
   std::unique_ptr<CompositionRenderer> compositionRenderer_;
   ArtifactPreviewCompositionPipeline previewPipeline_;
   std::unique_ptr<TransformGizmo> gizmo_;
+  std::unique_ptr<TextGizmo> textGizmo_;
   std::unique_ptr<Artifact3DGizmo> gizmo3D_;
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
   RenderPipeline renderPipeline_;
@@ -2808,6 +2884,7 @@ public:
   LayerID selectedLayerId_;
   bool isDraggingLayer_ = false;
   bool gizmoDragActive_ = false;
+  bool textGizmoDragActive_ = false;
   bool pendingMaskCreation_ = false;
   LayerID pendingMaskLayerId_;
   MaskPath pendingMaskPath_;
@@ -3212,6 +3289,16 @@ public:
     return true;
   }
 
+  void sync2DGizmosForLayer(const ArtifactAbstractLayerPtr &layer) {
+    const bool useTextGizmo = layerUsesTextGizmo(layer);
+    if (textGizmo_) {
+      textGizmo_->setLayer(useTextGizmo ? layer : nullptr);
+    }
+    if (gizmo_) {
+      gizmo_->setLayer(useTextGizmo ? nullptr : layer);
+    }
+  }
+
   void
   syncSelectedLayerOverlayState(const ArtifactCompositionPtr &composition) {
     ArtifactAbstractLayerPtr layer;
@@ -3219,9 +3306,7 @@ public:
       layer = composition->layerById(selectedLayerId_);
     }
 
-    if (gizmo_) {
-      gizmo_->setLayer(layer);
-    }
+    sync2DGizmosForLayer(layer);
 
     if (gizmo3D_ && layer && layer->is3D()) {
       syncGizmo3DFromLayer(layer);
@@ -3392,6 +3477,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
       FloatColor{QColor(28, 40, 56).redF(), QColor(28, 40, 56).greenF(),
                  QColor(28, 40, 56).blueF(), 1.0f};
   impl_->gizmo_ = std::make_unique<TransformGizmo>();
+  impl_->textGizmo_ = std::make_unique<TextGizmo>();
   impl_->gizmo3D_ = std::make_unique<Artifact3DGizmo>(this);
 
   // Connect to project service to track layer selection
@@ -3903,9 +3989,10 @@ void CompositionRenderController::setComposition(
       impl_->applyCompositionState(composition);
     }
     if (composition && !impl_->selectedLayerId_.isNil()) {
-      impl_->gizmo_->setLayer(composition->layerById(impl_->selectedLayerId_));
+      impl_->sync2DGizmosForLayer(
+          composition->layerById(impl_->selectedLayerId_));
     } else if (!composition) {
-      impl_->gizmo_->setLayer(nullptr);
+      impl_->sync2DGizmosForLayer(nullptr);
     }
     if (sameId) {
       // Pointer changed but same composition — re-bind changed signals
@@ -5331,10 +5418,27 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
       if (hitTestMaskSegment(selectedLayer, QPointF(cPos.x, cPos.y),
                              segmentThreshold, segmentMaskIndex,
                              segmentPathIndex, segmentIndex)) {
-        qDebug() << "[PenTool] Ignored new mask start near existing segment"
-                 << "mask:" << segmentMaskIndex
-                 << "path:" << segmentPathIndex
-                 << "segment:" << segmentIndex;
+        if (insertVertexOnMaskSegment(selectedLayer, segmentMaskIndex,
+                                      segmentPathIndex, segmentIndex,
+                                      localPos)) {
+          const int insertedVertexIndex = segmentIndex + 1;
+          impl_->markMaskEditDirty();
+          impl_->isDraggingVertex_ = true;
+          impl_->resetLayerMutationNotify();
+          impl_->draggingMaskIndex_ = segmentMaskIndex;
+          impl_->draggingPathIndex_ = segmentPathIndex;
+          impl_->draggingVertexIndex_ = insertedVertexIndex;
+          impl_->hoveredMaskIndex_ = segmentMaskIndex;
+          impl_->hoveredPathIndex_ = segmentPathIndex;
+          impl_->hoveredVertexIndex_ = insertedVertexIndex;
+          qDebug() << "[PenTool] Inserted mask vertex on segment"
+                   << "mask:" << segmentMaskIndex
+                   << "path:" << segmentPathIndex
+                   << "vertex:" << insertedVertexIndex;
+          ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+              comp->id().toString(), selectedLayer->id().toString(),
+              LayerChangedEvent::ChangeType::Modified});
+        }
         event->accept();
         return;
       }
@@ -5440,13 +5544,27 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   }
 
   // Gizmo hit test first (2D)
-  if (impl_->gizmo_ && activeTool != ToolType::Pen) {
-    impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
-    if (impl_->gizmo_->isDragging()) {
-      impl_->gizmoDragActive_ = true;
-      notifyViewportInteractionActivity();
-      impl_->gizmoDragRenderTimer_.restart();
-      return;
+  if (activeTool != ToolType::Pen) {
+    ArtifactAbstractLayerPtr gizmoLayer;
+    if (comp && !impl_->selectedLayerId_.isNil()) {
+      gizmoLayer = comp->layerById(impl_->selectedLayerId_);
+    }
+    if (impl_->textGizmo_ && layerUsesTextGizmo(gizmoLayer)) {
+      impl_->textGizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
+      if (impl_->textGizmo_->isDragging()) {
+        impl_->textGizmoDragActive_ = true;
+        notifyViewportInteractionActivity();
+        impl_->gizmoDragRenderTimer_.restart();
+        return;
+      }
+    } else if (impl_->gizmo_) {
+      impl_->gizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
+      if (impl_->gizmo_->isDragging()) {
+        impl_->gizmoDragActive_ = true;
+        notifyViewportInteractionActivity();
+        impl_->gizmoDragRenderTimer_.restart();
+        return;
+      }
     }
   }
 
@@ -5574,7 +5692,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
           }
         }
         setSelectedLayerId(primaryLayer ? primaryLayer->id() : LayerID::Nil());
-        impl_->gizmo_->setLayer(primaryLayer);
+        impl_->sync2DGizmosForLayer(primaryLayer);
         if (impl_->gizmo3D_ && primaryLayer) {
           impl_->syncGizmo3DFromLayer(primaryLayer);
         }
@@ -5641,7 +5759,7 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
               selection->clearSelection();
             }
             setSelectedLayerId(LayerID::Nil());
-            impl_->gizmo_->setLayer(nullptr);
+            impl_->sync2DGizmosForLayer(nullptr);
           }
           impl_->clearSelectionGestureState();
           impl_->isDraggingLayer_ = false;
@@ -5943,6 +6061,13 @@ void CompositionRenderController::handleMouseMove(
     }
   }
 
+  if (impl_->textGizmo_ && impl_->textGizmo_->isDragging()) {
+    impl_->textGizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
+    notifyViewportInteractionActivity();
+    markRenderDirty();
+    return;
+  }
+
   if (impl_->gizmo_) {
     impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
     if (impl_->gizmo_->isDragging()) {
@@ -6040,7 +6165,7 @@ void CompositionRenderController::handleMouseRelease() {
 
       const auto primaryLayer = selection->currentLayer();
       setSelectedLayerId(primaryLayer ? primaryLayer->id() : LayerID::Nil());
-      impl_->gizmo_->setLayer(primaryLayer);
+      impl_->sync2DGizmosForLayer(primaryLayer);
       if (impl_->gizmo3D_ && primaryLayer) {
         impl_->syncGizmo3DFromLayer(primaryLayer);
       }
@@ -6115,9 +6240,7 @@ void CompositionRenderController::handleMouseRelease() {
                 std::max(1, static_cast<int>(std::lround(normalizedRect.height()))));
           }
           setSelectedLayerId(createdLayer->id());
-          if (impl_->gizmo_) {
-            impl_->gizmo_->setLayer(createdLayer);
-          }
+          impl_->sync2DGizmosForLayer(createdLayer);
           if (impl_->gizmo3D_) {
             impl_->syncGizmo3DFromLayer(createdLayer);
           }
@@ -6150,6 +6273,17 @@ void CompositionRenderController::handleMouseRelease() {
     impl_->gizmo3D_->endDrag();
     impl_->invalidateOverlayComposite();
     if (wasDragging) {
+      finishViewportInteraction();
+    }
+    markRenderDirty();
+  }
+
+  if (impl_->textGizmo_) {
+    const bool wasTextDragging = impl_->textGizmoDragActive_;
+    impl_->textGizmoDragActive_ = false;
+    impl_->textGizmo_->handleMouseRelease();
+    impl_->invalidateOverlayComposite();
+    if (wasTextDragging) {
       finishViewportInteraction();
     }
     markRenderDirty();
@@ -6242,11 +6376,25 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
     return Qt::CrossCursor;
   }
 
-  if (!impl_->gizmo_ || !impl_->renderer_) {
+  if (!impl_->renderer_) {
     return Qt::ArrowCursor;
   }
+
+  auto comp = impl_->previewPipeline_.composition();
+  ArtifactAbstractLayerPtr selectedLayer;
+  if (comp && !impl_->selectedLayerId_.isNil()) {
+    selectedLayer = comp->layerById(impl_->selectedLayerId_);
+  }
+
   // viewportPos is in logical pixels; convert to physical for gizmo hit testing
   const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
+  if (impl_->textGizmo_ && layerUsesTextGizmo(selectedLayer)) {
+    return impl_->textGizmo_->cursorShapeForViewportPos(physPos,
+                                                        impl_->renderer_.get());
+  }
+  if (!impl_->gizmo_) {
+    return Qt::ArrowCursor;
+  }
   return impl_->gizmo_->cursorShapeForViewportPos(physPos,
                                                   impl_->renderer_.get());
 }
@@ -6549,10 +6697,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       1.0f, viewportW / static_cast<float>(effectivePreviewDownsample));
   const float previewRch = std::max(
       1.0f, viewportH / static_cast<float>(effectivePreviewDownsample));
-  // GPU blend intermediates are composition images. Keeping them in viewport
-  // space makes the color result correct but shifts/scales the final blit.
-  const float rcw = gpuBlendEnabled_ ? std::max(1.0f, cw) : previewRcw;
-  const float rch = gpuBlendEnabled_ ? std::max(1.0f, ch) : previewRch;
+  // GPU blend intermediates mirror the editor viewport. This keeps non-Normal
+  // blend modes consistent with the direct editor path when layers extend
+  // outside the composition rect.
+  const float rcw = gpuBlendEnabled_ ? std::max(1.0f, viewportW) : previewRcw;
+  const float rch = gpuBlendEnabled_ ? std::max(1.0f, viewportH) : previewRch;
 
   if (compositionRenderer_) {
     compositionRenderer_->SetCompositionSize(cw, ch);
@@ -6756,7 +6905,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       selectedLayerId_};
   const bool forceContinuousRedraw =
       viewportInteracting_ || isRubberBandSelecting_ || dropGhostVisible_ ||
-      (gizmo_ && gizmo_->isDragging());
+      (gizmo_ && gizmo_->isDragging()) ||
+      (textGizmo_ && textGizmo_->isDragging());
   if (!forceContinuousRedraw && currentKey == lastRenderKeyState_) {
     return;
   }
@@ -6971,9 +7121,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       // accum にシードする。これで accum/temp は Vulkan 互換の
       // linear storage image に保てる。
       renderer_->setViewportSize(rcw, rch);
-      renderer_->setCanvasSize(cw, ch); // Composition-space offscreen target.
-      renderer_->setZoom(1.0f);
-      renderer_->setPan(0.0f, 0.0f);
+      renderer_->setCanvasSize(cw, ch);
+      renderer_->setZoom(origZoom);
+      renderer_->setPan(origPanX, origPanY);
       renderer_->setViewportRect(rcw, rch);
 
       const FloatColor layerBgColor = comp->backgroundColor();
@@ -6984,7 +7134,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << "rtSize=" << QSize(static_cast<int>(rcw), static_cast<int>(rch))
             << "viewport="
             << QSize(static_cast<int>(origViewW), static_cast<int>(origViewH))
-            << "zoom=1 pan=(0,0)"
+            << "zoom=" << origZoom << "pan=(" << origPanX << "," << origPanY << ")"
             << "bg="
             << QColor::fromRgbF(layerBgColor.r(), layerBgColor.g(),
                                 layerBgColor.b(), layerBgColor.a())
@@ -6997,11 +7147,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->setClearColor(viewportClearColor_);
         renderer_->setOverrideRTV(nullptr);
 
-      // Keep offscreen drawing in composition space. View zoom/pan is applied
-      // only when the completed accum texture is blitted to the visible FB.
+      // Keep offscreen drawing in the same viewport transform as the editor.
       renderer_->setCanvasSize(cw, ch);
-      renderer_->setZoom(1.0f);
-      renderer_->setPan(0.0f, 0.0f);
+      renderer_->setZoom(origZoom);
+      renderer_->setPan(origPanX, origPanY);
 
       // Seed accum with the composition background through the same
       // layerRTV -> LayerFloat -> blend path used by visible layers. This keeps
@@ -7137,10 +7286,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             // We draw the current composition result (accumSRV) into our layer
             // buffer. This makes the 'background' available as a source for
             // this layer's effects.
-            const QSize compSize = comp->settings().compositionSize();
-            const float cw = static_cast<float>(compSize.width());
-            const float ch = static_cast<float>(compSize.height());
-            renderer_->drawSprite(0.0f, 0.0f, cw, ch, accumSRV, 1.0f);
+            const float savedZoom = renderer_->getZoom();
+            float savedPanX = 0.0f;
+            float savedPanY = 0.0f;
+            renderer_->getPan(savedPanX, savedPanY);
+            renderer_->setCanvasSize(rcw, rch);
+            renderer_->setZoom(1.0f);
+            renderer_->setPan(0.0f, 0.0f);
+            renderer_->drawSprite(0.0f, 0.0f, rcw, rch, accumSRV, 1.0f);
+            renderer_->setCanvasSize(cw, ch);
+            renderer_->setZoom(savedZoom);
+            renderer_->setPan(savedPanX, savedPanY);
           } else {
             renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
             renderer_->clear();
@@ -7251,13 +7407,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                       backgroundMode, checkerboardTileSize_,
                                       cachedMayaGradientSprite_);
 
-      // -- 4: オフスクリーン RT を composition-space に戻して描画。
-      // ここを viewport 全体へ伸ばすと、単一の平面レイヤーを非 Normal blend に
-      // しただけで編集ビュー全面がその色で塗り潰される。
-      renderer_->setCanvasSize(cw, ch);
-      renderer_->setZoom(origZoom);
-      renderer_->setPan(origPanX, origPanY);
-      renderer_->drawSprite(0.0f, 0.0f, cw, ch, renderPipeline_.accumSRV(),
+      // -- 4: オフスクリーン RT を viewport-space のまま描画。
+      renderer_->setCanvasSize(origViewW, origViewH);
+      renderer_->setZoom(1.0f);
+      renderer_->setPan(0.0f, 0.0f);
+      renderer_->drawSprite(0.0f, 0.0f, rcw, rch, renderPipeline_.accumSRV(),
                             1.0f);
 
       // コンポジションのキャンバス座標系に戻す
@@ -7565,14 +7719,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         if (!selectedLayer->is3D()) {
           ArtifactCore::ProfileScope _profG2D(
               "Gizmo2D", ArtifactCore::ProfileCategory::Render);
-          {
-            ArtifactCore::ProfileScope _profG2DSetLayer(
-                "Gizmo2DSetLayer", ArtifactCore::ProfileCategory::Render);
-            gizmo_->setLayer(selectedLayer);
-          }
-          {
+          sync2DGizmosForLayer(selectedLayer);
+          if (layerUsesTextGizmo(selectedLayer) && textGizmo_) {
             ArtifactCore::ProfileScope _profG2DDrawCall(
-                  "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
+                "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
+            textGizmo_->draw(renderer_.get());
+          } else if (gizmo_) {
+            ArtifactCore::ProfileScope _profG2DDrawCall(
+                "Gizmo2DDrawCall", ArtifactCore::ProfileCategory::Render);
             const bool showDuringDrag =
                 ArtifactCore::ArtifactAppSettings::instance()
                     ? ArtifactCore::ArtifactAppSettings::instance()
@@ -7587,7 +7741,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             }
           }
         } else {
-          gizmo_->setLayer(nullptr);
+          sync2DGizmosForLayer(nullptr);
         }
 
         if (gizmo3D_ && selectedLayer->is3D()) {

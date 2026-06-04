@@ -288,7 +288,7 @@ void ArtifactTimeMenu::Impl::handleProjectClosed()
 ArtifactTimeMenu::ArtifactTimeMenu(QWidget* parent /*= nullptr*/)
   :QMenu(parent),impl_(new Impl(this))
 {
-  setTitle("Time(&T)");
+  setTitle("時間(&T)");
   setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_timer.svg")));
   impl_->refreshState();
 }

@@ -77,7 +77,9 @@ export namespace Artifact {
       const QString stamp = QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd_HHmmss_zzz"));
       QFileInfo fi(projectFilePath_);
       const QString base = fi.completeBaseName().isEmpty() ? QStringLiteral("project") : fi.completeBaseName();
-      return QStringLiteral("%1.autosave.%2.json").arg(base, stamp);
+      return QStringLiteral("%1.autosave.%2.json")
+          .arg(base)
+          .arg(stamp);
     }
 
     void pruneOldRecoveryPoints() const {

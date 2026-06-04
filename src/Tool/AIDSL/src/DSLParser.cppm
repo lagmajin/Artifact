@@ -647,9 +647,9 @@ std::string AIDSLInterpreter::execute(const DSLScript& script) {
 std::string AIDSLInterpreter::executeQuery(const QueryNode& query) {
     if (const auto* activeQuery = dynamic_cast<const QueryActiveComp*>(&query)) {
         (void)activeQuery;
-        std::string active = activeCompId_.isNil()
+        std::string active = activeCompId_.empty()
                                  ? std::string()
-                                 : activeCompId_.toString().toStdString();
+                                 : activeCompId_;
         std::ostringstream out;
         out << "{\"status\":\"ok\",\"activeCompId\":" << jsonString(active)
             << ",\"availableCompCount\":" << compNameToId_.size()

@@ -60,6 +60,11 @@ module;
 #include <qthreadpool.h>
 
 #include <QByteArray>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
+#include <QSaveFile>
+#include <QVariant>
 #include <opencv2/opencv.hpp>
 #include <string>
 module Artifact.AppMain;
@@ -131,6 +136,7 @@ import Widgets.ToolBar;
 import Widgets.Inspector;
 import Widgets.AssetBrowser;
 import Artifact.Widgets.ArtifactPropertyWidget;
+import Property;
 import Artifact.MainWindow;
 import Artifact.Project.Manager;
 import Artifact.Project.AutoSaveManager;
@@ -393,6 +399,704 @@ QByteArray currentProjectSnapshotJson() {
   const QJsonDocument doc(project->toJson());
   return doc.toJson(QJsonDocument::Indented);
 }
+
+QString debugBridgeFilePath() {
+  const QString tempRoot =
+      QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+  QDir rootDir(tempRoot);
+  if (!rootDir.exists(QStringLiteral("ArtifactStudio"))) {
+    rootDir.mkpath(QStringLiteral("ArtifactStudio"));
+  }
+  return rootDir.filePath(QStringLiteral("ArtifactStudio/debug-bridge.json"));
+}
+
+QJsonArray trimJsonArray(const QJsonArray& array, const int maxEntries) {
+  if (array.size() <= maxEntries) {
+    return array;
+  }
+  QJsonArray trimmed;
+  const int start = std::max(0, static_cast<int>(array.size()) - maxEntries);
+  for (int i = start; i < array.size(); ++i) {
+    trimmed.append(array.at(i));
+  }
+  return trimmed;
+}
+
+QJsonObject buildDebugBridgeSnapshotJson() {
+  QJsonObject root;
+  root.insert(QStringLiteral("snapshotVersion"), 1);
+  root.insert(QStringLiteral("timestamp"),
+              QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+  QJsonObject appJson;
+  appJson.insert(QStringLiteral("name"), QStringLiteral("Artifact"));
+  appJson.insert(QStringLiteral("pid"),
+                 static_cast<qint64>(QCoreApplication::applicationPid()));
+  root.insert(QStringLiteral("app"), appJson);
+
+  const QVariantMap workspace =
+      Artifact::WorkspaceAutomation::instance()
+          .invokeMethod(QStringLiteral("workspaceSnapshot"), {})
+          .toMap();
+  const QJsonObject workspaceJson = QJsonDocument::fromVariant(workspace).object();
+  root.insert(QStringLiteral("workspace"), workspaceJson);
+  root.insert(QStringLiteral("project"),
+              workspaceJson.value(QStringLiteral("project")).toObject());
+  root.insert(QStringLiteral("composition"),
+              workspaceJson.value(QStringLiteral("currentComposition")).toObject());
+  root.insert(QStringLiteral("selection"),
+              workspaceJson.value(QStringLiteral("selection")).toObject());
+  root.insert(QStringLiteral("renderQueue"),
+              workspaceJson.value(QStringLiteral("renderQueue")).toObject());
+
+  QJsonObject playbackJson;
+  if (auto* playback = Artifact::ArtifactPlaybackService::instance()) {
+    playbackJson.insert(QStringLiteral("available"), true);
+    playbackJson.insert(QStringLiteral("state"), [playback]() {
+      switch (playback->state()) {
+      case PlaybackState::Playing:
+        return QStringLiteral("playing");
+      case PlaybackState::Paused:
+        return QStringLiteral("paused");
+      case PlaybackState::Stopped:
+      default:
+        return QStringLiteral("stopped");
+      }
+    }());
+    playbackJson.insert(QStringLiteral("frame"),
+                        static_cast<qint64>(playback->currentFrame().framePosition()));
+    playbackJson.insert(QStringLiteral("frameRate"), playback->frameRate().framerate());
+    playbackJson.insert(QStringLiteral("speed"), playback->playbackSpeed());
+    playbackJson.insert(QStringLiteral("looping"), playback->isLooping());
+    QJsonObject rangeJson;
+    rangeJson.insert(QStringLiteral("start"),
+                     static_cast<qint64>(playback->frameRange().start()));
+    rangeJson.insert(QStringLiteral("end"),
+                     static_cast<qint64>(playback->frameRange().end()));
+    playbackJson.insert(QStringLiteral("range"), rangeJson);
+    playbackJson.insert(QStringLiteral("inPoint"),
+                        playback->inPoint()
+                            ? QJsonValue(static_cast<qint64>(playback->inPoint()->framePosition()))
+                            : QJsonValue(QJsonValue::Null));
+    playbackJson.insert(QStringLiteral("outPoint"),
+                        playback->outPoint()
+                            ? QJsonValue(static_cast<qint64>(playback->outPoint()->framePosition()))
+                            : QJsonValue(QJsonValue::Null));
+  } else {
+    playbackJson.insert(QStringLiteral("available"), false);
+  }
+  root.insert(QStringLiteral("playback"), playbackJson);
+
+  QJsonObject diagnosticsJson;
+  if (auto* projectService = Artifact::ArtifactProjectService::instance()) {
+    diagnosticsJson.insert(QStringLiteral("healthState"),
+                           projectService->currentProjectHealthStateToken());
+    diagnosticsJson.insert(QStringLiteral("summary"),
+                           projectService->currentProjectHealthSummaryText());
+  } else {
+    diagnosticsJson.insert(QStringLiteral("healthState"), QStringLiteral("unknown"));
+    diagnosticsJson.insert(QStringLiteral("summary"),
+                           QStringLiteral("Project service unavailable."));
+  }
+  root.insert(QStringLiteral("diagnostics"), diagnosticsJson);
+
+  QJsonObject traceJson = ArtifactCore::toJson(ArtifactCore::TraceRecorder::instance().snapshot());
+  traceJson.insert(QStringLiteral("events"),
+                   trimJsonArray(traceJson.value(QStringLiteral("events")).toArray(), 40));
+  traceJson.insert(QStringLiteral("frames"),
+                   trimJsonArray(traceJson.value(QStringLiteral("frames")).toArray(), 10));
+  traceJson.insert(QStringLiteral("scopes"),
+                   trimJsonArray(traceJson.value(QStringLiteral("scopes")).toArray(), 40));
+  traceJson.insert(QStringLiteral("locks"),
+                   trimJsonArray(traceJson.value(QStringLiteral("locks")).toArray(), 40));
+  traceJson.insert(QStringLiteral("crashes"),
+                   trimJsonArray(traceJson.value(QStringLiteral("crashes")).toArray(), 8));
+  root.insert(QStringLiteral("trace"), traceJson);
+  root.insert(QStringLiteral("traceText"),
+              QString::fromUtf8(QJsonDocument(traceJson).toJson(QJsonDocument::Compact)));
+
+  QJsonArray propertiesJson;
+  const auto properties = ArtifactCore::PropertyRegistryReadOnlyAdapter::queryAllProperties();
+  for (const auto& property : properties) {
+    if (!property.isValid) {
+      continue;
+    }
+    QJsonObject propertyJson;
+    propertyJson.insert(QStringLiteral("path"),
+                        ArtifactCore::propertyPathJoin(property.ownerPath,
+                                                       property.propertyName));
+    propertyJson.insert(QStringLiteral("ownerPath"), property.ownerPath);
+    propertyJson.insert(QStringLiteral("propertyName"), property.propertyName);
+    propertyJson.insert(QStringLiteral("type"), property.propertyType);
+    propertyJson.insert(QStringLiteral("value"),
+                        QJsonValue::fromVariant(property.currentValue));
+    propertyJson.insert(QStringLiteral("readOnly"), property.isReadOnly);
+    propertiesJson.append(propertyJson);
+  }
+  root.insert(QStringLiteral("properties"), propertiesJson);
+  return root;
+}
+
+QString debugMcpStateFilePath() {
+  const QString envPath = qEnvironmentVariable("ARTIFACT_DEBUG_MCP_STATE_FILE");
+  if (!envPath.trimmed().isEmpty()) {
+    return envPath;
+  }
+
+  const QString tempRoot =
+      QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+  QDir rootDir(tempRoot);
+  if (!rootDir.exists(QStringLiteral("ArtifactStudio"))) {
+    rootDir.mkpath(QStringLiteral("ArtifactStudio"));
+  }
+  return rootDir.filePath(QStringLiteral("ArtifactStudio/debug-mcp-state.json"));
+}
+
+QJsonObject debugMcpDefaultStateJson() {
+  QJsonObject root;
+  root.insert(QStringLiteral("version"), 1);
+
+  QJsonObject session;
+  session.insert(QStringLiteral("paused"), false);
+  session.insert(QStringLiteral("tickCount"), 0);
+  session.insert(QStringLiteral("lastAction"), QStringLiteral("idle"));
+  session.insert(QStringLiteral("pauseReason"), QJsonValue::Null);
+  session.insert(QStringLiteral("wasPlayingBeforePause"), false);
+  session.insert(QStringLiteral("pausedAtFrame"), QJsonValue::Null);
+  root.insert(QStringLiteral("session"), session);
+
+  root.insert(QStringLiteral("nextConditionId"), 1);
+  root.insert(QStringLiteral("breakConditions"), QJsonArray{});
+  root.insert(QStringLiteral("lastBreakHit"), QJsonValue::Null);
+  root.insert(QStringLiteral("history"), QJsonArray{});
+
+  QJsonObject mockSnapshot;
+  mockSnapshot.insert(QStringLiteral("snapshotVersion"), 1);
+  mockSnapshot.insert(QStringLiteral("timestamp"),
+                      QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+  root.insert(QStringLiteral("mockSnapshot"), mockSnapshot);
+  return root;
+}
+
+QJsonObject debugMcpNormalizeStateJson(QJsonObject state) {
+  const QJsonObject defaults = debugMcpDefaultStateJson();
+
+  if (!state.contains(QStringLiteral("version"))) {
+    state.insert(QStringLiteral("version"), defaults.value(QStringLiteral("version")));
+  }
+
+  QJsonObject session = state.value(QStringLiteral("session")).toObject();
+  const QJsonObject defaultSession = defaults.value(QStringLiteral("session")).toObject();
+  if (!session.contains(QStringLiteral("paused"))) {
+    session.insert(QStringLiteral("paused"), defaultSession.value(QStringLiteral("paused")));
+  }
+  if (!session.contains(QStringLiteral("tickCount"))) {
+    session.insert(QStringLiteral("tickCount"), defaultSession.value(QStringLiteral("tickCount")));
+  }
+  if (!session.contains(QStringLiteral("lastAction"))) {
+    session.insert(QStringLiteral("lastAction"),
+                   defaultSession.value(QStringLiteral("lastAction")));
+  }
+  if (!session.contains(QStringLiteral("pauseReason"))) {
+    session.insert(QStringLiteral("pauseReason"),
+                   defaultSession.value(QStringLiteral("pauseReason")));
+  }
+  if (!session.contains(QStringLiteral("wasPlayingBeforePause"))) {
+    session.insert(QStringLiteral("wasPlayingBeforePause"),
+                   defaultSession.value(QStringLiteral("wasPlayingBeforePause")));
+  }
+  if (!session.contains(QStringLiteral("pausedAtFrame"))) {
+    session.insert(QStringLiteral("pausedAtFrame"),
+                   defaultSession.value(QStringLiteral("pausedAtFrame")));
+  }
+  state.insert(QStringLiteral("session"), session);
+
+  if (!state.value(QStringLiteral("breakConditions")).isArray()) {
+    state.insert(QStringLiteral("breakConditions"), defaults.value(QStringLiteral("breakConditions")));
+  }
+  if (!state.value(QStringLiteral("history")).isArray()) {
+    state.insert(QStringLiteral("history"), defaults.value(QStringLiteral("history")));
+  }
+  if (!state.contains(QStringLiteral("nextConditionId"))) {
+    state.insert(QStringLiteral("nextConditionId"), defaults.value(QStringLiteral("nextConditionId")));
+  }
+  if (!state.contains(QStringLiteral("lastBreakHit"))) {
+    state.insert(QStringLiteral("lastBreakHit"), defaults.value(QStringLiteral("lastBreakHit")));
+  }
+  if (!state.value(QStringLiteral("mockSnapshot")).isObject()) {
+    state.insert(QStringLiteral("mockSnapshot"),
+                 defaults.value(QStringLiteral("mockSnapshot")));
+  }
+  return state;
+}
+
+QJsonObject debugMcpReadStateJson() {
+  QFile file(debugMcpStateFilePath());
+  if (!file.open(QIODevice::ReadOnly)) {
+    return debugMcpDefaultStateJson();
+  }
+
+  const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+  if (!doc.isObject()) {
+    return debugMcpDefaultStateJson();
+  }
+  return debugMcpNormalizeStateJson(doc.object());
+}
+
+bool debugMcpWriteStateJson(const QJsonObject& state) {
+  const QString filePath = debugMcpStateFilePath();
+  QDir dirInfo(QFileInfo(filePath).absolutePath());
+  if (!dirInfo.exists()) {
+    dirInfo.mkpath(QStringLiteral("."));
+  }
+
+  QSaveFile file(filePath);
+  if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+    qWarning() << "[DebugMCP] failed to open state file:" << filePath;
+    return false;
+  }
+
+  const QByteArray payload = QJsonDocument(debugMcpNormalizeStateJson(state))
+                                 .toJson(QJsonDocument::Indented);
+  if (file.write(payload) != payload.size()) {
+    qWarning() << "[DebugMCP] failed to write state file:" << filePath;
+    file.cancelWriting();
+    return false;
+  }
+  if (!file.commit()) {
+    qWarning() << "[DebugMCP] failed to commit state file:" << filePath;
+    return false;
+  }
+  return true;
+}
+
+QJsonArray debugMcpSelectionArray(const QJsonObject& snapshot, const QString& key) {
+  const QJsonObject selection = snapshot.value(QStringLiteral("selection")).toObject();
+  return selection.value(key).toArray();
+}
+
+QString debugMcpJoinedArray(const QJsonArray& array) {
+  QStringList parts;
+  parts.reserve(array.size());
+  for (const QJsonValue& value : array) {
+    parts.push_back(value.toString());
+  }
+  return parts.join(QStringLiteral(","));
+}
+
+QString debugMcpSnapshotTraceText(const QJsonObject& snapshot) {
+  const QJsonValue traceTextValue = snapshot.value(QStringLiteral("traceText"));
+  if (traceTextValue.isString() && !traceTextValue.toString().trimmed().isEmpty()) {
+    return traceTextValue.toString();
+  }
+
+  const QJsonValue traceValue = snapshot.value(QStringLiteral("trace"));
+  if (traceValue.isString() && !traceValue.toString().trimmed().isEmpty()) {
+    return traceValue.toString();
+  }
+  if (traceValue.isObject()) {
+    return QString::fromUtf8(
+        QJsonDocument(traceValue.toObject()).toJson(QJsonDocument::Compact));
+  }
+  if (traceValue.isArray()) {
+    return QString::fromUtf8(
+        QJsonDocument(traceValue.toArray()).toJson(QJsonDocument::Compact));
+  }
+  return QString();
+}
+
+QString debugMcpSnapshotPropertiesText(const QJsonObject& snapshot) {
+  const QJsonValue propertiesValue = snapshot.value(QStringLiteral("properties"));
+  if (!propertiesValue.isArray()) {
+    return QString();
+  }
+
+  QStringList parts;
+  const QJsonArray properties = propertiesValue.toArray();
+  parts.reserve(properties.size());
+  for (const QJsonValue& propertyValue : properties) {
+    const QJsonObject property = propertyValue.toObject();
+    const QString path = property.value(QStringLiteral("path")).toString();
+    const QJsonValue serializedValue =
+        QJsonValue::fromVariant(property.value(QStringLiteral("value")).toVariant());
+    QString value;
+    if (serializedValue.isObject()) {
+      value = QString::fromUtf8(
+          QJsonDocument(serializedValue.toObject()).toJson(QJsonDocument::Compact));
+    } else if (serializedValue.isArray()) {
+      value = QString::fromUtf8(
+          QJsonDocument(serializedValue.toArray()).toJson(QJsonDocument::Compact));
+    } else if (serializedValue.isNull() || serializedValue.isUndefined()) {
+      value = QStringLiteral("null");
+    } else {
+      value = serializedValue.toVariant().toString();
+    }
+    parts.push_back(QStringLiteral("%1=%2").arg(path, value));
+  }
+  return parts.join(QStringLiteral("\n"));
+}
+
+QString debugMcpSnapshotSignature(const QJsonObject& snapshot) {
+  const QJsonArray layerIds = debugMcpSelectionArray(snapshot, QStringLiteral("layerIds"));
+  const QJsonArray layerNames = debugMcpSelectionArray(snapshot, QStringLiteral("layerNames"));
+  return QStringLiteral("frame=%1|selectionIds=%2|selectionNames=%3|health=%4|trace=%5|properties=%6")
+      .arg(snapshot.value(QStringLiteral("playback"))
+               .toObject()
+               .value(QStringLiteral("frame"))
+               .toVariant()
+               .toLongLong())
+      .arg(debugMcpJoinedArray(layerIds))
+      .arg(debugMcpJoinedArray(layerNames))
+      .arg(snapshot.value(QStringLiteral("diagnostics"))
+               .toObject()
+               .value(QStringLiteral("healthState"))
+               .toString())
+      .arg(debugMcpSnapshotTraceText(snapshot))
+      .arg(debugMcpSnapshotPropertiesText(snapshot));
+}
+
+QString debugMcpConditionSummary(const QJsonObject& condition) {
+  const QString label = condition.value(QStringLiteral("label")).toString().trimmed();
+  const QString suffix = label.isEmpty() ? QString() : QStringLiteral(" (%1)").arg(label);
+  return QStringLiteral("#%1 %2%3")
+      .arg(condition.value(QStringLiteral("id")).toInt())
+      .arg(condition.value(QStringLiteral("kind")).toString())
+      .arg(suffix);
+}
+
+QString debugMcpSnapshotSelectionKey(const QJsonObject& snapshot) {
+  const QJsonArray layerIds = debugMcpSelectionArray(snapshot, QStringLiteral("layerIds"));
+  const QJsonArray layerNames = debugMcpSelectionArray(snapshot, QStringLiteral("layerNames"));
+  return QStringLiteral("%1|%2")
+      .arg(debugMcpJoinedArray(layerIds))
+      .arg(debugMcpJoinedArray(layerNames));
+}
+
+QString debugMcpSnapshotHealthState(const QJsonObject& snapshot) {
+  return snapshot.value(QStringLiteral("diagnostics"))
+      .toObject()
+      .value(QStringLiteral("healthState"))
+      .toString();
+}
+
+qint64 debugMcpSnapshotFrame(const QJsonObject& snapshot) {
+  return snapshot.value(QStringLiteral("playback"))
+      .toObject()
+      .value(QStringLiteral("frame"))
+      .toVariant()
+      .toLongLong();
+}
+
+bool debugMcpMatchesCondition(const QJsonObject& condition, const QJsonObject& snapshot) {
+  if (!condition.value(QStringLiteral("enabled")).toBool(true)) {
+    return false;
+  }
+
+  const QString kind = condition.value(QStringLiteral("kind")).toString();
+  const QJsonValue rawValue = condition.value(QStringLiteral("value"));
+
+  if (kind == QStringLiteral("frame_equals")) {
+    return debugMcpSnapshotFrame(snapshot) ==
+           rawValue.toVariant().toLongLong();
+  }
+
+  if (kind == QStringLiteral("frame_range")) {
+    const QJsonObject value = rawValue.toObject();
+    const qint64 frame = debugMcpSnapshotFrame(snapshot);
+    const qint64 minFrame = value.value(QStringLiteral("min")).toVariant().toLongLong();
+    const qint64 maxFrame = value.value(QStringLiteral("max")).toVariant().toLongLong();
+    const bool lowerOk = !value.contains(QStringLiteral("min")) || frame >= minFrame;
+    const bool upperOk = !value.contains(QStringLiteral("max")) || frame <= maxFrame;
+    return lowerOk && upperOk;
+  }
+
+  if (kind == QStringLiteral("selection_contains")) {
+    const QString selectionKey = debugMcpSnapshotSelectionKey(snapshot);
+    if (rawValue.isArray()) {
+      for (const QJsonValue& entry : rawValue.toArray()) {
+        const QString needle = entry.toString();
+        if (!needle.isEmpty() &&
+            (selectionKey.contains(needle, Qt::CaseInsensitive) ||
+             debugMcpJoinedArray(debugMcpSelectionArray(snapshot, QStringLiteral("layerIds")))
+                 .contains(needle, Qt::CaseInsensitive) ||
+             debugMcpJoinedArray(debugMcpSelectionArray(snapshot, QStringLiteral("layerNames")))
+                 .contains(needle, Qt::CaseInsensitive))) {
+          return true;
+        }
+      }
+      return false;
+    }
+    const QString needle = rawValue.toString();
+    return !needle.isEmpty() && selectionKey.contains(needle, Qt::CaseInsensitive);
+  }
+
+  if (kind == QStringLiteral("health_is")) {
+    return debugMcpSnapshotHealthState(snapshot).compare(
+               rawValue.toString(), Qt::CaseInsensitive) == 0;
+  }
+
+  if (kind == QStringLiteral("trace_contains")) {
+    const QString needle = rawValue.toString().trimmed();
+    return !needle.isEmpty() &&
+           debugMcpSnapshotTraceText(snapshot).contains(needle, Qt::CaseInsensitive);
+  }
+
+  if (kind == QStringLiteral("property_equals")) {
+    const QJsonObject value = rawValue.toObject();
+    const QString path = value.value(QStringLiteral("path")).toString(
+        condition.value(QStringLiteral("path")).toString());
+    if (path.isEmpty()) {
+      return false;
+    }
+
+    const QJsonValue propertiesValue = snapshot.value(QStringLiteral("properties"));
+    if (!propertiesValue.isArray()) {
+      return false;
+    }
+
+    const QJsonArray properties = propertiesValue.toArray();
+    for (const QJsonValue& entryValue : properties) {
+      const QJsonObject entry = entryValue.toObject();
+      if (entry.value(QStringLiteral("path")).toString() != path) {
+        continue;
+      }
+      const QJsonValue entrySerialized =
+          QJsonValue::fromVariant(entry.value(QStringLiteral("value")).toVariant());
+      const QJsonValue expectedSerialized =
+          QJsonValue::fromVariant(value.value(QStringLiteral("value")).toVariant());
+      if (entrySerialized.isObject() && expectedSerialized.isObject()) {
+        return entrySerialized.toObject() == expectedSerialized.toObject();
+      }
+      if (entrySerialized.isArray() && expectedSerialized.isArray()) {
+        return entrySerialized.toArray() == expectedSerialized.toArray();
+      }
+      return entrySerialized.toVariant() == expectedSerialized.toVariant();
+    }
+    return false;
+  }
+
+  return false;
+}
+
+bool debugMcpConditionAlreadyHit(const QJsonObject& state, int conditionId, const QString& signature) {
+  const QJsonObject lastBreakHit = state.value(QStringLiteral("lastBreakHit")).toObject();
+  return lastBreakHit.value(QStringLiteral("conditionId")).toInt(-1) == conditionId &&
+         lastBreakHit.value(QStringLiteral("signature")).toString() == signature;
+}
+
+void debugMcpAppendHistoryEntry(QJsonObject& state, QJsonObject entry) {
+  QJsonArray history = state.value(QStringLiteral("history")).toArray();
+  entry.insert(QStringLiteral("timestamp"),
+               QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+  history.append(entry);
+  if (history.size() > 100) {
+    history = trimJsonArray(history, 100);
+  }
+  state.insert(QStringLiteral("history"), history);
+}
+
+bool debugMcpRecordBreakHit(QJsonObject& state, const QJsonObject& snapshot,
+                            const QJsonObject& condition) {
+  const int conditionId = condition.value(QStringLiteral("id")).toInt(-1);
+  if (conditionId < 0) {
+    return false;
+  }
+
+  const QString signature = debugMcpSnapshotSignature(snapshot);
+  if (debugMcpConditionAlreadyHit(state, conditionId, signature)) {
+    return false;
+  }
+
+  QJsonObject session = state.value(QStringLiteral("session")).toObject();
+  const QString playbackState = snapshot.value(QStringLiteral("playback"))
+      .toObject()
+      .value(QStringLiteral("state"))
+      .toString()
+      .toLower();
+  const bool wasPlaying = playbackState == QStringLiteral("playing");
+  session.insert(QStringLiteral("paused"), true);
+  session.insert(QStringLiteral("lastAction"), QStringLiteral("break-hit"));
+  session.insert(QStringLiteral("pauseReason"), QStringLiteral("breakpoint"));
+  session.insert(QStringLiteral("wasPlayingBeforePause"), wasPlaying);
+  session.insert(QStringLiteral("pausedAtFrame"), debugMcpSnapshotFrame(snapshot));
+  state.insert(QStringLiteral("session"), session);
+
+  QJsonObject lastBreakHit;
+  lastBreakHit.insert(QStringLiteral("conditionId"), conditionId);
+  lastBreakHit.insert(QStringLiteral("condition"), condition);
+  lastBreakHit.insert(QStringLiteral("reason"),
+                      QStringLiteral("Matched %1").arg(debugMcpConditionSummary(condition)));
+  lastBreakHit.insert(QStringLiteral("matchedAt"),
+                      QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs));
+  lastBreakHit.insert(QStringLiteral("signature"), signature);
+  lastBreakHit.insert(QStringLiteral("snapshot"), snapshot);
+  state.insert(QStringLiteral("lastBreakHit"), lastBreakHit);
+
+  QJsonObject historyEntry;
+  historyEntry.insert(QStringLiteral("type"), QStringLiteral("break-hit"));
+  historyEntry.insert(QStringLiteral("conditionId"), conditionId);
+  historyEntry.insert(QStringLiteral("conditionKind"),
+                      condition.value(QStringLiteral("kind")).toString());
+  debugMcpAppendHistoryEntry(state, historyEntry);
+  return true;
+}
+
+bool debugMcpAutoSyncPlaybackState(QJsonObject& state, ArtifactPlaybackService* playbackService)
+{
+  if (!playbackService) {
+    return false;
+  }
+
+  const QJsonObject session = state.value(QStringLiteral("session")).toObject();
+  const bool paused = session.value(QStringLiteral("paused")).toBool(false);
+  const bool wasPlayingBeforePause = session.value(QStringLiteral("wasPlayingBeforePause")).toBool(false);
+  if (paused) {
+    if (session.value(QStringLiteral("pauseReason")).toString() == QStringLiteral("breakpoint") &&
+        playbackService->state() == PlaybackState::Playing) {
+      playbackService->pause();
+    }
+    return false;
+  }
+
+  if (wasPlayingBeforePause && playbackService->state() == PlaybackState::Paused) {
+    playbackService->play();
+    QJsonObject updatedSession = session;
+    updatedSession.insert(QStringLiteral("wasPlayingBeforePause"), false);
+    updatedSession.insert(QStringLiteral("lastAction"), QStringLiteral("resume"));
+    state.insert(QStringLiteral("session"), updatedSession);
+    return true;
+  }
+
+  return false;
+}
+
+class DebugBreakpointPoller final : public QObject {
+public:
+  explicit DebugBreakpointPoller(QObject* parent, ArtifactPlaybackService* playbackService)
+      : QObject(parent), playbackService_(playbackService) {}
+
+  void start()
+  {
+    if (timerId_ != 0) {
+      return;
+    }
+    evaluate();
+    timerId_ = startTimer(200);
+  }
+
+protected:
+  void timerEvent(QTimerEvent* event) override
+  {
+    if (!event || event->timerId() != timerId_) {
+      return;
+    }
+    evaluate();
+  }
+
+private:
+  void evaluate()
+  {
+    if (!playbackService_) {
+      return;
+    }
+
+    QJsonObject state = debugMcpNormalizeStateJson(debugMcpReadStateJson());
+    const bool stateChanged = debugMcpAutoSyncPlaybackState(state, playbackService_);
+
+    const QJsonArray conditions = state.value(QStringLiteral("breakConditions")).toArray();
+    if (conditions.isEmpty()) {
+      if (stateChanged) {
+        debugMcpWriteStateJson(state);
+      }
+      return;
+    }
+
+    const QJsonObject snapshot = buildDebugBridgeSnapshotJson();
+    if (state.value(QStringLiteral("session")).toObject()
+            .value(QStringLiteral("paused")).toBool(false)) {
+      if (stateChanged) {
+        debugMcpWriteStateJson(state);
+      }
+      return;
+    }
+
+    for (const QJsonValue& value : conditions) {
+      const QJsonObject condition = value.toObject();
+      if (!debugMcpMatchesCondition(condition, snapshot)) {
+        continue;
+      }
+      if (debugMcpRecordBreakHit(state, snapshot, condition)) {
+        if (playbackService_->state() == PlaybackState::Playing) {
+          playbackService_->pause();
+        }
+        debugMcpWriteStateJson(state);
+      } else if (stateChanged) {
+        debugMcpWriteStateJson(state);
+      }
+      return;
+    }
+
+    if (stateChanged) {
+      debugMcpWriteStateJson(state);
+    }
+  }
+
+  int timerId_ = 0;
+  ArtifactPlaybackService* playbackService_ = nullptr;
+};
+
+class DebugBridgeFileWriter final : public QObject {
+public:
+  explicit DebugBridgeFileWriter(QObject* parent = nullptr)
+      : QObject(parent) {}
+
+  void start()
+  {
+    if (timerId_ != 0) {
+      return;
+    }
+    writeSnapshot(true);
+    timerId_ = startTimer(250);
+  }
+
+protected:
+  void timerEvent(QTimerEvent* event) override
+  {
+    if (!event || event->timerId() != timerId_) {
+      return;
+    }
+    writeSnapshot(false);
+  }
+
+private:
+  void writeSnapshot(const bool force)
+  {
+    const QJsonObject snapshot = buildDebugBridgeSnapshotJson();
+    const QByteArray payload = QJsonDocument(snapshot).toJson(QJsonDocument::Compact);
+    if (!force && payload == lastPayload_) {
+      return;
+    }
+
+    const QString filePath = debugBridgeFilePath();
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
+      qWarning() << "[DebugBridge] failed to open bridge file:" << filePath;
+      return;
+    }
+    if (file.write(payload) != payload.size()) {
+      qWarning() << "[DebugBridge] failed to write bridge file:" << filePath;
+      file.cancelWriting();
+      return;
+    }
+    if (!file.commit()) {
+      qWarning() << "[DebugBridge] failed to commit bridge file:" << filePath;
+      return;
+    }
+    lastPayload_ = payload;
+  }
+
+  int timerId_ = 0;
+  QByteArray lastPayload_;
+};
 
 QString sessionStateFilePath() {
   const QString appDataDir =
@@ -2157,6 +2861,9 @@ int main(int argc, char *argv[]) {
       }
     });
     recoveryTimer->start();
+
+    (new DebugBridgeFileWriter(mw))->start();
+    (new DebugBreakpointPoller(mw, playbackService))->start();
 
     if (playbackService) {
       appEventSubscriptions.push_back(
