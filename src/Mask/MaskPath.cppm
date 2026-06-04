@@ -51,11 +51,76 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+namespace {
+
+void applySnapshotToPath(MaskPath& path, const MaskPathKeyframeSnapshot& snapshot)
+{
+    path.clearVertices();
+    for (const auto& vertex : snapshot.vertices) {
+        path.addVertex(vertex);
+    }
+    path.setClosed(snapshot.closed);
+    path.setOpacity(snapshot.opacity);
+    path.setFeather(snapshot.feather);
+    path.setExpansion(snapshot.expansion);
+    path.setInverted(snapshot.inverted);
+    path.setMode(snapshot.mode);
+    path.setName(snapshot.name);
+}
+
+MaskVertex lerpVertex(const MaskVertex& a, const MaskVertex& b, float t)
+{
+    const auto lerpPoint = [t](const QPointF& p0, const QPointF& p1) {
+        return QPointF(p0.x() + (p1.x() - p0.x()) * t,
+                       p0.y() + (p1.y() - p0.y()) * t);
+    };
+    MaskVertex out;
+    out.position = lerpPoint(a.position, b.position);
+    out.inTangent = lerpPoint(a.inTangent, b.inTangent);
+    out.outTangent = lerpPoint(a.outTangent, b.outTangent);
+    return out;
+}
+
+MaskPathKeyframeSnapshot interpolateSnapshot(const MaskPathKeyframeSnapshot& a,
+                                             const MaskPathKeyframeSnapshot& b,
+                                             int64_t frame)
+{
+    MaskPathKeyframeSnapshot out = a;
+    if (b.frame <= a.frame) {
+        return out;
+    }
+
+    const float t = std::clamp(
+        static_cast<float>(frame - a.frame) / static_cast<float>(b.frame - a.frame),
+        0.0f, 1.0f);
+    out.frame = frame;
+    out.opacity = a.opacity + (b.opacity - a.opacity) * t;
+    out.feather = a.feather + (b.feather - a.feather) * t;
+    out.expansion = a.expansion + (b.expansion - a.expansion) * t;
+    out.inverted = t < 0.5f ? a.inverted : b.inverted;
+    out.mode = t < 0.5f ? a.mode : b.mode;
+    out.closed = t < 0.5f ? a.closed : b.closed;
+    out.name = t < 0.5f ? a.name : b.name;
+
+    if (a.vertices.size() == b.vertices.size()) {
+        out.vertices.resize(a.vertices.size());
+        for (size_t i = 0; i < a.vertices.size(); ++i) {
+            out.vertices[i] = lerpVertex(a.vertices[i], b.vertices[i], t);
+        }
+    } else {
+        out.vertices = t < 0.5f ? a.vertices : b.vertices;
+    }
+    return out;
+}
+
+} // namespace
+
 // -- Impl --
 
 class MaskPath::Impl {
 public:
     std::vector<MaskVertex> vertices;
+    std::vector<MaskPathKeyframeSnapshot> animationKeyframes;
     bool closed = true;
     float opacity = 1.0f;
     float feather = 0.0f;
@@ -168,6 +233,96 @@ void MaskPath::setMode(MaskMode mode) { impl_->mode = mode; }
 
 UniString MaskPath::name() const { return impl_->name; }
 void MaskPath::setName(const UniString& name) { impl_->name = name; }
+
+void MaskPath::clearAnimationKeyframes() { impl_->animationKeyframes.clear(); }
+
+void MaskPath::setAnimationKeyframe(int64_t frame, const MaskPathKeyframeSnapshot& snapshot)
+{
+    MaskPathKeyframeSnapshot stored = snapshot;
+    stored.frame = frame;
+    stored.name = stored.name.toQString().trimmed().isEmpty() ? impl_->name : stored.name;
+    auto it = std::find_if(impl_->animationKeyframes.begin(), impl_->animationKeyframes.end(),
+                           [frame](const MaskPathKeyframeSnapshot& existing) {
+                               return existing.frame == frame;
+                           });
+    if (it != impl_->animationKeyframes.end()) {
+        *it = std::move(stored);
+    } else {
+        impl_->animationKeyframes.push_back(std::move(stored));
+        std::sort(impl_->animationKeyframes.begin(), impl_->animationKeyframes.end(),
+                  [](const MaskPathKeyframeSnapshot& a, const MaskPathKeyframeSnapshot& b) {
+                      return a.frame < b.frame;
+                  });
+    }
+}
+
+bool MaskPath::removeAnimationKeyframe(int64_t frame)
+{
+    const auto before = impl_->animationKeyframes.size();
+    impl_->animationKeyframes.erase(
+        std::remove_if(impl_->animationKeyframes.begin(), impl_->animationKeyframes.end(),
+                       [frame](const MaskPathKeyframeSnapshot& existing) {
+                           return existing.frame == frame;
+                       }),
+        impl_->animationKeyframes.end());
+    return impl_->animationKeyframes.size() != before;
+}
+
+bool MaskPath::hasAnimationKeyframes() const
+{
+    return !impl_->animationKeyframes.empty();
+}
+
+std::vector<MaskPathKeyframeSnapshot> MaskPath::animationKeyframes() const
+{
+    return impl_->animationKeyframes;
+}
+
+MaskPath MaskPath::sampleAtFrame(int64_t frame) const
+{
+    if (impl_->animationKeyframes.empty()) {
+        return *this;
+    }
+
+    if (impl_->animationKeyframes.size() == 1) {
+        MaskPath sampled;
+        applySnapshotToPath(sampled, impl_->animationKeyframes.front());
+        return sampled;
+    }
+
+    const auto upper = std::lower_bound(
+        impl_->animationKeyframes.begin(), impl_->animationKeyframes.end(), frame,
+        [](const MaskPathKeyframeSnapshot& snapshot, int64_t value) {
+            return snapshot.frame < value;
+        });
+    if (upper == impl_->animationKeyframes.begin()) {
+        MaskPath sampled;
+        applySnapshotToPath(sampled, *upper);
+        return sampled;
+    }
+    if (upper == impl_->animationKeyframes.end()) {
+        MaskPath sampled;
+        applySnapshotToPath(sampled, impl_->animationKeyframes.back());
+        return sampled;
+    }
+
+    const auto& after = *upper;
+    const auto& before = *(upper - 1);
+    if (before.frame == frame) {
+        MaskPath sampled;
+        applySnapshotToPath(sampled, before);
+        return sampled;
+    }
+    if (after.frame == frame) {
+        MaskPath sampled;
+        applySnapshotToPath(sampled, after);
+        return sampled;
+    }
+
+    MaskPath sampled;
+    applySnapshotToPath(sampled, interpolateSnapshot(before, after, frame));
+    return sampled;
+}
 
 void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
                                 float offsetX, float offsetY,

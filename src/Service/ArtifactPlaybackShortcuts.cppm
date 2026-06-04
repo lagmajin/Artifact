@@ -2,6 +2,7 @@
 
 #include <QKeySequence>
 #include <QDebug>
+#include <QInputDialog>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -90,6 +91,8 @@ public:
     static inline const QString ACTION_NEXT_CHAPTER = "playback.next_chapter";
     static inline const QString ACTION_PREV_CHAPTER = "playback.prev_chapter";
     static inline const QString ACTION_DELETE_MARKER = "playback.delete_marker";
+    static inline const QString ACTION_GOTO_FRAME = "playback.goto_frame";
+    static inline const QString ACTION_CLEAR_MARKERS = "playback.clear_markers";
     
     static inline const QString ACTION_SPEED_NORMAL = "playback.speed_normal";
     static inline const QString ACTION_SPEED_HALF = "playback.speed_half";
@@ -139,6 +142,42 @@ ArtifactPlaybackShortcuts::ArtifactPlaybackShortcuts(QObject* parent)
     am->registerAction(Impl::ACTION_NEXT_CHAPTER, "Next Chapter", "Go to next chapter", "Navigation");
     am->registerAction(Impl::ACTION_PREV_CHAPTER, "Previous Chapter", "Go to previous chapter", "Navigation");
     am->registerAction(Impl::ACTION_DELETE_MARKER, "Delete Marker", "Delete marker at current frame", "Markers");
+    auto* gotoFrameAction = am->createAction(Impl::ACTION_GOTO_FRAME,
+                                             "Go to Frame",
+                                             "Prompt for a frame number and jump there",
+                                             [this]() {
+                         int currentFrame = 0;
+                         int maxFrame = 999999;
+                         if (auto* service = ArtifactPlaybackService::instance()) {
+                             currentFrame = static_cast<int>(service->currentFrame().framePosition());
+                             maxFrame = static_cast<int>(service->frameRange().endPosition().framePosition());
+                         } else if (impl_->controller_) {
+                             currentFrame = static_cast<int>(impl_->controller_->currentFrame().framePosition());
+                             maxFrame = static_cast<int>(impl_->controller_->frameRange().endPosition().framePosition());
+                         }
+
+                         const int upperBound = std::max(currentFrame, maxFrame);
+                         bool ok = false;
+                         const int frame = QInputDialog::getInt(nullptr,
+                                                                QStringLiteral("Go to Frame"),
+                                                                QStringLiteral("Frame:"),
+                                                                currentFrame,
+                                                                0,
+                                                                upperBound,
+                                                                1,
+                                                                &ok);
+                         if (ok) {
+                             goToFrame(frame);
+                         }
+                     });
+    gotoFrameAction->setCategory("Navigation");
+    auto* clearMarkersAction = am->createAction(Impl::ACTION_CLEAR_MARKERS,
+                                                 "Clear All Markers",
+                                                 "Remove all markers and chapter markers",
+                                                 [this]() {
+                         clearAllMarkers();
+                     });
+    clearMarkersAction->setCategory("Markers");
     
     // Speed actions
     am->registerAction(Impl::ACTION_SPEED_NORMAL, "Normal Speed", "Set playback speed to 100%", "Speed");
@@ -174,8 +213,14 @@ void ArtifactPlaybackShortcuts::registerDefaultBindings(KeyMap* keyMap) {
     // ==================== After Effects-like shortcuts ====================
     
     // Playback control
-    keyMap->addBinding(Qt::Key_Space, InputEvent::Modifiers(), 
+    keyMap->addBinding(Qt::Key_Space, InputEvent::Modifiers(),
                       am->getAction(Impl::ACTION_PLAY_PAUSE), "Play/Pause");
+    
+    keyMap->addBinding(Qt::Key_Space, kShift,
+                      am->getAction(Impl::ACTION_PLAY), "Play");
+    
+    keyMap->addBinding(Qt::Key_Space, kCtrl,
+                      am->getAction(Impl::ACTION_PAUSE), "Pause");
     
     keyMap->addBinding(Qt::Key_Enter, InputEvent::Modifiers(),
                       am->getAction(Impl::ACTION_GOTO_END), "Go to End");
@@ -220,6 +265,10 @@ void ArtifactPlaybackShortcuts::registerDefaultBindings(KeyMap* keyMap) {
                       am->getAction(Impl::ACTION_NEXT_MARKER), "Next Marker");
     keyMap->addBinding(Qt::Key_M, kCtrlShift,
                       am->getAction(Impl::ACTION_PREV_MARKER), "Previous Marker");
+    keyMap->addBinding(Qt::Key_G, kCtrl,
+                      am->getAction(Impl::ACTION_GOTO_FRAME), "Go to Frame");
+    keyMap->addBinding(Qt::Key_M, kCtrl | kAlt,
+                      am->getAction(Impl::ACTION_CLEAR_MARKERS), "Clear All Markers");
     
     // Chapters
     keyMap->addBinding(Qt::Key_Return, kShift,
@@ -375,8 +424,7 @@ void ArtifactPlaybackShortcuts::goToFrame(int frame) {
     } else if (impl_->controller_) {
         impl_->controller_->goToFrame(FramePosition(frame));
     }
-    emit shortcutExecuted("playback.goto_frame");
-    // TODO: register "playback.goto_frame" with ActionManager + KeyMap so it has a default key binding
+    emit shortcutExecuted(Impl::ACTION_GOTO_FRAME);
 }
 
 // ==================== In/Out Point Actions ====================
@@ -530,8 +578,7 @@ void ArtifactPlaybackShortcuts::clearAllMarkers() {
     } else if (impl_->inOutPoints_) {
         impl_->inOutPoints_->clearAllMarkers();
     }
-    emit shortcutExecuted("playback.clear_markers");
-    // TODO: register "playback.clear_markers" with ActionManager + KeyMap so it has a default key binding
+    emit shortcutExecuted(Impl::ACTION_CLEAR_MARKERS);
 }
 
 // ==================== Speed Actions ====================

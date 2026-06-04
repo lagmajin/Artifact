@@ -10,6 +10,8 @@ module;
 module Artifact.Widgets.QuickToolBox;
 
 import Artifact.Widgets.QuickToolBox;
+import Artifact.Widgets.AnchorPointTool;
+import Artifact.Widgets.Alignment;
 import Widgets.Utils.CSS;
 
 namespace Artifact {
@@ -38,11 +40,29 @@ ArtifactQuickToolBox::ArtifactQuickToolBox(QWidget* parent)
     // Tab widget
     impl_->tabWidget = new QTabWidget(this);
 
-    // TODO: 各タブに便利ツールを追加
-    // impl_->tabWidget->addTab(createAnchorPointTool(), "Anchor");
-    // impl_->tabWidget->addTab(createAlignmentTool(), "Align");
-    // impl_->tabWidget->addTab(createTransformTool(), "Transform");
-    // impl_->tabWidget->addTab(createCalculatorTool(), "Calc");
+    auto* anchorTab = new ArtifactAnchorPointTool(impl_->tabWidget);
+    impl_->tabWidget->addTab(anchorTab, QStringLiteral("Anchor"));
+
+    auto* alignTab = new AlignmentWidget(impl_->tabWidget);
+    impl_->tabWidget->addTab(alignTab, QStringLiteral("Align"));
+
+    auto* transformTab = new QWidget(impl_->tabWidget);
+    {
+        auto* layout = new QVBoxLayout(transformTab);
+        layout->setContentsMargins(12, 12, 12, 12);
+        layout->addWidget(new QLabel(QStringLiteral("Transform helpers are routed through the composition editor."), transformTab));
+        layout->addStretch(1);
+    }
+    impl_->tabWidget->addTab(transformTab, QStringLiteral("Transform"));
+
+    auto* calcTab = new QWidget(impl_->tabWidget);
+    {
+        auto* layout = new QVBoxLayout(calcTab);
+        layout->setContentsMargins(12, 12, 12, 12);
+        layout->addWidget(new QLabel(QStringLiteral("Calculator utilities are reserved for a later pass."), calcTab));
+        layout->addStretch(1);
+    }
+    impl_->tabWidget->addTab(calcTab, QStringLiteral("Calc"));
 
     root->addWidget(impl_->tabWidget);
 }

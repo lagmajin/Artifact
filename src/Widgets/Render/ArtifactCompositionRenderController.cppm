@@ -833,7 +833,80 @@ enum class SelectionMode { Replace, Add, Toggle };
 
 enum class LayerDragMode { None, Move, ScaleTL, ScaleTR, ScaleBL, ScaleBR };
 
+enum class RectangleToolMode { None, Mask, Shape };
+
 enum class MaskHandleType { None, InTangent, OutTangent };
+
+QRectF dragRectFromPoints(const QPointF &start, const QPointF &end)
+{
+  return QRectF(start, end).normalized();
+}
+
+bool isMeaningfulDragRect(const QRectF &rect)
+{
+  return rect.width() >= 1.0 && rect.height() >= 1.0;
+}
+
+std::array<QPointF, 4> rectCorners(const QRectF &rect)
+{
+  return {rect.topLeft(), rect.topRight(), rect.bottomRight(),
+          rect.bottomLeft()};
+}
+
+QString uniqueLayerNameForCurrentComposition(const QString &baseName)
+{
+  const QString trimmedBase = baseName.trimmed().isEmpty()
+                                  ? QStringLiteral("Layer 1")
+                                  : baseName.trimmed();
+
+  QSet<QString> occupied;
+  if (auto *service = ArtifactProjectService::instance()) {
+    if (auto comp = service->currentComposition().lock()) {
+      for (const auto &layer : comp->allLayer()) {
+        if (!layer) {
+          continue;
+        }
+        const QString name = layer->layerName().trimmed();
+        if (!name.isEmpty()) {
+          occupied.insert(name);
+        }
+      }
+    }
+  }
+
+  if (!occupied.contains(trimmedBase)) {
+    return trimmedBase;
+  }
+
+  QString prefix = trimmedBase;
+  int startNumber = 2;
+  int end = trimmedBase.size();
+  while (end > 0 && trimmedBase.at(end - 1).isDigit()) {
+    --end;
+  }
+  if (end < trimmedBase.size()) {
+    int start = end;
+    while (start > 0 && trimmedBase.at(start - 1).isSpace()) {
+      --start;
+    }
+    bool ok = false;
+    const int current = trimmedBase.mid(end).toInt(&ok);
+    if (ok) {
+      prefix = trimmedBase.left(start);
+      startNumber = current + 1;
+    }
+  }
+  if (prefix == trimmedBase && !prefix.endsWith(QLatin1Char(' '))) {
+    prefix += QLatin1Char(' ');
+  }
+  for (int index = startNumber; index < 10000; ++index) {
+    const QString candidate = prefix + QString::number(index);
+    if (!occupied.contains(candidate)) {
+      return candidate;
+    }
+  }
+  return trimmedBase;
+}
 
 QColor toQColor(const FloatColor &color) {
   return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
@@ -2738,6 +2811,11 @@ public:
   bool pendingMaskCreation_ = false;
   LayerID pendingMaskLayerId_;
   MaskPath pendingMaskPath_;
+  bool rectangleToolDragging_ = false;
+  RectangleToolMode rectangleToolMode_ = RectangleToolMode::None;
+  QPointF rectangleToolStartCanvasPos_;
+  QPointF rectangleToolCurrentCanvasPos_;
+  ArtifactAbstractLayerWeak rectangleToolTargetLayer_;
   bool penToolPreviewVisible_ = false;
   bool penMaskPreviewValid_ = false;
   Detail::float2 penMaskPreviewCanvasPos_ = {0.0f, 0.0f};
@@ -2745,6 +2823,10 @@ public:
   void beginPendingMaskCreation(const ArtifactAbstractLayerPtr &layer,
                                 const QPointF &localPos);
   bool finalizePendingMaskCreation(const ArtifactAbstractLayerPtr &layer);
+  void clearRectangleToolSession();
+  void beginRectangleToolSession(RectangleToolMode mode,
+                                 const ArtifactAbstractLayerPtr &layer,
+                                 const QPointF &canvasPos);
 
   // MayaGradient sprite cache — regenerated only when bgColor changes
   QImage cachedMayaGradientSprite_;
@@ -5085,6 +5167,37 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                            ? comp->layerById(impl_->selectedLayerId_)
                            : ArtifactAbstractLayerPtr{};
 
+  if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
+    auto *selectionManager = ArtifactApplicationManager::instance()
+                                 ? ArtifactApplicationManager::instance()
+                                       ->layerSelectionManager()
+                                 : nullptr;
+    ArtifactAbstractLayerPtr effectiveSelectedLayer =
+        selectionManager ? selectionManager->currentLayer()
+                         : ArtifactAbstractLayerPtr{};
+    if (!effectiveSelectedLayer && !selectionManager && selectedLayer) {
+      effectiveSelectedLayer = selectedLayer;
+    }
+
+    const auto canvasPos = impl_->renderer_->viewportToCanvas(
+        {(float)viewportPos.x(), (float)viewportPos.y()});
+    impl_->clearPendingMaskCreation();
+    if (effectiveSelectedLayer) {
+      impl_->beginRectangleToolSession(RectangleToolMode::Mask,
+                                       effectiveSelectedLayer,
+                                       QPointF(canvasPos.x, canvasPos.y));
+      impl_->beginMaskEditTransaction(effectiveSelectedLayer);
+    } else {
+      impl_->beginRectangleToolSession(RectangleToolMode::Shape,
+                                       ArtifactAbstractLayerPtr{},
+                                       QPointF(canvasPos.x, canvasPos.y));
+    }
+
+    markRenderDirty();
+    event->accept();
+    return;
+  }
+
   if (event->button() == Qt::LeftButton && activeTool == ToolType::Pen &&
       selectedLayer && comp && impl_->renderer_) {
     const auto cPos = impl_->renderer_->viewportToCanvas(
@@ -5695,6 +5808,14 @@ void CompositionRenderController::handleMouseMove(
     }
   }
 
+  if (impl_->rectangleToolDragging_) {
+    const auto cPos = impl_->renderer_->viewportToCanvas(
+        {(float)viewportPos.x(), (float)viewportPos.y()});
+    impl_->rectangleToolCurrentCanvasPos_ = QPointF(cPos.x, cPos.y);
+    markRenderDirty();
+    return;
+  }
+
   // Hover detection for Pen tool
   if (activeTool == ToolType::Pen) {
     impl_->penToolPreviewVisible_ = true;
@@ -5929,6 +6050,86 @@ void CompositionRenderController::handleMouseRelease() {
     return;
   }
 
+  if (impl_->rectangleToolDragging_) {
+    auto comp = impl_->previewPipeline_.composition();
+    auto *selectionManager = ArtifactApplicationManager::instance()
+                                 ? ArtifactApplicationManager::instance()
+                                       ->layerSelectionManager()
+                                 : nullptr;
+    const QRectF rect = dragRectFromPoints(impl_->rectangleToolStartCanvasPos_,
+                                           impl_->rectangleToolCurrentCanvasPos_);
+    const bool meaningfulRect = isMeaningfulDragRect(rect);
+
+    if (impl_->rectangleToolMode_ == RectangleToolMode::Mask) {
+      auto layer = impl_->rectangleToolTargetLayer_.lock();
+      if (layer && meaningfulRect) {
+        const QTransform globalTransform = layer->getGlobalTransform();
+        bool invertible = false;
+        const QTransform invTransform = globalTransform.inverted(&invertible);
+        const auto corners = rectCorners(rect);
+
+        MaskPath path;
+        for (const auto &corner : corners) {
+          const QPointF localCorner =
+              invertible ? invTransform.map(corner) : corner;
+          MaskVertex vertex;
+          vertex.position = localCorner;
+          vertex.inTangent = QPointF(0.0, 0.0);
+          vertex.outTangent = QPointF(0.0, 0.0);
+          path.addVertex(vertex);
+        }
+        path.setClosed(true);
+
+        LayerMask mask;
+        mask.addMaskPath(path);
+        layer->addMask(mask);
+        impl_->markMaskEditDirty();
+        impl_->publishLayerModified(layer, true);
+      }
+      impl_->commitMaskEditTransaction();
+    } else if (impl_->rectangleToolMode_ == RectangleToolMode::Shape &&
+               meaningfulRect && comp) {
+      const QString layerName =
+          uniqueLayerNameForCurrentComposition(QStringLiteral("Rectangle"));
+      if (auto *service = ArtifactProjectService::instance()) {
+        ArtifactLayerInitParams params(layerName, LayerType::Shape);
+        service->addLayerToCurrentComposition(params, true);
+
+        ArtifactAbstractLayerPtr createdLayer =
+            selectionManager ? selectionManager->currentLayer()
+                             : ArtifactAbstractLayerPtr{};
+        if (!createdLayer && !comp->allLayer().isEmpty()) {
+          createdLayer = comp->allLayer().back();
+        }
+
+        if (createdLayer) {
+          const QRectF normalizedRect = rect.normalized();
+          const QVector3D currentPos = createdLayer->position3D();
+          createdLayer->setPosition3D(QVector3D(
+              static_cast<float>(normalizedRect.left()),
+              static_cast<float>(normalizedRect.top()), currentPos.z()));
+          if (auto shapeLayer =
+                  std::dynamic_pointer_cast<ArtifactShapeLayer>(createdLayer)) {
+            shapeLayer->setSize(
+                std::max(1, static_cast<int>(std::lround(normalizedRect.width()))),
+                std::max(1, static_cast<int>(std::lround(normalizedRect.height()))));
+          }
+          setSelectedLayerId(createdLayer->id());
+          if (impl_->gizmo_) {
+            impl_->gizmo_->setLayer(createdLayer);
+          }
+          if (impl_->gizmo3D_) {
+            impl_->syncGizmo3DFromLayer(createdLayer);
+          }
+        }
+      }
+    }
+
+    impl_->clearRectangleToolSession();
+    markRenderDirty();
+    return;
+  }
+
   const bool publishFinalMaskEditChange = impl_->maskEditDirty_;
   const auto maskEditLayer = impl_->maskEditLayer_.lock();
   impl_->isDraggingVertex_ = false;
@@ -6037,6 +6238,10 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
     return Qt::CrossCursor;
   }
 
+  if (activeTool == ToolType::Rectangle) {
+    return Qt::CrossCursor;
+  }
+
   if (!impl_->gizmo_ || !impl_->renderer_) {
     return Qt::ArrowCursor;
   }
@@ -6078,6 +6283,27 @@ void CompositionRenderController::Impl::clearPendingMaskCreation() {
   pendingMaskPath_.setClosed(false);
   penToolPreviewVisible_ = false;
   penMaskPreviewValid_ = false;
+}
+
+void CompositionRenderController::Impl::clearRectangleToolSession() {
+  rectangleToolDragging_ = false;
+  rectangleToolMode_ = RectangleToolMode::None;
+  rectangleToolStartCanvasPos_ = {};
+  rectangleToolCurrentCanvasPos_ = {};
+  rectangleToolTargetLayer_.reset();
+}
+
+void CompositionRenderController::Impl::beginRectangleToolSession(
+    RectangleToolMode mode, const ArtifactAbstractLayerPtr &layer,
+    const QPointF &canvasPos) {
+  rectangleToolDragging_ = mode != RectangleToolMode::None;
+  rectangleToolMode_ = mode;
+  rectangleToolStartCanvasPos_ = canvasPos;
+  rectangleToolCurrentCanvasPos_ = canvasPos;
+  rectangleToolTargetLayer_ = layer;
+  if (!rectangleToolDragging_) {
+    rectangleToolTargetLayer_.reset();
+  }
 }
 
 void CompositionRenderController::Impl::beginPendingMaskCreation(
@@ -6226,14 +6452,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
 
   if (auto *service = ArtifactProjectService::instance()) {
-    const auto healthReport = service->currentProjectHealthReport();
-    if (ArtifactProjectHealthChecker::hasBlockingErrors(healthReport)) {
+    const auto projectDiagnostics = service->currentProjectDiagnostics();
+    const bool hasBlockingErrors = std::any_of(
+        projectDiagnostics.begin(), projectDiagnostics.end(),
+        [](const auto& diagnostic) { return diagnostic.isError(); });
+    if (hasBlockingErrors) {
       const QString blockedSummary =
           QStringLiteral("preflight=blocked issues=%1")
-              .arg(static_cast<int>(healthReport.issues.size()));
+              .arg(static_cast<int>(projectDiagnostics.size()));
       if (blockedSummary != lastRenderPathSummary_) {
         qWarning() << "[CompositionView] render preflight blocked by project health errors"
-                   << "issues=" << healthReport.issues.size();
+                   << "issues=" << projectDiagnostics.size();
       }
       lastRenderPathSummary_ = blockedSummary;
       renderer_->clear();
@@ -7895,6 +8124,29 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         drawTaggedRectOutline(renderer_.get(), rubberBandRect,
                               {0.25f, 0.70f, 1.0f, 0.95f},
                               showSelectionRect);
+      }
+    }
+
+    if (renderer_ && rectangleToolDragging_) {
+      const QRectF rect =
+          dragRectFromPoints(rectangleToolStartCanvasPos_,
+                             rectangleToolCurrentCanvasPos_)
+              .normalized();
+      if (rect.isValid() && rect.width() > 0.0f && rect.height() > 0.0f) {
+        const FloatColor fillColor =
+            rectangleToolMode_ == RectangleToolMode::Mask
+                ? FloatColor{0.28f, 0.88f, 1.0f, 0.12f}
+                : FloatColor{1.0f, 0.78f, 0.24f, 0.12f};
+        const FloatColor outlineColor =
+            rectangleToolMode_ == RectangleToolMode::Mask
+                ? FloatColor{0.28f, 0.88f, 1.0f, 0.95f}
+                : FloatColor{1.0f, 0.78f, 0.24f, 0.95f};
+        renderer_->drawSolidRect(static_cast<float>(rect.left()),
+                                 static_cast<float>(rect.top()),
+                                 static_cast<float>(rect.width()),
+                                 static_cast<float>(rect.height()), fillColor,
+                                 1.0f);
+        drawRectOutline(renderer_.get(), rect, outlineColor, 1.6f);
       }
     }
 

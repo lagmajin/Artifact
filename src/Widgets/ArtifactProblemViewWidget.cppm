@@ -22,6 +22,7 @@ module;
 #include <QColor>
 #include <QFont>
 #include <QPalette>
+#include <QShowEvent>
 #include <QStyle>
 #include <QTreeWidgetItemIterator>
 #include <QEvent>
@@ -31,6 +32,8 @@ module Artifact.Widgets.ProblemViewWidget;
 
 import Artifact.Widgets.ProblemViewWidget;
 import Widgets.Utils.CSS;
+import Event.Bus;
+import Artifact.Event.Types;
 import Artifact.Project;
 import Artifact.Project.Health;
 import Artifact.Service.Project;
@@ -54,6 +57,8 @@ public:
     QFrame* divider = nullptr;
     std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
     ArtifactProject* project = nullptr;
+    ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
+    std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
 };
 
 namespace {
@@ -419,6 +424,40 @@ ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
     impl_->summaryLabel->setPalette(summaryPal);
     }
     root->addWidget(impl_->summaryLabel);
+
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
+            if (!impl_) {
+                return;
+            }
+            QTimer::singleShot(0, this, [this]() {
+                if (impl_) {
+                    refreshFromCurrentProject();
+                }
+            });
+        }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<CurrentCompositionChangedEvent>([this](const CurrentCompositionChangedEvent&) {
+            if (!impl_) {
+                return;
+            }
+            QTimer::singleShot(0, this, [this]() {
+                if (impl_) {
+                    refreshFromCurrentProject();
+                }
+            });
+        }));
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
+            if (!impl_) {
+                return;
+            }
+            QTimer::singleShot(0, this, [this]() {
+                if (impl_) {
+                    refreshFromCurrentProject();
+                }
+            });
+        }));
 }
 
 ArtifactProblemViewWidget::~ArtifactProblemViewWidget()
@@ -682,6 +721,12 @@ bool ArtifactProblemViewWidget::eventFilter(QObject* watched, QEvent* event)
     }
 
     return QWidget::eventFilter(watched, event);
+}
+
+void ArtifactProblemViewWidget::showEvent(QShowEvent* event)
+{
+    QWidget::showEvent(event);
+    refreshFromCurrentProject();
 }
 
 void ArtifactProblemViewWidget::updateSummary(const std::vector<ArtifactCore::ProjectDiagnostic>& diagnostics)

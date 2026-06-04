@@ -59,7 +59,7 @@ export namespace Artifact
   bool createTextures(IRenderDevice* device, Uint32 width, Uint32 height, TEXTURE_FORMAT format);
 
   struct Impl;
-  Impl* impl_;
+  Impl* impl_ = nullptr;
  };
 
 }

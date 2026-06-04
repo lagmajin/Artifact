@@ -85,12 +85,15 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
 import Artifact.Layer.Svg;
+import Artifact.Layer.Image;
+import Artifact.Layers.SolidImage;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Time.Rational;
 import Artifact.Layer.Video;
+import Artifact.Layer.Clone;
 import Artifact.Tool.Manager;
 import FloatColorPickerDialog;
 import Clipboard.ClipboardManager;
@@ -207,6 +210,36 @@ QIcon loadIconWithFallback(const QString &fileName) {
 
 QIcon loadEditorMenuIcon(const QString &fileName) {
   return loadIconWithFallback(fileName);
+}
+
+QImage selectedLayerDebugImage(const ArtifactAbstractLayerPtr& layer) {
+  if (!layer) {
+    return {};
+  }
+
+  if (const auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    return video->currentFrameToQImage();
+  }
+  if (const auto text = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+    return text->toQImage();
+  }
+  if (const auto image = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+    return image->toQImage();
+  }
+  if (const auto solidImage =
+          std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
+    return solidImage->toQImage();
+  }
+  if (const auto svg = std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) {
+    return svg->toQImage();
+  }
+  if (const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
+    return shape->toQImage();
+  }
+  if (const auto clone = std::dynamic_pointer_cast<ArtifactCloneLayer>(layer)) {
+    return clone->toQImage();
+  }
+  return {};
 }
 
 QString screenshotDefaultExtensionForFilter(const QString& selectedFilter)
@@ -2210,13 +2243,6 @@ protected:
       event->accept();
       return;
     }
-    if (event->key() == Qt::Key_F && !event->isAutoRepeat()) {
-      if (controller_) {
-        controller_->focusSelectedLayer();
-      }
-      event->accept();
-      return;
-    }
     if (event->key() == Qt::Key_F12) {
       if (controller_) {
         saveCurrentFrame(controller_);
@@ -2230,11 +2256,48 @@ protected:
       return;
     }
     if (!event->isAutoRepeat() && event->key() == Qt::Key_M) {
+      const auto now = std::chrono::steady_clock::now();
+      const bool isDoublePress =
+          lastMaskShortcutPressValid_ &&
+          (now - lastMaskShortcutPressTime_) <= std::chrono::milliseconds(450);
+      lastMaskShortcutPressTime_ = now;
+      lastMaskShortcutPressValid_ = true;
+
       if (auto *toolManager =
               ArtifactApplicationManager::instance()
                   ? ArtifactApplicationManager::instance()->toolManager()
                   : nullptr) {
         toolManager->setActiveTool(ToolType::Pen);
+      }
+      if (controller_) {
+        controller_->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
+        if (isDoublePress) {
+          controller_->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
+        }
+      }
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_F && !event->isAutoRepeat()) {
+      auto *toolManager =
+          ArtifactApplicationManager::instance()
+              ? ArtifactApplicationManager::instance()->toolManager()
+              : nullptr;
+      const bool isMaskTool =
+          toolManager && toolManager->activeTool() == ToolType::Pen;
+      if (controller_ && isMaskTool) {
+        const bool nextVisible =
+            !controller_->isLineDebugKindVisible(LineDebugKind::MaskHandle);
+        controller_->setLineDebugKindVisible(LineDebugKind::MaskHandle,
+                                             nextVisible);
+        if (nextVisible) {
+          controller_->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
+        }
+        event->accept();
+        return;
+      }
+      if (controller_) {
+        controller_->focusSelectedLayer();
       }
       event->accept();
       return;
@@ -2670,41 +2733,46 @@ protected:
     if (!svc)
       return;
 
-    // 選択されているレイヤーを取得（簡易的にコントローラーから）
-    // 実際には SelectionManager 経由が良いが、controller にもキャッシュがある
-    // ここでは CompositionRenderController の内部実装にアクセスできないため、
-    // 外部から見える情報を元にするか、controller
-    // にメソッドを追加する必要がある。
-    // 一旦、コンポジション全体のレンダリング結果（もし取れれば）か、
-    // ログ出力で生存確認する。
+    const auto selection = ArtifactApplicationManager::instance()
+                               ? ArtifactApplicationManager::instance()
+                                     ->layerSelectionManager()
+                               : nullptr;
+    const ArtifactAbstractLayerPtr selectedLayer =
+        selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+    const ArtifactAbstractLayerPtr controllerLayer =
+        !controller->selectedLayerId().isNil() ? comp->layerById(controller->selectedLayerId())
+                                               : ArtifactAbstractLayerPtr{};
+    const ArtifactAbstractLayerPtr targetLayer =
+        selectedLayer ? selectedLayer : controllerLayer;
 
-    qDebug() << "Debug: F12 pressed. Attempting to save current frame...";
+    qDebug() << "Debug: F12 pressed. Attempting to save selected layer..."
+             << (targetLayer ? targetLayer->id().toString() : QStringLiteral("<none>"));
 
-    // フォルダ作成
-    QDir dir(".");
-    if (!dir.exists("test")) {
-      dir.mkdir("test");
+    QDir dir(QStringLiteral("test"));
+    if (!dir.exists() && !dir.mkpath(QStringLiteral("."))) {
+      qWarning() << "Failed to create test directory.";
+      return;
     }
 
-    // TODO: 本来は controller->captureSelectedLayer() のようなものが必要
-    // ここではコンポジション内の「最初の動画レイヤー」を探して保存するデバッグコードを試みる
-    for (const auto &layer : comp->allLayerRef()) {
-      if (auto video = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
-        QImage img = video->currentFrameToQImage();
-        if (!img.isNull()) {
-          QString path = QString("test/frame_%1_%2.png")
-                             .arg(layer->id().toString())
+    QImage img = selectedLayerDebugImage(targetLayer);
+    if (img.isNull()) {
+      img = captureCompositionScreenshot(controller, nullptr);
+    }
+    if (img.isNull()) {
+      qWarning() << "No debug image available for selected layer.";
+      return;
+    }
+
+    const QString layerTag = targetLayer
+                                 ? targetLayer->id().toString()
+                                 : QStringLiteral("composition");
+    const QString path = QStringLiteral("test/frame_%1_%2.png")
+                             .arg(layerTag)
                              .arg(comp->framePosition().framePosition());
-          if (img.save(path)) {
-            qDebug() << "Successfully saved debug frame to:" << path;
-          } else {
-            qWarning() << "Failed to save image to:" << path;
-          }
-        } else {
-          qWarning() << "Layer" << layer->id().toString()
-                     << "returned null image.";
-        }
-      }
+    if (img.save(path)) {
+      qDebug() << "Successfully saved debug frame to:" << path;
+    } else {
+      qWarning() << "Failed to save image to:" << path;
     }
   }
 
@@ -3306,6 +3374,8 @@ public:
 
   bool selectionSyncQueued_ = false;
   bool toolLabelSyncQueued_ = false;
+  std::chrono::steady_clock::time_point lastMaskShortcutPressTime_{};
+  bool lastMaskShortcutPressValid_ = false;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   ProfilerOverlayWidget *profilerOverlay_ = nullptr;

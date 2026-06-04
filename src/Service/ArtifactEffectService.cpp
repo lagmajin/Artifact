@@ -20,7 +20,18 @@ import Artifact.Effect.Ofx.Impl;
 import Artifact.Project.PresetManager;
 import Artifact.Service.Project;
 import BrightnessEffect;
+import Artifact.Effect.Creative;
 import Artifact.Effect.DirectionalGlow;
+import Artifact.Effect.Rasterizer.Sharpen;
+import Artifact.Effect.Rasterizer.FindEdges;
+import Artifact.Effect.Rasterizer.RadialBlur;
+import Artifact.Effect.Rasterizer.AddNoise;
+import Artifact.Effect.Rasterizer.RadialShadow;
+import Artifact.Effect.Rasterizer.OpticsCompensation;
+import Artifact.Effect.Rasterizer.Mosaic;
+import Artifact.Effect.Rasterizer.TurbulentDisplace;
+import Artifact.Effect.Rasterizer.Bevel;
+import Artifact.Effect.Rasterizer.LinearWipe;
 import Artifact.Effect.Glow;
 import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Keying.ChromaKey;
@@ -286,6 +297,84 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("PBR Material"));
    return effect;
   }
+  if (effectId == QStringLiteral("builtin.halftone")) {
+   auto effect = std::make_unique<ArtifactHalftoneEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Halftone"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("halftone")) {
+   auto effect = std::make_unique<ArtifactHalftoneEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Halftone"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("sharpen")) {
+   auto effect = std::make_unique<SharpenEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Sharpen"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("find_edges")) {
+   auto effect = std::make_unique<FindEdgesEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Find Edges"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("radial_blur")) {
+   auto effect = std::make_unique<RadialBlurEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Radial Blur"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("add_noise")) {
+   auto effect = std::make_unique<AddNoiseEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Add Noise"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("radial_shadow")) {
+   auto effect = std::make_unique<RadialShadowEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Radial Shadow"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("optics_compensation")) {
+   auto effect = std::make_unique<OpticsCompensationEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Optics Compensation"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("mosaic")) {
+   auto effect = std::make_unique<MosaicEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Mosaic"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("turbulent_displace")) {
+   auto effect = std::make_unique<TurbulentDisplaceEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Turbulent Displace"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("bevel")) {
+   auto effect = std::make_unique<BevelEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Bevel"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("linear_wipe")) {
+   auto effect = std::make_unique<LinearWipeEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Linear Wipe"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("emboss")) {
+   auto effect = std::make_unique<EmbossEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Emboss"));
+   return effect;
+  }
   if (effectId.startsWith(QStringLiteral("ofx."))) {
    const QString pluginId = effectId.mid(QStringLiteral("ofx.").size());
    Artifact::Ofx::ArtifactOfxHost::instance().initialize();
@@ -343,6 +432,18 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("twist"), "Twist"});
   effects.push_back({EffectID("bend"), "Bend"});
   effects.push_back({EffectID("pbr_material"), "PBR Material"});
+  effects.push_back({EffectID("halftone"), "Halftone"});
+  effects.push_back({EffectID("sharpen"), "Sharpen"});
+  effects.push_back({EffectID("find_edges"), "Find Edges"});
+  effects.push_back({EffectID("radial_blur"), "Radial Blur"});
+  effects.push_back({EffectID("add_noise"), "Add Noise"});
+  effects.push_back({EffectID("radial_shadow"), "Radial Shadow"});
+  effects.push_back({EffectID("optics_compensation"), "Optics Compensation"});
+  effects.push_back({EffectID("mosaic"), "Mosaic"});
+  effects.push_back({EffectID("turbulent_displace"), "Turbulent Displace"});
+  effects.push_back({EffectID("bevel"), "Bevel"});
+  effects.push_back({EffectID("linear_wipe"), "Linear Wipe"});
+  effects.push_back({EffectID("emboss"), "Emboss"});
 
   Artifact::Ofx::ArtifactOfxHost::instance().initialize();
   for (const auto& plugin : Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins()) {

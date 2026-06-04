@@ -49,6 +49,7 @@ module Artifact.Layer.Particle;
 
 
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Artifact.Generator.Particle;
 import Graphics.ParticleData;
 import Animation.Transform2D;
@@ -62,6 +63,18 @@ import Property.Group;
 namespace Artifact {
 
 namespace {
+
+ParticleEmitter* firstEmitterOrCreate(ParticleSystem* system)
+{
+    if (!system) {
+        return nullptr;
+    }
+    const auto& emitters = system->emitters();
+    if (!emitters.empty()) {
+        return emitters.front().get();
+    }
+    return system->createEmitter();
+}
 
 ArtifactCore::ParticleRenderData transformParticleRenderData(
     const ParticleRenderData& source,
@@ -199,23 +212,6 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
     if (renderer->isInitialized()) {
         const int emitterCount = impl_->particleSystem->emitterCount();
         const auto sourceData = impl_->particleSystem->captureRenderData();
-        qDebug() << "[ParticleLayer]" << layerName()
-                 << "frame=" << frameNumber
-                 << "emitters=" << emitterCount
-                 << "alive particles=" << sourceData.particles.size()
-                 << "renderer initialized=" << renderer->isInitialized();
-        if (emitterCount > 0) {
-            const auto& params = impl_->particleSystem->emitters().front()->params();
-            qDebug() << "[ParticleLayer]"
-                     << "mode=" << static_cast<int>(params.mode)
-                     << "rate=" << params.rate
-                     << "burstCount=" << params.burstCount
-                     << "burstInterval=" << params.burstInterval
-                     << "maxParticles=" << params.maxParticles
-                     << "lifeMin=" << params.lifeMin
-                     << "lifeMax=" << params.lifeMax
-                     << "randomSeed=" << params.randomSeed;
-        }
         if (!sourceData.particles.empty()) {
             const ArtifactCore::ParticleRenderData renderData =
                 transformParticleRenderData(sourceData, getGlobalTransform(), opacity());
@@ -592,7 +588,7 @@ int ArtifactParticleLayer::emitterCount() const
 
 void ArtifactParticleLayer::addForceEffector(const QVector3D& force)
 {
-    auto* emitter = impl_->particleSystem->createEmitter();
+    auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
     if (emitter) {
         auto effector = std::make_unique<ForceEffector>();
         effector->force = force;
@@ -602,7 +598,7 @@ void ArtifactParticleLayer::addForceEffector(const QVector3D& force)
 
 void ArtifactParticleLayer::addVortexEffector(const QVector3D& position, float radius, float angularVelocity)
 {
-    auto* emitter = impl_->particleSystem->createEmitter();
+    auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
     if (emitter) {
         auto effector = std::make_unique<VortexEffector>();
         effector->position = position;
@@ -614,7 +610,7 @@ void ArtifactParticleLayer::addVortexEffector(const QVector3D& position, float r
 
 void ArtifactParticleLayer::addTurbulenceEffector(float frequency, float amplitude)
 {
-    auto* emitter = impl_->particleSystem->createEmitter();
+    auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
     if (emitter) {
         auto effector = std::make_unique<TurbulenceEffector>();
         effector->frequency = frequency;
@@ -625,7 +621,7 @@ void ArtifactParticleLayer::addTurbulenceEffector(float frequency, float amplitu
 
 void ArtifactParticleLayer::addAttractorEffector(const QVector3D& position, float radius, float strength)
 {
-    auto* emitter = impl_->particleSystem->createEmitter();
+    auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
     if (emitter) {
         auto effector = std::make_unique<AttractorEffector>();
         effector->position = position;
@@ -637,7 +633,7 @@ void ArtifactParticleLayer::addAttractorEffector(const QVector3D& position, floa
 
 void ArtifactParticleLayer::addWindEffector(const QVector3D& direction, float strength)
 {
-    auto* emitter = impl_->particleSystem->createEmitter();
+    auto* emitter = firstEmitterOrCreate(impl_->particleSystem.get());
     if (emitter) {
         auto effector = std::make_unique<WindEffector>();
         effector->windDirection = direction;

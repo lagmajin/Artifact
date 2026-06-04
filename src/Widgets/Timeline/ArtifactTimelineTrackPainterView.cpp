@@ -4,6 +4,10 @@
 #include <QCursor>
 #include <QFontMetrics>
 #include <QKeyEvent>
+#include <cmath>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QMenu>
 #include <QPainter>
 #include <QPainterPath>
@@ -11,6 +15,7 @@
 #include <QPolygonF>
 #include <QRect>
 #include <QRectF>
+#include <QPointer>
 #include <QSet>
 #include <QSize>
 #include <QToolTip>
@@ -23,6 +28,7 @@ module Artifact.Timeline.TrackPainterView;
 
 import std;
 import Application.AppSettings;
+import Clipboard.ClipboardManager;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
@@ -43,6 +49,9 @@ namespace Artifact {
 W_OBJECT_IMPL(ArtifactTimelineTrackPainterView)
 
 namespace {
+std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
+    const ArtifactAbstractLayerPtr &layer, const QString &propertyPath);
+
 struct TimelineThemeColors {
   QColor background;
   QColor surface;
@@ -66,6 +75,7 @@ constexpr int kClipCorner = 4;
 constexpr int kClipPadding = 6;
 constexpr int kMinTrackCount = 1;
 constexpr double kMarkerLaneStep = 8.0;
+constexpr double kKeyframeSnapToPlayheadThresholdFrames = 0.35;
 
 double clampDurationFrames(const double value) { return std::max(1.0, value); }
 
@@ -147,6 +157,420 @@ QString keyframeSelectionKey(const LayerID &layerId,
   return QStringLiteral("%1|%2|%3")
       .arg(layerId.toString(), propertyPath, QString::number(frame));
 }
+
+struct KeyframePropertyRef {
+  LayerID layerId;
+  QString propertyPath;
+};
+
+struct KeyframePropertySnapshot {
+  LayerID layerId;
+  QString propertyPath;
+  std::vector<ArtifactCore::KeyFrame> keyframes;
+};
+
+struct TimelineLayerStateSnapshot {
+  LayerID layerId;
+  qint64 inPoint = 0;
+  qint64 outPoint = 0;
+  qint64 startTime = 0;
+  QVector<KeyframePropertySnapshot> keyframes;
+};
+
+QVector<KeyframePropertyRef> collectAnimatablePropertyRefs(
+    const ArtifactAbstractLayerPtr &layer) {
+  QVector<KeyframePropertyRef> refs;
+  if (!layer) {
+    return refs;
+  }
+
+  QSet<QString> seen;
+  for (const auto &group : layer->getLayerPropertyGroups()) {
+    for (const auto &property : group.sortedProperties()) {
+      if (!property || !property->isAnimatable()) {
+        continue;
+      }
+      const QString key =
+          QStringLiteral("%1|%2").arg(layer->id().toString(), property->getName());
+      if (seen.contains(key)) {
+        continue;
+      }
+      seen.insert(key);
+      refs.push_back({layer->id(), property->getName()});
+    }
+  }
+  return refs;
+}
+
+QVector<KeyframePropertyRef> collectPropertyRefsFromMarkers(
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers) {
+  QVector<KeyframePropertyRef> refs;
+  QSet<QString> seen;
+  for (const auto &marker : markers) {
+    const QString key = QStringLiteral("%1|%2")
+                            .arg(marker.layerId.toString(), marker.propertyPath);
+    if (seen.contains(key)) {
+      continue;
+    }
+    seen.insert(key);
+    refs.push_back({marker.layerId, marker.propertyPath});
+  }
+  return refs;
+}
+
+QVector<KeyframePropertySnapshot> captureKeyframePropertySnapshots(
+    const ArtifactCompositionPtr &composition,
+    const QVector<KeyframePropertyRef> &refs) {
+  QVector<KeyframePropertySnapshot> snapshots;
+  if (!composition || refs.isEmpty()) {
+    return snapshots;
+  }
+
+  QSet<QString> seen;
+  for (const auto &ref : refs) {
+    const QString key =
+        QStringLiteral("%1|%2").arg(ref.layerId.toString(), ref.propertyPath);
+    if (seen.contains(key)) {
+      continue;
+    }
+    seen.insert(key);
+
+    const auto layer = composition->layerById(ref.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, ref.propertyPath);
+    if (!property) {
+      continue;
+    }
+
+    snapshots.push_back(
+        KeyframePropertySnapshot{ref.layerId, ref.propertyPath, property->getKeyFrames()});
+  }
+
+  return snapshots;
+}
+
+void applyKeyframePropertySnapshots(
+    const ArtifactCompositionPtr &composition,
+    const QVector<KeyframePropertySnapshot> &snapshots) {
+  if (!composition || snapshots.isEmpty()) {
+    return;
+  }
+
+  QSet<QString> changedLayerKeys;
+  QVector<LayerID> changedLayers;
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const int64_t scale = static_cast<int64_t>(std::llround(fps));
+
+  for (const auto &snapshot : snapshots) {
+    const auto layer = composition->layerById(snapshot.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, snapshot.propertyPath);
+    if (!property) {
+      continue;
+    }
+
+    property->clearKeyFrames();
+    for (const auto &keyframe : snapshot.keyframes) {
+      property->addKeyFrame(keyframe.time.rescaledTo(scale), keyframe.value,
+                            keyframe.interpolation, keyframe.cp1_x,
+                            keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
+                            keyframe.roving);
+    }
+
+    const QString layerKey = layer->id().toString();
+    if (!changedLayerKeys.contains(layerKey)) {
+      changedLayerKeys.insert(layerKey);
+      changedLayers.push_back(layer->id());
+    }
+  }
+
+  for (const auto &layerId : changedLayers) {
+    const auto layer = composition->layerById(layerId);
+    if (!layer) {
+      continue;
+    }
+    layer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{composition->id().toString(), layer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+  }
+}
+
+void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr &composition,
+                                   const ArtifactAbstractLayerPtr &layer,
+                                   const qint64 frameDelta) {
+  if (!composition || !layer || frameDelta == 0) {
+    return;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const int64_t scale = static_cast<int64_t>(std::llround(fps));
+
+  for (const auto &group : layer->getLayerPropertyGroups()) {
+    for (const auto &property : group.sortedProperties()) {
+      if (!property || !property->isAnimatable()) {
+        continue;
+      }
+
+      const auto keyframes = property->getKeyFrames();
+      if (keyframes.empty()) {
+        continue;
+      }
+
+      property->clearKeyFrames();
+      for (const auto &keyframe : keyframes) {
+        const int64_t oldFrame = keyframe.time.rescaledTo(scale);
+        const int64_t newFrame = std::max<int64_t>(0, oldFrame + frameDelta);
+        property->addKeyFrame(
+            RationalTime(newFrame, scale),
+            keyframe.value.isValid() ? keyframe.value : property->getValue(),
+            keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
+            keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
+      }
+    }
+  }
+}
+
+TimelineLayerStateSnapshot captureTimelineLayerStateSnapshot(
+    const ArtifactCompositionPtr &composition, const ArtifactAbstractLayerPtr &layer) {
+  TimelineLayerStateSnapshot snapshot;
+  if (!composition || !layer) {
+    return snapshot;
+  }
+
+  snapshot.layerId = layer->id();
+  snapshot.inPoint = layer->inPoint().framePosition();
+  snapshot.outPoint = layer->outPoint().framePosition();
+  snapshot.startTime = layer->startTime().framePosition();
+  snapshot.keyframes = captureKeyframePropertySnapshots(
+      composition, collectAnimatablePropertyRefs(layer));
+  return snapshot;
+}
+
+QVector<TimelineLayerStateSnapshot> captureTimelineLayerStateSnapshots(
+    const ArtifactCompositionPtr &composition,
+    const QVector<ArtifactAbstractLayerPtr> &layers) {
+  QVector<TimelineLayerStateSnapshot> snapshots;
+  if (!composition || layers.isEmpty()) {
+    return snapshots;
+  }
+
+  snapshots.reserve(layers.size());
+  for (const auto &layer : layers) {
+    if (!layer) {
+      continue;
+    }
+    snapshots.push_back(captureTimelineLayerStateSnapshot(composition, layer));
+  }
+  return snapshots;
+}
+
+void restoreTimelineLayerStateSnapshot(
+    const ArtifactCompositionPtr &composition,
+    const TimelineLayerStateSnapshot &snapshot) {
+  if (!composition || snapshot.layerId.isNil()) {
+    return;
+  }
+
+  const auto layer = composition->layerById(snapshot.layerId);
+  if (!layer) {
+    return;
+  }
+
+  layer->setInPoint(FramePosition(snapshot.inPoint));
+  layer->setOutPoint(FramePosition(snapshot.outPoint));
+  layer->setStartTime(FramePosition(snapshot.startTime));
+
+  if (!snapshot.keyframes.isEmpty()) {
+    applyKeyframePropertySnapshots(composition, snapshot.keyframes);
+    return;
+  }
+
+  layer->changed();
+  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+      LayerChangedEvent{composition->id().toString(), layer->id().toString(),
+                        LayerChangedEvent::ChangeType::Modified});
+}
+
+void restoreTimelineLayerStateSnapshots(
+    const ArtifactCompositionPtr &composition,
+    const QVector<TimelineLayerStateSnapshot> &snapshots) {
+  if (!composition || snapshots.isEmpty()) {
+    return;
+  }
+
+  for (const auto &snapshot : snapshots) {
+    restoreTimelineLayerStateSnapshot(composition, snapshot);
+  }
+}
+
+ArtifactCompositionPtr lookupTimelineComposition(const CompositionID &compositionId) {
+  auto *svc = ArtifactProjectService::instance();
+  if (!svc) {
+    return nullptr;
+  }
+
+  auto result = svc->findComposition(compositionId);
+  if (!result.success) {
+    return nullptr;
+  }
+  return result.ptr.lock();
+}
+
+QVector<ArtifactAbstractLayerPtr> collectRippleLaterLayers(
+    const ArtifactCompositionPtr &composition, const LayerID &targetLayerId,
+    const qint64 boundaryFrame) {
+  QVector<ArtifactAbstractLayerPtr> layers;
+  if (!composition) {
+    return layers;
+  }
+
+  for (const auto &layer : composition->allLayer()) {
+    if (!layer || layer->id() == targetLayerId || layer->isLocked()) {
+      continue;
+    }
+    if (layer->inPoint().framePosition() < boundaryFrame) {
+      continue;
+    }
+    layers.push_back(layer);
+  }
+  return layers;
+}
+
+bool applyTimelineRippleTrimOut(const CompositionID &compositionId,
+                                const QString &layerIdText,
+                                const qint64 currentFrame) {
+  if (layerIdText.trimmed().isEmpty()) {
+    return false;
+  }
+
+  const auto composition = lookupTimelineComposition(compositionId);
+  if (!composition) {
+    return false;
+  }
+
+  const auto layer = composition->layerById(LayerID(layerIdText));
+  if (!layer) {
+    return false;
+  }
+
+  const qint64 oldInPoint = layer->inPoint().framePosition();
+  const qint64 oldOutPoint = layer->outPoint().framePosition();
+  const qint64 newOutPoint =
+      std::max<qint64>(oldInPoint + 1, currentFrame);
+  const qint64 oldDuration = std::max<qint64>(1, oldOutPoint - oldInPoint);
+  const qint64 newDuration = std::max<qint64>(1, newOutPoint - oldInPoint);
+  const qint64 rippleDelta = newDuration - oldDuration;
+
+  const auto rippleLayers =
+      collectRippleLaterLayers(composition, layer->id(), oldOutPoint);
+
+  if (!applyTimelineLayerRangeEdit(layer, oldInPoint, newDuration, false)) {
+    return false;
+  }
+
+  if (rippleDelta == 0 || rippleLayers.isEmpty()) {
+    return true;
+  }
+
+  for (const auto &rippleLayer : rippleLayers) {
+    if (!rippleLayer) {
+      continue;
+    }
+
+    const qint64 followerOldIn = rippleLayer->inPoint().framePosition();
+    const qint64 followerOldOut = rippleLayer->outPoint().framePosition();
+    const qint64 followerNewIn =
+        std::max<qint64>(0, followerOldIn + rippleDelta);
+    const qint64 actualDelta = followerNewIn - followerOldIn;
+    if (actualDelta == 0) {
+      continue;
+    }
+
+    rippleLayer->setInPoint(FramePosition(followerNewIn));
+    rippleLayer->setOutPoint(FramePosition(
+        std::max<qint64>(followerNewIn + 1, followerOldOut + actualDelta)));
+    shiftAnimatableLayerKeyframes(composition, rippleLayer, actualDelta);
+    rippleLayer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{compositionId.toString(), rippleLayer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+  }
+
+  return true;
+}
+
+class RippleTrimOutCommand final : public UndoCommand {
+public:
+  RippleTrimOutCommand(CompositionID compositionId, LayerID layerId,
+                       qint64 currentFrame,
+                       QVector<TimelineLayerStateSnapshot> beforeSnapshots)
+      : compositionId_(std::move(compositionId)),
+        layerId_(std::move(layerId)), currentFrame_(currentFrame),
+        beforeSnapshots_(std::move(beforeSnapshots)) {}
+
+  void undo() override {
+    const auto composition = lookupTimelineComposition(compositionId_);
+    if (!composition) {
+      return;
+    }
+
+    restoreTimelineLayerStateSnapshots(composition, beforeSnapshots_);
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void redo() override {
+    if (applyTimelineRippleTrimOut(compositionId_, layerId_.toString(),
+                                   currentFrame_)) {
+      if (auto *mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+      }
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Ripple Trim Out"); }
+
+private:
+  CompositionID compositionId_;
+  LayerID layerId_;
+  qint64 currentFrame_ = 0;
+  QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+};
+
+class TimelineKeyframeSnapshotCommand final : public UndoCommand {
+public:
+  TimelineKeyframeSnapshotCommand(QString label, std::function<void()> redoFunc,
+                                  std::function<void()> undoFunc)
+      : label_(std::move(label)), redoFunc_(std::move(redoFunc)),
+        undoFunc_(std::move(undoFunc)) {}
+
+  void undo() override {
+    if (undoFunc_) {
+      undoFunc_();
+    }
+  }
+
+  void redo() override {
+    if (redoFunc_) {
+      redoFunc_();
+    }
+  }
+
+  QString label() const override { return label_; }
+
+private:
+  QString label_;
+  std::function<void()> redoFunc_;
+  std::function<void()> undoFunc_;
+};
 
 QVector<int> selectedMarkerIndices(
     const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
@@ -595,11 +1019,149 @@ QString formatMarkerTooltip(
   const QString hoverText =
       hovered ? QStringLiteral("State: Hovered")
               : QStringLiteral("State: Visible");
-  return label + QStringLiteral("\n") + frameText + QStringLiteral("\n") +
+  QString tooltip = label + QStringLiteral("\n") + frameText + QStringLiteral("\n") +
          pathText + QStringLiteral("\n") + laneText + QStringLiteral("\n") +
          easingText + QStringLiteral("\n") + selectionText +
          QStringLiteral("\n") + relationText + QStringLiteral("\n") +
          hoverText;
+  if (marker.selected) {
+    tooltip += QStringLiteral("\nShortcuts: Delete / Backspace remove, Ctrl+D duplicates here, Left / Right move, Shift+Left / Shift+Right move by 10 frames.");
+  }
+  return tooltip;
+}
+
+QString formatKeyframeDragTooltip(const int selectionCount, const double deltaFrames,
+                                  const double targetFrame,
+                                  const QString &snapLabel) {
+  const QString countText =
+      selectionCount == 1 ? QStringLiteral("1 keyframe")
+                          : QStringLiteral("%1 keyframes").arg(selectionCount);
+  QString tooltip = QStringLiteral("Moving %1\nDelta: %2 frames\nTarget: F%3")
+      .arg(countText)
+      .arg(QString::number(deltaFrames, 'f', 1))
+      .arg(QString::number(targetFrame, 'f', 1));
+  if (!snapLabel.isEmpty()) {
+    tooltip += QStringLiteral("\nSnap: %1").arg(snapLabel);
+  }
+  return tooltip;
+}
+
+QString formatKeyframeCollisionLabel(const int count) {
+  return count == 1
+             ? QStringLiteral("collides with 1 existing keyframe")
+             : QStringLiteral("collides with %1 existing keyframes").arg(count);
+}
+
+QString formatKeyframeNoun(const int count) {
+  return count == 1 ? QStringLiteral("keyframe") : QStringLiteral("keyframes");
+}
+
+bool triggerTimelineShortcut(QWidget *source, const int key,
+                             const Qt::KeyboardModifiers modifiers) {
+  if (!source || !source->parentWidget()) {
+    return false;
+  }
+
+  QKeyEvent press(QEvent::KeyPress, key, modifiers);
+  QCoreApplication::sendEvent(source->parentWidget(), &press);
+  return press.isAccepted();
+}
+
+QString formatFrameUnit(const qint64 count) {
+  return count == 1 ? QStringLiteral("frame") : QStringLiteral("frames");
+}
+
+double snappedKeyframeDragTargetFrame(
+    const double originalFrame, const double rawDeltaFrames,
+    const double currentFrame, const Qt::KeyboardModifiers modifiers,
+    QString *outSnapLabel = nullptr) {
+  double targetFrame = originalFrame + rawDeltaFrames;
+  if (outSnapLabel) {
+    outSnapLabel->clear();
+  }
+
+  if (modifiers & Qt::ShiftModifier) {
+    targetFrame = std::round(targetFrame / 10.0) * 10.0;
+    if (outSnapLabel) {
+      *outSnapLabel = QStringLiteral("10 frame increments");
+    }
+  }
+
+  if (std::abs(targetFrame - currentFrame) <=
+      kKeyframeSnapToPlayheadThresholdFrames) {
+    targetFrame = currentFrame;
+    if (outSnapLabel) {
+      *outSnapLabel = QStringLiteral("current frame");
+    }
+  }
+
+  return targetFrame;
+}
+
+int keyframeDragCollisionCount(
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
+    const QVector<int> &selectedIndices,
+    const QVector<double> &selectedOrigFrames, const double deltaFrames,
+    const double maxFrame) {
+  if (selectedIndices.isEmpty() || selectedOrigFrames.isEmpty()) {
+    return 0;
+  }
+
+  QSet<int> selectedIndexSet;
+  QSet<QString> selectedTargetKeys;
+  QSet<QString> occupiedTargetKeys;
+  int collisionCount = 0;
+  for (int i = 0; i < selectedIndices.size(); ++i) {
+    const int selectedIndex = selectedIndices[i];
+    if (selectedIndex < 0 || selectedIndex >= markers.size() ||
+        i >= selectedOrigFrames.size()) {
+      continue;
+    }
+    selectedIndexSet.insert(selectedIndex);
+    const auto &marker = markers[selectedIndex];
+    const qint64 mergedFrame = static_cast<qint64>(std::llround(std::clamp(
+        selectedOrigFrames[i] + deltaFrames, 0.0,
+        maxFrame)));
+    const QString targetKey =
+        keyframeSelectionKey(marker.layerId, marker.propertyPath, mergedFrame);
+    if (selectedTargetKeys.contains(targetKey) ||
+        occupiedTargetKeys.contains(targetKey)) {
+      ++collisionCount;
+      continue;
+    }
+    selectedTargetKeys.insert(targetKey);
+    occupiedTargetKeys.insert(targetKey);
+  }
+
+  for (int i = 0; i < selectedIndices.size(); ++i) {
+    const int selectedIndex = selectedIndices[i];
+    if (selectedIndex < 0 || selectedIndex >= markers.size() ||
+        i >= selectedOrigFrames.size()) {
+      continue;
+    }
+    const qint64 targetFrameInt = static_cast<qint64>(std::llround(std::clamp(
+        selectedOrigFrames[i] + deltaFrames, 0.0, maxFrame)));
+    const QString targetKey =
+        keyframeSelectionKey(markers[selectedIndex].layerId,
+                             markers[selectedIndex].propertyPath,
+                             targetFrameInt);
+    for (int markerIndex = 0; markerIndex < markers.size(); ++markerIndex) {
+      if (selectedIndexSet.contains(markerIndex)) {
+        continue;
+      }
+      const auto &marker = markers[markerIndex];
+      const qint64 markerFrame =
+          static_cast<qint64>(std::llround(std::clamp(marker.frame, 0.0, maxFrame)));
+      const QString existingKey =
+          keyframeSelectionKey(marker.layerId, marker.propertyPath, markerFrame);
+      if (existingKey == targetKey) {
+        ++collisionCount;
+        break;
+      }
+    }
+  }
+
+  return collisionCount;
 }
 
 void updateHoverToolTip(QWidget *widget, const QPoint &globalPos,
@@ -986,6 +1548,252 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr &composition,
   return changed;
 }
 
+bool removeSelectedKeyframeMarkers(
+    const ArtifactCompositionPtr &composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers) {
+  if (!composition || markers.isEmpty()) {
+    return false;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const double lastFrame = std::max(
+      0.0, static_cast<double>(composition->frameRange().duration() - 1));
+  QSet<QString> uniqueKeys;
+  bool changed = false;
+  for (const auto &marker : markers) {
+    const qint64 frame =
+        static_cast<qint64>(std::llround(std::clamp(marker.frame, 0.0, lastFrame)));
+    const QString selectionKey =
+        keyframeSelectionKey(marker.layerId, marker.propertyPath, frame);
+    if (uniqueKeys.contains(selectionKey)) {
+      continue;
+    }
+    uniqueKeys.insert(selectionKey);
+
+    const auto layer = composition->layerById(marker.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property || !property->isAnimatable()) {
+      continue;
+    }
+    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    if (!property->hasKeyFrameAt(time)) {
+      continue;
+    }
+
+    property->removeKeyFrame(time);
+    layer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{composition->id().toString(), layer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+    changed = true;
+  }
+
+  return changed;
+}
+
+QJsonArray serializeSelectedKeyframeMarkers(
+    const ArtifactCompositionPtr &composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers) {
+  QJsonArray keyframes;
+  if (!composition || markers.isEmpty()) {
+    return keyframes;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  QSet<QString> seen;
+  for (const auto &marker : markers) {
+    const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+    const QString dedupeKey =
+        QStringLiteral("%1|%2|%3").arg(marker.layerId.toString(), marker.propertyPath,
+                                        QString::number(frame));
+    if (seen.contains(dedupeKey)) {
+      continue;
+    }
+    seen.insert(dedupeKey);
+
+    const auto layer = composition->layerById(marker.layerId);
+    if (!layer) {
+      continue;
+    }
+    const auto property = findLayerPropertyByPath(layer, marker.propertyPath);
+    if (!property) {
+      continue;
+    }
+
+    const RationalTime time(frame, static_cast<int64_t>(std::llround(fps)));
+    const auto keyframesAtProperty = property->getKeyFrames();
+    const auto it = std::find_if(keyframesAtProperty.cbegin(),
+                                 keyframesAtProperty.cend(),
+                                 [&time](const ArtifactCore::KeyFrame &keyframe) {
+                                   return keyframe.time == time;
+                                 });
+    if (it == keyframesAtProperty.cend()) {
+      continue;
+    }
+
+    QJsonObject record;
+    record.insert(QStringLiteral("layerId"), marker.layerId.toString());
+    record.insert(QStringLiteral("propertyPath"), marker.propertyPath);
+    record.insert(QStringLiteral("frame"), static_cast<qint64>(frame));
+    record.insert(QStringLiteral("value"), QJsonValue::fromVariant(it->value));
+    record.insert(QStringLiteral("interpolation"),
+                  static_cast<int>(it->interpolation));
+    record.insert(QStringLiteral("cp1_x"), it->cp1_x);
+    record.insert(QStringLiteral("cp1_y"), it->cp1_y);
+    record.insert(QStringLiteral("cp2_x"), it->cp2_x);
+    record.insert(QStringLiteral("cp2_y"), it->cp2_y);
+    keyframes.append(record);
+  }
+
+  return keyframes;
+}
+
+bool pasteKeyframesToLayers(
+    const ArtifactCompositionPtr &composition,
+    const QVector<ArtifactAbstractLayerPtr> &targetLayers,
+    const QJsonArray &records,
+    const qint64 targetFrame,
+    QSet<QString> *outSelectionKeys = nullptr,
+    int *outMergedExistingKeyframeCount = nullptr) {
+  if (!composition || targetLayers.isEmpty() || records.isEmpty()) {
+    return false;
+  }
+
+  QVector<QJsonObject> sourceRecords;
+  sourceRecords.reserve(records.size());
+  qint64 minFrame = std::numeric_limits<qint64>::max();
+  for (const auto &value : records) {
+    if (!value.isObject()) {
+      continue;
+    }
+    const QJsonObject record = value.toObject();
+    const qint64 frame = record.value(QStringLiteral("frame")).toVariant().toLongLong();
+    if (record.value(QStringLiteral("propertyPath")).toString().trimmed().isEmpty()) {
+      continue;
+    }
+    minFrame = std::min(minFrame, frame);
+    sourceRecords.push_back(record);
+  }
+
+  if (sourceRecords.isEmpty() || minFrame == std::numeric_limits<qint64>::max()) {
+    return false;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  if (outSelectionKeys) {
+    outSelectionKeys->clear();
+  }
+  if (outMergedExistingKeyframeCount) {
+    *outMergedExistingKeyframeCount = 0;
+  }
+  int mergedExistingKeyframeCount = 0;
+
+  bool changed = false;
+  for (const auto &layer : targetLayers) {
+    if (!layer) {
+      continue;
+    }
+    bool layerChanged = false;
+    for (const auto &record : sourceRecords) {
+      const QString propertyPath =
+          record.value(QStringLiteral("propertyPath")).toString();
+      const auto property = findLayerPropertyByPath(layer, propertyPath);
+      if (!property || !property->isAnimatable()) {
+        continue;
+      }
+
+      const qint64 sourceFrame =
+          record.value(QStringLiteral("frame")).toVariant().toLongLong();
+      const qint64 offset = sourceFrame - minFrame;
+      const qint64 newFrame = std::max<qint64>(0, targetFrame + offset);
+      const RationalTime time(newFrame, static_cast<int64_t>(std::llround(fps)));
+      const QVariant value = record.value(QStringLiteral("value")).toVariant();
+      const auto interpolationValue =
+          static_cast<ArtifactCore::InterpolationType>(
+              record.value(QStringLiteral("interpolation"))
+                  .toInt(static_cast<int>(ArtifactCore::InterpolationType::Linear)));
+      const float cp1_x =
+          static_cast<float>(record.value(QStringLiteral("cp1_x")).toDouble(0.42));
+      const float cp1_y =
+          static_cast<float>(record.value(QStringLiteral("cp1_y")).toDouble(0.0));
+      const float cp2_x =
+          static_cast<float>(record.value(QStringLiteral("cp2_x")).toDouble(0.58));
+      const float cp2_y =
+          static_cast<float>(record.value(QStringLiteral("cp2_y")).toDouble(1.0));
+
+      if (property->hasKeyFrameAt(time)) {
+        ++mergedExistingKeyframeCount;
+      }
+      property->addKeyFrame(time, value.isValid() ? value : property->getValue(),
+                            interpolationValue, cp1_x, cp1_y, cp2_x, cp2_y);
+      if (outSelectionKeys) {
+        outSelectionKeys->insert(
+            keyframeSelectionKey(layer->id(), propertyPath, newFrame));
+      }
+      layerChanged = true;
+    }
+    if (layerChanged) {
+      layer->changed();
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{composition->id().toString(),
+                            layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+      changed = true;
+    }
+  }
+
+  if (outMergedExistingKeyframeCount) {
+    *outMergedExistingKeyframeCount = mergedExistingKeyframeCount;
+  }
+
+  return changed;
+}
+
+bool duplicateSelectedKeyframeMarkersAtFrame(
+    const ArtifactCompositionPtr &composition,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
+    const qint64 targetFrame,
+    QSet<QString> *outSelectionKeys = nullptr,
+    int *outMergedExistingKeyframeCount = nullptr) {
+  if (!composition || markers.isEmpty()) {
+    return false;
+  }
+
+  const auto targetLayers = [&]() {
+    QVector<ArtifactAbstractLayerPtr> layers;
+    QSet<LayerID> seen;
+    for (const auto &marker : markers) {
+      if (seen.contains(marker.layerId)) {
+        continue;
+      }
+      seen.insert(marker.layerId);
+      const auto layer = composition->layerById(marker.layerId);
+      if (layer) {
+        layers.push_back(layer);
+      }
+    }
+    return layers;
+  }();
+
+  if (targetLayers.isEmpty()) {
+    return false;
+  }
+
+  const QJsonArray records = serializeSelectedKeyframeMarkers(composition, markers);
+  if (records.isEmpty()) {
+    return false;
+  }
+
+  return pasteKeyframesToLayers(composition, targetLayers, records, targetFrame,
+                                outSelectionKeys, outMergedExistingKeyframeCount);
+}
+
 bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
                                  const qint64 startFrame,
                                  const qint64 durationFrame,
@@ -1081,6 +1889,8 @@ public:
   int dragMarkerIndex_ = -1;
   QPoint dragMarkerStartPoint_;
   double dragMarkerOrigFrame_ = 0.0;
+  double dragMarkerTargetFrame_ = 0.0;
+  QString dragMarkerSnapLabel_;
   QVector<int> dragMarkerSelectionIndices_;
   QVector<double> dragMarkerSelectionOrigFrames_;
   bool pendingMarkerSingleClick_ = false;
@@ -1386,6 +2196,15 @@ ArtifactTimelineTrackPainterView::selectedKeyframeMarkers() const {
   return selected;
 }
 
+ArtifactTimelineTrackPainterView::KeyframeMarkerVisual
+ArtifactTimelineTrackPainterView::hoveredKeyframeMarker() const {
+  if (!impl_ || impl_->hoverMarkerIndex_ < 0 ||
+      impl_->hoverMarkerIndex_ >= impl_->keyframeMarkers_.size()) {
+    return {};
+  }
+  return impl_->keyframeMarkers_[impl_->hoverMarkerIndex_];
+}
+
 void ArtifactTimelineTrackPainterView::selectAllKeyframeMarkers() {
   QSet<QString> selectedKeys;
   for (const auto &marker : impl_->keyframeMarkers_) {
@@ -1412,6 +2231,189 @@ void ArtifactTimelineTrackPainterView::clearKeyframeSelection() {
                             impl_->selectedMarkerKeys_);
   Q_EMIT keyframeSelectionChanged(0);
   update();
+}
+
+void ArtifactTimelineTrackPainterView::setSelectedKeyframeKeys(
+    const QSet<QString> &selectedKeys) {
+  if (!impl_) {
+    return;
+  }
+  if (impl_->selectedMarkerKeys_ == selectedKeys) {
+    return;
+  }
+  impl_->selectedMarkerKeys_ = selectedKeys;
+  applyMarkerSelectionFlags(impl_->keyframeMarkers_,
+                            impl_->selectedMarkerKeys_);
+  Q_EMIT keyframeSelectionChanged(impl_->selectedMarkerKeys_.size());
+  update();
+}
+
+bool ArtifactTimelineTrackPainterView::deleteSelectedKeyframeMarkers() {
+  if (!impl_) {
+    return false;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return false;
+  }
+
+  QVector<KeyframeMarkerVisual> targets = selectedKeyframeMarkers();
+  if (targets.isEmpty() && impl_->hoverMarkerIndex_ >= 0 &&
+      impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
+    targets.push_back(impl_->keyframeMarkers_[impl_->hoverMarkerIndex_]);
+  }
+  if (targets.isEmpty()) {
+    return false;
+  }
+
+  const auto refs = collectPropertyRefsFromMarkers(targets);
+  const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
+  const QSet<QString> beforeSelectionKeys = impl_->selectedMarkerKeys_;
+  const int removedCount = static_cast<int>(targets.size());
+  const bool changed = removeSelectedKeyframeMarkers(composition, targets);
+  if (!changed) {
+    return false;
+  }
+
+  const auto afterSnapshots = captureKeyframePropertySnapshots(composition, refs);
+  const QSet<QString> afterSelectionKeys;
+  if (auto *mgr = UndoManager::instance()) {
+    QPointer<ArtifactTimelineTrackPainterView> self(this);
+    mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+        QStringLiteral("Delete Selected Keyframes"),
+        [self, composition, afterSnapshots, afterSelectionKeys]() {
+          applyKeyframePropertySnapshots(composition, afterSnapshots);
+          if (!self) {
+            return;
+          }
+          ArtifactLayerSelectionManager *selectionManager = nullptr;
+          if (auto *app = ArtifactApplicationManager::instance()) {
+            selectionManager = app->layerSelectionManager();
+          }
+          self->syncSelectionState(composition, selectionManager,
+                                   self->impl_->trackRows_, true);
+          self->setSelectedKeyframeKeys(afterSelectionKeys);
+        },
+        [self, composition, beforeSnapshots, beforeSelectionKeys]() {
+          applyKeyframePropertySnapshots(composition, beforeSnapshots);
+          if (!self) {
+            return;
+          }
+          ArtifactLayerSelectionManager *selectionManager = nullptr;
+          if (auto *app = ArtifactApplicationManager::instance()) {
+            selectionManager = app->layerSelectionManager();
+          }
+          self->syncSelectionState(composition, selectionManager,
+                                   self->impl_->trackRows_, true);
+          self->setSelectedKeyframeKeys(beforeSelectionKeys);
+        }));
+  }
+
+  clearKeyframeSelection();
+  Q_EMIT timelineDebugMessage(
+      QStringLiteral("Deleted %1 %2")
+          .arg(removedCount)
+          .arg(formatKeyframeNoun(removedCount)));
+  update();
+  return true;
+}
+
+bool ArtifactTimelineTrackPainterView::duplicateSelectedKeyframeMarkersAtCurrentFrame() {
+  if (!impl_) {
+    return false;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return false;
+  }
+
+  QVector<KeyframeMarkerVisual> targets = selectedKeyframeMarkers();
+  if (targets.isEmpty() && impl_->hoverMarkerIndex_ >= 0 &&
+      impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
+    targets.push_back(impl_->keyframeMarkers_[impl_->hoverMarkerIndex_]);
+  }
+  if (targets.isEmpty()) {
+    return false;
+  }
+
+  const qint64 frame = static_cast<qint64>(std::llround(std::max(
+      0.0, std::min(impl_->currentFrame_, impl_->durationFrames_ - 1.0))));
+  const auto refs = collectPropertyRefsFromMarkers(targets);
+  const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
+  const QSet<QString> beforeSelectionKeys = impl_->selectedMarkerKeys_;
+  QSet<QString> nextSelectionKeys;
+  int mergedExistingKeyframeCount = 0;
+  const bool changed =
+      duplicateSelectedKeyframeMarkersAtFrame(
+          composition, targets, frame, &nextSelectionKeys, &mergedExistingKeyframeCount);
+  if (!changed) {
+    return false;
+  }
+
+  const auto afterSnapshots = captureKeyframePropertySnapshots(composition, refs);
+  if (auto *mgr = UndoManager::instance()) {
+    QPointer<ArtifactTimelineTrackPainterView> self(this);
+    const QSet<QString> afterSelectionKeys = nextSelectionKeys;
+    mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+        QStringLiteral("Duplicate Selected Keyframes Here"),
+        [self, composition, afterSnapshots, afterSelectionKeys]() {
+          applyKeyframePropertySnapshots(composition, afterSnapshots);
+          if (!self) {
+            return;
+          }
+          ArtifactLayerSelectionManager *selectionManager = nullptr;
+          if (auto *app = ArtifactApplicationManager::instance()) {
+            selectionManager = app->layerSelectionManager();
+          }
+          self->syncSelectionState(composition, selectionManager,
+                                   self->impl_->trackRows_, true);
+          self->setSelectedKeyframeKeys(afterSelectionKeys);
+        },
+        [self, composition, beforeSnapshots, beforeSelectionKeys]() {
+          applyKeyframePropertySnapshots(composition, beforeSnapshots);
+          if (!self) {
+            return;
+          }
+          ArtifactLayerSelectionManager *selectionManager = nullptr;
+          if (auto *app = ArtifactApplicationManager::instance()) {
+            selectionManager = app->layerSelectionManager();
+          }
+          self->syncSelectionState(composition, selectionManager,
+                                   self->impl_->trackRows_, true);
+          self->setSelectedKeyframeKeys(beforeSelectionKeys);
+        }));
+  }
+
+  if (!nextSelectionKeys.isEmpty()) {
+    impl_->selectedMarkerKeys_ = std::move(nextSelectionKeys);
+  }
+  ArtifactLayerSelectionManager *selectionManager = nullptr;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+  syncSelectionState(composition, selectionManager, impl_->trackRows_, true);
+  const QString mergeNote = mergedExistingKeyframeCount > 0
+                                ? (mergedExistingKeyframeCount == 1
+                                       ? QStringLiteral(" (merged 1 existing keyframe at destination)")
+                                       : QStringLiteral(" (merged %1 existing keyframes at destination)")
+                                             .arg(mergedExistingKeyframeCount))
+                                : QString();
+  Q_EMIT timelineDebugMessage(
+      QStringLiteral("Duplicated %1 %3 at F%2%4")
+          .arg(static_cast<int>(targets.size()))
+          .arg(frame)
+          .arg(formatKeyframeNoun(static_cast<int>(targets.size())))
+          .arg(mergeNote));
+  update();
+  return true;
 }
 
 bool ArtifactTimelineTrackPainterView::hasSelectedKeyframes() const {
@@ -1742,7 +2744,12 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
   // Keyframe markers.
   QSet<int> selectedMarkerTracks;
   QSet<int> selectedKeyframeTracks;
+  QVector<int> keyframeCountsByTrack(impl_->trackHeights_.size(), 0);
   for (const auto &marker : impl_->keyframeMarkers_) {
+    if (marker.trackIndex >= 0 &&
+        marker.trackIndex < keyframeCountsByTrack.size()) {
+      ++keyframeCountsByTrack[marker.trackIndex];
+    }
     if (marker.selectedLayer) {
       selectedMarkerTracks.insert(marker.trackIndex);
     }
@@ -1758,6 +2765,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     const int trackTop =
         trackTopAt(impl_->trackTops_, impl_->trackHeights_, trackIndex);
     const int trackH = impl_->trackHeights_[trackIndex];
+    const int keyframeCount = keyframeCountsByTrack.value(trackIndex, 0);
     const QRectF laneRect(
         0.0, trackTop + 2.0 - yOffset, static_cast<qreal>(width()),
         std::max(8, trackH - 4));
@@ -1772,6 +2780,28 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                QPointF(laneRect.right(), laneRect.top() + 0.5));
     p.drawLine(QPointF(laneRect.left(), laneRect.bottom() - 0.5),
                QPointF(laneRect.right(), laneRect.bottom() - 0.5));
+
+    if (keyframeCount > 0) {
+      const QString badgeText = keyframeCount == 1
+                                    ? QStringLiteral("1 key")
+                                    : QStringLiteral("%1 keys").arg(keyframeCount);
+      const QFontMetrics fm = p.fontMetrics();
+      const int badgeW = std::min(110, std::max(52, fm.horizontalAdvance(badgeText) + 14));
+      const QRect badgeRect(fullRect.width() - badgeW - 10,
+                            static_cast<int>(std::round(trackTop + 5.0 - yOffset)),
+                            badgeW, std::max(14, trackH - 10));
+      QColor badgeBg = theme.background;
+      badgeBg.setAlpha(175);
+      QColor badgeBorder = theme.accent.lighter(120);
+      badgeBorder.setAlpha(160);
+      QColor badgeTextColor = theme.accent.lighter(145);
+      p.setPen(QPen(badgeBorder, 1.0));
+      p.setBrush(badgeBg);
+      p.drawRoundedRect(badgeRect, 4, 4);
+      p.setPen(badgeTextColor);
+      p.drawText(badgeRect.adjusted(7, 0, -7, 0),
+                 Qt::AlignVCenter | Qt::AlignLeft, badgeText);
+    }
   }
 
   for (const int trackIndex : selectedKeyframeTracks) {
@@ -1790,6 +2820,36 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     QColor laneFill = theme.accent.lighter(120);
     laneFill.setAlpha(38);
     p.fillRect(laneRect, laneFill);
+  }
+
+  if (impl_->draggingMarker_) {
+    const double targetFrame = std::clamp(
+        impl_->dragMarkerTargetFrame_, 0.0,
+        std::max(0.0, impl_->durationFrames_ - 1.0));
+    const qreal targetX = static_cast<qreal>(targetFrame * ppf - xOffset);
+    if (targetX >= dirtyRect.left() - 12 && targetX <= dirtyRect.right() + 12) {
+      QColor guideColor = theme.accent.lighter(135);
+      guideColor.setAlpha(180);
+      p.setPen(QPen(guideColor, 1.25, Qt::DashLine));
+      p.drawLine(QPointF(targetX, 0.0), QPointF(targetX, static_cast<qreal>(height())));
+      if (!impl_->dragMarkerSnapLabel_.isEmpty()) {
+        const QString label = impl_->dragMarkerSnapLabel_;
+        const QFontMetrics fm = p.fontMetrics();
+        const int labelW = fm.horizontalAdvance(label) + 12;
+        const int labelX = std::clamp(
+            static_cast<int>(std::round(targetX + 8.0)), 8,
+            std::max(8, width() - labelW - 8));
+        const QRect labelRect(labelX, 6, labelW, fm.height() + 6);
+        QColor labelBg = theme.background;
+        labelBg.setAlpha(200);
+        p.setPen(QPen(guideColor.darker(120), 1.0));
+        p.setBrush(labelBg);
+        p.drawRoundedRect(labelRect, 4, 4);
+        p.setPen(guideColor.lighter(145));
+        p.drawText(labelRect.adjusted(6, 0, -6, 0),
+                   Qt::AlignVCenter | Qt::AlignLeft, label);
+      }
+    }
   }
 
   const int nearestMarkerIndex =
@@ -1863,6 +2923,15 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                            : (marker.eased ? marker.color.lighter(102)
                                            : marker.color));
       p.drawPolygon(diamond);
+    }
+    if (atCurrentFrame) {
+      QColor coreFill = marker.selectedLayer ? theme.accent.lighter(165)
+                                             : theme.text.lighter(150);
+      coreFill.setAlpha(marker.selected ? 255 : 230);
+      p.setPen(QPen(theme.background.darker(180), 1.0));
+      p.setBrush(coreFill);
+      p.drawEllipse(center, marker.selectedLayer ? 2.8 : 2.4,
+                    marker.selectedLayer ? 2.8 : 2.4);
     }
     if (marker.bezier) {
       QColor bezierColor = marker.selectedLayer ? theme.accent.lighter(135)
@@ -2166,9 +3235,35 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
       setCursor(Qt::ClosedHandCursor);
     }
     if (impl_->draggingMarker_) {
-      const double deltaFrames =
+      const double rawDeltaFrames =
           (event->position().x() - impl_->dragMarkerStartPoint_.x()) /
           std::max(0.001, impl_->pixelsPerFrame_);
+      QString snapLabel;
+      const double targetFrame = std::clamp(
+          snappedKeyframeDragTargetFrame(
+              impl_->dragMarkerOrigFrame_, rawDeltaFrames, impl_->currentFrame_,
+              event->modifiers(), &snapLabel),
+          0.0, std::max(0.0, impl_->durationFrames_ - 1.0));
+      const double deltaFrames = targetFrame - impl_->dragMarkerOrigFrame_;
+      const int dragCollisionCount = keyframeDragCollisionCount(
+          impl_->keyframeMarkers_, impl_->dragMarkerSelectionIndices_,
+          impl_->dragMarkerSelectionOrigFrames_, deltaFrames,
+          std::max(0.0, impl_->durationFrames_ - 1.0));
+      if (dragCollisionCount > 0) {
+        if (snapLabel.isEmpty()) {
+          snapLabel = formatKeyframeCollisionLabel(dragCollisionCount);
+        } else {
+          snapLabel += QStringLiteral(", %1")
+                           .arg(formatKeyframeCollisionLabel(dragCollisionCount));
+        }
+      }
+      impl_->dragMarkerTargetFrame_ = targetFrame;
+      impl_->dragMarkerSnapLabel_ = snapLabel;
+      updateHoverToolTip(
+          this, event->globalPosition().toPoint(),
+          formatKeyframeDragTooltip(static_cast<int>(impl_->dragMarkerSelectionIndices_.size()),
+                                    deltaFrames, targetFrame, snapLabel),
+          impl_->hoverToolTipText_);
       QRectF dirtyRect;
       bool hasDirty = false;
       for (int i = 0; i < impl_->dragMarkerSelectionIndices_.size(); ++i) {
@@ -2455,9 +3550,10 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
   if (event->button() == Qt::LeftButton && impl_->draggingMarker_ &&
       impl_->dragMarkerIndex_ >= 0 &&
       impl_->dragMarkerIndex_ < impl_->keyframeMarkers_.size()) {
-    const double deltaFrames =
-        (event->position().x() - impl_->dragMarkerStartPoint_.x()) /
-        std::max(0.001, impl_->pixelsPerFrame_);
+    const double targetFrame = std::clamp(
+        impl_->dragMarkerTargetFrame_, 0.0,
+        std::max(0.0, impl_->durationFrames_ - 1.0));
+    const double deltaFrames = targetFrame - impl_->dragMarkerOrigFrame_;
     struct DragMoveRequest {
       LayerID layerId;
       QString propertyPath;
@@ -2503,19 +3599,25 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
                                      request.fromFrame, request.toFrame);
       }
       Q_EMIT timelineDebugMessage(
-          QStringLiteral("Dragged %1 keyframe(s) by %2 frame(s)")
+          QStringLiteral("Dragged %1 %3 by %2 %4")
               .arg(requests.size())
               .arg(QString::number(
-                  static_cast<qint64>(std::llround(deltaFrames)))));
+                  static_cast<qint64>(std::llround(deltaFrames))))
+              .arg(formatKeyframeNoun(requests.size()))
+              .arg(formatFrameUnit(static_cast<qint64>(std::llround(deltaFrames)))));
     }
     impl_->draggingMarker_ = false;
     impl_->dragMarkerIndex_ = -1;
     impl_->dragMarkerSelectionIndices_.clear();
     impl_->dragMarkerSelectionOrigFrames_.clear();
+    impl_->dragMarkerTargetFrame_ = 0.0;
+    impl_->dragMarkerSnapLabel_.clear();
     impl_->pendingMarkerSingleClick_ = false;
     impl_->pendingMarkerSingleClickKey_.clear();
     impl_->pendingMarkerSingleClickLabel_.clear();
     impl_->pendingMarkerSingleClickFrame_ = 0.0;
+    updateHoverToolTip(this, event->globalPosition().toPoint(), QString(),
+                       impl_->hoverToolTipText_);
     if (impl_->hoverMarkerIndex_ >= 0) {
       setCursor(Qt::PointingHandCursor);
     } else {
@@ -2663,6 +3765,31 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   if (interpolationTargets.isEmpty() && markerUnderCursor) {
     interpolationTargets.push_back(impl_->keyframeMarkers_[markerHit.markerIndex]);
   }
+  const bool hasKeyframeTarget = markerUnderCursor || !selectedKeyframeMarkers().isEmpty();
+  QAction *duplicateSelectedKeyframesAct = nullptr;
+  if (hasKeyframeTarget) {
+    duplicateSelectedKeyframesAct =
+        menu.addAction(QStringLiteral("Duplicate Keyframes Here"));
+  }
+  QAction *copySelectedKeyframesAct = nullptr;
+  QAction *cutSelectedKeyframesAct = nullptr;
+  QAction *pasteKeyframesAct = nullptr;
+  if (hasKeyframeTarget) {
+    copySelectedKeyframesAct =
+        menu.addAction(QStringLiteral("Copy Selected Keyframes"));
+    cutSelectedKeyframesAct =
+        menu.addAction(QStringLiteral("Cut Selected Keyframes"));
+  }
+  if (ClipboardManager::instance().hasKeyframeData()) {
+    pasteKeyframesAct =
+        menu.addAction(QStringLiteral("Paste Keyframes at Playhead"));
+  }
+  QAction *deleteSelectedKeyframesAct = nullptr;
+  if (hasKeyframeTarget) {
+    menu.addSeparator();
+    deleteSelectedKeyframesAct =
+        menu.addAction(QStringLiteral("Delete Selected Keyframes"));
+  }
   QAction *interpLinearAct = nullptr;
   QAction *interpEaseInAct = nullptr;
   QAction *interpEaseOutAct = nullptr;
@@ -2710,6 +3837,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *duplicateClipAct = nullptr;
   QAction *trimInClipAct = nullptr;
   QAction *trimOutClipAct = nullptr;
+  QAction *rippleTrimOutClipAct = nullptr;
   QAction *moveStartClipAct = nullptr;
   QAction *deleteClipAct = nullptr;
   if (clipUnderCursor) {
@@ -2721,6 +3849,8 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     moveStartClipAct = menu.addAction(QStringLiteral("Move Start to Playhead"));
     trimInClipAct = menu.addAction(QStringLiteral("Trim In at Playhead"));
     trimOutClipAct = menu.addAction(QStringLiteral("Trim Out at Playhead"));
+    rippleTrimOutClipAct =
+        menu.addAction(QStringLiteral("Ripple Trim Out at Playhead"));
     deleteClipAct = menu.addAction(QStringLiteral("Delete Layer"));
   }
 
@@ -2782,9 +3912,10 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
                                       ? QStringLiteral("Hold")
                                       : QStringLiteral("Bezier");
       Q_EMIT timelineDebugMessage(
-          QStringLiteral("Applied %1 interpolation to %2 keyframe(s)")
+          QStringLiteral("Applied %1 interpolation to %2 %3")
               .arg(typeLabel)
-              .arg(applied));
+              .arg(applied)
+              .arg(formatKeyframeNoun(applied)));
       update();
     }
     event->accept();
@@ -2805,10 +3936,57 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     }
     if (applied > 0) {
       Q_EMIT timelineDebugMessage(
-          QStringLiteral("%1 roving on %2 keyframe(s)")
+          QStringLiteral("%1 roving on %2 %3")
               .arg(roving ? QStringLiteral("Enabled") : QStringLiteral("Disabled"))
-              .arg(applied));
+              .arg(applied)
+              .arg(formatKeyframeNoun(applied)));
       update();
+    }
+    event->accept();
+    return;
+  }
+
+  if (chosen == duplicateSelectedKeyframesAct) {
+    if (duplicateSelectedKeyframeMarkersAtCurrentFrame()) {
+      event->accept();
+      return;
+    }
+    event->accept();
+    return;
+  }
+
+  if (chosen == copySelectedKeyframesAct) {
+    if (triggerTimelineShortcut(this, Qt::Key_C, Qt::ControlModifier)) {
+      event->accept();
+      return;
+    }
+    event->accept();
+    return;
+  }
+
+  if (chosen == cutSelectedKeyframesAct) {
+    if (triggerTimelineShortcut(this, Qt::Key_C, Qt::ControlModifier) &&
+        deleteSelectedKeyframeMarkers()) {
+      event->accept();
+      return;
+    }
+    event->accept();
+    return;
+  }
+
+  if (chosen == pasteKeyframesAct) {
+    if (triggerTimelineShortcut(this, Qt::Key_V, Qt::ControlModifier)) {
+      event->accept();
+      return;
+    }
+    event->accept();
+    return;
+  }
+
+  if (chosen == deleteSelectedKeyframesAct) {
+    if (deleteSelectedKeyframeMarkers()) {
+      event->accept();
+      return;
     }
     event->accept();
     return;
@@ -2843,7 +4021,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       return;
     }
     if (layer && (chosen == moveStartClipAct || chosen == trimInClipAct ||
-                  chosen == trimOutClipAct)) {
+                  chosen == trimOutClipAct || chosen == rippleTrimOutClipAct)) {
       const qint64 currentFrame = static_cast<qint64>(std::llround(
           std::clamp(impl_->currentFrame_, 0.0,
                      std::max(0.0, impl_->durationFrames_ - 1.0))));
@@ -2857,6 +4035,28 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
                                 layer->inPoint().framePosition();
         changed = applyTimelineLayerRangeEdit(layer, currentFrame - duration,
                                               duration, false);
+      } else if (chosen == rippleTrimOutClipAct) {
+        const auto beforeLayers =
+            collectRippleLaterLayers(composition, layer->id(),
+                                     layer->outPoint().framePosition());
+        QVector<ArtifactAbstractLayerPtr> snapshotLayers;
+        snapshotLayers.reserve(beforeLayers.size() + 1);
+        snapshotLayers.push_back(layer);
+        for (const auto &laterLayer : beforeLayers) {
+          snapshotLayers.push_back(laterLayer);
+        }
+        const auto beforeSnapshots =
+            captureTimelineLayerStateSnapshots(composition, snapshotLayers);
+        if (auto *mgr = UndoManager::instance()) {
+          mgr->push(std::make_unique<RippleTrimOutCommand>(
+              composition->id(), layer->id(), currentFrame,
+              std::move(beforeSnapshots)));
+          changed = true;
+        } else {
+          changed = applyTimelineRippleTrimOut(composition->id(),
+                                               layer->id().toString(),
+                                               currentFrame);
+        }
       }
       if (changed) {
         // This view only emits projectChanged after a local edit has already
@@ -2989,6 +4189,31 @@ void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent *event) {
     event->accept();
     return;
   }
+  if (key == Qt::Key_Delete || key == Qt::Key_Backspace) {
+    if (deleteSelectedKeyframeMarkers()) {
+      event->accept();
+      return;
+    }
+    QWidget::keyPressEvent(event);
+    return;
+  }
+  if (key == Qt::Key_D && (event->modifiers() & Qt::ControlModifier)) {
+    if (duplicateSelectedKeyframeMarkersAtCurrentFrame()) {
+      event->accept();
+      return;
+    }
+    QWidget::keyPressEvent(event);
+    return;
+  }
+  if (key == Qt::Key_X && (event->modifiers() & Qt::ControlModifier)) {
+    if (triggerTimelineShortcut(this, Qt::Key_C, Qt::ControlModifier) &&
+        deleteSelectedKeyframeMarkers()) {
+      event->accept();
+      return;
+    }
+    QWidget::keyPressEvent(event);
+    return;
+  }
   if (key != Qt::Key_Left && key != Qt::Key_Right) {
     QWidget::keyPressEvent(event);
     return;
@@ -3059,9 +4284,11 @@ void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent *event) {
                                  request.fromFrame, request.toFrame);
   }
   Q_EMIT timelineDebugMessage(
-      QStringLiteral("Moved %1 keyframe(s) by %2 frame(s)")
+      QStringLiteral("Moved %1 %3 by %2 %4")
           .arg(requests.size())
-          .arg(deltaFrames));
+          .arg(deltaFrames)
+          .arg(formatKeyframeNoun(requests.size()))
+          .arg(formatFrameUnit(static_cast<qint64>(std::llround(deltaFrames)))));
   update();
   event->accept();
 }
@@ -3081,6 +4308,8 @@ void ArtifactTimelineTrackPainterView::leaveEvent(QEvent *event) {
   impl_->marqueeAnchorSelectionKeys_.clear();
   impl_->draggingMarker_ = false;
   impl_->dragMarkerIndex_ = -1;
+  impl_->dragMarkerTargetFrame_ = 0.0;
+  impl_->dragMarkerSnapLabel_.clear();
   impl_->dragMarkerSelectionIndices_.clear();
   impl_->dragMarkerSelectionOrigFrames_.clear();
   impl_->pendingMarkerSingleClick_ = false;

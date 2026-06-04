@@ -1,5 +1,7 @@
 module;
 #include <utility>
+#include <QFocusEvent>
+#include <QKeyEvent>
 
 #include <Audio/AudioDllImport.hpp>
 
@@ -20,6 +22,9 @@ export namespace Artifact {
  protected:
   void update();
 
+  void focusInEvent(QFocusEvent* event) override;
+  void focusOutEvent(QFocusEvent* event) override;
+  void keyPressEvent(QKeyEvent* event) override;
   void contextMenuEvent(QContextMenuEvent*) override;
 
  public:
@@ -31,9 +36,9 @@ export namespace Artifact {
   void clear();
  //signals:
  
- public /*slots*/:
-  void triggerUpdate();
- };
+  public /*slots*/:
+   void triggerUpdate();
+  };
 
 
 

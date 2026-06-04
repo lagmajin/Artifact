@@ -38,6 +38,7 @@ module;
 #include <QDesktopServices>
 #include <QUrl>
 #include <QFileDialog>
+#include <QFocusEvent>
 #include <QClipboard>
 #include <QApplication>
 #include <QImage>
@@ -91,6 +92,7 @@ import Codec.Thumbnail.FFmpeg;
 import Artifact.Audio.Waveform;
 import Audio.Segment;
 import Audio.SimpleWav;
+import Input.Operator;
 
 namespace Artifact {
 
@@ -100,6 +102,7 @@ namespace {
 constexpr int kAssetThumbnailMinPx = 25;
 constexpr int kAssetThumbnailMaxPx = 256;
 constexpr int kAssetThumbnailDefaultPx = 96;
+constexpr auto kAssetBrowserContext = "Panel.AssetBrowser";
 
 class RecentFolderButton final : public QToolButton {
  public:
@@ -2105,11 +2108,37 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   impl_->defaultHandleMousePressEvent(event);
  }
 
+ void ArtifactAssetBrowser::focusInEvent(QFocusEvent* event)
+ {
+  if (auto* input = InputOperator::instance()) {
+   input->setActiveContext(QString::fromLatin1(kAssetBrowserContext));
+  }
+  QWidget::focusInEvent(event);
+ }
+
+ void ArtifactAssetBrowser::focusOutEvent(QFocusEvent* event)
+ {
+  if (auto* input = InputOperator::instance()) {
+   if (input->activeContext() == QString::fromLatin1(kAssetBrowserContext)) {
+    input->setActiveContext(QStringLiteral("Global"));
+   }
+  }
+  QWidget::focusOutEvent(event);
+ }
+
  void ArtifactAssetBrowser::keyPressEvent(QKeyEvent* event)
  {
   if (!impl_->fileView_ || !impl_->assetModel_) {
    QWidget::keyPressEvent(event);
    return;
+  }
+
+  if (auto* input = InputOperator::instance()) {
+   input->setActiveContext(QString::fromLatin1(kAssetBrowserContext));
+   if (event && input->processKeyPress(this, event->key(), event->modifiers())) {
+    event->accept();
+    return;
+   }
   }
 
   const auto* sel = impl_->fileView_->selectionModel();
@@ -2586,7 +2615,9 @@ if (!item.isFolder) {
      .arg(fileInfo.size())
      .arg(fileInfo.suffix())
      .arg(filePath);
-   // TODO: Show in a dialog or status bar
+   QMessageBox::information(nullptr,
+                            QStringLiteral("Asset Properties"),
+                            info);
   });
 
   // Show menu at cursor position

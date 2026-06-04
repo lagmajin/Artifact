@@ -4,6 +4,7 @@ module;
 #include <QJsonObject>
 #include <QMetaType>
 #include <QObject>
+#include <QStringList>
 #include <algorithm>
 #include <any>
 #include <array>
@@ -157,6 +158,8 @@ public:
   // Static render preflight
   auto preflightRenderQueueAt(int index) const -> ArtifactCore::DiagnosticResult;
   auto preflightAllRenderQueues() const -> ArtifactCore::DiagnosticResult;
+  static auto formatPreflightSummary(const ArtifactCore::DiagnosticResult& result) -> QString;
+  static auto formatPreflightDetails(const ArtifactCore::DiagnosticResult& result) -> QStringList;
 
 public:
   void jobAdded(int index) W_SIGNAL(jobAdded, index) void jobRemoved(int index)

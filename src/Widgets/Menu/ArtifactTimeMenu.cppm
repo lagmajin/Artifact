@@ -70,40 +70,44 @@ ArtifactTimeMenu::Impl::Impl(ArtifactTimeMenu* menu)
   menu_->setMinimumWidth(220);
 
   showControlAction = menu_->addAction("Playback Control...");
-  showControlAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/play_circle.svg")));
+  showControlAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_control.svg")));
   showControlAction->setStatusTip(QStringLiteral("Open the playback control panel."));
 
   playPauseAction = menu_->addAction("再生");
-  playPauseAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/play_arrow.svg")));
+  playPauseAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_play.svg")));
   playPauseAction->setStatusTip(QStringLiteral("Space toggles playback. J/K/L controls shuttle playback."));
   stopAction = menu_->addAction("停止");
-  stopAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/stop.svg")));
+  stopAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_stop.svg")));
   stopAction->setStatusTip(QStringLiteral("Stop playback and return shuttle speed to zero."));
 
   menu_->addSeparator();
   stepBackwardAction = menu_->addAction("1 フレーム戻る");
-  stepBackwardAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/skip_previous.svg")));
+  stepBackwardAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_step_backward.svg")));
   stepBackwardAction->setStatusTip(QStringLiteral("Left Arrow steps back one frame. J shuttles reverse."));
   stepForwardAction = menu_->addAction("1 フレーム進む");
-  stepForwardAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/skip_next.svg")));
+  stepForwardAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_step_forward.svg")));
   stepForwardAction->setStatusTip(QStringLiteral("Right Arrow steps forward one frame. L shuttles forward."));
 
   seekStartAction = menu_->addAction("先頭へ移動");
-  seekStartAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/fast_rewind.svg")));
+  seekStartAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_seek_start.svg")));
   seekEndAction = menu_->addAction("末尾へ移動");
-  seekEndAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/fast_forward.svg")));
+  seekEndAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_seek_end.svg")));
 
   menu_->addSeparator();
   prevMarkerAction = menu_->addAction("前のマーカーへ");
-  prevMarkerAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/keyboard_double_arrow_left.svg")));
+  prevMarkerAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_marker_previous.svg")));
   nextMarkerAction = menu_->addAction("次のマーカーへ");
-  nextMarkerAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/keyboard_double_arrow_right.svg")));
+  nextMarkerAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_marker_next.svg")));
 
   menu_->addSeparator();
   setInPointAction = menu_->addAction("In Point を現在位置に設定");
+  setInPointAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_in_point.svg")));
   setOutPointAction = menu_->addAction("Out Point を現在位置に設定");
+  setOutPointAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_out_point.svg")));
   clearInOutAction = menu_->addAction("In/Out をクリア");
+  clearInOutAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_clear_in_out.svg")));
   loopAction = menu_->addAction("ループ再生");
+  loopAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_loop.svg")));
   loopAction->setCheckable(true);
   loopAction->setStatusTip(QStringLiteral("Alt+L toggles loop playback."));
 
@@ -285,7 +289,7 @@ ArtifactTimeMenu::ArtifactTimeMenu(QWidget* parent /*= nullptr*/)
   :QMenu(parent),impl_(new Impl(this))
 {
   setTitle("Time(&T)");
-  setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timer.svg")));
+  setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_timer.svg")));
   impl_->refreshState();
 }
 

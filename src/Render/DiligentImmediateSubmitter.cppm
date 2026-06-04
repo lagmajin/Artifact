@@ -9,6 +9,7 @@ module;
 #include <QFont>
 #include <QRectF>
 #include <QMatrix4x4>
+#include <QDebug>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/CommandList.h>
@@ -642,6 +643,11 @@ void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p
 void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
 {
     if (!ctx || !pRTV || !m_particleRenderer_ || p.data.particles.empty()) {
+        qWarning() << "[ParticleRenderer] submitParticles skipped"
+                   << "ctx=" << (ctx != nullptr)
+                   << "rtv=" << (pRTV != nullptr)
+                   << "renderer=" << (m_particleRenderer_ != nullptr)
+                   << "count=" << p.data.particles.size();
         return;
     }
     ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
@@ -649,8 +655,29 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
     m_particleRenderer_->setProjectionMatrix(p.projMatrix.constData());
     m_particleRenderer_->setFrameCostStats(m_frameCostStats_);
     m_particleRenderer_->updateBuffer(p.data);
+    const size_t uploadedCount = m_particleRenderer_->lastUploadedParticleCount();
+    if (uploadedCount == 0) {
+        qWarning() << "[ParticleRenderer] submitParticles skipped: uploaded count is zero"
+                   << "requested=" << p.data.particles.size()
+                   << "state=" << m_particleRenderer_->debugState();
+        m_particleRenderer_->setFrameCostStats(nullptr);
+        return;
+    }
     m_particleRenderer_->prepare(ctx);
-    m_particleRenderer_->draw(ctx, p.data.particles.size());
+    const QString preparedState = m_particleRenderer_->debugState();
+    if (!preparedState.startsWith(QStringLiteral("state=prepared"))) {
+        qWarning() << "[ParticleRenderer] submitParticles skipped: prepare failed"
+                   << "requested=" << p.data.particles.size()
+                   << "uploaded=" << uploadedCount
+                   << "state=" << preparedState;
+        m_particleRenderer_->setFrameCostStats(nullptr);
+        return;
+    }
+    m_particleRenderer_->draw(ctx, uploadedCount);
+    qDebug() << "[ParticleRenderer] submitParticles drawn"
+             << "requested=" << p.data.particles.size()
+             << "uploaded=" << uploadedCount
+             << "state=" << m_particleRenderer_->debugState();
     m_particleRenderer_->setFrameCostStats(nullptr);
 }
 

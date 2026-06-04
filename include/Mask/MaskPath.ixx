@@ -2,6 +2,7 @@ module;
 #include <iostream>
 #include <vector>
 #include <string>
+#include <cstdint>
 #include <map>
 #include <unordered_map>
 #include <set>
@@ -56,6 +57,19 @@ enum class MaskMode {
     Difference
 };
 
+/// MaskPath のアニメーション用スナップショット
+struct MaskPathKeyframeSnapshot {
+    int64_t frame = 0;
+    std::vector<MaskVertex> vertices;
+    bool closed = true;
+    float opacity = 1.0f;
+    float feather = 0.0f;
+    float expansion = 0.0f;
+    bool inverted = false;
+    MaskMode mode = MaskMode::Add;
+    UniString name;
+};
+
 /// ベジェパスで定義されるマスク
 class MaskPath {
 private:
@@ -98,6 +112,14 @@ public:
 
     UniString name() const;
     void setName(const UniString& name);
+
+    // === Animation scaffold ===
+    void clearAnimationKeyframes();
+    void setAnimationKeyframe(int64_t frame, const MaskPathKeyframeSnapshot& snapshot);
+    bool removeAnimationKeyframe(int64_t frame);
+    bool hasAnimationKeyframes() const;
+    std::vector<MaskPathKeyframeSnapshot> animationKeyframes() const;
+    MaskPath sampleAtFrame(int64_t frame) const;
 
     /// ベジェパスからアルファマスクをラスタライズ (0.0~1.0 single channel)
     /// offsetX/offsetY: レイヤーローカル空間からピクセル空間への変換オフセット

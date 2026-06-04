@@ -38,6 +38,7 @@ module;
 #include <QCursor>
 #include <QGuiApplication>
 #include <QFile>
+#include <QFocusEvent>
 #include <QScreen>
 #include <QShortcut>
 #include <QRegularExpression>
@@ -117,6 +118,7 @@ import Artifact.Project.Model;
 import Artifact.Project.Items;
 import Artifact.Project.Roles;
 import Artifact.Project.Cleanup;
+import Input.Operator;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Video;
 import Artifact.Layer.Search.Query;
@@ -131,7 +133,11 @@ import Utils.Path;
 
 namespace Artifact {
 
- using namespace ArtifactCore;
+using namespace ArtifactCore;
+
+namespace {
+constexpr auto kProjectContext = "Workspace.Project";
+}
 
 namespace {
 
@@ -222,7 +228,7 @@ protected:
             if (picker.exec() == QDialog::Accepted) {
                 const ArtifactCore::FloatColor picked = picker.getColor();
                 const QColor acceptedColor = QColor::fromRgbF(
-                    picked.r(), picked.g(), picked.b(), picked.a()));
+                    picked.r(), picked.g(), picked.b(), picked.a());
                 setSelectedColor(acceptedColor);
                 if (previewChanged) {
                     previewChanged(acceptedColor);
@@ -2845,9 +2851,34 @@ void ArtifactProjectView::mouseReleaseEvent(QMouseEvent* event) {
     QWidget::mouseReleaseEvent(event);
 }
 
+void ArtifactProjectView::focusInEvent(QFocusEvent* event)
+{
+    if (auto* input = InputOperator::instance()) {
+        input->setActiveContext(QString::fromLatin1(kProjectContext));
+    }
+    QWidget::focusInEvent(event);
+}
+
+void ArtifactProjectView::focusOutEvent(QFocusEvent* event)
+{
+    if (auto* input = InputOperator::instance()) {
+        if (input->activeContext() == QString::fromLatin1(kProjectContext)) {
+            input->setActiveContext(QStringLiteral("Global"));
+        }
+    }
+    QWidget::focusOutEvent(event);
+}
+
  void ArtifactProjectView::keyPressEvent(QKeyEvent* event)
  {
      if (!impl_ || impl_->visibleRows.isEmpty()) { QWidget::keyPressEvent(event); return; }
+     if (auto* input = InputOperator::instance()) {
+         input->setActiveContext(QString::fromLatin1(kProjectContext));
+         if (event && input->processKeyPress(this, event->key(), event->modifiers())) {
+             event->accept();
+             return;
+         }
+     }
      if (event->key() == Qt::Key_F2) { if (currentIndex().isValid()) editIndex(currentIndex()); return; }
      
      // Ctrl+A で全選択
@@ -3412,11 +3443,7 @@ public:
         if (!svc || !svc->hasProject()) {
             return QStringLiteral("Status: Open a project to inspect details");
         }
-        const auto report = svc->currentProjectHealthReport();
-        return QStringLiteral("Status: Project %1 (%2 issue%3)")
-            .arg(report.isHealthy ? QStringLiteral("healthy") : QStringLiteral("issues"))
-            .arg(static_cast<int>(report.issues.size()))
-            .arg(report.issues.size() == 1 ? QString() : QStringLiteral("s"));
+        return svc->currentProjectHealthSummaryText();
     }
 
     void refreshSelectionChrome() {

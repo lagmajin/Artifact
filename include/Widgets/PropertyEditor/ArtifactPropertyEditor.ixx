@@ -245,9 +245,13 @@ public:
 private slots:
     void onReferencePicked();
     void onReferenceChanged(qint64 newId);
+    void updateReferenceDisplay();
 
 private:
     QWidget* referenceWidget_ = nullptr;
+    QLabel* valueLabel_ = nullptr;
+    QPushButton* pickButton_ = nullptr;
+    QPushButton* clearButton_ = nullptr;
     qint64 currentId_ = -1;
 };
 

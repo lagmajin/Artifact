@@ -3,6 +3,7 @@ module;
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QVector>
+#include <QFocusEvent>
 #include <QWheelEvent>
 
 export module Artifact.Widgets.LayerPanelWidget;
@@ -117,6 +118,8 @@ export namespace Artifact
    void mouseDoubleClickEvent(QMouseEvent* event) override;
    void mouseMoveEvent(QMouseEvent* event) override;
    void mouseReleaseEvent(QMouseEvent* event) override;
+   void focusInEvent(QFocusEvent* event) override;
+   void focusOutEvent(QFocusEvent* event) override;
    void keyPressEvent(QKeyEvent* event) override;
    void wheelEvent(QWheelEvent* event) override;
    void leaveEvent(QEvent* event) override;

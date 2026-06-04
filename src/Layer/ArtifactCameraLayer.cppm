@@ -10,12 +10,33 @@ module;
 module Artifact.Layer.Camera;
 
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Property.Group;
 import Property;
 import Animation.Transform3D;
 import Time.Rational;
 
 namespace Artifact {
+
+namespace {
+
+constexpr float kDegreesToRadians = 0.017453292519943295769f;
+
+int64_t cameraTimelineFps(const ArtifactCameraLayer* layer)
+{
+    if (!layer) {
+        return 30;
+    }
+    if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+        const double fps = comp->frameRate().framerate();
+        if (fps > 0.0) {
+            return std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)));
+        }
+    }
+    return 30;
+}
+
+}
 
 W_OBJECT_IMPL(ArtifactCameraLayer)
 
@@ -58,7 +79,7 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
     if (!renderer || !isVisible()) return;
 
     // Get current state
-    const auto frameTime = RationalTime(currentFrame(), 30);
+    const auto frameTime = RationalTime(currentFrame(), cameraTimelineFps(this));
     const auto &t3 = transform3D();
     const QVector3D pos(
         t3.positionXAt(frameTime),
@@ -96,7 +117,7 @@ void ArtifactCameraLayer::draw(ArtifactIRenderer* renderer)
         frameHalfH = std::max(20.0f, camImpl_->orthoHeight_ * 0.02f);
     } else {
         const float fovV = fov();
-        const float tanHalfV = std::tan(fovV * 0.5f * 0.0174532925f);
+        const float tanHalfV = std::tan(fovV * 0.5f * kDegreesToRadians);
         frameHalfH = std::max(20.0f, dist * tanHalfV);
         frameHalfW = frameHalfH * 1.777f;
     }

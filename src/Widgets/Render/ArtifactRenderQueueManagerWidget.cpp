@@ -637,25 +637,8 @@ namespace Artifact
     dialog.setAudioCodec(impl_->service->jobAudioCodecAt(index));
     dialog.setAudioBitrateKbps(impl_->service->jobAudioBitrateKbpsAt(index));
     const auto preflight = impl_->service->preflightRenderQueueAt(index);
-    dialog.setPreflightSummary(QStringLiteral("Preflight: %1E / %2W")
-        .arg(preflight.getErrorCount())
-        .arg(preflight.getWarningCount()));
-    QStringList preflightDetails;
-    for (const auto& diagnostic : preflight.getDiagnostics()) {
-      const QString severity = diagnostic.isError()
-          ? QStringLiteral("ERROR")
-          : diagnostic.isWarning()
-              ? QStringLiteral("WARNING")
-              : QStringLiteral("INFO");
-      preflightDetails << QStringLiteral("%1: %2").arg(severity, diagnostic.getMessage());
-      if (!diagnostic.getDescription().isEmpty()) {
-        preflightDetails << QStringLiteral("  %1").arg(diagnostic.getDescription());
-      }
-      if (!diagnostic.getFixAction().isEmpty()) {
-        preflightDetails << QStringLiteral("  Fix: %1").arg(diagnostic.getFixAction());
-      }
-    }
-    dialog.setPreflightDetails(preflightDetails);
+    dialog.setPreflightSummary(ArtifactRenderQueueService::formatPreflightSummary(preflight));
+    dialog.setPreflightDetails(ArtifactRenderQueueService::formatPreflightDetails(preflight));
 
     if (dialog.exec() == QDialog::Accepted) {
       impl_->service->setJobOutputPathAt(index, dialog.outputPath());

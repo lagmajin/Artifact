@@ -47,7 +47,7 @@ class ArtifactHDRMonitor : public QObject {
 
 private:
   class Impl;
-  Impl *impl_;
+  Impl *impl_ = nullptr;
 
 public:
   ArtifactHDRMonitor();

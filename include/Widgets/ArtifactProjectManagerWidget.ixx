@@ -36,6 +36,7 @@ module;
 #include <QToolBar>
 #include <QFileInfo>
 #include <QItemSelectionModel>
+#include <QFocusEvent>
 #include <QKeyEvent>
 #include <QModelIndex>
 #include <QPaintEvent>
@@ -85,6 +86,8 @@ public:
   void paintEvent(QPaintEvent* event) override;
   void resizeEvent(QResizeEvent* event) override;
   void showEvent(QShowEvent* event) override;
+  void focusInEvent(QFocusEvent* event) override;
+  void focusOutEvent(QFocusEvent* event) override;
   bool event(QEvent* event) override;
   void mouseMoveEvent(QMouseEvent* event) override;
   void wheelEvent(QWheelEvent* event) override;

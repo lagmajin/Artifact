@@ -4,6 +4,7 @@
 #include <QClipboard>
 #include <QContextMenuEvent>
 #include <QCursor>
+#include <QFocusEvent>
 #include <QDesktopServices>
 #include <QDoubleSpinBox>
 #include <QFont>
@@ -22,6 +23,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QKeyEvent>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -82,6 +84,7 @@ import Artifact.Layer.Video;
 import Artifact.Event.Types;
 import Event.Bus;
 import Undo.UndoManager;
+import Input.Operator;
 import Generator.Effector;
 import Artifact.Effect.Generator.Cloner;
 import Artifact.Effect.Generator.FractalNoise;
@@ -137,6 +140,7 @@ constexpr int kInspectorRackMarginL = 6;
 constexpr int kInspectorRackMarginT = 10;
 constexpr int kInspectorRackMarginR = 6;
 constexpr int kInspectorRackMarginB = 6;
+constexpr auto kInspectorContext = "Panel.Inspector";
 
 QColor themeColor(const QString &value, const QColor &fallback) {
   const QColor color(value);
@@ -2128,8 +2132,39 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex) {
 
 void ArtifactInspectorWidget::update() {}
 
+void ArtifactInspectorWidget::focusInEvent(QFocusEvent* event)
+{
+  if (auto* input = InputOperator::instance()) {
+    input->setActiveContext(QString::fromLatin1(kInspectorContext));
+  }
+  QScrollArea::focusInEvent(event);
+}
+
+void ArtifactInspectorWidget::focusOutEvent(QFocusEvent* event)
+{
+  if (auto* input = InputOperator::instance()) {
+    if (input->activeContext() == QString::fromLatin1(kInspectorContext)) {
+      input->setActiveContext(QStringLiteral("Global"));
+    }
+  }
+  QScrollArea::focusOutEvent(event);
+}
+
+void ArtifactInspectorWidget::keyPressEvent(QKeyEvent* event)
+{
+  if (auto* input = InputOperator::instance()) {
+    input->setActiveContext(QString::fromLatin1(kInspectorContext));
+    if (event && input->processKeyPress(this, event->key(), event->modifiers())) {
+      event->accept();
+      return;
+    }
+  }
+  QScrollArea::keyPressEvent(event);
+}
+
 ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     : QScrollArea(parent), impl_(new Impl()) {
+  setFocusPolicy(Qt::StrongFocus);
   // メインレイアウト
   auto mainLayout = new QVBoxLayout();
   impl_->containerWidget = new QWidget();

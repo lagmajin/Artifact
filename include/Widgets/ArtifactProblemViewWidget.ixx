@@ -3,6 +3,7 @@ module;
 #include <QWidget>
 #include <QTreeWidgetItem>
 #include <QEvent>
+#include <QShowEvent>
 #include <wobjectdefs.h>
 export module Artifact.Widgets.ProblemViewWidget;
 
@@ -30,6 +31,7 @@ private slots:
 
 private:
     bool eventFilter(QObject* watched, QEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void rebuildProblemTree();
     void updateSummary(const std::vector<ArtifactCore::ProjectDiagnostic>& diagnostics);
 

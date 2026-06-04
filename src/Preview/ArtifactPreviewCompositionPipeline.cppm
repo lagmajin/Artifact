@@ -448,11 +448,11 @@ namespace Artifact
  };
 
  ArtifactPreviewCompositionPipeline::ArtifactPreviewCompositionPipeline() :impl_(new Impl()) {}
- ArtifactPreviewCompositionPipeline::~ArtifactPreviewCompositionPipeline() { delete impl_; }
- void ArtifactPreviewCompositionPipeline::render(Artifact::ArtifactIRenderer* renderer) { impl_->render(renderer); }
- void ArtifactPreviewCompositionPipeline::setComposition(Artifact::ArtifactCompositionPtr composition) { impl_->setComposition(composition); }
- Artifact::ArtifactCompositionPtr ArtifactPreviewCompositionPipeline::composition() const { return impl_->composition(); }
- void ArtifactPreviewCompositionPipeline::setSelectedLayerId(const ArtifactCore::LayerID& id) { impl_->setSelectedLayerId(id); }
- void ArtifactPreviewCompositionPipeline::setCurrentFrame(int64_t frame) { impl_->setCurrentFrame(frame); }
+ ArtifactPreviewCompositionPipeline::~ArtifactPreviewCompositionPipeline() { delete impl_; impl_ = nullptr; }
+ void ArtifactPreviewCompositionPipeline::render(Artifact::ArtifactIRenderer* renderer) { if (impl_) impl_->render(renderer); }
+ void ArtifactPreviewCompositionPipeline::setComposition(Artifact::ArtifactCompositionPtr composition) { if (impl_) impl_->setComposition(composition); }
+ Artifact::ArtifactCompositionPtr ArtifactPreviewCompositionPipeline::composition() const { return impl_ ? impl_->composition() : Artifact::ArtifactCompositionPtr(); }
+ void ArtifactPreviewCompositionPipeline::setSelectedLayerId(const ArtifactCore::LayerID& id) { if (impl_) impl_->setSelectedLayerId(id); }
+ void ArtifactPreviewCompositionPipeline::setCurrentFrame(int64_t frame) { if (impl_) impl_->setCurrentFrame(frame); }
 
 }

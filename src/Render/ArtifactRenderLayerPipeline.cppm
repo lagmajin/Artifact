@@ -113,6 +113,7 @@ namespace Artifact
  {
   destroy();
   delete impl_;
+  impl_ = nullptr;
  }
 
  bool RenderPipeline::initialize(IRenderDevice* device,

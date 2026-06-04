@@ -442,7 +442,8 @@ public:
   void openExpressionCopilotForProperty(
       const QString& propertyName,
       const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
-      const QString& initialExpression);
+      const QString& initialExpression,
+      const RationalTime& currentTime);
 };
 
 void ArtifactPropertyWidget::showEvent(QShowEvent *event) {
@@ -635,12 +636,45 @@ void launchExpressionCopilot(
     QWidget *parent, const QString &propertyName,
     const std::shared_ptr<ArtifactCore::AbstractProperty> &propertyPtr,
     const QString &initialExpression,
+    const ArtifactAbstractLayerPtr &layer,
+    const RationalTime &currentTime,
     const std::function<void(const QString &)> &applyHandler = {}) {
   auto *copilot = new ArtifactExpressionCopilotWidget(parent);
   copilot->setWindowFlags(Qt::Window | Qt::WindowStaysOnTopHint | Qt::Tool);
   copilot->setWindowTitle(
       QStringLiteral("Expression Copilot: %1").arg(propertyName));
   copilot->setExpressionText(initialExpression);
+  if (layer) {
+    auto *composition =
+        static_cast<ArtifactAbstractComposition *>(layer->composition());
+    QStringList layerNames;
+    int currentLayerIndex = -1;
+    if (composition) {
+      const auto layers = composition->allLayerRef();
+      layerNames.reserve(layers.size());
+      for (int i = 0; i < layers.size(); ++i) {
+        const auto &candidate = layers.at(i);
+        if (!candidate) {
+          continue;
+        }
+        layerNames.push_back(candidate->layerName());
+        if (candidate->id() == layer->id()) {
+          currentLayerIndex = i;
+        }
+      }
+    }
+    copilot->setPreviewContext(
+        composition ? composition->settings().compositionName().toQString()
+                    : QString(),
+        composition ? composition->settings().compositionSize() : QSize(),
+        layerNames,
+        currentLayerIndex,
+        layer->layerName(),
+        propertyPtr ? propertyPtr->getValue() : QVariant(),
+        currentTime.toDouble());
+  } else {
+    copilot->clearPreviewContext();
+  }
   if (propertyPtr && applyHandler) {
     copilot->setApplyHandler([propertyPtr, applyHandler](const QString &expr) {
       propertyPtr->setExpression(expr);
@@ -850,6 +884,8 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
               propertyName,
               propertyPtr,
               initialExpression,
+              layer,
+              currentTime,
               [layer, keyframeChanged, propertyName](const QString &) {
                 if (keyframeChanged) {
                   keyframeChanged(propertyName);
@@ -1287,8 +1323,11 @@ bool ArtifactPropertyWidget::openActiveExpressionCopilot() {
   const QString initialExpression = propertyPtr->hasExpression()
       ? propertyPtr->getExpression()
       : (row->editor() ? row->editor()->value().toString() : QString{});
+  const auto playback = ArtifactPlaybackService::instance();
+  const RationalTime currentTime =
+      currentPlaybackTime(playback, impl_->currentLayer);
   impl_->openExpressionCopilotForProperty(propertyName, propertyPtr,
-                                          initialExpression);
+                                          initialExpression, currentTime);
   return true;
 }
 
@@ -1677,7 +1716,8 @@ ArtifactPropertyEditorRowWidget* ArtifactPropertyWidget::Impl::activeExpressionR
 void ArtifactPropertyWidget::Impl::openExpressionCopilotForProperty(
     const QString& propertyName,
     const std::shared_ptr<ArtifactCore::AbstractProperty>& propertyPtr,
-    const QString& initialExpression) {
+    const QString& initialExpression,
+    const RationalTime& currentTime) {
   if (!propertyPtr) {
     return;
   }
@@ -1687,6 +1727,8 @@ void ArtifactPropertyWidget::Impl::openExpressionCopilotForProperty(
       propertyName,
       propertyPtr,
       initialExpression,
+      currentLayer,
+      currentTime,
       [this](const QString &) {
         if (currentLayer) {
           notifyLayerPropertyAnimationChanged(currentLayer);
@@ -1999,8 +2041,12 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   }
 
   for (const auto &groupDef : layerGroups) {
+    const QString groupName =
+        groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name();
+    const bool isSourceReframe = groupName.compare(QStringLiteral("Source Reframe"),
+                                                   Qt::CaseInsensitive) == 0;
     QGroupBox *group = new QGroupBox(
-        groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name());
+        isSourceReframe ? QStringLiteral("Pan / Crop") : groupName);
     auto *groupLayout = new QVBoxLayout(group);
     groupLayout->setContentsMargins(10, 8, 10, 8);
     groupLayout->setSpacing(5);
@@ -2011,50 +2057,120 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     bool addedGroupProperties = false;
     std::vector<ArtifactPropertyEditorRowWidget *> groupRows;
     auto groupPreviewOpacity = std::make_shared<std::optional<float>>();
-    addRowsFromProperties(
-        group, groupLayout, sortedProps, filterText,
-        [this, layer, groupPreviewOpacity](const QString &name, const QVariant &value) {
-          if (layer) {
-            ScopedPropertyEditGuard guard(localPropertyEditDepth);
-            if (name.compare(QStringLiteral("layer.opacity"),
-                             Qt::CaseInsensitive) == 0) {
-              const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
-              const float oldOpacity =
-                  groupPreviewOpacity->value_or(layer->opacity());
-              groupPreviewOpacity->reset();
-              if (std::abs(oldOpacity - newOpacity) > 0.0001f) {
-                auto *cmd = new ChangeLayerOpacityCommand(layer,
-                                                          oldOpacity, newOpacity);
-                UndoManager::instance()->push(
-                    std::unique_ptr<ChangeLayerOpacityCommand>(cmd));
-              }
-            } else {
-              layer->setLayerPropertyValue(name, value);
-              notifyLayerPropertyAnimationChanged(layer);
-            }
+    auto commitLayerValue = [this, layer, groupPreviewOpacity](
+                                const QString &name, const QVariant &value) {
+      if (layer) {
+        ScopedPropertyEditGuard guard(localPropertyEditDepth);
+        if (name.compare(QStringLiteral("layer.opacity"),
+                         Qt::CaseInsensitive) == 0) {
+          const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
+          const float oldOpacity =
+              groupPreviewOpacity->value_or(layer->opacity());
+          groupPreviewOpacity->reset();
+          if (std::abs(oldOpacity - newOpacity) > 0.0001f) {
+            auto *cmd = new ChangeLayerOpacityCommand(layer, oldOpacity,
+                                                      newOpacity);
+            UndoManager::instance()->push(
+                std::unique_ptr<ChangeLayerOpacityCommand>(cmd));
           }
-        },
-        [this, layer, groupPreviewOpacity](const QString &name, const QVariant &value) {
-          if (layer) {
-            ScopedPropertyEditGuard guard(localPropertyEditDepth);
-            if (name.compare(QStringLiteral("layer.opacity"),
-                             Qt::CaseInsensitive) == 0) {
-              const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
-              if (!groupPreviewOpacity->has_value()) {
-                *groupPreviewOpacity = layer->opacity();
-              }
-              layer->setOpacity(newOpacity);
-            } else {
-              layer->setLayerPropertyValue(name, value);
-              notifyLayerPropertyAnimationChanged(layer);
-            }
+        } else {
+          layer->setLayerPropertyValue(name, value);
+          notifyLayerPropertyAnimationChanged(layer);
+        }
+      }
+    };
+    auto previewLayerValue = [this, layer, groupPreviewOpacity](
+                                 const QString &name, const QVariant &value) {
+      if (layer) {
+        ScopedPropertyEditGuard guard(localPropertyEditDepth);
+        if (name.compare(QStringLiteral("layer.opacity"),
+                         Qt::CaseInsensitive) == 0) {
+          const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
+          if (!groupPreviewOpacity->has_value()) {
+            *groupPreviewOpacity = layer->opacity();
           }
-        },
-        currentLayerTime,
-        notifyLayerKeyframeChanged,
-        layer,
-        &addedGroupProperties, &propertyEditors, &groupRows,
-        decorateLayerRow, updateLayerRowValue);
+          layer->setOpacity(newOpacity);
+        } else {
+          layer->setLayerPropertyValue(name, value);
+          notifyLayerPropertyAnimationChanged(layer);
+        }
+      }
+    };
+
+    if (isSourceReframe) {
+      auto *note = new QLabel(
+          QStringLiteral("Source reframe behaves like Pan/Crop: the window looks into the source, then layer transform places it in comp."));
+      note->setObjectName(QStringLiteral("propertySectionNote"));
+      note->setWordWrap(true);
+      applyPropertySectionLabel(note, false);
+      applyThemeTextPalette(note, 120);
+      groupLayout->addWidget(note);
+
+      auto collectProps = [](const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &src,
+                             const auto &names) {
+        std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> out;
+        for (const auto &name : names) {
+          const QString target = QString::fromUtf8(name);
+          auto it = std::find_if(src.begin(), src.end(),
+                                 [&target](const std::shared_ptr<ArtifactCore::AbstractProperty> &prop) {
+                                   return prop && prop->getName().compare(target, Qt::CaseInsensitive) == 0;
+                                 });
+          if (it != src.end()) {
+            out.push_back(*it);
+          }
+        }
+        return out;
+      };
+
+      const auto windowProps = collectProps(
+          sortedProps,
+          std::array<const char *, 8>{
+              "sourceCrop.enabled", "sourceCrop.cropX", "sourceCrop.cropY",
+              "sourceCrop.cropWidth", "sourceCrop.cropHeight",
+              "sourceCrop.anchorX", "sourceCrop.anchorY",
+              "sourceCrop.preserveAspect"});
+      const auto motionProps = collectProps(
+          sortedProps,
+          std::array<const char *, 4>{
+              "sourceCrop.panX", "sourceCrop.panY",
+              "sourceCrop.zoom", "sourceCrop.rotation"});
+
+      if (!windowProps.empty()) {
+        auto *windowLabel = new QLabel(QStringLiteral("Window"), group);
+        windowLabel->setObjectName(QStringLiteral("propertySectionLabel"));
+        applyPropertySectionLabel(windowLabel, true);
+        groupLayout->addWidget(windowLabel);
+
+        std::vector<ArtifactPropertyEditorRowWidget *> windowRows;
+        addRowsFromProperties(
+            group, groupLayout, windowProps, filterText, commitLayerValue,
+            previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
+            layer, &addedGroupProperties, &propertyEditors, &windowRows,
+            decorateLayerRow, updateLayerRowValue);
+        groupRows.insert(groupRows.end(), windowRows.begin(), windowRows.end());
+      }
+
+      if (!motionProps.empty()) {
+        auto *motionLabel = new QLabel(QStringLiteral("Motion"), group);
+        motionLabel->setObjectName(QStringLiteral("propertySectionLabel"));
+        applyPropertySectionLabel(motionLabel, true);
+        groupLayout->addWidget(motionLabel);
+
+        std::vector<ArtifactPropertyEditorRowWidget *> motionRows;
+        addRowsFromProperties(
+            group, groupLayout, motionProps, filterText, commitLayerValue,
+            previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
+            layer, &addedGroupProperties, &propertyEditors, &motionRows,
+            decorateLayerRow, updateLayerRowValue);
+        groupRows.insert(groupRows.end(), motionRows.begin(), motionRows.end());
+      }
+    } else {
+      addRowsFromProperties(
+          group, groupLayout, sortedProps, filterText, commitLayerValue,
+          previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
+          layer, &addedGroupProperties, &propertyEditors, &groupRows,
+          decorateLayerRow, updateLayerRowValue);
+    }
     if (addedGroupProperties) {
       alignPropertyRowLabels(groupRows, 132, 184);
       mainLayout->addWidget(group);
