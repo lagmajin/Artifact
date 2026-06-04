@@ -30,6 +30,7 @@ module;
 #include <regex>
 #include <random>
 #include <QFile>
+#include <QString>
 export module Artifact.Project.Exporter;
 
 
@@ -47,6 +48,8 @@ export namespace Artifact
  struct ArtifactProjectExporterResult
  {
   bool success = false;
+  QString errorStage;
+  QString errorMessage;
  };
 
  class ArtifactProjectExporter {

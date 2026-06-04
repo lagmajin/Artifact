@@ -22,6 +22,9 @@ module;
 #include <QtConcurrent>
 #include <QTransform>
 #include <QMatrix4x4>
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Query.h>
@@ -59,6 +62,7 @@ import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentImmediateSubmitter;
 import Artifact.Render.RenderCommandBuffer;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Color.TransferFunction;
 
 namespace Artifact
 {
@@ -89,6 +93,25 @@ namespace {
     flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Blue)] = true;
     flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Alpha)] = true;
     return flags;
+  }
+
+  uint8_t linearToSrgb8(float value)
+  {
+    constexpr size_t kLutSize = 4096;
+    static const std::array<uint8_t, kLutSize> lut = [] {
+      std::array<uint8_t, kLutSize> table{};
+      for (size_t i = 0; i < kLutSize; ++i) {
+        const float x = static_cast<float>(i) / static_cast<float>(kLutSize - 1);
+        table[i] = static_cast<uint8_t>(
+            ArtifactCore::ColorTransferFunction::encode(
+                x, ArtifactCore::TransferFunction::Gamma22) * 255.0f + 0.5f);
+      }
+      return table;
+    }();
+
+    const float clamped = std::clamp(value, 0.0f, 1.0f);
+    const size_t index = static_cast<size_t>(clamped * static_cast<float>(kLutSize - 1) + 0.5f);
+    return lut[std::min(index, kLutSize - 1)];
   }
 
   float polygonSignedArea(const std::vector<Detail::float2>& points)
@@ -587,7 +610,7 @@ namespace {
   void drawParticles(const ArtifactCore::ParticleRenderData& data) {
     if (data.particles.empty()) {
       lastParticleDebug_ = QStringLiteral(
-          "stage=queued skipped=empty count=0 path=particle render=none");
+          "state=empty skipped=empty count=0 path=particle render=none");
       qDebug() << "[ParticleRenderer] drawParticles skipped: empty particle buffer";
       return;
     }
@@ -595,7 +618,7 @@ namespace {
     if (!particleRenderer_) {
       if (!deviceManager_.device()) {
         lastParticleDebug_ =
-            QStringLiteral("stage=queued skipped=device-null count=%1 path=particle")
+            QStringLiteral("state=device-null skipped=device-null count=%1 path=particle")
                 .arg(data.particles.size());
         qWarning() << "[ParticleRenderer] drawParticles skipped: device is null"
                    << "count=" << data.particles.size();
@@ -614,7 +637,7 @@ namespace {
 
     if (m_viewportWidth <= 0.0f || m_viewportHeight <= 0.0f) {
       lastParticleDebug_ = QStringLiteral(
-                               "stage=queued skipped=invalid-viewport count=%1 viewport=%2x%3 path=particle")
+                               "state=invalid-viewport skipped=invalid-viewport count=%1 viewport=%2x%3 path=particle")
                                .arg(data.particles.size())
                                .arg(m_viewportWidth)
                                .arg(m_viewportHeight);
@@ -651,7 +674,7 @@ namespace {
     auto* pRTV = primitiveRenderer_.currentRTV();
     if (!pRTV) {
       lastParticleDebug_ = QStringLiteral(
-                               "stage=queued skipped=no-rtv count=%1 camera3D=%2 viewport=%3x%4 path=particle")
+                               "state=no-rtv skipped=no-rtv count=%1 camera3D=%2 viewport=%3x%4 path=particle")
                                .arg(data.particles.size())
                                .arg(particle3DCameraActive_ ? QStringLiteral("true")
                                                             : QStringLiteral("false"))
@@ -665,7 +688,7 @@ namespace {
     }
 
     lastParticleDebug_ = QStringLiteral(
-                             "stage=queued count=%1 camera3D=%2 zoom=%3 pan=%4,%5 viewport=%6x%7 rtv=bound matrix=%8 path=particle")
+                             "state=queued count=%1 camera3D=%2 zoom=%3 pan=%4,%5 viewport=%6x%7 rtv=bound matrix=%8 path=particle")
                              .arg(data.particles.size())
                              .arg(particle3DCameraActive_ ? QStringLiteral("true")
                                                           : QStringLiteral("false"))
@@ -1006,9 +1029,9 @@ namespace {
      const float g = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]), 0.0f, 1.0f);
      const float b = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]), 0.0f, 1.0f);
      const float a = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]), 0.0f, 1.0f);
-     dst[x * 4 + 0] = static_cast<uint8_t>(std::pow(r, 1.0f / 2.2f) * 255.0f + 0.5f);
-     dst[x * 4 + 1] = static_cast<uint8_t>(std::pow(g, 1.0f / 2.2f) * 255.0f + 0.5f);
-     dst[x * 4 + 2] = static_cast<uint8_t>(std::pow(b, 1.0f / 2.2f) * 255.0f + 0.5f);
+     dst[x * 4 + 0] = linearToSrgb8(r);
+     dst[x * 4 + 1] = linearToSrgb8(g);
+     dst[x * 4 + 2] = linearToSrgb8(b);
      dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
     }
     srcRow = reinterpret_cast<const uint16_t*>(
@@ -1203,7 +1226,7 @@ namespace {
   const bool floatReadback = useFloatReadback;
 
   // Run fence wait + pixel conversion in background thread
-    [[maybe_unused]] auto future = QtConcurrent::run([fence, stagingTex, ctx, w, h, floatReadback, cb = std::move(callback)]() mutable {
+    [[maybe_unused]] auto future = QtConcurrent::run([fence, stagingTex, ctx, w, h, floatReadback, waitValue, cb = std::move(callback)]() mutable {
     // Wait for GPU copy to complete
     fence->Wait(waitValue);
 
@@ -1243,9 +1266,9 @@ namespace {
           const float g = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]), 0.0f, 1.0f);
           const float b = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]), 0.0f, 1.0f);
           const float a = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]), 0.0f, 1.0f);
-          dst[x * 4 + 0] = static_cast<uint8_t>(std::pow(r, 1.0f / 2.2f) * 255.0f + 0.5f);
-          dst[x * 4 + 1] = static_cast<uint8_t>(std::pow(g, 1.0f / 2.2f) * 255.0f + 0.5f);
-          dst[x * 4 + 2] = static_cast<uint8_t>(std::pow(b, 1.0f / 2.2f) * 255.0f + 0.5f);
+          dst[x * 4 + 0] = linearToSrgb8(r);
+          dst[x * 4 + 1] = linearToSrgb8(g);
+          dst[x * 4 + 2] = linearToSrgb8(b);
           dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
         }
         srcRow = reinterpret_cast<const uint16_t*>(

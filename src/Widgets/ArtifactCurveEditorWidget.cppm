@@ -15,11 +15,151 @@
 #include <QBrush>
 #include <QFont>
 #include <QPainterPath>
+#include <QVector>
 #include <wobjectimpl.h>
 
 module Widget.CurveEditor;
 
+import Frame.Rate;
+import Time.TimeRemap;
+
 namespace ArtifactCore {
+
+namespace {
+
+float clampSpeedPercent(float value) {
+ return std::clamp(value, -1000.0f, 1000.0f);
+}
+
+CurveTrack sampleSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
+                            int64_t startFrame,
+                            int64_t endFrame,
+                            const FrameRate& frameRate) {
+ CurveTrack track;
+ track.name = QStringLiteral("Speed (%)");
+ track.color = QColor(96, 196, 255);
+ track.visible = true;
+
+ float fps = frameRate.framerate();
+ if (fps <= 0.0f) {
+  fps = 30.0f;
+ }
+
+ if (endFrame < startFrame) {
+  std::swap(startFrame, endFrame);
+ }
+
+ auto frameFromTime = [fps](double timeSeconds) -> int64_t {
+  return static_cast<int64_t>(std::llround(timeSeconds * static_cast<double>(fps)));
+ };
+
+ if (keyframes.isEmpty()) {
+  CurveKey left;
+  left.frame = startFrame;
+  left.value = 100.0f;
+  CurveKey right = left;
+  right.frame = endFrame;
+  track.keys.push_back(left);
+  track.keys.push_back(right);
+  return track;
+ }
+
+ QVector<TimeRemapKeyframe> sorted = keyframes;
+ std::sort(sorted.begin(), sorted.end(), [](const TimeRemapKeyframe& a, const TimeRemapKeyframe& b) {
+  if (a.outputTime == b.outputTime) {
+   return a.sourceTime < b.sourceTime;
+  }
+  return a.outputTime < b.outputTime;
+ });
+
+ struct SamplePoint {
+  int64_t frame = 0;
+  float speed = 100.0f;
+ };
+
+ std::vector<SamplePoint> samples;
+ samples.reserve(static_cast<size_t>(sorted.size()) + 2);
+
+ auto appendSample = [&](int64_t frame, float speed) {
+  if (!samples.empty() && samples.back().frame == frame) {
+   samples.back().speed = speed;
+   return;
+  }
+  samples.push_back({frame, speed});
+ };
+
+ const TimeRemapKeyframe* prev = nullptr;
+ float lastSpeed = 100.0f;
+ for (const auto& key : sorted) {
+  if (prev) {
+   const double dt = key.outputTime - prev->outputTime;
+   const double ds = key.sourceTime - prev->sourceTime;
+   if (std::abs(dt) > 1e-9) {
+    lastSpeed = clampSpeedPercent(static_cast<float>((ds / dt) * 100.0));
+   }
+  }
+
+  appendSample(frameFromTime(key.outputTime), lastSpeed);
+  prev = &key;
+ }
+
+ if (samples.empty()) {
+  CurveKey point;
+  point.frame = startFrame;
+  point.value = 100.0f;
+  track.keys.push_back(point);
+  point.frame = endFrame;
+  track.keys.push_back(point);
+  return track;
+ }
+
+ if (samples.front().frame > startFrame) {
+  samples.insert(samples.begin(), {startFrame, samples.front().speed});
+ }
+ if (samples.back().frame < endFrame) {
+  samples.push_back({endFrame, samples.back().speed});
+ }
+
+ std::sort(samples.begin(), samples.end(), [](const SamplePoint& a, const SamplePoint& b) {
+  if (a.frame == b.frame) {
+   return a.speed < b.speed;
+  }
+  return a.frame < b.frame;
+ });
+
+ for (size_t i = 0; i < samples.size(); ++i) {
+  const auto& sample = samples[i];
+  CurveKey key;
+  key.frame = sample.frame;
+  key.value = sample.speed;
+  key.smooth = true;
+  if (i > 0) {
+   const auto& prevSample = samples[i - 1];
+   const float df = static_cast<float>(std::max<int64_t>(1, sample.frame - prevSample.frame));
+   key.inTangent = (sample.speed - prevSample.speed) / df;
+   key.inHandleFrame = -std::max<int64_t>(1, static_cast<int64_t>(std::round(df * 0.25f)));
+   key.inHandleValue = key.inTangent * static_cast<float>(-key.inHandleFrame);
+  }
+  if (i + 1 < samples.size()) {
+   const auto& nextSample = samples[i + 1];
+   const float df = static_cast<float>(std::max<int64_t>(1, nextSample.frame - sample.frame));
+   key.outTangent = (nextSample.speed - sample.speed) / df;
+   key.outHandleFrame = std::max<int64_t>(1, static_cast<int64_t>(std::round(df * 0.25f)));
+   key.outHandleValue = key.outTangent * static_cast<float>(key.outHandleFrame);
+  }
+  track.keys.push_back(key);
+ }
+
+ if (track.keys.size() == 1) {
+  CurveKey extra = track.keys.front();
+  extra.frame = endFrame;
+  track.keys.push_back(extra);
+ }
+
+ return track;
+}
+
+} // namespace
 
 W_OBJECT_IMPL(ArtifactCurveEditorWidget)
 
@@ -423,6 +563,18 @@ void ArtifactCurveEditorWidget::setCurrentFrame(int64_t frame) {
  update();
 }
 
+void ArtifactCurveEditorWidget::setSpeedGraph(
+    const QVector<TimeRemapKeyframe>& keyframes,
+    int64_t startFrame,
+    int64_t endFrame,
+    const FrameRate& frameRate) {
+ std::vector<CurveTrack> tracks;
+ tracks.push_back(
+     ArtifactCore::sampleSpeedGraph(keyframes, startFrame, endFrame, frameRate));
+ setTracks(tracks);
+ fitToContent();
+}
+
 void ArtifactCurveEditorWidget::setHandleEditingEnabled(bool enabled) {
  impl_->handlesInteractive_ = enabled;
 }
@@ -808,11 +960,5 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
  // ============================================================
  // Speed Graph Utilities
  // ============================================================
-
- // Sample speed from TimeRemap keyframes and create a CurveTrack for display.
- // Requires the Time.TimeRemap module (optional dependency).
- // Usage:
- //   auto track = sampleSpeedGraph(keyframes, startFrame, endFrame, frameRate);
- //   curveEditor->setTracks({track});
 
 } // namespace ArtifactCore

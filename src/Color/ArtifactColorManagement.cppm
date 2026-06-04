@@ -45,6 +45,8 @@ module;
 
 module Artifact.Color.Management;
 
+import Color.ColorSpace;
+
 
 
 
@@ -504,21 +506,15 @@ const ColorSettings* ColorManager::settings() const
 
 QMatrix4x4 ColorManager::getConversionMatrix(ColorSpace from, ColorSpace to) const
 {
-    // 简化实现 - 実際は複雑な行列
+    const auto conversion = ArtifactCore::ColorSpaceConverter::getConversionMatrix(
+        static_cast<ArtifactCore::ColorSpace>(from),
+        static_cast<ArtifactCore::ColorSpace>(to));
     QMatrix4x4 matrix;
-
-    if (from == to) {
-        return matrix;  // 単位行列
-    }
-
-    // sRGBからLinearへの変換（简单版）
-    if (from == ColorSpace::sRGB && to == ColorSpace::Linear) {
-        matrix.setRow(0, QVector4D(0.2126f, 0.7152f, 0.0722f, 0.0f));
-        matrix.setRow(1, QVector4D(0.2126f, 0.7152f, 0.0722f, 0.0f));
-        matrix.setRow(2, QVector4D(0.2126f, 0.7152f, 0.0722f, 0.0f));
-        matrix.setRow(3, QVector4D(0.0f, 0.0f, 0.0f, 1.0f));
-    }
-
+    matrix.setToIdentity();
+    matrix.setRow(0, QVector4D(conversion[0], conversion[1], conversion[2], conversion[3]));
+    matrix.setRow(1, QVector4D(conversion[4], conversion[5], conversion[6], conversion[7]));
+    matrix.setRow(2, QVector4D(conversion[8], conversion[9], conversion[10], conversion[11]));
+    matrix.setRow(3, QVector4D(conversion[12], conversion[13], conversion[14], conversion[15]));
     return matrix;
 }
 

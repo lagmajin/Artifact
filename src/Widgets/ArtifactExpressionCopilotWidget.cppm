@@ -17,20 +17,28 @@ module;
 #include <QListWidgetItem>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSize>
 #include <QRegularExpression>
 #include <QSyntaxHighlighter>
 #include <QStringList>
+#include <QVariant>
 #include <QKeyEvent>
 #include <QTextCursor>
 #include <QTextCharFormat>
 #include <QTextDocument>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QPointF>
+#include <QVector2D>
+#include <QVector3D>
+#include <QVector4D>
 #include <memory>
 
 module Artifact.Widgets.ExpressionCopilotWidget;
 
+import Script.Expression.Evaluator;
 import Script.Expression.Parser;
+import Script.Expression.Value;
 
 namespace Artifact {
 
@@ -112,6 +120,104 @@ QString posToLineColumn(const QString& text, int position)
     return QStringLiteral("line %1, col %2").arg(line).arg(column);
 }
 
+ArtifactCore::ExpressionValue variantToExpressionValue(const QVariant& value)
+{
+    if (!value.isValid() || value.isNull()) {
+        return ArtifactCore::ExpressionValue();
+    }
+
+    switch (value.typeId()) {
+    case QMetaType::Bool:
+        return ArtifactCore::ExpressionValue(value.toBool() ? 1.0 : 0.0);
+    case QMetaType::Int:
+    case QMetaType::LongLong:
+    case QMetaType::UInt:
+    case QMetaType::ULongLong:
+    case QMetaType::Double:
+        return ArtifactCore::ExpressionValue(value.toDouble());
+    case QMetaType::QString:
+        return ArtifactCore::ExpressionValue(value.toString().toStdString());
+    case QMetaType::QPointF: {
+        const QPointF point = value.toPointF();
+        return ArtifactCore::ExpressionValue(point.x(), point.y());
+    }
+    case QMetaType::QVector2D: {
+        const QVector2D vec = value.value<QVector2D>();
+        return ArtifactCore::ExpressionValue(vec.x(), vec.y());
+    }
+    case QMetaType::QVector3D: {
+        const QVector3D vec = value.value<QVector3D>();
+        return ArtifactCore::ExpressionValue(vec.x(), vec.y(), vec.z());
+    }
+    case QMetaType::QVector4D: {
+        const QVector4D vec = value.value<QVector4D>();
+        return ArtifactCore::ExpressionValue(vec.x(), vec.y(), vec.z(), vec.w());
+    }
+    case QMetaType::QColor: {
+        const QColor color = value.value<QColor>();
+        return ArtifactCore::ExpressionValue(color.redF(), color.greenF(),
+                                             color.blueF(), color.alphaF());
+    }
+    case QMetaType::QVariantList: {
+        const QVariantList list = value.toList();
+        std::vector<ArtifactCore::ExpressionValue> items;
+        items.reserve(list.size());
+        for (const QVariant& item : list) {
+            items.push_back(variantToExpressionValue(item));
+        }
+        return ArtifactCore::ExpressionValue(items);
+    }
+    case QMetaType::QVariantMap: {
+        const auto map = value.toMap();
+        std::map<std::string, ArtifactCore::ExpressionValue> object;
+        for (auto it = map.cbegin(); it != map.cend(); ++it) {
+            object[it.key().toStdString()] = variantToExpressionValue(it.value());
+        }
+        return ArtifactCore::ExpressionValue(object);
+    }
+    default:
+        break;
+    }
+
+    if (value.canConvert<double>()) {
+        return ArtifactCore::ExpressionValue(value.toDouble());
+    }
+    return ArtifactCore::ExpressionValue(value.toString().toStdString());
+}
+
+ArtifactCore::ExpressionValue buildLayerObject(const QString& layerName, int layerIndex,
+                                               const QString& compositionName)
+{
+    std::map<std::string, ArtifactCore::ExpressionValue> object;
+    object["name"] = ArtifactCore::ExpressionValue(layerName.toStdString());
+    object["index"] = ArtifactCore::ExpressionValue(static_cast<double>(std::max(0, layerIndex)));
+    object["comp"] = ArtifactCore::ExpressionValue(
+        std::map<std::string, ArtifactCore::ExpressionValue>{
+            {"name", ArtifactCore::ExpressionValue(compositionName.toStdString())}
+        });
+    return ArtifactCore::ExpressionValue(object);
+}
+
+ArtifactCore::ExpressionValue buildCompositionObject(
+    const QString& compositionName,
+    const QSize& compositionSize,
+    const QStringList& layerNames)
+{
+    std::vector<ArtifactCore::ExpressionValue> layers;
+    layers.reserve(layerNames.size());
+    for (int i = 0; i < layerNames.size(); ++i) {
+        layers.push_back(buildLayerObject(layerNames.at(i), i + 1, compositionName));
+    }
+
+    std::map<std::string, ArtifactCore::ExpressionValue> object;
+    object["name"] = ArtifactCore::ExpressionValue(compositionName.toStdString());
+    object["width"] = ArtifactCore::ExpressionValue(static_cast<double>(compositionSize.width()));
+    object["height"] = ArtifactCore::ExpressionValue(static_cast<double>(compositionSize.height()));
+    object["numLayers"] = ArtifactCore::ExpressionValue(static_cast<double>(layerNames.size()));
+    object["layers"] = ArtifactCore::ExpressionValue(layers);
+    return ArtifactCore::ExpressionValue(object);
+}
+
 } // namespace
 
 W_OBJECT_IMPL(ArtifactExpressionCopilotWidget)
@@ -147,6 +253,13 @@ public:
     QTimer* validateTimer = nullptr;
     std::unique_ptr<ExpressionSyntaxHighlighter> highlighter;
     ArtifactCore::ExpressionParser parser;
+    QString previewCompositionName;
+    QSize previewCompositionSize;
+    QStringList previewLayerNames;
+    int previewLayerIndex = -1;
+    QString previewLayerName;
+    QVariant previewValue;
+    double previewTimeSeconds = 0.0;
 
     static QList<SuggestionCandidate> rootSuggestions()
     {
@@ -454,7 +567,34 @@ public:
 
         const auto ast = parser.parse(expr);
         if (ast) {
-            setStatus(QStringLiteral("Syntax OK"), QColor(74, 222, 128));
+            ArtifactCore::ExpressionEvaluator evaluator;
+            evaluator.setVariable("value", variantToExpressionValue(previewValue));
+            evaluator.setVariable("time", ArtifactCore::ExpressionValue(previewTimeSeconds));
+            if (!previewCompositionName.isEmpty() || !previewLayerName.isEmpty()) {
+                evaluator.setVariable(
+                    "thisComp",
+                    buildCompositionObject(previewCompositionName,
+                                           previewCompositionSize,
+                                           previewLayerNames));
+                evaluator.setVariable(
+                    "thisLayer",
+                    buildLayerObject(previewLayerName,
+                                     previewLayerIndex >= 0 ? previewLayerIndex + 1 : 0,
+                                     previewCompositionName));
+            }
+
+            const auto runtime = evaluator.evaluate(expr);
+            if (evaluator.hasError()) {
+                setStatus(
+                    QStringLiteral("Runtime error: %1")
+                        .arg(QString::fromStdString(evaluator.getError())),
+                    QColor(248, 113, 113));
+            } else {
+                setStatus(
+                    QStringLiteral("Runtime OK: %1")
+                        .arg(QString::fromStdString(runtime.toString()).left(96)),
+                    QColor(74, 222, 128));
+            }
             setHint(currentHintText(text), QColor(96, 165, 250));
             applyErrorSelection(-1, 0, text);
             return;
@@ -731,6 +871,43 @@ ArtifactExpressionCopilotWidget::~ArtifactExpressionCopilotWidget() {
 
 QString ArtifactExpressionCopilotWidget::expressionText() const {
     return impl_ && impl_->expressionEdit ? impl_->expressionEdit->toPlainText() : QString();
+}
+
+void ArtifactExpressionCopilotWidget::setPreviewContext(
+    const QString& compositionName,
+    const QSize& compositionSize,
+    const QStringList& layerNames,
+    int currentLayerIndex,
+    const QString& layerName,
+    const QVariant& propertyValue,
+    double timeSeconds) {
+    if (!impl_) {
+        return;
+    }
+
+    impl_->previewCompositionName = compositionName;
+    impl_->previewCompositionSize = compositionSize;
+    impl_->previewLayerNames = layerNames;
+    impl_->previewLayerIndex = currentLayerIndex;
+    impl_->previewLayerName = layerName;
+    impl_->previewValue = propertyValue;
+    impl_->previewTimeSeconds = timeSeconds;
+    impl_->validateExpression();
+}
+
+void ArtifactExpressionCopilotWidget::clearPreviewContext() {
+    if (!impl_) {
+        return;
+    }
+
+    impl_->previewCompositionName.clear();
+    impl_->previewCompositionSize = QSize();
+    impl_->previewLayerNames.clear();
+    impl_->previewLayerIndex = -1;
+    impl_->previewLayerName.clear();
+    impl_->previewValue = QVariant();
+    impl_->previewTimeSeconds = 0.0;
+    impl_->validateExpression();
 }
 
 bool ArtifactExpressionCopilotWidget::eventFilter(QObject* watched, QEvent* event) {

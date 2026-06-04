@@ -29,6 +29,7 @@ import Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Application.Manager;
+import Artifact.Widgets.CompositionEditor;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Tool.Manager;
 import Artifact.Service.ActiveContext;
@@ -579,12 +580,19 @@ int compositionPreviewIntervalMs(
   QWidget::closeEvent(event);
  }
 
-  void ArtifactCompositionRenderWidget::focusInEvent(QFocusEvent* event) {
+ void ArtifactCompositionRenderWidget::focusInEvent(QFocusEvent* event) {
   QWidget::focusInEvent(event);
-  ArtifactCore::InputOperator::instance()->setActiveContext("Viewport");
+  if (auto* input = ArtifactCore::InputOperator::instance()) {
+    input->setActiveContext(QStringLiteral("Viewport.Composition"));
+  }
  }
 
  void ArtifactCompositionRenderWidget::focusOutEvent(QFocusEvent* event) {
+  if (auto* input = ArtifactCore::InputOperator::instance()) {
+    if (input->activeContext() == QStringLiteral("Viewport.Composition")) {
+      input->setActiveContext(QStringLiteral("Global"));
+    }
+  }
   QWidget::focusOutEvent(event);
  }
 
@@ -906,7 +914,15 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   auto* am = ArtifactApplicationManager::instance();
   auto* tm = am->toolManager();
   auto* ctx = am->activeContextService();
+  auto* editor = qobject_cast<ArtifactCompositionEditor*>(parentWidget());
   auto& shortcuts = ShortcutBindings::instance();
+  if (auto* input = ArtifactCore::InputOperator::instance()) {
+    input->setActiveContext(QStringLiteral("Viewport.Composition"));
+    if (event && input->processKeyPress(this, event->key(), event->modifiers())) {
+      event->accept();
+      return;
+    }
+  }
   
   if (!event->isAutoRepeat()) {
       if (shortcuts.matches(event, ShortcutId::Undo)) {
@@ -934,6 +950,33 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       else if (event->key() == Qt::Key_PageDown) ctx->nextFrame();
       else if (event->key() == Qt::Key_BracketLeft) ctx->setLayerInAtCurrentTime();
       else if (event->key() == Qt::Key_BracketRight) ctx->setLayerOutAtCurrentTime();
+      else if (event->key() == Qt::Key_F) {
+          if (event->modifiers() & Qt::ShiftModifier) {
+              if (auto* ctrl = editor ? editor->renderController() : nullptr) {
+                  ctrl->focusSelectedLayer();
+              }
+          } else {
+              zoomFit();
+          }
+      }
+      else if (event->key() == Qt::Key_1 && (event->modifiers() & Qt::ControlModifier)) {
+          zoom100();
+      }
+      else if (event->key() == Qt::Key_G) {
+          if (auto* ctrl = editor ? editor->renderController() : nullptr) {
+              ctrl->setShowGrid(!ctrl->isShowGrid());
+          }
+      }
+      else if (event->key() == Qt::Key_Apostrophe) {
+          if (auto* ctrl = editor ? editor->renderController() : nullptr) {
+              ctrl->setShowGuides(!ctrl->isShowGuides());
+          }
+      }
+      else if (event->key() == Qt::Key_Semicolon) {
+          if (auto* ctrl = editor ? editor->renderController() : nullptr) {
+              ctrl->setShowSafeMargins(!ctrl->isShowSafeMargins());
+          }
+      }
       
       // Arrow keys for nudge
       else if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right || event->key() == Qt::Key_Up || event->key() == Qt::Key_Down) {

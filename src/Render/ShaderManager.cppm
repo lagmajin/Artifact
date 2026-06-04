@@ -13,6 +13,7 @@ module;
 #include <QFile>
 #include <QDebug>
 #include <cmath>
+#include <cstring>
 
 module Artifact.Render.ShaderManager;
 
@@ -336,6 +337,7 @@ float4 main(PS_INPUT input) : SV_TARGET
     gizmo3DVsInfo.Desc.ShaderType = SHADER_TYPE_VERTEX;
     gizmo3DVsInfo.Desc.Name = "Gizmo3D VS";
     gizmo3DVsInfo.Source = s_gizmo3DVS;
+    gizmo3DVsInfo.SourceLength = static_cast<Uint32>(std::strlen(s_gizmo3DVS));
 
     ShaderCreateInfo thickLineVsInfo;
     thickLineVsInfo.SourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
@@ -368,30 +370,41 @@ float4 main(PS_INPUT input) : SV_TARGET
     // Keep startup predictable: compile shaders on the current thread instead
     // of fanning out a large temporary task group on top of Diligent's own
     // async workers.
-    device_->CreateShader(lineVsInfo,                &lineShaders_.VS);
-    device_->CreateShader(linePsInfo,                &lineShaders_.PS);
-    device_->CreateShader(sprite2DVsInfo,            &spriteShaders_.VS);
-    device_->CreateShader(sprite2DPsInfo,            &spriteShaders_.PS);
-    device_->CreateShader(solidRectVsInfo2,          &solidShaders_.VS);
-    device_->CreateShader(solidRectPsInfo2,          &solidShaders_.PS);
-    device_->CreateShader(solidRectTransformVsInfo,  &solidRectTransformShaders_.VS);
-    device_->CreateShader(solidRectPsInfo2,          &solidRectTransformShaders_.PS);
-    device_->CreateShader(spriteTransformVsInfo,     &spriteTransformShaders_.VS);
-    device_->CreateShader(spriteTransformVsInfo,     &maskedSpriteShaders_.VS);
-    device_->CreateShader(maskedSpritePsInfo,        &maskedSpriteShaders_.PS);
-    device_->CreateShader(glyphQuadPsInfo,           &glyphQuadShaders_.PS);
-    device_->CreateShader(checkerboardPsInfo,        &checkerboardShaders_.PS);
-    device_->CreateShader(gridPsInfo,                &gridShaders_.PS);
-    device_->CreateShader(drawOutlineRectVsInfo,     &outlineShaders_.VS);
-    device_->CreateShader(drawOutlineRectPsInfo,     &outlineShaders_.PS);
-    device_->CreateShader(thickLineVsInfo,           &thickLineShaders_.VS);
-    device_->CreateShader(thickLinePsInfo,           &thickLineShaders_.PS);
-    device_->CreateShader(dotLineVsInfo,             &dotLineShaders_.VS);
-    device_->CreateShader(dotLinePsInfo,             &dotLineShaders_.PS);
-    device_->CreateShader(gizmo3DVsInfo,             &gizmo3DShaders_.VS);
+    const auto createShaderOrWarn = [this](const ShaderCreateInfo& info,
+                                           IShader*& out) {
+        IShader* shader = nullptr;
+        device_->CreateShader(info, &shader);
+        out = shader;
+        if (!out) {
+            qWarning() << "[ShaderManager] Failed to create shader:"
+                       << info.Desc.Name;
+        }
+    };
+
+    createShaderOrWarn(lineVsInfo,                lineShaders_.VS);
+    createShaderOrWarn(linePsInfo,                lineShaders_.PS);
+    createShaderOrWarn(sprite2DVsInfo,            spriteShaders_.VS);
+    createShaderOrWarn(sprite2DPsInfo,            spriteShaders_.PS);
+    createShaderOrWarn(solidRectVsInfo2,          solidShaders_.VS);
+    createShaderOrWarn(solidRectPsInfo2,          solidShaders_.PS);
+    createShaderOrWarn(solidRectTransformVsInfo,   solidRectTransformShaders_.VS);
+    createShaderOrWarn(solidRectPsInfo2,          solidRectTransformShaders_.PS);
+    createShaderOrWarn(spriteTransformVsInfo,     spriteTransformShaders_.VS);
+    createShaderOrWarn(spriteTransformVsInfo,     maskedSpriteShaders_.VS);
+    createShaderOrWarn(maskedSpritePsInfo,        maskedSpriteShaders_.PS);
+    createShaderOrWarn(glyphQuadPsInfo,           glyphQuadShaders_.PS);
+    createShaderOrWarn(checkerboardPsInfo,        checkerboardShaders_.PS);
+    createShaderOrWarn(gridPsInfo,                gridShaders_.PS);
+    createShaderOrWarn(drawOutlineRectVsInfo,     outlineShaders_.VS);
+    createShaderOrWarn(drawOutlineRectPsInfo,     outlineShaders_.PS);
+    createShaderOrWarn(thickLineVsInfo,           thickLineShaders_.VS);
+    createShaderOrWarn(thickLinePsInfo,           thickLineShaders_.PS);
+    createShaderOrWarn(dotLineVsInfo,             dotLineShaders_.VS);
+    createShaderOrWarn(dotLinePsInfo,             dotLineShaders_.PS);
+    createShaderOrWarn(gizmo3DVsInfo,             gizmo3DShaders_.VS);
 
     // Glyph transform VS: separate from glyphQuadShaders_.VS (matrix CB + per-vertex color)
-    device_->CreateShader(glyphTransformVsInfo, &glyphQuadTransformShaders_.VS);
+    createShaderOrWarn(glyphTransformVsInfo, glyphQuadTransformShaders_.VS);
     glyphQuadTransformShaders_.PS = glyphQuadShaders_.PS; // reuse the same glyph PS
 
     // Post-parallel pointer assignments (no CreateShader needed, just sharing refs)
