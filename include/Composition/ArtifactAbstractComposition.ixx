@@ -5,6 +5,9 @@
 #include <QObject>
 #include <QImage>
 #include <QJsonDocument>
+#include <QJsonObject>
+#include <QPointF>
+#include <QRectF>
 #include <QSize>
 
 export module Artifact.Composition.Abstract;
@@ -31,6 +34,30 @@ import Audio.Segment;
 export namespace Artifact {
 
  using namespace ArtifactCore;
+
+ struct ResponsiveLayoutVariant {
+  QString variantId;
+  QString displayName;
+  QSize baseSize;
+  qreal aspectRatio = 0.0;
+  QRectF safeArea = QRectF(0.0, 0.0, 1.0, 1.0);
+  QPointF contentAnchor = QPointF(0.5, 0.5);
+  QJsonObject layoutRules;
+  bool enabled = true;
+
+  QJsonObject toJson() const;
+  static ResponsiveLayoutVariant fromJson(const QJsonObject& obj);
+ };
+
+ struct ResponsiveLayoutSet {
+  QString activeVariantId;
+  QString defaultPolicy = QStringLiteral("manual");
+  QVector<ResponsiveLayoutVariant> variants;
+
+  QJsonObject toJson() const;
+  static ResponsiveLayoutSet fromJson(const QJsonObject& obj);
+  bool hasVariant(const QString& variantId) const;
+ };
 
  class ArtifactAbstractComposition:public QObject {
   W_OBJECT(ArtifactAbstractComposition)
@@ -96,6 +123,13 @@ export namespace Artifact {
   void setWorkAreaRange(const FrameRange& range);
   FrameRate frameRate() const;
   void setFrameRate(const FrameRate& rate);
+
+  ResponsiveLayoutSet responsiveLayout() const;
+  void setResponsiveLayout(const ResponsiveLayoutSet& layout);
+  QString activeResponsiveLayoutVariantId() const;
+  void setActiveResponsiveLayoutVariantId(const QString& variantId);
+  QVector<ResponsiveLayoutVariant> responsiveLayoutVariants() const;
+  QSize effectiveCompositionSize() const;
   	
   bool hasVideo() const;
   bool hasAudio() const;
