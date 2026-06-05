@@ -92,6 +92,7 @@ import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.Application.ProjectBundleIpc;
 import Time.Rational;
 import Artifact.Layer.Video;
 import Artifact.Layer.Clone;
@@ -1120,6 +1121,51 @@ public:
       add(selectedCount > 1 ? QStringLiteral("Copy Selected Layers as Bundle")
                             : QStringLiteral("Copy Layer as Bundle"),
           copyLayerBundle);
+      add(selectedCount > 1 ? QStringLiteral("Send Selected Layers to Main Project")
+                            : QStringLiteral("Send Layer to Main Project"),
+          [this, layer, svc, comp, selectedLayersInComposition]() {
+            QVector<ArtifactAbstractLayerPtr> layersToSend = selectedLayersInComposition();
+            if (layersToSend.isEmpty() && layer) {
+              layersToSend.push_back(layer);
+            }
+            if (layersToSend.isEmpty()) {
+              return;
+            }
+
+            QJsonArray layerJsonArray;
+            for (const auto &sendLayer : layersToSend) {
+              if (sendLayer) {
+                layerJsonArray.append(sendLayer->toJson());
+              }
+            }
+            if (layerJsonArray.isEmpty()) {
+              return;
+            }
+
+            QJsonObject bundle;
+            bundle[QStringLiteral("bundleKind")] = QStringLiteral("layer");
+            bundle[QStringLiteral("bundleTitle")] =
+                layersToSend.size() == 1 && layersToSend.first()
+                    ? layersToSend.first()->layerName()
+                    : QStringLiteral("%1 layer(s)").arg(layerJsonArray.size());
+            bundle[QStringLiteral("layers")] = layerJsonArray;
+            bundle[QStringLiteral("sourceProjectName")] =
+                svc ? svc->projectName().toQString() : QString();
+            bundle[QStringLiteral("sourceCompositionName")] =
+                comp ? comp->settings().compositionName().toQString() : QString();
+            if (layersToSend.size() == 1 && layersToSend.first()) {
+              bundle[QStringLiteral("sourceLayerId")] =
+                  layersToSend.first()->id().toString();
+              bundle[QStringLiteral("sourceLayerName")] =
+                  layersToSend.first()->layerName();
+            }
+            QString error;
+            if (!sendProjectBundleToMainProject(bundle, &error)) {
+              QMessageBox::warning(this, QStringLiteral("Send Bundle"),
+                  error.isEmpty() ? QStringLiteral("Failed to send layer bundle to the main project.")
+                                  : error);
+            }
+          });
       add(QStringLiteral("Paste Layers Here"), pasteLayersHere,
           clipboardHasLayerData);
       addSeparator();
