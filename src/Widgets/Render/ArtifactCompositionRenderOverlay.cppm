@@ -101,6 +101,51 @@ QString layerOverlayDetailText(const ArtifactAbstractLayerPtr &layer)
       .arg(QString::number(std::max(0.0, boundsSize.height()), 'f', 0));
 }
 
+QString responsiveLayoutSummaryText(const ArtifactCompositionPtr &comp)
+{
+  if (!comp) {
+    return QString();
+  }
+
+  const auto layout = comp->responsiveLayout();
+  const QString activeId = comp->activeResponsiveLayoutVariantId();
+  const auto activeVariantIt =
+      std::find_if(layout.variants.begin(), layout.variants.end(),
+                   [&activeId](const ResponsiveLayoutVariant &variant) {
+                     return variant.variantId == activeId;
+                   });
+  if (activeVariantIt == layout.variants.end()) {
+    return QStringLiteral("Responsive Layout: %1")
+        .arg(activeId.isEmpty() ? QStringLiteral("default") : activeId);
+  }
+
+  const ResponsiveLayoutVariant &variant = *activeVariantIt;
+  QStringList details;
+  details << (variant.displayName.isEmpty() ? variant.variantId
+                                            : variant.displayName);
+  if (variant.baseSize.isValid()) {
+    details << QStringLiteral("%1x%2")
+                   .arg(variant.baseSize.width())
+                   .arg(variant.baseSize.height());
+  }
+  if (variant.aspectRatio > 0.0) {
+    details << QStringLiteral("%1:1")
+                   .arg(QString::number(variant.aspectRatio, 'f', 2));
+  }
+  const QString guidePreset =
+      variant.layoutRules.value(QStringLiteral("guidePreset")).toString().trimmed();
+  if (!guidePreset.isEmpty()) {
+    details << QStringLiteral("guide %1").arg(guidePreset);
+  }
+  const QString scaleMode =
+      variant.layoutRules.value(QStringLiteral("scaleMode")).toString().trimmed();
+  if (!scaleMode.isEmpty()) {
+    details << QStringLiteral("scale %1").arg(scaleMode);
+  }
+
+  return QStringLiteral("Responsive Layout: %1").arg(details.join(QStringLiteral(" · ")));
+}
+
 void drawLabelBox(QPainter &p, const QRectF &boxRect, const QColor &fill,
                   const QColor &border, const QString &title,
                   const QString &subtitle)
@@ -410,7 +455,7 @@ void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
-  const QSize compSize = comp->settings().compositionSize();
+  const QSize compSize = comp->effectiveCompositionSize();
   const float cw =
       static_cast<float>(compSize.width() > 0 ? compSize.width() : 1920);
   const float ch =
@@ -429,6 +474,27 @@ void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
   renderer->drawSolidLine({cw, 0.0f}, {cw, ch}, lightColor, 1.0f);
   renderer->drawSolidLine({cw, ch}, {0.0f, ch}, lightColor, 1.0f);
   renderer->drawSolidLine({0.0f, ch}, {0.0f, 0.0f}, lightColor, 1.0f);
+
+  const QString summary = responsiveLayoutSummaryText(comp);
+  if (!summary.isEmpty()) {
+    QFont badgeFont = QApplication::font();
+    badgeFont.setPointSizeF(std::max(8.5, static_cast<double>(badgeFont.pointSizeF())));
+    const QFontMetrics fm(badgeFont);
+    const int badgeWidth = std::min(std::max(280, fm.horizontalAdvance(summary) + 28),
+                                    std::max(180, static_cast<int>(cw) - 24));
+    const int badgeHeight = fm.height() + 18;
+    const QRectF badgeRect(12.0, 12.0, static_cast<float>(badgeWidth),
+                           static_cast<float>(badgeHeight));
+    renderer->drawOverlayPanel(static_cast<float>(badgeRect.left()),
+                               static_cast<float>(badgeRect.top()),
+                               static_cast<float>(badgeRect.width()),
+                               static_cast<float>(badgeRect.height()),
+                               FloatColor{0.05f, 0.06f, 0.08f, 0.90f},
+                               FloatColor{0.31f, 0.55f, 0.84f, 0.95f});
+    renderer->drawText(badgeRect.adjusted(12.0, 6.0, -12.0, -6.0), summary,
+                       badgeFont, FloatColor{0.91f, 0.95f, 0.99f, 1.0f},
+                       Qt::AlignLeft | Qt::AlignVCenter);
+  }
 }
 
 void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,

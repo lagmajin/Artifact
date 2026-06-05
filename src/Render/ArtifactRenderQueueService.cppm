@@ -503,11 +503,12 @@ namespace Artifact
                 return;
             }
 
-            const QSize compSize = composition->settings().compositionSize();
+            const QSize compSize = composition->effectiveCompositionSize();
             const int compWidth = std::max(1, compSize.width());
             const int compHeight = std::max(1, compSize.height());
             if (compWidth > 0 && compHeight > 0 &&
                 (job.resolutionWidth != compWidth || job.resolutionHeight != compHeight)) {
+                const QString variantId = composition->activeResponsiveLayoutVariantId().trimmed();
                 auto diag = makePreflightDiagnostic(
                     ArtifactCore::DiagnosticSeverity::Warning,
                     ArtifactCore::DiagnosticCategory::Configuration,
@@ -517,7 +518,10 @@ namespace Artifact
                         .arg(job.resolutionHeight)
                         .arg(compWidth)
                         .arg(compHeight),
-                    QStringLiteral("Confirm whether the mismatch is intentional"),
+                    variantId.isEmpty()
+                        ? QStringLiteral("Confirm whether the mismatch is intentional")
+                        : QStringLiteral("Active layout variant is %1. Confirm whether the mismatch is intentional.")
+                              .arg(variantId),
                     compId);
                 result.addDiagnostic(diag);
             }
@@ -544,7 +548,7 @@ namespace Artifact
     {
         const QSize outputSize(std::max(1, job.resolutionWidth), std::max(1, job.resolutionHeight));
         const QSize compSize = composition
-            ? composition->settings().compositionSize()
+            ? composition->effectiveCompositionSize()
             : outputSize;
         const int canvasW = std::max(1, compSize.width());
         const int canvasH = std::max(1, compSize.height());
@@ -2565,7 +2569,7 @@ namespace Artifact
             }
 
             composition->goToFrame(frameNumber);
-            const QSize compSize = composition->settings().compositionSize();
+            const QSize compSize = composition->effectiveCompositionSize();
             const int compW = std::max(16, compSize.width());
             const int compH = std::max(16, compSize.height());
             // RGBA8888 で直接作成（ARGB→RGBA 変換の問題を回避）
@@ -2642,7 +2646,7 @@ namespace Artifact
             // コンポジションのフレームを設定
             comp->goToFrame(job.startFrame);
 
-            const auto compSize = comp->settings().compositionSize();
+            const auto compSize = comp->effectiveCompositionSize();
             QHash<QString, LayerSurfaceCacheEntry> surfaceCache;
             GPUTextureCacheManager gpuTextureCacheManager;
             gpuTextureCacheManager.setDevice(gpuRenderer_->device());
@@ -2816,7 +2820,7 @@ namespace Artifact
                 job.startFrame = static_cast<int>(std::max<int64_t>(0, effectiveRange.start()));
                 job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, effectiveRange.end()));
                 job.frameRate = comp->frameRate().framerate();
-                const QSize size = comp->settings().compositionSize();
+                const QSize size = comp->effectiveCompositionSize();
                 if (size.width() > 0 && size.height() > 0) {
                     job.resolutionWidth = size.width();
                     job.resolutionHeight = size.height();
@@ -2886,7 +2890,7 @@ namespace Artifact
                 job.startFrame = static_cast<int>(std::max<int64_t>(0, effectiveRange.start()));
                 job.endFrame = static_cast<int>(std::max<int64_t>(job.startFrame + 1, effectiveRange.end()));
                 job.frameRate = comp->frameRate().framerate();
-                const QSize size = comp->settings().compositionSize();
+                const QSize size = comp->effectiveCompositionSize();
                 if (size.width() > 0 && size.height() > 0) {
                     job.resolutionWidth = size.width();
                     job.resolutionHeight = size.height();
@@ -3633,7 +3637,7 @@ namespace Artifact
                     if (useGpuBackend) {
                         // 経路B: GPU Diligent レンダリング
                         // ヘッドレスレンダラーで1フレームレンダリング → readback
-                        const auto compSize = (*compositionForRender)->settings().compositionSize();
+                        const auto compSize = (*compositionForRender)->effectiveCompositionSize();
                         const TileRenderMode tileMode = impl_->tileRenderMode_;
                         const int tileSz = impl_->tileSize_;
                         if (tileMode == TileRenderMode::Tiled) {

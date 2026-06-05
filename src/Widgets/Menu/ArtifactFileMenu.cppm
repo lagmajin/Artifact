@@ -500,7 +500,7 @@ void ArtifactFileMenu::Impl::handleExportCurrentFrame()
     if (filePath.isEmpty()) return;
 
     // 現在のフレームをレンダリング
-    const QSize compSize = comp->settings().compositionSize();
+    const QSize compSize = comp->effectiveCompositionSize();
     QImage canvas(compSize, QImage::Format_ARGB32_Premultiplied);
     canvas.fill(QColor(18, 20, 24));
     
@@ -575,7 +575,7 @@ void ArtifactFileMenu::Impl::handleExportWorkArea()
     const int64_t startFrame = workArea.start();
     const int64_t endFrame = workArea.end();
     const int64_t totalFrames = std::max<int64_t>(1, endFrame - startFrame);
-    const QSize compSize = comp->settings().compositionSize();
+    const QSize compSize = comp->effectiveCompositionSize();
     const auto layers = comp->allLayer();
 
     // 進捗ダイアログを表示
