@@ -2608,7 +2608,15 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
             QJsonArray items;
             items.append(serializeItem(contextItem, serializeItem));
-            ClipboardManager::instance().copyProjectItems(items, contextItem->name.toQString());
+            QJsonObject bundle;
+            bundle[QStringLiteral("bundleTitle")] = contextItem->name.toQString();
+            bundle[QStringLiteral("sourceProjectName")] = svc ? svc->projectName().toQString() : QString();
+            bundle[QStringLiteral("sourceProjectPath")] = ArtifactProjectManager::getInstance().currentProjectPath();
+            bundle[QStringLiteral("sourceItemType")] = items.isEmpty()
+                ? QStringLiteral("unknown")
+                : items.first().toObject().value(QStringLiteral("type")).toString(QStringLiteral("unknown"));
+            bundle[QStringLiteral("items")] = items;
+            ClipboardManager::instance().copyProjectBundle(bundle, contextItem->name.toQString());
         }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
         
         if (contextType == eProjectItemType::Composition) {
