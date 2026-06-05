@@ -10,14 +10,19 @@ module;
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QComboBox>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QPalette>
+#include <QPointF>
+#include <QRectF>
 #include <QSpinBox>
+#include <QSize>
 #include <QVBoxLayout>
 #include <QTimer>
+#include <numeric>
 #include <wobjectimpl.h>
 
 module Menu.Composition;
@@ -37,6 +42,101 @@ import Widgets.Utils.CSS;
 
 namespace Artifact {
 using namespace ArtifactCore;
+
+namespace {
+
+QString aspectRatioLabel(const QSize& size)
+{
+ if (size.width() > 0 && size.height() > 0) {
+  const int divisor = std::gcd(size.width(), size.height());
+  if (divisor > 0) {
+   return QStringLiteral("%1:%2")
+    .arg(size.width() / divisor)
+    .arg(size.height() / divisor);
+  }
+ }
+ return QStringLiteral("custom");
+}
+
+ResponsiveLayoutVariant makeResponsiveVariant(const QString& id,
+                                              const QString& name,
+                                              const QSize& size,
+                                              const QString& guidePreset)
+{
+ ResponsiveLayoutVariant variant;
+ variant.variantId = id;
+ variant.displayName = name;
+ variant.baseSize = size.isValid() ? size : QSize(1920, 1080);
+ variant.aspectRatio = variant.baseSize.height() > 0
+  ? static_cast<qreal>(variant.baseSize.width()) /
+    static_cast<qreal>(variant.baseSize.height())
+  : 0.0;
+ variant.safeArea = QRectF(0.0, 0.0, 1.0, 1.0);
+ variant.contentAnchor = QPointF(0.5, 0.5);
+ variant.layoutRules.insert(QStringLiteral("scaleMode"), QStringLiteral("fit"));
+ variant.layoutRules.insert(QStringLiteral("cropMode"), QStringLiteral("none"));
+ variant.layoutRules.insert(QStringLiteral("guidePreset"), guidePreset);
+ variant.enabled = true;
+ return variant;
+}
+
+QString responsiveVariantLabel(const ResponsiveLayoutVariant& variant)
+{
+ const QString name = variant.displayName.isEmpty() ? variant.variantId
+                                                    : variant.displayName;
+ const QString sizeLabel = variant.baseSize.isValid()
+  ? QStringLiteral("%1x%2").arg(variant.baseSize.width()).arg(variant.baseSize.height())
+  : QStringLiteral("custom");
+ const QString ratioLabel = aspectRatioLabel(variant.baseSize);
+ return QStringLiteral("%1  (%2, %3)").arg(name, sizeLabel, ratioLabel);
+}
+
+ResponsiveLayoutSet normalizedResponsiveLayoutForDialog(const ArtifactCompositionPtr& current)
+{
+ ResponsiveLayoutSet layout = current ? current->responsiveLayout() : ResponsiveLayoutSet{};
+ const QSize currentSize = current ? current->settings().compositionSize() : QSize(1920, 1080);
+ if (layout.variants.isEmpty()) {
+  layout.variants.append(makeResponsiveVariant(QStringLiteral("default"),
+                                               QStringLiteral("Default"),
+                                               currentSize.isValid() ? currentSize : QSize(1920, 1080),
+                                               QStringLiteral("default")));
+ }
+
+ const auto hasVariant = [&layout](const QString& id) {
+  for (const auto& variant : layout.variants) {
+   if (variant.variantId == id) {
+    return true;
+   }
+  }
+  return false;
+ };
+
+ if (!hasVariant(QStringLiteral("layout_16_9"))) {
+  layout.variants.append(makeResponsiveVariant(QStringLiteral("layout_16_9"),
+                                               QStringLiteral("16:9"),
+                                               QSize(1920, 1080),
+                                               QStringLiteral("safeFrame")));
+ }
+ if (!hasVariant(QStringLiteral("layout_9_16"))) {
+  layout.variants.append(makeResponsiveVariant(QStringLiteral("layout_9_16"),
+                                               QStringLiteral("9:16"),
+                                               QSize(1080, 1920),
+                                               QStringLiteral("safeFrame")));
+ }
+ if (!hasVariant(QStringLiteral("layout_1_1"))) {
+  layout.variants.append(makeResponsiveVariant(QStringLiteral("layout_1_1"),
+                                               QStringLiteral("1:1"),
+                                               QSize(1080, 1080),
+                                               QStringLiteral("centerSquare")));
+ }
+
+ if (layout.activeVariantId.isEmpty() || !layout.hasVariant(layout.activeVariantId)) {
+  layout.activeVariantId = layout.variants.front().variantId;
+ }
+ return layout;
+}
+
+} // namespace
 
 W_OBJECT_IMPL(ArtifactCompositionMenu)
 
@@ -243,20 +343,42 @@ void ArtifactCompositionMenu::Impl::showSettings()
  layout->addWidget(nameLabel);
  layout->addWidget(nameEdit);
 
+ const QSize initialSize = current->effectiveCompositionSize();
  auto* sizeLabel = new QLabel(QStringLiteral("Size"), &dialog);
  layout->addWidget(sizeLabel);
  auto* sizeLayout = new QHBoxLayout();
  auto* widthSpin = new QSpinBox(&dialog);
  widthSpin->setRange(1, 32768);
- widthSpin->setValue(std::max(1, current->settings().compositionSize().width()));
+ widthSpin->setValue(std::max(1, initialSize.width()));
  auto* heightSpin = new QSpinBox(&dialog);
  heightSpin->setRange(1, 32768);
- heightSpin->setValue(std::max(1, current->settings().compositionSize().height()));
+ heightSpin->setValue(std::max(1, initialSize.height()));
  sizeLayout->addWidget(new QLabel(QStringLiteral("Width"), &dialog));
  sizeLayout->addWidget(widthSpin);
  sizeLayout->addWidget(new QLabel(QStringLiteral("Height"), &dialog));
  sizeLayout->addWidget(heightSpin);
  layout->addLayout(sizeLayout);
+
+ auto* responsiveLabel = new QLabel(QStringLiteral("Responsive Layout"), &dialog);
+ layout->addWidget(responsiveLabel);
+ auto* responsiveCombo = new QComboBox(&dialog);
+ const ResponsiveLayoutSet previewLayout = normalizedResponsiveLayoutForDialog(current);
+ for (const auto& variant : previewLayout.variants) {
+  responsiveCombo->addItem(responsiveVariantLabel(variant), variant.variantId);
+  if (variant.variantId == previewLayout.activeVariantId) {
+   responsiveCombo->setCurrentIndex(responsiveCombo->count() - 1);
+  }
+ }
+ layout->addWidget(responsiveCombo);
+ auto* responsiveHint = new QLabel(
+  QStringLiteral("Select the active layout variant for this composition."), &dialog);
+ {
+  QPalette pal = responsiveHint->palette();
+  pal.setColor(QPalette::WindowText,
+               QColor(ArtifactCore::currentDCCTheme().textColor).darker(140));
+  responsiveHint->setPalette(pal);
+ }
+ layout->addWidget(responsiveHint);
 
  auto* fpsLabel = new QLabel(QStringLiteral("Frame Rate"), &dialog);
  layout->addWidget(fpsLabel);
@@ -374,7 +496,28 @@ void ArtifactCompositionMenu::Impl::showSettings()
   }
 
   current->setCompositionName(UniString::fromQString(trimmedName));
-  current->setCompositionSize(QSize(widthSpin->value(), heightSpin->value()));
+  ResponsiveLayoutSet responsiveLayout = normalizedResponsiveLayoutForDialog(current);
+  const QString selectedVariantId = responsiveCombo->currentData().toString();
+  const QSize requestedSize(std::max(1, widthSpin->value()),
+                            std::max(1, heightSpin->value()));
+  QSize chosenSize = requestedSize;
+  for (auto& variant : responsiveLayout.variants) {
+   if (variant.variantId == selectedVariantId) {
+    if (requestedSize == initialSize && variant.baseSize.isValid()) {
+     chosenSize = variant.baseSize;
+    }
+    variant.baseSize = chosenSize;
+    variant.aspectRatio = requestedSize.height() > 0
+     ? static_cast<qreal>(chosenSize.width()) /
+       static_cast<qreal>(chosenSize.height())
+     : 0.0;
+    break;
+   }
+  }
+  if (!selectedVariantId.isEmpty() && responsiveLayout.hasVariant(selectedVariantId)) {
+   responsiveLayout.activeVariantId = selectedVariantId;
+  }
+  current->setResponsiveLayout(responsiveLayout);
   current->setFrameRate(FrameRate(static_cast<float>(fpsSpin->value())));
   current->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
  current->setBackGroundColor(FloatColor(backgroundColor.redF(),
