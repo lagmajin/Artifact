@@ -111,6 +111,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Playback;
 import Artifact.Service.PlaybackShortcuts;
 import Artifact.Service.Project;
+import Artifact.Application.ProjectBundleIpc;
 import Artifact.Project.Roles;
 import EnvironmentVariable;
 import Core.Localization;
@@ -1892,6 +1893,7 @@ int main(int argc, char *argv[]) {
   QApplication::setWindowIcon(appIcon);
   using namespace Artifact;
   auto *mw = new ArtifactMainWindow();
+  initializeProjectBundleIpc(mw);
   ArtifactWorkspaceManager workspaceManager;
   mw->setObjectName("ArtifactMainWindow");
   mw->setWindowTitle(buildWindowTitle());

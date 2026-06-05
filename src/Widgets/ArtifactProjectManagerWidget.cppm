@@ -117,6 +117,7 @@ import Utils.String.UniString;
 import Utils.Id;
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
+import Artifact.Application.ProjectBundleIpc;
 import Artifact.Service.Playback;
 import Artifact.Project.Model;
 import Artifact.Project.Items;
@@ -2538,9 +2539,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         addTrackedAction(QStringLiteral("copy_name"), QStringLiteral("Copy Name"), [sourceIdx]() {
             QApplication::clipboard()->setText(sourceIdx.data(Qt::DisplayRole).toString());
         }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
-        addTrackedAction(QStringLiteral("copy_item_snapshot"), QStringLiteral("Copy Item Snapshot"), [this, contextItem, svc]() {
+        const auto buildProjectItemBundle = [this, contextItem, svc]() -> QJsonObject {
+            QJsonObject bundle;
             if (!contextItem) {
-                return;
+                return bundle;
             }
 
             auto serializeItem = [&](const ProjectItem* item, const auto& self) -> QJsonObject {
@@ -2608,7 +2610,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
             QJsonArray items;
             items.append(serializeItem(contextItem, serializeItem));
-            QJsonObject bundle;
+            bundle[QStringLiteral("bundleKind")] = QStringLiteral("project-items");
             bundle[QStringLiteral("bundleTitle")] = contextItem->name.toQString();
             bundle[QStringLiteral("sourceProjectName")] = svc ? svc->projectName().toQString() : QString();
             bundle[QStringLiteral("sourceProjectPath")] = ArtifactProjectManager::getInstance().currentProjectPath();
@@ -2616,8 +2618,27 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 ? QStringLiteral("unknown")
                 : items.first().toObject().value(QStringLiteral("type")).toString(QStringLiteral("unknown"));
             bundle[QStringLiteral("items")] = items;
+            return bundle;
+        };
+        addTrackedAction(QStringLiteral("copy_item_snapshot"), QStringLiteral("Copy Item Snapshot"), [this, contextItem, svc]() {
+            const QJsonObject bundle = buildProjectItemBundle();
+            if (bundle.isEmpty()) {
+                return;
+            }
             ClipboardManager::instance().copyProjectBundle(bundle, contextItem->name.toQString());
         }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
+        addTrackedAction(QStringLiteral("send_item_snapshot"), QStringLiteral("Send Bundle to Main Project"), [this, buildProjectItemBundle]() {
+            const QJsonObject bundle = buildProjectItemBundle();
+            if (bundle.isEmpty()) {
+                return;
+            }
+            QString error;
+            if (!sendProjectBundleToMainProject(bundle, &error)) {
+                QMessageBox::warning(this, QStringLiteral("Send Bundle"),
+                    error.isEmpty() ? QStringLiteral("Failed to send bundle to the main project.")
+                                    : error);
+            }
+        }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/share.svg")));
         
         if (contextType == eProjectItemType::Composition) {
             addTrackedAction(QStringLiteral("set_active_composition"), QStringLiteral("Set as Active Composition"), [sourceIdx]() {
