@@ -14,6 +14,7 @@ module;
 #include <QDragLeaveEvent>
 #include <QDragMoveEvent>
 #include <QJsonArray>
+#include <QJsonObject>
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QEvent>
@@ -954,6 +955,23 @@ public:
       }
       return parts.join(QStringLiteral(" • "));
     };
+    const auto selectedLayersInComposition = [&]() {
+      QVector<ArtifactAbstractLayerPtr> selected;
+      if (!selection || !comp) {
+        return selected;
+      }
+      const auto selectedSet = selection->selectedLayers();
+      if (selectedSet.isEmpty()) {
+        return selected;
+      }
+      const auto &orderedLayers = comp->allLayerRef();
+      for (const auto &orderedLayer : orderedLayers) {
+        if (orderedLayer && selectedSet.contains(orderedLayer)) {
+          selected.push_back(orderedLayer);
+        }
+      }
+      return selected;
+    };
     const auto pasteLayersHere = [this]() {
       auto *service = ArtifactProjectService::instance();
       if (!service) {
@@ -1030,6 +1048,51 @@ public:
                              QStringLiteral("No layers could be pasted."));
       }
     };
+    const auto copyLayerBundle = [this, svc, comp, layer, selectedLayersInComposition]() {
+      QVector<ArtifactAbstractLayerPtr> layersToCopy = selectedLayersInComposition();
+      if (layersToCopy.isEmpty() && layer) {
+        layersToCopy.push_back(layer);
+      }
+      if (layersToCopy.isEmpty()) {
+        return;
+      }
+
+      QJsonArray layerJsonArray;
+      for (const auto &copyLayer : layersToCopy) {
+        if (copyLayer) {
+          layerJsonArray.append(copyLayer->toJson());
+        }
+      }
+      if (layerJsonArray.isEmpty()) {
+        return;
+      }
+
+      QJsonObject metadata;
+      metadata[QStringLiteral("sourceProjectName")] = svc ? svc->projectName().toQString() : QString();
+      metadata[QStringLiteral("sourceCompositionName")] =
+          comp ? comp->settings().compositionName().toQString() : QString();
+      if (layersToCopy.size() == 1 && layersToCopy.first()) {
+        metadata[QStringLiteral("sourceLayerId")] = layersToCopy.first()->id().toString();
+        metadata[QStringLiteral("sourceLayerName")] = layersToCopy.first()->layerName();
+      } else {
+        QJsonArray sourceLayerIds;
+        QJsonArray sourceLayerNames;
+        for (const auto &copyLayer : layersToCopy) {
+          if (!copyLayer) {
+            continue;
+          }
+          sourceLayerIds.append(copyLayer->id().toString());
+          sourceLayerNames.append(copyLayer->layerName());
+        }
+        metadata[QStringLiteral("sourceLayerIds")] = sourceLayerIds;
+        metadata[QStringLiteral("sourceLayerNames")] = sourceLayerNames;
+      }
+
+      const QString bundleTitle = layersToCopy.size() == 1 && layersToCopy.first()
+                                      ? layersToCopy.first()->layerName()
+                                      : QStringLiteral("%1 layer(s)").arg(layerJsonArray.size());
+      ArtifactCore::ClipboardManager::instance().copyLayerBundle(layerJsonArray, bundleTitle, metadata);
+    };
     if (layer) {
       title = describeLayerMenuTitle(layer);
       subtitle = describeContextSubtitle(true);
@@ -1054,6 +1117,9 @@ public:
         ArtifactCore::ClipboardManager::instance().copyLayer(layer->toJson(),
                                                              layer->layerName());
       });
+      add(selectedCount > 1 ? QStringLiteral("Copy Selected Layers as Bundle")
+                            : QStringLiteral("Copy Layer as Bundle"),
+          copyLayerBundle);
       add(QStringLiteral("Paste Layers Here"), pasteLayersHere,
           clipboardHasLayerData);
       addSeparator();
