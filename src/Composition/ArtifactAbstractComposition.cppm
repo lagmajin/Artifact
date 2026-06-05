@@ -18,6 +18,8 @@ module;
 #include <QDir>
 #include <QFileInfo>
 #include <QUuid>
+#include <QPointF>
+#include <QRectF>
 
 module Artifact.Composition.Abstract;
 
@@ -88,6 +90,33 @@ ArtifactCore::AssetID assetIdForPath(const QString& path)
   return ArtifactCore::AssetID(uuid.toString(QUuid::WithoutBraces));
 }
 
+Artifact::ResponsiveLayoutVariant makeDefaultResponsiveLayoutVariant(const QSize& size)
+{
+  Artifact::ResponsiveLayoutVariant variant;
+  variant.variantId = QStringLiteral("default");
+  variant.displayName = QStringLiteral("Default");
+  variant.baseSize = size.isValid() ? size : QSize(1920, 1080);
+  variant.aspectRatio = variant.baseSize.height() > 0
+      ? static_cast<qreal>(variant.baseSize.width()) / static_cast<qreal>(variant.baseSize.height())
+      : 0.0;
+  variant.safeArea = QRectF(0.0, 0.0, 1.0, 1.0);
+  variant.contentAnchor = QPointF(0.5, 0.5);
+  variant.layoutRules.insert(QStringLiteral("scaleMode"), QStringLiteral("fit"));
+  variant.layoutRules.insert(QStringLiteral("cropMode"), QStringLiteral("none"));
+  variant.layoutRules.insert(QStringLiteral("guidePreset"), QStringLiteral("default"));
+  variant.enabled = true;
+  return variant;
+}
+
+Artifact::ResponsiveLayoutSet makeDefaultResponsiveLayoutSet(const QSize& size)
+{
+  Artifact::ResponsiveLayoutSet layout;
+  layout.activeVariantId = QStringLiteral("default");
+  layout.defaultPolicy = QStringLiteral("manual");
+  layout.variants.append(makeDefaultResponsiveLayoutVariant(size));
+  return layout;
+}
+
 } // namespace
 	
 
@@ -109,6 +138,7 @@ ArtifactCore::AssetID assetIdForPath(const QString& path)
   FrameRange frameRange_ = FrameRange(0, 300);
   FrameRange workAreaRange_ = FrameRange(0, 300);
   FrameRate frameRate_;
+  ResponsiveLayoutSet responsiveLayout_;
   bool looping_ = false;
   float playbackSpeed_ = 1.0f;
   CompositionID id_;
@@ -425,6 +455,109 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() cons
     return usedAssets;
   }
 
+QJsonObject ResponsiveLayoutVariant::toJson() const
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("variantId"), variantId);
+    obj.insert(QStringLiteral("displayName"), displayName);
+    obj.insert(QStringLiteral("width"), baseSize.width());
+    obj.insert(QStringLiteral("height"), baseSize.height());
+    obj.insert(QStringLiteral("aspectRatio"), aspectRatio);
+    obj.insert(QStringLiteral("safeArea"), QJsonObject{
+        {QStringLiteral("x"), safeArea.x()},
+        {QStringLiteral("y"), safeArea.y()},
+        {QStringLiteral("width"), safeArea.width()},
+        {QStringLiteral("height"), safeArea.height()},
+    });
+    obj.insert(QStringLiteral("contentAnchor"), QJsonObject{
+        {QStringLiteral("x"), contentAnchor.x()},
+        {QStringLiteral("y"), contentAnchor.y()},
+    });
+    obj.insert(QStringLiteral("layoutRules"), layoutRules);
+    obj.insert(QStringLiteral("enabled"), enabled);
+    return obj;
+}
+
+ResponsiveLayoutVariant ResponsiveLayoutVariant::fromJson(const QJsonObject& obj)
+{
+    ResponsiveLayoutVariant variant;
+    variant.variantId = obj.value(QStringLiteral("variantId")).toString();
+    variant.displayName = obj.value(QStringLiteral("displayName")).toString();
+    const int width = obj.value(QStringLiteral("width")).toInt(0);
+    const int height = obj.value(QStringLiteral("height")).toInt(0);
+    variant.baseSize = QSize(width, height);
+    variant.aspectRatio = obj.value(QStringLiteral("aspectRatio")).toDouble(
+        height > 0 ? static_cast<double>(width) / static_cast<double>(height) : 0.0);
+    const QJsonObject safeAreaObj = obj.value(QStringLiteral("safeArea")).toObject();
+    variant.safeArea = QRectF(
+        safeAreaObj.value(QStringLiteral("x")).toDouble(0.0),
+        safeAreaObj.value(QStringLiteral("y")).toDouble(0.0),
+        safeAreaObj.value(QStringLiteral("width")).toDouble(1.0),
+        safeAreaObj.value(QStringLiteral("height")).toDouble(1.0));
+    const QJsonObject anchorObj = obj.value(QStringLiteral("contentAnchor")).toObject();
+    variant.contentAnchor = QPointF(
+        anchorObj.value(QStringLiteral("x")).toDouble(0.5),
+        anchorObj.value(QStringLiteral("y")).toDouble(0.5));
+    variant.layoutRules = obj.value(QStringLiteral("layoutRules")).toObject();
+    variant.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+    if (variant.variantId.isEmpty()) {
+        variant.variantId = QStringLiteral("default");
+    }
+    if (variant.displayName.isEmpty()) {
+        variant.displayName = variant.variantId;
+    }
+    if (!variant.baseSize.isValid()) {
+        variant.baseSize = QSize(1920, 1080);
+    }
+    if (variant.aspectRatio <= 0.0 && variant.baseSize.height() > 0) {
+        variant.aspectRatio = static_cast<qreal>(variant.baseSize.width()) / static_cast<qreal>(variant.baseSize.height());
+    }
+    return variant;
+}
+
+QJsonObject ResponsiveLayoutSet::toJson() const
+{
+    QJsonObject obj;
+    obj.insert(QStringLiteral("activeVariantId"), activeVariantId);
+    obj.insert(QStringLiteral("defaultPolicy"), defaultPolicy);
+    QJsonArray variantArray;
+    for (const auto& variant : variants) {
+        variantArray.append(variant.toJson());
+    }
+    obj.insert(QStringLiteral("variants"), variantArray);
+    return obj;
+}
+
+ResponsiveLayoutSet ResponsiveLayoutSet::fromJson(const QJsonObject& obj)
+{
+    ResponsiveLayoutSet layout;
+    layout.activeVariantId = obj.value(QStringLiteral("activeVariantId")).toString();
+    layout.defaultPolicy = obj.value(QStringLiteral("defaultPolicy")).toString(QStringLiteral("manual"));
+    const QJsonArray variantArray = obj.value(QStringLiteral("variants")).toArray();
+    for (const auto& value : variantArray) {
+        if (value.isObject()) {
+            layout.variants.append(ResponsiveLayoutVariant::fromJson(value.toObject()));
+        }
+    }
+    if (layout.variants.isEmpty()) {
+        layout.variants.append(makeDefaultResponsiveLayoutVariant(QSize(1920, 1080)));
+    }
+    if (layout.activeVariantId.isEmpty() || !layout.hasVariant(layout.activeVariantId)) {
+        layout.activeVariantId = layout.variants.front().variantId;
+    }
+    return layout;
+}
+
+bool ResponsiveLayoutSet::hasVariant(const QString& variantId) const
+{
+    for (const auto& variant : variants) {
+        if (variant.variantId == variantId) {
+            return true;
+        }
+    }
+    return false;
+}
+
  ArtifactAbstractComposition::ArtifactAbstractComposition(const CompositionID& id, const ArtifactCompositionInitParams& params) :impl_(new Impl(this))
  {
   impl_->id_ = id;
@@ -446,6 +579,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() cons
   } else {
    impl_->workAreaRange_ = impl_->frameRange_;
   }
+  impl_->responsiveLayout_ = makeDefaultResponsiveLayoutSet(impl_->settings_.compositionSize());
  }
 
  ArtifactAbstractComposition::~ArtifactAbstractComposition()
@@ -708,6 +842,15 @@ void ArtifactAbstractComposition::setCompositionSize(const QSize& size)
         return;
     }
     impl_->settings_.setCompositionSize(size);
+    for (auto& variant : impl_->responsiveLayout_.variants) {
+        if (variant.variantId == impl_->responsiveLayout_.activeVariantId) {
+            variant.baseSize = size;
+            variant.aspectRatio = size.height() > 0
+                ? static_cast<qreal>(size.width()) / static_cast<qreal>(size.height())
+                : 0.0;
+            break;
+        }
+    }
     impl_->invalidateThumbnailCache();
     Q_EMIT changed();
 }
@@ -805,6 +948,71 @@ void ArtifactAbstractComposition::setFrameRate(const FrameRate& rate)
     Q_EMIT changed();
 }
 
+ResponsiveLayoutSet ArtifactAbstractComposition::responsiveLayout() const
+{
+    return impl_->responsiveLayout_;
+}
+
+void ArtifactAbstractComposition::setResponsiveLayout(const ResponsiveLayoutSet& layout)
+{
+    ResponsiveLayoutSet normalized = layout;
+    if (normalized.variants.isEmpty()) {
+        normalized = makeDefaultResponsiveLayoutSet(impl_->settings_.compositionSize());
+    }
+    if (normalized.activeVariantId.isEmpty() || !normalized.hasVariant(normalized.activeVariantId)) {
+        normalized.activeVariantId = normalized.variants.front().variantId;
+    }
+    impl_->responsiveLayout_ = normalized;
+
+    for (const auto& variant : impl_->responsiveLayout_.variants) {
+        if (variant.variantId == impl_->responsiveLayout_.activeVariantId && variant.baseSize.isValid()) {
+            impl_->settings_.setCompositionSize(variant.baseSize);
+            break;
+        }
+    }
+    impl_->invalidateThumbnailCache();
+    Q_EMIT changed();
+}
+
+QString ArtifactAbstractComposition::activeResponsiveLayoutVariantId() const
+{
+    return impl_->responsiveLayout_.activeVariantId;
+}
+
+void ArtifactAbstractComposition::setActiveResponsiveLayoutVariantId(const QString& variantId)
+{
+    if (variantId.isEmpty() || impl_->responsiveLayout_.activeVariantId == variantId) {
+        return;
+    }
+    if (!impl_->responsiveLayout_.hasVariant(variantId)) {
+        return;
+    }
+    impl_->responsiveLayout_.activeVariantId = variantId;
+    for (const auto& variant : impl_->responsiveLayout_.variants) {
+        if (variant.variantId == variantId && variant.baseSize.isValid()) {
+            impl_->settings_.setCompositionSize(variant.baseSize);
+            break;
+        }
+    }
+    impl_->invalidateThumbnailCache();
+    Q_EMIT changed();
+}
+
+QVector<ResponsiveLayoutVariant> ArtifactAbstractComposition::responsiveLayoutVariants() const
+{
+    return impl_->responsiveLayout_.variants;
+}
+
+QSize ArtifactAbstractComposition::effectiveCompositionSize() const
+{
+    for (const auto& variant : impl_->responsiveLayout_.variants) {
+        if (variant.variantId == impl_->responsiveLayout_.activeVariantId && variant.baseSize.isValid()) {
+            return variant.baseSize;
+        }
+    }
+    return impl_->settings_.compositionSize();
+}
+
 QJsonDocument ArtifactAbstractComposition::toJson() const{
     QJsonObject obj;
     obj["id"] = id().toString();
@@ -824,6 +1032,7 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     backgroundColorObj["b"] = impl_->backgroundColor_.b();
     backgroundColorObj["a"] = impl_->backgroundColor_.a();
     obj["backgroundColor"] = backgroundColorObj;
+    obj["responsiveLayout"] = impl_->responsiveLayout_.toJson();
     QJsonArray layersArray;
     for (const auto& layer : impl_->layerMultiIndex_.all()) {
         if (layer) {
@@ -880,6 +1089,17 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
     }
     if (obj.contains("looping")) {
         comp->setLooping(obj["looping"].toBool(false));
+    }
+    if (obj.contains("responsiveLayout") && obj["responsiveLayout"].isObject()) {
+        comp->impl_->responsiveLayout_ = ResponsiveLayoutSet::fromJson(obj["responsiveLayout"].toObject());
+        for (const auto& variant : comp->impl_->responsiveLayout_.variants) {
+            if (variant.variantId == comp->impl_->responsiveLayout_.activeVariantId && variant.baseSize.isValid()) {
+                comp->impl_->settings_.setCompositionSize(variant.baseSize);
+                break;
+            }
+        }
+    } else {
+        comp->impl_->responsiveLayout_ = makeDefaultResponsiveLayoutSet(comp->impl_->settings_.compositionSize());
     }
 
     if (obj.contains("layers") && obj["layers"].isArray()) {
