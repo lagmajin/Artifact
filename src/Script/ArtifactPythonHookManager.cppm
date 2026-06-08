@@ -41,7 +41,6 @@ module;
 #include <QJsonDocument>
 module Artifact.Script.Hooks;
 
-import Artifact.Script.Hooks;
 import Script.Python.Engine;
 import Core.FastSettingsStore;
 import Artifact.AI.WorkspaceAutomation;

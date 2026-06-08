@@ -13,7 +13,6 @@ module;
 
 module Artifact.Widgets.RenderCenterWindow;
 
-import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Widgets.Render.QueueManager;
 import Widgets.Utils.CSS;
 

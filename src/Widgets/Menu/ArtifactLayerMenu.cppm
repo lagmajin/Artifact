@@ -36,13 +36,16 @@ import Artifact.Layer.Factory;
 import Artifact.Layer.Composition;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Video;
+import Artifact.Layer.Camera;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Composition.Abstract;
 import Artifact.MainWindow;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
+import Artifact.Widgets.CreateCameraLayerDialog;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Tool.CameraTracker;
+import Tracking.MotionTracker;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -141,6 +144,7 @@ public:
     QAction* createTextAction = nullptr;
     QAction* createParticleAction = nullptr;
     QAction* createCameraAction = nullptr;
+    QAction* createLightAction = nullptr;
     QAction* createAudioAction = nullptr;
     QAction* createSvgAction = nullptr;
     QAction* createModel3DAction = nullptr;
@@ -151,6 +155,7 @@ public:
     QAction* createShapeEllipseAction = nullptr;
     QAction* createShapeStarAction = nullptr;
     QAction* trackCameraAction = nullptr;
+    QAction* createMotionTrackerAction = nullptr;
 
     QAction* duplicateLayerAction = nullptr;
     QAction* renameLayerAction = nullptr;
@@ -189,10 +194,12 @@ public:
     void handleCreateText();
     void handleCreateParticle();
     void handleCreateCamera();
+    void handleCreateLight();
     void handleCreateAudio();
     void handleCreateSvg();
     void handleCreateModel3D();
     void handleCreateShape(ShapeType type, const QString& nameBase);
+    void handleCreateMotionTracker();
 
     void handleDuplicateLayer();
     void handleRenameLayer();
@@ -259,6 +266,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createCameraAction = new QAction("カメラ(&C)", createMenu);
     createCameraAction->setIcon(QIcon(resolveIconPath("Studio/videocam.svg")));
 
+    createLightAction = new QAction("ライト(&L)", createMenu);
+    createLightAction->setIcon(QIcon(resolveIconPath("Studio/wb_sunny.svg")));
+
     createAudioAction = new QAction("オーディオ(&U)...", createMenu);
     createAudioAction->setIcon(QIcon(resolveIconPath("Studio/audiotrack.svg")));
 
@@ -291,6 +301,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     trackCameraAction = new QAction("3Dカメラトラッキング(&T)", menu);
     trackCameraAction->setIcon(QIcon(resolveIconPath("Studio/videocam.svg")));
+    createMotionTrackerAction = new QAction("モーショントラッカーを作成(&M)", menu);
 
     createMenu->addAction(createSolidAction);
     createMenu->addAction(createNullAction);
@@ -299,6 +310,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createTextAction);
     createMenu->addAction(createParticleAction);
     createMenu->addAction(createCameraAction);
+    createMenu->addAction(createLightAction);
     createMenu->addAction(createAudioAction);
     createMenu->addAction(createSvgAction);
     createMenu->addAction(createModel3DAction);
@@ -391,6 +403,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     menu->addMenu(createMenu);
     menu->addAction(trackCameraAction);
+    menu->addAction(createMotionTrackerAction);
     menu->addSeparator();
     menu->addAction(duplicateLayerAction);
     menu->addAction(renameLayerAction);
@@ -420,6 +433,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createTextAction) { handleCreateText(); return; }
         if (action == createParticleAction) { handleCreateParticle(); return; }
         if (action == createCameraAction) { handleCreateCamera(); return; }
+        if (action == createLightAction) { handleCreateLight(); return; }
         if (action == createAudioAction) { handleCreateAudio(); return; }
         if (action == createSvgAction) { handleCreateSvg(); return; }
         if (action == createModel3DAction) { handleCreateModel3D(); return; }
@@ -456,6 +470,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == ungroupAction) { handleUngroup(); return; }
         if (action == splitAction) { handleSplitLayer(); return; }
         if (action == trackCameraAction) { handleTrackCamera(); return; }
+        if (action == createMotionTrackerAction) { handleCreateMotionTracker(); return; }
     };
 
     QObject::connect(menu, &QMenu::triggered, menu, dispatchAction);
@@ -556,6 +571,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createTextAction->setEnabled(hasProject);
     createParticleAction->setEnabled(hasProject);
     createCameraAction->setEnabled(hasProject);
+    createLightAction->setEnabled(hasProject);
     createAudioAction->setEnabled(hasProject);
     createSvgAction->setEnabled(hasProject);
     createModel3DAction->setEnabled(hasProject);
@@ -682,6 +698,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         }
     }
     trackCameraAction->setEnabled(isVideoSelected);
+    createMotionTrackerAction->setEnabled(isVideoSelected);
     proxyMenu->setEnabled(isVideoSelected);
     generateProxyAction->setEnabled(isVideoSelected);
     revealProxyAction->setEnabled(isVideoSelected && hasProxy);
@@ -793,9 +810,62 @@ void ArtifactLayerMenu::Impl::handleCreateCamera()
         QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
         return;
     }
+
+    auto* const service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+
+    QWidget* parentWindow = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
+    CreateCameraLayerDialog dialog(parentWindow);
+    dialog.setModal(true);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
     ArtifactCameraLayerInitParams params;
-    params.setName(UniString(uniqueLayerName(u8"Camera 1")));
-    ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
+    params.setName(UniString(dialog.cameraName().trimmed().isEmpty()
+                                 ? uniqueLayerName(u8"Camera 1")
+                                 : dialog.cameraName()));
+
+    service->addLayerToCurrentComposition(params);
+
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    const auto camera = selectionManager
+        ? std::dynamic_pointer_cast<ArtifactCameraLayer>(selectionManager->currentLayer())
+        : nullptr;
+    if (!camera) {
+        return;
+    }
+
+    camera->setZoom(dialog.zoom());
+    camera->setFocusDistance(dialog.focusDistance());
+    camera->setAperture(dialog.apertureF());
+    camera->setDepthOfField(dialog.depthOfFieldEnabled());
+    camera->setMotionBlur(dialog.motionBlur());
+    camera->setBlurAmount(dialog.blurAmount());
+    camera->setUseManualFov(true);
+    camera->setFov(dialog.fov());
+    camera->setLocked(dialog.cameraLocked());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateLight()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer",
+                             "コンポジションが選択されていません。");
+        return;
+    }
+
+    auto* const service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+
+    ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Light 1")),
+                                   LayerType::Light);
+    service->addLayerToCurrentComposition(params);
 }
 
 void ArtifactLayerMenu::Impl::handleCreateAudio()
@@ -1470,6 +1540,53 @@ void ArtifactLayerMenu::Impl::handleTrackCamera()
     } else {
         QMessageBox::warning(menu_->window(), "3D Tracker", "トラッキングに失敗しました。十分な特徴点が見つからなかった可能性があります。");
     }
+}
+
+void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return;
+    }
+
+    auto layer = comp->layerById(selectedLayerId_);
+    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    if (!videoLayer || !videoLayer->hasVideo()) {
+        QMessageBox::warning(menu_->window(), "Motion Tracker", "動画レイヤーを選択してください。");
+        return;
+    }
+
+    const int existingTrackerId = videoLayer->motionTrackerId();
+    if (existingTrackerId > 0 && ArtifactCore::TrackerManager::instance().tracker(existingTrackerId)) {
+        QMessageBox::information(menu_->window(), "Motion Tracker",
+                                 QStringLiteral("このレイヤーには既存のトラッカー #%1 が紐づいています。")
+                                     .arg(existingTrackerId));
+        return;
+    }
+
+    const QString baseName = videoLayer->layerName().trimmed().isEmpty()
+                                 ? QStringLiteral("Motion Tracker")
+                                 : QStringLiteral("%1 Tracker").arg(videoLayer->layerName().trimmed());
+    auto* tracker = ArtifactCore::TrackerManager::instance().createTracker(baseName);
+    if (!tracker) {
+        QMessageBox::warning(menu_->window(), "Motion Tracker", "トラッカーを作成できませんでした。");
+        return;
+    }
+
+    videoLayer->setMotionTrackerId(tracker->id());
+    videoLayer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+
+    QMessageBox::information(menu_->window(), "Motion Tracker",
+                             QStringLiteral("トラッカー #%1 を作成してレイヤーに紐づけました。")
+                                 .arg(tracker->id()));
 }
 
 ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)

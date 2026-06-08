@@ -123,7 +123,7 @@ public:
                      .arg(relationDriftCount)
                      .arg(textureShapeDriftCount);
 
-        lines << QStringLiteral("densityDelta=visual %1 -> %2 info %3 -> %4 luminance %5 -> %6 motion %7 -> %8")
+        lines << QStringLiteral("visualDensityDelta=visual %1 -> %2 info %3 -> %4 luminance %5 -> %6 motion %7 -> %8")
                      .arg(QString::number(previous.visualDensityScore, 'f', 2))
                      .arg(QString::number(current.visualDensityScore, 'f', 2))
                      .arg(QString::number(previous.informationDensityScore, 'f', 2))
@@ -283,13 +283,13 @@ public:
         }
 
         lines << QString();
-        lines << QStringLiteral("Density:");
-        lines << QStringLiteral("  visual=%1 info=%2 luminance=%3 motion=%4 level=%5")
+        lines << QStringLiteral("Visual Density Monitor:");
+        lines << QStringLiteral("  level=%1 visual=%2 info=%3 luminance=%4 motion=%5")
+                      .arg(snapshot.densityLabel.isEmpty() ? QStringLiteral("low") : snapshot.densityLabel)
                       .arg(QString::number(snapshot.visualDensityScore, 'f', 2))
                       .arg(QString::number(snapshot.informationDensityScore, 'f', 2))
                       .arg(QString::number(snapshot.luminanceDensityScore, 'f', 2))
-                      .arg(QString::number(snapshot.motionDensityScore, 'f', 2))
-                      .arg(snapshot.densityLabel.isEmpty() ? QStringLiteral("low") : snapshot.densityLabel);
+                      .arg(QString::number(snapshot.motionDensityScore, 'f', 2));
         if (!snapshot.densityWarning.isEmpty()) {
             lines << QStringLiteral("  warning: %1").arg(snapshot.densityWarning);
         }

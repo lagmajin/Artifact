@@ -32,14 +32,24 @@ QPainter::CompositionMode toCompositionMode(const ArtifactCore::BlendMode mode)
  case ArtifactCore::BlendMode::SoftLight: return QPainter::CompositionMode_SoftLight;
  case ArtifactCore::BlendMode::Difference: return QPainter::CompositionMode_Difference;
  case ArtifactCore::BlendMode::Exclusion: return QPainter::CompositionMode_Exclusion;
- case ArtifactCore::BlendMode::Hue:
- case ArtifactCore::BlendMode::Saturation:
- case ArtifactCore::BlendMode::Color:
- case ArtifactCore::BlendMode::Luminosity:
-  return QPainter::CompositionMode_SourceOver;
- case ArtifactCore::BlendMode::Normal:
- default:
-  return QPainter::CompositionMode_SourceOver;
+  case ArtifactCore::BlendMode::Hue:
+  case ArtifactCore::BlendMode::Saturation:
+  case ArtifactCore::BlendMode::Color:
+  case ArtifactCore::BlendMode::Luminosity:
+  case ArtifactCore::BlendMode::Dissolve:
+  case ArtifactCore::BlendMode::DancingDissolve:
+  case ArtifactCore::BlendMode::ClassicColorBurn:
+  case ArtifactCore::BlendMode::LinearDodge:
+  case ArtifactCore::BlendMode::ClassicColorDodge:
+  case ArtifactCore::BlendMode::ClassicDifference:
+  case ArtifactCore::BlendMode::StencilAlpha:
+  case ArtifactCore::BlendMode::StencilLuma:
+  case ArtifactCore::BlendMode::SilhouetteAlpha:
+  case ArtifactCore::BlendMode::SilhouetteLuma:
+   return QPainter::CompositionMode_SourceOver;
+  case ArtifactCore::BlendMode::Normal:
+  default:
+   return QPainter::CompositionMode_SourceOver;
  }
 }
 
@@ -134,25 +144,44 @@ float blendChannel(const float dst, const float src, const ArtifactCore::BlendMo
   return std::abs(d - s);
  case ArtifactCore::BlendMode::Exclusion:
   return d + s - 2.0f * d * s;
- case ArtifactCore::BlendMode::Hue:
- case ArtifactCore::BlendMode::Saturation:
- case ArtifactCore::BlendMode::Color:
- case ArtifactCore::BlendMode::Luminosity:
- default:
-  return s;
+  case ArtifactCore::BlendMode::Hue:
+  case ArtifactCore::BlendMode::Saturation:
+  case ArtifactCore::BlendMode::Color:
+  case ArtifactCore::BlendMode::Luminosity:
+  case ArtifactCore::BlendMode::ClassicColorBurn:
+   return s <= 0.0f ? 0.0f : std::clamp(1.0f - ((1.0f - d) / s), 0.0f, 1.0f);
+  case ArtifactCore::BlendMode::LinearDodge:
+  case ArtifactCore::BlendMode::ClassicColorDodge:
+   return s >= 1.0f ? 1.0f : std::clamp(d / (1.0f - s), 0.0f, 1.0f);
+  case ArtifactCore::BlendMode::ClassicDifference:
+   return std::abs(d - s);
+  case ArtifactCore::BlendMode::Dissolve:
+  case ArtifactCore::BlendMode::DancingDissolve:
+  case ArtifactCore::BlendMode::StencilAlpha:
+  case ArtifactCore::BlendMode::StencilLuma:
+  case ArtifactCore::BlendMode::SilhouetteAlpha:
+  case ArtifactCore::BlendMode::SilhouetteLuma:
+  default:
+   return s;
+  }
  }
-}
 
 bool shouldUseQPainterFallback(const ArtifactCore::BlendMode mode)
 {
  switch (mode) {
- case ArtifactCore::BlendMode::Hue:
- case ArtifactCore::BlendMode::Saturation:
- case ArtifactCore::BlendMode::Color:
- case ArtifactCore::BlendMode::Luminosity:
-  return true;
- default:
-  return false;
+  case ArtifactCore::BlendMode::Hue:
+  case ArtifactCore::BlendMode::Saturation:
+  case ArtifactCore::BlendMode::Color:
+  case ArtifactCore::BlendMode::Luminosity:
+  case ArtifactCore::BlendMode::Dissolve:
+  case ArtifactCore::BlendMode::DancingDissolve:
+  case ArtifactCore::BlendMode::StencilAlpha:
+  case ArtifactCore::BlendMode::StencilLuma:
+  case ArtifactCore::BlendMode::SilhouetteAlpha:
+  case ArtifactCore::BlendMode::SilhouetteLuma:
+   return true;
+  default:
+   return false;
  }
 }
 

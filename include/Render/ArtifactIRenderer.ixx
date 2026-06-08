@@ -184,6 +184,16 @@ public:
                         const FloatColor &fillColor,
                         const FloatColor &outlineColor,
                         float opacity = 1.0f);
+  void drawRoundedPanel(float x, float y, float w, float h, float radius,
+                        const FloatColor &fillColor,
+                        const FloatColor &outlineColor,
+                        float opacity = 1.0f,
+                        float outlineThickness = 1.0f);
+  void drawRoundedPanel(Detail::float2 pos, Detail::float2 size, float radius,
+                        const FloatColor &fillColor,
+                        const FloatColor &outlineColor,
+                        float opacity = 1.0f,
+                        float outlineThickness = 1.0f);
   void drawSolidLine(Detail::float2 start, Detail::float2 end,
                      const FloatColor &color, float thickness);
   void drawPolyline(const std::vector<Detail::float2> &points,

@@ -73,8 +73,7 @@ QJsonObject ArtifactCompositionLayer::toJson() const {
   return obj;
 }
 
-std::shared_ptr<ArtifactAbstractComposition>
-ArtifactCompositionLayer::sourceComposition() const {
+ArtifactCompositionPtr ArtifactCompositionLayer::sourceComposition() const {
   auto *service = ArtifactProjectService::instance();
   if (!service)
     return nullptr;

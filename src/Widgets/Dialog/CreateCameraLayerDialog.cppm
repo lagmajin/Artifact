@@ -576,7 +576,7 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
         impl_->zoomSpin = new QDoubleSpinBox(rightCol);
         impl_->zoomSpin->setRange(1.0, 100000.0);
         impl_->zoomSpin->setDecimals(1);
-        impl_->zoomSpin->setValue(666.7);
+        impl_->zoomSpin->setValue(1000.0);
         auto* pxLbl = new QLabel("px", rightCol);
         {
             QPalette pal = pxLbl->palette();
@@ -649,7 +649,7 @@ CreateCameraLayerDialog::~CreateCameraLayerDialog()
 QString CreateCameraLayerDialog::cameraName()       const { return impl_->nameEdit       ? impl_->nameEdit->text()                                       : QString(); }
 float   CreateCameraLayerDialog::focalLength()      const { return impl_->focalLengthSpin ? static_cast<float>(impl_->focalLengthSpin->value())          : 35.0f; }
 float   CreateCameraLayerDialog::fov()              const { return impl_->fovSpin         ? static_cast<float>(impl_->fovSpin->value())                  : 54.0f; }
-float   CreateCameraLayerDialog::zoom()             const { return impl_->zoomSpin        ? static_cast<float>(impl_->zoomSpin->value())                 : 666.7f; }
+float   CreateCameraLayerDialog::zoom()             const { return impl_->zoomSpin        ? static_cast<float>(impl_->zoomSpin->value())                 : 1000.0f; }
 float   CreateCameraLayerDialog::focusDistance()    const { return impl_->focusDistSpin   ? static_cast<float>(impl_->focusDistSpin->value())            : 1000.0f; }
 float   CreateCameraLayerDialog::blurAmount()       const { return impl_->blurAmountSpin  ? static_cast<float>(impl_->blurAmountSpin->value())           : 100.0f; }
 bool    CreateCameraLayerDialog::depthOfFieldEnabled() const { return impl_->dofCheck    ? impl_->dofCheck->isChecked()                                 : false; }

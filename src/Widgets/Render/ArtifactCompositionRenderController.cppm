@@ -64,6 +64,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
+import Core.Light;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
@@ -758,6 +759,10 @@ QString toolTypeToOverlayLabel(ToolType toolType)
     return QStringLiteral("Slip");
   case ToolType::Slide:
     return QStringLiteral("Slide");
+  case ToolType::MotionSketch:
+    return QStringLiteral("Sketch");
+  case ToolType::Puppet:
+    return QStringLiteral("Puppet");
   }
   return QStringLiteral("Tool");
 }
@@ -942,12 +947,16 @@ QString layerSurfaceDependencyKey(ArtifactAbstractLayer *layer) {
                .arg(mask.maskPathCount());
     for (int p = 0; p < mask.maskPathCount(); ++p) {
       const MaskPath path = mask.maskPath(p);
-      key += QStringLiteral(":p%1 closed=%2 mode=%3 opacity=%4 feather=%5 expansion=%6 inverted=%7 vertices=%8")
+      key += QStringLiteral(":p%1 closed=%2 mode=%3 opacity=%4 feather=%5 fH=%6 fV=%7 fI=%8 fO=%9 expansion=%10 inverted=%11 vertices=%12")
                  .arg(p)
                  .arg(path.isClosed() ? 1 : 0)
                  .arg(static_cast<int>(path.mode()))
                  .arg(path.opacity(), 0, 'f', 4)
                  .arg(path.feather(), 0, 'f', 4)
+                 .arg(path.featherHorizontal(), 0, 'f', 4)
+                 .arg(path.featherVertical(), 0, 'f', 4)
+                 .arg(path.featherInner(), 0, 'f', 4)
+                 .arg(path.featherOuter(), 0, 'f', 4)
                  .arg(path.expansion(), 0, 'f', 4)
                  .arg(path.isInverted() ? 1 : 0)
                  .arg(path.vertexCount());
@@ -1447,6 +1456,123 @@ bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer) {
     ++guard;
   }
   return static_cast<bool>(layer);
+}
+
+ArtifactCore::Light makeSceneLightFromLayer(const ArtifactLightLayer* layer,
+                                            const RationalTime& time)
+{
+  ArtifactCore::Light light;
+  if (!layer) {
+    return light;
+  }
+
+  switch (layer->lightType()) {
+  case LightType::Point:
+    light.setType(ArtifactCore::LightType::Point);
+    break;
+  case LightType::Spot:
+    light.setType(ArtifactCore::LightType::Spot);
+    break;
+  case LightType::Parallel:
+    light.setType(ArtifactCore::LightType::Directional);
+    break;
+  case LightType::Ambient:
+    light.setType(ArtifactCore::LightType::Ambient);
+    break;
+  }
+
+  const auto color = layer->color();
+  const float intensity = std::max(0.0f, layer->intensity() / 100.0f);
+  light.setColor(ArtifactCore::float3<float>{color.r(), color.g(), color.b()});
+  light.setIntensity(intensity);
+
+  const auto& t3 = layer->transform3D();
+  const QVector3D position(
+      static_cast<float>(t3.positionXAt(time)),
+      static_cast<float>(t3.positionYAt(time)),
+      static_cast<float>(t3.positionZAt(time)));
+  const QMatrix4x4 globalMat = layer->getGlobalTransform4x4();
+  QVector3D direction = globalMat.mapVector(QVector3D(0.0f, 0.0f, 1.0f));
+  if (direction.lengthSquared() <= 0.000001f) {
+    direction = QVector3D(0.0f, 0.0f, 1.0f);
+  } else {
+    direction.normalize();
+  }
+
+  light.setPosition(ArtifactCore::float3<float>{position.x(), position.y(), position.z()});
+  light.setDirection(
+      ArtifactCore::float3<float>{direction.x(), direction.y(), direction.z()});
+
+  if (layer->lightType() == LightType::Point || layer->lightType() == LightType::Spot) {
+    light.setRange(std::max(10.0f, layer->shadowRadius() * 10.0f));
+  }
+  if (layer->lightType() == LightType::Spot) {
+    light.setSpotAngle(45.0f);
+  }
+
+  return light;
+}
+
+struct SceneLightEntry {
+  ArtifactCore::Light light;
+  const ArtifactLightLayer* source = nullptr;
+};
+
+QSet<QString> parseLightLinkIdSet(const QString& text)
+{
+  QSet<QString> ids;
+  for (const auto& token : text.split(QLatin1Char(','), Qt::SkipEmptyParts)) {
+    const QString id = token.trimmed();
+    if (!id.isEmpty()) {
+      ids.insert(id);
+    }
+  }
+  return ids;
+}
+
+bool lightAppliesToLayer(const ArtifactLightLayer* light,
+                         const ArtifactAbstractLayer* targetLayer)
+{
+  if (!light || !targetLayer) {
+    return false;
+  }
+
+  const QString targetId = targetLayer->id().toString();
+  switch (light->lightLinkMode()) {
+  case LightLinkMode::All:
+    return true;
+  case LightLinkMode::IncludeOnly:
+    return parseLightLinkIdSet(light->linkedLayerIdsText()).contains(targetId);
+  case LightLinkMode::ExcludeList:
+    return !parseLightLinkIdSet(light->excludedLayerIdsText()).contains(targetId);
+  }
+  return true;
+}
+
+std::vector<ArtifactCore::Light> filterSceneLightsForLayer(
+    const ArtifactAbstractLayer* targetLayer,
+    const std::vector<SceneLightEntry>& sceneLights)
+{
+  std::vector<ArtifactCore::Light> filtered;
+  if (!targetLayer) {
+    return filtered;
+  }
+
+  const auto* modelLayer = dynamic_cast<const Artifact3DLayer*>(targetLayer);
+  if (modelLayer && !modelLayer->affectedByLights()) {
+    return filtered;
+  }
+
+  filtered.reserve(sceneLights.size());
+  for (const auto& entry : sceneLights) {
+    if (!entry.source || !entry.source->isVisible()) {
+      continue;
+    }
+    if (lightAppliesToLayer(entry.source, targetLayer)) {
+      filtered.push_back(entry.light);
+    }
+  }
+  return filtered;
 }
 
 QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
@@ -2259,7 +2385,8 @@ void drawLayerForCompositionView(
     bool useGpuPath = false, const DetailLevel lod = DetailLevel::High,
     const QMatrix4x4 *cameraView = nullptr,
     const QMatrix4x4 *cameraProj = nullptr,
-    const std::function<QImage(const ArtifactCore::Id &)> *matteSourceResolver = nullptr) {
+    const std::function<QImage(const ArtifactCore::Id &)> *matteSourceResolver = nullptr,
+    const std::vector<SceneLightEntry> *sceneLights = nullptr) {
   if (!layer || !renderer) {
     qCDebug(compositionViewLog)
         << "[CompositionView] drawLayerForCompositionView: invalid "
@@ -2290,12 +2417,26 @@ void drawLayerForCompositionView(
 
   // Handle 3D layers separately
   if (layer->is3D()) {
+    std::vector<ArtifactCore::Light> filteredLights;
+    const auto *modelLayer = dynamic_cast<Artifact3DLayer *>(layer);
+    if (modelLayer && sceneLights) {
+      filteredLights = filterSceneLightsForLayer(modelLayer, *sceneLights);
+      renderer->setSceneLights(filteredLights);
+    }
     if (cameraView && cameraProj) {
       renderer->set3DCameraMatrices(*cameraView, *cameraProj);
     }
     layer->draw(renderer);
     if (cameraView && cameraProj) {
       renderer->reset3DCameraMatrices();
+    }
+    if (modelLayer && sceneLights) {
+      std::vector<ArtifactCore::Light> restoreLights;
+      restoreLights.reserve(sceneLights->size());
+      for (const auto &entry : *sceneLights) {
+        restoreLights.push_back(entry.light);
+      }
+      renderer->setSceneLights(restoreLights);
     }
     return;
   }
@@ -2542,36 +2683,43 @@ void drawLayerForCompositionView(
         layer->isActiveAt(FramePosition(static_cast<int>(layer->currentFrame())));
     const FramePosition ip = layer->inPoint();
     const FramePosition op = layer->outPoint();
-    if (!hasRasterizer && hasBuffer && currentFrameReady) {
-      const ArtifactCore::ImageF32x4_RGBA &buffer =
-          videoLayer->currentFrameBuffer();
-      const float baseOpacity =
-          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
-      if (videoDebugOut) {
-        *videoDebugOut = QStringLiteral(
-                             "[Video] branch=buffer loaded=%1 hasBuffer=%2 "
-                             "rasterizer=%3 active=%4 frameReady=%5 "
-                             "range=[%6,%7] curFrame=%8")
-                             .arg(loaded)
-                             .arg(hasBuffer)
-                             .arg(hasRasterizer)
-                             .arg(active)
-                             .arg(currentFrameReady)
-                             .arg(ip.framePosition())
-                             .arg(op.framePosition())
-                             .arg(layer->currentFrame());
+    if (!hasRasterizer && currentFrameReady) {
+      const ArtifactCore::ImageF32x4_RGBA buffer =
+          videoLayer->cachedFrameImageBuffer(layer->currentFrame());
+      if (buffer.isEmpty()) {
+        qCDebug(compositionViewLog)
+            << "[VideoLayerT] cached frame marker without frame payload"
+            << videoLayer->decodeState()
+            << "timelineFrame=" << layer->currentFrame();
+      } else {
+        const float baseOpacity =
+            (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+        if (videoDebugOut) {
+          *videoDebugOut = QStringLiteral(
+                               "[Video] branch=buffer loaded=%1 hasBuffer=%2 "
+                               "rasterizer=%3 active=%4 frameReady=%5 "
+                               "range=[%6,%7] curFrame=%8")
+                               .arg(loaded)
+                               .arg(hasBuffer)
+                               .arg(hasRasterizer)
+                               .arg(active)
+                               .arg(currentFrameReady)
+                               .arg(ip.framePosition())
+                               .arg(op.framePosition())
+                               .arg(layer->currentFrame());
+        }
+        drawWithClonerEffect(
+            layer, globalTransform4x4,
+            [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+              renderer->drawSpriteTransformed(
+                  static_cast<float>(localRect.x()),
+                  static_cast<float>(localRect.y()),
+                  static_cast<float>(localRect.width()),
+                  static_cast<float>(localRect.height()), instanceTransform,
+                  buffer, baseOpacity * instanceWeight);
+            });
+        return;
       }
-      drawWithClonerEffect(
-          layer, globalTransform4x4,
-          [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
-            renderer->drawSpriteTransformed(
-                static_cast<float>(localRect.x()),
-                static_cast<float>(localRect.y()),
-                static_cast<float>(localRect.width()),
-                static_cast<float>(localRect.height()), instanceTransform,
-                buffer, baseOpacity * instanceWeight);
-      });
-      return;
     }
 
     ArtifactCore::ImageF32x4_RGBA frameBuffer;
@@ -2620,14 +2768,10 @@ void drawLayerForCompositionView(
       }
     }
     if (loaded) {
-      frameBuffer = videoLayer->currentFrameImageBuffer();
+      frameBuffer = videoLayer->cachedFrameImageBuffer(layer->currentFrame());
+      usedBufferFallback = !frameBuffer.isEmpty();
     } else {
       reason = QStringLiteral("notLoaded");
-    }
-    if (frameBuffer.isEmpty() && currentFrameReady &&
-        videoLayer->hasCurrentFrameBuffer()) {
-      frameBuffer = videoLayer->currentFrameBuffer();
-      usedBufferFallback = !frameBuffer.isEmpty();
     }
     if (frameBuffer.isEmpty() && loaded) {
       frameBuffer = videoLayer->decodeFrameToImageBuffer(layer->currentFrame());
@@ -5306,7 +5450,42 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
                            ? comp->layerById(impl_->selectedLayerId_)
                            : ArtifactAbstractLayerPtr{};
 
-  if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
+  
+  // MotionSketch tool
+  if (event->button() == Qt::LeftButton && activeTool == ToolType::MotionSketch && selectedLayer && impl_->renderer_) {
+    const auto cPos = impl_->renderer_->viewportToCanvas(
+        {(float)viewportPos.x(), (float)viewportPos.y()});
+    auto* app = ArtifactApplicationManager::instance();
+    if (app && app->motionSketchTool()) {
+      app->motionSketchTool()->beginSketch(QPointF(cPos.x, cPos.y), selectedLayer);
+    }
+    markRenderDirty();
+    event->accept();
+    return;
+  }
+
+  // Puppet tool
+  if (event->button() == Qt::LeftButton && activeTool == ToolType::Puppet && impl_->renderer_) {
+    const auto cPos = impl_->renderer_->viewportToCanvas(
+        {(float)viewportPos.x(), (float)viewportPos.y()});
+    auto* app = ArtifactApplicationManager::instance();
+    if (app && app->puppetTool()) {
+      const QPointF canvasPt(cPos.x, cPos.y);
+      QString hitId = app->puppetTool()->hitTestPin(canvasPt);
+      if (!hitId.isEmpty()) {
+        app->puppetTool()->setSelectedPinId(hitId);
+      } else if (selectedLayer) {
+        app->puppetTool()->addPin(selectedLayer->id(), canvasPt);
+        if (app && app->puppetTool()) {
+          app->puppetTool()->deformLayer(selectedLayer->id(), impl_->renderer_.get());
+        }
+      }
+    }
+    markRenderDirty();
+    event->accept();
+    return;
+  }
+if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
     auto *selectionManager = ArtifactApplicationManager::instance()
                                  ? ArtifactApplicationManager::instance()
                                        ->layerSelectionManager()
@@ -5842,6 +6021,14 @@ void CompositionRenderController::handleMouseMove(
     return;
   }
 
+  // Finish MotionSketch on mouse release
+  {
+    auto* app = ArtifactApplicationManager::instance();
+    if (app && app->motionSketchTool() && app->motionSketchTool()->isSketching()) {
+      app->motionSketchTool()->finishSketch();
+      markRenderDirty();
+    }
+  }
   if (impl_->isDraggingMotionPathKeyframe_) {
     auto comp = impl_->previewPipeline_.composition();
     if (comp && impl_->renderer_) {
@@ -5893,7 +6080,38 @@ void CompositionRenderController::handleMouseMove(
     }
   }
 
-  if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
+  
+  // MotionSketch tool: capture samples during drag
+  if (activeTool == ToolType::MotionSketch && impl_->renderer_) {
+    auto* app = ArtifactApplicationManager::instance();
+    if (app && app->motionSketchTool() && app->motionSketchTool()->isSketching()) {
+      const auto cPos = impl_->renderer_->viewportToCanvas(
+          {(float)viewportPos.x(), (float)viewportPos.y()});
+      app->motionSketchTool()->addSample(QPointF(cPos.x, cPos.y));
+      markRenderDirty();
+      return;
+    }
+  }
+
+  // Puppet tool: drag pin
+  if (activeTool == ToolType::Puppet && impl_->renderer_) {
+    auto* app = ArtifactApplicationManager::instance();
+    if (app && app->puppetTool()) {
+      QString selId = app->puppetTool()->selectedPinId();
+      if (!selId.isEmpty()) {
+        const auto cPos = impl_->renderer_->viewportToCanvas(
+            {(float)viewportPos.x(), (float)viewportPos.y()});
+        app->puppetTool()->movePin(selId, QPointF(cPos.x, cPos.y));
+        auto comp = impl_->previewPipeline_.composition();
+        if (comp && !impl_->selectedLayerId_.isNil()) {
+          app->puppetTool()->deformLayer(impl_->selectedLayerId_, impl_->renderer_.get());
+        }
+        markRenderDirty();
+        return;
+      }
+    }
+  }
+if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
     auto comp = impl_->previewPipeline_.composition();
     if (comp && impl_->renderer_) {
       auto selectedLayer = comp->layerById(impl_->selectedLayerId_);
@@ -6138,6 +6356,14 @@ void CompositionRenderController::handleMouseMove(
 void CompositionRenderController::handleMouseRelease() {
   qCDebug(compositionViewLog) << "[MouseRelease] ENTER";
 
+  // Finish MotionSketch on mouse release
+  {
+    auto* app = ArtifactApplicationManager::instance();
+    if (app && app->motionSketchTool() && app->motionSketchTool()->isSketching()) {
+      app->motionSketchTool()->finishSketch();
+      markRenderDirty();
+    }
+  }
   if (impl_->isDraggingMotionPathKeyframe_) {
     auto layer = impl_->draggingMotionPathLayer_.lock();
     if (layer) {
@@ -6428,6 +6654,14 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
     return Qt::CrossCursor;
   }
 
+  if (activeTool == ToolType::MotionSketch) {
+    return Qt::CrossCursor;
+  }
+
+  if (activeTool == ToolType::Puppet) {
+    return Qt::PointingHandCursor;
+  }
+
   if (!impl_->renderer_) {
     return Qt::ArrowCursor;
   }
@@ -6637,6 +6871,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
   } traceGuard;
 
+  renderer_->setSceneLights(std::vector<ArtifactCore::Light>{});
+
   auto comp = previewPipeline_.composition();
   if (auto *service = ArtifactProjectService::instance()) {
     const auto preferred = resolvePreferredComposition(service);
@@ -6650,7 +6886,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
   }
   if (!comp) {
-    renderer_->clear();
+    renderer_->setOverrideRTV(nullptr);
+    renderer_->setClearColor(viewportClearColor_);
+    renderer_->clearRenderTarget(viewportClearColor_);
     renderer_->present();
     return;
   }
@@ -6669,7 +6907,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                    << "issues=" << projectDiagnostics.size();
       }
       lastRenderPathSummary_ = blockedSummary;
-      renderer_->clear();
+      renderer_->setOverrideRTV(nullptr);
+      renderer_->setClearColor(viewportClearColor_);
+      renderer_->clearRenderTarget(viewportClearColor_);
       renderer_->present();
       return;
     }
@@ -6776,6 +7016,31 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       currentFrame = playback->currentFrame();
     }
   }
+
+  const int sceneLightFps = std::max(
+      1, static_cast<int>(std::llround(comp->frameRate().framerate())));
+  const RationalTime sceneLightTime(currentFrame.framePosition(), sceneLightFps);
+  std::vector<SceneLightEntry> sceneLights;
+  sceneLights.reserve(layers.size());
+  for (const auto &layer : layers) {
+    if (!layer || !isLayerEffectivelyVisible(layer) ||
+        !layer->isActiveAt(currentFrame)) {
+      continue;
+    }
+
+    auto *lightLayer = dynamic_cast<ArtifactLightLayer *>(layer.get());
+    if (!lightLayer) {
+      continue;
+    }
+    sceneLights.push_back(
+        SceneLightEntry{makeSceneLightFromLayer(lightLayer, sceneLightTime), lightLayer});
+  }
+  std::vector<ArtifactCore::Light> rendererSceneLights;
+  rendererSceneLights.reserve(sceneLights.size());
+  for (const auto &entry : sceneLights) {
+    rendererSceneLights.push_back(entry.light);
+  }
+  renderer_->setSceneLights(rendererSceneLights);
 
   // Build matte source resolver: find layer by ID, render to QImage
   auto matteResolverLambda = [&layers](const ArtifactCore::Id &layerId) -> QImage {
@@ -7363,7 +7628,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               layer.get(), renderer_.get(), 1.0f, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(), true,
               lod, has3DCamera ? &cameraViewMatrix : nullptr,
-              has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver);
+              has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver,
+              &sceneLights);
           // Keep the command-buffer architecture, but make the graphics ->
           // compute boundary explicit. The blend pipeline samples layerSRV,
           // so pending draw packets must be submitted before dispatch.
@@ -7685,7 +7951,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               layer.get(), renderer_.get(), opacity, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(),
               false, lod, has3DCamera ? &cameraViewMatrix : nullptr,
-              has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver);
+              has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver,
+              &sceneLights);
 
           // === 段階 7: ROI デバッグ表示 ===
           if (debugMode_) {

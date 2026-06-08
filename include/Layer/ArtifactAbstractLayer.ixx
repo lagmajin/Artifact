@@ -14,6 +14,7 @@ module;
 #include <QImage>
 #include <QJsonObject>
 #include <QObject>
+#include <QPointer>
 #include <QRectF>
 #include <QString>
 #include <QTransform>
@@ -89,7 +90,7 @@ public:
     std::optional<float> opacityOverride;
     std::optional<LAYER_BLEND_TYPE> blendModeOverride;
 
-    ArtifactAbstractLayer* parentLayer_ = nullptr;
+    QPointer<ArtifactAbstractLayer> parentLayer_;
     std::string name_;
 };
 
@@ -139,6 +140,96 @@ enum class LayerDirtyReason : uint64_t {
   UserEdit = 1ull << 7
 };
 
+enum class LayerBoundsKind {
+  Source,
+  Visible,
+  Effect,
+  Mask,
+  Layout
+};
+
+enum class GuideOrientation {
+  Horizontal,
+  Vertical,
+  Range
+};
+
+enum class GuidePriority {
+  Lowest,
+  Low,
+  Normal,
+  High,
+  Highest
+};
+
+enum class GuideSemanticTag {
+  Custom,
+  TitleBaseline,
+  LogoArea,
+  CaptionBottom,
+  CharacterCenter,
+  ExportCropEdge,
+  SafeAreaTop,
+  SafeAreaBottom,
+  SafeAreaLeft,
+  SafeAreaRight,
+  GridRow,
+  GridColumn
+};
+
+struct GuideDefinition {
+  QString guideId;
+  QString name;
+  QString purpose;
+  GuideOrientation orientation = GuideOrientation::Horizontal;
+  qreal position = 0.0;
+  qreal start = 0.0;
+  qreal end = 0.0;
+  bool enabled = true;
+  GuidePriority priority = GuidePriority::Normal;
+  GuideSemanticTag semanticTag = GuideSemanticTag::Custom;
+
+  QJsonObject toJson() const;
+  static GuideDefinition fromJson(const QJsonObject &obj);
+};
+
+struct GuideBinding {
+  QString guideId;
+  QString role;
+  qreal offset = 0.0;
+  bool follow = false;
+  bool enabled = true;
+  GuidePriority priority = GuidePriority::Normal;
+
+  QJsonObject toJson() const;
+  static GuideBinding fromJson(const QJsonObject &obj);
+};
+
+struct GuideSet {
+  QString ownerId;
+  QVector<GuideDefinition> guides;
+  QVector<GuideBinding> bindings;
+
+  QJsonObject toJson() const;
+  static GuideSet fromJson(const QJsonObject &obj);
+
+  QVector<GuideDefinition> guidesForSemanticTag(GuideSemanticTag tag) const;
+  QVector<GuideDefinition> enabledGuides() const;
+  QVector<GuideBinding> enabledBindings() const;
+  GuideDefinition* guideById(const QString& guideId);
+  void sortByPriority();
+};
+
+struct LayerBounds {
+  QRectF sourceBounds;
+  QRectF visibleBounds;
+  QRectF effectBounds;
+  QRectF maskBounds;
+  QRectF layoutBounds;
+
+  QRectF boundsFor(LayerBoundsKind kind) const;
+};
+
 // LOD (Level of Detail) system
 enum class DetailLevel {
   Low,    // 簡略化された描画（ズーム 0-25%）
@@ -181,8 +272,10 @@ public:
   QString layerNote() const;
   void setLayerNote(const QString& note);
 
+  virtual void setComposition(QObject *comp);
   virtual void setComposition(void *comp);
   void *composition() const;
+  QObject *compositionObject() const;
 
   LAYER_BLEND_TYPE layerBlendType() const;
   void setBlendMode(LAYER_BLEND_TYPE type);
@@ -194,6 +287,14 @@ public:
   /*Transform*/
   Size_2D sourceSize() const;
   Size_2D aabb() const;
+  LayerBounds contentBounds() const;
+  QRectF contentBounds(LayerBoundsKind kind) const;
+  QRectF sourceBounds() const;
+  QRectF visibleBounds() const;
+  QString contentBoundsSummary() const;
+  QRectF effectBounds() const;
+  QRectF maskBounds() const;
+  QRectF layoutBounds() const;
   QRectF transformedBoundingBox() const;
 
   AnimatableTransform2D &transform2D();

@@ -52,11 +52,22 @@ bool ArtifactGroupLayer::isGroupLayer() const {
     return true;
 }
 
-void ArtifactGroupLayer::setComposition(void *comp) {
+void ArtifactGroupLayer::setComposition(QObject *comp) {
     ArtifactAbstractLayer::setComposition(comp);
+    auto *composition = compositionObject();
     for (auto& child : groupImpl_->children) {
         if (child) {
-            child->setComposition(comp);
+            child->setComposition(composition);
+        }
+    }
+}
+
+void ArtifactGroupLayer::setComposition(void *comp) {
+    ArtifactAbstractLayer::setComposition(comp);
+    auto *composition = compositionObject();
+    for (auto& child : groupImpl_->children) {
+        if (child) {
+            child->setComposition(composition);
         }
     }
 }
@@ -212,7 +223,7 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
 
     // Set parenting in the core system
     layer->setParentById(this->id());
-    layer->setComposition(composition());
+    layer->setComposition(compositionObject());
     
     groupImpl_->children.push_back(layer);
     // Invalidate cached RT
@@ -230,7 +241,7 @@ void ArtifactGroupLayer::removeChild(const LayerID& id) {
                 return false;
             }
             l->clearParent();
-            l->setComposition(nullptr);
+            l->setComposition(static_cast<QObject *>(nullptr));
             return true;
         });
     
@@ -251,7 +262,7 @@ void ArtifactGroupLayer::clearChildren() {
             continue;
         }
         child->clearParent();
-        child->setComposition(nullptr);
+        child->setComposition(static_cast<QObject *>(nullptr));
     }
     groupImpl_->children.clear();
     // Invalidate cached RT
@@ -271,7 +282,7 @@ void ArtifactGroupLayer::insertChildAt(int index, ArtifactAbstractLayerPtr layer
     if (layer->id() == this->id()) return;
 
     layer->setParentById(this->id());
-    layer->setComposition(composition());
+    layer->setComposition(compositionObject());
 
     if (index < 0) index = 0;
     if (static_cast<size_t>(index) >= groupImpl_->children.size()) {

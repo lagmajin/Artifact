@@ -36,6 +36,8 @@ import Artifact.Layer.Factory;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
 import Artifact.Layer.Svg;
+import Artifact.Project.CreationDefaults;
+import Application.AppSettings;
 
 import Artifact.Project.Items;
 
@@ -91,6 +93,8 @@ namespace Artifact {
    QString aiDescription_;
    QStringList aiTags_;
    QString aiNotes_;
+   CreationDefaultsState creationDefaultsState_;
+   GuideSet guideSet_;
 
  public:
   Impl();
@@ -109,7 +113,9 @@ namespace Artifact {
   bool addProjectItemsFromJson(const QJsonArray& items, ProjectItem* parent = nullptr);
    void setProjectName(const QString& name);
    void setAuthor(const QString& author);
-   ArtifactProjectSettings projectSettings() const { return projectSettings_; }
+  ArtifactProjectSettings projectSettings() const { return projectSettings_; }
+  GuideSet guideSet() const { return guideSet_; }
+  void setGuideSet(const GuideSet& guideSet) { guideSet_ = guideSet; }
 
   // AI向けメタデータ
   void setAIDescription(const QString& description);
@@ -131,6 +137,8 @@ namespace Artifact {
    void setDirty(bool dirty);
 
    QJsonObject toJson() const;
+   CreationDefaultsState creationDefaultsState() const { return creationDefaultsState_; }
+   void setCreationDefaultsState(const CreationDefaultsState& state) { creationDefaultsState_ = state; }
    CompositionID currentCompositionId() const;
    void setCurrentCompositionId(const CompositionID& id, bool markDirty = true);
   AssetMultiIndexContainer assetContainer_;
@@ -678,6 +686,8 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   if (!aiNotes_.isEmpty()) {
    result["ai_notes"] = aiNotes_;
   }
+  result["creationDefaults"] = creationDefaultsState_.toJson();
+  result["guideSet"] = guideSet_.toJson();
 
 QJsonArray compsArray;
    for (const auto& comp : container_.all()) {
@@ -853,9 +863,9 @@ QJsonArray compsArray;
 
   if (errorMessage) {
     errorMessage->clear();
-  }
-  return true;
- }
+      }
+      return true;
+    }
 
  std::vector<ProjectValidationIssue> ArtifactProject::validate() const
  {
@@ -1234,10 +1244,31 @@ ArtifactProject::ArtifactProject() :impl_(new Impl())
   impl_->setProjectName(name);
  }
 
- ArtifactProjectSettings ArtifactProject::settings() const
- {
+ArtifactProjectSettings ArtifactProject::settings() const
+{
   return impl_->projectSettings();
- }
+}
+
+CreationDefaultsState ArtifactProject::creationDefaultsState() const
+{
+  return impl_->creationDefaultsState();
+}
+
+void ArtifactProject::setCreationDefaultsState(const CreationDefaultsState& state)
+{
+  impl_->setCreationDefaultsState(state);
+}
+
+GuideSet ArtifactProject::guideSet() const
+{
+  return impl_->guideSet();
+}
+
+void ArtifactProject::setGuideSet(const GuideSet& guideSet)
+{
+  impl_->setGuideSet(guideSet);
+  impl_->setDirty(true);
+}
 
  void ArtifactProject::setAuthor(const QString& author)
  {

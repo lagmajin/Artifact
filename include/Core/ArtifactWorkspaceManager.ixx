@@ -17,12 +17,14 @@ public:
   QString sessionFilePath() const;
   QString presetFilePath(const QString &presetName) const;
   QStringList presetNames() const;
+  bool presetExists(const QString &presetName) const;
 
   bool saveSession(const ArtifactMainWindow *window) const;
   bool restoreSession(ArtifactMainWindow *window) const;
   bool savePreset(const QString &presetName, const ArtifactMainWindow *window) const;
   bool restorePreset(const QString &presetName, ArtifactMainWindow *window) const;
   bool deletePreset(const QString &presetName) const;
+  bool renamePreset(const QString &oldName, const QString &newName) const;
 
 private:
   QString workspaceRoot_;

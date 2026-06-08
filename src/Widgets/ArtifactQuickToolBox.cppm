@@ -9,7 +9,6 @@ module;
 #include <QPalette>
 module Artifact.Widgets.QuickToolBox;
 
-import Artifact.Widgets.QuickToolBox;
 import Artifact.Widgets.AnchorPointTool;
 import Artifact.Widgets.Alignment;
 import Widgets.Utils.CSS;

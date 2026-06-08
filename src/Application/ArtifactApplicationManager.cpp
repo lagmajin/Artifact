@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <entt/entt.hpp>
 
 #include <iostream>
@@ -47,6 +47,8 @@ import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Artifact.Service.ActiveContext;
 import Artifact.Tool.Manager;
+import Artifact.Tool.MotionSketchTool;
+import Artifact.Tool.PuppetTool;
 import Artifact.Layers.Selection.Manager;
 
 namespace Artifact
@@ -58,9 +60,11 @@ namespace Artifact
   ArtifactGlobalEffectManager effectManager_;
   ArtifactTestProjectManager testProjectManager_;
   ArtifactToolManager toolManager_;
+  ArtifactMotionSketchTool motionSketchTool_;
+  ArtifactPuppetTool puppetTool_;
   EnvironmentVariableManager manager_;
   ArtifactLayerSelectionManager selectionManager_;
- 	
+
   entt::registry registry_;
   entt::dispatcher dispather_;
  public:
@@ -74,6 +78,8 @@ namespace Artifact
   ArtifactActiveContextService* activeContext_=new ArtifactActiveContextService();
   ArtifactLayerSelectionManager* layerSelectionManager();
   ArtifactToolManager* toolManager();
+  ArtifactMotionSketchTool* motionSketchTool();
+  ArtifactPuppetTool* puppetTool();
  };
 
  ArtifactApplicationManager::Impl::Impl()
@@ -117,6 +123,16 @@ ArtifactProjectManager* ArtifactApplicationManager::Impl::projectManager() const
   return &toolManager_;
  }
 
+ ArtifactMotionSketchTool* ArtifactApplicationManager::Impl::motionSketchTool()
+ {
+  return &motionSketchTool_;
+ }
+
+ ArtifactPuppetTool* ArtifactApplicationManager::Impl::puppetTool()
+ {
+  return &puppetTool_;
+ }
+
  ArtifactApplicationManager::ArtifactApplicationManager() :impl_(new Impl())
  {
 
@@ -158,6 +174,16 @@ ArtifactActiveContextService* ArtifactApplicationManager::activeContextService()
  ArtifactToolManager* ArtifactApplicationManager::toolManager() const
  {
   return impl_->toolManager();
+ }
+
+ ArtifactMotionSketchTool* ArtifactApplicationManager::motionSketchTool() const
+ {
+  return impl_->motionSketchTool();
+ }
+
+ ArtifactPuppetTool* ArtifactApplicationManager::puppetTool() const
+ {
+  return impl_->puppetTool();
  }
 
  entt::registry& ArtifactApplicationManager::registry()

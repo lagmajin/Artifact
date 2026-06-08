@@ -62,6 +62,10 @@ QString ArtifactWorkspaceManager::presetFilePath(const QString &presetName) cons
   return presetPath(workspaceRoot_, presetName);
 }
 
+bool ArtifactWorkspaceManager::presetExists(const QString &presetName) const {
+  return QFileInfo::exists(presetPath(workspaceRoot_, presetName));
+}
+
 QStringList ArtifactWorkspaceManager::presetNames() const {
   QStringList names;
   QDir dir(presetDirPath(workspaceRoot_));
@@ -218,6 +222,19 @@ bool ArtifactWorkspaceManager::deletePreset(const QString &presetName) const {
     return false;
   }
   return QFile::remove(path);
+}
+
+bool ArtifactWorkspaceManager::renamePreset(const QString &oldName,
+                                            const QString &newName) const {
+  const QString oldPath = presetPath(workspaceRoot_, oldName);
+  const QString newPath = presetPath(workspaceRoot_, newName);
+  if (oldPath == newPath || !QFileInfo::exists(oldPath)) {
+    return false;
+  }
+  if (QFileInfo::exists(newPath) && !QFile::remove(newPath)) {
+    return false;
+  }
+  return QFile::rename(oldPath, newPath);
 }
 
 } // namespace Artifact

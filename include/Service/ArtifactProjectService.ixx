@@ -16,18 +16,19 @@ export module Artifact.Service.Project;
 import Utils;
 import Utils.String.Like;
 import Utils.String.UniString;
+export import Artifact.Composition.Abstract;
 import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Layer.InitParams;
 import Artifact.Project.Settings;
 import Artifact.Project.Health;
 
 import Artifact.Composition.Result;
-import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Project.Items;
 import Artifact.Effect.Abstract;
 
 import Artifact.Project;
+import Memory.SharedPtr;
 
 W_REGISTER_ARGTYPE(QSize)
 W_REGISTER_ARGTYPE(QString)

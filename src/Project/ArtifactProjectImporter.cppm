@@ -41,6 +41,7 @@ module Artifact.Project.Importer;
 
 import Utils.String.UniString;
 import Artifact.Project;
+import Artifact.Project.CreationDefaults;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Render.Queue.Service;
@@ -234,6 +235,13 @@ namespace Artifact
   if (root.contains("ai_notes") && root["ai_notes"].isString()) {
    projectPtr->setAINotes(root["ai_notes"].toString());
    qDebug() << "[Importer] AI Notes:" << root["ai_notes"].toString();
+  }
+
+  if (root.contains("creationDefaults") && root["creationDefaults"].isObject()) {
+   CreationDefaultsState state;
+   state.fromJson(root["creationDefaults"].toObject());
+   projectPtr->setCreationDefaultsState(state);
+   qDebug() << "[Importer] Creation defaults restored";
   }
 
   // エクスポーターが追加したAIメタデータセクション

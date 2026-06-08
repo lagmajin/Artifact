@@ -45,6 +45,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Factory;
+import Composition.ExportMatrix;
 
 export namespace Artifact {
 
@@ -244,6 +245,9 @@ public:
             {"listTemplateSlots", IDescribable::loc("List all template slots in current composition.", "List all template slots in current composition.", {}), "QVariantList"},
             {"applyTemplateVariation", IDescribable::loc("Apply a template variation to current composition.", "Apply a template variation to current composition.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("variationJson")}},
             {"createTemplateFromVariation", IDescribable::loc("Create batch export jobs from variations.", "Create batch export jobs from variations.", {}), "int", {QStringLiteral("QVariantList"), QStringLiteral("QString")}, {QStringLiteral("variations"), QStringLiteral("outputPreset")}},
+            {"resolveExportMatrixCell", IDescribable::loc("Resolve one export matrix cell into concrete export settings.", "Resolve one export matrix cell into concrete export settings.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("matrixJson"), QStringLiteral("variantId"), QStringLiteral("presetId"), QStringLiteral("baseOutputPath")}},
+            {"createExportMatrixJobs", IDescribable::loc("Create resolved export jobs from an export matrix.", "Create resolved export jobs from an export matrix.", {}), "QVariantList", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("matrixJson"), QStringLiteral("baseOutputPath")}},
+            {"queueExportMatrixForCurrentComposition", IDescribable::loc("Queue all enabled export matrix jobs for the active composition.", "Queue all enabled export matrix jobs for the active composition.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("matrixJson"), QStringLiteral("baseOutputPath")}},
             {"listAvailableEffects", IDescribable::loc("List all available effects.", "List all available effects.", {}), "QVariantList"}
         };
     }
@@ -709,6 +713,15 @@ public:
         }
         if (name == QStringLiteral("createTemplateFromVariation")) {
             return createTemplateFromVariation(args, stringArg(args, 1));
+        }
+        if (name == QStringLiteral("resolveExportMatrixCell")) {
+            return resolveExportMatrixCell(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), stringArg(args, 3));
+        }
+        if (name == QStringLiteral("createExportMatrixJobs")) {
+            return createExportMatrixJobs(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("queueExportMatrixForCurrentComposition")) {
+            return queueExportMatrixForCurrentComposition(stringArg(args, 0), stringArg(args, 1));
         }
         return {};
     }
@@ -3512,6 +3525,93 @@ private:
             count++;
         }
         return count;
+    }
+
+    static QVariantMap resolveExportMatrixCell(const QString& matrixJson,
+                                               const QString& variantId,
+                                               const QString& presetId,
+                                               const QString& baseOutputPath)
+    {
+        QJsonParseError err;
+        const QJsonDocument doc = QJsonDocument::fromJson(matrixJson.toUtf8(), &err);
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            return {
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("Invalid matrix JSON")}
+            };
+        }
+
+        const ArtifactCore::ExportMatrix matrix = ArtifactCore::ExportMatrix::fromJson(doc.object());
+        const auto resolved = ArtifactCore::resolveExportMatrixCell(matrix, variantId, presetId, baseOutputPath);
+        return {
+            {QStringLiteral("success"), true},
+            {QStringLiteral("cell"), resolved.toJson()}
+        };
+    }
+
+    static QVariantList createExportMatrixJobs(const QString& matrixJson, const QString& baseOutputPath)
+    {
+        QJsonParseError err;
+        const QJsonDocument doc = QJsonDocument::fromJson(matrixJson.toUtf8(), &err);
+        if (err.error != QJsonParseError::NoError || !doc.isObject()) {
+            return {};
+        }
+
+        const ArtifactCore::ExportMatrix matrix = ArtifactCore::ExportMatrix::fromJson(doc.object());
+        QVariantList jobs;
+        for (const auto& variant : matrix.variants) {
+            for (const auto& preset : matrix.presets) {
+                const auto cell = ArtifactCore::resolveExportMatrixCell(matrix, variant.id, preset.id, baseOutputPath);
+                if (!cell.enabled) {
+                    continue;
+                }
+                jobs.append(cell.toJson());
+            }
+        }
+        return jobs;
+    }
+
+    static QVariantMap queueExportMatrixForCurrentComposition(const QString& matrixJson,
+                                                              const QString& baseOutputPath)
+    {
+        auto* renderService = ArtifactRenderQueueService::instance();
+        const auto comp = currentComposition();
+        if (!renderService || !comp) {
+            return {
+                {QStringLiteral("success"), false},
+                {QStringLiteral("error"), QStringLiteral("No active composition or render service")}
+            };
+        }
+
+        const QVariantList jobs = createExportMatrixJobs(matrixJson, baseOutputPath);
+        int added = 0;
+        for (const auto& jobValue : jobs) {
+            const QJsonObject jobObj = QJsonDocument::fromVariant(jobValue).object();
+            const QString exportName = jobObj.value(QStringLiteral("exportName")).toString();
+            const QString outputPath = jobObj.value(QStringLiteral("outputPath")).toString();
+            const QString format = jobObj.value(QStringLiteral("format")).toString();
+            const QString codec = jobObj.value(QStringLiteral("codec")).toString();
+            const int width = jobObj.value(QStringLiteral("width")).toInt();
+            const int height = jobObj.value(QStringLiteral("height")).toInt();
+            const double fps = jobObj.value(QStringLiteral("fps")).toDouble();
+            const int bitrateKbps = jobObj.value(QStringLiteral("bitrateKbps")).toInt();
+
+            renderService->addRenderQueueForComposition(comp->id(), exportName);
+            const int jobIndex = renderService->jobCount() - 1;
+            if (jobIndex < 0) {
+                continue;
+            }
+            if (!outputPath.isEmpty()) {
+                renderService->setJobOutputPathAt(jobIndex, outputPath);
+            }
+            renderService->setJobOutputSettingsAt(jobIndex, format, codec, width, height, fps, bitrateKbps);
+            ++added;
+        }
+
+        return {
+            {QStringLiteral("success"), true},
+            {QStringLiteral("addedCount"), added}
+        };
     }
 
     static QVariantList listAvailableEffects()

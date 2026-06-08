@@ -70,7 +70,7 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   layer->setDirty(flag);
   layer->addDirtyReason(reason);
   const auto *comp =
-      static_cast<ArtifactAbstractComposition *>(layer->composition());
+      static_cast<const ArtifactAbstractComposition *>(layer->compositionObject());
   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
       comp ? comp->id().toString() : QString{},
       layer->id().toString(),
@@ -136,7 +136,7 @@ double effectiveLayerFrameRate(const ArtifactAbstractLayer *layer) {
     return 30.0;
   }
   auto *composition =
-      static_cast<ArtifactAbstractComposition *>(layer->composition());
+      static_cast<ArtifactAbstractComposition *>(layer->compositionObject());
   if (!composition) {
     return 30.0;
   }
@@ -149,7 +149,7 @@ int64_t currentTimelineFrame(const ArtifactAbstractLayer *layer) {
     return 0;
   }
   auto *composition =
-      static_cast<ArtifactAbstractComposition *>(layer->composition());
+      static_cast<ArtifactAbstractComposition *>(layer->compositionObject());
   if (!composition) {
     return layer->currentFrame();
   }
@@ -158,6 +158,11 @@ int64_t currentTimelineFrame(const ArtifactAbstractLayer *layer) {
 
 RationalTime currentTimelineTime(const ArtifactAbstractLayer *layer) {
   return RationalTime(currentTimelineFrame(layer), effectiveLayerFrameRate(layer));
+}
+
+RationalTime timelineTimeForFramePosition(const ArtifactAbstractLayer *layer,
+                                          const FramePosition &position) {
+  return RationalTime(position.framePosition(), effectiveLayerFrameRate(layer));
 }
 
 struct MaskPropertyAddress {
@@ -196,6 +201,10 @@ parseMaskPropertyPath(const QString &propertyPath) {
   if (field == QStringLiteral("closed") ||
       field == QStringLiteral("opacity") ||
       field == QStringLiteral("feather") ||
+      field == QStringLiteral("featherHorizontal") ||
+      field == QStringLiteral("featherVertical") ||
+      field == QStringLiteral("featherInner") ||
+      field == QStringLiteral("featherOuter") ||
       field == QStringLiteral("expansion") ||
       field == QStringLiteral("inverted") ||
       field == QStringLiteral("mode") ||
@@ -273,6 +282,18 @@ void applyMaskPropertyState(const ArtifactAbstractLayer *layer,
     path.setFeather(static_cast<float>(
         resolveDouble(pathPrefix + QStringLiteral(".feather"),
                       static_cast<double>(path.feather()))));
+    path.setFeatherHorizontal(static_cast<float>(
+        resolveDouble(pathPrefix + QStringLiteral(".featherHorizontal"),
+                      static_cast<double>(path.featherHorizontal()))));
+    path.setFeatherVertical(static_cast<float>(
+        resolveDouble(pathPrefix + QStringLiteral(".featherVertical"),
+                      static_cast<double>(path.featherVertical()))));
+    path.setFeatherInner(static_cast<float>(
+        resolveDouble(pathPrefix + QStringLiteral(".featherInner"),
+                      static_cast<double>(path.featherInner()))));
+    path.setFeatherOuter(static_cast<float>(
+        resolveDouble(pathPrefix + QStringLiteral(".featherOuter"),
+                      static_cast<double>(path.featherOuter()))));
     path.setExpansion(static_cast<float>(
         resolveDouble(pathPrefix + QStringLiteral(".expansion"),
                       static_cast<double>(path.expansion()))));
@@ -296,7 +317,8 @@ public:
   Id id;
   QString name_;
   QString layerNote_;
-  ArtifactAbstractComposition *composition_ = nullptr;
+  QPointer<QObject> composition_;
+  mutable std::mutex compositionMutex_;
   LayerID parentLayerId_;
   LAYER_BLEND_TYPE blendMode_ = LAYER_BLEND_TYPE::BLEND_NORMAL;
   LayerState state_;
@@ -352,6 +374,7 @@ public:
   // マスクコンテナ
   std::vector<LayerMask> masks_;
   mutable QHash<QString, std::shared_ptr<AbstractProperty>> propertyCache_;
+  mutable std::mutex propertyCacheMutex_;
 
   // Time remap
   std::unique_ptr<ArtifactCore::TimeRemapEffect> timeRemapEffect_;
@@ -510,8 +533,20 @@ int64_t ArtifactAbstractLayer::currentFrame() const {
 
 FramePosition ArtifactAbstractLayer::inPoint() const { return impl_->inPoint_; }
 void ArtifactAbstractLayer::setInPoint(const FramePosition &pos) {
+  const FramePosition oldIn = impl_->inPoint_;
+  const FramePosition oldOut = impl_->outPoint_;
   if (!assignIfChanged(impl_->inPoint_, pos)) {
     return;
+  }
+  for (auto it = impl_->propertyCache_.begin(); it != impl_->propertyCache_.end(); ++it) {
+    const auto& property = it.value();
+    if (property && property->isAnimatable()) {
+      property->retimeKeyFramesForLayerPointChange(
+          timelineTimeForFramePosition(this, oldIn),
+          timelineTimeForFramePosition(this, oldOut),
+          timelineTimeForFramePosition(this, pos),
+          timelineTimeForFramePosition(this, oldOut));
+    }
   }
   notifyLayerMutation(this, LayerDirtyFlag::All,
                       LayerDirtyReason::TimelineChanged);
@@ -520,8 +555,20 @@ FramePosition ArtifactAbstractLayer::outPoint() const {
   return impl_->outPoint_;
 }
 void ArtifactAbstractLayer::setOutPoint(const FramePosition &pos) {
+  const FramePosition oldIn = impl_->inPoint_;
+  const FramePosition oldOut = impl_->outPoint_;
   if (!assignIfChanged(impl_->outPoint_, pos)) {
     return;
+  }
+  for (auto it = impl_->propertyCache_.begin(); it != impl_->propertyCache_.end(); ++it) {
+    const auto& property = it.value();
+    if (property && property->isAnimatable()) {
+      property->retimeKeyFramesForLayerPointChange(
+          timelineTimeForFramePosition(this, oldIn),
+          timelineTimeForFramePosition(this, oldOut),
+          timelineTimeForFramePosition(this, oldIn),
+          timelineTimeForFramePosition(this, pos));
+    }
   }
   notifyLayerMutation(this, LayerDirtyFlag::All,
                       LayerDirtyReason::TimelineChanged);
@@ -711,16 +758,30 @@ void ArtifactAbstractLayer::insertVariant(size_t index, std::unique_ptr<LayerVar
     notifyLayerMutation(this, LayerDirtyFlag::All, LayerDirtyReason::PropertyChanged);
 }
 
-void ArtifactAbstractLayer::setComposition(void *comp) {
-  impl_->composition_ = static_cast<ArtifactAbstractComposition *>(comp);
+void ArtifactAbstractLayer::setComposition(QObject *comp) {
+  std::lock_guard<std::mutex> lock(impl_->compositionMutex_);
+  impl_->composition_ = comp;
 }
 
-void *ArtifactAbstractLayer::composition() const { return impl_->composition_; }
+void ArtifactAbstractLayer::setComposition(void *comp) {
+  setComposition(static_cast<QObject *>(comp));
+}
+
+void *ArtifactAbstractLayer::composition() const {
+  std::lock_guard<std::mutex> lock(impl_->compositionMutex_);
+  return impl_->composition_.data();
+}
+
+QObject *ArtifactAbstractLayer::compositionObject() const {
+  std::lock_guard<std::mutex> lock(impl_->compositionMutex_);
+  return impl_->composition_.data();
+}
 
 ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
-  if (!impl_->composition_ || impl_->parentLayerId_.isNil())
-    return nullptr;
-  return impl_->composition_->layerById(impl_->parentLayerId_);
+  auto *composition = static_cast<ArtifactAbstractComposition *>(compositionObject());
+  if (!composition || impl_->parentLayerId_.isNil())
+  return nullptr;
+  return composition->layerById(impl_->parentLayerId_);
 }
 
 QTransform ArtifactAbstractLayer::getLocalTransform() const {
@@ -991,7 +1052,8 @@ void ArtifactAbstractLayer::setParentById(const LayerID &id) {
   }
 
   if (impl_->composition_) {
-    auto parent = impl_->composition_->layerById(id);
+    auto *composition = static_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
+    auto parent = composition->layerById(id);
     if (!parent) {
       qWarning() << "[Layer] Reject invalid parent id:" << id.toString();
       return;
@@ -1004,7 +1066,7 @@ void ArtifactAbstractLayer::setParentById(const LayerID &id) {
         qWarning() << "[Layer] Reject cyclic parent:" << id.toString();
         return;
       }
-      auto node = impl_->composition_->layerById(cursor);
+      auto node = composition->layerById(cursor);
       if (!node) {
         break;
       }
@@ -1078,7 +1140,8 @@ void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
 
     double fps = 30.0;
     if (impl_->composition_) {
-        fps = impl_->composition_->frameRate().framerate();
+        auto *composition = static_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
+        fps = composition->frameRate().framerate();
         if (fps <= 0.0) {
             fps = 30.0;
         }
@@ -1109,7 +1172,8 @@ double ArtifactAbstractLayer::getSourceFrameAtCompFrame(int64_t compFrame) const
 
     double fps = 30.0;
     if (impl_->composition_) {
-        fps = impl_->composition_->frameRate().framerate();
+        auto *composition = static_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
+        fps = composition->frameRate().framerate();
         if (fps <= 0.0) {
             fps = 30.0;
         }
@@ -1145,6 +1209,210 @@ Size_2D ArtifactAbstractLayer::aabb() const {
   result.width = static_cast<int>(std::ceil(bounds.width()));
   result.height = static_cast<int>(std::ceil(bounds.height()));
   return result;
+}
+
+QRectF LayerBounds::boundsFor(LayerBoundsKind kind) const {
+  switch (kind) {
+    case LayerBoundsKind::Source:
+      return sourceBounds;
+    case LayerBoundsKind::Visible:
+      return visibleBounds;
+    case LayerBoundsKind::Effect:
+      return effectBounds;
+    case LayerBoundsKind::Mask:
+      return maskBounds;
+    case LayerBoundsKind::Layout:
+      return layoutBounds;
+  }
+  return layoutBounds;
+}
+
+LayerBounds ArtifactAbstractLayer::contentBounds() const {
+  const QRectF source = localBounds();
+  const QRectF visible = transformedBoundingBox();
+  LayerBounds bounds;
+  bounds.sourceBounds = source;
+  bounds.visibleBounds = visible;
+  bounds.effectBounds = visible;
+  bounds.maskBounds = visible;
+  bounds.layoutBounds = source.isValid() ? source : visible;
+  return bounds;
+}
+
+QJsonObject GuideDefinition::toJson() const {
+  QJsonObject obj;
+  obj.insert(QStringLiteral("guideId"), guideId);
+  obj.insert(QStringLiteral("name"), name);
+  obj.insert(QStringLiteral("purpose"), purpose);
+  obj.insert(QStringLiteral("orientation"), static_cast<int>(orientation));
+  obj.insert(QStringLiteral("position"), position);
+  obj.insert(QStringLiteral("start"), start);
+  obj.insert(QStringLiteral("end"), end);
+  obj.insert(QStringLiteral("enabled"), enabled);
+  obj.insert(QStringLiteral("priority"), static_cast<int>(priority));
+  obj.insert(QStringLiteral("semanticTag"), static_cast<int>(semanticTag));
+  return obj;
+}
+
+GuideDefinition GuideDefinition::fromJson(const QJsonObject &obj) {
+  GuideDefinition guide;
+  guide.guideId = obj.value(QStringLiteral("guideId")).toString();
+  guide.name = obj.value(QStringLiteral("name")).toString();
+  guide.purpose = obj.value(QStringLiteral("purpose")).toString();
+  guide.orientation = static_cast<GuideOrientation>(
+      obj.value(QStringLiteral("orientation")).toInt(static_cast<int>(GuideOrientation::Horizontal)));
+  guide.position = obj.value(QStringLiteral("position")).toDouble(0.0);
+  guide.start = obj.value(QStringLiteral("start")).toDouble(0.0);
+  guide.end = obj.value(QStringLiteral("end")).toDouble(0.0);
+  guide.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+  guide.priority = static_cast<GuidePriority>(
+      obj.value(QStringLiteral("priority")).toInt(static_cast<int>(GuidePriority::Normal)));
+  guide.semanticTag = static_cast<GuideSemanticTag>(
+      obj.value(QStringLiteral("semanticTag")).toInt(static_cast<int>(GuideSemanticTag::Custom)));
+  return guide;
+}
+
+QJsonObject GuideBinding::toJson() const {
+  QJsonObject obj;
+  obj.insert(QStringLiteral("guideId"), guideId);
+  obj.insert(QStringLiteral("role"), role);
+  obj.insert(QStringLiteral("offset"), offset);
+  obj.insert(QStringLiteral("follow"), follow);
+  obj.insert(QStringLiteral("enabled"), enabled);
+  obj.insert(QStringLiteral("priority"), static_cast<int>(priority));
+  return obj;
+}
+
+GuideBinding GuideBinding::fromJson(const QJsonObject &obj) {
+  GuideBinding binding;
+  binding.guideId = obj.value(QStringLiteral("guideId")).toString();
+  binding.role = obj.value(QStringLiteral("role")).toString();
+  binding.offset = obj.value(QStringLiteral("offset")).toDouble(0.0);
+  binding.follow = obj.value(QStringLiteral("follow")).toBool(false);
+  binding.enabled = obj.value(QStringLiteral("enabled")).toBool(true);
+  binding.priority = static_cast<GuidePriority>(
+      obj.value(QStringLiteral("priority")).toInt(static_cast<int>(GuidePriority::Normal)));
+  return binding;
+}
+
+QJsonObject GuideSet::toJson() const {
+  QJsonObject obj;
+  obj.insert(QStringLiteral("ownerId"), ownerId);
+  QJsonArray guideArray;
+  for (const auto &guide : guides) {
+    guideArray.append(guide.toJson());
+  }
+  obj.insert(QStringLiteral("guides"), guideArray);
+  QJsonArray bindingArray;
+  for (const auto &binding : bindings) {
+    bindingArray.append(binding.toJson());
+  }
+  obj.insert(QStringLiteral("bindings"), bindingArray);
+  return obj;
+}
+
+GuideSet GuideSet::fromJson(const QJsonObject &obj) {
+  GuideSet set;
+  set.ownerId = obj.value(QStringLiteral("ownerId")).toString();
+  for (const auto &value : obj.value(QStringLiteral("guides")).toArray()) {
+    set.guides.append(GuideDefinition::fromJson(value.toObject()));
+  }
+  for (const auto &value : obj.value(QStringLiteral("bindings")).toArray()) {
+    set.bindings.append(GuideBinding::fromJson(value.toObject()));
+  }
+  return set;
+}
+
+QVector<GuideDefinition> GuideSet::guidesForSemanticTag(GuideSemanticTag tag) const {
+  QVector<GuideDefinition> result;
+  for (const auto& g : guides) {
+    if (g.semanticTag == tag) {
+      result.append(g);
+    }
+  }
+  return result;
+}
+
+QVector<GuideDefinition> GuideSet::enabledGuides() const {
+  QVector<GuideDefinition> result;
+  for (const auto& g : guides) {
+    if (g.enabled) {
+      result.append(g);
+    }
+  }
+  return result;
+}
+
+QVector<GuideBinding> GuideSet::enabledBindings() const {
+  QVector<GuideBinding> result;
+  for (const auto& b : bindings) {
+    if (b.enabled) {
+      result.append(b);
+    }
+  }
+  return result;
+}
+
+GuideDefinition* GuideSet::guideById(const QString& guideId) {
+  for (auto& g : guides) {
+    if (g.guideId == guideId) {
+      return &g;
+    }
+  }
+  return nullptr;
+}
+
+void GuideSet::sortByPriority() {
+  std::sort(guides.begin(), guides.end(), [](const GuideDefinition& a, const GuideDefinition& b) {
+    return static_cast<int>(a.priority) > static_cast<int>(b.priority);
+  });
+  std::sort(bindings.begin(), bindings.end(), [](const GuideBinding& a, const GuideBinding& b) {
+    return static_cast<int>(a.priority) > static_cast<int>(b.priority);
+  });
+}
+
+QRectF ArtifactAbstractLayer::contentBounds(LayerBoundsKind kind) const {
+  return contentBounds().boundsFor(kind);
+}
+
+QRectF ArtifactAbstractLayer::sourceBounds() const {
+  return contentBounds(LayerBoundsKind::Source);
+}
+
+QRectF ArtifactAbstractLayer::visibleBounds() const {
+  return contentBounds(LayerBoundsKind::Visible);
+}
+
+QString ArtifactAbstractLayer::contentBoundsSummary() const {
+  const LayerBounds bounds = contentBounds();
+  const auto rectString = [](const QRectF &rect) {
+    return rect.isValid()
+               ? QStringLiteral("%1,%2 %3x%4")
+                     .arg(rect.x(), 0, 'f', 1)
+                     .arg(rect.y(), 0, 'f', 1)
+                     .arg(rect.width(), 0, 'f', 1)
+                     .arg(rect.height(), 0, 'f', 1)
+               : QStringLiteral("invalid");
+  };
+
+  return QStringLiteral("source=%1 visible=%2 effect=%3 mask=%4 layout=%5")
+      .arg(rectString(bounds.sourceBounds),
+           rectString(bounds.visibleBounds),
+           rectString(bounds.effectBounds),
+           rectString(bounds.maskBounds),
+           rectString(bounds.layoutBounds));
+}
+
+QRectF ArtifactAbstractLayer::effectBounds() const {
+  return contentBounds(LayerBoundsKind::Effect);
+}
+
+QRectF ArtifactAbstractLayer::maskBounds() const {
+  return contentBounds(LayerBoundsKind::Mask);
+}
+
+QRectF ArtifactAbstractLayer::layoutBounds() const {
+  return contentBounds(LayerBoundsKind::Layout);
 }
 
 QRectF ArtifactAbstractLayer::localBounds() const {
@@ -1493,9 +1761,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("transform") && obj["transform"].isObject()) {
     QJsonObject trans = obj["transform"].toObject();
     auto &t3 = transform3D();
-    // Since we are loading, we might want to set these as initial values or at
-    // time 0
-    RationalTime t0(0, 30000); // 0s
+    // Time zero only needs a stable scale; avoid implying a fake fps.
+    RationalTime t0(0, 1);
     if (trans.contains("px"))
       t3.setPosition(t0, trans["px"].toDouble(), trans["py"].toDouble());
     if (trans.contains("pz"))
@@ -1507,18 +1774,6 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     if (trans.contains("ax"))
       t3.setAnchor(t0, trans["ax"].toDouble(), trans["ay"].toDouble(),
                    trans["az"].toDouble());
-  }
-
-  if (obj.contains("mattes") && obj["mattes"].isArray()) {
-    auto mattesArr = obj["mattes"].toArray();
-    impl_->mattes_.clear();
-    for (const auto &matteVal : mattesArr) {
-      if (matteVal.isObject()) {
-        LayerMatteReference matte;
-        matte.fromJson(matteVal.toObject());
-        impl_->mattes_.push_back(matte);
-      }
-    }
   }
 
   if (obj.contains("variants") && obj["variants"].isArray()) {
@@ -1538,7 +1793,7 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
           if (varObj.contains("transform") && varObj["transform"].isObject()) {
               QJsonObject vtrans = varObj["transform"].toObject();
               AnimatableTransform3D vt3;
-              RationalTime t0(0, 30000);
+              RationalTime t0(0, 1);
               if (vtrans.contains("px")) vt3.setPosition(t0, vtrans["px"].toDouble(), vtrans["py"].toDouble(0));
               if (vtrans.contains("pz")) vt3.setPositionZ(t0, vtrans["pz"].toDouble());
               if (vtrans.contains("rx")) vt3.setRotation(t0, vtrans["rx"].toDouble());
@@ -1849,6 +2104,46 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       featherProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather"));
       maskGroup.addProperty(featherProp);
 
+      auto fhProp = makeProp(pathPrefix + QStringLiteral(".featherHorizontal"),
+                             PropertyType::Float,
+                             static_cast<double>(path.featherHorizontal()),
+                             -232 - pathIndex);
+      fhProp->setAnimatable(true);
+      fhProp->setSoftRange(0.0, 128.0);
+      fhProp->setStep(0.5);
+      fhProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather H"));
+      maskGroup.addProperty(fhProp);
+
+      auto fvProp = makeProp(pathPrefix + QStringLiteral(".featherVertical"),
+                             PropertyType::Float,
+                             static_cast<double>(path.featherVertical()),
+                             -233 - pathIndex);
+      fvProp->setAnimatable(true);
+      fvProp->setSoftRange(0.0, 128.0);
+      fvProp->setStep(0.5);
+      fvProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather V"));
+      maskGroup.addProperty(fvProp);
+
+      auto fiProp = makeProp(pathPrefix + QStringLiteral(".featherInner"),
+                             PropertyType::Float,
+                             static_cast<double>(path.featherInner()),
+                             -234 - pathIndex);
+      fiProp->setAnimatable(true);
+      fiProp->setSoftRange(0.0, 128.0);
+      fiProp->setStep(0.5);
+      fiProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather Inner"));
+      maskGroup.addProperty(fiProp);
+
+      auto foProp = makeProp(pathPrefix + QStringLiteral(".featherOuter"),
+                             PropertyType::Float,
+                             static_cast<double>(path.featherOuter()),
+                             -235 - pathIndex);
+      foProp->setAnimatable(true);
+      foProp->setSoftRange(0.0, 128.0);
+      foProp->setStep(0.5);
+      foProp->setDisplayLabel(pathLabel + QStringLiteral(" Feather Outer"));
+      maskGroup.addProperty(foProp);
+
       auto expansionProp = makeProp(pathPrefix + QStringLiteral(".expansion"),
                                     PropertyType::Float,
                                     static_cast<double>(path.expansion()),
@@ -1893,6 +2188,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
 
 std::shared_ptr<ArtifactCore::AbstractProperty>
 ArtifactAbstractLayer::getProperty(const QString &name) const {
+  std::lock_guard<std::mutex> lock(impl_->propertyCacheMutex_);
   auto &cache = impl_->propertyCache_;
   auto it = cache.find(name);
   if (it != cache.end()) {
@@ -1906,15 +2202,20 @@ ArtifactAbstractLayer::persistentLayerProperty(const QString &propertyPath,
                                                PropertyType type,
                                                const QVariant &value,
                                                int priority) const {
+  std::lock_guard<std::mutex> lock(impl_->propertyCacheMutex_);
   auto &cache = impl_->propertyCache_;
   auto it = cache.find(propertyPath);
   if (it == cache.end() || !it.value()) {
     it = cache.insert(propertyPath, std::make_shared<AbstractProperty>());
   }
   auto property = it.value();
+  const bool hasAnimatedValue =
+      property->isAnimatable() && !property->getKeyFrames().empty();
   property->setName(propertyPath);
   property->setType(type);
-  property->setValue(value);
+  if (!hasAnimatedValue && !property->hasExpression()) {
+    property->setValue(value);
+  }
   property->setDisplayPriority(priority);
   if (type == PropertyType::Integer) {
     property->setStep(1);
@@ -1992,6 +2293,14 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       path.setOpacity(static_cast<float>(value.toDouble()));
     } else if (maskAddress->field == QStringLiteral("feather")) {
       path.setFeather(static_cast<float>(value.toDouble()));
+    } else if (maskAddress->field == QStringLiteral("featherHorizontal")) {
+      path.setFeatherHorizontal(static_cast<float>(value.toDouble()));
+    } else if (maskAddress->field == QStringLiteral("featherVertical")) {
+      path.setFeatherVertical(static_cast<float>(value.toDouble()));
+    } else if (maskAddress->field == QStringLiteral("featherInner")) {
+      path.setFeatherInner(static_cast<float>(value.toDouble()));
+    } else if (maskAddress->field == QStringLiteral("featherOuter")) {
+      path.setFeatherOuter(static_cast<float>(value.toDouble()));
     } else if (maskAddress->field == QStringLiteral("expansion")) {
       path.setExpansion(static_cast<float>(value.toDouble()));
     } else if (maskAddress->field == QStringLiteral("inverted")) {

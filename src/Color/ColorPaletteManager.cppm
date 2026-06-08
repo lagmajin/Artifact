@@ -1,6 +1,7 @@
 module;
 
 #include <QColor>
+#include <QDebug>
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -41,11 +42,11 @@ module;
 #include <random>
 module Artifact.Color.Palette;
 
+import Core.Diagnostics.FallbackPolicy;
 
 
 
-
-namespace Artifact {
+namespace ArtifactCore::Color {
 
 QJsonObject ColorPalette::toJson() const {
     QJsonObject obj;
@@ -70,6 +71,19 @@ ColorPalette ColorPalette::fromJson(const QJsonObject& json) {
         NamedColor nc;
         nc.name = colorItem["name"].toString();
         nc.color = QColor::fromString(colorItem["color_hex"].toString());
+        if (!nc.color.isValid()) {
+            qWarning() << "[ColorPalette] missing or invalid color token"
+                       << "palette=" << cp.name
+                       << "name=" << nc.name
+                       << "value=" << colorItem["color_hex"].toString()
+                       << "fallback=#ff00ffff";
+            nc.color = QColor(255, 0, 255);
+            auto* tracker = ArtifactCore::FallbackTracker::instance();
+            tracker->record(ArtifactCore::FallbackCategory::Color,
+                          ArtifactCore::FallbackAction::Warning,
+                          nc.name, "#ff00ffff",
+                          QStringLiteral("Color token missing, fallback to magenta"));
+        }
         cp.colors.append(nc);
     }
     return cp;
@@ -126,4 +140,4 @@ bool ColorPaletteManager::saveToFile(const QString& filePath) const {
     return true;
 }
 
-} // namespace Artifact
+} // namespace ArtifactCore::Color

@@ -1139,8 +1139,10 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
  deleteViewportBookmarkAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
 
  QObject::connect(saveViewportBookmarkAction, &QAction::triggered, menu_,
-                  [this]() {
-                   QWidget* dialogParent = mainWindow ? mainWindow : menu_;
+                   [this]() {
+                    QWidget* dialogParent = mainWindow
+                                                ? static_cast<QWidget*>(mainWindow)
+                                                : static_cast<QWidget*>(menu_);
                    if (!dialogParent) {
                     return;
                    }
@@ -1183,8 +1185,10 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                   });
 
  QObject::connect(deleteViewportBookmarkAction, &QAction::triggered, menu_,
-                  [this]() {
-                   QWidget* dialogParent = mainWindow ? mainWindow : menu_;
+                   [this]() {
+                    QWidget* dialogParent = mainWindow
+                                                ? static_cast<QWidget*>(mainWindow)
+                                                : static_cast<QWidget*>(menu_);
                    if (!dialogParent) {
                     return;
                    }
@@ -1252,8 +1256,10 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
   QAction* action = viewportBookmarkMenu->addAction(bookmarkName);
   action->setIcon(QIcon(resolveIconPath("Studio/bookmarks.svg")));
   QObject::connect(action, &QAction::triggered, menu_,
-                   [this, bookmarkName, compositionId]() {
-                    QWidget* dialogParent = mainWindow ? mainWindow : menu_;
+                    [this, bookmarkName, compositionId]() {
+                     QWidget* dialogParent = mainWindow
+                                                 ? static_cast<QWidget*>(mainWindow)
+                                                 : static_cast<QWidget*>(menu_);
                     if (!dialogParent) {
                      return;
                     }

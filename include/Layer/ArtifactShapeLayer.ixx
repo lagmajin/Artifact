@@ -10,6 +10,7 @@ export module Artifact.Layer.Shape;
 import Color.Float;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
+import Shape.Operator;
 
 export namespace Artifact {
 using namespace ArtifactCore;
@@ -108,6 +109,12 @@ public:
   void clearCustomPath();
   std::vector<CustomPathVertex> customPathVertices() const;
   bool customPathClosed() const;
+
+  // Shape operators (AE-style path operators)
+  void addShapeOperator(ArtifactCore::ShapeOperatorType type);
+  void clearShapeOperators();
+  int shapeOperatorCount() const;
+  ArtifactCore::ShapeOperatorType shapeOperatorTypeAt(int index) const;
 
   // Layer interface
   QRectF localBounds() const override;

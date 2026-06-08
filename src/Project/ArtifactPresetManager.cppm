@@ -111,11 +111,11 @@ bool ArtifactPresetManager::loadEffectPreset(ArtifactAbstractEffectPtr& effect, 
     return applyPresetJsonToEffect(effect, doc.object());
 }
 
-bool ArtifactPresetManager::saveColorPaletteMapping(const ColorPaletteManager& manager, const QString& filePath) {
+bool ArtifactPresetManager::saveColorPaletteMapping(const ArtifactCore::Color::ColorPaletteManager& manager, const QString& filePath) {
     return manager.saveToFile(filePath);
 }
 
-bool ArtifactPresetManager::loadColorPaletteMapping(ColorPaletteManager& manager, const QString& filePath) {
+bool ArtifactPresetManager::loadColorPaletteMapping(ArtifactCore::Color::ColorPaletteManager& manager, const QString& filePath) {
     return manager.loadFromFile(filePath);
 }
 

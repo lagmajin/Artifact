@@ -50,7 +50,6 @@ module Artifact.Composition.InOutPoints;
 
 import Frame.Position;
 import Frame.Range;
-import Artifact.Composition.InOutPoints;
 import Event.Bus;
 import Artifact.Event.Types;
 

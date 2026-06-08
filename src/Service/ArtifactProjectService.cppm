@@ -11,6 +11,7 @@ module;
 #include <QImage>
 #include <QImageReader>
 #include <QList>
+#include <QMessageBox>
 #include <QPointer>
 #include <QRectF>
 #include <QSet>
@@ -30,6 +31,7 @@ import Utils.String.UniString;
 import Artifact.Layer.Composition;
 import Artifact.Project.Manager;
 import Artifact.Project.RevisionService;
+import Artifact.Project.CreationDefaults;
 import Artifact.Layer.Factory;
 import Artifact.Layer.Result;
 import Artifact.Composition.Abstract;
@@ -52,6 +54,7 @@ import Artifact.Render.Queue.Service;
 import Event.Bus;
 import Artifact.Event.Types;
 import Core.Diagnostics.SessionLedger;
+import MediaSource;
 import Core.Diagnostics.ProjectDiagnostic;
 // import Artifact.Render.FrameCache;
 
@@ -452,6 +455,44 @@ void appendUniqueDiagnostic(
     diagnostics.push_back(diagnostic);
   }
 }
+
+void updateLastUsedCreationDefaults(const std::shared_ptr<ArtifactProject>& project,
+                                    const ArtifactCompositionInitParams& params)
+{
+  if (!project) {
+    return;
+  }
+  auto state = project->creationDefaultsState();
+  CreationCompositionDefaults defaults;
+  defaults.composition = params;
+  state.lastUsed.composition = defaults;
+  project->setCreationDefaultsState(state);
+}
+
+void updateLastUsedCreationDefaults(const std::shared_ptr<ArtifactProject>& project,
+                                    const ArtifactLayerInitParams& params)
+{
+  if (!project) {
+    return;
+  }
+  auto state = project->creationDefaultsState();
+  CreationLayerDefaults defaults;
+  defaults.layer = params;
+  switch (params.layerType()) {
+  case LayerType::Shape:
+    state.lastUsed.shape = defaults;
+    break;
+  case LayerType::Text:
+    state.lastUsed.text = defaults;
+    break;
+  case LayerType::Image:
+    state.lastUsed.image = defaults;
+    break;
+  default:
+    break;
+  }
+  project->setCreationDefaultsState(state);
+}
 } // namespace
 
 class ArtifactProjectService::Impl {
@@ -663,6 +704,10 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
       }
     }
 
+    if (auto project = manager.getCurrentProjectSharedPtr()) {
+      updateLastUsedCreationDefaults(project, params);
+    }
+
     if (targetedCurrentComposition) {
       if (auto comp = currentComposition().lock()) {
         if (!selectedLayerId.isNil() &&
@@ -822,10 +867,7 @@ QStringList ArtifactProjectService::Impl::importAssetsFromPaths(
     project->projectChanged();
   }
 
-  // [Fix 2] importAssetsFromPathsAsync の非同期ブロック内で既に
-  // QImageReader::size() によるチェックが完了しているため、
-  // ここで同期実行すると同じファイルに対して 3 回 QImageReader が走る。
-  // checkImportedAssetCompatibility(importedPaths);
+  checkImportedAssetCompatibility(finalImported);
   return finalImported;
 }
 
@@ -849,9 +891,12 @@ void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
 
   auto *watcher = new QFutureWatcher<QStringList>(service);
   QObject::connect(watcher, &QFutureWatcher<QStringList>::finished, service,
-                   [watcher, onFinished = std::move(onFinished)]() mutable {
+                   [this, watcher, onFinished = std::move(onFinished)]() mutable {
                      const QStringList importedPaths = watcher->result();
                      watcher->deleteLater();
+                     if (!importedPaths.isEmpty()) {
+                       checkImportedAssetCompatibility(importedPaths);
+                     }
                      if (onFinished) {
                        onFinished(importedPaths);
                      }
@@ -947,6 +992,8 @@ void ArtifactProjectService::Impl::checkImportedAssetCompatibility(
   }
 
   ArtifactCore::FileTypeDetector detector;
+  QStringList videoWarnings;
+
   for (const auto &path : importedPaths) {
     if (path.isEmpty())
       continue;
@@ -974,6 +1021,32 @@ void ArtifactProjectService::Impl::checkImportedAssetCompatibility(
                    << " path=" << path;
       }
     }
+
+    if (type == ArtifactCore::FileType::Video) {
+      auto probe = ArtifactCore::probeVideoFile(path);
+      if (!probe.hasVideoStream)
+        continue;
+      if (!probe.isEditingFriendly) {
+        qWarning() << "[CompatibilityGuard] Non-editing-friendly video codec:"
+                    << probe.codecName << "path=" << path;
+        videoWarnings.append(
+            QStringLiteral("  %1 (%2)").arg(QFileInfo(path).fileName())
+                .arg(probe.codecName));
+      }
+    }
+  }
+
+  if (!videoWarnings.isEmpty()) {
+    QString msg = QStringLiteral(
+        "The following video files use a compression format that is not "
+        "ideal for editing:\n\n%1\n\n"
+        "Editing-friendly alternatives: ProRes, DNxHD, Animation, "
+        "or image sequences.\n"
+        "Consider transcoding before use for smoother playback "
+        "and frame-accurate seeking.")
+        .arg(videoWarnings.join(QStringLiteral("\n")));
+    QMessageBox::warning(QApplication::activeWindow(),
+                         QStringLiteral("Video Codec Warning"), msg);
   }
 }
 
@@ -2398,8 +2471,13 @@ void ArtifactProjectService::createComposition(const UniString &name) {
   if (!hasProject()) {
     manager.createProject();
   }
-  auto result = manager.createComposition(name);
+  ArtifactCompositionInitParams params;
+  params.setCompositionName(name);
+  auto result = manager.createComposition(params);
   if (result.success) {
+    if (auto project = manager.getCurrentProjectSharedPtr()) {
+      updateLastUsedCreationDefaults(project, params);
+    }
     changeCurrentComposition(result.id);
     qDebug() << "[ArtifactProjectService::createComposition(UniString)] "
                 "succeeded, id:"
@@ -2417,6 +2495,9 @@ void ArtifactProjectService::createComposition(
   }
   auto result = manager.createComposition(params);
   if (result.success) {
+    if (auto project = manager.getCurrentProjectSharedPtr()) {
+      updateLastUsedCreationDefaults(project, params);
+    }
     changeCurrentComposition(result.id);
     qDebug() << "[ArtifactProjectService::createComposition] succeeded, id:"
              << result.id.toString();

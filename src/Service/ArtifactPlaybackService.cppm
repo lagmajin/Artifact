@@ -53,6 +53,7 @@ import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
 import Frame.Debug;
+import Frame.SkipTracker;
 import Core.Diagnostics.Trace;
 import Image.ImageF32x4RGBAWithCache;
 import Artifact.Composition.PlaybackController;
@@ -136,6 +137,20 @@ public:
   std::vector<ArtifactRamPreviewFrameCacheState> frameCacheStates_;
   std::unordered_map<int64_t, ArtifactCore::ImageF32x4RGBAWithCache>
       ramPreviewImageCache_;
+  size_t ramPreviewImageCacheBudgetFrames_ = 128;
+  std::list<int64_t> ramPreviewImageLru_;
+  std::unordered_map<int64_t, std::list<int64_t>::iterator>
+      ramPreviewImageLruIndex_;
+  struct PreviewDiskWriteTask {
+    int64_t frame = -1;
+    QString filePath;
+    ArtifactCore::ImageF32x4_RGBA image;
+  };
+  std::mutex previewDiskWriteMutex_;
+  std::condition_variable previewDiskWriteCv_;
+  std::deque<PreviewDiskWriteTask> previewDiskWriteQueue_;
+  std::thread previewDiskWriterThread_;
+  bool previewDiskWriterStop_ = false;
   struct RamPreviewBuildQueue {
     uint64_t generation = 0;
     bool active = false;
@@ -167,6 +182,30 @@ public:
   explicit Impl(ArtifactPlaybackService *owner) : owner_(owner) {
     controller_ = new ArtifactCompositionPlaybackController();
     engine_ = new ArtifactPlaybackEngine();
+    previewDiskWriterThread_ = std::thread([this]() {
+      while (true) {
+        PreviewDiskWriteTask task;
+        {
+          std::unique_lock<std::mutex> lock(previewDiskWriteMutex_);
+          previewDiskWriteCv_.wait(lock, [this]() {
+            return previewDiskWriterStop_ || !previewDiskWriteQueue_.empty();
+          });
+          if (previewDiskWriterStop_ && previewDiskWriteQueue_.empty()) {
+            break;
+          }
+          task = std::move(previewDiskWriteQueue_.front());
+          previewDiskWriteQueue_.pop_front();
+        }
+
+        const bool savedToDisk =
+            persistPreviewFrameToDisk(task.filePath, task.image);
+        QMetaObject::invokeMethod(
+            owner_, [this, frame = task.frame, savedToDisk]() {
+              markFrameOnDisk(frame, savedToDisk);
+            },
+            Qt::QueuedConnection);
+      }
+    });
 
     // エンジンのシグナルをサービスに転送
     QObject::connect(
@@ -196,8 +235,14 @@ public:
                                   : QString();
 
           const int64_t frameNumber = position.framePosition();
-          const QImage frameCopy = frame;
-          const bool hasConcreteFrame = !frameCopy.isNull();
+          ArtifactCore::ImageF32x4_RGBA frameBuffer;
+          const bool hasConcreteFrame = !frame.isNull();
+          if (hasConcreteFrame) {
+            const QImage rgba = frame.format() == QImage::Format_RGBA8888
+                                    ? frame
+                                    : frame.convertToFormat(QImage::Format_RGBA8888);
+            frameBuffer.setFromRGBA8(rgba.constBits(), rgba.width(), rgba.height());
+          }
           const QString diskCacheFramePath =
               currentComposition_
                   ? previewDiskCacheFramePathForNamespace(
@@ -206,14 +251,20 @@ public:
 
           syncCurrentCompositionFrame(position);
           const auto publishFrame = [this, position, compositionId, frameNumber,
-                                     frameCopy, hasConcreteFrame,
+                                     frameBuffer, hasConcreteFrame,
                                      diskCacheFramePath]() {
             if (hasConcreteFrame) {
-              storeFrameImageInRam(frameNumber, frameCopy,
+              FrameSkipTracker::instance()->commitFrame(frameNumber);
+              storeFrameImageInRam(frameNumber, frameBuffer,
                                    QStringLiteral("playback-frame"));
-              const bool savedToDisk =
-                  persistPreviewFrameToDisk(diskCacheFramePath, frameCopy);
-              markFrameOnDisk(frameNumber, savedToDisk);
+              {
+                std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
+                previewDiskWriteQueue_.push_back(
+                    PreviewDiskWriteTask{frameNumber, diskCacheFramePath,
+                                         frameBuffer});
+              }
+              previewDiskWriteCv_.notify_one();
+              markFrameOnDisk(frameNumber, false);
             } else {
               markFrameRequested(frameNumber, QStringLiteral("playback-tick"));
               markFrameOnDisk(frameNumber, hasPreviewFrameOnDisk(frameNumber));
@@ -224,7 +275,6 @@ public:
             ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
                 FrameChangedEvent{QString(compositionId),
                                   position.framePosition()});
-            Q_EMIT owner_->frameChanged(position);
             emitRamPreviewStats();
           };
           QMetaObject::invokeMethod(owner_, publishFrame, Qt::QueuedConnection);
@@ -284,9 +334,8 @@ public:
 
     QObject::connect(controller_,
     &ArtifactCompositionPlaybackController::frameChanged, owner_, [this](const
-    FramePosition& position) { syncCurrentCompositionFrame(position); Q_EMIT
-    owner_->frameChanged(position);
-     }, Qt::DirectConnection);
+    FramePosition& position) { syncCurrentCompositionFrame(position); },
+                     Qt::DirectConnection);
 
     QObject::connect(controller_,
     &ArtifactCompositionPlaybackController::playbackSpeedChanged, owner_,
@@ -342,6 +391,14 @@ public:
   }
 
   ~Impl() {
+    {
+      std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
+      previewDiskWriterStop_ = true;
+    }
+    previewDiskWriteCv_.notify_all();
+    if (previewDiskWriterThread_.joinable()) {
+      previewDiskWriterThread_.join();
+    }
     delete engine_;
     delete controller_;
   }
@@ -413,6 +470,42 @@ public:
   void emitRamPreviewStats() {
     Q_EMIT owner_->ramPreviewStatsChanged(ramPreviewHitRate(),
                                           ramPreviewCachedFrameCount());
+  }
+
+  void touchRamPreviewImageLru(const int64_t frame) {
+    const auto it = ramPreviewImageLruIndex_.find(frame);
+    if (it != ramPreviewImageLruIndex_.end()) {
+      ramPreviewImageLru_.erase(it->second);
+      ramPreviewImageLruIndex_.erase(it);
+    }
+    ramPreviewImageLru_.push_front(frame);
+    ramPreviewImageLruIndex_[frame] = ramPreviewImageLru_.begin();
+  }
+
+  void eraseRamPreviewImageLru(const int64_t frame) {
+    const auto it = ramPreviewImageLruIndex_.find(frame);
+    if (it == ramPreviewImageLruIndex_.end()) {
+      return;
+    }
+    ramPreviewImageLru_.erase(it->second);
+    ramPreviewImageLruIndex_.erase(it);
+  }
+
+  void evictRamPreviewImagesIfNeeded() {
+    while (ramPreviewImageCache_.size() > ramPreviewImageCacheBudgetFrames_ &&
+           !ramPreviewImageLru_.empty()) {
+      const int64_t frame = ramPreviewImageLru_.back();
+      ramPreviewImageLru_.pop_back();
+      ramPreviewImageLruIndex_.erase(frame);
+      ramPreviewImageCache_.erase(frame);
+      if (isValidFrameIndex(frame)) {
+        auto &state = frameCacheStates_[static_cast<size_t>(frame)];
+        state.inRam = false;
+        state.ready = false;
+        state.reason = QStringLiteral("evicted-lru");
+        cacheBitmap_[static_cast<size_t>(frame)] = false;
+      }
+    }
   }
 
   void completeRamPreviewBuildFrame(const int64_t frame) {
@@ -613,6 +706,28 @@ public:
     return file.commit();
   }
 
+  bool persistPreviewFrameToDisk(const QString &filePath,
+                                 const ArtifactCore::ImageF32x4_RGBA &image) {
+    if (filePath.trimmed().isEmpty() || image.isEmpty()) {
+      return false;
+    }
+    return persistPreviewFrameToDisk(filePath, image.toQImage());
+  }
+
+  ArtifactCore::ImageF32x4_RGBA imageToCpuPreviewFrame(const QImage &image) {
+    ArtifactCore::ImageF32x4_RGBA cpuImage;
+    if (image.isNull()) {
+      return cpuImage;
+    }
+
+    const QImage rgba =
+        image.format() == QImage::Format_RGBA8888
+            ? image
+            : image.convertToFormat(QImage::Format_RGBA8888);
+    cpuImage.setFromRGBA8(rgba.constBits(), rgba.width(), rgba.height());
+    return cpuImage;
+  }
+
   bool hasPreviewFrameOnDisk(const int64_t frame) {
     if (!currentComposition_ || frame < 0) {
       return false;
@@ -626,6 +741,8 @@ public:
     frameCacheStates_.assign(targetSize, ArtifactRamPreviewFrameCacheState{});
     cacheBitmap_.assign(targetSize, false);
     ramPreviewImageCache_.clear();
+    ramPreviewImageLru_.clear();
+    ramPreviewImageLruIndex_.clear();
   }
 
   void syncLegacyBitmapFromStates() {
@@ -656,6 +773,7 @@ public:
       } else {
         state.onDisk = false;
         ramPreviewImageCache_.erase(frame);
+        eraseRamPreviewImageLru(frame);
         state.inRam = false;
         state.ready = false;
         cacheBitmap_[static_cast<size_t>(frame)] = false;
@@ -713,14 +831,36 @@ public:
       return;
     }
 
-    const QImage rgba =
-        image.format() == QImage::Format_RGBA8888
-            ? image
-            : image.convertToFormat(QImage::Format_RGBA8888);
-    ArtifactCore::ImageF32x4_RGBA cpuImage;
-    cpuImage.setFromRGBA8(rgba.constBits(), rgba.width(), rgba.height());
+    const ArtifactCore::ImageF32x4_RGBA cpuImage = imageToCpuPreviewFrame(image);
     ramPreviewImageCache_[frame] =
         ArtifactCore::ImageF32x4RGBAWithCache(cpuImage);
+    touchRamPreviewImageLru(frame);
+    evictRamPreviewImagesIfNeeded();
+    auto &state = frameCacheStates_[static_cast<size_t>(frame)];
+    state.requested = true;
+    state.ready = true;
+    state.failed = false;
+    state.inRam = true;
+    if (!reason.trimmed().isEmpty()) {
+      state.reason = reason.trimmed();
+    } else {
+      state.reason.clear();
+    }
+    cacheBitmap_[static_cast<size_t>(frame)] = true;
+    completeRamPreviewBuildFrame(frame);
+  }
+
+  void storeFrameImageInRam(const int64_t frame,
+                            const ArtifactCore::ImageF32x4_RGBA &image,
+                            const QString &reason = {}) {
+    if (!isValidFrameIndex(frame) || image.isEmpty()) {
+      return;
+    }
+
+    ramPreviewImageCache_[frame] =
+        ArtifactCore::ImageF32x4RGBAWithCache(image);
+    touchRamPreviewImageLru(frame);
+    evictRamPreviewImagesIfNeeded();
     auto &state = frameCacheStates_[static_cast<size_t>(frame)];
     state.requested = true;
     state.ready = true;
@@ -739,6 +879,31 @@ public:
                                  const QString &reason = {},
                                  const bool persistToDisk = true) {
     if (!isValidFrameIndex(frame) || image.isNull()) {
+      return false;
+    }
+
+    storeFrameImageInRam(frame, image, reason);
+    if (persistToDisk) {
+      const QString filePath = previewDiskCacheFramePath(frame);
+      {
+        std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
+        previewDiskWriteQueue_.push_back(
+            PreviewDiskWriteTask{frame, filePath, imageToCpuPreviewFrame(image)});
+      }
+      previewDiskWriteCv_.notify_one();
+      markFrameOnDisk(frame, false);
+    } else {
+      markFrameOnDisk(frame, false);
+    }
+    clearFrameFailure(frame);
+    return true;
+  }
+
+  bool storeRamPreviewFrameImage(const int64_t frame,
+                                 const ArtifactCore::ImageF32x4_RGBA &image,
+                                 const QString &reason = {},
+                                 const bool persistToDisk = true) {
+    if (!isValidFrameIndex(frame) || image.isEmpty()) {
       return false;
     }
 
@@ -832,6 +997,7 @@ public:
       auto &state = frameCacheStates_[static_cast<size_t>(frame)];
       state.inRam = true;
       state.ready = true;
+      touchRamPreviewImageLru(frame);
       cacheBitmap_[static_cast<size_t>(frame)] = true;
       completeRamPreviewBuildFrame(frame);
       return true;
@@ -1636,7 +1802,7 @@ void ArtifactPlaybackService::setCurrentComposition(
     ArtifactCore::globalEventBus().publish<PlaybackCompositionChangedEvent>(
         PlaybackCompositionChangedEvent{
             composition ? composition->id().toString() : QString()});
-    Q_EMIT currentCompositionChanged(composition);
+    Q_EMIT currentCompositionChanged();
     if (impl_->ramPreviewEnabled_) {
       impl_->prewarmRamPreviewAround(composition ? composition->framePosition()
                                                  : currentFrame());
@@ -2054,11 +2220,60 @@ bool ArtifactPlaybackService::storeRamPreviewFrameImage(
   return stored;
 }
 
+bool ArtifactPlaybackService::storeRamPreviewFrameImage(
+    const int64_t frame, const ArtifactCore::ImageF32x4_RGBA &image,
+    const QString &reason, const bool persistToDisk) {
+  if (!impl_) {
+    return false;
+  }
+
+  const bool stored =
+      impl_->storeRamPreviewFrameImage(frame, image, reason, persistToDisk);
+  impl_->emitRamPreviewStats();
+  return stored;
+}
+
 bool ArtifactPlaybackService::storeCompositionPreviewFrameImage(
     const int64_t frame, const QImage &image, const QString &compositionId,
     const int previewDownsample, const int effectiveDownsample,
     const QString &renderPath, const QString &reason,
     const bool persistToDisk) {
+  if (!impl_) {
+    return false;
+  }
+
+  const auto summary = impl_->ramPreviewSummary();
+  const QString detailReason =
+      QStringLiteral(
+          "composition-preview-readback;composition=%1;frame=%2;"
+          "previewDownsample=%3;effectiveDownsample=%4;"
+          "backend=composition-view;path=%5;policy=viewport-preview-v1;"
+          "diskKeyLimit=composition-settings-only;queue=%6;gen=%7;"
+          "next=%8;range=%9-%10;rangeReady=%11%12")
+          .arg(compositionId.trimmed().isEmpty() ? QStringLiteral("-")
+                                                 : compositionId.trimmed())
+          .arg(frame)
+          .arg(previewDownsample)
+          .arg(effectiveDownsample)
+          .arg(renderPath.trimmed().isEmpty() ? QStringLiteral("unknown")
+                                              : renderPath.trimmed())
+          .arg(summary.buildQueueReason)
+          .arg(static_cast<qulonglong>(summary.buildQueueGeneration))
+          .arg(summary.buildQueueNextFrame)
+          .arg(summary.range.start())
+          .arg(summary.range.end())
+          .arg(summary.buildRangeReady ? 1 : 0)
+          .arg(reason.trimmed().isEmpty()
+                   ? QString()
+                   : QStringLiteral(";note=%1").arg(reason.trimmed()));
+  return storeRamPreviewFrameImage(frame, image, detailReason, persistToDisk);
+}
+
+bool ArtifactPlaybackService::storeCompositionPreviewFrameImage(
+    const int64_t frame, const ArtifactCore::ImageF32x4_RGBA &image,
+    const QString &compositionId, const int previewDownsample,
+    const int effectiveDownsample, const QString &renderPath,
+    const QString &reason, const bool persistToDisk) {
   if (!impl_) {
     return false;
   }

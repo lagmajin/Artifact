@@ -45,6 +45,12 @@ export namespace Artifact {
   bool depthOfField() const;
   void setDepthOfField(bool enabled);
 
+  bool motionBlur() const;
+  void setMotionBlur(bool enabled);
+
+  float blurAmount() const;
+  void setBlurAmount(float amount);
+
   // Projection mode
   ProjectionMode projectionMode() const;
   void setProjectionMode(ProjectionMode mode);

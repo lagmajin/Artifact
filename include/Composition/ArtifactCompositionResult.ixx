@@ -9,6 +9,7 @@ export module Artifact.Composition.Result;
 
 import Utils;
 import Utils.String.UniString;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -28,7 +29,7 @@ export namespace Artifact {
 
  struct FindCompositionResult {
   bool success = false;
-  std::weak_ptr<ArtifactAbstractComposition> ptr;
+  WeakPtr<ArtifactAbstractComposition> ptr;
  };
 
  enum class AppendLayerToCompositionError {

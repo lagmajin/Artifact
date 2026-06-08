@@ -27,18 +27,19 @@ module;
 #include <QList>
 #include <cmath>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPointer>
 #include <QShowEvent>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeView>
 #include <QWidget>
 #include <wobjectimpl.h>
 
 module Artifact.MainWindow;
 
-import Artifact.MainWindow;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
@@ -249,6 +250,17 @@ void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
                     "Composition View (Software)", "Layer View (Diligent)",
                     "Layer View (Software)"};
     break;
+  case WorkspaceMode::Import:
+    visibleTitles = {"Project", "Asset Browser", "Inspector", "Properties"};
+    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
+                    "Composition Viewer", "Composition Note", "Layer Note"};
+    break;
+  case WorkspaceMode::Layout:
+    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
+                     "Inspector", "Properties", "Composition Note",
+                     "Layer Note"};
+    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat"};
+    break;
   case WorkspaceMode::Animation:
     visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
                      "Inspector", "Composition Note", "Layer Note",
@@ -272,6 +284,23 @@ void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
     hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
                     "Playback Control", "Composition View (Software)",
                     "Layer View (Software)"};
+    break;
+  case WorkspaceMode::Text:
+    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
+                     "Inspector", "Composition Note", "Layer Note",
+                     "Properties", "Contents Viewer"};
+    hiddenTitles = {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control"};
+    break;
+  case WorkspaceMode::Export:
+    visibleTitles = {"Project", "Asset Browser", "Inspector", "Properties",
+                     "Composition Viewer"};
+    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
+                    "Playback Control"};
+    break;
+  case WorkspaceMode::Debug:
+    visibleTitles = {"Project", "Asset Browser", "Inspector", "Properties",
+                     "Contents Viewer", "AI Chat", "Playback Control"};
+    hiddenTitles = {"Audio Mixer", "Composition Note", "Layer Note"};
     break;
   case WorkspaceMode::Audio:
     visibleTitles = {"Contents Viewer", "Audio Mixer", "Project",
@@ -662,6 +691,14 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   CDockManager::setConfigFlag(CDockManager::TabCloseButtonIsToolButton, true);
   CDockManager::setConfigFlag(CDockManager::AllTabsHaveCloseButton, true);
   CDockManager::setConfigFlag(CDockManager::AlwaysShowTabs, true);
+  CDockManager::setConfigFlag(CDockManager::EqualSplitOnInsertion, true);
+  CDockManager::setConfigFlag(CDockManager::FloatingContainerHasWidgetTitle,
+                              true);
+  CDockManager::setConfigFlag(CDockManager::FloatingContainerHasWidgetIcon,
+                              true);
+  CDockManager::setAutoHideConfigFlags(CDockManager::DefaultAutoHideConfig);
+  CDockManager::setAutoHideConfigFlag(CDockManager::AutoHideButtonCheckable,
+                                      true);
 
   QTimer::singleShot(0, this, [this]() {
     if (!impl_ || impl_->menuBarInitialized)
@@ -681,6 +718,30 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   addToolBar(toolBar);
   impl_->toolBar = toolBar;
 
+  auto *workspaceButton = new QToolButton(this);
+  workspaceButton->setText(QStringLiteral("Workspace"));
+  workspaceButton->setPopupMode(QToolButton::InstantPopup);
+  auto *workspaceMenu = new QMenu(workspaceButton);
+  const auto addWorkspaceAction = [this, workspaceMenu](const QString &label,
+                                                        WorkspaceMode mode) {
+    QAction *action = workspaceMenu->addAction(label);
+    QObject::connect(action, &QAction::triggered, this, [this, mode]() {
+      setWorkspaceMode(mode);
+    });
+  };
+  addWorkspaceAction(QStringLiteral("Default"), WorkspaceMode::Default);
+  addWorkspaceAction(QStringLiteral("Import"), WorkspaceMode::Import);
+  addWorkspaceAction(QStringLiteral("Layout"), WorkspaceMode::Layout);
+  addWorkspaceAction(QStringLiteral("Animation"), WorkspaceMode::Animation);
+  addWorkspaceAction(QStringLiteral("VFX"), WorkspaceMode::VFX);
+  addWorkspaceAction(QStringLiteral("Compositing"), WorkspaceMode::Compositing);
+  addWorkspaceAction(QStringLiteral("Text"), WorkspaceMode::Text);
+  addWorkspaceAction(QStringLiteral("Export"), WorkspaceMode::Export);
+  addWorkspaceAction(QStringLiteral("Debug"), WorkspaceMode::Debug);
+  addWorkspaceAction(QStringLiteral("Audio"), WorkspaceMode::Audio);
+  workspaceButton->setMenu(workspaceMenu);
+  toolBar->addWidget(workspaceButton);
+
   impl_->toolOptionsBar = new ArtifactToolOptionsBar(this);
   impl_->toolOptionsBar->clearTextOptions();
   impl_->toolOptionsBar->clearShapeOptions();
@@ -692,12 +753,27 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
     if (workspaceModeText.compare(QStringLiteral("Animation"),
                                   Qt::CaseInsensitive) == 0) {
       startupMode = WorkspaceMode::Animation;
+    } else if (workspaceModeText.compare(QStringLiteral("Import"),
+                                         Qt::CaseInsensitive) == 0) {
+      startupMode = WorkspaceMode::Import;
+    } else if (workspaceModeText.compare(QStringLiteral("Layout"),
+                                         Qt::CaseInsensitive) == 0) {
+      startupMode = WorkspaceMode::Layout;
     } else if (workspaceModeText.compare(QStringLiteral("VFX"),
                                          Qt::CaseInsensitive) == 0) {
       startupMode = WorkspaceMode::VFX;
     } else if (workspaceModeText.compare(QStringLiteral("Compositing"),
                                          Qt::CaseInsensitive) == 0) {
       startupMode = WorkspaceMode::Compositing;
+    } else if (workspaceModeText.compare(QStringLiteral("Text"),
+                                         Qt::CaseInsensitive) == 0) {
+      startupMode = WorkspaceMode::Text;
+    } else if (workspaceModeText.compare(QStringLiteral("Export"),
+                                         Qt::CaseInsensitive) == 0) {
+      startupMode = WorkspaceMode::Export;
+    } else if (workspaceModeText.compare(QStringLiteral("Debug"),
+                                         Qt::CaseInsensitive) == 0) {
+      startupMode = WorkspaceMode::Debug;
     } else if (workspaceModeText.compare(QStringLiteral("Audio"),
                                          Qt::CaseInsensitive) == 0) {
       startupMode = WorkspaceMode::Audio;
@@ -1571,6 +1647,12 @@ void ArtifactMainWindow::setWorkspaceMode(WorkspaceMode mode) {
     case WorkspaceMode::Default:
       modeText = QStringLiteral("Default");
       break;
+    case WorkspaceMode::Import:
+      modeText = QStringLiteral("Import");
+      break;
+    case WorkspaceMode::Layout:
+      modeText = QStringLiteral("Layout");
+      break;
     case WorkspaceMode::Animation:
       modeText = QStringLiteral("Animation");
       break;
@@ -1579,6 +1661,15 @@ void ArtifactMainWindow::setWorkspaceMode(WorkspaceMode mode) {
       break;
     case WorkspaceMode::Compositing:
       modeText = QStringLiteral("Compositing");
+      break;
+    case WorkspaceMode::Text:
+      modeText = QStringLiteral("Text");
+      break;
+    case WorkspaceMode::Export:
+      modeText = QStringLiteral("Export");
+      break;
+    case WorkspaceMode::Debug:
+      modeText = QStringLiteral("Debug");
       break;
     case WorkspaceMode::Audio:
       modeText = QStringLiteral("Audio");

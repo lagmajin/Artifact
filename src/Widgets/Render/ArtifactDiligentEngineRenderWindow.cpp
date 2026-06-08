@@ -558,9 +558,6 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
           world.translate(-center);
           world.scale(2.0f / maxExtent);
       }
-      world.rotate(25.0f, 1.0f, 0.0f, 0.0f);
-      world.rotate(35.0f, 0.0f, 1.0f, 0.0f);
-
       QMatrix4x4 view;
       view.setToIdentity();
       view.translate(0.0f, 0.0f, -previewDistance_);

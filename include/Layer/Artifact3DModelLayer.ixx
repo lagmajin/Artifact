@@ -43,6 +43,8 @@ export namespace Artifact {
     UniString className() const override;
 
     // Properties
+    bool affectedByLights() const;
+    void setAffectedByLights(bool enabled);
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
     bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
  };

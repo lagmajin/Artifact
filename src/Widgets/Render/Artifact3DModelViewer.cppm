@@ -8,6 +8,8 @@ module;
 #include <QTimer>
 #include <QShowEvent>
 #include <QHideEvent>
+#include <QMouseEvent>
+#include <QWheelEvent>
 #include <QDebug>
 #include <wobjectimpl.h>
 
@@ -60,14 +62,22 @@ W_OBJECT_IMPL(Artifact3DModelViewer)
 
 class Artifact3DModelViewer::Impl {
 public:
+    enum class NavMode { None, Orbit, Pan };
+
     Artifact3DModelViewer* owner = nullptr;
 
     ArtifactCore::UniString currentModelPath;
     ArtifactCore::FloatColor backgroundColor{0.1f, 0.1f, 0.1f, 1.0f};
-    float zoomFactor = 1.0f;
-    float cameraYaw = 0.0f;
-    float cameraPitch = 0.0f;
-    QVector3D cameraPosition{0.0f, 0.0f, 5.0f};
+
+    // Orbit camera model
+    QVector3D orbitTarget_{0.0f, 0.0f, 0.0f};
+    float orbitYaw_ = 0.0f;
+    float orbitPitch_ = 0.0f;
+    float orbitDistance_ = 5.0f;
+
+    // Navigation state
+    QPointF lastMousePos_;
+    NavMode navMode_ = NavMode::None;
 
     std::shared_ptr<ArtifactCore::Mesh> currentMesh = nullptr;
     bool modelLoaded = false;
@@ -79,6 +89,7 @@ public:
     QWidget* renderContainer = nullptr;
     QComboBox* modeCombo = nullptr;
     QLabel* statusLabel = nullptr;
+    QLabel* navHud_ = nullptr;
     QTimer* renderTimer_ = nullptr;
 
     explicit Impl(Artifact3DModelViewer* widget)
@@ -148,7 +159,8 @@ public:
         if (!renderWindow) {
             return;
         }
-        renderWindow->setPreviewCamera(zoomFactor, cameraYaw, cameraPitch, QVector3D(0.0f, 0.0f, 0.0f));
+        const float zoomFactor = 5.0f / std::max(0.05f, orbitDistance_);
+        renderWindow->setPreviewCamera(zoomFactor, orbitYaw_, orbitPitch_, orbitTarget_);
     }
 };
 
@@ -180,7 +192,15 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     impl_->renderContainer = QWidget::createWindowContainer(impl_->renderWindow, this);
     impl_->renderContainer->setMinimumSize(400, 280);
     impl_->renderContainer->setFocusPolicy(Qt::StrongFocus);
+    impl_->renderContainer->installEventFilter(this);
     rootLayout->addWidget(impl_->renderContainer, 1);
+
+    impl_->navHud_ = new QLabel(this);
+    impl_->navHud_->setStyleSheet(
+        "background: rgba(0,0,0,160); color: white; padding: 4px 10px;"
+        "border-radius: 4px; font-size: 12px; font-weight: bold;");
+    impl_->navHud_->setVisible(false);
+    impl_->navHud_->adjustSize();
 
     impl_->statusLabel = new QLabel(this);
     impl_->statusLabel->setObjectName("Artifact3DViewerStatus");
@@ -264,10 +284,10 @@ void Artifact3DModelViewer::clearModel()
 
 void Artifact3DModelViewer::resetView()
 {
-    impl_->zoomFactor = 1.0f;
-    impl_->cameraYaw = 0.0f;
-    impl_->cameraPitch = 0.0f;
-    impl_->cameraPosition = QVector3D(0.0f, 0.0f, 5.0f);
+    impl_->orbitTarget_ = QVector3D(0.0f, 0.0f, 0.0f);
+    impl_->orbitYaw_ = 0.0f;
+    impl_->orbitPitch_ = 0.0f;
+    impl_->orbitDistance_ = 5.0f;
     impl_->pushCamera();
     requestUpdate();
 }
@@ -283,23 +303,22 @@ void Artifact3DModelViewer::setBackgroundColor(const ArtifactCore::FloatColor& c
 
 void Artifact3DModelViewer::setZoom(float factor)
 {
-    impl_->zoomFactor = std::max(0.05f, factor);
-    impl_->cameraPosition.setZ(5.0f / impl_->zoomFactor);
+    impl_->orbitDistance_ = 5.0f / std::max(0.05f, factor);
     impl_->pushCamera();
     requestUpdate();
 }
 
 void Artifact3DModelViewer::setCameraRotation(float yaw, float pitch)
 {
-    impl_->cameraYaw = yaw;
-    impl_->cameraPitch = pitch;
+    impl_->orbitYaw_ = yaw;
+    impl_->orbitPitch_ = pitch;
     impl_->pushCamera();
     requestUpdate();
 }
 
 void Artifact3DModelViewer::setCameraPosition(const QVector3D& position)
 {
-    impl_->cameraPosition = position;
+    impl_->orbitTarget_ = position;
     impl_->pushCamera();
     requestUpdate();
 }
@@ -380,22 +399,22 @@ QVector3D Artifact3DModelViewer::meshExtents() const
 
 float Artifact3DModelViewer::zoomFactor() const
 {
-    return impl_ ? impl_->zoomFactor : 1.0f;
+    return impl_ ? (5.0f / std::max(0.05f, impl_->orbitDistance_)) : 1.0f;
 }
 
 float Artifact3DModelViewer::cameraYaw() const
 {
-    return impl_ ? impl_->cameraYaw : 0.0f;
+    return impl_ ? impl_->orbitYaw_ : 0.0f;
 }
 
 float Artifact3DModelViewer::cameraPitch() const
 {
-    return impl_ ? impl_->cameraPitch : 0.0f;
+    return impl_ ? impl_->orbitPitch_ : 0.0f;
 }
 
 QVector3D Artifact3DModelViewer::cameraPosition() const
 {
-    return impl_ ? impl_->cameraPosition : QVector3D(0.0f, 0.0f, 5.0f);
+    return impl_ ? impl_->orbitTarget_ : QVector3D(0.0f, 0.0f, 0.0f);
 }
 
 void Artifact3DModelViewer::requestUpdate()
@@ -403,6 +422,79 @@ void Artifact3DModelViewer::requestUpdate()
     if (impl_->renderWindow) {
         impl_->renderWindow->requestRender();
     }
+}
+
+bool Artifact3DModelViewer::eventFilter(QObject* obj, QEvent* event)
+{
+    if (obj != impl_->renderContainer) {
+        return QWidget::eventFilter(obj, event);
+    }
+
+    switch (event->type()) {
+    case QEvent::MouseButtonPress: {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if ((me->modifiers() & Qt::AltModifier) && me->button() == Qt::LeftButton) {
+            impl_->navMode_ = Impl::NavMode::Orbit;
+            impl_->lastMousePos_ = me->position();
+            impl_->navHud_->setText(QStringLiteral("Orbit"));
+            impl_->navHud_->adjustSize();
+            impl_->navHud_->move(10, impl_->renderContainer->height() - impl_->navHud_->height() - 10);
+            impl_->navHud_->setVisible(true);
+            return true;
+        }
+        if (me->button() == Qt::MiddleButton) {
+            impl_->navMode_ = Impl::NavMode::Pan;
+            impl_->lastMousePos_ = me->position();
+            setCursor(Qt::ClosedHandCursor);
+            impl_->navHud_->setText(QStringLiteral("Pan"));
+            impl_->navHud_->adjustSize();
+            impl_->navHud_->move(10, impl_->renderContainer->height() - impl_->navHud_->height() - 10);
+            impl_->navHud_->setVisible(true);
+            return true;
+        }
+        break;
+    }
+    case QEvent::MouseButtonRelease: {
+        if (impl_->navMode_ != Impl::NavMode::None) {
+            impl_->navMode_ = Impl::NavMode::None;
+            unsetCursor();
+            impl_->navHud_->setVisible(false);
+            return true;
+        }
+        break;
+    }
+    case QEvent::MouseMove: {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (impl_->navMode_ == Impl::NavMode::Orbit) {
+            const QPointF delta = me->position() - impl_->lastMousePos_;
+            impl_->orbitYaw_ += delta.x() * 0.5f;
+            impl_->orbitPitch_ = std::clamp(impl_->orbitPitch_ + static_cast<float>(delta.y()) * 0.5f, -89.0f, 89.0f);
+            impl_->lastMousePos_ = me->position();
+            impl_->pushCamera();
+            return true;
+        }
+        if (impl_->navMode_ == Impl::NavMode::Pan) {
+            const QPointF delta = me->position() - impl_->lastMousePos_;
+            const float panSpeed = impl_->orbitDistance_ * 0.002f;
+            impl_->orbitTarget_ += QVector3D(-delta.x() * panSpeed, delta.y() * panSpeed, 0.0f);
+            impl_->lastMousePos_ = me->position();
+            impl_->pushCamera();
+            return true;
+        }
+        break;
+    }
+    case QEvent::Wheel: {
+        auto* we = static_cast<QWheelEvent*>(event);
+        const float delta = we->angleDelta().y();
+        const float factor = (delta > 0) ? 0.9f : 1.1f;
+        impl_->orbitDistance_ = std::clamp(impl_->orbitDistance_ * factor, 0.1f, 100.0f);
+        impl_->pushCamera();
+        return true;
+    }
+    default:
+        break;
+    }
+    return QWidget::eventFilter(obj, event);
 }
 
 void Artifact3DModelViewer::showEvent(QShowEvent* event)

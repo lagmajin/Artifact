@@ -5,6 +5,7 @@ module;
 #include <QCloseEvent>
 #include <QColor>
 #include <QComboBox>
+#include <QDialog>
 #include <QContextMenuEvent>
 #include <QCoreApplication>
 #include <QCursor>
@@ -72,11 +73,14 @@ module;
 #endif
 
 module Artifact.Widgets.CompositionEditor;
+import std;
 
 import Artifact.Widgets.CompositionRenderController;
+import Artifact.Contents.Viewer;
 import Artifact.Widgets.TransformGizmo;
 import Artifact.Widgets.Gizmo3D;
 import Artifact.Widgets.PieMenu;
+import UI.ShortcutBindings;
 import UI.View.Orientation.Navigator;
 import Math.Interpolate;
 import Artifact.MainWindow;
@@ -96,10 +100,13 @@ import Artifact.Application.ProjectBundleIpc;
 import Time.Rational;
 import Artifact.Layer.Video;
 import Artifact.Layer.Clone;
+import Artifact.Layer.Camera;
 import Artifact.Tool.Manager;
 import FloatColorPickerDialog;
+import Artifact.Widgets.CreateCameraLayerDialog;
 import Clipboard.ClipboardManager;
 import Utils.Path;
+import Utils.String.UniString;
 import Artifact.Layer.InitParams;
 import File.TypeDetector;
 import Application.AppSettings;
@@ -120,6 +127,32 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
+void openContentsViewerCompareSurface()
+{
+  ArtifactContentsViewer *viewer = nullptr;
+  for (QWidget *widget : QApplication::allWidgets()) {
+    viewer = qobject_cast<ArtifactContentsViewer *>(widget);
+    if (viewer) {
+      break;
+    }
+  }
+  if (!viewer) {
+    return;
+  }
+
+  for (QWidget *widget : QApplication::topLevelWidgets()) {
+    if (auto *mainWindow = qobject_cast<ArtifactMainWindow *>(widget)) {
+      mainWindow->activateDock(QStringLiteral("Contents Viewer"));
+      break;
+    }
+  }
+
+  viewer->setViewerMode(ContentsViewerMode::Compare);
+  viewer->raise();
+  viewer->activateWindow();
+  viewer->setFocus(Qt::OtherFocusReason);
+}
+
 QCursor makeMaskAddCursor()
 {
   static const QCursor cursor = []() {
@@ -1505,8 +1538,44 @@ public:
         if (!service) {
           return;
         }
+        CreateCameraLayerDialog dialog(this);
+        dialog.setModal(true);
+        if (dialog.exec() != QDialog::Accepted) {
+          return;
+        }
+
         ArtifactCameraLayerInitParams params;
-        params.setName(UniString(QStringLiteral("Camera 1")));
+        params.setName(UniString(dialog.cameraName().trimmed().isEmpty()
+                                     ? QStringLiteral("Camera 1")
+                                     : dialog.cameraName()));
+
+        const auto result = service->addLayerToCurrentComposition(params);
+        if (!result.success || !result.layer) {
+          return;
+        }
+
+        const auto camera = std::dynamic_pointer_cast<ArtifactCameraLayer>(result.layer);
+        if (!camera) {
+          return;
+        }
+
+        camera->setZoom(dialog.zoom());
+        camera->setFocusDistance(dialog.focusDistance());
+        camera->setAperture(dialog.apertureF());
+        camera->setDepthOfField(dialog.depthOfFieldEnabled());
+        camera->setMotionBlur(dialog.motionBlur());
+        camera->setBlurAmount(dialog.blurAmount());
+        camera->setUseManualFov(true);
+        camera->setFov(dialog.fov());
+        camera->setLocked(dialog.cameraLocked());
+      });
+      add(QStringLiteral("New Light Layer"), [this]() {
+        auto *service = ArtifactProjectService::instance();
+        if (!service) {
+          return;
+        }
+        ArtifactLayerInitParams params(QStringLiteral("Light 1"),
+                                       LayerType::Light);
         service->addLayerToCurrentComposition(params);
       });
       add(QStringLiteral("New SVG Layer..."), [this]() {
@@ -1536,13 +1605,16 @@ public:
                 ? QStringLiteral("SVG 1")
                 : QFileInfo(filePath).completeBaseName();
         service->importAssetsFromPathsAsync(QStringList{filePath},
-                                           [service, layerName](QStringList importedPaths) {
+                                           [this, service, layerName, filePath](QStringList importedPaths) {
                                              if (!service || importedPaths.isEmpty()) {
                                                return;
                                              }
                                              ArtifactSvgInitParams params(layerName);
                                              params.setSvgPath(importedPaths.first());
                                              service->addLayerToCurrentComposition(params);
+                                             if (controller_) {
+                                               controller_->markRenderDirty();
+                                             }
                                            });
       });
       add(QStringLiteral("New Image Layer..."), [this]() {
@@ -1567,38 +1639,16 @@ public:
                 ? QStringLiteral("Image 1")
                 : QFileInfo(filePath).completeBaseName();
         service->importAssetsFromPathsAsync(QStringList{filePath},
-                                           [service, layerName](QStringList importedPaths) {
+                                           [this, service, layerName, filePath](QStringList importedPaths) {
                                              if (!service || importedPaths.isEmpty()) {
                                                return;
                                              }
                                              ArtifactImageInitParams params(layerName);
                                              params.setImagePath(importedPaths.first());
                                              service->addLayerToCurrentComposition(params);
-                                           });
-      });
-      add(QStringLiteral("New Audio Layer..."), [this]() {
-        auto *service = ArtifactProjectService::instance();
-        if (!service) {
-          return;
-        }
-        const QString filePath = QFileDialog::getOpenFileName(
-            this, QStringLiteral("オーディオを選択"), QString(),
-            QStringLiteral("Audio (*.wav *.mp3 *.ogg *.flac *.aac *.m4a);;All Files (*.*)"));
-        if (filePath.isEmpty()) {
-          return;
-        }
-        const QString layerName =
-            QFileInfo(filePath).completeBaseName().isEmpty()
-                ? QStringLiteral("Audio 1")
-                : QFileInfo(filePath).completeBaseName();
-        service->importAssetsFromPathsAsync(QStringList{filePath},
-                                           [service, layerName](QStringList importedPaths) {
-                                             if (!service || importedPaths.isEmpty()) {
-                                               return;
+                                             if (controller_) {
+                                               controller_->markRenderDirty();
                                              }
-                                             ArtifactAudioInitParams params(layerName);
-                                             params.setAudioPath(importedPaths.first());
-                                             service->addLayerToCurrentComposition(params);
                                            });
       });
       addSeparator();
@@ -2324,6 +2374,11 @@ protected:
 #endif
 
   void keyPressEvent(QKeyEvent *event) override {
+    if (auto *owner = qobject_cast<ArtifactCompositionEditor *>(parentWidget())) {
+      if (owner->handleImportPlacementKeyPress(event)) {
+        return;
+      }
+    }
     if (event->key() == Qt::Key_Escape && !event->isAutoRepeat() &&
         controller_ && controller_->isPieMenuOverlayVisible()) {
       controller_->cancelPieMenuOverlay();
@@ -3456,6 +3511,27 @@ private:
 
 class ArtifactCompositionEditor::Impl {
 public:
+  enum class ImportPlacementSizeMode {
+    Original = 0,
+    Fit = 1,
+    Fill = 2,
+    Stretch = 3,
+  };
+
+  struct ImportPlacementSession {
+    bool active = false;
+    bool sizeAdjustSupported = true;
+    ArtifactAbstractLayerPtr targetLayer;
+    QString sourcePath;
+    QString layerName;
+    QSize sourceSize;
+    QSize compositionSize;
+    QPointF placementCenter;
+    QRectF originalBounds;
+    ImportPlacementSizeMode sizeMode = ImportPlacementSizeMode::Original;
+    bool committed = false;
+  };
+
   CompositionViewport *compositionView_ = nullptr;
   CompositionOverlayWidget *overlayView_ = nullptr;
   ViewOrientationWidget *viewOrientationWidget_ = nullptr;
@@ -3471,6 +3547,7 @@ public:
   QToolButton *screenshotButton_ = nullptr;
   QAction *quickScreenshotAction_ = nullptr;
   QAction *advancedScreenshotAction_ = nullptr;
+  QAction *compareAction_ = nullptr;
   QAction *motionPathAction_ = nullptr;
   QAction *effectHitboxAction_ = nullptr;
   QAction *densityHeatmapAction_ = nullptr;
@@ -3496,6 +3573,7 @@ public:
   ProfilerPanelWidget *profilerPanel_ = nullptr;
   EventBusDebuggerWidget *eventBusDebugger_ = nullptr;
   int startupCompositionRetryCount_ = 0;
+  ImportPlacementSession importPlacementSession_;
 
   // 外部 signal から即時に widget を書き換えず、イベントループの次 tick
   // にまとめて反映する。
@@ -3517,6 +3595,210 @@ public:
     QCoreApplication::postEvent(
         owner, new CompositionEditorDeferredEvent(
                    CompositionEditorDeferredEvent::Kind::ToolLabelSync));
+  }
+
+  QString importPlacementModeLabel() const {
+    switch (importPlacementSession_.sizeMode) {
+    case ImportPlacementSizeMode::Original:
+      return QStringLiteral("Original");
+    case ImportPlacementSizeMode::Fit:
+      return QStringLiteral("Fit");
+    case ImportPlacementSizeMode::Fill:
+      return QStringLiteral("Fill");
+    case ImportPlacementSizeMode::Stretch:
+      return QStringLiteral("Stretch");
+    }
+    return QStringLiteral("Original");
+  }
+
+  QRectF importPlacementBounds(ImportPlacementSizeMode mode) const {
+    if (!importPlacementSession_.sizeAdjustSupported) {
+      return QRectF();
+    }
+    if (!importPlacementSession_.compositionSize.isValid() ||
+        !importPlacementSession_.sourceSize.isValid() ||
+        importPlacementSession_.sourceSize.width() <= 0 ||
+        importPlacementSession_.sourceSize.height() <= 0) {
+      return QRectF();
+    }
+    const double compW = std::max<double>(1.0, static_cast<double>(importPlacementSession_.compositionSize.width()));
+    const double compH = std::max<double>(1.0, static_cast<double>(importPlacementSession_.compositionSize.height()));
+    const double srcW = std::max<double>(1.0, static_cast<double>(importPlacementSession_.sourceSize.width()));
+    const double srcH = std::max<double>(1.0, static_cast<double>(importPlacementSession_.sourceSize.height()));
+    double w = srcW;
+    double h = srcH;
+    switch (mode) {
+    case ImportPlacementSizeMode::Original:
+      break;
+    case ImportPlacementSizeMode::Fit: {
+      const double scale = std::min(compW / srcW, compH / srcH);
+      w = srcW * scale;
+      h = srcH * scale;
+      break;
+    }
+    case ImportPlacementSizeMode::Fill: {
+      const double scale = std::max<double>(compW / srcW, compH / srcH);
+      w = srcW * scale;
+      h = srcH * scale;
+      break;
+    }
+    case ImportPlacementSizeMode::Stretch:
+      w = compW;
+      h = compH;
+      break;
+    }
+    const QPointF center = importPlacementSession_.placementCenter;
+    return QRectF(center.x() - w * 0.5, center.y() - h * 0.5, w, h);
+  }
+
+  void applyImportPlacementMode() {
+    auto layer = importPlacementSession_.targetLayer;
+    if (!renderController_ || !layer) {
+      return;
+    }
+    const QRectF bounds = importPlacementBounds(importPlacementSession_.sizeMode);
+    if (!bounds.isValid()) {
+      return;
+    }
+    const auto comp = ArtifactProjectService::instance()
+                          ? ArtifactProjectService::instance()->currentComposition().lock()
+                          : ArtifactCompositionPtr{};
+    const ArtifactCore::RationalTime time(
+        comp ? comp->framePosition().framePosition() : 0, 30000);
+    auto& t3 = layer->transform3D();
+    t3.setPosition(time, static_cast<float>(bounds.center().x()),
+                   static_cast<float>(bounds.center().y()));
+    t3.setScale(time,
+                static_cast<float>(bounds.width() /
+                                   std::max<double>(1.0, static_cast<double>(importPlacementSession_.sourceSize.width()))),
+                static_cast<float>(bounds.height() /
+                                   std::max<double>(1.0, static_cast<double>(importPlacementSession_.sourceSize.height()))));
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+  }
+
+  void refreshImportPlacementOverlay(ArtifactCompositionEditor *owner) {
+    if (!renderController_) {
+      return;
+    }
+    if (!importPlacementSession_.active) {
+      renderController_->clearInfoOverlayText();
+      syncSelectionState(owner);
+      return;
+    }
+    const auto &shortcuts = ArtifactCore::ShortcutBindings::instance();
+    const QString detail =
+        importPlacementSession_.sizeAdjustSupported
+            ? QStringLiteral("Mode: %1 | S:%2  Shift+S:%3  Enter:%4  Esc:%5  R:%6")
+                  .arg(importPlacementModeLabel(),
+                       shortcuts.shortcutText(ArtifactCore::ShortcutId::ImportPlacementNextSizeMode),
+                       shortcuts.shortcutText(ArtifactCore::ShortcutId::ImportPlacementPreviousSizeMode),
+                       shortcuts.shortcutText(ArtifactCore::ShortcutId::ImportPlacementConfirm),
+                       shortcuts.shortcutText(ArtifactCore::ShortcutId::ImportPlacementCancel),
+                       shortcuts.shortcutText(ArtifactCore::ShortcutId::ImportPlacementReset))
+            : QStringLiteral("Mode: Placement | Enter:%1  Esc:%2")
+                  .arg(shortcuts.shortcutText(ArtifactCore::ShortcutId::ImportPlacementConfirm),
+                       shortcuts.shortcutText(ArtifactCore::ShortcutId::ImportPlacementCancel));
+    renderController_->setInfoOverlayText(QStringLiteral("Smart Import Placement"), detail);
+    syncOverlayGeometry(owner);
+  }
+
+  void startImportPlacementSession(ArtifactCompositionEditor *owner,
+                                   const QString &sourcePath,
+                                   const QString &layerName,
+                                   const QSize &sourceSize,
+                                   const ArtifactAbstractLayerPtr &targetLayer,
+                                   bool sizeAdjustSupported = true) {
+    auto *svc = ArtifactProjectService::instance();
+    auto comp = svc ? svc->currentComposition().lock() : ArtifactCompositionPtr{};
+    if (!svc || !comp || !targetLayer) {
+      return;
+    }
+    importPlacementSession_ = {};
+    importPlacementSession_.active = true;
+    importPlacementSession_.targetLayer = targetLayer;
+    importPlacementSession_.sizeAdjustSupported = sizeAdjustSupported;
+    importPlacementSession_.sourcePath = sourcePath;
+    importPlacementSession_.layerName = layerName;
+    importPlacementSession_.sourceSize = sourceSize;
+    importPlacementSession_.compositionSize = comp->settings().compositionSize();
+    importPlacementSession_.placementCenter = QPointF(
+        importPlacementSession_.compositionSize.width() * 0.5,
+        importPlacementSession_.compositionSize.height() * 0.5);
+    importPlacementSession_.originalBounds = targetLayer->transformedBoundingBox();
+    applyImportPlacementMode();
+    refreshImportPlacementOverlay(owner);
+  }
+
+  void finishImportPlacementSession(ArtifactCompositionEditor *owner, bool commit) {
+    if (!importPlacementSession_.active) {
+      return;
+    }
+    if (!commit && importPlacementSession_.targetLayer) {
+      if (auto *svc = ArtifactProjectService::instance()) {
+        const auto comp = svc->currentComposition().lock();
+        if (comp) {
+          svc->removeLayerFromComposition(comp->id(),
+                                          importPlacementSession_.targetLayer->id());
+        }
+      }
+    }
+    importPlacementSession_ = {};
+    if (renderController_) {
+      renderController_->clearInfoOverlayText();
+    }
+    syncSelectionState(owner);
+  }
+
+  bool handleImportPlacementKeyPress(ArtifactCompositionEditor *owner,
+                                     QKeyEvent *event) {
+    if (!event || !importPlacementSession_.active) {
+      return false;
+    }
+    auto &shortcuts = ArtifactCore::ShortcutBindings::instance();
+    if (shortcuts.matches(event, ArtifactCore::ShortcutId::ImportPlacementNextSizeMode)) {
+      if (!importPlacementSession_.sizeAdjustSupported) {
+        return false;
+      }
+      importPlacementSession_.sizeMode = static_cast<ImportPlacementSizeMode>(
+          (static_cast<int>(importPlacementSession_.sizeMode) + 1) % 4);
+      applyImportPlacementMode();
+      refreshImportPlacementOverlay(owner);
+      event->accept();
+      return true;
+    }
+    if (shortcuts.matches(event, ArtifactCore::ShortcutId::ImportPlacementPreviousSizeMode)) {
+      if (!importPlacementSession_.sizeAdjustSupported) {
+        return false;
+      }
+      importPlacementSession_.sizeMode = static_cast<ImportPlacementSizeMode>(
+          (static_cast<int>(importPlacementSession_.sizeMode) + 3) % 4);
+      applyImportPlacementMode();
+      refreshImportPlacementOverlay(owner);
+      event->accept();
+      return true;
+    }
+    if (shortcuts.matches(event, ArtifactCore::ShortcutId::ImportPlacementReset)) {
+      if (!importPlacementSession_.sizeAdjustSupported) {
+        return false;
+      }
+      importPlacementSession_.sizeMode = ImportPlacementSizeMode::Original;
+      applyImportPlacementMode();
+      refreshImportPlacementOverlay(owner);
+      event->accept();
+      return true;
+    }
+    if (shortcuts.matches(event, ArtifactCore::ShortcutId::ImportPlacementConfirm)) {
+      finishImportPlacementSession(owner, true);
+      event->accept();
+      return true;
+    }
+    if (shortcuts.matches(event, ArtifactCore::ShortcutId::ImportPlacementCancel)) {
+      finishImportPlacementSession(owner, false);
+      event->accept();
+      return true;
+    }
+    return false;
   }
 
   void syncSelectionState(ArtifactCompositionEditor *owner) {
@@ -3879,14 +4161,24 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->screenshotButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->topToolbar_->addWidget(impl_->screenshotButton_);
 
+  impl_->compareAction_ = impl_->topToolbar_->addAction("A/B");
+  impl_->compareAction_->setToolTip(
+      QStringLiteral("Open the A/B compare surface in Contents Viewer"));
+  impl_->compareAction_->setShortcut(
+      QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_B));
+
   impl_->motionPathAction_ = impl_->topToolbar_->addAction("Motion Path");
   impl_->motionPathAction_->setCheckable(true);
   impl_->motionPathAction_->setToolTip(
       QStringLiteral("Show motion path overlay for the selected layer"));
+  impl_->motionPathAction_->setShortcut(
+      QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_M));
   impl_->effectHitboxAction_ = impl_->topToolbar_->addAction("Hitbox");
   impl_->effectHitboxAction_->setCheckable(true);
   impl_->effectHitboxAction_->setToolTip(
       QStringLiteral("Show selected layer bounds, masks, and matte source hitboxes"));
+  impl_->effectHitboxAction_->setShortcut(
+      QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H));
 
   auto *toolMenu = new QMenu(this);
   polishEditorMenu(toolMenu, this);
@@ -4398,6 +4690,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       impl_->renderController_->markRenderDirty();
     }
   });
+  QObject::connect(impl_->compareAction_, &QAction::triggered, this, [this]() {
+    openContentsViewerCompareSurface();
+  });
   QObject::connect(
       impl_->motionPathAction_, &QAction::toggled, this, [this](bool checked) {
         if (impl_->renderController_) {
@@ -4414,6 +4709,38 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
           impl_->renderController_->setShowEffectHitboxOverlay(checked);
         }
       });
+  auto *toggleMotionPathShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_M), this);
+  toggleMotionPathShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  QObject::connect(toggleMotionPathShortcut, &QShortcut::activated, this,
+                   [this]() {
+                     if (impl_->motionPathAction_) {
+                       impl_->motionPathAction_->toggle();
+                     }
+                   });
+  auto *toggleHitboxShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_H), this);
+  toggleHitboxShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  QObject::connect(toggleHitboxShortcut, &QShortcut::activated, this,
+                   [this]() {
+                     if (impl_->effectHitboxAction_) {
+                       impl_->effectHitboxAction_->toggle();
+                     }
+                   });
+  auto *focusSelectedLayerShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_F), this);
+  focusSelectedLayerShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  QObject::connect(focusSelectedLayerShortcut, &QShortcut::activated, this,
+                   [this]() {
+                     if (impl_ && impl_->renderController_) {
+                       impl_->renderController_->focusSelectedLayer();
+                     }
+                   });
+  auto *compareSurfaceShortcut =
+      new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_B), this);
+  compareSurfaceShortcut->setContext(Qt::WidgetWithChildrenShortcut);
+  QObject::connect(compareSurfaceShortcut, &QShortcut::activated, this,
+                   []() { openContentsViewerCompareSurface(); });
   auto *immersiveExitShortcut =
       new QShortcut(QKeySequence(Qt::Key_Escape), this);
   QObject::connect(
@@ -4759,6 +5086,10 @@ void ArtifactCompositionEditor::zoom100() {
   if (impl_->renderController_) {
     impl_->renderController_->zoom100();
   }
+}
+
+bool ArtifactCompositionEditor::handleImportPlacementKeyPress(QKeyEvent *event) {
+  return impl_ ? impl_->handleImportPlacementKeyPress(this, event) : false;
 }
 
 } // namespace Artifact

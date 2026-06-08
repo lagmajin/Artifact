@@ -302,10 +302,8 @@ int compositionPreviewIntervalMs(
       const auto previewState = playback->ramPreviewFrameState(targetFrame.framePosition());
       playbackAllowsRamFallbackWhilePlaying =
           playback->ramPreviewPlaybackFallbackWhilePlaying();
-      if (!previewState.ready) {
+      if (!previewState.playable) {
        ramPreviewFallbackReason = ramPreviewNotReadyReason(previewState);
-      } else if (!previewState.imageAvailable) {
-       ramPreviewFallbackReason = QStringLiteral("ready-missing-image");
       } else if (!playback->tryGetRamPreviewFrameImage(
                          targetFrame.framePosition(), ramPreviewFrameImage)) {
        ramPreviewFallbackReason = QStringLiteral("ready-missing-image");

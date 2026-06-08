@@ -1003,6 +1003,31 @@ int ArtifactTextLayer::animatorCount() const {
   return static_cast<int>(impl_->animators_.size());
 }
 
+int ArtifactTextLayer::applyColorToSelectorRange(
+    const int charStart, const int charEnd,
+    const ArtifactCore::FloatRGBA& color) {
+  const int textLen = text().length();
+  if (textLen <= 0) return -1;
+  const int start = std::clamp(charStart, 0, textLen);
+  const int end = std::clamp(charEnd, start + 1, textLen);
+  if (end - start < 1) return -1;
+
+  TextAnimatorState animator = defaultTextAnimatorState(animatorCount());
+  animator.name = QStringLiteral("Color %1-%2").arg(start).arg(end);
+  animator.range.start = (static_cast<float>(start) / textLen) * 100.0f;
+  animator.range.end = (static_cast<float>(end) / textLen) * 100.0f;
+  animator.range.units = SelectorUnits::Percentage;
+  animator.properties.colorEnabled = true;
+  animator.properties.fillColor = FloatRGBA(color.r(), color.g(), color.b(), color.a());
+
+  impl_->animators_.push_back(std::move(animator));
+  setDirty(LayerDirtyFlag::Property);
+  markDirty();
+  Q_EMIT changed();
+
+  return static_cast<int>(impl_->animators_.size()) - 1;
+}
+
 QJsonObject ArtifactTextLayer::toJson() const {
   QJsonObject obj = ArtifactAbstract2DLayer::toJson();
   obj["type"] = static_cast<int>(LayerType::Text);
@@ -1207,7 +1232,7 @@ QString ArtifactTextLayer::debugState() const {
                                ? QSize(impl_->renderedBuffer_->width(),
                                        impl_->renderedBuffer_->height())
                                : QSize();
-  return QStringLiteral("textLen=%1 animators=%2 dirty=%3 layout=%4 box=%5x%6 font=%7/%8 hasImage=%9 image=%10 hasBuffer=%11 buffer=%12")
+  return QStringLiteral("textLen=%1 animators=%2 dirty=%3 layout=%4 box=%5x%6 font=%7/%8 hasImage=%9 image=%10 hasBuffer=%11 buffer=%12 bounds={%13}")
       .arg(impl_ ? impl_->text_.toQString().size() : 0)
       .arg(animatorCount())
       .arg(impl_ && impl_->isDirty_ ? QStringLiteral("true") : QStringLiteral("false"))
@@ -1223,7 +1248,8 @@ QString ArtifactTextLayer::debugState() const {
                ? QStringLiteral("true")
                : QStringLiteral("false"))
       .arg(bufferSize.isValid() ? QStringLiteral("%1x%2").arg(bufferSize.width()).arg(bufferSize.height())
-                                : QStringLiteral("0x0"));
+                                : QStringLiteral("0x0"))
+      .arg(contentBoundsSummary());
 }
 
 void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {

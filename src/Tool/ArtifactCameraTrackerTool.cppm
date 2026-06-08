@@ -4,10 +4,11 @@ module;
 #include <QVector>
 #include <QImage>
 #include <memory>
+#include <type_traits>
 
 export module Artifact.Tool.CameraTracker;
 
-import Artifact.Composition.Abstract;
+export import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Video;
 import Artifact.Layer.Factory;
@@ -25,11 +26,15 @@ public:
         QString message;
     };
 
-    using ProgressCallback = std::function<void(const ProgressUpdate&)>;
+    static bool run(ArtifactAbstractComposition* comp,
+                    ArtifactAbstractLayerPtr videoLayer) {
+        return run(comp, videoLayer, [](const ProgressUpdate&) {});
+    }
 
-    static bool run(ArtifactAbstractComposition* comp, 
+    template<typename ProgressCallback>
+    static bool run(ArtifactAbstractComposition* comp,
                     ArtifactAbstractLayerPtr videoLayer,
-                    ProgressCallback progress = nullptr) {
+                    ProgressCallback&& progress) {
         if (!comp || !videoLayer) return false;
 
         const auto sourceLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(videoLayer);
@@ -46,7 +51,7 @@ public:
 
         // 1. 各フレームの画像を収集してトラッカーに送る
         for (int64_t f = start; f <= end; ++f) {
-            if (progress) {
+            if constexpr (std::is_invocable_v<ProgressCallback, const ProgressUpdate&>) {
                 progress({static_cast<int>(f - start), total, "Analyzing frames..."});
             }
             
@@ -58,7 +63,7 @@ public:
         }
 
         // 2. 解析実行
-        if (progress) {
+        if constexpr (std::is_invocable_v<ProgressCallback, const ProgressUpdate&>) {
             progress({total, total, "Solving camera pose..."});
         }
         auto result = tracker.solve();

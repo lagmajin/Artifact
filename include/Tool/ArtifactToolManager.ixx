@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <wobjectdefs.h>
 #include <QObject>
@@ -27,7 +27,10 @@ export namespace Artifact {
   Ripple,
   Rolling,
   Slip,
-  Slide
+  Slide,
+  // Deformation / Utility Tools
+  MotionSketch,
+  Puppet
  };
 
  class ArtifactToolManager : public QObject {

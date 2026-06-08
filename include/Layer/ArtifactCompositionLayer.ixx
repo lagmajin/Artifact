@@ -36,8 +36,8 @@ export module Artifact.Layer.Composition;
 
 
 import Utils;
+export import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
-import Artifact.Composition.Abstract;
 
 export namespace Artifact {
 
@@ -53,7 +53,7 @@ public:
   void setCompositionId(const CompositionID &id);
   QJsonObject toJson() const override;
 
-  std::shared_ptr<ArtifactAbstractComposition> sourceComposition() const;
+  ArtifactCompositionPtr sourceComposition() const;
 
   // ArtifactAbstractLayer overrides
   void draw(ArtifactIRenderer *renderer) override;

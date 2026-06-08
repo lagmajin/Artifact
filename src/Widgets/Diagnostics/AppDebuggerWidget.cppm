@@ -46,6 +46,7 @@ import Artifact.Widgets.FrameResourceInspectorWidget;
 import Artifact.Widgets.FrameStateDiffWidget;
 import Artifact.Widgets.TraceTimelineWidget;
 import Artifact.Widgets.DebugRenderHarnessWidget;
+import Tracking.MotionTracker;
 import Thread.Helper;
 import Frame.Debug;
 import Playback.State;
@@ -182,6 +183,50 @@ QString debugMcpConditionValueText(const QJsonValue& value)
         return QString::number(value.toDouble());
     }
     return QStringLiteral("<none>");
+}
+
+QString trackerTypeText(ArtifactCore::TrackerType type)
+{
+    switch (type) {
+    case ArtifactCore::TrackerType::Point:
+        return QStringLiteral("point");
+    case ArtifactCore::TrackerType::Planar:
+        return QStringLiteral("planar");
+    case ArtifactCore::TrackerType::Spline:
+        return QStringLiteral("spline");
+    case ArtifactCore::TrackerType::Perspective:
+        return QStringLiteral("perspective");
+    }
+    return QStringLiteral("unknown");
+}
+
+QString motionTrackerSummaryText()
+{
+    auto& manager = ArtifactCore::TrackerManager::instance();
+    const auto trackers = manager.allTrackers();
+    if (trackers.empty()) {
+        return QStringLiteral("motionTrackers=0");
+    }
+
+    const ArtifactCore::MotionTracker* first = trackers.front();
+    const QString firstName = first ? first->name() : QStringLiteral("<none>");
+    const QString firstType = first ? trackerTypeText(first->trackerType()) : QStringLiteral("<none>");
+    const int pointCount = first ? first->trackPointCount() : 0;
+    const int regionCount = first ? first->trackRegionCount() : 0;
+    const bool hasResult = first ? first->hasResult() : false;
+    const int resultFrames = first && hasResult ? static_cast<int>(first->result().frameCount()) : 0;
+    const double avgConfidence = first && hasResult ? first->averageConfidence() : 0.0;
+    const int problemFrameCount = first && hasResult ? static_cast<int>(first->problemFrames().size()) : 0;
+
+    return QStringLiteral("motionTrackers=%1  first=%2  type=%3  points=%4  regions=%5  resultFrames=%6  avgConf=%7  problemFrames=%8")
+        .arg(static_cast<int>(trackers.size()))
+        .arg(firstName.isEmpty() ? QStringLiteral("<unnamed>") : firstName)
+        .arg(firstType)
+        .arg(pointCount)
+        .arg(regionCount)
+        .arg(resultFrames)
+        .arg(QString::number(avgConfidence * 100.0, 'f', 1) + QStringLiteral("%"))
+        .arg(problemFrameCount);
 }
 
 QString debugMcpBreakConditionSummary(const QJsonObject& condition)
@@ -944,9 +989,9 @@ public:
         return QStringLiteral("topPasses=%1").arg(items.join(QStringLiteral(" | ")));
     }
 
-    static QString densitySummaryText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    static QString visualDensityMonitorText(const ArtifactCore::FrameDebugSnapshot& snapshot)
     {
-        return QStringLiteral("%1 v=%2 i=%3 l=%4 m=%5")
+        return QStringLiteral("level=%1 visual=%2 info=%3 luminance=%4 motion=%5")
                 .arg(snapshot.densityLabel.isEmpty() ? QStringLiteral("low")
                                                     : snapshot.densityLabel)
                 .arg(QString::number(snapshot.visualDensityScore, 'f', 2))
@@ -975,7 +1020,7 @@ public:
     static QString captureEntryLabel(const ArtifactCore::FrameDebugCapture& capture, bool isCurrent)
     {
         const auto& snapshot = capture.snapshot;
-        return QStringLiteral("%1 frame=%2  comp=%3  layer=%4  backend=%5  density=%6  passes=%7  res=%8  att=%9")
+        return QStringLiteral("%1 frame=%2  comp=%3  layer=%4  backend=%5  visualDensityMonitor=%6  passes=%7  res=%8  att=%9")
                 .arg(isCurrent ? QStringLiteral("[current]") : (capture.pinned ? QStringLiteral("[pinned]") : QStringLiteral("[history]")))
                 .arg(snapshot.frame.framePosition())
                 .arg(snapshot.compositionName.isEmpty() ? QStringLiteral("<none>") : snapshot.compositionName)
@@ -1291,7 +1336,7 @@ public:
             lines << QStringLiteral("renderBackend: %1")
                           .arg(controllerSnapshot.renderBackend.isEmpty() ? QStringLiteral("<none>")
                                                                           : controllerSnapshot.renderBackend);
-            lines << QStringLiteral("density: %1").arg(densitySummaryText(controllerSnapshot));
+            lines << QStringLiteral("visualDensityMonitor: %1").arg(visualDensityMonitorText(controllerSnapshot));
             lines << QStringLiteral("densityWarning: %1").arg(densityWarningText(controllerSnapshot));
             lines << QStringLiteral("densityNext: %1")
                           .arg(controllerSnapshot.densityNextAction.isEmpty()
@@ -1348,9 +1393,9 @@ public:
                                        .arg(backendText)
                                        .arg(queueText));
             if (!breakHistorySummaryText.isEmpty()) {
-                stateSummary_->setToolTip(QStringLiteral("breakHistorySummary=%1\ndensity=%2  warning=%3  next=%4  status=%5  lastHit=%6  act=%7")
+                stateSummary_->setToolTip(QStringLiteral("breakHistorySummary=%1\nvisualDensityMonitor=%2  warning=%3  next=%4  status=%5  lastHit=%6  act=%7")
                                              .arg(breakHistorySummaryText)
-                                             .arg(densitySummaryText(controllerSnapshot))
+                                             .arg(visualDensityMonitorText(controllerSnapshot))
                                              .arg(densityWarningText(controllerSnapshot))
                                              .arg(controllerSnapshot.densityNextAction.isEmpty()
                                                       ? QStringLiteral("<none>")
@@ -1358,8 +1403,8 @@ public:
                                              .arg(debugMcpStatus, debugMcpHit, recentActionText));
             } else if (!controllerSnapshot.densityLabel.isEmpty() ||
                        !controllerSnapshot.densityWarning.isEmpty()) {
-                stateSummary_->setToolTip(QStringLiteral("density=%1  warning=%2  next=%3  status=%4  lastHit=%5  act=%6")
-                                             .arg(densitySummaryText(controllerSnapshot))
+                stateSummary_->setToolTip(QStringLiteral("visualDensityMonitor=%1  warning=%2  next=%3  status=%4  lastHit=%5  act=%6")
+                                             .arg(visualDensityMonitorText(controllerSnapshot))
                                              .arg(densityWarningText(controllerSnapshot))
                                              .arg(controllerSnapshot.densityNextAction.isEmpty()
                                                       ? QStringLiteral("<none>")
@@ -1463,22 +1508,20 @@ public:
                 warningText = QStringLiteral("project health issues");
             } else if (!trace.crashes.isEmpty()) {
                 warningText = QStringLiteral("recent crash: %1").arg(lastCrashText);
-            } else if (controllerSnapshot.densityLabel == QStringLiteral("high")) {
-                warningText = controllerSnapshot.densityWarning.isEmpty()
-                                  ? QStringLiteral("density is high")
-                                  : controllerSnapshot.densityWarning;
+            } else if (!controllerSnapshot.densityLabel.isEmpty()) {
+                warningText = densityWarningText(controllerSnapshot);
             }
             const QString nextText = warningText == QStringLiteral("none")
                                          ? QStringLiteral("capture frame when behavior changes")
                                          : QStringLiteral("open the relevant diagnostic tab");
-            overviewSummary_->setText(QStringLiteral("Goal: inspect current app state  |  Now: project=%1 composition=%2 layer=%3 frame=%4 playback=%5 backend=%6  |  Density: %7  |  Warning: %8  |  Next: %9")
+            overviewSummary_->setText(QStringLiteral("Goal: inspect current app state  |  Now: project=%1 composition=%2 layer=%3 frame=%4 playback=%5 backend=%6  |  Visual Density Monitor: %7  |  Warning: %8  |  Next: %9")
                                           .arg(projectText,
                                                compositionText,
                                                layerText)
                                           .arg(controllerSnapshot.frame.framePosition())
                                           .arg(playbackText)
                                           .arg(backendText)
-                                          .arg(densitySummaryText(controllerSnapshot))
+                                          .arg(visualDensityMonitorText(controllerSnapshot))
                                           .arg(warningText)
                                           .arg(nextText));
             overviewSummary_->setToolTip(QStringLiteral("failedPasses=%1 totalPassUs=%2 queueJobs=%3 traceThreads=%4")
@@ -1510,8 +1553,8 @@ public:
                                          .arg(compositionText)
                                          .arg(layerText)
                                          .arg(backendText)
-                                         .arg(QStringLiteral("%1  density=%2")
-                                                  .arg(compareText, densitySummaryText(controllerSnapshot)))
+                                         .arg(QStringLiteral("%1  visualDensityMonitor=%2")
+                                                  .arg(compareText, visualDensityMonitorText(controllerSnapshot)))
                                          .arg(static_cast<int>(controllerSnapshot.passes.size()))
                                          .arg(static_cast<int>(controllerSnapshot.resources.size()))
                                          .arg(static_cast<int>(controllerSnapshot.attachments.size()))
@@ -1782,13 +1825,13 @@ public:
                 hint = QStringLiteral("frame looks stable");
             }
 
-            frameSummary_->setText(QStringLiteral("Frame %1 | %2 | %3 | density=%4 | passes=%5 resources=%6 attachments=%7 totalPassUs=%8")
+            frameSummary_->setText(QStringLiteral("Frame %1 | %2 | %3 | visualDensityMonitor=%4 | passes=%5 resources=%6 attachments=%7 totalPassUs=%8")
                                        .arg(frameIndex)
                                        .arg(controllerSnapshot.compositionName.isEmpty()
                                                 ? QStringLiteral("<no composition>")
                                                 : controllerSnapshot.compositionName)
                                        .arg(compareText)
-                                       .arg(densitySummaryText(controllerSnapshot))
+                                       .arg(visualDensityMonitorText(controllerSnapshot))
                                        .arg(passCount)
                                        .arg(resourceCount)
                                        .arg(attachmentCount)
@@ -2005,6 +2048,7 @@ public:
             lines << QStringLiteral("queueCount: %1").arg(queueSvc ? queueSvc->jobCount() : 0);
             lines << QStringLiteral("playbackState: %1")
                           .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
+            lines << motionTrackerSummaryText();
             if (projectSvc) {
                 const auto projectHealth = projectSvc->currentProjectDiagnostics();
                 const int projectErrorCount = static_cast<int>(std::count_if(
@@ -2033,24 +2077,28 @@ public:
                 const auto& crash = trace.crashes.back();
                 lastCrashText = crash.summary.isEmpty() ? QStringLiteral("<no-summary>") : crash.summary.left(48);
             }
-            diagnosticsSummary_->setText(QStringLiteral("traceFrames=%1  traceEvents=%2  crashes=%3  openLocks=%4  queueJobs=%5  playback=%6")
-                                             .arg(static_cast<int>(trace.frames.size()))
-                                             .arg(static_cast<int>(trace.events.size()))
-                                             .arg(static_cast<int>(trace.crashes.size()))
-                                             .arg([&trace]() {
-                                                 int total = 0;
-                                                 for (const auto& thread : trace.threads) {
-                                                     total += std::max(0, thread.lockDepth);
-                                                 }
-                                                 return total;
-                                             }())
-                                             .arg(queueSvc ? queueSvc->jobCount() : 0)
-                                             .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>")));
-            diagnosticsSummary_->setToolTip(QStringLiteral("lastCrash=%1\n%2\nprojectHealth=%3")
+            QString summaryText = QStringLiteral("traceFrames=%1  traceEvents=%2  crashes=%3  openLocks=%4  queueJobs=%5  playback=%6")
+                                      .arg(static_cast<int>(trace.frames.size()))
+                                      .arg(static_cast<int>(trace.events.size()))
+                                      .arg(static_cast<int>(trace.crashes.size()))
+                                      .arg([&trace]() {
+                                          int total = 0;
+                                          for (const auto& thread : trace.threads) {
+                                              total += std::max(0, thread.lockDepth);
+                                          }
+                                          return total;
+                                      }())
+                                      .arg(queueSvc ? queueSvc->jobCount() : 0)
+                                      .arg(playbackSvc ? playbackStateText(playbackSvc->state()) : QStringLiteral("<no service>"));
+            summaryText += QStringLiteral("  tracker=%1")
+                               .arg(ArtifactCore::TrackerManager::instance().trackerCount());
+            diagnosticsSummary_->setText(summaryText);
+            diagnosticsSummary_->setToolTip(QStringLiteral("lastCrash=%1\n%2\nprojectHealth=%3\n%4")
                                                 .arg(lastCrashText)
                                                 .arg(mediaHealthText(controllerSnapshot))
                                                 .arg(projectSvc ? projectSvc->currentProjectHealthSummaryText()
-                                                               : QStringLiteral("Status: <no service>")));
+                                                               : QStringLiteral("Status: <no service>"))
+                                                .arg(motionTrackerSummaryText()));
         }
 
         if (exportText_) {

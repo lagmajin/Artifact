@@ -63,22 +63,7 @@ QImage makeCheckerboard(const QSize& size)
 
 QString blendModeName(ArtifactCore::BlendMode mode)
 {
-    switch (mode) {
-    case ArtifactCore::BlendMode::Normal: return "Normal";
-    case ArtifactCore::BlendMode::Add: return "Add";
-    case ArtifactCore::BlendMode::Multiply: return "Multiply";
-    case ArtifactCore::BlendMode::Screen: return "Screen";
-    case ArtifactCore::BlendMode::Overlay: return "Overlay";
-    case ArtifactCore::BlendMode::Darken: return "Darken";
-    case ArtifactCore::BlendMode::Lighten: return "Lighten";
-    case ArtifactCore::BlendMode::ColorDodge: return "ColorDodge";
-    case ArtifactCore::BlendMode::ColorBurn: return "ColorBurn";
-    case ArtifactCore::BlendMode::HardLight: return "HardLight";
-    case ArtifactCore::BlendMode::SoftLight: return "SoftLight";
-    case ArtifactCore::BlendMode::Difference: return "Difference";
-    case ArtifactCore::BlendMode::Exclusion: return "Exclusion";
-    default: return "Normal";
-    }
+    return ArtifactCore::BlendModeUtils::toString(mode);
 }
 
 ArtifactCore::BlendMode blendModeFromIndex(int index)
@@ -86,6 +71,7 @@ ArtifactCore::BlendMode blendModeFromIndex(int index)
     static const std::vector<ArtifactCore::BlendMode> modes = {
         ArtifactCore::BlendMode::Normal,
         ArtifactCore::BlendMode::Add,
+        ArtifactCore::BlendMode::Subtract,
         ArtifactCore::BlendMode::Multiply,
         ArtifactCore::BlendMode::Screen,
         ArtifactCore::BlendMode::Overlay,
@@ -93,10 +79,30 @@ ArtifactCore::BlendMode blendModeFromIndex(int index)
         ArtifactCore::BlendMode::Lighten,
         ArtifactCore::BlendMode::ColorDodge,
         ArtifactCore::BlendMode::ColorBurn,
+        ArtifactCore::BlendMode::LinearBurn,
+        ArtifactCore::BlendMode::ClassicColorBurn,
+        ArtifactCore::BlendMode::Divide,
+        ArtifactCore::BlendMode::LinearDodge,
+        ArtifactCore::BlendMode::ClassicColorDodge,
         ArtifactCore::BlendMode::HardLight,
         ArtifactCore::BlendMode::SoftLight,
+        ArtifactCore::BlendMode::LinearLight,
+        ArtifactCore::BlendMode::VividLight,
+        ArtifactCore::BlendMode::PinLight,
+        ArtifactCore::BlendMode::HardMix,
         ArtifactCore::BlendMode::Difference,
+        ArtifactCore::BlendMode::ClassicDifference,
         ArtifactCore::BlendMode::Exclusion,
+        ArtifactCore::BlendMode::Hue,
+        ArtifactCore::BlendMode::Saturation,
+        ArtifactCore::BlendMode::Color,
+        ArtifactCore::BlendMode::Luminosity,
+        ArtifactCore::BlendMode::Dissolve,
+        ArtifactCore::BlendMode::DancingDissolve,
+        ArtifactCore::BlendMode::StencilAlpha,
+        ArtifactCore::BlendMode::StencilLuma,
+        ArtifactCore::BlendMode::SilhouetteAlpha,
+        ArtifactCore::BlendMode::SilhouetteLuma,
     };
     if (index < 0 || index >= static_cast<int>(modes.size())) {
         return ArtifactCore::BlendMode::Normal;
@@ -572,12 +578,10 @@ ArtifactTimelineLayerTestWidget::ArtifactTimelineLayerTestWidget(QWidget* parent
         impl_->reloadLayerControls(this);
     }
     
-    // Playback サービスの接続
-    if (auto* playbackService = ArtifactPlaybackService::instance()) {
-        QObject::connect(playbackService, &ArtifactPlaybackService::frameChanged, this, [this]() {
-            impl_->updateComposite();
-        });
-    }
+    // Playback のフレーム更新はイベントバス経由で追従
+    impl_->eventBusSubscriptions_.push_back(
+        impl_->eventBus_.subscribe<FrameChangedEvent>(
+            [this](const FrameChangedEvent&) { impl_->updateComposite(); }));
     
     impl_->updateComposite();
 }

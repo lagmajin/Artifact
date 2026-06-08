@@ -201,6 +201,27 @@ public:
             .description = "BMP 連番画像（未圧縮）",
             .isImageSequence = true
         });
+
+        // === Vector / Code Export Presets ===
+        standardPresets.push_back({
+            .id = "animated_svg",
+            .name = "Animated SVG",
+            .container = "svg",
+            .codec = "svg",
+            .description = "SVG フレーム連番（ベクターアニメーション用）",
+            .isAnimatedImage = false,
+            .isImageSequence = true
+        });
+
+        standardPresets.push_back({
+            .id = "css_animation",
+            .name = "CSS Animation",
+            .container = "css",
+            .codec = "css",
+            .description = "CSS @keyframes アニメーション",
+            .isAnimatedImage = false,
+            .isImageSequence = false
+        });
     }
 };
 
@@ -287,6 +308,24 @@ const ArtifactRenderFormatPreset* ArtifactRenderFormatPresetManager::findPresetB
     }
     
     return nullptr;
+}
+
+QVector<ArtifactRenderFormatPreset> ArtifactRenderFormatPresetManager::presetsByUsage(
+    ArtifactRenderUsageCategory usage) const
+{
+    QMutexLocker locker(&impl_->mutex);
+    QVector<ArtifactRenderFormatPreset> result;
+    for (const auto& preset : impl_->standardPresets) {
+        if (preset.usageCategory == usage) {
+            result.push_back(preset);
+        }
+    }
+    for (auto it = impl_->customPresets.begin(); it != impl_->customPresets.end(); ++it) {
+        if (it.value().usageCategory == usage) {
+            result.push_back(it.value());
+        }
+    }
+    return result;
 }
 
 void ArtifactRenderFormatPresetManager::addCustomPreset(const ArtifactRenderFormatPreset& preset) {

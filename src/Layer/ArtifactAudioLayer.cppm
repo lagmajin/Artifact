@@ -37,6 +37,14 @@ namespace Artifact
    double duration_ = 0.0;
    qint64 totalFrames_ = 0;
 
+   // 最終デコード結果のキャッシュ（シークバック・ループ時にリサンプリングを回避）
+   struct ResampledCache {
+       qint64 startSample = -1;
+       int sampleRate = 0;
+       ArtifactCore::AudioSegment segment;
+   };
+   ResampledCache resampledCache_;
+
    Impl() = default;
    ~Impl() = default;
   };
@@ -330,6 +338,12 @@ WaveformData ArtifactAudioLayer::buildWaveformData(int displayWidth) const
   return data;
 }
 
+QString ArtifactAudioLayer::waveformPreviewSummary(int displayWidth) const
+{
+  const auto waveform = buildWaveformData(displayWidth);
+  return Artifact::waveformPreviewSummary(waveform.peaks, waveform.rms);
+}
+
 size_t ArtifactAudioLayer::getCacheSize() const
 {
   return impl_->cache_.getCacheSize();
@@ -414,6 +428,17 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
     return false;
   }
 
+  // リサンプリング結果キャッシュを確認
+  auto& rc = impl_->resampledCache_;
+  if (rc.startSample == startSample && rc.sampleRate == sampleRate &&
+      rc.segment.frameCount() >= frameCount) {
+    for (int ch = 0; ch < 2; ++ch) {
+      std::copy_n(rc.segment.channelData[ch].data(), frameCount,
+                  outSegment.channelData[ch].data());
+    }
+    return true;
+  }
+
   int producedFrames = 0;
   for (int i = 0; i < frameCount; ++i) {
     const double srcPos = static_cast<double>(startSample) +
@@ -452,13 +477,16 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
   }
 
   if (producedFrames > 0) {
-    // デバッグログ（キャッシュ統計）
-    static int audioProduceLogCount = 0;
-    if (audioProduceLogCount < 8) {
-      ++audioProduceLogCount;
-      qDebug() << "[AudioLayer] getAudio produced" << producedFrames << "frames"
-               << "cache size:" << impl_->cache_.getCacheSize()
-               << "memory:" << impl_->cache_.getMemoryUsage() << "bytes";
+    // キャッシュを更新（リサンプリング結果を保存）
+    rc.startSample = startSample;
+    rc.sampleRate = sampleRate;
+    rc.segment.sampleRate = sampleRate;
+    rc.segment.layout = ArtifactCore::AudioChannelLayout::Stereo;
+    rc.segment.channelData.resize(2);
+    rc.segment.setFrameCount(producedFrames);
+    for (int ch = 0; ch < 2; ++ch) {
+      std::copy_n(outSegment.channelData[ch].data(), producedFrames,
+                  rc.segment.channelData[ch].data());
     }
     return true;
   }

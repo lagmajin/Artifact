@@ -5,6 +5,7 @@
 #include <QWidget>
 #include <QShowEvent>
 #include <QHideEvent>
+#include <QEvent>
 #include <QVector3D>
 export module Artifact.Widgets.ModelViewer;
 
@@ -60,6 +61,7 @@ public:
 protected:
     void showEvent(QShowEvent* event) override;
     void hideEvent(QHideEvent* event) override;
+    bool eventFilter(QObject* obj, QEvent* event) override;
 };
 
 }

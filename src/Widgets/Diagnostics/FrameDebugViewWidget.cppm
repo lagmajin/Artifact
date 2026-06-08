@@ -104,9 +104,9 @@ public:
         return notes;
     }
 
-    static QString densitySummaryText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+    static QString visualDensityMonitorText(const ArtifactCore::FrameDebugSnapshot& snapshot)
     {
-        return QStringLiteral("density=%1 visual=%2 info=%3 luminance=%4 motion=%5")
+        return QStringLiteral("level=%1 visual=%2 info=%3 luminance=%4 motion=%5")
                 .arg(snapshot.densityLabel.isEmpty() ? QStringLiteral("low")
                                                     : snapshot.densityLabel)
                 .arg(QString::number(snapshot.visualDensityScore, 'f', 2))
@@ -173,7 +173,7 @@ public:
                                             .arg(snapshot.renderBackend.isEmpty() ? QStringLiteral("<none>") : snapshot.renderBackend)
                                             .arg(static_cast<int>(snapshot.passes.size()))
                                             .arg(static_cast<int>(snapshot.resources.size()))
-                                            .arg(QStringLiteral("%1 | %2").arg(diffModeText, densitySummaryText(snapshot)))
+                                            .arg(QStringLiteral("%1 | %2").arg(diffModeText, visualDensityMonitorText(snapshot)))
                                             .arg(resourceState(QStringLiteral("video"), QStringLiteral("Video Decode")))
                                             .arg(resourceState(QStringLiteral("particle"), QStringLiteral("Particle Draw")));
             summary_->setText(summaryText);
@@ -204,7 +204,8 @@ public:
                       .arg(static_cast<qulonglong>(snapshot.renderCost.psoSwitches))
                       .arg(static_cast<qulonglong>(snapshot.renderCost.srbCommits))
                       .arg(static_cast<qulonglong>(snapshot.renderCost.bufferUpdates));
-        lines << QStringLiteral("density: %1").arg(densitySummaryText(snapshot));
+        lines << QStringLiteral("Visual Density Monitor:");
+        lines << QStringLiteral("  %1").arg(visualDensityMonitorText(snapshot));
         if (snapshot.totalLayerCount > 0 || snapshot.visibleLayerCount > 0 ||
             snapshot.selectedLayerMaskCount > 0 || snapshot.selectedLayerEffectCount > 0 ||
             snapshot.selectedLayerMatteCount > 0) {

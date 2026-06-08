@@ -34,7 +34,6 @@ module;
 
 module Artifact.Widgets.CompositionAudioMixer;
 
-import Artifact.Widgets.CompositionAudioMixer;
 import Artifact.Audio.Mixer;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;

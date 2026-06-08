@@ -1,13 +1,16 @@
 module;
 #include <utility>
 #include <algorithm>
+#include <cmath>
 #include <QColor>
 #include <QVariant>
+#include <QStringList>
 #include <wobjectimpl.h>
 
 module Artifact.Layer.Light;
 
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Animation.Transform3D;
 import Time.Rational;
 import Property.Group;
@@ -25,6 +28,20 @@ QColor toQColor(const ArtifactCore::FloatColor& color) {
         static_cast<qreal>(color.a())
     );
 }
+
+int64_t lightTimelineFps(const ArtifactLightLayer* layer)
+{
+    if (!layer) {
+        return 30;
+    }
+    if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+        const double fps = comp->frameRate().framerate();
+        if (fps > 0.0) {
+            return std::max<int64_t>(1, static_cast<int64_t>(std::llround(fps)));
+        }
+    }
+    return 30;
+}
 }
 
 W_OBJECT_IMPL(ArtifactLightLayer)
@@ -35,12 +52,16 @@ struct ArtifactLightLayer::Impl {
     float intensity_ = 100.0f;
     float shadowRadius_ = 10.0f;
     bool castsShadows_ = true;
+    LightLinkMode linkMode_ = LightLinkMode::All;
+    QString linkedLayerIdsText_;
+    QString excludedLayerIdsText_;
 };
 
 ArtifactLightLayer::ArtifactLightLayer()
     : lightImpl_(new Impl())
 {
     setLayerName("Light 1");
+    setIs3D(true);
 }
 
 ArtifactLightLayer::~ArtifactLightLayer()
@@ -54,7 +75,7 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   }
 
   // Get position from 3D transform at current frame
-  const RationalTime frameTime(currentFrame(), 30);
+  const RationalTime frameTime(currentFrame(), lightTimelineFps(this));
   const auto &t3 = transform3D();
   const QVector3D pos(
       static_cast<float>(t3.positionXAt(frameTime)),
@@ -95,9 +116,7 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
 
   // Direction indicators for oriented lights
   if (type == LightType::Spot || type == LightType::Parallel) {
-    // In AE, lights generally look towards -Z of their local space or special target.
-    // Basic representation: a line pointing in the forward direction.
-    // For now, simpler: just draw a small "antenna" or axis.
+    // Draw a small forward axis so the gizmo matches the scene-light direction.
     QMatrix4x4 m = getGlobalTransform4x4();
     QVector3D forward = m.mapVector(QVector3D(0, 0, 100.0f / (zoom > 0.001f ? zoom : 1.0f)));
     QVector3D tip = pos + forward;
@@ -120,6 +139,27 @@ void ArtifactLightLayer::setShadowRadius(float r) { lightImpl_->shadowRadius_ = 
 
 bool ArtifactLightLayer::castsShadows() const { return lightImpl_->castsShadows_; }
 void ArtifactLightLayer::setCastsShadows(bool e) { lightImpl_->castsShadows_ = e; changed(); }
+
+LightLinkMode ArtifactLightLayer::lightLinkMode() const { return lightImpl_->linkMode_; }
+void ArtifactLightLayer::setLightLinkMode(LightLinkMode mode)
+{
+  lightImpl_->linkMode_ = mode;
+  changed();
+}
+
+QString ArtifactLightLayer::linkedLayerIdsText() const { return lightImpl_->linkedLayerIdsText_; }
+void ArtifactLightLayer::setLinkedLayerIdsText(const QString& ids)
+{
+  lightImpl_->linkedLayerIdsText_ = ids.trimmed();
+  changed();
+}
+
+QString ArtifactLightLayer::excludedLayerIdsText() const { return lightImpl_->excludedLayerIdsText_; }
+void ArtifactLightLayer::setExcludedLayerIdsText(const QString& ids)
+{
+  lightImpl_->excludedLayerIdsText_ = ids.trimmed();
+  changed();
+}
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGroups() const
 {
@@ -161,8 +201,32 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     radiusProp->setSoftRange(0.0, 200.0);
     radiusProp->setUnit(QStringLiteral("px"));
     lightOptions.addProperty(radiusProp);
+
+    ArtifactCore::PropertyGroup linkingOptions("Light Linking");
+
+    auto linkModeProp = persistentLayerProperty(
+        QStringLiteral("Light Linking/Link Mode"),
+        ArtifactCore::PropertyType::Integer,
+        static_cast<int>(lightImpl_->linkMode_), -110);
+    linkModeProp->setTooltip(QStringLiteral("0: All, 1: Include Only, 2: Exclude List"));
+    linkingOptions.addProperty(linkModeProp);
+
+    auto includeProp = persistentLayerProperty(
+        QStringLiteral("Light Linking/Include Layer IDs"),
+        ArtifactCore::PropertyType::String,
+        lightImpl_->linkedLayerIdsText_, -105);
+    includeProp->setTooltip(QStringLiteral("Comma-separated layer IDs that this light affects when Link Mode is Include Only"));
+    linkingOptions.addProperty(includeProp);
+
+    auto excludeProp = persistentLayerProperty(
+        QStringLiteral("Light Linking/Exclude Layer IDs"),
+        ArtifactCore::PropertyType::String,
+        lightImpl_->excludedLayerIdsText_, -100);
+    excludeProp->setTooltip(QStringLiteral("Comma-separated layer IDs that this light ignores when Link Mode is Exclude List"));
+    linkingOptions.addProperty(excludeProp);
     
     groups.push_back(lightOptions);
+    groups.push_back(linkingOptions);
     return groups;
 }
 
@@ -188,6 +252,15 @@ bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, cons
         return true;
     } else if (propertyPath == "Light Options/Shadow Radius") {
         setShadowRadius(value.toFloat());
+        return true;
+    } else if (propertyPath == "Light Linking/Link Mode") {
+        setLightLinkMode(static_cast<LightLinkMode>(value.toInt()));
+        return true;
+    } else if (propertyPath == "Light Linking/Include Layer IDs") {
+        setLinkedLayerIdsText(value.toString());
+        return true;
+    } else if (propertyPath == "Light Linking/Exclude Layer IDs") {
+        setExcludedLayerIdsText(value.toString());
         return true;
     }
     

@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <array>
+#include <algorithm>
 
 #include <QDebug>
 #include <QImage>
@@ -10,6 +11,7 @@ module;
 #include <QRect>
 #include <QRectF>
 #include <QSizeF>
+#include <QFont>
 #include <QFutureWatcher>
 #include <QThread>
 #include <QCoreApplication>
@@ -29,6 +31,7 @@ import Thread.Helper;
 import CvUtils;
 import Artifact.Render.IRenderer;
 import Artifact.Layer.SourceCrop;
+import Core.Diagnostics.FallbackPolicy;
 import Image.ImageF32x4_RGBA;
 import Size;
 
@@ -129,6 +132,32 @@ QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* 
     }
     return image;
 }
+
+QImage makeMissingImagePlaceholder(const QSize& size = QSize(256, 256), const QString& label = QStringLiteral("Image unavailable"))
+{
+    const QSize safeSize = size.isValid() ? size.expandedTo(QSize(64, 64)) : QSize(256, 256);
+    QImage placeholder(safeSize, QImage::Format_ARGB32_Premultiplied);
+    placeholder.fill(QColor(34, 38, 46));
+
+    QPainter painter(&placeholder);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QPen(QColor(180, 82, 82), 3.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRect(placeholder.rect().adjusted(2, 2, -3, -3));
+    const QRect rect = placeholder.rect();
+    painter.drawLine(rect.topLeft() + QPoint(10, 10), rect.bottomRight() - QPoint(10, 10));
+    painter.drawLine(rect.topRight() + QPoint(-10, 10), rect.bottomLeft() + QPoint(10, -10));
+
+    QFont font;
+    font.setBold(true);
+    font.setPointSizeF(std::max<qreal>(10.0, safeSize.height() * 0.08));
+    painter.setFont(font);
+    painter.setPen(QColor(235, 235, 235));
+    painter.drawText(placeholder.rect().adjusted(12, 12, -12, -12),
+                     Qt::AlignCenter | Qt::TextWordWrap,
+                     label);
+    return placeholder;
+}
 }
 
 class ArtifactImageLayer::Impl {
@@ -183,12 +212,36 @@ bool ArtifactImageLayer::loadFromPath(const QString& path)
     if (!headerOnly.read(0, 0, true, OIIO::TypeDesc::UINT8)) {
         qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
                    << "error=" << QString::fromStdString(headerOnly.geterror());
+        impl_->hasImage_ = true;
+        impl_->cache_ = std::make_shared<QImage>(makeMissingImagePlaceholder(QSize(256, 256),
+                                                                             QStringLiteral("Missing image")));
+        impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
+        impl_->width_ = impl_->cache_->width();
+        impl_->height_ = impl_->cache_->height();
+        setSourceSize(Size_2D(impl_->width_, impl_->height_));
+        ArtifactCore::FallbackTracker::instance()->record(
+            ArtifactCore::FallbackCategory::Image,
+            ArtifactCore::FallbackAction::Fallback,
+            path, "placeholder",
+            QStringLiteral("Image missing, using placeholder"));
         return false;
     }
     const OIIO::ImageSpec& spec = headerOnly.spec();
     if (spec.width <= 0 || spec.height <= 0) {
         qWarning() << "[ArtifactImageLayer] Failed to load image from:" << path
                    << "error=" << QString::fromStdString(headerOnly.geterror());
+        impl_->hasImage_ = true;
+        impl_->cache_ = std::make_shared<QImage>(makeMissingImagePlaceholder(QSize(256, 256),
+                                                                             QStringLiteral("Missing image")));
+        impl_->cacheBuffer_ = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(toFrameBuffer(*impl_->cache_));
+        impl_->width_ = impl_->cache_->width();
+        impl_->height_ = impl_->cache_->height();
+        setSourceSize(Size_2D(impl_->width_, impl_->height_));
+        ArtifactCore::FallbackTracker::instance()->record(
+            ArtifactCore::FallbackCategory::Image,
+            ArtifactCore::FallbackAction::Fallback,
+            path, "placeholder",
+            QStringLiteral("Image missing, using placeholder"));
         return false;
     }
 
@@ -511,7 +564,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 QImage ArtifactImageLayer::toQImage() const
 {
     if (!impl_->hasImage_) {
-        return QImage();
+        return makeMissingImagePlaceholder(QSize(256, 256), QStringLiteral("Missing image"));
     }
 
     const bool isMainThread = (QThread::currentThread() == qApp->thread());
@@ -549,7 +602,7 @@ QImage ArtifactImageLayer::toQImage() const
             }
             // メインスレッド: プリフェッチ実行中はブロックせず次フレームで再試行
             if (impl_->prefetchFuture_.isRunning()) {
-                return QImage();
+                return makeMissingImagePlaceholder(QSize(256, 256), QStringLiteral("Loading image"));
             }
             // 非同期パスを通らなかった場合のフォールバック (メインスレッドのみ impl_書き込み)
             QSize size;
@@ -565,14 +618,24 @@ QImage ArtifactImageLayer::toQImage() const
             } else {
                 qWarning() << "[ArtifactImageLayer::toQImage] Sync fallback load failed:"
                            << impl_->sourcePath_ << "error=" << errorString;
-                return QImage();
+                ArtifactCore::FallbackTracker::instance()->record(
+                    ArtifactCore::FallbackCategory::Image,
+                    ArtifactCore::FallbackAction::Fallback,
+                    impl_->sourcePath_, "placeholder",
+                    QStringLiteral("Sync fallback load failed, using placeholder"));
+                return makeMissingImagePlaceholder(QSize(256, 256), QStringLiteral("Missing image"));
             }
             impl_->prefetchDone_ = true;
         }
     }
 
     if (!impl_->cache_) {
-        return QImage();
+        ArtifactCore::FallbackTracker::instance()->record(
+            ArtifactCore::FallbackCategory::Image,
+            ArtifactCore::FallbackAction::Fallback,
+            impl_->sourcePath_, "placeholder",
+            QStringLiteral("No cache available, using placeholder"));
+        return makeMissingImagePlaceholder(QSize(256, 256), QStringLiteral("Missing image"));
     }
     return *impl_->cache_;
 }

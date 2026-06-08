@@ -12,6 +12,7 @@
 
 export module Artifact.Composition.Abstract;
 import std;
+import Memory.SharedPtr;
 import Utils;
 import Utils.String.UniString;
 import Asset.File;
@@ -28,12 +29,17 @@ import Artifact.Composition.Result;
 import Artifact.Composition.InitParams;
 import Composition.Settings;
 import Audio.Segment;
+import Geometry.ResolutionRemap;
 //import Artifact.Layer.Abstract;
 //import Artifact.Preview.Controller;
 
 export namespace Artifact {
 
  using namespace ArtifactCore;
+
+ class ArtifactAbstractComposition;
+ using ArtifactCompositionPtr = ArtifactCore::SharedPtr<ArtifactAbstractComposition>;
+ using ArtifactCompositionWeakPtr = ArtifactCore::WeakPtr<ArtifactAbstractComposition>;
 
  struct ResponsiveLayoutVariant {
   QString variantId;
@@ -140,7 +146,7 @@ export namespace Artifact {
                 int frameCount, int sampleRate);
 
   QJsonDocument toJson() const;
-  static std::shared_ptr<ArtifactAbstractComposition> fromJson(const QJsonDocument& doc);
+  static ArtifactCompositionPtr fromJson(const QJsonDocument& doc);
 
   QVector<ArtifactAbstractLayerPtr> allLayer();
   const QVector<ArtifactAbstractLayerPtr>& allLayerRef() const;
@@ -151,14 +157,13 @@ export namespace Artifact {
   /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;
   /*Thumbnail*/
- };
 
- typedef std::shared_ptr<ArtifactAbstractComposition> ArtifactCompositionPtr;
- typedef std::weak_ptr<ArtifactAbstractComposition>	  ArtifactCompositionWeakPtr;
+  // Resolution Remap
+  void applyResolutionRemap(const QSize& newSize, ArtifactCore::RemapPolicy policy);
+ };
 
  typedef MultiIndexContainer<ArtifactCompositionPtr, CompositionID> ArtifactCompositionMultiIndexContainer;
  using MultiIndexLayerContainer = MultiIndexContainer<ArtifactAbstractLayerPtr, LayerID>;
 };
 
 
-W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)

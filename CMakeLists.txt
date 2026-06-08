@@ -1,6 +1,10 @@
 ﻿cmake_minimum_required(VERSION 3.30)
 project(Artifact)
 
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+endif()
+
 # ---------------------------------------------------------------------------
 # Version
 # ---------------------------------------------------------------------------
@@ -43,6 +47,7 @@ string(TIMESTAMP ARTIFACT_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
 # ---------------------------------------------------------------------------
 file(GLOB_RECURSE POTENTIAL_SOURCES CONFIGURE_DEPENDS 
     "src/*.cpp" "src/*.cppm" "src/*.ixx"
+    "src/**/*.cpp" "src/**/*.cppm" "src/**/*.ixx"
     "include/*.ixx" "include/*.cppm"
     "include/**/*.ixx" "include/**/*.cppm"
 )
@@ -172,9 +177,14 @@ elseif(ARTIFACT_FRONTEND_MSVC)
 endif()
 
 # MSVC-style linker diagnostics
-option(ARTIFACT_LINK_VERBOSE_LIB "Enable MSVC linker library-resolution diagnostics" ON)
+set(ARTIFACT_LINK_VERBOSE_LIB ON CACHE BOOL "Enable MSVC linker library-resolution diagnostics" FORCE)
 if(ARTIFACT_LINK_VERBOSE_LIB)
     target_link_options(Artifact PRIVATE "$<$<BOOL:${ARTIFACT_FRONTEND_MSVC}>:/VERBOSE:LIB>")
+endif()
+if(ARTIFACT_FRONTEND_MSVC)
+    target_link_options(Artifact PRIVATE
+        "$<$<NOT:$<CONFIG:Debug>>:/LTCG>"
+    )
 endif()
 
 target_include_directories(Artifact
@@ -283,16 +293,13 @@ find_package(Boost REQUIRED COMPONENTS iostreams)
 target_link_libraries(Artifact PRIVATE Boost::iostreams)
 
 # FFmpeg
-find_package(ffmpeg REQUIRED)
-if(ffmpeg_FOUND)
-    target_include_directories(Artifact PRIVATE ${FFMPEG_INCLUDE_DIR})
-    target_link_libraries(Artifact PRIVATE 
-        ${FFMPEG_AVCODEC_LIBRARY}
-        ${FFMPEG_AVFORMAT_LIBRARY}
-        ${FFMPEG_AVUTIL_LIBRARY}
-        ${FFMPEG_SWSCALE_LIBRARY}
-        ${FFMPEG_SWRESAMPLE_LIBRARY}
-    )
+find_package(FFMPEG REQUIRED)
+if(FFMPEG_FOUND)
+    target_include_directories(Artifact PRIVATE ${FFMPEG_INCLUDE_DIRS})
+    if(FFMPEG_LIBRARY_DIRS)
+        target_link_directories(Artifact PRIVATE ${FFMPEG_LIBRARY_DIRS})
+    endif()
+    target_link_libraries(Artifact PRIVATE ${FFMPEG_LIBRARIES})
 else()
     # Fallback for manual specification
     target_link_libraries(Artifact PRIVATE 
@@ -358,7 +365,13 @@ artifact_enable_delay_load(Artifact
 
 # Windows 固有
 if(WIN32)
-    target_link_libraries(Artifact PRIVATE dwmapi shell32 user32 ole32 advapi32)
+    target_link_libraries(Artifact PRIVATE
+        dwmapi
+        shell32
+        user32
+        ole32
+        advapi32
+    )
 endif()
 
 # ---------------------------------------------------------------------------

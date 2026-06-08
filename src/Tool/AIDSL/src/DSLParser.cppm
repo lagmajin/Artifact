@@ -3,7 +3,6 @@ module;
 #include <sstream>
 #include <algorithm>
 #include <cctype>
-#include <regex>
 #include <iomanip>
 //#include "DSLTypes.ixx"
 
@@ -134,8 +133,43 @@ bool isNumber(const std::string& s) {
 
 // Check if token is a float
 bool isFloat(const std::string& s) {
-    std::regex pattern(R"(^-?\d+(\.\d+)?([eE][+-]?\d+)?$)");
-    return std::regex_match(s, pattern);
+    if (s.empty()) {
+        return false;
+    }
+    std::size_t i = 0;
+    if (s[i] == '+' || s[i] == '-') {
+        ++i;
+    }
+    bool hasDigits = false;
+    while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+        hasDigits = true;
+        ++i;
+    }
+    if (i < s.size() && s[i] == '.') {
+        ++i;
+        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+            hasDigits = true;
+            ++i;
+        }
+    }
+    if (!hasDigits) {
+        return false;
+    }
+    if (i < s.size() && (s[i] == 'e' || s[i] == 'E')) {
+        ++i;
+        if (i < s.size() && (s[i] == '+' || s[i] == '-')) {
+            ++i;
+        }
+        bool hasExponentDigits = false;
+        while (i < s.size() && std::isdigit(static_cast<unsigned char>(s[i]))) {
+            hasExponentDigits = true;
+            ++i;
+        }
+        if (!hasExponentDigits) {
+            return false;
+        }
+    }
+    return i == s.size();
 }
 
 // Check if token is a boolean

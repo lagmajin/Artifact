@@ -68,6 +68,7 @@ export namespace Artifact
   int channelCount() const;
   qint64 totalFrames() const;
   WaveformData buildWaveformData(int displayWidth) const;
+  QString waveformPreviewSummary(int displayWidth = 128) const;
 
   // Cache information
   size_t getCacheSize() const;

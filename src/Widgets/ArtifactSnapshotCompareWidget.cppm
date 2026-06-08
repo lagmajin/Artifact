@@ -25,7 +25,6 @@ module;
 module Artifact.Widgets.SnapshotCompareWidget;
 
 import std;
-import Artifact.Widgets.SnapshotCompareWidget;
 import Artifact.Project.RevisionService;
 import Widgets.Utils.CSS;
 

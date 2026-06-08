@@ -18,6 +18,78 @@ namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactTimelineKeyframeModel)
 
+namespace {
+
+QString editablePathDisplayLabel(const QString &propertyPath) {
+  if (propertyPath.isEmpty()) {
+    return {};
+  }
+
+  const auto parts = propertyPath.split(QLatin1Char('.'), Qt::SkipEmptyParts);
+  if (parts.isEmpty()) {
+    return {};
+  }
+
+  const bool isMaskPath =
+      parts.front().compare(QStringLiteral("mask"), Qt::CaseInsensitive) == 0;
+  const bool isRotoPath =
+      parts.front().compare(QStringLiteral("roto"), Qt::CaseInsensitive) == 0;
+  if (!isMaskPath && !isRotoPath) {
+    return {};
+  }
+
+  const QString rootLabel =
+      isRotoPath ? QStringLiteral("Roto") : QStringLiteral("Mask");
+  if (parts.size() == 1) {
+    return rootLabel;
+  }
+
+  if (parts.size() == 3 &&
+      parts[2].compare(QStringLiteral("enabled"), Qt::CaseInsensitive) == 0) {
+    const int maskIndex = parts[1].toInt();
+    return QStringLiteral("%1 %2 / Enabled")
+        .arg(rootLabel)
+        .arg(maskIndex + 1);
+  }
+
+  if (parts.size() == 5 &&
+      parts[2].compare(QStringLiteral("path"), Qt::CaseInsensitive) == 0) {
+    const int maskIndex = parts[1].toInt();
+    const int pathIndex = parts[3].toInt();
+    const QString pathLabel = QStringLiteral("%1 %2 / Path %3")
+                                  .arg(rootLabel)
+                                  .arg(maskIndex + 1)
+                                  .arg(pathIndex + 1);
+    const QString field = parts[4];
+    if (field.compare(QStringLiteral("closed"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Closed");
+    }
+    if (field.compare(QStringLiteral("opacity"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Opacity");
+    }
+    if (field.compare(QStringLiteral("feather"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Feather");
+    }
+    if (field.compare(QStringLiteral("expansion"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Expansion");
+    }
+    if (field.compare(QStringLiteral("inverted"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Inverted");
+    }
+    if (field.compare(QStringLiteral("mode"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Mode");
+    }
+    if (field.compare(QStringLiteral("name"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Name");
+    }
+  }
+
+  return QStringLiteral("%1 / %2")
+      .arg(rootLabel, propertyPath.mid(propertyPath.indexOf(QLatin1Char('.')) + 1));
+}
+
+} // namespace
+
 QStringList ArtifactTimelineKeyframeModel::transformPropertyPaths() {
   return {
       QStringLiteral("transform.position.x"),
@@ -40,6 +112,10 @@ QString ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
   if (propertyPath.isNull() || propertyPath.isEmpty()) {
     return QStringLiteral("Property");
   }
+  const QString editableLabel = editablePathDisplayLabel(propertyPath);
+  if (!editableLabel.isEmpty()) {
+    return editableLabel;
+  }
   if (propertyPath == QStringLiteral("transform.position.x")) {
     return QStringLiteral("Transform / Position X");
   }
@@ -60,43 +136,6 @@ QString ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
   }
   if (propertyPath == QStringLiteral("transform.anchor.y")) {
     return QStringLiteral("Transform / Anchor Y");
-  }
-
-  if (propertyPath.startsWith(QStringLiteral("mask."), Qt::CaseInsensitive)) {
-    const auto parts = propertyPath.split(QLatin1Char('.'), Qt::SkipEmptyParts);
-    if (parts.size() == 3 && parts[2] == QStringLiteral("enabled")) {
-      const int maskIndex = parts[1].toInt();
-      return QStringLiteral("Mask %1 / Enabled").arg(maskIndex + 1);
-    }
-    if (parts.size() == 5 && parts[2] == QStringLiteral("path")) {
-      const int maskIndex = parts[1].toInt();
-      const int pathIndex = parts[3].toInt();
-      const QString pathLabel = QStringLiteral("Mask %1 / Path %2")
-                                    .arg(maskIndex + 1)
-                                    .arg(pathIndex + 1);
-      const QString field = parts[4];
-      if (field == QStringLiteral("closed")) {
-        return pathLabel + QStringLiteral(" / Closed");
-      }
-      if (field == QStringLiteral("opacity")) {
-        return pathLabel + QStringLiteral(" / Opacity");
-      }
-      if (field == QStringLiteral("feather")) {
-        return pathLabel + QStringLiteral(" / Feather");
-      }
-      if (field == QStringLiteral("expansion")) {
-        return pathLabel + QStringLiteral(" / Expansion");
-      }
-      if (field == QStringLiteral("inverted")) {
-        return pathLabel + QStringLiteral(" / Inverted");
-      }
-      if (field == QStringLiteral("mode")) {
-        return pathLabel + QStringLiteral(" / Mode");
-      }
-      if (field == QStringLiteral("name")) {
-        return pathLabel + QStringLiteral(" / Name");
-      }
-    }
   }
 
   QString fallback = propertyPath;

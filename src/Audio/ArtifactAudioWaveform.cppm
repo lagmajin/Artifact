@@ -88,6 +88,29 @@ W_OBJECT_IMPL(AudioAnalyzer)
 W_OBJECT_IMPL(AudioLevelMeter)
 W_OBJECT_IMPL(AudioSyncTools)
 
+QString waveformPreviewSummary(const QVector<float>& peaks,
+                               const QVector<float>& rms)
+{
+    if (peaks.isEmpty()) {
+        return QStringLiteral("Waveform: unavailable");
+    }
+
+    float peakMax = 0.0f;
+    for (const float peak : peaks) {
+        peakMax = std::max(peakMax, std::abs(peak));
+    }
+
+    float rmsMax = 0.0f;
+    for (const float sample : rms) {
+        rmsMax = std::max(rmsMax, std::abs(sample));
+    }
+
+    return QStringLiteral("Waveform: ready (%1 bins, peak %2, rms %3)")
+        .arg(peaks.size())
+        .arg(QString::number(peakMax, 'f', 2))
+        .arg(QString::number(rmsMax, 'f', 2));
+}
+
 // ==================== AudioWaveformGenerator ====================
 
 class AudioWaveformGenerator::Impl {

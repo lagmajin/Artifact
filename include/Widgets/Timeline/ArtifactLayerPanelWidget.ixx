@@ -1,6 +1,9 @@
 module;
 #include <utility>
 #include <wobjectdefs.h>
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QWidget>
 #include <QVector>
 #include <QFocusEvent>
@@ -86,6 +89,9 @@ export namespace Artifact
    void mouseMoveEvent(QMouseEvent* event) override;
    void mouseReleaseEvent(QMouseEvent* event) override;
    void leaveEvent(QEvent* event) override;
+   void dragEnterEvent(QDragEnterEvent* event) override;
+   void dragMoveEvent(QDragMoveEvent* event) override;
+   void dropEvent(QDropEvent* event) override;
 
    public:
     explicit ArtifactLayerPanelHeaderWidget(QWidget* parent = nullptr);
@@ -177,6 +183,9 @@ export namespace Artifact
   class Impl;
   Impl* impl_;
  protected:
+  void dragEnterEvent(QDragEnterEvent* event) override;
+  void dragMoveEvent(QDragMoveEvent* event) override;
+  void dropEvent(QDropEvent* event) override;
 
  public:
   explicit ArtifactLayerTimelinePanelWrapper(QWidget* parent = nullptr);

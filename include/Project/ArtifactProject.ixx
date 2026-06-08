@@ -15,6 +15,7 @@
 export module Artifact.Project;
 
 export import Artifact.Project.Settings;
+export import Artifact.Project.CreationDefaults;
 
 import Artifact.Composition.InitParams;
 import Artifact.Layer.InitParams;
@@ -60,6 +61,10 @@ export namespace Artifact {
   ArtifactProject(const ArtifactProjectSettings& setting);
   ~ArtifactProject();
   ArtifactProjectSettings settings() const;
+  CreationDefaultsState creationDefaultsState() const;
+  void setCreationDefaultsState(const CreationDefaultsState& state);
+  GuideSet guideSet() const;
+  void setGuideSet(const GuideSet& guideSet);
   void createComposition(const QString&name);
   template <typename NameT, typename SizeT>
    requires StringLike<NameT>&& SizeLike<SizeT>

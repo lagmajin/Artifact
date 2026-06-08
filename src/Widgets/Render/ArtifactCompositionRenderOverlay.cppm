@@ -24,10 +24,12 @@ module Artifact.Widgets.CompositionRenderOverlay;
 
 import Color.Float;
 import Artifact.Layer.Camera;
+import Artifact.Layer.Video;
 import Artifact.Layer.Shape;
 import Layer.Blend;
 import Artifact.Widgets.PieMenu;
 import ArtifactCore.Utils.PerformanceProfiler;
+import Tracking.MotionTracker;
 import Artifact.Render.IRenderer;
 
 namespace Artifact {
@@ -37,36 +39,7 @@ namespace {
 
 QString blendModeName(const ArtifactCore::BlendMode mode)
 {
-  switch (mode) {
-  case ArtifactCore::BlendMode::Normal:
-    return QStringLiteral("Normal");
-  case ArtifactCore::BlendMode::Add:
-    return QStringLiteral("Add");
-  case ArtifactCore::BlendMode::Multiply:
-    return QStringLiteral("Multiply");
-  case ArtifactCore::BlendMode::Screen:
-    return QStringLiteral("Screen");
-  case ArtifactCore::BlendMode::Overlay:
-    return QStringLiteral("Overlay");
-  case ArtifactCore::BlendMode::Darken:
-    return QStringLiteral("Darken");
-  case ArtifactCore::BlendMode::Lighten:
-    return QStringLiteral("Lighten");
-  case ArtifactCore::BlendMode::ColorDodge:
-    return QStringLiteral("ColorDodge");
-  case ArtifactCore::BlendMode::ColorBurn:
-    return QStringLiteral("ColorBurn");
-  case ArtifactCore::BlendMode::HardLight:
-    return QStringLiteral("HardLight");
-  case ArtifactCore::BlendMode::SoftLight:
-    return QStringLiteral("SoftLight");
-  case ArtifactCore::BlendMode::Difference:
-    return QStringLiteral("Difference");
-  case ArtifactCore::BlendMode::Exclusion:
-    return QStringLiteral("Exclusion");
-  default:
-    return QStringLiteral("Normal");
-  }
+  return ArtifactCore::BlendModeUtils::toString(mode);
 }
 
 QString layerOverlayDetailText(const ArtifactAbstractLayerPtr &layer)
@@ -89,7 +62,7 @@ QString layerOverlayDetailText(const ArtifactAbstractLayerPtr &layer)
                                      .arg(layer->maskCount() == 1 ? QString()
                                                                  : QStringLiteral("s"))
                                : QStringLiteral("no masks");
-  return QStringLiteral("%1 | %2 | O%3 | %4%5 | %6 | %7x%8")
+  QString detail = QStringLiteral("%1 | %2 | O%3 | %4%5 | %6 | %7x%8")
       .arg(typeLabel)
       .arg(blendModeName(ArtifactCore::toBlendMode(layer->layerBlendType())))
       .arg(QString::number(std::clamp(layer->opacity() * 100.0f, 0.0f, 100.0f),
@@ -99,6 +72,24 @@ QString layerOverlayDetailText(const ArtifactAbstractLayerPtr &layer)
       .arg(maskText)
       .arg(QString::number(std::max(0.0, boundsSize.width()), 'f', 0))
       .arg(QString::number(std::max(0.0, boundsSize.height()), 'f', 0));
+
+  if (const auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    const int trackerId = videoLayer->motionTrackerId();
+    if (trackerId > 0) {
+      const auto *tracker = ArtifactCore::TrackerManager::instance().tracker(trackerId);
+      const QString trackerLabel = tracker
+          ? QStringLiteral("Tracker #%1 | %2pt | %3rg | %4fr | conf %5")
+                .arg(trackerId)
+                .arg(tracker->trackPointCount())
+                .arg(tracker->trackRegionCount())
+                .arg(tracker->hasResult() ? static_cast<int>(tracker->result().frameCount()) : 0)
+                .arg(tracker->averageConfidence(), 0, 'f', 2)
+          : QStringLiteral("Tracker #%1 (missing)").arg(trackerId);
+      detail += QStringLiteral(" | %1").arg(trackerLabel);
+    }
+  }
+
+  return detail;
 }
 
 QString responsiveLayoutSummaryText(const ArtifactCompositionPtr &comp)
@@ -803,6 +794,10 @@ void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
                                             .arg(camera->zoom(), 0, 'f', 0));
   const QString dofText =
       camera->depthOfField() ? QStringLiteral("DOF On") : QStringLiteral("DOF Off");
+  const QString motionBlurText =
+      camera->motionBlur()
+          ? QStringLiteral("MB %1%").arg(camera->blurAmount(), 0, 'f', 0)
+          : QStringLiteral("MB Off");
 
   renderer->drawText(QRectF(panelAnchor.x() + 12.0, panelAnchor.y() + 6.0,
                             154.0, 16.0),
@@ -812,8 +807,8 @@ void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
                      Qt::AlignLeft | Qt::AlignVCenter);
   renderer->drawText(QRectF(panelAnchor.x() + 12.0, panelAnchor.y() + 22.0,
                             154.0, 14.0),
-                     QStringLiteral("%1 | %2 | %3")
-                         .arg(modeText, lensText, dofText),
+                     QStringLiteral("%1 | %2 | %3 | %4")
+                         .arg(modeText, lensText, dofText, motionBlurText),
                      detailFont,
                      isActiveCamera ? FloatColor{0.74f, 0.94f, 0.82f, 1.0f}
                                     : FloatColor{0.74f, 0.82f, 0.90f, 1.0f},
@@ -935,16 +930,9 @@ void drawViewportInfoOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
-  QImage overlayImage(overlayW, overlayH, QImage::Format_ARGB32_Premultiplied);
-  overlayImage.fill(Qt::transparent);
-
-  QPainter p(&overlayImage);
-  p.setRenderHint(QPainter::Antialiasing, true);
   QFont font = QApplication::font();
   font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
-  p.setFont(font);
-
-  const QFontMetrics fm(p.font());
+  const QFontMetrics fm(font);
   const int lineHeight = fm.height();
   const int contentWidth =
       std::max(fm.horizontalAdvance(title),
@@ -958,21 +946,26 @@ void drawViewportInfoOverlay(ArtifactIRenderer *renderer,
   if (labelRect.bottom() > overlayH - 8) {
     labelRect.moveBottom(overlayH - 8);
   }
-  p.setPen(Qt::NoPen);
-  p.setBrush(QColor(8, 10, 14, 210));
-  p.drawRoundedRect(labelRect, 7, 7);
-  p.setPen(QColor(232, 238, 244));
-  p.drawText(labelRect.adjusted(10, 6, -10, -6), Qt::AlignLeft | Qt::AlignTop,
-             title);
-  if (!detail.isEmpty()) {
-    p.setPen(QColor(178, 190, 204));
-    const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
-    p.drawText(detailRect, Qt::AlignLeft | Qt::AlignTop,
-               fm.elidedText(detail, Qt::ElideRight, detailRect.width()));
-  }
 
-  p.end();
-  presentOverlayImage(renderer, overlayImage, restoreCanvasSize);
+  renderer->drawRoundedPanel(static_cast<float>(labelRect.left()),
+                             static_cast<float>(labelRect.top()),
+                             static_cast<float>(labelRect.width()),
+                             static_cast<float>(labelRect.height()),
+                             7.0f,
+                             FloatColor{0.03f, 0.04f, 0.06f, 0.82f},
+                             FloatColor{0.20f, 0.72f, 0.92f, 0.90f},
+                             1.0f,
+                             1.0f);
+  renderer->drawText(labelRect.adjusted(10, 6, -10, -6), title, font,
+                     FloatColor{0.92f, 0.96f, 1.0f, 1.0f},
+                     Qt::AlignLeft | Qt::AlignTop);
+  if (!detail.isEmpty()) {
+    const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
+    renderer->drawText(detailRect, fm.elidedText(detail, Qt::ElideRight, detailRect.width()),
+                       font, FloatColor{0.70f, 0.75f, 0.80f, 1.0f},
+                       Qt::AlignLeft | Qt::AlignTop);
+  }
+  (void)restoreCanvasSize;
 }
 
 void drawViewportStatusChipOverlay(ArtifactIRenderer *renderer,
@@ -985,30 +978,29 @@ void drawViewportStatusChipOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
-  QImage overlayImage(overlayW, overlayH, QImage::Format_ARGB32_Premultiplied);
-  overlayImage.fill(Qt::transparent);
-
-  QPainter p(&overlayImage);
-  p.setRenderHint(QPainter::Antialiasing, true);
   QFont font = QApplication::font();
   font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
-  p.setFont(font);
-
-  const QFontMetrics fm(p.font());
+  const QFontMetrics fm(font);
   const int chipH = fm.height() + 12;
   const int chipW = fm.horizontalAdvance(statusText) + 24;
   QRect chipRect(overlayW - chipW - 12, 12, chipW, chipH);
   if (chipRect.left() < 8) {
     chipRect.setLeft(8);
   }
-  p.setPen(QPen(QColor(76, 102, 132, 180), 1.0));
-  p.setBrush(QColor(12, 16, 22, 210));
-  p.drawRoundedRect(chipRect, 10, 10);
-  p.setPen(QColor(226, 235, 243));
-  p.drawText(chipRect, Qt::AlignCenter, statusText);
 
-  p.end();
-  presentOverlayImage(renderer, overlayImage, restoreCanvasSize);
+  renderer->drawRoundedPanel(static_cast<float>(chipRect.left()),
+                             static_cast<float>(chipRect.top()),
+                             static_cast<float>(chipRect.width()),
+                             static_cast<float>(chipRect.height()),
+                             10.0f,
+                             FloatColor{0.05f, 0.06f, 0.09f, 0.82f},
+                             FloatColor{0.30f, 0.40f, 0.52f, 0.90f},
+                             1.0f,
+                             1.0f);
+  renderer->drawText(chipRect, statusText, font,
+                     FloatColor{0.90f, 0.94f, 0.97f, 1.0f},
+                     Qt::AlignCenter);
+  (void)restoreCanvasSize;
 }
 
 void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
@@ -1025,14 +1017,8 @@ void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
     return;
   }
 
-  QImage overlayImage(overlayW, overlayH, QImage::Format_ARGB32_Premultiplied);
-  overlayImage.fill(Qt::transparent);
-
-  QPainter p(&overlayImage);
-  p.setRenderHint(QPainter::Antialiasing, true);
   QFont font = QApplication::font();
   font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
-  p.setFont(font);
 
   QString title = snapTitle;
   if (!snapBypassed) {
@@ -1049,7 +1035,7 @@ void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
     }
   }
 
-  const QFontMetrics fm(p.font());
+  const QFontMetrics fm(font);
   const int lineHeight = fm.height();
   const int contentWidth = std::max(fm.horizontalAdvance(title),
                                     fm.horizontalAdvance(snapDetail));
@@ -1061,19 +1047,24 @@ void drawViewportSnapHintOverlay(ArtifactIRenderer *renderer,
   if (labelRect.left() < 8) {
     labelRect.moveLeft(8);
   }
-  p.setPen(Qt::NoPen);
-  p.setBrush(QColor(8, 10, 14, 210));
-  p.drawRoundedRect(labelRect, 7, 7);
-  p.setPen(QColor(232, 238, 244));
-  p.drawText(labelRect.adjusted(10, 6, -10, -6), Qt::AlignLeft | Qt::AlignTop,
-             title);
-  p.setPen(QColor(178, 190, 204));
-  const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
-  p.drawText(detailRect, Qt::AlignLeft | Qt::AlignTop,
-             fm.elidedText(snapDetail, Qt::ElideRight, detailRect.width()));
 
-  p.end();
-  presentOverlayImage(renderer, overlayImage, restoreCanvasSize);
+  renderer->drawRoundedPanel(static_cast<float>(labelRect.left()),
+                             static_cast<float>(labelRect.top()),
+                             static_cast<float>(labelRect.width()),
+                             static_cast<float>(labelRect.height()),
+                             7.0f,
+                             FloatColor{0.03f, 0.04f, 0.06f, 0.82f},
+                             FloatColor{0.18f, 0.75f, 0.95f, 0.90f},
+                             1.0f,
+                             1.0f);
+  renderer->drawText(labelRect.adjusted(10, 6, -10, -6), title, font,
+                     FloatColor{0.92f, 0.96f, 1.0f, 1.0f},
+                     Qt::AlignLeft | Qt::AlignTop);
+  const QRect detailRect = labelRect.adjusted(10, 6 + lineHeight, -10, -6);
+  renderer->drawText(detailRect, fm.elidedText(snapDetail, Qt::ElideRight, detailRect.width()),
+                     font, FloatColor{0.70f, 0.75f, 0.80f, 1.0f},
+                     Qt::AlignLeft | Qt::AlignTop);
+  (void)restoreCanvasSize;
 }
 
 namespace {

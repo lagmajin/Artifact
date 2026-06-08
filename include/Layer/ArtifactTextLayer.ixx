@@ -36,9 +36,12 @@ export module Artifact.Layer.Text;
 
 
 
+import Shape.Types;
+
 import Artifact.Layers.Abstract._2D;
 import Utils.String.UniString;
 import Color.Float;
+import FloatRGBA;
 import Image.ImageF32x4_RGBA;
 import Text.Style;
 import Artifact.Layers;
@@ -47,7 +50,8 @@ export namespace Artifact {
 
 enum class TextLayoutMode : int {
     Point = 0,
-    Box = 1
+    Box = 1,
+    Path = 2
 };
 
 class ArtifactTextLayer : public ArtifactAbstract2DLayer {
@@ -124,6 +128,18 @@ public:
     void setMaxWidth(float width);
     float maxWidth() const;
 
+    // Path text: bind to a set of bezier segments
+    void setPathSegments(const std::vector<ArtifactCore::BezierSegment>& segments);
+    std::vector<ArtifactCore::BezierSegment> pathSegments() const;
+    void setPathStartOffset(double offset);
+    double pathStartOffset() const;
+    void setPathEndOffset(double offset);
+    double pathEndOffset() const;
+    void setPathAlignToPath(bool align);
+    bool pathAlignToPath() const;
+    void setPathReverse(bool reverse);
+    bool pathReverse() const;
+
     void setBoxHeight(float height);
     float boxHeight() const;
 
@@ -134,6 +150,10 @@ public:
      void removeAnimator(int index);
      void setAnimatorCount(int count);
      int animatorCount() const;
+
+     // Apply a fill color to a character range by creating an animator.
+     // Returns the animator index, or -1 if the range is invalid.
+     int applyColorToSelectorRange(int charStart, int charEnd, const ArtifactCore::FloatRGBA& color);
 
      QImage toQImage() const;
      const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;

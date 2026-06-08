@@ -67,7 +67,7 @@ W_OBJECT_IMPL(ArtifactColorPaletteWidget)
 // Custom delegate to draw colored palettes in the list
 class PaletteItemDelegate : public QStyledItemDelegate {
 public:
-    PaletteItemDelegate(std::shared_ptr<ColorPaletteManager> manager, QObject* parent = nullptr)
+    PaletteItemDelegate(std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager, QObject* parent = nullptr)
         : QStyledItemDelegate(parent), manager_(manager) {}
 
     void paint(QPainter* painter, const QStyleOptionViewItem& option, const QModelIndex& index) const override {
@@ -76,7 +76,7 @@ public:
         if (!manager_) return;
 
         QString name = index.data(Qt::DisplayRole).toString();
-        ColorPalette* p = manager_->getPalette(name);
+        ArtifactCore::Color::ColorPalette* p = manager_->getPalette(name);
         if (!p || p->colors.isEmpty()) return;
 
         painter->save();
@@ -99,13 +99,13 @@ public:
         painter->restore();
     }
 private:
-    std::shared_ptr<ColorPaletteManager> manager_;
+    std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager_;
 };
 
 
 class ArtifactColorPaletteWidget::Impl {
 public:
-    std::shared_ptr<ColorPaletteManager> manager;
+    std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager;
     
     QListWidget* listWidget = nullptr;
     QPushButton* btnGenerate = nullptr;
@@ -120,7 +120,7 @@ ArtifactColorPaletteWidget::ArtifactColorPaletteWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl()) 
 {
     // Default manager fallback if none is provided
-    impl_->manager = std::make_shared<ColorPaletteManager>();
+    impl_->manager = std::make_shared<ArtifactCore::Color::ColorPaletteManager>();
 
     QVBoxLayout* mainLayout = new QVBoxLayout(this);
 
@@ -173,7 +173,7 @@ ArtifactColorPaletteWidget::~ArtifactColorPaletteWidget() {
     delete impl_;
 }
 
-void ArtifactColorPaletteWidget::setPaletteManager(std::shared_ptr<ColorPaletteManager> manager) {
+void ArtifactColorPaletteWidget::setPaletteManager(std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager) {
     if (manager) {
         impl_->manager = manager;
         // Delegate also needs the new manager reference, we simply recreate it
@@ -241,11 +241,11 @@ void ArtifactColorPaletteWidget::onGenerateHarmonicPalette() {
     QString presetName = QInputDialog::getText(this, "Palette Name", "Enter a name for the new palette:", QLineEdit::Normal, prefix + " Palette", &ok);
     
     if (ok && !presetName.isEmpty()) {
-        ColorPalette palette;
+        ArtifactCore::Color::ColorPalette palette;
         palette.name = presetName;
 
         for (int i = 0; i < harmonyColors.size(); ++i) {
-            NamedColor nc;
+            ArtifactCore::Color::NamedColor nc;
             nc.name = QString("Color %1").arg(i + 1);
             nc.color = QColor::fromRgbF(harmonyColors[i].r(), harmonyColors[i].g(), harmonyColors[i].b(), harmonyColors[i].a());
             palette.colors.append(nc);
@@ -275,11 +275,11 @@ void ArtifactColorPaletteWidget::onSmartExtractPalette() {
     QString presetName = QInputDialog::getText(this, "Palette Name", "Enter a name for the extracted palette:", QLineEdit::Normal, "Smart Palette", &ok);
     
     if (ok && !presetName.isEmpty()) {
-        ColorPalette palette;
+        ArtifactCore::Color::ColorPalette palette;
         palette.name = presetName;
 
         for (size_t i = 0; i < floatPalette.size(); ++i) {
-            NamedColor nc;
+            ArtifactCore::Color::NamedColor nc;
             nc.name = QString("Dominant %1").arg(i + 1);
             nc.color = QColor::fromRgbF(floatPalette[i].r(), floatPalette[i].g(), floatPalette[i].b(), floatPalette[i].a());
             palette.colors.append(nc);

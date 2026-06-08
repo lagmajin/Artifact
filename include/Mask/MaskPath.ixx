@@ -64,6 +64,10 @@ struct MaskPathKeyframeSnapshot {
     bool closed = true;
     float opacity = 1.0f;
     float feather = 0.0f;
+    float featherHorizontal = 0.0f;
+    float featherVertical = 0.0f;
+    float featherInner = 0.0f;
+    float featherOuter = 0.0f;
     float expansion = 0.0f;
     bool inverted = false;
     MaskMode mode = MaskMode::Add;
@@ -100,6 +104,14 @@ public:
 
     float feather() const;
     void setFeather(float feather);
+    float featherHorizontal() const;
+    void setFeatherHorizontal(float feather);
+    float featherVertical() const;
+    void setFeatherVertical(float feather);
+    float featherInner() const;
+    void setFeatherInner(float feather);
+    float featherOuter() const;
+    void setFeatherOuter(float feather);
 
     float expansion() const;
     void setExpansion(float expansion);
