@@ -12,7 +12,6 @@ module;
 
 module Artifact.Audio.Mixer;
 
-import Artifact.Audio.Mixer;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Video;

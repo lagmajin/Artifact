@@ -43,8 +43,6 @@ module Undo.UndoManager;
 
 
 
-import Undo.UndoManager;
-
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;

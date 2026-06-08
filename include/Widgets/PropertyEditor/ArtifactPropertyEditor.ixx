@@ -20,6 +20,7 @@ module;
 #include <QSlider>
 #include <QSpinBox>
 #include <QTextEdit>
+#include <wobjectdefs.h>
 export module Artifact.Widgets.PropertyEditor;
 
 import Property.Abstract;
@@ -27,6 +28,8 @@ import Artifact.Widgets.FontPicker;
 import Event.Bus;
 
 export namespace Artifact {
+
+class ArtifactTextLayer;
 
 enum class ArtifactPropertyRowLayoutMode {
     LabelThenEditor = 0,
@@ -236,6 +239,30 @@ private:
     QColor currentColor_;
 };
 
+class ArtifactTextAnimatorColorEditor final : public ArtifactAbstractPropertyEditor {
+    W_OBJECT(ArtifactTextAnimatorColorEditor)
+public:
+    explicit ArtifactTextAnimatorColorEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+    void setLayer(ArtifactTextLayer* layer);
+
+public:
+    void colorApplied(int start, int end, QColor color) W_SIGNAL(colorApplied, start, end, color);
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    void onSelectionChanged();
+    void onColorPicked();
+
+    QTextEdit* textEdit_ = nullptr;
+    QPushButton* colorButton_ = nullptr;
+    ArtifactTextLayer* layer_ = nullptr;
+};
+
 class ArtifactObjectReferencePropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
     explicit ArtifactObjectReferencePropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
@@ -259,6 +286,8 @@ class ArtifactPropertyEditorRowWidget final : public QWidget {
 public:
     using KeyFrameHandler = std::function<void(bool)>;
     using NavigationHandler = std::function<void(int)>; // -1 for prev, 1 for next
+    using KeyframeAnchorHandler = std::function<void(ArtifactCore::KeyFrame::Anchor)>;
+    using KeyframeColorLabelHandler = std::function<void(ArtifactCore::KeyFrame::ColorLabel)>;
 
     explicit ArtifactPropertyEditorRowWidget(
         const QString& labelText,
@@ -273,6 +302,8 @@ public:
     void setExpressionHandler(std::function<void()> handler);
     void setResetHandler(std::function<void()> handler);
     void setKeyframeHandler(KeyFrameHandler handler);
+    void setKeyframeAnchorHandler(KeyframeAnchorHandler handler);
+    void setKeyframeColorLabelHandler(KeyframeColorLabelHandler handler);
     void setNavigationHandler(NavigationHandler handler);
     
     void setEditorToolTip(const QString& tooltip);
@@ -306,6 +337,8 @@ private:
     std::function<void()> expressionHandler_;
     std::function<void()> resetHandler_;
     KeyFrameHandler keyframeHandler_;
+    KeyframeAnchorHandler keyframeAnchorHandler_;
+    KeyframeColorLabelHandler keyframeColorLabelHandler_;
     NavigationHandler navigationHandler_;
     bool currentFrameKeyframed_ = false;
     

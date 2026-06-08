@@ -35,8 +35,9 @@ module;
 export module Artifact.Layers.Selection.Manager;
 
 
+export import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
-import Artifact.Composition.Abstract;
+import Memory.SharedPtr;
 
 export namespace Artifact {
 
@@ -64,9 +65,7 @@ export namespace Artifact {
   ArtifactCompositionPtr activeComposition() const;
 
   void selectionChanged() W_SIGNAL(selectionChanged);
-  void activeCompositionChanged(const ArtifactCompositionPtr& comp) W_SIGNAL(activeCompositionChanged, comp);
+  void activeCompositionChanged() W_SIGNAL(activeCompositionChanged);
  };
 
 }
-
-W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)

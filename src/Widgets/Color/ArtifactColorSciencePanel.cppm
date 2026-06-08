@@ -15,6 +15,9 @@ module;
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QHeaderView>
+#include <QTableWidget>
+#include <QTableWidgetItem>
 #include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
@@ -22,6 +25,7 @@ module;
 #include <QStandardPaths>
 #include <QSlider>
 #include <QUrl>
+#include <limits>
 #include <QVBoxLayout>
 #include <wobjectimpl.h>
 
@@ -31,10 +35,19 @@ module;
 module Artifact.Widgets.ColorSciencePanel;
 import Color.ScienceManager;
 import Color.LUT;
+import Artifact.Color.Palette;
 namespace Artifact {
 
 class ArtifactColorSciencePanel::Impl {
 public:
+  struct ColorRuleRow {
+    QString target;
+    QString op;
+    double value = 0.0;
+    QString scope;
+    bool enforce = true;
+  };
+
   struct LutEntry {
     QString displayName;
     QString source;
@@ -42,6 +55,7 @@ public:
   };
 
   ArtifactColorScienceManager *manager_ = nullptr;
+  std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> paletteManager_;
 
   // UI elements
   QComboBox *inputSpaceCombo_ = nullptr;
@@ -59,14 +73,25 @@ public:
   QPushButton *reloadLUTButton_ = nullptr;
   QPushButton *openLUTFolderButton_ = nullptr;
   QCheckBox *hdrCheckBox_ = nullptr;
+  QTableWidget *ruleTable_ = nullptr;
+  QPushButton *addRuleButton_ = nullptr;
+  QPushButton *removeRuleButton_ = nullptr;
+  QPushButton *snapToPaletteButton_ = nullptr;
+  QLineEdit *snapColorEdit_ = nullptr;
+  QLabel *snapResultLabel_ = nullptr;
 
   std::vector<LutEntry> lutEntries_;
+  std::vector<ColorRuleRow> colorRules_;
 
   void setupUI(QWidget *parent);
   void updateUI();
   void connectSignals();
   void refreshLUTBrowser();
   void updateSelectedLUTPreview();
+  void setupColorRulesSection(QWidget *parent, QVBoxLayout *layout);
+  void refreshColorRuleTable();
+  void syncColorRulesFromTable();
+  QColor nearestPaletteColor(const QColor &input) const;
   ArtifactCore::ColorLUT lutForSource(const QString &source) const;
   QPixmap buildPreviewPixmap(const ArtifactCore::ColorLUT &lut,
                              const QString &title) const;
@@ -77,6 +102,7 @@ public:
 ArtifactColorSciencePanel::ArtifactColorSciencePanel(QWidget *parent)
     : QWidget(parent), impl_(new Impl()) {
   impl_->manager_ = new ArtifactColorScienceManager();
+  impl_->paletteManager_ = std::make_shared<ArtifactCore::Color::ColorPaletteManager>();
   impl_->setupUI(this);
   impl_->connectSignals();
   impl_->updateUI();
@@ -166,7 +192,140 @@ void ArtifactColorSciencePanel::Impl::setupUI(QWidget *parent) {
 
   layout->addWidget(hdrGroup);
 
+  setupColorRulesSection(parent, layout);
+
   layout->addStretch();
+}
+
+void ArtifactColorSciencePanel::Impl::setupColorRulesSection(QWidget *parent, QVBoxLayout *layout) {
+  auto *ruleGroup = new QGroupBox("Color Constraints");
+  auto *ruleLayout = new QVBoxLayout(ruleGroup);
+
+  auto *ruleHeader = new QLabel(
+      "Build rules with target + operator + value. Rules are kept in-memory for now.");
+  ruleHeader->setWordWrap(true);
+  ruleLayout->addWidget(ruleHeader);
+
+  ruleTable_ = new QTableWidget(ruleGroup);
+  ruleTable_->setColumnCount(5);
+  ruleTable_->setHorizontalHeaderLabels({"Target", "Operator", "Value", "Scope", "Enforce"});
+  ruleTable_->horizontalHeader()->setStretchLastSection(true);
+  ruleTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
+  ruleTable_->setSelectionMode(QAbstractItemView::SingleSelection);
+  ruleTable_->setEditTriggers(QAbstractItemView::AllEditTriggers);
+  ruleLayout->addWidget(ruleTable_);
+
+  auto *controls = new QHBoxLayout();
+  addRuleButton_ = new QPushButton("Add Rule", ruleGroup);
+  removeRuleButton_ = new QPushButton("Remove Rule", ruleGroup);
+  snapColorEdit_ = new QLineEdit(ruleGroup);
+  snapColorEdit_->setPlaceholderText("#RRGGBB or #AARRGGBB");
+  snapToPaletteButton_ = new QPushButton("Snap To Palette Color", ruleGroup);
+  snapResultLabel_ = new QLabel("No snap applied", ruleGroup);
+  controls->addWidget(addRuleButton_);
+  controls->addWidget(removeRuleButton_);
+  controls->addWidget(snapColorEdit_, 1);
+  controls->addWidget(snapToPaletteButton_);
+  ruleLayout->addLayout(controls);
+  ruleLayout->addWidget(snapResultLabel_);
+
+  colorRules_.push_back({"main.alpha", "==", 1.0, "background", true});
+  colorRules_.push_back({"accent.hue", "==", 180.0, "palette", true});
+  refreshColorRuleTable();
+
+  layout->addWidget(ruleGroup);
+}
+
+void ArtifactColorSciencePanel::Impl::refreshColorRuleTable() {
+  if (!ruleTable_) {
+    return;
+  }
+  ruleTable_->blockSignals(true);
+  ruleTable_->setRowCount(static_cast<int>(colorRules_.size()));
+  for (int row = 0; row < static_cast<int>(colorRules_.size()); ++row) {
+    const auto &rule = colorRules_[row];
+    auto *targetItem = new QTableWidgetItem(rule.target);
+    auto *opItem = new QTableWidgetItem(rule.op);
+    auto *valueItem = new QTableWidgetItem(QString::number(rule.value, 'f', 3));
+    auto *scopeItem = new QTableWidgetItem(rule.scope);
+    auto *enforceItem = new QTableWidgetItem();
+    enforceItem->setCheckState(rule.enforce ? Qt::Checked : Qt::Unchecked);
+    ruleTable_->setItem(row, 0, targetItem);
+    ruleTable_->setItem(row, 1, opItem);
+    ruleTable_->setItem(row, 2, valueItem);
+    ruleTable_->setItem(row, 3, scopeItem);
+    ruleTable_->setItem(row, 4, enforceItem);
+  }
+  ruleTable_->blockSignals(false);
+}
+
+void ArtifactColorSciencePanel::Impl::syncColorRulesFromTable() {
+  if (!ruleTable_) {
+    return;
+  }
+  std::vector<ColorRuleRow> updated;
+  updated.reserve(static_cast<size_t>(ruleTable_->rowCount()));
+  for (int row = 0; row < ruleTable_->rowCount(); ++row) {
+    ColorRuleRow rule;
+    if (auto *item = ruleTable_->item(row, 0)) rule.target = item->text().trimmed();
+    if (auto *item = ruleTable_->item(row, 1)) rule.op = item->text().trimmed();
+    if (auto *item = ruleTable_->item(row, 2)) rule.value = item->text().toDouble();
+    if (auto *item = ruleTable_->item(row, 3)) rule.scope = item->text().trimmed();
+    if (auto *item = ruleTable_->item(row, 4)) rule.enforce = item->checkState() == Qt::Checked;
+    updated.push_back(rule);
+  }
+  colorRules_ = std::move(updated);
+}
+
+QColor ArtifactColorSciencePanel::Impl::nearestPaletteColor(const QColor &input) const {
+  if (!paletteManager_) {
+    return input;
+  }
+  const QStringList names = paletteManager_->paletteNames();
+  if (names.isEmpty()) {
+    return input;
+  }
+
+  auto distanceSq = [](const QColor &a, const QColor &b) {
+    const double dr = a.redF() - b.redF();
+    const double dg = a.greenF() - b.greenF();
+    const double db = a.blueF() - b.blueF();
+    const double da = a.alphaF() - b.alphaF();
+    return dr * dr + dg * dg + db * db + 0.5 * da * da;
+  };
+
+  QColor best = input;
+  double bestDistance = std::numeric_limits<double>::max();
+  for (const auto &name : names) {
+    const auto *palette = paletteManager_->getPalette(name);
+    if (!palette) {
+      continue;
+    }
+    for (const auto &entry : palette->colors) {
+      const double d = distanceSq(input, entry.color);
+      if (d < bestDistance) {
+        bestDistance = d;
+        best = entry.color;
+      }
+    }
+  }
+  return best;
+}
+
+static void seedDefaultConstraintPalette(const std::shared_ptr<ArtifactCore::Color::ColorPaletteManager>& manager)
+{
+  if (!manager || !manager->paletteNames().isEmpty()) {
+    return;
+  }
+
+  ArtifactCore::Color::ColorPalette palette;
+  palette.name = QStringLiteral("Constraint Defaults");
+  palette.colors.push_back({QStringLiteral("Main"), QColor(QStringLiteral("#ff4e5d6c"))});
+  palette.colors.push_back({QStringLiteral("Accent"), QColor(QStringLiteral("#ff6c4e5d"))});
+  palette.colors.push_back({QStringLiteral("Background"), QColor(QStringLiteral("#ff20242a"))});
+  palette.colors.push_back({QStringLiteral("Surface"), QColor(QStringLiteral("#ff2b3038"))});
+  palette.colors.push_back({QStringLiteral("Text"), QColor(QStringLiteral("#ffe3e7ec"))});
+  manager->addPalette(palette);
 }
 
 void ArtifactColorSciencePanel::Impl::updateUI() {
@@ -223,6 +382,8 @@ void ArtifactColorSciencePanel::Impl::updateUI() {
 
   // HDR
   hdrCheckBox_->setChecked(manager_->isHDREnabled());
+
+  seedDefaultConstraintPalette(paletteManager_);
 
   refreshLUTBrowser();
 }
@@ -318,6 +479,41 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
   // HDR
   connect(hdrCheckBox_, &QCheckBox::toggled,
           [this](bool checked) { manager_->setHDREnabled(checked); });
+
+  connect(addRuleButton_, &QPushButton::clicked, [this]() {
+    colorRules_.push_back({"main.alpha", "==", 1.0, "background", true});
+    refreshColorRuleTable();
+  });
+
+  connect(removeRuleButton_, &QPushButton::clicked, [this]() {
+    if (!ruleTable_) {
+      return;
+    }
+    const int row = ruleTable_->currentRow();
+    if (row < 0 || row >= static_cast<int>(colorRules_.size())) {
+      return;
+    }
+    colorRules_.erase(colorRules_.begin() + row);
+    refreshColorRuleTable();
+  });
+
+  connect(ruleTable_, &QTableWidget::itemChanged, [this](QTableWidgetItem *) {
+    syncColorRulesFromTable();
+  });
+
+  connect(snapToPaletteButton_, &QPushButton::clicked, [this]() {
+    if (!snapColorEdit_ || !snapResultLabel_) {
+      return;
+    }
+    const QColor input(snapColorEdit_->text().trimmed());
+    if (!input.isValid()) {
+      snapResultLabel_->setText("Invalid color input");
+      return;
+    }
+    const QColor snapped = nearestPaletteColor(input);
+    snapResultLabel_->setText(
+        QString("Snapped %1 -> %2").arg(input.name(QColor::HexArgb), snapped.name(QColor::HexArgb)));
+  });
 }
 
 ArtifactColorScienceManager *

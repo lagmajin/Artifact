@@ -5,7 +5,6 @@
 module Localization.Localization;
 
 import std;
-import Localization.Localization;
 import Utils.String.UniString;
 
 namespace ArtifactCore {

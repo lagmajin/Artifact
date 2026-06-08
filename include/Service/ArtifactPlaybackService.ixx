@@ -51,10 +51,6 @@ import Artifact.Playback.Engine;
 import Artifact.Composition.InOutPoints;
 import Artifact.Event.Types;
 
-W_REGISTER_ARGTYPE(Artifact::ArtifactCompositionPtr)
-W_REGISTER_ARGTYPE(Artifact::PlaybackRangeMode)
-W_REGISTER_ARGTYPE(Artifact::PlaybackSkipMode)
-
 export namespace Artifact {
 
 using namespace ArtifactCore;
@@ -247,8 +243,20 @@ public:
                                  const QImage &image,
                                  const QString &reason = {},
                                  bool persistToDisk = true);
+  bool storeRamPreviewFrameImage(int64_t frame,
+                                 const ArtifactCore::ImageF32x4_RGBA &image,
+                                 const QString &reason = {},
+                                 bool persistToDisk = true);
   bool storeCompositionPreviewFrameImage(int64_t frame,
                                          const QImage &image,
+                                         const QString &compositionId,
+                                         int previewDownsample,
+                                         int effectiveDownsample,
+                                         const QString &renderPath,
+                                         const QString &reason = {},
+                                         bool persistToDisk = true);
+  bool storeCompositionPreviewFrameImage(int64_t frame,
+                                         const ArtifactCore::ImageF32x4_RGBA &image,
                                          const QString &compositionId,
                                          int previewDownsample,
                                          int effectiveDownsample,
@@ -279,8 +287,8 @@ public: // signals
   void loopingChanged(bool loop) W_SIGNAL(loopingChanged, loop);
   void frameRangeChanged(const FrameRange &range)
       W_SIGNAL(frameRangeChanged, range);
-  void currentCompositionChanged(ArtifactCompositionPtr composition)
-      W_SIGNAL(currentCompositionChanged, composition);
+  void currentCompositionChanged()
+      W_SIGNAL(currentCompositionChanged);
   void ramPreviewStateChanged(bool enabled, const FrameRange &range)
       W_SIGNAL(ramPreviewStateChanged, enabled, range);
   void ramPreviewStatsChanged(float hitRate, int cachedFrameCount)
@@ -291,3 +299,9 @@ public: // signals
 };
 
 } // namespace Artifact
+
+W_REGISTER_ARGTYPE(ArtifactCore::PlaybackState)
+W_REGISTER_ARGTYPE(ArtifactCore::FramePosition)
+W_REGISTER_ARGTYPE(ArtifactCore::FrameRange)
+W_REGISTER_ARGTYPE(Artifact::PlaybackRangeMode)
+W_REGISTER_ARGTYPE(Artifact::PlaybackSkipMode)

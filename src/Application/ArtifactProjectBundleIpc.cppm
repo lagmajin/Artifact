@@ -22,6 +22,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Service.Project;
 import Artifact.Layers.Selection.Manager;
 import Clipboard.ClipboardManager;
+import Composition.ParametricComposition;
 
 namespace Artifact {
 
@@ -166,8 +167,47 @@ bool pasteProjectItemsBundle(const QJsonObject& bundle) {
     return ok;
 }
 
+bool pasteParametricCompositionBundle(const QJsonObject& bundle) {
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) {
+        return false;
+    }
+    auto project = svc->getCurrentProjectSharedPtr();
+    if (!project) {
+        return false;
+    }
+
+    const auto parsed = ArtifactCore::ParametricCompositionBundle::fromJson(bundle);
+    const QJsonObject compositionJson =
+        ArtifactCore::parametricCompositionBundleToCompositionJson(parsed);
+    if (compositionJson.isEmpty()) {
+        return false;
+    }
+
+    QJsonObject item;
+    item[QStringLiteral("type")] = QStringLiteral("composition");
+    item[QStringLiteral("name")] = parsed.bundleTitle.isEmpty()
+        ? QStringLiteral("Parametric Composition")
+        : parsed.bundleTitle;
+    item[QStringLiteral("compositionJson")] = compositionJson;
+    if (compositionJson.contains(QStringLiteral("id"))) {
+        item[QStringLiteral("compositionId")] =
+            compositionJson.value(QStringLiteral("id")).toString();
+    }
+
+    const QJsonArray items{item};
+    const bool ok = project->addProjectItemsFromJson(items, nullptr);
+    if (ok) {
+        project->projectChanged();
+    }
+    return ok;
+}
+
 bool applyProjectBundleLocally(const QJsonObject& bundle) {
     const QString bundleKind = bundle.value(QStringLiteral("bundleKind")).toString();
+    if (bundleKind == QStringLiteral("parametric-composition")) {
+        return pasteParametricCompositionBundle(bundle);
+    }
     if (bundleKind == QStringLiteral("layer")) {
         return pasteLayerBundle(bundle);
     }
@@ -179,6 +219,10 @@ bool applyProjectBundleLocally(const QJsonObject& bundle) {
     }
     if (bundle.contains(QStringLiteral("items"))) {
         return pasteProjectItemsBundle(bundle);
+    }
+    if (bundle.contains(QStringLiteral("definition")) ||
+        bundle.contains(QStringLiteral("instance"))) {
+        return pasteParametricCompositionBundle(bundle);
     }
     return false;
 }

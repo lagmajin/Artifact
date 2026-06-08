@@ -58,7 +58,7 @@ public:
     void updatePaletteList();
 
     // デフォルトのパレットマネージャーを外部からセットする
-    void setPaletteManager(std::shared_ptr<ColorPaletteManager> manager);
+    void setPaletteManager(std::shared_ptr<ArtifactCore::Color::ColorPaletteManager> manager);
 
 public Q_SLOTS:
     void onGenerateHarmonicPalette();
@@ -67,7 +67,7 @@ public Q_SLOTS:
     void onSavePalettes();
 
 Q_SIGNALS:
-    void paletteSelected(const ColorPalette& palette) W_SIGNAL(paletteSelected, palette);
+    void paletteSelected(const ArtifactCore::Color::ColorPalette& palette) W_SIGNAL(paletteSelected, palette);
 };
 
 } // namespace Artifact

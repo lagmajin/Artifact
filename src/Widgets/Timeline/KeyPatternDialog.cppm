@@ -19,6 +19,7 @@ module;
 
 module Artifact.Widgets.Timeline.KeyPatternDialog;
 
+import Property.Abstract;
 import Animation.KeyframePatternGenerator;
 
 namespace Artifact {

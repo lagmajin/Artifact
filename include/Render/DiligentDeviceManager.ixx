@@ -4,6 +4,7 @@
 #include <DeviceContext.h>
 #include <SwapChain.h>
 #include <RefCntAutoPtr.hpp>
+#include <vulkan/vulkan_core.h>
 #include <windows.h>
 #include <QWidget>
 export module Artifact.Render.DiligentDeviceManager;

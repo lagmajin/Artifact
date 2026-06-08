@@ -33,6 +33,9 @@ struct WaveformData {
     qint64 startFrame = 0;
 };
 
+QString waveformPreviewSummary(const QVector<float>& peaks,
+                               const QVector<float>& rms);
+
 /**
  * @brief Audio waveform generator
  */

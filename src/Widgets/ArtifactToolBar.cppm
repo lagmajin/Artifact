@@ -98,6 +98,8 @@ QString toolLabelForType(Artifact::ToolType type)
     case Artifact::ToolType::Zoom:        return QStringLiteral("ズーム");
     case Artifact::ToolType::Rotation:    return QStringLiteral("回転");
     case Artifact::ToolType::AnchorPoint: return QStringLiteral("アンカー");
+    case Artifact::ToolType::MotionSketch: return QStringLiteral("モーションスケッチ");
+    case Artifact::ToolType::Puppet: return QStringLiteral("パペット");
     case Artifact::ToolType::Pen:         return QStringLiteral("ペン");
     case Artifact::ToolType::Text:        return QStringLiteral("テキスト");
     case Artifact::ToolType::Shape:       return QStringLiteral("シェイプ");
@@ -187,6 +189,7 @@ public:
   QAction *cloneStampTool_ = nullptr;
   QAction *eraserTool_ = nullptr;
   QAction *puppetTool_ = nullptr;
+  QAction *motionSketchTool_ = nullptr;
 
   // Zoom actions
   QAction *zoomInAction_ = nullptr;
@@ -523,6 +526,10 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                        eraserToolRequested();
                      } else if (action == impl_->puppetTool_) {
                        puppetToolRequested();
+                       setTool(ToolType::Puppet);
+                     } else if (action == impl_->motionSketchTool_) {
+                       motionSketchToolRequested();
+                       setTool(ToolType::MotionSketch);
                      }
                    });
 
@@ -778,6 +785,12 @@ void ArtifactToolBar::setWorkspaceMode(WorkspaceMode mode) {
   case WorkspaceMode::Default:
     setVisible(true);
     break;
+  case WorkspaceMode::Import:
+    // Emphasize asset and project surfaces.
+    break;
+  case WorkspaceMode::Layout:
+    // Emphasize viewer and inspector surfaces.
+    break;
   case WorkspaceMode::Animation:
     // Emphasize timeline-related tools
     break;
@@ -786,6 +799,15 @@ void ArtifactToolBar::setWorkspaceMode(WorkspaceMode mode) {
     break;
   case WorkspaceMode::Compositing:
     // Emphasize viewer-related tools
+    break;
+  case WorkspaceMode::Text:
+    // Emphasize text and caption editing tools.
+    break;
+  case WorkspaceMode::Export:
+    // Emphasize render/export tools.
+    break;
+  case WorkspaceMode::Debug:
+    // Emphasize diagnostics and inspection tools.
     break;
   case WorkspaceMode::Audio:
     // Minimize visual tools
@@ -799,6 +821,12 @@ void ArtifactToolBar::setWorkspaceMode(WorkspaceMode mode) {
     case WorkspaceMode::Default:
       modeText = QStringLiteral("Default");
       break;
+    case WorkspaceMode::Import:
+      modeText = QStringLiteral("Import");
+      break;
+    case WorkspaceMode::Layout:
+      modeText = QStringLiteral("Layout");
+      break;
     case WorkspaceMode::Animation:
       modeText = QStringLiteral("Animation");
       break;
@@ -807,6 +835,15 @@ void ArtifactToolBar::setWorkspaceMode(WorkspaceMode mode) {
       break;
     case WorkspaceMode::Compositing:
       modeText = QStringLiteral("Compositing");
+      break;
+    case WorkspaceMode::Text:
+      modeText = QStringLiteral("Text");
+      break;
+    case WorkspaceMode::Export:
+      modeText = QStringLiteral("Export");
+      break;
+    case WorkspaceMode::Debug:
+      modeText = QStringLiteral("Debug");
       break;
     case WorkspaceMode::Audio:
       modeText = QStringLiteral("Audio");

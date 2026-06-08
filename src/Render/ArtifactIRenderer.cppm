@@ -61,6 +61,7 @@ import Graphics.ParticleRenderer;
 import Graphics.GPUcomputeContext;
 import Artifact.Render.DiligentImmediateSubmitter;
 import Artifact.Render.RenderCommandBuffer;
+import Core.Light;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Color.TransferFunction;
 
@@ -551,6 +552,83 @@ namespace {
   void drawOverlayPanel(float2 pos, float2 size, const FloatColor& fillColor,
                         const FloatColor& outlineColor, float opacity)
   { drawOverlayPanel(pos.x, pos.y, size.x, size.y, fillColor, outlineColor, opacity); }
+  void drawRoundedPanel(float x, float y, float w, float h, float radius,
+                        const FloatColor& fillColor,
+                        const FloatColor& outlineColor,
+                        float opacity,
+                        float outlineThickness)
+  {
+    if (w <= 0.0f || h <= 0.0f) {
+      return;
+    }
+
+    radius = std::max(0.0f, std::min(radius, std::min(w, h) * 0.5f));
+    if (radius <= 0.01f) {
+      drawOverlayPanel(x, y, w, h, fillColor, outlineColor, opacity);
+      return;
+    }
+
+    const float inset = radius;
+    const float innerW = std::max(0.0f, w - inset * 2.0f);
+    const float innerH = std::max(0.0f, h - inset * 2.0f);
+    if (innerW > 0.0f) {
+      primitiveRenderer_.drawRectLocal(x + inset, y, innerW, h, fillColor, opacity);
+    }
+    if (innerH > 0.0f) {
+      primitiveRenderer_.drawRectLocal(x, y + inset, w, innerH, fillColor, opacity);
+    }
+    primitiveRenderer_.drawCircle(x + inset, y + inset, radius, fillColor, 1.0f, true);
+    primitiveRenderer_.drawCircle(x + w - inset, y + inset, radius, fillColor, 1.0f, true);
+    primitiveRenderer_.drawCircle(x + w - inset, y + h - inset, radius, fillColor, 1.0f, true);
+    primitiveRenderer_.drawCircle(x + inset, y + h - inset, radius, fillColor, 1.0f, true);
+
+    const int segments = std::max(4, static_cast<int>(std::ceil(radius * 0.75f)));
+    constexpr float kPi = 3.14159265358979323846f;
+    auto drawArc = [this, outlineThickness, &outlineColor, segments, kPi](float cx, float cy,
+                                                                          float startDeg,
+                                                                          float endDeg,
+                                                                          float r) {
+      const float degStep = (endDeg - startDeg) / static_cast<float>(segments);
+      Detail::float2 prev{
+          cx + std::cos(startDeg * kPi / 180.0f) * r,
+          cy + std::sin(startDeg * kPi / 180.0f) * r
+      };
+      for (int i = 1; i <= segments; ++i) {
+        const float deg = startDeg + degStep * static_cast<float>(i);
+        const Detail::float2 cur{
+            cx + std::cos(deg * kPi / 180.0f) * r,
+            cy + std::sin(deg * kPi / 180.0f) * r
+        };
+        primitiveRenderer_.drawThickLineLocal(toDiligentFloat2(prev), toDiligentFloat2(cur),
+                                               outlineThickness, outlineColor);
+        prev = cur;
+      }
+    };
+
+    const float left = x;
+    const float right = x + w;
+    const float top = y;
+    const float bottom = y + h;
+    const float cxL = left + radius;
+    const float cxR = right - radius;
+    const float cyT = top + radius;
+    const float cyB = bottom - radius;
+
+    primitiveRenderer_.drawThickLineLocal({cxL, top}, {cxR, top}, outlineThickness, outlineColor);
+    primitiveRenderer_.drawThickLineLocal({right, cyT}, {right, cyB}, outlineThickness, outlineColor);
+    primitiveRenderer_.drawThickLineLocal({cxR, bottom}, {cxL, bottom}, outlineThickness, outlineColor);
+    primitiveRenderer_.drawThickLineLocal({left, cyB}, {left, cyT}, outlineThickness, outlineColor);
+
+    drawArc(cxR, cyT, -90.0f,   0.0f, radius);
+    drawArc(cxR, cyB,   0.0f,  90.0f, radius);
+    drawArc(cxL, cyB,  90.0f, 180.0f, radius);
+    drawArc(cxL, cyT, 180.0f, 270.0f, radius);
+  }
+  void drawRoundedPanel(float2 pos, float2 size, float radius,
+                        const FloatColor& fillColor,
+                        const FloatColor& outlineColor,
+                        float opacity, float outlineThickness)
+  { drawRoundedPanel(pos.x, pos.y, size.x, size.y, radius, fillColor, outlineColor, opacity, outlineThickness); }
   void drawSolidLine(Detail::float2 start, Detail::float2 end, const FloatColor& color, float thickness)
   { primitiveRenderer_.drawThickLineLocal(toDiligentFloat2(start), toDiligentFloat2(end), thickness, color); }
   void drawPolyline(const std::vector<Detail::float2>& points, const FloatColor& color, float thickness)
@@ -1742,8 +1820,12 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
 { impl_->resetGizmoCameraMatrices(); }
  void ArtifactIRenderer::set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj)
  { impl_->set3DCameraMatrices(view, proj); }
- void ArtifactIRenderer::reset3DCameraMatrices()
- { impl_->reset3DCameraMatrices(); }
+void ArtifactIRenderer::reset3DCameraMatrices()
+{ impl_->reset3DCameraMatrices(); }
+void ArtifactIRenderer::setSceneLights(const std::vector<ArtifactCore::Light>& lights)
+{ impl_->m_sceneLights = lights; }
+const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() const
+{ return impl_->m_sceneLights; }
 
  QMatrix4x4 ArtifactIRenderer::getViewMatrix() const { return impl_->primitiveRenderer_.getViewMatrix(); }
  QMatrix4x4 ArtifactIRenderer::getProjectionMatrix() const { return impl_->primitiveRenderer_.getProjectionMatrix(); }
@@ -1783,6 +1865,18 @@ void ArtifactIRenderer::resetGizmoCameraMatrices()
                                          const FloatColor& outlineColor,
                                          float opacity)
  { impl_->drawOverlayPanel(toDiligentFloat2(pos), toDiligentFloat2(size), fillColor, outlineColor, opacity); }
+ void ArtifactIRenderer::drawRoundedPanel(float x, float y, float w, float h, float radius,
+                                          const FloatColor& fillColor,
+                                          const FloatColor& outlineColor,
+                                          float opacity,
+                                          float outlineThickness)
+ { impl_->drawRoundedPanel(x, y, w, h, radius, fillColor, outlineColor, opacity, outlineThickness); }
+ void ArtifactIRenderer::drawRoundedPanel(Detail::float2 pos, Detail::float2 size, float radius,
+                                          const FloatColor& fillColor,
+                                          const FloatColor& outlineColor,
+                                          float opacity,
+                                          float outlineThickness)
+ { impl_->drawRoundedPanel(toDiligentFloat2(pos), toDiligentFloat2(size), radius, fillColor, outlineColor, opacity, outlineThickness); }
  void ArtifactIRenderer::drawSolidLine(Detail::float2 start, Detail::float2 end,
                                        const FloatColor& color, float thickness)
  { impl_->drawSolidLine(start, end, color, thickness); }

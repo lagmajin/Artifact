@@ -46,7 +46,6 @@ module Artifact.Render.Scheduler;
 
 
 
-import Artifact.Render.Scheduler;
 import Thread.Helper;
 import Frame.Position;
 import Frame.Range;

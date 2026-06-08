@@ -34,6 +34,8 @@ export namespace Artifact
   void setResolution(int width, int height);
   [[nodiscard]] int outputWidth() const;
   [[nodiscard]] int outputHeight() const;
+  void setCompositionFrameRate(double fps);
+  [[nodiscard]] double compositionFrameRate() const;
   void setFrameRate(double fps);
   [[nodiscard]] double frameRate() const;
   void setBitrateKbps(int bitrateKbps);

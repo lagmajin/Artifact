@@ -116,6 +116,9 @@ public:
     /// Get source stream information
     const VideoStreamInfo& streamInfo() const;
 
+    /// Override source frame rate (e.g. after Interpret Footage change)
+    void setStreamFrameRate(double fps);
+
     /// Lightweight diagnostics for the internal debugger
     QString debugState() const;
 
@@ -131,6 +134,7 @@ public:
     /// Seek to specific time
     /// @param time Time in seconds
     void seekToTime(double time);
+    void stop();
     
     /// Get current frame number
     int64_t currentFrame() const;
@@ -145,6 +149,7 @@ public:
     const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
     bool hasCurrentFrameBuffer() const;
     ArtifactCore::ImageF32x4_RGBA currentFrameImageBuffer() const;
+    ArtifactCore::ImageF32x4_RGBA cachedFrameImageBuffer(int64_t frameNumber) const;
     ArtifactCore::ImageF32x4_RGBA decodeFrameToImageBuffer(int64_t frameNumber) const;
     ArtifactCore::GpuVideoFrame decodeFrameToGpuFrame(int64_t frameNumber) const;
 
@@ -242,6 +247,14 @@ public:
     /// Check if audio is muted
     bool isAudioMuted() const;
 
+    // === Motion Tracking ===
+
+    /// Get linked motion tracker ID, or 0 if none
+    int motionTrackerId() const;
+
+    /// Link this video layer to a motion tracker ID
+    void setMotionTrackerId(int trackerId);
+
     // === Serialization ===
     
     /// Export to JSON for project save
@@ -264,6 +277,7 @@ public:
 private:
     /// Internal frame decoding
     void decodeCurrentFrame();
+    void cancelPendingDecode();
 };
 
 } // namespace Artifact

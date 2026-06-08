@@ -65,6 +65,7 @@
 module Artifact.Widgets.ArtifactPropertyWidget;
 
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Text;
 import Artifact.Composition.Abstract;
 import Property;
 import Property.Abstract;
@@ -489,6 +490,65 @@ QString humanizePropertyLabel(QString name) {
     return it.value();
   }
 
+  const auto parts = name.split(QLatin1Char('.'), Qt::SkipEmptyParts);
+  if (!parts.isEmpty()) {
+    const bool isMaskPath =
+        parts.front().compare(QStringLiteral("mask"), Qt::CaseInsensitive) == 0;
+    const bool isRotoPath =
+        parts.front().compare(QStringLiteral("roto"), Qt::CaseInsensitive) == 0;
+    if (isMaskPath || isRotoPath) {
+      const QString rootLabel =
+          isRotoPath ? QStringLiteral("Roto") : QStringLiteral("Mask");
+      if (parts.size() == 3 &&
+          parts[2].compare(QStringLiteral("enabled"), Qt::CaseInsensitive) == 0) {
+        return QStringLiteral("%1 %2 / Enabled")
+            .arg(rootLabel)
+            .arg(parts[1].toInt() + 1);
+      }
+      if (parts.size() == 5 &&
+          parts[2].compare(QStringLiteral("path"), Qt::CaseInsensitive) == 0) {
+        const QString pathLabel = QStringLiteral("%1 %2 / Path %3")
+                                      .arg(rootLabel)
+                                      .arg(parts[1].toInt() + 1)
+                                      .arg(parts[3].toInt() + 1);
+        const QString field = parts[4];
+        if (field.compare(QStringLiteral("closed"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Closed");
+        }
+        if (field.compare(QStringLiteral("opacity"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Opacity");
+        }
+        if (field.compare(QStringLiteral("feather"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Feather");
+        }
+        if (field.compare(QStringLiteral("featherHorizontal"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Feather H");
+        }
+        if (field.compare(QStringLiteral("featherVertical"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Feather V");
+        }
+        if (field.compare(QStringLiteral("featherInner"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Feather Inner");
+        }
+        if (field.compare(QStringLiteral("featherOuter"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Feather Outer");
+        }
+        if (field.compare(QStringLiteral("expansion"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Expansion");
+        }
+        if (field.compare(QStringLiteral("inverted"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Inverted");
+        }
+        if (field.compare(QStringLiteral("mode"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Mode");
+        }
+        if (field.compare(QStringLiteral("name"), Qt::CaseInsensitive) == 0) {
+          return pathLabel + QStringLiteral(" / Name");
+        }
+      }
+    }
+  }
+
   const int dot = name.lastIndexOf('.');
   if (dot >= 0 && dot + 1 < name.size()) {
     name = name.mid(dot + 1);
@@ -708,6 +768,14 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
     return nullptr;
   }
 
+  if (auto *colorEditor = qobject_cast<ArtifactTextAnimatorColorEditor *>(editor)) {
+    if (layer) {
+      if (auto *textLayer = dynamic_cast<Artifact::ArtifactTextLayer *>(layer.get())) {
+        colorEditor->setLayer(textLayer);
+      }
+    }
+  }
+
   const auto meta = property.metadata();
   const QString labelText = meta.displayLabel.isEmpty()
                                 ? humanizePropertyLabel(property.getName())
@@ -830,6 +898,35 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
           row->setKeyframeModeEnabled(checked);
           row->setKeyframeChecked(propertyPtr->hasKeyFrameAt(nowTime));
           row->setNavigationEnabled(hasAnyKeyframes);
+          if (keyframeChanged) {
+            keyframeChanged(propertyName);
+          }
+        });
+
+    row->setKeyframeAnchorHandler([propertyPtr, keyframeChanged, propertyName](
+                                      ArtifactCore::KeyFrame::Anchor anchor) {
+      if (!propertyPtr) {
+        return;
+      }
+      const auto keyframes = propertyPtr->getKeyFrames();
+      for (const auto &keyframe : keyframes) {
+        propertyPtr->setKeyFrameAnchorAt(keyframe.time, anchor);
+      }
+      if (keyframeChanged) {
+        keyframeChanged(propertyName);
+      }
+    });
+
+    row->setKeyframeColorLabelHandler(
+        [propertyPtr, keyframeChanged, propertyName](
+            ArtifactCore::KeyFrame::ColorLabel label) {
+          if (!propertyPtr) {
+            return;
+          }
+          const auto keyframes = propertyPtr->getKeyFrames();
+          for (const auto &keyframe : keyframes) {
+            propertyPtr->setKeyFrameColorLabelAt(keyframe.time, label);
+          }
           if (keyframeChanged) {
             keyframeChanged(propertyName);
           }

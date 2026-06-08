@@ -43,8 +43,10 @@ W_OBJECT_IMPL(ArtifactCameraLayer)
 struct ArtifactCameraLayer::Impl {
     float zoom_ = 1000.0f;
     float focusDistance_ = 1000.0f;
-    float aperture_ = 50.0f;
+    float aperture_ = 4.0f;
     bool depthOfField_ = false;
+    bool motionBlur_ = false;
+    float blurAmount_ = 100.0f;
 
     // Projection mode
     ProjectionMode projectionMode_ = ProjectionMode::Perspective;
@@ -157,6 +159,12 @@ void ArtifactCameraLayer::setAperture(float a) { camImpl_->aperture_ = a; change
 
 bool ArtifactCameraLayer::depthOfField() const { return camImpl_->depthOfField_; }
 void ArtifactCameraLayer::setDepthOfField(bool e) { camImpl_->depthOfField_ = e; changed(); }
+
+bool ArtifactCameraLayer::motionBlur() const { return camImpl_->motionBlur_; }
+void ArtifactCameraLayer::setMotionBlur(bool e) { camImpl_->motionBlur_ = e; changed(); }
+
+float ArtifactCameraLayer::blurAmount() const { return camImpl_->blurAmount_; }
+void ArtifactCameraLayer::setBlurAmount(float a) { camImpl_->blurAmount_ = std::clamp(a, 0.0f, 100.0f); changed(); }
 
 ProjectionMode ArtifactCameraLayer::projectionMode() const { return camImpl_->projectionMode_; }
 void ArtifactCameraLayer::setProjectionMode(ProjectionMode mode) {
@@ -343,6 +351,23 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
         ArtifactCore::PropertyType::Boolean,
         camImpl_->depthOfField_, -110));
 
+    auto motionBlurProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/Motion Blur"),
+        ArtifactCore::PropertyType::Boolean,
+        camImpl_->motionBlur_, -108);
+    motionBlurProp->setTooltip(QStringLiteral("Enable camera motion blur metadata"));
+    lensOptions.addProperty(motionBlurProp);
+
+    auto blurAmountProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/Blur Amount"),
+        ArtifactCore::PropertyType::Float,
+        static_cast<double>(camImpl_->blurAmount_), -107);
+    blurAmountProp->setHardRange(0.0, 100.0);
+    blurAmountProp->setSoftRange(0.0, 100.0);
+    blurAmountProp->setUnit(QStringLiteral("%"));
+    blurAmountProp->setTooltip(QStringLiteral("Motion blur amount"));
+    lensOptions.addProperty(blurAmountProp);
+
     auto focusProp = persistentLayerProperty(
         QStringLiteral("Camera Options/Focus Distance"),
         ArtifactCore::PropertyType::Float,
@@ -358,7 +383,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
         static_cast<double>(camImpl_->aperture_), -100);
     apertureProp->setHardRange(0.0, 1000.0);
     apertureProp->setSoftRange(0.0, 250.0);
-    apertureProp->setUnit(QStringLiteral("px"));
+    apertureProp->setTooltip(QStringLiteral("Aperture / f-stop"));
     lensOptions.addProperty(apertureProp);
     
     groups.push_back(projectionOptions);
@@ -396,6 +421,12 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
     } else if (propertyPath == "Camera Options/Depth of Field") {
         setDepthOfField(value.toBool());
         return true;
+    } else if (propertyPath == "Camera Options/Motion Blur") {
+        setMotionBlur(value.toBool());
+        return true;
+    } else if (propertyPath == "Camera Options/Blur Amount") {
+        setBlurAmount(value.toFloat());
+        return true;
     } else if (propertyPath == "Camera Options/Focus Distance") {
         setFocusDistance(value.toFloat());
         return true;
@@ -417,6 +448,8 @@ QJsonObject ArtifactCameraLayer::toJson() const
     obj["cameraFocusDistance"] = static_cast<double>(camImpl_->focusDistance_);
     obj["cameraAperture"] = static_cast<double>(camImpl_->aperture_);
     obj["cameraDepthOfField"] = camImpl_->depthOfField_;
+    obj["cameraMotionBlur"] = camImpl_->motionBlur_;
+    obj["cameraBlurAmount"] = static_cast<double>(camImpl_->blurAmount_);
     obj["cameraOrthoWidth"] = static_cast<double>(camImpl_->orthoWidth_);
     obj["cameraOrthoHeight"] = static_cast<double>(camImpl_->orthoHeight_);
     obj["cameraNearClip"] = static_cast<double>(camImpl_->nearClipPlane_);
@@ -447,6 +480,12 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
     }
     if (obj.contains("cameraDepthOfField")) {
         setDepthOfField(obj.value("cameraDepthOfField").toBool());
+    }
+    if (obj.contains("cameraMotionBlur")) {
+        setMotionBlur(obj.value("cameraMotionBlur").toBool());
+    }
+    if (obj.contains("cameraBlurAmount")) {
+        setBlurAmount(static_cast<float>(obj.value("cameraBlurAmount").toDouble(camImpl_->blurAmount_)));
     }
     if (obj.contains("cameraOrthoWidth")) {
         setOrthoWidth(static_cast<float>(obj.value("cameraOrthoWidth").toDouble(camImpl_->orthoWidth_)));

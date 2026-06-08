@@ -84,6 +84,7 @@ public:
   Mesh mesh_; // The 3D mesh data
   QString sourcePath_;
   bool meshLoaded_ = false;
+  bool affectedByLights_ = true;
   Impl() {}
   ~Impl() {}
 };
@@ -400,6 +401,13 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   sourcePathProp->setTooltip(QStringLiteral("3D model source file path"));
   renderGroup.addProperty(sourcePathProp);
 
+  auto affectedByLightsProp = persistentLayerProperty(
+      QStringLiteral("render.affectedByLights"), PropertyType::Boolean,
+      affectedByLights(), -54);
+  affectedByLightsProp->setDisplayLabel(QStringLiteral("Affected By Lights"));
+  affectedByLightsProp->setTooltip(QStringLiteral("Disable to ignore all scene lights for this 3D layer"));
+  renderGroup.addProperty(affectedByLightsProp);
+
   PropertyGroup materialGroup(QStringLiteral("Material"));
 
   auto baseColorProp = persistentLayerProperty(
@@ -492,6 +500,9 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     loadFromFile(value.toString());
     Q_EMIT changed();
     return true;
+  } else if (propertyPath == QStringLiteral("render.affectedByLights")) {
+    setAffectedByLights(value.toBool());
+    return true;
   } else if (propertyPath == QStringLiteral("material.base.color")) {
     impl_->material_.setBaseColor(value.value<QColor>());
     Q_EMIT changed();
@@ -535,6 +546,14 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
+}
+
+bool Artifact3DLayer::affectedByLights() const { return impl_->affectedByLights_; }
+
+void Artifact3DLayer::setAffectedByLights(bool enabled)
+{
+  impl_->affectedByLights_ = enabled;
+  changed();
 }
 
 } // namespace Artifact

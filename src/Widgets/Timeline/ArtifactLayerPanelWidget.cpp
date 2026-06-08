@@ -55,11 +55,20 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Image;
+import Artifact.Layer.Text;
+import Artifact.Layer.Shape;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
+import Artifact.Layer.Audio;
+import Artifact.Layer.Camera;
+import Artifact.Layer.Light;
+import Artifact.Layer.Particle;
 import Artifact.Layer.Composition;
+import Artifact.Layer.Solid2D;
+import Artifact.Layer.Construction;
+import Artifact.Layer.Clone;
 import Layer.Matte;
 import Artifact.Timeline.KeyframeModel;
 import Undo.UndoManager;
@@ -168,9 +177,9 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
   if (layer->hasAudio()) {
     descriptor.typeText = QStringLiteral("Audio Layer");
     descriptor.timelineBadgeText = QStringLiteral("Audio");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Audio Layer");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Audio Layer · Waveform Preview");
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Audio");
+    descriptor.capabilitySummaryText = QStringLiteral("Waveform preview");
     descriptor.badgeTone = LayerPresentationBadgeTone::Media;
     return descriptor;
   }
@@ -245,8 +254,58 @@ namespace {
     }
   }
 
-  constexpr int kVariantChipWidth = 72;
-  constexpr int kVariantChipHeight = 16;
+constexpr int kVariantChipWidth = 72;
+constexpr int kVariantChipHeight = 16;
+constexpr int kLayerTypeIconSize = 14;
+constexpr int kLayerTypeIconGap = 5;
+
+enum class TimelineLayerIconKind {
+  Generic,
+  Solid,
+  Image,
+  Svg,
+  Video,
+  Audio,
+  Text,
+  Shape,
+  Precomp,
+  Camera,
+  Light,
+  Group,
+  Null,
+  Adjustment,
+  Particle,
+  Clone,
+  Model3D,
+  Construction
+};
+
+TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& layer)
+{
+  if (!layer) return TimelineLayerIconKind::Generic;
+  if (layer->isAdjustmentLayer()) return TimelineLayerIconKind::Adjustment;
+  if (layer->isGroupLayer()) return TimelineLayerIconKind::Group;
+  if (layer->isCloneLayer()) return TimelineLayerIconKind::Clone;
+  if (layer->isConstructionLayer()) return TimelineLayerIconKind::Construction;
+  if (layer->is3D()) return TimelineLayerIconKind::Model3D;
+  if (dynamic_cast<ArtifactCompositionLayer*>(layer.get())) return TimelineLayerIconKind::Precomp;
+  if (std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) return TimelineLayerIconKind::Text;
+  if (std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) return TimelineLayerIconKind::Shape;
+  if (std::dynamic_pointer_cast<ArtifactSvgLayer>(layer)) return TimelineLayerIconKind::Svg;
+  if (std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) return TimelineLayerIconKind::Image;
+  if (std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) return TimelineLayerIconKind::Audio;
+  if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+    if (layer->hasAudio() && !layer->hasVideo()) return TimelineLayerIconKind::Audio;
+    return TimelineLayerIconKind::Video;
+  }
+  if (std::dynamic_pointer_cast<ArtifactCameraLayer>(layer)) return TimelineLayerIconKind::Camera;
+  if (std::dynamic_pointer_cast<ArtifactLightLayer>(layer)) return TimelineLayerIconKind::Light;
+  if (std::dynamic_pointer_cast<ArtifactParticleLayer>(layer)) return TimelineLayerIconKind::Particle;
+  if (std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) return TimelineLayerIconKind::Solid;
+  if (layer->isNullLayer()) return TimelineLayerIconKind::Null;
+  if (layer->hasAudio() && !layer->hasVideo()) return TimelineLayerIconKind::Audio;
+  return TimelineLayerIconKind::Solid;
+}
 
   QString variantNameForIndex(int index)
   {
@@ -594,6 +653,94 @@ namespace {
     }
   }
 
+  QStringList collectTimelineDroppedPaths(const QMimeData* mime)
+  {
+    QStringList validPaths;
+    if (!mime) {
+      return validPaths;
+    }
+
+    if (mime->hasUrls()) {
+      for (const auto& url : mime->urls()) {
+        if (!url.isLocalFile()) {
+          continue;
+        }
+        const QString filePath = url.toLocalFile();
+        const QFileInfo info(filePath);
+        if (!info.exists() || info.isDir()) {
+          continue;
+        }
+        const LayerType type = inferLayerTypeFromFile(filePath);
+        if (type == LayerType::Image || type == LayerType::Video ||
+            type == LayerType::Audio || type == LayerType::Shape) {
+          validPaths.append(filePath);
+        }
+      }
+    }
+
+    if (!validPaths.isEmpty() || !mime->hasText()) {
+      return validPaths;
+    }
+
+    const QStringList paths =
+        mime->text().split(QStringLiteral("\n"), Qt::SkipEmptyParts);
+    for (const QString& path : paths) {
+      const QString trimmed = path.trimmed();
+      if (trimmed.isEmpty()) {
+        continue;
+      }
+      const QFileInfo info(trimmed);
+      if (!info.exists() || info.isDir()) {
+        continue;
+      }
+      const LayerType type = inferLayerTypeFromFile(trimmed);
+      if (type == LayerType::Image || type == LayerType::Video ||
+          type == LayerType::Audio || type == LayerType::Shape) {
+        validPaths.append(trimmed);
+      }
+    }
+
+    return validPaths;
+  }
+
+  void importTimelineDroppedPaths(const QStringList& validPaths)
+  {
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc || validPaths.isEmpty()) {
+      return;
+    }
+
+    svc->importAssetsFromPathsAsync(validPaths, [svc](QStringList imported) {
+      if (!svc || imported.isEmpty()) {
+        return;
+      }
+
+      for (const auto& path : imported) {
+        const LayerType type = inferLayerTypeFromFile(path);
+        if (type == LayerType::Image) {
+          ArtifactImageInitParams params(QFileInfo(path).baseName());
+          params.setImagePath(path);
+          svc->addLayerToCurrentComposition(params);
+        } else if (type == LayerType::Shape) {
+          ArtifactSvgInitParams params(QFileInfo(path).baseName());
+          params.setSvgPath(path);
+          svc->addLayerToCurrentComposition(params);
+        } else if (type == LayerType::Audio) {
+          ArtifactAudioInitParams params(QFileInfo(path).baseName());
+          params.setAudioPath(path);
+          svc->addLayerToCurrentComposition(params);
+        } else if (type == LayerType::Video) {
+          ArtifactVideoInitParams params(QFileInfo(path).baseName());
+          params.setVideoPath(path);
+          svc->addLayerToCurrentComposition(params);
+        } else {
+          ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
+          svc->addLayerToCurrentComposition(params);
+        }
+      }
+    });
+  }
+
   QString blendModeToText(const LAYER_BLEND_TYPE mode)
   {
     switch (mode) {
@@ -623,6 +770,7 @@ namespace {
     return {
       {QStringLiteral("Normal"), LAYER_BLEND_TYPE::BLEND_NORMAL},
       {QStringLiteral("Add"), LAYER_BLEND_TYPE::BLEND_ADD},
+      {QStringLiteral("Subtract"), LAYER_BLEND_TYPE::BLEND_SUBTRACT},
       {QStringLiteral("Multiply"), LAYER_BLEND_TYPE::BLEND_MULTIPLY},
       {QStringLiteral("Screen"), LAYER_BLEND_TYPE::BLEND_SCREEN},
       {QStringLiteral("Overlay"), LAYER_BLEND_TYPE::BLEND_OVERLAY},
@@ -630,14 +778,30 @@ namespace {
       {QStringLiteral("Lighten"), LAYER_BLEND_TYPE::BLEND_LIGHTEN},
       {QStringLiteral("Color Dodge"), LAYER_BLEND_TYPE::BLEND_COLOR_DODGE},
       {QStringLiteral("Color Burn"), LAYER_BLEND_TYPE::BLEND_COLOR_BURN},
+      {QStringLiteral("Linear Burn"), LAYER_BLEND_TYPE::BLEND_LINEAR_BURN},
+      {QStringLiteral("Classic Color Burn"), LAYER_BLEND_TYPE::BLEND_CLASSIC_COLOR_BURN},
+      {QStringLiteral("Divide"), LAYER_BLEND_TYPE::BLEND_DIVIDE},
+      {QStringLiteral("Linear Dodge"), LAYER_BLEND_TYPE::BLEND_LINEAR_DODGE},
+      {QStringLiteral("Classic Color Dodge"), LAYER_BLEND_TYPE::BLEND_CLASSIC_COLOR_DODGE},
       {QStringLiteral("Hard Light"), LAYER_BLEND_TYPE::BLEND_HARD_LIGHT},
       {QStringLiteral("Soft Light"), LAYER_BLEND_TYPE::BLEND_SOFT_LIGHT},
+      {QStringLiteral("Linear Light"), LAYER_BLEND_TYPE::BLEND_LINEAR_LIGHT},
+      {QStringLiteral("Vivid Light"), LAYER_BLEND_TYPE::BLEND_VIVID_LIGHT},
+      {QStringLiteral("Pin Light"), LAYER_BLEND_TYPE::BLEND_PIN_LIGHT},
+      {QStringLiteral("Hard Mix"), LAYER_BLEND_TYPE::BLEND_HARD_MIX},
       {QStringLiteral("Difference"), LAYER_BLEND_TYPE::BLEND_DIFFERENCE},
+      {QStringLiteral("Classic Difference"), LAYER_BLEND_TYPE::BLEND_CLASSIC_DIFFERENCE},
       {QStringLiteral("Exclusion"), LAYER_BLEND_TYPE::BLEND_EXCLUSION},
       {QStringLiteral("Hue"), LAYER_BLEND_TYPE::BLEND_HUE},
       {QStringLiteral("Saturation"), LAYER_BLEND_TYPE::BLEND_SATURATION},
       {QStringLiteral("Color"), LAYER_BLEND_TYPE::BLEND_COLOR},
-      {QStringLiteral("Luminosity"), LAYER_BLEND_TYPE::BLEND_LUMINOSITY}
+      {QStringLiteral("Luminosity"), LAYER_BLEND_TYPE::BLEND_LUMINOSITY},
+      {QStringLiteral("Dissolve"), LAYER_BLEND_TYPE::BLEND_DISSOLVE},
+      {QStringLiteral("Dancing Dissolve"), LAYER_BLEND_TYPE::BLEND_DANCING_DISSOLVE},
+      {QStringLiteral("Stencil Alpha"), LAYER_BLEND_TYPE::BLEND_STENCIL_ALPHA},
+      {QStringLiteral("Stencil Luma"), LAYER_BLEND_TYPE::BLEND_STENCIL_LUMA},
+      {QStringLiteral("Silhouette Alpha"), LAYER_BLEND_TYPE::BLEND_SILHOUETTE_ALPHA},
+      {QStringLiteral("Silhouette Luma"), LAYER_BLEND_TYPE::BLEND_SILHOUETTE_LUMA}
     };
   }
 
@@ -841,9 +1005,10 @@ namespace {
 
  W_OBJECT_IMPL(ArtifactLayerPanelHeaderWidget)
 
- ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
-  : QWidget(parent), impl_(new Impl())
- {
+ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
+ : QWidget(parent), impl_(new Impl())
+{
+ setAcceptDrops(true);
   impl_->visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"));
   impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"));
   if (impl_->lockIcon.isNull()) impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
@@ -970,6 +1135,37 @@ void ArtifactLayerPanelHeaderWidget::mouseReleaseEvent(QMouseEvent* event)
 void ArtifactLayerPanelHeaderWidget::leaveEvent(QEvent* event)
 {
  QWidget::leaveEvent(event);
+}
+
+void ArtifactLayerPanelHeaderWidget::dragEnterEvent(QDragEnterEvent* event)
+{
+  const QStringList validPaths = collectTimelineDroppedPaths(event->mimeData());
+  if (!validPaths.isEmpty()) {
+    event->acceptProposedAction();
+    return;
+  }
+  event->ignore();
+}
+
+void ArtifactLayerPanelHeaderWidget::dragMoveEvent(QDragMoveEvent* event)
+{
+  const QStringList validPaths = collectTimelineDroppedPaths(event->mimeData());
+  if (!validPaths.isEmpty()) {
+    event->acceptProposedAction();
+    return;
+  }
+  event->ignore();
+}
+
+void ArtifactLayerPanelHeaderWidget::dropEvent(QDropEvent* event)
+{
+  const QStringList validPaths = collectTimelineDroppedPaths(event->mimeData());
+  if (validPaths.isEmpty()) {
+    event->ignore();
+    return;
+  }
+  importTimelineDroppedPaths(validPaths);
+  event->acceptProposedAction();
 }
 
 // ============================================================================
@@ -1381,6 +1577,24 @@ public:
     iconCreateAdjust  = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/warning.svg"));
     iconCreateText    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/title.svg"));
     iconCreateModel3D = loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/layers.svg"));
+    iconLayerGeneric      = loadLayerPanelIcon(QStringLiteral("Studio/timeline_layer.svg"));
+    iconLayerSolid        = loadLayerPanelIcon(QStringLiteral("Studio/layer_composite.svg"));
+    iconLayerImage        = loadLayerPanelIcon(QStringLiteral("Studio/photo_filter.svg"));
+    iconLayerSvg          = loadLayerPanelIcon(QStringLiteral("Studio/svg_layer.svg"));
+    iconLayerVideo        = loadLayerPanelIcon(QStringLiteral("Studio/videocam.svg"));
+    iconLayerAudio        = loadLayerPanelIcon(QStringLiteral("Studio/audiotrack.svg"));
+    iconLayerText         = loadLayerPanelIcon(QStringLiteral("Studio/text_fields.svg"));
+    iconLayerShape        = loadLayerPanelIcon(QStringLiteral("Studio/shape_rect.svg"));
+    iconLayerPrecomp      = loadLayerPanelIcon(QStringLiteral("Studio/composition.svg"));
+    iconLayerCamera       = loadLayerPanelIcon(QStringLiteral("Studio/camera_alt.svg"));
+    iconLayerLight        = loadLayerPanelIcon(QStringLiteral("Studio/wb_sunny.svg"));
+    iconLayerGroup        = loadLayerPanelIcon(QStringLiteral("Studio/group.svg"));
+    iconLayerNull         = loadLayerPanelIcon(QStringLiteral("Studio/transform.svg"));
+    iconLayerAdjustment   = loadLayerPanelIcon(QStringLiteral("Studio/tune.svg"));
+    iconLayerParticle     = loadLayerPanelIcon(QStringLiteral("Studio/particle.svg"));
+    iconLayerClone        = loadLayerPanelIcon(QStringLiteral("Studio/content_copy.svg"));
+    iconLayerModel3D      = loadLayerPanelIcon(QStringLiteral("Studio/model3d.svg"));
+    iconLayerConstruction = loadLayerPanelIcon(QStringLiteral("Studio/draw.svg"));
   }
   ~Impl() = default;
 
@@ -1399,6 +1613,10 @@ public:
   QIcon iconVisOn, iconVisOff, iconLock, iconUnlock, iconSolo, iconShy;
   QIcon iconLink, iconLinkOff;
   QIcon iconCreateSolid, iconCreateNull, iconCreateAdjust, iconCreateText, iconCreateModel3D;
+  QIcon iconLayerGeneric, iconLayerSolid, iconLayerImage, iconLayerSvg, iconLayerVideo, iconLayerAudio;
+  QIcon iconLayerText, iconLayerShape, iconLayerPrecomp, iconLayerCamera, iconLayerLight, iconLayerGroup;
+  QIcon iconLayerNull, iconLayerAdjustment, iconLayerParticle, iconLayerClone, iconLayerModel3D;
+  QIcon iconLayerConstruction;
   bool shyHidden = false;
   QString filterText;
   SearchMatchMode searchMatchMode = SearchMatchMode::AllVisible;
@@ -1460,6 +1678,31 @@ public:
    }
 
    editingLayerId = LayerID();
+  }
+
+  const QIcon& iconForLayerKind(TimelineLayerIconKind kind) const
+  {
+    switch (kind) {
+    case TimelineLayerIconKind::Solid: return iconLayerSolid;
+    case TimelineLayerIconKind::Image: return iconLayerImage;
+    case TimelineLayerIconKind::Svg: return iconLayerSvg;
+    case TimelineLayerIconKind::Video: return iconLayerVideo;
+    case TimelineLayerIconKind::Audio: return iconLayerAudio;
+    case TimelineLayerIconKind::Text: return iconLayerText;
+    case TimelineLayerIconKind::Shape: return iconLayerShape;
+    case TimelineLayerIconKind::Precomp: return iconLayerPrecomp;
+    case TimelineLayerIconKind::Camera: return iconLayerCamera;
+    case TimelineLayerIconKind::Light: return iconLayerLight;
+    case TimelineLayerIconKind::Group: return iconLayerGroup;
+    case TimelineLayerIconKind::Null: return iconLayerNull;
+    case TimelineLayerIconKind::Adjustment: return iconLayerAdjustment;
+    case TimelineLayerIconKind::Particle: return iconLayerParticle;
+    case TimelineLayerIconKind::Clone: return iconLayerClone;
+    case TimelineLayerIconKind::Model3D: return iconLayerModel3D;
+    case TimelineLayerIconKind::Construction: return iconLayerConstruction;
+    case TimelineLayerIconKind::Generic:
+    default: return iconLayerGeneric;
+    }
   }
 
   void clearMaskSelection()
@@ -2178,7 +2421,10 @@ void ArtifactLayerPanelWidget::editLayerName(const LayerID& id)
     // Position it
     const int rowIndent = impl_->visibleRows[idx].depth * 14;
     const int nameStartX = kLayerColumnWidth * kLayerPropertyColumnCount;
-    const int textX = nameStartX + rowIndent + (impl_->visibleRows[idx].hasChildren ? 16 : 4);
+    const int layerIconAdvance = kLayerTypeIconSize + kLayerTypeIconGap;
+    const int textX = nameStartX + rowIndent +
+                      (impl_->visibleRows[idx].hasChildren ? 16 : 4) +
+                      layerIconAdvance;
     const int editorWidth = std::max(60, width() - textX - kInlineParentWidth - kInlineBlendWidth - 8);
     impl_->inlineNameEditor->setGeometry(textX, impl_->rowViewportY(idx) + 2, editorWidth, kLayerRowHeight - 4);
 
@@ -2652,6 +2898,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           svc->removeLayerFromComposition(compId, layer->id());
           impl_->selectedLayerId = LayerID();
           impl_->currentPropertyPath.clear();
+          impl_->clearDragState();
           updateLayout();
         }
       }
@@ -2677,6 +2924,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           if (auto* selectionManager = currentLayerSelectionManager()) {
             selectionManager->clearSelection();
           }
+          impl_->clearDragState();
           for (const auto& layerId : selectedIds) {
             svc->removeLayerFromComposition(compId, layerId);
           }
@@ -3679,6 +3927,7 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
           impl_->selectedLayerId = LayerID();
           impl_->currentPropertyPath.clear();
           propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
+          impl_->clearDragState();
           for (const auto& layerId : selectedIds) {
             service->removeLayerFromComposition(compId, layerId);
           }
@@ -4085,7 +4334,23 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     }
 
     p.setPen(text);
-    const int textX = nameX + ((row.hasChildren && (row.kind == RowKind::Layer || isGroupRow)) ? 16 : 4);
+    int textX = nameX + ((row.hasChildren && (row.kind == RowKind::Layer || isGroupRow)) ? 16 : 4);
+    if (row.kind == RowKind::Layer) {
+      const QRect layerTypeIconRect(textX, y + (rowH - kLayerTypeIconSize) / 2,
+                                    kLayerTypeIconSize, kLayerTypeIconSize);
+      const QIcon& layerTypeIcon = impl_->iconForLayerKind(layerIconKindForLayer(l));
+      if (!layerTypeIcon.isNull()) {
+        p.setOpacity(layerSelected ? 1.0 : 0.90);
+        p.drawPixmap(layerTypeIconRect, layerTypeIcon.pixmap(layerTypeIconRect.size()));
+        p.setOpacity(1.0);
+      } else {
+        p.setPen(QPen(layerSelected ? accent.darker(180) : border, 1.0));
+        p.setBrush(mixColor(background, accent, 0.24));
+        p.drawRoundedRect(layerTypeIconRect.adjusted(1, 1, -1, -1), 2, 2);
+      }
+      textX += kLayerTypeIconSize + kLayerTypeIconGap;
+      p.setPen(text);
+    }
     const bool showInlineCombos = row.kind == RowKind::Layer &&
                                   (width() - (nameX + 8)) >= (kInlineComboReserve + kLayerNameMinWidth);
     const int parentRectX = width() - kInlineComboReserve;
@@ -4149,8 +4414,6 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.setPen(text);
       p.drawText(textX + 4, y, labelWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
     } else {
-     const bool isPrecompLayer = dynamic_cast<ArtifactCompositionLayer *>(l.get()) != nullptr;
-     const bool isModel3DLayer = l->is3D() && !isPrecompLayer;
      const auto matteRefs = l->matteReferences();
      const bool hasMatteRefs = !matteRefs.empty();
      bool matteBroken = false;
@@ -4171,7 +4434,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      const auto variants = l->getVariants();
      const int variantChipW = kVariantChipWidth;
      const QFontMetrics fm(p.font());
-     const int iconGap = ((isPrecompLayer || isModel3DLayer) ? 18 : 0) + (hasMatteRefs ? 18 : 0);
+     const int iconGap = hasMatteRefs ? 18 : 0;
      const QString layerName = l->layerName();
      const QString layerAux = row.auxiliaryText.trimmed();
      const QString matteBadgeText = hasMatteRefs ? matteSourceBadgeLabel(safeCompositionLookup(impl_->compositionId), l)
@@ -4179,31 +4442,11 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      const int matteBadgeW = hasMatteRefs
                                  ? std::min(160, std::max(66, fm.horizontalAdvance(matteBadgeText) + 16))
                                  : 0;
-     const int matteBadgeX = textX + 4 + ((isPrecompLayer || isModel3DLayer) ? 18 : 0) + 18;
+     const int matteBadgeX = textX + 4 + 18;
      const QRect matteBadgeRect(matteBadgeX, y + 5, matteBadgeW, rowH - 10);
      const int layerTextX = hasMatteRefs ? (matteBadgeRect.right() + 8) : (textX + 4 + iconGap);
-     if (isPrecompLayer) {
-      const QRect iconRect(textX + 4, y + 7, 12, 12);
-      const QColor iconFill = mixColor(background, accent, 0.34);
-      const QColor iconStroke = layerSelected ? accent.darker(180) : border;
-      p.setPen(QPen(iconStroke, 1.2));
-      p.setBrush(iconFill);
-      p.drawRoundedRect(iconRect, 2, 2);
-      p.setBrush(Qt::NoBrush);
-      p.setPen(QPen(iconStroke.darker(120), 1.0));
-      p.drawRect(iconRect.adjusted(3, 3, -3, -3));
-     } else if (isModel3DLayer) {
-      const QRect iconRect(textX + 4, y + 6, 14, 14);
-      if (!impl_->iconCreateModel3D.isNull()) {
-        p.drawPixmap(iconRect, impl_->iconCreateModel3D.pixmap(iconRect.size()));
-      } else {
-        p.setPen(QPen(layerSelected ? accent.darker(180) : border, 1.2));
-        p.setBrush(mixColor(background, accent, 0.28));
-        p.drawRoundedRect(iconRect, 2, 2);
-      }
-     }
      if (hasMatteRefs) {
-      const QRect iconRect(textX + 4 + ((isPrecompLayer || isModel3DLayer) ? 18 : 0), y + 6, 14, 14);
+      const QRect iconRect(textX + 4, y + 6, 14, 14);
       const QIcon& matteIcon = matteBroken ? impl_->iconLinkOff : impl_->iconLink;
       if (!matteIcon.isNull()) {
         p.setOpacity(matteBroken ? 0.95 : 1.0);
@@ -4428,77 +4671,14 @@ void ArtifactLayerPanelWidget::dragEnterEvent(QDragEnterEvent* e)
     return;
   }
 
-  QStringList validPaths;
-
-  if (mime->hasUrls()) {
-    for (const auto& url : mime->urls()) {
-      if (url.isLocalFile()) {
-        const QString filePath = url.toLocalFile();
-        const LayerType type = inferLayerTypeFromFile(filePath);
-        if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio || type == LayerType::Shape) {
-          validPaths.append(filePath);
-        }
-      }
-    }
-  }
-
-  if (validPaths.isEmpty() && mime->hasText()) {
-    const QStringList paths = mime->text().split(QStringLiteral("\n"), Qt::SkipEmptyParts);
-    for (const QString& path : paths) {
-      const QString trimmed = path.trimmed();
-      if (trimmed.isEmpty()) continue;
-      const LayerType type = inferLayerTypeFromFile(trimmed);
-      if (type == LayerType::Image || type == LayerType::Video || type == LayerType::Audio || type == LayerType::Shape) {
-        validPaths.append(trimmed);
-      }
-    }
-  }
+  QStringList validPaths = collectTimelineDroppedPaths(mime);
 
   if (validPaths.isEmpty()) {
     event->ignore();
     return;
   }
 
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc) {
-    event->ignore();
-    return;
-  }
-
-  QPointer<ArtifactLayerPanelWidget> self(this);
-  svc->importAssetsFromPathsAsync(validPaths, [self, svc](QStringList imported) {
-    if (!self || !svc) {
-      return;
-    }
-
-    if (imported.isEmpty()) {
-      return;
-    }
-
-    for (const auto& path : imported) {
-      const LayerType type = inferLayerTypeFromFile(path);
-      if (type == LayerType::Image) {
-        ArtifactImageInitParams params(QFileInfo(path).baseName());
-        params.setImagePath(path);
-        svc->addLayerToCurrentComposition(params);
-      } else if (type == LayerType::Shape) {
-        ArtifactSvgInitParams params(QFileInfo(path).baseName());
-        params.setSvgPath(path);
-        svc->addLayerToCurrentComposition(params);
-      } else if (type == LayerType::Audio) {
-        ArtifactAudioInitParams params(QFileInfo(path).baseName());
-        params.setAudioPath(path);
-        svc->addLayerToCurrentComposition(params);
-      } else if (type == LayerType::Video) {
-        ArtifactVideoInitParams params(QFileInfo(path).baseName());
-        params.setVideoPath(path);
-        svc->addLayerToCurrentComposition(params);
-      } else {
-        ArtifactLayerInitParams params(QFileInfo(path).baseName(), type);
-        svc->addLayerToCurrentComposition(params);
-      }
-    }
-  });
+  importTimelineDroppedPaths(validPaths);
 
   event->acceptProposedAction();
  }
@@ -4520,6 +4700,7 @@ public:
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(QWidget* parent)
   : QWidget(parent), impl_(new Impl)
  {
+  setAcceptDrops(true);
   auto* layout = new QVBoxLayout(this);
   layout->setContentsMargins(0,0,0,0);
   layout->setSpacing(0);
@@ -4550,6 +4731,37 @@ public:
       [this](const LayerID& layerId, const QString& propertyPath) {
         this->propertyFocusChanged(layerId, propertyPath);
       });
+}
+
+void ArtifactLayerTimelinePanelWrapper::dragEnterEvent(QDragEnterEvent* event)
+{
+  const QStringList validPaths = collectTimelineDroppedPaths(event->mimeData());
+  if (!validPaths.isEmpty()) {
+    event->acceptProposedAction();
+    return;
+  }
+  event->ignore();
+}
+
+void ArtifactLayerTimelinePanelWrapper::dragMoveEvent(QDragMoveEvent* event)
+{
+  const QStringList validPaths = collectTimelineDroppedPaths(event->mimeData());
+  if (!validPaths.isEmpty()) {
+    event->acceptProposedAction();
+    return;
+  }
+  event->ignore();
+}
+
+void ArtifactLayerTimelinePanelWrapper::dropEvent(QDropEvent* event)
+{
+  const QStringList validPaths = collectTimelineDroppedPaths(event->mimeData());
+  if (validPaths.isEmpty()) {
+    event->ignore();
+    return;
+  }
+  importTimelineDroppedPaths(validPaths);
+  event->acceptProposedAction();
 }
 
  ArtifactLayerTimelinePanelWrapper::ArtifactLayerTimelinePanelWrapper(const CompositionID& id, QWidget* parent)

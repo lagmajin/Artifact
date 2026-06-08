@@ -36,7 +36,6 @@ module;
 module Artifact.Widgets.ReactiveEventEditorWindow;
 
 import std;
-import Artifact.Widgets.ReactiveEventEditorWindow;
 import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Artifact.Composition.Abstract;

@@ -19,9 +19,14 @@ enum class ToolBarDisplayMode {
 // ワークスペースモード列挙型
 enum class WorkspaceMode {
   Default,     // 標準
+  Import,      // 取り込み重視
+  Layout,      // レイアウト重視
   Animation,   // アニメーション重視
   VFX,         // エフェクト重視
   Compositing, // 合成重視
+  Text,        // テキスト/キャプション重視
+  Export,      // 書き出し重視
+  Debug,       // 診断重視
   Audio        // オーディオ重視
 };
 
@@ -79,6 +84,7 @@ public:
   void cloneStampToolRequested() W_SIGNAL(cloneStampToolRequested);
   void eraserToolRequested() W_SIGNAL(eraserToolRequested);
   void puppetToolRequested() W_SIGNAL(puppetToolRequested);
+  void motionSketchToolRequested() W_SIGNAL(motionSketchToolRequested);
 
   // Zoom signals
   void zoomInRequested() W_SIGNAL(zoomInRequested);

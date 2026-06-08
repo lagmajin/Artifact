@@ -46,7 +46,6 @@ module;
 #include <random>
 module Artifact.Widgets.UndoHistoryWidget;
 
-import Artifact.Widgets.UndoHistoryWidget;
 import Undo.UndoManager;
 import Widgets.Utils.CSS;
 

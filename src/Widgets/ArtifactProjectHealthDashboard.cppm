@@ -99,7 +99,8 @@ QString assetPathFromDiagnostic(const ArtifactCore::ProjectDiagnostic& diag)
     return match.captured(1).trimmed();
 }
 
-std::vector<ArtifactCore::ProjectDiagnostic> diagnosticsFromHealthReport(const ProjectHealthReport& report)
+auto convertHealthReportToDiagnostics(const ProjectHealthReport& report)
+    -> std::vector<ArtifactCore::ProjectDiagnostic>
 {
     std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
     diagnostics.reserve(static_cast<size_t>(report.issues.size()));
@@ -203,7 +204,8 @@ public:
             lastReport_ = {};
         } else {
             lastReport_ = ArtifactProjectHealthChecker::check(project_);
-            diagnostics = diagnosticsFromHealthReport(lastReport_);
+            // Use the service's conversion logic directly (or inline)
+            diagnostics = convertHealthReportToDiagnostics(lastReport_);
         }
 
         // Update overall status

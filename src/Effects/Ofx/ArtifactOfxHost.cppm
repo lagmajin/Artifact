@@ -12,6 +12,7 @@ module;
 
 #include <QCoreApplication>
 #include <QColor>
+#include <QDebug>
 #include <QDir>
 #include <QDirIterator>
 #include <QFileInfo>
@@ -559,6 +560,7 @@ void initEffectProperties(PropertySet &properties, const char *name,
 }
 
 OfxStatus unsupportedStatus() {
+  qWarning() << "[OFX] unsupported effect operation requested; bypassing with warning";
   return kOfxStatErrUnsupported;
 }
 

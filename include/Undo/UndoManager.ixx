@@ -40,12 +40,13 @@ export module Undo.UndoManager;
 
 
 
+export import Artifact.Composition.Abstract;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
-import Artifact.Composition.Abstract;
+import Geometry.ResolutionRemap;
 
 export namespace Artifact {
  using namespace ArtifactCore;
@@ -201,6 +202,24 @@ private:
     std::string name_;
     size_t index_;
     std::unique_ptr<LayerVariant> extracted_;
+};
+
+// 新規コマンド：コンポジション解像度変更 / Remap
+class ChangeCompositionResolutionCommand : public UndoCommand {
+public:
+    ChangeCompositionResolutionCommand(
+        ArtifactCompositionPtr comp,
+        const QSize& oldSize,
+        const QSize& newSize,
+        ArtifactCore::RemapPolicy policy);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactCompositionWeakPtr comp_;
+    QSize oldSize_;
+    QSize newSize_;
+    ArtifactCore::RemapPolicy policy_;
 };
 
 class UndoManager : public QObject {

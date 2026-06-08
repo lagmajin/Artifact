@@ -39,7 +39,6 @@ module;
 
 module Artifact.Widgets.AI.ArtifactAICloudWidget;
 
-import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import std;
 import Core.AI.Context;
@@ -49,7 +48,7 @@ import Core.AI.ToolExecutor;
 import Core.AI.McpBridge;
 import Core.AI.McpTransport;
 import Core.AI.CloudAgent;
-import Core.AI.TieredManager;
+import Core.AI.TieredAIManager;
 import Widgets.Utils.CSS;
 import Artifact.AI.WorkspaceAutomation;
 import Artifact.Application.Manager;

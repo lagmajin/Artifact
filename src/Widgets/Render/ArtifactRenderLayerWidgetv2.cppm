@@ -67,6 +67,49 @@ enum class LayerBackgroundMode {
   MayaGradient
 };
 
+QString editModeLabel(EditMode mode)
+{
+  switch (mode) {
+  case EditMode::Mask:
+    return QStringLiteral("Mask");
+  case EditMode::Paint:
+    return QStringLiteral("Paint");
+  case EditMode::View:
+  default:
+    return QStringLiteral("View");
+  }
+}
+
+QString displayModeLabel(DisplayMode mode)
+{
+  switch (mode) {
+  case DisplayMode::Mask:
+    return QStringLiteral("Mask");
+  case DisplayMode::Color:
+  default:
+    return QStringLiteral("Color");
+  }
+}
+
+bool isMaskEditingMode(EditMode mode)
+{
+  return mode == EditMode::Mask || mode == EditMode::Paint;
+}
+
+void publishModeReadout(QWidget *widget, EditMode editMode, DisplayMode displayMode)
+{
+  if (!widget) {
+    return;
+  }
+
+  const QString editLabel = editModeLabel(editMode);
+  const QString displayLabel = displayModeLabel(displayMode);
+  widget->setProperty("artifactEditMode", editLabel);
+  widget->setProperty("artifactDisplayMode", displayLabel);
+  widget->setProperty("artifactModeSummary",
+                      QStringLiteral("%1 / %2").arg(editLabel, displayLabel));
+}
+
 QImage makeMayaGradientSprite(const QSize& size, const FloatColor& bgColor)
 {
   const int w = std::max(1, size.width());
@@ -386,6 +429,7 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& can
   LayerBackgroundMode backgroundMode_ = LayerBackgroundMode::Alpha;
   EditMode editMode_ = EditMode::View;
   DisplayMode displayMode_ = DisplayMode::Color;
+  DisplayMode displayModeBeforeMask_ = DisplayMode::Color;
   QImage cachedMayaGradientSprite_;
   QSize cachedMayaGradientSize_;
   LayerID targetLayerId_{};
@@ -986,7 +1030,7 @@ void ArtifactLayerEditorWidgetV2::Impl::drawTransformOverlay(const ArtifactAbstr
  if (!renderer_ || !transformGizmo_ || !layer) {
   return;
  }
- if (displayMode_ == DisplayMode::Mask || editMode_ == EditMode::Mask || editMode_ == EditMode::Paint) {
+ if (displayMode_ == DisplayMode::Mask || isMaskEditingMode(editMode_)) {
   return;
  }
  transformGizmo_->setLayer(layer);
@@ -1000,7 +1044,7 @@ void ArtifactLayerEditorWidgetV2::Impl::syncTransformGizmo(const ArtifactAbstrac
   return;
  }
  if (!layer || !layer->isVisible() || displayMode_ == DisplayMode::Mask ||
-     editMode_ == EditMode::Mask || editMode_ == EditMode::Paint) {
+     isMaskEditingMode(editMode_)) {
   transformGizmo_->setLayer(nullptr);
   return;
  }
@@ -2726,63 +2770,127 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
   return;
  }
  QMenu menu(this);
+ QAction* clearShapeOperatorsAct = nullptr;
+ QAction* addTrimPathsAct = nullptr;
+ QAction* addRepeaterAct = nullptr;
+ QAction* addMergePathsAct = nullptr;
+ QAction* addOffsetPathsAct = nullptr;
+ QAction* addPuckerBloatAct = nullptr;
+ QAction* addRoundedCornersAct = nullptr;
+ QAction* addWigglePathsAct = nullptr;
+ QAction* addZigZagAct = nullptr;
+ QAction* addTwistAct = nullptr;
  QAction* insertPointAct = nullptr;
  QAction* splitSegmentAct = nullptr;
  QAction* deletePointAct = nullptr;
  QAction* toggleClosedAct = nullptr;
+ std::shared_ptr<ArtifactShapeLayer> shapeLayer;
  if (impl_->editMode_ == EditMode::Paint && impl_->renderer_) {
   auto layer = impl_->targetLayer();
-  auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
-  if (shape && shape->hasCustomPolygon()) {
-   const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
-       {(float)event->pos().x(), (float)event->pos().y()});
-   const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
-                             static_cast<qreal>(canvasPos.y));
-   impl_->shapeContextMenuCanvasPos_ = canvasPoint;
-   impl_->updateShapeHover(layer, canvasPoint);
+  shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+  if (shapeLayer) {
+   QMenu* shapeOpsMenu = menu.addMenu(QStringLiteral("Add Operator"));
+   addTrimPathsAct = shapeOpsMenu->addAction(QStringLiteral("Trim Paths"));
+   addRepeaterAct = shapeOpsMenu->addAction(QStringLiteral("Repeater"));
+   addMergePathsAct = shapeOpsMenu->addAction(QStringLiteral("Merge Paths"));
+   addOffsetPathsAct = shapeOpsMenu->addAction(QStringLiteral("Offset Paths"));
+   addPuckerBloatAct = shapeOpsMenu->addAction(QStringLiteral("Pucker & Bloat"));
+   addRoundedCornersAct = shapeOpsMenu->addAction(QStringLiteral("Rounded Corners"));
+   addWigglePathsAct = shapeOpsMenu->addAction(QStringLiteral("Wiggle Paths"));
+   addZigZagAct = shapeOpsMenu->addAction(QStringLiteral("ZigZag"));
+   addTwistAct = shapeOpsMenu->addAction(QStringLiteral("Twist"));
+   clearShapeOperatorsAct = menu.addAction(QStringLiteral("Clear Shape Operators"));
+   clearShapeOperatorsAct->setEnabled(shapeLayer->shapeOperatorCount() > 0);
+   if (shapeLayer->hasCustomPolygon()) {
+    const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
+        {(float)event->pos().x(), (float)event->pos().y()});
+    const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
+                              static_cast<qreal>(canvasPos.y));
+    impl_->shapeContextMenuCanvasPos_ = canvasPoint;
+    impl_->updateShapeHover(layer, canvasPoint);
 
-   insertPointAct = menu.addAction(QStringLiteral("Insert Point"));
-   splitSegmentAct = menu.addAction(QStringLiteral("Split Segment"));
-   deletePointAct = menu.addAction(QStringLiteral("Delete Point"));
-   toggleClosedAct = menu.addAction(shape->customPolygonClosed()
-                                        ? QStringLiteral("Open Polygon")
-                                        : QStringLiteral("Close Polygon"));
-   insertPointAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
-   splitSegmentAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
-   deletePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
-   toggleClosedAct->setEnabled(shape->customPolygonClosed() || shape->customPolygonPoints().size() >= 3);
-
+    insertPointAct = menu.addAction(QStringLiteral("Insert Point"));
+    splitSegmentAct = menu.addAction(QStringLiteral("Split Segment"));
+    deletePointAct = menu.addAction(QStringLiteral("Delete Point"));
+    toggleClosedAct = menu.addAction(shapeLayer->customPolygonClosed()
+                                         ? QStringLiteral("Open Polygon")
+                                         : QStringLiteral("Close Polygon"));
+    insertPointAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
+    splitSegmentAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
+    deletePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
+    toggleClosedAct->setEnabled(shapeLayer->customPolygonClosed() || shapeLayer->customPolygonPoints().size() >= 3);
+   }
    if (!menu.actions().isEmpty()) {
-    QAction* chosen = menu.exec(event->globalPos());
-    if (!chosen) {
-     event->accept();
-     return;
-    }
-
-    bool handled = false;
-    impl_->beginShapeEditTransaction(layer);
-    if (chosen == deletePointAct) {
-     handled = impl_->deleteHoveredShapeVertex(layer);
-    } else if (chosen == insertPointAct) {
-     handled = impl_->insertPointOnHoveredShapeSegment(layer, canvasPoint);
-    } else if (chosen == splitSegmentAct) {
-     handled = impl_->splitHoveredShapeSegment(layer);
-    } else if (chosen == toggleClosedAct) {
-     const bool closed = shape->customPolygonClosed();
-     const auto points = shape->customPolygonPoints();
-     if (closed || points.size() >= 3) {
-      shape->setCustomPolygonPoints(points, !closed);
-      impl_->markShapeEditDirty();
+    QAction* shapeChosen = menu.exec(event->globalPos());
+    if (shapeChosen) {
+     bool handled = false;
+     if (shapeChosen == clearShapeOperatorsAct) {
+      shapeLayer->clearShapeOperators();
+      impl_->requestRender();
+      event->accept();
+      return;
+     }
+     if (shapeChosen == addTrimPathsAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::TrimPaths);
       handled = true;
+     } else if (shapeChosen == addRepeaterAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::Repeater);
+      handled = true;
+     } else if (shapeChosen == addMergePathsAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::MergePaths);
+      handled = true;
+     } else if (shapeChosen == addOffsetPathsAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::OffsetPaths);
+      handled = true;
+     } else if (shapeChosen == addPuckerBloatAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::PuckerBloat);
+      handled = true;
+     } else if (shapeChosen == addRoundedCornersAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::RoundedCorners);
+      handled = true;
+     } else if (shapeChosen == addWigglePathsAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::WigglePaths);
+      handled = true;
+     } else if (shapeChosen == addZigZagAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::ZigZag);
+      handled = true;
+     } else if (shapeChosen == addTwistAct) {
+      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::Twist);
+      handled = true;
+     } else if (shapeLayer->hasCustomPolygon()) {
+      if (shapeChosen == deletePointAct) {
+       impl_->beginShapeEditTransaction(layer);
+       handled = impl_->deleteHoveredShapeVertex(layer);
+      } else if (shapeChosen == insertPointAct) {
+       impl_->beginShapeEditTransaction(layer);
+       handled = impl_->insertPointOnHoveredShapeSegment(layer, canvasPoint);
+      } else if (shapeChosen == splitSegmentAct) {
+       impl_->beginShapeEditTransaction(layer);
+       handled = impl_->splitHoveredShapeSegment(layer);
+      } else if (shapeChosen == toggleClosedAct) {
+       impl_->beginShapeEditTransaction(layer);
+       const bool closed = shapeLayer->customPolygonClosed();
+       const auto points = shapeLayer->customPolygonPoints();
+       if (closed || points.size() >= 3) {
+        shapeLayer->setCustomPolygonPoints(points, !closed);
+        impl_->markShapeEditDirty();
+        handled = true;
+       }
+      }
+      if (handled) {
+       impl_->commitShapeEditTransaction();
+       impl_->requestRender();
+       event->accept();
+       return;
+      }
+      impl_->commitShapeEditTransaction();
+     }
+     if (handled) {
+      impl_->requestRender();
+      event->accept();
+      return;
      }
     }
-    if (handled) {
-     impl_->commitShapeEditTransaction();
-     impl_->requestRender();
-     event->accept();
-     return;
-    }
-    impl_->commitShapeEditTransaction();
    }
   }
  }
@@ -2991,8 +3099,14 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
 
  void ArtifactLayerEditorWidgetV2::setEditMode(EditMode mode)
  {
+  const bool wasMaskMode = isMaskEditingMode(impl_->editMode_);
+  const bool isMaskMode = isMaskEditingMode(mode);
   impl_->editMode_ = mode;
- if (mode == EditMode::Mask || mode == EditMode::Paint) {
+ if (isMaskMode) {
+   if (!wasMaskMode) {
+    impl_->displayModeBeforeMask_ = impl_->displayMode_;
+   }
+   impl_->displayMode_ = DisplayMode::Mask;
    setCursor(Qt::CrossCursor);
   } else {
    unsetCursor();
@@ -3009,9 +3123,12 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
    if (impl_->shapeEditPending_) {
     impl_->commitShapeEditTransaction();
    }
+   if (wasMaskMode) {
+    impl_->displayMode_ = impl_->displayModeBeforeMask_;
+   }
   }
   if (impl_->transformGizmo_) {
-   if (mode == EditMode::Mask || mode == EditMode::Paint) {
+   if (isMaskMode) {
     impl_->transformGizmo_->setLayer(nullptr);
    } else {
     impl_->syncTransformGizmo(impl_->targetLayer());
@@ -3033,6 +3150,7 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
     }
    }
   }
+  publishModeReadout(impl_->widget_, impl_->editMode_, impl_->displayMode_);
   if (impl_->initialized_ && impl_->renderer_) {
    impl_->requestRender();
   }
@@ -3040,10 +3158,16 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
 
  void ArtifactLayerEditorWidgetV2::setDisplayMode(DisplayMode mode)
  {
-  impl_->displayMode_ = mode;
+  if (isMaskEditingMode(impl_->editMode_)) {
+    impl_->displayModeBeforeMask_ = mode;
+    impl_->displayMode_ = DisplayMode::Mask;
+  } else {
+    impl_->displayMode_ = mode;
+  }
   if (impl_->transformGizmo_) {
    impl_->syncTransformGizmo(impl_->targetLayer());
   }
+  publishModeReadout(impl_->widget_, impl_->editMode_, impl_->displayMode_);
   if (impl_->initialized_ && impl_->renderer_) {
    impl_->requestRender();
   }

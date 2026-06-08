@@ -58,8 +58,8 @@ public:
     static bool applyPresetJsonToEffect(ArtifactAbstractEffectPtr& effect, const QJsonObject& json);
 
     // Color Palette
-    static bool saveColorPaletteMapping(const ColorPaletteManager& manager, const QString& filePath);
-    static bool loadColorPaletteMapping(ColorPaletteManager& manager, const QString& filePath);
+    static bool saveColorPaletteMapping(const ArtifactCore::Color::ColorPaletteManager& manager, const QString& filePath);
+    static bool loadColorPaletteMapping(ArtifactCore::Color::ColorPaletteManager& manager, const QString& filePath);
 };
 
 } // namespace Artifact

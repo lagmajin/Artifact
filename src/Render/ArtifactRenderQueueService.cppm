@@ -96,6 +96,7 @@ import Core.Diagnostics.SessionLedger;
 import Encoder.FFmpegEncoder;
 import Media.Encoder.FFmpegAudioEncoder;
 import IO.ImageExporter;
+import IO.VectorExport;
 import Image.ExportOptions;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -109,6 +110,7 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layer.Shape;
 import Layer.Blend;
 import Color.Float;
+import Composition.TemplateLock;
 
 namespace Artifact
 {
@@ -426,9 +428,13 @@ namespace Artifact
         }
 
         void appendCompositionMismatchWarnings(const ArtifactRenderJob& job,
-                                               const ArtifactCompositionPtr& composition,
-                                               const QString& compId,
-                                               ArtifactCore::DiagnosticResult& result);
+                                                const ArtifactCompositionPtr& composition,
+                                                const QString& compId,
+                                                ArtifactCore::DiagnosticResult& result);
+
+        void appendTemplateLockDiagnostics(const ArtifactCompositionPtr& composition,
+                                            const QString& compId,
+                                            ArtifactCore::DiagnosticResult& result);
     }
 
     // レンダリングジョブクラス
@@ -539,6 +545,60 @@ namespace Artifact
                     QStringLiteral("Confirm whether the mismatch is intentional"),
                     compId);
                 result.addDiagnostic(diag);
+            }
+        }
+
+        void appendTemplateLockDiagnostics(const ArtifactCompositionPtr& composition,
+                                            const QString& compId,
+                                            ArtifactCore::DiagnosticResult& result)
+        {
+            if (!composition) {
+                return;
+            }
+
+            const auto compJson = composition->toJson();
+            const auto templateLockObj = compJson.object().value(QStringLiteral("templateLock")).toObject();
+            if (templateLockObj.isEmpty()) {
+                return;
+            }
+
+            const auto schema = ArtifactCore::TemplateLockSchema::fromJson(templateLockObj);
+            if (!schema.isEnabled) {
+                return;
+            }
+
+            for (const auto& region : schema.protectedRegions) {
+                if (region.editability == ArtifactCore::Editability::Locked) {
+                    auto diag = makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Warning,
+                        ArtifactCore::DiagnosticCategory::Configuration,
+                        QStringLiteral("Template locked region will be exported"),
+                        QStringLiteral("Protected region '%1' (%2) is locked and will be included as-is in the export.")
+                            .arg(region.displayName, region.description),
+                        QStringLiteral("Verify the protected region does not contain sensitive or incorrect content"),
+                        compId);
+                    result.addDiagnostic(diag);
+                }
+            }
+
+            if (!schema.editableFields.isEmpty()) {
+                int editableCount = 0;
+                for (const auto& field : schema.editableFields) {
+                    if (!field.fieldId.isEmpty()) {
+                        ++editableCount;
+                    }
+                }
+                if (editableCount > 0) {
+                    auto diag = makePreflightDiagnostic(
+                        ArtifactCore::DiagnosticSeverity::Info,
+                        ArtifactCore::DiagnosticCategory::Configuration,
+                        QStringLiteral("Template has editable fields"),
+                        QStringLiteral("The template has %1 editable field(s) that can be customized per export.")
+                            .arg(editableCount),
+                        QStringLiteral("Use template variations to customize output"),
+                        compId);
+                    result.addDiagnostic(diag);
+                }
             }
         }
     }
@@ -773,7 +833,8 @@ namespace Artifact
                value == QStringLiteral("tif") ||
                value == QStringLiteral("jpeg") ||
                value == QStringLiteral("jpg") ||
-               value == QStringLiteral("bmp");
+               value == QStringLiteral("bmp") ||
+               value == QStringLiteral("svg");
     }
 
     static QString sequenceExtension(const QString& format, const QString& codec)
@@ -787,6 +848,7 @@ namespace Artifact
             if (s.contains("jpeg") || s.contains("jpg")) return QStringLiteral("jpg");
             if (s.contains("bmp"))  return QStringLiteral("bmp");
             if (s.contains("png"))  return QStringLiteral("png");
+            if (s.contains("svg"))  return QStringLiteral("svg");
         }
         return QStringLiteral("png"); // default
     }
@@ -1035,6 +1097,8 @@ namespace Artifact
         }
 
         settings.videoCodec = encoderName;
+        settings.encoderName = encoderName;
+        settings.preferHardware = true;
         settings.preset = QStringLiteral("p4");
         settings.zerolatency = false;
         if (selectedEncoder) {
@@ -3351,6 +3415,7 @@ namespace Artifact
 
         appendMissingAssetDiagnostics(composition, compId, result);
         appendCompositionMismatchWarnings(job, composition, compId, result);
+        appendTemplateLockDiagnostics(composition, compId, result);
         return result;
     }
 
@@ -3688,6 +3753,23 @@ namespace Artifact
                         if (!videoBackend->addFrame(qimg, f, &failureReason)) {
                             success.store(false, std::memory_order_relaxed);
                             break;
+                        }
+                    } else if (ext == QStringLiteral("svg")) {
+                        // SVG frame: write as vector SVG
+                        QString bn = outInfo.completeBaseName();
+                        if (bn.isEmpty()) bn = "render";
+                        QString fp = outDir.filePath(QStringLiteral("%1_%2.svg").arg(bn).arg(f, 4, 10, QChar("0")));
+                        QFile sf(fp);
+                        if (sf.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                            QTextStream so(&sf);
+                            so << QStringLiteral("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%1\" height=\"%2\">\n")
+                                  .arg(job.resolutionWidth)
+                                  .arg(job.resolutionHeight);
+                            so << QStringLiteral("<rect width=\"100%\" height=\"100%\" fill=\"black\" />\n");
+                            so << QStringLiteral("<text x=\"50%\" y=\"50%\" fill=\"white\" text-anchor=\"middle\" dy=\"0.35em\">Fr %1</text>\n")
+                                  .arg(f);
+                            so << QStringLiteral("</svg>\n");
+                            sf.close();
                         }
                     } else {
                         const QString ext = sequenceExtension(job.outputFormat, job.codec);

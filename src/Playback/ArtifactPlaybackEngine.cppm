@@ -20,6 +20,7 @@ module Artifact.Playback.Engine;
 import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
+import Frame.SkipTracker;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InOutPoints;
 import Artifact.Widgets.SoftwareRenderInspectors;
@@ -320,6 +321,7 @@ public:
     
     /// フレーム更新処理
     void updateFrame(int64_t targetFrame) {
+        FrameSkipTracker::instance()->beginDispatch(targetFrame);
         // PlaybackService owns composition-frame sync and viewport rendering.
         // Do not render a QImage here: playback ticks must stay lightweight.
         QMetaObject::invokeMethod(owner_, [this, pos = FramePosition(targetFrame)]() {
@@ -699,7 +701,10 @@ void ArtifactPlaybackEngine::togglePlayPause() {
 }
 
 void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
-    impl_->currentFrame_ = position.framePosition();
+    const int64_t targetFrame = position.framePosition();
+    FrameSkipTracker::instance()->beginDispatch(targetFrame);
+
+    impl_->currentFrame_ = targetFrame;
     impl_->playbackStartFrame_ = impl_->currentFrame_.load();
     impl_->playbackStartTime_ = std::chrono::steady_clock::now();
     impl_->lastEmittedFrame_ = std::numeric_limits<int64_t>::min();
@@ -710,7 +715,15 @@ void ArtifactPlaybackEngine::goToFrame(const FramePosition& position) {
     if (impl_->audioRenderer_) {
         impl_->audioRenderer_->clearBuffer();
     }
-    Q_EMIT frameChanged(position, renderPreviewFrame(position));
+
+    QImage preview = renderPreviewFrame(position);
+    if (preview.isNull()) {
+        FrameSkipTracker::instance()->recordSkip(
+            targetFrame, impl_->currentFrame_.load(),
+            FrameSkipReason::TooHeavy,
+            QStringLiteral("renderPreviewFrame returned null"));
+    }
+    Q_EMIT frameChanged(position, preview);
 }
 
 void ArtifactPlaybackEngine::goToNextFrame() {

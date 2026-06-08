@@ -249,7 +249,7 @@ private:
                           ? ArtifactApplicationManager::instance()->layerSelectionManager()
                           : nullptr) {
    emit selMgr->selectionChanged();
-   emit selMgr->activeCompositionChanged(selMgr->activeComposition());
+   emit selMgr->activeCompositionChanged();
   }
   rebuildMenu();
  }

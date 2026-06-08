@@ -19,6 +19,12 @@ export namespace Artifact {
   Ambient
  };
 
+ enum class LightLinkMode {
+  All = 0,
+  IncludeOnly,
+  ExcludeList
+ };
+
  // AfterEffects compatible Light Layer
  class ArtifactLightLayer : public ArtifactAbstractLayer {
   W_OBJECT(ArtifactLightLayer)
@@ -46,6 +52,13 @@ export namespace Artifact {
 
   bool castsShadows() const;
   void setCastsShadows(bool enabled);
+
+  LightLinkMode lightLinkMode() const;
+  void setLightLinkMode(LightLinkMode mode);
+  QString linkedLayerIdsText() const;
+  void setLinkedLayerIdsText(const QString& ids);
+  QString excludedLayerIdsText() const;
+  void setExcludedLayerIdsText(const QString& ids);
 
   // Generic properties for Inspector
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;

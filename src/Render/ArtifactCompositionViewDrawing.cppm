@@ -724,34 +724,38 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         layer->isActiveAt(FramePosition(static_cast<int>(layer->currentFrame())));
     const FramePosition ip = layer->inPoint();
     const FramePosition op = layer->outPoint();
-    if (!hasRasterizer && hasBuffer) {
-      const ArtifactCore::ImageF32x4_RGBA& buffer =
-          videoLayer->currentFrameBuffer();
-      const float baseOpacity =
-          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
-      if (videoDebugOut) {
-        *videoDebugOut = QStringLiteral(
-                             "[Video] branch=buffer loaded=%1 hasBuffer=%2 "
-                             "rasterizer=%3 active=%4 range=[%5,%6] curFrame=%7")
-                             .arg(loaded)
-                             .arg(hasBuffer)
-                             .arg(hasRasterizer)
-                             .arg(active)
-                             .arg(ip.framePosition())
-                             .arg(op.framePosition())
-                             .arg(layer->currentFrame());
+    const int64_t targetFrame =
+        cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame();
+    if (!hasRasterizer && !offlineRender) {
+      const ArtifactCore::ImageF32x4_RGBA buffer =
+          videoLayer->cachedFrameImageBuffer(targetFrame);
+      if (!buffer.isEmpty()) {
+        const float baseOpacity =
+            (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+        if (videoDebugOut) {
+          *videoDebugOut = QStringLiteral(
+                               "[Video] branch=buffer loaded=%1 hasBuffer=%2 "
+                               "rasterizer=%3 active=%4 range=[%5,%6] curFrame=%7")
+                               .arg(loaded)
+                               .arg(hasBuffer)
+                               .arg(hasRasterizer)
+                               .arg(active)
+                               .arg(ip.framePosition())
+                               .arg(op.framePosition())
+                               .arg(layer->currentFrame());
+        }
+        drawWithClonerEffect(layer, globalTransform4x4,
+          [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+            renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                                 static_cast<float>(localRect.y()),
+                                 static_cast<float>(localRect.width()),
+                                 static_cast<float>(localRect.height()),
+                                 instanceTransform,
+                                 buffer,
+                                 baseOpacity * instanceWeight);
+        });
+        return;
       }
-      drawWithClonerEffect(layer, globalTransform4x4,
-        [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
-          renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
-                               static_cast<float>(localRect.y()),
-                               static_cast<float>(localRect.width()),
-                               static_cast<float>(localRect.height()),
-                               instanceTransform,
-                               buffer,
-                               baseOpacity * instanceWeight);
-      });
-      return;
     }
 
     ArtifactCore::ImageF32x4_RGBA frameBuffer;
@@ -760,8 +764,6 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     bool usedBufferFallback = false;
     QString reason;
     if (!hasRasterizer && gpuTextureCacheManager && !offlineRender) {
-      const int64_t targetFrame =
-          cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame();
       const ArtifactCore::GpuVideoFrame gpuFrame =
           videoLayer->decodeFrameToGpuFrame(targetFrame);
       if (gpuFrame.isValid()) {
@@ -805,18 +807,14 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     }
     if (loaded) {
       frameBuffer = offlineRender
-          ? videoLayer->decodeFrameToImageBuffer(cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame())
-          : videoLayer->currentFrameImageBuffer();
+          ? videoLayer->decodeFrameToImageBuffer(targetFrame)
+          : videoLayer->cachedFrameImageBuffer(targetFrame);
+      usedBufferFallback = !frameBuffer.isEmpty();
     } else {
       reason = QStringLiteral("notLoaded");
     }
-    if (frameBuffer.isEmpty() && hasBuffer) {
-      frameBuffer = videoLayer->currentFrameBuffer();
-      usedBufferFallback = !frameBuffer.isEmpty();
-    }
     if (frameBuffer.isEmpty() && loaded) {
-      frameBuffer = videoLayer->decodeFrameToImageBuffer(
-          cacheFrameNumber >= 0 ? cacheFrameNumber : layer->currentFrame());
+      frameBuffer = videoLayer->decodeFrameToImageBuffer(targetFrame);
       usedSyncFallback = !frameBuffer.isEmpty();
     }
     if (!frameBuffer.isEmpty()) {

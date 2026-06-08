@@ -252,7 +252,7 @@ void ArtifactAbstractComposition::Impl::invalidateThumbnailCache()
  {
   for (auto& layer : layerMultiIndex_) {
    if (layer) {
-    layer->setComposition(nullptr);
+    layer->setComposition(static_cast<ArtifactAbstractComposition *>(nullptr));
    }
   }
   layerMultiIndex_.clear();
@@ -273,7 +273,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
    }
     layerMultiIndex_.removeById(id);
     if (removedLayer) {
-     removedLayer->setComposition(nullptr);
+     removedLayer->setComposition(static_cast<ArtifactAbstractComposition *>(nullptr));
      invalidateThumbnailCache();
      ArtifactCore::globalEventBus().publish(LayerChangedEvent{
          owner_->id().toString(), id.toString(),
@@ -1049,7 +1049,7 @@ void ArtifactAbstractComposition::removeLayerById(const ArtifactCore::LayerID& i
     removeLayer(id);
 }
 
-std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJson(const QJsonDocument& doc){
+ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument& doc){
     if (!doc.isObject()) return nullptr;
     QJsonObject obj = doc.object();
     
@@ -1074,7 +1074,7 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
             static_cast<float>(backgroundColorObj["a"].toDouble(1.0))
         });
     }
-    auto comp = std::make_shared<ArtifactAbstractComposition>(compId, params);
+    auto comp = ArtifactCore::makeShared<ArtifactAbstractComposition>(compId, params);
     if (obj.contains("frameRange") && obj["frameRange"].isObject()) {
         comp->setFrameRange(FrameRange::fromJson(obj["frameRange"].toObject()));
     }
@@ -1141,6 +1141,58 @@ std::shared_ptr<ArtifactAbstractComposition> ArtifactAbstractComposition::fromJs
 QVector<ArtifactCore::AssetID> ArtifactAbstractComposition::getUsedAssets() const
 {
   return impl_->getUsedAssets();
+}
+
+void ArtifactAbstractComposition::applyResolutionRemap(const QSize& newSize, RemapPolicy policy)
+{
+    const QSize oldSize = impl_->settings_.compositionSize();
+    if (oldSize == newSize) return;
+
+    setCompositionSize(newSize);
+
+    const auto& layers = allLayerRef();
+    for (const auto& layer : layers) {
+        if (!layer) continue;
+
+        // Remap mask vertex positions
+        if (layer->hasMasks()) {
+            for (int mi = 0; mi < layer->maskCount(); ++mi) {
+                auto lm = layer->mask(mi);
+                for (int pi = 0; pi < lm.maskPathCount(); ++pi) {
+                    auto path = lm.maskPath(pi);
+                    const int vc = path.vertexCount();
+                    for (int vi = 0; vi < vc; ++vi) {
+                        auto v = path.vertex(vi);
+                        v.position = ResolutionRemap::remapPosition(
+                            v.position, oldSize, newSize, policy);
+                        v.inTangent = ResolutionRemap::remapPosition(
+                            v.inTangent, oldSize, newSize, policy);
+                        v.outTangent = ResolutionRemap::remapPosition(
+                            v.outTangent, oldSize, newSize, policy);
+                        path.setVertex(vi, v);
+                    }
+                    // Remap animation keyframe snapshots
+                    if (path.hasAnimationKeyframes()) {
+                        auto snaps = path.animationKeyframes();
+                        for (auto& snap : snaps) {
+                            for (auto& sv : snap.vertices) {
+                                sv.position = ResolutionRemap::remapPosition(
+                                    sv.position, oldSize, newSize, policy);
+                                sv.inTangent = ResolutionRemap::remapPosition(
+                                    sv.inTangent, oldSize, newSize, policy);
+                                sv.outTangent = ResolutionRemap::remapPosition(
+                                    sv.outTangent, oldSize, newSize, policy);
+                            }
+                            path.clearAnimationKeyframes();
+                            path.setAnimationKeyframe(snap.frame, snap);
+                        }
+                    }
+                    lm.setMaskPath(pi, path);
+                }
+                layer->setMask(mi, lm);
+            }
+        }
+    }
 }
 
 QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const

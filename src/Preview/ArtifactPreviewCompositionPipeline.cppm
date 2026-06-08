@@ -236,16 +236,17 @@ namespace Artifact
    }
 
    if (const auto videoLayer = dynamic_cast<ArtifactVideoLayer*>(layerPtr)) {
-    if (!hasRasterizerEffects(layerPtr) && !layerPtr->hasMasks() && videoLayer->hasCurrentFrameBuffer()) {
-     const ArtifactCore::ImageF32x4_RGBA& frameBuffer = videoLayer->currentFrameBuffer();
+    const ArtifactCore::ImageF32x4_RGBA cachedFrame =
+        videoLayer->cachedFrameImageBuffer(layerPtr->currentFrame());
+    if (!hasRasterizerEffects(layerPtr) && !layerPtr->hasMasks() && !cachedFrame.isEmpty()) {
      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
-     drawWithClonerEffect(layerPtr, baseTransform, [&frameBuffer, renderer, worldRect, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
+     drawWithClonerEffect(layerPtr, baseTransform, [cachedFrame, renderer, worldRect, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
       const float opacity = previewLayerOpacity(layerPtr);
       renderer->drawSpriteTransformed(static_cast<float>(worldRect.x()),
                                       static_cast<float>(worldRect.y()),
                                       static_cast<float>(worldRect.width()),
                                       static_cast<float>(worldRect.height()),
-                                      transform, frameBuffer,
+                                      transform, cachedFrame,
                                       opacity * weight);
      });
      return;

@@ -36,7 +36,7 @@ import Core.AI.LocalAgent;
 import Core.AI.LlamaAgent;
 import Core.AI.OnnxDmlAgent;
 import Core.AI.CloudAgent;
-import Core.AI.TieredManager;
+import Core.AI.TieredAIManager;
 import Artifact.AI.WorkspaceAutomation;
 import Artifact.AI.MaterialAutomation;
 import Artifact.AI.RenderAutomation;

@@ -15,6 +15,8 @@ import Artifact.Project.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Tool.Manager;
+import Artifact.Tool.MotionSketchTool;
+import Artifact.Tool.PuppetTool;
 
 
 export namespace Artifact {
@@ -36,6 +38,8 @@ export namespace Artifact {
   ArtifactActiveContextService* activeContextService();
   ArtifactLayerSelectionManager* layerSelectionManager() const;
   ArtifactToolManager* toolManager() const;
+  ArtifactMotionSketchTool* motionSketchTool() const;
+  ArtifactPuppetTool* puppetTool() const;
   
   entt::registry& registry();
  

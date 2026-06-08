@@ -42,7 +42,6 @@ module Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 
-
 namespace Artifact {
 
  class ArtifactLayerSelectionManager::Impl {
@@ -140,7 +139,7 @@ namespace Artifact {
  void ArtifactLayerSelectionManager::setActiveComposition(const ArtifactCompositionPtr& comp) {
   if (impl_->activeComp_ == comp) return;
   impl_->activeComp_ = comp;
-  activeCompositionChanged(comp);
+  activeCompositionChanged();
  }
 
  ArtifactCompositionPtr ArtifactLayerSelectionManager::activeComposition() const {

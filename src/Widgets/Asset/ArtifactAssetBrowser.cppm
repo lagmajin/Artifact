@@ -56,6 +56,7 @@ module;
 #include <QGroupBox>
 #include <QGridLayout>
 #include <QElapsedTimer>
+#include <QSet>
 #include <QHBoxLayout>
 #include <QAbstractItemView>
 #include <QComboBox>
@@ -1537,35 +1538,143 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    breadcrumb_->setPath(currentDirectoryPath_);
   }
 
-  // Get both files and directories, excluding . and ..
-  QStringList entries = dir.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
-  QList<AssetMenuItem> items;
+   // Get both files and directories, excluding . and ..
+   QStringList entries = dir.entryList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
+   QList<AssetMenuItem> items;
 
-  for (const QString& entry : entries) {
-   QString fullPath = dir.absoluteFilePath(entry);
-   QFileInfo fileInfo(fullPath);
-
-   // Skip directories if filtering for specific file types (except "all")
-   bool isDir = fileInfo.isDir();
-   if (isDir && currentFileTypeFilter_ != "all") {
-    continue;
+   // --- Phase 1: pre-filter directories ---
+   QStringList dirNames;
+   for (const QString& entry : entries) {
+    QString fullPath = dir.absoluteFilePath(entry);
+    QFileInfo fileInfo(fullPath);
+    if (!fileInfo.isDir()) continue;
+    if (currentFileTypeFilter_ != "all") continue;
+    if (!matchesSearchFilter(entry)) continue;
+    dirNames.append(entry);
    }
 
-   // Check search filter
-   if (!matchesSearchFilter(entry)) {
-    continue;
+   // --- Phase 2: pre-filter files and detect sequences ---
+   struct SeqFile { QString name; int frame; int pad; QString fullPath; };
+   static const QRegularExpression kSeqRx(QStringLiteral(R"(^(.*?)([._-]?)(\d{3,})(\.[a-zA-Z0-9]+)$)"));
+   QMap<QString, QList<SeqFile>> seqMap;
+   QSet<QString> seqFiles;
+
+   for (const QString& entry : entries) {
+    QString fullPath = dir.absoluteFilePath(entry);
+    QFileInfo fileInfo(fullPath);
+    if (fileInfo.isDir()) continue;
+    if (!matchesSearchFilter(entry) || !matchesFileTypeFilter(entry)) continue;
+
+    QRegularExpressionMatch m = kSeqRx.match(entry);
+    if (!m.hasMatch()) continue;
+    QString frameStr = m.captured(3);
+    bool ok = false;
+    int frameNum = frameStr.toInt(&ok);
+    if (!ok) continue;
+    QString key = m.captured(1) + m.captured(2) + m.captured(4);
+    seqMap[key].append({entry, frameNum, static_cast<int>(frameStr.length()), fullPath});
    }
 
-    // For files, check type filter
-    if (!isDir && !matchesFileTypeFilter(entry)) {
-     continue;
+   for (auto it = seqMap.begin(); it != seqMap.end(); ++it) {
+    if (it.value().size() < 2) continue;
+    for (const auto& sf : it.value()) seqFiles.insert(sf.name);
+   }
+
+   // --- Phase 3: build items (dirs → sequences → standalone files) ---
+
+   // Directories
+   for (const QString& dirName : dirNames) {
+    AssetMenuItem item;
+    QString fullPath = dir.absoluteFilePath(dirName);
+    item.name = UniString::fromQString(dirName);
+    item.path = UniString::fromQString(fullPath);
+    QStringList markers;
+    if (isFavoriteAssetPath(fullPath)) markers.append(QStringLiteral("Favorite"));
+    QString itemType = QStringLiteral("Folder");
+    if (!markers.isEmpty()) itemType = QStringLiteral("%1 • Folder").arg(markers.join(QStringLiteral(" • ")));
+    item.type = UniString::fromQString(itemType);
+    item.isFolder = true;
+    item.icon = generateThumbnail(fullPath);
+    items.append(item);
+   }
+
+   // Sequences
+   for (auto it = seqMap.begin(); it != seqMap.end(); ++it) {
+    if (it.value().size() < 2) continue;
+    auto& seq = it.value();
+    std::sort(seq.begin(), seq.end(), [](const SeqFile& a, const SeqFile& b) { return a.frame < b.frame; });
+
+    AssetMenuItem item;
+    int firstFrame = seq.first().frame;
+    int lastFrame = seq.last().frame;
+    int count = seq.size();
+    int pad = seq.first().pad;
+    QFileInfo fi(seq.first().name);
+    QString ext = fi.suffix().toUpper();
+
+    // Name: "prefix[####].ext (N frames)"
+    QString prefix;
+    {
+     QRegularExpressionMatch m2 = kSeqRx.match(seq.first().name);
+     prefix = m2.hasMatch() ? m2.captured(1) : fi.completeBaseName();
     }
+    item.name = UniString::fromQString(QStringLiteral("%1[%2-%3].%4 (%5 frames)")
+      .arg(prefix)
+      .arg(firstFrame, pad, 10, QLatin1Char('0'))
+      .arg(lastFrame, pad, 10, QLatin1Char('0'))
+      .arg(ext.toLower())
+      .arg(count));
+    item.path = UniString::fromQString(seq.first().fullPath);
+    item.isSequence = true;
+    item.sequenceFrameCount = count;
+    item.sequenceStartFrame = firstFrame;
+    item.sequencePadding = pad;
+    for (const auto& sf : seq) item.sequencePaths.append(sf.fullPath);
+
+    // Status markers (aggregated across all frames)
+    bool allImported = true, allUnused = true, anyMissing = false, allFav = true;
+    for (const auto& sf : seq) {
+     if (!isImportedAssetPath(sf.fullPath)) allImported = false;
+     if (!isUnusedAssetPath(sf.fullPath)) allUnused = false;
+     if (isMissingAssetPath(sf.fullPath)) anyMissing = true;
+     if (!isFavoriteAssetPath(sf.fullPath)) allFav = false;
+    }
+    // Apply status filter
+    if (currentStatusFilter_ != "all") {
+     bool matchFilter = false;
+     if (currentStatusFilter_ == "imported") matchFilter = allImported;
+     else if (currentStatusFilter_ == "favorite") matchFilter = allFav;
+     else if (currentStatusFilter_ == "missing") matchFilter = anyMissing;
+     else if (currentStatusFilter_ == "unused") matchFilter = allUnused;
+     if (!matchFilter) continue;
+    }
+
+    QStringList markers;
+    if (allFav) markers.append(QStringLiteral("Favorite"));
+    if (anyMissing) markers.append(QStringLiteral("Missing"));
+    if (allImported) markers.append(QStringLiteral("Imported"));
+    if (allUnused) markers.append(QStringLiteral("Unused"));
+    QString seqType = QStringLiteral("Sequence • %1").arg(ext);
+    if (!markers.isEmpty()) seqType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), seqType);
+    item.type = UniString::fromQString(seqType);
+
+    item.icon = generateThumbnail(seq.first().fullPath);
+    items.append(item);
+   }
+
+   // Standalone files
+   for (const QString& entry : entries) {
+    QString fullPath = dir.absoluteFilePath(entry);
+    QFileInfo fileInfo(fullPath);
+    if (fileInfo.isDir()) continue;
+    if (!matchesSearchFilter(entry) || !matchesFileTypeFilter(entry)) continue;
+    if (seqFiles.contains(entry)) continue;
 
     // Check status filter
     if (currentStatusFilter_ != "all") {
-     const bool imported = !isDir && isImportedAssetPath(fullPath);
-     const bool unused = !isDir && isUnusedAssetPath(fullPath);
-     const bool missing = !isDir && isMissingAssetPath(fullPath);
+     const bool imported = isImportedAssetPath(fullPath);
+     const bool unused = isUnusedAssetPath(fullPath);
+     const bool missing = isMissingAssetPath(fullPath);
      const bool favorite = isFavoriteAssetPath(fullPath);
      if (currentStatusFilter_ == "imported" && !imported) continue;
      if (currentStatusFilter_ == "favorite" && !favorite) continue;
@@ -1574,36 +1683,21 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     }
 
     AssetMenuItem item;
-   item.name = UniString::fromQString(entry);
-   item.path = UniString::fromQString(fullPath);
-   QStringList markers;
-   if (isFavoriteAssetPath(fullPath)) {
-    markers.append(QStringLiteral("Favorite"));
-   }
-   if (!isDir) {
+    item.name = UniString::fromQString(entry);
+    item.path = UniString::fromQString(fullPath);
+    QStringList markers;
+    if (isFavoriteAssetPath(fullPath)) markers.append(QStringLiteral("Favorite"));
     const bool imported = isImportedAssetPath(fullPath);
     const bool unused = isUnusedAssetPath(fullPath);
     const bool missing = isMissingAssetPath(fullPath);
-    if (missing) {
-     markers.append(QStringLiteral("Missing"));
-    }
-    if (imported) {
-     markers.append(QStringLiteral("Imported"));
-    }
-    if (unused) {
-     markers.append(QStringLiteral("Unused"));
-    }
-   }
-   QString itemType = isDir ? QStringLiteral("Folder") : fileInfo.suffix().toUpper();
-   if (!markers.isEmpty()) {
-    itemType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), itemType);
-   }
-   item.type = UniString::fromQString(itemType);
-   item.isFolder = isDir;
-
-// Generate thumbnail/icon for display
+    if (missing) markers.append(QStringLiteral("Missing"));
+    if (imported) markers.append(QStringLiteral("Imported"));
+    if (unused) markers.append(QStringLiteral("Unused"));
+    QString itemType = fileInfo.suffix().toUpper();
+    if (!markers.isEmpty()) itemType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), itemType);
+    item.type = UniString::fromQString(itemType);
+    item.isFolder = false;
     item.icon = generateThumbnail(fullPath);
-
     items.append(item);
    }
 

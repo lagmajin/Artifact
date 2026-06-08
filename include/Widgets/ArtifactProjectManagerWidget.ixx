@@ -50,8 +50,6 @@ W_REGISTER_ARGTYPE(QFileInfo)
 
 export namespace Artifact {
 
- class QPainter;
-
  /*
 class ArtifactToolBar :public QToolBar {
 private:

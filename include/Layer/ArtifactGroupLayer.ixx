@@ -30,6 +30,7 @@ public:
     ~ArtifactGroupLayer() override;
 
     bool isGroupLayer() const override;
+    void setComposition(QObject *comp) override;
     void setComposition(void *comp) override;
     void draw(ArtifactIRenderer* renderer) override;
 

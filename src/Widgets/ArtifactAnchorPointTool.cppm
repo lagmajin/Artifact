@@ -12,7 +12,6 @@ module;
 #include <QPalette>
 module Artifact.Widgets.AnchorPointTool;
 
-import Artifact.Widgets.AnchorPointTool;
 import Widgets.Utils.CSS;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;

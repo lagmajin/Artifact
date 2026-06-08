@@ -44,7 +44,6 @@ module;
 #include <random>
 module Artifact.Widgets.PythonHookManagerWidget;
 
-import Artifact.Widgets.PythonHookManagerWidget;
 import Artifact.Script.Hooks;
 
 namespace Artifact {

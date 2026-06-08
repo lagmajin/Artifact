@@ -44,7 +44,7 @@ export module Artifact.Color.Palette;
 
 
 
-export namespace Artifact {
+export namespace ArtifactCore::Color {
 
 struct NamedColor {
     QString name;
@@ -77,6 +77,12 @@ public:
     QString lastError() const { return lastError_; }
 };
 
-} // namespace Artifact
+} // namespace ArtifactCore::Color
+
+namespace Artifact {
+using ArtifactCore::Color::NamedColor;
+using ArtifactCore::Color::ColorPalette;
+using ArtifactCore::Color::ColorPaletteManager;
+}
 
 W_REGISTER_ARGTYPE(Artifact::ColorPalette)

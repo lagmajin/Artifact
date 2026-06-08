@@ -5,6 +5,8 @@ module;
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonObject>
+#include <QJsonDocument>
+#include <QJsonParseError>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStringList>
@@ -37,6 +39,7 @@ import Artifact.Layer.Result;
 import Artifact.Layer.Factory;
 import Core.Diagnostics.DiagnosticEngine;
 import Artifact.Script.Hooks;
+import Artifact.Project.CreationDefaults;
 
 
 namespace Artifact {
@@ -120,10 +123,32 @@ namespace Artifact {
     ArtifactPythonHookManager::runHook(hookName, QStringList() << path);
   }
 
-  ArtifactCompositionInitParams defaultCompositionParamsFromSettings()
+  ArtifactCompositionInitParams defaultCompositionParamsFromSettings(
+      const std::shared_ptr<ArtifactProject>& project = {})
   {
     ArtifactCompositionInitParams params;
     if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+      const QString json = settings->creationDefaultsJson();
+      if (!json.isEmpty()) {
+        QJsonParseError parseError;
+        const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parseError);
+        if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+          CreationDefaultsState state;
+          state.fromJson(doc.object());
+          if (state.globalDefaults.composition.composition.isValid()) {
+            return state.globalDefaults.composition.composition;
+          }
+          if (project) {
+            const auto projectState = project->creationDefaultsState();
+            if (projectState.projectDefaults.composition.composition.isValid()) {
+              return projectState.projectDefaults.composition.composition;
+            }
+            if (projectState.lastUsed.composition.composition.isValid()) {
+              return projectState.lastUsed.composition.composition;
+            }
+          }
+        }
+      }
       params.setResolution(settings->projectDefaultCompositionWidth(),
                            settings->projectDefaultCompositionHeight());
       params.setFrameRate(settings->projectDefaultCompositionFrameRate());
@@ -197,6 +222,20 @@ void ArtifactProjectManager::Impl::createProject(const QString& name, bool /*for
   currentProjectPtr_ = std::make_shared<ArtifactProject>(displayName);
  } else {
   currentProjectPtr_->setProjectName(displayName);
+ }
+ if (currentProjectPtr_) {
+  CreationDefaultsState state;
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    const QString json = settings->creationDefaultsJson();
+    if (!json.isEmpty()) {
+      QJsonParseError parseError;
+      const QJsonDocument doc = QJsonDocument::fromJson(json.toUtf8(), &parseError);
+      if (parseError.error == QJsonParseError::NoError && doc.isObject()) {
+        state.fromJson(doc.object());
+      }
+    }
+  }
+  currentProjectPtr_->setCreationDefaultsState(state);
  }
  isCreated_ = true;
 }
@@ -922,7 +961,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   }
 
   // Create a composition using default init params and emit the created ID
-  ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings();
+ ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings(impl_->currentProjectPtr_);
   // Ensure a project exists so UI/model get updated and signals are wired
   if (!impl_->currentProjectPtr_) {
    createProject();
@@ -940,7 +979,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
 
   void ArtifactProjectManager::createComposition(const QString name, const QSize& size)
   {
-   ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings();
+   ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings(impl_->currentProjectPtr_);
    if (!name.isEmpty()) {
      params.setCompositionName(UniString(name));
    }
@@ -989,7 +1028,7 @@ QVector<ProjectItem*> ArtifactProjectManager::projectItems() const
   }
   impl_->creatingComposition_ = true;
 
-  ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings();
+  ArtifactCompositionInitParams params = defaultCompositionParamsFromSettings(impl_->currentProjectPtr_);
   // try to set a name if provided
   try {
    params.setCompositionName(str);

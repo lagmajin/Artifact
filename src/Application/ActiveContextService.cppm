@@ -77,7 +77,7 @@ namespace Artifact
   if (auto* playback = ArtifactPlaybackService::instance()) {
    playback->setCurrentComposition(comp);
   }
-  activeCompositionChanged(comp);
+  activeCompositionChanged();
  }
 
  ArtifactCompositionPtr ArtifactActiveContextService::activeComposition() const {

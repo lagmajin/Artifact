@@ -707,6 +707,13 @@ QVector<KeyPatternTarget> collectKeyPatternTargets(
   return targets;
 }
 
+QVector<KeyframePropertySnapshot> captureKeyframePropertySnapshots(
+    const ArtifactCompositionPtr& composition,
+    const QVector<KeyframePropertyRef>& refs);
+
+void applyKeyframePropertySnapshots(const ArtifactCompositionPtr& composition,
+                                    const QVector<KeyframePropertySnapshot>& snapshots);
+
 class TimelineKeyframeSnapshotCommand final : public UndoCommand {
 public:
   TimelineKeyframeSnapshotCommand(QString label, std::function<void()> redoFunc,
@@ -1898,6 +1905,8 @@ struct KeyframeNavigationState {
   bool currentFrameHasKeyframe = false;
   qint64 previousKeyframe = -1;
   qint64 nextKeyframe = -1;
+  qint64 nearestKeyframe = -1;
+  qint64 nearestKeyframeDelta = 0;
 };
 
 struct CurveEditorBinding {
@@ -2322,6 +2331,27 @@ KeyframeNavigationState collectKeyframeNavigationState(
       break;
     }
   }
+
+  if (state.currentFrameHasKeyframe) {
+    state.nearestKeyframe = currentFrame;
+    state.nearestKeyframeDelta = 0;
+  } else if (state.previousKeyframe >= 0 && state.nextKeyframe >= 0) {
+    const qint64 previousDelta = currentFrame - state.previousKeyframe;
+    const qint64 nextDelta = state.nextKeyframe - currentFrame;
+    if (previousDelta <= nextDelta) {
+      state.nearestKeyframe = state.previousKeyframe;
+      state.nearestKeyframeDelta = -previousDelta;
+    } else {
+      state.nearestKeyframe = state.nextKeyframe;
+      state.nearestKeyframeDelta = nextDelta;
+    }
+  } else if (state.previousKeyframe >= 0) {
+    state.nearestKeyframe = state.previousKeyframe;
+    state.nearestKeyframeDelta = state.previousKeyframe - currentFrame;
+  } else if (state.nextKeyframe >= 0) {
+    state.nearestKeyframe = state.nextKeyframe;
+    state.nearestKeyframeDelta = state.nextKeyframe - currentFrame;
+  }
   return state;
 }
 
@@ -2356,13 +2386,22 @@ QString formatKeyframeNavigationText(const KeyframeNavigationState& state)
                          ? QString::number(state.nextKeyframe - state.currentFrame)
                          : QStringLiteral("-"))
           : QStringLiteral("-");
+  const QString nearestMark =
+      state.nearestKeyframe >= 0
+          ? (state.nearestKeyframeDelta == 0
+                 ? QStringLiteral("F%1 (current)").arg(state.nearestKeyframe)
+                 : QStringLiteral("F%1 (%2)")
+                       .arg(state.nearestKeyframe)
+                       .arg(QString::number(state.nearestKeyframeDelta)))
+          : QStringLiteral("-");
 
-  return QStringLiteral("Keys: %1 | Scope: %2 layer(s) | Frame: %3 | Prev: %4 | Next: %5")
+  return QStringLiteral("Keys: %1 | Scope: %2 layer(s) | Frame: %3 | Nearest: %6 | Prev: %4 | Next: %5")
       .arg(state.totalFrames)
       .arg(state.selectedLayerCount)
       .arg(currentMark)
       .arg(previousMark)
-      .arg(nextMark);
+      .arg(nextMark)
+      .arg(nearestMark);
 }
 
 QString formatKeyframeCountSummary(const int count) {
@@ -3160,6 +3199,7 @@ public:
   bool graphEditorVisible_ = false;
   bool graphEditorNeedsFit_ = false;
   bool audioPreviewActive_ = false;
+  QString audioWaveformSummary_;
   QHash<QString, CachedAudioWaveform> audioWaveformCache_;
 };
 
@@ -5330,6 +5370,20 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
   }
 
   if (impl_->painterTrackView_) {
+    struct UpdateRestoreGuard {
+      QWidget* widget = nullptr;
+      bool restore = true;
+      ~UpdateRestoreGuard() {
+        if (widget) {
+          widget->setUpdatesEnabled(restore);
+          widget->update();
+        }
+      }
+    };
+    const bool restoreUpdates = updatesEnabled();
+    setUpdatesEnabled(false);
+    UpdateRestoreGuard restoreGuard{this, restoreUpdates};
+
     if (auto svc = ArtifactProjectService::instance()) {
       auto res = svc->findComposition(id);
       if (res.success && !res.ptr.expired()) {
@@ -5361,7 +5415,6 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
             selectionManager->setActiveComposition(comp);
           }
         }
-        updateSelectionState();
         const int totalFrames = static_cast<int>(
             timelineCompositionFrameCount(comp, kDefaultTimelineFrames));
         if (auto *playbackService = ArtifactPlaybackService::instance()) {
@@ -5481,6 +5534,9 @@ void ArtifactTimelineWidget::refreshTracks() {
   }
   QVector<ArtifactTimelineTrackPainterView::TrackClipVisual> painterClips;
   painterClips.reserve(visibleRows.size());
+  int audioTrackCount = 0;
+  int waveformReadyCount = 0;
+  QString firstWaveformPreview;
   if (impl_->painterTrackView_) {
     impl_->painterTrackView_->setTrackHeights(trackHeights);
   }
@@ -5503,6 +5559,7 @@ void ArtifactTimelineWidget::refreshTracks() {
         std::max(1.0, static_cast<double>(layer->outPoint().framePosition() -
                                           layer->inPoint().framePosition()));
     if (impl_->painterTrackView_) {
+      const auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer);
       ArtifactTimelineTrackPainterView::TrackClipVisual visual;
       visual.clipId = row.layerId.toString();
       visual.layerId = row.layerId;
@@ -5512,7 +5569,8 @@ void ArtifactTimelineWidget::refreshTracks() {
       visual.title = layer->layerName();
       visual.fillColor = layerTimelineColor(layer);
       if (layer->hasAudio()) {
-        visual.kind = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)
+        ++audioTrackCount;
+        visual.kind = audioLayer
                           ? ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio
                           : ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video;
         const QString cacheKey = audioWaveformCacheKey(impl_->compositionId_, row.layerId);
@@ -5530,6 +5588,12 @@ void ArtifactTimelineWidget::refreshTracks() {
         if (cachedIt != impl_->audioWaveformCache_.end()) {
           visual.waveformPeaks = cachedIt->peaks;
           visual.waveformRms = cachedIt->rms;
+          ++waveformReadyCount;
+          if (firstWaveformPreview.isEmpty()) {
+            firstWaveformPreview = audioLayer
+                                       ? audioLayer->waveformPreviewSummary()
+                                       : waveformPreviewSummary(cachedIt->peaks, cachedIt->rms);
+          }
         }
       } else if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
         visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video;
@@ -5552,6 +5616,21 @@ void ArtifactTimelineWidget::refreshTracks() {
         : impl_->painterTrackView_->verticalOffset();
     syncTimelineVerticalOffset(syncedOffset);
     syncPainterSelectionState();
+  }
+  if (audioTrackCount > 0) {
+    const QString waveformSummary = QStringLiteral("Audio waveform preview: %1/%2 clips ready%3")
+                                        .arg(waveformReadyCount)
+                                        .arg(audioTrackCount)
+                                        .arg(firstWaveformPreview.isEmpty()
+                                                 ? QString()
+                                                 : QStringLiteral(" | %1").arg(firstWaveformPreview));
+    if (waveformSummary != impl_->audioWaveformSummary_) {
+      impl_->audioWaveformSummary_ = waveformSummary;
+      Q_EMIT timelineDebugMessage(waveformSummary);
+    }
+  } else if (!impl_->audioWaveformSummary_.isEmpty()) {
+    impl_->audioWaveformSummary_.clear();
+    Q_EMIT timelineDebugMessage(QStringLiteral("Audio waveform preview: none"));
   }
   if (impl_->curveEditor_ && impl_->graphEditorVisible_) {
     refreshCurveEditorTracks();
@@ -6006,6 +6085,13 @@ void ArtifactTimelineWidget::updateKeyframeState()
   ArtifactLayerSelectionManager *selectionManager = nullptr;
   if (auto *app = ArtifactApplicationManager::instance()) {
     selectionManager = app->layerSelectionManager();
+  }
+
+  ArtifactAbstractLayerPtr currentLayer;
+  int selectedCount = 0;
+  if (selectionManager) {
+    currentLayer = selectionManager->currentLayer();
+    selectedCount = static_cast<int>(selectionManager->selectedLayers().size());
   }
 
   const auto state = collectKeyframeNavigationState(

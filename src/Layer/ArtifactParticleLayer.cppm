@@ -269,7 +269,7 @@ QString ArtifactParticleLayer::debugState() const
     const auto& rs = impl_->particleSystem->renderSettings();
     const auto sourceData = impl_->particleSystem->captureRenderData();
     const int emitterCount = impl_->particleSystem->emitterCount();
-    return QStringLiteral("playing=%1 emitters=%2 alive=%3 blend=%4 billboard=%5 sort=%6 depthTest=%7 depthWrite=%8 cachedFrame=%9 timeScale=%10")
+    return QStringLiteral("playing=%1 emitters=%2 alive=%3 blend=%4 billboard=%5 sort=%6 depthTest=%7 depthWrite=%8 cachedFrame=%9 timeScale=%10 bounds={%11}")
         .arg(impl_->playing ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(emitterCount)
         .arg(sourceData.particles.size())
@@ -279,7 +279,8 @@ QString ArtifactParticleLayer::debugState() const
         .arg(rs.depthTest ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(rs.depthWrite ? QStringLiteral("true") : QStringLiteral("false"))
         .arg(impl_->cachedFrameNumber)
-        .arg(QString::number(impl_->particleSystem->timeScale(), 'f', 3));
+        .arg(QString::number(impl_->particleSystem->timeScale(), 'f', 3))
+        .arg(contentBoundsSummary());
 }
 
 QJsonObject ArtifactParticleLayer::toJson() const

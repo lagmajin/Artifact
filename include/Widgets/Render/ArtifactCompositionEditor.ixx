@@ -3,6 +3,7 @@ module;
 
 #include <QWidget>
 #include <QResizeEvent>
+#include <QKeyEvent>
 #include <wobjectdefs.h>
 export module Artifact.Widgets.CompositionEditor;
 
@@ -39,6 +40,7 @@ public /*slots*/:
   void zoomFit(); W_SLOT(zoomFit);
   void zoomFill(); W_SLOT(zoomFill);
   void zoom100(); W_SLOT(zoom100);
+  bool handleImportPlacementKeyPress(QKeyEvent* event);
 
 signals:
   void videoDebugMessage(const QString& msg) W_SIGNAL(videoDebugMessage, msg);

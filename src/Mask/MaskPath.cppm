@@ -62,6 +62,10 @@ void applySnapshotToPath(MaskPath& path, const MaskPathKeyframeSnapshot& snapsho
     path.setClosed(snapshot.closed);
     path.setOpacity(snapshot.opacity);
     path.setFeather(snapshot.feather);
+    path.setFeatherHorizontal(snapshot.featherHorizontal);
+    path.setFeatherVertical(snapshot.featherVertical);
+    path.setFeatherInner(snapshot.featherInner);
+    path.setFeatherOuter(snapshot.featherOuter);
     path.setExpansion(snapshot.expansion);
     path.setInverted(snapshot.inverted);
     path.setMode(snapshot.mode);
@@ -96,6 +100,10 @@ MaskPathKeyframeSnapshot interpolateSnapshot(const MaskPathKeyframeSnapshot& a,
     out.frame = frame;
     out.opacity = a.opacity + (b.opacity - a.opacity) * t;
     out.feather = a.feather + (b.feather - a.feather) * t;
+    out.featherHorizontal = a.featherHorizontal + (b.featherHorizontal - a.featherHorizontal) * t;
+    out.featherVertical = a.featherVertical + (b.featherVertical - a.featherVertical) * t;
+    out.featherInner = a.featherInner + (b.featherInner - a.featherInner) * t;
+    out.featherOuter = a.featherOuter + (b.featherOuter - a.featherOuter) * t;
     out.expansion = a.expansion + (b.expansion - a.expansion) * t;
     out.inverted = t < 0.5f ? a.inverted : b.inverted;
     out.mode = t < 0.5f ? a.mode : b.mode;
@@ -124,6 +132,10 @@ public:
     bool closed = true;
     float opacity = 1.0f;
     float feather = 0.0f;
+    float featherHorizontal = 0.0f;
+    float featherVertical = 0.0f;
+    float featherInner = 0.0f;
+    float featherOuter = 0.0f;
     float expansion = 0.0f;
     bool inverted = false;
     MaskMode mode = MaskMode::Add;
@@ -221,6 +233,14 @@ void MaskPath::setOpacity(float opacity) { impl_->opacity = std::clamp(opacity, 
 
 float MaskPath::feather() const { return impl_->feather; }
 void MaskPath::setFeather(float feather) { impl_->feather = std::max(0.0f, feather); }
+float MaskPath::featherHorizontal() const { return impl_->featherHorizontal; }
+void MaskPath::setFeatherHorizontal(float feather) { impl_->featherHorizontal = std::max(0.0f, feather); }
+float MaskPath::featherVertical() const { return impl_->featherVertical; }
+void MaskPath::setFeatherVertical(float feather) { impl_->featherVertical = std::max(0.0f, feather); }
+float MaskPath::featherInner() const { return impl_->featherInner; }
+void MaskPath::setFeatherInner(float feather) { impl_->featherInner = std::max(0.0f, feather); }
+float MaskPath::featherOuter() const { return impl_->featherOuter; }
+void MaskPath::setFeatherOuter(float feather) { impl_->featherOuter = std::max(0.0f, feather); }
 
 float MaskPath::expansion() const { return impl_->expansion; }
 void MaskPath::setExpansion(float expansion) { impl_->expansion = expansion; }
@@ -368,15 +388,44 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
         }
     }
 
-    // Feather: Gaussian blur
-    float featherVal = impl_->feather * ((scaleX + scaleY) * 0.5f);
-    if (featherVal > 0.5f) {
-        int ksize = static_cast<int>(featherVal * 2.0f) | 1;
-        cv::GaussianBlur(mask8, mask8, cv::Size(ksize, ksize), 0);
+    auto blurMask = [&](const cv::Mat& srcMask, float featherPxX, float featherPxY) {
+        cv::Mat blurred = srcMask.clone();
+        const float fx = featherPxX * scaleX;
+        const float fy = featherPxY * scaleY;
+        const int kx = fx > 0.5f ? (static_cast<int>(fx * 2.0f) | 1) : 0;
+        const int ky = fy > 0.5f ? (static_cast<int>(fy * 2.0f) | 1) : 0;
+        if (kx > 0 || ky > 0) {
+            cv::GaussianBlur(blurred, blurred, cv::Size(std::max(1, kx), std::max(1, ky)), 0);
+        }
+        return blurred;
+    };
+
+    cv::Mat featherMask = mask8;
+    const float uniformFeather = impl_->feather * ((scaleX + scaleY) * 0.5f);
+    const float featherX = (impl_->featherHorizontal > 0.0f ? impl_->featherHorizontal : uniformFeather);
+    const float featherY = (impl_->featherVertical > 0.0f ? impl_->featherVertical : uniformFeather);
+    if (impl_->featherOuter > 0.0f || impl_->featherInner > 0.0f) {
+        cv::Mat outerMask = mask8.clone();
+        cv::Mat innerMask = mask8.clone();
+        const int outerK = static_cast<int>(std::max(0.0f, impl_->featherOuter * ((scaleX + scaleY) * 0.5f)) * 2.0f) | 1;
+        const int innerK = static_cast<int>(std::max(0.0f, impl_->featherInner * ((scaleX + scaleY) * 0.5f)) * 2.0f) | 1;
+        if (outerK > 1) {
+            cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(outerK, outerK));
+            cv::dilate(outerMask, outerMask, kernel);
+        }
+        if (innerK > 1) {
+            cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(innerK, innerK));
+            cv::erode(innerMask, innerMask, kernel);
+        }
+        outerMask = blurMask(outerMask, featherX, featherY);
+        innerMask = blurMask(innerMask, featherX, featherY);
+        featherMask = cv::max(innerMask, outerMask);
+    } else {
+        featherMask = blurMask(mask8, featherX, featherY);
     }
 
     // Convert to float 0~1
-    mask8.convertTo(dst, CV_32FC1, 1.0 / 255.0);
+    featherMask.convertTo(dst, CV_32FC1, 1.0 / 255.0);
 
     // Apply opacity
     if (impl_->opacity < 1.0f) {

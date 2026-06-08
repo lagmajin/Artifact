@@ -3,9 +3,13 @@ module;
 
 #include <QColor>
 #include <QContextMenuEvent>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPaintEvent>
+#include <QDropEvent>
 #include <QMenu>
 #include <QWheelEvent>
 #include <QSet>
@@ -41,9 +45,14 @@ export namespace Artifact
    bool selectedLayer = false;
    bool selected = false;
    bool eased = false;
+   bool incomingEased = false;
+   bool outgoingEased = false;
+   bool incomingBezier = false;
+   bool outgoingBezier = false;
    bool bezier = false;
    bool roving = false;
    QColor color = QColor(247, 204, 83);
+   QColor labelColor;
    QString label;
   };
 
@@ -81,6 +90,10 @@ export namespace Artifact
  void contextMenuEvent(QContextMenuEvent* event) override;
  void wheelEvent(QWheelEvent* event) override;
  void leaveEvent(QEvent* event) override;
+ void dragEnterEvent(QDragEnterEvent* event) override;
+ void dragMoveEvent(QDragMoveEvent* event) override;
+ void dragLeaveEvent(QDragLeaveEvent* event) override;
+ void dropEvent(QDropEvent* event) override;
  QSize minimumSizeHint() const override;
 
  public:
@@ -119,6 +132,8 @@ export namespace Artifact
   void selectAllKeyframeMarkers();
   void clearKeyframeSelection();
   void setSelectedKeyframeKeys(const QSet<QString>& selectedKeys);
+  bool setSelectedKeyframeAnchor(ArtifactCore::KeyFrame::Anchor anchor);
+  bool setSelectedKeyframeColorLabel(ArtifactCore::KeyFrame::ColorLabel label);
   bool deleteSelectedKeyframeMarkers();
   bool duplicateSelectedKeyframeMarkersAtCurrentFrame();
   bool distributeSelectedKeyframeMarkersEvenly();

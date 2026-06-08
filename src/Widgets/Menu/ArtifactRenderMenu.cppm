@@ -202,6 +202,12 @@ void ArtifactRenderMenu::Impl::showRenderSettings()
 {
  ArtifactRenderOutputSettingDialog dialog(mainWindow_ ? mainWindow_ : menu_);
  dialog.setWindowTitle(QStringLiteral("Render Output Settings"));
+ if (auto* projectService = ArtifactProjectService::instance()) {
+  if (auto current = projectService->currentComposition().lock()) {
+   dialog.setCompositionFrameRate(current->frameRate().framerate());
+   dialog.setFrameRate(current->frameRate().framerate());
+  }
+ }
  if (auto* queueService = ArtifactRenderQueueService::instance()) {
   const auto preflight = queueService->preflightAllRenderQueues();
   dialog.setPreflightSummary(ArtifactRenderQueueService::formatPreflightSummary(preflight));
