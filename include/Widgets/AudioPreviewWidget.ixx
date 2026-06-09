@@ -27,6 +27,29 @@ import Artifact.Audio.Waveform;
 
 export namespace Artifact {
 
+// 音声レベルメーター（水平バー）
+class AudioLevelBarWidget : public QWidget {
+    W_OBJECT(AudioLevelBarWidget)
+public:
+    explicit AudioLevelBarWidget(QWidget* parent = nullptr);
+
+    void setLevels(float leftPeak, float leftRms, float rightPeak, float rightRms);
+
+protected:
+    void paintEvent(QPaintEvent* event) override;
+
+private:
+    float leftPeak_ = -96.0f;
+    float leftRms_ = -96.0f;
+    float rightPeak_ = -96.0f;
+    float rightRms_ = -96.0f;
+    float leftPeakHold_ = -96.0f;
+    float rightPeakHold_ = -96.0f;
+    QElapsedTimer peakHoldTimer_;
+    static constexpr float kMinDb = -60.0f;
+    static constexpr float kMaxDb = 0.0f;
+};
+
 // 音声波形表示ウィジェット
 class AudioWaveformWidget : public QWidget {
     W_OBJECT(AudioWaveformWidget)

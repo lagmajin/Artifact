@@ -32,11 +32,110 @@ module;
 module Artifact.Widgets.AudioPreview;
 
 import Artifact.Audio.Waveform;
+import Media.Encoder.FFmpegAudioDecoder;
+import Audio.Segment;
 
 namespace Artifact {
 
 W_OBJECT_IMPL(AudioWaveformWidget)
 W_OBJECT_IMPL(ArtifactAudioPreviewWidget)
+
+// ─────────────────────────────────────────────────────────
+// AudioLevelBarWidget
+// ─────────────────────────────────────────────────────────
+
+AudioLevelBarWidget::AudioLevelBarWidget(QWidget* parent)
+    : QWidget(parent)
+{
+    setMinimumHeight(24);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    peakHoldTimer_.start();
+}
+
+void AudioLevelBarWidget::setLevels(float leftPeak, float leftRms, float rightPeak, float rightRms)
+{
+    leftPeak_ = std::max(-96.0f, leftPeak);
+    leftRms_ = std::max(-96.0f, leftRms);
+    rightPeak_ = std::max(-96.0f, rightPeak);
+    rightRms_ = std::max(-96.0f, rightRms);
+
+    if (leftPeak_ > leftPeakHold_) {
+        leftPeakHold_ = leftPeak_;
+    }
+    if (rightPeak_ > rightPeakHold_) {
+        rightPeakHold_ = rightPeak_;
+    }
+
+    // Release peak hold after 1.5s
+    if (peakHoldTimer_.hasExpired(1500)) {
+        leftPeakHold_ = std::max(leftPeakHold_ - 0.5f, leftPeak_);
+        rightPeakHold_ = std::max(rightPeakHold_ - 0.5f, rightPeak_);
+        peakHoldTimer_.restart();
+    }
+
+    update();
+}
+
+static float dbToRatio(float db)
+{
+    if (db <= -96.0f) return 0.0f;
+    return (db - kMinDb) / (kMaxDb - kMinDb);
+}
+
+void AudioLevelBarWidget::paintEvent(QPaintEvent* event)
+{
+    Q_UNUSED(event);
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, false);
+
+    const int w = width();
+    const int h = height();
+    if (w <= 0 || h <= 0) return;
+
+    // Background
+    painter.fillRect(rect(), QColor(20, 20, 30));
+
+    const int barHeight = (h - 4) / 2;
+    const int barWidth = w - 8;
+
+    auto paintBar = [&](int y, float rms, float peak, float peakHold) {
+        const int x = 4;
+        const int rmsW = static_cast<int>(dbToRatio(rms) * barWidth);
+        const int peakW = static_cast<int>(dbToRatio(peak) * barWidth);
+        const int holdW = static_cast<int>(dbToRatio(peakHold) * barWidth);
+
+        // Background fill
+        painter.fillRect(x, y, barWidth, barHeight, QColor(10, 10, 18));
+
+        // Gradient for RMS
+        if (rmsW > 0) {
+            QLinearGradient grad(x, 0, x + barWidth, 0);
+            grad.setColorAt(0.0, QColor(0, 200, 80));
+            grad.setColorAt(0.7, QColor(240, 220, 0));
+            grad.setColorAt(0.9, QColor(240, 80, 0));
+            grad.setColorAt(1.0, QColor(220, 30, 30));
+            painter.fillRect(x, y, rmsW, barHeight, grad);
+        }
+
+        // Peak line
+        if (peakW > 0) {
+            painter.setPen(QPen(QColor(255, 255, 255, 220), 1));
+            painter.drawLine(x + peakW, y, x + peakW, y + barHeight);
+        }
+
+        // Peak hold line
+        if (holdW > 0) {
+            painter.setPen(QPen(QColor(255, 255, 255, 80), 1));
+            painter.drawLine(x + holdW, y, x + holdW, y + barHeight);
+        }
+    };
+
+    // Left channel (top)
+    paintBar(2, leftRms_, leftPeak_, leftPeakHold_);
+
+    // Right channel (bottom)
+    paintBar(2 + barHeight + 2, rightRms_, rightPeak_, rightPeakHold_);
+}
 
 // ─────────────────────────────────────────────────────────
 // AudioWaveformWidget
@@ -189,6 +288,7 @@ public:
     explicit AudioPlaybackEngine(QObject* parent = nullptr)
         : QObject(parent)
     {
+        decoder_ = std::make_unique<ArtifactCore::FFmpegAudioDecoder>();
         timer_ = new QTimer(this);
         timer_->setInterval(50);
         connect(timer_, &QTimer::timeout, this, &AudioPlaybackEngine::onTimerTick);
@@ -196,110 +296,99 @@ public:
 
     bool loadFile(const QString& filePath) {
         stop();
-        QFile file(filePath);
-        if (!file.open(QIODevice::ReadOnly)) {
+        if (!decoder_->openFile(filePath)) {
+            return false;
+        }
+        sampleRate_ = decoder_->sampleRate();
+        numChannels_ = decoder_->channelCount();
+        totalSamples_ = 0;
+        preloadedSegments_.clear();
+
+        ArtifactCore::AudioSegment seg;
+        while (decoder_->decodeNextSegment(seg)) {
+            totalSamples_ += seg.frameCount();
+            preloadedSegments_.push_back(seg);
+        }
+
+        if (preloadedSegments_.empty()) {
+            decoder_->closeFile();
             return false;
         }
 
-        // Simple WAV parser
-        QByteArray data = file.readAll();
-        file.close();
-
-        if (data.size() < 44) return false;
-
-        // Check RIFF header
-        if (data.mid(0, 4) != "RIFF" || data.mid(8, 4) != "WAVE") {
-            return false;
-        }
-
-        // Parse format
-        quint16 audioFormat = *reinterpret_cast<const quint16*>(data.constData() + 20);
-        quint16 numChannels = *reinterpret_cast<const quint16*>(data.constData() + 22);
-        quint32 sampleRate = *reinterpret_cast<const quint32*>(data.constData() + 24);
-        quint16 bitsPerSample = *reinterpret_cast<const quint16*>(data.constData() + 34);
-
-        if (audioFormat != 1) return false; // Only PCM
-
-        // Find data chunk
-        int dataPos = 36;
-        while (dataPos < data.size() - 8) {
-            if (data.mid(dataPos, 4) == "data") {
-                break;
-            }
-            quint32 chunkSize = *reinterpret_cast<const quint32*>(data.constData() + dataPos + 4);
-            dataPos += 8 + chunkSize;
-        }
-
-        if (dataPos >= data.size() - 8) return false;
-
-        quint32 dataSize = *reinterpret_cast<const quint32*>(data.constData() + dataPos + 4);
-        audioData_ = data.mid(dataPos + 8, dataSize);
-
-        // Setup format
-        QAudioFormat format;
-        format.setSampleRate(sampleRate);
-        format.setChannelCount(numChannels);
-        format.setSampleFormat(bitsPerSample == 16 ? QAudioFormat::Int16 : QAudioFormat::UInt8);
-
-        audioSink_ = new QAudioSink(format, this);
-        audioDevice_ = audioSink_->start();
-
-        sampleRate_ = sampleRate;
-        numChannels_ = numChannels;
-        bitsPerSample_ = bitsPerSample;
-        totalSamples_ = (dataSize / (bitsPerSample / 8)) / numChannels;
         currentSample_ = 0;
+        currentSegmentIndex_ = 0;
+        currentSegmentOffset_ = 0;
         isPlaying_ = false;
+        eosReached_ = false;
 
-        // Generate downsampled samples for waveform display
+        leftPeak_ = -96.0f;
+        leftRms_ = -96.0f;
+        rightPeak_ = -96.0f;
+        rightRms_ = -96.0f;
+        levelTickCounter_ = 0;
+
         generateWaveformSamples();
-
         return true;
     }
 
     void play() {
-        if (!audioSink_ || audioData_.isEmpty()) return;
+        if (!decoder_ || preloadedSegments_.empty()) return;
         isPlaying_ = true;
+        eosReached_ = false;
         timer_->start();
         emit playbackStarted();
     }
 
     void pause() {
-        if (!audioSink_) return;
+        if (!decoder_) return;
         isPlaying_ = false;
         timer_->stop();
-        audioSink_->suspend();
+        leftPeak_ = -96.0f; leftRms_ = -96.0f;
+        rightPeak_ = -96.0f; rightRms_ = -96.0f;
+        emit levelUpdated(leftPeak_, leftRms_, rightPeak_, rightRms_);
     }
 
     void stop() {
-        if (!audioSink_) return;
+        if (!decoder_) return;
         isPlaying_ = false;
         timer_->stop();
-        audioSink_->stop();
+        decoder_->closeFile();
+        currentSegmentIndex_ = 0;
+        currentSegmentOffset_ = 0;
         currentSample_ = 0;
+        eosReached_ = false;
+        leftPeak_ = -96.0f; leftRms_ = -96.0f;
+        rightPeak_ = -96.0f; rightRms_ = -96.0f;
         emit positionChanged(0);
+        emit levelUpdated(leftPeak_, leftRms_, rightPeak_, rightRms_);
     }
 
     bool isPlaying() const { return isPlaying_; }
-
     int currentPosition() const { return currentSample_; }
     int totalSamples() const { return totalSamples_; }
     int sampleRate() const { return sampleRate_; }
 
     void setPosition(int sampleIndex) {
         currentSample_ = std::clamp(sampleIndex, 0, totalSamples_ - 1);
+        int pos = 0;
+        for (size_t i = 0; i < preloadedSegments_.size(); ++i) {
+            int frames = preloadedSegments_[i].frameCount();
+            if (pos + frames > currentSample_) {
+                currentSegmentIndex_ = i;
+                currentSegmentOffset_ = currentSample_ - pos;
+                emit positionChanged(currentSample_);
+                return;
+            }
+            pos += frames;
+        }
         emit positionChanged(currentSample_);
     }
 
     void setVolume(float volume) {
-        if (audioSink_) {
-            audioSink_->setVolume(std::clamp(volume, 0.0f, 1.0f));
-        }
+        volume_ = std::clamp(volume, 0.0f, 1.0f);
     }
 
-    float volume() const {
-        return audioSink_ ? audioSink_->volume() : 1.0f;
-    }
+    float volume() const { return volume_; }
 
     const QVector<float>& waveformSamples() const { return waveformSamples_; }
 
@@ -307,82 +396,136 @@ signals:
     void playbackStarted() W_SIGNAL(playbackStarted);
     void playbackStopped() W_SIGNAL(playbackStopped);
     void positionChanged(int sampleIndex) W_SIGNAL(positionChanged, sampleIndex);
+    void levelUpdated(float leftPeak, float leftRms, float rightPeak, float rightRms)
+        W_SIGNAL(levelUpdated, leftPeak, leftRms, rightPeak, rightRms);
 
 private slots:
     void onTimerTick() {
-        if (!isPlaying_ || !audioDevice_ || audioData_.isEmpty()) return;
-
-        const int bytesPerSample = bitsPerSample_ / 8;
-        const int bytesToWrite = 4096;
-        const int samplesToWrite = bytesToWrite / bytesPerSample / numChannels_;
-
-        if (currentSample_ + samplesToWrite >= totalSamples_) {
-            // End of audio
+        if (!isPlaying_ || preloadedSegments_.empty()) return;
+        if (eosReached_) {
             stop();
             emit playbackStopped();
             return;
         }
 
-        const int byteOffset = currentSample_ * numChannels_ * bytesPerSample;
-        const int writeBytes = std::min(bytesToWrite, static_cast<int>(audioData_.size()) - byteOffset);
+        if (currentSegmentIndex_ >= preloadedSegments_.size()) {
+            eosReached_ = true;
+            stop();
+            emit playbackStopped();
+            return;
+        }
 
-        if (writeBytes > 0) {
-            qint64 written = audioDevice_->write(audioData_.constData() + byteOffset, writeBytes);
-            if (written > 0) {
-                currentSample_ += (written / bytesPerSample) / numChannels_;
-                emit positionChanged(currentSample_);
-            }
+        const auto& seg = preloadedSegments_[currentSegmentIndex_];
+        int remaining = seg.frameCount() - currentSegmentOffset_;
+        const int samplesToAdvance = std::min(remaining, 1024);
+
+        computeLevelsFromSegment(seg, currentSegmentOffset_, samplesToAdvance);
+
+        currentSegmentOffset_ += samplesToAdvance;
+        currentSample_ += samplesToAdvance;
+
+        if (currentSegmentOffset_ >= seg.frameCount()) {
+            currentSegmentOffset_ = 0;
+            ++currentSegmentIndex_;
+        }
+
+        emit positionChanged(currentSample_);
+
+        ++levelTickCounter_;
+        if (levelTickCounter_ % 2 == 0) {
+            emit levelUpdated(leftPeak_, leftRms_, rightPeak_, rightRms_);
+        }
+
+        if (currentSample_ >= totalSamples_) {
+            eosReached_ = true;
+            stop();
+            emit playbackStopped();
         }
     }
 
 private:
-    void generateWaveformSamples() {
-        if (audioData_.isEmpty() || totalSamples_ <= 0) return;
+    static float linearToDb(float linear) {
+        if (linear < 1e-10f) return -96.0f;
+        return 20.0f * std::log10(linear);
+    }
 
-        // Downsample to ~4000 samples for display
+    void computeLevelsFromSegment(const ArtifactCore::AudioSegment& seg, int offset, int count) {
+        if (seg.channelData.isEmpty()) return;
+        const auto& ch0 = seg.channelData[0];
+        const bool stereo = seg.channelData.size() >= 2;
+        const auto& ch1 = stereo ? seg.channelData[1] : ch0;
+
+        float leftSumSq = 0.0f;
+        float rightSumSq = 0.0f;
+        float leftAbsMax = 0.0f;
+        float rightAbsMax = 0.0f;
+
+        int end = std::min(offset + count, static_cast<int>(ch0.size()));
+        for (int i = offset; i < end; ++i) {
+            float l = std::abs(ch0[i]);
+            float r = stereo ? std::abs(ch1[i]) : l;
+            leftSumSq += l * l;
+            rightSumSq += r * r;
+            if (l > leftAbsMax) leftAbsMax = l;
+            if (r > rightAbsMax) rightAbsMax = r;
+        }
+
+        int n = end - offset;
+        if (n <= 0) return;
+        leftPeak_ = linearToDb(leftAbsMax);
+        leftRms_ = linearToDb(std::sqrt(leftSumSq / n));
+        rightPeak_ = linearToDb(rightAbsMax);
+        rightRms_ = linearToDb(std::sqrt(rightSumSq / n));
+    }
+
+    void generateWaveformSamples() {
+        if (preloadedSegments_.empty()) return;
         const int targetSamples = 4000;
         const int samplesPerPixel = std::max(1, totalSamples_ / targetSamples);
-        const int bytesPerSample = bitsPerSample_ / 8;
-
         waveformSamples_.resize(targetSamples);
 
+        int segIdx = 0;
+        int segOffset = 0;
         for (int i = 0; i < targetSamples; ++i) {
-            const int startSample = i * samplesPerPixel;
-            const int endSample = std::min(startSample + samplesPerPixel, totalSamples_);
-
             float maxVal = 0.0f;
-            for (int s = startSample; s < endSample; ++s) {
-                const int byteOffset = s * numChannels_ * bytesPerSample;
-                float sampleVal = 0.0f;
-
-                if (bitsPerSample_ == 16) {
-                    const qint16* ptr = reinterpret_cast<const qint16*>(audioData_.constData() + byteOffset);
-                    sampleVal = static_cast<float>(*ptr) / 32768.0f;
-                } else {
-                    const quint8* ptr = reinterpret_cast<const quint8*>(audioData_.constData() + byteOffset);
-                    sampleVal = (static_cast<float>(*ptr) / 255.0f) * 2.0f - 1.0f;
+            for (int s = 0; s < samplesPerPixel; ++s) {
+                if (segIdx >= static_cast<int>(preloadedSegments_.size())) break;
+                const auto& seg = preloadedSegments_[segIdx];
+                if (seg.channelData.isEmpty()) break;
+                const auto& ch0 = seg.channelData[0];
+                if (segOffset < static_cast<int>(ch0.size())) {
+                    float v = std::abs(ch0[segOffset]);
+                    if (v > maxVal) maxVal = v;
                 }
-
-                if (std::abs(sampleVal) > std::abs(maxVal)) {
-                    maxVal = sampleVal;
+                ++segOffset;
+                if (segOffset >= seg.frameCount()) {
+                    segOffset = 0;
+                    ++segIdx;
                 }
             }
-
             waveformSamples_[i] = maxVal;
         }
     }
 
-    QAudioSink* audioSink_ = nullptr;
-    QIODevice* audioDevice_ = nullptr;
+    std::unique_ptr<ArtifactCore::FFmpegAudioDecoder> decoder_;
     QTimer* timer_ = nullptr;
-    QByteArray audioData_;
+    std::vector<ArtifactCore::AudioSegment> preloadedSegments_;
     QVector<float> waveformSamples_;
     int sampleRate_ = 44100;
     int numChannels_ = 2;
-    int bitsPerSample_ = 16;
     int totalSamples_ = 0;
     int currentSample_ = 0;
+    size_t currentSegmentIndex_ = 0;
+    int currentSegmentOffset_ = 0;
     bool isPlaying_ = false;
+    bool eosReached_ = false;
+    float volume_ = 1.0f;
+
+    float leftPeak_ = -96.0f;
+    float leftRms_ = -96.0f;
+    float rightPeak_ = -96.0f;
+    float rightRms_ = -96.0f;
+    int levelTickCounter_ = 0;
 };
 
 W_OBJECT_IMPL(AudioPlaybackEngine)
@@ -402,6 +545,7 @@ public:
     AudioPlaybackEngine* engine_ = nullptr;
 
     AudioWaveformWidget* waveformWidget_ = nullptr;
+    AudioLevelBarWidget* levelBar_ = nullptr;
     QLabel* titleLabel_ = nullptr;
     QLabel* durationLabel_ = nullptr;
     QPushButton* playButton_ = nullptr;
@@ -415,7 +559,7 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
 {
     auto* mainLayout = new QVBoxLayout(this);
     mainLayout->setContentsMargins(8, 8, 8, 8);
-    mainLayout->setSpacing(8);
+    mainLayout->setSpacing(6);
 
     // Title
     impl_->titleLabel_ = new QLabel("Audio Preview");
@@ -427,6 +571,10 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
         titleFont.setPointSize(14);
     }
     impl_->titleLabel_->setFont(titleFont);
+
+    // Level meter
+    impl_->levelBar_ = new AudioLevelBarWidget();
+    impl_->levelBar_->setFixedHeight(28);
 
     // Waveform
     impl_->waveformWidget_ = new AudioWaveformWidget();
@@ -465,6 +613,7 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
     controlsLayout->addWidget(impl_->volumeSlider_);
 
     mainLayout->addWidget(impl_->titleLabel_);
+    mainLayout->addWidget(impl_->levelBar_);
     mainLayout->addWidget(impl_->waveformWidget_, 1);
     mainLayout->addWidget(impl_->durationLabel_);
     mainLayout->addLayout(controlsLayout);
@@ -510,6 +659,11 @@ ArtifactAudioPreviewWidget::ArtifactAudioPreviewWidget(QWidget* parent)
         impl_->engine_->setPosition(sampleIndex);
     });
 
+    connect(impl_->engine_, &AudioPlaybackEngine::levelUpdated, this,
+        [this](float leftPeak, float leftRms, float rightPeak, float rightRms) {
+            impl_->levelBar_->setLevels(leftPeak, leftRms, rightPeak, rightRms);
+        });
+
     // Initial state
     impl_->playButton_->setEnabled(false);
     impl_->stopButton_->setEnabled(false);
@@ -533,7 +687,7 @@ void ArtifactAudioPreviewWidget::loadAudioFile(const QString& filePath) {
         updateDurationLabel();
     } else {
         QMessageBox::warning(this, "Audio Preview",
-            QString("Failed to load audio file:\n%1\n\nOnly WAV files are supported.").arg(filePath));
+            QString("Failed to load audio file:\n%1").arg(filePath));
     }
 }
 
