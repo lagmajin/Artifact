@@ -50,6 +50,7 @@ import Artifact.Tool.Manager;
 import Artifact.Tool.MotionSketchTool;
 import Artifact.Tool.PuppetTool;
 import Artifact.Layers.Selection.Manager;
+import Artifact.Composition.Manager;
 
 namespace Artifact
 {
@@ -64,6 +65,7 @@ namespace Artifact
   ArtifactPuppetTool puppetTool_;
   EnvironmentVariableManager manager_;
   ArtifactLayerSelectionManager selectionManager_;
+  ArtifactCompositionManager compositionManager_;
 
   entt::registry registry_;
   entt::dispatcher dispather_;
@@ -128,6 +130,11 @@ ArtifactProjectManager* ArtifactApplicationManager::Impl::projectManager() const
   return &motionSketchTool_;
  }
 
+ ArtifactCompositionManager* ArtifactApplicationManager::Impl::compositionManager()
+ {
+  return &compositionManager_;
+ }
+
  ArtifactPuppetTool* ArtifactApplicationManager::Impl::puppetTool()
  {
   return &puppetTool_;
@@ -179,6 +186,11 @@ ArtifactActiveContextService* ArtifactApplicationManager::activeContextService()
  ArtifactMotionSketchTool* ArtifactApplicationManager::motionSketchTool() const
  {
   return impl_->motionSketchTool();
+ }
+
+ ArtifactCompositionManager* ArtifactApplicationManager::compositionManager() const
+ {
+  return impl_->compositionManager();
  }
 
  ArtifactPuppetTool* ArtifactApplicationManager::puppetTool() const

@@ -17,6 +17,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Tool.Manager;
 import Artifact.Tool.MotionSketchTool;
 import Artifact.Tool.PuppetTool;
+import Artifact.Composition.Manager;
 
 
 export namespace Artifact {
@@ -40,6 +41,7 @@ export namespace Artifact {
   ArtifactToolManager* toolManager() const;
   ArtifactMotionSketchTool* motionSketchTool() const;
   ArtifactPuppetTool* puppetTool() const;
+  ArtifactCompositionManager* compositionManager() const;
   
   entt::registry& registry();
  
