@@ -152,6 +152,8 @@ import Artifact.Widgets.DebugRenderHarnessWidget;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Workspace.Manager;
+import Artifact.Plugin.Loader;
+import ArtifactCore.Plugin.Registry;
 
 using namespace Artifact;
 using namespace ArtifactCore;
@@ -1648,10 +1650,78 @@ int main(int argc, char *argv[]) {
   for (int i = 0; i < argc; ++i) {
     appArgs << QString::fromLocal8Bit(argv[i]);
   }
+  if (appArgs.contains(QStringLiteral("--help")) || appArgs.contains(QStringLiteral("-h"))) {
+    printf("ArtifactStudio v%s (%s)\n", ARTIFACT_VERSION_STRING, ARTIFACT_BUILD_GIT_HASH);
+    printf("Usage: Artifact.exe [options] [project.artifact]\n\n");
+    printf("Options:\n");
+    printf("  -h, --help          Show this help message and exit\n");
+    printf("  --version           Show version information and exit\n");
+    printf("  --lang <code>       Set UI language (ja/en/zh/zh-tw)\n");
+    printf("  --mcp-server        Run in MCP (Model Context Protocol) server mode\n");
+    printf("  --plugin-list       List all registered plugins and exit\n");
+    printf("  --plugin-info <id>  Show details for a specific plugin and exit\n");
+    printf("\nEnvironment:\n");
+    printf("  ARTIFACT_RUN_BUILTIN_TESTS  Run built-in tests and exit\n");
+    return 0;
+  }
+
+  if (appArgs.contains(QStringLiteral("--version"))) {
+    printf("ArtifactStudio v%s (%s)\n", ARTIFACT_VERSION_STRING, ARTIFACT_BUILD_GIT_HASH);
+    return 0;
+  }
+
   if (appArgs.contains(QStringLiteral("--mcp-server"))) {
     return runMcpServerMode();
   }
   const QStringList launchProjectPaths = collectLaunchProjectPaths(appArgs);
+
+  if (appArgs.contains(QStringLiteral("--plugin-list"))) {
+    printf("Registered Plugins:\n");
+    const auto& registry = ArtifactCore::ArtifactPluginRegistry::instance();
+    const auto plugins = registry.allPlugins();
+    if (plugins.empty()) {
+      printf("  (none)\n");
+    } else {
+      for (const auto& p : plugins) {
+        const char* categoryNames[] = {"Effect", "Layer", "Tool", "ImportExport"};
+        const char* cat = (static_cast<int>(p.category) >= 0 && static_cast<int>(p.category) <= 3)
+            ? categoryNames[static_cast<int>(p.category)] : "Unknown";
+        const char* stateNames[] = {"Discovered", "Validated", "Registered", "Active", "Inactive", "Failed", "Unloaded"};
+        const char* st = (static_cast<int>(p.state) >= 0 && static_cast<int>(p.state) <= 6)
+            ? stateNames[static_cast<int>(p.state)] : "Unknown";
+        printf("  %-40s %-12s %-10s v%s\n", p.id.c_str(), cat, st, p.version.c_str());
+        printf("    %s\n", p.displayName.c_str());
+      }
+    }
+    printf("\nTotal: %zu plugin(s)\n", plugins.size());
+    return 0;
+  }
+
+  {
+    int pluginInfoIndex = appArgs.indexOf(QStringLiteral("--plugin-info"));
+    if (pluginInfoIndex >= 0 && pluginInfoIndex + 1 < appArgs.size()) {
+      QString pluginId = appArgs[pluginInfoIndex + 1];
+      const auto& registry = ArtifactCore::ArtifactPluginRegistry::instance();
+      auto optDesc = registry.pluginById(pluginId.toStdString());
+      if (optDesc) {
+        const auto& p = *optDesc;
+        const char* categoryNames[] = {"Effect", "Layer", "Tool", "ImportExport"};
+        const char* cat = (static_cast<int>(p.category) >= 0 && static_cast<int>(p.category) <= 3)
+            ? categoryNames[static_cast<int>(p.category)] : "Unknown";
+        printf("Plugin: %s\n", p.id.c_str());
+        printf("  Display Name: %s\n", p.displayName.c_str());
+        printf("  Version:      %s\n", p.version.c_str());
+        printf("  Author:       %s\n", p.author.c_str());
+        printf("  Category:     %s\n", cat);
+        printf("  Path:         %s\n", p.pluginPath.c_str());
+        printf("  Description:  %s\n", p.description.c_str());
+      } else {
+        printf("Plugin not found: %s\n", pluginId.toLocal8Bit().constData());
+        return 1;
+      }
+      return 0;
+    }
+  }
 
   // ============================================================
   // 起動言語オプションの処理
