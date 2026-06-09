@@ -1,4 +1,5 @@
-﻿module;
+module;
+
 #include <QHash>
 #include <iostream>
 #include <vector>
@@ -35,10 +36,10 @@
 #include <random>
 module Artifact.Effects.Manager;
 
-
-
-
 import Container.MultiIndex;
+import ArtifactCore.Plugin.Registry;
+import ArtifactCore.Plugin.Common;
+import Artifact.Plugin.Loader;
 
 namespace Artifact
 {
@@ -46,45 +47,59 @@ namespace Artifact
  class ArtifactGlobalEffectManager::Impl {
  private:
   QHash<EffectID, EffectFactory> effectFactory_;
+  ArtifactPluginLoader loader_;
  public:
   Impl();
   ~Impl();
-   
+  void loadPlugin();
+  void unloadAllPlugins();
+  void factoryByID(const EffectID& id);
  };
 
- ArtifactGlobalEffectManager::Impl::Impl()
- {
+ ArtifactGlobalEffectManager::Impl::Impl() {}
 
- }
+ ArtifactGlobalEffectManager::Impl::~Impl() {}
 
- ArtifactGlobalEffectManager::Impl::~Impl()
- {
+ ArtifactGlobalEffectManager::ArtifactGlobalEffectManager() {}
 
- }
-
- ArtifactGlobalEffectManager::ArtifactGlobalEffectManager()
- {
-
- }
-
- ArtifactGlobalEffectManager::~ArtifactGlobalEffectManager()
- {
-
- }
+ ArtifactGlobalEffectManager::~ArtifactGlobalEffectManager() {}
 
  void ArtifactGlobalEffectManager::loadPlugin() noexcept
  {
+   impl_->loadPlugin();
+ }
 
+ void ArtifactGlobalEffectManager::Impl::loadPlugin()
+ {
+   const QStringList paths = {
+     QDir(QCoreApplication::applicationDirPath()).filePath("plugins/effects"),
+   };
+   loader_.discoverAndLoad(paths, PluginLoadMode::Auto);
+ }
+
+ void ArtifactGlobalEffectManager::Impl::unloadAllPlugins()
+ {
+   loader_.unloadAll();
  }
 
  void ArtifactGlobalEffectManager::unloadAllPlugins() noexcept
  {
-
+   impl_->unloadAllPlugins();
  }
 
  void ArtifactGlobalEffectManager::factoryByID(const EffectID& id)
  {
-  Q_UNUSED(id);
+   impl_->factoryByID(id);
+ }
+
+ void ArtifactGlobalEffectManager::Impl::factoryByID(const EffectID& id)
+ {
+   auto& registry = ArtifactPluginRegistry::instance();
+   auto opt = registry.pluginById(id.toString().toStdString());
+   if (opt) {
+     // Plugin registered in the registry — forwarding is active
+     return;
+   }
  }
 
 ArtifactGlobalEffectManager* ArtifactGlobalEffectManager::effectManager()

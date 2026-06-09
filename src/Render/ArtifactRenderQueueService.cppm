@@ -3758,7 +3758,7 @@ namespace Artifact
                         // SVG frame: write as vector SVG
                         QString bn = outInfo.completeBaseName();
                         if (bn.isEmpty()) bn = "render";
-                        QString fp = outDir.filePath(QStringLiteral("%1_%2.svg").arg(bn).arg(f, 4, 10, QChar("0")));
+                        QString fp = outDir.filePath(QStringLiteral("%1_%2.svg").arg(bn).arg(f, 4, 10, QLatin1Char('0')));
                         QFile sf(fp);
                         if (sf.open(QIODevice::WriteOnly | QIODevice::Text)) {
                             QTextStream so(&sf);

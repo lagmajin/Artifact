@@ -2863,7 +2863,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        handled = impl_->deleteHoveredShapeVertex(layer);
       } else if (shapeChosen == insertPointAct) {
        impl_->beginShapeEditTransaction(layer);
-       handled = impl_->insertPointOnHoveredShapeSegment(layer, canvasPoint);
+       handled = impl_->insertPointOnHoveredShapeSegment(layer, impl_->shapeContextMenuCanvasPos_);
       } else if (shapeChosen == splitSegmentAct) {
        impl_->beginShapeEditTransaction(layer);
        handled = impl_->splitHoveredShapeSegment(layer);

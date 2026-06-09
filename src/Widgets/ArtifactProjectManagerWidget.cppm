@@ -188,7 +188,7 @@ QVector<FootageImpactRow> assessFootageFrameRateChange(
 
                 FootageImpactRow row;
                 row.compositionName = compItem->name.toQString();
-                row.layerName = layerPtr->name();
+                row.layerName = layerPtr->layerName();
                 row.hasTimeRemap = layerPtr->isTimeRemapEnabled();
                 row.hasKeyframes = layerPtr->isTimeRemapEnabled();
                 result.append(row);
@@ -467,9 +467,9 @@ QString projectItemTileBadgeText(ProjectItem* item)
     }
 }
 
-enum class ProxyQuality { Quarter, Half, Full };
+enum class ProjectProxyQuality { Quarter, Half, Full };
 struct ProxyMeta {
-    ProxyQuality quality = ProxyQuality::Half;
+    ProjectProxyQuality quality = ProjectProxyQuality::Half;
     bool enabled = true;
     QDateTime sourceLastModified;
     QString qualityLabel;
@@ -3131,7 +3131,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                         {
                             const auto items = project->projectItems();
                             std::function<void(ProjectItem*)> findComp = [&](ProjectItem* item) {
-                                if (!item || compId.isValid()) return;
+                                if (!item || compId) return;
                                 if (item->type() == eProjectItemType::Composition) {
                                     auto* ci = static_cast<CompositionItem*>(item);
                                     if (ci->name.toQString() == row.compositionName)
@@ -3141,14 +3141,14 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                             };
                             for (auto* root : items) findComp(root);
                         }
-                        if (!compId.isValid()) continue;
+                        if (!compId) continue;
 
                         auto compResult = project->findComposition(compId);
                         auto comp = compResult.ptr.lock();
                         if (!comp) continue;
                         const auto& layers = comp->allLayerRef();
                         for (const auto& layerPtr : layers) {
-                            if (!layerPtr || layerPtr->name() != row.layerName) continue;
+                            if (!layerPtr || layerPtr->layerName() != row.layerName) continue;
                             if (auto* vl = dynamic_cast<ArtifactVideoLayer*>(layerPtr.get())) {
                                 vl->setStreamFrameRate(frameRate);
                             }
@@ -4758,9 +4758,9 @@ public:
             auto* dl = new QVBoxLayout(&dlg);
             dl->addWidget(new QLabel(QStringLiteral("Select proxy resolution:"), &dlg));
             auto* combo = new QComboBox(&dlg);
-            combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProxyQuality::Quarter));
-            combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProxyQuality::Half));
-            combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProxyQuality::Full));
+            combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProjectProxyQuality::Quarter));
+            combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProjectProxyQuality::Half));
+            combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProjectProxyQuality::Full));
             combo->setCurrentIndex(1);
             dl->addWidget(combo);
             auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -4768,7 +4768,7 @@ public:
             connect(btns, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
             dl->addWidget(btns);
             if (dlg.exec() != QDialog::Accepted) return;
-            const auto q = static_cast<ProxyQuality>(combo->itemData(combo->currentIndex()).toInt());
+            const auto q = static_cast<ProjectProxyQuality>(combo->itemData(combo->currentIndex()).toInt());
             proxyMetadata()[path].quality = q;
             proxyMetadata()[path].qualityLabel = combo->currentText();
         }
@@ -4804,9 +4804,9 @@ public:
             auto* dl = new QVBoxLayout(&dlg);
             dl->addWidget(new QLabel(QStringLiteral("Select proxy resolution:"), &dlg));
             auto* combo = new QComboBox(&dlg);
-            combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProxyQuality::Quarter));
-            combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProxyQuality::Half));
-            combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProxyQuality::Full));
+            combo->addItem(QStringLiteral("1/4 (Quarter)"), static_cast<int>(ProjectProxyQuality::Quarter));
+            combo->addItem(QStringLiteral("1/2 (Half)"), static_cast<int>(ProjectProxyQuality::Half));
+            combo->addItem(QStringLiteral("Full (1:1)"), static_cast<int>(ProjectProxyQuality::Full));
             combo->setCurrentIndex(1);
             dl->addWidget(combo);
             auto* btns = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dlg);
@@ -4815,7 +4815,7 @@ public:
             dl->addWidget(btns);
             if (dlg.exec() != QDialog::Accepted) return;
             const int selIdx = combo->currentIndex();
-            const auto q = static_cast<ProxyQuality>(combo->itemData(selIdx).toInt());
+            const auto q = static_cast<ProjectProxyQuality>(combo->itemData(selIdx).toInt());
             proxyMetadata()[targetPath].quality = q;
             proxyMetadata()[targetPath].qualityLabel = combo->currentText();
         }
@@ -5044,8 +5044,8 @@ public:
             auto& meta = proxyMetadata()[src.absoluteFilePath()];
             meta.sourceLastModified = src.lastModified();
 
-            const double scale = meta.quality == ProxyQuality::Quarter ? 0.25
-                               : meta.quality == ProxyQuality::Full  ? 1.0
+            const double scale = meta.quality == ProjectProxyQuality::Quarter ? 0.25
+                               : meta.quality == ProjectProxyQuality::Full  ? 1.0
                                : 0.5;
             proxyJobs_.push_back({src.absoluteFilePath(), out, scale});
         }
