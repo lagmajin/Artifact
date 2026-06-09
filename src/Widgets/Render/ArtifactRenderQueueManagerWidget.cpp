@@ -51,6 +51,7 @@ import Widgets.Utils.CSS;
 import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Render.Queue.Service;
+import Artifact.Render.Batch;
 import Artifact.Render.Queue.Presets;
 import Artifact.Service.Project;
 import Artifact.Widget.Dialog.RenderOutputSetting;
@@ -246,7 +247,8 @@ namespace Artifact
     eventBus_.post<RenderQueueLogEvent>(RenderQueueLogEvent{message, sourceIndex, alsoHistory});
     (void)eventBus_.drain();
   }
-
+
+
   struct JobLineData {
     QString line;
     QColor textColor;
@@ -476,6 +478,14 @@ namespace Artifact
   impl_->duplicateButton = new QToolButton();
   impl_->duplicateButton->setText("D");
   btnLayout->addWidget(impl_->addButton);
+
+  auto* batchAllBtn = new QPushButton(QStringLiteral("All"));
+  batchAllBtn->setToolTip(QStringLiteral("Add all compositions to queue"));
+  auto* batchTmplBtn = new QPushButton(QStringLiteral("Template"));
+  batchTmplBtn->setToolTip(QStringLiteral("Batch add using a template"));
+  btnLayout->addWidget(batchAllBtn);
+  btnLayout->addWidget(batchTmplBtn);
+
   btnLayout->addWidget(impl_->duplicateButton);
   btnLayout->addStretch();
   btnLayout->addWidget(impl_->removeButton);
@@ -761,6 +771,46 @@ namespace Artifact
     if (impl_->service) {
       impl_->service->addRenderQueue();
     }
+  });
+
+  // Batch actions via ArtifactBatchRenderer
+  connect(batchAllBtn, &QPushButton::clicked, this, [this]() {
+    auto* batchRenderer = ArtifactBatchRenderer::instance();
+    if (batchRenderer) {
+      const QString outDir = QFileDialog::getExistingDirectory(this,
+          QStringLiteral("Batch Output Directory"),
+          QDir::homePath());
+      if (outDir.isEmpty()) return;
+      const int count = batchRenderer->addAllCompositions(outDir);
+      impl_->logUiEvent(QStringLiteral("Batch add all: %1 jobs").arg(count));
+      impl_->syncJobsFromService();
+      impl_->postQueueChanged(QStringLiteral("batch-all"));
+    }
+  });
+
+  connect(batchTmplBtn, &QPushButton::clicked, this, [this]() {
+    auto* batchRenderer = ArtifactBatchRenderer::instance();
+    if (!batchRenderer) return;
+    const auto templates = batchRenderer->availableTemplates();
+    if (templates.isEmpty()) {
+      // Create a default template on first use
+      BatchTemplate tmpl = batchRenderer->defaultTemplate();
+      tmpl.outputDirectory = QFileDialog::getExistingDirectory(this,
+          QStringLiteral("Select Output Directory"), QDir::homePath());
+      if (tmpl.outputDirectory.isEmpty()) return;
+      batchRenderer->saveTemplate(tmpl);
+      const int count = batchRenderer->addAllCompositions(
+          tmpl.outputDirectory, tmpl.fileNamePattern);
+      impl_->logUiEvent(QStringLiteral("Batch default template: %1 jobs").arg(count));
+    } else {
+      // Pick first template for now
+      const auto& tmpl = templates.first();
+      const int count = batchRenderer->addAllCompositions(
+          tmpl.outputDirectory, tmpl.fileNamePattern);
+      impl_->logUiEvent(QStringLiteral("Batch template '%1': %2 jobs").arg(tmpl.name).arg(count));
+    }
+    impl_->syncJobsFromService();
+    impl_->postQueueChanged(QStringLiteral("batch-template"));
   });
 
   connect(impl_->removeButton, &QPushButton::clicked, this, [this]() {
