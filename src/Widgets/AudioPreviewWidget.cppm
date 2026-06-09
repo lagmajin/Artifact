@@ -18,6 +18,7 @@ module;
 #include <QVector>
 #include <QTimer>
 #include <QFileInfo>
+#include <QMetaObject>
 #include <QTime>
 #include <QMessageBox>
 #include <QFile>
@@ -34,6 +35,7 @@ module Artifact.Widgets.AudioPreview;
 import Artifact.Audio.Waveform;
 import Media.Encoder.FFmpegAudioDecoder;
 import Audio.Segment;
+import AudioRenderer;
 
 namespace Artifact {
 
@@ -289,6 +291,17 @@ public:
         : QObject(parent)
     {
         decoder_ = std::make_unique<ArtifactCore::FFmpegAudioDecoder>();
+        renderer_ = std::make_unique<ArtifactCore::AudioRenderer>();
+
+        renderer_->setLevelCallback([this](const ArtifactCore::AudioLevelData& data) {
+            levelTickCounter_++;
+            if (levelTickCounter_ % 4 == 0) {
+                QMetaObject::invokeMethod(this, [this, data]() {
+                    emit levelUpdated(data.leftPeak, data.leftRms, data.rightPeak, data.rightRms);
+                }, Qt::QueuedConnection);
+            }
+        });
+
         timer_ = new QTimer(this);
         timer_->setInterval(50);
         connect(timer_, &QTimer::timeout, this, &AudioPlaybackEngine::onTimerTick);
@@ -318,14 +331,10 @@ public:
         currentSample_ = 0;
         currentSegmentIndex_ = 0;
         currentSegmentOffset_ = 0;
-        isPlaying_ = false;
         eosReached_ = false;
 
-        leftPeak_ = -96.0f;
-        leftRms_ = -96.0f;
-        rightPeak_ = -96.0f;
-        rightRms_ = -96.0f;
         levelTickCounter_ = 0;
+        emit levelUpdated(-96.0f, -96.0f, -96.0f, -96.0f);
 
         generateWaveformSamples();
         return true;
@@ -333,8 +342,14 @@ public:
 
     void play() {
         if (!decoder_ || preloadedSegments_.empty()) return;
-        isPlaying_ = true;
+
+        if (!renderer_->isDeviceOpen()) {
+            renderer_->openDevice(ArtifactCore::AudioBackendType::WASAPI);
+            renderer_->start();
+        }
+        renderer_->setMasterVolume(volumeToDb(volume_));
         eosReached_ = false;
+        isPlaying_ = true;
         timer_->start();
         emit playbackStarted();
     }
@@ -343,24 +358,28 @@ public:
         if (!decoder_) return;
         isPlaying_ = false;
         timer_->stop();
-        leftPeak_ = -96.0f; leftRms_ = -96.0f;
-        rightPeak_ = -96.0f; rightRms_ = -96.0f;
-        emit levelUpdated(leftPeak_, leftRms_, rightPeak_, rightRms_);
+        renderer_->clearBuffer();
+        renderer_->stop();
+        emit levelUpdated(-96.0f, -96.0f, -96.0f, -96.0f);
     }
 
     void stop() {
         if (!decoder_) return;
         isPlaying_ = false;
         timer_->stop();
+        renderer_->stop();
+        renderer_->closeDevice();
         decoder_->closeFile();
         currentSegmentIndex_ = 0;
         currentSegmentOffset_ = 0;
         currentSample_ = 0;
         eosReached_ = false;
-        leftPeak_ = -96.0f; leftRms_ = -96.0f;
-        rightPeak_ = -96.0f; rightRms_ = -96.0f;
         emit positionChanged(0);
-        emit levelUpdated(leftPeak_, leftRms_, rightPeak_, rightRms_);
+        emit levelUpdated(-96.0f, -96.0f, -96.0f, -96.0f);
+    }
+
+    ~AudioPlaybackEngine() {
+        stop();
     }
 
     bool isPlaying() const { return isPlaying_; }
@@ -386,6 +405,9 @@ public:
 
     void setVolume(float volume) {
         volume_ = std::clamp(volume, 0.0f, 1.0f);
+        if (renderer_ && renderer_->isDeviceOpen()) {
+            renderer_->setMasterVolume(volumeToDb(volume_));
+        }
     }
 
     float volume() const { return volume_; }
@@ -415,26 +437,41 @@ private slots:
             return;
         }
 
-        const auto& seg = preloadedSegments_[currentSegmentIndex_];
-        int remaining = seg.frameCount() - currentSegmentOffset_;
-        const int samplesToAdvance = std::min(remaining, 1024);
+        // Feed segments to AudioRenderer at half the buffer rate (~10ms chunks)
+        static int feedCounter = 0;
+        feedCounter++;
+        if (feedCounter % 4 == 0 || renderer_->bufferedFrames() < 1024) {
+            const auto& seg = preloadedSegments_[currentSegmentIndex_];
+            if (currentSegmentOffset_ < seg.frameCount()) {
+                ArtifactCore::AudioSegment chunk;
+                chunk.sampleRate = seg.sampleRate;
+                chunk.layout = seg.layout;
+                chunk.startFrame = seg.startFrame + currentSegmentOffset_;
+                int available = seg.frameCount() - currentSegmentOffset_;
+                int chunkSize = std::min(available, 512);
+                chunk.channelData.resize(seg.channelData.size());
+                for (int ch = 0; ch < static_cast<int>(seg.channelData.size()); ++ch) {
+                    chunk.channelData[ch] = seg.channelData[ch].mid(currentSegmentOffset_, chunkSize);
+                }
+                renderer_->enqueue(chunk);
+            }
+        }
 
-        computeLevelsFromSegment(seg, currentSegmentOffset_, samplesToAdvance);
-
-        currentSegmentOffset_ += samplesToAdvance;
-        currentSample_ += samplesToAdvance;
-
-        if (currentSegmentOffset_ >= seg.frameCount()) {
-            currentSegmentOffset_ = 0;
-            ++currentSegmentIndex_;
+        // Advance position based on actual hardware playback
+        size_t bufferedBefore = renderer_->bufferedFrames();
+        if (bufferedBefore < 4096) {
+            const auto& seg = preloadedSegments_[currentSegmentIndex_];
+            int remaining = seg.frameCount() - currentSegmentOffset_;
+            int advance = std::min(remaining, 256);
+            currentSegmentOffset_ += advance;
+            currentSample_ += advance;
+            if (currentSegmentOffset_ >= seg.frameCount()) {
+                currentSegmentOffset_ = 0;
+                ++currentSegmentIndex_;
+            }
         }
 
         emit positionChanged(currentSample_);
-
-        ++levelTickCounter_;
-        if (levelTickCounter_ % 2 == 0) {
-            emit levelUpdated(leftPeak_, leftRms_, rightPeak_, rightRms_);
-        }
 
         if (currentSample_ >= totalSamples_) {
             eosReached_ = true;
@@ -444,38 +481,9 @@ private slots:
     }
 
 private:
-    static float linearToDb(float linear) {
-        if (linear < 1e-10f) return -96.0f;
+    static float volumeToDb(float linear) {
+        if (linear < 1e-6f) return -144.0f;
         return 20.0f * std::log10(linear);
-    }
-
-    void computeLevelsFromSegment(const ArtifactCore::AudioSegment& seg, int offset, int count) {
-        if (seg.channelData.isEmpty()) return;
-        const auto& ch0 = seg.channelData[0];
-        const bool stereo = seg.channelData.size() >= 2;
-        const auto& ch1 = stereo ? seg.channelData[1] : ch0;
-
-        float leftSumSq = 0.0f;
-        float rightSumSq = 0.0f;
-        float leftAbsMax = 0.0f;
-        float rightAbsMax = 0.0f;
-
-        int end = std::min(offset + count, static_cast<int>(ch0.size()));
-        for (int i = offset; i < end; ++i) {
-            float l = std::abs(ch0[i]);
-            float r = stereo ? std::abs(ch1[i]) : l;
-            leftSumSq += l * l;
-            rightSumSq += r * r;
-            if (l > leftAbsMax) leftAbsMax = l;
-            if (r > rightAbsMax) rightAbsMax = r;
-        }
-
-        int n = end - offset;
-        if (n <= 0) return;
-        leftPeak_ = linearToDb(leftAbsMax);
-        leftRms_ = linearToDb(std::sqrt(leftSumSq / n));
-        rightPeak_ = linearToDb(rightAbsMax);
-        rightRms_ = linearToDb(std::sqrt(rightSumSq / n));
     }
 
     void generateWaveformSamples() {
@@ -508,6 +516,7 @@ private:
     }
 
     std::unique_ptr<ArtifactCore::FFmpegAudioDecoder> decoder_;
+    std::unique_ptr<ArtifactCore::AudioRenderer> renderer_;
     QTimer* timer_ = nullptr;
     std::vector<ArtifactCore::AudioSegment> preloadedSegments_;
     QVector<float> waveformSamples_;
@@ -520,11 +529,6 @@ private:
     bool isPlaying_ = false;
     bool eosReached_ = false;
     float volume_ = 1.0f;
-
-    float leftPeak_ = -96.0f;
-    float leftRms_ = -96.0f;
-    float rightPeak_ = -96.0f;
-    float rightRms_ = -96.0f;
     int levelTickCounter_ = 0;
 };
 
