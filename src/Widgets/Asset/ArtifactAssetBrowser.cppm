@@ -2558,6 +2558,61 @@ if (!item.isFolder) {
   });
 }
 
+  // Interpret Footage action for media files
+  if (!item.isFolder && (impl_->isVideoFile(filePath) || impl_->isImageFile(filePath))) {
+    QAction* interpretAction = contextMenu.addAction("Interpret Footage...");
+    connect(interpretAction, &QAction::triggered, this, [this, filePath]() {
+      if (filePath.isEmpty()) return;
+      auto* svc = ArtifactProjectService::instance();
+      if (!svc) return;
+      auto* project = svc->currentProject();
+      if (!project) return;
+      Artifact::FootageItem* footage = nullptr;
+      for (auto* root : project->projectItems()) {
+        std::function<void(ProjectItem*)> walk = [&](ProjectItem* item) {
+          if (!item) return;
+          if (item->type() == Artifact::eProjectItemType::Footage) {
+            auto* fi = static_cast<Artifact::FootageItem*>(item);
+            if (fi->filePath == filePath || fi->sequencePaths.contains(filePath)) {
+              footage = fi;
+              return;
+            }
+          }
+          for (auto* child : item->children) walk(child);
+        };
+        walk(root);
+        if (footage) break;
+      }
+      if (!footage) return;
+      auto& interpretSvc = Artifact::FootageInterpretService::instance();
+      auto report = interpretSvc.preflightChange(footage, footage->frameRate);
+      ArtifactWidgets::InterpretFootageDialog dialog(
+          QFileInfo(filePath).fileName(),
+          footage->frameRate,
+          footage->frameRate,
+          report.affectedLayerCount,
+          report.affectedKeyframeCount,
+          report.hasTimeRemap);
+      if (dialog.exec() == QDialog::Accepted) {
+        double newFps = dialog.selectedFrameRate();
+        int mode = dialog.selectedPreserveMode();
+        ArtifactCore::FrameRatePreserveMode preserveMode;
+        switch (mode) {
+          case 0: preserveMode = ArtifactCore::FrameRatePreserveMode::KeepKeyframes; break;
+          case 1: preserveMode = ArtifactCore::FrameRatePreserveMode::KeepTime; break;
+          default: preserveMode = ArtifactCore::FrameRatePreserveMode::ReSample; break;
+        }
+        QString error;
+        interpretSvc.applyFrameRateChange(footage, newFps, preserveMode, &error);
+        if (!error.isEmpty()) {
+          QMessageBox::warning(nullptr, "Interpret Footage", error);
+        }
+        impl_->applyFilters();
+      }
+    });
+  }
+
+  // Open in File Explorer action
   // Open in File Explorer action
   const bool favorite = impl_->isFavoriteAssetPath(filePath);
   QAction* favoriteAction = contextMenu.addAction(favorite ? "Remove from Favorites" : "Add to Favorites");
