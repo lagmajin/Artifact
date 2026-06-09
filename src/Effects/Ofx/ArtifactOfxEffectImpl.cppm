@@ -5,10 +5,12 @@ module;
 #include <QString>
 #include <QVariant>
 #include <QColor>
+#include <windows.h>
 
 export module Artifact.Effect.Ofx.Impl;
 
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageF32x4_RGBA;
 import Artifact.Effect.ImplBase;
 import Artifact.Effect.Abstract;
 import Property.Abstract;
@@ -22,7 +24,8 @@ using namespace ArtifactCore;
 
 class ArtifactOfxEffect final : public ArtifactAbstractEffect {
 public:
-  explicit ArtifactOfxEffect(const OfxPluginDescriptor &descriptor) {
+  explicit ArtifactOfxEffect(const OfxPluginDescriptor &descriptor)
+      : descriptor_(descriptor) {
     setEffectID(UniString::fromQString(QStringLiteral("ofx.%1")
                                            .arg(descriptor.identifier.toQString())));
     setDisplayName(QStringLiteral("OFX: %1").arg(descriptor.identifier.toQString()));
@@ -35,14 +38,81 @@ public:
 
   void apply(const ImageF32x4RGBAWithCache &src,
              ImageF32x4RGBAWithCache &dst) override {
-    // OFX processing is not wired yet, so keep the effect as a stable passthrough.
-    // The bridge parameters are already stored here and will be used once the
-    // real OFX render path lands.
     if (bypass_ || mix_ <= 0.0) {
       dst = src.DeepCopy();
       return;
     }
+
+    if (!descriptor_.libraryHandle || !descriptor_.descriptorState) {
+      dst = src.DeepCopy();
+      return;
+    }
+
+    auto &host = ArtifactOfxHost::instance();
+    if (!renderState_) {
+      renderState_ = host.createRenderInstance(descriptor_.identifier);
+      if (!renderState_) {
+        dst = src.DeepCopy();
+        return;
+      }
+      auto *plugin = findPlugin();
+      if (plugin) {
+        pluginActionCreateInstance(plugin, *renderState_);
+        OfxPointD scale{1.0, 1.0};
+        pluginActionBeginSequenceRender(plugin, *renderState_, scale);
+      }
+    }
+
+    auto *plugin = findPlugin();
+    if (!plugin) {
+      dst = src.DeepCopy();
+      return;
+    }
+
+    auto &srcImage = src.image();
+    const int w = src.width();
+    const int h = src.height();
+    const int rowBytes = static_cast<int>(w * 4 * sizeof(float));
+    const auto *srcData = reinterpret_cast<const unsigned char *>(srcImage.rgba32fData());
+
     dst = src.DeepCopy();
+    auto &dstImage = dst.image();
+    auto *dstData = reinterpret_cast<unsigned char *>(dstImage.rgba32fData());
+
+    renderState_->renderFrame.srcPixelData = srcData;
+    renderState_->renderFrame.srcWidth = w;
+    renderState_->renderFrame.srcHeight = h;
+    renderState_->renderFrame.srcRowBytes = rowBytes;
+    renderState_->renderFrame.dstPixelData = dstData;
+    renderState_->renderFrame.dstRowBytes = rowBytes;
+
+    for (const auto &prop : properties_) {
+      auto it = renderState_->paramSet.params.find(prop.getName().toStdString());
+      if (it != renderState_->paramSet.params.end() && it->second) {
+        const QVariant val = prop.getValue();
+        const QString ptype = it->second->paramType;
+        if (ptype.contains(QStringLiteral("String"), Qt::CaseInsensitive)) {
+          it->second->currentStringValue = val.toString();
+          it->second->currentUtf8Value = val.toString().toUtf8().toStdString();
+          it->second->currentValues = {it->second->currentStringValue};
+        } else if (ptype.contains(QStringLiteral("Boolean"), Qt::CaseInsensitive)) {
+          it->second->currentValues = {val.toBool() ? 1 : 0};
+        } else if (ptype.contains(QStringLiteral("Integer"), Qt::CaseInsensitive)) {
+          it->second->currentValues = {val.toInt()};
+        } else if (ptype.contains(QStringLiteral("RGB"), Qt::CaseInsensitive)) {
+          QColor c = val.value<QColor>();
+          it->second->currentValues = {c.redF(), c.greenF(), c.blueF()};
+        } else if (ptype.contains(QStringLiteral("RGBA"), Qt::CaseInsensitive)) {
+          QColor c = val.value<QColor>();
+          it->second->currentValues = {c.redF(), c.greenF(), c.blueF(), c.alphaF()};
+        } else {
+          it->second->currentValues = {val.toDouble()};
+        }
+      }
+    }
+
+    OfxPointD scale{1.0, 1.0};
+    pluginActionRender(plugin, *renderState_, 0.0, scale);
   }
 
   std::vector<AbstractProperty> getProperties() const override {
@@ -132,9 +202,30 @@ private:
     }
   }
 
+  OfxPlugin *findPlugin() {
+    if (!descriptor_.libraryHandle) return nullptr;
+    auto fn = reinterpret_cast<OfxGetPluginFn>(
+        GetProcAddress(descriptor_.libraryHandle, "OfxGetPlugin"));
+    auto countFn = reinterpret_cast<int(*)()>(
+        GetProcAddress(descriptor_.libraryHandle, "OfxGetNumberOfPlugins"));
+    if (!fn || !countFn) return nullptr;
+    int count = countFn();
+    for (int i = 0; i < count; ++i) {
+      OfxPlugin *p = fn(i);
+      if (p && p->pluginIdentifier &&
+          strlen(p->pluginIdentifier) > 0 &&
+          descriptor_.identifier.toQString() == QString::fromLatin1(p->pluginIdentifier)) {
+        return p;
+      }
+    }
+    return nullptr;
+  }
+
   std::vector<AbstractProperty> properties_;
   double mix_ = 1.0;
   bool bypass_ = false;
+  OfxPluginDescriptor descriptor_;
+  std::shared_ptr<ImageEffectState> renderState_;
 };
 
 export std::unique_ptr<ArtifactAbstractEffect>
