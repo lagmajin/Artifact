@@ -38,6 +38,7 @@ module;
 #include <QTextEdit>
 #include <QVBoxLayout>
 #include <QtSVG/QSvgRenderer>
+#include <wobjectimpl.h>
 
 module Artifact.Widgets.PropertyEditor;
 
@@ -55,8 +56,11 @@ import Time.Rational;
 import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
 import Widgets.Utils.CSS;
+import Artifact.Layer.Text;
 
 namespace Artifact {
+
+W_OBJECT_IMPL(ArtifactTextAnimatorColorEditor)
 
 namespace {
 constexpr int kPropertyRowMinHeight = 32;
@@ -2244,6 +2248,16 @@ void ArtifactPropertyEditorRowWidget::setKeyframeHandler(
   keyframeHandler_ = std::move(handler);
 }
 
+void ArtifactPropertyEditorRowWidget::setKeyframeAnchorHandler(
+    KeyframeAnchorHandler handler) {
+  keyframeAnchorHandler_ = std::move(handler);
+}
+
+void ArtifactPropertyEditorRowWidget::setKeyframeColorLabelHandler(
+    KeyframeColorLabelHandler handler) {
+  keyframeColorLabelHandler_ = std::move(handler);
+}
+
 void ArtifactPropertyEditorRowWidget::setNavigationHandler(
     NavigationHandler handler) {
   navigationHandler_ = std::move(handler);
@@ -2388,6 +2402,36 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
   QAction *resetAction = menu.addAction(QStringLiteral("Reset Value"));
   QAction *copyNameAction =
       menu.addAction(QStringLiteral("Copy Property Name"));
+  QMenu *anchorMenu = nullptr;
+  QAction *anchorAbsoluteAction = nullptr;
+  QAction *anchorLockToInAction = nullptr;
+  QAction *anchorLockToOutAction = nullptr;
+  QAction *anchorStretchAction = nullptr;
+  QMenu *colorMenu = nullptr;
+  QAction *colorNoneAction = nullptr;
+  QAction *colorRedAction = nullptr;
+  QAction *colorBlueAction = nullptr;
+  QAction *colorYellowAction = nullptr;
+  QAction *colorGreenAction = nullptr;
+  QAction *colorPurpleAction = nullptr;
+  QAction *colorGrayAction = nullptr;
+  if (keyframeAnchorHandler_) {
+    anchorMenu = menu.addMenu(QStringLiteral("Keyframe Anchor"));
+    anchorAbsoluteAction = anchorMenu->addAction(QStringLiteral("Absolute"));
+    anchorLockToInAction = anchorMenu->addAction(QStringLiteral("Lock to In Point"));
+    anchorLockToOutAction = anchorMenu->addAction(QStringLiteral("Lock to Out Point"));
+    anchorStretchAction = anchorMenu->addAction(QStringLiteral("Stretch with Layer"));
+  }
+  if (keyframeColorLabelHandler_) {
+    colorMenu = menu.addMenu(QStringLiteral("Keyframe Color Label"));
+    colorNoneAction = colorMenu->addAction(QStringLiteral("None"));
+    colorRedAction = colorMenu->addAction(QStringLiteral("Red"));
+    colorBlueAction = colorMenu->addAction(QStringLiteral("Blue"));
+    colorYellowAction = colorMenu->addAction(QStringLiteral("Yellow"));
+    colorGreenAction = colorMenu->addAction(QStringLiteral("Green"));
+    colorPurpleAction = colorMenu->addAction(QStringLiteral("Purple"));
+    colorGrayAction = colorMenu->addAction(QStringLiteral("Gray"));
+  }
 
   copyAction->setEnabled(editor_ != nullptr);
   pasteAction->setEnabled(editor_ != nullptr);
@@ -2413,6 +2457,33 @@ void ArtifactPropertyEditorRowWidget::contextMenuEvent(
     resetButton_->click();
   } else if (chosen == copyNameAction) {
     QApplication::clipboard()->setText(propertyName_);
+  } else if (anchorMenu &&
+             (chosen == anchorAbsoluteAction || chosen == anchorLockToInAction ||
+              chosen == anchorLockToOutAction || chosen == anchorStretchAction)) {
+    if (keyframeAnchorHandler_) {
+      const auto anchor =
+          (chosen == anchorAbsoluteAction)   ? ArtifactCore::KeyFrame::Anchor::Absolute
+          : (chosen == anchorLockToInAction) ? ArtifactCore::KeyFrame::Anchor::LockToIn
+          : (chosen == anchorLockToOutAction) ? ArtifactCore::KeyFrame::Anchor::LockToOut
+                                             : ArtifactCore::KeyFrame::Anchor::StretchWithLayer;
+      keyframeAnchorHandler_(anchor);
+    }
+  } else if (colorMenu &&
+             (chosen == colorNoneAction || chosen == colorRedAction ||
+              chosen == colorBlueAction || chosen == colorYellowAction ||
+              chosen == colorGreenAction || chosen == colorPurpleAction ||
+              chosen == colorGrayAction)) {
+    if (keyframeColorLabelHandler_) {
+      const auto label =
+          (chosen == colorNoneAction)    ? ArtifactCore::KeyFrame::ColorLabel::None
+          : (chosen == colorRedAction)   ? ArtifactCore::KeyFrame::ColorLabel::Red
+          : (chosen == colorBlueAction)  ? ArtifactCore::KeyFrame::ColorLabel::Blue
+          : (chosen == colorYellowAction) ? ArtifactCore::KeyFrame::ColorLabel::Yellow
+          : (chosen == colorGreenAction)  ? ArtifactCore::KeyFrame::ColorLabel::Green
+          : (chosen == colorPurpleAction) ? ArtifactCore::KeyFrame::ColorLabel::Purple
+                                         : ArtifactCore::KeyFrame::ColorLabel::Gray;
+      keyframeColorLabelHandler_(label);
+    }
   }
   event->accept();
 }
@@ -2575,11 +2646,105 @@ void ArtifactPropertyEditorRowWidget::finishScrub(const bool commitChanges) {
   scrubbing_ = false;
 }
 
+// ---------------------------------------------------------------------------
+// ArtifactTextAnimatorColorEditor
+// ---------------------------------------------------------------------------
+ArtifactTextAnimatorColorEditor::ArtifactTextAnimatorColorEditor(
+    const ArtifactCore::AbstractProperty &property, QWidget *parent)
+    : ArtifactAbstractPropertyEditor(parent) {
+  setObjectName(QStringLiteral("propertyTextAnimatorColorEditor"));
+
+  textEdit_ = new QTextEdit(this);
+  textEdit_->setAcceptRichText(false);
+  textEdit_->setMinimumHeight(72);
+  textEdit_->setTabChangesFocus(true);
+  textEdit_->setLineWrapMode(QTextEdit::WidgetWidth);
+  textEdit_->setFrameStyle(QFrame::NoFrame);
+  applyPropertyFieldPalette(textEdit_, true);
+
+  colorButton_ = new QPushButton(QStringLiteral(" "), this);
+  colorButton_->setObjectName(QStringLiteral("propertyColorSwatchButton"));
+  colorButton_->setFixedSize(36, 24);
+  colorButton_->setToolTip(QStringLiteral("Apply color to selected text range"));
+  colorButton_->hide();
+  applyPropertyButtonPalette(colorButton_, true);
+
+  auto *layout = new QHBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->addWidget(textEdit_);
+  layout->addWidget(colorButton_, 0, Qt::AlignTop);
+
+  setValueFromVariant(property.getValue());
+
+  QObject::connect(textEdit_, &QTextEdit::textChanged, this,
+                   [this]() { previewValue(textEdit_->toPlainText()); });
+  QObject::connect(textEdit_, &QTextEdit::selectionChanged, this,
+                   &ArtifactTextAnimatorColorEditor::onSelectionChanged);
+  QObject::connect(colorButton_, &QPushButton::clicked, this,
+                   &ArtifactTextAnimatorColorEditor::onColorPicked);
+  textEdit_->installEventFilter(this);
+}
+
+QVariant ArtifactTextAnimatorColorEditor::value() const {
+  return textEdit_ ? QVariant(textEdit_->toPlainText()) : QVariant();
+}
+
+void ArtifactTextAnimatorColorEditor::setValueFromVariant(
+    const QVariant &value) {
+  if (!textEdit_) return;
+  const QSignalBlocker blocker(textEdit_);
+  textEdit_->setPlainText(value.toString());
+}
+
+bool ArtifactTextAnimatorColorEditor::eventFilter(QObject *watched,
+                                                    QEvent *event) {
+  if (watched == textEdit_ && event->type() == QEvent::FocusOut) {
+    commitCurrentValue();
+  }
+  return ArtifactAbstractPropertyEditor::eventFilter(watched, event);
+}
+
+void ArtifactTextAnimatorColorEditor::onSelectionChanged() {
+  if (!textEdit_) return;
+  const QTextCursor cursor = textEdit_->textCursor();
+  const bool hasSelection = cursor.hasSelection();
+  colorButton_->setVisible(hasSelection);
+}
+
+void ArtifactTextAnimatorColorEditor::onColorPicked() {
+  if (!textEdit_ || !layer_) return;
+
+  const QTextCursor cursor = textEdit_->textCursor();
+  if (!cursor.hasSelection()) return;
+
+  const int selStart = cursor.selectionStart();
+  const int selEnd = cursor.selectionEnd();
+  if (selEnd <= selStart) return;
+
+  ArtifactWidgets::FloatColorPicker picker(colorButton_);
+  picker.setWindowTitle(QStringLiteral("Select Text Range Color"));
+  picker.setInitialColor(ArtifactCore::FloatColor(1.0f, 1.0f, 1.0f, 1.0f));
+  if (picker.exec() != QDialog::Accepted) return;
+
+  const ArtifactCore::FloatColor picked = picker.getColor();
+  const QColor qColor =
+      QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
+  if (!qColor.isValid()) return;
+
+  const int animIdx = layer_->applyColorToSelectorRange(
+      selStart, selEnd,
+      ArtifactCore::FloatRGBA(picked.r(), picked.g(), picked.b(), picked.a()));
+  if (animIdx >= 0) {
+    colorButton_->hide();
+    Q_EMIT colorApplied(selStart, selEnd, qColor);
+  }
+}
+
 ArtifactAbstractPropertyEditor *
 createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
                            QWidget *parent) {
   if (isMultilineTextProperty(property)) {
-    return new ArtifactMultilineStringPropertyEditor(property, parent);
+    return new ArtifactTextAnimatorColorEditor(property, parent);
   }
   if (isFontFamilyProperty(property)) {
     return new ArtifactFontFamilyPropertyEditor(property, parent);

@@ -10,6 +10,18 @@ import std;
 export namespace Artifact {
 
 /**
+ * @brief 用途カテゴリ（ユーザー向け分類）
+ */
+enum class ArtifactRenderUsageCategory {
+    Transparent,    // 透過あり
+    Editing,        // 編集ソフト向け
+    Distribution,   // 配布向け
+    Web,            // Web 向け
+    Sequence,       // 連番
+    General         // 一般
+};
+
+/**
  * @brief 出力フォーマットプリセット
  * 
  * After Effects のようにコンテナ＋コーデックのセットを定義
@@ -23,6 +35,7 @@ struct ArtifactRenderFormatPreset {
     QString description;  // 説明
     bool isAnimatedImage = false; // GIF / APNG / Animated WebP などの単一ファイルアニメ
     bool isImageSequence = false; // 連番画像出力かどうか
+    ArtifactRenderUsageCategory usageCategory = ArtifactRenderUsageCategory::General;
 
     // プリセットファクトリ
     static QVector<ArtifactRenderFormatPreset> getStandardPresets();

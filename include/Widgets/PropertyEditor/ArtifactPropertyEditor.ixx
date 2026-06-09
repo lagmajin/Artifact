@@ -236,6 +236,30 @@ private:
     QColor currentColor_;
 };
 
+class ArtifactTextAnimatorColorEditor final : public ArtifactAbstractPropertyEditor {
+    W_OBJECT(ArtifactTextAnimatorColorEditor)
+public:
+    explicit ArtifactTextAnimatorColorEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+    void setLayer(ArtifactTextLayer* layer) { layer_ = layer; }
+
+public:
+    void colorApplied(int start, int end, QColor color) W_SIGNAL(colorApplied, start, end, color);
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
+
+private:
+    void onSelectionChanged();
+    void onColorPicked();
+
+    QTextEdit* textEdit_ = nullptr;
+    QPushButton* colorButton_ = nullptr;
+    ArtifactTextLayer* layer_ = nullptr;
+};
+
 class ArtifactObjectReferencePropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
     explicit ArtifactObjectReferencePropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
