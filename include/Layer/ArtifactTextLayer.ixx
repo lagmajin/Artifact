@@ -39,6 +39,8 @@ export module Artifact.Layer.Text;
 import Shape.Types;
 
 import Artifact.Layers.Abstract._2D;
+import Artifact.Mask.Path;
+import Artifact.Mask.LayerMask;
 import Utils.String.UniString;
 import Color.Float;
 import FloatRGBA;
