@@ -2696,11 +2696,6 @@ void ArtifactTextAnimatorColorEditor::setValueFromVariant(
   textEdit_->setPlainText(value.toString());
 }
 
-void ArtifactTextAnimatorColorEditor::setLayer(
-    ArtifactTextLayer *layer) {
-  layer_ = layer;
-}
-
 bool ArtifactTextAnimatorColorEditor::eventFilter(QObject *watched,
                                                     QEvent *event) {
   if (watched == textEdit_ && event->type() == QEvent::FocusOut) {

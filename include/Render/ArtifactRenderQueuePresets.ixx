@@ -10,6 +10,18 @@ import std;
 export namespace Artifact {
 
 /**
+ * @brief 用途カテゴリ（ユーザー向け分類）
+ */
+enum class ArtifactRenderUsageCategory {
+    Transparent,    // 透過あり
+    Editing,        // 編集ソフト向け
+    Distribution,   // 配布向け
+    Web,            // Web 向け
+    Sequence,       // 連番
+    General         // 一般
+};
+
+/**
  * @brief 出力フォーマットプリセット
  * 
  * After Effects のようにコンテナ＋コーデックのセットを定義
@@ -22,7 +34,7 @@ struct ArtifactRenderFormatPreset {
     QString codecProfile; // コーデックプロファイル（例："hq", "4444"）
     QString description;  // 説明
     bool isAnimatedImage = false; // GIF / APNG / Animated WebP などの単一ファイルアニメ
-    bool isImageSequence = false;
+    bool isImageSequence = false; // 連番画像出力かどうか
     ArtifactRenderUsageCategory usageCategory = ArtifactRenderUsageCategory::General;
 
     // プリセットファクトリ
@@ -38,15 +50,6 @@ struct ArtifactRenderFormatPreset {
 /**
  * @brief 出力形式カテゴリ
  */
-enum class ArtifactRenderUsageCategory {
-    Transparent,
-    Editing,
-    Distribution,
-    Web,
-    Sequence,
-    General
-};
-
 enum class ArtifactRenderFormatCategory {
     Video,          // ビデオ形式（MP4, MOV 等）
     AnimatedImage,  // GIF / APNG / Animated WebP
@@ -67,7 +70,6 @@ public:
     
     // カテゴリ別にプリセットを取得
     QVector<ArtifactRenderFormatPreset> presetsByCategory(ArtifactRenderFormatCategory category) const;
-    QVector<ArtifactRenderFormatPreset> presetsByUsage(ArtifactRenderUsageCategory usage) const;
     
     // ID でプリセットを検索
     const ArtifactRenderFormatPreset* findPresetById(const QString& id) const;

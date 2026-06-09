@@ -84,6 +84,17 @@ struct ImageEffectState {
   ParamSetState paramSet;
   std::unordered_map<std::string, std::unique_ptr<ClipState>> clips;
   bool abortRequested = false;
+
+  // Render-time state: pixel data from the host for clipGetImage
+  struct RenderFrameData {
+    const unsigned char* srcPixelData = nullptr;
+    int srcWidth = 0;
+    int srcHeight = 0;
+    int srcRowBytes = 0;
+    const unsigned char* dstPixelData = nullptr;
+    int dstRowBytes = 0;
+  };
+  RenderFrameData renderFrame;
 };
 
 export struct OfxPluginDescriptor {
@@ -550,6 +561,19 @@ ClipState *ensureClip(ImageEffectState *effect, const char *name) {
   return entry.get();
 }
 
+ImageEffectState *imageEffectForClip(const ClipState *clip) {
+  if (!clip) return nullptr;
+  auto &host = ArtifactOfxHost::instance();
+  for (const auto &desc : host.getLoadedPlugins()) {
+    if (desc.descriptorState) {
+      for (const auto &kv : desc.descriptorState->clips) {
+        if (kv.second.get() == clip) return desc.descriptorState.get();
+      }
+    }
+  }
+  return nullptr;
+}
+
 void initEffectProperties(PropertySet &properties, const char *name,
                           const char *type) {
   setStringProperty(properties, kOfxPropType, type);
@@ -661,28 +685,59 @@ OfxStatus effectClipGetPropertySet(OfxImageClipHandle clip,
   return kOfxStatOK;
 }
 
-OfxStatus effectClipGetImage(OfxImageClipHandle /*clip*/, OfxTime /*time*/,
+OfxStatus effectClipGetImage(OfxImageClipHandle clip, OfxTime /*time*/,
                              const OfxRectD * /*region*/,
                              OfxPropertySetHandle *imageHandle) {
-  if (imageHandle) {
-    *imageHandle = nullptr;
+  if (!clip || !imageHandle) {
+    if (imageHandle) *imageHandle = nullptr;
+    return kOfxStatFailed;
   }
-  return kOfxStatFailed;
+  auto *effect = imageEffectForClip(asClip(clip));
+  if (!effect || !effect->renderFrame.srcPixelData) {
+    *imageHandle = nullptr;
+    return kOfxStatFailed;
+  }
+  auto &rf = effect->renderFrame;
+  static thread_local PropertySet s_imageProps;
+  PropertySet &imageProps = s_imageProps;
+  imageProps.entries.clear();
+  imageProps.entries[std::string(kOfxPropType)].kind = PropertyKind::String;
+  imageProps.entries[std::string(kOfxPropType)].values = {QString::fromLatin1(kOfxTypeImage)};
+  imageProps.entries[std::string(kOfxPropType)].stringStorage = {kOfxTypeImage};
+  setPointerProperty(imageProps, kOfxImagePropData,
+                     const_cast<unsigned char *>(rf.srcPixelData));
+  setDoubleProperty(imageProps, kOfxImagePropPixelAspectRatio, 1.0);
+  setIntProperty(imageProps, kOfxImagePropField, (int)kOfxImageFieldNone);
+  setStringProperty(imageProps, kOfxImagePropPixelDepth, kOfxBitDepthFloat);
+  setStringProperty(imageProps, kOfxImagePropComponents, kOfxImageComponentRGBA);
+  setIntProperty(imageProps, kOfxImagePropRowBytes, rf.srcRowBytes);
+  setIntPropertyN(imageProps, kOfxImagePropBounds, 4, {0, 0, rf.srcWidth, rf.srcHeight});
+  setDoublePropertyN(imageProps, kOfxImagePropRegionOfDefinition, 4,
+                     {0.0, 0.0, (double)rf.srcWidth, (double)rf.srcHeight});
+  setIntProperty(imageProps, kOfxImagePropUniqueIdentifier, 1);
+  *imageHandle = reinterpret_cast<OfxPropertySetHandle>(&imageProps);
+  return kOfxStatOK;
 }
 
 OfxStatus effectClipReleaseImage(OfxPropertySetHandle /*imageHandle*/) {
   return kOfxStatOK;
 }
 
-OfxStatus effectClipGetRod(OfxImageClipHandle /*clip*/, OfxTime /*time*/,
+OfxStatus effectClipGetRod(OfxImageClipHandle clip, OfxTime /*time*/,
                            OfxRectD *bounds) {
-  if (bounds) {
-    bounds->x1 = 0.0;
-    bounds->y1 = 0.0;
-    bounds->x2 = 0.0;
-    bounds->y2 = 0.0;
+  if (!bounds) return kOfxStatErrBadHandle;
+  auto *effect = imageEffectForClip(asClip(clip));
+  if (!effect || !effect->renderFrame.srcPixelData) {
+    bounds->x1 = 0.0; bounds->y1 = 0.0;
+    bounds->x2 = 0.0; bounds->y2 = 0.0;
+    return kOfxStatFailed;
   }
-  return kOfxStatFailed;
+  auto &rf = effect->renderFrame;
+  bounds->x1 = 0.0;
+  bounds->y1 = 0.0;
+  bounds->x2 = (double)rf.srcWidth;
+  bounds->y2 = (double)rf.srcHeight;
+  return kOfxStatOK;
 }
 
 int effectAbort(OfxImageEffectHandle imageEffect) {
@@ -1374,6 +1429,71 @@ QString stripBundleSuffix(QString name) {
 
 } // namespace
 
+OfxStatus pluginActionCreateInstance(OfxPlugin *plugin, ImageEffectState &instanceState) {
+  if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
+  return plugin->mainEntry(kOfxActionCreateInstance,
+                           reinterpret_cast<const void *>(&instanceState),
+                           nullptr, nullptr);
+}
+
+OfxStatus pluginActionDestroyInstance(OfxPlugin *plugin, ImageEffectState &instanceState) {
+  if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
+  return plugin->mainEntry(kOfxActionDestroyInstance,
+                           reinterpret_cast<const void *>(&instanceState),
+                           nullptr, nullptr);
+}
+
+OfxStatus pluginActionBeginSequenceRender(OfxPlugin *plugin, ImageEffectState &instanceState,
+                                           const OfxPointD &renderScale) {
+  if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
+  PropertySet inArgs;
+  setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
+  return plugin->mainEntry(kOfxImageEffectActionBeginSequenceRender,
+                           reinterpret_cast<const void *>(&instanceState),
+                           reinterpret_cast<OfxPropertySetHandle>(&inArgs),
+                           nullptr);
+}
+
+OfxStatus pluginActionRender(OfxPlugin *plugin, ImageEffectState &instanceState,
+                              OfxTime time, const OfxPointD &renderScale) {
+  if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
+  PropertySet inArgs;
+  setDoubleProperty(inArgs, kOfxImageEffectPropFrame, time);
+  setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
+  setIntProperty(inArgs, kOfxImageEffectPropFieldToRender, (int)kOfxImageFieldNone);
+  return plugin->mainEntry(kOfxImageEffectActionRender,
+                           reinterpret_cast<const void *>(&instanceState),
+                           reinterpret_cast<OfxPropertySetHandle>(&inArgs),
+                           nullptr);
+}
+
+OfxStatus pluginActionEndSequenceRender(OfxPlugin *plugin, ImageEffectState &instanceState,
+                                         const OfxPointD &renderScale) {
+  if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
+  PropertySet inArgs;
+  setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
+  return plugin->mainEntry(kOfxImageEffectActionEndSequenceRender,
+                           reinterpret_cast<const void *>(&instanceState),
+                           reinterpret_cast<OfxPropertySetHandle>(&inArgs),
+                           nullptr);
+}
+
+OfxStatus ofxMessageFunc(void * /*handle*/, OfxMessageType /*type*/,
+                        const char * /*messageId*/, const char * /*format*/, va_list /*args*/) {
+  return kOfxStatOK;
+}
+
+OfxMessageSuiteV1 makeMessageSuite() {
+  OfxMessageSuiteV1 suite{};
+  suite.message = &ofxMessageFunc;
+  return suite;
+}
+
+const OfxMessageSuiteV1 *messageSuite() {
+  static const OfxMessageSuiteV1 suite = makeMessageSuite();
+  return &suite;
+}
+
 export class ArtifactOfxHost {
 public:
   static ArtifactOfxHost &instance() {
@@ -1532,6 +1652,28 @@ public:
     return &hostStruct_;
   }
 
+  OfxPluginDescriptor *findDescriptor(const UniString &identifier) {
+    for (auto &desc : plugins_) {
+      if (desc.identifier == identifier) return &desc;
+    }
+    return nullptr;
+  }
+
+  std::shared_ptr<ImageEffectState> createRenderInstance(const UniString &identifier) {
+    auto *desc = findDescriptor(identifier);
+    if (!desc || !desc->descriptorState) return nullptr;
+    auto state = std::make_shared<ImageEffectState>();
+    state->properties = desc->descriptorState->properties;
+    state->paramSet = desc->descriptorState->paramSet;
+    state->clips.clear();
+    for (const auto &kv : desc->descriptorState->clips) {
+      auto cs = std::make_unique<ClipState>();
+      cs->properties = kv.second->properties;
+      state->clips[kv.first] = std::move(cs);
+    }
+    return state;
+  }
+
 private:
   ArtifactOfxHost() = default;
   ~ArtifactOfxHost() { clearLoadedPlugins(); }
@@ -1560,6 +1702,9 @@ private:
     }
     if (std::strcmp(suiteName, kOfxParameterSuite) == 0) {
       return parameterSuite();
+    }
+    if (std::strcmp(suiteName, kOfxMessageSuite) == 0) {
+      return messageSuite();
     }
     return nullptr;
   }
