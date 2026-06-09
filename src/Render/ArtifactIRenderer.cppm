@@ -1015,7 +1015,7 @@ namespace {
 
   if (!srcTex || srcWidth == 0 || srcHeight == 0) return {};
 
-  const TEXTURE_FORMAT srcFormat = srcTex->GetDesc().Format;
+  const TEXTURE_FORMAT srcFormat = srcTexPtr->GetDesc().Format;
   const bool useFloatReadback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
   const TEXTURE_FORMAT stagingFormat =
       useFloatReadback ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM;
@@ -1063,7 +1063,7 @@ namespace {
   ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
 
   CopyTextureAttribs copyAttribs;
-  copyAttribs.pSrcTexture              = srcTex;
+  copyAttribs.pSrcTexture              = srcTexPtr;
   copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
   copyAttribs.pDstTexture              = m_readbackStagingTex;
   copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
@@ -1225,27 +1225,39 @@ namespace {
   auto ctx = deviceManager_.immediateContext();
   auto device = deviceManager_.device();
 
-  // Get swap chain back buffer info
-  RefCntAutoPtr<ITexture> srcTex;
+  // Resolve source texture with the same priority as sync readbackToImage():
+  // 1. Headless offline RT (m_layerRT with m_offlineWidth/Height set)
+  // 2. Online layerRT
+  // 3. Swap chain back buffer (fallback)
+  ITexture* srcTexPtr = nullptr;
   Uint32 srcWidth = 0, srcHeight = 0;
 
-  if (auto sc = deviceManager_.swapChain()) {
-   if (auto rtv = sc->GetCurrentBackBufferRTV()) {
-    srcTex = rtv->GetTexture();
-    if (srcTex) {
-     const auto& desc = srcTex->GetDesc();
+  if (m_layerRT && m_offlineWidth > 0 && m_offlineHeight > 0) {
+   srcTexPtr = m_layerRT;
+   srcWidth  = static_cast<Uint32>(m_offlineWidth);
+   srcHeight = static_cast<Uint32>(m_offlineHeight);
+  } else if (m_layerRT) {
+   const auto& desc = m_layerRT->GetDesc();
+   srcTexPtr = m_layerRT;
+   srcWidth  = desc.Width;
+   srcHeight = desc.Height;
+  } else if (auto sc = deviceManager_.swapChain()) {
+   if (auto* rtv = sc->GetCurrentBackBufferRTV()) {
+    srcTexPtr = rtv->GetTexture();
+    if (srcTexPtr) {
+     const auto& desc = srcTexPtr->GetDesc();
      srcWidth  = desc.Width;
      srcHeight = desc.Height;
     }
    }
   }
 
-  if (!srcTex || srcWidth == 0 || srcHeight == 0) {
+  if (!srcTexPtr || srcWidth == 0 || srcHeight == 0) {
     if (callback) callback(QImage());
     return;
   }
 
-  const TEXTURE_FORMAT srcFormat = srcTex->GetDesc().Format;
+  const TEXTURE_FORMAT srcFormat = srcTexPtr->GetDesc().Format;
   const bool useFloatReadback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
   const TEXTURE_FORMAT stagingFormat =
       useFloatReadback ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM;
@@ -1287,7 +1299,7 @@ namespace {
   ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
 
   CopyTextureAttribs copyAttribs;
-  copyAttribs.pSrcTexture              = srcTex;
+  copyAttribs.pSrcTexture              = srcTexPtr;
   copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
   copyAttribs.pDstTexture              = stagingTex;
   copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;

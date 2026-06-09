@@ -2263,23 +2263,104 @@ namespace Artifact
             }
         }
 
-        bool runExternalRendererJob(const ArtifactRenderJob& job, int index, QString* failureReason)
+        bool encodeSequenceToVideo(const ArtifactRenderJob& job, const QString& sequenceDir, const QString& finalOutputPath, QString* failureReason)
         {
-            const QString format = deriveContainerFromJob(job);
-            if (format != QStringLiteral("png")) {
+            const QString ffmpegPath = resolveFfmpegExePath();
+            if (ffmpegPath.isEmpty() || ffmpegPath == QStringLiteral("ffmpeg.exe")) {
                 if (failureReason) {
-                    *failureReason = QStringLiteral("External renderer currently supports PNG sequence jobs only");
+                    *failureReason = QStringLiteral("FFmpeg executable not found. Please ensure FFmpeg is installed and in the PATH.");
                 }
                 return false;
             }
 
-            const QString workDir = externalRenderWorkDir(job, index);
+            const QString fpsStr = QString::number(job.frameRate > 0.0 ? job.frameRate : 30.0, 'f', 2);
+            const QString inputPattern = QDir(sequenceDir).filePath(QStringLiteral("%1_%05d.png").arg(job.compositionId.toString()));
+            
+            QStringList args;
+            args << QStringLiteral("-y")
+                 << QStringLiteral("-framerate") << fpsStr
+                 << QStringLiteral("-i") << inputPattern;
+
+            const QString format = deriveContainerFromJob(job);
+            if (format == QStringLiteral("mp4") || format == QStringLiteral("mov") || format == QStringLiteral("mkv")) {
+                args << QStringLiteral("-c:v") << QStringLiteral("libx264")
+                     << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
+            } else if (format == QStringLiteral("webm")) {
+                args << QStringLiteral("-c:v") << QStringLiteral("libvpx-vp9")
+                     << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
+            } else if (format == QStringLiteral("gif")) {
+                args << QStringLiteral("-c:v") << QStringLiteral("gif");
+            } else if (format == QStringLiteral("webp")) {
+                args << QStringLiteral("-c:v") << QStringLiteral("libwebp");
+            } else {
+                args << QStringLiteral("-c:v") << QStringLiteral("libx264")
+                     << QStringLiteral("-pix_fmt") << QStringLiteral("yuv420p");
+            }
+
+            args << finalOutputPath;
+
+            QProcess process;
+            process.setProcessChannelMode(QProcess::MergedChannels);
+            process.start(ffmpegPath, args);
+            if (!process.waitForStarted(5000)) {
+                if (failureReason) {
+                    *failureReason = QStringLiteral("Failed to start FFmpeg for video encoding.");
+                }
+                return false;
+            }
+
+            if (!process.waitForFinished(-1)) {
+                process.kill();
+                if (failureReason) {
+                    *failureReason = QStringLiteral("FFmpeg encoding timed out or was interrupted.");
+                }
+                return false;
+            }
+
+            if (process.exitCode() != 0) {
+                if (failureReason) {
+                    *failureReason = QStringLiteral("FFmpeg encoding failed: %1").arg(QString::fromUtf8(process.readAllStandardOutput()).trimmed());
+                }
+                return false;
+            }
+
+            return true;
+        }
+
+
+        bool runExternalRendererJob(const ArtifactRenderJob& job, int index, QString* failureReason)
+        {
+            const QString format = deriveContainerFromJob(job);
+            const bool isImageSequence = (format == QStringLiteral("png") || format == QStringLiteral("exr") || 
+                                          format == QStringLiteral("tiff") || format == QStringLiteral("jpeg") || 
+                                          format == QStringLiteral("bmp"));
+
+            QString tempSequenceDir;
+            QString workDir;
             QString summaryPath;
             QString eventLogPath;
             QString cancelPath;
-            const QJsonObject jobJson = buildExternalRendererJobJson(job, workDir, &summaryPath, &eventLogPath, &cancelPath);
+            QJsonObject jobJson;
+
+            if (!isImageSequence) {
+                tempSequenceDir = externalRenderWorkDir(job, index);
+                QDir().mkpath(tempSequenceDir);
+                
+                ArtifactRenderJob tempJob = job;
+                tempJob.outputPath = tempSequenceDir;
+                tempJob.outputFormat = QStringLiteral("png");
+                
+                jobJson = buildExternalRendererJobJson(tempJob, tempSequenceDir, &summaryPath, &eventLogPath, &cancelPath);
+                workDir = tempSequenceDir;
+            } else {
+                workDir = externalRenderWorkDir(job, index);
+                jobJson = buildExternalRendererJobJson(job, workDir, &summaryPath, &eventLogPath, &cancelPath);
+            }
             const QString jobPath = QDir(workDir).filePath(QStringLiteral("job.json"));
             if (!writeJsonDocumentFile(jobPath, jobJson, failureReason)) {
+                if (!tempSequenceDir.isEmpty()) {
+                    QDir(tempSequenceDir).removeRecursively();
+                }
                 return false;
             }
 
@@ -2293,6 +2374,9 @@ namespace Artifact
             if (!process.waitForStarted(10000)) {
                 if (failureReason) {
                     *failureReason = QStringLiteral("Failed to start external renderer: %1").arg(executable);
+                }
+                if (!tempSequenceDir.isEmpty()) {
+                    QDir(tempSequenceDir).removeRecursively();
                 }
                 return false;
             }
@@ -2324,6 +2408,9 @@ namespace Artifact
                     if (failureReason) {
                         *failureReason = QStringLiteral("External rendering cancelled");
                     }
+                    if (!tempSequenceDir.isEmpty()) {
+                        QDir(tempSequenceDir).removeRecursively();
+                    }
                     return false;
                 }
             }
@@ -2338,6 +2425,9 @@ namespace Artifact
                         ? QStringLiteral("External renderer failed with exit code %1").arg(process.exitCode())
                         : stderrText;
                 }
+                if (!tempSequenceDir.isEmpty()) {
+                    QDir(tempSequenceDir).removeRecursively();
+                }
                 return false;
             }
 
@@ -2348,6 +2438,15 @@ namespace Artifact
                 if (parseError.error == QJsonParseError::NoError && summaryDoc.isObject()) {
                     applyExternalRendererEvent(index, summaryDoc.object());
                 }
+            }
+
+            
+            if (!isImageSequence) {
+                if (!encodeSequenceToVideo(job, tempSequenceDir, job.outputPath, failureReason)) {
+                    QDir(tempSequenceDir).removeRecursively();
+                    return false;
+                }
+                QDir(tempSequenceDir).removeRecursively();
             }
 
             return true;

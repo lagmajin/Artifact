@@ -8838,28 +8838,27 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           !viewportInteracting_ && !frameOutOfRange &&
           !playbackPreviewState.ready && playbackPreviewPendingBuild;
       if (shouldCaptureRamPreview) {
-        const QImage capturedFrame = renderer_->readbackToImage();
-        if (!capturedFrame.isNull()) {
-          const QString renderPath = pipelineEnabled ? QStringLiteral("gpu-blend")
-                                                     : QStringLiteral("fallback");
-          const bool stored = playback->storeCompositionPreviewFrameImage(
-              framePos, capturedFrame, comp->id().toString(), previewDownsample_,
-              effectivePreviewDownsample, renderPath, QString(), true);
-          if (stored && compositionViewLog().isDebugEnabled()) {
-            qCDebug(compositionViewLog)
-                << "[CompositionView][RamPreviewCapture]"
-                << "frame=" << framePos
-                << "path=" << renderPath
-                << "rangeReady=" << previewSummary.buildRangeReady
-                << "queueNext=" << previewSummary.buildQueueNextFrame
-                << "queueGeneration="
-                << static_cast<qulonglong>(previewSummary.buildQueueGeneration);
-          }
-        } else if (compositionViewLog().isDebugEnabled()) {
-          qCDebug(compositionViewLog)
-              << "[CompositionView][RamPreviewCapture]"
-              << "frame=" << framePos << "result=empty";
-        }
+        // Asynchronous readback: GPU copy + fence wait runs on a worker thread,
+        // avoiding a full GPU pipeline stall on the render thread.
+        const auto weakPlayback = QPointer<ArtifactPlaybackService>(playback);
+        const qint64 capturedFramePos = framePos;
+        const QString capturedCompId = comp->id().toString();
+        const int capturedPreviewDownsample = previewDownsample_;
+        const int capturedEffectiveDownsample = effectivePreviewDownsample;
+        const bool capturedPipelineEnabled = pipelineEnabled;
+        renderer_->readbackToImageAsync(
+            [weakPlayback, capturedFramePos, capturedCompId,
+             capturedPreviewDownsample, capturedEffectiveDownsample,
+             capturedPipelineEnabled](const QImage& capturedFrame) {
+              if (!weakPlayback || capturedFrame.isNull()) return;
+              const QString renderPath = capturedPipelineEnabled
+                  ? QStringLiteral("gpu-blend")
+                  : QStringLiteral("fallback");
+              weakPlayback->storeCompositionPreviewFrameImage(
+                  capturedFramePos, capturedFrame, capturedCompId,
+                  capturedPreviewDownsample, capturedEffectiveDownsample,
+                  renderPath, QString(), true);
+            });
       }
     }
     presentMs = markPhaseMs();
