@@ -76,6 +76,8 @@ import Text.Style;
 import Text.GlyphLayout;
 import Text.Animator;
 import Time.Rational;
+import Artifact.Mask.Path;
+import Artifact.Mask.LayerMask;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -2657,6 +2659,41 @@ void ArtifactTextLayer::updateImage() {
     impl_->renderedBuffer_->setFromCVMat(rgba);
   }
   impl_->isDirty_ = false;
+}
+
+} // namespace Artifact
+
+// -- createMaskFromText --
+
+namespace Artifact {
+
+LayerMask ArtifactTextLayer::createMaskFromText() const
+{
+    LayerMask mask;
+
+    const QString text = impl_->text_.toQString().trimmed();
+    if (text.isEmpty()) {
+        mask.setEnabled(false);
+        return mask;
+    }
+
+    const QFont font = makeTextFont(impl_->textStyle_, text);
+    QPainterPath path;
+    path.addText(QPointF(0.0, 0.0), font, text);
+
+    auto maskPaths = MaskPath::fromQPainterPath(path, text);
+    for (auto& mp : maskPaths) {
+        mask.addMaskPath(mp);
+    }
+
+    if (mask.maskPathCount() == 0) {
+        MaskPath fallback;
+        fallback.setName(UniString(text));
+        fallback.setMode(MaskMode::Add);
+        mask.addMaskPath(fallback);
+    }
+
+    return mask;
 }
 
 } // namespace Artifact

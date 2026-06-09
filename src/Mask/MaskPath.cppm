@@ -1,8 +1,9 @@
-﻿module;
+module;
 #include <QDebug>
 #include <QPointF>
 #include <QPolygonF>
 #include <QSize>
+#include <QPainterPath>
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -448,6 +449,116 @@ void MaskPath::rasterizeToAlpha(int width, int height, void* outMat,
                    << "size=" << QSize(width, height)
                    << "offset=" << QPointF(offsetX, offsetY);
     }
+}
+
+// -- Static: fromQPainterPath --
+
+std::vector<MaskPath> MaskPath::fromQPainterPath(
+    const QPainterPath& path, const QString& text)
+{
+    std::vector<MaskPath> result;
+    if (path.isEmpty())
+        return result;
+
+    int subpathIndex = 0;
+    int i = 0;
+    const int n = path.elementCount();
+
+    while (i < n) {
+        if (path.elementAt(i).type != QPainterPath::MoveToElement) {
+            ++i;
+            continue;
+        }
+
+        MaskPath maskPath;
+        maskPath.setName(UniString(text));
+        maskPath.setMode(subpathIndex == 0 ? MaskMode::Add : MaskMode::Subtract);
+
+        QPointF startPoint(path.elementAt(i).x, path.elementAt(i).y);
+        ++i;
+
+        struct CubicSegment {
+            QPointF end;
+            QPointF c1Out;
+            QPointF c2In;
+        };
+        std::vector<CubicSegment> segments;
+        QPointF prev = startPoint;
+
+        while (i < n) {
+            const auto& e = path.elementAt(i);
+            if (e.type == QPainterPath::MoveToElement)
+                break;
+
+            if (e.type == QPainterPath::LineToElement) {
+                QPointF pt(e.x, e.y);
+                segments.push_back({pt, prev, pt});
+                prev = pt;
+                ++i;
+            }
+            else if (e.type == QPainterPath::CurveToElement) {
+                QPointF c1(e.x, e.y);
+                QPointF c2(path.elementAt(i + 1).x, path.elementAt(i + 1).y);
+                QPointF end(path.elementAt(i + 2).x, path.elementAt(i + 2).y);
+                segments.push_back({end, c1, c2});
+                prev = end;
+                i += 3;
+            }
+            else {
+                ++i;
+            }
+        }
+
+        if (segments.empty())
+            continue;
+
+        const auto& lastSeg = segments.back();
+        const double dx = lastSeg.end.x() - startPoint.x();
+        const double dy = lastSeg.end.y() - startPoint.y();
+        bool isClosed = (dx * dx + dy * dy) < 0.0001;
+
+        for (std::size_t j = 0; j < segments.size(); ++j) {
+            const auto& seg = segments[j];
+            QPointF pos = seg.end;
+
+            QPointF inTan(0, 0);
+            if (j > 0) {
+                const auto& prevSeg = segments[j - 1];
+                inTan = prevSeg.c2In - pos;
+            } else if (isClosed && segments.size() > 1) {
+                const auto& lastSegRef = segments.back();
+                inTan = lastSegRef.c2In - pos;
+            }
+
+            QPointF segStart = (j == 0) ? startPoint : segments[j - 1].end;
+            QPointF outTan = seg.c1Out - segStart;
+
+            MaskVertex v;
+            v.position = pos;
+            v.inTangent = inTan;
+            v.outTangent = outTan;
+            maskPath.addVertex(v);
+        }
+
+        if (isClosed && maskPath.vertexCount() >= 2) {
+            const auto& lastV = maskPath.vertex(maskPath.vertexCount() - 1);
+            const double dx2 = lastV.position.x() - startPoint.x();
+            const double dy2 = lastV.position.y() - startPoint.y();
+            if (dx2 * dx2 + dy2 * dy2 < 0.0001) {
+                MaskVertex firstV = maskPath.vertex(0);
+                firstV.outTangent = lastV.outTangent;
+                maskPath.setVertex(0, firstV);
+                maskPath.removeVertex(maskPath.vertexCount() - 1);
+            }
+        }
+
+        maskPath.setClosed(isClosed);
+        if (maskPath.vertexCount() >= 3 && isClosed) {
+            result.push_back(std::move(maskPath));
+        }
+        ++subpathIndex;
+    }
+    return result;
 }
 
 }

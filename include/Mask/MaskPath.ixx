@@ -31,6 +31,7 @@ module;
 #include <regex>
 #include <random>
 #include <QPointF>
+#include <QPainterPath>
 export module Artifact.Mask.Path;
 
 
@@ -132,6 +133,13 @@ public:
     bool hasAnimationKeyframes() const;
     std::vector<MaskPathKeyframeSnapshot> animationKeyframes() const;
     MaskPath sampleAtFrame(int64_t frame) const;
+
+    /// QPainterPath の各サブパスを MaskPath のリストに分解する
+    /// 外側輪郭は MaskMode::Add、穴は MaskMode::Subtract となる。
+    /// text が空でない場合、そのテキストを名前として使う。
+    static std::vector<MaskPath> fromQPainterPath(
+        const QPainterPath& path,
+        const QString& text = QString());
 
     /// ベジェパスからアルファマスクをラスタライズ (0.0~1.0 single channel)
     /// offsetX/offsetY: レイヤーローカル空間からピクセル空間への変換オフセット
