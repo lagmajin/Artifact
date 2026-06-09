@@ -1639,12 +1639,6 @@ int main(int argc, char *argv[]) {
   // qsetenv("QT_QPA_PLATFORM", "windows:darkmode=[1]");
 
   // QTextCodec::setCodecForLocale(QTextCodec::codecForName("Shift-JIS"));
-  bool renderMode = false;
-
-  if (renderMode) {
-
-  } else {
-  }
 
   QStringList appArgs;
   for (int i = 0; i < argc; ++i) {
