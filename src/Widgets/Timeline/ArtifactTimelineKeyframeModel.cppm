@@ -148,146 +148,111 @@ ArtifactTimelineKeyframeModel::ArtifactTimelineKeyframeModel(QObject* parent)
 
 ArtifactTimelineKeyframeModel::~ArtifactTimelineKeyframeModel() {}
 
+namespace {
+struct LayerPropertyLookup {
+    Property* prop = nullptr;
+    ArtifactAbstractLayer* layer = nullptr;
+    bool success = false;
+};
+
+LayerPropertyLookup resolveLayerProperty(
+    const CompositionID& compId,
+    const LayerID& layerId,
+    const QString& propertyPath) {
+    LayerPropertyLookup result;
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) return result;
+    auto findResult = svc->findComposition(compId);
+    if (!findResult.success) return result;
+    auto comp = findResult.ptr.lock();
+    if (!comp) return result;
+    result.layer = comp->layerById(layerId);
+    if (!result.layer) return result;
+    result.prop = result.layer->getProperty(propertyPath);
+    if (!result.prop) return result;
+    result.success = true;
+    return result;
+}
+
+void notifyLayerChanged(ArtifactAbstractLayer* layer, const CompositionID& compId, const LayerID& layerId) {
+    if (layer) {
+        layer->setDirty();
+        layer->changed();
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{compId.toString(), layerId.toString(),
+                             LayerChangedEvent::ChangeType::Modified});
+    }
+}
+} // namespace
+
 std::vector<KeyFrame> ArtifactTimelineKeyframeModel::getKeyframesFor(
     const CompositionID& compId,
     const LayerID& layerId,
     const QString& propertyPath) const {
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc) return {};
-  auto result = svc->findComposition(compId);
-  if (!result.success) return {};
-  auto comp = result.ptr.lock();
-  if (!comp) return {};
-  auto layer = comp->layerById(layerId);
-  if (!layer) return {};
-  auto prop = layer->getProperty(propertyPath);
-  if (!prop) return {};
-  return prop->getKeyFrames();
+    if (auto lookup = resolveLayerProperty(compId, layerId, propertyPath); lookup.success) {
+        return lookup.prop->getKeyFrames();
+    }
+    return {};
 }
 
 bool ArtifactTimelineKeyframeModel::addKeyframe(const CompositionID& compId,
-                                                const LayerID& layerId,
-                                                const QString& propertyPath,
-                                                const RationalTime& time,
-                                                const QVariant& value,
-                                                InterpolationType interpolation) {
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc) return false;
-  auto result = svc->findComposition(compId);
-  if (!result.success) return false;
-  auto comp = result.ptr.lock();
-  if (!comp) return false;
-  auto layer = comp->layerById(layerId);
-  if (!layer) return false;
-  auto prop = layer->getProperty(propertyPath);
-  if (!prop) return false;
-
-  prop->setAnimatable(true);
-  prop->addKeyFrame(time, value, interpolation);
-
-  layer->setDirty();
-  layer->changed();
-  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-      LayerChangedEvent{compId.toString(), layerId.toString(),
-                        LayerChangedEvent::ChangeType::Modified});
-  return true;
+    const LayerID& layerId,
+    const QString& propertyPath,
+    const RationalTime& time,
+    const QVariant& value,
+    InterpolationType interpolation) {
+    if (auto lookup = resolveLayerProperty(compId, layerId, propertyPath); lookup.success) {
+        lookup.prop->setAnimatable(true);
+        lookup.prop->addKeyFrame(time, value, interpolation);
+        return true;
+    }
+    return false;
 }
 
 bool ArtifactTimelineKeyframeModel::addKeyframeWithBezier(const CompositionID& compId,
-                                                          const LayerID& layerId,
-                                                          const QString& propertyPath,
-                                                          const RationalTime& time,
-                                                          const QVariant& value,
-                                                          float cp1_x, float cp1_y, float cp2_x, float cp2_y) {
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc) return false;
-  auto result = svc->findComposition(compId);
-  if (!result.success) return false;
-  auto comp = result.ptr.lock();
-  if (!comp) return false;
-  auto layer = comp->layerById(layerId);
-  if (!layer) return false;
-  auto prop = layer->getProperty(propertyPath);
-  if (!prop) return false;
-
-  prop->setAnimatable(true);
-  prop->addKeyFrame(time, value, InterpolationType::Bezier, cp1_x, cp1_y, cp2_x, cp2_y, false);
-
-  layer->setDirty();
-  layer->changed();
-  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-      LayerChangedEvent{compId.toString(), layerId.toString(),
-                        LayerChangedEvent::ChangeType::Modified});
-  return true;
+    const LayerID& layerId,
+    const QString& propertyPath,
+    const RationalTime& time,
+    const QVariant& value,
+    float cp1_x, float cp1_y, float cp2_x, float cp2_y) {
+    if (auto lookup = resolveLayerProperty(compId, layerId, propertyPath); lookup.success) {
+        lookup.prop->setAnimatable(true);
+        lookup.prop->addKeyFrame(time, value, InterpolationType::Bezier, cp1_x, cp1_y, cp2_x, cp2_y, false);
+        notifyLayerChanged(lookup.layer, compId, layerId);
+        return true;
+    }
+    return false;
 }
 
 bool ArtifactTimelineKeyframeModel::moveKeyframe(const CompositionID& compId,
-                                                 const LayerID& layerId,
-                                                 const QString& propertyPath,
-                                                 const RationalTime& fromTime,
-                                                 const RationalTime& toTime) {
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc) return false;
-  auto result = svc->findComposition(compId);
-  if (!result.success) return false;
-  auto comp = result.ptr.lock();
-  if (!comp) return false;
-  auto layer = comp->layerById(layerId);
-  if (!layer) return false;
-  auto prop = layer->getProperty(propertyPath);
-  if (!prop || !prop->isAnimatable()) return false;
-  if (fromTime == toTime) return false;
-
-  const auto keyframes = prop->getKeyFrames();
-  const auto it = std::find_if(keyframes.begin(), keyframes.end(),
-                               [&fromTime](const KeyFrame& kf) {
-                                 return kf.time == fromTime;
-                               });
-  if (it == keyframes.end()) {
+    const LayerID& layerId,
+    const QString& propertyPath,
+    const RationalTime& fromTime,
+    const RationalTime& toTime) {
+    if (auto lookup = resolveLayerProperty(compId, layerId, propertyPath); lookup.success) {
+        if (!lookup.prop->isAnimatable() || fromTime == toTime) return false;
+        const auto keyframes = lookup.prop->getKeyFrames();
+        const auto it = std::find_if(keyframes.begin(), keyframes.end(),
+            [&fromTime](const KeyFrame& kf) { return kf.time == fromTime; });
+        if (it == keyframes.end()) return false;
+        lookup.prop->removeKeyFrame(fromTime);
+        lookup.prop->addKeyFrame(toTime, it->value, it->interpolation, it->cp1_x, it->cp1_y, it->cp2_x, it->cp2_y, it->roving);
+        notifyLayerChanged(lookup.layer, compId, layerId);
+        return true;
+    }
     return false;
-  }
-
-  const QVariant value = it->value;
-  const InterpolationType interpolation = it->interpolation;
-  const float cp1_x = it->cp1_x;
-  const float cp1_y = it->cp1_y;
-  const float cp2_x = it->cp2_x;
-  const float cp2_y = it->cp2_y;
-  const bool roving = it->roving;
-  prop->removeKeyFrame(fromTime);
-  prop->addKeyFrame(toTime, value, interpolation, cp1_x, cp1_y, cp2_x, cp2_y,
-                    roving);
-
-  layer->setDirty();
-  layer->changed();
-  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-      LayerChangedEvent{compId.toString(), layerId.toString(),
-                        LayerChangedEvent::ChangeType::Modified});
-  return true;
 }
 
 bool ArtifactTimelineKeyframeModel::removeKeyframe(const CompositionID& compId,
-                                                   const LayerID& layerId,
-                                                   const QString& propertyPath,
-                                                   const RationalTime& time) {
-  auto* svc = ArtifactProjectService::instance();
-  if (!svc) return false;
-  auto result = svc->findComposition(compId);
-  if (!result.success) return false;
-  auto comp = result.ptr.lock();
-  if (!comp) return false;
-  auto layer = comp->layerById(layerId);
-  if (!layer) return false;
-  auto prop = layer->getProperty(propertyPath);
-  if (!prop) return false;
-
-  prop->removeKeyFrame(time);
-  layer->setDirty();
-  layer->changed();
-  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-      LayerChangedEvent{compId.toString(), layerId.toString(),
-                        LayerChangedEvent::ChangeType::Modified});
-  return true;
+    const LayerID& layerId,
+    const QString& propertyPath,
+    const RationalTime& time) {
+    if (auto lookup = resolveLayerProperty(compId, layerId, propertyPath); lookup.success) {
+        lookup.prop->removeKeyFrame(time);
+        notifyLayerChanged(lookup.layer, compId, layerId);
+        return true;
+    }
+return false;
 }
 
 } // namespace Artifact

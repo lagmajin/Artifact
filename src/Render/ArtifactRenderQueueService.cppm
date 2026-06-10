@@ -32,11 +32,9 @@ module;
 #include <wobjectimpl.h>
 #include <mutex>
 #include <map>
-
 #include <iostream>
 #include <vector>
 #include <string>
-#include <map>
 #include <unordered_map>
 #include <set>
 #include <unordered_set>
@@ -66,8 +64,6 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-#include <tbb/parallel_for.h>
-#include <tbb/blocked_range.h>
 module Artifact.Render.Queue.Service;
 
 

@@ -318,127 +318,51 @@ private:
     QColor color_;
 };
 
-bool isImportableAssetFile(const QString& path)
-{
+enum class AssetKind { Image, Video, Audio, Font, Other };
+
+AssetKind assetKindFromPath(const QString& path) {
     const QString lower = path.toLower();
-    return lower.endsWith(".png") || lower.endsWith(".jpg") ||
+    if (lower.endsWith(".png") || lower.endsWith(".jpg") ||
         lower.endsWith(".jpeg") || lower.endsWith(".bmp") ||
         lower.endsWith(".gif") || lower.endsWith(".tga") ||
-        lower.endsWith(".tiff") || lower.endsWith(".exr") ||
-        lower.endsWith(".mp4") || lower.endsWith(".mov") ||
+        lower.endsWith(".tiff") || lower.endsWith(".exr")) {
+        return AssetKind::Image;
+    }
+    if (lower.endsWith(".mp4") || lower.endsWith(".mov") ||
         lower.endsWith(".avi") || lower.endsWith(".mkv") ||
-        lower.endsWith(".webm") || lower.endsWith(".flv") ||
-        lower.endsWith(".mp3") || lower.endsWith(".wav") ||
+        lower.endsWith(".webm") || lower.endsWith(".flv")) {
+        return AssetKind::Video;
+    }
+    if (lower.endsWith(".mp3") || lower.endsWith(".wav") ||
         lower.endsWith(".ogg") || lower.endsWith(".flac") ||
-        lower.endsWith(".aac") || lower.endsWith(".m4a") ||
-        lower.endsWith(".ttf") || lower.endsWith(".otf") ||
+        lower.endsWith(".aac") || lower.endsWith(".m4a")) {
+        return AssetKind::Audio;
+    }
+    if (lower.endsWith(".ttf") || lower.endsWith(".otf") ||
         lower.endsWith(".ttc") || lower.endsWith(".woff") ||
-        lower.endsWith(".woff2");
+        lower.endsWith(".woff2")) {
+        return AssetKind::Font;
+    }
+    return AssetKind::Other;
 }
 
-void collectImportablePaths(const QString& localPath, QStringList& outPaths)
-{
-    if (localPath.isEmpty()) {
-        return;
-    }
-    const QFileInfo info(localPath);
-    if (!info.exists()) {
-        return;
-    }
-    if (info.isDir()) {
-        QDirIterator it(localPath, QDir::Files, QDirIterator::Subdirectories);
-        while (it.hasNext()) {
-            const QString candidate = it.next();
-            if (isImportableAssetFile(candidate)) {
-                outPaths.append(candidate);
-            }
-        }
-        return;
-    }
-    if (isImportableAssetFile(localPath)) {
-        outPaths.append(localPath);
-    }
+bool isImportableAssetFile(const QString& path) {
+    return assetKindFromPath(path) != AssetKind::Other;
 }
 
-void collectFolders(ProjectItem* item, QVector<FolderItem*>& out)
-{
-    if (!item) {
-        return;
-    }
-    if (item->type() == eProjectItemType::Folder) {
-        out.append(static_cast<FolderItem*>(item));
-    }
-    for (auto* child : item->children) {
-        collectFolders(child, out);
-    }
-}
-
-bool isDescendantOf(const ProjectItem* node, const ProjectItem* potentialAncestor)
-{
-    for (const ProjectItem* p = node; p; p = p->parent) {
-        if (p == potentialAncestor) {
-            return true;
-        }
-    }
-    return false;
-}
-
-QString folderDisplayPath(const FolderItem* folder)
-{
-    if (!folder) {
-        return QStringLiteral("(Folder)");
-    }
-    QStringList names;
-    const ProjectItem* cur = folder;
-    while (cur) {
-        const QString n = cur->name.toQString().trimmed();
-        names.prepend(n.isEmpty() ? QStringLiteral("(Unnamed)") : n);
-        cur = cur->parent;
-    }
-    return names.join(QStringLiteral(" / "));
-}
-
-QString projectItemTypeLabel(const eProjectItemType type)
-{
-    switch (type) {
-    case eProjectItemType::Composition:
-        return QStringLiteral("Composition");
-    case eProjectItemType::Footage:
-        return QStringLiteral("Footage");
-    case eProjectItemType::Folder:
-        return QStringLiteral("Folder");
-    case eProjectItemType::Solid:
-        return QStringLiteral("Solid");
-    default:
-        return QStringLiteral("Item");
-    }
-}
-
-QString projectItemFootageKindLabel(const QString& path)
-{
-    const QString lowerPath = path.toLower();
-    if (lowerPath.endsWith(".png") || lowerPath.endsWith(".jpg") ||
-        lowerPath.endsWith(".jpeg") || lowerPath.endsWith(".bmp") ||
-        lowerPath.endsWith(".gif") || lowerPath.endsWith(".tga") ||
-        lowerPath.endsWith(".tiff") || lowerPath.endsWith(".exr")) {
+QString projectItemFootageKindLabel(const QString& path) {
+    switch (assetKindFromPath(path)) {
+    case AssetKind::Image:
         return QStringLiteral("Image");
-    }
-    if (lowerPath.endsWith(".mp4") || lowerPath.endsWith(".mov") ||
-        lowerPath.endsWith(".avi") || lowerPath.endsWith(".mkv") ||
-        lowerPath.endsWith(".webm")) {
+    case AssetKind::Video:
         return QStringLiteral("Video");
-    }
-    if (lowerPath.endsWith(".wav") || lowerPath.endsWith(".mp3") ||
-        lowerPath.endsWith(".flac") || lowerPath.endsWith(".ogg") ||
-        lowerPath.endsWith(".m4a") || lowerPath.endsWith(".aac")) {
+    case AssetKind::Audio:
         return QStringLiteral("Audio");
-    }
-    if (lowerPath.endsWith(".ttf") || lowerPath.endsWith(".otf") ||
-        lowerPath.endsWith(".ttc") || lowerPath.endsWith(".woff") ||
-        lowerPath.endsWith(".woff2")) {
+    case AssetKind::Font:
         return QStringLiteral("Font");
+    default:
+        return QStringLiteral("Footage");
     }
-    return QStringLiteral("Footage");
 }
 
 QString projectItemTileBadgeText(ProjectItem* item)
@@ -3088,9 +3012,12 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     }
                     warningLabel->setText(warn);
                 }
-                warningLabel->setStyleSheet(timeRemapCount > 0
-                    ? QStringLiteral("color: #ffcc66; padding: 4px;")
-                    : QStringLiteral("color: #88cc88; padding: 4px;"));
+                QPalette warningPal = warningLabel->palette();
+                warningPal.setColor(QPalette::WindowText, timeRemapCount > 0
+                    ? QColor(QStringLiteral("#ffcc66"))
+                    : QColor(QStringLiteral("#88cc88")));
+                warningLabel->setPalette(warningPal);
+                warningLabel->setContentsMargins(4, 4, 4, 4);
                 layout->addWidget(warningLabel);
 
                 auto* buttons = new QDialogButtonBox(
