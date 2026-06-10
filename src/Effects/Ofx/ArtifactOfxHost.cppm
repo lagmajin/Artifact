@@ -37,7 +37,7 @@ namespace Ofx {
 
 using namespace ArtifactCore;
 
-struct OfxPropertySetStruct {
+export struct OfxPropertySetStruct {
   enum class Kind {
     Unknown,
     Pointer,
@@ -56,7 +56,7 @@ struct OfxPropertySetStruct {
   std::unordered_map<std::string, Entry> entries;
 };
 
-struct ParamState {
+export struct ParamState {
   OfxPropertySetStruct properties;
   QString paramType;
   std::vector<QVariant> currentValues;
@@ -64,22 +64,22 @@ struct ParamState {
   std::string currentUtf8Value;
 };
 
-struct ParamSetState {
+export struct ParamSetState {
   OfxPropertySetStruct properties;
   std::unordered_map<std::string, std::unique_ptr<ParamState>> params;
   std::vector<std::string> paramOrder;
 };
 
-struct ClipState {
+export struct ClipState {
   OfxPropertySetStruct properties;
 };
 
-struct ImageMemoryState {
+export struct ImageMemoryState {
   std::vector<unsigned char> bytes;
   int lockCount = 0;
 };
 
-struct ImageEffectState {
+export struct ImageEffectState {
   OfxPropertySetStruct properties;
   ParamSetState paramSet;
   std::unordered_map<std::string, std::unique_ptr<ClipState>> clips;
@@ -1429,7 +1429,7 @@ QString stripBundleSuffix(QString name) {
 
 } // namespace
 
-OfxStatus pluginActionCreateInstance(OfxPlugin *plugin, ImageEffectState &instanceState) {
+export OfxStatus pluginActionCreateInstance(OfxPlugin *plugin, ImageEffectState &instanceState) {
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   return plugin->mainEntry(kOfxActionCreateInstance,
                            reinterpret_cast<const void *>(&instanceState),
@@ -1443,7 +1443,7 @@ OfxStatus pluginActionDestroyInstance(OfxPlugin *plugin, ImageEffectState &insta
                            nullptr, nullptr);
 }
 
-OfxStatus pluginActionBeginSequenceRender(OfxPlugin *plugin, ImageEffectState &instanceState,
+export OfxStatus pluginActionBeginSequenceRender(OfxPlugin *plugin, ImageEffectState &instanceState,
                                            const OfxPointD &renderScale) {
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   PropertySet inArgs;
@@ -1454,7 +1454,7 @@ OfxStatus pluginActionBeginSequenceRender(OfxPlugin *plugin, ImageEffectState &i
                            nullptr);
 }
 
-OfxStatus pluginActionRender(OfxPlugin *plugin, ImageEffectState &instanceState,
+export OfxStatus pluginActionRender(OfxPlugin *plugin, ImageEffectState &instanceState,
                               OfxTime time, const OfxPointD &renderScale) {
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   PropertySet inArgs;

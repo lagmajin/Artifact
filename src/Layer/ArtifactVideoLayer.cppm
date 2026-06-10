@@ -69,7 +69,6 @@ module Artifact.Layer.Video;
 
 import Thread.Helper;
 import Artifact.Composition.Abstract;
-import Artifact.Project.Manager;
 import Event.Bus;
 import Artifact.Event.Types;
 import CvUtils;

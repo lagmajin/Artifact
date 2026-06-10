@@ -20,6 +20,8 @@ module;
 #include <QTransform>
 #include <QMatrix4x4>
 
+namespace Artifact { class ArtifactIRenderer; }
+
 export module Artifact.Layer.Abstract;
 
 import Size;
@@ -38,8 +40,6 @@ import Frame.Position;
 import Audio.Segment;
 export import Property.Abstract;
 export import Property.Group;
-
-import Artifact.Render.IRenderer;
 
 export namespace Artifact {
 

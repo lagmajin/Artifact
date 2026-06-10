@@ -3,7 +3,7 @@ module Artifact.Plugin.Loader;
 import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Registry;
 
-#include "ArtifactPluginABI.h"
+#include "Plugin/ArtifactPluginABI.h"
 
 namespace Artifact {
 

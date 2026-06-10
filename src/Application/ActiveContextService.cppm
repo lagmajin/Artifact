@@ -42,7 +42,6 @@ module Artifact.Service.ActiveContext;
 
 
 
-import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Playback;
 
@@ -65,6 +64,11 @@ namespace Artifact
 
  ArtifactActiveContextService::~ArtifactActiveContextService() {
   delete impl_;
+ }
+
+ ArtifactActiveContextService* ArtifactActiveContextService::instance() {
+  static ArtifactActiveContextService service;
+  return &service;
  }
 
  void ArtifactActiveContextService::setHandler(QObject* obj) {
@@ -141,7 +145,7 @@ namespace Artifact
 
  // --- Layer Actions ---
  void ArtifactActiveContextService::setLayerInAtCurrentTime() {
-  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   if (l && impl_->activeComp_) {
    l->setInPoint(impl_->activeComp_->framePosition());
    qDebug() << "[ActiveContext] Set In for" << l->layerName() << "to" << impl_->activeComp_->framePosition().framePosition();
@@ -149,14 +153,14 @@ namespace Artifact
  }
 
  void ArtifactActiveContextService::setLayerOutAtCurrentTime() {
-  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   if (l && impl_->activeComp_) {
    l->setOutPoint(impl_->activeComp_->framePosition());
   }
  }
 
  void ArtifactActiveContextService::trimLayerInAtCurrentTime() {
-  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   if (l && impl_->activeComp_) {
    auto now = impl_->activeComp_->framePosition();
    l->setInPoint(now);
@@ -166,7 +170,7 @@ namespace Artifact
  }
 
  void ArtifactActiveContextService::trimLayerOutAtCurrentTime() {
-  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   if (l && impl_->activeComp_) {
    auto now = impl_->activeComp_->framePosition();
    l->setOutPoint(now);
@@ -175,7 +179,7 @@ namespace Artifact
  }
 
  void ArtifactActiveContextService::splitLayerAtCurrentTime() {
-  auto l = ArtifactApplicationManager::instance()->layerSelectionManager()->currentLayer();
+  auto l = ArtifactLayerSelectionManager::instance()->currentLayer();
   auto comp = impl_->activeComp_;
   if (l && comp) {
    auto now = comp->framePosition();

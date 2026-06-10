@@ -5,8 +5,6 @@ module;
 
 export module Artifact.Event.Types;
 
-export import Artifact.Tool.Manager;
-
 import Playback.State;
 
 export namespace Artifact {
@@ -205,10 +203,6 @@ enum class PlaybackSkipMode {
 
 struct PlaybackSkipModeChangedEvent {
     PlaybackSkipMode mode;
-};
-
-struct ToolChangedEvent {
-    ToolType toolType;
 };
 
 } // namespace Artifact

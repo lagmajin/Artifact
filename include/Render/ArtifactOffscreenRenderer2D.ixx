@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <d3d12.h>
 
@@ -44,12 +44,9 @@ export module Artifact.Render.Offscreen;
 
 
 
-
 import Size;
 import Image.Raw;
-import Composition;
 import Color.Float;
-import Artifact.Layers;
 import Transform._2D;
 
 export namespace Artifact

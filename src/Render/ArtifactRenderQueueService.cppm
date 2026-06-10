@@ -80,7 +80,6 @@ import Core.Diagnostics.Trace;
 import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Project.Manager;
 import Artifact.Project.Items;
-import Artifact.Service.Project;
 import Core.Defaults;
 import Image.ImageF32x4_RGBA;
 import CvUtils;
@@ -2925,12 +2924,7 @@ namespace Artifact
 
     void ArtifactRenderQueueService::addRenderQueue() {
         ArtifactCompositionPtr currentComposition;
-        if (auto* projectService = ArtifactProjectService::instance()) {
-            currentComposition = projectService->currentComposition().lock();
-        }
-        if (!currentComposition) {
-            currentComposition = ArtifactProjectManager::getInstance().currentComposition();
-        }
+        currentComposition = ArtifactProjectManager::getInstance().currentComposition();
         if (currentComposition) {
             const auto compositionName = currentComposition->settings().compositionName().toQString();
             addRenderQueueForComposition(currentComposition->id(), compositionName);
@@ -3465,14 +3459,7 @@ namespace Artifact
                 compId));
         }
 
-        auto* projectService = ArtifactProjectService::instance();
         ArtifactCompositionPtr composition;
-        if (projectService) {
-            const auto found = projectService->findComposition(job.compositionId);
-            if (found.success) {
-                composition = found.ptr.lock();
-            }
-        }
         if (!composition) {
             const auto found = ArtifactProjectManager::getInstance().findComposition(job.compositionId);
             composition = found.ptr.lock();

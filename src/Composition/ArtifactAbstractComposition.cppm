@@ -20,6 +20,7 @@ module;
 #include <QUuid>
 #include <QPointF>
 #include <QRectF>
+#include "../../include/Layer/ArtifactLayerJsonFactory.ixx"
 
 module Artifact.Composition.Abstract;
 
@@ -33,7 +34,6 @@ import Composition.Context;
 import Composition.Settings;
 import Artifact.Composition.Result;
 import Artifact.Layer.Abstract;
-import Artifact.Layer.Factory;
 import Artifact.Event.Types;
 import Event.Bus;
 //import Playback.Clock;
@@ -1107,7 +1107,7 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
         QVector<ArtifactAbstractLayerPtr> loadedLayers;
         for (const auto& v : arr) {
             if (v.isObject()) {
-                auto layer = ArtifactLayerFactory::createFromJson(v.toObject());
+                auto layer = createArtifactLayerFromJson(v.toObject());
                 if (layer) {
                     comp->appendLayerTop(layer);
                     loadedLayers.append(layer);

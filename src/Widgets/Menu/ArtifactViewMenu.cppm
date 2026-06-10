@@ -10,6 +10,7 @@ module;
 #include <QGuiApplication>
 #include <QDir>
 #include <QList>
+#include <QDockWidget>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QImage>
@@ -30,7 +31,6 @@ import Artifact.Service.Playback;
 import Artifact.Widgets.CompositionEditor;
 import Application.AppSettings;
 import Core.FastSettingsStore;
-import Artifact.MainWindow;
 import Artifact.Workspace.Manager;
 import Artifact.Widgets.ColorPaletteWidget;
 import Artifact.Widgets.ColorSciencePanel;
@@ -55,8 +55,74 @@ namespace Artifact {
     if (className.contains(classHint, Qt::CaseInsensitive)) {
      return w;
     }
+  }
+  return nullptr;
+  }
+
+  QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
+  {
+   if (!window) return nullptr;
+   const auto docks = window->findChildren<QDockWidget*>();
+   for (QDockWidget* dock : docks) {
+    if (dock && dock->windowTitle() == title) {
+     return dock;
+    }
    }
    return nullptr;
+  }
+
+  QStringList dockTitles(QMainWindow* window)
+  {
+   QStringList titles;
+   if (!window) return titles;
+   const auto docks = window->findChildren<QDockWidget*>();
+   for (QDockWidget* dock : docks) {
+    if (!dock) continue;
+    const QString title = dock->windowTitle().trimmed();
+    if (!title.isEmpty() && !titles.contains(title)) {
+     titles.push_back(title);
+    }
+   }
+   return titles;
+  }
+
+  bool isDockVisible(QMainWindow* window, const QString& title)
+  {
+   const auto* dock = findDockByTitle(window, title);
+   return dock ? dock->isVisible() : false;
+  }
+
+  void setDockVisible(QMainWindow* window, const QString& title, bool visible)
+  {
+   auto* dock = findDockByTitle(window, title);
+   if (!dock) return;
+   dock->setVisible(visible);
+   if (visible) {
+    dock->raise();
+   }
+  }
+
+  void activateDock(QMainWindow* window, const QString& title)
+  {
+   auto* dock = findDockByTitle(window, title);
+   if (!dock) return;
+   dock->setVisible(true);
+   dock->raise();
+   dock->activateWindow();
+  }
+
+  void addFloatingDock(QMainWindow* window, const QString& title,
+                       const QString& dockId, QWidget* widget,
+                       const QRect& floatingGeometry)
+  {
+   if (!window || !widget) return;
+   auto* dock = new QDockWidget(title, window);
+   dock->setObjectName(dockId);
+   dock->setWidget(widget);
+   dock->setFloating(true);
+   dock->setGeometry(floatingGeometry);
+   window->addDockWidget(Qt::RightDockWidgetArea, dock);
+   dock->show();
   }
 
   struct ViewportBookmarkEntry {
@@ -363,7 +429,7 @@ namespace Artifact {
    QMenu* windowPanelsMenu = nullptr;
    QStringList cachedWorkspacePresetNames_;
    QStringList cachedDockTitles_;
-   ArtifactMainWindow* mainWindow = nullptr;
+   QMainWindow* mainWindow = nullptr;
    QPointer<ArtifactReactiveEventEditorWindow> reactiveEventEditorWindow;
      int newBrowserCount_ = 1;
      QAction* openContentsViewerAction = nullptr;
@@ -583,19 +649,19 @@ namespace Artifact {
    }
 
    QObject::connect(workspaceDefaultAction, &QAction::triggered, menu, [this]() {
-    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::Default);
+    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::Default);
    });
    QObject::connect(workspaceAnimationAction, &QAction::triggered, menu, [this]() {
-    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::Animation);
+    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::Animation);
    });
    QObject::connect(workspaceVfxAction, &QAction::triggered, menu, [this]() {
-    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::VFX);
+    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::VFX);
    });
    QObject::connect(workspaceCompositingAction, &QAction::triggered, menu, [this]() {
-    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::Compositing);
+    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::Compositing);
    });
    QObject::connect(workspaceAudioAction, &QAction::triggered, menu, [this]() {
-    if (mainWindow) mainWindow->setWorkspaceMode(WorkspaceMode::Audio);
+    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::Audio);
    });
 
    workspacePresetMenu = new QMenu("プリセット");
@@ -685,8 +751,8 @@ namespace Artifact {
    openContentsViewerAction->setIcon(QIcon(resolveIconPath("Studio/contents_viewer.svg")));
    QObject::connect(openContentsViewerAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
-    mainWindow->setDockVisible(QStringLiteral("Contents Viewer"), true);
-    mainWindow->activateDock(QStringLiteral("Contents Viewer"));
+    setDockVisible(mainWindow, QStringLiteral("Contents Viewer"), true);
+    activateDock(mainWindow, QStringLiteral("Contents Viewer"));
    });
 
    openProjectPanelAction = menu->addAction("Project パネル(&P)");
@@ -700,17 +766,14 @@ namespace Artifact {
    QObject::connect(openColorPaletteAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     const QString dockTitle = QStringLiteral("Color Palette");
-    if (mainWindow->hasDock(dockTitle)) {
-     mainWindow->setDockVisible(dockTitle, true);
-     mainWindow->activateDock(dockTitle);
+    if (findDockByTitle(mainWindow, dockTitle)) {
+     setDockVisible(mainWindow, dockTitle, true);
+     activateDock(mainWindow, dockTitle);
      return;
     }
     auto* paletteWidget = new ArtifactColorPaletteWidget(mainWindow);
-    mainWindow->addDockedWidgetFloating(
-        dockTitle,
-        QStringLiteral("color_palette_dock"),
-        paletteWidget,
-        QRect(120, 120, 560, 640));
+    addFloatingDock(mainWindow, dockTitle, QStringLiteral("color_palette_dock"),
+                    paletteWidget, QRect(120, 120, 560, 640));
    });
 
    openColorScienceAction = menu->addAction("Color Science");
@@ -718,17 +781,14 @@ namespace Artifact {
    QObject::connect(openColorScienceAction, &QAction::triggered, menu, [this]() {
     if (!mainWindow) return;
     const QString dockTitle = QStringLiteral("Color Science");
-    if (mainWindow->hasDock(dockTitle)) {
-     mainWindow->setDockVisible(dockTitle, true);
-     mainWindow->activateDock(dockTitle);
+    if (findDockByTitle(mainWindow, dockTitle)) {
+     setDockVisible(mainWindow, dockTitle, true);
+     activateDock(mainWindow, dockTitle);
      return;
     }
     auto* colorScienceWidget = new ArtifactColorSciencePanel(mainWindow);
-    mainWindow->addDockedWidgetFloating(
-        dockTitle,
-        QStringLiteral("color_science_dock"),
-        colorScienceWidget,
-        QRect(140, 140, 720, 720));
+    addFloatingDock(mainWindow, dockTitle, QStringLiteral("color_science_dock"),
+                    colorScienceWidget, QRect(140, 140, 720, 720));
    });
 
    menu->addSeparator();
@@ -754,7 +814,7 @@ namespace Artifact {
     openReactiveEventEditorAction = menu->addAction("リアクティブイベントエディタ(&E)...");
     openReactiveEventEditorAction->setIcon(QIcon(resolveIconPath("Studio/reactive_events.svg")));
     QObject::connect(openReactiveEventEditorAction, &QAction::triggered, menu, [this]() {
-     if (!mainWindow) return;
+    if (!mainWindow) return;
      if (!reactiveEventEditorWindow) {
       reactiveEventEditorWindow = new ArtifactReactiveEventEditorWindow(mainWindow);
       reactiveEventEditorWindow->setAttribute(Qt::WA_DeleteOnClose, true);
@@ -770,11 +830,9 @@ namespace Artifact {
       newBrowserCount_++;
       auto* browser = new ArtifactAssetBrowser(mainWindow);
       const QString title = QStringLiteral("Asset Browser (%1)").arg(newBrowserCount_);
-      mainWindow->addDockedWidgetFloating(
-       title,
-       QStringLiteral("asset_browser_%1").arg(newBrowserCount_),
-       browser,
-       QRect(100, 100, 800, 600));
+      addFloatingDock(mainWindow, title,
+                      QStringLiteral("asset_browser_%1").arg(newBrowserCount_),
+                      browser, QRect(100, 100, 800, 600));
      });
 
      menu->addSeparator();
@@ -872,8 +930,7 @@ namespace Artifact {
    return;
   }
 
-  const WorkspaceMode mode = mainWindow ? mainWindow->workspaceMode()
-                                        : WorkspaceMode::Default;
+  const WorkspaceMode mode = workspaceModeForWindow(mainWindow);
   workspaceDefaultAction->setChecked(mode == WorkspaceMode::Default);
   workspaceAnimationAction->setChecked(mode == WorkspaceMode::Animation);
   workspaceVfxAction->setChecked(mode == WorkspaceMode::VFX);
@@ -1074,7 +1131,7 @@ namespace Artifact {
   });
  }
 
- void ArtifactViewMenu::setMainWindow(ArtifactMainWindow* mw)
+ void ArtifactViewMenu::setMainWindow(QMainWindow* mw)
  {
   impl_->mainWindow = mw;
   if (impl_) {
@@ -1088,14 +1145,14 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
 {
   if (!windowPanelsMenu || !mainWindow) return;
 
-  const QStringList titles = mainWindow->dockTitles();
+  const QStringList titles = dockTitles(mainWindow);
   if (titles == cachedDockTitles_) {
    for (QAction* action : windowPanelsMenu->actions()) {
     if (!action || !action->isCheckable()) {
      continue;
     }
     const QString title = action->text();
-    action->setChecked(mainWindow->isDockVisible(title));
+    action->setChecked(isDockVisible(mainWindow, title));
    }
    return;
   }
@@ -1107,12 +1164,12 @@ void ArtifactViewMenu::Impl::rebuildWindowPanelsMenu()
    QAction* action = windowPanelsMenu->addAction(title);
    action->setIcon(QIcon(resolveIconPath("Studio/panels.svg")));
    action->setCheckable(true);
-   action->setChecked(mainWindow->isDockVisible(title));
+   action->setChecked(isDockVisible(mainWindow, title));
 
    QObject::connect(action, &QAction::triggered, mainWindow, [mw = mainWindow, title](bool checked) {
-    mw->setDockVisible(title, checked);
+    setDockVisible(mw, title, checked);
     if (checked) {
-     mw->activateDock(title);
+     activateDock(mw, title);
     }
    });
   }
@@ -1296,9 +1353,9 @@ void ArtifactViewMenu::Impl::showProjectPanel()
  }
 
  const QString dockTitle = QStringLiteral("Project");
- if (mainWindow->hasDock(dockTitle)) {
-  mainWindow->setDockVisible(dockTitle, true);
-  mainWindow->activateDock(dockTitle);
+ if (findDockByTitle(mainWindow, dockTitle)) {
+  setDockVisible(mainWindow, dockTitle, true);
+  activateDock(mainWindow, dockTitle);
   return;
  }
 

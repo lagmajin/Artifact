@@ -4,6 +4,8 @@ module;
 #include <QList>
 #include <QObject>
 
+#include "../../include/Layer/ArtifactCompositionLayerFactory.ixx"
+
 module Artifact.Layer.Factory;
 import std;
 
@@ -20,7 +22,6 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
-import Artifact.Layer.Composition;
 import Artifact.Layer.Text;
  import Artifact.Layer.Group;
  import Artifact.Layer.Clone;
@@ -139,7 +140,7 @@ namespace Artifact {
    }
    break;
   case LayerType::Precomp:
-   ptr = std::make_shared<ArtifactCompositionLayer>();
+   ptr = createArtifactCompositionLayer();
    break;
   case LayerType::Camera:
    ptr = std::make_shared<ArtifactCameraLayer>();

@@ -16,7 +16,7 @@ export module Artifact.Service.Project;
 import Utils;
 import Utils.String.Like;
 import Utils.String.UniString;
-export import Artifact.Composition.Abstract;
+import Artifact.Composition.Abstract;
 import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Layer.InitParams;
 import Artifact.Project.Settings;

@@ -15,7 +15,6 @@ module Artifact.Tool.PuppetTool;
 import std;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
-import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Render.IRenderer;
 import Event.Bus;
@@ -178,9 +177,7 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
     auto* lp = impl_->getLayerPins(layerId);
     if (!lp || !lp->engine) return;
 
-    auto* app = ArtifactApplicationManager::instance();
-    if (!app) return;
-    auto* selection = app->layerSelectionManager();
+    auto* selection = ArtifactLayerSelectionManager::instance();
     if (!selection) return;
     auto layer = selection->layerById(layerId);
     if (!layer) return;

@@ -3,10 +3,10 @@
 #include <QtCore/QObject>
 #include <memory>
 #include <vector>
-#include "Artifact/include/Composition/ArtifactAbstractComposition.ixx"
-#include "Artifact/include/Composition/ArtifactCompositionResult.ixx"
-#include "Artifact/include/Composition/ArtifactFindCompositionQuery.ixx"
-#include "Artifact/include/Composition/ArtifactCompositionInitParams.ixx"
+#include "ArtifactAbstractComposition.ixx"
+#include "ArtifactCompositionResult.ixx"
+#include "ArtifactFindCompositionQuery.ixx"
+#include "ArtifactCompositionInitParams.ixx"
 
 namespace Artifact {
 

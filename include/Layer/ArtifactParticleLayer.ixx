@@ -43,7 +43,6 @@ export module Artifact.Layer.Particle;
 
 
 import Artifact.Layer.Abstract;
-import Artifact.Composition.Abstract;
 import Artifact.Composition.PlaybackController;
 import Playback.State;
 import Artifact.Generator.Particle;
@@ -145,7 +144,7 @@ public:
     // Serialization
     void applyPropertiesFromJson(const QJsonObject& obj);
     std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
-    bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
+    bool setLayerPropertyValue(const QString &propertyPath, const QVariant &value) override;
     
 signals:
     void particleSystemChanged() W_SIGNAL(particleSystemChanged);

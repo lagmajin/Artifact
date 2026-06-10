@@ -49,13 +49,12 @@ import Core.Diagnostics.DiagnosticEngine;
 import Image.PSDDocument;
 import File.TypeDetector;
 import Artifact.Layers.Selection.Manager;
-import Artifact.Application.Manager;
-import Artifact.Render.Queue.Service;
 import Event.Bus;
 import Artifact.Event.Types;
 import Core.Diagnostics.SessionLedger;
 import MediaSource;
 import Core.Diagnostics.ProjectDiagnostic;
+import Artifact.Service.ActiveContext;
 // import Artifact.Render.FrameCache;
 
 namespace Artifact {
@@ -593,73 +592,73 @@ void ArtifactProjectService::Impl::installSelectionBridge(
   if (!owner) {
     return;
   }
-  if (auto *app = ArtifactApplicationManager::instance()) {
-    if (auto *selectionManager = app->layerSelectionManager()) {
-      auto publishSelectionChanged =
-          [this](ArtifactProjectService *targetOwner, const LayerID &layerId,
-                 LayerSelectionChangeReason reason) {
-            if (!targetOwner) {
-              return;
-            }
-            if (layerId == lastForwardedLayerId_) {
-              return;
-            }
-            lastForwardedLayerId_ = layerId;
-            ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
-                LayerSelectionChangedEvent{
-                    targetOwner->currentComposition().lock()
-                        ? targetOwner->currentComposition().lock()->id().toString()
-                        : QString(),
-                    layerId.toString(), reason});
-          };
-      QObject::connect(
-          selectionManager, &ArtifactLayerSelectionManager::selectionChanged,
-          owner, [this, owner, selectionManager, publishSelectionChanged]() {
-            if (forwardingSelectionChange_) {
-              return;
-            }
-            const auto current = selectionManager
-                                     ? selectionManager->currentLayer()
-                                     : ArtifactAbstractLayerPtr{};
-            const LayerID nextId = current ? current->id() : LayerID();
-            if (!nextId.isNil()) {
-              publishSelectionChanged(owner, nextId,
-                                      LayerSelectionChangeReason::SelectionBridgeSync);
-              return;
-            }
-            if (lastForwardedLayerId_.isNil()) {
-              return;
-            }
-
-            const auto currentComp = owner->currentComposition().lock();
-            qDebug() << "[ProjectService] selection bridge cleared"
-                     << "composition="
-                     << (currentComp ? currentComp->id().toString() : QString())
-                     << "lastForwarded="
-                     << lastForwardedLayerId_.toString();
-
-            QPointer<ArtifactProjectService> safeOwner(owner);
-            QPointer<ArtifactLayerSelectionManager> safeSelectionManager(
-                selectionManager);
-            QTimer::singleShot(
-                0, owner,
-                [this, safeOwner, safeSelectionManager,
-                 publishSelectionChanged]() {
-                  if (!safeOwner || !safeSelectionManager ||
-                      forwardingSelectionChange_) {
-                    return;
-                  }
-                  const auto resolvedCurrent =
-                      safeSelectionManager->currentLayer();
-                  const LayerID resolvedId =
-                      resolvedCurrent ? resolvedCurrent->id() : LayerID();
-                  publishSelectionChanged(
-                      safeOwner.data(), resolvedId,
-                      LayerSelectionChangeReason::TransientSync);
-                });
-          });
-    }
+  auto *selectionManager = ArtifactLayerSelectionManager::instance();
+  if (!selectionManager) {
+    return;
   }
+  auto publishSelectionChanged =
+      [this](ArtifactProjectService *targetOwner, const LayerID &layerId,
+             LayerSelectionChangeReason reason) {
+        if (!targetOwner) {
+          return;
+        }
+        if (layerId == lastForwardedLayerId_) {
+          return;
+        }
+        lastForwardedLayerId_ = layerId;
+        ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
+            LayerSelectionChangedEvent{
+                targetOwner->currentComposition().lock()
+                    ? targetOwner->currentComposition().lock()->id().toString()
+                    : QString(),
+                layerId.toString(), reason});
+      };
+  QObject::connect(
+      selectionManager, &ArtifactLayerSelectionManager::selectionChanged,
+      owner, [this, owner, selectionManager, publishSelectionChanged]() {
+        if (forwardingSelectionChange_) {
+          return;
+        }
+        const auto current = selectionManager
+                                 ? selectionManager->currentLayer()
+                                 : ArtifactAbstractLayerPtr{};
+        const LayerID nextId = current ? current->id() : LayerID();
+        if (!nextId.isNil()) {
+          publishSelectionChanged(owner, nextId,
+                                  LayerSelectionChangeReason::SelectionBridgeSync);
+          return;
+        }
+        if (lastForwardedLayerId_.isNil()) {
+          return;
+        }
+
+        const auto currentComp = owner->currentComposition().lock();
+        qDebug() << "[ProjectService] selection bridge cleared"
+                 << "composition="
+                 << (currentComp ? currentComp->id().toString() : QString())
+                 << "lastForwarded="
+                 << lastForwardedLayerId_.toString();
+
+        QPointer<ArtifactProjectService> safeOwner(owner);
+        QPointer<ArtifactLayerSelectionManager> safeSelectionManager(
+            selectionManager);
+        QTimer::singleShot(
+            0, owner,
+            [this, safeOwner, safeSelectionManager,
+             publishSelectionChanged]() {
+              if (!safeOwner || !safeSelectionManager ||
+                  forwardingSelectionChange_) {
+                return;
+              }
+              const auto resolvedCurrent =
+                  safeSelectionManager->currentLayer();
+              const LayerID resolvedId =
+                  resolvedCurrent ? resolvedCurrent->id() : LayerID();
+              publishSelectionChanged(
+                  safeOwner.data(), resolvedId,
+                  LayerSelectionChangeReason::TransientSync);
+            });
+      });
 }
 
 ArtifactProjectManager &ArtifactProjectService::Impl::projectManager() {
@@ -670,11 +669,9 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
     const ArtifactLayerInitParams &params, bool selectNewLayer) {
   auto &manager = ArtifactProjectService::Impl::projectManager();
   LayerID selectedLayerId;
-  if (auto *app = ArtifactApplicationManager::instance()) {
-    if (auto *selectionManager = app->layerSelectionManager()) {
-      if (auto selectedLayer = selectionManager->currentLayer()) {
-        selectedLayerId = selectedLayer->id();
-      }
+  if (auto *selectionManager = ArtifactLayerSelectionManager::instance()) {
+    if (auto selectedLayer = selectionManager->currentLayer()) {
+      selectedLayerId = selectedLayer->id();
     }
   }
 
@@ -1108,10 +1105,8 @@ ChangeCompositionResult ArtifactProjectService::Impl::changeCurrentComposition(
 
   currentCompositionId_ = id;
   if (auto comp = find.ptr.lock()) {
-    if (auto *app = ArtifactApplicationManager::instance()) {
-      if (auto *active = app->activeContextService()) {
-        active->setActiveComposition(comp);
-      }
+    if (auto *active = ArtifactActiveContextService::instance()) {
+      active->setActiveComposition(comp);
     }
   }
 
@@ -1175,61 +1170,59 @@ void ArtifactProjectService::projectSettingChanged(
     const ArtifactProjectSettings &setting) {}
 
 void ArtifactProjectService::selectLayer(const LayerID &id) {
-  if (auto *app = ArtifactApplicationManager::instance()) {
-    if (auto *selectionManager = app->layerSelectionManager()) {
-      const auto currentComp = currentComposition().lock();
-      const auto current = selectionManager->currentLayer();
-      if (current && current->id() == id) {
-        selectionManager->setActiveComposition(currentComp);
-        ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
-            LayerSelectionChangedEvent{
-                currentComp ? currentComp->id().toString() : QString(),
-                id.toString(),
-                LayerSelectionChangeReason::ProgrammaticReselect});
-        return;
-      }
-
-      if (!id.isNil() && (!currentComp || !currentComp->layerById(id))) {
-        qDebug() << "[ProjectService] selectLayer rejected"
-                 << "composition="
-                 << (currentComp ? currentComp->id().toString() : QString())
-                 << "layer=" << id.toString()
-                 << "reason=" << layerSelectionChangeReasonToString(
-                        currentComp ? LayerSelectionChangeReason::InvalidSelection
-                                    : LayerSelectionChangeReason::ProjectChanged);
-      }
-
-      impl_->forwardingSelectionChange_ = true;
+  if (auto *selectionManager = ArtifactLayerSelectionManager::instance()) {
+    const auto currentComp = currentComposition().lock();
+    const auto current = selectionManager->currentLayer();
+    if (current && current->id() == id) {
       selectionManager->setActiveComposition(currentComp);
-      if (id.isNil()) {
-        selectionManager->clearSelection();
-      } else if (currentComp) {
-        selectionManager->selectLayer(currentComp->layerById(id));
-      } else {
-        selectionManager->clearSelection();
-      }
-      impl_->forwardingSelectionChange_ = false;
-
-      const auto resolvedCurrent = selectionManager->currentLayer();
-      const LayerID nextId = resolvedCurrent ? resolvedCurrent->id()
-                                             : (id.isNil() ? LayerID() : id);
-      const auto reason = id.isNil()
-                              ? LayerSelectionChangeReason::UserCleared
-                              : (resolvedCurrent
-                                     ? LayerSelectionChangeReason::SelectionBridgeSync
-                                     : LayerSelectionChangeReason::InvalidSelection);
       ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
           LayerSelectionChangedEvent{
               currentComp ? currentComp->id().toString() : QString(),
-              nextId.toString(),
-              reason});
-      qDebug() << "[ProjectService] selectLayer"
+              id.toString(),
+              LayerSelectionChangeReason::ProgrammaticReselect});
+      return;
+    }
+
+    if (!id.isNil() && (!currentComp || !currentComp->layerById(id))) {
+      qDebug() << "[ProjectService] selectLayer rejected"
                << "composition="
                << (currentComp ? currentComp->id().toString() : QString())
-               << "requested=" << id.toString()
-               << "resolved=" << nextId.toString()
-               << "reason=" << layerSelectionChangeReasonToString(reason);
+               << "layer=" << id.toString()
+               << "reason=" << layerSelectionChangeReasonToString(
+                      currentComp ? LayerSelectionChangeReason::InvalidSelection
+                                  : LayerSelectionChangeReason::ProjectChanged);
     }
+
+    impl_->forwardingSelectionChange_ = true;
+    selectionManager->setActiveComposition(currentComp);
+    if (id.isNil()) {
+      selectionManager->clearSelection();
+    } else if (currentComp) {
+      selectionManager->selectLayer(currentComp->layerById(id));
+    } else {
+      selectionManager->clearSelection();
+    }
+    impl_->forwardingSelectionChange_ = false;
+
+    const auto resolvedCurrent = selectionManager->currentLayer();
+    const LayerID nextId = resolvedCurrent ? resolvedCurrent->id()
+                                           : (id.isNil() ? LayerID() : id);
+    const auto reason = id.isNil()
+                            ? LayerSelectionChangeReason::UserCleared
+                            : (resolvedCurrent
+                                   ? LayerSelectionChangeReason::SelectionBridgeSync
+                                   : LayerSelectionChangeReason::InvalidSelection);
+    ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
+        LayerSelectionChangedEvent{
+            currentComp ? currentComp->id().toString() : QString(),
+            nextId.toString(),
+            reason});
+    qDebug() << "[ProjectService] selectLayer"
+             << "composition="
+             << (currentComp ? currentComp->id().toString() : QString())
+             << "requested=" << id.toString()
+             << "resolved=" << nextId.toString()
+             << "reason=" << layerSelectionChangeReasonToString(reason);
   }
 }
 
@@ -1259,8 +1252,7 @@ bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()
         return false;
     }
 
-    auto* app = ArtifactApplicationManager::instance();
-    auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+    auto* selectionManager = ArtifactLayerSelectionManager::instance();
     if (!selectionManager) {
         return false;
     }
@@ -1339,8 +1331,7 @@ bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(
     return false;
   }
 
-  auto *app = ArtifactApplicationManager::instance();
-  auto *selectionManager = app ? app->layerSelectionManager() : nullptr;
+  auto *selectionManager = ArtifactLayerSelectionManager::instance();
   if (!selectionManager) {
     return false;
   }
@@ -1384,8 +1375,7 @@ bool ArtifactProjectService::removeLayerFromComposition(
     const CompositionID &compositionId, const LayerID &layerId) {
   ArtifactAbstractLayerPtr removedLayer;
   ArtifactAbstractLayerPtr selectedLayer;
-  auto *app = ArtifactApplicationManager::instance();
-  auto *selectionManager = app ? app->layerSelectionManager() : nullptr;
+  auto *selectionManager = ArtifactLayerSelectionManager::instance();
   if (auto comp = currentComposition().lock()) {
     removedLayer = comp->layerById(layerId);
     if (selectionManager) {

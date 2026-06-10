@@ -35,7 +35,7 @@ module;
 export module Artifact.Layers.Selection.Manager;
 
 
-export import Artifact.Composition.Abstract;
+import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Memory.SharedPtr;
 

@@ -2,7 +2,6 @@ module;
 #include <wobjectimpl.h>
 module Artifact.Tool.Manager;
 
-import Artifact.Event.Types;
 import Event.Bus;
 
 namespace Artifact {

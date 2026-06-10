@@ -1,9 +1,11 @@
 module;
 #include <utility>
 #include <QAction>
+#include <QDockWidget>
 #include <QIcon>
 #include <QMenu>
 #include <QRect>
+#include <QMainWindow>
 #include <QString>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -14,16 +16,53 @@ import std;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Service.Playback;
-import Artifact.MainWindow;
 import Artifact.Widgets.PlaybackControlWidget;
 import Utils.Path;
 
 namespace Artifact {
 
 namespace {
-ArtifactMainWindow* activeMainWindow(QWidget* widget)
+QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
 {
- return qobject_cast<ArtifactMainWindow*>(widget ? widget->window() : nullptr);
+ if (!window) return nullptr;
+ const auto docks = window->findChildren<QDockWidget*>();
+ for (QDockWidget* dock : docks) {
+  if (dock && dock->windowTitle() == title) {
+   return dock;
+  }
+ }
+ return nullptr;
+}
+
+void setDockVisible(QMainWindow* window, const QString& title, bool visible)
+{
+ auto* dock = findDockByTitle(window, title);
+ if (!dock) return;
+ dock->setVisible(visible);
+ if (visible) dock->raise();
+}
+
+void activateDock(QMainWindow* window, const QString& title)
+{
+ auto* dock = findDockByTitle(window, title);
+ if (!dock) return;
+ dock->setVisible(true);
+ dock->raise();
+ dock->activateWindow();
+}
+
+void addFloatingDock(QMainWindow* window, const QString& title,
+                     const QString& dockId, QWidget* widget,
+                     const QRect& floatingGeometry)
+{
+ if (!window || !widget) return;
+ auto* dock = new QDockWidget(title, window);
+ dock->setObjectName(dockId);
+ dock->setWidget(widget);
+ dock->setFloating(true);
+ dock->setGeometry(floatingGeometry);
+ window->addDockWidget(Qt::RightDockWidgetArea, dock);
+ dock->show();
 }
 
 ArtifactPlaybackService* playbackService()
@@ -192,19 +231,16 @@ ArtifactTimeMenu::Impl::Impl(ArtifactTimeMenu* menu)
 
 void ArtifactTimeMenu::Impl::showPlaybackControl()
 {
-  if (auto* mw = activeMainWindow(menu_)) {
+  if (auto* mw = qobject_cast<QMainWindow*>(menu_ ? menu_->window() : nullptr)) {
     const QString dockTitle = QStringLiteral("Playback Control");
-    if (mw->hasDock(dockTitle)) {
-      mw->setDockVisible(dockTitle, true);
-      mw->activateDock(dockTitle);
+    if (findDockByTitle(mw, dockTitle)) {
+      setDockVisible(mw, dockTitle, true);
+      activateDock(mw, dockTitle);
       return;
     }
     auto* widget = new ArtifactPlaybackControlWidget(mw);
-    mw->addDockedWidgetFloating(
-        dockTitle,
-        QStringLiteral("PlaybackControl"),
-        widget,
-        QRect(120, 828, 720, 210));
+    addFloatingDock(mw, dockTitle, QStringLiteral("PlaybackControl"), widget,
+                    QRect(120, 828, 720, 210));
     return;
   }
 

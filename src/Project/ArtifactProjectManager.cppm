@@ -17,6 +17,8 @@ module;
 #include <QTextStream>
 #include <wobjectimpl.h>
 //#include <folly\Singleton.h>
+
+#include "../../include/Project/ArtifactProjectHookBridge.ixx"
 module Artifact.Project.Manager;
 
 import std;
@@ -38,7 +40,6 @@ import Artifact.Layer.InitParams;
 import Artifact.Layer.Result;
 import Artifact.Layer.Factory;
 import Core.Diagnostics.DiagnosticEngine;
-import Artifact.Script.Hooks;
 import Artifact.Project.CreationDefaults;
 
 
@@ -120,7 +121,7 @@ namespace Artifact {
   }
   void runProjectHookScript(const QString& hookName, const QString& path)
   {
-    ArtifactPythonHookManager::runHook(hookName, QStringList() << path);
+    runArtifactProjectHook(hookName, path);
   }
 
   ArtifactCompositionInitParams defaultCompositionParamsFromSettings(

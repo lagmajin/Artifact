@@ -57,6 +57,8 @@ module;
 #include <QWheelEvent>
 #include <QFileDialog>
 #include <QApplication>
+#include <QDockWidget>
+#include <QMainWindow>
 #include <QtSVG/QSvgRenderer>
 #include <algorithm>
 #include <cmath>
@@ -84,7 +86,6 @@ import Artifact.Widgets.PieMenu;
 import UI.ShortcutBindings;
 import UI.View.Orientation.Navigator;
 import Math.Interpolate;
-import Artifact.MainWindow;
 import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -128,6 +129,31 @@ W_OBJECT_IMPL(ArtifactCompositionEditor)
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview");
 
 namespace {
+QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
+{
+  if (!window) {
+    return nullptr;
+  }
+  const auto docks = window->findChildren<QDockWidget*>();
+  for (QDockWidget* dock : docks) {
+    if (dock && dock->windowTitle() == title) {
+      return dock;
+    }
+  }
+  return nullptr;
+}
+
+void activateDock(QMainWindow* window, const QString& title)
+{
+  auto* dock = findDockByTitle(window, title);
+  if (!dock) {
+    return;
+  }
+  dock->setVisible(true);
+  dock->raise();
+  dock->activateWindow();
+}
+
 void openContentsViewerCompareSurface()
 {
   ArtifactContentsViewer *viewer = nullptr;
@@ -142,8 +168,8 @@ void openContentsViewerCompareSurface()
   }
 
   for (QWidget *widget : QApplication::topLevelWidgets()) {
-    if (auto *mainWindow = qobject_cast<ArtifactMainWindow *>(widget)) {
-      mainWindow->activateDock(QStringLiteral("Contents Viewer"));
+    if (auto *mainWindow = qobject_cast<QMainWindow *>(widget)) {
+      activateDock(mainWindow, QStringLiteral("Contents Viewer"));
       break;
     }
   }
@@ -3949,8 +3975,8 @@ public:
       return;
     }
     immersiveMode_ = immersive;
-    if (auto *mw = qobject_cast<ArtifactMainWindow *>(owner->window())) {
-      mw->setDockImmersive(owner, immersive);
+    if (auto *mw = qobject_cast<QMainWindow *>(owner->window())) {
+      mw->setDockNestingEnabled(immersive);
     } else if (auto *topLevel = owner->window()) {
       if (immersive) {
         topLevel->showFullScreen();
