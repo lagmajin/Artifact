@@ -25,6 +25,7 @@ export namespace Artifact
  public:
   explicit ArtifactActiveContextService(QObject* parent = nullptr);
   ~ArtifactActiveContextService();
+  static ArtifactActiveContextService* instance();
   
   void setHandler(QObject* obj);
   void setActiveComposition(ArtifactCompositionPtr comp);

@@ -44,7 +44,6 @@ import Artifact.Project;
 import Artifact.Project.CreationDefaults;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
-import Artifact.Render.Queue.Service;
 
 namespace Artifact
 {
@@ -294,14 +293,6 @@ namespace Artifact
     projectPtr->addImportedComposition(compPtr, compName);
     result.compositionsLoaded++;
     qDebug() << "[Importer] Loaded composition:" << compName << "with" << layersInComp << "layers";
-   }
-  }
-
-  // Render queue restoration
-  if (root.contains("renderQueue") && root["renderQueue"].isArray()) {
-   if (auto* rqService = ArtifactRenderQueueService::instance()) {
-    rqService->fromJson(root["renderQueue"].toArray());
-    qDebug() << "[Importer] Render queue restored:" << rqService->jobCount() << "jobs";
    }
   }
 

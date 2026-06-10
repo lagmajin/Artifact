@@ -1,5 +1,6 @@
 #include "../../include/Composition/ArtifactCompositionManager.hpp"
-#include "Artifact/include/Composition/ArtifactComposition2D.ixx"
+
+import Artifact.Composition._2D;
 
 namespace Artifact {
 

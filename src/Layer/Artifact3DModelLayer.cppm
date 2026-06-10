@@ -471,6 +471,34 @@ Artifact3DLayer::getLayerPropertyGroups() const {
   roughnessProp->setDisplayLabel(QStringLiteral("Roughness"));
   materialGroup.addProperty(roughnessProp);
 
+  auto emissionStrengthProp = persistentLayerProperty(
+      QStringLiteral("material.emissionStrength"), PropertyType::Float,
+      impl_->material_.emissionStrength(), -32);
+  emissionStrengthProp->setDisplayLabel(QStringLiteral("Emission Strength"));
+  emissionStrengthProp->setTooltip(QStringLiteral("Emission intensity multiplier"));
+  materialGroup.addProperty(emissionStrengthProp);
+
+  auto opacityProp = persistentLayerProperty(
+      QStringLiteral("material.opacity"), PropertyType::Float,
+      impl_->material_.opacity(), -31);
+  opacityProp->setDisplayLabel(QStringLiteral("Opacity"));
+  opacityProp->setTooltip(QStringLiteral("Material opacity (0=transparent, 1=opaque)"));
+  materialGroup.addProperty(opacityProp);
+
+  auto normalStrengthProp = persistentLayerProperty(
+      QStringLiteral("material.normalStrength"), PropertyType::Float,
+      impl_->material_.normalStrength(), -30);
+  normalStrengthProp->setDisplayLabel(QStringLiteral("Normal Strength"));
+  normalStrengthProp->setTooltip(QStringLiteral("Normal map intensity"));
+  materialGroup.addProperty(normalStrengthProp);
+
+  auto occlusionStrengthProp = persistentLayerProperty(
+      QStringLiteral("material.occlusionStrength"), PropertyType::Float,
+      impl_->material_.occlusionStrength(), -29);
+  occlusionStrengthProp->setDisplayLabel(QStringLiteral("Occlusion Strength"));
+  occlusionStrengthProp->setTooltip(QStringLiteral("Ambient occlusion intensity"));
+  materialGroup.addProperty(occlusionStrengthProp);
+
   // MaterialX summary
   if (impl_->material_.materialXDocument().length() > 0) {
     auto materialXProp = persistentLayerProperty(
@@ -542,6 +570,22 @@ bool Artifact3DLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   } else if (propertyPath == QStringLiteral("material.roughness")) {
     impl_->material_.setRoughness(value.toFloat());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.emissionStrength")) {
+    impl_->material_.setEmissionStrength(value.toFloat());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.opacity")) {
+    impl_->material_.setOpacity(value.toFloat());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.normalStrength")) {
+    impl_->material_.setNormalStrength(value.toFloat());
+    Q_EMIT changed();
+    return true;
+  } else if (propertyPath == QStringLiteral("material.occlusionStrength")) {
+    impl_->material_.setOcclusionStrength(value.toFloat());
     Q_EMIT changed();
     return true;
   }

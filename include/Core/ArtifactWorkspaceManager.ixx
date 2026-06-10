@@ -1,10 +1,11 @@
 module;
 #include <QString>
 #include <QStringList>
+#include <QMainWindow>
 
 export module Artifact.Workspace.Manager;
 
-import Artifact.MainWindow;
+import Widgets.ToolBar;
 
 export namespace Artifact {
 
@@ -19,10 +20,10 @@ public:
   QStringList presetNames() const;
   bool presetExists(const QString &presetName) const;
 
-  bool saveSession(const ArtifactMainWindow *window) const;
-  bool restoreSession(ArtifactMainWindow *window) const;
-  bool savePreset(const QString &presetName, const ArtifactMainWindow *window) const;
-  bool restorePreset(const QString &presetName, ArtifactMainWindow *window) const;
+  bool saveSession(const QMainWindow *window) const;
+  bool restoreSession(QMainWindow *window) const;
+  bool savePreset(const QString &presetName, const QMainWindow *window) const;
+  bool restorePreset(const QString &presetName, QMainWindow *window) const;
   bool deletePreset(const QString &presetName) const;
   bool renamePreset(const QString &oldName, const QString &newName) const;
 

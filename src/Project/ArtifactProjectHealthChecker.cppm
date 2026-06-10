@@ -16,7 +16,6 @@ import Artifact.Project;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
-import Artifact.Layer.Composition; // CompositionLayerのインポート
 import Utils.Id;
 import Frame.Range;
 import Frame.Position;
@@ -121,8 +120,12 @@ void ArtifactProjectHealthChecker::checkCircularReferences(ArtifactProject* proj
             for (auto layer : comp->allLayer()) {
                 if (!layer) continue;
                 // コンポジションレイヤーかどうかを判定
-                if (auto compLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get())) {
-                    QString targetId = compLayer->sourceCompositionId().toString();
+                const QJsonObject layerJson = layer->toJson();
+                if (static_cast<LayerType>(layerJson.value("type").toInt()) == LayerType::Precomp) {
+                    const QString targetId = layerJson.value("composition.sourceId").toString();
+                    if (targetId.isEmpty()) {
+                        continue;
+                    }
                     if (!visited.contains(targetId)) {
                         if (dfs(targetId, path)) return true;
                     } else if (recStack.contains(targetId)) {
@@ -238,12 +241,14 @@ void ArtifactProjectHealthChecker::checkBrokenReferences(ArtifactProject* projec
                     for (const auto& layer : comp->allLayer()) {
                         if (!layer) continue;
                         
-                        if (auto compLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get())) {
-                            auto sourceRes = project->findComposition(compLayer->sourceCompositionId());
+                        const QJsonObject layerJson = layer->toJson();
+                        if (static_cast<LayerType>(layerJson.value("type").toInt()) == LayerType::Precomp) {
+                            const CompositionID sourceId(layerJson.value("composition.sourceId").toString());
+                            auto sourceRes = project->findComposition(sourceId);
                             if (!sourceRes.success || sourceRes.ptr.expired()) {
                                 report.issues.push_back({
                                     HealthIssueSeverity::Error,
-                                    QString("Composition layer references missing composition: %1").arg(compLayer->sourceCompositionId().toString()),
+                                    QString("Composition layer references missing composition: %1").arg(sourceId.toString()),
                                     compItem->name.toQString() + " / " + layer->layerName(),
                                     "BrokenReference"
                                 });
@@ -568,8 +573,10 @@ void ArtifactProjectHealthChecker::repairBrokenReferences(ArtifactProject* proje
                     for (const auto& layer : comp->allLayer()) {
                         if (!layer) continue;
                         
-                        if (auto compLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get())) {
-                            auto sourceRes = project->findComposition(compLayer->sourceCompositionId());
+                        const QJsonObject layerJson = layer->toJson();
+                        if (static_cast<LayerType>(layerJson.value("type").toInt()) == LayerType::Precomp) {
+                            const CompositionID sourceId(layerJson.value("composition.sourceId").toString());
+                            auto sourceRes = project->findComposition(sourceId);
                             if (!sourceRes.success || sourceRes.ptr.expired()) {
                                 toRemove.push_back(layer->id());
                             }

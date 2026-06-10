@@ -9,6 +9,8 @@ module;
 #include <QDialog>
 #include <QLineEdit>
 #include <QMenu>
+#include <QDockWidget>
+#include <QMainWindow>
 #include <QMessageBox>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -39,7 +41,6 @@ import Artifact.Layer.Video;
 import Artifact.Layer.Camera;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Composition.Abstract;
-import Artifact.MainWindow;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Widgets.CreatePlaneLayerDialog;
 import Artifact.Widgets.CreateCameraLayerDialog;
@@ -51,6 +52,43 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
+
+QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
+{
+    if (!window) {
+        return nullptr;
+    }
+    const auto docks = window->findChildren<QDockWidget*>();
+    for (QDockWidget* dock : docks) {
+        if (dock && dock->windowTitle() == title) {
+            return dock;
+        }
+    }
+    return nullptr;
+}
+
+void setDockVisible(QMainWindow* window, const QString& title, bool visible)
+{
+    auto* dock = findDockByTitle(window, title);
+    if (!dock) {
+        return;
+    }
+    dock->setVisible(visible);
+    if (visible) {
+        dock->raise();
+    }
+}
+
+void activateDock(QMainWindow* window, const QString& title)
+{
+    auto* dock = findDockByTitle(window, title);
+    if (!dock) {
+        return;
+    }
+    dock->setVisible(true);
+    dock->raise();
+    dock->activateWindow();
+}
 
 QSet<QString> currentLayerNames()
 {
@@ -1116,12 +1154,12 @@ void ArtifactLayerMenu::Impl::handleGenerateProxy()
         return;
     }
 
-    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
     if (!window) {
         return;
     }
-    window->setDockVisible(QStringLiteral("Project"), true);
-    window->activateDock(QStringLiteral("Project"));
+    setDockVisible(window, QStringLiteral("Project"), true);
+    activateDock(window, QStringLiteral("Project"));
 
     auto* projectDock = window->findChild<ArtifactProjectManagerWidget*>(QStringLiteral("artifactProjectManagerWidget"));
     if (!projectDock) {
@@ -1188,7 +1226,7 @@ void ArtifactLayerMenu::Impl::handleClearProxy()
     if (proxyPath.isEmpty()) {
         return;
     }
-    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
     auto* manager = window ? window->findChild<ArtifactProjectManagerWidget*>(QStringLiteral("artifactProjectManagerWidget")) : nullptr;
     if (manager) {
         if (!manager->clearProxyForFilePath(videoLayer->sourcePath())) {
@@ -1260,12 +1298,12 @@ void ArtifactLayerMenu::Impl::handleGenerateSelectedProxies()
         return;
     }
 
-    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
     if (!window) {
         return;
     }
-    window->setDockVisible(QStringLiteral("Project"), true);
-    window->activateDock(QStringLiteral("Project"));
+    setDockVisible(window, QStringLiteral("Project"), true);
+    activateDock(window, QStringLiteral("Project"));
 
     auto* projectDock = window->findChild<ArtifactProjectManagerWidget*>(QStringLiteral("artifactProjectManagerWidget"));
     if (!projectDock) {
@@ -1292,7 +1330,7 @@ void ArtifactLayerMenu::Impl::handleClearSelectedProxies()
         return;
     }
 
-    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
     if (!window) {
         return;
     }
@@ -1335,22 +1373,22 @@ void ArtifactLayerMenu::Impl::handleClearParent()
 
 void ArtifactLayerMenu::Impl::handleOpenInspector()
 {
-    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
     if (!window) {
         return;
     }
-    window->setDockVisible(QStringLiteral("Inspector"), true);
-    window->activateDock(QStringLiteral("Inspector"));
+    setDockVisible(window, QStringLiteral("Inspector"), true);
+    activateDock(window, QStringLiteral("Inspector"));
 }
 
 void ArtifactLayerMenu::Impl::handleOpenProperties()
 {
-    auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow_);
+    auto* window = qobject_cast<QMainWindow*>(mainWindow_);
     if (!window) {
         return;
     }
-    window->setDockVisible(QStringLiteral("Properties"), true);
-    window->activateDock(QStringLiteral("Properties"));
+    setDockVisible(window, QStringLiteral("Properties"), true);
+    activateDock(window, QStringLiteral("Properties"));
 }
 
 void ArtifactLayerMenu::Impl::handlePrecompose()
@@ -1512,7 +1550,7 @@ void ArtifactLayerMenu::Impl::handleTrackCamera()
     }
 
     // 実行
-    auto* window = qobject_cast<ArtifactMainWindow*>(menu_ ? menu_->window() : nullptr);
+    auto* window = qobject_cast<QMainWindow*>(menu_ ? menu_->window() : nullptr);
     bool success = ArtifactCameraTrackerTool::run(
         comp.get(), layer,
         [window](const ArtifactCameraTrackerTool::ProgressUpdate& update) {
@@ -1529,7 +1567,7 @@ void ArtifactLayerMenu::Impl::handleTrackCamera()
                 window,
                 [window, status]() {
                     if (window) {
-                        window->showStatusMessage(status, 1500);
+                        window->statusBar()->showMessage(status, 1500);
                     }
                 },
                 Qt::QueuedConnection);

@@ -24,6 +24,7 @@ import Frame.Range;
 import Frame.Position;
 import Container.MultiIndex;
 import Composition.Context;
+import Artifact.Composition.Access;
 export import Artifact.Layer.Abstract;
 import Artifact.Composition.Result;
 import Artifact.Composition.InitParams;
@@ -65,7 +66,7 @@ export namespace Artifact {
   bool hasVariant(const QString& variantId) const;
  };
 
- class ArtifactAbstractComposition:public QObject {
+ class ArtifactAbstractComposition:public QObject, public ArtifactAbstractCompositionAccess {
   W_OBJECT(ArtifactAbstractComposition)
  private:
   class Impl;

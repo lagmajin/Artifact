@@ -11,7 +11,6 @@ module Artifact.Tool.MotionSketchTool;
 import std;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
-import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Event.Bus;
 

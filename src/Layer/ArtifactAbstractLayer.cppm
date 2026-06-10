@@ -35,7 +35,7 @@ import Artifact.Layer.Settings;
 import Artifact.Layer.Physics;
 import Artifact.Layer.Matte;
 import Layer.Matte;
-import Artifact.Composition.Abstract;
+import Artifact.Composition.Access;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Artifact.Mask.LayerMask;
@@ -70,7 +70,7 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   layer->setDirty(flag);
   layer->addDirtyReason(reason);
   const auto *comp =
-      static_cast<const ArtifactAbstractComposition *>(layer->compositionObject());
+      dynamic_cast<const ArtifactAbstractCompositionAccess *>(layer->compositionObject());
   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
       comp ? comp->id().toString() : QString{},
       layer->id().toString(),
@@ -136,7 +136,7 @@ double effectiveLayerFrameRate(const ArtifactAbstractLayer *layer) {
     return 30.0;
   }
   auto *composition =
-      static_cast<ArtifactAbstractComposition *>(layer->compositionObject());
+      dynamic_cast<ArtifactAbstractCompositionAccess *>(layer->compositionObject());
   if (!composition) {
     return 30.0;
   }
@@ -149,7 +149,7 @@ int64_t currentTimelineFrame(const ArtifactAbstractLayer *layer) {
     return 0;
   }
   auto *composition =
-      static_cast<ArtifactAbstractComposition *>(layer->compositionObject());
+      dynamic_cast<ArtifactAbstractCompositionAccess *>(layer->compositionObject());
   if (!composition) {
     return layer->currentFrame();
   }
@@ -778,7 +778,7 @@ QObject *ArtifactAbstractLayer::compositionObject() const {
 }
 
 ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
-  auto *composition = static_cast<ArtifactAbstractComposition *>(compositionObject());
+  auto *composition = dynamic_cast<ArtifactAbstractCompositionAccess *>(compositionObject());
   if (!composition || impl_->parentLayerId_.isNil())
   return nullptr;
   return composition->layerById(impl_->parentLayerId_);
@@ -1052,7 +1052,7 @@ void ArtifactAbstractLayer::setParentById(const LayerID &id) {
   }
 
   if (impl_->composition_) {
-    auto *composition = static_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
+    auto *composition = dynamic_cast<ArtifactAbstractCompositionAccess *>(impl_->composition_.data());
     auto parent = composition->layerById(id);
     if (!parent) {
       qWarning() << "[Layer] Reject invalid parent id:" << id.toString();
@@ -1140,7 +1140,7 @@ void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
 
     double fps = 30.0;
     if (impl_->composition_) {
-        auto *composition = static_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
+        auto *composition = dynamic_cast<ArtifactAbstractCompositionAccess *>(impl_->composition_.data());
         fps = composition->frameRate().framerate();
         if (fps <= 0.0) {
             fps = 30.0;
@@ -1172,7 +1172,7 @@ double ArtifactAbstractLayer::getSourceFrameAtCompFrame(int64_t compFrame) const
 
     double fps = 30.0;
     if (impl_->composition_) {
-        auto *composition = static_cast<ArtifactAbstractComposition *>(impl_->composition_.data());
+        auto *composition = dynamic_cast<ArtifactAbstractCompositionAccess *>(impl_->composition_.data());
         fps = composition->frameRate().framerate();
         if (fps <= 0.0) {
             fps = 30.0;

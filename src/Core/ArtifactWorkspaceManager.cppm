@@ -4,6 +4,7 @@ module;
 #include <QFile>
 #include <QFileInfo>
 #include <QFileInfoList>
+#include <QDockWidget>
 #include <QJsonArray>
 #include <QJsonValue>
 #include <QJsonDocument>
@@ -15,7 +16,7 @@ module;
 
 module Artifact.Workspace.Manager;
 
-import Artifact.MainWindow;
+import Widgets.ToolBar;
 import UI.Layout.State;
 
 namespace Artifact {
@@ -82,7 +83,84 @@ QStringList ArtifactWorkspaceManager::presetNames() const {
   return names;
 }
 
-static QJsonObject captureWindowState(const ArtifactMainWindow *window,
+static QDockWidget *findDockByTitle(const QMainWindow *window,
+                                   const QString &title) {
+  if (!window) {
+    return nullptr;
+  }
+  const auto docks = window->findChildren<QDockWidget *>();
+  for (QDockWidget *dock : docks) {
+    if (dock && dock->windowTitle() == title) {
+      return dock;
+    }
+  }
+  return nullptr;
+}
+
+static QStringList dockTitles(const QMainWindow *window) {
+  QStringList titles;
+  if (!window) {
+    return titles;
+  }
+  const auto docks = window->findChildren<QDockWidget *>();
+  for (QDockWidget *dock : docks) {
+    if (!dock) {
+      continue;
+    }
+    const QString title = dock->windowTitle().trimmed();
+    if (!title.isEmpty() && !titles.contains(title)) {
+      titles.push_back(title);
+    }
+  }
+  return titles;
+}
+
+static bool isDockVisible(const QMainWindow *window, const QString &title) {
+  const QDockWidget *dock = findDockByTitle(window, title);
+  return dock ? dock->isVisible() : false;
+}
+
+static void setDockVisible(QMainWindow *window, const QString &title, bool visible) {
+  QDockWidget *dock = findDockByTitle(window, title);
+  if (!dock) {
+    return;
+  }
+  dock->setVisible(visible);
+  if (visible) {
+    dock->raise();
+  }
+}
+
+static void activateDock(QMainWindow *window, const QString &title) {
+  QDockWidget *dock = findDockByTitle(window, title);
+  if (!dock) {
+    return;
+  }
+  dock->setVisible(true);
+  dock->raise();
+  dock->activateWindow();
+}
+
+static WorkspaceMode workspaceModeForWindow(const QMainWindow *window) {
+  if (!window) {
+    return WorkspaceMode::Default;
+  }
+  if (const auto *toolBar = window->findChild<ArtifactToolBar *>()) {
+    return toolBar->workspaceMode();
+  }
+  return WorkspaceMode::Default;
+}
+
+static void setWorkspaceModeForWindow(QMainWindow *window, WorkspaceMode mode) {
+  if (!window) {
+    return;
+  }
+  if (auto *toolBar = window->findChild<ArtifactToolBar *>()) {
+    toolBar->setWorkspaceMode(mode);
+  }
+}
+
+static QJsonObject captureWindowState(const QMainWindow *window,
                                      bool includeWorkspaceMode) {
   QJsonObject json;
   if (!window) {
@@ -96,21 +174,21 @@ static QJsonObject captureWindowState(const ArtifactMainWindow *window,
 
   json["layout"] = layout.toJson();
   if (includeWorkspaceMode) {
-    json["workspaceMode"] = static_cast<int>(window->workspaceMode());
+    json["workspaceMode"] = static_cast<int>(workspaceModeForWindow(window));
   }
 
   QJsonArray docks;
-  for (const QString &title : window->dockTitles()) {
+  for (const QString &title : dockTitles(window)) {
     QJsonObject dock;
     dock["title"] = title;
-    dock["visible"] = window->isDockVisible(title);
+    dock["visible"] = isDockVisible(window, title);
     docks.append(dock);
   }
   json["docks"] = docks;
   return json;
 }
 
-static bool applyWindowState(ArtifactMainWindow *window,
+static bool applyWindowState(QMainWindow *window,
                              const QJsonObject &json,
                              bool applyWorkspaceMode) {
   if (!window) {
@@ -131,7 +209,7 @@ static bool applyWindowState(ArtifactMainWindow *window,
     const WorkspaceMode mode = static_cast<WorkspaceMode>(
         json.value(QStringLiteral("workspaceMode")).toInt(
             static_cast<int>(WorkspaceMode::Default)));
-    window->setWorkspaceMode(mode);
+    setWorkspaceModeForWindow(window, mode);
   }
 
   const QJsonArray docks = json.value(QStringLiteral("docks")).toArray();
@@ -139,7 +217,7 @@ static bool applyWindowState(ArtifactMainWindow *window,
     const QJsonObject dock = value.toObject();
     const QString title = dock.value(QStringLiteral("title")).toString();
     if (!title.isEmpty()) {
-      window->setDockVisible(title, dock.value(QStringLiteral("visible")).toBool());
+      setDockVisible(window, title, dock.value(QStringLiteral("visible")).toBool());
     }
   }
 
@@ -171,7 +249,7 @@ static QJsonObject readJsonFile(const QString &path) {
   return doc.isObject() ? doc.object() : QJsonObject{};
 }
 
-bool ArtifactWorkspaceManager::saveSession(const ArtifactMainWindow *window) const {
+bool ArtifactWorkspaceManager::saveSession(const QMainWindow *window) const {
   if (!window) {
     return false;
   }
@@ -179,7 +257,7 @@ bool ArtifactWorkspaceManager::saveSession(const ArtifactMainWindow *window) con
                        captureWindowState(window, false));
 }
 
-bool ArtifactWorkspaceManager::restoreSession(ArtifactMainWindow *window) const {
+bool ArtifactWorkspaceManager::restoreSession(QMainWindow *window) const {
   if (!window) {
     return false;
   }
@@ -189,14 +267,14 @@ bool ArtifactWorkspaceManager::restoreSession(ArtifactMainWindow *window) const 
   }
   const bool ok = applyWindowState(window, json, false);
   if (ok) {
-    window->setDockVisible(QStringLiteral("Composition Viewer"), true);
-    window->activateDock(QStringLiteral("Composition Viewer"));
+    setDockVisible(window, QStringLiteral("Composition Viewer"), true);
+    activateDock(window, QStringLiteral("Composition Viewer"));
   }
   return ok;
 }
 
 bool ArtifactWorkspaceManager::savePreset(const QString &presetName,
-                                          const ArtifactMainWindow *window) const {
+                                          const QMainWindow *window) const {
   if (!window) {
     return false;
   }
@@ -205,7 +283,7 @@ bool ArtifactWorkspaceManager::savePreset(const QString &presetName,
 }
 
 bool ArtifactWorkspaceManager::restorePreset(const QString &presetName,
-                                             ArtifactMainWindow *window) const {
+                                             QMainWindow *window) const {
   if (!window) {
     return false;
   }

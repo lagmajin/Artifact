@@ -2,14 +2,17 @@ module;
 
 #include <memory>
 #include <string>
+#include <vector>
+#include <QJsonObject>
 
 export module Artifact.Plugin.Layer.Adapter;
 
 import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Layer.Interface;
 import ArtifactCore.Plugin.Registry;
+import Property.Group;
 
-#include "ArtifactPluginABI.h"
+#include "Plugin/ArtifactPluginABI.h"
 
 export namespace Artifact {
 

@@ -17,7 +17,6 @@ import std;
 
 import Application.AppSettings;
 import ApplicationSettingDialog;
-import Artifact.MainWindow;
 import Utils.Path;
 
 namespace Artifact {

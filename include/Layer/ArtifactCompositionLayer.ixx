@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <algorithm>
 #include <any>
@@ -32,11 +32,16 @@
 #include <vector>
 #include <QJsonObject>
 #include <QVariant>
+
+namespace Artifact {
+class ArtifactAbstractComposition;
+using ArtifactCompositionPtr = std::shared_ptr<ArtifactAbstractComposition>;
+}
+
 export module Artifact.Layer.Composition;
 
 
 import Utils;
-export import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 
 export namespace Artifact {

@@ -47,6 +47,10 @@ export namespace Artifact {
   QString toolName(ToolType type) const;
  };
 
+ struct ToolChangedEvent {
+  ToolType toolType;
+ };
+
 }
 
 W_REGISTER_ARGTYPE(Artifact::ToolType)

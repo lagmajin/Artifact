@@ -11,7 +11,7 @@ import ArtifactCore.Plugin.Registry;
 import ArtifactCore.Plugin.Layer.Interface;
 import Artifact.Plugin.Layer.Adapter;
 
-#include "ArtifactPluginABI.h"
+#include "Plugin/ArtifactPluginABI.h"
 
 export namespace Artifact {
 
