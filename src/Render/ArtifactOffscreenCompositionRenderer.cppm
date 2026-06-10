@@ -172,12 +172,15 @@ namespace Artifact
     bool OffscreenCompositionRenderer::saveFrame(const QString& path)
     {
         ArtifactCore::ImageF32x4_RGBA img = captureImage();
-        // ImageF32x4_RGBAをQImageに変換して保存
         QImage qimg(width_, height_, QImage::Format_RGBA8888);
         for (Uint32 y = 0; y < height_; ++y) {
+            QRgb* scan = reinterpret_cast<QRgb*>(qimg.scanLine(y));
             for (Uint32 x = 0; x < width_; ++x) {
                 auto col = img.getPixel(x, y);
-                qimg.setPixelColor(x, y, QColor::fromRgbF(col.r(), col.g(), col.b(), col.a()));
+                scan[x] = qRgba(static_cast<int>(col.r() * 255),
+                                static_cast<int>(col.g() * 255),
+                                static_cast<int>(col.b() * 255),
+                                static_cast<int>(col.a() * 255));
             }
         }
         return qimg.save(path);

@@ -11,6 +11,7 @@ module;
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QDebug>
+#include <QPaintEvent>
 #include <wobjectimpl.h>
 
 #include <iostream>
@@ -58,7 +59,10 @@ namespace Artifact {
 
 using namespace ArtifactCore;
 
+class NavHudLabel;
+
 W_OBJECT_IMPL(Artifact3DModelViewer)
+W_OBJECT_IMPL(NavHudLabel)
 
 class Artifact3DModelViewer::Impl {
 public:
@@ -89,7 +93,7 @@ public:
     QWidget* renderContainer = nullptr;
     QComboBox* modeCombo = nullptr;
     QLabel* statusLabel = nullptr;
-    QLabel* navHud_ = nullptr;
+    NavHudLabel* navHud_ = nullptr;
     QTimer* renderTimer_ = nullptr;
 
     explicit Impl(Artifact3DModelViewer* widget)
@@ -195,10 +199,7 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     impl_->renderContainer->installEventFilter(this);
     rootLayout->addWidget(impl_->renderContainer, 1);
 
-    impl_->navHud_ = new QLabel(this);
-    impl_->navHud_->setStyleSheet(
-        "background: rgba(0,0,0,160); color: white; padding: 4px 10px;"
-        "border-radius: 4px; font-size: 12px; font-weight: bold;");
+    impl_->navHud_ = new NavHudLabel(this);
     impl_->navHud_->setVisible(false);
     impl_->navHud_->adjustSize();
 

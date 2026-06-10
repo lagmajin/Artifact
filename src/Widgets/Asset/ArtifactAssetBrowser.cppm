@@ -76,6 +76,8 @@ module;
 // Audio waveform includes
 #include <QAudioFormat>
 #include <QAudioDecoder>
+#include <tbb/parallel_for.h>
+#include <tbb/blocked_range.h>
 
 module Widgets.AssetBrowser;
 
@@ -767,6 +769,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
  {
  private:
  QHash<QString, QIcon> thumbnailCache_;  // Cache thumbnails by file path
+  mutable std::mutex thumbnailMutex_;  // Protects thumbnail cache access
   QSize thumbnailSize_{kAssetThumbnailDefaultPx, kAssetThumbnailDefaultPx};
   QIcon defaultFileIcon_;
   QIcon defaultImageIcon_;
@@ -1120,6 +1123,7 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
 
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
  {
+  std::lock_guard<std::mutex> lock(thumbnailMutex_);
   // Check cache first
   if (thumbnailCache_.contains(filePath)) {
    return thumbnailCache_[filePath];
@@ -1662,43 +1666,54 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     items.append(item);
    }
 
-   // Standalone files
-   for (const QString& entry : entries) {
-    QString fullPath = dir.absoluteFilePath(entry);
-    QFileInfo fileInfo(fullPath);
-    if (fileInfo.isDir()) continue;
-    if (!matchesSearchFilter(entry) || !matchesFileTypeFilter(entry)) continue;
-    if (seqFiles.contains(entry)) continue;
+   // Standalone files — parallelized with TBB
+   std::vector<AssetMenuItem> standaloneItems(entries.size());
+   tbb::parallel_for(tbb::blocked_range<int>(0, static_cast<int>(entries.size())),
+    [&](const tbb::blocked_range<int>& range) {
+     for (int i = range.begin(); i < range.end(); ++i) {
+      const QString& entry = entries.at(i);
+      const QString fullPath = dir.absoluteFilePath(entry);
+      const QFileInfo fileInfo(fullPath);
+      if (fileInfo.isDir() || !matchesSearchFilter(entry) || !matchesFileTypeFilter(entry) || seqFiles.contains(entry)) {
+       continue;
+      }
 
-    // Check status filter
-    if (currentStatusFilter_ != "all") {
-     const bool imported = isImportedAssetPath(fullPath);
-     const bool unused = isUnusedAssetPath(fullPath);
-     const bool missing = isMissingAssetPath(fullPath);
-     const bool favorite = isFavoriteAssetPath(fullPath);
-     if (currentStatusFilter_ == "imported" && !imported) continue;
-     if (currentStatusFilter_ == "favorite" && !favorite) continue;
-     if (currentStatusFilter_ == "missing" && !missing) continue;
-     if (currentStatusFilter_ == "unused" && !unused) continue;
+      // Check status filter
+      if (currentStatusFilter_ != "all") {
+       const bool imported = isImportedAssetPath(fullPath);
+       const bool unused = isUnusedAssetPath(fullPath);
+       const bool missing = isMissingAssetPath(fullPath);
+       const bool favorite = isFavoriteAssetPath(fullPath);
+       if (currentStatusFilter_ == "imported" && !imported) continue;
+       if (currentStatusFilter_ == "favorite" && !favorite) continue;
+       if (currentStatusFilter_ == "missing" && !missing) continue;
+       if (currentStatusFilter_ == "unused" && !unused) continue;
+      }
+
+      AssetMenuItem item;
+      item.name = UniString::fromQString(entry);
+      item.path = UniString::fromQString(fullPath);
+      QStringList markers;
+      if (isFavoriteAssetPath(fullPath)) markers.append(QStringLiteral("Favorite"));
+      const bool imported = isImportedAssetPath(fullPath);
+      const bool unused = isUnusedAssetPath(fullPath);
+      const bool missing = isMissingAssetPath(fullPath);
+      if (missing) markers.append(QStringLiteral("Missing"));
+      if (imported) markers.append(QStringLiteral("Imported"));
+      if (unused) markers.append(QStringLiteral("Unused"));
+      QString itemType = fileInfo.suffix().toUpper();
+      if (!markers.isEmpty()) itemType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), itemType);
+      item.type = UniString::fromQString(itemType);
+      item.isFolder = false;
+      item.icon = generateThumbnail(fullPath);
+      standaloneItems[static_cast<size_t>(i)] = std::move(item);
+     }
+    });
+
+   for (auto& item : standaloneItems) {
+    if (!item.name.toQString().isEmpty()) {
+     items.append(std::move(item));
     }
-
-    AssetMenuItem item;
-    item.name = UniString::fromQString(entry);
-    item.path = UniString::fromQString(fullPath);
-    QStringList markers;
-    if (isFavoriteAssetPath(fullPath)) markers.append(QStringLiteral("Favorite"));
-    const bool imported = isImportedAssetPath(fullPath);
-    const bool unused = isUnusedAssetPath(fullPath);
-    const bool missing = isMissingAssetPath(fullPath);
-    if (missing) markers.append(QStringLiteral("Missing"));
-    if (imported) markers.append(QStringLiteral("Imported"));
-    if (unused) markers.append(QStringLiteral("Unused"));
-    QString itemType = fileInfo.suffix().toUpper();
-    if (!markers.isEmpty()) itemType = QStringLiteral("%1 • %2").arg(markers.join(QStringLiteral(" • ")), itemType);
-    item.type = UniString::fromQString(itemType);
-    item.isFolder = false;
-    item.icon = generateThumbnail(fullPath);
-    items.append(item);
    }
 
    // Sort items
