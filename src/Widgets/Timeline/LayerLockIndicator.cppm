@@ -46,6 +46,8 @@ void LayerLockIndicator::setLocked(bool locked, const QString& userName, const Q
 
     if (locked && !userName.isEmpty()) {
         setToolTip(QStringLiteral("Locked by %1").arg(userName));
+    } else if (locked && !impl_->userName_.isEmpty()) {
+        setToolTip(QStringLiteral("Locked by %1").arg(impl_->userName_));
     } else {
         setToolTip(QStringLiteral(""));
     }

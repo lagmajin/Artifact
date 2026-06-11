@@ -53,6 +53,7 @@ module;
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QVector>
+#include <QSizeF>
 #include <QVector3D>
 #include <QWheelEvent>
 #include <QFileDialog>
@@ -536,10 +537,12 @@ bool editTextLayerInline(QWidget *parent, const ArtifactAbstractLayerPtr &layer,
     return false;
   }
 
-  // Get text layer bounding box in canvas coordinates
   QRectF bbox = layer->transformedBoundingBox();
   if (bbox.isEmpty()) {
-    bbox = QRectF(0, 0, 400, 100); // Fallback
+    const QPointF pos = layer->transform2D().position();
+    const float fallbackW = textLayer->isBoxText() ? std::max(1.0f, textLayer->maxWidth()) : std::max(160.0f, textLayer->fontSize() * 8.0f);
+    const float fallbackH = textLayer->isBoxText() ? std::max(1.0f, textLayer->boxHeight()) : std::max(64.0f, textLayer->fontSize() * 2.5f);
+    bbox = QRectF(pos, QSizeF(fallbackW, fallbackH));
   }
 
   // Convert to viewport coordinates
@@ -558,10 +561,12 @@ bool editTextLayerInline(QWidget *parent, const ArtifactAbstractLayerPtr &layer,
   editor->setPlainText(textLayer->text().toQString());
   editor->setPlaceholderText(QStringLiteral("Enter text..."));
   editor->selectAll();
+  editor->setLineWrapMode(textLayer->isBoxText() ? QPlainTextEdit::WidgetWidth
+                                                 : QPlainTextEdit::NoWrap);
 
   const float size = std::max(10.0f, textLayer->fontSize());
   const float zoom = renderer ? renderer->getZoom() : 1.0f;
-  const int pointSize = static_cast<int>(size * 0.75f * zoom);
+  const int pointSize = std::max(10, static_cast<int>(size * 0.75f * zoom));
   const auto theme = ArtifactCore::currentDCCTheme();
   QFont editorFont = editor->font();
   editorFont.setFamily(textLayer->fontFamily().toQString());
@@ -574,6 +579,17 @@ bool editTextLayerInline(QWidget *parent, const ArtifactAbstractLayerPtr &layer,
   editorPalette.setColor(QPalette::Window,
                          QColor(theme.secondaryBackgroundColor));
   editor->setPalette(editorPalette);
+
+  if (textLayer->isBoxText()) {
+    w = std::max(w, static_cast<int>(std::ceil(std::max(1.0f, textLayer->maxWidth()))));
+    h = std::max(h, static_cast<int>(std::ceil(std::max(1.0f, textLayer->boxHeight()))));
+  } else {
+    QFontMetrics fm(editorFont);
+    const QStringList lines = editor->toPlainText().split('\n');
+    const int lineCount = std::max(1, lines.size());
+    h = std::max(h, fm.lineSpacing() * lineCount + 24);
+    w = std::max(w, std::min(720, fm.horizontalAdvance(editor->toPlainText()) + 40));
+  }
 
   const QPoint hostPos = parent->mapTo(host, QPoint(x, y));
   editor->setGeometry(hostPos.x(), hostPos.y(), w, h);

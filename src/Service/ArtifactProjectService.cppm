@@ -1575,6 +1575,11 @@ bool ArtifactProjectService::setLayerVisibleInCurrentComposition(
 
 bool ArtifactProjectService::setLayerLockedInCurrentComposition(
     const LayerID &layerId, bool locked) {
+  return setLayerLockedInCurrentComposition(layerId, locked, QString());
+}
+
+bool ArtifactProjectService::setLayerLockedInCurrentComposition(
+    const LayerID &layerId, bool locked, const QString &ownerId) {
   auto comp = currentComposition().lock();
   if (!comp || layerId.isNil()) {
     return false;
@@ -1584,6 +1589,12 @@ bool ArtifactProjectService::setLayerLockedInCurrentComposition(
     return false;
   }
   layer->setLocked(locked);
+  if (locked) {
+    layer->setLockOwnerId(ownerId.trimmed());
+  } else {
+    layer->setLockOwnerId(QString());
+  }
+  notifyProjectMutation(impl_->projectManager());
   return true;
 }
 

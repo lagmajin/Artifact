@@ -37,6 +37,7 @@ public:
 
     // ローカルユーザーの設定
     void setLocalUser(const QString& userId, const QString& userName, const QColor& color);
+    UserPresence localUser() const;
 
     // ユーザー情報取得
     struct UserPresence {

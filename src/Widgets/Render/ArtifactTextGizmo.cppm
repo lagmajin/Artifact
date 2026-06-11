@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <QPointF>
+#include <QSizeF>
 #include <QRectF>
 #include <QTransform>
 #include <algorithm>
@@ -13,6 +14,32 @@ import Artifact.Render.IRenderer;
 import Color.Float;
 
 namespace Artifact {
+
+namespace {
+
+QRectF resolveTextLayerBounds(const ArtifactAbstractLayerPtr& layer,
+                              const ArtifactTextLayer* textLayer) {
+    if (!layer || !textLayer) {
+        return QRectF();
+    }
+
+    QRectF bounds = layer->transformedBoundingBox().normalized();
+    if (bounds.isValid() && !bounds.isEmpty()) {
+        return bounds;
+    }
+
+    const QRectF localBounds = layer->localBounds();
+    if (localBounds.isValid() && !localBounds.isEmpty()) {
+        return layer->getGlobalTransform().mapRect(localBounds).normalized();
+    }
+
+    const QPointF pos = layer->transform2D().position();
+    const float fallbackW = std::max(1.0f, textLayer->isBoxText() ? textLayer->maxWidth() : textLayer->fontSize() * 6.0f);
+    const float fallbackH = std::max(1.0f, textLayer->isBoxText() ? textLayer->boxHeight() : textLayer->fontSize() * 2.0f);
+    return QRectF(pos, QSizeF(fallbackW, fallbackH));
+}
+
+} // namespace
 
 TextGizmo::TextGizmo() {}
 TextGizmo::~TextGizmo() {}
@@ -29,14 +56,8 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
 
     const float zoom = renderer->getZoom();
     const float invZoom = zoom > 0.0001f ? 1.0f / zoom : 1.0f;
-    const float handleWidth = HANDLE_WIDTH * invZoom;
-    const float rangeLineHeight = RANGE_LINE_HEIGHT * invZoom;
 
-    // Get text layer bounds
-    QRectF bbox = layer_->transformedBoundingBox();
-    if (bbox.isEmpty()) {
-        bbox = QRectF(0, 0, 400, 100);
-    }
+    const QRectF bbox = resolveTextLayerBounds(layer_, textLayer).normalized();
 
     // Draw text box bounds
     FloatColor boundsColor{0.5f, 0.8f, 1.0f, 0.8f}; // Light blue
@@ -52,10 +73,11 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
     renderer->drawSolidRect(bbox.left() - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
     renderer->drawSolidRect(bbox.right() - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
 
-    // Side handles (optional, for now just corners)
-
-    // If text animator is present, draw range selectors (legacy)
-    // ... existing code for range selectors if needed
+    // Side handles
+    renderer->drawSolidRect((bbox.center().x()) - handleSize/2, bbox.top() - handleSize/2, handleSize, handleSize, handleColor);
+    renderer->drawSolidRect((bbox.center().x()) - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
+    renderer->drawSolidRect(bbox.left() - handleSize/2, (bbox.center().y()) - handleSize/2, handleSize, handleSize, handleColor);
+    renderer->drawSolidRect(bbox.right() - handleSize/2, (bbox.center().y()) - handleSize/2, handleSize, handleSize, handleColor);
 }
 
 TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const {
@@ -67,11 +89,7 @@ TextGizmo::HandleType TextGizmo::hitTest(const QPointF& viewportPos, ArtifactIRe
     // マウス位置をキャンバス座標に変換
     auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
 
-    // Get text layer bounds
-    QRectF bbox = layer_->transformedBoundingBox();
-    if (bbox.isEmpty()) {
-        bbox = QRectF(0, 0, 400, 100);
-    }
+    const QRectF bbox = resolveTextLayerBounds(layer_, textLayer).normalized();
 
     const float hitThreshold = 10.0f / renderer->getZoom();
 
@@ -188,13 +206,22 @@ bool TextGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* r
             return false;
     }
 
-    // Update text layer properties based on new bounds
-    // Assuming bounds represent maxWidth and boxHeight
+    // Update text layer properties based on new bounds.
+    // We keep the layer model as the source of truth and only map the dragged
+    // box back to text layout properties.
+    textLayer->setLayoutMode(TextLayoutMode::Box);
     textLayer->setMaxWidth(std::max(1.0f, static_cast<float>(bbox.width())));
     textLayer->setBoxHeight(std::max(1.0f, static_cast<float>(bbox.height())));
 
-    // Update position if needed (simplified)
-    // layer_->transform2D().setPosition(...)
+    if (activeHandle_ == HandleType::BoxLeft ||
+        activeHandle_ == HandleType::BoxTop ||
+        activeHandle_ == HandleType::BoxCornerTopLeft ||
+        activeHandle_ == HandleType::BoxCornerTopRight ||
+        activeHandle_ == HandleType::BoxCornerBottomLeft) {
+        auto& t3 = layer_->transform2D();
+        const auto pos = t3.position();
+        t3.setPosition(QPointF(pos.x() + deltaX, pos.y() + deltaY));
+    }
 
     textLayer->setDirty();
     textLayer->updateImage();

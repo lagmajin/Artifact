@@ -331,6 +331,7 @@ public:
   int64_t currentFrame() const { return currentFrame_; }
 
   bool isLocked_ = false;
+  QString lockOwnerId_;
   bool isGuide_ = false;
   bool isSolo_ = false;
   bool isShy_ = false;
@@ -610,8 +611,15 @@ void ArtifactAbstractLayer::setLocked(bool locked) {
   if (!assignIfChanged(impl_->isLocked_, locked)) {
     return;
   }
+  if (!locked) {
+    impl_->lockOwnerId_.clear();
+  }
   notifyLayerMutation(this, LayerDirtyFlag::Visibility,
                       LayerDirtyReason::PropertyChanged);
+}
+QString ArtifactAbstractLayer::lockOwnerId() const { return impl_->lockOwnerId_; }
+void ArtifactAbstractLayer::setLockOwnerId(const QString& ownerId) {
+  impl_->lockOwnerId_ = ownerId;
 }
 bool ArtifactAbstractLayer::isShy() const { return impl_->isShy_; }
 void ArtifactAbstractLayer::setShy(bool shy) {
@@ -1721,6 +1729,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     setVisible(obj["isVisible"].toBool());
   if (obj.contains("isLocked"))
     setLocked(obj["isLocked"].toBool());
+  if (obj.contains("lockOwnerId"))
+    setLockOwnerId(obj["lockOwnerId"].toString());
   if (obj.contains("isGuide"))
     setGuide(obj["isGuide"].toBool());
   if (obj.contains("isSolo"))
@@ -1910,6 +1920,13 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                                   PropertyType::Boolean, isVisible(), -190));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.locked"),
                                   PropertyType::Boolean, isLocked(), -180));
+  auto lockOwnerProp =
+      makeProp(QStringLiteral("layer.lockOwnerId"), PropertyType::String,
+               lockOwnerId(), -179);
+  lockOwnerProp->setDisplayLabel(QStringLiteral("Lock Owner"));
+  lockOwnerProp->setTooltip(
+      QStringLiteral("Collaborative lock owner identifier."));
+  layerGroup.addProperty(lockOwnerProp);
   layerGroup.addProperty(makeProp(QStringLiteral("layer.guide"),
                                   PropertyType::Boolean, isGuide(), -170));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.solo"),
@@ -2235,6 +2252,10 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("layer.locked")) {
     setLocked(value.toBool());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.lockOwnerId")) {
+    setLockOwnerId(value.toString());
     return true;
   }
   if (propertyPath == QStringLiteral("layer.guide")) {

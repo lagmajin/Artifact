@@ -156,6 +156,10 @@ void CollabPresenceWidget::setLocalUser(const QString& userId, const QString& us
     impl_->localUser_.color = color;
 }
 
+CollabPresenceWidget::UserPresence CollabPresenceWidget::localUser() const {
+    return impl_->localUser_;
+}
+
 QList<CollabPresenceWidget::UserPresence> CollabPresenceWidget::users() const {
     QList<CollabPresenceWidget::UserPresence> list;
     for (auto it = impl_->users_.begin(); it != impl_->users_.end(); ++it) {

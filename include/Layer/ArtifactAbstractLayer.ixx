@@ -383,6 +383,8 @@ public:
   void setSolo(bool solo);
   bool isLocked() const;
   void setLocked(bool locked);
+  QString lockOwnerId() const;
+  void setLockOwnerId(const QString& ownerId);
   bool isShy() const;
   void setShy(bool shy);
 

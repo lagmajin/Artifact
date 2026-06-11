@@ -101,6 +101,7 @@ export namespace Artifact {
   bool isLayerShyInCurrentComposition(const LayerID& layerId);
   bool setLayerVisibleInCurrentComposition(const LayerID& layerId, bool visible);
   bool setLayerLockedInCurrentComposition(const LayerID& layerId, bool locked);
+  bool setLayerLockedInCurrentComposition(const LayerID& layerId, bool locked, const QString& ownerId);
   bool setLayerSoloInCurrentComposition(const LayerID& layerId, bool solo);
   bool setLayerShyInCurrentComposition(const LayerID& layerId, bool shy);
   bool soloOnlyLayerInCurrentComposition(const LayerID& layerId);

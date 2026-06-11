@@ -210,6 +210,104 @@ bool sourceTextIsAnimated(const ArtifactTextLayer *layer) {
   return false;
 }
 
+TextAnimatorState resolvedAnimatorStateForTime(const ArtifactTextLayer *layer,
+                                               int index,
+                                               const TextAnimatorState &base,
+                                               const RationalTime &time) {
+  TextAnimatorState resolved = base;
+  if (!layer) {
+    return resolved;
+  }
+
+  const QString prefix = QStringLiteral("text.animators.%1.").arg(index);
+  auto resolveFloat = [&](const QString &suffix, float &target) {
+    if (const auto property = layer->getProperty(prefix + suffix); property) {
+      const QVariant value = property->getKeyFrames().empty()
+                                 ? property->getValue()
+                                 : property->interpolateValue(time);
+      if (value.isValid()) {
+        target = static_cast<float>(value.toDouble());
+      }
+    }
+  };
+  auto resolveBool = [&](const QString &suffix, bool &target) {
+    if (const auto property = layer->getProperty(prefix + suffix); property) {
+      const QVariant value = property->getKeyFrames().empty()
+                                 ? property->getValue()
+                                 : property->interpolateValue(time);
+      if (value.isValid()) {
+        target = value.toBool();
+      }
+    }
+  };
+
+  resolveFloat(QStringLiteral("start"), resolved.range.start);
+  resolveFloat(QStringLiteral("end"), resolved.range.end);
+  resolveFloat(QStringLiteral("offset"), resolved.range.offset);
+  if (const auto property = layer->getProperty(prefix + QStringLiteral("units"));
+      property) {
+    const QVariant value = property->getKeyFrames().empty()
+                               ? property->getValue()
+                               : property->interpolateValue(time);
+    if (value.isValid()) {
+      resolved.range.units = static_cast<SelectorUnits>(value.toInt());
+    }
+  }
+  if (const auto property = layer->getProperty(prefix + QStringLiteral("shape"));
+      property) {
+    const QVariant value = property->getKeyFrames().empty()
+                               ? property->getValue()
+                               : property->interpolateValue(time);
+    if (value.isValid()) {
+      resolved.range.shape = static_cast<SelectorShape>(value.toInt());
+    }
+  }
+  resolveFloat(QStringLiteral("wigglesPerSecond"),
+               resolved.wiggly.wigglesPerSecond);
+  resolveFloat(QStringLiteral("correlation"), resolved.wiggly.correlation);
+  resolveFloat(QStringLiteral("phase"), resolved.wiggly.phase);
+  if (const auto property = layer->getProperty(prefix + QStringLiteral("seed"));
+      property) {
+    const QVariant value = property->getKeyFrames().empty()
+                               ? property->getValue()
+                               : property->interpolateValue(time);
+    if (value.isValid()) {
+      resolved.wiggly.seed = value.toInt();
+    }
+  }
+  resolveFloat(QStringLiteral("positionX"), resolved.properties.position.rx());
+  resolveFloat(QStringLiteral("positionY"), resolved.properties.position.ry());
+  resolveFloat(QStringLiteral("scale"), resolved.properties.scale);
+  resolveFloat(QStringLiteral("rotation"), resolved.properties.rotation);
+  resolveFloat(QStringLiteral("opacity"), resolved.properties.opacity);
+  resolveFloat(QStringLiteral("skew"), resolved.properties.skew);
+  resolveFloat(QStringLiteral("tracking"), resolved.properties.tracking);
+  resolveFloat(QStringLiteral("z"), resolved.properties.z);
+  resolveBool(QStringLiteral("colorEnabled"), resolved.properties.colorEnabled);
+  if (const auto property = layer->getProperty(prefix + QStringLiteral("fillColor"));
+      property) {
+    const QVariant value = property->getKeyFrames().empty()
+                               ? property->getValue()
+                               : property->interpolateValue(time);
+    if (value.canConvert<QColor>()) {
+      resolved.properties.fillColor = toFloatRGBA(value.value<QColor>());
+    }
+  }
+  resolveBool(QStringLiteral("strokeEnabled"), resolved.properties.strokeEnabled);
+  if (const auto property = layer->getProperty(prefix + QStringLiteral("strokeColor"));
+      property) {
+    const QVariant value = property->getKeyFrames().empty()
+                               ? property->getValue()
+                               : property->interpolateValue(time);
+    if (value.canConvert<QColor>()) {
+      resolved.properties.strokeColor = toFloatRGBA(value.value<QColor>());
+    }
+  }
+  resolveFloat(QStringLiteral("strokeWidth"), resolved.properties.strokeWidth);
+  resolveFloat(QStringLiteral("blur"), resolved.properties.blur);
+  return resolved;
+}
+
 bool isAnimatorPropertyAnimatable(const QString &suffix) {
   return suffix == QStringLiteral("start") ||
          suffix == QStringLiteral("end") ||
