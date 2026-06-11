@@ -5,10 +5,11 @@ module;
 #include <QJsonObject>
 #include <QVariant>
 
-module Artifact.Layer.Audio;
+export module Artifact.Layer.Audio;
 
 import std;
 import ArtifactCore.Utils.PerformanceProfiler;
+import ArtifactCore.Audio.Panner;
 
 import Property.Abstract;
 import Property.Group;
@@ -19,17 +20,6 @@ import Artifact.Composition.Abstract;
 
 namespace Artifact
 {
-
-namespace
-{
-  void applyStereoPan(float pan, float& left, float& right)
-  {
-    const float clamped = std::clamp(pan, -1.0f, 1.0f);
-    const float angle = (clamped + 1.0f) * 0.78539816339f;
-    left *= std::cos(angle);
-    right *= std::sin(angle);
-  }
-}
 
   class ArtifactAudioLayer::Impl
   {
@@ -511,7 +501,9 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
 
     outSegment.channelData[0][i] = left * impl_->volume_;
     outSegment.channelData[1][i] = right * impl_->volume_;
-    applyStereoPan(impl_->pan_, outSegment.channelData[0][i], outSegment.channelData[1][i]);
+    const auto gains = ArtifactCore::AudioPanner::calculateConstantPowerGains(impl_->pan_);
+    outSegment.channelData[0][i] *= gains.channelGains[0];
+    outSegment.channelData[1][i] *= gains.channelGains[1];
     producedFrames = i + 1;
   }
 

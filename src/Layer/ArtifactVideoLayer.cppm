@@ -69,6 +69,7 @@ module Artifact.Layer.Video;
 
 import Thread.Helper;
 import Artifact.Composition.Abstract;
+import ArtifactCore.Audio.Panner;
 import Artifact.Render.IRenderer;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -83,17 +84,9 @@ import MediaPlaybackController;
 
 namespace Artifact {
 
-Q_LOGGING_CATEGORY(videoLayerLog, "artifact.layer.video")
+ Q_LOGGING_CATEGORY(videoLayerLog, "artifact.layer.video")
 
-namespace {
-
-void applyStereoPan(double pan, double& left, double& right)
-{
-    const double clamped = std::clamp(pan, -1.0, 1.0);
-    const double angle = (clamped + 1.0) * 0.7853981633974483;
-    left *= std::cos(angle);
-    right *= std::sin(angle);
-}
+ namespace {
 
 int64_t timelineFrameToSourceFrame(const ArtifactVideoLayer* layer, int64_t timelineFrame)
 {
@@ -1777,14 +1770,12 @@ bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const 
     outSegment.channelData[0].resize(actualFrames);
     outSegment.channelData[1].resize(actualFrames);
 
-    for (int i = 0; i < actualFrames; ++i) {
+for (int i = 0; i < actualFrames; ++i) {
         outSegment.channelData[0][i] = impl_->audioBufferL_.front() * (float)impl_->audioVolume_;
         outSegment.channelData[1][i] = impl_->audioBufferR_.front() * (float)impl_->audioVolume_;
-        double left = static_cast<double>(outSegment.channelData[0][i]);
-        double right = static_cast<double>(outSegment.channelData[1][i]);
-        applyStereoPan(impl_->audioPan_, left, right);
-        outSegment.channelData[0][i] = static_cast<float>(left);
-        outSegment.channelData[1][i] = static_cast<float>(right);
+        const auto gains = ArtifactCore::AudioPanner::calculateConstantPowerGains(static_cast<float>(impl_->audioPan_));
+        outSegment.channelData[0][i] *= gains.channelGains[0];
+        outSegment.channelData[1][i] *= gains.channelGains[1];
         impl_->audioBufferL_.pop_front();
         impl_->audioBufferR_.pop_front();
     }
