@@ -20,7 +20,6 @@ module;
 #include <QUuid>
 #include <QPointF>
 #include <QRectF>
-#include "../../include/Layer/ArtifactLayerJsonFactory.ixx"
 
 module Artifact.Composition.Abstract;
 
@@ -41,6 +40,8 @@ import Event.Bus;
 
 namespace Artifact {
  using namespace ArtifactCore;
+
+std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json);
 
 namespace {
 
@@ -427,15 +428,21 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::frontMostLayer() const
 {
     const auto& all = layerMultiIndex_.all();
-    if (!all.isEmpty()) return all.constLast();
-    return ArtifactAbstractLayerPtr();
+    if (all.isEmpty()) {
+      return ArtifactAbstractLayerPtr();
+    }
+    ArtifactAbstractLayerPtr layer = all.constLast();
+    return layer;
 }
 
 ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() const
 {
     const auto& all = layerMultiIndex_.all();
-    if (!all.isEmpty()) return all.constFirst();
-    return ArtifactAbstractLayerPtr();
+    if (all.isEmpty()) {
+      return ArtifactAbstractLayerPtr();
+    }
+    ArtifactAbstractLayerPtr layer = all.constFirst();
+    return layer;
 }
 
   QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
@@ -602,7 +609,8 @@ bool ResponsiveLayoutSet::hasVariant(const QString& variantId) const
 
 ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& id)
 {
-  return impl_->layerMultiIndex_.findById(id);
+  ArtifactAbstractLayerPtr layer = impl_->layerMultiIndex_.findById(id);
+  return layer;
 }
 
 
@@ -723,7 +731,8 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
 
 QVector<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
 {
-  return impl_->layerMultiIndex_.all();
+  QVector<ArtifactAbstractLayerPtr> layers = impl_->layerMultiIndex_.all();
+  return layers;
 }
 
 const QVector<Artifact::ArtifactAbstractLayerPtr>&
@@ -778,12 +787,14 @@ void ArtifactAbstractComposition::removeAllLayers()
 
 ArtifactAbstractLayerPtr ArtifactAbstractComposition::frontMostLayer() const
 {
-    return impl_->frontMostLayer();
+    ArtifactAbstractLayerPtr layer = impl_->frontMostLayer();
+    return layer;
 }
 
 ArtifactAbstractLayerPtr ArtifactAbstractComposition::backMostLayer() const
 {
-    return impl_->backMostLayer();
+    ArtifactAbstractLayerPtr layer = impl_->backMostLayer();
+    return layer;
 }
 
 void ArtifactAbstractComposition::bringToFront(const LayerID& id)

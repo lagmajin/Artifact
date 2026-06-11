@@ -4,8 +4,6 @@ module;
 #include <QList>
 #include <QObject>
 
-#include "../../include/Layer/ArtifactCompositionLayerFactory.ixx"
-
 module Artifact.Layer.Factory;
 import std;
 
@@ -32,6 +30,8 @@ import Artifact.Layer.Composition;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
+
+std::shared_ptr<ArtifactAbstractLayer> createArtifactCompositionLayer();
 
  class ArtifactLayerFactory::Impl {
  private:
