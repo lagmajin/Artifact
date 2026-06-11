@@ -42,7 +42,7 @@ export namespace Artifact {
  using ArtifactCompositionPtr = ArtifactCore::SharedPtr<ArtifactAbstractComposition>;
  using ArtifactCompositionWeakPtr = ArtifactCore::WeakPtr<ArtifactAbstractComposition>;
 
- struct ResponsiveLayoutVariant {
+ struct LayoutVariant {
   QString variantId;
   QString displayName;
   QSize baseSize;
@@ -53,16 +53,16 @@ export namespace Artifact {
   bool enabled = true;
 
   QJsonObject toJson() const;
-  static ResponsiveLayoutVariant fromJson(const QJsonObject& obj);
+  static LayoutVariant fromJson(const QJsonObject& obj);
  };
 
- struct ResponsiveLayoutSet {
+ struct LayoutSet {
   QString activeVariantId;
   QString defaultPolicy = QStringLiteral("manual");
-  QVector<ResponsiveLayoutVariant> variants;
+  QVector<LayoutVariant> variants;
 
   QJsonObject toJson() const;
-  static ResponsiveLayoutSet fromJson(const QJsonObject& obj);
+  static LayoutSet fromJson(const QJsonObject& obj);
   bool hasVariant(const QString& variantId) const;
  };
 
@@ -131,11 +131,11 @@ export namespace Artifact {
   FrameRate frameRate() const;
   void setFrameRate(const FrameRate& rate);
 
-  ResponsiveLayoutSet responsiveLayout() const;
-  void setResponsiveLayout(const ResponsiveLayoutSet& layout);
-  QString activeResponsiveLayoutVariantId() const;
-  void setActiveResponsiveLayoutVariantId(const QString& variantId);
-  QVector<ResponsiveLayoutVariant> responsiveLayoutVariants() const;
+  LayoutSet layout() const;
+  void setLayout(const LayoutSet& layout);
+  QString activeLayoutVariantId() const;
+  void setActiveLayoutVariantId(const QString& variantId);
+  QVector<LayoutVariant> layoutVariants() const;
   QSize effectiveCompositionSize() const;
   	
   bool hasVideo() const;
