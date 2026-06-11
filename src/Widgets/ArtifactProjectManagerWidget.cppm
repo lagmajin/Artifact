@@ -33,6 +33,7 @@ module;
 #include <QInputDialog>
 #include <QContextMenuEvent>
 #include <QDesktopServices>
+#include <QDir>
 #include <QHeaderView>
 #include <QPushButton>
 #include <QFileDialog>
@@ -389,6 +390,96 @@ QString projectItemTileBadgeText(ProjectItem* item)
     default:
         return QStringLiteral("Item");
     }
+}
+
+QString projectItemTypeLabel(eProjectItemType type)
+{
+    switch (type) {
+    case eProjectItemType::Folder:
+        return QStringLiteral("Folder");
+    case eProjectItemType::Composition:
+        return QStringLiteral("Composition");
+    case eProjectItemType::Footage:
+        return QStringLiteral("Footage");
+    case eProjectItemType::Solid:
+        return QStringLiteral("Solid");
+    default:
+        return QStringLiteral("Item");
+    }
+}
+
+bool isDescendantOf(const ProjectItem* item, const ProjectItem* ancestor)
+{
+    if (!item || !ancestor) {
+        return false;
+    }
+    for (const ProjectItem* current = item->parent; current; current = current->parent) {
+        if (current == ancestor) {
+            return true;
+        }
+    }
+    return false;
+}
+
+QString folderDisplayPath(FolderItem* folder)
+{
+    if (!folder) {
+        return {};
+    }
+    QStringList parts;
+    for (ProjectItem* current = folder; current; current = current->parent) {
+        if (!current->name.toQString().isEmpty()) {
+            parts.prepend(current->name.toQString());
+        }
+    }
+    return parts.join(QStringLiteral("/"));
+}
+
+void collectFolders(ProjectItem* item, QVector<FolderItem*>& out)
+{
+    if (!item) {
+        return;
+    }
+    if (item->type() == eProjectItemType::Folder) {
+        out.append(static_cast<FolderItem*>(item));
+    }
+    for (auto* child : item->children) {
+        collectFolders(child, out);
+    }
+}
+
+void collectImportablePaths(const QString& input, QStringList& out)
+{
+    auto addPath = [&out](const QString& path) {
+        const QFileInfo info(path.trimmed());
+        if (!info.exists()) {
+            return;
+        }
+        if (info.isDir()) {
+            QDirIterator it(info.absoluteFilePath(), QDir::Files, QDirIterator::Subdirectories);
+            while (it.hasNext()) {
+                out.append(it.next());
+            }
+            return;
+        }
+        if (isImportableAssetFile(info.absoluteFilePath())) {
+            out.append(info.absoluteFilePath());
+        }
+    };
+
+    const QString trimmed = input.trimmed();
+    if (trimmed.isEmpty()) {
+        return;
+    }
+    if (trimmed.contains('\n') || trimmed.contains('\r') || trimmed.contains(';')) {
+        const QStringList parts = trimmed.split(QRegularExpression(QStringLiteral("[\\r\\n;]+")),
+                                                Qt::SkipEmptyParts);
+        for (const QString& part : parts) {
+            addPath(part);
+        }
+        return;
+    }
+    addPath(trimmed);
 }
 
 enum class ProjectProxyQuality { Quarter, Half, Full };

@@ -36,12 +36,9 @@ namespace Artifact {
 namespace Ofx {
 
 struct OfxPluginDescriptor;
-
-class ArtifactOfxHost {
-public:
-  static ArtifactOfxHost &instance();
-  const std::vector<OfxPluginDescriptor> &getLoadedPlugins() const;
-};
+class ArtifactOfxHost;
+ArtifactOfxHost &artifactOfxHostInstance();
+const std::vector<OfxPluginDescriptor> &artifactOfxHostLoadedPlugins();
 
 using namespace ArtifactCore;
 
@@ -571,8 +568,7 @@ ClipState *ensureClip(ImageEffectState *effect, const char *name) {
 
 ImageEffectState *imageEffectForClip(const ClipState *clip) {
   if (!clip) return nullptr;
-  auto &host = ArtifactOfxHost::instance();
-  for (const auto &desc : host.getLoadedPlugins()) {
+  for (const auto &desc : artifactOfxHostLoadedPlugins()) {
     if (desc.descriptorState) {
       for (const auto &kv : desc.descriptorState->clips) {
         if (kv.second.get() == clip) return desc.descriptorState.get();
@@ -1885,6 +1881,14 @@ private:
   OfxHost hostStruct_{};
   bool initialized_ = false;
 };
+
+ArtifactOfxHost &artifactOfxHostInstance() {
+  return ArtifactOfxHost::instance();
+}
+
+const std::vector<OfxPluginDescriptor> &artifactOfxHostLoadedPlugins() {
+  return ArtifactOfxHost::instance().getLoadedPlugins();
+}
 
 } // namespace Ofx
 } // namespace Artifact

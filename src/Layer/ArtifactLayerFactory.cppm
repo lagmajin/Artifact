@@ -53,8 +53,8 @@ namespace Artifact {
 
  ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLayerInitParams params) noexcept
  {
-	auto result = createLayer(params);
-	return result.layer;
+  auto result = createLayer(params);
+	return std::move(result.layer);
  }
 
  ArtifactLayerResult ArtifactLayerFactory::Impl::createLayer(ArtifactLayerInitParams& params) noexcept
