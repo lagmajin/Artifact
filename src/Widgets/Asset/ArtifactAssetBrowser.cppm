@@ -84,6 +84,7 @@ module Widgets.AssetBrowser;
 import Widgets.Utils.CSS;
 import Artifact.Service.Project;
 import Artifact.Service.FootageInterpret;
+import Widgets.Dialog.InterpretFootage;
 import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Project.Manager;

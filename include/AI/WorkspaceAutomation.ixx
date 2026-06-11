@@ -24,6 +24,7 @@ export module Artifact.AI.WorkspaceAutomation;
 import std;
 import Core.AI.Describable;
 import Artifact.Application.Manager;
+import Artifact.Service.ActiveContext;
 import Artifact.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
