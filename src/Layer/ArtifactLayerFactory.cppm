@@ -278,13 +278,4 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
       return nullptr;
   }
 
-std::shared_ptr<ArtifactAbstractLayer> createArtifactCompositionLayer()
-{
-  return std::make_shared<ArtifactCompositionLayer>();
-}
-
-std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json)
-{
-  return ArtifactLayerFactory::createFromJson(json);
-}
 }
