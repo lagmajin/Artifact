@@ -678,6 +678,17 @@ void ArtifactAbstractLayer::setActiveVariant(size_t index) {
     }
 }
 
+size_t ArtifactAbstractLayer::variantCount() const {
+    return impl_->variants_.size();
+}
+
+QString ArtifactAbstractLayer::variantNameAt(size_t index) const {
+    if (index >= impl_->variants_.size() || !impl_->variants_[index]) {
+        return QString();
+    }
+    return QString::fromStdString(impl_->variants_[index]->name_);
+}
+
 LayerVariant* ArtifactAbstractLayer::getActiveVariant() const {
     if (impl_->activeVariantIndex_ < impl_->variants_.size()) {
         return impl_->variants_[impl_->activeVariantIndex_].get();
@@ -1933,6 +1944,21 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                                   PropertyType::Boolean, isSolo(), -160));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.shy"),
                                   PropertyType::Boolean, isShy(), -150));
+  auto activeVariantProp = makeProp(QStringLiteral("layer.activeVariantIndex"),
+                                    PropertyType::Integer,
+                                    static_cast<int>(getActiveVariantIndex()),
+                                    -148);
+  activeVariantProp->setHardRange(0, std::max<int>(0, static_cast<int>(variantCount()) - 1));
+  activeVariantProp->setSoftRange(0, std::max<int>(0, static_cast<int>(variantCount()) - 1));
+  activeVariantProp->setStep(1);
+  activeVariantProp->setTooltip(QStringLiteral("Select the active layer variant."));
+  layerGroup.addProperty(activeVariantProp);
+
+  auto variantCountProp = makeProp(QStringLiteral("layer.variantCount"),
+                                   PropertyType::Integer,
+                                   static_cast<int>(variantCount()), -147);
+  variantCountProp->setTooltip(QStringLiteral("Number of stored variants."));
+  layerGroup.addProperty(variantCountProp);
   layerGroup.addProperty(makeProp(QStringLiteral("layer.labelColorIndex"),
                                   PropertyType::Integer, labelColorIndex(),
                                   -145));
@@ -2256,6 +2282,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("layer.lockOwnerId")) {
     setLockOwnerId(value.toString());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.activeVariantIndex")) {
+    bool ok = false;
+    const int idx = value.toInt(&ok);
+    setActiveVariant(ok ? static_cast<size_t>(std::max(0, idx)) : 0);
     return true;
   }
   if (propertyPath == QStringLiteral("layer.guide")) {

@@ -407,6 +407,8 @@ public:
    /* Variants */
    size_t getActiveVariantIndex() const;
    void setActiveVariant(size_t index);
+   size_t variantCount() const;
+   QString variantNameAt(size_t index) const;
    LayerVariant* getActiveVariant() const;
    LayerVariant* createVariantFromCurrent(const std::string& newName);
    void resetVariantOverride(VariantOverrideFlags specificFlag = VariantOverrideFlags::None);
