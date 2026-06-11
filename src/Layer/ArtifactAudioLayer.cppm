@@ -9,7 +9,7 @@ module Artifact.Layer.Audio;
 
 import std;
 import ArtifactCore.Utils.PerformanceProfiler;
-import ArtifactCore.Audio.Panner;
+import Audio.Panner;
 
 import Property.Abstract;
 import Property.Group;
