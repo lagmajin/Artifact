@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <memory>
 #include <QVariant>
 #include <QStringList>
 #include <vector>
@@ -150,8 +151,8 @@ ArtifactTimelineKeyframeModel::~ArtifactTimelineKeyframeModel() {}
 
 namespace {
 struct LayerPropertyLookup {
-    Property* prop = nullptr;
-    ArtifactAbstractLayer* layer = nullptr;
+    std::shared_ptr<ArtifactCore::AbstractProperty> prop;
+    ArtifactAbstractLayerPtr layer;
     bool success = false;
 };
 
@@ -174,7 +175,7 @@ LayerPropertyLookup resolveLayerProperty(
     return result;
 }
 
-void notifyLayerChanged(ArtifactAbstractLayer* layer, const CompositionID& compId, const LayerID& layerId) {
+void notifyLayerChanged(const ArtifactAbstractLayerPtr& layer, const CompositionID& compId, const LayerID& layerId) {
     if (layer) {
         layer->setDirty();
         layer->changed();

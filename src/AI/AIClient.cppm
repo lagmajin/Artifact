@@ -43,6 +43,8 @@ import Artifact.AI.RenderAutomation;
 import Artifact.AI.FileAutomation;
 import Artifact.Application.Manager;
 import Artifact.Project.Statistics;
+import Artifact.Service.Project;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 
