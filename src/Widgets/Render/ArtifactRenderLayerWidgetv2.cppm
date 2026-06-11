@@ -32,6 +32,7 @@ import Graphics.Shader.Compile.Task;
 import Graphics.Shader.Compute.HLSL.Blend;
 import Layer.Blend;
 import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Application;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;

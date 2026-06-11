@@ -37,6 +37,7 @@ module Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Render.SoftwareCompositor;
 import Artifact.Service.Project;
 import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Project.Items;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
@@ -944,13 +945,11 @@ ArtifactAbstractLayerPtr ArtifactSoftwareLayerTestWidget::Impl::selectedLayer() 
     }
     const QString idString = layerCombo_->currentData().toString();
     if (idString.trimmed().isEmpty()) {
-        if (const auto* app = ArtifactApplicationManager::instance()) {
-            if (const auto* selection = app->layerSelectionManager()) {
-                if (const auto current = selection->currentLayer()) {
-                    return composition->containsLayerById(current->id())
-                               ? current
-                               : ArtifactAbstractLayerPtr{};
-                }
+        if (const auto* selection = ArtifactLayerSelectionManager::instance()) {
+            if (const auto current = selection->currentLayer()) {
+                return composition->containsLayerById(current->id())
+                           ? current
+                           : ArtifactAbstractLayerPtr{};
             }
         }
         return {};
@@ -1014,11 +1013,9 @@ void ArtifactSoftwareLayerTestWidget::Impl::reloadLayers()
     const QString previous = layerCombo_->currentData().toString();
     const ArtifactCompositionPtr composition = selectedComposition();
     QString preferredSelection = previous;
-    if (const auto* app = ArtifactApplicationManager::instance()) {
-        if (const auto* selection = app->layerSelectionManager()) {
-            if (const auto current = selection->currentLayer()) {
-                preferredSelection = current->id().toString();
-            }
+    if (const auto* selection = ArtifactLayerSelectionManager::instance()) {
+        if (const auto current = selection->currentLayer()) {
+            preferredSelection = current->id().toString();
         }
     }
     QSignalBlocker blocker(layerCombo_);
