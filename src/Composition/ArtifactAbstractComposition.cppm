@@ -79,34 +79,54 @@ ArtifactCore::AssetID assetIdForPath(const QString& path)
   const QFileInfo info(path);
   QString normalized = info.canonicalFilePath();
   if (normalized.isEmpty()) {
-    normalized = info.absoluteFilePath();
+    normalized = QDir::cleanPath(path);
   }
-  if (normalized.isEmpty()) {
-    normalized = QDir::cleanPath(path.trimmed());
-  }
-
-  const QByteArray digest = QCryptographicHash::hash(normalized.toUtf8(), QCryptographicHash::Md5);
-  const QUuid uuid = QUuid::fromRfc4122(digest);
-  return ArtifactCore::AssetID(uuid.toString(QUuid::WithoutBraces));
+  return ArtifactCore::AssetID(QCryptographicHash::hash(normalized.toUtf8(), QCryptographicHash::Sha256).toHex().constData());
 }
 
 Artifact::ResponsiveLayoutVariant makeDefaultResponsiveLayoutVariant(const QSize& size)
-{
-  Artifact::ResponsiveLayoutVariant variant;
-  variant.variantId = QStringLiteral("default");
-  variant.displayName = QStringLiteral("Default");
-  variant.baseSize = size.isValid() ? size : QSize(1920, 1080);
-  variant.aspectRatio = variant.baseSize.height() > 0
-      ? static_cast<qreal>(variant.baseSize.width()) / static_cast<qreal>(variant.baseSize.height())
-      : 0.0;
-  variant.safeArea = QRectF(0.0, 0.0, 1.0, 1.0);
-  variant.contentAnchor = QPointF(0.5, 0.5);
-  variant.layoutRules.insert(QStringLiteral("scaleMode"), QStringLiteral("fit"));
-  variant.layoutRules.insert(QStringLiteral("cropMode"), QStringLiteral("none"));
-  variant.layoutRules.insert(QStringLiteral("guidePreset"), QStringLiteral("default"));
-  variant.enabled = true;
-  return variant;
-}
+ {
+   Artifact::ResponsiveLayoutVariant variant;
+   variant.variantId = QStringLiteral("default");
+   variant.displayName = QStringLiteral("Default");
+   variant.baseSize = size.isValid() ? size : QSize(1920, 1080);
+   variant.aspectRatio = variant.baseSize.height() > 0
+       ? static_cast<qreal>(variant.baseSize.width()) / static_cast<qreal>(variant.baseSize.height())
+       : 0.0;
+   variant.safeArea = QRectF(0.0, 0.0, 1.0, 1.0);
+   variant.contentAnchor = QPointF(0.5, 0.5);
+   variant.layoutRules.insert(QStringLiteral("scaleMode"), QStringLiteral("fit"));
+   variant.layoutRules.insert(QStringLiteral("cropMode"), QStringLiteral("none"));
+   variant.layoutRules.insert(QStringLiteral("guidePreset"), QStringLiteral("default"));
+   variant.enabled = true;
+   return variant;
+ }
+
+ Artifact::ResponsiveLayoutSet makeDefaultResponsiveLayoutSet(const QSize& size)
+ {
+   Artifact::ResponsiveLayoutSet layout;
+   layout.activeVariantId = QStringLiteral("default");
+   layout.defaultPolicy = QStringLiteral("manual");
+   layout.variants.append(makeDefaultResponsiveLayoutVariant(size));
+   return layout;
+ }
+
+ float limiterGainForSegment(const AudioSegment& segment)
+ {
+   constexpr float ceiling = 0.995f;
+   float peak = 0.0f;
+   for (const auto& channel : segment.channelData) {
+     for (const float sample : channel) {
+       peak = std::max(peak, std::abs(sample));
+       if (peak >= ceiling) {
+         break;
+       }
+     }
+   }
+   return peak > ceiling ? ceiling / peak : 1.0f;
+ }
+
+ } // namespace
 
 Artifact::ResponsiveLayoutSet makeDefaultResponsiveLayoutSet(const QSize& size)
 {
@@ -115,6 +135,21 @@ Artifact::ResponsiveLayoutSet makeDefaultResponsiveLayoutSet(const QSize& size)
   layout.defaultPolicy = QStringLiteral("manual");
   layout.variants.append(makeDefaultResponsiveLayoutVariant(size));
   return layout;
+=======
+float limiterGainForSegment(const AudioSegment& segment)
+{
+  constexpr float ceiling = 0.995f;
+  float peak = 0.0f;
+  for (const auto& channel : segment.channelData) {
+    for (const float sample : channel) {
+      peak = std::max(peak, std::abs(sample));
+      if (peak >= ceiling) {
+        break;
+      }
+    }
+  }
+  return peak > ceiling ? ceiling / peak : 1.0f;
+>>>>>>> 7115214a (Audio mixer: add pan support, extend volume range to 0-2.0, add brickwall limiter for overflow protection)
 }
 
 } // namespace
@@ -698,6 +733,18 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
                    << "activeAudioLayers=" << activeAudioLayerCount
                    << "producedAudioLayers=" << producedAudioLayerCount;
     }
+
+    if (hasAnyAudio) {
+        const float gain = limiterGainForSegment(outSegment);
+        if (gain < 1.0f) {
+            for (auto& channel : outSegment.channelData) {
+                for (float& sample : channel) {
+                    sample *= gain;
+                }
+            }
+        }
+    }
+
     return hasAnyAudio;
 }
 

@@ -56,6 +56,8 @@ export namespace Artifact
 
   void setVolume(float volume);
   float volume() const;
+  void setPan(float pan);
+  float pan() const;
   bool isMuted() const;
   void mute();
   bool loadFromPath(const QString& path);

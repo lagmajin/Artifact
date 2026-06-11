@@ -235,15 +235,21 @@ public:
     /// Check if video has audio stream
     bool hasAudio() const override;
     
-    /// Get audio volume (0.0 - 1.0)
+    /// Get audio volume (0.0 - 2.0)
     double audioVolume() const;
-    
+
     /// Set audio volume
     void setAudioVolume(double volume);
-    
+
+    /// Get audio pan (-1.0 left, 1.0 right)
+    double audioPan() const;
+
+    /// Set audio pan
+    void setAudioPan(double pan);
+
     /// Mute/unmute audio
     void setAudioMuted(bool muted);
-    
+
     /// Check if audio is muted
     bool isAudioMuted() const;
 
