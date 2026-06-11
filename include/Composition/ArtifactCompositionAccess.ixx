@@ -6,12 +6,10 @@ export module Artifact.Composition.Access;
 
 import Frame.Position;
 import Frame.Rate;
+import Artifact.Layer.Abstract;
 import Utils.Id;
 
 export namespace Artifact {
-
-class ArtifactAbstractLayer;
-using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
 
 class ArtifactAbstractCompositionAccess {
 public:
