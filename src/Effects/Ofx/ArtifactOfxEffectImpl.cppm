@@ -6,6 +6,8 @@ module;
 #include <QVariant>
 #include <QColor>
 #include <windows.h>
+#include <ofx/ofxCore.h>
+#include <ofx/ofxImageEffect.h>
 
 export module Artifact.Effect.Ofx.Impl;
 
