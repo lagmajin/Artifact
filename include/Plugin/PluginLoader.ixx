@@ -24,10 +24,12 @@ import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Registry;
 
 export namespace Artifact {
+using namespace ArtifactCore;
 
 class ArtifactPluginLoader {
 public:
     ArtifactPluginLoader();
+    ~ArtifactPluginLoader();
 
     void discoverAndLoad(const QStringList& searchPaths,
                          PluginLoadMode mode = PluginLoadMode::Auto);

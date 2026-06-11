@@ -44,9 +44,11 @@ module Artifact.Layer.Composition;
 
 import Property.Abstract;
 import Property.Group;
+import Artifact.Composition.Abstract;
 import Composition.Settings;
 
 namespace Artifact {
+using namespace ArtifactCore;
 
 class ArtifactCompositionLayer::Impl {
 public:

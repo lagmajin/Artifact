@@ -1,6 +1,8 @@
 module;
 
 #include <QHash>
+#include <QCoreApplication>
+#include <QDir>
 #include <iostream>
 #include <vector>
 #include <string>

@@ -17,6 +17,7 @@ module;
 #include <QAudioFormat>
 #include <QAudioSink>
 #include <QIODevice>
+#include <QElapsedTimer>
 #include <QVector>
 #include <QTimer>
 #include <QFileInfo>

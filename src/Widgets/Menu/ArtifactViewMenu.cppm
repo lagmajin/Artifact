@@ -28,6 +28,7 @@ import std;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.MainWindow;
 import Artifact.Widgets.CompositionEditor;
 import Application.AppSettings;
 import Core.FastSettingsStore;
@@ -649,19 +650,29 @@ namespace Artifact {
    }
 
    QObject::connect(workspaceDefaultAction, &QAction::triggered, menu, [this]() {
-    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::Default);
+    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
+     window->setWorkspaceMode(WorkspaceMode::Default);
+    }
    });
    QObject::connect(workspaceAnimationAction, &QAction::triggered, menu, [this]() {
-    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::Animation);
+    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
+     window->setWorkspaceMode(WorkspaceMode::Animation);
+    }
    });
    QObject::connect(workspaceVfxAction, &QAction::triggered, menu, [this]() {
-    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::VFX);
+    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
+     window->setWorkspaceMode(WorkspaceMode::VFX);
+    }
    });
    QObject::connect(workspaceCompositingAction, &QAction::triggered, menu, [this]() {
-    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::Compositing);
+    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
+     window->setWorkspaceMode(WorkspaceMode::Compositing);
+    }
    });
    QObject::connect(workspaceAudioAction, &QAction::triggered, menu, [this]() {
-    setWorkspaceModeForWindow(mainWindow, WorkspaceMode::Audio);
+    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
+     window->setWorkspaceMode(WorkspaceMode::Audio);
+    }
    });
 
    workspacePresetMenu = new QMenu("プリセット");
@@ -930,7 +941,8 @@ namespace Artifact {
    return;
   }
 
-  const WorkspaceMode mode = workspaceModeForWindow(mainWindow);
+  const auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow);
+  const WorkspaceMode mode = window ? window->workspaceMode() : WorkspaceMode::Default;
   workspaceDefaultAction->setChecked(mode == WorkspaceMode::Default);
   workspaceAnimationAction->setChecked(mode == WorkspaceMode::Animation);
   workspaceVfxAction->setChecked(mode == WorkspaceMode::VFX);

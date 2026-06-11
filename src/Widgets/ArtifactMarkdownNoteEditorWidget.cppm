@@ -1,3 +1,4 @@
+module;
 #include <wobjectimpl.h>
 #include <QLabel>
 #include <QPlainTextEdit>

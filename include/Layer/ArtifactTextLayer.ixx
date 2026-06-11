@@ -161,6 +161,7 @@ public:
      const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
      bool hasCurrentFrameBuffer() const;
      QString debugState() const;
+     LayerMask createMaskFromText() const;
 
      // Trigger update of internal image
      void updateImage();

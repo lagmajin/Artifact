@@ -1015,7 +1015,7 @@ namespace {
 
   if (!srcTex || srcWidth == 0 || srcHeight == 0) return {};
 
-  const TEXTURE_FORMAT srcFormat = srcTexPtr->GetDesc().Format;
+  const TEXTURE_FORMAT srcFormat = srcTex->GetDesc().Format;
   const bool useFloatReadback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
   const TEXTURE_FORMAT stagingFormat =
       useFloatReadback ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM;
@@ -1063,7 +1063,7 @@ namespace {
   ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
 
   CopyTextureAttribs copyAttribs;
-  copyAttribs.pSrcTexture              = srcTexPtr;
+  copyAttribs.pSrcTexture              = srcTex;
   copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
   copyAttribs.pDstTexture              = m_readbackStagingTex;
   copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;

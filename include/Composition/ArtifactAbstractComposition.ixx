@@ -27,7 +27,6 @@ import Composition.Context;
 import Artifact.Composition.Access;
 export import Artifact.Layer.Abstract;
 import Artifact.Composition.Result;
-import Artifact.Composition.InitParams;
 import Composition.Settings;
 import Audio.Segment;
 import Geometry.ResolutionRemap;
@@ -39,6 +38,7 @@ export namespace Artifact {
  using namespace ArtifactCore;
 
  class ArtifactAbstractComposition;
+ class ArtifactCompositionInitParams;
  using ArtifactCompositionPtr = ArtifactCore::SharedPtr<ArtifactAbstractComposition>;
  using ArtifactCompositionWeakPtr = ArtifactCore::WeakPtr<ArtifactAbstractComposition>;
 

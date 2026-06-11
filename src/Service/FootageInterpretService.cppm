@@ -1,5 +1,10 @@
+module;
+
+#include <QVector>
+
 module Artifact.Service.FootageInterpret;
 
+import Artifact.Project.Manager;
 import Media.SourceInterpret;
 import Artifact.Project;
 import Artifact.Project.Items;
@@ -8,6 +13,7 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Video;
 import Artifact.Layer.Image;
 import Artifact.Layer.Audio;
+import Frame.Position;
 import Time.Rational;
 import Time.TimeRemap;
 import Frame.Rate;
@@ -20,7 +26,8 @@ struct FootageInterpretService::Impl {
     void collectAffectedLayers(const FootageItem* footage,
                                QVector<ArtifactAbstractLayerPtr>& outLayers,
                                std::vector<ArtifactAbstractComposition*>& outComps) const {
-        auto* project = ArtifactProjectService::instance()->currentProject();
+        auto& projectManager = ArtifactProjectManager::getInstance();
+        auto project = projectManager.getCurrentProjectSharedPtr();
         if (!project) return;
 
         const auto items = project->projectItems();
@@ -35,21 +42,18 @@ struct FootageInterpretService::Impl {
                         bool foundInThisComp = false;
                         for (const auto& layer : comp->allLayer()) {
                             if (!layer) continue;
-                            if (layer->type() == LayerType::Video) {
-                                auto* videoLayer = static_cast<ArtifactVideoLayer*>(layer.get());
-                                if (videoLayer && videoLayer->sourcePath() == footage->filePath) {
+                            if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+                                if (videoLayer->sourcePath() == footage->filePath) {
                                     outLayers.push_back(layer);
                                     foundInThisComp = true;
                                 }
-                            } else if (layer->type() == LayerType::Image) {
-                                auto* imgLayer = static_cast<ArtifactImageLayer*>(layer.get());
-                                if (imgLayer && imgLayer->sourcePath() == footage->filePath) {
+                            } else if (auto imgLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer)) {
+                                if (imgLayer->sourcePath() == footage->filePath) {
                                     outLayers.push_back(layer);
                                     foundInThisComp = true;
                                 }
-                            } else if (layer->type() == LayerType::Audio) {
-                                auto* audioLayer = static_cast<ArtifactAudioLayer*>(layer.get());
-                                if (audioLayer && audioLayer->sourcePath() == footage->filePath) {
+                            } else if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+                                if (audioLayer->sourcePath() == footage->filePath) {
                                     outLayers.push_back(layer);
                                     foundInThisComp = true;
                                 }
@@ -151,10 +155,10 @@ bool FootageInterpretService::applyFrameRateChange(
         case FrameRatePreserveMode::KeepTime:
             // Keep source timing, adjust in/out points proportionally
             {
-                const int64_t oldIn = layer->inPoint();
-                const int64_t oldOut = layer->outPoint();
-                layer->setInPoint(static_cast<int64_t>(oldIn * ratio));
-                layer->setOutPoint(static_cast<int64_t>(oldOut * ratio));
+                const int64_t oldIn = layer->inPoint().framePosition();
+                const int64_t oldOut = layer->outPoint().framePosition();
+                layer->setInPoint(FramePosition(static_cast<int>(oldIn * ratio)));
+                layer->setOutPoint(FramePosition(static_cast<int>(oldOut * ratio)));
             }
             if (layer->isTimeRemapEnabled()) {
                 layer->clearTimeRemap();

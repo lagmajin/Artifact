@@ -61,6 +61,7 @@ foreach(file_path ${POTENTIAL_SOURCES})
        file_path MATCHES "src/Audio/Effects/AudioEffectsInit\\.cpp" OR
        file_path MATCHES "src/Test/ArtifactTestRenderQueue\\.cppm" OR
        file_path MATCHES "src/Generator/CloneGenerator\\.ixx" OR
+       file_path MATCHES "src/Composition/ArtifactCompositionManager\\.cpp" OR
        file_path MATCHES "include/Effect/ArtifactStabilizer\\.ixx" OR
        file_path MATCHES "src/Effect/ArtifactStabilizer\\.cppm" OR
        file_path MATCHES "include/Render/ArtifactFrameCache\\.ixx" OR
@@ -115,6 +116,13 @@ endforeach()
 list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Diagnostics/AppDebuggerWidget.cppm" _app_debugger_widget_idx)
 if(_app_debugger_widget_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Diagnostics/AppDebuggerWidget.cppm")
+endif()
+
+# OffscreenCompositionRenderer は他モジュールから import される公開モジュールなので、
+# 自動分類の漏れを防ぐため明示的に CXX_MODULES に含める。
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cppm" _offscreen_composition_module_idx)
+if(_offscreen_composition_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cppm")
 endif()
 
 # ---------------------------------------------------------------------------

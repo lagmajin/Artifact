@@ -1,11 +1,31 @@
+module;
+
+#include <string>
+#include <string_view>
+#include <vector>
+#include <memory>
+
+#include <QDir>
+#include <QDirIterator>
+#include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QLibrary>
+#include <QCoreApplication>
+#include <QProcess>
+#include <QString>
+#include <QStringList>
+
+#include "Plugin/ArtifactPluginABI.h"
+
 module Artifact.Plugin.Loader;
 
 import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Registry;
 
-#include "Plugin/ArtifactPluginABI.h"
-
 namespace Artifact {
+using namespace ArtifactCore;
 
 typedef int (*PFN_ArtifactPlugin_GetAPIVersion)();
 typedef int (*PFN_ArtifactPlugin_GetPluginCount)();
@@ -120,7 +140,9 @@ struct ArtifactPluginLoader::Impl {
         const auto entries = dir.entryInfoList(nameFilters, QDir::Files);
         for (const auto& info : entries) {
             const auto filePath = info.absoluteFilePath();
-            LoadResult r = loadPlugin(filePath, mode);
+            LoadResult r = (mode == PluginLoadMode::Subprocess)
+                ? loadSubprocessPlugin(filePath)
+                : loadDllPlugin(filePath);
             results.push_back(std::move(r));
         }
     }
@@ -128,6 +150,8 @@ struct ArtifactPluginLoader::Impl {
 
 ArtifactPluginLoader::ArtifactPluginLoader()
     : impl_(std::make_unique<Impl>()) {}
+
+ArtifactPluginLoader::~ArtifactPluginLoader() = default;
 
 void ArtifactPluginLoader::discoverAndLoad(const QStringList& searchPaths,
                                            PluginLoadMode mode) {

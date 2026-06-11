@@ -33,11 +33,6 @@ module;
 #include <QJsonObject>
 #include <QVariant>
 
-namespace Artifact {
-class ArtifactAbstractComposition;
-using ArtifactCompositionPtr = std::shared_ptr<ArtifactAbstractComposition>;
-}
-
 export module Artifact.Layer.Composition;
 
 
@@ -45,6 +40,7 @@ import Utils;
 import Artifact.Layer.Abstract;
 
 export namespace Artifact {
+using namespace ArtifactCore;
 
 class ArtifactCompositionLayer : public ArtifactAbstractLayer {
 private:

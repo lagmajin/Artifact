@@ -3,6 +3,7 @@ module;
 #include <memory>
 #include <string>
 #include <vector>
+#include "Plugin/ArtifactPluginABI.h"
 
 export module Artifact.Plugin.Layer.Factory;
 
@@ -10,8 +11,6 @@ import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Registry;
 import ArtifactCore.Plugin.Layer.Interface;
 import Artifact.Plugin.Layer.Adapter;
-
-#include "Plugin/ArtifactPluginABI.h"
 
 export namespace Artifact {
 

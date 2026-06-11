@@ -1,3 +1,11 @@
+module;
+
+#include <memory>
+#include <string>
+#include <vector>
+
+#include "Plugin/ArtifactPluginABI.h"
+
 module Artifact.Plugin.Layer.Factory;
 
 import ArtifactCore.Plugin.Common;
@@ -5,9 +13,8 @@ import ArtifactCore.Plugin.Registry;
 import ArtifactCore.Plugin.Layer.Interface;
 import Artifact.Plugin.Layer.Adapter;
 
-#include "Plugin/ArtifactPluginABI.h"
-
 namespace Artifact {
+using namespace ArtifactCore;
 
 struct PluginLayerFactory::Impl {
     std::vector<LayerPluginInfo> plugins;

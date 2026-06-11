@@ -11,6 +11,7 @@ module Artifact.Layer.Camera;
 
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Artifact.Render.IRenderer;
 import Property.Group;
 import Property;
 import Animation.Transform3D;

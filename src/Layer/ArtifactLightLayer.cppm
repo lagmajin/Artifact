@@ -11,6 +11,7 @@ module Artifact.Layer.Light;
 
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Artifact.Render.IRenderer;
 import Animation.Transform3D;
 import Time.Rational;
 import Property.Group;

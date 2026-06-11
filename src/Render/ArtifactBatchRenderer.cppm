@@ -98,7 +98,7 @@ int ArtifactBatchRenderer::addCompositions(
         auto comp = found.ptr.lock();
         if (!comp) continue;
 
-        const QString compName = comp->name();
+        const QString compName = comp->settings().compositionName().toQString();
         const QString safeName = resolveFileNamePattern(fileNamePattern, compName);
 
         // Generate output path
@@ -145,7 +145,7 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
         auto comp = found.ptr.lock();
         if (!comp) continue;
 
-        const QString compName = comp->name();
+        const QString compName = comp->settings().compositionName().toQString();
         const QString resolvedName = resolveFileNamePattern(tmpl.fileNamePattern, compName);
         QDir dir(tmpl.outputDirectory);
         if (!dir.exists()) dir.mkpath(".");
