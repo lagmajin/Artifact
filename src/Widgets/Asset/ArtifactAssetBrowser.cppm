@@ -76,8 +76,17 @@ module;
 // Audio waveform includes
 #include <QAudioFormat>
 #include <QAudioDecoder>
+#ifdef emit
+#pragma push_macro("emit")
+#undef emit
+#define ARTIFACT_RESTORE_QT_EMIT_MACRO
+#endif
 #include <tbb/parallel_for.h>
 #include <tbb/blocked_range.h>
+#ifdef ARTIFACT_RESTORE_QT_EMIT_MACRO
+#pragma pop_macro("emit")
+#undef ARTIFACT_RESTORE_QT_EMIT_MACRO
+#endif
 
 module Widgets.AssetBrowser;
 

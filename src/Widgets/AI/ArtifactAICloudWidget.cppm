@@ -52,6 +52,8 @@ import Core.AI.TieredAIManager;
 import Widgets.Utils.CSS;
 import Artifact.AI.WorkspaceAutomation;
 import Artifact.Application.Manager;
+import Artifact.Service.Project;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Project.Statistics;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;

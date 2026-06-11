@@ -38,7 +38,6 @@ namespace Ofx {
 struct OfxPluginDescriptor;
 class ArtifactOfxHost;
 ArtifactOfxHost &artifactOfxHostInstance();
-const std::vector<OfxPluginDescriptor> &artifactOfxHostLoadedPlugins();
 
 using namespace ArtifactCore;
 
@@ -111,6 +110,8 @@ export struct OfxPluginDescriptor {
   std::shared_ptr<ImageEffectState> descriptorState;
   HMODULE libraryHandle = nullptr;
 };
+
+const std::vector<OfxPluginDescriptor> &artifactOfxHostLoadedPlugins();
 
 namespace {
 
@@ -1502,8 +1503,8 @@ OfxStatus pluginActionEndSequenceRender(OfxPlugin *plugin, ImageEffectState &ins
                            nullptr);
 }
 
-OfxStatus ofxMessageFunc(void * /*handle*/, OfxMessageType /*type*/,
-                        const char * /*messageId*/, const char * /*format*/, va_list /*args*/) {
+OfxStatus ofxMessageFunc(void * /*handle*/, const char * /*type*/,
+                        const char * /*messageId*/, const char * /*format*/, ...) {
   return kOfxStatOK;
 }
 

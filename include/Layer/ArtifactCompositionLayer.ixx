@@ -55,7 +55,7 @@ public:
   void setCompositionId(const CompositionID &id);
   QJsonObject toJson() const override;
 
-  ArtifactCompositionPtr sourceComposition() const;
+  std::shared_ptr<ArtifactAbstractComposition> sourceComposition() const;
 
   // ArtifactAbstractLayer overrides
   void draw(ArtifactIRenderer *renderer) override;

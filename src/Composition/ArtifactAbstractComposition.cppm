@@ -426,24 +426,24 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
 
 ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::frontMostLayer() const
 {
-    auto all = layerMultiIndex_.all();
-    if (!all.isEmpty()) return all.last();
+    const auto& all = layerMultiIndex_.all();
+    if (!all.isEmpty()) return all.constLast();
     return ArtifactAbstractLayerPtr();
 }
 
 ArtifactAbstractLayerPtr ArtifactAbstractComposition::Impl::backMostLayer() const
 {
-    auto all = layerMultiIndex_.all();
-    if (!all.isEmpty()) return all.first();
+    const auto& all = layerMultiIndex_.all();
+    if (!all.isEmpty()) return all.constFirst();
     return ArtifactAbstractLayerPtr();
 }
 
   QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayerBackToFront() const
   {
-   auto v = layerMultiIndex_.all();
-   std::reverse(v.begin(), v.end());
-   return v;
-  }
+    QVector<ArtifactAbstractLayerPtr> v = layerMultiIndex_.all();
+    std::reverse(v.begin(), v.end());
+    return v;
+   }
 
   QVector<ArtifactCore::AssetID> ArtifactAbstractComposition::Impl::getUsedAssets() const
   {
@@ -1127,7 +1127,7 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
         QVector<ArtifactAbstractLayerPtr> loadedLayers;
         for (const auto& v : arr) {
             if (v.isObject()) {
-                auto layer = createArtifactLayerFromJson(v.toObject());
+                ArtifactAbstractLayerPtr layer = createArtifactLayerFromJson(v.toObject());
                 if (layer) {
                     comp->appendLayerTop(layer);
                     loadedLayers.append(layer);
@@ -1136,8 +1136,9 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
         }
 
         // Parent resolution pass
-        for (const auto& layer : loadedLayers) {
-            QJsonObject lobj = arr.at(loadedLayers.indexOf(layer)).toObject();
+        for (int i = 0; i < loadedLayers.size() && i < arr.size(); ++i) {
+            const auto& layer = loadedLayers.at(i);
+            QJsonObject lobj = arr.at(i).toObject();
             if (lobj.contains("parentId")) {
                 LayerID pid(lobj["parentId"].toString());
                 layer->setParentById(pid);

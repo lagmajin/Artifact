@@ -15,6 +15,7 @@ module;
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QMetaObject>
+#include <QStatusBar>
 #include <QUrl>
 #include <QtSVG/QSvgRenderer>
 #include <QTimer>
@@ -28,6 +29,7 @@ import std;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Service.Project;
+import Artifact.Service.ActiveContext;
 import Utils.Path;
 import Utils.Id;
 import Utils.String.UniString;

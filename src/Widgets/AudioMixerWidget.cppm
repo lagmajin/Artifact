@@ -341,23 +341,25 @@ AudioMixerWidget::AudioMixerWidget(ArtifactCore::AudioMixer* mixer, QWidget* par
 AudioMixerWidget::~AudioMixerWidget() = default;
 
 void AudioMixerWidget::refreshBuses() {
-    // 既存のストリップを削除
     for (auto* strip : strips_) {
         strip->deleteLater();
     }
     strips_.clear();
 
-    // マスターバスを一番左に
-    auto master = mixer_->getMasterBus();
-    if (master) {
-        auto* strip = new AudioChannelStripWidget(master, this);
-        strip->setFixedWidth(100); // Masterは少し太めに
+    auto allBuses = mixer_->getAllBuses();
+    bool hasMaster = false;
+
+    for (const auto& bus : allBuses) {
+        if (!bus) continue;
+        bool isMaster = (bus == mixer_->getMasterBus());
+        if (isMaster && hasMaster) continue;
+        hasMaster = hasMaster || isMaster;
+
+        auto* strip = new AudioChannelStripWidget(bus, this);
+        strip->setFixedWidth(isMaster ? 120 : 80);
         layout()->addWidget(strip);
         strips_.push_back(strip);
     }
-
-    // 他のバスをリストアップ (本来はMixerから取得)
-    // 今回は簡易的にMaster以外の管理は省略
 }
 
 void AudioMixerWidget::updateAllMeters() {

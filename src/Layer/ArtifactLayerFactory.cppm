@@ -28,6 +28,7 @@ import Artifact.Layer.Text;
 import Artifact.Layer.SDF;
 import Artifact.Layer.Construction;
 import Artifact.Layers.Model3D;
+import Artifact.Layer.Composition;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -51,11 +52,12 @@ namespace Artifact {
 
  }
 
- ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLayerInitParams params) noexcept
- {
+ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLayerInitParams params) noexcept
+{
   auto result = createLayer(params);
-	return std::move(result.layer);
- }
+  ArtifactAbstractLayerPtr layer = result.layer;
+  return layer;
+}
 
  ArtifactLayerResult ArtifactLayerFactory::Impl::createLayer(ArtifactLayerInitParams& params) noexcept
  {
@@ -67,21 +69,21 @@ namespace Artifact {
 
   switch (params.layerType()) {
   case LayerType::Null:
-   ptr = std::make_shared<ArtifactNullLayer>();
+   ptr = ArtifactAbstractLayerPtr(new ArtifactNullLayer());
    break;
   case LayerType::Solid: {
-   auto solidLayer = std::make_shared<ArtifactSolidImageLayer>();
+   auto* solidLayer = new ArtifactSolidImageLayer();
    if (auto* solidParams = dynamic_cast<ArtifactSolidLayerInitParams*>(&params)) {
     solidLayer->setSize(solidParams->width(), solidParams->height());
     solidLayer->setColor(solidParams->color());
    } else {
     solidLayer->setSize(1920, 1080);
    }
-   ptr = solidLayer;
+   ptr = ArtifactAbstractLayerPtr(solidLayer);
    break;
   }
   case LayerType::Image:
-   ptr = std::make_shared<ArtifactImageLayer>();
+   ptr = ArtifactAbstractLayerPtr(new ArtifactImageLayer());
    if (ptr) {
     // 画像パラメータからパスを取得して読み込み
     if (auto* imageParams = dynamic_cast<ArtifactImageInitParams*>(&params)) {
@@ -94,22 +96,22 @@ namespace Artifact {
    }
    break;
   case LayerType::Adjustment:
-   ptr = std::make_shared<ArtifactAdjustableLayer>();
+   ptr = ArtifactAbstractLayerPtr(new ArtifactAdjustableLayer());
    break;
   case LayerType::Text:
-   ptr = std::make_shared<ArtifactTextLayer>();
+   ptr = ArtifactAbstractLayerPtr(new ArtifactTextLayer());
    break;
   case LayerType::Shape: {
    if (auto* svgParams = dynamic_cast<ArtifactSvgInitParams*>(&params)) {
-    auto svgLayer = std::make_shared<ArtifactSvgLayer>();
+    auto* svgLayer = new ArtifactSvgLayer();
     const QString path = svgParams->svgPath();
     if (path.isEmpty() || !svgLayer->loadFromPath(path)) {
      qWarning() << "[ArtifactLayerFactory] Failed to create SVG layer from path:" << path;
      break;
     }
-    ptr = svgLayer;
+    ptr = ArtifactAbstractLayerPtr(svgLayer);
    } else {
-    ptr = std::make_shared<ArtifactShapeLayer>();
+    ptr = ArtifactAbstractLayerPtr(new ArtifactShapeLayer());
    }
    break;
   }
@@ -117,18 +119,18 @@ namespace Artifact {
    ptr = createParticleLayer(QStringLiteral("fire"));
    break;
   case LayerType::Audio: {
-   auto audioLayer = std::make_shared<ArtifactAudioLayer>();
+   auto* audioLayer = new ArtifactAudioLayer();
    if (auto* audioParams = dynamic_cast<ArtifactAudioInitParams*>(&params)) {
     const QString path = audioParams->audioPath();
     if (!path.isEmpty()) {
      audioLayer->loadFromPath(path);
     }
    }
-   ptr = audioLayer;
+   ptr = ArtifactAbstractLayerPtr(audioLayer);
    break;
   }
   case LayerType::Video:
-   ptr = std::make_shared<ArtifactVideoLayer>();
+   ptr = ArtifactAbstractLayerPtr(new ArtifactVideoLayer());
    if (ptr) {
     if (auto* videoParams = dynamic_cast<ArtifactVideoInitParams*>(&params)) {
      const QString path = videoParams->videoPath();
@@ -143,25 +145,25 @@ namespace Artifact {
    ptr = createArtifactCompositionLayer();
    break;
   case LayerType::Camera:
-   ptr = std::make_shared<ArtifactCameraLayer>();
+   ptr = ArtifactAbstractLayerPtr(new ArtifactCameraLayer());
    break;
   case LayerType::Light:
-   ptr = std::make_shared<ArtifactLightLayer>();
+   ptr = ArtifactAbstractLayerPtr(new ArtifactLightLayer());
    break;
    case LayerType::Group:
-    ptr = std::make_shared<ArtifactGroupLayer>();
+    ptr = ArtifactAbstractLayerPtr(new ArtifactGroupLayer());
     break;
    case LayerType::Clone:
-    ptr = std::make_shared<ArtifactCloneLayer>();
+    ptr = ArtifactAbstractLayerPtr(new ArtifactCloneLayer());
     break;
   case LayerType::SDF:
-   ptr = std::make_shared<ArtifactSDFLayer>();
+   ptr = ArtifactAbstractLayerPtr(new ArtifactSDFLayer());
    break;
   case LayerType::Construction:
-   ptr = std::make_shared<ArtifactConstructionLayer>();
+   ptr = ArtifactAbstractLayerPtr(new ArtifactConstructionLayer());
    break;
   case LayerType::Model3D: {
-   auto modelLayer = std::make_shared<Artifact3DLayer>();
+   auto* modelLayer = new Artifact3DLayer();
    if (auto* modelParams =
            dynamic_cast<ArtifactModel3DLayerInitParams*>(&params)) {
     const QString path = modelParams->modelPath();
@@ -169,7 +171,7 @@ namespace Artifact {
      modelLayer->loadFromFile(path);
     }
    }
-   ptr = modelLayer;
+   ptr = ArtifactAbstractLayerPtr(modelLayer);
    break;
   }
    default:
@@ -230,7 +232,8 @@ namespace Artifact {
                   }
               }
               result.layer->fromJsonProperties(json);
-              return result.layer;
+              ArtifactAbstractLayerPtr layer = result.layer;
+              return layer;
           }
           return nullptr;
       }
@@ -245,7 +248,8 @@ namespace Artifact {
           auto result = factory.createLayer(videoParams);
           if (result.success && result.layer) {
               result.layer->fromJsonProperties(json);
-              return result.layer;
+              ArtifactAbstractLayerPtr layer = result.layer;
+              return layer;
           }
           return nullptr;
       }
@@ -259,7 +263,8 @@ namespace Artifact {
           auto result = factory.createLayer(svgParams);
           if (result.success && result.layer) {
               result.layer->fromJsonProperties(json);
-              return result.layer;
+              ArtifactAbstractLayerPtr layer = result.layer;
+              return layer;
           }
           return nullptr;
       }
@@ -267,8 +272,19 @@ namespace Artifact {
       auto result = factory.createLayer(paramsForFactory);
       if (result.success && result.layer) {
           result.layer->fromJsonProperties(json);
-          return result.layer;
+          ArtifactAbstractLayerPtr layer = result.layer;
+          return layer;
       }
       return nullptr;
   }
+
+std::shared_ptr<ArtifactAbstractLayer> createArtifactCompositionLayer()
+{
+  return std::make_shared<ArtifactCompositionLayer>();
+}
+
+std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json)
+{
+  return ArtifactLayerFactory::createFromJson(json);
+}
 }
