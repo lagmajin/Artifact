@@ -8,6 +8,8 @@ module;
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QDateTime>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
 #include <memory>
 #include <vector>
 
@@ -18,6 +20,24 @@ import Artifact.Render.Queue.Service;
 import Artifact.Render.Queue.Presets;
 
 namespace Artifact {
+
+namespace {
+
+struct BatchRenderPlan {
+    ArtifactCore::CompositionID id;
+    QString compName;
+    QString outputPath;
+    QString outputFormat;
+    QString codec;
+    QString codecProfile;
+    int width = 0;
+    int height = 0;
+    double fps = 0.0;
+    int bitrate = 0;
+    bool valid = false;
+};
+
+} // namespace
 
 class ArtifactBatchRenderer::Impl {
 public:
@@ -88,31 +108,41 @@ int ArtifactBatchRenderer::addCompositions(
     auto* queue = impl_->queueService;
     if (!queue) return 0;
 
-    int added = 0;
     auto& pm = ArtifactProjectManager::getInstance();
+    QVector<BatchRenderPlan> plans(ids.size());
+    QDir outputRoot(outputDir);
+    if (!outputRoot.exists()) {
+        outputRoot.mkpath(".");
+    }
 
-    for (const auto& id : ids) {
-        const auto found = pm.findComposition(id);
-        if (!found.success) continue;
+    tbb::parallel_for(tbb::blocked_range<int>(0, ids.size()),
+        [&](const tbb::blocked_range<int>& range) {
+            for (int i = range.begin(); i < range.end(); ++i) {
+                const auto& id = ids[i];
+                const auto found = pm.findComposition(id);
+                if (!found.success) continue;
 
-        auto comp = found.ptr.lock();
-        if (!comp) continue;
+                auto comp = found.ptr.lock();
+                if (!comp) continue;
 
-        const QString compName = comp->name();
-        const QString safeName = resolveFileNamePattern(fileNamePattern, compName);
+                const QString compName = comp->name();
+                const QString safeName = resolveFileNamePattern(fileNamePattern, compName);
+                plans[i].id = id;
+                plans[i].compName = compName;
+                plans[i].outputPath = outputRoot.filePath(safeName + ".mp4");
+                plans[i].valid = true;
+            }
+        });
 
-        // Generate output path
-        QDir dir(outputDir);
-        if (!dir.exists()) dir.mkpath(".");
-        const QString outputPath = dir.filePath(safeName + ".mp4");
+    int added = 0;
+    for (const auto& plan : plans) {
+        if (!plan.valid) continue;
 
-        // Add to render queue
-        queue->addRenderQueueForComposition(id, compName);
+        queue->addRenderQueueForComposition(plan.id, plan.compName);
 
-        // Set output path and frame range from composition
         const int compIndex = queue->jobCount() - 1;
         if (compIndex >= 0) {
-            queue->setJobOutputPathAt(compIndex, outputPath);
+            queue->setJobOutputPathAt(compIndex, plan.outputPath);
             int startF = 0, endF = 1;
             if (queue->jobFrameRangeAt(compIndex, &startF, &endF)) {
                 // Already set by addRenderQueueForComposition
@@ -135,32 +165,43 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
     auto* queue = impl_->queueService;
     if (!queue) return 0;
 
-    int added = 0;
     auto& pm = ArtifactProjectManager::getInstance();
+    QVector<BatchRenderPlan> plans(ids.size());
+    QDir outputRoot(tmpl.outputDirectory);
+    if (!outputRoot.exists()) {
+        outputRoot.mkpath(".");
+    }
+    const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(tmpl.presetId);
+    const QString ext = preset ? preset->container : "mp4";
 
-    for (const auto& id : ids) {
-        const auto found = pm.findComposition(id);
-        if (!found.success) continue;
+    tbb::parallel_for(tbb::blocked_range<int>(0, ids.size()),
+        [&](const tbb::blocked_range<int>& range) {
+            for (int i = range.begin(); i < range.end(); ++i) {
+                const auto& id = ids[i];
+                const auto found = pm.findComposition(id);
+                if (!found.success) continue;
 
-        auto comp = found.ptr.lock();
-        if (!comp) continue;
+                auto comp = found.ptr.lock();
+                if (!comp) continue;
 
-        const QString compName = comp->name();
-        const QString resolvedName = resolveFileNamePattern(tmpl.fileNamePattern, compName);
-        QDir dir(tmpl.outputDirectory);
-        if (!dir.exists()) dir.mkpath(".");
+                const QString compName = comp->name();
+                const QString resolvedName = resolveFileNamePattern(tmpl.fileNamePattern, compName);
+                plans[i].id = id;
+                plans[i].compName = compName;
+                plans[i].outputPath = outputRoot.filePath(resolvedName + "." + ext);
+                plans[i].valid = true;
+            }
+        });
 
-        // Determine extension from preset
-        const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(tmpl.presetId);
-        const QString ext = preset ? preset->container : "mp4";
-        const QString outputPath = dir.filePath(resolvedName + "." + ext);
+    int added = 0;
+    for (const auto& plan : plans) {
+        if (!plan.valid) continue;
 
-        queue->addRenderQueueForComposition(id, compName);
+        queue->addRenderQueueForComposition(plan.id, plan.compName);
         const int idx = queue->jobCount() - 1;
         if (idx >= 0) {
-            queue->setJobOutputPathAt(idx, outputPath);
+            queue->setJobOutputPathAt(idx, plan.outputPath);
             if (!tmpl.presetId.isEmpty()) {
-                // Use addRenderQueueWithPreset-equivalent via output settings
                 QString outFmt, codec, codecProfile;
                 int w, h, bitrate;
                 double fps;

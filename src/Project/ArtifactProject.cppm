@@ -12,6 +12,8 @@ module;
 #include <QDir>
 #include <QSet>
 #include <QtTest/QtTest>
+#include <tbb/blocked_range.h>
+#include <tbb/parallel_for.h>
 module Artifact.Project;
 
 //#include <QtCore/QString>
@@ -875,11 +877,17 @@ QJsonArray compsArray;
   const auto settingsIssues = settings().validate();
   issues.insert(issues.end(), settingsIssues.begin(), settingsIssues.end());
 
-  // Composition validation
-  for (const auto& item : impl_->ownedItems_) {
-    if (!item) continue;
+  const int rootCount = static_cast<int>(impl_->ownedItems_.size());
+  std::vector<std::vector<ProjectValidationIssue>> issuesByRoot(static_cast<std::size_t>(rootCount));
+
+  auto validateRoot = [&](int index) {
+    const auto& item = impl_->ownedItems_[index];
+    if (!item) return;
+
+    std::vector<ProjectValidationIssue> localIssues;
     std::function<void(const ProjectItem*)> walk = [&](const ProjectItem* node) {
       if (!node) return;
+
       if (node->type() == eProjectItemType::Composition) {
         const auto* compItem = static_cast<const CompositionItem*>(node);
         auto findResult = impl_->findComposition(compItem->compositionId);
@@ -887,7 +895,7 @@ QJsonArray compsArray;
           if (auto comp = findResult.ptr.lock()) {
             const QString compName = compItem->name.toQString().trimmed();
             if (compName.isEmpty()) {
-              issues.push_back({
+              localIssues.push_back({
                 ProjectValidationIssue::Severity::Warning,
                 "composition.name",
                 "コンポジション名が空です",
@@ -896,7 +904,7 @@ QJsonArray compsArray;
             }
 
             if (comp->layerCount() == 0) {
-              issues.push_back({
+              localIssues.push_back({
                 ProjectValidationIssue::Severity::Info,
                 "composition.layers",
                 QString("コンポジション '%1' にレイヤーがありません").arg(compName),
@@ -910,7 +918,7 @@ QJsonArray compsArray;
               if (!layer) continue;
               const QString layerName = layer->layerName().trimmed();
               if (layerName.isEmpty()) {
-                issues.push_back({
+                localIssues.push_back({
                   ProjectValidationIssue::Severity::Info,
                   "layer.name",
                   QString("コンポジション '%1' 内のレイヤー名が空です").arg(compName),
@@ -921,24 +929,13 @@ QJsonArray compsArray;
           }
         }
       }
-      for (const auto* child : node->children) {
-        walk(child);
-      }
-    };
-    walk(item.get());
-  }
 
-  // Footage validation - check for missing files
-  for (const auto& item : impl_->ownedItems_) {
-    if (!item) continue;
-    std::function<void(const ProjectItem*)> walkFootage = [&](const ProjectItem* node) {
-      if (!node) return;
       if (node->type() == eProjectItemType::Footage) {
         const auto* footage = static_cast<const FootageItem*>(node);
         if (!footage->filePath.isEmpty()) {
           QFileInfo fi(footage->filePath);
           if (!fi.exists()) {
-            issues.push_back({
+            localIssues.push_back({
               ProjectValidationIssue::Severity::Error,
               "footage.missing",
               QString("ファイルが見つかりません: %1").arg(footage->name.toQString()),
@@ -947,11 +944,29 @@ QJsonArray compsArray;
           }
         }
       }
+
       for (const auto* child : node->children) {
-        walkFootage(child);
+        walk(child);
       }
     };
-    walkFootage(item.get());
+
+    walk(item.get());
+    issuesByRoot[static_cast<std::size_t>(index)] = std::move(localIssues);
+  };
+
+  if (rootCount > 0) {
+    tbb::parallel_for(tbb::blocked_range<int>(0, rootCount),
+      [&](const tbb::blocked_range<int>& range) {
+        for (int i = range.begin(); i < range.end(); ++i) {
+          validateRoot(i);
+        }
+      });
+  }
+
+  for (auto& rootIssues : issuesByRoot) {
+    issues.insert(issues.end(),
+      std::make_move_iterator(rootIssues.begin()),
+      std::make_move_iterator(rootIssues.end()));
   }
 
   return issues;
