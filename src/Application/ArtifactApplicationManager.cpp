@@ -41,6 +41,8 @@ module Artifact.Application.Manager;
 
 
 import EnvironmentVariable;
+import Artifact.Effects.Manager;
+import Artifact.Composition.Manager;
 import Render.Queue.Manager;
 import Artifact.Test.ProjectManager;
 import Artifact.Project.Manager;

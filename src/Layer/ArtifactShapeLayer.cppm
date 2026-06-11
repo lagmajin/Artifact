@@ -22,7 +22,10 @@ module Artifact.Layer.Shape;
 import std;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Layer.CloneEffectSupport;
+import Property.Types;
 import Shape.Group;
+import Shape.TrimPaths;
+import Shape.Repeater;
 import Shape.AeOperators;
 import Shape.Types;
 import Shape.Path;
@@ -108,19 +111,46 @@ QPainterPath buildLayerPath(const Artifact::ShapeType shapeType,
      .toPainterPath();
 }
 
+std::unique_ptr<ArtifactCore::ShapeOperator> createShapeOperator(ArtifactCore::ShapeOperatorType type) {
+  switch (type) {
+  case ArtifactCore::ShapeOperatorType::TrimPaths:
+    return std::make_unique<ArtifactCore::TrimPaths>();
+  case ArtifactCore::ShapeOperatorType::Repeater:
+    return std::make_unique<ArtifactCore::Repeater>();
+  case ArtifactCore::ShapeOperatorType::MergePaths:
+    return std::make_unique<ArtifactCore::MergePaths>();
+  case ArtifactCore::ShapeOperatorType::OffsetPaths:
+    return std::make_unique<ArtifactCore::OffsetPaths>();
+  case ArtifactCore::ShapeOperatorType::PuckerBloat:
+    return std::make_unique<ArtifactCore::PuckerBloat>();
+  case ArtifactCore::ShapeOperatorType::RoundedCorners:
+    return std::make_unique<ArtifactCore::RoundedCorners>();
+  case ArtifactCore::ShapeOperatorType::WigglePaths:
+    return std::make_unique<ArtifactCore::WigglePaths>();
+  case ArtifactCore::ShapeOperatorType::ZigZag:
+    return std::make_unique<ArtifactCore::ZigZag>();
+  case ArtifactCore::ShapeOperatorType::Twist:
+    return std::make_unique<ArtifactCore::Twist>();
+  case ArtifactCore::ShapeOperatorType::HandDrawnWobble:
+    return std::make_unique<ArtifactCore::HandDrawnWobble>();
+  default:
+    return nullptr;
+  }
+}
+
 static std::vector<ArtifactCore::ShapePath> applyShapeOperators(
     const ArtifactCore::ShapePath& basePath,
-    const std::vector<ArtifactCore::ShapeOperatorType>& operatorTypes)
+    const std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>& operators)
 {
- if (operatorTypes.empty()) {
+ if (operators.empty()) {
   return {basePath};
  }
 
  ArtifactCore::ShapeGroup group;
  auto pathShape = std::make_unique<ArtifactCore::PathShape>(basePath);
  group.addChild(std::move(pathShape));
- for (const auto type : operatorTypes) {
-  group.addOperator(type);
+ for (const auto& op : operators) {
+  group.addOperator(op->clone());
  }
  return group.processedPaths();
 }
@@ -137,14 +167,14 @@ static std::vector<QPainterPath> buildProcessedPainterPaths(
     bool customPolygonClosed,
     const std::vector<Artifact::CustomPathVertex>& customPathVertices,
     bool customPathClosed,
-    const std::vector<ArtifactCore::ShapeOperatorType>& operatorTypes)
+    const std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>>& operators)
 {
  const QPainterPath basePath = buildLayerPath(shapeType, width, height, cornerRadius,
                                               starPoints, starInnerRadius, polygonSides,
                                               customPolygonPoints, customPolygonClosed,
                                               customPathVertices, customPathClosed);
  const ArtifactCore::ShapePath shapePath = ArtifactCore::ShapePath::fromPainterPath(basePath);
- const auto processed = applyShapeOperators(shapePath, operatorTypes);
+ const auto processed = applyShapeOperators(shapePath, operators);
  std::vector<QPainterPath> painterPaths;
  painterPaths.reserve(processed.size());
  for (const auto& path : processed) {
@@ -508,6 +538,22 @@ QString shapeTypeName(int type) {
  return QStringLiteral("Rect");
 }
 
+QString operatorName(ArtifactCore::ShapeOperatorType type) {
+  switch (type) {
+  case ArtifactCore::ShapeOperatorType::TrimPaths: return QStringLiteral("Trim Paths");
+  case ArtifactCore::ShapeOperatorType::Repeater: return QStringLiteral("Repeater");
+  case ArtifactCore::ShapeOperatorType::MergePaths: return QStringLiteral("Merge Paths");
+  case ArtifactCore::ShapeOperatorType::OffsetPaths: return QStringLiteral("Offset Paths");
+  case ArtifactCore::ShapeOperatorType::PuckerBloat: return QStringLiteral("Pucker & Bloat");
+  case ArtifactCore::ShapeOperatorType::RoundedCorners: return QStringLiteral("Rounded Corners");
+  case ArtifactCore::ShapeOperatorType::WigglePaths: return QStringLiteral("Wiggle Paths");
+  case ArtifactCore::ShapeOperatorType::ZigZag: return QStringLiteral("Zig Zag");
+  case ArtifactCore::ShapeOperatorType::Twist: return QStringLiteral("Twist");
+  case ArtifactCore::ShapeOperatorType::HandDrawnWobble: return QStringLiteral("Hand Drawn Wobble");
+  default: return QStringLiteral("Unknown Operator");
+  }
+}
+
 } // namespace
 
 namespace Artifact
@@ -556,7 +602,7 @@ public:
  // Phase 5: Bezier path override
  std::vector<CustomPathVertex> customPathVertices_;
  bool customPathClosed_ = true;
- std::vector<ArtifactCore::ShapeOperatorType> shapeOperators_;
+ std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> shapeOperators_;
 
  bool useCachePipeline() const {
   return customPathVertices_.size() >= 3 ||
@@ -861,11 +907,14 @@ void ArtifactShapeLayer::addShapeOperator(ArtifactCore::ShapeOperatorType type)
  if (!impl_) {
   return;
  }
- impl_->shapeOperators_.push_back(type);
- impl_->markDirty();
- impl_->localBoundsCacheDirty_ = true;
- impl_->shapeContentCacheDirty_ = true;
- Q_EMIT changed();
+ auto op = createShapeOperator(type);
+ if (op) {
+  impl_->shapeOperators_.push_back(std::move(op));
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
+ }
 }
 
 void ArtifactShapeLayer::clearShapeOperators()
@@ -890,7 +939,7 @@ ArtifactCore::ShapeOperatorType ArtifactShapeLayer::shapeOperatorTypeAt(int inde
  if (!impl_ || index < 0 || index >= static_cast<int>(impl_->shapeOperators_.size())) {
   return ArtifactCore::ShapeOperatorType::None;
  }
- return impl_->shapeOperators_[static_cast<size_t>(index)];
+ return impl_->shapeOperators_[static_cast<size_t>(index)]->type();
 }
 
 // ============================================================
@@ -1237,6 +1286,115 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
 
  groups.push_back(paramsGroup);
 
+ // Shape Operators
+ for (int i = 0; i < shapeOperatorCount(); ++i) {
+   const auto &op = impl_->shapeOperators_[static_cast<size_t>(i)];
+   ArtifactCore::PropertyGroup opGroup;
+   opGroup.setName(QStringLiteral("Operator %1 (%2)")
+                       .arg(i + 1)
+                       .arg(operatorName(op->type())));
+
+   QString prefix = QStringLiteral("shape.operator.%1.").arg(i);
+
+   if (auto trim = dynamic_cast<const ArtifactCore::TrimPaths *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("start"),
+                                  ArtifactCore::PropertyType::Float,
+                                  trim->start(), -100));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("end"),
+                                  ArtifactCore::PropertyType::Float,
+                                  trim->end(), -99));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("offset"),
+                                  ArtifactCore::PropertyType::Float,
+                                  trim->offset(), -98));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("trimMode"),
+                                  ArtifactCore::PropertyType::Integer,
+                                  static_cast<int>(trim->trimMode()), -97));
+   } else if (auto repeater =
+                  dynamic_cast<const ArtifactCore::Repeater *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("copies"),
+                                  ArtifactCore::PropertyType::Integer,
+                                  repeater->copies(), -100));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("offset"),
+                                  ArtifactCore::PropertyType::Float,
+                                  repeater->offset(), -99));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("anchorPoint"),
+                                  ArtifactCore::PropertyType::String,
+                                  repeater->anchorPoint(), -98));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("position"),
+                                  ArtifactCore::PropertyType::String,
+                                  repeater->position(), -97));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("scale"),
+                                  ArtifactCore::PropertyType::String,
+                                  repeater->scale(), -96));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("rotation"),
+                                  ArtifactCore::PropertyType::Float,
+                                  repeater->rotation(), -95));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("startOpacity"),
+                                  ArtifactCore::PropertyType::Float,
+                                  repeater->startOpacity(), -94));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("endOpacity"),
+                                  ArtifactCore::PropertyType::Float,
+                                  repeater->endOpacity(), -93));
+   } else if (auto offset =
+                  dynamic_cast<const ArtifactCore::OffsetPaths *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("offset"),
+                                  ArtifactCore::PropertyType::Float,
+                                  offset->offset(), -100));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("join"),
+                                  ArtifactCore::PropertyType::Integer,
+                                  offset->joinValue(), -99));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("miterLimit"),
+                                  ArtifactCore::PropertyType::Float,
+                                  offset->miterLimit(), -98));
+   } else if (auto pb =
+                  dynamic_cast<const ArtifactCore::PuckerBloat *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("amount"),
+                                  ArtifactCore::PropertyType::Float,
+                                  pb->amount(), -100));
+   } else if (auto rc =
+                  dynamic_cast<const ArtifactCore::RoundedCorners *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("radius"),
+                                  ArtifactCore::PropertyType::Float,
+                                  rc->radius(), -100));
+   } else if (auto wp =
+                  dynamic_cast<const ArtifactCore::WigglePaths *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("amount"),
+                                  ArtifactCore::PropertyType::Float,
+                                  wp->amount(), -100));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("frequency"),
+                                  ArtifactCore::PropertyType::Float,
+                                  wp->frequency(), -99));
+   } else if (auto zz = dynamic_cast<const ArtifactCore::ZigZag *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("amount"),
+                                  ArtifactCore::PropertyType::Float,
+                                  zz->amount(), -100));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("frequency"),
+                                  ArtifactCore::PropertyType::Float,
+                                  zz->frequency(), -99));
+   } else if (auto twist =
+                  dynamic_cast<const ArtifactCore::Twist *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("angle"),
+                                  ArtifactCore::PropertyType::Float,
+                                  twist->angle(), -100));
+   } else if (auto wobble =
+                  dynamic_cast<const ArtifactCore::HandDrawnWobble *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("wobbleAmount"),
+                                  ArtifactCore::PropertyType::Float,
+                                  wobble->wobbleAmount(), -100));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("wobbleFrequency"),
+                                  ArtifactCore::PropertyType::Float,
+                                  wobble->wobbleFrequency(), -99));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("pressureJitter"),
+                                  ArtifactCore::PropertyType::Float,
+                                  wobble->pressureJitter(), -98));
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("gapProbability"),
+                                  ArtifactCore::PropertyType::Float,
+                                  wobble->gapProbability(), -97));
+   }
+
+   groups.push_back(opGroup);
+ }
+
  return groups;
 }
 
@@ -1325,6 +1483,131 @@ if (propertyPath == "shape.type") {
   setStrokeAlign(static_cast<StrokeAlign>(value.toInt()));
   return true;
  }
+
+ if (propertyPath.startsWith("shape.operator.")) {
+   QStringList parts = propertyPath.split('.');
+   if (parts.size() >= 4) {
+     bool ok = false;
+     int opIndex = parts[2].toInt(&ok);
+     QString field = parts[3];
+     if (ok && opIndex >= 0 &&
+         opIndex < static_cast<int>(impl_->shapeOperators_.size())) {
+       auto &op = impl_->shapeOperators_[static_cast<size_t>(opIndex)];
+       bool handled = false;
+       if (auto trim = dynamic_cast<ArtifactCore::TrimPaths *>(op.get())) {
+         if (field == "start") {
+           trim->setStart(value.toFloat());
+           handled = true;
+         } else if (field == "end") {
+           trim->setEnd(value.toFloat());
+           handled = true;
+         } else if (field == "offset") {
+           trim->setOffset(value.toFloat());
+           handled = true;
+         } else if (field == "trimMode") {
+           trim->setTrimMode(static_cast<ArtifactCore::TrimMode>(value.toInt()));
+           handled = true;
+         }
+       } else if (auto repeater =
+                      dynamic_cast<ArtifactCore::Repeater *>(op.get())) {
+         if (field == "copies") {
+           repeater->setCopies(value.toInt());
+           handled = true;
+         } else if (field == "offset") {
+           repeater->setOffset(value.toFloat());
+           handled = true;
+         } else if (field == "anchorPoint") {
+           repeater->setAnchorPoint(value.toPointF());
+           handled = true;
+         } else if (field == "position") {
+           repeater->setPosition(value.toPointF());
+           handled = true;
+         } else if (field == "scale") {
+           repeater->setScale(value.toPointF());
+           handled = true;
+         } else if (field == "rotation") {
+           repeater->setRotation(value.toFloat());
+           handled = true;
+         } else if (field == "startOpacity") {
+           repeater->setStartOpacity(value.toFloat());
+           handled = true;
+         } else if (field == "endOpacity") {
+           repeater->setEndOpacity(value.toFloat());
+           handled = true;
+         }
+       } else if (auto offset =
+                      dynamic_cast<ArtifactCore::OffsetPaths *>(op.get())) {
+         if (field == "offset") {
+           offset->setOffset(value.toFloat());
+           handled = true;
+         } else if (field == "join") {
+           offset->setJoinValue(value.toInt());
+           handled = true;
+         } else if (field == "miterLimit") {
+           offset->setMiterLimit(value.toFloat());
+           handled = true;
+         }
+       } else if (auto pb =
+                      dynamic_cast<ArtifactCore::PuckerBloat *>(op.get())) {
+         if (field == "amount") {
+           pb->setAmount(value.toFloat());
+           handled = true;
+         }
+       } else if (auto rc =
+                      dynamic_cast<ArtifactCore::RoundedCorners *>(op.get())) {
+         if (field == "radius") {
+           rc->setRadius(value.toFloat());
+           handled = true;
+         }
+       } else if (auto wp =
+                      dynamic_cast<ArtifactCore::WigglePaths *>(op.get())) {
+         if (field == "amount") {
+           wp->setAmount(value.toFloat());
+           handled = true;
+         } else if (field == "frequency") {
+           wp->setFrequency(value.toFloat());
+           handled = true;
+         }
+       } else if (auto zz = dynamic_cast<ArtifactCore::ZigZag *>(op.get())) {
+         if (field == "amount") {
+           zz->setAmount(value.toFloat());
+           handled = true;
+         } else if (field == "frequency") {
+           zz->setFrequency(value.toFloat());
+           handled = true;
+         }
+       } else if (auto twist =
+                      dynamic_cast<ArtifactCore::Twist *>(op.get())) {
+         if (field == "angle") {
+           twist->setAngle(value.toFloat());
+           handled = true;
+         }
+       } else if (auto wobble =
+                      dynamic_cast<ArtifactCore::HandDrawnWobble *>(op.get())) {
+         if (field == "wobbleAmount") {
+           wobble->setWobbleAmount(value.toFloat());
+           handled = true;
+         } else if (field == "wobbleFrequency") {
+           wobble->setWobbleFrequency(value.toFloat());
+           handled = true;
+         } else if (field == "pressureJitter") {
+           wobble->setPressureJitter(value.toFloat());
+           handled = true;
+         } else if (field == "gapProbability") {
+           wobble->setGapProbability(value.toFloat());
+           handled = true;
+         }
+       }
+
+       if (handled) {
+         impl_->markDirty();
+         impl_->localBoundsCacheDirty_ = true;
+         Q_EMIT changed();
+         return true;
+       }
+     }
+   }
+ }
  return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
 }
 
@@ -1389,88 +1672,104 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   }
   obj["customPath"] = customPath;
   QJsonArray operators;
-  for (const auto type : impl_->shapeOperators_) {
-   operators.push_back(static_cast<int>(type));
+  for (const auto &op : impl_->shapeOperators_) {
+    QJsonObject opObj = op->toJson();
+    opObj["type"] = static_cast<int>(op->type());
+    operators.push_back(opObj);
   }
   obj["shapeOperators"] = operators;
   return obj;
 }
 
-std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject& obj) {
- auto layer = std::make_shared<ArtifactShapeLayer>();
- layer->ArtifactAbstract2DLayer::fromJsonProperties(obj);
- layer->setShapeType(static_cast<Artifact::ShapeType>(obj["shapeType"].toInt()));
- layer->setSize(obj["shapeWidth"].toInt(200), obj["shapeHeight"].toInt(200));
- layer->setFillColor(FloatColor(
-  static_cast<float>(obj["fillR"].toDouble(1.0)),
-  static_cast<float>(obj["fillG"].toDouble(1.0)),
-  static_cast<float>(obj["fillB"].toDouble(1.0)),
-  static_cast<float>(obj["fillA"].toDouble(1.0))
- ));
- layer->setFillEnabled(obj["fillEnabled"].toBool(true));
- layer->setStrokeColor(FloatColor(
-  static_cast<float>(obj["strokeR"].toDouble(0.0)),
-  static_cast<float>(obj["strokeG"].toDouble(0.0)),
-  static_cast<float>(obj["strokeB"].toDouble(0.0)),
-  static_cast<float>(obj["strokeA"].toDouble(1.0))
- ));
- layer->setStrokeWidth(static_cast<float>(obj["strokeWidth"].toDouble(0.0)));
- layer->setStrokeEnabled(obj["strokeEnabled"].toBool(false));
- layer->setStrokeTaper(static_cast<float>(obj["strokeTaperStart"].toDouble(1.0)),
-                       static_cast<float>(obj["strokeTaperEnd"].toDouble(1.0)));
- layer->setStrokeGradientEnabled(obj["strokeGradientEnabled"].toBool(false));
- layer->setStrokeGradientStartColor(FloatColor(
-  static_cast<float>(obj["strokeGradientStartR"].toDouble(layer->strokeColor().r())),
-  static_cast<float>(obj["strokeGradientStartG"].toDouble(layer->strokeColor().g())),
-  static_cast<float>(obj["strokeGradientStartB"].toDouble(layer->strokeColor().b())),
-  static_cast<float>(obj["strokeGradientStartA"].toDouble(layer->strokeColor().a()))
-  ));
- layer->setStrokeGradientEndColor(FloatColor(
-  static_cast<float>(obj["strokeGradientEndR"].toDouble(layer->strokeColor().r())),
-  static_cast<float>(obj["strokeGradientEndG"].toDouble(layer->strokeColor().g())),
-  static_cast<float>(obj["strokeGradientEndB"].toDouble(layer->strokeColor().b())),
-  static_cast<float>(obj["strokeGradientEndA"].toDouble(layer->strokeColor().a()))
-  ));
- layer->setStrokeCap(static_cast<StrokeCap>(obj["strokeCap"].toInt(0)));
- layer->setStrokeJoin(static_cast<StrokeJoin>(obj["strokeJoin"].toInt(0)));
- layer->setStrokeAlign(static_cast<StrokeAlign>(obj["strokeAlign"].toInt(0)));
- layer->setCornerRadius(static_cast<float>(obj["cornerRadius"].toDouble(0.0)));
- layer->setStarPoints(obj["starPoints"].toInt(5));
- layer->setStarInnerRadius(static_cast<float>(obj["starInnerRadius"].toDouble(0.382)));
- layer->setPolygonSides(obj["polygonSides"].toInt(6));
- layer->impl_->customPolygonClosed_ = obj["customPolygonClosed"].toBool(true);
- layer->impl_->customPolygonPoints_.clear();
- const QJsonArray customPolygonPoints = obj["customPolygonPoints"].toArray();
- layer->impl_->customPolygonPoints_.reserve(customPolygonPoints.size());
- for (const auto& value : customPolygonPoints) {
-  const QJsonObject p = value.toObject();
-  layer->impl_->customPolygonPoints_.push_back(QPointF(p["x"].toDouble(), p["y"].toDouble()));
- }
- // Phase 5: bezier path (takes priority over customPolygon)
- const QJsonArray customPathArr = obj["customPath"].toArray();
- if (!customPathArr.isEmpty()) {
-  layer->impl_->customPathClosed_ = obj["customPathClosed"].toBool(true);
-  layer->impl_->customPathVertices_.clear();
-  layer->impl_->customPathVertices_.reserve(customPathArr.size());
-  for (const auto& val : customPathArr) {
-   const QJsonObject vObj = val.toObject();
-   CustomPathVertex v;
-   v.pos = QPointF(vObj["px"].toDouble(), vObj["py"].toDouble());
-   v.inTangent = QPointF(vObj["ix"].toDouble(), vObj["iy"].toDouble());
-   v.outTangent = QPointF(vObj["ox"].toDouble(), vObj["oy"].toDouble());
-   v.smooth = vObj["smooth"].toBool(false);
-   layer->impl_->customPathVertices_.push_back(v);
+std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObject &obj) {
+  auto layer = std::make_shared<ArtifactShapeLayer>();
+  layer->ArtifactAbstract2DLayer::fromJsonProperties(obj);
+  layer->setShapeType(static_cast<Artifact::ShapeType>(obj["shapeType"].toInt()));
+  layer->setSize(obj["shapeWidth"].toInt(200), obj["shapeHeight"].toInt(200));
+  layer->setFillColor(FloatColor(
+      static_cast<float>(obj["fillR"].toDouble(1.0)),
+      static_cast<float>(obj["fillG"].toDouble(1.0)),
+      static_cast<float>(obj["fillB"].toDouble(1.0)),
+      static_cast<float>(obj["fillA"].toDouble(1.0))));
+  layer->setFillEnabled(obj["fillEnabled"].toBool(true));
+  layer->setStrokeColor(FloatColor(
+      static_cast<float>(obj["strokeR"].toDouble(0.0)),
+      static_cast<float>(obj["strokeG"].toDouble(0.0)),
+      static_cast<float>(obj["strokeB"].toDouble(0.0)),
+      static_cast<float>(obj["strokeA"].toDouble(1.0))));
+  layer->setStrokeWidth(static_cast<float>(obj["strokeWidth"].toDouble(0.0)));
+  layer->setStrokeEnabled(obj["strokeEnabled"].toBool(false));
+  layer->setStrokeTaper(
+      static_cast<float>(obj["strokeTaperStart"].toDouble(1.0)),
+      static_cast<float>(obj["strokeTaperEnd"].toDouble(1.0)));
+  layer->setStrokeGradientEnabled(obj["strokeGradientEnabled"].toBool(false));
+  layer->setStrokeGradientStartColor(FloatColor(
+      static_cast<float>(
+          obj["strokeGradientStartR"].toDouble(layer->strokeColor().r())),
+      static_cast<float>(
+          obj["strokeGradientStartG"].toDouble(layer->strokeColor().g())),
+      static_cast<float>(
+          obj["strokeGradientStartB"].toDouble(layer->strokeColor().b())),
+      static_cast<float>(
+          obj["strokeGradientStartA"].toDouble(layer->strokeColor().a()))));
+  layer->setStrokeGradientEndColor(FloatColor(
+      static_cast<float>(
+          obj["strokeGradientEndR"].toDouble(layer->strokeColor().r())),
+      static_cast<float>(
+          obj["strokeGradientEndG"].toDouble(layer->strokeColor().g())),
+      static_cast<float>(
+          obj["strokeGradientEndB"].toDouble(layer->strokeColor().b())),
+      static_cast<float>(
+          obj["strokeGradientEndA"].toDouble(layer->strokeColor().a()))));
+  layer->setStrokeCap(static_cast<StrokeCap>(obj["strokeCap"].toInt(0)));
+  layer->setStrokeJoin(static_cast<StrokeJoin>(obj["strokeJoin"].toInt(0)));
+  layer->setStrokeAlign(static_cast<StrokeAlign>(obj["strokeAlign"].toInt(0)));
+  layer->setCornerRadius(static_cast<float>(obj["cornerRadius"].toDouble(0.0)));
+  layer->setStarPoints(obj["starPoints"].toInt(5));
+  layer->setStarInnerRadius(
+      static_cast<float>(obj["starInnerRadius"].toDouble(0.382)));
+  layer->setPolygonSides(obj["polygonSides"].toInt(6));
+  layer->impl_->customPolygonClosed_ = obj["customPolygonClosed"].toBool(true);
+  layer->impl_->customPolygonPoints_.clear();
+  const QJsonArray customPolygonPoints = obj["customPolygonPoints"].toArray();
+  layer->impl_->customPolygonPoints_.reserve(customPolygonPoints.size());
+  for (const auto &value : customPolygonPoints) {
+    const QJsonObject p = value.toObject();
+    layer->impl_->customPolygonPoints_.push_back(
+        QPointF(p["x"].toDouble(), p["y"].toDouble()));
   }
-  layer->impl_->customPolygonPoints_.clear(); // mutual exclusion
- }
- const QJsonArray operators = obj["shapeOperators"].toArray();
- layer->impl_->shapeOperators_.clear();
- layer->impl_->shapeOperators_.reserve(operators.size());
- for (const auto& val : operators) {
-  layer->impl_->shapeOperators_.push_back(static_cast<ArtifactCore::ShapeOperatorType>(val.toInt()));
- }
- layer->impl_->markDirty();
- return layer;
+  // Phase 5: bezier path (takes priority over customPolygon)
+  const QJsonArray customPathArr = obj["customPath"].toArray();
+  if (!customPathArr.isEmpty()) {
+    layer->impl_->customPathClosed_ = obj["customPathClosed"].toBool(true);
+    layer->impl_->customPathVertices_.clear();
+    layer->impl_->customPathVertices_.reserve(customPathArr.size());
+    for (const auto &val : customPathArr) {
+      const QJsonObject vObj = val.toObject();
+      CustomPathVertex v;
+      v.pos = QPointF(vObj["px"].toDouble(), vObj["py"].toDouble());
+      v.inTangent = QPointF(vObj["ix"].toDouble(), vObj["iy"].toDouble());
+      v.outTangent = QPointF(vObj["ox"].toDouble(), vObj["oy"].toDouble());
+      v.smooth = vObj["smooth"].toBool(false);
+      layer->impl_->customPathVertices_.push_back(v);
+    }
+    layer->impl_->customPolygonPoints_.clear(); // mutual exclusion
+  }
+  const QJsonArray operators = obj["shapeOperators"].toArray();
+  layer->impl_->shapeOperators_.clear();
+  layer->impl_->shapeOperators_.reserve(operators.size());
+  for (const auto &val : operators) {
+    const QJsonObject opObj = val.toObject();
+    const auto type = static_cast<ArtifactCore::ShapeOperatorType>(
+        opObj.value(QStringLiteral("type")).toInt(0));
+    auto op = createShapeOperator(type);
+    if (op) {
+      op->fromJson(opObj);
+      layer->impl_->shapeOperators_.push_back(std::move(op));
+    }
+  }
+  layer->impl_->markDirty();
+  return layer;
 }
 
 };

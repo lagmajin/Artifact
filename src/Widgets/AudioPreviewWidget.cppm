@@ -39,6 +39,11 @@ import AudioRenderer;
 
 namespace Artifact {
 
+namespace {
+constexpr float kAudioPreviewMinDb = -60.0f;
+constexpr float kAudioPreviewMaxDb = 0.0f;
+}
+
 W_OBJECT_IMPL(AudioWaveformWidget)
 W_OBJECT_IMPL(ArtifactAudioPreviewWidget)
 
@@ -80,8 +85,8 @@ void AudioLevelBarWidget::setLevels(float leftPeak, float leftRms, float rightPe
 
 static float dbToRatio(float db)
 {
-    if (db <= -96.0f) return 0.0f;
-    return (db - kMinDb) / (kMaxDb - kMinDb);
+    if (db <= kAudioPreviewMinDb) return 0.0f;
+    return (db - kAudioPreviewMinDb) / (kAudioPreviewMaxDb - kAudioPreviewMinDb);
 }
 
 void AudioLevelBarWidget::paintEvent(QPaintEvent* event)

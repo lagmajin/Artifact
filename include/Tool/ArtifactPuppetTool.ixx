@@ -8,6 +8,7 @@ module;
 
 export module Artifact.Tool.PuppetTool;
 
+import Utils.Id;
 import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 

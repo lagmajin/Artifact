@@ -224,7 +224,7 @@ namespace Artifact {
           }
           auto result = factory.createLayer(modelParams);
           if (result.success && result.layer) {
-              if (auto modelLayer = std::dynamic_pointer_cast<Artifact3DLayer>(result.layer)) {
+              if (auto modelLayer = dynamic_cast<Artifact3DLayer*>(result.layer.get())) {
                   if (json.contains("renderMode")) {
                       modelLayer->setRenderMode(static_cast<RenderMode>(json.value("renderMode").toInt()));
                   }

@@ -1,3 +1,18 @@
+module;
+
+#include <chrono>
+#include <functional>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <QByteArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
+#include <QString>
+#include <QTimer>
+
 module Artifact.Plugin.Sandbox;
 
 import ArtifactCore.Plugin.Common;
@@ -10,20 +25,20 @@ namespace {
 
 QJsonObject makePingCommand(int id) {
     QJsonObject cmd;
-    cmd["cmd"] = QStringLiteral("ping");
+    cmd["cmd"] = QString("ping");
     cmd["id"] = id;
     return cmd;
 }
 
 QJsonObject makeShutdownCommand() {
     QJsonObject cmd;
-    cmd["cmd"] = QStringLiteral("shutdown");
+    cmd["cmd"] = QString("shutdown");
     return cmd;
 }
 
 QJsonObject makeLoadCommand(const QString& dllPath) {
     QJsonObject cmd;
-    cmd["cmd"] = QStringLiteral("load");
+    cmd["cmd"] = QString("load");
     cmd["pluginPath"] = dllPath;
     return cmd;
 }
@@ -105,7 +120,7 @@ bool ArtifactPluginSandbox::start() {
                      });
 
     impl_->process->start(impl_->runnerPath, {
-        QStringLiteral("--plugin"), impl_->pluginDllPath
+        QString("--plugin"), impl_->pluginDllPath
     });
 
     if (!impl_->process->waitForStarted(10000)) {

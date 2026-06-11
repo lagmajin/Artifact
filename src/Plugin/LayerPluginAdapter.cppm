@@ -2,13 +2,12 @@ module;
 #include <cstdlib>
 #include <QByteArray>
 #include <QJsonDocument>
+#include "Plugin/ArtifactPluginABI.h"
 
 module Artifact.Plugin.Layer.Adapter;
 
 import ArtifactCore.Plugin.Common;
 import ArtifactCore.Plugin.Layer.Interface;
-
-#include "Plugin/ArtifactPluginABI.h"
 
 namespace Artifact {
 

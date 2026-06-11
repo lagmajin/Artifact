@@ -90,6 +90,7 @@ import Artifact.Project.Cleanup;
 import AssetMenuModel;
 import AssetDirectoryModel;
 import Utils.String.UniString;
+import Media.SourceInterpret;
 import File.TypeDetector;
 import Codec.Thumbnail.FFmpeg;
 import Artifact.Audio.Waveform;
@@ -2674,7 +2675,7 @@ if (!item.isFolder) {
       if (filePath.isEmpty()) return;
       auto* svc = ArtifactProjectService::instance();
       if (!svc) return;
-      auto* project = svc->currentProject();
+      auto project = svc->getCurrentProjectSharedPtr();
       if (!project) return;
       Artifact::FootageItem* footage = nullptr;
       for (auto* root : project->projectItems()) {
@@ -2705,11 +2706,11 @@ if (!item.isFolder) {
       if (dialog.exec() == QDialog::Accepted) {
         double newFps = dialog.selectedFrameRate();
         int mode = dialog.selectedPreserveMode();
-        ArtifactCore::FrameRatePreserveMode preserveMode;
+        FrameRatePreserveMode preserveMode;
         switch (mode) {
-          case 0: preserveMode = ArtifactCore::FrameRatePreserveMode::KeepKeyframes; break;
-          case 1: preserveMode = ArtifactCore::FrameRatePreserveMode::KeepTime; break;
-          default: preserveMode = ArtifactCore::FrameRatePreserveMode::ReSample; break;
+          case 0: preserveMode = FrameRatePreserveMode::KeepKeyframes; break;
+          case 1: preserveMode = FrameRatePreserveMode::KeepTime; break;
+          default: preserveMode = FrameRatePreserveMode::ReSample; break;
         }
         QString error;
         interpretSvc.applyFrameRateChange(footage, newFps, preserveMode, &error);

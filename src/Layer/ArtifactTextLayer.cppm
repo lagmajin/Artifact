@@ -63,6 +63,7 @@ module Artifact.Layer.Text;
 
 import Artifact.Layers.Abstract._2D;
 import Artifact.Composition.Abstract;
+import Artifact.Render.IRenderer;
 import Utils.String.UniString;
 import Color.Float;
 import FloatRGBA;
@@ -108,13 +109,21 @@ public:
   std::vector<GlyphItem> glyphs_;
   std::vector<TextAnimatorState> animators_;
   bool perGlyphMode_ = false;
+
+  // Path Text support
+  std::vector<ArtifactCore::BezierSegment> pathSegments_;
+
   // Cache key to detect if we actually need to re-render
   struct CacheKey {
     UniString text;
     TextStyle style;
     ParagraphStyle paragraph;
+    TextLayoutMode layoutMode;
+    std::vector<ArtifactCore::BezierSegment> pathSegments;
+
     bool operator==(const CacheKey &o) const {
-      return text == o.text && style == o.style && paragraph == o.paragraph;
+      return text == o.text && style == o.style && paragraph == o.paragraph &&
+             layoutMode == o.layoutMode && pathSegments == o.pathSegments;
     }
   };
   std::optional<CacheKey> lastCacheKey_;
@@ -963,6 +972,58 @@ float ArtifactTextLayer::boxHeight() const {
   return impl_->paragraphStyle_.boxHeight;
 }
 
+void ArtifactTextLayer::setPathSegments(const std::vector<ArtifactCore::BezierSegment>& segments) {
+  impl_->pathSegments_ = segments;
+  if (impl_->layoutMode_ != TextLayoutMode::Path && !segments.empty()) {
+    impl_->layoutMode_ = TextLayoutMode::Path;
+  }
+  markDirty();
+}
+
+std::vector<ArtifactCore::BezierSegment> ArtifactTextLayer::pathSegments() const {
+  return impl_->pathSegments_;
+}
+
+void ArtifactTextLayer::setPathStartOffset(double offset) {
+  if (!impl_->paragraphStyle_.pathBinding) impl_->paragraphStyle_.pathBinding.emplace();
+  impl_->paragraphStyle_.pathBinding->startOffset = offset;
+  markDirty();
+}
+
+double ArtifactTextLayer::pathStartOffset() const {
+  return impl_->paragraphStyle_.pathBinding ? impl_->paragraphStyle_.pathBinding->startOffset : 0.0;
+}
+
+void ArtifactTextLayer::setPathEndOffset(double offset) {
+  if (!impl_->paragraphStyle_.pathBinding) impl_->paragraphStyle_.pathBinding.emplace();
+  impl_->paragraphStyle_.pathBinding->endOffset = offset;
+  markDirty();
+}
+
+double ArtifactTextLayer::pathEndOffset() const {
+  return impl_->paragraphStyle_.pathBinding ? impl_->paragraphStyle_.pathBinding->endOffset : 0.0;
+}
+
+void ArtifactTextLayer::setPathAlignToPath(bool align) {
+  if (!impl_->paragraphStyle_.pathBinding) impl_->paragraphStyle_.pathBinding.emplace();
+  impl_->paragraphStyle_.pathBinding->alignToPath = align;
+  markDirty();
+}
+
+bool ArtifactTextLayer::pathAlignToPath() const {
+  return impl_->paragraphStyle_.pathBinding ? impl_->paragraphStyle_.pathBinding->alignToPath : true;
+}
+
+void ArtifactTextLayer::setPathReverse(bool reverse) {
+  if (!impl_->paragraphStyle_.pathBinding) impl_->paragraphStyle_.pathBinding.emplace();
+  impl_->paragraphStyle_.pathBinding->reversePath = reverse;
+  markDirty();
+}
+
+bool ArtifactTextLayer::pathReverse() const {
+  return impl_->paragraphStyle_.pathBinding ? impl_->paragraphStyle_.pathBinding->reversePath : false;
+}
+
 void ArtifactTextLayer::setParagraphSpacing(float spacing) {
   impl_->paragraphStyle_.paragraphSpacing = std::max(0.0f, spacing);
   markDirty();
@@ -1050,6 +1111,27 @@ QJsonObject ArtifactTextLayer::toJson() const {
   obj["text.maxWidth"] = maxWidth();
   obj["text.boxHeight"] = boxHeight();
   obj["text.paragraphSpacing"] = paragraphSpacing();
+
+  obj["text.pathStartOffset"] = pathStartOffset();
+  obj["text.pathEndOffset"] = pathEndOffset();
+  obj["text.pathReverse"] = pathReverse();
+  obj["text.pathAlignToPath"] = pathAlignToPath();
+
+  QJsonArray pathSegmentsArray;
+  for (const auto &seg : impl_->pathSegments_) {
+    QJsonObject segObj;
+    segObj["p0x"] = seg.p0.x();
+    segObj["p0y"] = seg.p0.y();
+    segObj["cp1x"] = seg.cp1.x();
+    segObj["cp1y"] = seg.cp1.y();
+    segObj["cp2x"] = seg.cp2.x();
+    segObj["cp2y"] = seg.cp2.y();
+    segObj["p1x"] = seg.p1.x();
+    segObj["p1y"] = seg.p1.y();
+    pathSegmentsArray.append(segObj);
+  }
+  obj["text.pathSegments"] = pathSegmentsArray;
+
   obj["text.color"] = toQColor(impl_->textStyle_.fillColor).name(QColor::HexArgb);
   obj["text.strokeEnabled"] = isStrokeEnabled();
   obj["text.strokeColor"] =
@@ -1134,6 +1216,34 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
     setParagraphSpacing(static_cast<float>(
         obj.value("text.paragraphSpacing").toDouble(paragraphSpacing())));
   }
+
+  if (obj.contains("text.pathStartOffset")) {
+    setPathStartOffset(obj.value("text.pathStartOffset").toDouble());
+  }
+  if (obj.contains("text.pathEndOffset")) {
+    setPathEndOffset(obj.value("text.pathEndOffset").toDouble());
+  }
+  if (obj.contains("text.pathReverse")) {
+    setPathReverse(obj.value("text.pathReverse").toBool());
+  }
+  if (obj.contains("text.pathAlignToPath")) {
+    setPathAlignToPath(obj.value("text.pathAlignToPath").toBool());
+  }
+  if (obj.contains("text.pathSegments") && obj.value("text.pathSegments").isArray()) {
+    const QJsonArray pathSegmentsArray = obj.value("text.pathSegments").toArray();
+    std::vector<ArtifactCore::BezierSegment> segments;
+    segments.reserve(pathSegmentsArray.size());
+    for (int i = 0; i < pathSegmentsArray.size(); ++i) {
+      const QJsonObject segObj = pathSegmentsArray.at(i).toObject();
+      segments.emplace_back(
+          QPointF(segObj.value("p0x").toDouble(), segObj.value("p0y").toDouble()),
+          QPointF(segObj.value("cp1x").toDouble(), segObj.value("cp1y").toDouble()),
+          QPointF(segObj.value("cp2x").toDouble(), segObj.value("cp2y").toDouble()),
+          QPointF(segObj.value("p1x").toDouble(), segObj.value("p1y").toDouble()));
+    }
+    impl_->pathSegments_ = segments;
+  }
+
   if (!hasLayoutMode) {
     if (maxWidth() > 0.0f || boxHeight() > 0.0f) {
       setLayoutMode(TextLayoutMode::Box);
@@ -1552,6 +1662,22 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   groups.push_back(textGroup);
 
+  // Path Options
+  ArtifactCore::PropertyGroup pathGroup(QStringLiteral("Path Options"));
+  pathGroup.addProperty(makeProp(QStringLiteral("text.pathStartOffset"),
+                                 ArtifactCore::PropertyType::Float,
+                                 pathStartOffset(), -70));
+  pathGroup.addProperty(makeProp(QStringLiteral("text.pathEndOffset"),
+                                 ArtifactCore::PropertyType::Float,
+                                 pathEndOffset(), -69));
+  pathGroup.addProperty(makeProp(QStringLiteral("text.pathReverse"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 pathReverse(), -68));
+  pathGroup.addProperty(makeProp(QStringLiteral("text.pathAlignToPath"),
+                                 ArtifactCore::PropertyType::Boolean,
+                                 pathAlignToPath(), -67));
+  groups.push_back(pathGroup);
+
   for (int i = 0; i < animatorCount(); ++i) {
     const auto &animator = impl_->animators_[i];
     const QString prefix = QStringLiteral("text.animators.%1.").arg(i);
@@ -1894,6 +2020,26 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     setDirty(LayerDirtyFlag::Property);
     return true;
   }
+  if (propertyPath == QStringLiteral("text.pathStartOffset")) {
+    setPathStartOffset(value.toDouble());
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.pathEndOffset")) {
+    setPathEndOffset(value.toDouble());
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.pathReverse")) {
+    setPathReverse(value.toBool());
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.pathAlignToPath")) {
+    setPathAlignToPath(value.toBool());
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
   if (propertyPath == QStringLiteral("text.color")) {
     const auto c = value.value<QColor>();
     setTextColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
@@ -2073,10 +2219,12 @@ void ArtifactTextLayer::updateImage() {
                     return animator.enabled;
                   });
   const bool boxLayout = isBoxText();
+  const bool pathLayout = impl_->layoutMode_ == TextLayoutMode::Path;
   QString displayText = resolvedSourceTextAtTime(this);
   const bool sourceTextAnimated = sourceTextIsAnimated(this);
   Impl::CacheKey currentKey{UniString(displayText), impl_->textStyle_,
-                            impl_->paragraphStyle_};
+                            impl_->paragraphStyle_, impl_->layoutMode_,
+                            impl_->pathSegments_};
   if (!hasAnimators && !sourceTextAnimated && !impl_->isDirty_ && impl_->lastCacheKey_ &&
       *impl_->lastCacheKey_ == currentKey && !impl_->renderedImage_.isNull()) {
     return;
@@ -2093,11 +2241,17 @@ void ArtifactTextLayer::updateImage() {
 
   impl_->glyphs_.clear();
   if (!isRichText) {
-    impl_->glyphs_ = TextLayoutEngine::layout(UniString(displayText),
-                                              impl_->textStyle_,
-                                              impl_->paragraphStyle_);
+    if (pathLayout) {
+      impl_->glyphs_ = TextLayoutEngine::layoutOnPath(
+          UniString(displayText), impl_->textStyle_, impl_->paragraphStyle_,
+          impl_->pathSegments_);
+    } else {
+      impl_->glyphs_ = TextLayoutEngine::layout(UniString(displayText),
+                                                impl_->textStyle_,
+                                                impl_->paragraphStyle_);
+    }
   }
-  impl_->perGlyphMode_ = hasAnimators && !isRichText;
+  impl_->perGlyphMode_ = (hasAnimators || pathLayout) && !isRichText;
 
   if (impl_->perGlyphMode_) {
     const RationalTime time = effectiveTextTimelineTime(this);

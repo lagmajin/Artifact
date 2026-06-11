@@ -5,7 +5,9 @@ module;
 #include <vector>
 #include <map>
 #include <cmath>
+#include <QApplication>
 #include <QPointF>
+#include <QRectF>
 #include <QDebug>
 #include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
@@ -13,7 +15,10 @@ module;
 module Artifact.Tool.PuppetTool;
 
 import std;
+import Utils.Id;
+import Color.Float;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Image;
 import Artifact.Composition.Abstract;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Render.IRenderer;
@@ -179,12 +184,14 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
 
     auto* selection = ArtifactLayerSelectionManager::instance();
     if (!selection) return;
-    auto layer = selection->layerById(layerId);
-    if (!layer) return;
+    auto layer = selection->currentLayer();
+    if (!layer || layer->id() != layerId) return;
+    auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer);
+    if (!imageLayer) return;
 
     // Bind image to engine if dirty
     if (lp->needsRebind) {
-        QImage qimg = layer->toQImage();
+        QImage qimg = imageLayer->toQImage();
         if (!qimg.isNull()) {
             cv::Mat mat(qimg.height(), qimg.width(), CV_8UC4,
                         const_cast<uchar*>(qimg.constBits()), qimg.bytesPerLine());
@@ -219,7 +226,7 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
         QImage result(deformed.data, deformed.cols, deformed.rows,
                       deformed.step, QImage::Format_RGBA8888);
         QImage resultCopy = result.copy(); // detach
-        renderer->setLayerOverrideImage(layerId, resultCopy);
+        imageLayer->setFromQImage(resultCopy);
     }
 }
 

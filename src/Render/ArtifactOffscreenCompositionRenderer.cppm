@@ -7,7 +7,7 @@ module;
 #include <QImage>
 #include <QDebug>
 
-module Artifact.Render.OffscreenComposition;
+export module Artifact.Render.OffscreenComposition;
 
 import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
@@ -26,7 +26,7 @@ namespace Artifact
      * @brief 汎用コンポジションレンダラー
      * コンポジション内の各レイヤーを走査し、オフスクリーンバッファにレンダリングします。
      */
-    class OffscreenCompositionRenderer
+    export class OffscreenCompositionRenderer
     {
     public:
         OffscreenCompositionRenderer(RefCntAutoPtr<IRenderDevice> pDevice, Uint32 width, Uint32 height);

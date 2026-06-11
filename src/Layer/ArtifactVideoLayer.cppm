@@ -69,6 +69,7 @@ module Artifact.Layer.Video;
 
 import Thread.Helper;
 import Artifact.Composition.Abstract;
+import Artifact.Render.IRenderer;
 import Event.Bus;
 import Artifact.Event.Types;
 import CvUtils;
@@ -1779,7 +1780,11 @@ bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const 
     for (int i = 0; i < actualFrames; ++i) {
         outSegment.channelData[0][i] = impl_->audioBufferL_.front() * (float)impl_->audioVolume_;
         outSegment.channelData[1][i] = impl_->audioBufferR_.front() * (float)impl_->audioVolume_;
-        applyStereoPan(impl_->audioPan_, outSegment.channelData[0][i], outSegment.channelData[1][i]);
+        double left = static_cast<double>(outSegment.channelData[0][i]);
+        double right = static_cast<double>(outSegment.channelData[1][i]);
+        applyStereoPan(impl_->audioPan_, left, right);
+        outSegment.channelData[0][i] = static_cast<float>(left);
+        outSegment.channelData[1][i] = static_cast<float>(right);
         impl_->audioBufferL_.pop_front();
         impl_->audioBufferR_.pop_front();
     }

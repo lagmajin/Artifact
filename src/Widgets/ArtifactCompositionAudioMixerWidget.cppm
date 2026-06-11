@@ -1214,7 +1214,8 @@ private:
   void setPanFromEvent(QMouseEvent *event) {
     const QPointF center(width() * 0.5, 24.0);
     const float radius = 15.0f;
-    const float clamped = std::clamp((event->pos().x() - center.x()) / radius, -1.0f, 1.0f);
+    const float delta = static_cast<float>((event->pos().x() - center.x()) / radius);
+    const float clamped = std::clamp(delta, -1.0f, 1.0f);
     setPan(clamped);
   }
 

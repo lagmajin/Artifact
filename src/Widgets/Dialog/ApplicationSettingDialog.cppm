@@ -62,9 +62,48 @@ import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.Widgets.PropertyEditor;
 import Application.AppSettings;
 import FloatColorPickerDialog;
+import Widgets.Utils.CSS;
 import UI.ShortcutBindings;
 
 namespace ArtifactCore {
+
+namespace {
+
+struct ThemePresetEntry {
+  ArtifactCore::DccStylePreset preset;
+};
+
+static const ThemePresetEntry kThemePresetEntries[] = {
+    {ArtifactCore::DccStylePreset::DefaultQt},
+    {ArtifactCore::DccStylePreset::MayaStyle},
+    {ArtifactCore::DccStylePreset::ModoStyle},
+    {ArtifactCore::DccStylePreset::StudioStyle},
+    {ArtifactCore::DccStylePreset::BlenderStyle},
+    {ArtifactCore::DccStylePreset::DaVinciStyle},
+    {ArtifactCore::DccStylePreset::_3dsMaxStyle},
+    {ArtifactCore::DccStylePreset::NukeStyle},
+    {ArtifactCore::DccStylePreset::AfterEffectsStyle},
+    {ArtifactCore::DccStylePreset::HighContrast},
+};
+
+static void populateThemeCombo(QComboBox* combo)
+{
+  if (!combo) {
+    return;
+  }
+  combo->clear();
+  for (const auto& entry : kThemePresetEntries) {
+    combo->addItem(ArtifactCore::themePresetLabel(entry.preset),
+                   static_cast<int>(entry.preset));
+  }
+}
+
+static QString canonicalThemeLabel(const QString& name)
+{
+  return ArtifactCore::themePresetLabel(ArtifactCore::themePresetFromName(name));
+}
+
+} // namespace
 
 // GeneralSettingPage Implementation
 class GeneralSettingPage::Impl {
@@ -78,6 +117,7 @@ public:
   QCheckBox *showPropertyResetButtonsCheckBox_;
   QSpinBox *menuBarFontScaleSpinBox_;
   QSpinBox *dockTabFontSizeSpinBox_;
+  QComboBox *themeCombo_;
 };
 
 GeneralSettingPage::Impl::Impl() {}
@@ -142,6 +182,14 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
   dockTabFontLayout->addStretch();
   uiLayout->addLayout(dockTabFontLayout);
 
+  auto *themeLayout = new QHBoxLayout();
+  themeLayout->addWidget(new QLabel("UI Theme:", this));
+  impl_->themeCombo_ = new QComboBox(this);
+  populateThemeCombo(impl_->themeCombo_);
+  themeLayout->addWidget(impl_->themeCombo_);
+  themeLayout->addStretch();
+  uiLayout->addLayout(themeLayout);
+
   mainLayout->addWidget(uiGroup);
 
   mainLayout->addStretch();
@@ -160,6 +208,15 @@ void GeneralSettingPage::loadSettings() {
   impl_->menuBarFontScaleSpinBox_->setValue(
       settings->menuBarFontScalePercent());
   impl_->dockTabFontSizeSpinBox_->setValue(settings->dockTabFontPointSize());
+  if (impl_->themeCombo_) {
+    const QString themeLabel = canonicalThemeLabel(settings->themeName());
+    const int themeIndex = impl_->themeCombo_->findText(themeLabel);
+    if (themeIndex >= 0) {
+      impl_->themeCombo_->setCurrentIndex(themeIndex);
+    } else if (impl_->themeCombo_->count() > 0) {
+      impl_->themeCombo_->setCurrentIndex(0);
+    }
+  }
   // autoSaveEnabled の項目が AppSettings にまだないので、将来的に追加が必要
 }
 
@@ -175,10 +232,19 @@ void GeneralSettingPage::saveSettings() {
       impl_->menuBarFontScaleSpinBox_->value());
   settings->setDockTabFontPointSize(
       impl_->dockTabFontSizeSpinBox_->value());
+  if (impl_->themeCombo_) {
+    settings->setThemeName(impl_->themeCombo_->currentText());
+  }
 }
 
 QList<SettingItemInfo> GeneralSettingPage::searchableItems() const {
-  return {};
+  QList<SettingItemInfo> items;
+  if (impl_ && impl_->themeCombo_) {
+    items.push_back({"UI Theme",
+                     "Built-in application theme preset",
+                     "User Interface", impl_->themeCombo_});
+  }
+  return items;
 }
 
 GeneralSettingPage::~GeneralSettingPage() { delete impl_; }

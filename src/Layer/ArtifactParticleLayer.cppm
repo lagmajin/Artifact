@@ -50,6 +50,7 @@ module Artifact.Layer.Particle;
 
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Artifact.Render.IRenderer;
 import Artifact.Generator.Particle;
 import Graphics.ParticleData;
 import Animation.Transform2D;

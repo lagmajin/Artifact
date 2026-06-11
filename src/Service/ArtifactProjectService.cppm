@@ -30,6 +30,7 @@ import std;
 import Utils.String.UniString;
 import Artifact.Layer.Composition;
 import Artifact.Project.Manager;
+import Artifact.Render.Queue.Service;
 import Artifact.Project.RevisionService;
 import Artifact.Project.CreationDefaults;
 import Artifact.Layer.Factory;

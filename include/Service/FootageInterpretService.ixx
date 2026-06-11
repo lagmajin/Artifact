@@ -33,7 +33,7 @@ private:
     FootageInterpretService() = default;
 
     struct Impl;
-    std::unique_ptr<Impl> impl_;
+    mutable std::unique_ptr<Impl> impl_;
 };
 
 } // namespace Artifact

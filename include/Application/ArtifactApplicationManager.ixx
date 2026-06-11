@@ -5,22 +5,18 @@ module;
 #include <QApplication>
 export  module Artifact.Application.Manager;
 
-
-import EnvironmentVariable;
-import Artifact.Effects.Manager;
-import Artifact.Render.Manager;
-import Artifact.Service.Project;
-import Artifact.Test.ProjectManager;
-import Artifact.Project.Manager;
-import Artifact.Service.ActiveContext;
-import Artifact.Layers.Selection.Manager;
-import Artifact.Tool.Manager;
-import Artifact.Tool.MotionSketchTool;
-import Artifact.Tool.PuppetTool;
-import Artifact.Composition.Manager;
-
-
 export namespace Artifact {
+
+ class ArtifactProjectManager;
+ class ArtifactProjectService;
+ class ArtifactTestProjectManager;
+ class ArtifactGlobalEffectManager;
+ class ArtifactActiveContextService;
+ class ArtifactLayerSelectionManager;
+ class ArtifactToolManager;
+ class ArtifactMotionSketchTool;
+ class ArtifactPuppetTool;
+ class ArtifactCompositionManager;
 
  class ArtifactApplicationManager
  {

@@ -11,8 +11,10 @@ module Artifact.Tool.MotionSketchTool;
 import std;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
+import Artifact.Event.Types;
 import Artifact.Layers.Selection.Manager;
 import Event.Bus;
+import Time.Rational;
 
 namespace Artifact {
 
@@ -108,7 +110,7 @@ bool ArtifactMotionSketchTool::finishSketch()
     if (!impl_->sketching) return false;
     impl_->sketching = false;
 
-    auto layer = impl_->targetLayer.lock();
+    auto layer = impl_->targetLayer;
     if (!layer || impl_->sampledPoints.size() < 2) return false;
 
     const size_t n = impl_->sampledPoints.size();
@@ -147,7 +149,7 @@ bool ArtifactMotionSketchTool::finishSketch()
         const int frameNum = startFrame + static_cast<int>(std::llround(t * fps));
         const float x = static_cast<float>(smoothPoints[i].x());
         const float y = static_cast<float>(smoothPoints[i].y());
-        ArtifactCore::RationalTime rt(frameNum, static_cast<int>(fps));
+        RationalTime rt(frameNum, static_cast<int64_t>(fps));
         t3d.setPosition(rt, x, y);
     }
 

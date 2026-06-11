@@ -73,6 +73,9 @@ public:
     
     // ID でプリセットを検索
     const ArtifactRenderFormatPreset* findPresetById(const QString& id) const;
+
+    // 用途カテゴリ別にプリセットを取得
+    QVector<ArtifactRenderFormatPreset> presetsByUsage(ArtifactRenderUsageCategory usage) const;
     
     // カスタムプリセットを追加
     void addCustomPreset(const ArtifactRenderFormatPreset& preset);

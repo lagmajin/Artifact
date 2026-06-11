@@ -32,6 +32,7 @@ import Frame.Range;
 import Frame.Rate;
 import Composition.Context;
 import Composition.Settings;
+import Artifact.Composition.InitParams;
 import Artifact.Composition.Result;
 import Artifact.Layer.Abstract;
 import Artifact.Event.Types;
@@ -126,39 +127,11 @@ Artifact::ResponsiveLayoutVariant makeDefaultResponsiveLayoutVariant(const QSize
    return peak > ceiling ? ceiling / peak : 1.0f;
  }
 
- } // namespace
-
-Artifact::ResponsiveLayoutSet makeDefaultResponsiveLayoutSet(const QSize& size)
-{
-  Artifact::ResponsiveLayoutSet layout;
-  layout.activeVariantId = QStringLiteral("default");
-  layout.defaultPolicy = QStringLiteral("manual");
-  layout.variants.append(makeDefaultResponsiveLayoutVariant(size));
-  return layout;
-=======
-float limiterGainForSegment(const AudioSegment& segment)
-{
-  constexpr float ceiling = 0.995f;
-  float peak = 0.0f;
-  for (const auto& channel : segment.channelData) {
-    for (const float sample : channel) {
-      peak = std::max(peak, std::abs(sample));
-      if (peak >= ceiling) {
-        break;
-      }
-    }
-  }
-  return peak > ceiling ? ceiling / peak : 1.0f;
->>>>>>> 7115214a (Audio mixer: add pan support, extend volume range to 0-2.0, add brickwall limiter for overflow protection)
-}
-
 } // namespace
-	
 
+W_OBJECT_IMPL(ArtifactAbstractComposition)
 
- W_OBJECT_IMPL(ArtifactAbstractComposition)
-
- class ArtifactAbstractComposition::Impl {
+class ArtifactAbstractComposition::Impl {
  private:
   
 

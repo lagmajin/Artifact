@@ -5,6 +5,7 @@ module;
 #include <QStringList>
 #include <QVector>
 #include <memory>
+#include <wobjectdefs.h>
 
 export module Artifact.Render.Batch;
 

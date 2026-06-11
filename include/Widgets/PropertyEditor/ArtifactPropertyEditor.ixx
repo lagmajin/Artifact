@@ -20,6 +20,7 @@ module;
 #include <QSlider>
 #include <QSpinBox>
 #include <QTextEdit>
+#include <wobjectdefs.h>
 export module Artifact.Widgets.PropertyEditor;
 
 import Property.Abstract;
@@ -27,6 +28,8 @@ import Artifact.Widgets.FontPicker;
 import Event.Bus;
 
 export namespace Artifact {
+
+class ArtifactTextLayer;
 
 enum class ArtifactPropertyRowLayoutMode {
     LabelThenEditor = 0,
@@ -307,6 +310,8 @@ public:
     
     void setKeyframeChecked(bool checked);
     void setKeyframeModeEnabled(bool enabled);
+    void setKeyframeAnchorHandler(std::function<void(ArtifactCore::KeyFrame::Anchor)> handler);
+    void setKeyframeColorLabelHandler(std::function<void(ArtifactCore::KeyFrame::ColorLabel)> handler);
     bool isKeyframeModeEnabled() const;
     void setKeyframeEnabled(bool enabled);
     void setNavigationEnabled(bool enabled);

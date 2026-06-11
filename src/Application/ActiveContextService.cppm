@@ -38,6 +38,7 @@
 #include <QDebug>
 
 module Artifact.Service.ActiveContext;
+import Artifact.Service.Project;
 
 
 
