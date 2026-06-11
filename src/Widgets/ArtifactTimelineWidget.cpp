@@ -66,6 +66,7 @@ import Panel.DraggableSplitter;
 import Artifact.Widgets.Timeline.GlobalSwitches;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.Service.ActiveContext;
 import Clipboard.ClipboardManager;
 import Event.Bus;
 import Artifact.Event.Types;
