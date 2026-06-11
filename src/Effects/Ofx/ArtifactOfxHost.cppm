@@ -504,8 +504,28 @@ void setIntProperty(PropertySet &set, const char *property, int value) {
   setIntValue(&set, property, 0, value);
 }
 
+void setIntPropertyN(PropertySet &set, const char *property, int count,
+                     std::initializer_list<int> values) {
+  std::vector<int> buffer(values);
+  if (count > static_cast<int>(buffer.size())) {
+    buffer.resize(static_cast<size_t>(count), 0);
+  }
+  propSetIntN(reinterpret_cast<OfxPropertySetHandle>(&set), property, count,
+              buffer.data());
+}
+
 void setDoubleProperty(PropertySet &set, const char *property, double value) {
   setDoubleValue(&set, property, 0, value);
+}
+
+void setDoublePropertyN(PropertySet &set, const char *property, int count,
+                        std::initializer_list<double> values) {
+  std::vector<double> buffer(values);
+  if (count > static_cast<int>(buffer.size())) {
+    buffer.resize(static_cast<size_t>(count), 0.0);
+  }
+  propSetDoubleN(reinterpret_cast<OfxPropertySetHandle>(&set), property, count,
+                 buffer.data());
 }
 
 void setPointerProperty(PropertySet &set, const char *property, void *value) {
@@ -712,8 +732,8 @@ OfxStatus effectClipGetImage(OfxImageClipHandle clip, OfxTime /*time*/,
                      const_cast<unsigned char *>(rf.srcPixelData));
   setDoubleProperty(imageProps, kOfxImagePropPixelAspectRatio, 1.0);
   setIntProperty(imageProps, kOfxImagePropField, (int)kOfxImageFieldNone);
-  setStringProperty(imageProps, kOfxImagePropPixelDepth, kOfxBitDepthFloat);
-  setStringProperty(imageProps, kOfxImagePropComponents, kOfxImageComponentRGBA);
+  setStringProperty(imageProps, kOfxImageEffectPropPixelDepth, kOfxBitDepthFloat);
+  setStringProperty(imageProps, kOfxImageEffectPropComponents, kOfxImageComponentRGBA);
   setIntProperty(imageProps, kOfxImagePropRowBytes, rf.srcRowBytes);
   setIntPropertyN(imageProps, kOfxImagePropBounds, 4, {0, 0, rf.srcWidth, rf.srcHeight});
   setDoublePropertyN(imageProps, kOfxImagePropRegionOfDefinition, 4,
@@ -1462,7 +1482,7 @@ export OfxStatus pluginActionRender(OfxPlugin *plugin, ImageEffectState &instanc
                               OfxTime time, const OfxPointD &renderScale) {
   if (!plugin || !plugin->mainEntry) return kOfxStatErrBadHandle;
   PropertySet inArgs;
-  setDoubleProperty(inArgs, kOfxImageEffectPropFrame, time);
+  setDoubleProperty(inArgs, kOfxPropTime, time);
   setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
   setIntProperty(inArgs, kOfxImageEffectPropFieldToRender, (int)kOfxImageFieldNone);
   return plugin->mainEntry(kOfxImageEffectActionRender,

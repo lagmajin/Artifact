@@ -43,6 +43,7 @@ module Artifact.MainWindow;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
 import Event.Bus;
@@ -623,7 +624,7 @@ public:
 
     toolOptionsBar->setTextOptions(
         textLayer->fontFamily().toQString(),
-        static_cast<int>(std::max(1.0f, textLayer->fontSize())),
+        static_cast<int>(std::max(1.0, static_cast<double>(textLayer->fontSize()))),
         textLayer->isBold(),
         textLayer->isItalic(), textLayer->isUnderline(),
         static_cast<int>(textLayer->horizontalAlignment()),
@@ -842,7 +843,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
               changed = true;
             }
           } else if (optionName == QStringLiteral("fontSize")) {
-            const float fontSize = std::max(1.0f, value.toFloat());
+            const float fontSize = std::max(1.0, static_cast<double>(value.toFloat()));
             if (std::abs(textLayer->fontSize() - fontSize) > 0.001f) {
               textLayer->setFontSize(fontSize);
               changed = true;

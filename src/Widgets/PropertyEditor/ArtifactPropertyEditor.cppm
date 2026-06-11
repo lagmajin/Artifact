@@ -2249,12 +2249,12 @@ void ArtifactPropertyEditorRowWidget::setKeyframeHandler(
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeAnchorHandler(
-    KeyframeAnchorHandler handler) {
+    std::function<void(ArtifactCore::KeyFrame::Anchor)> handler) {
   keyframeAnchorHandler_ = std::move(handler);
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeColorLabelHandler(
-    KeyframeColorLabelHandler handler) {
+    std::function<void(ArtifactCore::KeyFrame::ColorLabel)> handler) {
   keyframeColorLabelHandler_ = std::move(handler);
 }
 
