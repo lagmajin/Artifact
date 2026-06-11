@@ -5,7 +5,7 @@ module;
 #include <QJsonObject>
 #include <QVariant>
 
-export module Artifact.Layer.Audio;
+module Artifact.Layer.Audio;
 
 import std;
 import ArtifactCore.Utils.PerformanceProfiler;

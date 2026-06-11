@@ -35,6 +35,14 @@ import Artifact.Effect.Context;
 namespace Artifact {
 namespace Ofx {
 
+struct OfxPluginDescriptor;
+
+class ArtifactOfxHost {
+public:
+  static ArtifactOfxHost &instance();
+  const std::vector<OfxPluginDescriptor> &getLoadedPlugins() const;
+};
+
 using namespace ArtifactCore;
 
 export struct OfxPropertySetStruct {

@@ -45,6 +45,7 @@ module Artifact.Widgets.WebBridge;
 
 import Artifact.Service.Project;
 import Artifact.Application.Manager;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Effect.Abstract;
@@ -156,9 +157,7 @@ namespace Artifact {
             return QJsonDocument(result).toJson(QJsonDocument::Compact);
         }
 
-        auto *selection = ArtifactApplicationManager::instance()
-                               ? ArtifactApplicationManager::instance()->layerSelectionManager()
-                               : nullptr;
+        auto *selection = ArtifactLayerSelectionManager::instance();
         const ArtifactAbstractLayerPtr layer =
             selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
         if (!layer) {

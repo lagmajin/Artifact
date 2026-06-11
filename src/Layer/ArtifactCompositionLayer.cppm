@@ -75,7 +75,7 @@ QJsonObject ArtifactCompositionLayer::toJson() const {
   return obj;
 }
 
-ArtifactCompositionPtr ArtifactCompositionLayer::sourceComposition() const {
+ArtifactCore::SharedPtr<ArtifactAbstractComposition> ArtifactCompositionLayer::sourceComposition() const {
   return resolveArtifactCompositionLayerSource(impl_->id_.toString());
 }
 

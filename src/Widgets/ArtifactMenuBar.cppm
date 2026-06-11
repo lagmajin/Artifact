@@ -18,6 +18,7 @@ import Application.AppSettings;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Service.Project;
 import Artifact.Menu.File;
 import Artifact.Menu.Edit;
@@ -111,8 +112,7 @@ ArtifactTimelineGlobalSwitches* activeTimelineGlobalSwitches(QWidget* root)
 
 ArtifactAbstractLayerPtr activeTimelineLayer()
 {
- auto* app = ArtifactApplicationManager::instance();
- auto* selection = app ? app->layerSelectionManager() : nullptr;
+ auto* selection = ArtifactLayerSelectionManager::instance();
  return selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
 }
 

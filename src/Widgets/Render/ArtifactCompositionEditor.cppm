@@ -96,6 +96,7 @@ import Artifact.Layer.Image;
 import Artifact.Layers.SolidImage;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
+import Artifact.Service.ActiveContext;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
 import Artifact.Application.ProjectBundleIpc;
@@ -425,11 +426,9 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
 }
 
 ArtifactCompositionPtr resolvePreferredComposition() {
-  if (auto *app = ArtifactApplicationManager::instance()) {
-    if (auto *active = app->activeContextService()) {
-      if (auto comp = active->activeComposition()) {
-        return comp;
-      }
+  if (auto *active = ArtifactActiveContextService::instance()) {
+    if (auto comp = active->activeComposition()) {
+      return comp;
     }
   }
 
@@ -944,8 +943,7 @@ public:
         (!layerId.isNil() && comp) ? comp->layerById(layerId)
                                    : ArtifactAbstractLayerPtr{};
     auto *svc = ArtifactProjectService::instance();
-    auto *app = ArtifactApplicationManager::instance();
-    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    auto *selection = ArtifactLayerSelectionManager::instance();
     const int selectedCount =
         selection ? static_cast<int>(selection->selectedLayers().size()) : 0;
     const bool clipboardHasLayerData =
@@ -1047,10 +1045,7 @@ public:
       if (layersArray.isEmpty()) {
         return;
       }
-      auto *selectionManager = ArtifactApplicationManager::instance()
-                                   ? ArtifactApplicationManager::instance()
-                                         ->layerSelectionManager()
-                                   : nullptr;
+      auto *selectionManager = ArtifactLayerSelectionManager::instance();
       ArtifactAbstractLayerPtr anchorLayer;
       int anchorIndex = -1;
       if (selectionManager) {
@@ -1578,8 +1573,7 @@ public:
 
         service->addLayerToCurrentComposition(params);
 
-        auto* app = ArtifactApplicationManager::instance();
-        auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+        auto* selectionManager = ArtifactLayerSelectionManager::instance();
         const ArtifactCameraLayerPtr camera =
             selectionManager
                 ? std::dynamic_pointer_cast<ArtifactCameraLayer>(
@@ -2544,10 +2538,9 @@ protected:
     }
     if ((event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete) &&
         !event->isAutoRepeat()) {
-      auto *app = ArtifactApplicationManager::instance();
       auto *svc = ArtifactProjectService::instance();
-      auto *active = app ? app->activeContextService() : nullptr;
-      auto *selection = app ? app->layerSelectionManager() : nullptr;
+      auto *active = ArtifactActiveContextService::instance();
+      auto *selection = ArtifactLayerSelectionManager::instance();
       const auto selectedLayers = selection ? selection->selectedLayers()
                                             : QSet<ArtifactAbstractLayerPtr>{};
       const auto currentComp =
@@ -2648,16 +2641,12 @@ protected:
   };
 
   ArtifactAbstractLayerPtr currentLayer() const {
-    auto *app = ArtifactApplicationManager::instance();
-    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    auto *selection = ArtifactLayerSelectionManager::instance();
     return selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
   }
 
   ArtifactCompositionPtr currentComposition() const {
-    auto *active =
-        ArtifactApplicationManager::instance()
-            ? ArtifactApplicationManager::instance()->activeContextService()
-            : nullptr;
+    auto *active = ArtifactActiveContextService::instance();
     return active ? active->activeComposition() : ArtifactCompositionPtr{};
   }
 
@@ -2930,10 +2919,7 @@ protected:
     if (!svc)
       return;
 
-    const auto selection = ArtifactApplicationManager::instance()
-                               ? ArtifactApplicationManager::instance()
-                                     ->layerSelectionManager()
-                               : nullptr;
+    const auto selection = ArtifactLayerSelectionManager::instance();
     const ArtifactAbstractLayerPtr selectedLayer =
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
     const ArtifactAbstractLayerPtr controllerLayer =
@@ -3835,8 +3821,7 @@ public:
     if (!owner || !renderController_) {
       return;
     }
-    auto *app = ArtifactApplicationManager::instance();
-    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    auto *selection = ArtifactLayerSelectionManager::instance();
     const auto current =
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
     const int selectedCount =
@@ -4293,8 +4278,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   auto *pivotGroup = new QActionGroup(this);
   pivotGroup->setExclusive(true);
   const auto applyPivotPreset = [this](const bool useCenter) {
-    auto *app = ArtifactApplicationManager::instance();
-    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    auto *selection = ArtifactLayerSelectionManager::instance();
     const auto comp = resolvePreferredComposition();
     const auto layer =
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
@@ -4707,8 +4691,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QObject::connect(impl_->zoom100Action_, &QAction::triggered, this,
                    &ArtifactCompositionEditor::zoom100);
   QObject::connect(impl_->editTextAction_, &QAction::triggered, this, [this]() {
-    auto *app = ArtifactApplicationManager::instance();
-    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    auto *selection = ArtifactLayerSelectionManager::instance();
     const auto layer =
         selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
     if (!layer || !std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {

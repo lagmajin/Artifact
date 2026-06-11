@@ -83,6 +83,7 @@ module Widgets.AssetBrowser;
 
 import Widgets.Utils.CSS;
 import Artifact.Service.Project;
+import Artifact.Service.FootageInterpret;
 import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Project.Manager;
@@ -2694,7 +2695,7 @@ if (!item.isFolder) {
         if (footage) break;
       }
       if (!footage) return;
-      auto& interpretSvc = Artifact::FootageInterpretService::instance();
+      auto& interpretSvc = FootageInterpretService::instance();
       auto report = interpretSvc.preflightChange(footage, footage->frameRate);
       ArtifactWidgets::InterpretFootageDialog dialog(
           QFileInfo(filePath).fileName(),
