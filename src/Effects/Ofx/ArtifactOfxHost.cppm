@@ -101,6 +101,26 @@ export struct ImageEffectState {
   RenderFrameData renderFrame;
 };
 
+std::unique_ptr<ParamState> cloneParamState(const ParamState &src) {
+  auto dst = std::make_unique<ParamState>();
+  dst->properties = src.properties;
+  dst->paramType = src.paramType;
+  dst->currentValues = src.currentValues;
+  dst->currentStringValue = src.currentStringValue;
+  dst->currentUtf8Value = src.currentUtf8Value;
+  return dst;
+}
+
+ParamSetState cloneParamSetState(const ParamSetState &src) {
+  ParamSetState dst;
+  dst.properties = src.properties;
+  dst.paramOrder = src.paramOrder;
+  for (const auto &[name, param] : src.params) {
+    dst.params.emplace(name, param ? cloneParamState(*param) : nullptr);
+  }
+  return dst;
+}
+
 export struct OfxPluginDescriptor {
   UniString pluginPath;
   UniString identifier;
@@ -1689,7 +1709,7 @@ public:
     if (!desc || !desc->descriptorState) return nullptr;
     auto state = std::make_shared<ImageEffectState>();
     state->properties = desc->descriptorState->properties;
-    state->paramSet = desc->descriptorState->paramSet;
+    state->paramSet = cloneParamSetState(desc->descriptorState->paramSet);
     state->clips.clear();
     for (const auto &kv : desc->descriptorState->clips) {
       auto cs = std::make_unique<ClipState>();
