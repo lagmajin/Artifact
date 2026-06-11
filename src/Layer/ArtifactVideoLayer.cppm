@@ -69,7 +69,7 @@ module Artifact.Layer.Video;
 
 import Thread.Helper;
 import Artifact.Composition.Abstract;
-import ArtifactCore.Audio.Panner;
+import Audio.Panner;
 import Artifact.Render.IRenderer;
 import Event.Bus;
 import Artifact.Event.Types;

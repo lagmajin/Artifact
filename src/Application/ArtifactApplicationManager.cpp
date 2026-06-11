@@ -83,6 +83,7 @@ namespace Artifact
   ArtifactLayerSelectionManager* layerSelectionManager();
   ArtifactToolManager* toolManager();
   ArtifactMotionSketchTool* motionSketchTool();
+  ArtifactCompositionManager* compositionManager();
   ArtifactPuppetTool* puppetTool();
  };
 
