@@ -11,6 +11,7 @@ import Utils.Id;
 export namespace Artifact {
 
 class ArtifactAbstractLayer;
+using ArtifactAbstractLayerPtr = std::shared_ptr<ArtifactAbstractLayer>;
 
 class ArtifactAbstractCompositionAccess {
 public:
@@ -18,8 +19,8 @@ public:
   virtual ArtifactCore::CompositionID id() const = 0;
   virtual ArtifactCore::FrameRate frameRate() const = 0;
   virtual ArtifactCore::FramePosition framePosition() const = 0;
-  virtual std::shared_ptr<ArtifactAbstractLayer> layerById(const ArtifactCore::LayerID &id) = 0;
-  virtual QVector<std::shared_ptr<ArtifactAbstractLayer>> allLayer() = 0;
+  virtual ArtifactAbstractLayerPtr layerById(const ArtifactCore::LayerID &id) = 0;
+  virtual QVector<ArtifactAbstractLayerPtr> allLayer() = 0;
 };
 
 } // namespace Artifact

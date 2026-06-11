@@ -13,6 +13,12 @@ export namespace Artifact {
   LayerType type;
   bool success = false;
   ArtifactAbstractLayerPtr layer;
+
+  ArtifactLayerResult() = default;
+  ArtifactLayerResult(const ArtifactLayerResult&) = default;
+  ArtifactLayerResult& operator=(const ArtifactLayerResult&) = default;
+  ArtifactLayerResult(ArtifactLayerResult&&) noexcept = default;
+  ArtifactLayerResult& operator=(ArtifactLayerResult&&) noexcept = default;
  	
  };
 

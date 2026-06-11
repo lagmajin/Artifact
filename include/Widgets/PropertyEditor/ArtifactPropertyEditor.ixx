@@ -336,6 +336,8 @@ private:
     std::function<void()> resetHandler_;
     KeyFrameHandler keyframeHandler_;
     NavigationHandler navigationHandler_;
+    std::function<void(ArtifactCore::KeyFrame::Anchor)> keyframeAnchorHandler_;
+    std::function<void(ArtifactCore::KeyFrame::ColorLabel)> keyframeColorLabelHandler_;
     bool currentFrameKeyframed_ = false;
     
     bool scrubCandidate_ = false;
