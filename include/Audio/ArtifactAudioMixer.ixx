@@ -10,12 +10,14 @@ export module Artifact.Audio.Mixer;
 
 
 import Artifact.Layer.Abstract;
-import Artifact.Composition.Abstract;
+import Memory.SharedPtr;
 import Utils.Id;
 
 export namespace Artifact
 {
     using namespace ArtifactCore;
+class ArtifactAbstractComposition;
+using ArtifactCompositionPtr = ArtifactCore::SharedPtr<ArtifactAbstractComposition>;
 
 // オーディオミキサー用のチャンネルストリップ
 class AudioMixerChannelStrip : public QObject

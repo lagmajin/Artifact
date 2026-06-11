@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <functional>
 #include <map>
 #include <utility>
 
@@ -84,7 +85,7 @@ float volumeToMeterDb(const float volume) {
   if (volume <= 0.0001f) {
     return -60.0f;
   }
-  return std::clamp(20.0f * std::log10(volume), -60.0f, 0.0f);
+  return std::clamp(20.0f * std::log10(volume), -60.0f, 6.02f);
 }
 
 QString volumeToDisplayText(const float volume) {
@@ -171,10 +172,10 @@ public:
 
   void setLevels(const float left, const float right,
                  const float peakLeft, const float peakRight) {
-    const float clampedLeft = std::clamp(left, -60.0f, 0.0f);
-    const float clampedRight = std::clamp(right, -60.0f, 0.0f);
-    const float clampedPeakLeft = std::clamp(peakLeft, -60.0f, 0.0f);
-    const float clampedPeakRight = std::clamp(peakRight, -60.0f, 0.0f);
+    const float clampedLeft = std::clamp(left, -60.0f, 6.02f);
+    const float clampedRight = std::clamp(right, -60.0f, 6.02f);
+    const float clampedPeakLeft = std::clamp(peakLeft, -60.0f, 6.02f);
+    const float clampedPeakRight = std::clamp(peakRight, -60.0f, 6.02f);
     if (qFuzzyCompare(left_ + 61.0f, clampedLeft + 61.0f) &&
         qFuzzyCompare(right_ + 61.0f, clampedRight + 61.0f) &&
         qFuzzyCompare(peakLeft_ + 61.0f, clampedPeakLeft + 61.0f) &&
@@ -1114,7 +1115,23 @@ public:
       return;
     }
     pan_ = clamped;
+    if (panChanged_) {
+      panChanged_(pan_);
+    }
     update();
+  }
+
+  void setPanFromStrip(const float pan) {
+    const float clamped = std::clamp(pan, -1.0f, 1.0f);
+    if (qFuzzyCompare(pan_ + 2.0f, clamped + 2.0f)) {
+      return;
+    }
+    pan_ = clamped;
+    update();
+  }
+
+  void setPanChangedCallback(std::function<void(float)> callback) {
+    panChanged_ = std::move(callback);
   }
 
   void setLinked(const bool linked) {
@@ -1126,6 +1143,27 @@ public:
   }
 
 protected:
+  bool event(QEvent *event) override {
+    if (event->type() == QEvent::MouseButtonPress) {
+      auto *mouseEvent = static_cast<QMouseEvent *>(event);
+      dragPan_ = true;
+      setPanFromEvent(mouseEvent);
+      return true;
+    }
+    if (event->type() == QEvent::MouseMove && dragPan_) {
+      auto *mouseEvent = static_cast<QMouseEvent *>(event);
+      setPanFromEvent(mouseEvent);
+      return true;
+    }
+    if (event->type() == QEvent::MouseButtonRelease && dragPan_) {
+      auto *mouseEvent = static_cast<QMouseEvent *>(event);
+      dragPan_ = false;
+      setPanFromEvent(mouseEvent);
+      return true;
+    }
+    return QWidget::event(event);
+  }
+
   void paintEvent(QPaintEvent *) override {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
@@ -1173,8 +1211,17 @@ protected:
   }
 
 private:
+  void setPanFromEvent(QMouseEvent *event) {
+    const QPointF center(width() * 0.5, 24.0);
+    const float radius = 15.0f;
+    const float clamped = std::clamp((event->pos().x() - center.x()) / radius, -1.0f, 1.0f);
+    setPan(clamped);
+  }
+
   float pan_ = 0.0f;
   bool linked_ = true;
+  bool dragPan_ = false;
+  std::function<void(float)> panChanged_;
 };
 
 class AudioMixerToggleButton final : public QPushButton {
@@ -1448,8 +1495,17 @@ public:
                          strip_->setSolo(checked);
                        }
                      });
+    if (panKnob_) {
+      panKnob_->setPanChangedCallback([this](const float pan) {
+        if (strip_) {
+          strip_->setPan(pan);
+        }
+      });
+    }
 
     QObject::connect(strip_, &AudioMixerChannelStrip::volumeChanged, this,
+                     [this](const float) { syncFromStrip(); });
+    QObject::connect(strip_, &AudioMixerChannelStrip::panChanged, this,
                      [this](const float) { syncFromStrip(); });
     QObject::connect(strip_, &AudioMixerChannelStrip::muteChanged, this,
                      [this](const bool) { syncFromStrip(); });
@@ -1594,7 +1650,7 @@ private:
       outputSlot_->setSlotColor(QColor(75, 78, 82));
     }
     if (panKnob_) {
-      panKnob_->setPan(strip_->pan());
+      panKnob_->setPanFromStrip(strip_->pan());
       panKnob_->setLinked(strip_->isStereoLinked());
     }
     if (volumeSlider_) {

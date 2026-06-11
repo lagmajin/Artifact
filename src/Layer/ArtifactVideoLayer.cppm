@@ -86,6 +86,14 @@ Q_LOGGING_CATEGORY(videoLayerLog, "artifact.layer.video")
 
 namespace {
 
+void applyStereoPan(double pan, double& left, double& right)
+{
+    const double clamped = std::clamp(pan, -1.0, 1.0);
+    const double angle = (clamped + 1.0) * 0.7853981633974483;
+    left *= std::cos(angle);
+    right *= std::sin(angle);
+}
+
 int64_t timelineFrameToSourceFrame(const ArtifactVideoLayer* layer, int64_t timelineFrame)
 {
     if (!layer) {
@@ -436,6 +444,7 @@ public:
     QString proxyPath_;
     
     double audioVolume_ = 1.0;
+    double audioPan_ = 0.0;
     bool audioMuted_ = false;
     bool audioEnabled_ = true;
     bool videoEnabled_ = true;
@@ -1425,7 +1434,17 @@ double ArtifactVideoLayer::audioVolume() const
 
 void ArtifactVideoLayer::setAudioVolume(double volume)
 {
-    impl_->audioVolume_ = std::max(0.0, std::min(volume, 1.0));
+    impl_->audioVolume_ = std::max(0.0, std::min(volume, 2.0));
+}
+
+void ArtifactVideoLayer::setAudioPan(double pan)
+{
+    impl_->audioPan_ = std::max(-1.0, std::min(pan, 1.0));
+}
+
+double ArtifactVideoLayer::audioPan() const
+{
+    return impl_->audioPan_;
 }
 
 void ArtifactVideoLayer::setAudioMuted(bool muted)
@@ -1464,6 +1483,8 @@ QJsonObject ArtifactVideoLayer::toJson() const
     obj["video.loopEnabled"] = impl_->loopEnabled_;
     obj["audioVolume"] = impl_->audioVolume_;
     obj["video.audioVolume"] = impl_->audioVolume_;
+    obj["audioPan"] = impl_->audioPan_;
+    obj["video.audioPan"] = impl_->audioPan_;
     obj["audioMuted"] = impl_->audioMuted_;
     obj["video.audioMuted"] = impl_->audioMuted_;
     obj["audioEnabled"] = impl_->audioEnabled_;
@@ -1526,6 +1547,9 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
     }
     if (obj.contains("video.audioVolume") || obj.contains("audioVolume")) {
         layer->setAudioVolume(obj.value("video.audioVolume").toDouble(obj.value("audioVolume").toDouble(1.0)));
+    }
+    if (obj.contains("video.audioPan") || obj.contains("audioPan")) {
+        layer->setAudioPan(obj.value("video.audioPan").toDouble(obj.value("audioPan").toDouble(0.0)));
     }
     if (obj.contains("video.audioMuted") || obj.contains("audioMuted")) {
         layer->setAudioMuted(obj.value("video.audioMuted").toBool(obj.value("audioMuted").toBool(false)));
@@ -1755,6 +1779,7 @@ bool ArtifactVideoLayer::getAudio(ArtifactCore::AudioSegment &outSegment, const 
     for (int i = 0; i < actualFrames; ++i) {
         outSegment.channelData[0][i] = impl_->audioBufferL_.front() * (float)impl_->audioVolume_;
         outSegment.channelData[1][i] = impl_->audioBufferR_.front() * (float)impl_->audioVolume_;
+        applyStereoPan(impl_->audioPan_, outSegment.channelData[0][i], outSegment.channelData[1][i]);
         impl_->audioBufferL_.pop_front();
         impl_->audioBufferR_.pop_front();
     }
@@ -1798,11 +1823,20 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactVideoLayer::getLayerPropertyGro
     auto volumeProp = makeProp(QStringLiteral("video.audioVolume"),
                                ArtifactCore::PropertyType::Float,
                                static_cast<double>(audioVolume()), -120);
-    volumeProp->setHardRange(0.0, 1.0);
-    volumeProp->setSoftRange(0.0, 1.0);
+    volumeProp->setHardRange(0.0, 2.0);
+    volumeProp->setSoftRange(0.0, 2.0);
     volumeProp->setStep(0.01);
     volumeProp->setUnit(QStringLiteral("linear"));
     videoGroup.addProperty(volumeProp);
+
+    auto panProp = makeProp(QStringLiteral("video.audioPan"),
+                            ArtifactCore::PropertyType::Float,
+                            audioPan(), -115);
+    panProp->setHardRange(-1.0, 1.0);
+    panProp->setSoftRange(-1.0, 1.0);
+    panProp->setStep(0.01);
+    panProp->setUnit(QStringLiteral("pan"));
+    videoGroup.addProperty(panProp);
         
     videoGroup.addProperty(makeProp(QStringLiteral("video.audioMuted"),
                                     ArtifactCore::PropertyType::Boolean,
@@ -1953,6 +1987,11 @@ bool ArtifactVideoLayer::setLayerPropertyValue(const QString& propertyPath, cons
     }
     if (propertyPath == QStringLiteral("video.audioVolume")) {
         setAudioVolume(value.toDouble());
+        setDirty(LayerDirtyFlag::Property);
+        return true;
+    }
+    if (propertyPath == QStringLiteral("video.audioPan")) {
+        setAudioPan(value.toDouble());
         setDirty(LayerDirtyFlag::Property);
         return true;
     }

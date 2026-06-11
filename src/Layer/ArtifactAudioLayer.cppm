@@ -20,10 +20,22 @@ import Artifact.Composition.Abstract;
 namespace Artifact
 {
 
+namespace
+{
+  void applyStereoPan(float pan, float& left, float& right)
+  {
+    const float clamped = std::clamp(pan, -1.0f, 1.0f);
+    const float angle = (clamped + 1.0f) * 0.78539816339f;
+    left *= std::cos(angle);
+    right *= std::sin(angle);
+  }
+}
+
   class ArtifactAudioLayer::Impl
   {
   public:
    float volume_ = 1.0f;
+   float pan_ = 0.0f;
    bool muted_ = false;
    QString sourcePath_;
    ArtifactCore::SimpleWav wav_;
@@ -60,13 +72,24 @@ ArtifactAudioLayer::~ArtifactAudioLayer()
 
 void ArtifactAudioLayer::setVolume(float volume)
 {
-  impl_->volume_ = std::clamp(volume, 0.0f, 1.0f);
+  impl_->volume_ = std::clamp(volume, 0.0f, 2.0f);
   Q_EMIT changed();
 }
 
 float ArtifactAudioLayer::volume() const
 {
   return impl_->volume_;
+}
+
+void ArtifactAudioLayer::setPan(float pan)
+{
+  impl_->pan_ = std::clamp(pan, -1.0f, 1.0f);
+  Q_EMIT changed();
+}
+
+float ArtifactAudioLayer::pan() const
+{
+  return impl_->pan_;
 }
 
 bool ArtifactAudioLayer::isMuted() const
@@ -135,6 +158,7 @@ QJsonObject ArtifactAudioLayer::toJson() const
   obj["type"] = static_cast<int>(LayerType::Audio);
   obj["audio.sourcePath"] = impl_->sourcePath_;
   obj["audio.volume"] = static_cast<double>(impl_->volume_);
+  obj["audio.pan"] = static_cast<double>(impl_->pan_);
   obj["audio.muted"] = impl_->muted_;
   return obj;
 }
@@ -149,6 +173,9 @@ void ArtifactAudioLayer::fromJsonProperties(const QJsonObject& obj)
   }
   if (obj.contains("audio.volume")) {
     setVolume(static_cast<float>(obj.value("audio.volume").toDouble(1.0)));
+  }
+  if (obj.contains("audio.pan")) {
+    setPan(static_cast<float>(obj.value("audio.pan").toDouble(0.0)));
   }
   if (obj.contains("audio.muted")) {
     impl_->muted_ = obj.value("audio.muted").toBool(false);
@@ -177,12 +204,19 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactAudioLayer::getLayerPropertyGro
 
   audioGroup.addProperty(makeProp(QStringLiteral("audio.sourcePath"), ArtifactCore::PropertyType::String, impl_->sourcePath_, -130));
   auto volumeProp = makeProp(QStringLiteral("audio.volume"), ArtifactCore::PropertyType::Float, impl_->volume_, -120);
-  volumeProp->setHardRange(0.0, 1.0);
-  volumeProp->setSoftRange(0.0, 1.0);
+  volumeProp->setHardRange(0.0, 2.0);
+  volumeProp->setSoftRange(0.0, 2.0);
   volumeProp->setStep(0.01);
   volumeProp->setUnit(QStringLiteral("linear"));
-  volumeProp->setTooltip(QStringLiteral("Audio gain (0.0 - 1.0)"));
+  volumeProp->setTooltip(QStringLiteral("Audio gain (0.0 - 2.0)"));
   audioGroup.addProperty(volumeProp);
+  auto panProp = makeProp(QStringLiteral("audio.pan"), ArtifactCore::PropertyType::Float, impl_->pan_, -115);
+  panProp->setHardRange(-1.0, 1.0);
+  panProp->setSoftRange(-1.0, 1.0);
+  panProp->setStep(0.01);
+  panProp->setUnit(QStringLiteral("pan"));
+  panProp->setTooltip(QStringLiteral("Audio pan (-1.0 left, 0.0 center, 1.0 right)"));
+  audioGroup.addProperty(panProp);
   audioGroup.addProperty(makeProp(QStringLiteral("audio.muted"), ArtifactCore::PropertyType::Boolean, impl_->muted_, -110));
   audioGroup.addProperty(makeProp(QStringLiteral("audio.sampleRate"), ArtifactCore::PropertyType::Integer, impl_->sourceSampleRate_, -100));
   audioGroup.addProperty(makeProp(QStringLiteral("audio.channels"), ArtifactCore::PropertyType::Integer, impl_->sourceChannelCount_, -90));
@@ -198,6 +232,10 @@ bool ArtifactAudioLayer::setLayerPropertyValue(const QString& propertyPath, cons
   }
   if (propertyPath == QStringLiteral("audio.volume")) {
     setVolume(static_cast<float>(value.toDouble()));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("audio.pan")) {
+    setPan(static_cast<float>(value.toDouble()));
     return true;
   }
   if (propertyPath == QStringLiteral("audio.muted")) {
@@ -473,6 +511,7 @@ bool ArtifactAudioLayer::getAudio(ArtifactCore::AudioSegment& outSegment,
 
     outSegment.channelData[0][i] = left * impl_->volume_;
     outSegment.channelData[1][i] = right * impl_->volume_;
+    applyStereoPan(impl_->pan_, outSegment.channelData[0][i], outSegment.channelData[1][i]);
     producedFrames = i + 1;
   }
 
