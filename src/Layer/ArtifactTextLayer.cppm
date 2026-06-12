@@ -76,6 +76,7 @@ import Property.Abstract;
 import Property.Group;
 import Font.FreeFont;
 import Text.Style;
+import Text.LayoutContract;
 import Text.GlyphLayout;
 import Text.ShapingBackend;
 import Text.Animator;
@@ -113,6 +114,7 @@ public:
 
   // Text Animator support
   std::vector<GlyphItem> glyphs_;
+  TextLayoutContract layoutContract_;
   std::vector<TextAnimatorState> animators_;
   bool perGlyphMode_ = false;
 
@@ -580,6 +582,26 @@ QString selectorTokenLabelForGlyphs(const std::vector<GlyphItem> &glyphs) {
   return QStringLiteral("token=%1").arg(glyph.stableTokenId);
 }
 
+QString selectorScriptLabelForContract(const TextLayoutContract &contract) {
+  if (contract.scriptRuns.isEmpty()) {
+    return QStringLiteral("scripts=0");
+  }
+
+  const TextScriptRun &run = contract.scriptRuns.front();
+  const QString direction =
+      run.direction == TextDirection::RightToLeft
+          ? QStringLiteral("rtl")
+          : (run.direction == TextDirection::LeftToRight
+                 ? QStringLiteral("ltr")
+                 : QStringLiteral("auto"));
+  return QStringLiteral("scripts=%1;script=%2;dir=%3;complex=%4")
+      .arg(contract.scriptRuns.size())
+      .arg(run.scriptTag)
+      .arg(direction)
+      .arg(run.isComplexScript ? QStringLiteral("yes")
+                               : QStringLiteral("no"));
+}
+
 QString textWritingModeLabel(const TextWritingMode writingMode) {
   return writingMode == TextWritingMode::Vertical ? QStringLiteral("mode=vertical")
                                                    : QStringLiteral("mode=horizontal");
@@ -593,7 +615,7 @@ QString textOrderingLabel(const TextWritingMode writingMode) {
 
 QString selectorOverviewTooltip() {
   return QStringLiteral(
-      "Primary summary for the current selector state in compact key=value form, including target, mode, source, visual, unit, regex, tag, token, clusters, and lines.");
+      "Primary summary for the current selector state in compact key=value form, including target, mode, source, visual, unit, regex, tag, script, token, clusters, and lines.");
 }
 
 bool containsRtlCodepoint(const QString &text) {
@@ -613,15 +635,18 @@ TextDirection inferredBaseDirection(const QString &text) {
                                     : TextDirection::LeftToRight;
 }
 
-std::vector<GlyphItem> layoutTextGlyphs(const UniString &text,
-                                        const TextStyle &style,
-                                        const ParagraphStyle &paragraph,
-                                        const TextWritingMode writingMode,
-                                        const QVector<TextRubyAttachment> &rubyAttachments,
-                                        const TextLayoutMode layoutMode,
-                                        const std::vector<ArtifactCore::BezierSegment> &pathSegments) {
+TextShapingResult layoutTextShape(const UniString &text,
+                                  const TextStyle &style,
+                                  const ParagraphStyle &paragraph,
+                                  const TextWritingMode writingMode,
+                                  const QVector<TextRubyAttachment> &rubyAttachments,
+                                  const TextLayoutMode layoutMode,
+                                  const std::vector<ArtifactCore::BezierSegment> &pathSegments) {
   if (layoutMode == TextLayoutMode::Path) {
-    return TextLayoutEngine::layoutOnPath(text, style, paragraph, pathSegments);
+    TextShapingResult result;
+    result.glyphs =
+        TextLayoutEngine::layoutOnPath(text, style, paragraph, pathSegments);
+    return result;
   }
 
   QtShapingBackend backend;
@@ -632,7 +657,7 @@ std::vector<GlyphItem> layoutTextGlyphs(const UniString &text,
   request.writingMode = writingMode;
   request.baseDirection = inferredBaseDirection(request.text);
   request.rubyAttachments = rubyAttachments;
-  return backend.shape(request).glyphs;
+  return backend.shape(request);
 }
 
 RangeSelector presetRange() {
@@ -1858,7 +1883,7 @@ QString ArtifactTextLayer::selectorBoundarySummary() const {
 QString ArtifactTextLayer::selectorOverviewSummary() const {
   if (!impl_) {
     return QStringLiteral(
-        "target=glyph;mode=horizontal;source=logical;visual=flow;unit=glyph;regex=off;tag=unknown;token=none;clusters=0;lines=0");
+        "target=glyph;mode=horizontal;source=logical;visual=flow;unit=glyph;regex=off;tag=unknown;token=none;scripts=0;clusters=0;lines=0");
   }
   const QString displayText = resolvedSourceTextAtTime(this);
   const bool hasAnimators =
@@ -1880,7 +1905,8 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
                          impl_->layoutMode_ == TextLayoutMode::Box;
   const QString tokenSummary = selectorTokenLabelForGlyphs(impl_->glyphs_);
   const QString tagSummary = selectorTagLabelForText(displayText);
-  return QStringLiteral("target=%1;%2;%3;%4;regex=%5;%6;%7;clusters=%8;lines=%9")
+  const QString scriptSummary = selectorScriptLabelForContract(impl_->layoutContract_);
+  return QStringLiteral("target=%1;%2;%3;%4;regex=%5;%6;%7;%8;clusters=%9;lines=%10")
       .arg(selectorDebugSummary(), textWritingModeLabel(impl_->writingMode_),
            textOrderingLabel(impl_->writingMode_),
            textSelectionUnitLabelForState(hasAnimators, hasRuby, hasCjk,
@@ -1889,6 +1915,7 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
            hasRegexSelector ? QStringLiteral("on") : QStringLiteral("off"),
            tagSummary,
            tokenSummary,
+           scriptSummary,
            selectorClusterBoundaryPreview().size(),
            selectorLineBoundaryPreview().size());
 }
@@ -1927,12 +1954,14 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
     if (impl_->isDirty_ || !impl_->lastCacheKey_ ||
         *impl_->lastCacheKey_ != currentKey || sourceSize().width <= 0 ||
         sourceSize().height <= 0) {
-      impl_->glyphs_ = layoutTextGlyphs(
+      const TextShapingResult shaped = layoutTextShape(
           UniString(displayText), impl_->textStyle_, impl_->paragraphStyle_,
           impl_->writingMode_,
           buildRubyAttachments(UniString(displayText), impl_->rubyText_,
                                impl_->rubyScale_),
           impl_->layoutMode_, impl_->pathSegments_);
+      impl_->glyphs_ = shaped.glyphs;
+      impl_->layoutContract_ = shaped.contract;
       const QRectF glyphBounds = unitedGlyphBounds(impl_->glyphs_);
       const qreal contentWidth = boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f
                                      ? impl_->paragraphStyle_.boxWidth
@@ -2141,12 +2170,20 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                        selectorOverviewSummary(), -83);
   selectorOverviewProp->setDisplayLabel(QStringLiteral("Selector Overview"));
   selectorOverviewProp->setTooltip(
-      QStringLiteral("Primary compact key=value summary for target, mode, source, visual, unit, tag, clusters, and lines."));
+      QStringLiteral("Primary compact key=value summary for target, mode, source, visual, unit, tag, script, token, clusters, and lines."));
   textGroup.addProperty(selectorOverviewProp);
+  auto selectorScriptProp = makeProp(QStringLiteral("text.selectorScript"),
+                                     ArtifactCore::PropertyType::String,
+                                     selectorScriptLabelForContract(impl_->layoutContract_),
+                                     -82);
+  selectorScriptProp->setDisplayLabel(QStringLiteral("Selector Script"));
+  selectorScriptProp->setTooltip(
+      QStringLiteral("Script run summary from the shaped layout contract."));
+  textGroup.addProperty(selectorScriptProp);
   auto selectorTokenProp = makeProp(QStringLiteral("text.selectorToken"),
                                    ArtifactCore::PropertyType::String,
                                    selectorTokenLabelForGlyphs(impl_->glyphs_),
-                                   -82);
+                                   -81);
   selectorTokenProp->setDisplayLabel(QStringLiteral("Selector Token"));
   selectorTokenProp->setTooltip(
       QStringLiteral("Representative stable token id for the current shaped glyph stream."));
@@ -2154,14 +2191,14 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   auto selectorTagProp = makeProp(QStringLiteral("text.selectorTag"),
                                   ArtifactCore::PropertyType::String,
                                   selectorTagLabelForText(badgeSourceText),
-                                  -81);
+                                  -80);
   selectorTagProp->setDisplayLabel(QStringLiteral("Selector Tag"));
   selectorTagProp->setTooltip(
       QStringLiteral("Representative script-family tag for the current text stream."));
   textGroup.addProperty(selectorTagProp);
   auto unitBadgeProp = makeProp(QStringLiteral("text.unitBadge"),
                                 ArtifactCore::PropertyType::String,
-                                badgeText, -80);
+                                badgeText, -79);
   unitBadgeProp->setDisplayLabel(QStringLiteral("Unit Badge"));
   unitBadgeProp->setTooltip(
       QStringLiteral("Detail used by Selector Overview: current text unit semantics."));
@@ -2169,10 +2206,10 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   textGroup.addProperty(makeProp(QStringLiteral("text.rubyText"),
                                  ArtifactCore::PropertyType::String,
-                                 rubyText(), -79));
+                                 rubyText(), -78));
   auto rubyScaleProp =
       makeProp(QStringLiteral("text.rubyScale"),
-               ArtifactCore::PropertyType::Float, rubyScale(), -78);
+               ArtifactCore::PropertyType::Float, rubyScale(), -77);
   rubyScaleProp->setHardRange(0.1, 1.0);
   rubyScaleProp->setSoftRange(0.25, 0.8);
   rubyScaleProp->setStep(0.05);
@@ -2181,14 +2218,14 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   auto layoutModeProp = makeProp(QStringLiteral("text.layoutMode"),
                                  ArtifactCore::PropertyType::Integer,
-                                 static_cast<int>(layoutMode()), -77);
+                                 static_cast<int>(layoutMode()), -76);
   layoutModeProp->setTooltip(
       QStringLiteral("0=Point text, 1=Box text"));
   textGroup.addProperty(layoutModeProp);
 
   auto maxWidthProp =
       makeProp(QStringLiteral("text.maxWidth"),
-               ArtifactCore::PropertyType::Float, maxWidth(), -76);
+               ArtifactCore::PropertyType::Float, maxWidth(), -75);
   maxWidthProp->setHardRange(0.0, 100000.0);
   maxWidthProp->setSoftRange(0.0, 1920.0);
   maxWidthProp->setStep(1.0);
@@ -2198,7 +2235,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   auto boxHeightProp =
       makeProp(QStringLiteral("text.boxHeight"),
-               ArtifactCore::PropertyType::Float, boxHeight(), -75);
+               ArtifactCore::PropertyType::Float, boxHeight(), -74);
   boxHeightProp->setHardRange(0.0, 100000.0);
   boxHeightProp->setSoftRange(0.0, 1080.0);
   boxHeightProp->setStep(1.0);
@@ -2208,7 +2245,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   auto paragraphSpacingProp =
       makeProp(QStringLiteral("text.paragraphSpacing"),
-               ArtifactCore::PropertyType::Float, paragraphSpacing(), -75);
+               ArtifactCore::PropertyType::Float, paragraphSpacing(), -73);
   paragraphSpacingProp->setHardRange(0.0, 1000.0);
   paragraphSpacingProp->setSoftRange(0.0, 80.0);
   paragraphSpacingProp->setStep(0.5);
@@ -2217,7 +2254,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   const auto c = textColor();
   auto colorProp = persistentLayerProperty(QStringLiteral("text.color"),
                                            ArtifactCore::PropertyType::Color,
-                                           QVariant(), -76);
+                                           QVariant(), -72);
   colorProp->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   colorProp->setValue(colorProp->getColorValue());
   textGroup.addProperty(colorProp);
@@ -2225,43 +2262,43 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   // Stroke
   textGroup.addProperty(makeProp(QStringLiteral("text.strokeEnabled"),
                                  ArtifactCore::PropertyType::Boolean,
-                                 isStrokeEnabled(), -75));
+                                 isStrokeEnabled(), -71));
   const auto sc = strokeColor();
   auto strokeColorProp = persistentLayerProperty(
       QStringLiteral("text.strokeColor"), ArtifactCore::PropertyType::Color,
-      QVariant(), -74);
+      QVariant(), -70);
   strokeColorProp->setColorValue(
       QColor::fromRgbF(sc.r(), sc.g(), sc.b(), sc.a()));
   strokeColorProp->setValue(strokeColorProp->getColorValue());
   textGroup.addProperty(strokeColorProp);
   textGroup.addProperty(makeProp(QStringLiteral("text.strokeWidth"),
                                  ArtifactCore::PropertyType::Float,
-                                 strokeWidth(), -73));
+                                 strokeWidth(), -69));
 
   // Shadow
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowEnabled"),
                                  ArtifactCore::PropertyType::Boolean,
-                                 isShadowEnabled(), -72));
+                                 isShadowEnabled(), -68));
   const auto shc = shadowColor();
   auto shadowColorProp = persistentLayerProperty(
       QStringLiteral("text.shadowColor"), ArtifactCore::PropertyType::Color,
-      QVariant(), -71);
+      QVariant(), -67);
   shadowColorProp->setColorValue(
       QColor::fromRgbF(shc.r(), shc.g(), shc.b(), shc.a()));
   shadowColorProp->setValue(shadowColorProp->getColorValue());
   textGroup.addProperty(shadowColorProp);
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetX"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowOffsetX(), -70));
+                                 shadowOffsetX(), -66));
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetY"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowOffsetY(), -69));
+                                 shadowOffsetY(), -65));
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowBlur"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowBlur(), -68));
+                                 shadowBlur(), -64));
   auto animatorCountProp =
       makeProp(QStringLiteral("text.animatorCount"),
-               ArtifactCore::PropertyType::Integer, animatorCount(), -67);
+               ArtifactCore::PropertyType::Integer, animatorCount(), -63);
   animatorCountProp->setHardRange(0, 16);
   animatorCountProp->setSoftRange(0, 8);
   animatorCountProp->setStep(1);
@@ -2271,7 +2308,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   auto animatorPresetProp =
       makeProp(QStringLiteral("text.animatorPreset"),
-               ArtifactCore::PropertyType::Integer, 0, -71);
+               ArtifactCore::PropertyType::Integer, 0, -62);
   animatorPresetProp->setDisplayLabel(QStringLiteral("Preset"));
   animatorPresetProp->setTooltip(animatorPresetTooltip());
   animatorPresetProp->setValue(inferTextAnimatorPresetId(impl_->animators_));
@@ -2894,13 +2931,16 @@ void ArtifactTextLayer::updateImage() {
   }
 
   impl_->glyphs_.clear();
+  impl_->layoutContract_ = TextLayoutContract{};
   if (!isRichText) {
-    impl_->glyphs_ = layoutTextGlyphs(UniString(displayText), impl_->textStyle_,
-                                      impl_->paragraphStyle_, impl_->writingMode_,
-                                      buildRubyAttachments(UniString(displayText),
-                                                           impl_->rubyText_,
-                                                           impl_->rubyScale_),
-                                      impl_->layoutMode_, impl_->pathSegments_);
+    const TextShapingResult shaped = layoutTextShape(
+        UniString(displayText), impl_->textStyle_, impl_->paragraphStyle_,
+        impl_->writingMode_,
+        buildRubyAttachments(UniString(displayText), impl_->rubyText_,
+                             impl_->rubyScale_),
+        impl_->layoutMode_, impl_->pathSegments_);
+    impl_->glyphs_ = shaped.glyphs;
+    impl_->layoutContract_ = shaped.contract;
   }
   impl_->perGlyphMode_ = (hasAnimators || pathLayout) && !isRichText;
 
