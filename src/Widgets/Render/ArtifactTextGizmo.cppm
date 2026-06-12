@@ -111,7 +111,10 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
                                Qt::AlignHCenter | Qt::AlignVCenter);
         }
 
-        const QString summary = textLayer->selectorDebugSummary();
+        const QString summary =
+            QStringLiteral("%1 | %2")
+                .arg(textLayer->selectorOverviewSummary(),
+                     textLayer->selectorBoundarySummary());
         const QString flowLabel =
             textLayer->writingMode() == TextWritingMode::Vertical
                 ? QStringLiteral("visual column order")
