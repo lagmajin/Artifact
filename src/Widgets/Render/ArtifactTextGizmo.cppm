@@ -1,4 +1,6 @@
 module;
+#include <QFont>
+#include <QString>
 #include <utility>
 #include <QPointF>
 #include <QRectF>
@@ -9,6 +11,7 @@ module;
 
 module Artifact.Widgets.TextGizmo;
 
+import Artifact.Layer.Text;
 import Artifact.Render.IRenderer;
 import Color.Float;
 
@@ -51,6 +54,89 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
     renderer->drawSolidRect(bbox.right() - handleSize/2, bbox.top() - handleSize/2, handleSize, handleSize, handleColor);
     renderer->drawSolidRect(bbox.left() - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
     renderer->drawSolidRect(bbox.right() - handleSize/2, bbox.bottom() - handleSize/2, handleSize, handleSize, handleColor);
+
+    const auto weightPreview = textLayer->selectorWeightPreview(24);
+    if (!weightPreview.isEmpty()) {
+        const float heatH = 4.0f * invZoom;
+        const float heatGap = 5.0f * invZoom;
+        const float heatY = bbox.top() - heatGap - heatH;
+        const float stripW = bbox.width() / static_cast<float>(weightPreview.size());
+        for (int i = 0; i < weightPreview.size(); ++i) {
+            const float w = std::clamp(weightPreview[i], 0.0f, 1.0f);
+            const FloatColor cool{0.12f, 0.20f, 0.32f, 0.75f};
+            const FloatColor mid{0.95f, 0.45f, 0.10f, 0.80f};
+            const FloatColor hot{1.00f, 0.92f, 0.25f, 0.90f};
+            FloatColor color = (w < 0.5f)
+                ? FloatColor(cool.r() + (mid.r() - cool.r()) * (w * 2.0f),
+                             cool.g() + (mid.g() - cool.g()) * (w * 2.0f),
+                             cool.b() + (mid.b() - cool.b()) * (w * 2.0f),
+                             cool.a() + (mid.a() - cool.a()) * (w * 2.0f))
+                : FloatColor(mid.r() + (hot.r() - mid.r()) * ((w - 0.5f) * 2.0f),
+                             mid.g() + (hot.g() - mid.g()) * ((w - 0.5f) * 2.0f),
+                             mid.b() + (hot.b() - mid.b()) * ((w - 0.5f) * 2.0f),
+                             mid.a() + (hot.a() - mid.a()) * ((w - 0.5f) * 2.0f));
+            const float x = bbox.left() + stripW * static_cast<float>(i);
+            renderer->drawSolidRect(x, heatY, std::max(1.0f, stripW - 1.0f * invZoom), heatH, color);
+        }
+        renderer->drawRectOutline(bbox.left(), heatY, bbox.width(), heatH,
+                                  FloatColor{0.9f, 0.9f, 0.95f, 0.5f});
+
+        const auto clusterBoundaries = textLayer->selectorClusterBoundaryPreview();
+        const QFont labelFont(QStringLiteral("Segoe UI"));
+        labelFont.setPointSizeF(std::max(6.0f, 9.0f * invZoom));
+        for (int i = 0; i < clusterBoundaries.size(); ++i) {
+            const float t = clusterBoundaries[i];
+            const float x = bbox.left() + bbox.width() * std::clamp(t, 0.0f, 1.0f);
+            renderer->drawSolidRect(x, heatY - 2.0f * invZoom, 1.0f * invZoom,
+                                    heatH + 4.0f * invZoom,
+                                    FloatColor{0.95f, 0.90f, 0.25f, 0.90f});
+            renderer->drawText(QRectF(x - 10.0f * invZoom, heatY - 10.0f * invZoom,
+                                      20.0f * invZoom, 8.0f * invZoom),
+                               QStringLiteral("%1").arg(i + 1), labelFont,
+                               FloatColor{0.98f, 0.96f, 0.64f, 0.95f},
+                               Qt::AlignHCenter | Qt::AlignVCenter);
+        }
+
+        const auto lineBoundaries = textLayer->selectorLineBoundaryPreview();
+        for (int i = 0; i < lineBoundaries.size(); ++i) {
+            const float t = lineBoundaries[i];
+            const float x = bbox.left() + bbox.width() * std::clamp(t, 0.0f, 1.0f);
+            renderer->drawSolidRect(x, heatY - 4.0f * invZoom, 1.5f * invZoom,
+                                    heatH + 8.0f * invZoom,
+                                    FloatColor{0.85f, 0.50f, 0.95f, 0.85f});
+            renderer->drawText(QRectF(x - 12.0f * invZoom, heatY + heatH + 2.0f * invZoom,
+                                      24.0f * invZoom, 8.0f * invZoom),
+                               QStringLiteral("L%1").arg(i + 1), labelFont,
+                               FloatColor{0.92f, 0.78f, 0.98f, 0.95f},
+                               Qt::AlignHCenter | Qt::AlignVCenter);
+        }
+
+        const QString summary = textLayer->selectorDebugSummary();
+        const QString flowLabel =
+            textLayer->writingMode() == TextWritingMode::Vertical
+                ? QStringLiteral("visual column order")
+                : QStringLiteral("visual flow order");
+        const float labelH = std::max(8.0f * invZoom, 9.0f * invZoom);
+        const float labelY = heatY - labelH - 2.0f * invZoom;
+        const float labelW = std::max(24.0f * invZoom, bbox.width() * 0.25f);
+        renderer->drawText(QRectF(bbox.left(), labelY, labelW, labelH),
+                           QStringLiteral("logical start"), labelFont,
+                           FloatColor{0.92f, 0.95f, 1.0f, 0.95f},
+                           Qt::AlignLeft | Qt::AlignVCenter);
+        renderer->drawText(QRectF(bbox.right() - labelW, labelY, labelW, labelH),
+                           QStringLiteral("logical end"), labelFont,
+                           FloatColor{0.92f, 0.95f, 1.0f, 0.95f},
+                           Qt::AlignRight | Qt::AlignVCenter);
+        renderer->drawText(QRectF(bbox.left() + labelW, labelY, bbox.width() - labelW * 2.0f, labelH),
+                           summary, labelFont,
+                           FloatColor{1.0f, 0.82f, 0.35f, 0.98f},
+                           Qt::AlignHCenter | Qt::AlignVCenter);
+        renderer->drawText(QRectF(bbox.left(), heatY + heatH + 1.0f * invZoom,
+                                  bbox.width(), labelH),
+                           flowLabel, labelFont,
+                           FloatColor{0.80f, 0.92f, 1.0f, 0.90f},
+                           Qt::AlignHCenter | Qt::AlignVCenter);
+    }
 
     // Side handles (optional, for now just corners)
 

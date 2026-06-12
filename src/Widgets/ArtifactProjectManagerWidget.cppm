@@ -25,6 +25,8 @@ module;
 #include <QPixmap>
 #include <QIcon>
 #include <QBrush>
+#include <QPointF>
+#include <QRectF>
 #include <QPainter>
 #include <QColor>
 #include <QFont>
@@ -392,6 +394,269 @@ QString projectItemTileBadgeText(ProjectItem* item)
     }
 }
 
+QString responsiveLayoutVariantSummary(const ResponsiveLayoutVariant& variant)
+{
+    const QString name = variant.displayName.isEmpty() ? variant.variantId
+                                                      : variant.displayName;
+    const QString sizeLabel = variant.baseSize.isValid()
+        ? QStringLiteral("%1x%2").arg(variant.baseSize.width()).arg(variant.baseSize.height())
+        : QStringLiteral("custom");
+    return QStringLiteral("%1 • %2").arg(name, sizeLabel);
+}
+
+QString responsiveLayoutActiveSummary(const ResponsiveLayoutSet& layout)
+{
+    const QString activeVariantId = layout.activeVariantId;
+    for (const auto& variant : layout.variants) {
+        if (variant.variantId == activeVariantId) {
+            return responsiveLayoutVariantSummary(variant);
+        }
+    }
+    return QStringLiteral("Manual");
+}
+
+QString uniqueResponsiveVariantId(const ResponsiveLayoutSet& layout, const QString& baseId)
+{
+    QString trimmed = baseId.trimmed();
+    if (trimmed.isEmpty()) {
+        trimmed = QStringLiteral("layout");
+    }
+    if (!layout.hasVariant(trimmed)) {
+        return trimmed;
+    }
+    for (int i = 2; i < 1000; ++i) {
+        const QString candidate = QStringLiteral("%1_%2").arg(trimmed).arg(i);
+        if (!layout.hasVariant(candidate)) {
+            return candidate;
+        }
+    }
+    return QStringLiteral("%1_%2").arg(trimmed, QString::number(layout.variants.size() + 1));
+}
+
+ResponsiveLayoutVariant responsiveLayoutVariantTemplate(const ResponsiveLayoutVariant* source,
+                                                        const QSize& fallbackSize)
+{
+    ResponsiveLayoutVariant variant;
+    if (source) {
+        variant = *source;
+    } else {
+        variant.variantId = QStringLiteral("layout");
+        variant.displayName = QStringLiteral("Layout");
+        variant.baseSize = fallbackSize.isValid() ? fallbackSize : QSize(1920, 1080);
+        variant.aspectRatio = variant.baseSize.height() > 0
+            ? static_cast<qreal>(variant.baseSize.width()) /
+              static_cast<qreal>(variant.baseSize.height())
+            : 0.0;
+        variant.safeArea = QRectF(0.0, 0.0, 1.0, 1.0);
+        variant.contentAnchor = QPointF(0.5, 0.5);
+        variant.layoutRules.insert(QStringLiteral("scaleMode"), QStringLiteral("fit"));
+        variant.layoutRules.insert(QStringLiteral("cropMode"), QStringLiteral("none"));
+        variant.enabled = true;
+    }
+    return variant;
+}
+
+bool editResponsiveLayoutVariantDialog(QWidget* parent,
+                                      ResponsiveLayoutSet* layoutSet,
+                                      const QString& variantId)
+{
+    if (!layoutSet) {
+        return false;
+    }
+    auto* variant = [&]() -> ResponsiveLayoutVariant* {
+        for (auto& candidate : layoutSet->variants) {
+            if (candidate.variantId == variantId) {
+                return &candidate;
+            }
+        }
+        return nullptr;
+    }();
+    if (!variant) {
+        return false;
+    }
+    const QString originalVariantId = variant->variantId;
+
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QStringLiteral("Edit Responsive Variant"));
+    dialog.setModal(true);
+    dialog.resize(420, 220);
+
+    auto* dialogLayout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout();
+
+    auto* nameEdit = new QLineEdit(&dialog);
+    nameEdit->setText(variant->displayName.isEmpty() ? variant->variantId : variant->displayName);
+    form->addRow(QStringLiteral("Name"), nameEdit);
+
+    auto* idEdit = new QLineEdit(&dialog);
+    idEdit->setText(variant->variantId);
+    form->addRow(QStringLiteral("Variant ID"), idEdit);
+
+    auto* widthSpin = new QSpinBox(&dialog);
+    widthSpin->setRange(1, 32768);
+    widthSpin->setValue(std::max(1, variant->baseSize.width()));
+    auto* heightSpin = new QSpinBox(&dialog);
+    heightSpin->setRange(1, 32768);
+    heightSpin->setValue(std::max(1, variant->baseSize.height()));
+    form->addRow(QStringLiteral("Width"), widthSpin);
+    form->addRow(QStringLiteral("Height"), heightSpin);
+
+    auto* enabledCheck = new QCheckBox(QStringLiteral("Enabled"), &dialog);
+    enabledCheck->setChecked(variant->enabled);
+    form->addRow(QString(), enabledCheck);
+
+    dialogLayout->addLayout(form);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                         Qt::Horizontal,
+                                         &dialog);
+    dialogLayout->addWidget(buttons);
+
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&]() {
+        const QString trimmedId = idEdit->text().trimmed();
+        if (trimmedId.isEmpty()) {
+            QMessageBox::warning(&dialog,
+                                 QStringLiteral("Edit Responsive Variant"),
+                                 QStringLiteral("Variant ID must not be empty."));
+            return;
+        }
+
+        for (const auto& candidate : layoutSet->variants) {
+            if (&candidate != variant && candidate.variantId == trimmedId) {
+                QMessageBox::warning(&dialog,
+                                     QStringLiteral("Edit Responsive Variant"),
+                                     QStringLiteral("Variant ID must be unique."));
+                return;
+            }
+        }
+
+        const QString trimmedName = nameEdit->text().trimmed();
+        if (trimmedName.isEmpty()) {
+            QMessageBox::warning(&dialog,
+                                 QStringLiteral("Edit Responsive Variant"),
+                                 QStringLiteral("Name must not be empty."));
+            return;
+        }
+
+        const bool wasActive = (layoutSet->activeVariantId == originalVariantId);
+        const QString newVariantId = trimmedId;
+        variant->variantId = newVariantId;
+        variant->displayName = trimmedName;
+        variant->baseSize = QSize(std::max(1, widthSpin->value()),
+                                  std::max(1, heightSpin->value()));
+        variant->aspectRatio = variant->baseSize.height() > 0
+            ? static_cast<qreal>(variant->baseSize.width()) /
+              static_cast<qreal>(variant->baseSize.height())
+            : 0.0;
+        variant->enabled = enabledCheck->isChecked();
+        if (wasActive) {
+            layoutSet->activeVariantId = newVariantId;
+        }
+        dialog.accept();
+    });
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    return dialog.exec() == QDialog::Accepted;
+}
+
+bool addResponsiveLayoutVariantDialog(QWidget* parent,
+                                     ResponsiveLayoutSet* layoutSet,
+                                     const ResponsiveLayoutVariant* templateVariant,
+                                     const QSize& fallbackSize,
+                                     const QString& title,
+                                     const bool activateNewVariant)
+{
+    if (!layoutSet) {
+        return false;
+    }
+
+    ResponsiveLayoutVariant draft = responsiveLayoutVariantTemplate(templateVariant, fallbackSize);
+    draft.variantId = uniqueResponsiveVariantId(*layoutSet, draft.variantId);
+    if (draft.displayName.trimmed().isEmpty()) {
+        draft.displayName = QStringLiteral("Layout");
+    }
+
+    QDialog dialog(parent);
+    dialog.setWindowTitle(title);
+    dialog.setModal(true);
+    dialog.resize(420, 220);
+
+    auto* dialogLayout = new QVBoxLayout(&dialog);
+    auto* form = new QFormLayout();
+
+    auto* nameEdit = new QLineEdit(&dialog);
+    nameEdit->setText(draft.displayName);
+    form->addRow(QStringLiteral("Name"), nameEdit);
+
+    auto* idEdit = new QLineEdit(&dialog);
+    idEdit->setText(draft.variantId);
+    form->addRow(QStringLiteral("Variant ID"), idEdit);
+
+    auto* widthSpin = new QSpinBox(&dialog);
+    widthSpin->setRange(1, 32768);
+    widthSpin->setValue(std::max(1, draft.baseSize.width()));
+    auto* heightSpin = new QSpinBox(&dialog);
+    heightSpin->setRange(1, 32768);
+    heightSpin->setValue(std::max(1, draft.baseSize.height()));
+    form->addRow(QStringLiteral("Width"), widthSpin);
+    form->addRow(QStringLiteral("Height"), heightSpin);
+
+    auto* enabledCheck = new QCheckBox(QStringLiteral("Enabled"), &dialog);
+    enabledCheck->setChecked(draft.enabled);
+    form->addRow(QString(), enabledCheck);
+
+    dialogLayout->addLayout(form);
+
+    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel,
+                                         Qt::Horizontal,
+                                         &dialog);
+    dialogLayout->addWidget(buttons);
+
+    QObject::connect(buttons, &QDialogButtonBox::accepted, &dialog, [&]() {
+        const QString trimmedId = idEdit->text().trimmed();
+        if (trimmedId.isEmpty()) {
+            QMessageBox::warning(&dialog,
+                                 QStringLiteral("Responsive Layout"),
+                                 QStringLiteral("Variant ID must not be empty."));
+            return;
+        }
+        for (const auto& candidate : layoutSet->variants) {
+            if (candidate.variantId == trimmedId) {
+                QMessageBox::warning(&dialog,
+                                     QStringLiteral("Responsive Layout"),
+                                     QStringLiteral("Variant ID must be unique."));
+                return;
+            }
+        }
+
+        const QString trimmedName = nameEdit->text().trimmed();
+        if (trimmedName.isEmpty()) {
+            QMessageBox::warning(&dialog,
+                                 QStringLiteral("Responsive Layout"),
+                                 QStringLiteral("Name must not be empty."));
+            return;
+        }
+
+        draft.variantId = trimmedId;
+        draft.displayName = trimmedName;
+        draft.baseSize = QSize(std::max(1, widthSpin->value()),
+                               std::max(1, heightSpin->value()));
+        draft.aspectRatio = draft.baseSize.height() > 0
+            ? static_cast<qreal>(draft.baseSize.width()) /
+              static_cast<qreal>(draft.baseSize.height())
+            : 0.0;
+        draft.enabled = enabledCheck->isChecked();
+        layoutSet->variants.append(draft);
+        if (activateNewVariant) {
+            layoutSet->activeVariantId = draft.variantId;
+        }
+        dialog.accept();
+    });
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    return dialog.exec() == QDialog::Accepted;
+}
+
 QString projectItemTypeLabel(eProjectItemType type)
 {
     switch (type) {
@@ -686,10 +951,14 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
                 const QSize compSize = comp->settings().compositionSize();
                 const auto frameRange = comp->frameRange().normalized();
                 const auto workAreaRange = comp->workAreaRange().normalized();
+                const ResponsiveLayoutSet responsiveLayout = comp->responsiveLayout();
                 lines << QStringLiteral("Status: Ready");
                 lines << QStringLiteral("Resolution: %1 x %2")
                              .arg(compSize.width())
                              .arg(compSize.height());
+                lines << QStringLiteral("Layout: %1 • %2 variants")
+                             .arg(responsiveLayoutActiveSummary(responsiveLayout))
+                             .arg(responsiveLayout.variants.size());
                 lines << QStringLiteral("Timing: %1 fps • %2 frames")
                              .arg(QString::number(comp->frameRate().framerate(), 'f', 2))
                              .arg(frameRange.duration());
@@ -1310,14 +1579,14 @@ public:
     int indentWidth = 16;
     ArtifactProjectView::PresentationMode presentationMode = ArtifactProjectView::PresentationMode::List;
     QHash<QString, QPixmap> tilePreviewCache;
-    int tileMargin = 12;
-    int tileSpacing = 14;
-    int tileWidth = 190;
-    int tileHeight = 204;
-    int tilePreviewHeight = 112;
+    int tileMargin = 14;
+    int tileSpacing = 16;
+    int tileWidth = 214;
+    int tileHeight = 226;
+    int tilePreviewHeight = 120;
     int tileContentTop = 34;
-    int tileContentBottom = 8;
-    int tileTextLines = 3;
+    int tileContentBottom = 10;
+    int tileTextLines = 4;
 
     QString keyForIndex(QModelIndex index) const {
         index = index.siblingAtColumn(0);
@@ -2221,6 +2490,20 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         painter.setBrush(tileFill);
         painter.drawRoundedRect(tileRect.adjusted(0, 0, -1, -1), 8, 8);
 
+        QColor accent = QColor(88, 140, 198);
+        if (type == eProjectItemType::Folder) {
+            accent = QColor(186, 146, 58);
+        } else if (type == eProjectItemType::Footage) {
+            accent = QColor(74, 165, 104);
+        } else if (type == eProjectItemType::Solid) {
+            accent = QColor(132, 104, 194);
+        }
+        if (selected) {
+            accent = accent.lighter(115);
+        }
+        painter.fillRect(QRect(tileRect.left() + 1, tileRect.top() + 1,
+                               tileRect.width() - 2, 3), accent);
+
         const QRect previewRect = impl_->tilePreviewRect(tileRect);
         const QRect titleRect = impl_->tileTitleRect(tileRect);
         const QRect metadataRect = impl_->tileMetadataRect(tileRect);
@@ -2291,9 +2574,9 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         const QString badgeText = projectItemTileBadgeText(item);
         const QFontMetrics badgeFm(painter.font());
         const int badgeW = std::min(tileRect.width() - 20,
-                                    badgeFm.horizontalAdvance(badgeText) + 14);
+                                    badgeFm.horizontalAdvance(badgeText) + 10);
         const QRect badgeRect(tileRect.right() - badgeW - 10,
-                              tileRect.top() + 10,
+                              tileRect.top() + 8,
                               badgeW,
                               std::max(18, badgeFm.height() + 4));
         QColor badgeBg = selected ? QColor(255, 255, 255, 26)
@@ -2308,6 +2591,36 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         painter.setPen(badgePen);
         painter.drawText(badgeRect.adjusted(6, 0, -6, 0),
                          Qt::AlignCenter, badgeText);
+
+        if (item && item->type() == eProjectItemType::Composition) {
+            auto* svc = ArtifactProjectService::instance();
+            if (svc) {
+                const auto found = svc->findComposition(static_cast<CompositionItem*>(item)->compositionId);
+                if (auto comp = found.ptr.lock()) {
+                    const auto responsiveLayout = comp->responsiveLayout();
+                    const QString layoutSummary = QStringLiteral("Layout: %1")
+                        .arg(responsiveLayoutActiveSummary(responsiveLayout));
+                    const QFontMetrics layoutFm(painter.font());
+                    const int layoutW = std::min(tileRect.width() - 20,
+                                                 layoutFm.horizontalAdvance(layoutSummary) + 10);
+                    const QRect layoutRect(tileRect.right() - layoutW - 10,
+                                           badgeRect.bottom() + 4,
+                                           layoutW,
+                                           std::max(18, layoutFm.height() + 4));
+                    painter.setBrush(selected ? QColor(255, 255, 255, 16)
+                                              : QColor(0, 0, 0, 28));
+                    painter.setPen(QPen(selected ? QColor(220, 226, 235)
+                                                 : QColor(180, 188, 198),
+                                        1.0));
+                    painter.drawRoundedRect(layoutRect, 6, 6);
+                    painter.setPen(selected ? QColor(240, 243, 246)
+                                            : QColor(200, 206, 214));
+                    painter.drawText(layoutRect.adjusted(6, 0, -6, 0),
+                                     Qt::AlignCenter,
+                                     layoutFm.elidedText(layoutSummary, Qt::ElideRight, layoutRect.width() - 12));
+                }
+            }
+        }
 
         // Proxy status badge for footage items
         if (item && item->type() == eProjectItemType::Footage) {
@@ -2324,9 +2637,9 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                 }();
                 const QString proxyBadgeText = isStale ? QStringLiteral("Proxy ⚠") : QStringLiteral("Proxy");
                 const QFontMetrics pf(painter.font());
-                const int pw = std::min(tileRect.width() - 20, pf.horizontalAdvance(proxyBadgeText) + 14);
+                const int pw = std::min(tileRect.width() - 20, pf.horizontalAdvance(proxyBadgeText) + 10);
                 const QRect proxyRect(tileRect.right() - pw - 10,
-                                      badgeRect.bottom() + 6,
+                                      badgeRect.bottom() + 4,
                                       pw, std::max(18, pf.height() + 4));
                 painter.setBrush(isStale ? QColor(255, 200, 50, 50) : QColor(50, 200, 100, 40));
                 painter.setPen(QPen(isStale ? QColor(255, 200, 50) : QColor(100, 220, 140), 1.0));
@@ -2833,6 +3146,151 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     ArtifactProjectService::instance()->changeCurrentComposition(CompositionID(idVar.toString()));
                 }
             }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/composition.svg")));
+
+            {
+                auto* responsiveMenu = menu.addMenu(QStringLiteral("Responsive Layout"));
+                responsiveMenu->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/blue/aspect_ratio.svg")));
+                const QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
+                if (idVar.isValid() && svc) {
+                    const CompositionID compositionId(idVar.toString());
+                    const auto found = svc->findComposition(compositionId);
+                    if (auto composition = found.ptr.lock()) {
+                        const ResponsiveLayoutSet responsiveLayout = composition->responsiveLayout();
+                        const QString activeVariantId = composition->activeResponsiveLayoutVariantId();
+                        const QSize fallbackSize = composition->effectiveCompositionSize();
+                        const ResponsiveLayoutVariant* activeVariant = nullptr;
+                        for (const auto& variant : responsiveLayout.variants) {
+                            if (variant.variantId == activeVariantId) {
+                                activeVariant = &variant;
+                                break;
+                            }
+                        }
+
+                        responsiveMenu->addAction(QStringLiteral("Add Variant..."), [this, compositionId, fallbackSize]() {
+                            auto* service = ArtifactProjectService::instance();
+                            if (!service) {
+                                return;
+                            }
+                            const auto foundComp = service->findComposition(compositionId);
+                            auto comp = foundComp.ptr.lock();
+                            if (!foundComp.success || !comp) {
+                                return;
+                            }
+                            ResponsiveLayoutSet layout = comp->responsiveLayout();
+                            const ResponsiveLayoutVariant* templateVariant = layout.variants.isEmpty() ? nullptr
+                                : &layout.variants.back();
+                            if (comp->activeResponsiveLayoutVariantId().isEmpty()) {
+                                templateVariant = layout.variants.isEmpty() ? nullptr : &layout.variants.front();
+                            } else {
+                                for (const auto& candidate : layout.variants) {
+                                    if (candidate.variantId == comp->activeResponsiveLayoutVariantId()) {
+                                        templateVariant = &candidate;
+                                        break;
+                                    }
+                                }
+                            }
+                            if (!addResponsiveLayoutVariantDialog(this,
+                                                                  &layout,
+                                                                  templateVariant,
+                                                                  fallbackSize,
+                                                                  QStringLiteral("Add Responsive Variant"),
+                                                                  false)) {
+                                return;
+                            }
+                            comp->setResponsiveLayout(layout);
+                            if (auto project = service->getCurrentProjectSharedPtr()) {
+                                project->projectChanged();
+                            }
+                        });
+
+                        QAction* duplicateAction = responsiveMenu->addAction(QStringLiteral("Duplicate Active Variant..."), [this, compositionId, fallbackSize]() {
+                            auto* service = ArtifactProjectService::instance();
+                            if (!service) {
+                                return;
+                            }
+                            const auto foundComp = service->findComposition(compositionId);
+                            auto comp = foundComp.ptr.lock();
+                            if (!foundComp.success || !comp) {
+                                return;
+                            }
+                            ResponsiveLayoutSet layout = comp->responsiveLayout();
+                            const QString activeId = comp->activeResponsiveLayoutVariantId();
+                            const ResponsiveLayoutVariant* templateVariant = nullptr;
+                            for (const auto& candidate : layout.variants) {
+                                if (candidate.variantId == activeId) {
+                                    templateVariant = &candidate;
+                                    break;
+                                }
+                            }
+                            if (!templateVariant) {
+                                QMessageBox::information(this,
+                                                         QStringLiteral("Responsive Layout"),
+                                                         QStringLiteral("There is no active variant to duplicate."));
+                                return;
+                            }
+                            if (!addResponsiveLayoutVariantDialog(this,
+                                                                  &layout,
+                                                                  templateVariant,
+                                                                  fallbackSize,
+                                                                  QStringLiteral("Duplicate Responsive Variant"),
+                                                                  true)) {
+                                return;
+                            }
+                            comp->setResponsiveLayout(layout);
+                            if (auto project = service->getCurrentProjectSharedPtr()) {
+                                project->projectChanged();
+                            }
+                        });
+                        duplicateAction->setEnabled(activeVariant != nullptr);
+                        responsiveMenu->addSeparator();
+                        if (responsiveLayout.variants.isEmpty()) {
+                            QAction* action = responsiveMenu->addAction(QStringLiteral("Manual"));
+                            action->setEnabled(false);
+                        } else {
+                            for (const auto& variant : responsiveLayout.variants) {
+                                const QString label = responsiveLayoutVariantSummary(variant);
+                                QAction* action = responsiveMenu->addAction(label, [compositionId, variant]() {
+                                    if (auto* service = ArtifactProjectService::instance()) {
+                                        const auto foundComp = service->findComposition(compositionId);
+                                        if (auto comp = foundComp.ptr.lock()) {
+                                            comp->setActiveResponsiveLayoutVariantId(variant.variantId);
+                                        }
+                                    }
+                                });
+                                action->setCheckable(true);
+                                action->setChecked(variant.variantId == activeVariantId);
+                            }
+                            responsiveMenu->addSeparator();
+                        }
+                        responsiveMenu->addAction(QStringLiteral("Edit Active Variant..."), [this, compositionId]() {
+                            auto* service = ArtifactProjectService::instance();
+                            if (!service) {
+                                return;
+                            }
+                            const auto foundComp = service->findComposition(compositionId);
+                            auto comp = foundComp.ptr.lock();
+                            if (!foundComp.success || !comp) {
+                                return;
+                            }
+                            ResponsiveLayoutSet layout = comp->responsiveLayout();
+                            const QString activeId = comp->activeResponsiveLayoutVariantId();
+                            if (layout.variants.isEmpty() || activeId.isEmpty()) {
+                                QMessageBox::information(this,
+                                                         QStringLiteral("Responsive Layout"),
+                                                         QStringLiteral("This composition has no responsive variant to edit."));
+                                return;
+                            }
+                            if (!editResponsiveLayoutVariantDialog(this, &layout, activeId)) {
+                                return;
+                            }
+                            comp->setResponsiveLayout(layout);
+                            if (auto project = service->getCurrentProjectSharedPtr()) {
+                                project->projectChanged();
+                            }
+                        });
+                    }
+                }
+            }
 
             addTrackedAction(QStringLiteral("composition_settings"), QStringLiteral("Composition Settings..."), [this, sourceIdx]() {
                 auto* svc = ArtifactProjectService::instance();

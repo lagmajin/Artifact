@@ -6,6 +6,7 @@ module;
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QHash>
 #include <QPointF>
 #include <QMatrix4x4>
 #include <QPainter>
@@ -22,6 +23,7 @@ module;
 #include <QTextLayout>
 #include <QTextOption>
 #include <QVariant>
+#include <QStringList>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 #include <algorithm>
 #include <any>
@@ -75,6 +77,7 @@ import Property.Group;
 import Font.FreeFont;
 import Text.Style;
 import Text.GlyphLayout;
+import Text.ShapingBackend;
 import Text.Animator;
 import Time.Rational;
 import Artifact.Mask.Path;
@@ -100,6 +103,9 @@ public:
   UniString text_;
   TextStyle textStyle_;
   ParagraphStyle paragraphStyle_;
+  TextWritingMode writingMode_ = TextWritingMode::Horizontal;
+  QString rubyText_;
+  float rubyScale_ = 0.5f;
   TextLayoutMode layoutMode_ = defaultTextLayoutMode();
   QImage renderedImage_;
   mutable std::shared_ptr<ArtifactCore::ImageF32x4_RGBA> renderedBuffer_;
@@ -118,12 +124,17 @@ public:
     UniString text;
     TextStyle style;
     ParagraphStyle paragraph;
+    TextWritingMode writingMode;
+    QString rubyText;
+    float rubyScale;
     TextLayoutMode layoutMode;
     std::vector<ArtifactCore::BezierSegment> pathSegments;
 
     bool operator==(const CacheKey &o) const {
       return text == o.text && style == o.style && paragraph == o.paragraph &&
-             layoutMode == o.layoutMode && pathSegments == o.pathSegments;
+             writingMode == o.writingMode && rubyText == o.rubyText &&
+             rubyScale == o.rubyScale && layoutMode == o.layoutMode &&
+             pathSegments == o.pathSegments;
     }
   };
   std::optional<CacheKey> lastCacheKey_;
@@ -163,6 +174,23 @@ QColor colorWithOpacity(const QColor &color, const float opacity) {
   QColor out = color;
   out.setAlphaF(std::clamp(color.alphaF() * opacity, 0.0f, 1.0f));
   return out;
+}
+
+QVector<TextRubyAttachment> buildRubyAttachments(const UniString &text,
+                                                 const QString &rubyText,
+                                                 const float rubyScale) {
+  QVector<TextRubyAttachment> attachments;
+  if (rubyText.isEmpty() || text.length() <= 0) {
+    return attachments;
+  }
+  attachments.push_back(TextRubyAttachment{
+      .baseLogicalStart = 0,
+      .baseLogicalLength = static_cast<int>(text.length()),
+      .rubyText = rubyText,
+      .rubyScale = rubyScale,
+      .rubyOffset = 0.0f,
+  });
+  return attachments;
 }
 
 int64_t effectiveTextTimelineFrame(const ArtifactTextLayer *layer) {
@@ -244,7 +272,7 @@ bool isAnimatorPropertyAnimatable(const QString &suffix) {
 }
 
 QString selectorUnitsTooltip() {
-  return QStringLiteral("0=Percentage, 1=Index");
+  return QStringLiteral("0=Percentage, 1=Index, 2=Cluster, 3=Line, 4=Tag");
 }
 
 QString selectorShapeTooltip() {
@@ -252,10 +280,359 @@ QString selectorShapeTooltip() {
       "0=Square, 1=Ramp Up, 2=Ramp Down, 3=Triangle, 4=Round, 5=Smooth");
 }
 
+QVector<float> selectorWeightPreviewForAnimators(
+    const std::vector<TextAnimatorState> &animators,
+    int sampleCount,
+    int textLength) {
+  QVector<float> preview;
+  if (sampleCount <= 0) {
+    return preview;
+  }
+  preview.fill(0.0f, sampleCount);
+  if (textLength <= 0 || animators.empty()) {
+    return preview;
+  }
+
+  for (int sample = 0; sample < sampleCount; ++sample) {
+    const int index = (sampleCount == 1)
+                          ? 0
+                          : static_cast<int>(std::round(
+                                (static_cast<double>(sample) /
+                                 static_cast<double>(sampleCount - 1)) *
+                                static_cast<double>(std::max(0, textLength - 1))));
+    float maxWeight = 0.0f;
+    for (const auto &animator : animators) {
+      if (!animator.enabled) {
+        continue;
+      }
+      maxWeight = std::max(
+          maxWeight,
+          TextAnimatorEngine::calculateWeight(index, std::max(textLength, 1),
+                                              animator.range));
+    }
+    preview[sample] = std::clamp(maxWeight, 0.0f, 1.0f);
+  }
+  return preview;
+}
+
+QVector<float> selectorWeightPreviewForGlyphs(
+    const std::vector<GlyphItem> &glyphs,
+    const std::vector<TextAnimatorState> &animators,
+    int sampleCount) {
+  QVector<float> preview;
+  if (sampleCount <= 0) {
+    return preview;
+  }
+  preview.fill(0.0f, sampleCount);
+  if (glyphs.empty() || animators.empty()) {
+    return preview;
+  }
+
+  int clusterCount = 0;
+  int lineCount = 0;
+  QHash<QString, int> tagOrder;
+  std::vector<int> tagIndices;
+  tagIndices.reserve(glyphs.size());
+  for (const auto &glyph : glyphs) {
+    if (glyph.clusterIndex >= 0) {
+      clusterCount = std::max(clusterCount, glyph.clusterIndex + 1);
+    }
+    if (glyph.lineIndex >= 0) {
+      lineCount = std::max(lineCount, glyph.lineIndex + 1);
+    }
+    const QString tag = glyph.selectorTag.isEmpty() ? QStringLiteral("untagged")
+                                                    : glyph.selectorTag;
+    const auto it = tagOrder.constFind(tag);
+    if (it == tagOrder.cend()) {
+      const int index = tagOrder.size();
+      tagOrder.insert(tag, index);
+      tagIndices.push_back(index);
+    } else {
+      tagIndices.push_back(it.value());
+    }
+  }
+  const int tagCount = tagOrder.size();
+
+  const int glyphCount = static_cast<int>(glyphs.size());
+  for (int sample = 0; sample < sampleCount; ++sample) {
+    const int glyphIndex = (sampleCount == 1)
+                               ? 0
+                               : static_cast<int>(std::round(
+                                     (static_cast<double>(sample) /
+                                      static_cast<double>(sampleCount - 1)) *
+                                     static_cast<double>(std::max(0, glyphCount - 1))));
+    const GlyphItem &glyph = glyphs[static_cast<size_t>(glyphIndex)];
+    float maxWeight = 0.0f;
+    for (const auto &animator : animators) {
+      if (!animator.enabled) {
+        continue;
+      }
+      maxWeight = std::max(
+          maxWeight,
+          TextAnimatorEngine::calculateWeightForGlyph(
+              glyph, glyphIndex, glyphCount, clusterCount, lineCount,
+              tagIndices[static_cast<size_t>(glyphIndex)], tagCount,
+              animator.range));
+    }
+    preview[sample] = std::clamp(maxWeight, 0.0f, 1.0f);
+  }
+  return preview;
+}
+
+QVector<float> selectorBoundaryPreviewForGlyphs(
+    const std::vector<GlyphItem> &glyphs,
+    const bool useLineIndex) {
+  QVector<float> preview;
+  if (glyphs.size() < 2) {
+    return preview;
+  }
+
+  const int total = static_cast<int>(glyphs.size());
+  for (int i = 1; i < total; ++i) {
+    const int previous = useLineIndex ? glyphs[static_cast<size_t>(i - 1)].lineIndex
+                                      : glyphs[static_cast<size_t>(i - 1)].clusterIndex;
+    const int current = useLineIndex ? glyphs[static_cast<size_t>(i)].lineIndex
+                                     : glyphs[static_cast<size_t>(i)].clusterIndex;
+    if (previous == current) {
+      continue;
+    }
+    const float position = static_cast<float>(i) / static_cast<float>(std::max(1, total - 1));
+    preview.push_back(position);
+  }
+  return preview;
+}
+
 QString animatorPresetTooltip() {
   return QStringLiteral(
       "0=Custom, 1=Typewriter, 2=Slide Up, 3=Scale In, 4=Rotation In, "
       "5=Tracking Fade, 6=Wiggly Position, 7=Blur Reveal");
+}
+
+QString textUnitBadgeForState(const QString &displayText,
+                              const TextWritingMode writingMode,
+                              const TextLayoutMode layoutMode,
+                              const bool hasAnimators,
+                              const bool hasRuby,
+                              const bool hasCjk,
+                              const bool isRichText) {
+  const QString coreUnit =
+      isRichText ? QStringLiteral("glyph-aware") :
+      (hasAnimators || hasRuby || hasCjk || writingMode == TextWritingMode::Vertical
+           ? QStringLiteral("cluster-aware")
+           : QStringLiteral("glyph-aware"));
+  const QString flowUnit =
+      writingMode == TextWritingMode::Vertical ? QStringLiteral("vertical")
+                                               : QStringLiteral("horizontal");
+
+  QStringList tags;
+  tags.push_back(coreUnit);
+  tags.push_back(flowUnit);
+  if (layoutMode == TextLayoutMode::Path) {
+    tags.push_back(QStringLiteral("path"));
+  } else if (layoutMode == TextLayoutMode::Box) {
+    tags.push_back(QStringLiteral("box"));
+  } else {
+    tags.push_back(QStringLiteral("point"));
+  }
+  if (hasRuby) {
+    tags.push_back(QStringLiteral("ruby"));
+  }
+  if (hasAnimators) {
+    tags.push_back(QStringLiteral("animators"));
+  }
+  if (hasCjk && !displayText.isEmpty()) {
+    tags.push_back(QStringLiteral("cjk"));
+  }
+  if (displayText.contains(QChar::LineFeed) || displayText.contains(QChar::CarriageReturn) ||
+      layoutMode == TextLayoutMode::Box) {
+    tags.push_back(QStringLiteral("line-aware"));
+  }
+  return tags.join(QStringLiteral(" / "));
+}
+
+QString textSelectionTargetForState(const bool hasAnimators,
+                                    const bool hasRuby,
+                                    const bool hasCjk,
+                                    const bool isRichText,
+                                    const TextWritingMode writingMode,
+                                    const bool lineAware,
+                                    const bool hasRegexSelector) {
+  const QString unit =
+      (isRichText || hasAnimators || hasRuby || hasCjk ||
+       writingMode == TextWritingMode::Vertical)
+          ? QStringLiteral("cluster")
+          : QStringLiteral("glyph");
+  QStringList tags;
+  tags.push_back(unit);
+  if (lineAware) {
+    tags.push_back(QStringLiteral("line"));
+  }
+  if (hasRegexSelector) {
+    tags.push_back(QStringLiteral("tag"));
+  }
+  return tags.join(QStringLiteral(" / "));
+}
+
+QString textSelectionTargetLabelForState(const bool hasAnimators,
+                                         const bool hasRuby,
+                                         const bool hasCjk,
+                                         const bool isRichText,
+                                         const TextWritingMode writingMode,
+                                         const bool lineAware,
+                                         const bool hasRegexSelector) {
+  const QString unit =
+      (isRichText || hasAnimators || hasRuby || hasCjk ||
+       writingMode == TextWritingMode::Vertical)
+          ? QStringLiteral("cluster")
+          : QStringLiteral("glyph");
+  QStringList tags;
+  tags.push_back(unit);
+  if (lineAware) {
+    tags.push_back(QStringLiteral("line"));
+  }
+  if (hasRegexSelector) {
+    tags.push_back(QStringLiteral("tag"));
+  }
+  return tags.join(QStringLiteral("-"));
+}
+
+QString textSelectionUnitLabelForState(const bool hasAnimators,
+                                       const bool hasRuby,
+                                       const bool hasCjk,
+                                       const bool isRichText,
+                                       const TextWritingMode writingMode,
+                                       const bool lineAware) {
+  const QString unit =
+      (isRichText || hasAnimators || hasRuby || hasCjk ||
+       writingMode == TextWritingMode::Vertical)
+          ? QStringLiteral("cluster")
+          : QStringLiteral("glyph");
+  return lineAware ? QStringLiteral("unit=%1;lineAware=true").arg(unit)
+                   : QStringLiteral("unit=%1").arg(unit);
+}
+
+QString selectorTagLabelForText(const QString &text) {
+  bool hasHangul = false;
+  bool hasCjk = false;
+  bool hasRtl = false;
+  bool hasThai = false;
+  bool hasIndic = false;
+  bool hasEmoji = false;
+  bool hasLatin = false;
+
+  for (const QChar ch : text) {
+    const uint code = ch.unicode();
+    if (code >= 0xAC00 && code <= 0xD7AF) {
+      hasHangul = true;
+    } else if ((code >= 0x3040 && code <= 0x30FF) ||
+               (code >= 0x4E00 && code <= 0x9FFF)) {
+      hasCjk = true;
+    } else if ((code >= 0x0590 && code <= 0x08FF) ||
+               (code >= 0xFB1D && code <= 0xFEFF)) {
+      hasRtl = true;
+    } else if (code >= 0x0E00 && code <= 0x0E7F) {
+      hasThai = true;
+    } else if ((code >= 0x0900 && code <= 0x097F) ||
+               (code >= 0x0980 && code <= 0x09FF) ||
+               (code >= 0x0A00 && code <= 0x0DFF) ||
+               (code >= 0x1780 && code <= 0x17FF) ||
+               (code >= 0x1000 && code <= 0x109F) ||
+               (code >= 0x0F00 && code <= 0x0FFF)) {
+      hasIndic = true;
+    } else if (code >= 0x1F300 && code <= 0x1FAFF) {
+      hasEmoji = true;
+    } else if ((code >= U'A' && code <= U'Z') || (code >= U'a' && code <= U'z')) {
+      hasLatin = true;
+    }
+  }
+
+  int familyCount = 0;
+  QString tag;
+  const auto assignTag = [&](const QString &candidate) {
+    ++familyCount;
+    tag = candidate;
+  };
+  if (hasHangul) assignTag(QStringLiteral("Hang"));
+  if (hasCjk) assignTag(QStringLiteral("Hani"));
+  if (hasRtl) assignTag(QStringLiteral("Rtl"));
+  if (hasThai) assignTag(QStringLiteral("Thai"));
+  if (hasIndic) assignTag(QStringLiteral("Indic"));
+  if (hasEmoji) assignTag(QStringLiteral("Emoji"));
+  if (hasLatin) assignTag(QStringLiteral("Latn"));
+
+  if (familyCount == 0) {
+    return QStringLiteral("tag=unknown");
+  }
+  if (familyCount > 1) {
+    return QStringLiteral("tag=mixed");
+  }
+  return QStringLiteral("tag=%1").arg(tag);
+}
+
+QString selectorTokenLabelForGlyphs(const std::vector<GlyphItem> &glyphs) {
+  if (glyphs.empty()) {
+    return QStringLiteral("token=none");
+  }
+  const GlyphItem &glyph = glyphs.front();
+  if (glyph.stableTokenId.isEmpty()) {
+    return QStringLiteral("token=unstable");
+  }
+  return QStringLiteral("token=%1").arg(glyph.stableTokenId);
+}
+
+QString textWritingModeLabel(const TextWritingMode writingMode) {
+  return writingMode == TextWritingMode::Vertical ? QStringLiteral("mode=vertical")
+                                                   : QStringLiteral("mode=horizontal");
+}
+
+QString textOrderingLabel(const TextWritingMode writingMode) {
+  return writingMode == TextWritingMode::Vertical
+             ? QStringLiteral("source=logical;visual=column")
+             : QStringLiteral("source=logical;visual=flow");
+}
+
+QString selectorOverviewTooltip() {
+  return QStringLiteral(
+      "Primary summary for the current selector state in compact key=value form, including target, mode, source, visual, unit, regex, tag, token, clusters, and lines.");
+}
+
+bool containsRtlCodepoint(const QString &text) {
+  for (const QChar ch : text) {
+    const uint code = ch.unicode();
+    if ((code >= 0x0590 && code <= 0x08FF) ||
+        (code >= 0xFB1D && code <= 0xFDFF) ||
+        (code >= 0xFE70 && code <= 0xFEFF)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+TextDirection inferredBaseDirection(const QString &text) {
+  return containsRtlCodepoint(text) ? TextDirection::RightToLeft
+                                    : TextDirection::LeftToRight;
+}
+
+std::vector<GlyphItem> layoutTextGlyphs(const UniString &text,
+                                        const TextStyle &style,
+                                        const ParagraphStyle &paragraph,
+                                        const TextWritingMode writingMode,
+                                        const QVector<TextRubyAttachment> &rubyAttachments,
+                                        const TextLayoutMode layoutMode,
+                                        const std::vector<ArtifactCore::BezierSegment> &pathSegments) {
+  if (layoutMode == TextLayoutMode::Path) {
+    return TextLayoutEngine::layoutOnPath(text, style, paragraph, pathSegments);
+  }
+
+  QtShapingBackend backend;
+  TextShapingRequest request;
+  request.text = text.toQString();
+  request.style = style;
+  request.paragraph = paragraph;
+  request.writingMode = writingMode;
+  request.baseDirection = inferredBaseDirection(request.text);
+  request.rubyAttachments = rubyAttachments;
+  return backend.shape(request).glyphs;
 }
 
 RangeSelector presetRange() {
@@ -300,6 +677,8 @@ bool sameTextAnimatorState(const TextAnimatorState &a,
          fuzzyEqual(a.range.end, b.range.end) &&
          fuzzyEqual(a.range.offset, b.range.offset) &&
          a.range.units == b.range.units && a.range.shape == b.range.shape &&
+         a.range.regexEnabled == b.range.regexEnabled &&
+         a.range.selectorPattern == b.range.selectorPattern &&
          fuzzyEqual(a.range.easeHigh, b.range.easeHigh) &&
          fuzzyEqual(a.range.easeLow, b.range.easeLow) &&
          a.wiggly.enabled == b.wiggly.enabled &&
@@ -450,6 +829,8 @@ QJsonObject textAnimatorToJson(const TextAnimatorState &animator) {
   rangeObj["offset"] = animator.range.offset;
   rangeObj["units"] = static_cast<int>(animator.range.units);
   rangeObj["shape"] = static_cast<int>(animator.range.shape);
+  rangeObj["regexEnabled"] = animator.range.regexEnabled;
+  rangeObj["selectorPattern"] = animator.range.selectorPattern;
   rangeObj["easeHigh"] = animator.range.easeHigh;
   rangeObj["easeLow"] = animator.range.easeLow;
   obj["range"] = rangeObj;
@@ -493,6 +874,8 @@ TextAnimatorState textAnimatorFromJson(const QJsonObject &obj, const int index) 
     animator.range.offset = static_cast<float>(rangeObj.value("offset").toDouble(animator.range.offset));
     animator.range.units = static_cast<SelectorUnits>(rangeObj.value("units").toInt(static_cast<int>(animator.range.units)));
     animator.range.shape = static_cast<SelectorShape>(rangeObj.value("shape").toInt(static_cast<int>(animator.range.shape)));
+    animator.range.regexEnabled = rangeObj.value("regexEnabled").toBool(animator.range.regexEnabled);
+    animator.range.selectorPattern = rangeObj.value("selectorPattern").toString(animator.range.selectorPattern);
     animator.range.easeHigh = static_cast<float>(rangeObj.value("easeHigh").toDouble(animator.range.easeHigh));
     animator.range.easeLow = static_cast<float>(rangeObj.value("easeLow").toDouble(animator.range.easeLow));
   }
@@ -942,6 +1325,33 @@ bool ArtifactTextLayer::isBoxText() const {
   return impl_->layoutMode_ == TextLayoutMode::Box;
 }
 
+void ArtifactTextLayer::setWritingMode(TextWritingMode mode) {
+  impl_->writingMode_ = mode;
+  markDirty();
+}
+
+TextWritingMode ArtifactTextLayer::writingMode() const {
+  return impl_->writingMode_;
+}
+
+void ArtifactTextLayer::setRubyText(const QString &text) {
+  impl_->rubyText_ = text;
+  markDirty();
+}
+
+QString ArtifactTextLayer::rubyText() const {
+  return impl_->rubyText_;
+}
+
+void ArtifactTextLayer::setRubyScale(float scale) {
+  impl_->rubyScale_ = std::clamp(scale, 0.1f, 1.0f);
+  markDirty();
+}
+
+float ArtifactTextLayer::rubyScale() const {
+  return impl_->rubyScale_;
+}
+
 void ArtifactTextLayer::setMaxWidth(float width) {
   impl_->paragraphStyle_.boxWidth = (width <= 0.0f) ? 0.0f : width;
   if (impl_->paragraphStyle_.boxWidth > 0.0f ||
@@ -1107,6 +1517,9 @@ QJsonObject ArtifactTextLayer::toJson() const {
   obj["text.alignment"] = static_cast<int>(horizontalAlignment());
   obj["text.verticalAlignment"] = static_cast<int>(verticalAlignment());
   obj["text.wrapMode"] = static_cast<int>(wrapMode());
+  obj["text.writingMode"] = static_cast<int>(writingMode());
+  obj["text.rubyText"] = rubyText();
+  obj["text.rubyScale"] = rubyScale();
   obj["text.layoutMode"] = static_cast<int>(layoutMode());
   obj["text.maxWidth"] = maxWidth();
   obj["text.boxHeight"] = boxHeight();
@@ -1199,6 +1612,17 @@ void ArtifactTextLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("text.wrapMode")) {
     setWrapMode(static_cast<TextWrapMode>(
         obj.value("text.wrapMode").toInt(static_cast<int>(wrapMode()))));
+  }
+  if (obj.contains("text.writingMode")) {
+    setWritingMode(static_cast<TextWritingMode>(
+        obj.value("text.writingMode")
+            .toInt(static_cast<int>(writingMode()))));
+  }
+  if (obj.contains("text.rubyText")) {
+    setRubyText(obj.value("text.rubyText").toString());
+  }
+  if (obj.contains("text.rubyScale")) {
+    setRubyScale(static_cast<float>(obj.value("text.rubyScale").toDouble(rubyScale())));
   }
   const bool hasLayoutMode = obj.contains("text.layoutMode");
   if (hasLayoutMode) {
@@ -1344,7 +1768,7 @@ QString ArtifactTextLayer::debugState() const {
                                ? QSize(impl_->renderedBuffer_->width(),
                                        impl_->renderedBuffer_->height())
                                : QSize();
-  return QStringLiteral("textLen=%1 animators=%2 dirty=%3 layout=%4 box=%5x%6 font=%7/%8 hasImage=%9 image=%10 hasBuffer=%11 buffer=%12 bounds={%13}")
+  return QStringLiteral("textLen=%1 animators=%2 dirty=%3 layout=%4 box=%5x%6 font=%7/%8 hasImage=%9 image=%10 hasBuffer=%11 buffer=%12 bounds={%13} selectorOverview=%14")
       .arg(impl_ ? impl_->text_.toQString().size() : 0)
       .arg(animatorCount())
       .arg(impl_ && impl_->isDirty_ ? QStringLiteral("true") : QStringLiteral("false"))
@@ -1361,7 +1785,112 @@ QString ArtifactTextLayer::debugState() const {
                : QStringLiteral("false"))
       .arg(bufferSize.isValid() ? QStringLiteral("%1x%2").arg(bufferSize.width()).arg(bufferSize.height())
                                 : QStringLiteral("0x0"))
-      .arg(contentBoundsSummary());
+      .arg(contentBoundsSummary())
+      .arg(selectorOverviewSummary());
+}
+
+QVector<float> ArtifactTextLayer::selectorWeightPreview(const int sampleCount) const {
+  if (!impl_) {
+    return {};
+  }
+  if (!impl_->glyphs_.empty()) {
+    return selectorWeightPreviewForGlyphs(impl_->glyphs_, impl_->animators_,
+                                         sampleCount);
+  }
+  const QString displayText = resolvedSourceTextAtTime(this);
+  const int textLength = std::max(1, displayText.size());
+  return selectorWeightPreviewForAnimators(impl_->animators_, sampleCount,
+                                           textLength);
+}
+
+QVector<float> ArtifactTextLayer::selectorClusterBoundaryPreview() const {
+  if (!impl_) {
+    return {};
+  }
+  return selectorBoundaryPreviewForGlyphs(impl_->glyphs_, false);
+}
+
+QVector<float> ArtifactTextLayer::selectorLineBoundaryPreview() const {
+  if (!impl_) {
+    return {};
+  }
+  return selectorBoundaryPreviewForGlyphs(impl_->glyphs_, true);
+}
+
+QString ArtifactTextLayer::selectorDebugSummary() const {
+  if (!impl_) {
+    return QStringLiteral("glyph");
+  }
+  const QString displayText = resolvedSourceTextAtTime(this);
+  const bool hasAnimators =
+      std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
+                  [](const TextAnimatorState &animator) {
+                    return animator.enabled;
+                  });
+  const bool hasRuby = !impl_->rubyText_.isEmpty();
+  const bool hasCjk = FontManager::containsCjkCharacters(displayText);
+  const bool isRichText = Qt::mightBeRichText(displayText);
+  const bool lineAware = displayText.contains(QChar::LineFeed) ||
+                         displayText.contains(QChar::CarriageReturn) ||
+                         impl_->layoutMode_ == TextLayoutMode::Box;
+  const bool hasRegexSelector =
+      std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
+                  [](const TextAnimatorState &animator) {
+                    return animator.range.regexEnabled &&
+                           !animator.range.selectorPattern.isEmpty();
+                  });
+  return textSelectionTargetLabelForState(hasAnimators, hasRuby, hasCjk,
+                                          isRichText, impl_->writingMode_,
+                                          lineAware, hasRegexSelector);
+}
+
+QString ArtifactTextLayer::selectorBoundarySummary() const {
+  if (!impl_) {
+    return QStringLiteral("clusters=0 lines=0");
+  }
+  const int clusterCount = selectorClusterBoundaryPreview().size();
+  const int lineCount = selectorLineBoundaryPreview().size();
+  return QStringLiteral("clusters=%1 lines=%2")
+      .arg(clusterCount)
+      .arg(lineCount);
+}
+
+QString ArtifactTextLayer::selectorOverviewSummary() const {
+  if (!impl_) {
+    return QStringLiteral(
+        "target=glyph;mode=horizontal;source=logical;visual=flow;unit=glyph;regex=off;tag=unknown;token=none;clusters=0;lines=0");
+  }
+  const QString displayText = resolvedSourceTextAtTime(this);
+  const bool hasAnimators =
+      std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
+                  [](const TextAnimatorState &animator) {
+                    return animator.enabled;
+                  });
+  const bool hasRegexSelector =
+      std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
+                  [](const TextAnimatorState &animator) {
+                    return animator.range.regexEnabled &&
+                           !animator.range.selectorPattern.isEmpty();
+                  });
+  const bool hasRuby = !impl_->rubyText_.isEmpty();
+  const bool hasCjk = FontManager::containsCjkCharacters(displayText);
+  const bool isRichText = Qt::mightBeRichText(displayText);
+  const bool lineAware = displayText.contains(QChar::LineFeed) ||
+                         displayText.contains(QChar::CarriageReturn) ||
+                         impl_->layoutMode_ == TextLayoutMode::Box;
+  const QString tokenSummary = selectorTokenLabelForGlyphs(impl_->glyphs_);
+  const QString tagSummary = selectorTagLabelForText(displayText);
+  return QStringLiteral("target=%1;%2;%3;%4;regex=%5;%6;%7;clusters=%8;lines=%9")
+      .arg(selectorDebugSummary(), textWritingModeLabel(impl_->writingMode_),
+           textOrderingLabel(impl_->writingMode_),
+           textSelectionUnitLabelForState(hasAnimators, hasRuby, hasCjk,
+                                          isRichText, impl_->writingMode_,
+                                          lineAware, hasRegexSelector),
+           hasRegexSelector ? QStringLiteral("on") : QStringLiteral("off"),
+           tagSummary,
+           tokenSummary,
+           selectorClusterBoundaryPreview().size(),
+           selectorLineBoundaryPreview().size());
 }
 
 void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
@@ -1391,12 +1920,19 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
     }
 
     const Impl::CacheKey currentKey{impl_->text_, impl_->textStyle_,
-                                    impl_->paragraphStyle_};
+                                    impl_->paragraphStyle_,
+                                    impl_->writingMode_, impl_->rubyText_,
+                                    impl_->rubyScale_, impl_->layoutMode_,
+                                    impl_->pathSegments_};
     if (impl_->isDirty_ || !impl_->lastCacheKey_ ||
         *impl_->lastCacheKey_ != currentKey || sourceSize().width <= 0 ||
         sourceSize().height <= 0) {
-      impl_->glyphs_ = TextLayoutEngine::layout(
-          UniString(displayText), impl_->textStyle_, impl_->paragraphStyle_);
+      impl_->glyphs_ = layoutTextGlyphs(
+          UniString(displayText), impl_->textStyle_, impl_->paragraphStyle_,
+          impl_->writingMode_,
+          buildRubyAttachments(UniString(displayText), impl_->rubyText_,
+                               impl_->rubyScale_),
+          impl_->layoutMode_, impl_->pathSegments_);
       const QRectF glyphBounds = unitedGlyphBounds(impl_->glyphs_);
       const qreal contentWidth = boxLayout && impl_->paragraphStyle_.boxWidth > 0.0f
                                      ? impl_->paragraphStyle_.boxWidth
@@ -1562,16 +2098,97 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
       QStringLiteral("0=NoWrap, 1=WordWrap, 2=WrapAnywhere, 3=ManualWrap"));
   textGroup.addProperty(wrapModeProp);
 
+  auto writingModeProp = makeProp(QStringLiteral("text.writingMode"),
+                                  ArtifactCore::PropertyType::Integer,
+                                  static_cast<int>(writingMode()), -85);
+  writingModeProp->setTooltip(
+      QStringLiteral("0=Horizontal, 1=Vertical"));
+  textGroup.addProperty(writingModeProp);
+
+  const QString badgeSourceText = resolvedSourceTextAtTime(this);
+  const bool hasAnimators =
+      std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
+                  [](const TextAnimatorState &animator) {
+                    return animator.enabled;
+                  });
+  const bool hasRuby = !impl_->rubyText_.isEmpty();
+  const bool hasCjk = FontManager::containsCjkCharacters(badgeSourceText);
+  const bool isRichText = Qt::mightBeRichText(badgeSourceText);
+  const bool lineAware = badgeSourceText.contains(QChar::LineFeed) ||
+                         badgeSourceText.contains(QChar::CarriageReturn) ||
+                         impl_->layoutMode_ == TextLayoutMode::Box;
+  const bool hasRegexSelector =
+      std::any_of(impl_->animators_.begin(), impl_->animators_.end(),
+                  [](const TextAnimatorState &animator) {
+                    return animator.range.regexEnabled &&
+                           !animator.range.selectorPattern.isEmpty();
+                  });
+  const QString selectionTarget = textSelectionTargetForState(
+      hasAnimators, hasRuby, hasCjk, isRichText, impl_->writingMode_,
+      lineAware, hasRegexSelector);
+  const QString badgeText = textUnitBadgeForState(
+      badgeSourceText, impl_->writingMode_, impl_->layoutMode_,
+      hasAnimators, hasRuby, hasCjk, isRichText);
+  auto selectionTargetProp = makeProp(QStringLiteral("text.selectionTarget"),
+                                      ArtifactCore::PropertyType::String,
+                                      selectionTarget, -84);
+  selectionTargetProp->setDisplayLabel(QStringLiteral("Selection Target"));
+  selectionTargetProp->setTooltip(
+      QStringLiteral("Detail used by Selector Overview: glyph, cluster, line-aware, or tag-aware."));
+  textGroup.addProperty(selectionTargetProp);
+  auto selectorOverviewProp = makeProp(QStringLiteral("text.selectorOverview"),
+                                       ArtifactCore::PropertyType::String,
+                                       selectorOverviewSummary(), -83);
+  selectorOverviewProp->setDisplayLabel(QStringLiteral("Selector Overview"));
+  selectorOverviewProp->setTooltip(
+      QStringLiteral("Primary compact key=value summary for target, mode, source, visual, unit, tag, clusters, and lines."));
+  textGroup.addProperty(selectorOverviewProp);
+  auto selectorTokenProp = makeProp(QStringLiteral("text.selectorToken"),
+                                   ArtifactCore::PropertyType::String,
+                                   selectorTokenLabelForGlyphs(impl_->glyphs_),
+                                   -82);
+  selectorTokenProp->setDisplayLabel(QStringLiteral("Selector Token"));
+  selectorTokenProp->setTooltip(
+      QStringLiteral("Representative stable token id for the current shaped glyph stream."));
+  textGroup.addProperty(selectorTokenProp);
+  auto selectorTagProp = makeProp(QStringLiteral("text.selectorTag"),
+                                  ArtifactCore::PropertyType::String,
+                                  selectorTagLabelForText(badgeSourceText),
+                                  -81);
+  selectorTagProp->setDisplayLabel(QStringLiteral("Selector Tag"));
+  selectorTagProp->setTooltip(
+      QStringLiteral("Representative script-family tag for the current text stream."));
+  textGroup.addProperty(selectorTagProp);
+  auto unitBadgeProp = makeProp(QStringLiteral("text.unitBadge"),
+                                ArtifactCore::PropertyType::String,
+                                badgeText, -80);
+  unitBadgeProp->setDisplayLabel(QStringLiteral("Unit Badge"));
+  unitBadgeProp->setTooltip(
+      QStringLiteral("Detail used by Selector Overview: current text unit semantics."));
+  textGroup.addProperty(unitBadgeProp);
+
+  textGroup.addProperty(makeProp(QStringLiteral("text.rubyText"),
+                                 ArtifactCore::PropertyType::String,
+                                 rubyText(), -79));
+  auto rubyScaleProp =
+      makeProp(QStringLiteral("text.rubyScale"),
+               ArtifactCore::PropertyType::Float, rubyScale(), -78);
+  rubyScaleProp->setHardRange(0.1, 1.0);
+  rubyScaleProp->setSoftRange(0.25, 0.8);
+  rubyScaleProp->setStep(0.05);
+  rubyScaleProp->setTooltip(QStringLiteral("0.1-1.0"));
+  textGroup.addProperty(rubyScaleProp);
+
   auto layoutModeProp = makeProp(QStringLiteral("text.layoutMode"),
                                  ArtifactCore::PropertyType::Integer,
-                                 static_cast<int>(layoutMode()), -85);
+                                 static_cast<int>(layoutMode()), -77);
   layoutModeProp->setTooltip(
       QStringLiteral("0=Point text, 1=Box text"));
   textGroup.addProperty(layoutModeProp);
 
   auto maxWidthProp =
       makeProp(QStringLiteral("text.maxWidth"),
-               ArtifactCore::PropertyType::Float, maxWidth(), -84);
+               ArtifactCore::PropertyType::Float, maxWidth(), -76);
   maxWidthProp->setHardRange(0.0, 100000.0);
   maxWidthProp->setSoftRange(0.0, 1920.0);
   maxWidthProp->setStep(1.0);
@@ -1581,7 +2198,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   auto boxHeightProp =
       makeProp(QStringLiteral("text.boxHeight"),
-               ArtifactCore::PropertyType::Float, boxHeight(), -83);
+               ArtifactCore::PropertyType::Float, boxHeight(), -75);
   boxHeightProp->setHardRange(0.0, 100000.0);
   boxHeightProp->setSoftRange(0.0, 1080.0);
   boxHeightProp->setStep(1.0);
@@ -1591,7 +2208,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
   auto paragraphSpacingProp =
       makeProp(QStringLiteral("text.paragraphSpacing"),
-               ArtifactCore::PropertyType::Float, paragraphSpacing(), -82);
+               ArtifactCore::PropertyType::Float, paragraphSpacing(), -75);
   paragraphSpacingProp->setHardRange(0.0, 1000.0);
   paragraphSpacingProp->setSoftRange(0.0, 80.0);
   paragraphSpacingProp->setStep(0.5);
@@ -1600,7 +2217,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   const auto c = textColor();
   auto colorProp = persistentLayerProperty(QStringLiteral("text.color"),
                                            ArtifactCore::PropertyType::Color,
-                                           QVariant(), -81);
+                                           QVariant(), -76);
   colorProp->setColorValue(QColor::fromRgbF(c.r(), c.g(), c.b(), c.a()));
   colorProp->setValue(colorProp->getColorValue());
   textGroup.addProperty(colorProp);
@@ -1608,43 +2225,43 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   // Stroke
   textGroup.addProperty(makeProp(QStringLiteral("text.strokeEnabled"),
                                  ArtifactCore::PropertyType::Boolean,
-                                 isStrokeEnabled(), -80));
+                                 isStrokeEnabled(), -75));
   const auto sc = strokeColor();
   auto strokeColorProp = persistentLayerProperty(
       QStringLiteral("text.strokeColor"), ArtifactCore::PropertyType::Color,
-      QVariant(), -79);
+      QVariant(), -74);
   strokeColorProp->setColorValue(
       QColor::fromRgbF(sc.r(), sc.g(), sc.b(), sc.a()));
   strokeColorProp->setValue(strokeColorProp->getColorValue());
   textGroup.addProperty(strokeColorProp);
   textGroup.addProperty(makeProp(QStringLiteral("text.strokeWidth"),
                                  ArtifactCore::PropertyType::Float,
-                                 strokeWidth(), -78));
+                                 strokeWidth(), -73));
 
   // Shadow
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowEnabled"),
                                  ArtifactCore::PropertyType::Boolean,
-                                 isShadowEnabled(), -77));
+                                 isShadowEnabled(), -72));
   const auto shc = shadowColor();
   auto shadowColorProp = persistentLayerProperty(
       QStringLiteral("text.shadowColor"), ArtifactCore::PropertyType::Color,
-      QVariant(), -76);
+      QVariant(), -71);
   shadowColorProp->setColorValue(
       QColor::fromRgbF(shc.r(), shc.g(), shc.b(), shc.a()));
   shadowColorProp->setValue(shadowColorProp->getColorValue());
   textGroup.addProperty(shadowColorProp);
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetX"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowOffsetX(), -75));
+                                 shadowOffsetX(), -70));
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowOffsetY"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowOffsetY(), -74));
+                                 shadowOffsetY(), -69));
   textGroup.addProperty(makeProp(QStringLiteral("text.shadowBlur"),
                                  ArtifactCore::PropertyType::Float,
-                                 shadowBlur(), -73));
+                                 shadowBlur(), -68));
   auto animatorCountProp =
       makeProp(QStringLiteral("text.animatorCount"),
-               ArtifactCore::PropertyType::Integer, animatorCount(), -72);
+               ArtifactCore::PropertyType::Integer, animatorCount(), -67);
   animatorCountProp->setHardRange(0, 16);
   animatorCountProp->setSoftRange(0, 8);
   animatorCountProp->setStep(1);
@@ -1744,16 +2361,33 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     shapeProp->setTooltip(selectorShapeTooltip());
     animatorGroup.addProperty(shapeProp);
 
+    auto regexEnabledProp =
+        makeAnimatorProp(QStringLiteral("regexEnabled"),
+                         ArtifactCore::PropertyType::Boolean,
+                         animator.range.regexEnabled, -113);
+    regexEnabledProp->setDisplayLabel(QStringLiteral("Regex"));
+    regexEnabledProp->setTooltip(
+        QStringLiteral("Enable regular-expression filtering against cluster id, tag, and glyph index."));
+    animatorGroup.addProperty(regexEnabledProp);
+
+    auto selectorPatternProp = makeAnimatorProp(
+        QStringLiteral("selectorPattern"), ArtifactCore::PropertyType::String,
+        animator.range.selectorPattern, -112);
+    selectorPatternProp->setDisplayLabel(QStringLiteral("Pattern"));
+    selectorPatternProp->setTooltip(
+        QStringLiteral("Pattern matched against cluster id, tag, and glyph index when Regex is on."));
+    animatorGroup.addProperty(selectorPatternProp);
+
     auto wigglyEnabledProp =
         makeAnimatorProp(QStringLiteral("wigglyEnabled"),
                          ArtifactCore::PropertyType::Boolean,
-                         animator.wiggly.enabled, -113);
+                         animator.wiggly.enabled, -111);
     wigglyEnabledProp->setDisplayLabel(QStringLiteral("Wiggly"));
     animatorGroup.addProperty(wigglyEnabledProp);
 
     auto wpsProp = makeAnimatorProp(QStringLiteral("wigglesPerSecond"),
                                     ArtifactCore::PropertyType::Float,
-                                    animator.wiggly.wigglesPerSecond, -112);
+                                    animator.wiggly.wigglesPerSecond, -110);
     wpsProp->setDisplayLabel(QStringLiteral("Wiggles/Sec"));
     wpsProp->setSoftRange(0.0, 20.0);
     animatorGroup.addProperty(wpsProp);
@@ -1761,7 +2395,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
     auto correlationProp =
         makeAnimatorProp(QStringLiteral("correlation"),
                          ArtifactCore::PropertyType::Float,
-                         animator.wiggly.correlation, -111);
+                         animator.wiggly.correlation, -109);
     correlationProp->setDisplayLabel(QStringLiteral("Correlation"));
     correlationProp->setHardRange(0.0, 100.0);
     correlationProp->setSoftRange(0.0, 100.0);
@@ -1769,26 +2403,26 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
 
     auto phaseProp = makeAnimatorProp(QStringLiteral("phase"),
                                       ArtifactCore::PropertyType::Float,
-                                      animator.wiggly.phase, -110);
+                                      animator.wiggly.phase, -108);
     phaseProp->setDisplayLabel(QStringLiteral("Phase"));
     animatorGroup.addProperty(phaseProp);
 
     auto seedProp = makeAnimatorProp(QStringLiteral("seed"),
                                      ArtifactCore::PropertyType::Integer,
-                                     animator.wiggly.seed, -109);
+                                     animator.wiggly.seed, -107);
     seedProp->setDisplayLabel(QStringLiteral("Seed"));
     animatorGroup.addProperty(seedProp);
 
     auto posXProp = makeAnimatorProp(QStringLiteral("positionX"),
                                      ArtifactCore::PropertyType::Float,
-                                     animator.properties.position.x(), -108);
+                                     animator.properties.position.x(), -106);
     posXProp->setDisplayLabel(QStringLiteral("Position X"));
     posXProp->setSoftRange(-500.0, 500.0);
     animatorGroup.addProperty(posXProp);
 
     auto posYProp = makeAnimatorProp(QStringLiteral("positionY"),
                                      ArtifactCore::PropertyType::Float,
-                                     animator.properties.position.y(), -107);
+                                     animator.properties.position.y(), -105);
     posYProp->setDisplayLabel(QStringLiteral("Position Y"));
     posYProp->setSoftRange(-500.0, 500.0);
     animatorGroup.addProperty(posYProp);
@@ -1997,6 +2631,21 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     setDirty(LayerDirtyFlag::Property);
     return true;
   }
+  if (propertyPath == QStringLiteral("text.writingMode")) {
+    setWritingMode(static_cast<TextWritingMode>(value.toInt()));
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.rubyText")) {
+    setRubyText(value.toString());
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("text.rubyScale")) {
+    setRubyScale(static_cast<float>(value.toDouble()));
+    setDirty(LayerDirtyFlag::Property);
+    return true;
+  }
   if (propertyPath == QStringLiteral("text.layoutMode")) {
     bool ok = false;
     const int layoutModeValue = value.toInt(&ok);
@@ -2152,6 +2801,10 @@ bool ArtifactTextLayer::setLayerPropertyValue(const QString &propertyPath,
     } else if (field == QStringLiteral("shape")) {
       animator.range.shape =
           static_cast<SelectorShape>(value.toInt());
+    } else if (field == QStringLiteral("regexEnabled")) {
+      animator.range.regexEnabled = value.toBool();
+    } else if (field == QStringLiteral("selectorPattern")) {
+      animator.range.selectorPattern = value.toString();
     } else if (field == QStringLiteral("wigglyEnabled")) {
       animator.wiggly.enabled = value.toBool();
     } else if (field == QStringLiteral("wigglesPerSecond")) {
@@ -2223,8 +2876,9 @@ void ArtifactTextLayer::updateImage() {
   QString displayText = resolvedSourceTextAtTime(this);
   const bool sourceTextAnimated = sourceTextIsAnimated(this);
   Impl::CacheKey currentKey{UniString(displayText), impl_->textStyle_,
-                            impl_->paragraphStyle_, impl_->layoutMode_,
-                            impl_->pathSegments_};
+                            impl_->paragraphStyle_, impl_->writingMode_,
+                            impl_->rubyText_, impl_->rubyScale_,
+                            impl_->layoutMode_, impl_->pathSegments_};
   if (!hasAnimators && !sourceTextAnimated && !impl_->isDirty_ && impl_->lastCacheKey_ &&
       *impl_->lastCacheKey_ == currentKey && !impl_->renderedImage_.isNull()) {
     return;
@@ -2241,15 +2895,12 @@ void ArtifactTextLayer::updateImage() {
 
   impl_->glyphs_.clear();
   if (!isRichText) {
-    if (pathLayout) {
-      impl_->glyphs_ = TextLayoutEngine::layoutOnPath(
-          UniString(displayText), impl_->textStyle_, impl_->paragraphStyle_,
-          impl_->pathSegments_);
-    } else {
-      impl_->glyphs_ = TextLayoutEngine::layout(UniString(displayText),
-                                                impl_->textStyle_,
-                                                impl_->paragraphStyle_);
-    }
+    impl_->glyphs_ = layoutTextGlyphs(UniString(displayText), impl_->textStyle_,
+                                      impl_->paragraphStyle_, impl_->writingMode_,
+                                      buildRubyAttachments(UniString(displayText),
+                                                           impl_->rubyText_,
+                                                           impl_->rubyScale_),
+                                      impl_->layoutMode_, impl_->pathSegments_);
   }
   impl_->perGlyphMode_ = (hasAnimators || pathLayout) && !isRichText;
 
