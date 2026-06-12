@@ -27,6 +27,7 @@ import VertexBuffer;
 import Text.Style;
 import Utils.String.UniString;
 import Text.GlyphLayout;
+import Text.ShapingBackend;
 import Text.GlyphAtlas;
 import Font.FreeFont;
 import Artifact.Render.ShaderManager;
@@ -93,6 +94,39 @@ static TextStyle textStyleFromQFont(const QFont& font)
     style.underline = font.underline();
     style.strikethrough = font.strikeOut();
     return style;
+}
+
+static bool containsRtlCodepoint(const QString& text)
+{
+    for (const QChar ch : text) {
+        const uint code = ch.unicode();
+        if ((code >= 0x0590 && code <= 0x08FF) ||
+            (code >= 0xFB1D && code <= 0xFDFF) ||
+            (code >= 0xFE70 && code <= 0xFEFF)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static TextDirection inferredBaseDirection(const QString& text)
+{
+    return containsRtlCodepoint(text) ? TextDirection::RightToLeft
+                                      : TextDirection::LeftToRight;
+}
+
+static std::vector<GlyphItem> shapeGlyphsForRender(const QString& text,
+                                                  const TextStyle& style,
+                                                  const ParagraphStyle& paragraph)
+{
+    QtShapingBackend backend;
+    TextShapingRequest request;
+    request.text = text;
+    request.style = style;
+    request.paragraph = paragraph;
+    request.writingMode = TextWritingMode::Horizontal;
+    request.baseDirection = inferredBaseDirection(text);
+    return backend.shape(request).glyphs;
 }
 
 static ParagraphStyle paragraphStyleFromRectAndAlignment(const QRectF& rect,
@@ -1210,7 +1244,7 @@ void DiligentImmediateSubmitter::submitGlyphText(const GlyphTextPkt& p, IDeviceC
     const TextStyle style = textStyleFromQFont(p.font);
     const ParagraphStyle paragraph =
         paragraphStyleFromRectAndAlignment(p.rect, static_cast<Qt::Alignment>(p.alignment));
-    const auto glyphs = TextLayoutEngine::layout(UniString(p.text), style, paragraph);
+    const auto glyphs = shapeGlyphsForRender(p.text, style, paragraph);
     if (glyphs.empty()) {
         return;
     }
@@ -1347,7 +1381,7 @@ void DiligentImmediateSubmitter::submitGlyphTextTransformed(const GlyphTextXform
     const TextStyle style = textStyleFromQFont(p.font);
     const ParagraphStyle paragraph =
         paragraphStyleFromRectAndAlignment(p.rect, static_cast<Qt::Alignment>(p.alignment));
-    const auto glyphs = TextLayoutEngine::layout(UniString(p.text), style, paragraph);
+    const auto glyphs = shapeGlyphsForRender(p.text, style, paragraph);
     if (glyphs.empty()) {
         return;
     }

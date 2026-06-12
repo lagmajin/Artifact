@@ -356,11 +356,29 @@ void ArtifactProjectModel::Impl::refreshTree()
             const QSize compSize = comp->settings().compositionSize();
             const FrameRange frameRange = comp->frameRange().normalized();
             const float fps = comp->frameRate().framerate();
+            const auto responsiveLayout = comp->responsiveLayout();
+            const QString activeVariantId = comp->activeResponsiveLayoutVariantId();
+            QString activeVariantLabel = QStringLiteral("Manual");
+            for (const auto& variant : responsiveLayout.variants) {
+              if (variant.variantId == activeVariantId) {
+                activeVariantLabel = variant.displayName.isEmpty()
+                                         ? variant.variantId
+                                         : variant.displayName;
+                if (variant.baseSize.isValid()) {
+                  activeVariantLabel = QStringLiteral("%1 %2x%3")
+                                           .arg(activeVariantLabel)
+                                           .arg(variant.baseSize.width())
+                                           .arg(variant.baseSize.height());
+                }
+                break;
+              }
+            }
             sizeItem->setText(QStringLiteral("%1 x %2")
                                   .arg(compSize.width())
                                   .arg(compSize.height()));
-            durationItem->setText(QStringLiteral("%1 frames")
-                                      .arg(frameRange.duration()));
+            durationItem->setText(QStringLiteral("%1 frames • %2")
+                                      .arg(frameRange.duration())
+                                      .arg(activeVariantLabel));
             frameRateItem->setText(
                 fps > 0.0f
                     ? QStringLiteral("%1 fps")

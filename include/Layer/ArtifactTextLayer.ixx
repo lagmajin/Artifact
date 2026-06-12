@@ -45,6 +45,7 @@ import Utils.String.UniString;
 import Color.Float;
 import FloatRGBA;
 import Image.ImageF32x4_RGBA;
+import Text.LayoutContract;
 import Text.Style;
 import Artifact.Layers;
 
@@ -127,6 +128,14 @@ public:
     TextLayoutMode layoutMode() const;
     bool isBoxText() const;
 
+    void setWritingMode(ArtifactCore::TextWritingMode mode);
+    ArtifactCore::TextWritingMode writingMode() const;
+
+    void setRubyText(const QString& text);
+    QString rubyText() const;
+    void setRubyScale(float scale);
+    float rubyScale() const;
+
     void setMaxWidth(float width);
     float maxWidth() const;
 
@@ -157,11 +166,17 @@ public:
      // Returns the animator index, or -1 if the range is invalid.
      int applyColorToSelectorRange(int charStart, int charEnd, const ArtifactCore::FloatRGBA& color);
 
-     QImage toQImage() const;
-     const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
-     bool hasCurrentFrameBuffer() const;
-     QString debugState() const;
-     LayerMask createMaskFromText() const;
+    QImage toQImage() const;
+    const ArtifactCore::ImageF32x4_RGBA& currentFrameBuffer() const;
+    bool hasCurrentFrameBuffer() const;
+    QString debugState() const;
+    QVector<float> selectorWeightPreview(int sampleCount = 24) const;
+    QVector<float> selectorClusterBoundaryPreview() const;
+    QVector<float> selectorLineBoundaryPreview() const;
+    QString selectorDebugSummary() const;
+    QString selectorBoundarySummary() const;
+    QString selectorOverviewSummary() const;
+    LayerMask createMaskFromText() const;
 
      // Trigger update of internal image
      void updateImage();
