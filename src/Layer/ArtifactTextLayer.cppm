@@ -602,6 +602,14 @@ QString selectorScriptLabelForContract(const TextLayoutContract &contract) {
                                : QStringLiteral("no"));
 }
 
+QString selectorVerticalLabelForContract(const TextLayoutContract &contract) {
+  return QStringLiteral("tcy=%1;punct=%2;brackets=%3;kinsoku=%4")
+      .arg(contract.tateChuYokoRuns.size())
+      .arg(contract.punctuationRuns.size())
+      .arg(contract.bracketOrientationRuns.size())
+      .arg(contract.kinsokuBoundaryInfos.size());
+}
+
 QString textWritingModeLabel(const TextWritingMode writingMode) {
   return writingMode == TextWritingMode::Vertical ? QStringLiteral("mode=vertical")
                                                    : QStringLiteral("mode=horizontal");
@@ -1883,7 +1891,7 @@ QString ArtifactTextLayer::selectorBoundarySummary() const {
 QString ArtifactTextLayer::selectorOverviewSummary() const {
   if (!impl_) {
     return QStringLiteral(
-        "target=glyph;mode=horizontal;source=logical;visual=flow;unit=glyph;regex=off;tag=unknown;token=none;scripts=0;clusters=0;lines=0");
+        "target=glyph;mode=horizontal;source=logical;visual=flow;unit=glyph;regex=off;tag=unknown;token=none;scripts=0;vertical=tcy=0;punct=0;brackets=0;kinsoku=0;clusters=0;lines=0");
   }
   const QString displayText = resolvedSourceTextAtTime(this);
   const bool hasAnimators =
@@ -1906,7 +1914,8 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
   const QString tokenSummary = selectorTokenLabelForGlyphs(impl_->glyphs_);
   const QString tagSummary = selectorTagLabelForText(displayText);
   const QString scriptSummary = selectorScriptLabelForContract(impl_->layoutContract_);
-  return QStringLiteral("target=%1;%2;%3;%4;regex=%5;%6;%7;%8;clusters=%9;lines=%10")
+  const QString verticalSummary = selectorVerticalLabelForContract(impl_->layoutContract_);
+  return QStringLiteral("target=%1;%2;%3;%4;regex=%5;%6;%7;%8;vertical=%9;clusters=%10;lines=%11")
       .arg(selectorDebugSummary(), textWritingModeLabel(impl_->writingMode_),
            textOrderingLabel(impl_->writingMode_),
            textSelectionUnitLabelForState(hasAnimators, hasRuby, hasCjk,
@@ -1916,6 +1925,7 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
            tagSummary,
            tokenSummary,
            scriptSummary,
+           verticalSummary,
            selectorClusterBoundaryPreview().size(),
            selectorLineBoundaryPreview().size());
 }
@@ -2170,7 +2180,7 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
                                        selectorOverviewSummary(), -83);
   selectorOverviewProp->setDisplayLabel(QStringLiteral("Selector Overview"));
   selectorOverviewProp->setTooltip(
-      QStringLiteral("Primary compact key=value summary for target, mode, source, visual, unit, tag, script, token, clusters, and lines."));
+      QStringLiteral("Primary compact key=value summary for target, mode, source, visual, unit, tag, script, vertical, token, clusters, and lines."));
   textGroup.addProperty(selectorOverviewProp);
   auto selectorScriptProp = makeProp(QStringLiteral("text.selectorScript"),
                                      ArtifactCore::PropertyType::String,
@@ -2180,10 +2190,17 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   selectorScriptProp->setTooltip(
       QStringLiteral("Script run summary from the shaped layout contract."));
   textGroup.addProperty(selectorScriptProp);
+  auto selectorVerticalProp = makeProp(
+      QStringLiteral("text.selectorVertical"), ArtifactCore::PropertyType::String,
+      selectorVerticalLabelForContract(impl_->layoutContract_), -81);
+  selectorVerticalProp->setDisplayLabel(QStringLiteral("Selector Vertical"));
+  selectorVerticalProp->setTooltip(
+      QStringLiteral("Vertical-writing summary from the shaped layout contract."));
+  textGroup.addProperty(selectorVerticalProp);
   auto selectorTokenProp = makeProp(QStringLiteral("text.selectorToken"),
                                    ArtifactCore::PropertyType::String,
                                    selectorTokenLabelForGlyphs(impl_->glyphs_),
-                                   -81);
+                                   -80);
   selectorTokenProp->setDisplayLabel(QStringLiteral("Selector Token"));
   selectorTokenProp->setTooltip(
       QStringLiteral("Representative stable token id for the current shaped glyph stream."));
@@ -2191,14 +2208,14 @@ ArtifactTextLayer::getLayerPropertyGroups() const {
   auto selectorTagProp = makeProp(QStringLiteral("text.selectorTag"),
                                   ArtifactCore::PropertyType::String,
                                   selectorTagLabelForText(badgeSourceText),
-                                  -80);
+                                  -79);
   selectorTagProp->setDisplayLabel(QStringLiteral("Selector Tag"));
   selectorTagProp->setTooltip(
       QStringLiteral("Representative script-family tag for the current text stream."));
   textGroup.addProperty(selectorTagProp);
   auto unitBadgeProp = makeProp(QStringLiteral("text.unitBadge"),
                                 ArtifactCore::PropertyType::String,
-                                badgeText, -79);
+                                badgeText, -78);
   unitBadgeProp->setDisplayLabel(QStringLiteral("Unit Badge"));
   unitBadgeProp->setTooltip(
       QStringLiteral("Detail used by Selector Overview: current text unit semantics."));
