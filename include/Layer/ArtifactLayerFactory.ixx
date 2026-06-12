@@ -56,6 +56,8 @@ export namespace Artifact {
   static ArtifactAbstractLayerPtr createFromJson(const QJsonObject& json) noexcept;
  };
 
+ std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json);
+
 
 
 };

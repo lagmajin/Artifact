@@ -24,12 +24,11 @@ module;
 export module Artifact.Widgets.PropertyEditor;
 
 import Property.Abstract;
+import Artifact.Layer.Text;
 import Artifact.Widgets.FontPicker;
 import Event.Bus;
 
 export namespace Artifact {
-
-class ArtifactTextLayer;
 
 enum class ArtifactPropertyRowLayoutMode {
     LabelThenEditor = 0,

@@ -38,13 +38,12 @@
 #include <vector>
 #include <QJsonObject>
 
-#include "../../include/Layer/ArtifactCompositionLayerResolver.ixx"
-
 module Artifact.Layer.Composition;
 
 import Property.Abstract;
 import Property.Group;
 import Artifact.Composition.Abstract;
+import Artifact.Service.Project;
 import Composition.Settings;
 
 namespace Artifact {
@@ -77,7 +76,12 @@ QJsonObject ArtifactCompositionLayer::toJson() const {
 
 std::shared_ptr<ArtifactAbstractComposition>
 ArtifactCompositionLayer::sourceComposition() const {
-  return resolveArtifactCompositionLayerSource(impl_->id_.toString());
+  auto *service = ArtifactProjectService::instance();
+  if (!service) {
+    return nullptr;
+  }
+  const auto result = service->findComposition(impl_->id_);
+  return result.ptr.lock();
 }
 
 void ArtifactCompositionLayer::draw(ArtifactIRenderer *) {

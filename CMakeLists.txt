@@ -118,6 +118,12 @@ if(_app_debugger_widget_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Widgets/Diagnostics/AppDebuggerWidget.cppm")
 endif()
 
+# CompositionManager は module/legacy 混在の影響で自動収集から漏れることがあるため固定する。
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Composition/ArtifactCompositionManager.cppm" _composition_manager_idx)
+if(_composition_manager_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Composition/ArtifactCompositionManager.cppm")
+endif()
+
 # OffscreenCompositionRenderer は他モジュールから import される公開モジュールなので、
 # 自動分類の漏れを防ぐため明示的に CXX_MODULES に含める。
 list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cppm" _offscreen_composition_module_idx)

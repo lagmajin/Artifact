@@ -174,6 +174,29 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
  button->setText(QString());
 }
 
+QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
+{
+  if (!storedColor.isValid()) {
+    return QColor(0, 0, 0, 255);
+  }
+
+  const auto &theme = ArtifactCore::currentDCCTheme();
+  const QColor accent(theme.accentColor);
+  const QColor selection(theme.selectionColor);
+  const auto sameRgb = [](const QColor &a, const QColor &b) {
+    return b.isValid() && a.red() == b.red() && a.green() == b.green() &&
+           a.blue() == b.blue();
+  };
+
+  // Legacy defaults should not inherit the theme accent blue as comp background.
+  if (sameRgb(storedColor, accent) || sameRgb(storedColor, selection)) {
+    return QColor(0, 0, 0, 255);
+  }
+
+  return QColor(storedColor.red(), storedColor.green(), storedColor.blue(),
+                255);
+}
+
 } // namespace
 	
  class CompositionSettingPage::Impl
@@ -396,11 +419,8 @@ void updateColorButtonPreview(QPushButton* button, const QColor& color)
     }
     const QColor defaultBg(
         settings->projectDefaultCompositionBackgroundColor());
-    if (defaultBg.isValid()) {
-      impl_->bgColor =
-          QColor(defaultBg.red(), defaultBg.green(), defaultBg.blue(), 255);
-      updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
-    }
+    impl_->bgColor = normalizedCompositionBackgroundDefault(defaultBg);
+    updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
   }
 
   qInfo() << "[CreateCompositionDialog][Ctor] CompositionSettingPage ms="

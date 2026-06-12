@@ -28,6 +28,7 @@ import Artifact.Service.ActiveContext;
 import Artifact.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
+import Artifact.Layer.Factory;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Group;
@@ -45,7 +46,6 @@ import Utils.String.UniString;
 import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Layer.Solid2D;
-import Artifact.Layer.Factory;
 import Composition.ExportMatrix;
 
 export namespace Artifact {
@@ -2202,7 +2202,7 @@ private:
         QJsonObject layerJson = originalLayer->toJson();
         layerJson.remove(QStringLiteral("id")); // Ensure new ID is generated
 
-        auto newLayer = ArtifactLayerFactory::createFromJson(layerJson);
+        auto newLayer = createArtifactLayerFromJson(layerJson);
         if (!newLayer) {
             return QVariantMap{
                 {QStringLiteral("success"), false},

@@ -131,7 +131,7 @@ export struct OfxPluginDescriptor {
   HMODULE libraryHandle = nullptr;
 };
 
-const std::vector<OfxPluginDescriptor> &artifactOfxHostLoadedPlugins();
+ImageEffectState *imageEffectForClip(const ClipState *clip);
 
 namespace {
 
@@ -607,18 +607,6 @@ ClipState *ensureClip(ImageEffectState *effect, const char *name) {
   return entry.get();
 }
 
-ImageEffectState *imageEffectForClip(const ClipState *clip) {
-  if (!clip) return nullptr;
-  for (const auto &desc : artifactOfxHostLoadedPlugins()) {
-    if (desc.descriptorState) {
-      for (const auto &kv : desc.descriptorState->clips) {
-        if (kv.second.get() == clip) return desc.descriptorState.get();
-      }
-    }
-  }
-  return nullptr;
-}
-
 void initEffectProperties(PropertySet &properties, const char *name,
                           const char *type) {
   setStringProperty(properties, kOfxPropType, type);
@@ -752,7 +740,7 @@ OfxStatus effectClipGetImage(OfxImageClipHandle clip, OfxTime /*time*/,
   setPointerProperty(imageProps, kOfxImagePropData,
                      const_cast<unsigned char *>(rf.srcPixelData));
   setDoubleProperty(imageProps, kOfxImagePropPixelAspectRatio, 1.0);
-  setIntProperty(imageProps, kOfxImagePropField, (int)kOfxImageFieldNone);
+  setStringProperty(imageProps, kOfxImagePropField, kOfxImageFieldNone);
   setStringProperty(imageProps, kOfxImageEffectPropPixelDepth, kOfxBitDepthFloat);
   setStringProperty(imageProps, kOfxImageEffectPropComponents, kOfxImageComponentRGBA);
   setIntProperty(imageProps, kOfxImagePropRowBytes, rf.srcRowBytes);
@@ -1505,7 +1493,7 @@ export OfxStatus pluginActionRender(OfxPlugin *plugin, ImageEffectState &instanc
   PropertySet inArgs;
   setDoubleProperty(inArgs, kOfxPropTime, time);
   setDoublePropertyN(inArgs, kOfxImageEffectPropRenderScale, 2, {renderScale.x, renderScale.y});
-  setIntProperty(inArgs, kOfxImageEffectPropFieldToRender, (int)kOfxImageFieldNone);
+  setStringProperty(inArgs, kOfxImageEffectPropFieldToRender, kOfxImageFieldNone);
   return plugin->mainEntry(kOfxImageEffectActionRender,
                            reinterpret_cast<const void *>(&instanceState),
                            reinterpret_cast<OfxPropertySetHandle>(&inArgs),
@@ -1544,6 +1532,10 @@ public:
   static ArtifactOfxHost &instance() {
     static ArtifactOfxHost s_instance;
     return s_instance;
+  }
+
+  inline const std::vector<OfxPluginDescriptor> &getLoadedPlugins() const {
+    return plugins_;
   }
 
   void initialize() {
@@ -1687,10 +1679,6 @@ public:
       return;
     }
     scanRoots(QStringList{root});
-  }
-
-  const std::vector<OfxPluginDescriptor> &getLoadedPlugins() const {
-    return plugins_;
   }
 
   void *getOfxHostStruct() {
@@ -1927,8 +1915,16 @@ ArtifactOfxHost &artifactOfxHostInstance() {
   return ArtifactOfxHost::instance();
 }
 
-const std::vector<OfxPluginDescriptor> &artifactOfxHostLoadedPlugins() {
-  return ArtifactOfxHost::instance().getLoadedPlugins();
+ImageEffectState *imageEffectForClip(const ClipState *clip) {
+  if (!clip) return nullptr;
+  for (const auto &desc : ArtifactOfxHost::instance().getLoadedPlugins()) {
+    if (desc.descriptorState) {
+      for (const auto &kv : desc.descriptorState->clips) {
+        if (kv.second.get() == clip) return desc.descriptorState.get();
+      }
+    }
+  }
+  return nullptr;
 }
 
 } // namespace Ofx

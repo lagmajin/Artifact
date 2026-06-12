@@ -82,8 +82,8 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
                                   FloatColor{0.9f, 0.9f, 0.95f, 0.5f});
 
         const auto clusterBoundaries = textLayer->selectorClusterBoundaryPreview();
-        const QFont labelFont(QStringLiteral("Segoe UI"));
-        labelFont.setPointSizeF(std::max(6.0f, 9.0f * invZoom));
+        QFont labelFont(QStringLiteral("Segoe UI"));
+        labelFont.setPointSizeF(static_cast<qreal>(std::max<float>(6.0f, 9.0f * invZoom)));
         for (int i = 0; i < clusterBoundaries.size(); ++i) {
             const float t = clusterBoundaries[i];
             const float x = bbox.left() + bbox.width() * std::clamp(t, 0.0f, 1.0f);
@@ -119,9 +119,10 @@ void TextGizmo::draw(ArtifactIRenderer* renderer) {
             textLayer->writingMode() == TextWritingMode::Vertical
                 ? QStringLiteral("visual column order")
                 : QStringLiteral("visual flow order");
-        const float labelH = std::max(8.0f * invZoom, 9.0f * invZoom);
+        const float labelH = 9.0f * invZoom;
         const float labelY = heatY - labelH - 2.0f * invZoom;
-        const float labelW = std::max(24.0f * invZoom, bbox.width() * 0.25f);
+        const float labelW = std::max<float>(24.0f * invZoom,
+                                             static_cast<float>(bbox.width() * 0.25));
         renderer->drawText(QRectF(bbox.left(), labelY, labelW, labelH),
                            QStringLiteral("logical start"), labelFont,
                            FloatColor{0.92f, 0.95f, 1.0f, 0.95f},

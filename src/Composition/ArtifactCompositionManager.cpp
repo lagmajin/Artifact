@@ -64,7 +64,6 @@ namespace Artifact {
    d->compositions_.push_back(comp);
    result.id = id;
    result.success = true;
-   emit compositionCreated(id, comp);
   } catch (const std::exception& e) {
    result.message = UniString::fromUtf8(e.what());
   }
@@ -73,11 +72,10 @@ namespace Artifact {
 
  RemoveAllCompositionResult ArtifactCompositionManager::removeAllCompositions()
  {
-  RemoveAllCompositionResult result;
+ RemoveAllCompositionResult result;
   d->compositions_.clear();
   d->idIndex_.clear();
   result.success = true;
-  emit allCompositionsRemoved();
   return result;
  }
 

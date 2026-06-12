@@ -3,11 +3,13 @@ module;
 #include <QJsonObject>
 #include <QList>
 #include <QObject>
+#include <QString>
 
 module Artifact.Layer.Factory;
 import std;
 
 import Utils.String.UniString;
+import Artifact.Layer.Abstract;
 import Artifact.Layer.Result;
 import Artifact.Layer.Null;
 import Artifact.Layer.Image;
@@ -21,8 +23,8 @@ import Artifact.Layer.Audio;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
 import Artifact.Layer.Text;
- import Artifact.Layer.Group;
- import Artifact.Layer.Clone;
+import Artifact.Layer.Group;
+import Artifact.Layer.Clone;
 import Artifact.Layer.SDF;
 import Artifact.Layer.Construction;
 import Artifact.Layers.Model3D;
@@ -31,7 +33,7 @@ import Artifact.Layer.Composition;
 
 namespace Artifact {
 
-std::shared_ptr<ArtifactAbstractLayer> createArtifactCompositionLayer();
+std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json);
 
  class ArtifactLayerFactory::Impl {
  private:
@@ -139,10 +141,10 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
       videoLayer->setSourceFile(path);
      }
     }
-   }
+  }
    break;
   case LayerType::Precomp:
-   ptr = createArtifactCompositionLayer();
+   ptr = std::make_shared<ArtifactCompositionLayer>();
    break;
   case LayerType::Camera:
    ptr = ArtifactAbstractLayerPtr(new ArtifactCameraLayer());
@@ -207,6 +209,10 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
 
   ArtifactAbstractLayerPtr ArtifactLayerFactory::createFromJson(const QJsonObject& json) noexcept
   {
+      return createArtifactLayerFromJson(json);
+  }
+
+ std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json) {
       if (!json.contains("type") && !json.value("isConstruction").toBool(false)) return nullptr;
       LayerType type = json.contains("type")
           ? static_cast<LayerType>(json["type"].toInt())

@@ -34,9 +34,8 @@ module;
 #include <wobjectdefs.h>
 export module Artifact.Layers.Selection.Manager;
 
-
-import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Composition.Abstract;
 import Memory.SharedPtr;
 
 export namespace Artifact {

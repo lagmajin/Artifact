@@ -28,6 +28,15 @@ struct CompositionRemovedEvent {
     QString compositionId;
 };
 
+struct CompositionChangedEvent {
+    QString compositionId;
+};
+
+struct CompositionNoteChangedEvent {
+    QString compositionId;
+    QString note;
+};
+
 struct CurrentCompositionChangedEvent {
     QString compositionId;
 };

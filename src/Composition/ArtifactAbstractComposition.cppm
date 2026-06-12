@@ -4,7 +4,6 @@ module;
 #include <QJsonDocument>
 #include <QList>
 #include <qforeach.h>
-#include <wobjectimpl.h>
 #include <QHash>
 #include <QVector>
 #include <QMultiMap>
@@ -34,14 +33,13 @@ import Composition.Settings;
 import Artifact.Composition.InitParams;
 import Artifact.Composition.Result;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Factory;
 import Artifact.Event.Types;
 import Event.Bus;
 //import Playback.Clock;
 
 namespace Artifact {
  using namespace ArtifactCore;
-
-std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json);
 
 namespace {
 
@@ -130,7 +128,17 @@ Artifact::ResponsiveLayoutVariant makeDefaultResponsiveLayoutVariant(const QSize
 
 } // namespace
 
-W_OBJECT_IMPL(ArtifactAbstractComposition)
+void ArtifactAbstractComposition::changed()
+{
+  ArtifactCore::globalEventBus().publish<CompositionChangedEvent>(
+      CompositionChangedEvent{ id().toString() });
+}
+
+void ArtifactAbstractComposition::compositionNoteChanged(const QString& note)
+{
+  ArtifactCore::globalEventBus().publish<CompositionNoteChangedEvent>(
+      CompositionNoteChangedEvent{ id().toString(), note });
+}
 
 class ArtifactAbstractComposition::Impl {
  private:
@@ -170,7 +178,7 @@ class ArtifactAbstractComposition::Impl {
   void goToStartFrame();
   void goToEndFrame();
   void goToFrame(int64_t frame=0);
-  QVector<ArtifactAbstractLayerPtr> allLayer() const;
+  QList<ArtifactAbstractLayerPtr> allLayer() const;
   QVector<ArtifactAbstractLayerPtr> allLayerBackToFront() const;
 
    ArtifactAbstractLayerPtr frontMostLayer() const;
@@ -328,7 +336,7 @@ void ArtifactAbstractComposition::Impl::removeLayer(const LayerID& id)
     }
   }
 
- QVector<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
+ QList<ArtifactAbstractLayerPtr> ArtifactAbstractComposition::Impl::allLayer() const
  {
   return layerMultiIndex_.all();
  }
@@ -607,7 +615,7 @@ bool ResponsiveLayoutSet::hasVariant(const QString& variantId) const
   return impl_->containsLayerById(id);
  }
 
-ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& id)
+ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& id) const
 {
   ArtifactAbstractLayerPtr layer = impl_->layerMultiIndex_.findById(id);
   return layer;
@@ -729,13 +737,13 @@ bool ArtifactAbstractComposition::getAudio(AudioSegment &outSegment, const Frame
     return hasAnyAudio;
 }
 
-QVector<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
+QList<Artifact::ArtifactAbstractLayerPtr> ArtifactAbstractComposition::allLayer()
 {
-  QVector<ArtifactAbstractLayerPtr> layers = impl_->layerMultiIndex_.all();
+  QList<ArtifactAbstractLayerPtr> layers = impl_->layerMultiIndex_.all();
   return layers;
 }
 
-const QVector<Artifact::ArtifactAbstractLayerPtr>&
+const QList<Artifact::ArtifactAbstractLayerPtr>&
 ArtifactAbstractComposition::allLayerRef() const
 {
   return impl_->layerMultiIndex_.all();

@@ -65,7 +65,7 @@ int requiredMenuBarWidth(const QMenuBar* menuBar, const QFont& font)
   }
   const int iconWidth = action->icon().isNull() ? 0 : 18;
   const int spacing = action->icon().isNull() ? 0 : 6;
-  width += fm.horizontalAdvance(action->text()) + iconWidth + spacing + 24;
+  width += fm.horizontalAdvance(action->text()) + iconWidth + spacing + 16;
  }
  return width + 12;
 }

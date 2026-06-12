@@ -44,6 +44,7 @@ constexpr float kAudioPreviewMinDb = -60.0f;
 constexpr float kAudioPreviewMaxDb = 0.0f;
 }
 
+W_OBJECT_IMPL(AudioLevelBarWidget)
 W_OBJECT_IMPL(AudioWaveformWidget)
 W_OBJECT_IMPL(ArtifactAudioPreviewWidget)
 

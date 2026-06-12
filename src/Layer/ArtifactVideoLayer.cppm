@@ -1688,7 +1688,7 @@ void ArtifactVideoLayer::goToFrame(int64_t frameNumber)
         const int64_t nextSource = currentSource + 2; // 2フレーム先をプリフェッチ
         if (nextSource < impl_->streamInfo_.frameCount) {
             // 非同期で次フレームを先読み
-            QtConcurrent::run(&sharedBackgroundThreadPool(), 
+            [[maybe_unused]] const auto prefetchFuture = QtConcurrent::run(&sharedBackgroundThreadPool(), 
                 [this, nextSource]() {
                     if (!impl_->playbackController_ || !impl_->isLoaded_) return;
                     const auto rawFrame = impl_->playbackController_->getVideoFrameAtFrameDirectRaw(nextSource);
