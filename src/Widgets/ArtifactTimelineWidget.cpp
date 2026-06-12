@@ -3176,7 +3176,7 @@ public:
   bool syncingVerticalOffset_ = false;
   double currentFrame_ = 0.0;
   bool curveEditorDragging_ = false;
-  QMetaObject::Connection compositionChangedConnection_;
+  ArtifactCore::EventBus::Subscription compositionChangedSubscription_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   // refreshTracks() の重複キューイング防止フラグ。
@@ -5390,19 +5390,23 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
       if (res.success && !res.ptr.expired()) {
         auto comp = res.ptr.lock();
         
-        // Listen to composition changes (e.g. layer additions, timeline range updates)
-        if (impl_->compositionChangedConnection_) {
-          disconnect(impl_->compositionChangedConnection_);
-        }
-        impl_->compositionChangedConnection_ = connect(comp.get(), &ArtifactAbstractComposition::changed, this, [this]() {
-          QMetaObject::invokeMethod(this, [this]() {
-            if (!impl_) {
-              return;
-            }
-            syncWorkAreaFromCurrentComposition();
-            refreshTracks();
-          }, Qt::QueuedConnection);
-        });
+        // Listen to composition-level changes via the shared internal event bus.
+        impl_->compositionChangedSubscription_.disconnect();
+        const QString compositionId = comp->id().toString();
+        impl_->compositionChangedSubscription_ =
+            impl_->eventBus_.subscribe<CompositionChangedEvent>(
+                [this, compositionId](const CompositionChangedEvent& event) {
+                  if (event.compositionId != compositionId) {
+                    return;
+                  }
+                  QMetaObject::invokeMethod(this, [this]() {
+                    if (!impl_) {
+                      return;
+                    }
+                    syncWorkAreaFromCurrentComposition();
+                    refreshTracks();
+                  }, Qt::QueuedConnection);
+                });
 
         const QString compositionLabel =
             comp->settings().compositionName().toQString().trimmed();

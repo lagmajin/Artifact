@@ -1,12 +1,16 @@
 module;
 #include <exception>
-#include <wobjectimpl.h>
+#include <QSize>
+#include <QString>
 
 module Artifact.Composition.Manager;
 
+import Artifact.Composition.Abstract;
 import Artifact.Composition._2D;
 import Artifact.Composition.FindQuery;
 import Artifact.Composition.InitParams;
+import Artifact.Event.Types;
+import Event.Bus;
 import Utils.String.UniString;
 
 namespace Artifact {
@@ -16,8 +20,6 @@ public:
  std::vector<ArtifactCompositionPtr> compositions_;
  std::unordered_map<QString, size_t> idIndex_;
 };
-
-W_OBJECT_IMPL(ArtifactCompositionManager)
 
 ArtifactCompositionManager::ArtifactCompositionManager(QObject* parent)
  : QObject(parent), d_(std::make_unique<Impl>())
@@ -39,7 +41,7 @@ ArtifactCompositionPtr ArtifactCompositionManager::compositionAt(size_t index) c
  return d_->compositions_[index];
 }
 
-ArtifactCompositionPtr ArtifactCompositionManager::compositionById(const CompositionID& id) const
+ArtifactCompositionPtr ArtifactCompositionManager::compositionById(const ArtifactCore::CompositionID& id) const
 {
  const auto it = d_->idIndex_.find(id.toQString());
  if (it == d_->idIndex_.end() || it->second >= d_->compositions_.size()) {
@@ -53,9 +55,9 @@ std::vector<ArtifactCompositionPtr> ArtifactCompositionManager::allCompositions(
  return d_->compositions_;
 }
 
-std::vector<CompositionID> ArtifactCompositionManager::allCompositionIds() const
+std::vector<ArtifactCore::CompositionID> ArtifactCompositionManager::allCompositionIds() const
 {
- std::vector<CompositionID> ids;
+ std::vector<ArtifactCore::CompositionID> ids;
  ids.reserve(d_->compositions_.size());
  for (const auto& comp : d_->compositions_) {
   ids.push_back(comp->id());
@@ -73,31 +75,33 @@ CreateCompositionResult ArtifactCompositionManager::createNewComposition(
 {
  CreateCompositionResult result;
  try {
-  const CompositionID id;
+   const ArtifactCore::CompositionID id;
   auto comp = std::make_shared<ArtifactComposition2D>(id, params);
   if (!comp) {
-   result.message = UniString::fromUtf8("Failed to allocate composition");
+    result.message = UniString::fromQString(QString::fromUtf8("Failed to allocate composition"));
    return result;
   }
   d_->idIndex_[id.toQString()] = d_->compositions_.size();
   d_->compositions_.push_back(comp);
   result.id = id;
   result.success = true;
-  compositionCreated(id, comp);
+  ArtifactCore::globalEventBus().publish<CompositionCreatedEvent>(CompositionCreatedEvent{
+      id.toString(),
+      comp->settings().compositionName().toQString()});
  } catch (const std::exception& e) {
-  result.message = UniString::fromUtf8(e.what());
- }
- return result;
+   result.message = UniString::fromQString(QString::fromUtf8(e.what()));
+  }
+  return result;
 }
 
 RemoveAllCompositionResult ArtifactCompositionManager::removeAllCompositions()
 {
  RemoveAllCompositionResult result;
- d_->compositions_.clear();
- d_->idIndex_.clear();
- result.success = true;
- allCompositionsRemoved();
- return result;
+  d_->compositions_.clear();
+  d_->idIndex_.clear();
+  result.success = true;
+  ArtifactCore::globalEventBus().publish<CompositionRemovedEvent>(CompositionRemovedEvent{QString()});
+  return result;
 }
 
 std::vector<FindCompositionResult> ArtifactCompositionManager::search(

@@ -1,7 +1,6 @@
 ﻿module;
 #include <utility>
 #include <memory>
-#include <wobjectdefs.h>
 #include <QObject>
 #include <QImage>
 #include <QJsonDocument>
@@ -25,6 +24,7 @@ import Frame.Position;
 import Container.MultiIndex;
 import Composition.Context;
 import Artifact.Composition.Access;
+import Artifact.Composition.InitParams;
 export import Artifact.Layer.Abstract;
 import Artifact.Composition.Result;
 import Composition.Settings;
@@ -38,7 +38,6 @@ export namespace Artifact {
  using namespace ArtifactCore;
 
  class ArtifactAbstractComposition;
- class ArtifactCompositionInitParams;
  using ArtifactCompositionPtr = ArtifactCore::SharedPtr<ArtifactAbstractComposition>;
  using ArtifactCompositionWeakPtr = ArtifactCore::WeakPtr<ArtifactAbstractComposition>;
 
@@ -67,7 +66,6 @@ export namespace Artifact {
  };
 
  class ArtifactAbstractComposition:public QObject, public ArtifactAbstractCompositionAccess {
-  W_OBJECT(ArtifactAbstractComposition)
  private:
   class Impl;
   Impl* impl_;
@@ -93,7 +91,7 @@ export namespace Artifact {
   void setCompositionNote(const QString& note);
   void setCompositionSize(const QSize& size);
 
-  ArtifactAbstractLayerPtr layerById(const LayerID& id);
+  ArtifactAbstractLayerPtr layerById(const LayerID& id) const;
   bool containsLayerById(const LayerID& id);
 
   ArtifactAbstractLayerPtr frontMostLayer() const;
@@ -104,9 +102,8 @@ export namespace Artifact {
 
    void setBackGroundColor(const FloatColor& color);
    FloatColor backgroundColor() const;
-  void changed() W_SIGNAL(changed);
-  void compositionNoteChanged(QString note)
-    W_SIGNAL(compositionNoteChanged, note);
+  void changed();
+  void compositionNoteChanged(const QString& note);
   FramePosition framePosition() const;
   void setFramePosition(const FramePosition& position);
   void setTimeCode();
@@ -149,8 +146,8 @@ export namespace Artifact {
   QJsonDocument toJson() const;
   static ArtifactCompositionPtr fromJson(const QJsonDocument& doc);
 
-  QVector<ArtifactAbstractLayerPtr> allLayer();
-  const QVector<ArtifactAbstractLayerPtr>& allLayerRef() const;
+  QList<ArtifactAbstractLayerPtr> allLayer();
+  const QList<ArtifactAbstractLayerPtr>& allLayerRef() const;
 
   // Asset usage tracking for unused asset detection
   QVector<ArtifactCore::AssetID> getUsedAssets() const;

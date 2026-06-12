@@ -8,6 +8,7 @@ module;
 #include <QJsonObject>
 #include <QStandardPaths>
 #include <QDateTime>
+#include <QRegularExpression>
 #include <memory>
 #include <vector>
 
@@ -123,7 +124,7 @@ int ArtifactBatchRenderer::addCompositions(
     }
 
     if (added > 0) {
-        Q_EMIT batchJobsAdded(added);
+        batchJobsAdded(added);
     }
     return added;
 }
@@ -177,9 +178,13 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
     }
 
     if (added > 0) {
-        Q_EMIT batchJobsAdded(added);
+        batchJobsAdded(added);
     }
     return added;
+}
+
+void ArtifactBatchRenderer::batchJobsAdded(int)
+{
 }
 
 QString ArtifactBatchRenderer::resolveTemplateDir() const

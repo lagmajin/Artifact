@@ -1,10 +1,12 @@
 module;
+#include <algorithm>
 #include <utility>
 #include <functional>
 #include <QAction>
 #include <QIcon>
 #include <QMessageBox>
 #include <QMenu>
+#include <QSize>
 #include <QWidget>
 #include <wobjectimpl.h>
 
@@ -18,8 +20,11 @@ import Artifact.Widgets.PlaybackControlTestWidget;
 import Artifact.Widgets.Test.ScrollPoC;
 import Menu.Test2;
 import Artifact.Service.Project;
+import Artifact.Project.Manager;
 import Artifact.Composition.InitParams;
+import Artifact.Composition.Abstract;
 import Artifact.Layer.InitParams;
+import Artifact.Layer.Abstract;
 import Utils.Path;
 
 namespace Artifact {
@@ -45,6 +50,26 @@ QAction* addOpenWidgetAction(QMenu* menu, const QString& text, const QString& ic
  menu->addAction(action);
  QObject::connect(action, &QAction::triggered, menu, [openFn]() { openFn(); });
  return action;
+}
+
+ArtifactAbstractLayerPtr addDebugSolidBlendLayer(
+    const CompositionID &compositionId, const QString &name, const QSize &size,
+    const FloatColor &color, const LAYER_BLEND_TYPE blendMode,
+    const float opacity)
+{
+ auto &manager = ArtifactProjectManager::getInstance();
+ ArtifactSolidLayerInitParams params(name);
+ params.setWidth(std::max(1, size.width()));
+ params.setHeight(std::max(1, size.height()));
+ params.setColor(color);
+ auto result = manager.addLayerToComposition(
+     compositionId, static_cast<ArtifactLayerInitParams &>(params));
+ if (!result.success || !result.layer) {
+  return {};
+ }
+ result.layer->setBlendMode(blendMode);
+ result.layer->setOpacity(std::clamp(opacity, 0.0f, 1.0f));
+ return result.layer;
 }
 }
 
@@ -120,6 +145,74 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
  addMenu(widgetMenu);
  addMenu(mediaMenu);
  addMenu(imageProcessingMenu);
+
+ addSeparator();
+
+ auto *addDebugBlendLayersAction =
+     new QAction("Add Debug Blend Test Layers", this);
+ addDebugBlendLayersAction->setIcon(
+     QIcon(resolveIconPath("Studio/layer_composite.svg")));
+ addAction(addDebugBlendLayersAction);
+ QObject::connect(addDebugBlendLayersAction, &QAction::triggered, this, []() {
+  auto *projectService = ArtifactProjectService::instance();
+  if (!projectService) {
+   QMessageBox::warning(nullptr, "Debug Layers",
+                        "ProjectService が利用できません。");
+   return;
+  }
+
+  auto comp = projectService->currentComposition().lock();
+  if (!comp) {
+   QMessageBox::warning(nullptr, "Debug Layers",
+                        "先にコンポジションを開いてください。");
+   return;
+  }
+
+  const QSize compSize = comp->effectiveCompositionSize().isValid()
+                             ? comp->effectiveCompositionSize()
+                             : QSize(1920, 1080);
+  const CompositionID compositionId = comp->id();
+
+  ArtifactAbstractLayerPtr lastCreatedLayer;
+  lastCreatedLayer = addDebugSolidBlendLayer(
+      compositionId, QStringLiteral("Debug Base Plate"), compSize,
+      FloatColor(0.32f, 0.32f, 0.36f, 1.0f), LAYER_BLEND_TYPE::BLEND_NORMAL,
+      1.0f);
+  if (!lastCreatedLayer) {
+   QMessageBox::warning(nullptr, "Debug Layers",
+                        "デバッグ用ベースレイヤーの追加に失敗しました。");
+   return;
+  }
+
+  lastCreatedLayer = addDebugSolidBlendLayer(
+      compositionId, QStringLiteral("Debug Multiply Plate"), compSize,
+      FloatColor(0.78f, 0.42f, 0.18f, 1.0f), LAYER_BLEND_TYPE::BLEND_MULTIPLY,
+      0.58f);
+  if (!lastCreatedLayer) {
+   QMessageBox::warning(nullptr, "Debug Layers",
+                        "Multiply テストレイヤーの追加に失敗しました。");
+   return;
+  }
+
+  lastCreatedLayer = addDebugSolidBlendLayer(
+      compositionId, QStringLiteral("Debug Screen Plate"), compSize,
+      FloatColor(0.18f, 0.72f, 0.98f, 1.0f), LAYER_BLEND_TYPE::BLEND_SCREEN,
+      0.52f);
+  if (!lastCreatedLayer) {
+   QMessageBox::warning(nullptr, "Debug Layers",
+                        "Screen テストレイヤーの追加に失敗しました。");
+   return;
+  }
+
+  projectService->selectLayer(lastCreatedLayer->id());
+  QMessageBox::information(
+      nullptr, "Debug Layers",
+      QStringLiteral("Debug blend test layers を追加しました。\n\n"
+                     "- Debug Base Plate\n"
+                     "- Debug Multiply Plate\n"
+                     "- Debug Screen Plate\n\n"
+                     "タイムライン上で並び替えたり、不透明度を変えて合成検証できます。"));
+ });
 
  addSeparator();
 

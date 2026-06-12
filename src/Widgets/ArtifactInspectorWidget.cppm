@@ -691,6 +691,7 @@ public:
   LayerID currentLayerId_;
   QMetaObject::Connection compositionNoteConnection_;
   QMetaObject::Connection layerNoteConnection_;
+  ArtifactCore::EventBus::Subscription compositionNoteSubscription_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   QString lastLayerInfoSignature_;
@@ -700,6 +701,7 @@ public:
   QString lastLayerNoteText_;
   int refreshMask_ = 0;
   bool refreshQueued_ = false;
+  bool suppressRackSelectionSync_ = false;
 
   enum RefreshReason {
     CompositionNoteDirty = 1 << 0,
@@ -729,6 +731,8 @@ public:
   void updateLayerInfo();
   void updateEffectsList();
   void updatePropertiesForEffect(const QString &effectId);
+  QString currentSelectedEffectIdFromRacks() const;
+  void syncFocusedEffectFromRackSelection();
   void syncEffectPropertyWidget();
   void handleAddEffectClicked(int rackIndex);
   void handleAddGeneratorEffect(int rackIndex);
@@ -790,8 +794,38 @@ void ArtifactInspectorWidget::Impl::refreshNow() {
 
 void ArtifactInspectorWidget::Impl::updatePropertiesForEffect(
     const QString &effectId) {
-  focusedEffectId_ = effectId.trimmed();
+  const QString normalized = effectId.trimmed();
+  if (focusedEffectId_ == normalized) {
+    return;
+  }
+  focusedEffectId_ = normalized;
   syncEffectPropertyWidget();
+}
+
+QString ArtifactInspectorWidget::Impl::currentSelectedEffectIdFromRacks() const {
+  for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
+    auto *list = racks[rackIndex].listWidget;
+    if (!list) {
+      continue;
+    }
+    auto *item = list->currentItem();
+    if (!item) {
+      continue;
+    }
+    const QString id = item->data(Qt::UserRole).toString().trimmed();
+    if (!id.isEmpty()) {
+      return id;
+    }
+  }
+  return {};
+}
+
+void ArtifactInspectorWidget::Impl::syncFocusedEffectFromRackSelection() {
+  if (suppressRackSelectionSync_) {
+    return;
+  }
+  updatePropertiesForEffect(currentSelectedEffectIdFromRacks());
+  refreshRackButtons();
 }
 
 void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
@@ -799,16 +833,22 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     return;
   }
 
+  const auto showEffectGuidance = [this](const QString &text,
+                                         const bool showPropertyWidget) {
+    effectPropertyWidget->setVisible(showPropertyWidget);
+    if (effectParametersHintLabel) {
+      effectParametersHintLabel->setText(text);
+      effectParametersHintLabel->setVisible(true);
+    }
+  };
+
   auto projectService = ArtifactProjectService::instance();
   if (!projectService || currentCompositionId_.isNil() ||
       currentLayerId_.isNil()) {
     effectPropertyWidget->clear();
-    effectPropertyWidget->setVisible(false);
-    if (effectParametersHintLabel) {
-      effectParametersHintLabel->setText(
-          QStringLiteral("Open a composition, then select a layer and effect to edit color controls."));
-      effectParametersHintLabel->setVisible(true);
-    }
+    showEffectGuidance(
+        QStringLiteral("Open a composition, then select a layer and effect. The selected effect's parameters appear below."),
+        false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
     return;
@@ -817,12 +857,9 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   auto findResult = projectService->findComposition(currentCompositionId_);
   if (!findResult.success) {
     effectPropertyWidget->clear();
-    effectPropertyWidget->setVisible(false);
-    if (effectParametersHintLabel) {
-      effectParametersHintLabel->setText(
-          QStringLiteral("Open a composition, then select a layer and effect to edit color controls."));
-      effectParametersHintLabel->setVisible(true);
-    }
+    showEffectGuidance(
+        QStringLiteral("Open a composition, then select a layer and effect. The selected effect's parameters appear below."),
+        false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
     return;
@@ -831,12 +868,9 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   auto comp = findResult.ptr.lock();
   if (!comp) {
     effectPropertyWidget->clear();
-    effectPropertyWidget->setVisible(false);
-    if (effectParametersHintLabel) {
-      effectParametersHintLabel->setText(
-          QStringLiteral("Open a composition, then select a layer and effect to edit color controls."));
-      effectParametersHintLabel->setVisible(true);
-    }
+    showEffectGuidance(
+        QStringLiteral("Open a composition, then select a layer and effect. The selected effect's parameters appear below."),
+        false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
     return;
@@ -845,12 +879,9 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   auto layer = comp->layerById(currentLayerId_);
   if (!layer) {
     effectPropertyWidget->clear();
-    effectPropertyWidget->setVisible(false);
-    if (effectParametersHintLabel) {
-      effectParametersHintLabel->setText(
-          QStringLiteral("Open a composition, then select a layer and effect to edit color controls."));
-      effectParametersHintLabel->setVisible(true);
-    }
+    showEffectGuidance(
+        QStringLiteral("Open a composition, then select a layer and effect. The selected effect's parameters appear below."),
+        false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
     return;
@@ -860,14 +891,17 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     return;
   }
 
+  const bool layerChanged = layer != lastSyncedLayer_;
   lastSyncedLayer_ = layer;
   lastSyncedFocusedEffectId_ = focusedEffectId_;
 
   bool effectExists = false;
+  QString focusedEffectName;
   if (!focusedEffectId_.trimmed().isEmpty()) {
     for (const auto &effect : layer->getEffects()) {
       if (effect && effect->effectID().toQString() == focusedEffectId_) {
         effectExists = true;
+        focusedEffectName = effect->displayName().toQString();
         break;
       }
     }
@@ -877,17 +911,19 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     focusedEffectId_.clear();
   }
 
-  effectPropertyWidget->setLayer(layer);
+  if (layerChanged) {
+    effectPropertyWidget->setLayer(layer);
+  }
   effectPropertyWidget->setFocusedEffectId(focusedEffectId_);
 
   const bool hasFocus = !focusedEffectId_.trimmed().isEmpty();
-  effectPropertyWidget->setVisible(hasFocus);
-  if (effectParametersHintLabel) {
-    effectParametersHintLabel->setText(
-        hasFocus ? QStringLiteral("Editing effect parameters.")
-                 : QStringLiteral("Open a composition, then select an effect to edit its parameters."));
-    effectParametersHintLabel->setVisible(!hasFocus);
-  }
+  showEffectGuidance(
+      hasFocus
+          ? QStringLiteral("Editing \"%1\" below. The same parameters are also mirrored in the Properties dock.")
+                .arg(focusedEffectName.isEmpty() ? focusedEffectId_
+                                                 : focusedEffectName)
+          : QStringLiteral("Select an effect in any rack. Its parameters will appear below and in the Properties dock."),
+      hasFocus);
 }
 
 void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
@@ -1243,6 +1279,7 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote() {
       QObject::disconnect(compositionNoteConnection_);
       compositionNoteConnection_ = {};
     }
+    compositionNoteSubscription_.disconnect();
   };
 
   if (!compositionNoteEdit) {
@@ -1289,14 +1326,13 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote() {
   }
 
   disconnectNoteConnection();
-  compositionNoteConnection_ = QObject::connect(
-      comp.get(), &ArtifactAbstractComposition::compositionNoteChanged,
-      compositionNoteEdit, [this](const QString &note) {
-        if (!compositionNoteEdit) {
+  compositionNoteSubscription_ =
+      eventBus_.subscribe<CompositionNoteChangedEvent>([this](const CompositionNoteChangedEvent &event) {
+        if (!compositionNoteEdit || event.compositionId != currentCompositionId_.toString()) {
           return;
         }
         QSignalBlocker blocker(compositionNoteEdit);
-        compositionNoteEdit->setPlainText(note);
+        compositionNoteEdit->setPlainText(event.note);
         compositionNoteEdit->setEnabled(true);
         if (compositionNoteGroup) {
           compositionNoteGroup->setEnabled(true);
@@ -1779,6 +1815,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     if (!racks[i].listWidget) {
       continue;
     }
+    const QSignalBlocker blocker(racks[i].listWidget);
     racks[i].listWidget->clear();
     if (rackEffects[i].empty()) {
       auto item = new QListWidgetItem("(No effects)");
@@ -1806,7 +1843,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
       auto *item = new QListWidgetItem(itemText);
       item->setData(Qt::UserRole, effect->effectID().toQString());
       item->setData(Qt::UserRole + 1, effect->isEnabled());
-      item->setToolTip(QStringLiteral("%1 on this layer. Double click to toggle. Right click for remove, duplicate, move, or enable/disable.")
+      item->setToolTip(QStringLiteral("%1 on this layer. Single click to edit parameters below. Double click toggles enable/disable. Right click for effect actions.")
                            .arg(effectName));
       item->setForeground(effect->isEnabled() ? rackColor : rackColor.darker(140));
       racks[i].listWidget->addItem(item);
@@ -1815,12 +1852,15 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
 
   if (effectCount == 0) {
     setEffectsStateText("No effects yet. Use + Add to create an effect.", true);
+  } else if (focusedEffectId_.trimmed().isEmpty()) {
+    setEffectsStateText("Select an effect to edit its parameters below.", true);
   } else {
     setEffectsStateText(QString(), false);
   }
   refreshRackButtons();
 
   if (!focusedEffectId_.trimmed().isEmpty()) {
+    suppressRackSelectionSync_ = true;
     for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
       auto *list = racks[rackIndex].listWidget;
       if (!list) {
@@ -1838,6 +1878,7 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
         }
       }
     }
+    suppressRackSelectionSync_ = false;
   }
 
   syncEffectPropertyWidget();
@@ -1873,7 +1914,7 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
         focusedEffectId_ = newEffect->effectID().toQString();
         updateEffectsList();
         if (statusLabel) {
-          statusLabel->setText(QStringLiteral("Status: Effect added - %1")
+          statusLabel->setText(QStringLiteral("Status: Effect added - %1. Parameters are shown below in the Effects tab.")
                                    .arg(newEffect->displayName().toQString()));
         }
         if (tabWidget) {
@@ -2318,13 +2359,13 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsTabWidget = new QWidget();
   auto effectsLayout = new QVBoxLayout();
   impl_->effectsStateLabel =
-      new QLabel("Open a composition to manage color correction effects.");
+      new QLabel("Open a composition to manage layer effects.");
   impl_->effectsStateLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectsStateLabel, false);
   effectsLayout->addWidget(impl_->effectsStateLabel);
 
   impl_->effectParametersHintLabel =
-      new QLabel("Open a composition, then select a layer and effect to edit color controls.");
+      new QLabel("Open a composition, then select a layer and effect. The selected effect's parameters appear below.");
   impl_->effectParametersHintLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectParametersHintLabel, false);
   effectsLayout->addWidget(impl_->effectParametersHintLabel);
@@ -2350,7 +2391,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     impl_->racks[i].listWidget->setUniformItemSizes(true);
     impl_->racks[i].listWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
     impl_->racks[i].listWidget->setToolTip(
-        QStringLiteral("Select an effect row, then use the buttons below to add, reorder, or remove effects."));
+        QStringLiteral("Single click an effect to edit its parameters below. Double click toggles enable/disable. Right click opens effect actions."));
     applyInspectorList(impl_->racks[i].listWidget);
     impl_->racks[i].listWidget->setContextMenuPolicy(Qt::CustomContextMenu);
     if (impl_->racks[i].listWidget->viewport()) {
@@ -2453,22 +2494,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     QObject::connect(
         impl_->racks[i].listWidget, &QListWidget::currentItemChanged, this,
         [this](QListWidgetItem *, QListWidgetItem *) {
-          QString focusedEffectId;
-          for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
-            auto *list = impl_->racks[rackIndex].listWidget;
-            if (!list)
-              continue;
-            auto *item = list->currentItem();
-            if (!item)
-              continue;
-            const QString id = item->data(Qt::UserRole).toString().trimmed();
-            if (!id.isEmpty()) {
-              focusedEffectId = id;
-              break;
-            }
-          }
-          impl_->updatePropertiesForEffect(focusedEffectId);
-          impl_->refreshRackButtons();
+          impl_->syncFocusedEffectFromRackSelection();
         });
     QObject::connect(
         impl_->racks[i].listWidget, &QListWidget::itemDoubleClicked, this,

@@ -1,13 +1,3 @@
-#pragma once
+export module Artifact.Layer.JsonFactory;
 
-#include <memory>
-
-class QJsonObject;
-
-namespace Artifact {
-
-class ArtifactAbstractLayer;
-
-std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json);
-
-} // namespace Artifact
+export import Artifact.Layer.Factory;

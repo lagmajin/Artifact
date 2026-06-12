@@ -308,7 +308,7 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
       const int textHeight = fm.height();
       const int iconWidth = menuItem->icon.isNull() ? 0 : 18;
       const int spacing = menuItem->icon.isNull() ? 0 : 6;
-      return QSize(std::max(contentsSize.width(), textWidth + iconWidth + spacing + 24),
+      return QSize(std::max(contentsSize.width(), textWidth + iconWidth + spacing + 16),
                    std::max(contentsSize.height(), textHeight + 10));
     }
   }

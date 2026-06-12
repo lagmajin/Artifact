@@ -3305,7 +3305,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       videoLayer->setLayerPropertyValue(QStringLiteral("video.proxyQuality"),
                                         QVariant::fromValue(static_cast<int>(quality)));
       videoLayer->changed();
-      if (auto* comp = safeCompositionLookup(impl_->compositionId)) {
+      if (auto comp = safeCompositionLookup(impl_->compositionId)) {
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
             LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
                               LayerChangedEvent::ChangeType::Modified});
@@ -3411,7 +3411,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
       videoLayer->clearProxy();
       videoLayer->changed();
-      if (auto* comp = safeCompositionLookup(impl_->compositionId)) {
+      if (auto comp = safeCompositionLookup(impl_->compositionId)) {
         ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
             LayerChangedEvent{comp->id().toString(), videoLayer->id().toString(),
                               LayerChangedEvent::ChangeType::Modified});

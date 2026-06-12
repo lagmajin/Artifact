@@ -8,12 +8,11 @@ import Utils.Id;
 import Color.Float;
 import Artifact.Layers;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.InitParams;
 
 export namespace Artifact {
 
 using namespace ArtifactCore;
-
-class ArtifactCompositionInitParams;
 
 class ArtifactComposition2D : public ArtifactAbstractComposition {
 private:

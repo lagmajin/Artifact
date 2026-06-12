@@ -23,6 +23,7 @@ namespace Artifact {
 namespace Ofx {
 
 using namespace ArtifactCore;
+using OfxGetPluginFn = OfxPlugin *(*)(int);
 
 class ArtifactOfxEffect final : public ArtifactAbstractEffect {
 public:

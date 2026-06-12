@@ -79,6 +79,7 @@ public:
   QLabel* subtitleLabel_ = nullptr;
   QPlainTextEdit* editor_ = nullptr;
   QMetaObject::Connection noteConnection_;
+  ArtifactCore::EventBus::Subscription compositionNoteSubscription_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   bool updating_ = false;
@@ -175,6 +176,7 @@ public:
       QObject::disconnect(noteConnection_);
       noteConnection_ = {};
     }
+    compositionNoteSubscription_.disconnect();
   }
 
   void loadText(const QString& text)
@@ -230,10 +232,13 @@ public:
 
     if (target_ == MarkdownNoteTarget::Composition) {
       disconnectNoteConnection();
-      noteConnection_ = QObject::connect(comp.get(), &ArtifactAbstractComposition::compositionNoteChanged,
-                                         owner_, [this](const QString& note) {
-        loadText(note);
-      });
+      compositionNoteSubscription_ = eventBus_.subscribe<CompositionNoteChangedEvent>(
+          [this](const CompositionNoteChangedEvent& event) {
+            if (event.compositionId != currentCompositionId_.toString()) {
+              return;
+            }
+            loadText(event.note);
+          });
       if (editor_) {
         editor_->setPlaceholderText(activePlaceholder());
       }

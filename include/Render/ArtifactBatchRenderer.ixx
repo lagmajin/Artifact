@@ -5,7 +5,6 @@ module;
 #include <QStringList>
 #include <QVector>
 #include <memory>
-#include <wobjectdefs.h>
 
 export module Artifact.Render.Batch;
 
@@ -30,7 +29,6 @@ struct BatchTemplate {
 };
 
 class ArtifactBatchRenderer : public QObject {
-    W_OBJECT(ArtifactBatchRenderer)
 public:
     explicit ArtifactBatchRenderer(QObject* parent = nullptr);
     ~ArtifactBatchRenderer();
@@ -57,7 +55,6 @@ public:
                                            const QString& compName,
                                            int frameNumber = -1);
 
-signals:
     void batchJobsAdded(int count);
 
 private:

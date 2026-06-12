@@ -13,7 +13,6 @@ namespace Artifact {
  class ArtifactCompositionManagerPrivate;
 
  class ArtifactCompositionManager : public QObject {
-  Q_OBJECT
  private:
   std::unique_ptr<ArtifactCompositionManagerPrivate> d;
 
@@ -34,14 +33,6 @@ namespace Artifact {
 
   // Search
   std::vector<FindCompositionResult> search(const ArtifactFindCompositionQuery& query) const;
-
- signals:
-  void compositionCreated(const CompositionID& id, const ArtifactCompositionPtr& composition);
-  void compositionRemoved(const CompositionID& id);
-  void allCompositionsRemoved();
-  void compositionChanged(const CompositionID& id);
-
- public slots:
   void createComposition();
   void removeAllComposition();
  };

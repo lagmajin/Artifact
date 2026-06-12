@@ -1863,7 +1863,7 @@ QVector<float> ArtifactTextLayer::selectorWeightPreview(const int sampleCount) c
                                          sampleCount);
   }
   const QString displayText = resolvedSourceTextAtTime(this);
-  const int textLength = std::max(1, displayText.size());
+  const int textLength = std::max<int>(1, static_cast<int>(displayText.size()));
   return selectorWeightPreviewForAnimators(impl_->animators_, sampleCount,
                                            textLength);
 }
@@ -1948,18 +1948,19 @@ QString ArtifactTextLayer::selectorOverviewSummary() const {
   const QString scriptSummary = selectorScriptLabelForContract(impl_->layoutContract_);
   const QString verticalSummary = selectorVerticalLabelForContract(impl_->layoutContract_);
   return QStringLiteral("target=%1;%2;%3;%4;regex=%5;%6;%7;%8;vertical=%9;clusters=%10;lines=%11")
-      .arg(selectorDebugSummary(), textWritingModeLabel(impl_->writingMode_),
-           textOrderingLabel(impl_->writingMode_),
-           textSelectionUnitLabelForState(hasAnimators, hasRuby, hasCjk,
+      .arg(selectorDebugSummary())
+      .arg(textWritingModeLabel(impl_->writingMode_))
+      .arg(textOrderingLabel(impl_->writingMode_))
+      .arg(textSelectionUnitLabelForState(hasAnimators, hasRuby, hasCjk,
                                           isRichText, impl_->writingMode_,
-                                          lineAware, hasRegexSelector),
-           hasRegexSelector ? QStringLiteral("on") : QStringLiteral("off"),
-           tagSummary,
-           tokenSummary,
-           scriptSummary,
-           verticalSummary,
-           selectorClusterBoundaryPreview().size(),
-           selectorLineBoundaryPreview().size());
+                                          lineAware))
+      .arg(hasRegexSelector ? QStringLiteral("on") : QStringLiteral("off"))
+      .arg(tagSummary)
+      .arg(tokenSummary)
+      .arg(scriptSummary)
+      .arg(verticalSummary)
+      .arg(selectorClusterBoundaryPreview().size())
+      .arg(selectorLineBoundaryPreview().size());
 }
 
 void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {

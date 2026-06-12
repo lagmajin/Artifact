@@ -4451,6 +4451,7 @@ public:
     QTimer* proxyQueueTimer_ = nullptr;
     QMetaObject::Connection currentRowChangedConnection_;
     bool headerLayoutInitialized_ = false;
+    bool syncingSelectionToComposition_ = false;
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
     QTimer* thumbnailUpdateDebounce_ = nullptr;
@@ -5437,6 +5438,9 @@ public:
     }
 
     void syncSelectionToCurrentComposition() {
+        if (syncingSelectionToComposition_) {
+            return;
+        }
         if (!projectView_ || !proxyModel_) {
             return;
         }
@@ -5481,12 +5485,32 @@ public:
         if (!proxyIndex.isValid()) {
             return;
         }
+        if (projectView_->selectionModel() && projectView_->selectionModel()->currentIndex() == proxyIndex) {
+            for (QModelIndex parent = proxyIndex.parent(); parent.isValid(); parent = parent.parent()) {
+                projectView_->expand(parent);
+            }
+            projectView_->ensureIndexVisible(proxyIndex);
+            if (infoPanel_) {
+                infoPanel_->updateInfo(sourceIndex);
+            }
+            return;
+        }
+
+        struct SyncGuard {
+            bool& flag;
+            explicit SyncGuard(bool& f) : flag(f) { flag = true; }
+            ~SyncGuard() { flag = false; }
+        } syncGuard(syncingSelectionToComposition_);
+
         for (QModelIndex parent = proxyIndex.parent(); parent.isValid(); parent = parent.parent()) {
             projectView_->expand(parent);
         }
-        projectView_->selectionModel()->setCurrentIndex(
-            proxyIndex,
-            QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows | QItemSelectionModel::Current);
+        if (auto* selectionModel = projectView_->selectionModel()) {
+            const QSignalBlocker blocker(selectionModel);
+            selectionModel->setCurrentIndex(
+                proxyIndex,
+                QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Rows | QItemSelectionModel::Current);
+        }
         projectView_->ensureIndexVisible(proxyIndex);
         if (infoPanel_) {
             infoPanel_->updateInfo(sourceIndex);
@@ -6081,6 +6105,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     });
     connect(impl_->projectView_, &ArtifactProjectView::itemSelected, [this](const QModelIndex& idx) {
         if (!impl_) {
+            return;
+        }
+        if (impl_->syncingSelectionToComposition_) {
             return;
         }
         if (impl_->proxyModel_ && impl_->infoPanel_) {

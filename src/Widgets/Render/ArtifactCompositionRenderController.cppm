@@ -3068,7 +3068,7 @@ public:
   qint64 lastSubmit2DMs_ = 0;
   qint64 lastPresentMs_ = 0;
   QVector<QMetaObject::Connection> layerChangedConnections_;
-  QMetaObject::Connection compositionChangedConnection_;
+  ArtifactCore::EventBus::Subscription compositionChangedSubscription_;
 
   // 変更検出器 (差分レンダリング用)
   CompositionChangeDetector changeDetector_;
@@ -3593,23 +3593,25 @@ public:
   void bindCompositionChanged(CompositionRenderController *owner,
                               const ArtifactCompositionPtr &composition) {
     // Layer change notifications are now handled exclusively via
-    // LayerChangedEvent. composition->changed is reserved for composition-level
-    // setting changes only.
-    if (compositionChangedConnection_) {
-      QObject::disconnect(compositionChangedConnection_);
-      compositionChangedConnection_ = {};
-    }
+    // CompositionChangedEvent.
+    compositionChangedSubscription_.disconnect();
     if (!owner || !composition) {
       return;
     }
-    compositionChangedConnection_ =
-        QObject::connect(composition.get(), &ArtifactAbstractComposition::changed,
-                         owner, [this, owner, composition]() {
-                           applyCompositionState(composition);
-                           invalidateBaseComposite();
-                           invalidateOverlayComposite();
-                           owner->markRenderDirty();
-                         });
+    {
+      const QString compositionId = composition->id().toString();
+      compositionChangedSubscription_ =
+          eventBus_.subscribe<CompositionChangedEvent>(
+              [this, owner, composition, compositionId](const CompositionChangedEvent &event) {
+                if (event.compositionId != compositionId) {
+                  return;
+                }
+                applyCompositionState(composition);
+                invalidateBaseComposite();
+                invalidateOverlayComposite();
+                owner->markRenderDirty();
+              });
+    }
   }
 
   void invalidateLayerSurfaceCache(const ArtifactAbstractLayerPtr &layer) {
@@ -4214,10 +4216,7 @@ void CompositionRenderController::setComposition(
     disconnect(connection);
   }
   impl_->layerChangedConnections_.clear();
-  if (impl_->compositionChangedConnection_) {
-    disconnect(impl_->compositionChangedConnection_);
-    impl_->compositionChangedConnection_ = {};
-  }
+  impl_->compositionChangedSubscription_.disconnect();
   impl_->surfaceCache_.clear();
   if (impl_->gpuTextureCacheManager_) {
     impl_->gpuTextureCacheManager_->clear();
