@@ -34,6 +34,7 @@ module;
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
+#include <QWheelEvent>
 #include <QStyleOptionSlider>
 #include <QTextEdit>
 #include <QVBoxLayout>
@@ -759,6 +760,15 @@ public:
 
   QLineEdit *scrubLineEdit() const { return lineEdit(); }
 
+protected:
+  void wheelEvent(QWheelEvent *event) override {
+    if (!hasFocus()) {
+      event->ignore();
+      return;
+    }
+    QDoubleSpinBox::wheelEvent(event);
+  }
+
   QValidator::State validate(QString &input, int &pos) const override {
     if (input.isEmpty())
       return QValidator::Intermediate;
@@ -800,6 +810,15 @@ public:
   using QSpinBox::QSpinBox;
 
   QLineEdit *scrubLineEdit() const { return lineEdit(); }
+
+protected:
+  void wheelEvent(QWheelEvent *event) override {
+    if (!hasFocus()) {
+      event->ignore();
+      return;
+    }
+    QSpinBox::wheelEvent(event);
+  }
 
   QValidator::State validate(QString &input, int &pos) const override {
     if (input.isEmpty())
