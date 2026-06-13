@@ -112,6 +112,9 @@ import LevelsEffect;
 import ChannelMixerEffect;
 import SelectiveColorEffect;
 import Artifact.Effect.Glow;
+import Artifact.Effect.Glow.EdgeBloom;
+import Artifact.Effect.Glow.ChromaticGlow;
+import Artifact.Effect.Glow.ReactiveGlow;
 import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.LiftGammaGain;
 import Artifact.Effect.LensDistortion;
@@ -1984,6 +1987,24 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
       auto effect = std::make_shared<DirectionalGlowEffect>();
       effect->setEffectID(ArtifactCore::UniString("directional_glow"));
       effect->setDisplayName(ArtifactCore::UniString("Directional Glow / Streaks"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addAction("Edge Bloom", [addAndRefresh]() {
+      auto effect = std::make_shared<EdgeBloomEffect>();
+      effect->setEffectID(ArtifactCore::UniString("edge_bloom"));
+      effect->setDisplayName(ArtifactCore::UniString("Edge Bloom"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addAction("Chromatic Glow", [addAndRefresh]() {
+      auto effect = std::make_shared<ChromaticGlowEffect>();
+      effect->setEffectID(ArtifactCore::UniString("chromatic_glow"));
+      effect->setDisplayName(ArtifactCore::UniString("Chromatic Glow"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addAction("Reactive Glow", [addAndRefresh]() {
+      auto effect = std::make_shared<ReactiveGlowEffect>();
+      effect->setEffectID(ArtifactCore::UniString("reactive_glow"));
+      effect->setDisplayName(ArtifactCore::UniString("Reactive Glow"));
       addAndRefresh(effect);
     });
     effectMenu.addSeparator();

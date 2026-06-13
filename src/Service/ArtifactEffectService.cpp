@@ -19,6 +19,8 @@ import Artifact.Effect.Ofx.Host;
 import Artifact.Effect.Ofx.Impl;
 import Artifact.Project.PresetManager;
 import Artifact.Service.Project;
+import Artifact.Event.Types;
+import Event.Bus;
 import BrightnessEffect;
 import Artifact.Effect.Creative;
 import Artifact.Effect.DirectionalGlow;
@@ -33,6 +35,9 @@ import Artifact.Effect.Rasterizer.TurbulentDisplace;
 import Artifact.Effect.Rasterizer.Bevel;
 import Artifact.Effect.Rasterizer.LinearWipe;
 import Artifact.Effect.Glow;
+import Artifact.Effect.Glow.EdgeBloom;
+import Artifact.Effect.Glow.ChromaticGlow;
+import Artifact.Effect.Glow.ReactiveGlow;
 import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.LensDistortion;
@@ -243,6 +248,27 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Glow"));
    return effect;
   }
+  if (effectId == QStringLiteral("edge_bloom") ||
+      effectId == QStringLiteral("effect.glow.edgebloom")) {
+   auto effect = std::make_unique<EdgeBloomEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Edge Bloom"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("chromatic_glow") ||
+      effectId == QStringLiteral("effect.glow.chromatic")) {
+   auto effect = std::make_unique<ChromaticGlowEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Chromatic Glow"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("reactive_glow") ||
+      effectId == QStringLiteral("effect.glow.reactive")) {
+   auto effect = std::make_unique<ReactiveGlowEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Reactive Glow"));
+   return effect;
+  }
   if (effectId == QStringLiteral("blur")) {
    auto effect = std::make_unique<BlurEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
@@ -417,6 +443,9 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("drop_shadow"), "Drop Shadow"});
   effects.push_back({EffectID("directional_glow"), "Directional Glow / Streaks"});
   effects.push_back({EffectID("glow"), "Glow"});
+  effects.push_back({EffectID("edge_bloom"), "Edge Bloom"});
+  effects.push_back({EffectID("chromatic_glow"), "Chromatic Glow"});
+  effects.push_back({EffectID("reactive_glow"), "Reactive Glow"});
   effects.push_back({EffectID("effect.blur.gaussian"), "Gaussian Blur"});
   effects.push_back({EffectID("blur"), "Blur"});
   effects.push_back({EffectID("lift_gamma_gain"), "Lift / Gamma / Gain"});
@@ -607,10 +636,43 @@ W_OBJECT_IMPL(ArtifactEffectService)
   auto* ps = ArtifactProjectService::instance();
   if (!ps) return EffectServiceResult::fail("Project service not available");
 
-  // Delegate to project service which handles property updates
-  ps->setEffectEnabledInLayerInCurrentComposition(layerId, effectId, true); // ensure accessible
-  Q_EMIT effectChanged(layerId, effectId);
-  return EffectServiceResult::ok(effectId);
+  auto comp = ps->currentComposition().lock();
+  if (!comp || layerId.isNil()) {
+   return EffectServiceResult::fail("Composition not available");
+  }
+  auto layer = comp->layerById(layerId);
+  if (!layer) {
+   return EffectServiceResult::fail("Layer not available");
+  }
+  const QString normalizedPropertyName = propertyName.trimmed();
+  if (normalizedPropertyName.isEmpty()) {
+   return EffectServiceResult::fail("Property not found");
+  }
+
+  for (const auto &effect : layer->getEffects()) {
+   if (!effect || effect->effectID().toQString() != effectId) {
+    continue;
+   }
+   const auto properties = effect->getProperties();
+   const auto propertyExists = std::any_of(
+       properties.begin(), properties.end(),
+       [&normalizedPropertyName](const ArtifactCore::AbstractProperty &property) {
+         return property.getName().compare(normalizedPropertyName, Qt::CaseInsensitive) == 0;
+       });
+   if (!propertyExists) {
+    return EffectServiceResult::fail("Property not found");
+   }
+   effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
+   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
+       comp->id().toString(), layerId.toString(),
+       LayerChangedEvent::ChangeType::Modified});
+   notifyLayerMutation(comp->id().toString(), layerId);
+   notifyProjectMutation(impl_->projectManager());
+   Q_EMIT effectChanged(layerId, effectId);
+   return EffectServiceResult::ok(effectId);
+  }
+
+  return EffectServiceResult::fail("Effect not found");
  }
 
  bool ArtifactEffectService::saveEffectPreset(const ArtifactAbstractEffectPtr& effect, const QString& filePath) const
