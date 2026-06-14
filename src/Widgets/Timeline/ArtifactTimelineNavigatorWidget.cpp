@@ -200,7 +200,7 @@ namespace Artifact
    const int clampedCurrentX = std::clamp(currentX, trackRect.left(), trackRect.right());
    const qreal stemBottom = static_cast<qreal>(outer.bottom()) - 1.0;
    TimelinePlayheadDraw::drawPlayhead(
-       p, static_cast<qreal>(clampedCurrentX), 0.0, stemBottom, true, 1.0,
+       p, static_cast<qreal>(clampedCurrentX), 0.0, stemBottom, false, 1.0,
        std::min<qreal>(10.0, static_cast<qreal>(trackRect.height() - 3)), 12.0);
   }
 }

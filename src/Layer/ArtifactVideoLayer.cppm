@@ -1580,7 +1580,8 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_ || impl_->opening_.load()) return;
-    if (renderer && !impl_->vulkanDeviceConfigured_ && impl_->playbackController_) {
+    constexpr bool kEnableVulkanVideoFrames = true;
+    if (kEnableVulkanVideoFrames && renderer && !impl_->vulkanDeviceConfigured_ && impl_->playbackController_) {
         auto device = renderer->device();
         auto context = renderer->immediateContext();
         if (device && context && device->GetDeviceInfo().Type == Diligent::RENDER_DEVICE_TYPE_VULKAN) {

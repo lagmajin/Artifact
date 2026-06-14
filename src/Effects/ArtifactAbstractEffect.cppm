@@ -129,6 +129,22 @@ void ArtifactAbstractEffect::applyCPUOnly(const ImageF32x4RGBAWithCache& src,
     impl_->mode = previousMode;
 }
 
+void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
+                                             ImageF32x4RGBAWithCache& dst) {
+    apply(src, dst);
+
+    const bool outputMissing = dst.width() <= 0 || dst.height() <= 0;
+    const bool outputSizeMismatch =
+        !outputMissing && src.width() > 0 && src.height() > 0 &&
+        (dst.width() != src.width() || dst.height() != src.height());
+    if ((outputMissing || outputSizeMismatch) && impl_->cpuImpl_) {
+        const ComputeMode previousMode = impl_->mode;
+        impl_->mode = ComputeMode::CPU;
+        apply(src, dst);
+        impl_->mode = previousMode;
+    }
+}
+
 void ArtifactAbstractEffect::setContext(const EffectContext& context) {
     impl_->context_ = context;
     if (impl_->cpuImpl_) {

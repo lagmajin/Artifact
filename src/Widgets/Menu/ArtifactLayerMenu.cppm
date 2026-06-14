@@ -279,59 +279,59 @@ public:
 ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 {
     createMenu = new QMenu("新規(&N)", menu);
-    createMenu->setIcon(QIcon(resolveIconPath("Studio/add.svg")));
+    createMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_add.svg")));
     createSolidAction = new QAction("平面(&Y)...", createMenu);
     createSolidAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
-    createSolidAction->setIcon(QIcon(resolveIconPath("Studio/palette.svg")));
+    createSolidAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_palette.svg")));
 
     createNullAction = new QAction("ヌルオブジェクト(&N)", createMenu);
     createNullAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_Y));
-    createNullAction->setIcon(QIcon(resolveIconPath("Studio/aspect_ratio.svg")));
+    createNullAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_aspect_ratio.svg")));
 
     createConstructionAction = new QAction("Construction Layer", createMenu);
-    createConstructionAction->setIcon(QIcon(resolveIconPath("Studio/grid_on.svg")));
+    createConstructionAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_grid_on.svg")));
     createConstructionAction->setToolTip(QStringLiteral("Create a renderless construction layer"));
 
     createAdjustAction = new QAction("調整レイヤー(&A)", createMenu);
     createAdjustAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Y));
-    createAdjustAction->setIcon(QIcon(resolveIconPath("Studio/blur_on.svg")));
+    createAdjustAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_blur_on.svg")));
 
     createTextAction = new QAction("テキスト(&T)", createMenu);
     createTextAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_T));
-    createTextAction->setIcon(QIcon(resolveIconPath("Studio/title.svg")));
+    createTextAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_title.svg")));
 
     createParticleAction = new QAction("パーティクル(&P)", createMenu);
-    createParticleAction->setIcon(QIcon(resolveIconPath("Studio/particle.svg")));
+    createParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
 
     createCameraAction = new QAction("カメラ(&C)", createMenu);
-    createCameraAction->setIcon(QIcon(resolveIconPath("Studio/videocam.svg")));
+    createCameraAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_videocam.svg")));
 
     createLightAction = new QAction("ライト(&L)", createMenu);
-    createLightAction->setIcon(QIcon(resolveIconPath("Studio/wb_sunny.svg")));
+    createLightAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_wb_sunny.svg")));
 
     createAudioAction = new QAction("オーディオ(&U)...", createMenu);
-    createAudioAction->setIcon(QIcon(resolveIconPath("Studio/audiotrack.svg")));
+    createAudioAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_audiotrack.svg")));
 
     createSvgAction = new QAction("SVG シェイプレイヤー(&V)...", createMenu);
-    createSvgAction->setIcon(QIcon(resolveIconPath("Studio/svg_layer.svg")));
+    createSvgAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_svg_layer.svg")));
     createModel3DAction = new QAction("3Dモデルレイヤー(&3)...", createMenu);
-    createModel3DAction->setIcon(QIcon(resolveIconPath("Studio/model3d.svg")));
+    createModel3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createModel3DAction->setToolTip(QStringLiteral("Import a 3D model as a layer"));
 
     createShapeMenu = new QMenu("シェイプ(&S)", createMenu);
-    createShapeMenu->setIcon(QIcon(resolveIconPath("Studio/shape_rect.svg")));
+    createShapeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
     createShapeRectAction = new QAction("四角形", createShapeMenu);
-    createShapeRectAction->setIcon(QIcon(resolveIconPath("Studio/shape_rect.svg")));
+    createShapeRectAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
     createShapeSquareAction = new QAction("正方形", createShapeMenu);
-    createShapeSquareAction->setIcon(QIcon(resolveIconPath("Studio/shape_square.svg")));
+    createShapeSquareAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_square.svg")));
     createShapePolygonAction = new QAction("多角形", createShapeMenu);
-    createShapePolygonAction->setIcon(QIcon(resolveIconPath("Studio/shape_polygon.svg")));
+    createShapePolygonAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_polygon.svg")));
     createShapeTriangleAction = new QAction("三角形", createShapeMenu);
-    createShapeTriangleAction->setIcon(QIcon(resolveIconPath("Studio/shape_triangle.svg")));
+    createShapeTriangleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_triangle.svg")));
     createShapeEllipseAction = new QAction("楕円", createShapeMenu);
-    createShapeEllipseAction->setIcon(QIcon(resolveIconPath("Studio/shape_ellipse.svg")));
+    createShapeEllipseAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_ellipse.svg")));
     createShapeStarAction = new QAction("星形", createShapeMenu);
-    createShapeStarAction->setIcon(QIcon(resolveIconPath("Studio/shape_star.svg")));
+    createShapeStarAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_star.svg")));
     createShapeMenu->addAction(createShapeRectAction);
     createShapeMenu->addAction(createShapeSquareAction);
     createShapeMenu->addAction(createShapePolygonAction);
@@ -340,7 +340,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeMenu->addAction(createShapeStarAction);
 
     trackCameraAction = new QAction("3Dカメラトラッキング(&T)", menu);
-    trackCameraAction->setIcon(QIcon(resolveIconPath("Studio/videocam.svg")));
+    trackCameraAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_videocam.svg")));
     createMotionTrackerAction = new QAction("モーショントラッカーを作成(&M)", menu);
 
     createMenu->addAction(createSolidAction);
@@ -358,26 +358,26 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
     duplicateLayerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
-    duplicateLayerAction->setIcon(QIcon(resolveIconPath("Studio/content_copy.svg")));
+    duplicateLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_content_copy.svg")));
     renameLayerAction = new QAction("レイヤー名を変更(&R)...", menu);
     renameLayerAction->setShortcut(QKeySequence(Qt::Key_F2));
-    renameLayerAction->setIcon(QIcon(resolveIconPath("Studio/rename.svg")));
+    renameLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_rename.svg")));
     deleteLayerAction = new QAction("削除(&X)", menu);
     deleteLayerAction->setShortcut(QKeySequence(Qt::Key_Delete));
-    deleteLayerAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
+    deleteLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
 
     switchMenu = new QMenu("スイッチ(&S)", menu);
-    switchMenu->setIcon(QIcon(resolveIconPath("Studio/settings.svg")));
+    switchMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
     toggleVisibleAction = new QAction("表示/非表示を切替", switchMenu);
-    toggleVisibleAction->setIcon(QIcon(resolveIconPath("Studio/visibility.svg")));
+    toggleVisibleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_visibility.svg")));
     toggleLockAction = new QAction("ロックを切替", switchMenu);
-    toggleLockAction->setIcon(QIcon(resolveIconPath("Studio/lock.svg")));
+    toggleLockAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_lock.svg")));
     toggleSoloAction = new QAction("ソロを切替", switchMenu);
-    toggleSoloAction->setIcon(QIcon(resolveIconPath("Studio/headset.svg")));
+    toggleSoloAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_headset.svg")));
     toggleShyAction = new QAction("シャイを切替", switchMenu);
-    toggleShyAction->setIcon(QIcon(resolveIconPath("Studio/shy.svg")));
+    toggleShyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shy.svg")));
     soloOnlyAction = new QAction("Smart Solo", switchMenu);
-    soloOnlyAction->setIcon(QIcon(resolveIconPath("Studio/solo_only.svg")));
+    soloOnlyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_solo_only.svg")));
     soloOnlyAction->setToolTip(QStringLiteral("選択レイヤーと必要な Parent / Matte をまとめてソロ表示します"));
     switchMenu->addAction(toggleVisibleAction);
     switchMenu->addAction(toggleLockAction);
@@ -387,59 +387,59 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     switchMenu->addAction(soloOnlyAction);
 
     selectMenu = new QMenu("選択(&E)", menu);
-    selectMenu->setIcon(QIcon(resolveIconPath("Studio/select_all.svg")));
+    selectMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_select_all.svg")));
     selectParentAction = new QAction("親を選択", selectMenu);
-    selectParentAction->setIcon(QIcon(resolveIconPath("Studio/parent_select.svg")));
+    selectParentAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_parent_select.svg")));
     clearParentAction = new QAction("親を解除", selectMenu);
-    clearParentAction->setIcon(QIcon(resolveIconPath("Studio/parent_clear.svg")));
+    clearParentAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_parent_clear.svg")));
     selectMenu->addAction(selectParentAction);
     selectMenu->addAction(clearParentAction);
 
     proxyMenu = new QMenu("Proxy 画質(&Q)", menu);
-    proxyMenu->setIcon(QIcon(resolveIconPath("Studio/resolution_half.svg")));
+    proxyMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_half.svg")));
     proxyQualityGroup = new QActionGroup(menu);
     proxyQualityGroup->setExclusive(true);
     proxyNoneAction = proxyMenu->addAction("無効");
-    proxyNoneAction->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
+    proxyNoneAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_full.svg")));
     proxyQuarterAction = proxyMenu->addAction("1/4 画質");
-    proxyQuarterAction->setIcon(QIcon(resolveIconPath("Studio/resolution_quarter.svg")));
+    proxyQuarterAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_quarter.svg")));
     proxyHalfAction = proxyMenu->addAction("1/2 画質");
-    proxyHalfAction->setIcon(QIcon(resolveIconPath("Studio/resolution_half.svg")));
+    proxyHalfAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_half.svg")));
     proxyFullAction = proxyMenu->addAction("フル画質");
-    proxyFullAction->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
+    proxyFullAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_full.svg")));
     generateProxyAction = proxyMenu->addAction("プロキシを生成");
-    generateProxyAction->setIcon(QIcon(resolveIconPath("Studio/replay.svg")));
+    generateProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_replay.svg")));
     generateSelectedProxyAction = proxyMenu->addAction("選択レイヤーのプロキシを生成");
-    generateSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/replay.svg")));
+    generateSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_replay.svg")));
     proxyMenu->addSeparator();
     revealProxyAction = proxyMenu->addAction("プロキシを表示");
-    revealProxyAction->setIcon(QIcon(resolveIconPath("Studio/folder_open.svg")));
+    revealProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_folder_open.svg")));
     clearProxyAction = proxyMenu->addAction("プロキシを削除");
-    clearProxyAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
+    clearProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
     clearSelectedProxyAction = proxyMenu->addAction("選択レイヤーのプロキシを削除");
-    clearSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/delete.svg")));
+    clearSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
     for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyHalfAction, proxyFullAction}) {
         action->setCheckable(true);
         proxyQualityGroup->addAction(action);
     }
 
     openInspectorAction = new QAction("Inspector を開く", menu);
-    openInspectorAction->setIcon(QIcon(resolveIconPath("Studio/inspector.svg")));
+    openInspectorAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_inspector.svg")));
     openPropertiesAction = new QAction("Properties を開く", menu);
-    openPropertiesAction->setIcon(QIcon(resolveIconPath("Studio/settings.svg")));
+    openPropertiesAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
 
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
     precomposeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
-    precomposeAction->setIcon(QIcon(resolveIconPath("Studio/view_comfy.svg")));
+    precomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_view_comfy.svg")));
     unprecomposeAction = new QAction("プリコンポーズを解除", menu);
-    unprecomposeAction->setIcon(QIcon(resolveIconPath("Studio/ungroup.svg")));
+    unprecomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_ungroup.svg")));
     groupSelectionAction = new QAction("グループ化(&G)...", menu);
-    groupSelectionAction->setIcon(QIcon(resolveIconPath("Studio/group.svg")));
+    groupSelectionAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
     ungroupAction = new QAction("グループ解除(&U)", menu);
-    ungroupAction->setIcon(QIcon(resolveIconPath("Studio/ungroup.svg")));
+    ungroupAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_ungroup.svg")));
     splitAction = new QAction("レイヤー分割(&L)", menu);
     splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
-    splitAction->setIcon(QIcon(resolveIconPath("Studio/content_cut.svg")));
+    splitAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_content_cut.svg")));
 
     menu->addMenu(createMenu);
     menu->addAction(trackCameraAction);
@@ -1634,7 +1634,7 @@ ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)
 {
     impl_->mainWindow_ = mainWindow ? mainWindow->window() : nullptr;
     setTitle("レイヤー(&L)");
-    setIcon(QIcon(resolveIconPath("Studio/layers.svg")));
+    setIcon(QIcon(resolveIconPath("Studio/menubar_layer.svg")));
 }
 
 ArtifactLayerMenu::~ArtifactLayerMenu()

@@ -662,15 +662,17 @@ W_OBJECT_IMPL(ArtifactEffectService)
    if (!propertyExists) {
     return EffectServiceResult::fail("Property not found");
    }
-   effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
-   ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-       comp->id().toString(), layerId.toString(),
-       LayerChangedEvent::ChangeType::Modified});
-   notifyLayerMutation(comp->id().toString(), layerId);
-   notifyProjectMutation(impl_->projectManager());
-   Q_EMIT effectChanged(layerId, effectId);
-   return EffectServiceResult::ok(effectId);
-  }
+    effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
+    ArtifactCore::globalEventBus().post<LayerChangedEvent>(LayerChangedEvent{
+        comp->id().toString(), layerId.toString(),
+        LayerChangedEvent::ChangeType::Modified});
+    if (auto project = ps->getCurrentProjectSharedPtr()) {
+      ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+      project->projectChanged();
+    }
+    Q_EMIT effectChanged(layerId, effectId);
+    return EffectServiceResult::ok(effectId);
+   }
 
   return EffectServiceResult::fail("Effect not found");
  }

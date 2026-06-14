@@ -13,6 +13,7 @@ import Artifact.Effect.ImplBase;
 import Utils.String.UniString;
 import Property.Abstract;
 import Image.ImageF32x4RGBAWithCache;
+import Translation.Manager;
 
 export namespace Artifact {
 
@@ -25,7 +26,8 @@ enum class BlurMode {
 
 class BlurEffect : public ArtifactAbstractEffect {
 private:
-    float sigma_ = 5.0f;
+    float radius_ = 10.0f;
+    float strength_ = 1.0f;
     int iterations_ = 1;
     BlurMode mode_ = BlurMode::Gaussian;
     bool premultiplied_ = true;
@@ -37,71 +39,61 @@ public:
     BlurEffect();
     virtual ~BlurEffect() = default;
 
-    float sigma() const { return sigma_; }
-    void setSigma(float s) { sigma_ = std::max(0.1f, s); }
+    float radius() const { return radius_; }
+    void setRadius(float r) { radius_ = std::max(0.1f, r); syncImpls(); }
+
+    float strength() const { return strength_; }
+    void setStrength(float s) { strength_ = std::clamp(s, 0.0f, 1.0f); syncImpls(); }
+
+    float sigma() const { return std::max(0.1f, radius_ * 0.5f); }
+    void setSigma(float s) { setRadius(std::max(0.1f, s) * 2.0f); }
 
     int iterations() const { return iterations_; }
-    void setIterations(int n) { iterations_ = std::max(1, n); }
+    void setIterations(int n) { iterations_ = std::max(1, n); syncImpls(); }
 
     BlurMode mode() const { return mode_; }
-    void setMode(BlurMode m) { mode_ = m; }
+    void setMode(BlurMode m) { mode_ = m; syncImpls(); }
 
     bool premultiplied() const { return premultiplied_; }
-    void setPremultiplied(bool p) { premultiplied_ = p; }
+    void setPremultiplied(bool p) { premultiplied_ = p; syncImpls(); }
 
     float edgeThreshold() const { return edgeThreshold_; }
-    void setEdgeThreshold(float t) { edgeThreshold_ = std::clamp(t, 0.0f, 1.0f); }
+    void setEdgeThreshold(float t) { edgeThreshold_ = std::clamp(t, 0.0f, 1.0f); syncImpls(); }
 
     std::vector<AbstractProperty> getProperties() const override {
         std::vector<AbstractProperty> props;
 
-        AbstractProperty sigmaProp;
-        sigmaProp.setName("Sigma");
-        sigmaProp.setType(PropertyType::Float);
-        sigmaProp.setValue(sigma_);
-        props.push_back(sigmaProp);
+        AbstractProperty radiusProp;
+        radiusProp.setName(TranslationManager::instance().tr("effect.blur.radius", "Radius"));
+        radiusProp.setType(PropertyType::Float);
+        radiusProp.setValue(radius_);
+        props.push_back(radiusProp);
 
-        AbstractProperty iterProp;
-        iterProp.setName("Iterations");
-        iterProp.setType(PropertyType::Integer);
-        iterProp.setValue(iterations_);
-        props.push_back(iterProp);
-
-        AbstractProperty modeProp;
-        modeProp.setName("Mode");
-        modeProp.setType(PropertyType::Integer);
-        modeProp.setValue(static_cast<int>(mode_));
-        props.push_back(modeProp);
-
-        AbstractProperty premultProp;
-        premultProp.setName("Premultiplied Alpha");
-        premultProp.setType(PropertyType::Boolean);
-        premultProp.setValue(premultiplied_);
-        props.push_back(premultProp);
-
-        if (mode_ == BlurMode::EdgePreserving) {
-            AbstractProperty edgeProp;
-            edgeProp.setName("Edge Threshold");
-            edgeProp.setType(PropertyType::Float);
-            edgeProp.setValue(edgeThreshold_);
-            props.push_back(edgeProp);
-        }
+        AbstractProperty strengthProp;
+        strengthProp.setName(TranslationManager::instance().tr("effect.blur.strength", "Strength"));
+        strengthProp.setType(PropertyType::Float);
+        strengthProp.setValue(strength_);
+        props.push_back(strengthProp);
 
         return props;
     }
 
     void setPropertyValue(const UniString& name, const QVariant& value) override {
         const QString key = name.toQString();
-        if (key == QStringLiteral("Sigma")) {
-            sigma_ = std::max(0.1f, value.toFloat());
+        if (key == QStringLiteral("Radius") || key == TranslationManager::instance().tr("effect.blur.radius", "Radius")) {
+            setRadius(value.toFloat());
+        } else if (key == QStringLiteral("Strength") || key == TranslationManager::instance().tr("effect.blur.strength", "Strength")) {
+            setStrength(value.toFloat());
+        } else if (key == QStringLiteral("Sigma")) {
+            setSigma(value.toFloat());
         } else if (key == QStringLiteral("Iterations")) {
-            iterations_ = std::max(1, value.toInt());
+            setIterations(value.toInt());
         } else if (key == QStringLiteral("Mode")) {
-            mode_ = static_cast<BlurMode>(value.toInt());
+            setMode(static_cast<BlurMode>(value.toInt()));
         } else if (key == QStringLiteral("Premultiplied Alpha")) {
-            premultiplied_ = value.toBool();
+            setPremultiplied(value.toBool());
         } else if (key == QStringLiteral("Edge Threshold")) {
-            edgeThreshold_ = std::clamp(value.toFloat(), 0.0f, 1.0f);
+            setEdgeThreshold(value.toFloat());
         }
     }
 

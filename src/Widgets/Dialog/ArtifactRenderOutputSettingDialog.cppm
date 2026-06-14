@@ -190,17 +190,21 @@ namespace Artifact
    const QString ffmpegPath = resolveFfmpegExePath();
    const bool nvencH264 = ffmpegExeSupportsEncoder(ffmpegPath, QStringLiteral("h264_nvenc"));
    const bool nvencHevc = ffmpegExeSupportsEncoder(ffmpegPath, QStringLiteral("hevc_nvenc"));
+   const bool vulkanH264 = ffmpegExeSupportsEncoder(ffmpegPath, QStringLiteral("h264_vulkan"));
+   const bool vulkanHevc = ffmpegExeSupportsEncoder(ffmpegPath, QStringLiteral("hevc_vulkan"));
 
    QStringList lines;
    lines << QStringLiteral("Hardware FFmpeg: %1")
                .arg((nvencH264 || nvencHevc) ? QStringLiteral("NVENC available") : QStringLiteral("NVENC unavailable, will fallback"));
+   lines << QStringLiteral("Vulkan encode: %1")
+               .arg((vulkanH264 || vulkanHevc) ? QStringLiteral("available") : QStringLiteral("unavailable"));
    if (visibleCodecs.isEmpty()) {
      lines << QStringLiteral("FFmpeg codecs: unavailable");
    } else {
      lines << QStringLiteral("FFmpeg codecs: %1").arg(visibleCodecs.join(QStringLiteral(", ")));
    }
    backendInfoLabel->setText(lines.join(QStringLiteral(" | ")));
-   backendInfoLabel->setToolTip(QStringLiteral("pipe-hw first tries NVENC through FFmpeg.exe. If the encoder is unavailable, the job falls back to the software pipe backend."));
+   backendInfoLabel->setToolTip(QStringLiteral("pipe-hw tries NVENC through FFmpeg.exe. pipe-vulkan tries h264_vulkan/hevc_vulkan and falls back to the software pipe backend if unavailable."));
  }
 
  QString ArtifactRenderOutputSettingDialog::Impl::resolveFfmpegExePath()
@@ -608,7 +612,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
 
     impl_->backendCombo = new QComboBox();
     impl_->backendCombo->addItems(QStringList{
-      "auto", "pipe", "pipe-hw (NVENC)", "native", "gpu"
+      "auto", "pipe", "pipe-hw (NVENC)", "pipe-vulkan", "native", "gpu"
     });
     formLayout->addRow("Encoder Backend:", impl_->backendCombo);
     impl_->backendInfoLabel = new QLabel(this);

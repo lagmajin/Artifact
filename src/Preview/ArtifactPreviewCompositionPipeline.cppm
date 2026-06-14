@@ -136,7 +136,7 @@ namespace Artifact
       continue;
      }
      ArtifactCore::ImageF32x4RGBAWithCache next;
-     effect->applyCPUOnly(current, next);
+     effect->applyConfigured(current, next);
      current = next;
     }
     surface = current.image().toQImage();

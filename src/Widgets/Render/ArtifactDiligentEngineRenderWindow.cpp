@@ -209,6 +209,10 @@ namespace Artifact {
 
 ArtifactDiligentEngineRenderWindow::~ArtifactDiligentEngineRenderWindow()
 {
+ if (pImmediateContext) {
+  pImmediateContext->Flush();
+  pImmediateContext->WaitForIdle();
+ }
  if (solidSrb_) {
   solidSrb_ = nullptr;
  }

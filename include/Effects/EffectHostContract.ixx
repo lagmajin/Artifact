@@ -138,7 +138,7 @@ public:
         }
 
         EffectContext legacyCtx;
-        effect_->applyCPUOnly(*inputSource_, *output.image);
+        effect_->applyConfigured(*inputSource_, *output.image);
 
         output.writtenROI = input.roi;
         output.fullyWritten = true;

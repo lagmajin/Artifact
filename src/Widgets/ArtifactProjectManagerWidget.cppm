@@ -24,6 +24,7 @@ module;
 #include <QMenu>
 #include <QPixmap>
 #include <QIcon>
+#include <QSizePolicy>
 #include <QBrush>
 #include <QPointF>
 #include <QRectF>
@@ -3032,10 +3033,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 itemDoubleClicked(idx);
             }
             handleItemDoubleClicked(idx);
-        }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/file_open.svg")));
+        }, loadProjectViewIcon(QStringLiteral("Studio/file_open.svg")));
         addTrackedAction(QStringLiteral("copy_name"), QStringLiteral("Copy Name"), [sourceIdx]() {
             QApplication::clipboard()->setText(sourceIdx.data(Qt::DisplayRole).toString());
-        }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
+        }, loadProjectViewIcon(QStringLiteral("Studio/content_copy.svg")));
         const auto buildProjectItemBundle = [this, contextItem, svc]() -> QJsonObject {
             QJsonObject bundle;
             if (!contextItem) {
@@ -3123,7 +3124,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 return;
             }
             ClipboardManager::instance().copyProjectBundle(bundle, contextItem->name.toQString());
-        }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
+        }, loadProjectViewIcon(QStringLiteral("Studio/content_copy.svg")));
         addTrackedAction(QStringLiteral("send_item_snapshot"), QStringLiteral("Send Bundle to Main Project"), [this, buildProjectItemBundle]() {
             const QJsonObject bundle = buildProjectItemBundle();
             if (bundle.isEmpty()) {
@@ -3135,7 +3136,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     error.isEmpty() ? QStringLiteral("Failed to send bundle to the main project.")
                                     : error);
             }
-        }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/share.svg")));
+        }, loadProjectViewIcon(QStringLiteral("Studio/upload.svg")));
 
         QStringList selectedFootagePaths;
         
@@ -3145,11 +3146,11 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 if (idVar.isValid()) {
                     ArtifactProjectService::instance()->changeCurrentComposition(CompositionID(idVar.toString()));
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/composition.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/composition.svg")));
 
             {
                 auto* responsiveMenu = menu.addMenu(QStringLiteral("Responsive Layout"));
-                responsiveMenu->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/blue/aspect_ratio.svg")));
+                responsiveMenu->setIcon(loadProjectViewIcon(QStringLiteral("Studio/aspect_ratio.svg")));
                 const QVariant idVar = sourceIdx.data(Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::CompositionId));
                 if (idVar.isValid() && svc) {
                     const CompositionID compositionId(idVar.toString());
@@ -3481,7 +3482,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 });
 
                 dialog->exec();
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/settings.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/settings.svg")));
             
             addTrackedAction(QStringLiteral("interpret_footage"), QStringLiteral("Interpret Footage..."), [this, svc, selectedFootagePaths, contextItem]() {
                 auto* projectService = svc ? svc : ArtifactProjectService::instance();
@@ -3635,7 +3636,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 if (updatedAny) {
                     projectService->projectChanged();
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/purple/info.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/info.svg")));
         }
 
         if (contextType == eProjectItemType::Footage) {
@@ -3669,22 +3670,22 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             }
             addTrackedAction(QStringLiteral("preview_in_contents_viewer"), QStringLiteral("Preview in Contents Viewer"), [this, idx]() {
                 itemDoubleClicked(idx);
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/visibility.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/visibility.svg")));
             addTrackedAction(QStringLiteral("generate_proxy_selected"), QStringLiteral("Generate Proxy"), [this, footagePath]() {
                 if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
                     manager->generateProxyForFilePath(footagePath);
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/green/replay.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
             addTrackedAction(QStringLiteral("reveal_proxy"), QStringLiteral("Reveal Proxy"), [this, footagePath]() {
                 if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
                     manager->revealProxyForFilePath(footagePath);
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/folder.svg")));
             addTrackedAction(QStringLiteral("clear_proxy"), QStringLiteral("Clear Proxy"), [this, footagePath]() {
                 if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
                     manager->clearProxyForFilePath(footagePath);
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/red/delete.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/delete.svg")));
             if (selectedFootagePaths.size() > 1) {
                 addTrackedAction(QStringLiteral("generate_selected_proxies"), QStringLiteral("Generate Selected Proxies"), [this, selectedFootagePaths]() {
                     if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
@@ -3692,14 +3693,14 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                             manager->generateProxyForFilePath(path);
                         }
                     }
-                }, loadProjectViewIcon(QStringLiteral("MaterialVS/green/replay.svg")));
+                }, loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
                 addTrackedAction(QStringLiteral("clear_selected_proxies"), QStringLiteral("Clear Selected Proxies"), [this, selectedFootagePaths]() {
                     if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
                         for (const QString& path : selectedFootagePaths) {
                             manager->clearProxyForFilePath(path);
                         }
                     }
-                }, loadProjectViewIcon(QStringLiteral("MaterialVS/red/delete.svg")));
+                }, loadProjectViewIcon(QStringLiteral("Studio/delete.svg")));
                 addTrackedAction(QStringLiteral("regenerate_stale_proxies"), QStringLiteral("Re-generate Stale Proxies"), [this, selectedFootagePaths]() {
                     if (auto* manager = qobject_cast<ArtifactProjectManagerWidget*>(parentWidget())) {
                         for (const QString& path : selectedFootagePaths) {
@@ -3719,19 +3720,19 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                             }
                         }
                     }
-                }, loadProjectViewIcon(QStringLiteral("MaterialVS/green/replay.svg")));
+                }, loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
             }
             addTrackedAction(QStringLiteral("reveal_in_explorer"), QStringLiteral("Reveal in Explorer (R)"), [contextItem]() {
                 if (contextItem && contextItem->type() == eProjectItemType::Footage) {
                     QString path = static_cast<FootageItem*>(contextItem)->filePath;
                     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/folder.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/folder_open.svg")));
             addTrackedAction(QStringLiteral("copy_file_path"), QStringLiteral("Copy File Path"), [contextItem]() {
                 if (contextItem && contextItem->type() == eProjectItemType::Footage) {
                     QApplication::clipboard()->setText(static_cast<FootageItem*>(contextItem)->filePath);
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/content_copy.svg")));
             addTrackedAction(QStringLiteral("relink_selected_footage"), QStringLiteral("Relink Selected Footage..."), [this, contextItem, svc]() {
                 if (!svc || !contextItem || contextItem->type() != eProjectItemType::Footage) return;
                 const QString root = QFileDialog::getExistingDirectory(this, "Relink Selected Footage - Search Root");
@@ -3744,7 +3745,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 }
                 QMessageBox::information(this, "Relink Result",
                                          QString("Relinked %1 file(s).").arg(relinked));
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/link.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/link.svg")));
         }
 
         auto& clipboard = ClipboardManager::instance();
@@ -3791,7 +3792,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                     QMessageBox::warning(this, QStringLiteral("Paste Items"),
                         QStringLiteral("Could not paste the copied project items."));
                 }
-            }, loadProjectViewIcon(QStringLiteral("MaterialVS/green/content_paste.svg")));
+            }, loadProjectViewIcon(QStringLiteral("Studio/content_paste.svg")));
         }
 
         menu.addSeparator();
@@ -3810,10 +3811,10 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                         QStringLiteral("Could not rename the selected project item."));
                 }
             }
-        }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/edit.svg")));
+        }, loadProjectViewIcon(QStringLiteral("Studio/edit.svg")));
 
         QMenu* moveToFolderMenu = menu.addMenu(QStringLiteral("Move to Folder"));
-        moveToFolderMenu->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
+        moveToFolderMenu->setIcon(loadProjectViewIcon(QStringLiteral("Studio/folder.svg")));
         bool hasMoveTarget = false;
         if (svc && contextItem) {
             if (auto project = svc->getCurrentProjectSharedPtr()) {
@@ -3827,7 +3828,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                         continue;
                     }
                     QAction* moveAction = moveToFolderMenu->addAction(folderDisplayPath(folder));
-                    moveAction->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
+                    moveAction->setIcon(loadProjectViewIcon(QStringLiteral("Studio/folder.svg")));
                     const bool canMove = (folder != contextItem) && !isDescendantOf(folder, contextItem);
                     moveAction->setEnabled(canMove);
                     if (!canMove) {
@@ -3848,7 +3849,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
         if (!hasMoveTarget) {
             QAction* emptyAction = moveToFolderMenu->addAction(QStringLiteral("(No valid target folder)"));
-            emptyAction->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/neutral/help.svg")));
+            emptyAction->setIcon(loadProjectViewIcon(QStringLiteral("Studio/help.svg")));
             emptyAction->setEnabled(false);
         }
 
@@ -3864,22 +3865,22 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
                 QMessageBox::warning(this, QStringLiteral("削除失敗"),
                     QStringLiteral("項目の削除に失敗しました。"));
             }
-        }, loadProjectViewIcon(QStringLiteral("MaterialVS/red/delete.svg")));
+        }, loadProjectViewIcon(QStringLiteral("Studio/delete.svg")));
 
         menu.addSeparator();
         addTrackedAction(QStringLiteral("expand_children"), QStringLiteral("Expand Children"), [this, idx]() {
             setExpanded(idx, true);
-        }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/visibility.svg")));
+        }, loadProjectViewIcon(QStringLiteral("Studio/visibility.svg")));
         addTrackedAction(QStringLiteral("collapse_children"), QStringLiteral("Collapse Children"), [this, idx]() {
             setExpanded(idx, false);
-        }, loadProjectViewIcon(QStringLiteral("MaterialVS/orange/visibility_off.svg")));
+        }, loadProjectViewIcon(QStringLiteral("Studio/visibility_off.svg")));
         
         menu.addSeparator();
     }
 
     // "New" menu group
     auto newMenu = menu.addMenu("New");
-    newMenu->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/green/check_circle.svg")));
+    newMenu->setIcon(loadProjectViewIcon(QStringLiteral("Studio/add_circle.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_composition"), QStringLiteral("Composition..."), [this]() {
          auto dialog = new CreateCompositionDialog(this);
          if (dialog->exec()) {
@@ -3891,7 +3892,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
              });
          }
          dialog->deleteLater();
-    }, loadProjectViewIcon(QStringLiteral("MaterialVS/blue/composition.svg")));
+    }, loadProjectViewIcon(QStringLiteral("Studio/composition.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_solid"), QStringLiteral("Solid..."), [this, svc]() {
         if (!svc) return;
         if (!svc->currentComposition().lock()) {
@@ -3912,21 +3913,21 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         });
         dialog.setModal(true);
         dialog.exec();
-    }, loadProjectViewIcon(QStringLiteral("MaterialVS/purple/format_shapes.svg")));
+    }, loadProjectViewIcon(QStringLiteral("Studio/palette.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_folder"), QStringLiteral("Folder"), [this]() {
         impl_->createFolderAtSelection(this);
-    }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/folder.svg")));
+    }, loadProjectViewIcon(QStringLiteral("Studio/folder.svg")));
 
     menu.addSeparator();
     addTrackedAction(QStringLiteral("expand_all"), QStringLiteral("Expand All"), [this]() { expandAll(); },
-                     loadProjectViewIcon(QStringLiteral("MaterialVS/blue/visibility.svg")));
+                     loadProjectViewIcon(QStringLiteral("Studio/visibility.svg")));
     addTrackedAction(QStringLiteral("collapse_all"), QStringLiteral("Collapse All"), [this]() { collapseAll(); },
-                     loadProjectViewIcon(QStringLiteral("MaterialVS/orange/visibility_off.svg")));
+                     loadProjectViewIcon(QStringLiteral("Studio/visibility_off.svg")));
     addTrackedAction(QStringLiteral("refresh_view"), QStringLiteral("Refresh View"), [this]() { update(); },
-                     loadProjectViewIcon(QStringLiteral("MaterialVS/blue/replay.svg")));
+                     loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
     addTrackedAction(QStringLiteral("show_dependency_graph"), QStringLiteral("Show Dependency Graph..."), [this, svc]() {
         Impl::showDependencyGraphDialog(this, svc);
-    }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/link.svg")));
+    }, loadProjectViewIcon(QStringLiteral("Studio/link.svg")));
     menu.addSeparator();
     addTrackedAction(QStringLiteral("relink_missing_footage"), QStringLiteral("Relink Missing Footage..."), [this, svc]() {
         if (!svc) return;
@@ -3945,7 +3946,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         }
         QMessageBox::information(this, "Relink Result",
                                  QString("Relinked %1 missing footage item(s).").arg(relinked));
-    }, loadProjectViewIcon(QStringLiteral("MaterialVS/yellow/link.svg")));
+    }, loadProjectViewIcon(QStringLiteral("Studio/link.svg")));
     menu.addSeparator();
     addTrackedAction(QStringLiteral("import_file"), QStringLiteral("Import File..."), [this, svc]() {
         Q_UNUSED(svc);
@@ -3953,7 +3954,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         for (const auto& p : paths) {
              impl_->handleFileDrop(p);
         }
-    }, loadProjectViewIcon(QStringLiteral("MaterialVS/green/file_open.svg")));
+    }, loadProjectViewIcon(QStringLiteral("Studio/file_open.svg")));
 
     if (!impl_->lastContextCommandId.isEmpty() && availableContextCommands.contains(impl_->lastContextCommandId)) {
         QAction* firstAction = menu.actions().isEmpty() ? nullptr : menu.actions().first();
@@ -3961,7 +3962,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         const QString repeatLabel = QStringLiteral("Repeat Last Command: %1").arg(
             availableContextLabels.value(impl_->lastContextCommandId, impl_->lastContextCommandLabel));
         QAction* repeatAction = new QAction(repeatLabel, &menu);
-        repeatAction->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/blue/replay.svg")));
+        repeatAction->setIcon(loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
         const QString commandId = impl_->lastContextCommandId;
         const QString commandLabel = availableContextLabels.value(commandId, impl_->lastContextCommandLabel);
         QObject::connect(repeatAction, &QAction::triggered, &menu, [this, commandId, commandLabel, run = availableContextCommands.value(commandId)]() mutable {
@@ -3982,7 +3983,7 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
         const QString repeatLabel = QStringLiteral("Repeat Last New Command: %1").arg(
             availableNewLabels.value(impl_->lastNewCommandId, impl_->lastNewCommandLabel));
         QAction* repeatAction = new QAction(repeatLabel, newMenu);
-        repeatAction->setIcon(loadProjectViewIcon(QStringLiteral("MaterialVS/green/replay.svg")));
+        repeatAction->setIcon(loadProjectViewIcon(QStringLiteral("Studio/replay.svg")));
         const QString commandId = impl_->lastNewCommandId;
         const QString commandLabel = availableNewLabels.value(commandId, impl_->lastNewCommandLabel);
         QObject::connect(repeatAction, &QAction::triggered, newMenu, [this, commandId, commandLabel, run = availableNewCommands.value(commandId)]() mutable {
@@ -4692,9 +4693,6 @@ public:
         if (compositionApplyButton) compositionApplyButton->setEnabled(editableSingle);
         if (compositionFrameRateSpin) compositionFrameRateSpin->setEnabled(hasAnyComposition);
         if (compositionApplyFrameRateButton) compositionApplyFrameRateButton->setEnabled(hasAnyComposition);
-        if (compositionEditorPanel) {
-            compositionEditorPanel->setVisible(hasAnyComposition);
-        }
     }
 
     QModelIndex currentSelectionIndex0() const {
@@ -5731,8 +5729,8 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     auto* selectionChrome = new QWidget(chromePanel);
     auto* selectionChromeLayout = new QVBoxLayout(selectionChrome);
-    selectionChromeLayout->setContentsMargins(10, 0, 10, 8);
-    selectionChromeLayout->setSpacing(4);
+    selectionChromeLayout->setContentsMargins(8, 0, 8, 5);
+    selectionChromeLayout->setSpacing(2);
     impl_->selectionSummaryLabel = new QLabel(QStringLiteral("Recent: - | Selection: 0 items | Status: All / All items | Search: -"), selectionChrome);
     impl_->selectionSummaryLabel->setWordWrap(true);
     impl_->selectionSummaryLabel->setMaximumHeight(42);
@@ -5774,14 +5772,15 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     };
 
     auto* selectionButtons = new QHBoxLayout();
-    selectionButtons->setSpacing(6);
+    selectionButtons->setContentsMargins(0, 0, 0, 0);
+    selectionButtons->setSpacing(3);
     impl_->openSelectionButton = new QPushButton(QStringLiteral("Open"), selectionChrome);
     impl_->revealSelectionButton = new QPushButton(QStringLiteral("Reveal"), selectionChrome);
     impl_->generateProxyButton = new QPushButton(QStringLiteral("Proxy"), selectionChrome);
     impl_->revealProxyButton = new QPushButton(QStringLiteral("Reveal Proxy"), selectionChrome);
     impl_->clearProxyButton = new QPushButton(QStringLiteral("Clear Proxy"), selectionChrome);
-    impl_->generateSelectedProxiesButton = new QPushButton(QStringLiteral("Generate Selected Proxies"), selectionChrome);
-    impl_->clearSelectedProxiesButton = new QPushButton(QStringLiteral("Clear Selected Proxies"), selectionChrome);
+    impl_->generateSelectedProxiesButton = new QPushButton(QStringLiteral("Gen Selected"), selectionChrome);
+    impl_->clearSelectedProxiesButton = new QPushButton(QStringLiteral("Clear Selected"), selectionChrome);
     impl_->regenerateStaleProxiesButton = new QPushButton(QStringLiteral("Re-gen Stale"), selectionChrome);
     impl_->renameSelectionButton = new QPushButton(QStringLiteral("Rename"), selectionChrome);
     impl_->deleteSelectionButton = new QPushButton(QStringLiteral("Delete"), selectionChrome);
@@ -5837,6 +5836,43 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->deleteSelectionButton->setToolTip(QStringLiteral("Delete the selected item."));
     impl_->relinkSelectionButton->setToolTip(QStringLiteral("Relink the selected footage item."));
     impl_->copyPathButton->setToolTip(QStringLiteral("Copy the selected item path."));
+    {
+        const auto tightenProjectButton = [](QPushButton* button, int minWidth = 52) {
+            if (!button) {
+                return;
+            }
+            button->setMinimumHeight(22);
+            button->setMaximumHeight(22);
+            button->setMinimumWidth(minWidth);
+            button->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+            QFont font = button->font();
+            font.setPointSizeF(std::max<qreal>(8.5, font.pointSizeF() > 0 ? font.pointSizeF() - 1.0 : 9.0));
+            font.setBold(false);
+            button->setFont(font);
+            QPalette pal = button->palette();
+            const auto& theme = ArtifactCore::currentDCCTheme();
+            pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor).lighter(106));
+            pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+            pal.setColor(QPalette::Highlight, QColor(theme.accentColor));
+            button->setPalette(pal);
+        };
+        tightenProjectButton(impl_->openSelectionButton, 44);
+        tightenProjectButton(impl_->revealSelectionButton, 50);
+        tightenProjectButton(impl_->generateProxyButton, 48);
+        tightenProjectButton(impl_->revealProxyButton, 76);
+        tightenProjectButton(impl_->clearProxyButton, 72);
+        tightenProjectButton(impl_->generateSelectedProxiesButton, 88);
+        tightenProjectButton(impl_->clearSelectedProxiesButton, 86);
+        tightenProjectButton(impl_->regenerateStaleProxiesButton, 78);
+        tightenProjectButton(impl_->relinkSelectionButton, 52);
+        tightenProjectButton(impl_->renameSelectionButton, 58);
+        tightenProjectButton(impl_->deleteSelectionButton, 54);
+        tightenProjectButton(impl_->copyPathButton, 66);
+        QFont proxyFont = impl_->proxyGlobalToggle_->font();
+        proxyFont.setPointSizeF(std::max<qreal>(8.5, proxyFont.pointSizeF() > 0 ? proxyFont.pointSizeF() - 1.0 : 9.0));
+        impl_->proxyGlobalToggle_->setFont(proxyFont);
+        impl_->proxyGlobalToggle_->setMaximumHeight(22);
+    }
     selectionButtons->addWidget(impl_->openSelectionButton);
     selectionButtons->addWidget(impl_->revealSelectionButton);
     selectionButtons->addWidget(impl_->generateProxyButton);
@@ -5873,6 +5909,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->compositionEditorModeLabel = new QLabel(
         QStringLiteral("Select a composition to edit its settings here."), impl_->compositionEditorPanel);
     impl_->compositionEditorModeLabel->setWordWrap(true);
+    impl_->compositionEditorModeLabel->setMaximumHeight(36);
     {
         QPalette pal = impl_->compositionEditorModeLabel->palette();
         pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(125));
@@ -5953,6 +5990,12 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     }
 
     impl_->compositionEditorPanel->setVisible(false);
+    {
+        QSizePolicy policy = impl_->compositionEditorPanel->sizePolicy();
+        policy.setRetainSizeWhenHidden(true);
+        impl_->compositionEditorPanel->setSizePolicy(policy);
+        impl_->compositionEditorPanel->setMinimumHeight(176);
+    }
     chromeLayout->addWidget(impl_->compositionEditorPanel);
 
     impl_->searchBar = new QLineEdit(chromePanel);
@@ -6348,14 +6391,14 @@ QSize ArtifactProjectManagerWidget::sizeHint() const { return QSize(250, 600); }
 ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : QWidget(parent) {
     setObjectName(QStringLiteral("projectManagerToolBox"));
     setAutoFillBackground(true);
-    setFixedHeight(32);
+    setFixedHeight(28);
     auto layout = new QHBoxLayout(this);
-    layout->setContentsMargins(10, 0, 10, 0);
-    layout->setSpacing(10);
+    layout->setContentsMargins(8, 0, 8, 0);
+    layout->setSpacing(5);
 
     auto createBtn = [](const QString& tip, const QString& iconPath, QStyle::StandardPixmap fallbackIcon, const QString& fallbackText) {
         auto b = new QPushButton();
-        b->setFixedSize(24, 24);
+        b->setFixedSize(22, 22);
         b->setToolTip(tip);
         QIcon icon = loadProjectViewIcon(iconPath);
         if ((icon.isNull() || icon.pixmap(16, 16).isNull()) && QApplication::style()) {
@@ -6366,7 +6409,7 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
         } else {
             b->setText(fallbackText);
         }
-        b->setIconSize(QSize(16, 16));
+        b->setIconSize(QSize(15, 15));
         b->setFlat(true);
         {
             QPalette pal = b->palette();
@@ -6376,10 +6419,10 @@ ArtifactProjectManagerToolBox::ArtifactProjectManagerToolBox(QWidget* parent) : 
         return b;
     };
 
-    auto btnNew = createBtn("New Composition", QStringLiteral("MaterialVS/blue/composition.svg"), QStyle::SP_FileDialogNewFolder, QStringLiteral("N"));
-    auto btnFolder = createBtn("New Folder", QStringLiteral("MaterialVS/yellow/folder.svg"), QStyle::SP_DirIcon, QStringLiteral("F"));
-    auto btnProxy = createBtn("Generate Proxies", QStringLiteral("MaterialVS/green/replay.svg"), QStyle::SP_BrowserReload, QStringLiteral("P"));
-    auto btnDel = createBtn("Delete", QStringLiteral("MaterialVS/red/delete.svg"), QStyle::SP_TrashIcon, QStringLiteral("D"));
+    auto btnNew = createBtn("New Composition", QStringLiteral("Studio/composition.svg"), QStyle::SP_FileDialogNewFolder, QStringLiteral("N"));
+    auto btnFolder = createBtn("New Folder", QStringLiteral("Studio/folder.svg"), QStyle::SP_DirIcon, QStringLiteral("F"));
+    auto btnProxy = createBtn("Generate Proxies", QStringLiteral("Studio/replay.svg"), QStyle::SP_BrowserReload, QStringLiteral("P"));
+    auto btnDel = createBtn("Delete", QStringLiteral("Studio/delete.svg"), QStyle::SP_TrashIcon, QStringLiteral("D"));
 
     layout->addWidget(btnNew);
     layout->addWidget(btnFolder);

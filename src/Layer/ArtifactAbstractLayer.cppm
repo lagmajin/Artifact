@@ -1,4 +1,5 @@
 ﻿module;
+#include <compare>
 #include <utility>
 #include <QDebug>
 #include <QImage>
@@ -33,6 +34,7 @@ import Time.TimeRemap;
 
 import Artifact.Layer.Settings;
 import Artifact.Layer.Physics;
+import Artifact.Layer.Modifier;
 import Artifact.Layer.Matte;
 import Layer.Matte;
 import Artifact.Composition.Abstract;
@@ -78,6 +80,14 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
   Q_EMIT layer->changed();
 }
 
+QMatrix4x4 matrixFromTransform2D(const QTransform& transform) {
+  return QMatrix4x4(
+      static_cast<float>(transform.m11()), static_cast<float>(transform.m12()), 0.0f, static_cast<float>(transform.m13()),
+      static_cast<float>(transform.m21()), static_cast<float>(transform.m22()), 0.0f, static_cast<float>(transform.m23()),
+      0.0f,                               0.0f,                               1.0f, 0.0f,
+      static_cast<float>(transform.m31()), static_cast<float>(transform.m32()), 0.0f, static_cast<float>(transform.m33()));
+}
+
 QString slugifyEffectId(const QString &text) {
   QString slug;
   slug.reserve(text.size());
@@ -116,6 +126,37 @@ QString uniqueEffectIdForLayer(
         effects.begin(), effects.end(),
         [&candidate](const std::shared_ptr<ArtifactAbstractEffect> &effect) {
           return effect && effect->effectID().toQString() == candidate;
+        });
+  };
+
+  if (!idExists(baseId)) {
+    return baseId;
+  }
+
+  QString uniqueId = baseId;
+  int suffix = 2;
+  while (idExists(uniqueId)) {
+    uniqueId = QStringLiteral("%1-%2").arg(baseId).arg(suffix++);
+  }
+  return uniqueId;
+}
+
+QString uniqueModifierIdForLayer(
+    const std::vector<std::shared_ptr<ArtifactLayerModifier>> &modifiers,
+    const QString &displayName, const QString &preferredId) {
+  QString baseId = preferredId.trimmed();
+  if (baseId.isEmpty()) {
+    baseId = slugifyEffectId(displayName);
+  }
+  if (baseId.isEmpty()) {
+    baseId = QStringLiteral("modifier");
+  }
+
+  auto idExists = [&modifiers](const QString &candidate) {
+    return std::any_of(
+        modifiers.begin(), modifiers.end(),
+        [&candidate](const std::shared_ptr<ArtifactLayerModifier> &modifier) {
+          return modifier && modifier->modifierId() == candidate;
         });
   };
 
@@ -371,6 +412,9 @@ public:
   // エフェクトコンテナ
   std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
 
+  // レイヤーモディファイアコンテナ
+  LayerModifierStack modifiers_;
+
   // マスクコンテナ
   std::vector<LayerMask> masks_;
   mutable QHash<QString, std::shared_ptr<AbstractProperty>> propertyCache_;
@@ -405,6 +449,15 @@ public:
   std::shared_ptr<ArtifactAbstractEffect>
   getEffect(const UniString &effectID) const;
   int effectCount() const;
+
+  // モディファイア管理メソッド
+  void addModifier(std::shared_ptr<ArtifactLayerModifier> modifier);
+  void removeModifier(const QString& modifierId);
+  void clearModifiers();
+  std::vector<std::shared_ptr<ArtifactLayerModifier>> getModifiers() const;
+  std::shared_ptr<ArtifactLayerModifier> getModifier(const QString& modifierId) const;
+  int modifierCount() const;
+  bool hasModifiers() const;
 
   // マスク管理
   void addMask(const LayerMask &mask);
@@ -918,8 +971,10 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
   const double anchorY =
       evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
 
-  return makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
-                              anchorX, anchorY);
+  QTransform transform = makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
+                                              anchorX, anchorY);
+  transform = impl_->modifiers_.apply(transform, localBounds(), time.toDouble());
+  return transform;
 }
 
 QTransform ArtifactAbstractLayer::getGlobalTransform() const {
@@ -974,8 +1029,10 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
 
   // Skip physics for random access evaluating (e.g. motion path rendering) to maintain determinism.
 
-  return makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
-                              anchorX, anchorY);
+  QTransform transform = makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
+                                              anchorX, anchorY);
+  transform = impl_->modifiers_.apply(transform, localBounds(), time.toDouble());
+  return transform;
 }
 
 QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) const {
@@ -1019,8 +1076,17 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const double anchorY =
       evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
   const double anchorZ = t.anchorZ();
-  return makeLayerTransform3D(positionX, positionY, positionZ, rotation,
-                              scaleX, scaleY, 1.0, anchorX, anchorY, anchorZ);
+  const QTransform local2D = impl_->modifiers_.apply(
+      makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
+                           anchorX, anchorY),
+      localBounds(), time.toDouble());
+
+  Q_UNUSED(anchorZ);
+  QMatrix4x4 result = matrixFromTransform2D(local2D);
+  if (positionZ != 0.0) {
+    result.translate(0.0f, 0.0f, static_cast<float>(positionZ));
+  }
+  return result;
 }
 
 QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
@@ -1566,7 +1632,16 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   trans["az"] = t3.anchorZ();
   obj["transform"] = trans;
 
-  // Effects and their properties
+  // Modifiers and effects
+  QJsonArray modifiersArr;
+  for (const auto &modifier : getModifiers()) {
+    if (!modifier) {
+      continue;
+    }
+    modifiersArr.append(serializeLayerModifier(*modifier));
+  }
+  obj["modifiers"] = modifiersArr;
+
   QJsonArray effectsArr;
   for (const auto &eff : getEffects()) {
     if (!eff)
@@ -1781,6 +1856,20 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
                    trans["az"].toDouble());
   }
 
+  if (obj.contains("modifiers") && obj["modifiers"].isArray()) {
+      impl_->modifiers_.clear();
+      QJsonArray arr = obj["modifiers"].toArray();
+      for (const auto& mv : arr) {
+          if (!mv.isObject()) {
+              continue;
+          }
+          auto modifier = deserializeLayerModifier(mv.toObject());
+          if (modifier) {
+              impl_->modifiers_.add(std::move(modifier));
+          }
+      }
+  }
+
   if (obj.contains("variants") && obj["variants"].isArray()) {
       impl_->variants_.clear();
       QJsonArray arr = obj["variants"].toArray();
@@ -1876,6 +1965,47 @@ int ArtifactAbstractLayer::Impl::effectCount() const {
   return static_cast<int>(effects_.size());
 }
 
+void ArtifactAbstractLayer::Impl::addModifier(
+    std::shared_ptr<ArtifactLayerModifier> modifier) {
+  if (!modifier) {
+    return;
+  }
+
+  const QString currentId = modifier->modifierId().trimmed();
+  const QString uniqueId = uniqueModifierIdForLayer(
+      modifiers_.modifiers(), modifier->displayName(), currentId);
+  if (currentId.isEmpty() || currentId != uniqueId) {
+    modifier->setModifierId(uniqueId);
+  }
+  modifiers_.add(std::move(modifier));
+}
+
+void ArtifactAbstractLayer::Impl::removeModifier(const QString& modifierId) {
+  modifiers_.remove(modifierId);
+}
+
+void ArtifactAbstractLayer::Impl::clearModifiers() {
+  modifiers_.clear();
+}
+
+std::vector<std::shared_ptr<ArtifactLayerModifier>>
+ArtifactAbstractLayer::Impl::getModifiers() const {
+  return modifiers_.modifiers();
+}
+
+std::shared_ptr<ArtifactLayerModifier>
+ArtifactAbstractLayer::Impl::getModifier(const QString& modifierId) const {
+  return modifiers_.modifier(modifierId);
+}
+
+int ArtifactAbstractLayer::Impl::modifierCount() const {
+  return modifiers_.count();
+}
+
+bool ArtifactAbstractLayer::Impl::hasModifiers() const {
+  return !modifiers_.isEmpty();
+}
+
 void ArtifactAbstractLayer::addEffect(
     std::shared_ptr<ArtifactAbstractEffect> effect) {
   impl_->addEffect(effect);
@@ -1898,6 +2028,39 @@ ArtifactAbstractLayer::getEffect(const UniString &effectID) const {
 }
 
 int ArtifactAbstractLayer::effectCount() const { return impl_->effectCount(); }
+
+void ArtifactAbstractLayer::addModifier(
+    std::shared_ptr<ArtifactLayerModifier> modifier) {
+  impl_->addModifier(std::move(modifier));
+  notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                      LayerDirtyReason::PropertyChanged);
+}
+
+void ArtifactAbstractLayer::removeModifier(const QString& modifierId) {
+  impl_->removeModifier(modifierId);
+  notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                      LayerDirtyReason::PropertyChanged);
+}
+
+void ArtifactAbstractLayer::clearModifiers() {
+  impl_->clearModifiers();
+  notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                      LayerDirtyReason::PropertyChanged);
+}
+
+std::vector<std::shared_ptr<ArtifactLayerModifier>>
+ArtifactAbstractLayer::getModifiers() const {
+  return impl_->getModifiers();
+}
+
+std::shared_ptr<ArtifactLayerModifier>
+ArtifactAbstractLayer::getModifier(const QString& modifierId) const {
+  return impl_->getModifier(modifierId);
+}
+
+int ArtifactAbstractLayer::modifierCount() const { return impl_->modifierCount(); }
+
+bool ArtifactAbstractLayer::hasModifiers() const { return impl_->hasModifiers(); }
 
 std::vector<ArtifactCore::PropertyGroup>
 ArtifactAbstractLayer::getLayerPropertyGroups() const {

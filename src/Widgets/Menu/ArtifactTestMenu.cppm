@@ -23,11 +23,18 @@ import Artifact.Service.Project;
 import Artifact.Project.Manager;
 import Artifact.Composition.InitParams;
 import Artifact.Composition.Abstract;
+import Color.Float;
+import Utils.Id;
+import Layer.Blend;
 import Artifact.Layer.InitParams;
 import Artifact.Layer.Abstract;
 import Utils.Path;
 
 namespace Artifact {
+using namespace ArtifactCore;
+using ArtifactCore::CompositionID;
+using ArtifactCore::FloatColor;
+using ArtifactCore::LAYER_BLEND_TYPE;
 
 namespace {
 template <typename WidgetT>
@@ -53,17 +60,17 @@ QAction* addOpenWidgetAction(QMenu* menu, const QString& text, const QString& ic
 }
 
 ArtifactAbstractLayerPtr addDebugSolidBlendLayer(
-    const CompositionID &compositionId, const QString &name, const QSize &size,
-    const FloatColor &color, const LAYER_BLEND_TYPE blendMode,
-    const float opacity)
+    const CompositionID &compositionId, const QString &name,
+    const QSize &size, const FloatColor &color,
+    const LAYER_BLEND_TYPE blendMode, const float opacity)
 {
- auto &manager = ArtifactProjectManager::getInstance();
- ArtifactSolidLayerInitParams params(name);
- params.setWidth(std::max(1, size.width()));
- params.setHeight(std::max(1, size.height()));
- params.setColor(color);
- auto result = manager.addLayerToComposition(
-     compositionId, static_cast<ArtifactLayerInitParams &>(params));
+  auto &manager = ArtifactProjectManager::getInstance();
+  ArtifactSolidLayerInitParams params(name);
+  params.setWidth(std::max<int>(1, size.width()));
+  params.setHeight(std::max<int>(1, size.height()));
+  params.setColor(color);
+  auto result = manager.addLayerToComposition(
+      compositionId, static_cast<ArtifactLayerInitParams &>(params));
  if (!result.success || !result.layer) {
   return {};
  }
@@ -77,21 +84,21 @@ ArtifactRenderTestMenu::ArtifactRenderTestMenu(QWidget* parent /*= nullptr*/)
  : QMenu(parent)
 {
  setTitle("Render Test");
- setIcon(QIcon(resolveIconPath("Studio/software_render.svg")));
+ setIcon(QIcon(resolveIconPath("Studio/testmenu_software_render.svg")));
 
- addOpenWidgetAction(this, "Software 3D Render Test...", "Studio/software_render.svg", []() {
+ addOpenWidgetAction(this, "Software 3D Render Test...", "Studio/testmenu_software_render.svg", []() {
   openTestWidget<ArtifactSoftwareRenderTestWidget>(960, 600);
  });
- addOpenWidgetAction(this, "Software Composition Test...", "Studio/software_composition.svg", []() {
+ addOpenWidgetAction(this, "Software Composition Test...", "Studio/testmenu_software_composition.svg", []() {
   openTestWidget<ArtifactSoftwareCompositionTestWidget>(1100, 760);
  });
- addOpenWidgetAction(this, "Software Layer Test...", "Studio/software_layer.svg", []() {
+ addOpenWidgetAction(this, "Software Layer Test...", "Studio/testmenu_software_layer.svg", []() {
   openTestWidget<ArtifactSoftwareLayerTestWidget>(1100, 820);
  });
- addOpenWidgetAction(this, "Layer Composite Test...", "Studio/layer_composite.svg", []() {
+ addOpenWidgetAction(this, "Layer Composite Test...", "Studio/testmenu_layer_composite.svg", []() {
   openTestWidget<ArtifactLayerCompositeTestWidget>(900, 700);
  });
- addOpenWidgetAction(this, "Timeline Layer Test...", "Studio/timeline_layer.svg", []() {
+ addOpenWidgetAction(this, "Timeline Layer Test...", "Studio/testmenu_timeline_layer.svg", []() {
   openTestWidget<ArtifactTimelineLayerTestWidget>(1600, 1000);
  });
 }
@@ -104,9 +111,9 @@ ArtifactWidgetTestMenu::ArtifactWidgetTestMenu(QWidget* parent /*= nullptr*/)
  : QMenu(parent)
 {
  setTitle("Widget Test");
- setIcon(QIcon(resolveIconPath("Studio/test.svg")));
+ setIcon(QIcon(resolveIconPath("Studio/menubar_test.svg")));
 
- addOpenWidgetAction(this, "Scroll PoC...", "Studio/scroll.svg", []() {
+ addOpenWidgetAction(this, "Scroll PoC...", "Studio/testmenu_scroll.svg", []() {
   openTestWidget<ArtifactScrollPoCWidget>(600, 500);
  });
 }
@@ -119,9 +126,9 @@ ArtifactMediaTestMenu::ArtifactMediaTestMenu(QWidget* parent /*= nullptr*/)
  : QMenu(parent)
 {
  setTitle("Media Test");
- setIcon(QIcon(resolveIconPath("Studio/play_arrow.svg")));
+ setIcon(QIcon(resolveIconPath("Studio/testmenu_play_arrow.svg")));
 
- addOpenWidgetAction(this, "Playback Control Test...", "Studio/replay.svg", []() {
+ addOpenWidgetAction(this, "Playback Control Test...", "Studio/testmenu_replay.svg", []() {
   openTestWidget<ArtifactPlaybackControlTestWidget>(1100, 760);
  });
 }
@@ -134,7 +141,7 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
  : QMenu(parent)
 {
  setTitle("Test");
- setIcon(QIcon(resolveIconPath("Studio/test.svg")));
+ setIcon(QIcon(resolveIconPath("Studio/menubar_test.svg")));
 
  auto* renderMenu = new ArtifactRenderTestMenu(this);
  auto* widgetMenu = new ArtifactWidgetTestMenu(this);
@@ -151,7 +158,7 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
  auto *addDebugBlendLayersAction =
      new QAction("Add Debug Blend Test Layers", this);
  addDebugBlendLayersAction->setIcon(
-     QIcon(resolveIconPath("Studio/layer_composite.svg")));
+     QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
  addAction(addDebugBlendLayersAction);
  QObject::connect(addDebugBlendLayersAction, &QAction::triggered, this, []() {
   auto *projectService = ArtifactProjectService::instance();
@@ -217,7 +224,7 @@ ArtifactTestMenu::ArtifactTestMenu(QWidget* parent /*= nullptr*/)
  addSeparator();
 
  auto* startSoftwareTestPipelineAction = new QAction("Software Test Pipeline を開始", this);
- startSoftwareTestPipelineAction->setIcon(QIcon(resolveIconPath("Studio/pipeline.svg")));
+ startSoftwareTestPipelineAction->setIcon(QIcon(resolveIconPath("Studio/testmenu_pipeline.svg")));
  addAction(startSoftwareTestPipelineAction);
  QObject::connect(startSoftwareTestPipelineAction, &QAction::triggered, this, []() {
   auto* projectService = ArtifactProjectService::instance();

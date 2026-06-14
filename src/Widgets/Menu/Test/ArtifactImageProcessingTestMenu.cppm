@@ -59,10 +59,10 @@ ArtifactImageProcessingTestMenu::ArtifactImageProcessingTestMenu(QWidget* parent
  : QMenu(parent), pImpl_(new ArtifactImageProcessingTestMenuPrivate())
 {
  setTitle("Image Processing");
- setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/test.svg")));
+ setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/testmenu_test.svg")));
 
  auto* openShaderAssetsAction = addAction("Shader Assets Folder を開く...");
- openShaderAssetsAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/folder_open.svg")));
+ openShaderAssetsAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/testmenu_folder_open.svg")));
  QObject::connect(openShaderAssetsAction, &QAction::triggered, this, [this]() {
   if (pImpl_) {
    pImpl_->openShaderAssetsFolder(this);

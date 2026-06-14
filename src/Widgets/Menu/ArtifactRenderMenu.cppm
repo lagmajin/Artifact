@@ -275,7 +275,7 @@ ArtifactRenderMenu::ArtifactRenderMenu(QWidget* mainWindow, QWidget* parent)
  : QMenu(parent), impl_(new Impl(this, mainWindow))
 {
  setTitle("レンダー(&R)");
- setIcon(QIcon(resolveIconPath("Studio/software_render.svg")));
+ setIcon(QIcon(resolveIconPath("Studio/menubar_render.svg")));
  connect(this, &QMenu::aboutToShow, this, &ArtifactRenderMenu::rebuildMenu);
 }
 

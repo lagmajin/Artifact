@@ -105,6 +105,7 @@ public:
 
     // effect execution
     void applyCPUOnly(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst);
+    void applyConfigured(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst);
 
     // context
     void setContext(const EffectContext& context);

@@ -1981,6 +1981,7 @@ int main(int argc, char *argv[]) {
   mw->setStatusBar(status);
   status->showReadyMessage();
   status->setProjectText("Loaded");
+  mw->applyApplicationSettings();
   auto *projectService = ArtifactProjectService::instance();
   if (projectService) {
     projectService->setPreviewQualityPreset(applyPreviewPresetFromSettings());
@@ -1991,7 +1992,7 @@ int main(int argc, char *argv[]) {
                     applyThemeFromSettings, applyPreviewPresetFromSettings]() {
                      applyThemeFromSettings();
                      if (mw) {
-                       mw->applyUiFontSettings();
+                       mw->applyApplicationSettings();
                      }
                      if (projectService) {
                        projectService->setPreviewQualityPreset(

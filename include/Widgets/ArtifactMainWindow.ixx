@@ -69,6 +69,7 @@ public /*slots*/:
   void setWorkspaceMode(WorkspaceMode mode);
   WorkspaceMode workspaceMode() const;
   void applyUiFontSettings();
+  void applyApplicationSettings();
 
   // Dock enumeration
   QStringList dockTitles() const;
@@ -80,6 +81,7 @@ public /*slots*/:
   void setStatusCoordinates(int x, int y);
   void setStatusMemoryUsage(uint64_t memoryMB);
   void setStatusFPS(double fps);
+  void setStatusPreviewResolution(int percent);
   void setStatusReady();
   void setDockSplitterSizes(const QString &dockTitle, const QList<int> &sizes);
 

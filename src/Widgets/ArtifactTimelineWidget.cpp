@@ -12,6 +12,7 @@ module;
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QMessageBox>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
@@ -91,6 +92,7 @@ import Artifact.Effect.Abstract;
 import Frame.Position;
 import Undo.UndoManager;
 import Time.Rational;
+import UI.ShortcutBindings;
 
 namespace Artifact {
 
@@ -5759,11 +5761,128 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     }
   }
 
+  const auto &shortcuts = ArtifactCore::ShortcutBindings::instance();
+  const auto zoomTimelineBy = [this](const double scale) {
+    if (!impl_ || !impl_->painterTrackView_) {
+      return false;
+    }
+    const double oldPpf =
+        std::max<double>(0.001, static_cast<double>(impl_->painterTrackView_->pixelsPerFrame()));
+    const double newPpf = std::clamp(oldPpf * scale, 0.05, 64.0);
+    if (std::abs(newPpf - oldPpf) < 0.0001) {
+      return false;
+    }
+    const double anchorX =
+        static_cast<double>(std::max(1, impl_->painterTrackView_->width())) * 0.5;
+    const double anchorFrame =
+        (anchorX + impl_->painterTrackView_->horizontalOffset()) / oldPpf;
+    impl_->painterTrackView_->setPixelsPerFrame(newPpf);
+    impl_->painterTrackView_->setHorizontalOffset(anchorFrame * newPpf - anchorX);
+    Q_EMIT zoomLevelChanged(newPpf * 100.0);
+    return true;
+  };
+  const auto resetTimelineZoom = [this, &zoomTimelineBy]() {
+    if (!impl_ || !impl_->painterTrackView_) {
+      return false;
+    }
+    const double currentPpf =
+        std::max<double>(0.001, static_cast<double>(impl_->painterTrackView_->pixelsPerFrame()));
+    return zoomTimelineBy(2.0 / currentPpf);
+  };
+  if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineZoomIn)) {
+    if (zoomTimelineBy(1.12)) {
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineZoomOut)) {
+    if (zoomTimelineBy(1.0 / 1.12)) {
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineZoomReset)) {
+    if (resetTimelineZoom()) {
+      event->accept();
+      return;
+    }
+  }
+
+  auto deleteSelectedLayersFromTimeline = [this]() -> bool {
+    auto *service = ArtifactProjectService::instance();
+    auto *selection = ArtifactApplicationManager::instance()
+                          ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                          : nullptr;
+    const auto selectedLayers = selection ? selection->selectedLayers()
+                                          : QSet<ArtifactAbstractLayerPtr>{};
+    if (!service || selectedLayers.isEmpty()) {
+      return false;
+    }
+
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+      return false;
+    }
+
+    QVector<LayerID> layerIds;
+    layerIds.reserve(selectedLayers.size());
+    for (const auto &layer : selectedLayers) {
+      if (layer) {
+        layerIds.push_back(layer->id());
+      }
+    }
+    if (layerIds.isEmpty()) {
+      return false;
+    }
+
+    bool confirmed = false;
+    if (layerIds.size() == 1) {
+      const QString message =
+          service->layerRemovalConfirmationMessage(comp->id(), layerIds.front());
+      confirmed = QMessageBox::question(this, QStringLiteral("Delete Layer"),
+                                        message, QMessageBox::Yes | QMessageBox::No,
+                                        QMessageBox::No) == QMessageBox::Yes;
+    } else {
+      confirmed = QMessageBox::question(
+                     this, QStringLiteral("Delete Layers"),
+                     QStringLiteral("Delete %1 selected layers?")
+                         .arg(layerIds.size()),
+                     QMessageBox::Yes | QMessageBox::No, QMessageBox::No) ==
+                 QMessageBox::Yes;
+    }
+    if (!confirmed) {
+      return false;
+    }
+
+    if (auto *selectionManager = ArtifactApplicationManager::instance()
+                                     ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                                     : nullptr) {
+      selectionManager->clearSelection();
+    }
+
+    bool removed = false;
+    for (const auto &layerId : layerIds) {
+      removed = service->removeLayerFromComposition(comp->id(), layerId) || removed;
+    }
+    return removed;
+  };
+
   if (event && !event->isAutoRepeat()) {
     const Qt::KeyboardModifiers modifiers = event->modifiers();
     if (event->key() == Qt::Key_Tab && impl_ && impl_->graphEditorVisible_ &&
         isGraphEditorFocusWidget(QApplication::focusWidget())) {
       advanceGraphEditorFocus(modifiers.testFlag(Qt::ShiftModifier));
+      event->accept();
+      return;
+    }
+  }
+
+  if (shortcuts.matches(event, ArtifactCore::ShortcutId::LayerDeleteSelected)) {
+    auto *selection = ArtifactApplicationManager::instance()
+                          ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                          : nullptr;
+    const auto selectedLayers = selection ? selection->selectedLayers()
+                                          : QSet<ArtifactAbstractLayerPtr>{};
+    if (!selectedLayers.isEmpty()) {
+      deleteSelectedLayersFromTimeline();
       event->accept();
       return;
     }

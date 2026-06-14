@@ -187,6 +187,12 @@
     "move_down": "Move Down",
     "play_pause": "Play/Pause"
   },
+  "effect": {
+    "blur": {
+      "radius": "Radius",
+      "strength": "Strength"
+    }
+  },
   "viewer": {
     "fps_na": "FPS: N/A",
     "mem_na": "Mem: N/A",

@@ -63,11 +63,11 @@ int requiredMenuBarWidth(const QMenuBar* menuBar, const QFont& font)
   if (!action || !action->isVisible()) {
    continue;
   }
-  const int iconWidth = action->icon().isNull() ? 0 : 18;
-  const int spacing = action->icon().isNull() ? 0 : 6;
-  width += fm.horizontalAdvance(action->text()) + iconWidth + spacing + 16;
+  const int iconWidth = action->icon().isNull() ? 0 : 16;
+  const int spacing = action->icon().isNull() ? 0 : 4;
+  width += fm.horizontalAdvance(action->text()) + iconWidth + spacing + 9;
  }
- return width + 12;
+ return width + 8;
 }
 
 ArtifactTimelineWidget* activeTimelineWidget(QWidget* root)

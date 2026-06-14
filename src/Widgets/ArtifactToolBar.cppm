@@ -7,6 +7,7 @@ module;
 #include <QIcon>
 #include <QList>
 #include <QMenu>
+#include <QSignalBlocker>
 #include <QSize>
 #include <QString>
 #include <QStringList>
@@ -890,6 +891,35 @@ void ArtifactToolBar::refreshFromApplicationState()
       if (!toolLabel.isEmpty()) {
         setCurrentTool(toolLabel);
       }
+    }
+  }
+}
+
+void ArtifactToolBar::refreshFromSettings()
+{
+  if (!impl_) {
+    return;
+  }
+
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    const bool showGrid = settings->toolbarShowGrid();
+    const bool showGuides = settings->toolbarShowGuide();
+    impl_->gridVisible_ = showGrid;
+    impl_->guideVisible_ = showGuides;
+
+    if (impl_->gridToggleAction_) {
+      const QSignalBlocker blocker(impl_->gridToggleAction_);
+      impl_->gridToggleAction_->setChecked(showGrid);
+      impl_->gridToggleAction_->setIcon(loadIconWithFallback(
+          showGrid ? QString::fromLatin1(kToolbarIconGridOn)
+                   : QString::fromLatin1(kToolbarIconGridOff)));
+    }
+    if (impl_->guideToggleAction_) {
+      const QSignalBlocker blocker(impl_->guideToggleAction_);
+      impl_->guideToggleAction_->setChecked(showGuides);
+      impl_->guideToggleAction_->setIcon(loadIconWithFallback(
+          showGuides ? QString::fromLatin1(kToolbarIconGuidesOn)
+                     : QString::fromLatin1(kToolbarIconGuidesOff)));
     }
   }
 }

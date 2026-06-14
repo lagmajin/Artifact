@@ -306,10 +306,10 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
       const QFontMetrics& fm = menuItem->fontMetrics;
       const int textWidth = fm.horizontalAdvance(menuItem->text);
       const int textHeight = fm.height();
-      const int iconWidth = menuItem->icon.isNull() ? 0 : 18;
-      const int spacing = menuItem->icon.isNull() ? 0 : 6;
-      return QSize(std::max(contentsSize.width(), textWidth + iconWidth + spacing + 16),
-                   std::max(contentsSize.height(), textHeight + 10));
+      const int iconWidth = menuItem->icon.isNull() ? 0 : 16;
+      const int spacing = menuItem->icon.isNull() ? 0 : 4;
+      return QSize(std::max(contentsSize.width(), textWidth + iconWidth + spacing + 9),
+                   std::max(contentsSize.height(), textHeight + 7));
     }
   }
 
@@ -370,7 +370,7 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       painter->save();
       painter->setRenderHint(QPainter::Antialiasing, true);
 
-      const QRect itemRect = menuItem->rect.adjusted(2, 2, -2, -2);
+      const QRect itemRect = menuItem->rect.adjusted(1, 2, -1, -2);
       const bool enabled = menuItem->state.testFlag(State_Enabled);
       const QColor disabledText = menuText.darker(145);
       if (enabled && (menuItem->state.testFlag(State_Selected) ||
@@ -383,8 +383,8 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       const QFontMetrics& fm = menuItem->fontMetrics;
       const int textWidth = fm.horizontalAdvance(menuItem->text);
       const bool hasIcon = !menuItem->icon.isNull();
-      const int iconSize = hasIcon ? std::min(16, std::max(12, itemRect.height() - 6)) : 0;
-      const int spacing = hasIcon ? 6 : 0;
+      const int iconSize = hasIcon ? std::min(15, std::max(12, itemRect.height() - 6)) : 0;
+      const int spacing = hasIcon ? 4 : 0;
       const int contentWidth = textWidth + iconSize + spacing;
       int x = itemRect.left() + std::max(0, (itemRect.width() - contentWidth) / 2);
 

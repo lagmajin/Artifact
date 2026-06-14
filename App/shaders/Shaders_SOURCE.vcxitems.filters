@@ -209,6 +209,9 @@
     <FxCompile Include="$(MSBuildThisFileDirectory)blur_gaussian_float4CS.hlsl">
       <Filter>CS</Filter>
     </FxCompile>
+    <FxCompile Include="$(MSBuildThisFileDirectory)blur_radius_float4CS.hlsl">
+      <Filter>CS</Filter>
+    </FxCompile>
     <FxCompile Include="$(MSBuildThisFileDirectory)bloomseparateCS.hlsl">
       <Filter>CS</Filter>
     </FxCompile>

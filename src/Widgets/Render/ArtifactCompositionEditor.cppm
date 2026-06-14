@@ -123,6 +123,7 @@ import Artifact.Widget.Dialog.ScreenshotExport;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Image.ImageF32x4_RGBA;
 import Codec.Thumbnail.FFmpeg;
+import UI.ShortcutBindings;
 
 namespace Artifact {
 
@@ -2536,8 +2537,10 @@ protected:
       event->accept();
       return;
     }
-    if ((event->key() == Qt::Key_Backspace || event->key() == Qt::Key_Delete) &&
-        !event->isAutoRepeat()) {
+    if (!event->isAutoRepeat() &&
+        (ArtifactCore::ShortcutBindings::instance().matches(
+             event, ArtifactCore::ShortcutId::LayerDeleteSelected) ||
+         event->key() == Qt::Key_Backspace)) {
       auto *svc = ArtifactProjectService::instance();
       auto *active = ArtifactActiveContextService::instance();
       auto *selection = ArtifactLayerSelectionManager::instance();

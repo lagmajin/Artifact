@@ -22,6 +22,7 @@ module;
 #include <QEvent>
 #include <QHash>
 #include <QHeaderView>
+#include <QLabel>
 #include <QKeyEvent>
 #include <QLayout>
 #include <QList>
@@ -540,6 +541,7 @@ public:
   bool startupRefreshScheduled = false;
   bool startupLayoutFrozen = true;
   ArtifactAICloudWidget *aiCloudWidget_ = nullptr;
+  QLabel *previewResolutionLabel = nullptr;
   QHash<CDockWidget *, std::function<QWidget *()>> lazyDockFactories;
   QMetaObject::Connection currentTextLayerChangedConnection;
   QMetaObject::Connection currentShapeLayerChangedConnection;
@@ -1057,7 +1059,6 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->primaryCenterDock = centralDock;
   impl_->dockStyleManager->applyStyle();
 
-  statusBar();
   resize(2000,
          1200); // Increased initial window size to give central area more space
 }
@@ -1080,6 +1081,23 @@ void ArtifactMainWindow::applyUiFontSettings() {
   }
   if (impl_->dockStyleManager) {
     impl_->dockStyleManager->applyStyle();
+  }
+}
+
+void ArtifactMainWindow::applyApplicationSettings() {
+  if (!impl_) {
+    return;
+  }
+  applyUiFontSettings();
+  if (impl_->toolBar) {
+    impl_->toolBar->refreshFromSettings();
+  }
+  if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+    setStatusPreviewResolution(settings->previewResolutionPercent());
+  }
+  if (impl_->toolOptionsHost) {
+    impl_->toolOptionsHost->updateGeometry();
+    impl_->toolOptionsHost->update();
   }
 }
 
@@ -1744,6 +1762,22 @@ void ArtifactMainWindow::setStatusMemoryUsage(uint64_t memoryMB) {
 void ArtifactMainWindow::setStatusFPS(double fps) {
   statusBar()->showMessage(
       QStringLiteral("FPS: %1").arg(QString::number(fps, 'f', 1)), 1000);
+}
+
+void ArtifactMainWindow::setStatusPreviewResolution(int percent) {
+  if (!impl_) {
+    return;
+  }
+  auto *status = statusBar();
+  if (!impl_->previewResolutionLabel || impl_->previewResolutionLabel->parent() != status) {
+    impl_->previewResolutionLabel = new QLabel(status);
+    impl_->previewResolutionLabel->setObjectName(
+        QStringLiteral("PreviewResolutionStatusLabel"));
+    status->addPermanentWidget(impl_->previewResolutionLabel);
+  }
+  const int normalized = std::clamp(percent, 1, 100);
+  impl_->previewResolutionLabel->setText(
+      QStringLiteral("Preview: %1%").arg(normalized));
 }
 
 void ArtifactMainWindow::setStatusReady() {

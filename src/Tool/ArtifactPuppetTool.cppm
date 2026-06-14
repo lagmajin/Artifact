@@ -5,6 +5,7 @@ module;
 #include <vector>
 #include <map>
 #include <cmath>
+#include <cstring>
 #include <QApplication>
 #include <QPointF>
 #include <QRectF>
@@ -192,11 +193,17 @@ void ArtifactPuppetTool::deformLayer(const LayerID& layerId, ArtifactIRenderer* 
     // Bind image to engine if dirty
     if (lp->needsRebind) {
         QImage qimg = imageLayer->toQImage();
-        if (!qimg.isNull()) {
-            cv::Mat mat(qimg.height(), qimg.width(), CV_8UC4,
-                        const_cast<uchar*>(qimg.constBits()), qimg.bytesPerLine());
-            cv::Mat copy = mat.clone();
-            lp->engine->bindImage(copy, 10);
+        if (!qimg.isNull() && qimg.width() > 0 && qimg.height() > 0) {
+            QImage safe = qimg.convertToFormat(QImage::Format_RGBA8888).copy();
+            if (!safe.isNull()) {
+                cv::Mat mat(safe.height(), safe.width(), CV_8UC4);
+                const int rowBytes = safe.bytesPerLine();
+                const int copyBytes = std::min(static_cast<int>(mat.step), rowBytes);
+                for (int y = 0; y < safe.height(); ++y) {
+                    std::memcpy(mat.ptr(y), safe.constScanLine(y), static_cast<size_t>(copyBytes));
+                }
+                lp->engine->bindImage(mat, 10);
+            }
         }
         lp->needsRebind = false;
     }

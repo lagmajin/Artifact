@@ -140,22 +140,25 @@ Diligent::RESOURCE_STATE resourceStateFromVulkanLayout(std::uint32_t layout)
 
 
 GPUTextureCacheManager::GPUTextureCacheManager() = default;
-GPUTextureCacheManager::~GPUTextureCacheManager() = default;
+GPUTextureCacheManager::~GPUTextureCacheManager()
+{
+    clearDevice();
+}
 
 void GPUTextureCacheManager::setDevice(RefCntAutoPtr<IRenderDevice> device,
                                        TEXTURE_FORMAT format)
 {
     QMutexLocker locker(&mutex_);
+    clear();
     device_ = std::move(device);
     textureFormat_ = format;
-    clear();
 }
 
 void GPUTextureCacheManager::clearDevice()
 {
     QMutexLocker locker(&mutex_);
-    device_.Release();
     clear();
+    device_.Release();
 }
 
 void GPUTextureCacheManager::setBudgetBytes(size_t bytes)
