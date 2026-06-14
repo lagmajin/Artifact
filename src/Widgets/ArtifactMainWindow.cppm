@@ -1800,6 +1800,20 @@ void ArtifactMainWindow::setDockSplitterSizes(const QString &dockTitle,
   }
 }
 
+QByteArray ArtifactMainWindow::saveDockManagerState() const {
+  if (!impl_ || !impl_->dockManager)
+    return {};
+  return impl_->dockManager->saveState();
+}
+
+bool ArtifactMainWindow::restoreDockManagerState(const QByteArray &state) {
+  if (!impl_ || !impl_->dockManager || state.isEmpty())
+    return false;
+  // ADS は「全ての dock が DockManager に登録された後」でないと restore できない。
+  // 呼び出し側（AppMain）がレイアウト構築完了後に呼ぶことを前提とする。
+  return impl_->dockManager->restoreState(state);
+}
+
 void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
   if (!impl_ || impl_->startupLayoutFrozen == frozen) {
     return;

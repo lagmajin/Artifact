@@ -5,6 +5,12 @@ module;
 
 #include <QJsonArray>
 #include <QFileInfo>
+#include <QFile>
+#include <QIODevice>
+#include <QDir>
+#include <QDateTime>
+#include <QStandardPaths>
+#include <QSettings>
 #include <QColor>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -28,6 +34,7 @@ import Artifact.Service.ActiveContext;
 import Artifact.Project;
 import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
+import Artifact.Effect.Abstract;
 import Artifact.Layer.Factory;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.InitParams;
@@ -100,6 +107,7 @@ public:
         using ArtifactCore::IDescribable;
         return {
             {"workspaceSnapshot", IDescribable::loc("Return a combined project, composition, selection, and render queue snapshot.", "Return a combined project, composition, selection, and render queue snapshot.", {}), "QVariantMap"},
+            {"workspaceDiagnostics", IDescribable::loc("Return a compact workspace diagnostics summary.", "Return a compact workspace diagnostics summary.", {}), "QVariantMap"},
             {"projectSnapshot", IDescribable::loc("Return the current project JSON snapshot.", "Return the current project JSON snapshot.", {}), "QVariantMap"},
             {"currentCompositionSnapshot", IDescribable::loc("Return the active composition snapshot.", "Return the active composition snapshot.", {}), "QVariantMap"},
             {"selectionSnapshot", IDescribable::loc("Return the current layer selection snapshot.", "Return the current layer selection snapshot.", {}), "QVariantMap"},
@@ -155,9 +163,18 @@ public:
             {"addLayerEffect", IDescribable::loc("Add an effect to a layer in the active composition.", "Add an effect to a layer in the active composition.", {}), "QString", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectType")}},
             {"removeLayerEffect", IDescribable::loc("Remove an effect from a layer in the active composition.", "Remove an effect from a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId")}},
             {"setLayerEffectParameter", IDescribable::loc("Set an effect parameter on a layer in the active composition.", "Set an effect parameter on a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QVariant")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("paramName"), QStringLiteral("value")}},
+            {"setLayerEffectEnabled", IDescribable::loc("Enable or disable an effect on a layer in the active composition.", "Enable or disable an effect on a layer in the active composition.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("bool")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("enabled")}},
+            {"moveLayerEffect", IDescribable::loc("Move an effect within a layer's effect stack.", "Move an effect within a layer's effect stack.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("direction")}},
+            {"duplicateLayerEffect", IDescribable::loc("Duplicate an effect on a layer in the active composition.", "Duplicate an effect on a layer in the active composition.", {}), "QString", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId")}},
+            {"saveLayerEffectPreset", IDescribable::loc("Save an effect preset from a layer effect to a file.", "Save an effect preset from a layer effect to a file.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("filePath")}},
+            {"loadLayerEffectPreset", IDescribable::loc("Load an effect preset into a layer effect from a file.", "Load an effect preset into a layer effect from a file.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("effectId"), QStringLiteral("filePath")}},
+            {"listLayerEffectPresets", IDescribable::loc("List effect preset files in a directory.", "List effect preset files in a directory.", {}), "QVariantList", {QStringLiteral("QString")}, {QStringLiteral("directoryPath")}},
+            {"recentLayerEffectPresets", IDescribable::loc("List recently used effect presets.", "List recently used effect presets.", {}), "QVariantList", {QStringLiteral("int")}, {QStringLiteral("limit")}},
             {"setKeyframe", IDescribable::loc("Set a keyframe for a layer property at a specific frame.", "Set a keyframe for a layer property at a specific frame.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int"), QStringLiteral("double")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber"), QStringLiteral("value")}},
             {"getKeyframes", IDescribable::loc("Get all keyframes for a layer property.", "Get all keyframes for a layer property.", {}), "QVariantList", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath")}},
             {"deleteKeyframe", IDescribable::loc("Delete a keyframe for a layer property at a specific frame.", "Delete a keyframe for a layer property at a specific frame.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QString"), QStringLiteral("int")}, {QStringLiteral("layerId"), QStringLiteral("propertyPath"), QStringLiteral("frameNumber")}},
+            {"getLayerKeyframeSummary", IDescribable::loc("Return a summary of keyframed properties for a layer.", "Return a summary of keyframed properties for a layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("layerId")}},
+            {"batchSetKeyframes", IDescribable::loc("Set multiple keyframes for a layer from a JSON array.", "Set multiple keyframes for a layer from a JSON array.", {}), "QVariantMap", {QStringLiteral("QString"), QStringLiteral("QVariantList")}, {QStringLiteral("layerId"), QStringLiteral("keyframes")}},
             {"createGroupLayer", IDescribable::loc("Create a new group layer in the active composition.", "Create a new group layer in the active composition.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("name")}},
             {"moveLayersToGroup", IDescribable::loc("Move multiple layers into a group layer.", "Move multiple layers into a group layer.", {}), "QVariantMap", {QStringLiteral("QStringList"), QStringLiteral("QString")}, {QStringLiteral("layerIds"), QStringLiteral("groupLayerId")}},
             {"ungroupLayers", IDescribable::loc("Ungroup all layers in a group layer.", "Ungroup all layers in a group layer.", {}), "QVariantMap", {QStringLiteral("QString")}, {QStringLiteral("groupLayerId")}},
@@ -169,6 +186,8 @@ public:
             {"projectItemRemovalConfirmationMessage", IDescribable::loc("Return the confirmation message for deleting a project item by id.", "Return the confirmation message for deleting a project item by id.", {}), "QString", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
             {"renameProjectItemById", IDescribable::loc("Rename a project item by id.", "Rename a project item by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("itemId"), QStringLiteral("newName")}},
             {"moveProjectItemToFolder", IDescribable::loc("Move a project item under a folder by id.", "Move a project item under a folder by id.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("itemId"), QStringLiteral("parentFolderId")}},
+            {"batchRenameProjectItems", IDescribable::loc("Rename multiple project items from a JSON array.", "Rename multiple project items from a JSON array.", {}), "QVariantMap", {QStringLiteral("QVariantList")}, {QStringLiteral("items")}},
+            {"batchMoveProjectItemsToFolder", IDescribable::loc("Move multiple project items into a folder.", "Move multiple project items into a folder.", {}), "QVariantMap", {QStringLiteral("QStringList"), QStringLiteral("QString")}, {QStringLiteral("itemIds"), QStringLiteral("parentFolderId")}},
             {"createFolderInProject", IDescribable::loc("Create a project folder, optionally under a parent folder.", "Create a project folder, optionally under a parent folder.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("name"), QStringLiteral("parentFolderId")}},
             {"removeProjectItemById", IDescribable::loc("Remove a project item by id.", "Remove a project item by id.", {}), "bool", {QStringLiteral("QString")}, {QStringLiteral("itemId")}},
             {"relinkFootageByPath", IDescribable::loc("Relink a footage item by its old file path.", "Relink a footage item by its old file path.", {}), "bool", {QStringLiteral("QString"), QStringLiteral("QString")}, {QStringLiteral("oldFilePath"), QStringLiteral("newFilePath")}},
@@ -257,6 +276,9 @@ public:
     {
         if (name == QStringLiteral("workspaceSnapshot")) {
             return workspaceSnapshot();
+        }
+        if (name == QStringLiteral("workspaceDiagnostics")) {
+            return workspaceDiagnostics();
         }
         if (name == QStringLiteral("projectSnapshot")) {
             return projectSnapshot();
@@ -423,6 +445,27 @@ public:
         if (name == QStringLiteral("setLayerEffectParameter")) {
             return setLayerEffectParameter(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2), args.value(3));
         }
+        if (name == QStringLiteral("setLayerEffectEnabled")) {
+            return setLayerEffectEnabled(stringArg(args, 0), stringArg(args, 1), boolArg(args, 2, true));
+        }
+        if (name == QStringLiteral("moveLayerEffect")) {
+            return moveLayerEffect(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0));
+        }
+        if (name == QStringLiteral("duplicateLayerEffect")) {
+            return duplicateLayerEffect(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("saveLayerEffectPreset")) {
+            return saveLayerEffectPreset(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2));
+        }
+        if (name == QStringLiteral("loadLayerEffectPreset")) {
+            return loadLayerEffectPreset(stringArg(args, 0), stringArg(args, 1), stringArg(args, 2));
+        }
+        if (name == QStringLiteral("listLayerEffectPresets")) {
+            return listLayerEffectPresets(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("recentLayerEffectPresets")) {
+            return recentLayerEffectPresets(intArg(args, 0, 10));
+        }
         if (name == QStringLiteral("setKeyframe")) {
             return setKeyframe(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0), doubleArg(args, 3, 0.0));
         }
@@ -431,6 +474,12 @@ public:
         }
         if (name == QStringLiteral("deleteKeyframe")) {
             return deleteKeyframe(stringArg(args, 0), stringArg(args, 1), intArg(args, 2, 0));
+        }
+        if (name == QStringLiteral("getLayerKeyframeSummary")) {
+            return getLayerKeyframeSummary(stringArg(args, 0));
+        }
+        if (name == QStringLiteral("batchSetKeyframes")) {
+            return batchSetKeyframes(stringArg(args, 0), args.value(1).toList());
         }
         if (name == QStringLiteral("createGroupLayer")) {
             return createGroupLayer(stringArg(args, 0));
@@ -464,6 +513,12 @@ public:
         }
         if (name == QStringLiteral("moveProjectItemToFolder")) {
             return moveProjectItemToFolder(stringArg(args, 0), stringArg(args, 1));
+        }
+        if (name == QStringLiteral("batchRenameProjectItems")) {
+            return batchRenameProjectItems(args.value(0).toList());
+        }
+        if (name == QStringLiteral("batchMoveProjectItemsToFolder")) {
+            return batchMoveProjectItemsToFolder(args.value(0).toStringList(), stringArg(args, 1));
         }
         if (name == QStringLiteral("createFolderInProject")) {
             return createFolderInProject(stringArg(args, 0), stringArg(args, 1));
@@ -1061,6 +1116,43 @@ private:
         obj.insert(QStringLiteral("currentComposition"), currentCompositionSnapshot());
         obj.insert(QStringLiteral("renderQueue"), renderQueueSnapshot());
         return obj;
+    }
+
+    static QVariantMap workspaceDiagnostics()
+    {
+        QVariantMap diag;
+        const QVariantMap project = projectSnapshot();
+        const QVariantMap selection = selectionSnapshot();
+        const QVariantMap comp = currentCompositionSnapshot();
+        const QVariantMap queue = renderQueueSnapshot();
+
+        diag.insert(QStringLiteral("available"), true);
+        diag.insert(QStringLiteral("hasProject"), project.value(QStringLiteral("available")).toBool());
+        diag.insert(QStringLiteral("hasActiveComposition"), comp.value(QStringLiteral("available")).toBool());
+        diag.insert(QStringLiteral("selectedLayerCount"), selection.value(QStringLiteral("selectedLayerCount")).toInt());
+        diag.insert(QStringLiteral("renderQueueJobCount"), queue.value(QStringLiteral("jobCount")).toInt());
+        diag.insert(QStringLiteral("projectName"), project.value(QStringLiteral("projectName")).toString());
+        diag.insert(QStringLiteral("activeCompositionName"), comp.value(QStringLiteral("name")).toString());
+        diag.insert(QStringLiteral("activeCompositionId"), comp.value(QStringLiteral("id")).toString());
+
+        QStringList warnings;
+        if (!diag.value(QStringLiteral("hasProject")).toBool()) {
+            warnings.append(QStringLiteral("No project is currently open."));
+        }
+        if (!diag.value(QStringLiteral("hasActiveComposition")).toBool()) {
+            warnings.append(QStringLiteral("No active composition is selected."));
+        }
+        if (diag.value(QStringLiteral("selectedLayerCount")).toInt() == 0) {
+            warnings.append(QStringLiteral("No layers are selected."));
+        }
+        if (diag.value(QStringLiteral("renderQueueJobCount")).toInt() == 0) {
+            warnings.append(QStringLiteral("Render queue is empty."));
+        }
+        diag.insert(QStringLiteral("warnings"), warnings);
+        diag.insert(QStringLiteral("summary"), warnings.isEmpty()
+            ? QStringLiteral("Workspace looks ready.")
+            : QStringLiteral("Workspace needs attention."));
+        return diag;
     }
 
     static QVariantList listCompositions()
@@ -1754,6 +1846,241 @@ private:
         return result.success;
     }
 
+    static QVariant setLayerEffectEnabled(const QString& layerId, const QString& effectId, bool enabled)
+    {
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return false;
+
+        const auto result = effectService->setEffectEnabled(
+            ArtifactCore::LayerID(layerId),
+            effectId,
+            enabled
+        );
+
+        return result.success;
+    }
+
+    static QVariant moveLayerEffect(const QString& layerId, const QString& effectId, int direction)
+    {
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return false;
+
+        const auto result = effectService->moveEffect(
+            ArtifactCore::LayerID(layerId),
+            effectId,
+            direction
+        );
+
+        return result.success;
+    }
+
+    static QVariant duplicateLayerEffect(const QString& layerId, const QString& effectId)
+    {
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return QString();
+
+        const auto result = effectService->duplicateEffect(
+            ArtifactCore::LayerID(layerId),
+            effectId
+        );
+
+        if (result.success) {
+            return result.effectId;
+        }
+        return QString();
+    }
+
+    static QVariant saveLayerEffectPreset(const QString& layerId, const QString& effectId, const QString& filePath)
+    {
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return false;
+
+        const auto effect = findLayerEffect(layerId, effectId);
+        if (!effect) {
+            return false;
+        }
+
+        const bool ok = effectService->saveEffectPreset(effect, filePath);
+        if (ok) {
+            recordRecentLayerEffectPreset(filePath, effect);
+        }
+        return ok;
+    }
+
+    static QVariant loadLayerEffectPreset(const QString& layerId, const QString& effectId, const QString& filePath)
+    {
+        auto* effectService = ArtifactEffectService::instance();
+        if (!effectService) return false;
+
+        auto effect = findLayerEffect(layerId, effectId);
+        if (!effect) {
+            return false;
+        }
+
+        const bool ok = effectService->loadEffectPreset(effect, filePath);
+        if (ok) {
+            recordRecentLayerEffectPreset(filePath, effect);
+        }
+        return ok;
+    }
+
+    static QVariant listLayerEffectPresets(const QString& directoryPath)
+    {
+        const QDir dir(resolveLayerEffectPresetDirectory(directoryPath));
+        if (!dir.exists()) {
+            return QVariantList();
+        }
+
+        QVariantList presets;
+        const QFileInfoList files = dir.entryInfoList({QStringLiteral("*.json")}, QDir::Files | QDir::Readable, QDir::Name);
+        for (const QFileInfo& info : files) {
+            QVariantMap item;
+            item[QStringLiteral("fileName")] = info.fileName();
+            item[QStringLiteral("filePath")] = info.absoluteFilePath();
+            item[QStringLiteral("sizeBytes")] = static_cast<qint64>(info.size());
+            item[QStringLiteral("modified")] = info.lastModified().toString(Qt::ISODate);
+
+            QFile file(info.absoluteFilePath());
+            if (file.open(QIODevice::ReadOnly)) {
+                const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+                if (doc.isObject()) {
+                    const QJsonObject obj = doc.object();
+                    const QString effectId = obj.value(QStringLiteral("effect_id")).toString();
+                    const QString displayName = obj.value(QStringLiteral("display_name")).toString();
+                    if (!effectId.isEmpty()) {
+                        item[QStringLiteral("effectId")] = effectId;
+                    }
+                    if (!displayName.isEmpty()) {
+                        item[QStringLiteral("displayName")] = displayName;
+                    }
+                }
+            }
+            if (!item.contains(QStringLiteral("displayName"))) {
+                item[QStringLiteral("displayName")] = info.completeBaseName();
+            }
+            presets.append(item);
+        }
+        return presets;
+    }
+
+    static QVariant recentLayerEffectPresets(int limit)
+    {
+        const int cappedLimit = std::max(0, limit);
+        if (cappedLimit == 0) {
+            return QVariantList();
+        }
+
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("AI/EffectPresets/Recent"));
+        const int count = settings.beginReadArray(QStringLiteral("items"));
+        QVariantList presets;
+        for (int i = count - 1; i >= 0 && presets.size() < cappedLimit; --i) {
+            settings.setArrayIndex(i);
+            const QString filePath = settings.value(QStringLiteral("filePath")).toString();
+            if (filePath.trimmed().isEmpty()) {
+                continue;
+            }
+            QVariantMap item;
+            item[QStringLiteral("filePath")] = filePath;
+            item[QStringLiteral("fileName")] = settings.value(QStringLiteral("fileName")).toString();
+            item[QStringLiteral("effectId")] = settings.value(QStringLiteral("effectId")).toString();
+            item[QStringLiteral("displayName")] = settings.value(QStringLiteral("displayName")).toString();
+            item[QStringLiteral("lastUsed")] = settings.value(QStringLiteral("lastUsed")).toString();
+            presets.append(item);
+        }
+        settings.endArray();
+        settings.endGroup();
+        return presets;
+    }
+
+    static QString resolveLayerEffectPresetDirectory(const QString& directoryPath)
+    {
+        const QString trimmed = directoryPath.trimmed();
+        if (!trimmed.isEmpty()) {
+            return QDir::cleanPath(trimmed);
+        }
+        QString base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        if (base.isEmpty()) {
+            base = QDir::currentPath();
+        }
+        return QDir(base).filePath(QStringLiteral("presets/effects"));
+    }
+
+    static void recordRecentLayerEffectPreset(const QString& filePath, const ArtifactAbstractEffectPtr& effect)
+    {
+        const QString trimmedPath = filePath.trimmed();
+        if (trimmedPath.isEmpty()) {
+            return;
+        }
+
+        QFileInfo info(trimmedPath);
+        QVariantMap entry;
+        entry[QStringLiteral("filePath")] = info.absoluteFilePath();
+        entry[QStringLiteral("fileName")] = info.fileName();
+        entry[QStringLiteral("effectId")] = effect ? effect->effectID().toQString() : QString();
+        entry[QStringLiteral("displayName")] = effect ? effect->displayName().toQString() : QString();
+        entry[QStringLiteral("lastUsed")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+
+        QSettings settings;
+        settings.beginGroup(QStringLiteral("AI/EffectPresets/Recent"));
+        QVariantList recentEntries;
+        const int count = settings.beginReadArray(QStringLiteral("items"));
+        recentEntries.reserve(count + 1);
+        for (int i = 0; i < count; ++i) {
+            settings.setArrayIndex(i);
+            const QString existingPath = settings.value(QStringLiteral("filePath")).toString();
+            if (existingPath.trimmed().isEmpty()) {
+                continue;
+            }
+            if (QDir::cleanPath(existingPath) == entry.value(QStringLiteral("filePath")).toString()) {
+                continue;
+            }
+            QVariantMap existing;
+            existing[QStringLiteral("filePath")] = existingPath;
+            existing[QStringLiteral("fileName")] = settings.value(QStringLiteral("fileName")).toString();
+            existing[QStringLiteral("effectId")] = settings.value(QStringLiteral("effectId")).toString();
+            existing[QStringLiteral("displayName")] = settings.value(QStringLiteral("displayName")).toString();
+            existing[QStringLiteral("lastUsed")] = settings.value(QStringLiteral("lastUsed")).toString();
+            recentEntries.append(existing);
+        }
+        settings.endArray();
+        recentEntries.prepend(entry);
+        while (recentEntries.size() > 12) {
+            recentEntries.removeLast();
+        }
+        settings.beginWriteArray(QStringLiteral("items"));
+        for (int i = 0; i < recentEntries.size(); ++i) {
+            settings.setArrayIndex(i);
+            const QVariantMap item = recentEntries[i].toMap();
+            settings.setValue(QStringLiteral("filePath"), item.value(QStringLiteral("filePath")));
+            settings.setValue(QStringLiteral("fileName"), item.value(QStringLiteral("fileName")));
+            settings.setValue(QStringLiteral("effectId"), item.value(QStringLiteral("effectId")));
+            settings.setValue(QStringLiteral("displayName"), item.value(QStringLiteral("displayName")));
+            settings.setValue(QStringLiteral("lastUsed"), item.value(QStringLiteral("lastUsed")));
+        }
+        settings.endArray();
+        settings.endGroup();
+    }
+
+    static ArtifactAbstractEffectPtr findLayerEffect(const QString& layerId, const QString& effectId)
+    {
+        auto* ps = ArtifactProjectService::instance();
+        if (!ps) return {};
+
+        auto comp = ps->currentComposition().lock();
+        if (!comp) return {};
+
+        auto layer = comp->layerById(ArtifactCore::LayerID(layerId));
+        if (!layer) return {};
+
+        for (const auto& effect : layer->getEffects()) {
+            if (effect && effect->effectID().toQString() == effectId) {
+                return effect;
+            }
+        }
+        return {};
+    }
+
     // Phase 4: Keyframe Animation
     // 
     // Set keyframe at given frame number for a property path.
@@ -1893,6 +2220,214 @@ private:
 
         return QVariantMap{
             {QStringLiteral("success"), removed}
+        };
+    }
+
+    static QVariant getLayerKeyframeSummary(const QString& layerId)
+    {
+        QVariantMap result;
+        auto svc = ArtifactProjectService::instance();
+        if (!svc) {
+            result.insert(QStringLiteral("available"), false);
+            return result;
+        }
+
+        auto currentComp = svc->currentComposition().lock();
+        if (!currentComp) {
+            result.insert(QStringLiteral("available"), false);
+            return result;
+        }
+
+        auto layer = currentComp->layerById(LayerID(layerId));
+        if (!layer) {
+            result.insert(QStringLiteral("available"), false);
+            return result;
+        }
+
+        static ArtifactTimelineKeyframeModel keyframeModel;
+        const QStringList candidateProperties = {
+            QStringLiteral("transform.position.x"),
+            QStringLiteral("transform.position.y"),
+            QStringLiteral("transform.position.z"),
+            QStringLiteral("transform.rotation"),
+            QStringLiteral("transform.scale.x"),
+            QStringLiteral("transform.scale.y"),
+            QStringLiteral("transform.scale.z"),
+            QStringLiteral("transform.anchor.x"),
+            QStringLiteral("transform.anchor.y"),
+            QStringLiteral("opacity"),
+            QStringLiteral("blending.opacity")
+        };
+
+        QVariantList properties;
+        int keyframeCount = 0;
+        for (const auto& propertyPath : candidateProperties) {
+            const auto frames = keyframeModel.getKeyframesFor(currentComp->id(), layer->id(), propertyPath);
+            if (frames.empty()) {
+                continue;
+            }
+
+            const auto frameToInt = [](const RationalTime& time) -> int {
+                const auto scale = time.scale();
+                if (scale == 0) {
+                    return static_cast<int>(time.value());
+                }
+                return static_cast<int>(time.rescaledTo(1));
+            };
+
+            QVariantMap entry;
+            entry.insert(QStringLiteral("propertyPath"), propertyPath);
+            entry.insert(QStringLiteral("keyframeCount"), static_cast<int>(frames.size()));
+            entry.insert(QStringLiteral("firstFrame"), frameToInt(frames.front().time));
+            entry.insert(QStringLiteral("lastFrame"), frameToInt(frames.back().time));
+            properties.push_back(entry);
+            keyframeCount += static_cast<int>(frames.size());
+        }
+
+        result.insert(QStringLiteral("available"), true);
+        result.insert(QStringLiteral("layerId"), layerId);
+        result.insert(QStringLiteral("propertyCount"), properties.size());
+        result.insert(QStringLiteral("keyframeCount"), keyframeCount);
+        result.insert(QStringLiteral("properties"), properties);
+        return result;
+    }
+
+    static QVariant batchSetKeyframes(const QString& layerId, const QVariantList& keyframes)
+    {
+        QVariantMap result;
+        auto svc = ArtifactProjectService::instance();
+        if (!svc) {
+            result.insert(QStringLiteral("success"), false);
+            result.insert(QStringLiteral("error"), QStringLiteral("ProjectService not available"));
+            return result;
+        }
+
+        auto currentComp = svc->currentComposition().lock();
+        if (!currentComp) {
+            result.insert(QStringLiteral("success"), false);
+            result.insert(QStringLiteral("error"), QStringLiteral("No active composition"));
+            return result;
+        }
+
+        auto layer = currentComp->layerById(LayerID(layerId));
+        if (!layer) {
+            result.insert(QStringLiteral("success"), false);
+            result.insert(QStringLiteral("error"), QStringLiteral("Layer not found"));
+            return result;
+        }
+
+        static ArtifactTimelineKeyframeModel keyframeModel;
+        int addedCount = 0;
+        int skippedCount = 0;
+        QVariantList details;
+        for (const QVariant& entryValue : keyframes) {
+            const QVariantMap entry = entryValue.toMap();
+            const QString propertyPath = entry.value(QStringLiteral("propertyPath")).toString();
+            const int frameNumber = entry.value(QStringLiteral("frameNumber")).toInt();
+            const double value = entry.value(QStringLiteral("value")).toDouble();
+            if (propertyPath.trimmed().isEmpty() || frameNumber < 0) {
+                ++skippedCount;
+                continue;
+            }
+            const bool ok = keyframeModel.addKeyframe(
+                currentComp->id(),
+                layer->id(),
+                propertyPath,
+                RationalTime(frameNumber, 30),
+                QVariant(value),
+                InterpolationType::Linear);
+            if (ok) {
+                ++addedCount;
+            } else {
+                ++skippedCount;
+            }
+            details.append(QVariantMap{
+                {QStringLiteral("propertyPath"), propertyPath},
+                {QStringLiteral("frameNumber"), frameNumber},
+                {QStringLiteral("value"), value},
+                {QStringLiteral("success"), ok}
+            });
+        }
+
+        result.insert(QStringLiteral("success"), skippedCount == 0);
+        result.insert(QStringLiteral("addedCount"), addedCount);
+        result.insert(QStringLiteral("skippedCount"), skippedCount);
+        result.insert(QStringLiteral("details"), details);
+        return result;
+    }
+
+    static QVariant batchRenameProjectItems(const QVariantList& items)
+    {
+        int renamedCount = 0;
+        int skippedCount = 0;
+        QVariantList details;
+
+        for (const QVariant& itemValue : items) {
+            const QVariantMap item = itemValue.toMap();
+            const QString itemId = item.value(QStringLiteral("itemId")).toString().trimmed();
+            const QString newName = item.value(QStringLiteral("newName")).toString().trimmed();
+            if (itemId.isEmpty() || newName.isEmpty()) {
+                ++skippedCount;
+                details.push_back(QVariantMap{
+                    {QStringLiteral("itemId"), itemId},
+                    {QStringLiteral("success"), false},
+                    {QStringLiteral("error"), QStringLiteral("Missing itemId or newName")}
+                });
+                continue;
+            }
+
+            const bool success = renameProjectItemById(itemId, newName).toBool();
+            if (success) {
+                ++renamedCount;
+            } else {
+                ++skippedCount;
+            }
+            details.push_back(QVariantMap{
+                {QStringLiteral("itemId"), itemId},
+                {QStringLiteral("newName"), newName},
+                {QStringLiteral("success"), success}
+            });
+        }
+
+        return QVariantMap{
+            {QStringLiteral("success"), skippedCount == 0},
+            {QStringLiteral("renamedCount"), renamedCount},
+            {QStringLiteral("skippedCount"), skippedCount},
+            {QStringLiteral("details"), details}
+        };
+    }
+
+    static QVariant batchMoveProjectItemsToFolder(const QStringList& itemIds, const QString& parentFolderId)
+    {
+        int movedCount = 0;
+        int skippedCount = 0;
+        QVariantList details;
+
+        for (const QString& rawItemId : itemIds) {
+            const QString itemId = rawItemId.trimmed();
+            if (itemId.isEmpty()) {
+                ++skippedCount;
+                continue;
+            }
+
+            const bool success = moveProjectItemToFolder(itemId, parentFolderId).toBool();
+            if (success) {
+                ++movedCount;
+            } else {
+                ++skippedCount;
+            }
+            details.push_back(QVariantMap{
+                {QStringLiteral("itemId"), itemId},
+                {QStringLiteral("parentFolderId"), parentFolderId},
+                {QStringLiteral("success"), success}
+            });
+        }
+
+        return QVariantMap{
+            {QStringLiteral("success"), skippedCount == 0},
+            {QStringLiteral("movedCount"), movedCount},
+            {QStringLiteral("skippedCount"), skippedCount},
+            {QStringLiteral("details"), details}
         };
     }
 

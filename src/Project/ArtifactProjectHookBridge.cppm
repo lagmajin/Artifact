@@ -1,6 +1,8 @@
-#include "../../include/Project/ArtifactProjectHookBridge.ixx"
-
+module;
 #include <QStringList>
+
+module Artifact.Project.HookBridge;
+
 import Artifact.Script.Hooks;
 
 namespace Artifact {

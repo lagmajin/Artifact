@@ -176,6 +176,42 @@ int runAIToolBridgeTests()
     report.check(createProjectTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
                  QStringLiteral("project creation returns a result map"));
 
+    const QJsonObject getLayerEffectsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getLayerEffects"));
+    report.check(!getLayerEffectsTool.isEmpty(), QStringLiteral("workspace automation exposes layer effect listing"));
+
+    const QJsonObject addLayerEffectTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("addLayerEffect"));
+    report.check(!addLayerEffectTool.isEmpty(), QStringLiteral("workspace automation exposes layer effect add"));
+
+    const QJsonObject removeLayerEffectTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("removeLayerEffect"));
+    report.check(!removeLayerEffectTool.isEmpty(), QStringLiteral("workspace automation exposes layer effect removal"));
+
+    const QJsonObject setLayerEffectParameterTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setLayerEffectParameter"));
+    report.check(!setLayerEffectParameterTool.isEmpty(), QStringLiteral("workspace automation exposes layer effect parameter edit"));
+
+    const QJsonObject setLayerEffectEnabledTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setLayerEffectEnabled"));
+    report.check(!setLayerEffectEnabledTool.isEmpty(), QStringLiteral("workspace automation exposes layer effect enable toggle"));
+
+    const QJsonObject moveLayerEffectTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("moveLayerEffect"));
+    report.check(!moveLayerEffectTool.isEmpty(), QStringLiteral("workspace automation exposes layer effect reorder"));
+
+    const QJsonObject duplicateLayerEffectTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("duplicateLayerEffect"));
+    report.check(!duplicateLayerEffectTool.isEmpty(), QStringLiteral("workspace automation exposes layer effect duplication"));
+
+    const QJsonObject saveLayerEffectPresetTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("saveLayerEffectPreset"));
+    report.check(!saveLayerEffectPresetTool.isEmpty(), QStringLiteral("workspace automation exposes layer effect preset save"));
+
+    const QJsonObject loadLayerEffectPresetTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("loadLayerEffectPreset"));
+    report.check(!loadLayerEffectPresetTool.isEmpty(), QStringLiteral("workspace automation exposes layer effect preset load"));
+
+    const QJsonObject listLayerEffectPresetsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("listLayerEffectPresets"));
+    report.check(!listLayerEffectPresetsTool.isEmpty(), QStringLiteral("workspace automation exposes effect preset listing"));
+
+    const QJsonObject recentLayerEffectPresetsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("recentLayerEffectPresets"));
+    report.check(!recentLayerEffectPresetsTool.isEmpty(), QStringLiteral("workspace automation exposes effect preset recent history"));
+
+    const QJsonObject workspaceDiagnosticsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("workspaceDiagnostics"));
+    report.check(!workspaceDiagnosticsTool.isEmpty(), QStringLiteral("workspace automation exposes diagnostics summary"));
+
     const QJsonObject setKeyframeTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("setKeyframe"));
     report.check(!setKeyframeTool.isEmpty(), QStringLiteral("workspace automation exposes keyframe creation"));
     report.check(setKeyframeTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
@@ -185,6 +221,12 @@ int runAIToolBridgeTests()
     report.check(!deleteKeyframeTool.isEmpty(), QStringLiteral("workspace automation exposes keyframe deletion"));
     report.check(deleteKeyframeTool.value(QStringLiteral("returnType")).toString() == QStringLiteral("QVariantMap"),
                  QStringLiteral("keyframe deletion returns a result map"));
+
+    const QJsonObject keyframeSummaryTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("getLayerKeyframeSummary"));
+    report.check(!keyframeSummaryTool.isEmpty(), QStringLiteral("workspace automation exposes keyframe summaries"));
+
+    const QJsonObject batchKeyframeTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("batchSetKeyframes"));
+    report.check(!batchKeyframeTool.isEmpty(), QStringLiteral("workspace automation exposes batch keyframe setting"));
 
     const QJsonObject createGroupLayerTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("createGroupLayer"));
     report.check(!createGroupLayerTool.isEmpty(), QStringLiteral("workspace automation exposes group creation"));
@@ -341,6 +383,12 @@ int runAIToolBridgeTests()
 
     const QJsonObject moveProjectItemTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("moveProjectItemToFolder"));
     report.check(!moveProjectItemTool.isEmpty(), QStringLiteral("workspace automation exposes project item move"));
+
+    const QJsonObject batchRenameProjectItemsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("batchRenameProjectItems"));
+    report.check(!batchRenameProjectItemsTool.isEmpty(), QStringLiteral("workspace automation exposes batch project rename"));
+
+    const QJsonObject batchMoveProjectItemsTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("batchMoveProjectItemsToFolder"));
+    report.check(!batchMoveProjectItemsTool.isEmpty(), QStringLiteral("workspace automation exposes batch project move"));
 
     const QJsonObject createFolderTool = findTool(tools, QStringLiteral("WorkspaceAutomation"), QStringLiteral("createFolderInProject"));
     report.check(!createFolderTool.isEmpty(), QStringLiteral("workspace automation exposes project folder creation"));

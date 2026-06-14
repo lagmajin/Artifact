@@ -175,7 +175,7 @@ struct SequenceImportGroup {
 bool isImageImportCandidate(const QString &path)
 {
   ArtifactCore::FileTypeDetector detector;
-  return detector.detect(path) == ArtifactCore::FileType::Image;
+  return detector.detectByExtension(path) == ArtifactCore::FileType::Image;
 }
 
 QVector<SequenceImportGroup> detectSequenceImportGroups(
@@ -493,6 +493,38 @@ void updateLastUsedCreationDefaults(const std::shared_ptr<ArtifactProject>& proj
   }
   project->setCreationDefaultsState(state);
 }
+
+void normalizeNewImageLayerTransform(const ArtifactCompositionPtr &comp,
+                                     const ArtifactAbstractLayerPtr &layer) {
+  if (!comp || !layer) {
+    return;
+  }
+
+  auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer);
+  if (!imageLayer) {
+    return;
+  }
+
+  auto &t3d = layer->transform3D();
+  if (std::abs(t3d.positionX()) > 0.001f || std::abs(t3d.positionY()) > 0.001f ||
+      std::abs(t3d.anchorX()) > 0.001f || std::abs(t3d.anchorY()) > 0.001f) {
+    return;
+  }
+
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+      localBounds.height() <= 0.0) {
+    return;
+  }
+
+  const QPointF targetAnchor = localBounds.center();
+  const RationalTime time(comp->framePosition().framePosition(), 30000);
+  t3d.setAnchor(time, static_cast<float>(targetAnchor.x()),
+                static_cast<float>(targetAnchor.y()), t3d.anchorZ());
+  t3d.setPosition(time, static_cast<float>(targetAnchor.x()),
+                  static_cast<float>(targetAnchor.y()));
+  layer->setDirty(LayerDirtyFlag::Transform);
+}
 } // namespace
 
 class ArtifactProjectService::Impl {
@@ -700,6 +732,8 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
         result.layer->setPosition3D(
             QVector3D(compCenterX, compCenterY, current.z()));
       }
+
+      normalizeNewImageLayerTransform(comp, result.layer);
     }
 
     if (auto project = manager.getCurrentProjectSharedPtr()) {
@@ -960,8 +994,9 @@ void ArtifactProjectService::Impl::importAssetsFromPathsAsync(
         importedPaths.append(finalFile);
       }
 
-      if (!importedPaths.isEmpty() && detector.detect(importedPaths.back()) ==
-                                          ArtifactCore::FileType::Image) {
+      if (!importedPaths.isEmpty() &&
+          detector.detectByExtension(importedPaths.back()) ==
+              ArtifactCore::FileType::Image) {
         const QSize imageSize = imageSizeForPath(importedPaths.back());
         if (imageSize.isValid() && compSize.isValid() &&
             (imageSize.width() != compSize.width() ||
@@ -996,7 +1031,7 @@ void ArtifactProjectService::Impl::checkImportedAssetCompatibility(
     if (path.isEmpty())
       continue;
 
-    auto type = detector.detect(path);
+    auto type = detector.detectByExtension(path);
     if (type == ArtifactCore::FileType::Unknown) {
       qWarning() << "[CompatibilityGuard] Unknown/unsupported file type:"
                  << path;

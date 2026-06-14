@@ -2988,6 +2988,7 @@ int main(int argc, char *argv[]) {
         layoutStore.remove("MainWindow/version");
         layoutStore.remove("MainWindow/geometry");
         layoutStore.remove("MainWindow/state");
+        layoutStore.remove("MainWindow/dockState");
         layoutStore.sync();
         layoutState = UiLayoutState("ArtifactMainWindow");
       }
@@ -3013,6 +3014,7 @@ int main(int argc, char *argv[]) {
         layoutStore.remove("MainWindow/version");
         layoutStore.remove("MainWindow/geometry");
         layoutStore.remove("MainWindow/state");
+        layoutStore.remove("MainWindow/dockState");
         layoutStore.sync();
         mw->resize(1600, 900);
         resetApplied = true;
@@ -3024,6 +3026,12 @@ int main(int argc, char *argv[]) {
     mw->activateDock(QStringLiteral("Composition Viewer"));
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);
     mw->activateDock(QStringLiteral("Layer View (Diligent)"));
+    // ADS の dock 配置を復元。全 dock が DockManager に登録された後でなければ
+    // ならないため、setStartupLayoutFrozen(false) の直前で呼ぶ。
+    // 古い version 1 のレイアウト（dockState 無し）はスキップされる。
+    if (!layoutState.dockState.isEmpty()) {
+      mw->restoreDockManagerState(layoutState.dockState);
+    }
     mw->setStartupLayoutFrozen(false);
   });
 
@@ -3040,6 +3048,9 @@ int main(int argc, char *argv[]) {
     layoutState.version = kMainWindowLayoutVersion;
     layoutState.geometry = mw->saveGeometry();
     layoutState.state = mw->saveState();
+    // ADS の dock 配置（タブグループ、splitter、floating 位置）を保存。
+    // QMainWindow::saveState() には含まれないため別途保持する。
+    layoutState.dockState = mw->saveDockManagerState();
     layoutState.saveToStore(layoutStore, "MainWindow");
     layoutStore.sync();
     workspaceManager.saveSession(mw);

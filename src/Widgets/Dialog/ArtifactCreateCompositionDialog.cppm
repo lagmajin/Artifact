@@ -6,6 +6,7 @@ module;
 #include <QTabWidget>
 #include <QDialogButtonBox>
 #include <QBoxLayout>
+#include <QHBoxLayout>
 #include <QEvent>
 #include <QKeyEvent>
 #include <QLineEdit>
@@ -17,6 +18,8 @@ module;
 #include <QComboBox>
 #include <QPushButton>
 #include <QToolButton>
+#include <QDoubleSpinBox>
+#include <QPointF>
 #include <QIcon>
 #include <QPixmap>
 #include <QPainter>
@@ -208,7 +211,9 @@ QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
   QComboBox* pixelAspectCombo_ = nullptr;
   DragSpinBox* widthSpinBox = nullptr;
   DragSpinBox* heightSpinBox = nullptr;
-  QToolButton* aspectLockButton_ = nullptr;
+ QToolButton* aspectLockButton_ = nullptr;
+  QDoubleSpinBox* anchorXSpinBox = nullptr;
+  QDoubleSpinBox* anchorYSpinBox = nullptr;
   DoubleDragSpinBox* durationSpinBox = nullptr;
   QLineEdit* startTimecodeEdit = nullptr;
   QPushButton* bgColorButton = nullptr;
@@ -419,9 +424,27 @@ QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
     }
     const QColor defaultBg(
         settings->projectDefaultCompositionBackgroundColor());
-    impl_->bgColor = normalizedCompositionBackgroundDefault(defaultBg);
-    updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
+  impl_->bgColor = normalizedCompositionBackgroundDefault(defaultBg);
+  updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
   }
+
+  auto anchorLabel = new QLabel(QStringLiteral("Anchor Point"), this);
+  formLayout->addRow(anchorLabel);
+  auto* anchorLayout = new QHBoxLayout();
+  impl_->anchorXSpinBox = new QDoubleSpinBox(this);
+  impl_->anchorYSpinBox = new QDoubleSpinBox(this);
+  for (auto* spin : {impl_->anchorXSpinBox, impl_->anchorYSpinBox}) {
+    spin->setRange(0.0, 1.0);
+    spin->setSingleStep(0.05);
+    spin->setDecimals(3);
+  }
+  impl_->anchorXSpinBox->setValue(0.5);
+  impl_->anchorYSpinBox->setValue(0.5);
+  anchorLayout->addWidget(new QLabel(QStringLiteral("X"), this));
+  anchorLayout->addWidget(impl_->anchorXSpinBox);
+  anchorLayout->addWidget(new QLabel(QStringLiteral("Y"), this));
+  anchorLayout->addWidget(impl_->anchorYSpinBox);
+  formLayout->addRow(anchorLayout);
 
   qInfo() << "[CreateCompositionDialog][Ctor] CompositionSettingPage ms="
           << ctorTimer.elapsed();
@@ -443,6 +466,9 @@ QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
      params.setDurationSeconds(impl_->durationSpinBox->value());
      QColor c = impl_->bgColor;
      params.setBackgroundColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+     params.setCompositionAnchorPoint(QPointF(
+         impl_->anchorXSpinBox ? impl_->anchorXSpinBox->value() : 0.5,
+         impl_->anchorYSpinBox ? impl_->anchorYSpinBox->value() : 0.5));
      return params;
  }
 

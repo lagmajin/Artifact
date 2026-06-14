@@ -1,4 +1,7 @@
-#include "../../include/Layer/ArtifactCompositionLayerFactory.ixx"
+module;
+#include <memory>
+
+module Artifact.Layer.Composition.Factory;
 
 import Artifact.Layer.Composition;
 

@@ -2398,10 +2398,6 @@ void drawLayerForCompositionView(
     return;
   }
 
-  if (layer->isConstructionLayer()) {
-    return;
-  }
-
   if (const auto parent = layer->parentLayer();
       parent && parent->isGroupLayer()) {
     return;
@@ -3737,8 +3733,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 impl_->applyCompositionState(comp);
               } else {
                 // Property/transform modification: invalidate only this layer
-                // ギズモドラッグ中は同じレイヤーのピクセルは変わらないので
-                // GPU テクスチャキャッシュ無効化をスキップ（transform のみ変化）
+                // ギズモドラッグ中は同じレイヤーのピクセルは変わらないので、
+                // transform だけの更新では重いサーフェス再生成を避ける。
                 if (auto layer = comp->layerById(layerId)) {
                   const bool skipCacheInvalidation =
                       impl_->gizmoDragActive_ &&

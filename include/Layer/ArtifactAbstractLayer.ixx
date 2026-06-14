@@ -356,6 +356,7 @@ public:
   virtual bool isAdjustmentLayer() const;
   void setAdjustmentLayer(bool isAdjustment);
   virtual bool isConstructionLayer() const;
+  virtual bool shouldIncludeInFinalRender() const;
 
   bool is3D() const;
 

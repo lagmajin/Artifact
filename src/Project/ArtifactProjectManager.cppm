@@ -18,8 +18,9 @@ module;
 #include <wobjectimpl.h>
 //#include <folly\Singleton.h>
 
-#include "../../include/Project/ArtifactProjectHookBridge.ixx"
 module Artifact.Project.Manager;
+
+import Artifact.Project.HookBridge;
 
 import std;
 

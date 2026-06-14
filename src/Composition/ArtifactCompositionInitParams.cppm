@@ -2,6 +2,7 @@ module;
 
 #include <QSize>
 #include <QString>
+#include <QPointF>
 #include <string>
 #include <cstdint>
 
@@ -58,6 +59,7 @@ namespace Artifact {
   TimeCode startTimeCode_;
   WorkArea workArea_;
   FloatColor backgroundColor_;
+  QPointF compositionAnchorPoint_;
   PreviewQuality previewQuality_;
   ResolutionFactor resolutionFactor_;
   MotionBlurSettings motionBlurSettings_;
@@ -70,6 +72,7 @@ namespace Artifact {
      duration_(kDefaultDurationFrames, kDefaultFrameRate),
      startTimeCode_(0, kDefaultFrameRate),
      backgroundColor_(0.0f, 0.0f, 0.0f, 1.0f),
+     compositionAnchorPoint_(0.5, 0.5),
      resolutionFactor_(ResolutionFactor::Full),
      renderer3D_(Renderer3DType::Classic3D)
   {
@@ -105,6 +108,7 @@ namespace Artifact {
   // startTimeCode_ is not copyable
   impl_->workArea_ = other.impl_->workArea_;
   impl_->backgroundColor_ = other.impl_->backgroundColor_;
+  impl_->compositionAnchorPoint_ = other.impl_->compositionAnchorPoint_;
   impl_->previewQuality_ = other.impl_->previewQuality_;
   impl_->motionBlurSettings_ = other.impl_->motionBlurSettings_;
   impl_->resolutionFactor_ = other.impl_->resolutionFactor_;
@@ -128,6 +132,7 @@ namespace Artifact {
    // startTimeCode_ is not copyable
    impl_->workArea_ = other.impl_->workArea_;
    impl_->backgroundColor_ = other.impl_->backgroundColor_;
+   impl_->compositionAnchorPoint_ = other.impl_->compositionAnchorPoint_;
    impl_->previewQuality_ = other.impl_->previewQuality_;
    impl_->motionBlurSettings_ = other.impl_->motionBlurSettings_;
    impl_->resolutionFactor_ = other.impl_->resolutionFactor_;
@@ -284,11 +289,23 @@ namespace Artifact {
   return impl_->backgroundColor_;
  }
 
- void ArtifactCompositionInitParams::setBackgroundColor(const FloatColor& color)
- {
-  impl_->backgroundColor_ =
+void ArtifactCompositionInitParams::setBackgroundColor(const FloatColor& color)
+{
+ impl_->backgroundColor_ =
       FloatColor(color.r(), color.g(), color.b(), 1.0f);
- }
+}
+
+QPointF ArtifactCompositionInitParams::compositionAnchorPoint() const
+{
+  return impl_->compositionAnchorPoint_;
+}
+
+void ArtifactCompositionInitParams::setCompositionAnchorPoint(const QPointF& anchorPoint)
+{
+  impl_->compositionAnchorPoint_ = QPointF(
+      std::clamp(anchorPoint.x(), 0.0, 1.0),
+      std::clamp(anchorPoint.y(), 0.0, 1.0));
+}
 
  PreviewQuality ArtifactCompositionInitParams::previewQuality() const
  {

@@ -11,6 +11,8 @@ module;
 #include <QString>
 #include <opencv2/opencv.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module CurvesEffect;

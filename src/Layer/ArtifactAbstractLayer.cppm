@@ -82,10 +82,10 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
 
 QMatrix4x4 matrixFromTransform2D(const QTransform& transform) {
   return QMatrix4x4(
-      static_cast<float>(transform.m11()), static_cast<float>(transform.m12()), 0.0f, static_cast<float>(transform.m13()),
-      static_cast<float>(transform.m21()), static_cast<float>(transform.m22()), 0.0f, static_cast<float>(transform.m23()),
+      static_cast<float>(transform.m11()), static_cast<float>(transform.m21()), 0.0f, static_cast<float>(transform.m31()),
+      static_cast<float>(transform.m12()), static_cast<float>(transform.m22()), 0.0f, static_cast<float>(transform.m32()),
       0.0f,                               0.0f,                               1.0f, 0.0f,
-      static_cast<float>(transform.m31()), static_cast<float>(transform.m32()), 0.0f, static_cast<float>(transform.m33()));
+      static_cast<float>(transform.m13()), static_cast<float>(transform.m23()), 0.0f, static_cast<float>(transform.m33()));
 }
 
 QString slugifyEffectId(const QString &text) {
@@ -1259,6 +1259,8 @@ bool ArtifactAbstractLayer::isNullLayer() const { return false; }
 
 bool ArtifactAbstractLayer::isConstructionLayer() const { return false; }
 
+bool ArtifactAbstractLayer::shouldIncludeInFinalRender() const { return true; }
+
 bool ArtifactAbstractLayer::isCloneLayer() const { return false; }
 
 bool ArtifactAbstractLayer::hasAudio() const { return false; }
@@ -1718,6 +1720,88 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["variants"] = variantsArr;
   obj["activeVariantIndex"] = static_cast<int>(impl_->activeVariantIndex_);
 
+  // Masks
+  if (hasMasks()) {
+    QJsonArray masksArr;
+    for (int maskIndex = 0; maskIndex < maskCount(); ++maskIndex) {
+      const auto layerMask = impl_->getMask(maskIndex);
+      QJsonObject mobj;
+      mobj["enabled"] = layerMask.isEnabled();
+
+      QJsonArray pathsArr;
+      for (int pathIndex = 0; pathIndex < layerMask.maskPathCount();
+           ++pathIndex) {
+        const auto path = layerMask.maskPath(pathIndex);
+        QJsonObject pobj;
+
+        // vertices: 各頂点は position / inTangent / outTangent（QPointF = x,y）
+        QJsonArray vertsArr;
+        for (int vi = 0; vi < path.vertexCount(); ++vi) {
+          const auto v = path.vertex(vi);
+          QJsonObject vobj;
+          vobj["px"] = v.position.x();
+          vobj["py"] = v.position.y();
+          vobj["ix"] = v.inTangent.x();
+          vobj["iy"] = v.inTangent.y();
+          vobj["ox"] = v.outTangent.x();
+          vobj["oy"] = v.outTangent.y();
+          vertsArr.append(vobj);
+        }
+        pobj["vertices"] = vertsArr;
+        pobj["closed"] = path.isClosed();
+        pobj["opacity"] = static_cast<double>(path.opacity());
+        pobj["feather"] = static_cast<double>(path.feather());
+        pobj["featherHorizontal"] = static_cast<double>(path.featherHorizontal());
+        pobj["featherVertical"] = static_cast<double>(path.featherVertical());
+        pobj["featherInner"] = static_cast<double>(path.featherInner());
+        pobj["featherOuter"] = static_cast<double>(path.featherOuter());
+        pobj["expansion"] = static_cast<double>(path.expansion());
+        pobj["inverted"] = path.isInverted();
+        pobj["mode"] = static_cast<int>(path.mode());
+        pobj["name"] = path.name().toQString();
+
+        // animation keyframes
+        if (path.hasAnimationKeyframes()) {
+          QJsonArray kfArr;
+          for (const auto &kf : path.animationKeyframes()) {
+            QJsonObject kfobj;
+            kfobj["frame"] = static_cast<qint64>(kf.frame);
+            kfobj["closed"] = kf.closed;
+            kfobj["opacity"] = static_cast<double>(kf.opacity);
+            kfobj["feather"] = static_cast<double>(kf.feather);
+            kfobj["featherHorizontal"] = static_cast<double>(kf.featherHorizontal);
+            kfobj["featherVertical"] = static_cast<double>(kf.featherVertical);
+            kfobj["featherInner"] = static_cast<double>(kf.featherInner);
+            kfobj["featherOuter"] = static_cast<double>(kf.featherOuter);
+            kfobj["expansion"] = static_cast<double>(kf.expansion);
+            kfobj["inverted"] = kf.inverted;
+            kfobj["mode"] = static_cast<int>(kf.mode);
+            kfobj["name"] = kf.name.toQString();
+
+            QJsonArray kfVertsArr;
+            for (const auto &v : kf.vertices) {
+              QJsonObject vobj;
+              vobj["px"] = v.position.x();
+              vobj["py"] = v.position.y();
+              vobj["ix"] = v.inTangent.x();
+              vobj["iy"] = v.inTangent.y();
+              vobj["ox"] = v.outTangent.x();
+              vobj["oy"] = v.outTangent.y();
+              kfVertsArr.append(vobj);
+            }
+            kfobj["vertices"] = kfVertsArr;
+            kfArr.append(kfobj);
+          }
+          pobj["animationKeyframes"] = kfArr;
+        }
+        pathsArr.append(pobj);
+      }
+      mobj["paths"] = pathsArr;
+      masksArr.append(mobj);
+    }
+    obj["masks"] = masksArr;
+  }
+
   return obj;
 }
 
@@ -1909,6 +1993,108 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       }
   }
 
+  // Masks
+  if (obj.contains("masks") && obj["masks"].isArray()) {
+    impl_->clearMasks();
+    const auto masksArr = obj["masks"].toArray();
+    for (const auto &maskVal : masksArr) {
+      if (!maskVal.isObject()) continue;
+      const auto mobj = maskVal.toObject();
+
+      LayerMask layerMask;
+      if (mobj.contains("enabled")) {
+        layerMask.setEnabled(mobj["enabled"].toBool(true));
+      }
+
+      if (mobj.contains("paths") && mobj["paths"].isArray()) {
+        const auto pathsArr = mobj["paths"].toArray();
+        for (const auto &pathVal : pathsArr) {
+          if (!pathVal.isObject()) continue;
+          const auto pobj = pathVal.toObject();
+
+          MaskPath path;
+          path.clearVertices();
+          if (pobj.contains("vertices") && pobj["vertices"].isArray()) {
+            const auto vertsArr = pobj["vertices"].toArray();
+            for (const auto &vVal : vertsArr) {
+              if (!vVal.isObject()) continue;
+              const auto vobj = vVal.toObject();
+              MaskVertex v;
+              v.position = QPointF(vobj["px"].toDouble(), vobj["py"].toDouble());
+              v.inTangent = QPointF(vobj["ix"].toDouble(), vobj["iy"].toDouble());
+              v.outTangent = QPointF(vobj["ox"].toDouble(), vobj["oy"].toDouble());
+              path.addVertex(v);
+            }
+          }
+          if (pobj.contains("closed"))
+            path.setClosed(pobj["closed"].toBool(true));
+          if (pobj.contains("opacity"))
+            path.setOpacity(static_cast<float>(pobj["opacity"].toDouble(1.0)));
+          if (pobj.contains("feather"))
+            path.setFeather(static_cast<float>(pobj["feather"].toDouble(0.0)));
+          if (pobj.contains("featherHorizontal"))
+            path.setFeatherHorizontal(static_cast<float>(pobj["featherHorizontal"].toDouble(0.0)));
+          if (pobj.contains("featherVertical"))
+            path.setFeatherVertical(static_cast<float>(pobj["featherVertical"].toDouble(0.0)));
+          if (pobj.contains("featherInner"))
+            path.setFeatherInner(static_cast<float>(pobj["featherInner"].toDouble(0.0)));
+          if (pobj.contains("featherOuter"))
+            path.setFeatherOuter(static_cast<float>(pobj["featherOuter"].toDouble(0.0)));
+          if (pobj.contains("expansion"))
+            path.setExpansion(static_cast<float>(pobj["expansion"].toDouble(0.0)));
+          if (pobj.contains("inverted"))
+            path.setInverted(pobj["inverted"].toBool(false));
+          if (pobj.contains("mode"))
+            path.setMode(static_cast<MaskMode>(pobj["mode"].toInt(static_cast<int>(MaskMode::Add))));
+          if (pobj.contains("name"))
+            path.setName(UniString::fromQString(pobj["name"].toString()));
+
+          // animation keyframes
+          if (pobj.contains("animationKeyframes") && pobj["animationKeyframes"].isArray()) {
+            const auto kfArr = pobj["animationKeyframes"].toArray();
+            for (const auto &kfVal : kfArr) {
+              if (!kfVal.isObject()) continue;
+              const auto kfobj = kfVal.toObject();
+
+              MaskPathKeyframeSnapshot snap;
+              snap.frame = static_cast<int64_t>(kfobj["frame"].toVariant().toLongLong());
+              snap.closed = kfobj["closed"].toBool(true);
+              snap.opacity = static_cast<float>(kfobj["opacity"].toDouble(1.0));
+              snap.feather = static_cast<float>(kfobj["feather"].toDouble(0.0));
+              snap.featherHorizontal = static_cast<float>(kfobj["featherHorizontal"].toDouble(0.0));
+              snap.featherVertical = static_cast<float>(kfobj["featherVertical"].toDouble(0.0));
+              snap.featherInner = static_cast<float>(kfobj["featherInner"].toDouble(0.0));
+              snap.featherOuter = static_cast<float>(kfobj["featherOuter"].toDouble(0.0));
+              snap.expansion = static_cast<float>(kfobj["expansion"].toDouble(0.0));
+              snap.inverted = kfobj["inverted"].toBool(false);
+              snap.mode = static_cast<MaskMode>(kfobj["mode"].toInt(static_cast<int>(MaskMode::Add)));
+              snap.name = UniString::fromQString(kfobj["name"].toString());
+
+              if (kfobj.contains("vertices") && kfobj["vertices"].isArray()) {
+                const auto kfVertsArr = kfobj["vertices"].toArray();
+                for (const auto &vVal : kfVertsArr) {
+                  if (!vVal.isObject()) continue;
+                  const auto vobj = vVal.toObject();
+                  MaskVertex v;
+                  v.position = QPointF(vobj["px"].toDouble(), vobj["py"].toDouble());
+                  v.inTangent = QPointF(vobj["ix"].toDouble(), vobj["iy"].toDouble());
+                  v.outTangent = QPointF(vobj["ox"].toDouble(), vobj["oy"].toDouble());
+                  snap.vertices.push_back(v);
+                }
+              }
+              path.setAnimationKeyframe(snap.frame, snap);
+            }
+          }
+
+          layerMask.addMaskPath(path);
+        }
+      }
+
+      impl_->addMask(layerMask);
+    }
+    changed();
+  }
+
   applyPropertiesFromJson(obj);
 }
 
@@ -2091,6 +2277,7 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   auto opacityProp =
       makeProp(QStringLiteral("layer.opacity"), PropertyType::Float,
                static_cast<double>(opacity()), -140);
+  opacityProp->setDisplayLabel(QStringLiteral("Opacity"));
   opacityProp->setHardRange(0.0, 1.0);
   opacityProp->setSoftRange(0.0, 1.0);
   opacityProp->setStep(0.01);
@@ -2103,42 +2290,49 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
 
   auto posXProp = makeProp(QStringLiteral("transform.position.x"),
                            PropertyType::Float, t3.positionX(), -300);
+  posXProp->setDisplayLabel(QStringLiteral("Position X"));
   posXProp->setUnit(QStringLiteral("px"));
   posXProp->setAnimatable(true);
   transformGroup.addProperty(posXProp);
 
   auto posYProp = makeProp(QStringLiteral("transform.position.y"),
                            PropertyType::Float, t3.positionY(), -299);
+  posYProp->setDisplayLabel(QStringLiteral("Position Y"));
   posYProp->setUnit(QStringLiteral("px"));
   posYProp->setAnimatable(true);
   transformGroup.addProperty(posYProp);
 
   auto scaleXProp = makeProp(QStringLiteral("transform.scale.x"),
                              PropertyType::Float, t3.scaleX(), -298);
+  scaleXProp->setDisplayLabel(QStringLiteral("Scale X"));
   scaleXProp->setAnimatable(true);
    scaleXProp->setSoftRange(0.0, 2.0);  // Soft range for typical use (0-200%)
   transformGroup.addProperty(scaleXProp);
 
   auto scaleYProp = makeProp(QStringLiteral("transform.scale.y"),
                              PropertyType::Float, t3.scaleY(), -297);
+  scaleYProp->setDisplayLabel(QStringLiteral("Scale Y"));
   scaleYProp->setAnimatable(true);
    scaleYProp->setSoftRange(0.0, 2.0);  // Soft range for typical use (0-200%)
   transformGroup.addProperty(scaleYProp);
 
   auto rotationProp = makeProp(QStringLiteral("transform.rotation"),
                                PropertyType::Float, t3.rotation(), -296);
+  rotationProp->setDisplayLabel(QStringLiteral("Rotation"));
   rotationProp->setUnit(QStringLiteral("deg"));
   rotationProp->setAnimatable(true);
   transformGroup.addProperty(rotationProp);
 
   auto anchorXProp = makeProp(QStringLiteral("transform.anchor.x"),
                               PropertyType::Float, t3.anchorX(), -295);
+  anchorXProp->setDisplayLabel(QStringLiteral("Anchor X"));
   anchorXProp->setUnit(QStringLiteral("px"));
   anchorXProp->setAnimatable(true);
   transformGroup.addProperty(anchorXProp);
 
   auto anchorYProp = makeProp(QStringLiteral("transform.anchor.y"),
                               PropertyType::Float, t3.anchorY(), -294);
+  anchorYProp->setDisplayLabel(QStringLiteral("Anchor Y"));
   anchorYProp->setUnit(QStringLiteral("px"));
   anchorYProp->setAnimatable(true);
   transformGroup.addProperty(anchorYProp);

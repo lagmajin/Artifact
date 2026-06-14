@@ -108,7 +108,8 @@ namespace Artifact
         
         // `allLayer()` は背面 -> 前面の順で保持されているので、そのまま描画する。
         for (const auto& layer : layers) {
-            if (layer && !layer->isConstructionLayer() && layer->isActiveAt(position) && layer->isVisible()) {
+            if (layer && layer->isActiveAt(position) && layer->isVisible() &&
+                layer->shouldIncludeInFinalRender()) {
                 // 各レイヤーの描画ロジック（render）を呼び出し
                 layer->draw(renderer_.get());
             }

@@ -1,8 +1,9 @@
-#pragma once
-
+module;
 #include <QString>
 
-namespace Artifact {
+export module Artifact.Project.HookBridge;
+
+export namespace Artifact {
 
 void runArtifactProjectHook(const QString& hookName, const QString& path);
 

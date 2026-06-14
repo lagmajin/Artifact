@@ -1,6 +1,6 @@
 # Milestone: Cloud AI Widget API Expansion - All Phases (2026-04-26)
 
-**Status**: Phases 1-2 Implemented ✅ | Phases 3-5 Framework Ready 🔧  
+**Status**: Phases 1-2 Implemented ✅ | Phase 3 Partial 🟡 | Phases 4-5 Implemented 🔧  
 **Goal**: Comprehensive Cloud AI agent capabilities for composition and layer manipulation.
 
 ---
@@ -19,40 +19,46 @@
 - `getLayerOpacity()` / `setLayerOpacity()`
 - **Status**: Complete and working
 
-### Phase 3: Effects & Masks 🔧
+### Phase 3: Effects & Masks 🟡
 - `getLayerEffects()` / `addLayerEffect()` / `removeLayerEffect()` / `setLayerEffectParameter()`
-- **Status**: Framework implemented, stubs ready for effect API integration
+- `setLayerEffectEnabled()` / `moveLayerEffect()` / `duplicateLayerEffect()`
+- `saveLayerEffectPreset()` / `loadLayerEffectPreset()`
+- `listLayerEffectPresets()` / `recentLayerEffectPresets()`
+- **Status**: Partial implementation available; core effect operations are callable
 
 ### Phase 4: Keyframe Animation 🔧
 - `setKeyframe()` / `getKeyframes()` / `deleteKeyframe()`
-- **Status**: Framework implemented, stubs ready for timeline API integration
+- `getLayerKeyframeSummary()` / `batchSetKeyframes()`
+- **Status**: Framework plus batch helpers implemented; summary is heuristic over known property paths
 
 ### Phase 5: Group Layers 🔧
 - `createGroupLayer()` / `moveLayersToGroup()` / `ungroupLayers()`
-- **Status**: Framework implemented, stubs ready for group layer API integration
+- `batchRenameProjectItems()` / `batchMoveProjectItemsToFolder()`
+- **Status**: Framework plus batch helpers implemented
 
 ---
 
 ## Implementation Details
 
-### Total Methods Added: 21
+### Total Methods Added: 33
 
 | Phase | Methods | Status |
 |-------|---------|--------|
 | 1 | 4 | ✅ Implemented |
 | 2 | 8 | ✅ Implemented |
-| 3 | 4 | 🔧 Framework |
-| 4 | 3 | 🔧 Framework |
-| 5 | 3 | 🔧 Framework |
+| 3 | 11 | 🟡 Partial |
+| 4 | 5 | 🔧 Implemented |
+| 5 | 5 | 🔧 Implemented |
 
 ### Files Modified
 
 **`Artifact/include/AI/WorkspaceAutomation.ixx`**:
-- Added 21 method descriptions to `methodDescriptions()` array
-- Added 21 method handlers in `invokeMethod()` dispatcher
+- Added 29 method descriptions to `methodDescriptions()` array
+- Added 33 method descriptions to `methodDescriptions()` array
+- Added 33 method handlers in `invokeMethod()` dispatcher
 - Added full implementations for Phase 1-2 (12 methods)
-- Added framework stubs for Phase 3-5 (9 methods)
-- **Total additions**: 324 lines
+- Added partial implementations for Phase 3 and batch helpers for Phases 4-5
+- **Total additions**: 324+ lines
 
 ---
 
@@ -119,21 +125,26 @@ setLayerOpacity(layerId, opacity) → bool
 
 ---
 
-## Phase 3: Effects & Masks (4 Methods - Framework)
+## Phase 3: Effects & Masks (9 Methods - Partial)
 
-**Status**: 🔧 Registered and callable, stub implementations ready
+**Status**: 🟡 Registered and callable, core effect operations implemented
 
 ```cpp
 getLayerEffects(layerId) → QVariantList
 addLayerEffect(layerId, effectType) → String (effectId)
 removeLayerEffect(layerId, effectId) → bool
 setLayerEffectParameter(layerId, effectId, paramName, value) → bool
+setLayerEffectEnabled(layerId, effectId, enabled) → bool
+moveLayerEffect(layerId, effectId, direction) → bool
+duplicateLayerEffect(layerId, effectId) → String
+saveLayerEffectPreset(layerId, effectId, filePath) → bool
+loadLayerEffectPreset(layerId, effectId, filePath) → bool
 ```
 
 **Current Implementation**:
 - Methods registered in tool descriptions
 - All handlers route correctly
-- Stubs return empty/false with TODO comments
+- Core effect operations delegate to `ArtifactEffectService`
 
 **To Complete Phase 3**:
 1. Access effect stack via `ArtifactAbstractLayer::effectStack()`
@@ -248,11 +259,15 @@ All methods follow the same pattern:
 4. Verify position changed in UI
 5. Repeat for scale, rotation, opacity
 
-**Phases 3-5 - Framework**:
+**Phase 3 - Effects**:
 1. Chat: "Add a Hue effect to layer X"
-   - AI calls `addLayerEffect()`, which currently returns empty string
-   - AI apologizes: "Effect API not yet implemented"
-2. Once stubs are implemented with real logic, same command works
+   - AI calls `addLayerEffect()` and receives the new effect id
+2. Chat: "Disable that effect"
+   - AI calls `setLayerEffectEnabled()`
+3. Chat: "Move the effect up"
+   - AI calls `moveLayerEffect()`
+4. Chat: "Duplicate the effect"
+   - AI calls `duplicateLayerEffect()`
 
 ---
 

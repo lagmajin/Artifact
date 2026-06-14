@@ -798,10 +798,43 @@ void ParticleSystem::goToFrame(int64_t frame, double fps)
     reset();
     if (frame < 0 || fps <= 0.0) return;
 
+    // 冒頭フレーム（frame <= 1）で preWarm を要求するエミッタがある場合だけ、
+    // 本来のシミュレーションに先立って短時間のプリウォームを行う。
+    // これにより rate の低いエミッタでも冒頭フレームから十分な粒子が描画される。
+    // frame > 1 ではスキップするので、タイムライン途中の見た目は変わらない。
+    if (frame <= 1) {
+        bool anyPreWarm = false;
+        for (const auto& emitter : emitters_) {
+            if (emitter && emitter->params().preWarm) {
+                anyPreWarm = true;
+                break;
+            }
+        }
+        if (anyPreWarm) {
+            // preWarm() は内部で clear()+update() を呼ぶが、直前の reset() と
+            // 重複しても副作用はない。プリウォーム後の粒子状態を保持したまま
+            // 以下の通常ループへ進むため、ここでは各エミッタの preWarm ではなく
+            // update() を直接回して状態を温める。
+            constexpr float kPreWarmDuration = 0.5f; // 秒
+            const float stepSize = 1.0f / 120.0f;    // 決定論的な基本刻み
+            float warmTime = 0.0f;
+            while (warmTime < kPreWarmDuration) {
+                const float dt = std::min(stepSize, kPreWarmDuration - warmTime);
+                for (auto& emitter : emitters_) {
+                    if (emitter && emitter->params().preWarm) {
+                        emitter->update(dt);
+                    }
+                }
+                warmTime += dt;
+            }
+            // プリウォームで進めた時刻を time_ に反映させない（frame 時刻は下で上書き）
+        }
+    }
+
     // 固定ステップでシミュレートしてターゲット時間に到達させる
     const double targetTime = static_cast<double>(frame) / fps;
     const float stepSize = 1.0f / 120.0f; // 決定論的な基本刻み
-    
+
     float currentTime = 0.0f;
     while (currentTime < targetTime) {
         float dt = std::min(stepSize, static_cast<float>(targetTime - currentTime));

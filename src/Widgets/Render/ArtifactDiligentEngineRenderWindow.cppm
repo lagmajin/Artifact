@@ -449,10 +449,8 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
    pDevice->CreateGraphicsPipelineState(psoCI, &outPSO);
    if (outPSO) {
     outPSO->CreateShaderResourceBinding(&outSRB, true);
-    if (outSRB) {
      outPSO->GetStaticVariableByName(SHADER_TYPE_VERTEX, "TransformCB")->Set(solidTransformBuffer_);
      outPSO->GetStaticVariableByName(SHADER_TYPE_PIXEL, "ColorCB")->Set(solidColorBuffer_);
-    }
    }
   };
 

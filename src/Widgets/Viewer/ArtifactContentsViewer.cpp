@@ -1146,9 +1146,9 @@ namespace Artifact
                                   ? QStringLiteral("Unassigned")
                                   : QFileInfo(logicalRightPath).fileName();
    const auto leftType = logicalLeftPath.isEmpty() ? ArtifactCore::FileType::Unknown
-                                                   : detector.detect(logicalLeftPath);
+                                                   : detector.detectByExtension(logicalLeftPath);
    const auto rightType = logicalRightPath.isEmpty() ? ArtifactCore::FileType::Unknown
-                                                     : detector.detect(logicalRightPath);
+                                                     : detector.detectByExtension(logicalRightPath);
 
    auto applyTextPanel = [&](QLabel* label, const QString& title, const QString& body) {
     if (!label) {
@@ -2619,7 +2619,7 @@ ArtifactContentsViewer::ArtifactContentsViewer(QWidget* parent/*=nullptr*/) :QWi
    impl_->currentFilePath = filepath;
    impl_->rememberRecentSource(filepath);
    ArtifactCore::FileTypeDetector detector;
-   impl_->currentFileType = detector.detect(filepath);
+   impl_->currentFileType = detector.detectByExtension(filepath);
    impl_->currentPreviewDescriptor = ArtifactCore::makePreviewDescriptor(filepath);
    impl_->hoverProbeValid = false;
    impl_->resetCurrentMode();

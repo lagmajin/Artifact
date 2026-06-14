@@ -1,7 +1,7 @@
 # Cloud AI Widget - Extended API Reference (Phases 1-5)
 
 **Updated**: 2026-04-26  
-**Phases**: 1 (Complete), 2 (Implemented), 3-5 (Framework Ready)
+**Phases**: 1 (Complete), 2 (Implemented), 3 (Partial), 4-5 (Framework Ready)
 
 ## Overview
 
@@ -9,7 +9,7 @@ The Cloud AI widget API now supports comprehensive composition and layer manipul
 
 - **Phase 1**: Composition and layer notes ✅
 - **Phase 2**: Layer properties (position, scale, rotation, opacity) ✅
-- **Phase 3**: Effects and masks 🔧 (Framework ready, stub implementations)
+- **Phase 3**: Effects and masks 🟡 (core effect operations available)
 - **Phase 4**: Keyframe animation 🔧 (Framework ready, stub implementations)
 - **Phase 5**: Group layer management 🔧 (Framework ready, stub implementations)
 
@@ -196,9 +196,9 @@ See detailed Phase 1 docs in `AI_API_CLOUD_WIDGET_NOTES.md`.
 
 ---
 
-## Phase 3: Effects & Masks API (Framework)
+## Phase 3: Effects & Masks API
 
-All Phase 3 methods are registered and callable. Implementations currently return stub values pending effect registry clarification.
+The core effect surface is now callable through `WorkspaceAutomation`.
 
 ### Effects
 
@@ -213,6 +213,30 @@ Remove an effect from a layer.
 
 #### `setLayerEffectParameter(layerId: string, effectId: string, paramName: string, value: double) → bool`
 Modify an effect parameter.
+
+#### `setLayerEffectEnabled(layerId: string, effectId: string, enabled: bool) → bool`
+Enable or disable an effect.
+
+#### `moveLayerEffect(layerId: string, effectId: string, direction: int) → bool`
+Move an effect within the stack. Use a negative or positive direction.
+
+#### `duplicateLayerEffect(layerId: string, effectId: string) → string`
+Duplicate an effect and return the new effect id.
+
+#### `saveLayerEffectPreset(layerId: string, effectId: string, filePath: string) → bool`
+Save the current effect state to a preset file.
+
+#### `loadLayerEffectPreset(layerId: string, effectId: string, filePath: string) → bool`
+Load a preset file into an existing layer effect.
+
+#### `listLayerEffectPresets(directoryPath: string) → QVariantList`
+List available preset files in a directory.
+
+#### `recentLayerEffectPresets(limit: int) → QVariantList`
+List recently used effect presets.
+
+#### `workspaceDiagnostics() → QVariantMap`
+Return a compact status summary for the current workspace.
 
 **TODO**: 
 - Access effect stack API
@@ -236,6 +260,12 @@ Get all keyframes for a property.
 #### `deleteKeyframe(layerId: string, propertyPath: string, frameNumber: int) → bool`
 Delete a keyframe at a specific frame.
 
+#### `getLayerKeyframeSummary(layerId: string) → QVariantMap`
+Return a compact summary of keyframed properties for a layer.
+
+#### `batchSetKeyframes(layerId: string, keyframes: QVariantList) → QVariantMap`
+Set multiple keyframes from a JSON-style array of `{ propertyPath, frameNumber, value }` objects.
+
 **TODO**:
 - Access timeline/keyframe storage
 - Define property path syntax
@@ -257,6 +287,12 @@ Move multiple layers into a group.
 
 #### `ungroupLayers(groupLayerId: string) → bool`
 Ungroup all layers in a group.
+
+#### `batchRenameProjectItems(items: QVariantList) → QVariantMap`
+Rename multiple project items from a JSON-style array of `{ itemId, newName }` objects.
+
+#### `batchMoveProjectItemsToFolder(itemIds: string[], parentFolderId: string) → QVariantMap`
+Move multiple project items into a folder.
 
 **TODO**:
 - Access group layer creation API
@@ -339,7 +375,7 @@ AI executes:
 |-------|---------|--------|---------|
 | 1 | Notes | ✅ Complete | Both composition and layer notes working |
 | 2 | Properties | ✅ Implemented | Position, scale, rotation, opacity working |
-| 3 | Effects/Masks | 🔧 Framework | Methods registered, stubs ready for implementation |
+| 3 | Effects/Masks | 🟡 Partial | Core effect operations exposed |
 | 4 | Keyframes | 🔧 Framework | Methods registered, stubs ready for implementation |
 | 5 | Groups | 🔧 Framework | Methods registered, stubs ready for implementation |
 

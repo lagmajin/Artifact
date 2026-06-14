@@ -7,14 +7,16 @@ module;
 #include <opencv2/opencv.hpp>
 #include <vector>
 #include <QVariant>
-import Graphics.Compute;
-import Graphics.GPUcomputeContext;
-import Artifact.Render.DiligentDeviceManager;
-import DiligentCore\Common/interface/RefCntAutoPtr.hpp;
-import DiligentCore/Graphics/GraphicsEngine/interface/Texture.h;
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 module LevelsEffect;
 
+import Graphics.Compute;
+import Graphics.GPUcomputeContext;
+import Artifact.Render.DiligentDeviceManager;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import ImageProcessing.ColorTransform.LevelsCurves;

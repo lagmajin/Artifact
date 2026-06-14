@@ -205,6 +205,8 @@ private:
 };
 
 // 新規コマンド：コンポジション解像度変更 / Remap
+// before snapshot として各レイヤーの mask と transform プロパティ keyframe 列を保持し、
+// redo で applyResolutionRemap、undo で size 復元 + snapshot 復元を行う。
 class ChangeCompositionResolutionCommand : public UndoCommand {
 public:
     ChangeCompositionResolutionCommand(
@@ -216,10 +218,24 @@ public:
     void redo() override;
     QString label() const override;
 private:
+    // レイヤー単位の transform プロパティ snapshot。
+    // propertyPath → keyframe 列。非アニメーション値は空 keyframe 列 + currentValue で表現。
+    struct PropertySnapshot {
+        QString propertyPath;
+        QVariant currentValue;
+        std::vector<ArtifactCore::KeyFrame> keyframes;
+    };
+    struct LayerSnapshot {
+        ArtifactCore::LayerID layerId;
+        std::vector<ArtifactCore::LayerMask> masks;
+        std::vector<PropertySnapshot> properties;
+    };
+
     ArtifactCompositionWeakPtr comp_;
     QSize oldSize_;
     QSize newSize_;
     ArtifactCore::RemapPolicy policy_;
+    std::vector<LayerSnapshot> beforeSnapshots_;
 };
 
 class UndoManager : public QObject {

@@ -1,10 +1,11 @@
-#pragma once
-
+module;
 #include <memory>
 
-namespace Artifact {
+export module Artifact.Layer.Composition.Factory;
 
-class ArtifactAbstractLayer;
+import Artifact.Layer.Abstract;
+
+export namespace Artifact {
 
 std::shared_ptr<ArtifactAbstractLayer> createArtifactCompositionLayer();
 

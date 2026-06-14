@@ -1,4 +1,8 @@
-#include "../../include/Layer/ArtifactCompositionLayerResolver.ixx"
+module;
+#include <memory>
+#include <QString>
+
+module Artifact.Layer.Composition.Resolver;
 
 import Artifact.Composition.Abstract;
 import Artifact.Service.Project;
