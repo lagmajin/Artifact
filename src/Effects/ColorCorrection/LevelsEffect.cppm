@@ -1,8 +1,17 @@
 module;
 #include <algorithm>
+#include <array>
+#include <cmath>
 #include <memory>
+#include <cstring>
+#include <opencv2/opencv.hpp>
 #include <vector>
 #include <QVariant>
+import Graphics.Compute;
+import Graphics.GPUcomputeContext;
+import Artifact.Render.DiligentDeviceManager;
+import DiligentCore\Common/interface/RefCntAutoPtr.hpp;
+import DiligentCore/Graphics/GraphicsEngine/interface/Texture.h;
 
 module LevelsEffect;
 
@@ -40,6 +49,13 @@ public:
 class LevelsEffectGPUImpl : public ArtifactEffectImplBase {
 public:
     ArtifactCore::LevelsEffect processor_;
+    ArtifactCore::LevelsSettings settings_;
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
+    Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
+    Diligent::RefCntAutoPtr<Diligent::ITexture> lutTexture_;
+    bool pipelineReady_ = false;
+    bool lutDirty_ = true;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
         dst = src;
@@ -59,8 +75,254 @@ public:
     }
 
     void applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
-        applyCPU(src, dst);
+        if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+            applyCPU(src, dst);
+            return;
+        }
+
+        struct Guard {
+            LevelsEffectGPUImpl* self{};
+            ~Guard() {
+                if (self) {
+                    self->context_.Release();
+                    self->device_.Release();
+                    releaseSharedRenderDevice();
+                }
+            }
+        } guard{this};
+
+        auto gpuContext = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+        auto executor = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext);
+
+        if (lutDirty_ || !lutTexture_) {
+            if (!buildLUTTexture()) {
+                applyCPU(src, dst);
+                return;
+            }
+        }
+
+        if (!pipelineReady_) {
+            static Diligent::ShaderResourceVariableDesc vars[] = {
+                {Diligent::SHADER_TYPE_COMPUTE, "g_InputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+                {Diligent::SHADER_TYPE_COMPUTE, "g_OutputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+                {Diligent::SHADER_TYPE_COMPUTE, "g_LUTTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+            };
+
+            ArtifactCore::ComputePipelineDesc desc;
+            desc.name = "Levels/PSO";
+            desc.shaderSource = kLevelsHlsl;
+            desc.entryPoint = "main";
+            desc.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+            desc.variables = vars;
+            desc.variableCount = 3;
+            desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+            if (!executor->build(desc) || !executor->createShaderResourceBinding(true)) {
+                applyCPU(src, dst);
+                return;
+            }
+            pipelineReady_ = true;
+        }
+
+        Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
+        if (!createTextureFromImage(src, device_, &inputTex, "Levels/InputTexture")) {
+            applyCPU(src, dst);
+            return;
+        }
+
+        Diligent::TextureDesc outDesc = inputTex->GetDesc();
+        outDesc.Usage = Diligent::USAGE_DEFAULT;
+        outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
+        outDesc.Name = "Levels/OutputTexture";
+        Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex;
+        device_->CreateTexture(outDesc, nullptr, &outputTex);
+        if (!outputTex) {
+            applyCPU(src, dst);
+            return;
+        }
+
+        if (!executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+            !executor->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS)) ||
+            !executor->setTextureView("g_LUTTexture", lutTexture_->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE))) {
+            applyCPU(src, dst);
+            return;
+        }
+
+        auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
+        executor->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+
+        if (!readbackTexture(device_, context_, outputTex, dst, "Levels/StagingTexture")) {
+            applyCPU(src, dst);
+        }
     }
+
+    void syncSettings(const ArtifactCore::LevelsSettings& settings) {
+        settings_ = settings;
+        processor_.setSettings(settings_);
+        lutDirty_ = true;
+    }
+
+private:
+    bool buildLUTTexture() {
+        std::array<float, 256 * 4> lut{};
+        for (int i = 0; i < 256; ++i) {
+            const float x = static_cast<float>(i) / 255.0f;
+            float r = x, g = x, b = x;
+            if (settings_.perChannel) {
+                auto transform = [](float v, const ArtifactCore::ChannelLevelsSettings& c) {
+                    const float clampedInput = std::clamp(v, static_cast<float>(c.inputBlack), static_cast<float>(c.inputWhite));
+                    const float range = std::max(0.0001f, static_cast<float>(c.inputWhite - c.inputBlack));
+                    float normalized = (clampedInput - static_cast<float>(c.inputBlack)) / range;
+                    if (c.inputGamma != 1.0) {
+                        normalized = std::pow(std::clamp(normalized, 0.0f, 1.0f), 1.0f / static_cast<float>(c.inputGamma));
+                    }
+                    return static_cast<float>(c.outputBlack + normalized * (c.outputWhite - c.outputBlack));
+                };
+                r = transform(x, settings_.red);
+                g = transform(x, settings_.green);
+                b = transform(x, settings_.blue);
+            } else {
+                const float clampedInput = std::clamp(x, static_cast<float>(settings_.inputBlack), static_cast<float>(settings_.inputWhite));
+                const float range = std::max(0.0001f, static_cast<float>(settings_.inputWhite - settings_.inputBlack));
+                float normalized = (clampedInput - static_cast<float>(settings_.inputBlack)) / range;
+                if (settings_.inputGamma != 1.0) {
+                    normalized = std::pow(std::clamp(normalized, 0.0f, 1.0f), 1.0f / static_cast<float>(settings_.inputGamma));
+                }
+                r = g = b = static_cast<float>(settings_.outputBlack + normalized * (settings_.outputWhite - settings_.outputBlack));
+            }
+            lut[i * 4 + 0] = r;
+            lut[i * 4 + 1] = g;
+            lut[i * 4 + 2] = b;
+            lut[i * 4 + 3] = 1.0f;
+        }
+
+        Diligent::TextureDesc desc;
+        desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+        desc.Width = 256;
+        desc.Height = 1;
+        desc.MipLevels = 1;
+        desc.SampleCount = 1;
+        desc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
+        desc.Usage = Diligent::USAGE_IMMUTABLE;
+        desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
+        desc.Name = "Levels/LUTTexture";
+        Diligent::TextureSubResData sub{};
+        sub.pData = lut.data();
+        sub.Stride = sizeof(float) * 4ull * 256ull;
+        Diligent::TextureData init{};
+        init.pSubResources = &sub;
+        init.NumSubresources = 1;
+        device_->CreateTexture(desc, &init, &lutTexture_);
+        lutDirty_ = false;
+        return lutTexture_ != nullptr;
+    }
+
+    static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src,
+                                       Diligent::IRenderDevice* device,
+                                       Diligent::ITexture** outTex,
+                                       const char* name)
+    {
+        if (!device || !outTex) {
+            return false;
+        }
+        const auto& img = src.image();
+        const float* data = img.rgba32fData();
+        if (!data || img.width() <= 0 || img.height() <= 0) {
+            return false;
+        }
+        Diligent::TextureDesc desc;
+        desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+        desc.Width = static_cast<Diligent::Uint32>(img.width());
+        desc.Height = static_cast<Diligent::Uint32>(img.height());
+        desc.Format = Diligent::TEX_FORMAT_RGBA32_FLOAT;
+        desc.ArraySize = 1;
+        desc.MipLevels = 1;
+        desc.SampleCount = 1;
+        desc.Usage = Diligent::USAGE_IMMUTABLE;
+        desc.BindFlags = Diligent::BIND_SHADER_RESOURCE;
+        desc.Name = name;
+        Diligent::TextureSubResData sub{};
+        sub.pData = data;
+        sub.Stride = static_cast<Diligent::Uint64>(img.width()) * sizeof(float) * 4ull;
+        Diligent::TextureData init{};
+        init.pSubResources = &sub;
+        init.NumSubresources = 1;
+        device->CreateTexture(desc, &init, outTex);
+        return *outTex != nullptr;
+    }
+
+    static bool readbackTexture(Diligent::IRenderDevice* device,
+                                Diligent::IDeviceContext* ctx,
+                                Diligent::ITexture* src,
+                                ImageF32x4RGBAWithCache& dst,
+                                const char* name)
+    {
+        if (!device || !ctx || !src) {
+            return false;
+        }
+        const auto desc = src->GetDesc();
+        Diligent::TextureDesc stagingDesc;
+        stagingDesc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+        stagingDesc.Width = desc.Width;
+        stagingDesc.Height = desc.Height;
+        stagingDesc.Format = desc.Format;
+        stagingDesc.ArraySize = 1;
+        stagingDesc.MipLevels = 1;
+        stagingDesc.SampleCount = 1;
+        stagingDesc.Usage = Diligent::USAGE_STAGING;
+        stagingDesc.CPUAccessFlags = Diligent::CPU_ACCESS_READ;
+        stagingDesc.Name = name;
+        Diligent::RefCntAutoPtr<Diligent::ITexture> staging;
+        device->CreateTexture(stagingDesc, nullptr, &staging);
+        if (!staging) {
+            return false;
+        }
+        Diligent::CopyTextureAttribs copy(src, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION,
+                                          staging, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+        ctx->CopyTexture(copy);
+        Diligent::MappedTextureSubresource mapped{};
+        ctx->Flush();
+        ctx->WaitForIdle();
+        ctx->MapTextureSubresource(staging, 0, 0, Diligent::MAP_READ, Diligent::MAP_FLAG_NONE, nullptr, mapped);
+        if (!mapped.pData || mapped.Stride == 0) {
+            return false;
+        }
+        cv::Mat temp(static_cast<int>(desc.Height), static_cast<int>(desc.Width), CV_32FC4, mapped.pData, mapped.Stride);
+        dst.image().setFromCVMat(temp);
+        ctx->UnmapTextureSubresource(staging, 0, 0);
+        return true;
+    }
+
+    static constexpr const char* kLevelsHlsl = R"(
+Texture2D<float4> g_InputTexture : register(t0);
+Texture2D<float4> g_LUTTexture : register(t1);
+RWTexture2D<float4> g_OutputTexture : register(u0);
+
+float sampleLUT(float value, int channel)
+{
+    value = saturate(value);
+    float x = value * 255.0f;
+    int x0 = (int)floor(x);
+    int x1 = min(x0 + 1, 255);
+    float t = x - x0;
+    float a = g_LUTTexture.Load(int3(x0, 0, 0))[channel];
+    float b = g_LUTTexture.Load(int3(x1, 0, 0))[channel];
+    return lerp(a, b, t);
+}
+
+[numthreads(8, 8, 1)]
+void main(uint3 dtid : SV_DispatchThreadID)
+{
+    uint width, height;
+    g_OutputTexture.GetDimensions(width, height);
+    if (dtid.x >= width || dtid.y >= height) return;
+
+    float4 px = g_InputTexture[dtid.xy];
+    px.r = sampleLUT(px.r, 0);
+    px.g = sampleLUT(px.g, 1);
+    px.b = sampleLUT(px.b, 2);
+    g_OutputTexture[dtid.xy] = px;
+}
+)";
 };
 
 LevelsEffect::LevelsEffect() {
@@ -147,7 +409,7 @@ void LevelsEffect::syncImpls() {
         cpu->processor_.setSettings(settings_);
     }
     if (auto* gpu = dynamic_cast<LevelsEffectGPUImpl*>(gpuImpl().get())) {
-        gpu->processor_.setSettings(settings_);
+        gpu->syncSettings(settings_);
     }
 }
 
@@ -207,77 +469,77 @@ std::vector<AbstractProperty> LevelsEffect::getProperties() const {
 
 void LevelsEffect::setPropertyValue(const UniString& name, const QVariant& value) {
     const QString key = name.toQString();
-    if (key == QStringLiteral("Preset")) {
+    if (key == QString("Preset")) {
         setPreset(value.toInt());
-    } else if (key == QStringLiteral("Input Black")) {
+    } else if (key == QString("Input Black")) {
         setInputBlack(static_cast<float>(value.toDouble()));
-    } else if (key == QStringLiteral("Input White")) {
+    } else if (key == QString("Input White")) {
         setInputWhite(static_cast<float>(value.toDouble()));
-    } else if (key == QStringLiteral("Input Gamma")) {
+    } else if (key == QString("Input Gamma")) {
         setInputGamma(static_cast<float>(value.toDouble()));
-    } else if (key == QStringLiteral("Output Black")) {
+    } else if (key == QString("Output Black")) {
         setOutputBlack(static_cast<float>(value.toDouble()));
-    } else if (key == QStringLiteral("Output White")) {
+    } else if (key == QString("Output White")) {
         setOutputWhite(static_cast<float>(value.toDouble()));
-    } else if (key == QStringLiteral("Per Channel")) {
+    } else if (key == QString("Per Channel")) {
         setPerChannel(value.toBool());
-    } else if (key == QStringLiteral("Red Input Black")) {
+    } else if (key == QString("Red Input Black")) {
         preset_ = Preset::Custom;
         settings_.red.inputBlack = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Red Input White")) {
+    } else if (key == QString("Red Input White")) {
         preset_ = Preset::Custom;
         settings_.red.inputWhite = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Red Input Gamma")) {
+    } else if (key == QString("Red Input Gamma")) {
         preset_ = Preset::Custom;
         settings_.red.inputGamma = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Red Output Black")) {
+    } else if (key == QString("Red Output Black")) {
         preset_ = Preset::Custom;
         settings_.red.outputBlack = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Red Output White")) {
+    } else if (key == QString("Red Output White")) {
         preset_ = Preset::Custom;
         settings_.red.outputWhite = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Green Input Black")) {
+    } else if (key == QString("Green Input Black")) {
         preset_ = Preset::Custom;
         settings_.green.inputBlack = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Green Input White")) {
+    } else if (key == QString("Green Input White")) {
         preset_ = Preset::Custom;
         settings_.green.inputWhite = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Green Input Gamma")) {
+    } else if (key == QString("Green Input Gamma")) {
         preset_ = Preset::Custom;
         settings_.green.inputGamma = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Green Output Black")) {
+    } else if (key == QString("Green Output Black")) {
         preset_ = Preset::Custom;
         settings_.green.outputBlack = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Green Output White")) {
+    } else if (key == QString("Green Output White")) {
         preset_ = Preset::Custom;
         settings_.green.outputWhite = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Blue Input Black")) {
+    } else if (key == QString("Blue Input Black")) {
         preset_ = Preset::Custom;
         settings_.blue.inputBlack = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Blue Input White")) {
+    } else if (key == QString("Blue Input White")) {
         preset_ = Preset::Custom;
         settings_.blue.inputWhite = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Blue Input Gamma")) {
+    } else if (key == QString("Blue Input Gamma")) {
         preset_ = Preset::Custom;
         settings_.blue.inputGamma = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Blue Output Black")) {
+    } else if (key == QString("Blue Output Black")) {
         preset_ = Preset::Custom;
         settings_.blue.outputBlack = value.toDouble();
         syncImpls();
-    } else if (key == QStringLiteral("Blue Output White")) {
+    } else if (key == QString("Blue Output White")) {
         preset_ = Preset::Custom;
         settings_.blue.outputWhite = value.toDouble();
         syncImpls();
