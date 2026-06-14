@@ -1056,7 +1056,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer *targetLayer,
       }
 
       ArtifactCore::ImageF32x4RGBAWithCache next;
-      effect->applyCPUOnly(current, next);
+      effect->applyConfigured(current, next);
       current = next;
     }
     mat = current.image().toCVMat();
@@ -1419,6 +1419,7 @@ bool layerNeedsFrameSyncForCompositionView(ArtifactAbstractLayer *layer) {
   }
 
   if (layer->isTimeRemapEnabled() || layer->hasMasks() ||
+      layer->hasModifiers() ||
       !layer->getEffects().empty()) {
     return true;
   }
@@ -3994,14 +3995,18 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 
 void CompositionRenderController::destroy() {
   stop();
-  if (impl_->renderer_) {
-    impl_->renderer_->destroy();
-    impl_->renderer_.reset();
-  }
   impl_->compositionRenderer_.reset();
   impl_->surfaceCache_.clear();
   if (impl_->gpuTextureCacheManager_) {
-    impl_->gpuTextureCacheManager_->clear();
+    impl_->gpuTextureCacheManager_->clearDevice();
+    impl_->gpuTextureCacheManager_.reset();
+  }
+  impl_->blendPipeline_.reset();
+  impl_->blendPipelineReady_ = false;
+  impl_->blendPipelineInitAttempted_ = false;
+  if (impl_->renderer_) {
+    impl_->renderer_->destroy();
+    impl_->renderer_.reset();
   }
   impl_->invalidateBaseComposite();
   impl_->initialized_ = false;

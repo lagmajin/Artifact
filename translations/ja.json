@@ -187,6 +187,12 @@
     "move_down": "下に移動",
     "play_pause": "再生/一時停止"
   },
+  "effect": {
+    "blur": {
+      "radius": "半径",
+      "strength": "強度"
+    }
+  },
   "viewer": {
     "fps_na": "FPS: N/A",
     "mem_na": "メモリ: N/A",

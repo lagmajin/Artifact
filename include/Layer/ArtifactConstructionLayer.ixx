@@ -2,6 +2,8 @@ module;
 #include <utility>
 #include <QString>
 #include <QJsonObject>
+#include <QVariant>
+#include <vector>
 
 export module Artifact.Layer.Construction;
 
@@ -25,6 +27,8 @@ public:
   QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject& obj) override;
   bool isConstructionLayer() const override;
+  std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+  bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 };
 
 } // namespace Artifact

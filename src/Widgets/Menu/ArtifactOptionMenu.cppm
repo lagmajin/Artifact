@@ -46,21 +46,21 @@ ArtifactOptionMenu::Impl::Impl(ArtifactOptionMenu* menu)
   : menu_(menu)
 {
   preferencesAction = menu_->addAction("環境設定 (&P)...");
-  preferencesAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/settings.svg")));
+  preferencesAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_settings.svg")));
 
   safeModeAction = menu_->addAction("セーフモード");
   safeModeAction->setCheckable(true);
-  safeModeAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/security.svg")));
+  safeModeAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_security.svg")));
 
   menu_->addSeparator();
   resetMenuFontAction = menu_->addAction("メニューフォントを既定に戻す");
-  resetMenuFontAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/text_fields.svg")));
+  resetMenuFontAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_text_fields.svg")));
   resetDockFontAction = menu_->addAction("ドックフォントを既定に戻す");
-  resetDockFontAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/view_sidebar.svg")));
+  resetDockFontAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_view_sidebar.svg")));
 
   menu_->addSeparator();
   openAppDataAction = menu_->addAction("アプリデータフォルダを開く");
-  openAppDataAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/folder_open.svg")));
+  openAppDataAction->setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/optionmenu_folder_open.svg")));
 
   QObject::connect(preferencesAction, &QAction::triggered, menu_, [this]() {
     auto* dialog = new ArtifactCore::ApplicationSettingDialog(menu_->window());
@@ -134,7 +134,7 @@ ArtifactOptionMenu::ArtifactOptionMenu(QWidget* parent/*=nullptr*/)
   setTearOffEnabled(true);
   setSeparatorsCollapsible(true);
   setMinimumWidth(240);
-  setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/settings.svg")));
+  setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/menubar_options.svg")));
 }
 
 ArtifactOptionMenu::~ArtifactOptionMenu()

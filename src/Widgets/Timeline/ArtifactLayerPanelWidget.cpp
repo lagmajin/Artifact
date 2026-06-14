@@ -58,6 +58,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import UI.ShortcutBindings;
 import Artifact.Layer.Image;
 import Artifact.Layer.Text;
 import Artifact.Layer.Shape;
@@ -1018,11 +1019,11 @@ namespace {
  public:
   Impl()
   {
-    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"));
-    lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"));
-    if (lockIcon.isNull()) lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
-    soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
-    shyIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/orange/visibility_off.svg"));
+    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("Studio/visibility.svg"));
+    lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/lock.svg"));
+    if (lockIcon.isNull()) lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/lock_open.svg"), QStringLiteral("unlock.png"));
+    soloIcon = loadLayerPanelPixmap(QStringLiteral("Studio/group.svg"), QStringLiteral("solo.png"));
+    shyIcon = loadLayerPanelPixmap(QStringLiteral("Studio/visibility_off.svg"));
   }
   ~Impl() = default;
 
@@ -1050,14 +1051,14 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
  : QWidget(parent), impl_(new Impl())
 {
  setAcceptDrops(true);
-  impl_->visibilityIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"));
-  impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"));
-  if (impl_->lockIcon.isNull()) impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock_open.svg"), QStringLiteral("unlock.png"));
-  impl_->soloIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"), QStringLiteral("solo.png"));
-  impl_->audioIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/volume.svg"),         QStringLiteral("volume.png"));
-  impl_->shyIcon = loadLayerPanelPixmap(QStringLiteral("MaterialVS/orange/visibility_off.svg"));
-  impl_->parentIcon = loadLayerPanelIcon(QStringLiteral("MaterialVS/yellow/link.svg"));
-  impl_->blendIcon = loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/merge_type.svg"));
+  impl_->visibilityIcon = loadLayerPanelPixmap(QStringLiteral("Studio/visibility.svg"));
+  impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/lock.svg"));
+  if (impl_->lockIcon.isNull()) impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/lock_open.svg"), QStringLiteral("unlock.png"));
+  impl_->soloIcon = loadLayerPanelPixmap(QStringLiteral("Studio/group.svg"), QStringLiteral("solo.png"));
+  impl_->audioIcon = loadLayerPanelPixmap(QStringLiteral("Studio/volume.svg"), QStringLiteral("volume.png"));
+  impl_->shyIcon = loadLayerPanelPixmap(QStringLiteral("Studio/visibility_off.svg"));
+  impl_->parentIcon = loadLayerPanelIcon(QStringLiteral("Studio/link.svg"));
+  impl_->blendIcon = loadLayerPanelIcon(QStringLiteral("Studio/merge_type.svg"));
 
   auto visButton = impl_->visibilityButton = new QPushButton();
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
@@ -1595,29 +1596,29 @@ class ArtifactLayerPanelWidget::Impl
 public:
  Impl()
   {
-    visibilityIcon    = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/visibility.svg"),     QStringLiteral("eye.png"));
-    lockIcon          = loadLayerPanelPixmap(QStringLiteral("MaterialVS/yellow/lock.svg"));
-    soloIcon          = loadLayerPanelPixmap(QStringLiteral("MaterialVS/purple/group.svg"),           QStringLiteral("solo.png"));
-    audioIcon         = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/volume.svg"),         QStringLiteral("volume.png"));
-    shyIcon           = loadLayerPanelPixmap(QStringLiteral("MaterialVS/neutral/shy.svg"),            QStringLiteral("shy.png"));
+    visibilityIcon    = loadLayerPanelPixmap(QStringLiteral("Studio/visibility.svg"),     QStringLiteral("eye.png"));
+    lockIcon          = loadLayerPanelPixmap(QStringLiteral("Studio/lock.svg"));
+    soloIcon          = loadLayerPanelPixmap(QStringLiteral("Studio/group.svg"),           QStringLiteral("solo.png"));
+    audioIcon         = loadLayerPanelPixmap(QStringLiteral("Studio/volume.svg"),          QStringLiteral("volume.png"));
+    shyIcon           = loadLayerPanelPixmap(QStringLiteral("Studio/visibility_off.svg"),  QStringLiteral("shy.png"));
     // [Fix B] 右クリックメニュー用アイコンを構築時にキャッシュ（毎回 SVG パースを防ぐ）
-    iconRename        = loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/edit.svg"));
-    iconCopy          = loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/content_copy.svg"));
-    iconDelete        = loadLayerPanelIcon(QStringLiteral("MaterialVS/red/delete.svg"));
-    iconFileOpen      = loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/file_open.svg"));
-    iconVisOn         = loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/visibility.svg"));
-    iconVisOff        = loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/visibility_off.svg"));
-    iconLock          = loadLayerPanelIcon(QStringLiteral("MaterialVS/yellow/lock.svg"));
-    iconUnlock        = loadLayerPanelIcon(QStringLiteral("MaterialVS/yellow/lock_open.svg"));
-    iconSolo          = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg"));
-    iconShy           = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/visibility_off.svg"));
-    iconLink          = loadLayerPanelIcon(QStringLiteral("MaterialVS/neutral/link.svg"));
-    iconLinkOff       = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/link_off.svg"));
-    iconCreateSolid   = loadLayerPanelIcon(QStringLiteral("MaterialVS/green/format_shapes.svg"));
-    iconCreateNull    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/group.svg"));
-    iconCreateAdjust  = loadLayerPanelIcon(QStringLiteral("MaterialVS/orange/warning.svg"));
-    iconCreateText    = loadLayerPanelIcon(QStringLiteral("MaterialVS/purple/title.svg"));
-    iconCreateModel3D = loadLayerPanelIcon(QStringLiteral("MaterialVS/blue/layers.svg"));
+    iconRename        = loadLayerPanelIcon(QStringLiteral("Studio/edit.svg"));
+    iconCopy          = loadLayerPanelIcon(QStringLiteral("Studio/content_copy.svg"));
+    iconDelete        = loadLayerPanelIcon(QStringLiteral("Studio/delete.svg"));
+    iconFileOpen      = loadLayerPanelIcon(QStringLiteral("Studio/file_open.svg"));
+    iconVisOn         = loadLayerPanelIcon(QStringLiteral("Studio/visibility.svg"));
+    iconVisOff        = loadLayerPanelIcon(QStringLiteral("Studio/visibility_off.svg"));
+    iconLock          = loadLayerPanelIcon(QStringLiteral("Studio/lock.svg"));
+    iconUnlock        = loadLayerPanelIcon(QStringLiteral("Studio/lock_open.svg"));
+    iconSolo          = loadLayerPanelIcon(QStringLiteral("Studio/group.svg"));
+    iconShy           = loadLayerPanelIcon(QStringLiteral("Studio/visibility_off.svg"));
+    iconLink          = loadLayerPanelIcon(QStringLiteral("Studio/link.svg"));
+    iconLinkOff       = loadLayerPanelIcon(QStringLiteral("Studio/link_off.svg"));
+    iconCreateSolid   = loadLayerPanelIcon(QStringLiteral("Studio/palette.svg"));
+    iconCreateNull    = loadLayerPanelIcon(QStringLiteral("Studio/transform.svg"));
+    iconCreateAdjust  = loadLayerPanelIcon(QStringLiteral("Studio/tune.svg"));
+    iconCreateText    = loadLayerPanelIcon(QStringLiteral("Studio/title.svg"));
+    iconCreateModel3D = loadLayerPanelIcon(QStringLiteral("Studio/model3d.svg"));
     iconLayerGeneric      = loadLayerPanelIcon(QStringLiteral("Studio/timeline_layer.svg"));
     iconLayerSolid        = loadLayerPanelIcon(QStringLiteral("Studio/layer_composite.svg"));
     iconLayerImage        = loadLayerPanelIcon(QStringLiteral("Studio/photo_filter.svg"));
@@ -2294,6 +2295,8 @@ double ArtifactLayerPanelWidget::verticalOffset() const
 
 void ArtifactLayerPanelWidget::updateLayout()
 {
+  impl_->clearDragState();
+  unsetCursor();
   if (!impl_->layoutDebounceTimer) {
     performUpdateLayout();
     return;
@@ -4217,7 +4220,9 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     return;
   }
 
-  if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+  if (ArtifactCore::ShortcutBindings::instance().matches(
+          event, ArtifactCore::ShortcutId::LayerDeleteSelected) ||
+      event->key() == Qt::Key_Backspace) {
     if (!impl_->selectedMaskLayerId.isNil() &&
         impl_->selectedMaskIndex >= 0 &&
         impl_->selectedMaskLayerId == impl_->selectedLayerId) {
@@ -4603,7 +4608,11 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
         p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
                    fm.elidedText(groupAux, Qt::ElideRight, badgeRect.width() - 16));
       }
-      p.setPen(maskSelected ? accent.lighter(135) : text);
+      const QColor groupText = maskSelected ? accent.lighter(135)
+                                            : (row.auxiliaryTone == LayerPresentationBadgeTone::Neutral
+                                                   ? text
+                                                   : mixColor(text, accent, 0.18));
+      p.setPen(groupText);
       const int groupTextWidth = std::max(20, width() - textX - 8 - (groupAux.isEmpty() ? 0 : 100));
       p.drawText(textX, y, groupTextWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
       continue;
@@ -4710,7 +4719,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      p.setPen(layerSelected ? accent.darker(180) : border);
      p.setBrush(layerSelected ? mixColor(background, accent, 0.22) : mixColor(background, surface, 0.28));
      p.drawRoundedRect(r, 3, 3);
-     p.setPen(layerSelected ? mixColor(text, accent, 0.42) : text);
+     p.setPen(layerSelected ? mixColor(text, accent, 0.48) : mixColor(text, accent, 0.16));
      p.drawText(r.adjusted(6, 0, -16, 0), Qt::AlignVCenter | Qt::AlignLeft, p.fontMetrics().elidedText(label, Qt::ElideRight, r.width() - 20));
     };
 
@@ -4734,7 +4743,8 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      const QRect keyframeRect = propertyKeyframeMarkerRect(width(), y, rowH);
      const int textWidth = std::max(20, keyframeRect.left() - textX - 10);
      p.setPen(propertyFocused ? accent.lighter(130)
-                              : (layerSelected ? text.lighter(112) : text));
+                              : (propertyKeyframed ? mixColor(text, accent, 0.26)
+                                                   : (layerSelected ? text.lighter(112) : text)));
      p.drawText(textX + 4, y, textWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
      if (propertyAnimatable) {
       const QRectF marker = QRectF(keyframeRect).adjusted(2.0, 2.0, -2.0, -2.0);
@@ -4753,14 +4763,14 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      p.setPen(layerSelected ? accent.darker(180) : border);
      p.setBrush(mixColor(background, surface, 0.30));
      p.drawRoundedRect(badgeRect, 4, 4);
-     p.setPen(text.darker(120));
+     p.setPen(mixColor(text.darker(120), accent, 0.22));
      p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
                 row.auxiliaryText.isEmpty()
                     ? (row.kind == RowKind::Mask ? QStringLiteral("Mask")
                                                  : QStringLiteral("Matte"))
                     : row.auxiliaryText);
       const int labelWidth = std::max(20, badgeRect.left() - textX - 10);
-      p.setPen(text);
+      p.setPen(mixColor(text, accent, 0.10));
       p.drawText(textX + 4, y, labelWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);
     } else {
      const auto matteRefs = l->matteReferences();
@@ -4820,7 +4830,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       const QRect badgeRect(badgeX, y + 5, badgeWidth, rowH - 10);
       const int nameWidth = std::max(20, badgeRect.left() - (layerTextX + 4));
       const QString elidedName = fm.elidedText(layerName, Qt::ElideRight, nameWidth);
-      p.setPen(maskSelected ? accent.lighter(135) : text);
+      const QColor layerTextColor = maskSelected ? accent.lighter(135)
+                                                 : (layerSelected ? mixColor(text, accent, 0.24)
+                                                                  : mixColor(text, accent, 0.08));
+      p.setPen(layerTextColor);
       p.drawText(layerTextX, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, elidedName);
       p.setPen(layerSelected ? accent.darker(180) : border);
       p.setBrush(toneBadgeFill(row.auxiliaryTone, background, surface, accent));
@@ -4829,7 +4842,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
                  fm.elidedText(layerAux, Qt::ElideRight, badgeRect.width() - 16));
      } else {
-      p.setPen(maskSelected ? accent.lighter(135) : text);
+      const QColor layerTextColor = maskSelected ? accent.lighter(135)
+                                                 : (layerSelected ? mixColor(text, accent, 0.24)
+                                                                  : mixColor(text, accent, 0.08));
+      p.setPen(layerTextColor);
       const int nameWidth = std::max(20, width() - layerTextX - variantChipW - 10);
       p.drawText(layerTextX, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, layerName);
      }
@@ -5128,6 +5144,7 @@ void ArtifactLayerTimelinePanelWrapper::dropEvent(QDropEvent* event)
   {
    impl_->id = id;
    impl_->panel->setComposition(id);
+   impl_->panel->updateLayout();
   }
 
   void ArtifactLayerTimelinePanelWrapper::setFilterText(const QString& text)

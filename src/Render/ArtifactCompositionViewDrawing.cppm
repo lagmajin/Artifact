@@ -308,7 +308,7 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
       }
 
       ArtifactCore::ImageF32x4RGBAWithCache next;
-      effect->applyCPUOnly(current, next);
+      effect->applyConfigured(current, next);
       current = next;
     }
     mat = current.image().toCVMat();

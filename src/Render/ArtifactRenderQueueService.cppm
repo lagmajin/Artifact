@@ -634,6 +634,7 @@ namespace Artifact
         Auto,
         Pipe,
         PipeHardware,
+        PipeVulkan,
         Native,
         GPU
     };
@@ -645,6 +646,10 @@ namespace Artifact
             || value == QLatin1String("ffmpeg-hw")
             || value == QLatin1String("hardware") || value == QLatin1String("hw")) {
             return VideoEncodeBackendKind::PipeHardware;
+        }
+        if (value == QLatin1String("pipe-vulkan") || value == QLatin1String("ffmpeg-vulkan")
+            || value == QLatin1String("vulkan-hw") || value == QLatin1String("vulkan")) {
+            return VideoEncodeBackendKind::PipeVulkan;
         }
         if (value == QLatin1String("pipe") || value == QLatin1String("ffmpeg.exe") || value == QLatin1String("ffmpeg")) {
             return VideoEncodeBackendKind::Pipe;
@@ -663,6 +668,10 @@ namespace Artifact
         switch (parseVideoEncodeBackend(backend)) {
         case VideoEncodeBackendKind::Pipe:
             return QStringLiteral("pipe");
+        case VideoEncodeBackendKind::PipeHardware:
+            return QStringLiteral("pipe-hw");
+        case VideoEncodeBackendKind::PipeVulkan:
+            return QStringLiteral("pipe-vulkan");
         case VideoEncodeBackendKind::Native:
             return QStringLiteral("native");
         case VideoEncodeBackendKind::GPU:
@@ -916,6 +925,14 @@ namespace Artifact
         return QStringLiteral("libx264");
     }
 
+    static QString ffmpegPipeVulkanEncoderName(const QString& codec)
+    {
+        const QString value = normalizeCodecName(codec);
+        if (value == QStringLiteral("h264")) return QStringLiteral("h264_vulkan");
+        if (value == QStringLiteral("h265")) return QStringLiteral("hevc_vulkan");
+        return QString();
+    }
+
     static QString normalizeProresProfile(const QString& profile)
     {
         const QString value = profile.trimmed().toLower();
@@ -1115,8 +1132,9 @@ namespace Artifact
 
     class PipeFFmpegExeBackend final : public IVideoEncodeBackend {
     public:
-        explicit PipeFFmpegExeBackend(bool preferHardware = false)
+        explicit PipeFFmpegExeBackend(bool preferHardware = false, bool preferVulkan = false)
             : preferHardware_(preferHardware)
+            , preferVulkan_(preferVulkan)
         {
         }
 
@@ -1131,33 +1149,45 @@ namespace Artifact
             const int height = std::max(1, job.resolutionHeight);
             const double fps = job.frameRate > 0.0 ? job.frameRate : 30.0;
             const QString codec = normalizeCodecName(job.codec);
-            if (preferHardware_ && codec != QStringLiteral("h264") && codec != QStringLiteral("h265")) {
+            if ((preferHardware_ || preferVulkan_) && codec != QStringLiteral("h264") && codec != QStringLiteral("h265")) {
                 if (errorMessage) {
-                    *errorMessage = QStringLiteral("pipe-hw is only supported for H.264/H.265 jobs");
+                    *errorMessage = QStringLiteral("Hardware pipe encoding is only supported for H.264/H.265 jobs");
                 }
                 lastError_ = QStringLiteral("Unsupported hardware codec: %1").arg(codec);
                 return false;
             }
 
             QStringList args;
-            args << QStringLiteral("-y")
-                 << QStringLiteral("-f") << QStringLiteral("rawvideo")
+            args << QStringLiteral("-y");
+            if (preferVulkan_) {
+                args << QStringLiteral("-init_hw_device") << QStringLiteral("vulkan=artifact_vk:0")
+                     << QStringLiteral("-filter_hw_device") << QStringLiteral("artifact_vk");
+            }
+            args << QStringLiteral("-f") << QStringLiteral("rawvideo")
                  << QStringLiteral("-pixel_format") << QStringLiteral("rgba")
                  << QStringLiteral("-video_size") << QStringLiteral("%1x%2").arg(width).arg(height)
                  << QStringLiteral("-framerate") << QString::number(fps, 'f', 6)
                  << QStringLiteral("-i") << QStringLiteral("-")
-                 << QStringLiteral("-c:v") << ffmpegPipeEncoderName(codec, preferHardware_);
+                 << QStringLiteral("-c:v") << (preferVulkan_ ? ffmpegPipeVulkanEncoderName(codec)
+                                                             : ffmpegPipeEncoderName(codec, preferHardware_));
 
             const QStringList qualityArgs = ffmpegPipeQualityArgs(job, preferHardware_);
             for (const QString& arg : qualityArgs) {
                 args << arg;
             }
-            args << QStringLiteral("-pix_fmt") << ffmpegPipePixelFormat(codec, job.codecProfile)
-                 << job.outputPath;
+            if (preferVulkan_) {
+                args << QStringLiteral("-vf") << QStringLiteral("format=rgba,hwupload")
+                     << QStringLiteral("-b:v") << QString::number(std::max(1, job.bitrate) * 1000);
+            } else {
+                args << QStringLiteral("-pix_fmt") << ffmpegPipePixelFormat(codec, job.codecProfile);
+            }
+            args << job.outputPath;
 
             const QString ffmpegPath = resolveFfmpegExePath();
-            if (preferHardware_) {
-                const QString hwEncoder = (codec == QStringLiteral("h265"))
+            if (preferHardware_ || preferVulkan_) {
+                const QString hwEncoder = preferVulkan_
+                    ? ffmpegPipeVulkanEncoderName(codec)
+                    : (codec == QStringLiteral("h265"))
                     ? QStringLiteral("hevc_nvenc")
                     : QStringLiteral("h264_nvenc");
                 if (!ffmpegExeSupportsEncoder(ffmpegPath, hwEncoder)) {
@@ -1237,6 +1267,7 @@ namespace Artifact
         std::unique_ptr<QProcess> process_;
         QString lastError_;
         bool preferHardware_ = false;
+        bool preferVulkan_ = false;
     };
 
     class NativeFFmpegBackend final : public IVideoEncodeBackend {
@@ -1346,6 +1377,17 @@ namespace Artifact
             if (errorMessage) *errorMessage = localError;
             return nullptr;
         };
+        const auto tryPipeVulkan = [&]() -> std::unique_ptr<IVideoEncodeBackend> {
+            QString localError;
+            auto backend = std::make_unique<PipeFFmpegExeBackend>(false, true);
+            if (backend->open(job, &localError)) {
+                if (backendName) *backendName = QStringLiteral("pipe-vulkan");
+                if (errorMessage) errorMessage->clear();
+                return backend;
+            }
+            if (errorMessage) *errorMessage = localError;
+            return nullptr;
+        };
 
         switch (requested) {
         case VideoEncodeBackendKind::Pipe:
@@ -1353,6 +1395,11 @@ namespace Artifact
         case VideoEncodeBackendKind::PipeHardware:
             if (auto hardwareBackend = tryPipeHardware()) {
                 return hardwareBackend;
+            }
+            return tryPipe();
+        case VideoEncodeBackendKind::PipeVulkan:
+            if (auto vulkanBackend = tryPipeVulkan()) {
+                return vulkanBackend;
             }
             return tryPipe();
         case VideoEncodeBackendKind::Native:

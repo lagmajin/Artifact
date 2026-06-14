@@ -2,6 +2,7 @@
 #include <QList>
 #include <QVariant>
 #include <opencv2/core/mat.hpp>
+#include <opencv2/imgproc.hpp>
 
 #include <iostream>
 #include <vector>
@@ -49,6 +50,35 @@ import Property.Abstract;
 
 namespace Artifact {
 
+namespace {
+
+void writeGlowResultToDestination(const cv::Mat& glowResult, ImageF32x4RGBAWithCache& dst) {
+    if (glowResult.empty()) {
+        return;
+    }
+
+    cv::Mat rgba8u;
+    switch (glowResult.channels()) {
+    case 4:
+        cv::cvtColor(glowResult, rgba8u, cv::COLOR_BGRA2RGBA);
+        break;
+    case 3:
+        cv::cvtColor(glowResult, rgba8u, cv::COLOR_BGR2RGBA);
+        break;
+    case 1:
+        cv::cvtColor(glowResult, rgba8u, cv::COLOR_GRAY2RGBA);
+        break;
+    default:
+        return;
+    }
+
+    cv::Mat rgba32f;
+    rgba8u.convertTo(rgba32f, CV_32FC4, 1.0 / 255.0);
+    dst.image().setFromRGBA32F(rgba32f.ptr<float>(), rgba32f.cols, rgba32f.rows);
+}
+
+} // namespace
+
 void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
     const ImageF32x4_RGBA& srcImage = src.image();
     const float* srcData = srcImage.rgba32fData();
@@ -74,9 +104,11 @@ void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     );
 
     // 結果をdstに設定
-    ImageF32x4_RGBA dstImage;
-    dstImage.setFromRGBA32F(dstMat.ptr<float>(), dstMat.cols, dstMat.rows);
-    //dst = ImageF32x4RGBAWithCache(dstImage);
+    if (dstMat.empty()) {
+        dst = src;
+        return;
+    }
+    writeGlowResultToDestination(dstMat, dst);
 }
 
 void GlowEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {

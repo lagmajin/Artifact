@@ -73,6 +73,7 @@ inline bool HasFlag(VariantOverrideFlags flags, VariantOverrideFlags flag) {
 }
 
 class ArtifactAbstractLayer;  // forward-declared within the same module – no tag mismatch
+class ArtifactLayerModifier;
 
 class LayerVariant {
 public:
@@ -422,6 +423,17 @@ public:
    getEffect(const UniString &effectID) const;
    int effectCount() const;
    /*Effects*/
+
+   /*Modifiers*/
+public:
+   void addModifier(std::shared_ptr<ArtifactLayerModifier> modifier);
+   void removeModifier(const QString& modifierId);
+   void clearModifiers();
+   std::vector<std::shared_ptr<ArtifactLayerModifier>> getModifiers() const;
+   std::shared_ptr<ArtifactLayerModifier> getModifier(const QString& modifierId) const;
+   int modifierCount() const;
+   bool hasModifiers() const;
+   /*Modifiers*/
 
   /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;

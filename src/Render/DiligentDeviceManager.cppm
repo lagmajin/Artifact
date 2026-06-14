@@ -377,6 +377,10 @@ void releaseSharedRenderDevice()
         return;
     }
 
+    if (shared.immediateContext) {
+        shared.immediateContext->Flush();
+        shared.immediateContext->WaitForIdle();
+    }
     shared.immediateContext.Release();
     shared.device.Release();
     shared.type = RENDER_DEVICE_TYPE_UNDEFINED;
@@ -751,13 +755,19 @@ bool DiligentDeviceManager::Impl::createSwapChainForBackend(HWND hwnd, int width
 
 void DiligentDeviceManager::Impl::destroy()
 {
+    if (immediateContext_) {
+        immediateContext_->Flush();
+        immediateContext_->WaitForIdle();
+    }
+
+    swapChain_.Release();
+
     if (renderHwnd_) {
         DestroyWindow(renderHwnd_);
         renderHwnd_ = nullptr;
     }
     renderParentHwnd_ = nullptr;
 
-    swapChain_.Release();
     deferredContext_.Release();
     immediateContext_.Release();
     device_.Release();

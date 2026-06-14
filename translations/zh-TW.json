@@ -187,6 +187,12 @@
     "move_down": "下移",
     "play_pause": "播放/暫停"
   },
+  "effect": {
+    "blur": {
+      "radius": "半徑",
+      "strength": "強度"
+    }
+  },
   "viewer": {
     "fps_na": "FPS: N/A",
     "mem_na": "記憶體: N/A",

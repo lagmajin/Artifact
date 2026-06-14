@@ -325,7 +325,7 @@ ArtifactTimeMenu::ArtifactTimeMenu(QWidget* parent /*= nullptr*/)
   :QMenu(parent),impl_(new Impl(this))
 {
   setTitle("時間(&T)");
-  setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/timemenu_timer.svg")));
+  setIcon(QIcon(ArtifactCore::resolveIconPath("Studio/menubar_time.svg")));
   impl_->refreshState();
 }
 
