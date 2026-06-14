@@ -85,6 +85,13 @@ public /*slots*/:
   void setStatusReady();
   void setDockSplitterSizes(const QString &dockTitle, const QList<int> &sizes);
 
+  // ADS dock manager のレイアウト状態（dock 配置、タブグループ、splitter、floating 位置）の
+  // 保存・復元。QMainWindow::saveState() には ADS の配置が含まれないため別途扱う。
+  // 保存はアプリ終了時、復元は起動時のレイアウト構築後に呼ぶ。
+  // restore は「全ての dock が登録された後」でなければならない（ADS の制約）。
+  QByteArray saveDockManagerState() const;
+  bool restoreDockManagerState(const QByteArray &state);
+
   // AI Cloud widget access
   ArtifactAICloudWidget *aiCloudWidget() const;
 };

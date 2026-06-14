@@ -1133,6 +1133,7 @@ bool applyTimelineRippleTrimOut(const CompositionID& compositionId,
 
     const qint64 followerOldIn = rippleLayer->inPoint().framePosition();
     const qint64 followerOldOut = rippleLayer->outPoint().framePosition();
+    const qint64 followerOldStart = rippleLayer->startTime().framePosition();
     const qint64 followerNewIn = std::max<qint64>(0, followerOldIn + rippleDelta);
     const qint64 actualDelta = followerNewIn - followerOldIn;
     if (actualDelta == 0) {
@@ -1143,6 +1144,11 @@ bool applyTimelineRippleTrimOut(const CompositionID& compositionId,
     rippleLayer->setOutPoint(
         FramePosition(std::max<qint64>(followerNewIn + 1,
                                        followerOldOut + actualDelta)));
+    // target 側の applyTimelineLayerRangeEdit と整合させるため、startTime も
+    // in/out と同じ delta で移動させる。これを忘れると follower の内部タイミング
+    // （source clip の再生開始位置）が in/out だけズレて破綻する。
+    rippleLayer->setStartTime(
+        FramePosition(std::max<qint64>(0, followerOldStart + actualDelta)));
     shiftAnimatableLayerKeyframes(comp, rippleLayer, actualDelta);
     rippleLayer->changed();
     ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
@@ -1191,6 +1197,249 @@ private:
   CompositionID compositionId_;
   LayerID layerId_;
   qint64 currentFrame_ = 0;
+  QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+};
+
+// Phase 2: Ripple Trim In
+bool applyTimelineRippleTrimIn(const CompositionID& compositionId,
+                               const QString& layerIdText,
+                               const qint64 currentFrame)
+{
+  if (layerIdText.trimmed().isEmpty()) {
+    return false;
+  }
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+    return false;
+  }
+
+  auto result = svc->findComposition(compositionId);
+  if (!result.success) {
+    return false;
+  }
+
+  auto comp = result.ptr.lock();
+  if (!comp) {
+    return false;
+  }
+
+  auto layer = comp->layerById(LayerID(layerIdText));
+  if (!layer) {
+    return false;
+  }
+
+  const qint64 oldInPoint = layer->inPoint().framePosition();
+  const qint64 oldOutPoint = layer->outPoint().framePosition();
+  const qint64 newInPoint =
+      std::max<qint64>(oldInPoint,
+                       std::min<qint64>(oldOutPoint - 1, currentFrame));
+  const qint64 rippleDelta = -(newInPoint - oldInPoint);
+
+  const auto rippleLayers =
+      collectRippleLaterLayers(comp, layer->id(), oldInPoint);
+
+  // target 側: inPoint を詰め、startTime と keyframe を追従させる。outPoint は動かさない。
+  const qint64 newOutPoint = oldOutPoint;
+  const qint64 inPointDelta = newInPoint - oldInPoint;
+
+  layer->setInPoint(FramePosition(newInPoint));
+  layer->setOutPoint(FramePosition(newOutPoint));
+  if (inPointDelta != 0) {
+    const qint64 oldStartTime = layer->startTime().framePosition();
+    layer->setStartTime(FramePosition(std::max<qint64>(0, oldStartTime + inPointDelta)));
+    shiftAnimatableLayerKeyframes(comp, layer, inPointDelta);
+    layer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{compositionId.toString(), layer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+  }
+
+  if (rippleDelta == 0 || rippleLayers.isEmpty()) {
+    return true;
+  }
+
+  for (const auto& rippleLayer : rippleLayers) {
+    if (!rippleLayer) {
+      continue;
+    }
+
+    const qint64 followerOldIn = rippleLayer->inPoint().framePosition();
+    const qint64 followerOldOut = rippleLayer->outPoint().framePosition();
+    const qint64 followerOldStart = rippleLayer->startTime().framePosition();
+    const qint64 followerNewIn = std::max<qint64>(0, followerOldIn + rippleDelta);
+    const qint64 actualDelta = followerNewIn - followerOldIn;
+    if (actualDelta == 0) {
+      continue;
+    }
+
+    rippleLayer->setInPoint(FramePosition(followerNewIn));
+    rippleLayer->setOutPoint(
+        FramePosition(std::max<qint64>(followerNewIn + 1,
+                                       followerOldOut + actualDelta)));
+    rippleLayer->setStartTime(
+        FramePosition(std::max<qint64>(0, followerOldStart + actualDelta)));
+    shiftAnimatableLayerKeyframes(comp, rippleLayer, actualDelta);
+    rippleLayer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{compositionId.toString(), rippleLayer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+  }
+
+  return true;
+}
+
+// Phase 2: Ripple Delete (Close Gap) - target を 0 幅に潰して後続を詰める。
+bool applyTimelineRippleDelete(const CompositionID& compositionId,
+                               const QString& layerIdText)
+{
+  if (layerIdText.trimmed().isEmpty()) {
+    return false;
+  }
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+    return false;
+  }
+
+  auto result = svc->findComposition(compositionId);
+  if (!result.success) {
+    return false;
+  }
+
+  auto comp = result.ptr.lock();
+  if (!comp) {
+    return false;
+  }
+
+  auto layer = comp->layerById(LayerID(layerIdText));
+  if (!layer) {
+    return false;
+  }
+
+  const qint64 oldInPoint = layer->inPoint().framePosition();
+  const qint64 oldOutPoint = layer->outPoint().framePosition();
+  const qint64 oldDuration = std::max<qint64>(1, oldOutPoint - oldInPoint);
+  const qint64 rippleDelta = -oldDuration;
+
+  const auto rippleLayers =
+      collectRippleLaterLayers(comp, layer->id(), oldInPoint);
+
+  layer->setInPoint(FramePosition(oldInPoint));
+  layer->setOutPoint(FramePosition(oldInPoint + 1));
+  layer->changed();
+  ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+      LayerChangedEvent{compositionId.toString(), layer->id().toString(),
+                        LayerChangedEvent::ChangeType::Modified});
+
+  if (rippleDelta == 0 || rippleLayers.isEmpty()) {
+    return true;
+  }
+
+  for (const auto& rippleLayer : rippleLayers) {
+    if (!rippleLayer) {
+      continue;
+    }
+
+    const qint64 followerOldIn = rippleLayer->inPoint().framePosition();
+    const qint64 followerOldOut = rippleLayer->outPoint().framePosition();
+    const qint64 followerOldStart = rippleLayer->startTime().framePosition();
+    const qint64 followerNewIn = std::max<qint64>(0, followerOldIn + rippleDelta);
+    const qint64 actualDelta = followerNewIn - followerOldIn;
+    if (actualDelta == 0) {
+      continue;
+    }
+
+    rippleLayer->setInPoint(FramePosition(followerNewIn));
+    rippleLayer->setOutPoint(
+        FramePosition(std::max<qint64>(followerNewIn + 1,
+                                       followerOldOut + actualDelta)));
+    rippleLayer->setStartTime(
+        FramePosition(std::max<qint64>(0, followerOldStart + actualDelta)));
+    shiftAnimatableLayerKeyframes(comp, rippleLayer, actualDelta);
+    rippleLayer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{compositionId.toString(), rippleLayer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+  }
+
+  return true;
+}
+
+class RippleTrimInCommand final : public UndoCommand {
+public:
+  RippleTrimInCommand(CompositionID compositionId, LayerID layerId,
+                      qint64 currentFrame,
+                      QVector<TimelineLayerStateSnapshot> beforeSnapshots)
+      : compositionId_(std::move(compositionId)),
+        layerId_(std::move(layerId)), currentFrame_(currentFrame),
+        beforeSnapshots_(std::move(beforeSnapshots)) {}
+
+  void undo() override
+  {
+    auto comp = safeCompositionLookup(compositionId_);
+    if (!comp) {
+      return;
+    }
+    restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void redo() override
+  {
+    if (applyTimelineRippleTrimIn(compositionId_, layerId_.toString(),
+                                  currentFrame_)) {
+      if (auto* mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+      }
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Ripple Trim In"); }
+
+private:
+  CompositionID compositionId_;
+  LayerID layerId_;
+  qint64 currentFrame_ = 0;
+  QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+};
+
+class RippleDeleteCommand final : public UndoCommand {
+public:
+  RippleDeleteCommand(CompositionID compositionId, LayerID layerId,
+                      QVector<TimelineLayerStateSnapshot> beforeSnapshots)
+      : compositionId_(std::move(compositionId)),
+        layerId_(std::move(layerId)),
+        beforeSnapshots_(std::move(beforeSnapshots)) {}
+
+  void undo() override
+  {
+    auto comp = safeCompositionLookup(compositionId_);
+    if (!comp) {
+      return;
+    }
+    restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void redo() override
+  {
+    if (applyTimelineRippleDelete(compositionId_, layerId_.toString())) {
+      if (auto* mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+      }
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Ripple Delete"); }
+
+private:
+  CompositionID compositionId_;
+  LayerID layerId_;
   QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
 };
 
@@ -5516,6 +5765,33 @@ void ArtifactTimelineWidget::refreshTracks() {
     if (composition) {
       auto layers = composition->allLayer();
       std::reverse(layers.begin(), layers.end());
+      auto summarizeLayerState = [](const ArtifactAbstractLayerPtr& layer) -> QString {
+        if (!layer) {
+          return {};
+        }
+        if (!layer->isVisible()) return QStringLiteral("Hidden");
+        if (layer->isLocked()) return QStringLiteral("Locked");
+        if (layer->isSolo()) return QStringLiteral("Solo");
+        if (layer->isShy()) return QStringLiteral("Shy");
+        const bool hasMasks = layer->hasMasks();
+        const bool hasMattes = !layer->matteReferences().empty();
+        if (hasMasks && hasMattes) return QStringLiteral("Mask + Matte");
+        if (hasMasks) return QStringLiteral("Masked");
+        if (hasMattes) return QStringLiteral("Matted");
+        if (layer->hasParent()) return QStringLiteral("Child");
+        return {};
+      };
+      auto summarizeLayerStateTone = [](const ArtifactAbstractLayerPtr& layer) -> LayerPresentationBadgeTone {
+        if (!layer) {
+          return LayerPresentationBadgeTone::Neutral;
+        }
+        if (!layer->isVisible()) return LayerPresentationBadgeTone::Neutral;
+        if (layer->isLocked() || layer->isShy()) return LayerPresentationBadgeTone::Special;
+        if (layer->isSolo()) return LayerPresentationBadgeTone::Motion;
+        if (layer->hasMasks() || !layer->matteReferences().empty()) return LayerPresentationBadgeTone::Special;
+        if (layer->hasParent()) return LayerPresentationBadgeTone::Container;
+        return LayerPresentationBadgeTone::Neutral;
+      };
       for (auto &layer : layers) {
         if (!layer)
           continue;
@@ -5527,6 +5803,8 @@ void ArtifactTimelineWidget::refreshTracks() {
         descriptor.kind = TimelineRowKind::Layer;
         descriptor.auxiliaryText = presentation.timelineBadgeText;
         descriptor.auxiliaryTone = presentation.badgeTone;
+        descriptor.stateText = summarizeLayerState(layer);
+        descriptor.stateTone = summarizeLayerStateTone(layer);
         visibleRows.push_back(std::move(descriptor));
       }
     }
@@ -6010,6 +6288,87 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
         if (changed) {
           Q_EMIT timelineDebugMessage(
               QStringLiteral("Ripple trimmed later layers at F%1")
+                  .arg(currentFrame));
+        }
+        event->accept();
+        return;
+      }
+
+      // Phase 2: Alt+Shift+[ で Ripple Trim In。
+      // BracketLeft + Alt+Shift のとき、選択レイヤーの inPoint を詰めて後続を前に詰める。
+      if (event->key() == Qt::Key_BracketLeft && isAlt && isShift) {
+        ArtifactAbstractLayerPtr rippleTarget = selManager->currentLayer();
+        if (!rippleTarget && !selectedLayers.isEmpty()) {
+          rippleTarget = *selectedLayers.begin();
+        }
+        if (rippleTarget) {
+          const qint64 oldIn = rippleTarget->inPoint().framePosition();
+          const auto rippleLayers =
+              collectRippleLaterLayers(comp, rippleTarget->id(), oldIn);
+          QVector<ArtifactAbstractLayerPtr> snapshotLayers;
+          snapshotLayers.reserve(rippleLayers.size() + 1);
+          snapshotLayers.push_back(rippleTarget);
+          for (const auto& rippleLayer : rippleLayers) {
+            snapshotLayers.push_back(rippleLayer);
+          }
+
+          const auto beforeSnapshots =
+              captureTimelineLayerStateSnapshots(comp, snapshotLayers);
+          if (auto* mgr = UndoManager::instance()) {
+            mgr->push(std::make_unique<RippleTrimInCommand>(
+                impl_->compositionId_, rippleTarget->id(), currentFrame,
+                std::move(beforeSnapshots)));
+            changed = true;
+          } else {
+            changed = applyTimelineRippleTrimIn(
+                impl_->compositionId_, rippleTarget->id().toString(),
+                currentFrame);
+          }
+        }
+
+        if (changed) {
+          Q_EMIT timelineDebugMessage(
+              QStringLiteral("Ripple Trim In at F%1").arg(currentFrame));
+        }
+        event->accept();
+        return;
+      }
+
+      // Phase 2: Alt+Shift+Delete/Backspace で Ripple Delete (Close Gap)。
+      // target を 0 幅に潰して後続を詰める。レイヤー完全削除はしない。
+      if ((event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) &&
+          isAlt && isShift) {
+        ArtifactAbstractLayerPtr rippleTarget = selManager->currentLayer();
+        if (!rippleTarget && !selectedLayers.isEmpty()) {
+          rippleTarget = *selectedLayers.begin();
+        }
+        if (rippleTarget) {
+          const qint64 oldIn = rippleTarget->inPoint().framePosition();
+          const auto rippleLayers =
+              collectRippleLaterLayers(comp, rippleTarget->id(), oldIn);
+          QVector<ArtifactAbstractLayerPtr> snapshotLayers;
+          snapshotLayers.reserve(rippleLayers.size() + 1);
+          snapshotLayers.push_back(rippleTarget);
+          for (const auto& rippleLayer : rippleLayers) {
+            snapshotLayers.push_back(rippleLayer);
+          }
+
+          const auto beforeSnapshots =
+              captureTimelineLayerStateSnapshots(comp, snapshotLayers);
+          if (auto* mgr = UndoManager::instance()) {
+            mgr->push(std::make_unique<RippleDeleteCommand>(
+                impl_->compositionId_, rippleTarget->id(),
+                std::move(beforeSnapshots)));
+            changed = true;
+          } else {
+            changed = applyTimelineRippleDelete(
+                impl_->compositionId_, rippleTarget->id().toString());
+          }
+        }
+
+        if (changed) {
+          Q_EMIT timelineDebugMessage(
+              QStringLiteral("Ripple Delete (Close Gap) at F%1")
                   .arg(currentFrame));
         }
         event->accept();

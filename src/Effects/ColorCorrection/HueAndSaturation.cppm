@@ -200,7 +200,6 @@ private:
         float colorize = 0.0f;
     };
 
-    static const char* kHueSatHlsl;
     static bool createTextureFromImage(const ImageF32x4RGBAWithCache& src, Diligent::IRenderDevice* device, Diligent::ITexture** outTex, const char* name)
     {
         if (!device || !outTex) return false;

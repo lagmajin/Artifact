@@ -43,6 +43,174 @@ namespace Artifact {
 
 namespace {
 
+// transform 系プロパティの keyframe 値を解像度変更に合わせて再計算する。
+// position / anchor は X/Y が別プロパティなので、同時刻の keyframe をペアリングして
+// QPointF を組み立ててから ResolutionRemap::remapPosition に渡す。
+// CenterLocked 等の policy は X と Y の双方にまたがる平行移動成分を持つため、
+// X と Y を独立には remap できない。
+// scale は X/Y 別々の倍率値として remapScale で処理する。rotation は角度なので対象外。
+
+// 同じ時間を持つ2つのプロパティの keyframe を時刻で整列させ、(xValue, yValue) のペア列を返す。
+// 一方にしか無い時刻は補間値で揃える。
+std::vector<std::pair<ArtifactCore::RationalTime, QPointF>>
+alignKeyframesByTime(const ArtifactCore::AbstractProperty& xProp,
+                     const ArtifactCore::AbstractProperty& yProp)
+{
+    const auto xKeys = xProp.getKeyFrames();
+    const auto yKeys = yProp.getKeyFrames();
+
+    std::vector<std::pair<ArtifactCore::RationalTime, QPointF>> result;
+    if (xKeys.empty() && yKeys.empty()) {
+        return result;
+    }
+
+    // 時刻の和集合を取る（RationalTime は同値比較可能）。
+    std::vector<ArtifactCore::RationalTime> times;
+    times.reserve(xKeys.size() + yKeys.size());
+    for (const auto& k : xKeys) times.push_back(k.time);
+    for (const auto& k : yKeys) times.push_back(k.time);
+    std::sort(times.begin(), times.end(),
+              [](const ArtifactCore::RationalTime& a, const ArtifactCore::RationalTime& b) {
+                  return a < b;
+              });
+    times.erase(std::unique(times.begin(), times.end(),
+                            [](const ArtifactCore::RationalTime& a, const ArtifactCore::RationalTime& b) {
+                                return !(a < b) && !(b < a);
+                            }),
+                times.end());
+
+    result.reserve(times.size());
+    for (const auto& t : times) {
+        const double xv = xProp.interpolateValue(t).toDouble();
+        const double yv = yProp.interpolateValue(t).toDouble();
+        result.emplace_back(t, QPointF(xv, yv));
+    }
+    return result;
+}
+
+// X/Y 別プロパティをPointF単位で remap し直す。keyframe が無ければ現在値を1回だけ remap する。
+void remapPointPropertyPair(ArtifactCore::AbstractProperty& xProp,
+                            ArtifactCore::AbstractProperty& yProp,
+                            const QSize& oldSize,
+                            const QSize& newSize,
+                            ArtifactCore::RemapPolicy policy)
+{
+    const auto xKeys = xProp.getKeyFrames();
+    const auto yKeys = yProp.getKeyFrames();
+
+    if (xKeys.empty() && yKeys.empty()) {
+        // 非アニメーション: 現在値を1回 remap して setValue する。
+        const QPointF remapped = ArtifactCore::ResolutionRemap::remapPosition(
+            QPointF(xProp.getValue().toDouble(), yProp.getValue().toDouble()),
+            oldSize, newSize, policy);
+        xProp.setValue(remapped.x());
+        yProp.setValue(remapped.y());
+        return;
+    }
+
+    // アニメーション: 時刻で整列した (x, y) ペアを remap し直して再設定する。
+    // interpolation / bezier handle / roving は元 keyframe のものを可能な限り維持する。
+    // X と Y で別々に clear/add するが、時刻と補間情報は整列済みペアから復元する。
+    const auto pairs = alignKeyframesByTime(xProp, yProp);
+    if (pairs.empty()) {
+        return;
+    }
+
+    // 元の keyframe メタデータ（補間/ハンドル/roving）を時刻で引けるようにする。
+    auto findKey = [](const std::vector<ArtifactCore::KeyFrame>& keys,
+                      const ArtifactCore::RationalTime& t) -> const ArtifactCore::KeyFrame* {
+        for (const auto& k : keys) {
+            if (!(k.time < t) && !(t < k.time)) return &k;
+        }
+        return nullptr;
+    };
+
+    xProp.clearKeyFrames();
+    yProp.clearKeyFrames();
+    for (const auto& [t, pt] : pairs) {
+        const QPointF remapped = ArtifactCore::ResolutionRemap::remapPosition(
+            pt, oldSize, newSize, policy);
+        const auto* xk = findKey(xKeys, t);
+        const auto* yk = findKey(yKeys, t);
+        if (xk) {
+            xProp.addKeyFrame(t, QVariant(remapped.x()), xk->interpolation,
+                              xk->cp1_x, xk->cp1_y, xk->cp2_x, xk->cp2_y, xk->roving);
+        } else {
+            xProp.addKeyFrame(t, QVariant(remapped.x()));
+        }
+        if (yk) {
+            yProp.addKeyFrame(t, QVariant(remapped.y()), yk->interpolation,
+                              yk->cp1_x, yk->cp1_y, yk->cp2_x, yk->cp2_y, yk->roving);
+        } else {
+            yProp.addKeyFrame(t, QVariant(remapped.y()));
+        }
+    }
+}
+
+// X/Y 別のスカラー倍率プロパティをそれぞれ remapScale で再計算する。
+void remapScalePropertyPair(ArtifactCore::AbstractProperty& xProp,
+                            ArtifactCore::AbstractProperty& yProp,
+                            const QSize& oldSize,
+                            const QSize& newSize,
+                            ArtifactCore::RemapPolicy policy)
+{
+    auto remapScalar = [&](ArtifactCore::AbstractProperty& prop) {
+        const auto keys = prop.getKeyFrames();
+        if (keys.empty()) {
+            const double v = ArtifactCore::ResolutionRemap::remapScale(
+                prop.getValue().toDouble(), oldSize, newSize, policy);
+            prop.setValue(v);
+            return;
+        }
+        prop.clearKeyFrames();
+        for (const auto& k : keys) {
+            const double v = ArtifactCore::ResolutionRemap::remapScale(
+                k.value.toDouble(), oldSize, newSize, policy);
+            prop.addKeyFrame(k.time, QVariant(v), k.interpolation,
+                             k.cp1_x, k.cp1_y, k.cp2_x, k.cp2_y, k.roving);
+        }
+    };
+    remapScalar(xProp);
+    remapScalar(yProp);
+}
+
+// レイヤーの transform 系プロパティ keyframe を解像度変更に合わせて remap する。
+void remapLayerTransformProperties(const ArtifactAbstractLayerPtr& layer,
+                                   const QSize& oldSize,
+                                   const QSize& newSize,
+                                   ArtifactCore::RemapPolicy policy)
+{
+    if (!layer) return;
+
+    // 対象プロパティ名。ArtifactAbstractLayer が "Transform" グループ以下に
+    // transform.position.x/.y, transform.scale.x/.y, transform.anchor.x/.y として公開する。
+    // rotation は角度で aspect 非依存のため対象外。
+    auto findInGroups = [&layer](const QString& name) -> ArtifactCore::AbstractPropertyPtr {
+        for (const auto& group : layer->getLayerPropertyGroups()) {
+            if (auto p = group.findProperty(name)) {
+                return p;
+            }
+        }
+        return nullptr;
+    };
+
+    if (auto px = findInGroups(QStringLiteral("transform.position.x"))) {
+        if (auto py = findInGroups(QStringLiteral("transform.position.y"))) {
+            remapPointPropertyPair(*px, *py, oldSize, newSize, policy);
+        }
+    }
+    if (auto ax = findInGroups(QStringLiteral("transform.anchor.x"))) {
+        if (auto ay = findInGroups(QStringLiteral("transform.anchor.y"))) {
+            remapPointPropertyPair(*ax, *ay, oldSize, newSize, policy);
+        }
+    }
+    if (auto sx = findInGroups(QStringLiteral("transform.scale.x"))) {
+        if (auto sy = findInGroups(QStringLiteral("transform.scale.y"))) {
+            remapScalePropertyPair(*sx, *sy, oldSize, newSize, policy);
+        }
+    }
+}
+
 void collectAssetSourcePaths(const QJsonValue& value, QSet<QString>& out)
 {
   if (value.isObject()) {
@@ -1232,6 +1400,10 @@ void ArtifactAbstractComposition::applyResolutionRemap(const QSize& newSize, Rem
                 layer->setMask(mi, lm);
             }
         }
+
+        // Remap transform property keyframes (position / anchor / scale).
+        // rotation は角度で aspect 非依存のため対象外。rotation / opacity はそのまま。
+        remapLayerTransformProperties(layer, oldSize, newSize, policy);
     }
 }
 

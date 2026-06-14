@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <array>
 #include <cmath>
+#include <cstdint>
 #include <cstring>
 #include <QImage>
 #include <QColor>
@@ -70,15 +71,20 @@ qint64 computeImageContentKey(const QImage& image) {
 
 qint64 computeImageContentKey(const auto& image)
 {
-    const float* data = image.rgba32fData();
-    if (!data) {
+    const float* data32 = image.rgba32fData();
+    const std::uint8_t* data8 = image.rgba8Data();
+    if (!data32 && !data8) {
         return 0;
     }
 
-    const size_t totalBytes = static_cast<size_t>(image.width()) * static_cast<size_t>(image.height()) * 4u * sizeof(float);
+    const bool isFloat = data32 != nullptr;
+    const size_t bytesPerChannel = isFloat ? sizeof(float) : sizeof(std::uint8_t);
+    const size_t totalBytes = static_cast<size_t>(image.width()) * static_cast<size_t>(image.height()) * 4u * bytesPerChannel;
     const size_t sampleBytes = std::min<size_t>(totalBytes, 4096u);
-    quint32 h = qHashMulti(0, image.width(), image.height(), 4, sizeof(float));
-    const quint8* bytes = reinterpret_cast<const quint8*>(data);
+    quint32 h = qHashMulti(0, image.width(), image.height(), 4, bytesPerChannel);
+    const quint8* bytes = isFloat
+        ? reinterpret_cast<const quint8*>(data32)
+        : reinterpret_cast<const quint8*>(data8);
     for (size_t i = 0; i < sampleBytes; ++i) {
         h ^= static_cast<quint32>(bytes[i]);
         h *= 16777619u;

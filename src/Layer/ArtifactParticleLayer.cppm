@@ -194,11 +194,19 @@ ArtifactParticleLayer::~ArtifactParticleLayer()
 void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!renderer || !impl_->particleSystem) {
+        qWarning() << "[ParticleLayer] draw() early exit: renderer=" << (renderer ? "ok" : "null")
+                   << "particleSystem=" << (impl_->particleSystem ? "ok" : "null");
         return;
     }
 
     const int64_t frameNumber = currentFrame();
+    const bool rendererReady = renderer->isInitialized();
+    const int emitterCount = impl_->particleSystem->emitterCount();
     
+    qInfo() << "[ParticleLayer] draw() frame=" << frameNumber
+            << "rendererInitialized=" << rendererReady
+            << "emitters=" << emitterCount;
+
     // 1. 決定論的なシミュレーション状態の更新
     // ※ goToFrame は内部で reset() と forward simulation を行う
     float fps = 30.0f;
@@ -210,19 +218,25 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
 
     // 2. GPU レンダリングパス
     // Diligent 経路が使える場合は billboard 描画を優先し、ここではソフト描画へ落とさない
-    if (renderer->isInitialized()) {
-        const int emitterCount = impl_->particleSystem->emitterCount();
+    if (rendererReady) {
         const auto sourceData = impl_->particleSystem->captureRenderData();
+        qInfo() << "[ParticleLayer] GPU path: particleCount=" << sourceData.particles.size();
         if (!sourceData.particles.empty()) {
             const ArtifactCore::ParticleRenderData renderData =
                 transformParticleRenderData(sourceData, getGlobalTransform(), opacity());
             renderer->drawParticles(renderData);
+        } else {
+            qWarning() << "[ParticleLayer] GPU path: NO PARTICLES - emitter may not generate";
         }
         return;
     }
 
     // 3. ソフトウェアフォールバックパス
     // renderer が未初期化のときだけ従来の QPainter 描画を使う
+    qInfo() << "[ParticleLayer] Fallback path: cachedFrame=" << impl_->cachedFrameNumber
+            << "currentFrame=" << frameNumber
+            << "cachedNull=" << impl_->cachedFrame.isNull();
+    
     if (frameNumber != impl_->cachedFrameNumber || impl_->cachedFrame.isNull()) {
         float fallbackFps = 30.0f;
         if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
@@ -233,12 +247,17 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
                                          std::max(1, impl_->height),
                                          time);
         impl_->cachedFrameNumber = frameNumber;
+        qInfo() << "[ParticleLayer] Fallback rendered: size=" << impl_->cachedFrame.size()
+                << "null=" << impl_->cachedFrame.isNull();
     }
 
     if (impl_->cachedFrame.isNull()) {
+        qWarning() << "[ParticleLayer] Fallback draw skipped: cachedFrame is null";
         return;
     }
 
+    qInfo() << "[ParticleLayer] drawSprite: w=" << impl_->cachedFrame.width()
+            << "h=" << impl_->cachedFrame.height() << "opacity=" << opacity();
     renderer->drawSprite(
         0.0f,
         0.0f,
@@ -538,6 +557,10 @@ void ArtifactParticleLayer::createParticleSystem()
             static_cast<float>(impl_->height) / 2.0f,
             0.0f);
         params.rate = 30.0f;
+        // 冒頭フレームでも粒子が蓄積した状態で描画されるよう、プリウォームを有効化する。
+        // goToFrame() 側が frame <= 1 のときだけ preWarm() を呼ぶため、
+        // タイムライン途中のシミュレーション見た目には影響しない。
+        params.preWarm = true;
         emitter->setParams(params);
     }
     clearFrameCache();

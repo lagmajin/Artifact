@@ -563,7 +563,7 @@ RotateRingGeometry makeVisualRotateRingGeometry(const RotateRingGeometry& geo)
 {
  RotateRingGeometry visual = geo;
  visual.ringRadius = std::max(12.0f, geo.ringRadius * 0.5f);
- visual.ringThickness = std::max(1.4f, geo.ringThickness * 0.75f);
+ visual.ringThickness = std::max(2.2f, geo.ringThickness * 0.82f);
  visual.innerRadius = std::max(1.0f,
                                visual.ringRadius - visual.ringThickness * GizmoVisualStyle::rotateRingInnerScale);
  visual.outerRadius = visual.ringRadius + visual.ringThickness * GizmoVisualStyle::rotateRingShadowBoost;
@@ -722,7 +722,7 @@ void drawRotateLeader(ArtifactIRenderer* renderer,
   return;
  }
 
- const float leaderThickness = std::max(1.2f, 1.1f * invZoom);
+ const float leaderThickness = std::max(1.8f, 1.35f * invZoom);
  renderer->drawSolidLine({static_cast<float>(center.x()), static_cast<float>(center.y())},
                          {static_cast<float>(grip.x()), static_cast<float>(grip.y())},
                          color, leaderThickness);
@@ -1562,18 +1562,24 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
   const float shadowOffset = std::max(1.2f, 1.0f * invZoom);
   const float segmentSweep = 68.0f;
 
+  const float projectedMajorRadius = visualRotateGeo.ringRadius * 0.98f;
+  const float projectedMinorRadius =
+      std::max(1.0f * invZoom, visualRotateGeo.ringRadius * 0.035f);
+  const float projectedAxisThickness =
+      std::max(2.0f, visualRotateGeo.ringThickness * 0.78f);
+  const float projectedAxisRotation = t3d.rotation();
   drawEllipse(renderer, visualRotateGeo.centerWorld,
-              visualRotateGeo.ringRadius * 0.98f,
-              visualRotateGeo.ringRadius * 0.34f,
-              0.0f,
-              FloatColor{1.0f, 0.30f, 0.18f, rotateEmphasis ? 0.70f : 0.46f},
-              std::max(1.4f, visualRotateGeo.ringThickness * 0.72f));
+              projectedMajorRadius,
+              projectedMinorRadius,
+              projectedAxisRotation,
+              FloatColor{1.0f, 0.30f, 0.18f, rotateEmphasis ? 0.74f : 0.52f},
+              projectedAxisThickness);
   drawEllipse(renderer, visualRotateGeo.centerWorld,
-              visualRotateGeo.ringRadius * 0.34f,
-              visualRotateGeo.ringRadius * 0.98f,
-              0.0f,
-              FloatColor{0.22f, 0.90f, 0.44f, rotateEmphasis ? 0.70f : 0.46f},
-              std::max(1.4f, visualRotateGeo.ringThickness * 0.72f));
+              projectedMinorRadius,
+              projectedMajorRadius,
+              projectedAxisRotation,
+              FloatColor{0.22f, 0.90f, 0.44f, rotateEmphasis ? 0.74f : 0.52f},
+              projectedAxisThickness);
 
   renderer->drawCircle(visualRotateGeo.centerWorld.x() + shadowOffset,
                        visualRotateGeo.centerWorld.y() + shadowOffset,
@@ -2056,7 +2062,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  ArtifactCore::RationalTime time(layer_->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
  auto &t3d = layer_->transform3D();
  const auto shouldPublishDragMutation = [this]() -> bool {
-  constexpr auto kDragMutationNotifyInterval = std::chrono::milliseconds(16);
+  constexpr auto kDragMutationNotifyInterval = std::chrono::milliseconds(33);
   const auto now = std::chrono::steady_clock::now();
   if (lastDragMutationNotify_.time_since_epoch().count() == 0 ||
       now - lastDragMutationNotify_ >= kDragMutationNotifyInterval) {

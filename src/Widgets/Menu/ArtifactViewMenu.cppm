@@ -47,6 +47,11 @@ import Image.ImageF32x4_RGBA;
 namespace Artifact {
  using namespace ArtifactCore;
  namespace {
+  ArtifactMainWindow* asArtifactMainWindow(QMainWindow* window)
+  {
+   return dynamic_cast<ArtifactMainWindow*>(window);
+  }
+
  QWidget* findWidgetByClassHint(const QString& classHint)
   {
    const auto widgets = QApplication::allWidgets();
@@ -74,6 +79,10 @@ namespace Artifact {
 
   QStringList dockTitles(QMainWindow* window)
   {
+   if (auto* artifactWindow = asArtifactMainWindow(window)) {
+    return artifactWindow->dockTitles();
+   }
+
    QStringList titles;
    if (!window) return titles;
    const auto docks = window->findChildren<QDockWidget*>();
@@ -89,12 +98,21 @@ namespace Artifact {
 
   bool isDockVisible(QMainWindow* window, const QString& title)
   {
+   if (auto* artifactWindow = asArtifactMainWindow(window)) {
+    return artifactWindow->isDockVisible(title);
+   }
+
    const auto* dock = findDockByTitle(window, title);
    return dock ? dock->isVisible() : false;
   }
 
   void setDockVisible(QMainWindow* window, const QString& title, bool visible)
   {
+   if (auto* artifactWindow = asArtifactMainWindow(window)) {
+    artifactWindow->setDockVisible(title, visible);
+    return;
+   }
+
    auto* dock = findDockByTitle(window, title);
    if (!dock) return;
    dock->setVisible(visible);
@@ -105,6 +123,11 @@ namespace Artifact {
 
   void activateDock(QMainWindow* window, const QString& title)
   {
+   if (auto* artifactWindow = asArtifactMainWindow(window)) {
+    artifactWindow->activateDock(title);
+    return;
+   }
+
    auto* dock = findDockByTitle(window, title);
    if (!dock) return;
    dock->setVisible(true);

@@ -1,4 +1,10 @@
 module;
+#include <QColor>
+#include <QEvent>
+#include <QPaintEvent>
+#include <QPen>
+#include <QRect>
+#include <QRectF>
 #include <QWidget>
 #include <QPainter>
 #include <QMouseEvent>

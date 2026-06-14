@@ -210,8 +210,22 @@ Candidate follow-up methods:
 - `getLayerProperties(compositionId, layerId, properties) → QVariantMap`
   - Position, scale, rotation, opacity
 - `setLayerProperties(compositionId, layerId, properties) → bool`
-- `getLayerEffects(compositionId, layerId) → QVariantList`
-- `addLayerEffect(compositionId, layerId, effectType, params) → QString`
+- `getLayerEffects(layerId) → QVariantList`
+- `addLayerEffect(layerId, effectType) → QString`
+- `removeLayerEffect(layerId, effectId) → bool`
+- `setLayerEffectParameter(layerId, effectId, paramName, value) → bool`
+- `setLayerEffectEnabled(layerId, effectId, enabled) → bool`
+- `moveLayerEffect(layerId, effectId, direction) → bool`
+- `duplicateLayerEffect(layerId, effectId) → QString`
+- `saveLayerEffectPreset(layerId, effectId, filePath) → bool`
+- `loadLayerEffectPreset(layerId, effectId, filePath) → bool`
+- `listLayerEffectPresets(directoryPath) → QVariantList`
+- `recentLayerEffectPresets(limit) → QVariantList`
+- `workspaceDiagnostics() → QVariantMap`
+- `getLayerKeyframeSummary(layerId) → QVariantMap`
+- `batchSetKeyframes(layerId, keyframes) → QVariantMap`
+- `batchRenameProjectItems(items) → QVariantMap`
+- `batchMoveProjectItemsToFolder(itemIds, parentFolderId) → QVariantMap`
 
 ---
 

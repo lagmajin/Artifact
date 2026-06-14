@@ -37,6 +37,7 @@ export module Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
 import Image.ImageF32x4RGBAWithCache;
+import Property.Abstract;
 
 export namespace Artifact {
 
@@ -106,6 +107,9 @@ public:
 
     void setSigma(float sigma);
     float sigma() const;
+
+    std::vector<AbstractProperty> getProperties() const override;
+    void setPropertyValue(const UniString& name, const QVariant& value) override;
 
     bool supportsGPU() const override {
         return true;

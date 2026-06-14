@@ -1,7 +1,12 @@
-﻿module;
-#include <QMouseEvent>
+module;
+#include <QColor>
 #include <QLinearGradient>
+#include <QPaintEvent>
 #include <QPainterPath>
+#include <QPen>
+#include <QRect>
+#include <QRectF>
+#include <QMouseEvent>
 #include <QPainter>
 #include <QWidget>
 #include <wobjectimpl.h>
@@ -203,7 +208,7 @@ namespace Artifact
        p, static_cast<qreal>(clampedCurrentX), 0.0, stemBottom, false, 1.0,
        std::min<qreal>(10.0, static_cast<qreal>(trackRect.height() - 3)), 12.0);
   }
-}
+ }
 
  void ArtifactTimelineNavigatorWidget::mousePressEvent(QMouseEvent* ev)
  {

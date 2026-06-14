@@ -1735,7 +1735,7 @@ public:
       asset.importedPath =
           resolveImportedAssetPathForSource(path, importedPaths);
       asset.fileType = asset.svgShapeFile ? ArtifactCore::FileType::Image
-                                          : detector.detect(path);
+                                          : detector.detectByExtension(path);
       pendingDroppedAssets_.push_back(asset);
     }
 

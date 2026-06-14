@@ -27,6 +27,7 @@ public:
   QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject& obj) override;
   bool isConstructionLayer() const override;
+  bool shouldIncludeInFinalRender() const override;
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
 };

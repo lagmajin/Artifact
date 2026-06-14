@@ -29,6 +29,7 @@ module Artifact.Widget.Dialog.RenderOutputSetting;
 
 import Encoder.FFmpegEncoder;
 import Artifact.Render.Queue.Presets;
+import Artifact.Widgets.RelativeSpinBox;
 
 
 namespace Artifact
@@ -642,9 +643,9 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->resolutionCombo->addItem("1280 x 720");
     impl_->resolutionCombo->addItem("Custom");
 
-    impl_->widthSpin = new QSpinBox();
+    impl_->widthSpin = new ArtifactRelativeSpinBox();
     impl_->widthSpin->setRange(1, 16384);
-    impl_->heightSpin = new QSpinBox();
+    impl_->heightSpin = new ArtifactRelativeSpinBox();
     impl_->heightSpin->setRange(1, 16384);
     impl_->widthSpin->setValue(1920);
     impl_->heightSpin->setValue(1080);
@@ -660,14 +661,14 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     formLayout->addRow("Resolution:", resLayout);
 
     // Frame rate selection
-    impl_->fpsSpin = new QDoubleSpinBox();
+    impl_->fpsSpin = new ArtifactRelativeDoubleSpinBox();
     impl_->fpsSpin->setRange(1.0, 240.0);
     impl_->fpsSpin->setDecimals(3);
     impl_->fpsSpin->setSingleStep(0.5);
     impl_->fpsSpin->setValue(30.0);
     formLayout->addRow("Frame Rate:", impl_->fpsSpin);
 
-    impl_->bitrateSpin = new QSpinBox();
+    impl_->bitrateSpin = new ArtifactRelativeSpinBox();
     impl_->bitrateSpin->setRange(128, 200000);
     impl_->bitrateSpin->setSingleStep(100);
     impl_->bitrateSpin->setValue(8000);
@@ -682,7 +683,7 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->audioCodecCombo->addItems(QStringList{"AAC", "MP3", "FLAC", "Opus"});
     formLayout->addRow("Audio Codec:", impl_->audioCodecCombo);
 
-    impl_->audioBitrateSpin = new QSpinBox();
+    impl_->audioBitrateSpin = new ArtifactRelativeSpinBox();
     impl_->audioBitrateSpin->setRange(32, 512);
     impl_->audioBitrateSpin->setSingleStep(32);
     impl_->audioBitrateSpin->setValue(128);

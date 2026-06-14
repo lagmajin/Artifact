@@ -63,6 +63,8 @@ export namespace Artifact
    QString propertyPath;
    QString auxiliaryText;
    LayerPresentationBadgeTone auxiliaryTone = LayerPresentationBadgeTone::Neutral;
+   QString stateText;
+   LayerPresentationBadgeTone stateTone = LayerPresentationBadgeTone::Neutral;
   };
 
   struct LayerPresentationDescriptor

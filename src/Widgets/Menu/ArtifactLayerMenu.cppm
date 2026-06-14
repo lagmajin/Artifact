@@ -290,7 +290,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     createConstructionAction = new QAction("Construction Layer", createMenu);
     createConstructionAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_grid_on.svg")));
-    createConstructionAction->setToolTip(QStringLiteral("Create a renderless construction layer"));
+    createConstructionAction->setToolTip(QStringLiteral("Create a construction layer (editor-only by default)"));
 
     createAdjustAction = new QAction("調整レイヤー(&A)", createMenu);
     createAdjustAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Y));

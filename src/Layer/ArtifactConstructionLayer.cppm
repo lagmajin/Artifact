@@ -10,6 +10,7 @@ import std;
 import Artifact.Layer.Abstract;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
+import Color.Float;
 import Property.Group;
 import Property;
 
@@ -33,6 +34,7 @@ public:
   bool showSafeArea = true;
   bool showBaseline = true;
   bool renderAsDesign = false;
+  bool includeInFinalRender = false;
 
   FloatColor guideColor() const
   {
@@ -152,6 +154,7 @@ QJsonObject ArtifactConstructionLayer::toJson() const {
   obj["construction.showSafeArea"] = impl_->showSafeArea;
   obj["construction.showBaseline"] = impl_->showBaseline;
   obj["construction.renderAsDesign"] = impl_->renderAsDesign;
+  obj["construction.includeInFinalRender"] = impl_->includeInFinalRender;
   return obj;
 }
 
@@ -170,12 +173,17 @@ void ArtifactConstructionLayer::fromJsonProperties(const QJsonObject& obj) {
   impl_->showSafeArea = obj.value(QStringLiteral("construction.showSafeArea")).toBool(impl_->showSafeArea);
   impl_->showBaseline = obj.value(QStringLiteral("construction.showBaseline")).toBool(impl_->showBaseline);
   impl_->renderAsDesign = obj.value(QStringLiteral("construction.renderAsDesign")).toBool(impl_->renderAsDesign);
+  impl_->includeInFinalRender = obj.value(QStringLiteral("construction.includeInFinalRender")).toBool(impl_->includeInFinalRender);
   setSourceSize(Size_2D(static_cast<int>(std::round(impl_->width)),
                         static_cast<int>(std::round(impl_->height))));
 }
 
 bool ArtifactConstructionLayer::isConstructionLayer() const {
   return true;
+}
+
+bool ArtifactConstructionLayer::shouldIncludeInFinalRender() const {
+  return impl_->includeInFinalRender;
 }
 
 std::vector<ArtifactCore::PropertyGroup> ArtifactConstructionLayer::getLayerPropertyGroups() const {
@@ -227,6 +235,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactConstructionLayer::getLayerProp
   group.addProperty(makeProp(QStringLiteral("construction.showSafeArea"), PropertyType::Boolean, impl_->showSafeArea, -87));
   group.addProperty(makeProp(QStringLiteral("construction.showBaseline"), PropertyType::Boolean, impl_->showBaseline, -86));
   group.addProperty(makeProp(QStringLiteral("construction.renderAsDesign"), PropertyType::Boolean, impl_->renderAsDesign, -80));
+  group.addProperty(makeProp(QStringLiteral("construction.includeInFinalRender"), PropertyType::Boolean, impl_->includeInFinalRender, -79));
 
   groups.push_back(group);
   return groups;
@@ -263,6 +272,8 @@ bool ArtifactConstructionLayer::setLayerPropertyValue(const QString& propertyPat
   } else if (propertyPath == QStringLiteral("construction.renderAsDesign")) {
     impl_->renderAsDesign = value.toBool();
     setGuide(!impl_->renderAsDesign);
+  } else if (propertyPath == QStringLiteral("construction.includeInFinalRender")) {
+    impl_->includeInFinalRender = value.toBool();
   } else {
     return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
   }

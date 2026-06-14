@@ -147,6 +147,7 @@ import Dialog.Composition;
 import Geometry.ResolutionRemap;
 import Artifact.Widgets.ResolutionRemapDialog;
 import Utils.Path;
+import Undo.UndoManager;
 
 namespace Artifact {
 
@@ -3444,7 +3445,15 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
 
                             Artifact::ArtifactResolutionRemapDialog dialog(oldSize, newSize, impact);
                             if (dialog.exec() == QDialog::Accepted && dialog.remapRequested()) {
-                                composition->applyResolutionRemap(newSize, dialog.selectedPolicy());
+                                // remap は Undo 可能なコマンド経由で実行する。
+                                // コマンドのコンストラクタが before snapshot を採取し、
+                                // push() 内の redo() で applyResolutionRemap を呼ぶ。
+                                if (auto* mgr = UndoManager::instance()) {
+                                    mgr->push(std::make_unique<ChangeCompositionResolutionCommand>(
+                                        composition, oldSize, newSize, dialog.selectedPolicy()));
+                                } else {
+                                    composition->applyResolutionRemap(newSize, dialog.selectedPolicy());
+                                }
                             } else {
                                 composition->setCompositionSize(newSize);
                             }
@@ -4591,7 +4600,13 @@ public:
 
                 Artifact::ArtifactResolutionRemapDialog dialog(oldSize, newSize, impact);
                 if (dialog.exec() == QDialog::Accepted && dialog.remapRequested()) {
-                    comp->applyResolutionRemap(newSize, dialog.selectedPolicy());
+                    // remap は Undo 可能なコマンド経由で実行する。
+                    if (auto* mgr = UndoManager::instance()) {
+                        mgr->push(std::make_unique<ChangeCompositionResolutionCommand>(
+                            comp, oldSize, newSize, dialog.selectedPolicy()));
+                    } else {
+                        comp->applyResolutionRemap(newSize, dialog.selectedPolicy());
+                    }
                 } else {
                     comp->setCompositionSize(newSize);
                 }

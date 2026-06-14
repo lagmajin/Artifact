@@ -1,11 +1,12 @@
-#pragma once
-
+module;
 #include <memory>
 #include <QString>
 
-namespace Artifact {
+export module Artifact.Layer.Composition.Resolver;
 
-class ArtifactAbstractComposition;
+import Artifact.Composition.Abstract;
+
+export namespace Artifact {
 
 std::shared_ptr<ArtifactAbstractComposition> resolveArtifactCompositionLayerSource(const QString& compositionId);
 

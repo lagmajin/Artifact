@@ -71,6 +71,18 @@ QString editablePathDisplayLabel(const QString &propertyPath) {
     if (field.compare(QStringLiteral("feather"), Qt::CaseInsensitive) == 0) {
       return pathLabel + QStringLiteral(" / Feather");
     }
+    if (field.compare(QStringLiteral("featherHorizontal"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Feather H");
+    }
+    if (field.compare(QStringLiteral("featherVertical"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Feather V");
+    }
+    if (field.compare(QStringLiteral("featherInner"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Feather Inner");
+    }
+    if (field.compare(QStringLiteral("featherOuter"), Qt::CaseInsensitive) == 0) {
+      return pathLabel + QStringLiteral(" / Feather Outer");
+    }
     if (field.compare(QStringLiteral("expansion"), Qt::CaseInsensitive) == 0) {
       return pathLabel + QStringLiteral(" / Expansion");
     }

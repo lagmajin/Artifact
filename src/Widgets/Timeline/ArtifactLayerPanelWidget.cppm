@@ -1,0 +1,154 @@
+module;
+#include <QString>
+
+module Artifact.Widgets.LayerPanelWidget;
+
+import Artifact.Layer.Abstract;
+import Artifact.Layer.Audio;
+import Artifact.Layer.Composition;
+import Artifact.Layer.Image;
+import Artifact.Layer.Video;
+
+namespace Artifact {
+
+LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLayerPtr& layer)
+{
+  LayerPresentationDescriptor descriptor;
+  descriptor.typeText = QStringLiteral("Layer");
+  descriptor.timelineBadgeText = QStringLiteral("Layer");
+  descriptor.propertySummaryTitle = QStringLiteral("Summary");
+  descriptor.inspectorTypeLabel = QStringLiteral("Type: N/A");
+  descriptor.capabilitySummaryText = QString();
+  descriptor.badgeTone = LayerPresentationBadgeTone::Neutral;
+
+  if (!layer) {
+    return descriptor;
+  }
+  if (layer->isNullLayer()) {
+    descriptor.typeText = QStringLiteral("Null Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Null");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Null Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Null Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Specialized");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    return descriptor;
+  }
+  if (layer->isAdjustmentLayer()) {
+    descriptor.typeText = QStringLiteral("Adjustment Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Adjust");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Adjustment Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Adjustment Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Specialized");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    return descriptor;
+  }
+  if (layer->isGroupLayer()) {
+    descriptor.typeText = QStringLiteral("Group Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Group");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Group Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Group Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Container");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
+    return descriptor;
+  }
+  if (layer->isCloneLayer()) {
+    descriptor.typeText = QStringLiteral("Clone Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Clone");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Clone Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Clone Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Instanced");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    return descriptor;
+  }
+  if (layer->isConstructionLayer()) {
+    descriptor.typeText = QStringLiteral("Construction Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Const");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Construction Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Construction Layer");
+    descriptor.capabilitySummaryText = layer->shouldIncludeInFinalRender()
+        ? QStringLiteral("Editor + Export")
+        : QStringLiteral("Editor only");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    return descriptor;
+  }
+  if (layer->is3D()) {
+    descriptor.typeText = QStringLiteral("3D Model Layer");
+    descriptor.timelineBadgeText = QStringLiteral("3D");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · 3D Model Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: 3D Model Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("3D Space");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Precomp Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Precomp");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Precomp Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Precomp Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Nested Composition");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactImageLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Image Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Image");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Image Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Image Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Image");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Video Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Video");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Video Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Video Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Video");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactAudioLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Audio Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Audio");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Audio Layer · Waveform Preview");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Waveform preview");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  if (layer->hasAudio() && layer->hasVideo()) {
+    descriptor.typeText = QStringLiteral("Audio-Video Layer");
+    descriptor.timelineBadgeText = QStringLiteral("A/V");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Audio-Video Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio-Video Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Audio + Video");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  if (layer->hasAudio()) {
+    descriptor.typeText = QStringLiteral("Audio Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Audio");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Audio Layer · Waveform Preview");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Waveform preview");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  if (layer->hasVideo()) {
+    descriptor.typeText = QStringLiteral("Video Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Video");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Video Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Video Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Video");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  return descriptor;
+}
+
+QString describeLayerType(const ArtifactAbstractLayerPtr& layer)
+{
+  return describeLayerPresentation(layer).typeText;
+}
+
+} // namespace Artifact

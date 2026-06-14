@@ -129,118 +129,6 @@ void activateDock(QMainWindow* window, const QString& title)
   dock->raise();
   dock->activateWindow();
 }
-}
-
-LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLayerPtr& layer)
-{
-  LayerPresentationDescriptor descriptor;
-  descriptor.typeText = QStringLiteral("Layer");
-  descriptor.timelineBadgeText = QStringLiteral("Layer");
-  descriptor.propertySummaryTitle = QStringLiteral("Summary");
-  descriptor.inspectorTypeLabel = QStringLiteral("Type: N/A");
-  descriptor.capabilitySummaryText = QString();
-  descriptor.badgeTone = LayerPresentationBadgeTone::Neutral;
-
-  if (!layer) {
-    return descriptor;
-  }
-  if (layer->isNullLayer()) {
-    descriptor.typeText = QStringLiteral("Null Layer");
-    descriptor.timelineBadgeText = QStringLiteral("Null");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Null Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Null Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Specialized");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
-    return descriptor;
-  }
-  if (layer->isAdjustmentLayer()) {
-    descriptor.typeText = QStringLiteral("Adjustment Layer");
-    descriptor.timelineBadgeText = QStringLiteral("Adjust");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Adjustment Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Adjustment Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Specialized");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
-    return descriptor;
-  }
-  if (layer->isGroupLayer()) {
-    descriptor.typeText = QStringLiteral("Group Layer");
-    descriptor.timelineBadgeText = QStringLiteral("Group");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Group Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Group Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Container");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
-    return descriptor;
-  }
-  if (layer->isCloneLayer()) {
-    descriptor.typeText = QStringLiteral("Clone Layer");
-    descriptor.timelineBadgeText = QStringLiteral("Clone");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Clone Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Clone Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Instanced");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
-    return descriptor;
-  }
-  if (layer->isConstructionLayer()) {
-    descriptor.typeText = QStringLiteral("Construction Layer");
-    descriptor.timelineBadgeText = QStringLiteral("Const");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Construction Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Construction Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Renderless");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
-    return descriptor;
-  }
-  if (layer->is3D()) {
-    descriptor.typeText = QStringLiteral("3D Model Layer");
-    descriptor.timelineBadgeText = QStringLiteral("3D");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · 3D Model Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: 3D Model Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("3D Space");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
-    return descriptor;
-  }
-  if (dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
-    descriptor.typeText = QStringLiteral("Precomp Layer");
-    descriptor.timelineBadgeText = QStringLiteral("Precomp");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Precomp Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Precomp Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Nested Composition");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Container;
-    return descriptor;
-  }
-  if (layer->hasAudio() && layer->hasVideo()) {
-    descriptor.typeText = QStringLiteral("Audio-Video Layer");
-    descriptor.timelineBadgeText = QStringLiteral("A/V");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Audio-Video Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio-Video Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Audio + Video");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
-    return descriptor;
-  }
-  if (layer->hasAudio()) {
-    descriptor.typeText = QStringLiteral("Audio Layer");
-    descriptor.timelineBadgeText = QStringLiteral("Audio");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Audio Layer · Waveform Preview");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Audio Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Waveform preview");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
-    return descriptor;
-  }
-  if (layer->hasVideo()) {
-    descriptor.typeText = QStringLiteral("Video Layer");
-    descriptor.timelineBadgeText = QStringLiteral("Video");
-    descriptor.propertySummaryTitle = QStringLiteral("Summary · Video Layer");
-    descriptor.inspectorTypeLabel = QStringLiteral("Type: Video Layer");
-    descriptor.capabilitySummaryText = QStringLiteral("Video");
-    descriptor.badgeTone = LayerPresentationBadgeTone::Media;
-    return descriptor;
-  }
-  return descriptor;
-}
-
-QString describeLayerType(const ArtifactAbstractLayerPtr& layer)
-{
-  return describeLayerPresentation(layer).typeText;
-}
 namespace {
   QColor themeColor(const QString& value, const QColor& fallback)
   {
@@ -682,7 +570,7 @@ namespace {
       return LayerType::Shape;
     }
     ArtifactCore::FileTypeDetector detector;
-    const auto type = detector.detect(filePath);
+    const auto type = detector.detectByExtension(filePath);
     switch (type) {
     case ArtifactCore::FileType::Image:
       return LayerType::Image;
@@ -691,7 +579,7 @@ namespace {
     case ArtifactCore::FileType::Audio:
       return LayerType::Audio;
     default:
-      return LayerType::Video;
+      return LayerType::Unknown;
     }
   }
 
@@ -1010,6 +898,8 @@ namespace {
   }
  }
 
+}
+
  // ============================================================================
  // ArtifactLayerPanelHeaderWidget Implementation
  // ============================================================================
@@ -1019,11 +909,11 @@ namespace {
  public:
   Impl()
   {
-    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("Studio/visibility.svg"));
-    lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/lock.svg"));
+    visibilityIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_visibility.svg"), QStringLiteral("visibility.svg"));
+    lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_lock.svg"), QStringLiteral("lock.svg"));
     if (lockIcon.isNull()) lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/lock_open.svg"), QStringLiteral("unlock.png"));
-    soloIcon = loadLayerPanelPixmap(QStringLiteral("Studio/group.svg"), QStringLiteral("solo.png"));
-    shyIcon = loadLayerPanelPixmap(QStringLiteral("Studio/visibility_off.svg"));
+    soloIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_solo_only.svg"), QStringLiteral("solo_only.svg"));
+    shyIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_shy.svg"), QStringLiteral("shy.svg"));
   }
   ~Impl() = default;
 
@@ -1051,13 +941,13 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
  : QWidget(parent), impl_(new Impl())
 {
  setAcceptDrops(true);
-  impl_->visibilityIcon = loadLayerPanelPixmap(QStringLiteral("Studio/visibility.svg"));
-  impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/lock.svg"));
+  impl_->visibilityIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_visibility.svg"), QStringLiteral("visibility.svg"));
+  impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_lock.svg"), QStringLiteral("lock.svg"));
   if (impl_->lockIcon.isNull()) impl_->lockIcon = loadLayerPanelPixmap(QStringLiteral("Studio/lock_open.svg"), QStringLiteral("unlock.png"));
-  impl_->soloIcon = loadLayerPanelPixmap(QStringLiteral("Studio/group.svg"), QStringLiteral("solo.png"));
-  impl_->audioIcon = loadLayerPanelPixmap(QStringLiteral("Studio/volume.svg"), QStringLiteral("volume.png"));
-  impl_->shyIcon = loadLayerPanelPixmap(QStringLiteral("Studio/visibility_off.svg"));
-  impl_->parentIcon = loadLayerPanelIcon(QStringLiteral("Studio/link.svg"));
+  impl_->soloIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_solo_only.svg"), QStringLiteral("solo_only.svg"));
+  impl_->audioIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_audiotrack.svg"), QStringLiteral("audiotrack.svg"));
+  impl_->shyIcon = loadLayerPanelPixmap(QStringLiteral("Studio/layermenu_shy.svg"), QStringLiteral("shy.svg"));
+  impl_->parentIcon = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_parent_select.svg"));
   impl_->blendIcon = loadLayerPanelIcon(QStringLiteral("Studio/merge_type.svg"));
 
   auto visButton = impl_->visibilityButton = new QPushButton();
@@ -1229,7 +1119,66 @@ struct VisibleRow {
  QString groupKey;
  QString auxiliaryText;
  LayerPresentationBadgeTone auxiliaryTone = LayerPresentationBadgeTone::Neutral;
+ QString stateText;
+ LayerPresentationBadgeTone stateTone = LayerPresentationBadgeTone::Neutral;
 };
+
+QString summarizeLayerState(const ArtifactAbstractLayerPtr& layer)
+{
+ if (!layer) {
+  return {};
+ }
+ if (!layer->isVisible()) {
+  return QStringLiteral("Hidden");
+ }
+ if (layer->isLocked()) {
+  return QStringLiteral("Locked");
+ }
+ if (layer->isSolo()) {
+  return QStringLiteral("Solo");
+ }
+ if (layer->isShy()) {
+  return QStringLiteral("Shy");
+ }
+ const bool hasMasks = layer->hasMasks();
+ const bool hasMattes = !layer->matteReferences().empty();
+ if (hasMasks && hasMattes) {
+  return QStringLiteral("Mask + Matte");
+ }
+ if (hasMasks) {
+  return QStringLiteral("Masked");
+ }
+ if (hasMattes) {
+  return QStringLiteral("Matted");
+ }
+ if (layer->hasParent()) {
+  return QStringLiteral("Child");
+ }
+ return {};
+}
+
+LayerPresentationBadgeTone summarizeLayerStateTone(const ArtifactAbstractLayerPtr& layer)
+{
+ if (!layer) {
+  return LayerPresentationBadgeTone::Neutral;
+ }
+ if (!layer->isVisible()) {
+  return LayerPresentationBadgeTone::Neutral;
+ }
+ if (layer->isLocked() || layer->isShy()) {
+  return LayerPresentationBadgeTone::Special;
+ }
+ if (layer->isSolo()) {
+  return LayerPresentationBadgeTone::Motion;
+ }
+ if (layer->hasMasks() || !layer->matteReferences().empty()) {
+  return LayerPresentationBadgeTone::Special;
+ }
+ if (layer->hasParent()) {
+  return LayerPresentationBadgeTone::Container;
+ }
+ return LayerPresentationBadgeTone::Neutral;
+}
 
 bool layerMatchesDisplayMode(const ArtifactAbstractLayerPtr& layer,
                              const TimelineLayerDisplayMode mode,
@@ -1606,14 +1555,14 @@ public:
     iconCopy          = loadLayerPanelIcon(QStringLiteral("Studio/content_copy.svg"));
     iconDelete        = loadLayerPanelIcon(QStringLiteral("Studio/delete.svg"));
     iconFileOpen      = loadLayerPanelIcon(QStringLiteral("Studio/file_open.svg"));
-    iconVisOn         = loadLayerPanelIcon(QStringLiteral("Studio/visibility.svg"));
-    iconVisOff        = loadLayerPanelIcon(QStringLiteral("Studio/visibility_off.svg"));
-    iconLock          = loadLayerPanelIcon(QStringLiteral("Studio/lock.svg"));
+    iconVisOn         = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_visibility.svg"));
+    iconVisOff        = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_visibility_off.svg"), QStringLiteral("visibility_off.svg"));
+    iconLock          = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_lock.svg"));
     iconUnlock        = loadLayerPanelIcon(QStringLiteral("Studio/lock_open.svg"));
-    iconSolo          = loadLayerPanelIcon(QStringLiteral("Studio/group.svg"));
-    iconShy           = loadLayerPanelIcon(QStringLiteral("Studio/visibility_off.svg"));
-    iconLink          = loadLayerPanelIcon(QStringLiteral("Studio/link.svg"));
-    iconLinkOff       = loadLayerPanelIcon(QStringLiteral("Studio/link_off.svg"));
+    iconSolo          = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_solo_only.svg"));
+    iconShy           = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_shy.svg"));
+    iconLink          = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_parent_select.svg"));
+    iconLinkOff       = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_parent_clear.svg"));
     iconCreateSolid   = loadLayerPanelIcon(QStringLiteral("Studio/palette.svg"));
     iconCreateNull    = loadLayerPanelIcon(QStringLiteral("Studio/transform.svg"));
     iconCreateAdjust  = loadLayerPanelIcon(QStringLiteral("Studio/tune.svg"));
@@ -1624,7 +1573,7 @@ public:
     iconLayerImage        = loadLayerPanelIcon(QStringLiteral("Studio/photo_filter.svg"));
     iconLayerSvg          = loadLayerPanelIcon(QStringLiteral("Studio/svg_layer.svg"));
     iconLayerVideo        = loadLayerPanelIcon(QStringLiteral("Studio/videocam.svg"));
-    iconLayerAudio        = loadLayerPanelIcon(QStringLiteral("Studio/audiotrack.svg"));
+    iconLayerAudio        = loadLayerPanelIcon(QStringLiteral("Studio/layermenu_audiotrack.svg"));
     iconLayerText         = loadLayerPanelIcon(QStringLiteral("Studio/text_fields.svg"));
     iconLayerShape        = loadLayerPanelIcon(QStringLiteral("Studio/shape_rect.svg"));
     iconLayerPrecomp      = loadLayerPanelIcon(QStringLiteral("Studio/composition.svg"));
@@ -1948,7 +1897,9 @@ public:
     QString(),
     QString(),
     presentation.timelineBadgeText,
-    presentation.badgeTone
+    presentation.badgeTone,
+    summarizeLayerState(node),
+    summarizeLayerStateTone(node)
    });
    emitted.insert(nodeId);
 
@@ -2406,6 +2357,8 @@ ArtifactLayerPanelWidget::visibleTimelineRowDescriptors() const
    descriptor.propertyPath = row.propertyPath;
    descriptor.auxiliaryText = row.auxiliaryText;
    descriptor.auxiliaryTone = row.auxiliaryTone;
+   descriptor.stateText = row.stateText;
+   descriptor.stateTone = row.stateTone;
    if (descriptor.auxiliaryText.isEmpty() &&
        (row.kind == RowKind::Mask || row.kind == RowKind::Matte)) {
     descriptor.auxiliaryText = row.label;
@@ -4796,6 +4749,7 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      const int iconGap = hasMatteRefs ? 18 : 0;
      const QString layerName = l->layerName();
      const QString layerAux = row.auxiliaryText.trimmed();
+     const QString layerState = row.stateText.trimmed();
      const QString matteBadgeText = hasMatteRefs ? matteSourceBadgeLabel(safeCompositionLookup(impl_->compositionId), l)
                                                  : QString();
      const int matteBadgeW = hasMatteRefs
@@ -4804,6 +4758,9 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      const int matteBadgeX = textX + 4 + 18;
      const QRect matteBadgeRect(matteBadgeX, y + 5, matteBadgeW, rowH - 10);
      const int layerTextX = hasMatteRefs ? (matteBadgeRect.right() + 8) : (textX + 4 + iconGap);
+     const int layerStateW = layerState.isEmpty()
+                                 ? 0
+                                 : std::min(128, std::max(52, fm.horizontalAdvance(layerState) + 16));
      if (hasMatteRefs) {
       const QRect iconRect(textX + 4, y + 6, 14, 14);
       const QIcon& matteIcon = matteBroken ? impl_->iconLinkOff : impl_->iconLink;
@@ -4826,8 +4783,12 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
      if (!layerAux.isEmpty()) {
       const int badgeTextWidth = fm.horizontalAdvance(layerAux) + 16;
       const int badgeWidth = std::min(120, std::max(52, badgeTextWidth));
-      const int badgeX = std::max(layerTextX, width() - (showInlineCombos ? kInlineComboReserve : 0) - variantChipW - badgeWidth - 10);
+      const int badgeGap = layerStateW > 0 ? 6 : 0;
+      const int badgeBundleWidth = badgeWidth + badgeGap + layerStateW;
+      const int badgeX = std::max(layerTextX, width() - (showInlineCombos ? kInlineComboReserve : 0) - variantChipW - badgeBundleWidth - 10);
       const QRect badgeRect(badgeX, y + 5, badgeWidth, rowH - 10);
+      const QRect stateRect(badgeRect.right() + badgeGap,
+                            y + 5, layerStateW, rowH - 10);
       const int nameWidth = std::max(20, badgeRect.left() - (layerTextX + 4));
       const QString elidedName = fm.elidedText(layerName, Qt::ElideRight, nameWidth);
       const QColor layerTextColor = maskSelected ? accent.lighter(135)
@@ -4841,13 +4802,31 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       p.setPen(toneBadgeText(row.auxiliaryTone, text, accent));
       p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
                  fm.elidedText(layerAux, Qt::ElideRight, badgeRect.width() - 16));
+      if (layerStateW > 0) {
+       p.setPen(layerSelected ? accent.darker(180) : border);
+       p.setBrush(toneBadgeFill(row.stateTone, background, surface, accent));
+       p.drawRoundedRect(stateRect, 4, 4);
+       p.setPen(toneBadgeText(row.stateTone, text, accent));
+       p.drawText(stateRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                  fm.elidedText(layerState, Qt::ElideRight, stateRect.width() - 16));
+      }
      } else {
       const QColor layerTextColor = maskSelected ? accent.lighter(135)
                                                  : (layerSelected ? mixColor(text, accent, 0.24)
                                                                   : mixColor(text, accent, 0.08));
       p.setPen(layerTextColor);
-      const int nameWidth = std::max(20, width() - layerTextX - variantChipW - 10);
+      const int nameWidth = std::max(20, width() - layerTextX - variantChipW - 10 - layerStateW);
       p.drawText(layerTextX, y, nameWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, layerName);
+      if (layerStateW > 0) {
+       const int stateX = std::max(layerTextX + 80, width() - variantChipW - layerStateW - 10);
+       const QRect stateRect(stateX, y + 5, layerStateW, rowH - 10);
+       p.setPen(layerSelected ? accent.darker(180) : border);
+       p.setBrush(toneBadgeFill(row.stateTone, background, surface, accent));
+       p.drawRoundedRect(stateRect, 4, 4);
+       p.setPen(toneBadgeText(row.stateTone, text, accent));
+       p.drawText(stateRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft,
+                  fm.elidedText(layerState, Qt::ElideRight, stateRect.width() - 16));
+      }
      }
 
      const QRect chipRect = variantChipRect(QRect(0, y, width(), rowH), l,

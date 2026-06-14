@@ -515,7 +515,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     return;
   }
 
-  if (layer->isConstructionLayer()) {
+  if (offlineRender && !layer->shouldIncludeInFinalRender()) {
     return;
   }
 
@@ -901,13 +901,20 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   }
 
   if (auto* particleLayer = dynamic_cast<ArtifactParticleLayer*>(layer)) {
-    const QSize surfaceSize(
-        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
     const int64_t targetFrame =
         (cacheFrameNumber != std::numeric_limits<int64_t>::min())
             ? cacheFrameNumber
             : layer->currentFrame();
+    const bool hasRasterizer = hasRasterizerEffectsOrMasks(layer);
+    if (renderer && renderer->isInitialized() && !hasRasterizer) {
+      particleLayer->goToFrame(targetFrame);
+      particleLayer->draw(renderer);
+      return;
+    }
+
+    const QSize surfaceSize(
+        std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+        std::max(1, static_cast<int>(std::ceil(localRect.height()))));
     particleLayer->goToFrame(targetFrame);
     QImage particleSurface;
     const bool cacheHit =

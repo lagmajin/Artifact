@@ -494,4 +494,144 @@ QString CreateVariantCommand::label() const {
     return QStringLiteral("Create Layer Variant");
 }
 
+// --- ChangeCompositionResolutionCommand ---
+
+namespace {
+
+// レイヤーの mask と transform 系プロパティ（position/anchor/scale の X/Y）の
+// 現在値 + keyframe 列を snapshot する。rotation/opacity は aspect 非依存のため除外。
+// これらは applyResolutionRemap が書き換える対象のみを保持する。
+ChangeCompositionResolutionCommand::LayerSnapshot
+captureLayerSnapshotForResolutionRemap(const ArtifactAbstractLayerPtr& layer) {
+    ChangeCompositionResolutionCommand::LayerSnapshot snap;
+    if (!layer) return snap;
+
+    snap.layerId = layer->id();
+
+    // masks
+    if (layer->hasMasks()) {
+        snap.masks.reserve(static_cast<std::size_t>(layer->maskCount()));
+        for (int mi = 0; mi < layer->maskCount(); ++mi) {
+            snap.masks.push_back(layer->mask(mi));
+        }
+    }
+
+    // transform 系プロパティのみ収集
+    static const std::unordered_set<QString> kTransformPaths = {
+        QStringLiteral("transform.position.x"),
+        QStringLiteral("transform.position.y"),
+        QStringLiteral("transform.anchor.x"),
+        QStringLiteral("transform.anchor.y"),
+        QStringLiteral("transform.scale.x"),
+        QStringLiteral("transform.scale.y"),
+    };
+
+    for (const auto& group : layer->getLayerPropertyGroups()) {
+        for (const auto& prop : group.allProperties()) {
+            if (!prop || !prop->isAnimatable()) continue;
+            if (kTransformPaths.find(prop->getName()) == kTransformPaths.end()) continue;
+
+            ChangeCompositionResolutionCommand::PropertySnapshot psnap;
+            psnap.propertyPath = prop->getName();
+            psnap.currentValue = prop->getValue();
+            psnap.keyframes = prop->getKeyFrames();
+            snap.properties.push_back(std::move(psnap));
+        }
+    }
+    return snap;
+}
+
+// snapshot から mask / transform プロパティを復元する。
+// keyframe があるプロパティは clearKeyFrames + addKeyFrame で再構築、
+// 無いプロパティは setValue で現在値を戻す。
+void restoreLayerSnapshotForResolutionRemap(
+    const ArtifactAbstractLayerPtr& layer,
+    const ChangeCompositionResolutionCommand::LayerSnapshot& snap) {
+    if (!layer) return;
+
+    // masks
+    layer->clearMasks();
+    for (const auto& mask : snap.masks) {
+        layer->addMask(mask);
+    }
+
+    // transform プロパティを path 名で引いて復元
+    for (const auto& psnap : snap.properties) {
+        ArtifactCore::AbstractPropertyPtr prop;
+        for (const auto& group : layer->getLayerPropertyGroups()) {
+            prop = group.findProperty(psnap.propertyPath);
+            if (prop) break;
+        }
+        if (!prop) continue;
+
+        if (psnap.keyframes.empty()) {
+            prop->setValue(psnap.currentValue);
+        } else {
+            prop->clearKeyFrames();
+            for (const auto& k : psnap.keyframes) {
+                prop->addKeyFrame(k.time, k.value, k.interpolation,
+                                  k.cp1_x, k.cp1_y, k.cp2_x, k.cp2_y, k.roving);
+            }
+        }
+    }
+
+    layer->changed();
+}
+
+} // namespace
+
+ChangeCompositionResolutionCommand::ChangeCompositionResolutionCommand(
+    ArtifactCompositionPtr comp,
+    const QSize& oldSize,
+    const QSize& newSize,
+    ArtifactCore::RemapPolicy policy)
+    : comp_(comp), oldSize_(oldSize), newSize_(newSize), policy_(policy) {
+    // コンストラクト時点（applyResolutionRemap 実行前）の before snapshot を採取する。
+    // 呼び出し元は remap を直接呼ばず、このコマンドを push すること。
+    if (comp) {
+        const auto layers = comp->allLayer();
+        beforeSnapshots_.reserve(layers.size());
+        for (const auto& layer : layers) {
+            if (!layer) continue;
+            beforeSnapshots_.push_back(captureLayerSnapshotForResolutionRemap(layer));
+        }
+    }
+}
+
+void ChangeCompositionResolutionCommand::undo() {
+    const auto comp = comp_.lock();
+    if (!comp) return;
+
+    // size を元に戻す。applyResolutionRemap を逆呼びすると mask/transform まで
+    // 再計算されて snapshot 復元と衝突するため、size のみ直接戻す。
+    comp->setCompositionSize(oldSize_);
+
+    // snapshot から mask / transform を復元
+    for (const auto& snap : beforeSnapshots_) {
+        const auto layer = comp->layerById(snap.layerId);
+        restoreLayerSnapshotForResolutionRemap(layer, snap);
+    }
+
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+void ChangeCompositionResolutionCommand::redo() {
+    const auto comp = comp_.lock();
+    if (!comp) return;
+
+    // applyResolutionRemap が size 設定 + mask/transform remap をまとめて行う。
+    // before snapshot はコンストラクタで採取済み。
+    comp->applyResolutionRemap(newSize_, policy_);
+
+    if (auto mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+    }
+}
+
+QString ChangeCompositionResolutionCommand::label() const {
+    return QStringLiteral("Change Composition Resolution");
+}
+
 }

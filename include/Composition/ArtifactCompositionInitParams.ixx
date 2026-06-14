@@ -31,6 +31,7 @@ module;
 #include <random>
 #include <cstdint>
 #include <QSize>
+#include <QPointF>
 export module Artifact.Composition.InitParams;
 
 
@@ -145,6 +146,8 @@ export namespace Artifact {
   // wiF
   FloatColor backgroundColor() const;
   void setBackgroundColor(const FloatColor& color);
+  QPointF compositionAnchorPoint() const;
+  void setCompositionAnchorPoint(const QPointF& anchorPoint);
 
   // vr[iE𑜓x
   PreviewQuality previewQuality() const;
