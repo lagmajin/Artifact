@@ -1445,9 +1445,12 @@ void ArtifactLayerMenu::Impl::handlePrecompose()
         return;
     }
 
-    if (!service->precomposeLayersInCurrentComposition(
+    const PrecomposeMode mode = dialog.moveSelectedOnly()
+                                    ? PrecomposeMode::MoveSelected
+                                    : PrecomposeMode::MoveAllAttributes;
+    if (!service->precomposeLayersWithUndo(
             selectedIds, UniString(dialog.newCompositionName()),
-            dialog.openNewComposition(), dialog.matchWorkspaceDuration())) {
+            dialog.openNewComposition(), dialog.matchWorkspaceDuration(), mode)) {
         QMessageBox::warning(menu_->window(), "プリコンポーズ", "プリコンポーズに失敗しました。");
     }
 }
@@ -1477,7 +1480,7 @@ void ArtifactLayerMenu::Impl::handleUnprecompose()
         return;
     }
 
-    if (!service->unprecomposeLayerInCurrentComposition(selectedLayerId_, true)) {
+    if (!service->unprecomposeLayerWithUndo(selectedLayerId_, true)) {
         QMessageBox::warning(menu_->window(), QStringLiteral("プリコンポーズを解除"),
                              QStringLiteral("プリコンポーズの解除に失敗しました。"));
     }

@@ -19,6 +19,7 @@ module;
 #include <QDropEvent>
 #include <QElapsedTimer>
 #include <QEvent>
+#include <QFrame>
 #include <QFileInfo>
 #include <QFocusEvent>
 #include <QFontMetrics>
@@ -2442,6 +2443,43 @@ protected:
       event->accept();
       return;
     }
+    if (!event->isAutoRepeat() &&
+        (event->key() == Qt::Key_BracketLeft ||
+         event->key() == Qt::Key_BracketRight)) {
+      auto *selection = ArtifactLayerSelectionManager::instance();
+      const auto comp = currentComposition();
+      if (selection && comp) {
+        const auto layers = comp->allLayerRef();
+        if (!layers.isEmpty()) {
+          const bool reverse = event->key() == Qt::Key_BracketLeft;
+          const auto current = selection->currentLayer();
+          int currentIndex = -1;
+          if (current) {
+            for (int i = 0; i < layers.size(); ++i) {
+              if (layers[i] == current) {
+                currentIndex = i;
+                break;
+              }
+            }
+          }
+          if (currentIndex < 0) {
+            currentIndex = reverse ? layers.size() : -1;
+          }
+          const int step = reverse ? -1 : 1;
+          int nextIndex = currentIndex + step;
+          if (nextIndex < 0) {
+            nextIndex = layers.size() - 1;
+          } else if (nextIndex >= layers.size()) {
+            nextIndex = 0;
+          }
+          if (nextIndex >= 0 && nextIndex < layers.size() && layers[nextIndex]) {
+            selection->selectLayer(layers[nextIndex]);
+            event->accept();
+            return;
+          }
+        }
+      }
+    }
     if (!event->isAutoRepeat() && event->key() == Qt::Key_P) {
       beginTemporaryPlayback();
       event->accept();
@@ -3557,6 +3595,10 @@ public:
   CompositionRenderController *renderController_ = nullptr;
   // Top Toolbar (Zoom/View controls)
   QToolBar *topToolbar_ = nullptr;
+  QFrame *chromeStrip_ = nullptr;
+  QLabel *chromeTitleLabel_ = nullptr;
+  QLabel *chromeDetailLabel_ = nullptr;
+  QLabel *chromeMetaLabel_ = nullptr;
   QAction *resetAction_ = nullptr;
   QAction *zoomInAction_ = nullptr;
   QAction *zoomOutAction_ = nullptr;
@@ -3614,6 +3656,52 @@ public:
     QCoreApplication::postEvent(
         owner, new CompositionEditorDeferredEvent(
                    CompositionEditorDeferredEvent::Kind::ToolLabelSync));
+  }
+
+  void syncChromeSummary(ArtifactCompositionEditor *owner) {
+    Q_UNUSED(owner);
+    if (!chromeStrip_ || !chromeTitleLabel_ || !chromeDetailLabel_ ||
+        !chromeMetaLabel_) {
+      return;
+    }
+
+    const auto comp = renderController_ ? renderController_->composition()
+                                        : ArtifactCompositionPtr{};
+    auto *selection = ArtifactLayerSelectionManager::instance();
+    const auto current =
+        selection ? selection->currentLayer() : ArtifactAbstractLayerPtr{};
+    const int selectedCount =
+        selection ? selection->selectedLayers().size() : 0;
+    const QString compName =
+        comp ? comp->settings().compositionName().toQString()
+             : QStringLiteral("<no composition>");
+    const QString layerName = current
+                                  ? (current->layerName().trimmed().isEmpty()
+                                         ? current->id().toString()
+                                         : current->layerName().trimmed())
+                                  : QStringLiteral("<none>");
+    auto *playback = ArtifactPlaybackService::instance();
+    const QString playState =
+        playback && playback->isPlaying() ? QStringLiteral("Playing")
+                                          : QStringLiteral("Idle");
+    const QString controllerState =
+        renderController_ && renderController_->isRunning()
+            ? QStringLiteral("Render hot")
+            : QStringLiteral("Render paused");
+
+    chromeTitleLabel_->setText(QStringLiteral("Composition: %1").arg(compName));
+    chromeDetailLabel_->setText(
+        QStringLiteral("Layer: %1  |  Selection: %2  |  %3")
+            .arg(layerName)
+            .arg(selectedCount)
+            .arg(playState));
+    chromeMetaLabel_->setText(QStringLiteral("%1  |  %2")
+                                  .arg(controllerState)
+                                  .arg(renderController_ &&
+                                               renderController_->selectedLayerId()
+                                                   .isNil()
+                                           ? QStringLiteral("No focus")
+                                           : QStringLiteral("Focused")));
   }
 
   QString importPlacementModeLabel() const {
@@ -3881,6 +3969,7 @@ public:
           selectedCount == 1 && current &&
           std::dynamic_pointer_cast<ArtifactTextLayer>(current));
     }
+    syncChromeSummary(owner);
     syncOverlayGeometry(owner);
   }
 
@@ -4276,6 +4365,41 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->gizmoModeButton_->setPopupMode(QToolButton::InstantPopup);
   impl_->topToolbar_->addWidget(impl_->gizmoModeButton_);
 
+  impl_->chromeStrip_ = new QFrame(this);
+  impl_->chromeStrip_->setFrameShape(QFrame::StyledPanel);
+  impl_->chromeStrip_->setFrameShadow(QFrame::Plain);
+  impl_->chromeStrip_->setAutoFillBackground(true);
+  impl_->chromeStrip_->setFixedHeight(44);
+  {
+    QPalette pal = impl_->chromeStrip_->palette();
+    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+    impl_->chromeStrip_->setPalette(pal);
+  }
+  auto *chromeLayout = new QHBoxLayout(impl_->chromeStrip_);
+  chromeLayout->setContentsMargins(12, 6, 12, 6);
+  chromeLayout->setSpacing(12);
+  auto *chromeTextColumn = new QVBoxLayout();
+  chromeTextColumn->setContentsMargins(0, 0, 0, 0);
+  chromeTextColumn->setSpacing(1);
+  impl_->chromeTitleLabel_ =
+      new QLabel(QStringLiteral("Composition: <none>"), impl_->chromeStrip_);
+  impl_->chromeDetailLabel_ = new QLabel(
+      QStringLiteral("Layer: <none>  |  Selection: 0  |  Idle"),
+      impl_->chromeStrip_);
+  impl_->chromeMetaLabel_ =
+      new QLabel(QStringLiteral("Render paused  |  No focus"),
+                 impl_->chromeStrip_);
+  QFont titleFont = impl_->chromeTitleLabel_->font();
+  titleFont.setBold(true);
+  titleFont.setPointSize(std::max(8, titleFont.pointSize()));
+  impl_->chromeTitleLabel_->setFont(titleFont);
+  chromeTextColumn->addWidget(impl_->chromeTitleLabel_);
+  chromeTextColumn->addWidget(impl_->chromeDetailLabel_);
+  chromeLayout->addLayout(chromeTextColumn, 1);
+  chromeLayout->addWidget(impl_->chromeMetaLabel_, 0,
+                          Qt::AlignRight | Qt::AlignVCenter);
+
   auto *pivotMenu = new QMenu(this);
   polishEditorMenu(pivotMenu, this);
   auto *pivotGroup = new QActionGroup(this);
@@ -4661,6 +4785,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   // Assembly
   mainLayout->addWidget(impl_->topToolbar_);
+  mainLayout->addWidget(impl_->chromeStrip_);
   mainLayout->addWidget(impl_->compositionView_, 1);
   mainLayout->addWidget(impl_->bottomBar_);
   impl_->topToolbar_->setAutoFillBackground(true);
@@ -4675,6 +4800,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                          QColor(theme.secondaryBackgroundColor));
   bottomPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
   impl_->bottomBar_->setPalette(bottomPalette);
+  impl_->syncChromeSummary(this);
   impl_->syncOverlayGeometry(this);
   QTimer::singleShot(0, this, [this]() {
     if (impl_) {
@@ -4997,10 +5123,12 @@ bool ArtifactCompositionEditor::event(QEvent *event) {
     case CompositionEditorDeferredEvent::Kind::SelectionSync:
       impl_->selectionSyncQueued_ = false;
       impl_->syncSelectionState(this);
+      impl_->syncChromeSummary(this);
       return true;
     case CompositionEditorDeferredEvent::Kind::ToolLabelSync:
       impl_->toolLabelSyncQueued_ = false;
       impl_->syncToolLabel(this);
+      impl_->syncChromeSummary(this);
       return true;
     }
   }
@@ -5033,6 +5161,7 @@ void ArtifactCompositionEditor::setComposition(
   }
   if (impl_) {
     impl_->queueSelectionSync(this);
+    impl_->syncChromeSummary(this);
   }
 }
 

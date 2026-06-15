@@ -1,5 +1,6 @@
 module;
 #include <algorithm>
+#include <deque>
 #include <QApplication>
 #include <QDebug>
 #include <QDir>
@@ -56,6 +57,7 @@ import Core.Diagnostics.SessionLedger;
 import MediaSource;
 import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Service.ActiveContext;
+import Undo.UndoManager;
 // import Artifact.Render.FrameCache;
 
 namespace Artifact {
@@ -525,6 +527,205 @@ void normalizeNewImageLayerTransform(const ArtifactCompositionPtr &comp,
                   static_cast<float>(targetAnchor.y()));
   layer->setDirty(LayerDirtyFlag::Transform);
 }
+
+// Precompose cycle detection:
+// Returns true if moving `layers` into a fresh child composition of `parent`
+// would create a cycle. This happens when any of the selected layers is a
+// composition layer whose source composition (transitively, through nested
+// composition layers) contains `parent` — i.e. the parent would end up
+// referencing itself through the new nesting.
+bool wouldCreatePrecomposeCycle(
+    const ArtifactCompositionPtr &parent,
+    const QVector<ArtifactAbstractLayerPtr> &layers) {
+  if (!parent) {
+    return false;
+  }
+  const CompositionID parentId = parent->id();
+
+  // `pending` holds compositions that we still need to descend into.
+  // `visited` guards against revisiting (and against pre-existing cycles
+  // already stored in the project data).
+  QSet<QString> visited;
+  std::deque<CompositionID> pending;
+
+  for (const auto &layer : layers) {
+    auto compLayer =
+        std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+    if (!compLayer) {
+      continue;
+    }
+    const CompositionID srcId = compLayer->sourceCompositionId();
+    if (srcId.isNil()) {
+      continue;
+    }
+    if (srcId == parentId) {
+      return true;
+    }
+    pending.push_back(srcId);
+  }
+
+  auto *service = ArtifactProjectService::instance();
+  if (!service) {
+    return false;
+  }
+
+  while (!pending.empty()) {
+    const CompositionID currentId = pending.front();
+    pending.pop_front();
+
+    const QString key = currentId.toString();
+    if (!visited.insert(key).second) {
+      continue;
+    }
+
+    auto current = service->findComposition(currentId).ptr.lock();
+    if (!current) {
+      continue;
+    }
+
+    for (const auto &layer : current->allLayer()) {
+      auto compLayer =
+          std::dynamic_pointer_cast<ArtifactCompositionLayer>(layer);
+      if (!compLayer) {
+        continue;
+      }
+      const CompositionID srcId = compLayer->sourceCompositionId();
+      if (srcId.isNil()) {
+        continue;
+      }
+      if (srcId == parentId) {
+        return true;
+      }
+      pending.push_back(srcId);
+    }
+  }
+
+  return false;
+}
+
+// === Precompose undo commands ===
+//
+// These commands wrap the Service mutation methods so that precompose /
+// unprecompose participate in the global undo stack. They delegate to
+// ArtifactProjectService for the actual mutation (single-sourced logic) and
+// read the `last*Outcome()` getters to learn the generated/removed ids.
+//
+// redo()  runs the forward operation and records the result.
+// undo()  runs the inverse operation using the recorded ids.
+// Repeated redo/undo rely on the ids being stable across the round trip,
+// which holds because layer/comp ids are not recycled within a session.
+
+class PrecomposeUndoCommand : public UndoCommand {
+public:
+  PrecomposeUndoCommand(QVector<LayerID> layerIds, UniString name,
+                        bool openNewComposition, bool matchWorkspaceDuration,
+                        PrecomposeMode mode)
+      : layerIds_(std::move(layerIds)), name_(std::move(name)),
+        openNewComposition_(openNewComposition),
+        matchWorkspaceDuration_(matchWorkspaceDuration), mode_(mode) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) {
+      return;
+    }
+    // On subsequent redo (after an undo), openNewComposition must stay false so
+    // we don't yank the user's current composition focus around.
+    const bool openForThisCall = firstRedo_ ? openNewComposition_ : false;
+    if (!svc->precomposeLayersInCurrentComposition(
+            layerIds_, name_, openForThisCall, matchWorkspaceDuration_, mode_)) {
+      return;
+    }
+    const PrecomposeOutcome outcome = svc->lastPrecomposeOutcome();
+    precompLayerId_ = outcome.precompLayerId;
+    childCompId_ = outcome.childCompId;
+    firstRedo_ = false;
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc || precompLayerId_.isNil()) {
+      return;
+    }
+    // Undo the precompose by unprecomposing the generated layer and deleting
+    // the child composition. keepComposition=false mirrors the original state
+    // where the child did not exist.
+    svc->unprecomposeLayerInCurrentComposition(precompLayerId_, false);
+    precompLayerId_ = LayerID();
+    childCompId_ = CompositionID();
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QString label() const override {
+    return QStringLiteral("Precompose");
+  }
+
+private:
+  QVector<LayerID> layerIds_;
+  UniString name_;
+  bool openNewComposition_;
+  bool matchWorkspaceDuration_;
+  PrecomposeMode mode_;
+  LayerID precompLayerId_;
+  CompositionID childCompId_;
+  bool firstRedo_ = true;
+};
+
+class UnprecomposeUndoCommand : public UndoCommand {
+public:
+  explicit UnprecomposeUndoCommand(LayerID precompLayerId, bool keepComposition)
+      : precompLayerId_(precompLayerId), keepComposition_(keepComposition) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc || precompLayerId_.isNil()) {
+      return;
+    }
+    if (!svc->unprecomposeLayerInCurrentComposition(precompLayerId_,
+                                                    keepComposition_)) {
+      return;
+    }
+    // Capture what we need to rebuild the precomp on undo. These are only
+    // valid right after a successful unprecompose.
+    movedLayerIds_ = svc->lastUnprecomposeMovedLayerIds();
+    childName_ = svc->lastUnprecomposeChildName();
+    precompLayerId_ = LayerID(); // consumed by the unprecompose
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc || movedLayerIds_.isEmpty() || childName_.toQString().isEmpty()) {
+      return;
+    }
+    // Re-create the precomp by precomposing the moved layers back together.
+    // openNewComposition=false keeps the user's current focus.
+    svc->precomposeLayersInCurrentComposition(movedLayerIds_, childName_, false,
+                                              true, PrecomposeMode::MoveSelected);
+    movedLayerIds_.clear();
+    childName_ = UniString();
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QString label() const override {
+    return QStringLiteral("Unprecompose");
+  }
+
+private:
+  LayerID precompLayerId_;
+  bool keepComposition_;
+  QVector<LayerID> movedLayerIds_;
+  UniString childName_;
+};
 } // namespace
 
 class ArtifactProjectService::Impl {
@@ -555,6 +756,15 @@ public:
   // ProgressiveRenderer progressiveRenderer_;
 
   void checkImportedAssetCompatibility(const QStringList &importedPaths);
+  // Records the most recent precompose/unprecompose outcome so undo commands
+  // (constructed right after the mutation) can target the exact generated/
+  // removed ids. Intentionally transient: only meaningful in the synchronous
+  // window between mutate and command push.
+  PrecomposeOutcome lastPrecomposeOutcome_;
+  LayerID lastUnprecomposePrecompLayerId_{};
+  CompositionID lastUnprecomposeChildCompId_{};
+  QVector<LayerID> lastUnprecomposeMovedLayerIds_;
+  UniString lastUnprecomposeChildName_;
   bool forwardingSelectionChange_ = false;
   LayerID lastForwardedLayerId_;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
@@ -1725,10 +1935,18 @@ bool ArtifactProjectService::setLayerParentInCurrentComposition(
 
 bool ArtifactProjectService::precomposeLayersInCurrentComposition(
     const QVector<LayerID> &layerIds, const UniString &newCompositionName,
-    bool openNewComposition, bool matchWorkspaceDuration) {
+    bool openNewComposition, bool matchWorkspaceDuration,
+    PrecomposeMode mode) {
   auto project = getCurrentProjectSharedPtr();
   auto comp = currentComposition().lock();
-  if (!project || !comp || layerIds.isEmpty()) {
+  // Reset the outcome up front so a failure cannot leak a stale id.
+  impl_->lastPrecomposeOutcome_ = PrecomposeOutcome{LayerID(), CompositionID()};
+  if (!project || !comp) {
+    return false;
+  }
+  // MoveAllAttributes folds the whole composition in, so an empty layerIds is
+  // acceptable in that mode. MoveSelected still requires an explicit selection.
+  if (mode != PrecomposeMode::MoveAllAttributes && layerIds.isEmpty()) {
     return false;
   }
 
@@ -1744,6 +1962,7 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
     }
     return false;
   };
+  const bool moveAll = (mode == PrecomposeMode::MoveAllAttributes);
 
   int firstIndex = -1;
   int64_t minInFrame = 0;
@@ -1752,7 +1971,11 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
   const auto allLayers = comp->allLayer();
   for (int i = 0; i < allLayers.size(); ++i) {
     const auto &layer = allLayers[i];
-    if (!layer || !containsLayerId(layer->id())) {
+    if (!layer) {
+      continue;
+    }
+    // MoveAllAttributes takes every layer; MoveSelected filters by the id set.
+    if (!moveAll && !containsLayerId(layer->id())) {
       continue;
     }
     if (firstIndex < 0) {
@@ -1773,6 +1996,14 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
   }
 
   if (orderedLayers.isEmpty() || firstIndex < 0) {
+    return false;
+  }
+
+  // Guard against self-nesting: refuse to precompose if any selected layer is a
+  // composition layer whose (transitive) source contains this composition —
+  // that would create a cycle once the layers move into the new child comp.
+  if (wouldCreatePrecomposeCycle(comp, orderedLayers)) {
+    qWarning() << "[precompose] rejected: would create composition cycle";
     return false;
   }
 
@@ -1875,11 +2106,26 @@ bool ArtifactProjectService::precomposeLayersInCurrentComposition(
 
   precompLayer->setLayerName(newCompositionName.toQString());
   precompLayer->setCompositionId(childCompId);
-  precompLayer->setInPoint(FramePosition(minInFrame));
-  precompLayer->setOutPoint(FramePosition(maxOutFrame));
-  precompLayer->setStartTime(FramePosition(minInFrame));
+  if (moveAll) {
+    // The new child holds the whole original timeline verbatim (layers keep
+    // their in/out), so the precomp layer plays it from frame 0 for the full
+    // duration — matching AE's "Move all attributes" semantics.
+    precompLayer->setInPoint(FramePosition(0));
+    precompLayer->setOutPoint(FramePosition(childDurationFrames));
+    precompLayer->setStartTime(FramePosition(0));
+  } else {
+    // Selected-only mode: the precomp layer stands in for the moved layers'
+    // original extent, offsetting the child's playback to line up with the
+    // earliest moved layer.
+    precompLayer->setInPoint(FramePosition(minInFrame));
+    precompLayer->setOutPoint(FramePosition(maxOutFrame));
+    precompLayer->setStartTime(FramePosition(minInFrame));
+  }
 
   comp->moveLayerToIndex(precompLayer->id(), firstIndex);
+  // Stash the outcome so the caller can build an undo command targeting the
+  // freshly created precomp layer / child composition.
+  impl_->lastPrecomposeOutcome_ = PrecomposeOutcome{precompLayer->id(), childCompId};
   ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
 
   if (openNewComposition) {
@@ -1900,6 +2146,11 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
     const LayerID &layerId, bool keepComposition) {
   auto project = getCurrentProjectSharedPtr();
   auto comp = currentComposition().lock();
+  // Reset undo bookkeeping up front so a failure cannot leak stale ids.
+  impl_->lastUnprecomposePrecompLayerId_ = LayerID();
+  impl_->lastUnprecomposeChildCompId_ = CompositionID();
+  impl_->lastUnprecomposeMovedLayerIds_.clear();
+  impl_->lastUnprecomposeChildName_ = UniString();
   if (!project || !comp || layerId.isNil()) {
     return false;
   }
@@ -1921,6 +2172,13 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
   if (!childFind.success || !childComp) {
     return false;
   }
+
+  // Snapshot what undo would need to re-create the precomp layer, before any
+  // mutation actually happens.
+  impl_->lastUnprecomposePrecompLayerId_ = layerId;
+  impl_->lastUnprecomposeChildCompId_ = childCompId;
+  impl_->lastUnprecomposeChildName_ =
+      UniString(childComp->settings().compositionName());
 
   const auto childLayers = childComp->allLayer();
   int insertIndex = -1;
@@ -1964,6 +2222,9 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
     comp->moveLayerToIndex(movedId, std::max(0, insertIndex + i));
   }
 
+  // Record the moved layer ids for undo (re-precompose), after success.
+  impl_->lastUnprecomposeMovedLayerIds_ = movedLayerIds;
+
   if (!keepComposition) {
     removeComposition(childCompId);
   }
@@ -1975,6 +2236,59 @@ bool ArtifactProjectService::unprecomposeLayerInCurrentComposition(
   }
   ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
   return true;
+}
+
+PrecomposeOutcome ArtifactProjectService::lastPrecomposeOutcome() const {
+  return impl_->lastPrecomposeOutcome_;
+}
+
+LayerID ArtifactProjectService::lastUnprecomposePrecompLayerId() const {
+  return impl_->lastUnprecomposePrecompLayerId_;
+}
+
+CompositionID ArtifactProjectService::lastUnprecomposeChildCompId() const {
+  return impl_->lastUnprecomposeChildCompId_;
+}
+
+QVector<LayerID> ArtifactProjectService::lastUnprecomposeMovedLayerIds() const {
+  return impl_->lastUnprecomposeMovedLayerIds_;
+}
+
+UniString ArtifactProjectService::lastUnprecomposeChildName() const {
+  return impl_->lastUnprecomposeChildName_;
+}
+
+bool ArtifactProjectService::precomposeLayersWithUndo(
+    const QVector<LayerID> &layerIds, const UniString &newCompositionName,
+    bool openNewComposition, bool matchWorkspaceDuration,
+    PrecomposeMode mode) {
+  auto *mgr = UndoManager::instance();
+  if (!mgr) {
+    // No undo infrastructure available — fall back to a direct mutation.
+    return precomposeLayersInCurrentComposition(
+        layerIds, newCompositionName, openNewComposition,
+        matchWorkspaceDuration, mode);
+  }
+  auto cmd = std::make_unique<PrecomposeUndoCommand>(
+      layerIds, newCompositionName, openNewComposition, matchWorkspaceDuration,
+      mode);
+  // UndoManager::push runs redo() once for us.
+  mgr->push(std::move(cmd));
+  const PrecomposeOutcome outcome = lastPrecomposeOutcome();
+  return !outcome.precompLayerId.isNil() && !outcome.childCompId.isNil();
+}
+
+bool ArtifactProjectService::unprecomposeLayerWithUndo(
+    const LayerID &layerId, bool keepComposition) {
+  auto *mgr = UndoManager::instance();
+  if (!mgr) {
+    return unprecomposeLayerInCurrentComposition(layerId, keepComposition);
+  }
+  auto cmd = std::make_unique<UnprecomposeUndoCommand>(layerId, keepComposition);
+  mgr->push(std::move(cmd));
+  // After redo, the precomp layer is gone; success is implied by a non-empty
+  // moved-layer record.
+  return !lastUnprecomposeMovedLayerIds().isEmpty();
 }
 
 void ArtifactProjectService::splitLayerAtCurrentTime(

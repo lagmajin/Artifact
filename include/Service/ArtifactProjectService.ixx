@@ -39,6 +39,26 @@ export enum class PreviewQualityPreset {
  Final
 };
 
+// Precompose mode mirrors the AE "Pre-compose" dialog radio options.
+//   MoveSelected       - move only the chosen layers into the new comp.
+//   MoveAllAttributes  - move the entire active composition into the new comp
+//                        and place a single precomp layer that reproduces the
+//                        original timeline extent (startTime + in/out).
+export enum class PrecomposeMode {
+ MoveSelected,
+ MoveAllAttributes
+};
+
+W_REGISTER_ARGTYPE(PrecomposeMode)
+
+// Outcome of a precompose operation: identifies the generated precomp layer
+// and child composition so undo/redo commands can target them. Nil fields
+// signal failure.
+struct PrecomposeOutcome {
+ LayerID precompLayerId;
+ CompositionID childCompId;
+};
+
 W_REGISTER_ARGTYPE(PreviewQualityPreset)
 
 export namespace Artifact {
@@ -128,9 +148,32 @@ export namespace Artifact {
        const QVector<LayerID>& layerIds,
        const UniString& newCompositionName,
        bool openNewComposition = true,
-       bool matchWorkspaceDuration = true);
+       bool matchWorkspaceDuration = true,
+       PrecomposeMode mode = PrecomposeMode::MoveSelected);
   bool unprecomposeLayerInCurrentComposition(const LayerID& layerId,
                                              bool keepComposition = true);
+
+  // === Precompose undo support ===
+  // These return the ids touched by the most recent precompose / unprecompose
+  // call. The UI layer reads them immediately after a successful mutation to
+  // build an undo command targeting the exact generated/removed entities.
+  // Returned ids are nil if the last operation failed or hasn't run.
+  PrecomposeOutcome lastPrecomposeOutcome() const;
+  LayerID lastUnprecomposePrecompLayerId() const;
+  CompositionID lastUnprecomposeChildCompId() const;
+  QVector<LayerID> lastUnprecomposeMovedLayerIds() const;
+  UniString lastUnprecomposeChildName() const;
+
+  // Undo-aware entry points. They perform the same mutation as the plain
+  // variants but push a command onto the global undo stack first, so the
+  // operation is reversible. The plain variants remain for code paths that
+  // manage their own undo (e.g. inside another command's redo/undo).
+  bool precomposeLayersWithUndo(const QVector<LayerID>& layerIds,
+                                const UniString& newCompositionName,
+                                bool openNewComposition,
+                                bool matchWorkspaceDuration,
+                                PrecomposeMode mode);
+  bool unprecomposeLayerWithUndo(const LayerID& layerId, bool keepComposition);
    void splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId);
    std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
    // Relink functions
