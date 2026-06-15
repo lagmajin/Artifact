@@ -1442,4 +1442,31 @@ QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const
     return impl_->thumbnailCache_;
 }
 
+QImage ArtifactAbstractComposition::getThumbnailAtFrame(int64_t frameNumber,
+                                                       int width, int height) {
+    const int safeWidth = std::max(1, width);
+    const int safeHeight = std::max(1, height);
+
+    // Seek the composition to the requested time so each layer samples its
+    // own state at that frame. This deliberately bypasses the cross-frame
+    // thumbnail cache used by getThumbnail(), because the cached entry is tied
+    // to a single representative frame and must not be reused for other times.
+    goToFrame(frameNumber);
+
+    const auto layers = impl_->allLayerBackToFront();
+    for (const auto& layer : layers) {
+        if (!layer) {
+            continue;
+        }
+        const QImage thumbnail = layer->getThumbnail(safeWidth, safeHeight);
+        if (!thumbnail.isNull()) {
+            return thumbnail;
+        }
+    }
+
+    QImage fallback(safeWidth, safeHeight, QImage::Format_ARGB32_Premultiplied);
+    fallback.fill(QColor(24, 24, 24, 255));
+    return fallback;
+}
+
 };
