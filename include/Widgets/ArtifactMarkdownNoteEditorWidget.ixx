@@ -1,3 +1,4 @@
+﻿module;
 #include <wobjectdefs.h>
 #include <QWidget>
 #include <QPlainTextEdit>

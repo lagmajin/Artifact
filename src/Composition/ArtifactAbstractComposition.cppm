@@ -28,6 +28,7 @@ import Container;
 import Frame.Position;
 import Frame.Range;
 import Frame.Rate;
+import Time.Rational;
 import Composition.Context;
 import Composition.Settings;
 import Artifact.Composition.InitParams;

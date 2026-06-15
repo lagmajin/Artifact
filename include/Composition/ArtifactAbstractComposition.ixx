@@ -154,6 +154,11 @@ export namespace Artifact {
 
   /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;
+  // Frame-aware thumbnail: seeks the composition to `frameNumber` before
+  // sampling, and bypasses the cross-frame thumbnail cache so each call
+  // reflects the requested time. Used by precomp-layer rendering where the
+  // child must be sampled at the parent's mapped time.
+  QImage getThumbnailAtFrame(int64_t frameNumber, int width, int height);
   /*Thumbnail*/
 
   // Resolution Remap

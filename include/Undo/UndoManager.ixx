@@ -41,6 +41,7 @@ export module Undo.UndoManager;
 
 
 export import Artifact.Composition.Abstract;
+import Utils.Id;
 import Utils.String.UniString;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Abstract;
@@ -227,7 +228,7 @@ private:
     };
     struct LayerSnapshot {
         ArtifactCore::LayerID layerId;
-        std::vector<ArtifactCore::LayerMask> masks;
+        std::vector<LayerMask> masks;
         std::vector<PropertySnapshot> properties;
     };
 

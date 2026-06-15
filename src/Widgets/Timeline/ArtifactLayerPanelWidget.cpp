@@ -56,6 +56,7 @@ import Artifact.Project.Manager;
 import Artifact.Application.Manager;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.ProjectManagerWidget;
+import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import UI.ShortcutBindings;
@@ -2978,15 +2979,56 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     };
 
     auto triggerPrecomposeSelectedLayers = [this, selectedVisibleIds]() {
-      if (selectedVisibleIds.size() <= 1) {
+      if (selectedVisibleIds.isEmpty()) {
         return;
       }
-      if (auto* svc = ArtifactProjectService::instance()) {
-        if (svc->precomposeLayersInCurrentComposition(selectedVisibleIds,
-                                                      UniString(QStringLiteral("Precomp")),
-                                                      true, true)) {
-          updateLayout();
+      auto* svc = ArtifactProjectService::instance();
+      if (!svc) {
+        return;
+      }
+      auto comp = svc->currentComposition().lock();
+      if (!comp) {
+        return;
+      }
+
+      // Resolve selection into ordered layer ids + names, mirroring the
+      // Layer menu path so both entry points behave identically.
+      QStringList selectedNames;
+      QVector<LayerID> orderedIds;
+      orderedIds.reserve(selectedVisibleIds.size());
+      QSet<QString> wanted;
+      for (const auto& id : selectedVisibleIds) {
+        wanted.insert(id.toString());
+      }
+      for (const auto& layer : comp->allLayer()) {
+        if (!layer) {
+          continue;
         }
+        if (!wanted.contains(layer->id().toString())) {
+          continue;
+        }
+        orderedIds.push_back(layer->id());
+        selectedNames.push_back(layer->layerName());
+      }
+      if (orderedIds.isEmpty()) {
+        return;
+      }
+
+      PrecomposeDialog dialog(window());
+      dialog.setSelectedLayerNames(selectedNames);
+      dialog.setTotalLayerCount(comp->layerCount());
+      if (dialog.exec() != QDialog::Accepted) {
+        return;
+      }
+
+      const PrecomposeMode mode = dialog.moveSelectedOnly()
+                                      ? PrecomposeMode::MoveSelected
+                                      : PrecomposeMode::MoveAllAttributes;
+      if (svc->precomposeLayersWithUndo(
+              orderedIds, UniString(dialog.newCompositionName()),
+              dialog.openNewComposition(), dialog.matchWorkspaceDuration(),
+              mode)) {
+        updateLayout();
       }
     };
 
@@ -3633,15 +3675,19 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       triggerDeleteLayer();
     });
     utilityMenu->addSeparator();
+    // Precompose is valid for any non-empty selection (single layer included),
+    // so it lives outside the multi-selection-only block to match the AE flow.
+    if (!selectedIds.isEmpty()) {
+      menu.addAction(QStringLiteral("Precompose Selected Layers"), [triggerPrecomposeSelectedLayers]() {
+        triggerPrecomposeSelectedLayers();
+      });
+    }
     if (selectedIds.size() > 1) {
       menu.addAction(QStringLiteral("Duplicate Selected Layers"), [triggerDuplicateSelectedLayers]() {
         triggerDuplicateSelectedLayers();
       });
       menu.addAction(QStringLiteral("Group Selected Layers"), [triggerGroupSelectedLayers]() {
         triggerGroupSelectedLayers();
-      });
-      menu.addAction(QStringLiteral("Precompose Selected Layers"), [triggerPrecomposeSelectedLayers]() {
-        triggerPrecomposeSelectedLayers();
       });
       menu.addSeparator();
       QMenu* batchStateMenu = menu.addMenu(QStringLiteral("Batch State"));
