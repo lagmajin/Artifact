@@ -123,12 +123,13 @@ public:
             applyCPU(src, dst);
             return;
         }
+        const auto &settings = processor_.settings();
         ParamsCB params{};
-        params.r = settings_.color.redF();
-        params.g = settings_.color.greenF();
-        params.b = settings_.color.blueF();
-        params.opacity = settings_.opacity;
-        params.preserveAlpha = settings_.preserveAlpha ? 1.0f : 0.0f;
+        params.r = settings.color.redF();
+        params.g = settings.color.greenF();
+        params.b = settings.color.blueF();
+        params.opacity = settings.opacity;
+        params.preserveAlpha = settings.preserveAlpha ? 1.0f : 0.0f;
         std::memcpy(mapped, &params, sizeof(params));
         context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
 

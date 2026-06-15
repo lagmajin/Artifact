@@ -25,6 +25,7 @@ namespace Artifact {
 
 class SelectiveColorEffectCPUImpl : public ArtifactEffectImplBase {
 public:
+    ArtifactCore::SelectiveColorSettings settings_;
     ArtifactCore::SelectiveColorProcessor processor_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -46,6 +47,7 @@ public:
 
 class SelectiveColorEffectGPUImpl : public ArtifactEffectImplBase {
 public:
+    ArtifactCore::SelectiveColorSettings settings_;
     ArtifactCore::SelectiveColorProcessor processor_;
     mutable Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     mutable Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
@@ -189,9 +191,11 @@ void SelectiveColorEffect::setAdjustment(ArtifactCore::SelectiveColorGroup group
 
 void SelectiveColorEffect::syncImpls() {
     if (auto* cpu = dynamic_cast<SelectiveColorEffectCPUImpl*>(cpuImpl().get())) {
+        cpu->settings_ = settings_;
         cpu->processor_.setSettings(settings_);
     }
     if (auto* gpu = dynamic_cast<SelectiveColorEffectGPUImpl*>(gpuImpl().get())) {
+        gpu->settings_ = settings_;
         gpu->processor_.setSettings(settings_);
     }
 }

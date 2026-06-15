@@ -295,7 +295,6 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle(u8"カメラ設定");
-    setFixedSize(500, 620);
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_NoChildEventsForParent);
 
@@ -638,6 +637,9 @@ CreateCameraLayerDialog::CreateCameraLayerDialog(QWidget* parent)
 
     // Trigger initial diagram
     impl_->syncFovFromFocalLength();
+
+    adjustSize();
+    setMinimumSize(size());
 }
 
 CreateCameraLayerDialog::~CreateCameraLayerDialog()

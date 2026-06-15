@@ -520,7 +520,6 @@ QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
   ctorTimer.start();
   setWindowTitle("Composition Settings");
   setWindowFlags(Qt::FramelessWindowHint | Qt::Dialog);
-  setFixedSize(500, 520);
   
   auto mainLayout = new QVBoxLayout(this);
   mainLayout->setContentsMargins(0, 0, 0, 0);
@@ -571,6 +570,9 @@ QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
 
   QObject::connect(okBtn, &QPushButton::clicked, this, [this]() { impl_->ok(this); });
   QObject::connect(cancelBtn, &QPushButton::clicked, this, [this]() { impl_->cancel(this); });
+
+  adjustSize();
+  setMinimumSize(size());
 
   qInfo() << "[CreateCompositionDialog][Ctor] total ms=" << ctorTimer.elapsed();
 

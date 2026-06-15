@@ -656,7 +656,6 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle(u8"平面設定");
-    setFixedSize(520, 500);
 
     auto chrome = buildDialogChrome(this);
     impl_->dialogButtonBox = chrome.buttonBox;
@@ -703,6 +702,9 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
         if (impl_->nameEditableLabel)
             impl_->nameEditableLabel->setText(name);
     });
+
+    adjustSize();
+    setMinimumSize(size());
 }
 
 CreateSolidLayerSettingDialog::~CreateSolidLayerSettingDialog()
@@ -787,7 +789,6 @@ EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle(u8"平面設定");
-    setFixedSize(520, 500);
 
     auto chrome = buildDialogChrome(this);
     impl_->dialogButtonBox = chrome.buttonBox;
@@ -837,6 +838,9 @@ EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent)
         if (impl_->nameEditableLabel)
             impl_->nameEditableLabel->setText(name);
     });
+
+    adjustSize();
+    setMinimumSize(size());
 }
 
 EditPlaneLayerSettingDialog::~EditPlaneLayerSettingDialog()

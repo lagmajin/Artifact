@@ -4971,9 +4971,15 @@ void CompositionRenderController::zoomFill() {
 void CompositionRenderController::zoom100() {
   if (impl_->renderer_) {
     impl_->renderer_->setZoom(1.0f);
-    // Center the canvas in the viewport at 100% zoom
-    const float panX = (impl_->hostWidth_ - impl_->lastCanvasWidth_) * 0.5f;
-    const float panY = (impl_->hostHeight_ - impl_->lastCanvasHeight_) * 0.5f;
+    // Center the canvas in the viewport at 100% zoom.
+    // hostWidth_/hostHeight_ are physical pixels, while lastCanvasWidth_/Height_
+    // are composition pixels. Convert the canvas size into the same physical
+    // pixel space before calculating the pan offset.
+    const float dpr = impl_->devicePixelRatio_ > 0.0f ? impl_->devicePixelRatio_ : 1.0f;
+    const float canvasW = impl_->lastCanvasWidth_ * dpr;
+    const float canvasH = impl_->lastCanvasHeight_ * dpr;
+    const float panX = (impl_->hostWidth_ - canvasW) * 0.5f;
+    const float panY = (impl_->hostHeight_ - canvasH) * 0.5f;
     impl_->renderer_->setPan(panX, panY);
     impl_->invalidateBaseComposite();
     markRenderDirty();

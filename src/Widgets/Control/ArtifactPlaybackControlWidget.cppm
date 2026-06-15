@@ -709,7 +709,8 @@ public:
         button->setIcon(loadIconWithFallback(iconNames));
         button->setIconSize(QSize(20, 20));
         button->setToolTip(tooltip);
-        button->setFixedSize(32, 32);
+        button->setMinimumSize(32, 32);
+        button->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
         applyThemeTextPalette(button, QColor(ArtifactCore::currentDCCTheme().textColor));
         
         if (shortcut != 0) {
@@ -734,7 +735,8 @@ public:
         auto* button = createToolButton(QStringList{}, tooltip, 0);
         button->setText(text);
         button->setCheckable(checkable);
-        button->setFixedSize(48, 28);
+        button->setMinimumSize(48, 28);
+        button->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Minimum);
         button->setIcon(QIcon());
         button->setToolButtonStyle(Qt::ToolButtonTextOnly);
         QFont font = button->font();

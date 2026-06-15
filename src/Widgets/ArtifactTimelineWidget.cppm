@@ -265,17 +265,22 @@ QString formatSelectedKeyframeSummary(
   qint64 minFrame = std::numeric_limits<qint64>::max();
   qint64 maxFrame = std::numeric_limits<qint64>::min();
   QSet<QString> propertyLabels;
+  QStringList sampleLabels;
   bool hitsCurrentFrame = false;
   for (const auto &marker : markers) {
     const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
     minFrame = std::min(minFrame, frame);
     maxFrame = std::max(maxFrame, frame);
-    hitsCurrentFrame |= (frame == currentFrame);
-    propertyLabels.insert(
+    const QString displayLabel =
         marker.label.isEmpty()
             ? ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
                   marker.propertyPath)
-            : marker.label);
+            : marker.label;
+    hitsCurrentFrame |= (frame == currentFrame);
+    propertyLabels.insert(displayLabel);
+    if (sampleLabels.size() < 3 && !sampleLabels.contains(displayLabel)) {
+      sampleLabels.push_back(displayLabel);
+    }
   }
 
   const QString propertyText =
@@ -290,11 +295,21 @@ QString formatSelectedKeyframeSummary(
   const QString currentText =
       hitsCurrentFrame ? QStringLiteral("Current: here")
                        : QStringLiteral("Current: off");
-  return QStringLiteral("Keys: %1 selected | %2 | %3 | %4")
+  QString previewText;
+  if (!sampleLabels.isEmpty()) {
+    previewText = QStringLiteral("Preview: %1")
+                      .arg(sampleLabels.join(QStringLiteral(", ")));
+    if (propertyLabels.size() > sampleLabels.size()) {
+      previewText += QStringLiteral(" (+%1 more)")
+                         .arg(propertyLabels.size() - sampleLabels.size());
+    }
+  }
+  return QStringLiteral("Keys: %1 selected | %2 | %3 | %4%5")
       .arg(markers.size())
       .arg(propertyText)
       .arg(frameText)
-      .arg(currentText);
+      .arg(currentText)
+      .arg(previewText.isEmpty() ? QString() : QStringLiteral(" | %1").arg(previewText));
 }
 
 struct CachedAudioWaveform {
@@ -3406,6 +3421,9 @@ public:
   QLabel *curveEditorSummaryLabel_ = nullptr;
   QToolButton *curveEditorModeButton_ = nullptr;
   QToolButton *curveEditorFitButton_ = nullptr;
+  QToolButton *curveEditorHandleButton_ = nullptr;
+  QToolButton *curveEditorPinButton_ = nullptr;
+  bool curveHandleEditingEnabled_ = false;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   WorkAreaControl *workArea_ = nullptr;
   TimelineRightPanelWidget *rightPanel_ = nullptr;
@@ -3581,11 +3599,24 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     QString summary =
         signatureChanged ? payload.summary
                          : curveEditorSummaryForTracks(impl_->curveTracks_);
+    const auto selectedMarkers =
+        impl_->painterTrackView_ ? impl_->painterTrackView_->selectedKeyframeMarkers()
+                                 : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
     summary = QStringLiteral("%1 | %2")
                   .arg(impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
                            ? QStringLiteral("Speed Graph")
                            : QStringLiteral("Value Graph"),
                        summary);
+    if (!selectedMarkers.isEmpty()) {
+      summary = QStringLiteral("%1 | %2")
+                    .arg(summary,
+                         formatSelectedKeyframeSummary(
+                             selectedMarkers,
+                             static_cast<qint64>(std::llround(
+                                 std::max(0.0, impl_->currentFrame_)))));
+    } else {
+      summary = QStringLiteral("%1 | Keys: none selected").arg(summary);
+    }
     if (impl_->graphEditorVisible_ &&
         selectionFocusTrack >= 0 &&
         selectionFocusTrack < impl_->curveTracks_.size()) {
@@ -3593,6 +3624,14 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
                     .arg(summary)
                     .arg(impl_->curveTracks_[selectionFocusTrack].name);
     }
+    summary = QStringLiteral("%1 | Display: %2")
+                  .arg(summary,
+                       impl_->curveFocusPinned_ ? QStringLiteral("solo")
+                                                : QStringLiteral("all tracks"));
+    summary = QStringLiteral("%1 | Handles: %2")
+                  .arg(summary,
+                       impl_->curveHandleEditingEnabled_ ? QStringLiteral("on")
+                                                         : QStringLiteral("off"));
     impl_->curveEditorSummaryLabel_->setText(summary);
   }
 
@@ -3616,6 +3655,37 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   if (impl_->graphEditorVisible_ && impl_->graphEditorNeedsFit_) {
     impl_->curveEditor_->fitToContent();
     impl_->graphEditorNeedsFit_ = false;
+  }
+  if (impl_->curveEditorHandleButton_) {
+    const QSignalBlocker blocker(impl_->curveEditorHandleButton_);
+    impl_->curveEditorHandleButton_->setChecked(impl_->curveHandleEditingEnabled_);
+    impl_->curveEditorHandleButton_->setText(
+        impl_->curveHandleEditingEnabled_ ? QStringLiteral("Handles On")
+                                          : QStringLiteral("Handles Off"));
+    impl_->curveEditorHandleButton_->setToolTip(
+        impl_->curveHandleEditingEnabled_
+            ? QStringLiteral("Bezier handle editing is enabled")
+            : QStringLiteral("Bezier handle editing is disabled for safer graph edits"));
+  }
+  if (impl_->curveEditorPinButton_) {
+    const QSignalBlocker blocker(impl_->curveEditorPinButton_);
+    impl_->curveEditorPinButton_->setChecked(impl_->curveFocusPinned_);
+    impl_->curveEditorPinButton_->setText(
+        impl_->curveFocusPinned_ ? QStringLiteral("Solo")
+                                 : QStringLiteral("Solo Off"));
+    impl_->curveEditorPinButton_->setToolTip(
+        impl_->curveFocusPinned_
+            ? QStringLiteral("Only the selected parameter is shown in the graph editor")
+            : QStringLiteral("Show all curve tracks in the graph editor"));
+    QPalette pal = impl_->curveEditorPinButton_->palette();
+    pal.setColor(QPalette::ButtonText,
+                 impl_->curveFocusPinned_ ? QColor(255, 240, 170)
+                                          : QColor(200, 220, 255));
+    pal.setColor(QPalette::Button,
+                 impl_->curveFocusPinned_ ? QColor(92, 70, 18)
+                                          : QColor(36, 44, 58));
+    impl_->curveEditorPinButton_->setPalette(pal);
+    impl_->curveEditorPinButton_->setAutoFillBackground(true);
   }
   updateCurvePropertyList();
 }
@@ -3781,7 +3851,9 @@ bool ArtifactTimelineWidget::isGraphEditorFocusWidget(const QWidget *widget) con
   while (cursor) {
     if (cursor == impl_->curveEditor_ || cursor == impl_->curveEditorPage_ ||
         cursor == impl_->curvePropertyList_ ||
-        cursor == impl_->curveEditorFitButton_) {
+        cursor == impl_->curveEditorFitButton_ ||
+        cursor == impl_->curveEditorHandleButton_ ||
+        cursor == impl_->curveEditorPinButton_) {
       return true;
     }
     cursor = cursor->parentWidget();
@@ -3804,6 +3876,12 @@ void ArtifactTimelineWidget::advanceGraphEditorFocus(const bool reverse)
   }
   if (impl_->curveEditorFitButton_) {
     focusOrder.push_back(impl_->curveEditorFitButton_);
+  }
+  if (impl_->curveEditorHandleButton_) {
+    focusOrder.push_back(impl_->curveEditorHandleButton_);
+  }
+  if (impl_->curveEditorPinButton_) {
+    focusOrder.push_back(impl_->curveEditorPinButton_);
   }
   if (focusOrder.isEmpty()) {
     return;
@@ -4605,9 +4683,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      const int trackIndex = item->data(Qt::UserRole).toInt();
                      impl_->focusedCurveTrackIndex_ =
                          (impl_->focusedCurveTrackIndex_ == trackIndex) ? -1 : trackIndex;
-                     impl_->curveFocusPinned_ =
-                         impl_->focusedCurveTrackIndex_ >= 0;
-                     impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
+      impl_->curveFocusPinned_ =
+          impl_->focusedCurveTrackIndex_ >= 0;
+      impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
                      updateCurvePropertyList();
                      impl_->curveEditor_->setFocus(Qt::MouseFocusReason);
                    });
@@ -4658,6 +4736,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveEditor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   curveEditor->setMinimumHeight(180);
   curveEditor->setHandleEditingEnabled(false);
+  impl_->curveHandleEditingEnabled_ = false;
   curveEditor->setVisible(true);
   impl_->curveEditorGraphMode_ = curveEditorGraphModeFromSettings();
 
@@ -4696,9 +4775,50 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
       impl_->curveEditor_->fitToContent();
     }
   });
+  impl_->curveEditorHandleButton_ = new QToolButton(curveHeader);
+  impl_->curveEditorHandleButton_->setAutoRaise(true);
+  impl_->curveEditorHandleButton_->setCheckable(true);
+  impl_->curveEditorHandleButton_->setChecked(false);
+  impl_->curveEditorHandleButton_->setText(QStringLiteral("Handles Off"));
+  impl_->curveEditorHandleButton_->setToolTip(
+      QStringLiteral("Bezier handle editing is disabled for safer graph edits"));
+  QObject::connect(impl_->curveEditorHandleButton_, &QToolButton::toggled, this,
+                   [this](bool enabled) {
+                     if (!impl_ || !impl_->curveEditor_) {
+                       return;
+                     }
+                     impl_->curveHandleEditingEnabled_ = enabled;
+                     impl_->curveEditor_->setHandleEditingEnabled(enabled);
+                     refreshCurveEditorTracks();
+                   });
+  impl_->curveEditorPinButton_ = new QToolButton(curveHeader);
+  impl_->curveEditorPinButton_->setAutoRaise(true);
+  impl_->curveEditorPinButton_->setCheckable(true);
+  impl_->curveEditorPinButton_->setChecked(false);
+  impl_->curveEditorPinButton_->setText(QStringLiteral("Solo Off"));
+  impl_->curveEditorPinButton_->setToolTip(
+      QStringLiteral("Show all curve tracks in the graph editor"));
+  {
+    QFont pinFont = impl_->curveEditorPinButton_->font();
+    pinFont.setBold(true);
+    impl_->curveEditorPinButton_->setFont(pinFont);
+  }
+  QObject::connect(impl_->curveEditorPinButton_, &QToolButton::toggled, this,
+                   [this](bool pinned) {
+                     if (!impl_) {
+                       return;
+                     }
+                     impl_->curveFocusPinned_ = pinned;
+                     if (impl_->curveEditor_) {
+                       impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
+                     }
+                     refreshCurveEditorTracks();
+                   });
   curveHeaderLayout->addWidget(impl_->curveEditorSummaryLabel_);
   curveHeaderLayout->addWidget(impl_->curveEditorModeButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFitButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorHandleButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorPinButton_);
   timeNavigatorWidget->setTotalFrames(kDefaultTimelineFrames);
   timeNavigatorWidget->setFixedHeight(kTimelineTopRowHeight);
   timeNavigatorWidget->setSizePolicy(QSizePolicy::Expanding,
@@ -7318,3 +7438,4 @@ void ArtifactTimelineWidget::pasteKeyframesAtPlayhead()
 }
 
 }; // namespace Artifact
+

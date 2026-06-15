@@ -4369,7 +4369,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->chromeStrip_->setFrameShape(QFrame::StyledPanel);
   impl_->chromeStrip_->setFrameShadow(QFrame::Plain);
   impl_->chromeStrip_->setAutoFillBackground(true);
-  impl_->chromeStrip_->setFixedHeight(44);
+  impl_->chromeStrip_->setMinimumHeight(44);
+  impl_->chromeStrip_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
   {
     QPalette pal = impl_->chromeStrip_->palette();
     pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
@@ -4489,7 +4490,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   // Bottom Bar (Viewer Controls)
   impl_->bottomBar_ = new QWidget(this);
-  impl_->bottomBar_->setFixedHeight(28);
+  impl_->bottomBar_->setMinimumHeight(28);
+  impl_->bottomBar_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
   impl_->bottomBar_->setAutoFillBackground(true);
   {
     QPalette pal = impl_->bottomBar_->palette();
@@ -4511,7 +4513,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->resolutionCombo_->addItem(
       "Quarter",
       QVariant::fromValue(static_cast<int>(PreviewQualityPreset::Draft)));
-  impl_->resolutionCombo_->setFixedWidth(70);
+  impl_->resolutionCombo_->setMinimumWidth(70);
   {
     QPalette pal = impl_->resolutionCombo_->palette();
     pal.setColor(QPalette::Base, QColor(theme.backgroundColor));

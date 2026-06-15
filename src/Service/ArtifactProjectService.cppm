@@ -574,9 +574,10 @@ bool wouldCreatePrecomposeCycle(
     pending.pop_front();
 
     const QString key = currentId.toString();
-    if (!visited.insert(key).second) {
+    if (visited.contains(key)) {
       continue;
     }
+    visited.insert(key);
 
     auto current = service->findComposition(currentId).ptr.lock();
     if (!current) {

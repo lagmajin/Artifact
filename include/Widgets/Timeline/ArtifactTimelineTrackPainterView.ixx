@@ -14,6 +14,7 @@ module;
 #include <QWheelEvent>
 #include <QSet>
 #include <QVector>
+#include <QVariant>
 #include <QWidget>
 #include <QString>
 #include <wobjectdefs.h>
@@ -35,11 +36,12 @@ export namespace Artifact
   W_OBJECT(ArtifactTimelineTrackPainterView)
 
  public:
-  struct KeyframeMarkerVisual {
+ struct KeyframeMarkerVisual {
    LayerID layerId;
    QString propertyPath;
    int trackIndex = -1;
    double frame = 0.0;
+   QVariant value;
    int laneIndex = 0;
    int laneCount = 1;
    bool selectedLayer = false;
@@ -130,6 +132,8 @@ export namespace Artifact
   QVector<KeyframeMarkerVisual> selectedKeyframeMarkers() const;
   KeyframeMarkerVisual hoveredKeyframeMarker() const;
   void selectAllKeyframeMarkers();
+  void selectSamePropertyKeyframeMarkers();
+  void selectNeighborKeyframeMarkers();
   void clearKeyframeSelection();
   void setSelectedKeyframeKeys(const QSet<QString>& selectedKeys);
   bool setSelectedKeyframeAnchor(ArtifactCore::KeyFrame::Anchor anchor);
