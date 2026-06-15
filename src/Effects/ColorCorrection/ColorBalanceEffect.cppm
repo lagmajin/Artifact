@@ -25,6 +25,7 @@ namespace Artifact {
 
 class ColorBalanceEffectCPUImpl : public ArtifactEffectImplBase {
 public:
+    ColorBalanceSettings settings_;
     ColorBalanceProcessor processor_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -46,6 +47,7 @@ public:
 
 class ColorBalanceEffectGPUImpl : public ArtifactEffectImplBase {
 public:
+    ColorBalanceSettings settings_;
     ColorBalanceProcessor processor_;
     mutable Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     mutable Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
@@ -410,9 +412,11 @@ void ColorBalanceEffect::setPreserveLuma(bool value) {
 
 void ColorBalanceEffect::syncImpls() {
     if (auto* cpu = dynamic_cast<ColorBalanceEffectCPUImpl*>(cpuImpl().get())) {
+        cpu->settings_ = settings_;
         cpu->processor_.setSettings(settings_);
     }
     if (auto* gpu = dynamic_cast<ColorBalanceEffectGPUImpl*>(gpuImpl().get())) {
+        gpu->settings_ = settings_;
         gpu->processor_.setSettings(settings_);
     }
 }

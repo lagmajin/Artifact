@@ -26,6 +26,7 @@ namespace Artifact {
 
 class TritoneEffectCPUImpl : public ArtifactEffectImplBase {
 public:
+    TritoneSettings settings_;
     TritoneProcessor processor_;
 
     void applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) override {
@@ -47,6 +48,7 @@ public:
 
 class TritoneEffectGPUImpl : public ArtifactEffectImplBase {
 public:
+    TritoneSettings settings_;
     TritoneProcessor processor_;
     mutable Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
     mutable Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
@@ -227,9 +229,11 @@ void TritoneEffect::setPreserveLuma(bool value) {
 
 void TritoneEffect::syncImpls() {
     if (auto* cpu = dynamic_cast<TritoneEffectCPUImpl*>(cpuImpl().get())) {
+        cpu->settings_ = settings_;
         cpu->processor_.setSettings(settings_);
     }
     if (auto* gpu = dynamic_cast<TritoneEffectGPUImpl*>(gpuImpl().get())) {
+        gpu->settings_ = settings_;
         gpu->processor_.setSettings(settings_);
     }
 }

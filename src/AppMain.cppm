@@ -2958,70 +2958,68 @@ int main(int argc, char *argv[]) {
               }));
     }
 
-    {
-      const QString appDataDir =
-          QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-      QDir dataDir(appDataDir);
-      if (!dataDir.exists()) {
-        dataDir.mkpath(QStringLiteral("."));
-      }
-      ArtifactCore::FastSettingsStore layoutStore(
-          dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
-      sanitizeLayoutStore(layoutStore);
-      if (!layoutStore.contains(QStringLiteral("MainWindow/layoutKey")) &&
-          !layoutStore.contains(QStringLiteral("MainWindow/geometry")) &&
-          !layoutStore.contains(QStringLiteral("MainWindow/state"))) {
-        // Backward compatibility: import once from legacy QSettings.
-        QSettings legacy(QStringLiteral("ArtifactStudio"),
-                         QStringLiteral("Artifact"));
-        auto legacyState = UiLayoutState::loadFromSettings(
-            legacy, QStringLiteral("MainWindow"));
-        if (!legacyState.isEmpty()) {
-          legacyState.saveToStore(layoutStore, QStringLiteral("MainWindow"));
-          layoutStore.sync();
-        }
-      }
-      auto layoutState =
-          UiLayoutState::loadFromStore(layoutStore, "MainWindow");
-      if (layoutState.version != kMainWindowLayoutVersion) {
-        layoutStore.remove("MainWindow/layoutKey");
-        layoutStore.remove("MainWindow/version");
-        layoutStore.remove("MainWindow/geometry");
-        layoutStore.remove("MainWindow/state");
-        layoutStore.remove("MainWindow/dockState");
-        layoutStore.sync();
-        layoutState = UiLayoutState("ArtifactMainWindow");
-      }
-      bool geometryRestored = true;
-      bool stateRestored = true;
-      const bool hasGeometry = !layoutState.geometry.isEmpty();
-      const bool hasState = !layoutState.state.isEmpty();
-      if (!layoutState.geometry.isEmpty()) {
-        geometryRestored = mw->restoreGeometry(layoutState.geometry);
-      }
-      if (!layoutState.state.isEmpty()) {
-        stateRestored = mw->restoreState(layoutState.state);
-      }
-      const bool workspaceRestored = workspaceManager.restoreSession(mw);
-      if (!workspaceRestored) {
-        mw->setWorkspaceMode(workspaceModeFromSettings());
-      }
-      bool resetApplied = false;
-      if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
-          (!layoutState.state.isEmpty() && !stateRestored)) {
-        // Saved layout is likely incompatible with current dock/widget set.
-        layoutStore.remove("MainWindow/layoutKey");
-        layoutStore.remove("MainWindow/version");
-        layoutStore.remove("MainWindow/geometry");
-        layoutStore.remove("MainWindow/state");
-        layoutStore.remove("MainWindow/dockState");
-        layoutStore.sync();
-        mw->resize(1600, 900);
-        resetApplied = true;
+    const QString appDataDir =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir dataDir(appDataDir);
+    if (!dataDir.exists()) {
+      dataDir.mkpath(QStringLiteral("."));
     }
-      recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored,
-                                stateRestored, resetApplied);
+    ArtifactCore::FastSettingsStore layoutStore(
+        dataDir.filePath(QStringLiteral("main_window_layout.cbor")));
+    sanitizeLayoutStore(layoutStore);
+    if (!layoutStore.contains(QStringLiteral("MainWindow/layoutKey")) &&
+        !layoutStore.contains(QStringLiteral("MainWindow/geometry")) &&
+        !layoutStore.contains(QStringLiteral("MainWindow/state"))) {
+      // Backward compatibility: import once from legacy QSettings.
+      QSettings legacy(QStringLiteral("ArtifactStudio"),
+                       QStringLiteral("Artifact"));
+      auto legacyState =
+          UiLayoutState::loadFromSettings(legacy, QStringLiteral("MainWindow"));
+      if (!legacyState.isEmpty()) {
+        legacyState.saveToStore(layoutStore, QStringLiteral("MainWindow"));
+        layoutStore.sync();
+      }
     }
+    UiLayoutState layoutState("ArtifactMainWindow");
+    layoutState = UiLayoutState::loadFromStore(layoutStore, "MainWindow");
+    if (layoutState.version != kMainWindowLayoutVersion) {
+      layoutStore.remove("MainWindow/layoutKey");
+      layoutStore.remove("MainWindow/version");
+      layoutStore.remove("MainWindow/geometry");
+      layoutStore.remove("MainWindow/state");
+      layoutStore.remove("MainWindow/dockState");
+      layoutStore.sync();
+      layoutState = UiLayoutState("ArtifactMainWindow");
+    }
+    bool geometryRestored = true;
+    bool stateRestored = true;
+    const bool hasGeometry = !layoutState.geometry.isEmpty();
+    const bool hasState = !layoutState.state.isEmpty();
+    if (!layoutState.geometry.isEmpty()) {
+      geometryRestored = mw->restoreGeometry(layoutState.geometry);
+    }
+    if (!layoutState.state.isEmpty()) {
+      stateRestored = mw->restoreState(layoutState.state);
+    }
+    const bool workspaceRestored = workspaceManager.restoreSession(mw);
+    if (!workspaceRestored) {
+      mw->setWorkspaceMode(workspaceModeFromSettings());
+    }
+    bool resetApplied = false;
+    if ((!layoutState.geometry.isEmpty() && !geometryRestored) ||
+        (!layoutState.state.isEmpty() && !stateRestored)) {
+      // Saved layout is likely incompatible with current dock/widget set.
+      layoutStore.remove("MainWindow/layoutKey");
+      layoutStore.remove("MainWindow/version");
+      layoutStore.remove("MainWindow/geometry");
+      layoutStore.remove("MainWindow/state");
+      layoutStore.remove("MainWindow/dockState");
+      layoutStore.sync();
+      mw->resize(1600, 900);
+      resetApplied = true;
+    }
+    recordLayoutRestoreResult(hasGeometry || hasState, geometryRestored,
+                              stateRestored, resetApplied);
     mw->setDockVisible(QStringLiteral("Composition Viewer"), true);
     mw->activateDock(QStringLiteral("Composition Viewer"));
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), true);

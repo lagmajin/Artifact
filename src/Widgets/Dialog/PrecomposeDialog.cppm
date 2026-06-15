@@ -65,7 +65,6 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle(u8"プリコンポーズ");
-    setFixedSize(440, 560);
     setWindowFlags(windowFlags() | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_NoChildEventsForParent);
 
@@ -148,7 +147,7 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
         bLay->addWidget(secLbl);
 
         impl_->layerListWidget = new QListWidget(body);
-        impl_->layerListWidget->setFixedHeight(110);
+        impl_->layerListWidget->setMinimumHeight(110);
         {
             QPalette pal = impl_->layerListWidget->palette();
             pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().backgroundColor));
@@ -282,6 +281,9 @@ PrecomposeDialog::PrecomposeDialog(QWidget* parent)
                      [this](bool checked) {
         if (impl_->addAdjLayerCheck) impl_->addAdjLayerCheck->setEnabled(checked);
     });
+
+    adjustSize();
+    setMinimumSize(size());
 }
 
 PrecomposeDialog::~PrecomposeDialog()

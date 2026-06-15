@@ -850,6 +850,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   bool matchesFileTypeFilter(const QString& fileName) const;
   bool matchesSearchFilter(const QString& fileName) const;
   QIcon generateThumbnail(const QString& filePath);
+  QIcon fileTypeIconFor(const QString& fileName) const;
   QIcon getFileIcon(const QString& fileName, const QString& filePath);
   void clearThumbnailCache();
   void startAsyncPreviewThumbnailGeneration(const QString& filePath);
@@ -894,9 +895,18 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   QStyle* style = QApplication::style();
   if (style) {
    defaultFileIcon_ = style->standardIcon(QStyle::SP_FileIcon);
-   defaultImageIcon_ = style->standardIcon(QStyle::SP_FileIcon);
-   defaultVideoIcon_ = style->standardIcon(QStyle::SP_MediaPlay);
-   defaultAudioIcon_ = style->standardIcon(QStyle::SP_MediaVolume);
+   defaultImageIcon_ = QIcon(QStringLiteral(":/icons/Studio/asset_file_image.svg"));
+   if (defaultImageIcon_.isNull()) {
+    defaultImageIcon_ = style->standardIcon(QStyle::SP_FileIcon);
+   }
+   defaultVideoIcon_ = QIcon(QStringLiteral(":/icons/Studio/asset_file_video.svg"));
+   if (defaultVideoIcon_.isNull()) {
+    defaultVideoIcon_ = style->standardIcon(QStyle::SP_MediaPlay);
+   }
+   defaultAudioIcon_ = QIcon(QStringLiteral(":/icons/Studio/asset_file_audio.svg"));
+   if (defaultAudioIcon_.isNull()) {
+    defaultAudioIcon_ = style->standardIcon(QStyle::SP_MediaVolume);
+   }
    defaultFontIcon_ = style->standardIcon(QStyle::SP_FileDialogDetailedView);
   }
  }
@@ -1133,6 +1143,100 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
   return svc ? QStringLiteral("Status: Project linked") : QStringLiteral("Status: Open a folder to browse assets");
 }
 
+QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
+{
+ const QString suffix = QFileInfo(fileName).suffix().toLower();
+ static const QHash<QString, QString> iconBySuffix = {
+  {QStringLiteral("jpg"), QStringLiteral("asset_file_jpeg.svg")},
+  {QStringLiteral("jpeg"), QStringLiteral("asset_file_jpeg.svg")},
+  {QStringLiteral("jpe"), QStringLiteral("asset_file_jpeg.svg")},
+  {QStringLiteral("jfif"), QStringLiteral("asset_file_jpeg.svg")},
+  {QStringLiteral("png"), QStringLiteral("asset_file_png.svg")},
+  {QStringLiteral("exr"), QStringLiteral("asset_file_exr.svg")},
+  {QStringLiteral("webp"), QStringLiteral("asset_file_webp.svg")},
+  {QStringLiteral("gif"), QStringLiteral("asset_file_gif.svg")},
+  {QStringLiteral("tif"), QStringLiteral("asset_file_tiff.svg")},
+  {QStringLiteral("tiff"), QStringLiteral("asset_file_tiff.svg")},
+  {QStringLiteral("psd"), QStringLiteral("asset_file_psd.svg")},
+  {QStringLiteral("psb"), QStringLiteral("asset_file_psd.svg")},
+  {QStringLiteral("ai"), QStringLiteral("asset_file_ai.svg")},
+  {QStringLiteral("eps"), QStringLiteral("asset_file_eps.svg")},
+  {QStringLiteral("svg"), QStringLiteral("asset_file_svg.svg")},
+  {QStringLiteral("pdf"), QStringLiteral("asset_file_pdf.svg")},
+  {QStringLiteral("aep"), QStringLiteral("asset_file_aep.svg")},
+  {QStringLiteral("aepx"), QStringLiteral("asset_file_aep.svg")},
+  {QStringLiteral("mp4"), QStringLiteral("asset_file_mp4.svg")},
+  {QStringLiteral("mov"), QStringLiteral("asset_file_mov.svg")},
+  {QStringLiteral("avi"), QStringLiteral("asset_file_avi.svg")},
+  {QStringLiteral("mkv"), QStringLiteral("asset_file_mkv.svg")},
+  {QStringLiteral("wav"), QStringLiteral("asset_file_wav.svg")},
+  {QStringLiteral("mp3"), QStringLiteral("asset_file_mp3.svg")},
+  {QStringLiteral("aac"), QStringLiteral("asset_file_aac.svg")},
+  {QStringLiteral("m4a"), QStringLiteral("asset_file_aac.svg")},
+  {QStringLiteral("flac"), QStringLiteral("asset_file_flac.svg")},
+  {QStringLiteral("obj"), QStringLiteral("asset_file_obj.svg")},
+  {QStringLiteral("fbx"), QStringLiteral("asset_file_fbx.svg")},
+  {QStringLiteral("glb"), QStringLiteral("asset_file_gltf.svg")},
+  {QStringLiteral("gltf"), QStringLiteral("asset_file_gltf.svg")},
+  {QStringLiteral("abc"), QStringLiteral("asset_file_abc.svg")},
+  {QStringLiteral("stl"), QStringLiteral("asset_file_stl.svg")},
+  {QStringLiteral("usd"), QStringLiteral("asset_file_usd.svg")},
+  {QStringLiteral("usda"), QStringLiteral("asset_file_usd.svg")},
+  {QStringLiteral("usdc"), QStringLiteral("asset_file_usd.svg")},
+  {QStringLiteral("usdz"), QStringLiteral("asset_file_usd.svg")},
+  {QStringLiteral("blend"), QStringLiteral("asset_file_blend.svg")},
+  {QStringLiteral("c4d"), QStringLiteral("asset_file_c4d.svg")},
+  {QStringLiteral("ma"), QStringLiteral("asset_file_maya.svg")},
+  {QStringLiteral("mb"), QStringLiteral("asset_file_maya.svg")},
+  {QStringLiteral("hip"), QStringLiteral("asset_file_hip.svg")},
+  {QStringLiteral("hiplc"), QStringLiteral("asset_file_hip.svg")},
+  {QStringLiteral("hipnc"), QStringLiteral("asset_file_hip.svg")},
+  {QStringLiteral("ztl"), QStringLiteral("asset_file_zbrush.svg")},
+  {QStringLiteral("zpr"), QStringLiteral("asset_file_zbrush.svg")},
+  {QStringLiteral("kra"), QStringLiteral("asset_file_kra.svg")},
+  {QStringLiteral("krz"), QStringLiteral("asset_file_kra.svg")},
+  {QStringLiteral("clip"), QStringLiteral("asset_file_clip.svg")},
+  {QStringLiteral("ase"), QStringLiteral("asset_file_aseprite.svg")},
+  {QStringLiteral("aseprite"), QStringLiteral("asset_file_aseprite.svg")}
+ };
+
+ const QString iconName = iconBySuffix.value(suffix);
+ if (!iconName.isEmpty()) {
+  const QIcon icon(QStringLiteral(":/icons/Studio/%1").arg(iconName));
+  if (!icon.isNull()) {
+   return icon;
+  }
+ }
+ if (isImageFile(fileName)) {
+  return defaultImageIcon_;
+ }
+ if (isVideoFile(fileName)) {
+  return defaultVideoIcon_;
+ }
+ if (isAudioFile(fileName)) {
+  return defaultAudioIcon_;
+ }
+ static const QSet<QString> modelSuffixes = {
+  QStringLiteral("obj"),
+  QStringLiteral("fbx"),
+  QStringLiteral("glb"),
+  QStringLiteral("gltf"),
+  QStringLiteral("abc"),
+  QStringLiteral("stl"),
+  QStringLiteral("usd"),
+  QStringLiteral("usda"),
+  QStringLiteral("usdc"),
+  QStringLiteral("usdz")
+ };
+ if (modelSuffixes.contains(suffix)) {
+  const QIcon icon(QStringLiteral(":/icons/Studio/asset_file_3d.svg"));
+  if (!icon.isNull()) {
+   return icon;
+  }
+ }
+ return defaultFileIcon_;
+}
+
  QIcon ArtifactAssetBrowser::Impl::generateThumbnail(const QString& filePath)
  {
   std::lock_guard<std::mutex> lock(thumbnailMutex_);
@@ -1158,32 +1262,34 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
 
   // Generate thumbnail for image files
   if (isImageFile(fileInfo.fileName())) {
+   const QIcon placeholder = fileTypeIconFor(fileInfo.fileName());
    if (auto it = pendingPreviewJobs_.find(filePath); it != pendingPreviewJobs_.end()) {
     if (it.value().generation == currentGeneration) {
-     return defaultImageIcon_;
+     return placeholder;
     }
     pendingPreviewJobs_.erase(it);
    }
    if (failedPreviewPaths_.contains(filePath)) {
-    return defaultImageIcon_;
+    return placeholder;
    }
    startAsyncPreviewThumbnailGeneration(filePath);
-   return defaultImageIcon_;
+   return placeholder;
   }
 
   // Extract first frame as thumbnail for video files
   if (isVideoFile(fileInfo.fileName())) {
+      const QIcon placeholder = fileTypeIconFor(fileInfo.fileName());
       if (auto it = pendingPreviewJobs_.find(filePath); it != pendingPreviewJobs_.end()) {
        if (it.value().generation == currentGeneration) {
-        return defaultVideoIcon_;
+        return placeholder;
        }
        pendingPreviewJobs_.erase(it);
       }
       if (failedPreviewPaths_.contains(filePath)) {
-       return defaultVideoIcon_;
+       return placeholder;
       }
       startAsyncPreviewThumbnailGeneration(filePath);
-      return defaultVideoIcon_;
+      return placeholder;
   }
 
   // For audio files, generate waveform thumbnail
@@ -1194,8 +1300,9 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
     return waveIcon;
    }
    // Fallback to default audio icon
-   thumbnailCache_[filePath] = defaultAudioIcon_;
-   return defaultAudioIcon_;
+   const QIcon placeholder = fileTypeIconFor(fileInfo.fileName());
+   thumbnailCache_[filePath] = placeholder;
+   return placeholder;
   }
 
   if (isFontFile(fileInfo.fileName())) {

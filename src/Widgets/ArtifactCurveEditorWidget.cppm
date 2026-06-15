@@ -349,7 +349,11 @@ public:
   }
 
   QColor curveColor = track.color;
-  p.setPen(QPen(curveColor, 2));
+  const bool focusedTrack = (selectedTrack_ == trackIndex);
+  if (focusedTrack) {
+   curveColor = curveColor.lighter(130);
+  }
+  p.setPen(QPen(curveColor, focusedTrack ? 3 : 2));
   p.setBrush(Qt::NoBrush);
 
   // Clip to plot rect
@@ -374,34 +378,33 @@ public:
    QPointF kp = dataToPixel(static_cast<float>(key.frame), key.value);
 
    // Draw tangent handles
-   if (i > 0 && (selectedTrack_ == trackIndex && selectedKey_ == i)) {
+   const bool isSelected = (selectedTrack_ == trackIndex && selectedKey_ == i);
+   if (i > 0 && isSelected) {
     float cp1F = static_cast<float>(key.frame + key.inHandleFrame);
     float cp1V = key.value + key.inHandleValue;
     QPointF hp = dataToPixel(cp1F, cp1V);
-    p.setPen(QPen(QColor(180, 180, 180), 1));
+    p.setPen(QPen(QColor(245, 245, 245), 2));
     p.drawLine(kp, hp);
-    p.setPen(QPen(QColor(200, 200, 100), 1));
-    p.setBrush(QColor(200, 200, 100));
-    p.drawEllipse(hp, HANDLE_RADIUS, HANDLE_RADIUS);
+    p.setPen(QPen(QColor(255, 230, 120), 2));
+    p.setBrush(QColor(255, 230, 120));
+    p.drawEllipse(hp, HANDLE_RADIUS + 1, HANDLE_RADIUS + 1);
    }
 
-   if (i < n - 1 && (selectedTrack_ == trackIndex && selectedKey_ == i)) {
+   if (i < n - 1 && isSelected) {
     float cp0F = static_cast<float>(key.frame + key.outHandleFrame);
     float cp0V = key.value + key.outHandleValue;
     QPointF hp = dataToPixel(cp0F, cp0V);
-    p.setPen(QPen(QColor(180, 180, 180), 1));
+    p.setPen(QPen(QColor(245, 245, 245), 2));
     p.drawLine(kp, hp);
-    p.setPen(QPen(QColor(200, 200, 100), 1));
-    p.setBrush(QColor(200, 200, 100));
-    p.drawEllipse(hp, HANDLE_RADIUS, HANDLE_RADIUS);
+    p.setPen(QPen(QColor(255, 230, 120), 2));
+    p.setBrush(QColor(255, 230, 120));
+    p.drawEllipse(hp, HANDLE_RADIUS + 1, HANDLE_RADIUS + 1);
    }
 
    // Draw keyframe diamond
-   bool isSelected = (selectedTrack_ == trackIndex && selectedKey_ == i);
-   QColor keyColor = isSelected ? QColor(255, 255, 100) : track.color;
-   QColor fillColor = isSelected ? QColor(255, 255, 100, 180) : track.color.darker(150);
-
-   p.setPen(QPen(keyColor, isSelected ? 2 : 1));
+   QColor keyColor = isSelected ? QColor(255, 250, 170) : track.color;
+   QColor fillColor = isSelected ? QColor(255, 236, 128, 235) : track.color.darker(150);
+   p.setPen(QPen(keyColor, isSelected ? 3 : 1));
    p.setBrush(fillColor);
 
    // Diamond shape
@@ -411,6 +414,11 @@ public:
            << QPointF(kp.x(), kp.y() + KEY_RADIUS)
            << QPointF(kp.x() - KEY_RADIUS, kp.y());
    p.drawPolygon(diamond);
+   if (isSelected) {
+    p.setPen(QPen(QColor(255, 255, 255, 180), 1));
+    p.setBrush(Qt::NoBrush);
+    p.drawEllipse(kp, KEY_RADIUS + 3, KEY_RADIUS + 3);
+   }
   }
 
   p.restore();

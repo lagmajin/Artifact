@@ -55,8 +55,8 @@ W_REGISTER_ARGTYPE(PrecomposeMode)
 // and child composition so undo/redo commands can target them. Nil fields
 // signal failure.
 struct PrecomposeOutcome {
- LayerID precompLayerId;
- CompositionID childCompId;
+  ArtifactCore::LayerID precompLayerId;
+  ArtifactCore::CompositionID childCompId;
 };
 
 W_REGISTER_ARGTYPE(PreviewQualityPreset)

@@ -218,7 +218,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
-private:
+
     // レイヤー単位の transform プロパティ snapshot。
     // propertyPath → keyframe 列。非アニメーション値は空 keyframe 列 + currentValue で表現。
     struct PropertySnapshot {
@@ -232,6 +232,7 @@ private:
         std::vector<PropertySnapshot> properties;
     };
 
+private:
     ArtifactCompositionWeakPtr comp_;
     QSize oldSize_;
     QSize newSize_;
