@@ -19,6 +19,7 @@ import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Widgets.PieMenu;
+import Artifact.Widgets.PointTrackerGizmo;
 
 export namespace Artifact {
 
@@ -30,6 +31,9 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
 
 void drawSelectionOverlay(ArtifactIRenderer *renderer,
                           const ArtifactAbstractLayerPtr &layer);
+
+void drawTrackerPointOverlay(ArtifactIRenderer *renderer,
+                             ArtifactPointTrackerGizmo *gizmo);
 
 void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
                                 const ArtifactAbstractLayerPtr &layer,

@@ -21,7 +21,10 @@ module;
 #include <QTimer>
 #include <QSet>
 #include <QVariant>
+#include <QProgressDialog>
 #include <wobjectimpl.h>
+#include <atomic>
+#include <memory>
 
 module Artifact.Menu.Layer;
 import std;
@@ -49,6 +52,7 @@ import Artifact.Widgets.CreateCameraLayerDialog;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Tool.CameraTracker;
 import Tracking.MotionTracker;
+import Artifact.Tool.PointTracker;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -196,6 +200,10 @@ public:
     QAction* createShapeStarAction = nullptr;
     QAction* trackCameraAction = nullptr;
     QAction* createMotionTrackerAction = nullptr;
+    QAction* analyzeForwardAction = nullptr;
+    QAction* analyzeBackwardAction = nullptr;
+    QAction* analyzeAllAction = nullptr;
+    QAction* applyTrackingToNullAction = nullptr;
 
     QAction* duplicateLayerAction = nullptr;
     QAction* renameLayerAction = nullptr;
@@ -240,6 +248,10 @@ public:
     void handleCreateModel3D();
     void handleCreateShape(ShapeType type, const QString& nameBase);
     void handleCreateMotionTracker();
+    void handleAnalyzeForward();
+    void handleAnalyzeBackward();
+    void handleAnalyzeAll();
+    void handleApplyTrackingToNull();
 
     void handleDuplicateLayer();
     void handleRenameLayer();
@@ -342,6 +354,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     trackCameraAction = new QAction("3Dカメラトラッキング(&T)", menu);
     trackCameraAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_videocam.svg")));
     createMotionTrackerAction = new QAction("モーショントラッカーを作成(&M)", menu);
+    analyzeForwardAction = new QAction("前方にトラッキング分析(&F)", menu);
+    analyzeBackwardAction = new QAction("後方にトラッキング分析(&B)", menu);
+    analyzeAllAction = new QAction("全フレームトラッキング分析(&A)", menu);
+    applyTrackingToNullAction = new QAction("トラッキング結果をヌルレイヤーに適用(&P)", menu);
 
     createMenu->addAction(createSolidAction);
     createMenu->addAction(createNullAction);
@@ -444,6 +460,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addMenu(createMenu);
     menu->addAction(trackCameraAction);
     menu->addAction(createMotionTrackerAction);
+    menu->addAction(analyzeForwardAction);
+    menu->addAction(analyzeBackwardAction);
+    menu->addAction(analyzeAllAction);
+    menu->addAction(applyTrackingToNullAction);
     menu->addSeparator();
     menu->addAction(duplicateLayerAction);
     menu->addAction(renameLayerAction);
@@ -511,6 +531,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == splitAction) { handleSplitLayer(); return; }
         if (action == trackCameraAction) { handleTrackCamera(); return; }
         if (action == createMotionTrackerAction) { handleCreateMotionTracker(); return; }
+        if (action == analyzeForwardAction) { handleAnalyzeForward(); return; }
+        if (action == analyzeBackwardAction) { handleAnalyzeBackward(); return; }
+        if (action == analyzeAllAction) { handleAnalyzeAll(); return; }
+        if (action == applyTrackingToNullAction) { handleApplyTrackingToNull(); return; }
     };
 
     QObject::connect(menu, &QMenu::triggered, menu, dispatchAction);
@@ -739,6 +763,28 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     }
     trackCameraAction->setEnabled(isVideoSelected);
     createMotionTrackerAction->setEnabled(isVideoSelected);
+
+    // トラッキング分析アクション: 選択レイヤーが tracker を持つ場合のみ有効
+    {
+        bool hasTracker = false;
+        if (isVideoSelected) {
+            auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+            if (selectionManager) {
+                const auto selected = selectionManager->selectedLayers();
+                for (const auto& layer : selected) {
+                    auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer);
+                    if (videoLayer && videoLayer->motionTrackerId() > 0) {
+                        hasTracker = true;
+                        break;
+                    }
+                }
+            }
+        }
+        analyzeForwardAction->setVisible(hasTracker);
+        analyzeBackwardAction->setVisible(hasTracker);
+        analyzeAllAction->setVisible(hasTracker);
+        applyTrackingToNullAction->setVisible(hasTracker);
+    }
     proxyMenu->setEnabled(isVideoSelected);
     generateProxyAction->setEnabled(isVideoSelected);
     revealProxyAction->setEnabled(isVideoSelected && hasProxy);
@@ -1630,6 +1676,234 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
     QMessageBox::information(menu_->window(), "Motion Tracker",
                              QStringLiteral("トラッカー #%1 を作成してレイヤーに紐づけました。")
                                  .arg(tracker->id()));
+}
+
+void ArtifactLayerMenu::Impl::handleAnalyzeForward()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+
+    auto layer = comp->layerById(selectedLayerId_);
+    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    if (!videoLayer) return;
+
+    const int trackerId = videoLayer->motionTrackerId();
+    auto* tracker = ArtifactCore::TrackerManager::instance().tracker(trackerId);
+    if (!tracker) {
+        QMessageBox::warning(menu_->window(), "トラッキング分析", "トラッカーが見つかりません。");
+        return;
+    }
+
+    // 現在フレームから末尾まで前方トラッキング
+    const int64_t startFrame = videoLayer->currentFrame();
+    const double fps = videoLayer->streamInfo().frameRate;
+    if (fps <= 0.0) return;
+
+    // 動画の総フレーム数を推定（streamInfo または decodeFrameToQImage で確認）
+    const int64_t totalFrames = videoLayer->streamInfo().totalFrames;
+    if (totalFrames <= 0 || startFrame >= totalFrames) {
+        QMessageBox::information(menu_->window(), "トラッキング分析", "これ以上前方にフレームがありません。");
+        return;
+    }
+
+    // 進捗ダイアログ
+    const int rangeSize = static_cast<int>(totalFrames - startFrame);
+    QProgressDialog progress("前方トラッキング分析中...", "キャンセル", 0, rangeSize, menu_->window());
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    QObject::connect(&progress, &QProgressDialog::canceled, [cancelFlag]() { *cancelFlag = true; });
+
+    // トラッカー設定: NCC メソッドを設定
+    ArtifactCore::TrackerSettings settings;
+    settings.method = ArtifactCore::TrackingMethod::NormalizedCrossCorrelation;
+    tracker->setSettings(settings);
+
+    // フレームを順次デコードして frameBuffer に蓄積
+    for (int64_t f = startFrame; f < totalFrames; ++f) {
+        if (*cancelFlag) break;
+
+        const double time = static_cast<double>(f) / fps;
+        QImage frameImg = videoLayer->decodeFrameToQImage(f);
+        if (!frameImg.isNull()) {
+            tracker->setFrame(time, frameImg);
+        }
+        progress.setValue(static_cast<int>(f - startFrame));
+        if (progress.wasCanceled()) break;
+    }
+
+    // 前方トラッキング実行
+    const double startTime = static_cast<double>(startFrame) / fps;
+    const double endTime = static_cast<double>(totalFrames - 1) / fps;
+    tracker->trackRange(startTime, endTime, [&progress, cancelFlag](double p) -> bool {
+        progress.setValue(static_cast<int>(p * progress.maximum()));
+        return !*cancelFlag;
+    });
+
+    progress.close();
+    QMessageBox::information(menu_->window(), "トラッキング分析",
+                             QStringLiteral("前方トラッキング完了 (フレーム %1 - %2)")
+                                 .arg(startFrame).arg(totalFrames - 1));
+}
+
+void ArtifactLayerMenu::Impl::handleAnalyzeBackward()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+
+    auto layer = comp->layerById(selectedLayerId_);
+    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    if (!videoLayer) return;
+
+    const int trackerId = videoLayer->motionTrackerId();
+    auto* tracker = ArtifactCore::TrackerManager::instance().tracker(trackerId);
+    if (!tracker) {
+        QMessageBox::warning(menu_->window(), "トラッキング分析", "トラッカーが見つかりません。");
+        return;
+    }
+
+    const int64_t currentFrameNum = videoLayer->currentFrame();
+    const double fps = videoLayer->streamInfo().frameRate;
+    if (fps <= 0.0) return;
+
+    if (currentFrameNum <= 0) {
+        QMessageBox::information(menu_->window(), "トラッキング分析", "これ以上後方にフレームがありません。");
+        return;
+    }
+
+    const int rangeSize = static_cast<int>(currentFrameNum + 1);
+    QProgressDialog progress("後方トラッキング分析中...", "キャンセル", 0, rangeSize, menu_->window());
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    QObject::connect(&progress, &QProgressDialog::canceled, [cancelFlag]() { *cancelFlag = true; });
+
+    ArtifactCore::TrackerSettings settings;
+    settings.method = ArtifactCore::TrackingMethod::NormalizedCrossCorrelation;
+    tracker->setSettings(settings);
+
+    // フレーム 0 から現在フレームまでを蓄積
+    for (int64_t f = 0; f <= currentFrameNum; ++f) {
+        if (*cancelFlag) break;
+        const double time = static_cast<double>(f) / fps;
+        QImage frameImg = videoLayer->decodeFrameToQImage(f);
+        if (!frameImg.isNull()) {
+            tracker->setFrame(time, frameImg);
+        }
+        progress.setValue(static_cast<int>(f));
+        if (progress.wasCanceled()) break;
+    }
+
+    // 後方トラッキング実行
+    const double fromTime = static_cast<double>(currentFrameNum) / fps;
+    const double toTime = 0.0;
+    tracker->trackBackward(fromTime, toTime);
+
+    progress.close();
+    QMessageBox::information(menu_->window(), "トラッキング分析",
+                             QStringLiteral("後方トラッキング完了 (フレーム 0 - %1)")
+                                 .arg(currentFrameNum));
+}
+
+void ArtifactLayerMenu::Impl::handleAnalyzeAll()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+
+    auto layer = comp->layerById(selectedLayerId_);
+    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    if (!videoLayer) return;
+
+    const int trackerId = videoLayer->motionTrackerId();
+    auto* tracker = ArtifactCore::TrackerManager::instance().tracker(trackerId);
+    if (!tracker) {
+        QMessageBox::warning(menu_->window(), "トラッキング分析", "トラッカーが見つかりません。");
+        return;
+    }
+
+    const double fps = videoLayer->streamInfo().frameRate;
+    if (fps <= 0.0) return;
+
+    const int64_t totalFrames = videoLayer->streamInfo().totalFrames;
+    if (totalFrames <= 0) {
+        QMessageBox::warning(menu_->window(), "トラッキング分析", "動画フレームがありません。");
+        return;
+    }
+
+    const int rangeSize = static_cast<int>(totalFrames);
+    QProgressDialog progress("全フレームトラッキング分析中...", "キャンセル", 0, rangeSize, menu_->window());
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
+    QObject::connect(&progress, &QProgressDialog::canceled, [cancelFlag]() { *cancelFlag = true; });
+
+    ArtifactCore::TrackerSettings settings;
+    settings.method = ArtifactCore::TrackingMethod::NormalizedCrossCorrelation;
+    tracker->setSettings(settings);
+
+    // 全フレームを frameBuffer に蓄積
+    for (int64_t f = 0; f < totalFrames; ++f) {
+        if (*cancelFlag) break;
+        const double time = static_cast<double>(f) / fps;
+        QImage frameImg = videoLayer->decodeFrameToQImage(f);
+        if (!frameImg.isNull()) {
+            tracker->setFrame(time, frameImg);
+        }
+        progress.setValue(static_cast<int>(f));
+        if (progress.wasCanceled()) break;
+    }
+
+    // トラッキング実行
+    tracker->trackAll([&progress, cancelFlag](double p) -> bool {
+        progress.setValue(static_cast<int>(p * progress.maximum()));
+        return !*cancelFlag;
+    });
+
+    progress.close();
+    QMessageBox::information(menu_->window(), "トラッキング分析",
+                             QStringLiteral("全フレームトラッキング完了 (%1 フレーム)")
+                                 .arg(totalFrames));
+}
+
+void ArtifactLayerMenu::Impl::handleApplyTrackingToNull()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) return;
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+
+    auto layer = comp->layerById(selectedLayerId_);
+    auto videoLayer = layer ? std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) : nullptr;
+    if (!videoLayer) return;
+
+    const int trackerId = videoLayer->motionTrackerId();
+    auto* tracker = ArtifactCore::TrackerManager::instance().tracker(trackerId);
+    if (!tracker || !tracker->hasResult()) {
+        QMessageBox::warning(menu_->window(), "適用", "トラッキング結果がありません。先に分析を実行してください。");
+        return;
+    }
+
+    ArtifactPointTrackerTool::ApplyOptions options;
+    options.pointId = 0;
+    options.createNullLayer = true;
+    options.writeAnchor = true;
+
+    const bool ok = ArtifactPointTrackerTool::applyTrackingResult(comp.get(), *tracker, options);
+    if (ok) {
+        QMessageBox::information(menu_->window(), "適用",
+                                 "トラッキング結果をヌルレイヤーに適用しました。");
+    } else {
+        QMessageBox::warning(menu_->window(), "適用", "トラッキング結果の適用に失敗しました。");
+    }
 }
 
 ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)

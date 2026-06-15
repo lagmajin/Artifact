@@ -30,7 +30,9 @@ export namespace Artifact {
   Slide,
   // Deformation / Utility Tools
   MotionSketch,
-  Puppet
+  Puppet,
+  // Tracking
+  PointTracker
  };
 
  class ArtifactToolManager : public QObject {

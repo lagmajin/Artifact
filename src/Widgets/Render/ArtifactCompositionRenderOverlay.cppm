@@ -439,6 +439,15 @@ __declspec(dllexport) void drawViewportPieMenuOverlay(ArtifactIRenderer *rendere
 
 #endif
 
+void drawTrackerPointOverlay(ArtifactIRenderer *renderer,
+                             ArtifactPointTrackerGizmo *gizmo)
+{
+  if (!renderer || !gizmo) {
+    return;
+  }
+  gizmo->draw(renderer);
+}
+
 void drawCompositionRegionOverlay(ArtifactIRenderer *renderer,
                                   const ArtifactCompositionPtr &comp)
 {

@@ -86,7 +86,9 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Widgets.TransformGizmo;
 import Artifact.Widgets.TextGizmo;
+import Artifact.Widgets.PointTrackerGizmo;
 import Artifact.Widgets.Gizmo3D;
+import Tracking.MotionTracker;
 import Artifact.Widgets.PieMenu;
 import UI.View.Orientation.Navigator;
 import Geometry.CameraGuide;
@@ -3034,6 +3036,7 @@ public:
   ArtifactPreviewCompositionPipeline previewPipeline_;
   std::unique_ptr<TransformGizmo> gizmo_;
   std::unique_ptr<TextGizmo> textGizmo_;
+  std::unique_ptr<ArtifactPointTrackerGizmo> trackerGizmo_;
   std::unique_ptr<Artifact3DGizmo> gizmo3D_;
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
   RenderPipeline renderPipeline_;
@@ -3673,6 +3676,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                  QColor(28, 40, 56).blueF(), 1.0f};
   impl_->gizmo_ = std::make_unique<TransformGizmo>();
   impl_->textGizmo_ = std::make_unique<TextGizmo>();
+  impl_->trackerGizmo_ = std::make_unique<ArtifactPointTrackerGizmo>();
   impl_->gizmo3D_ = std::make_unique<Artifact3DGizmo>(this);
 
   // Connect to project service to track layer selection
@@ -5488,6 +5492,16 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
     event->accept();
     return;
   }
+
+  // Point Tracker tool
+  if (event->button() == Qt::LeftButton && activeTool == ToolType::PointTracker && impl_->renderer_) {
+    if (impl_->trackerGizmo_->handleMousePress(viewportPos, impl_->renderer_.get())) {
+      markRenderDirty();
+      event->accept();
+      return;
+    }
+  }
+
 if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
     auto *selectionManager = ArtifactApplicationManager::instance()
                                  ? ArtifactApplicationManager::instance()
@@ -6114,6 +6128,15 @@ void CompositionRenderController::handleMouseMove(
       }
     }
   }
+
+  // Point Tracker tool: drag inner/outer box
+  if (activeTool == ToolType::PointTracker && impl_->renderer_) {
+    if (impl_->trackerGizmo_->handleMouseMove(viewportPos, impl_->renderer_.get())) {
+      markRenderDirty();
+      return;
+    }
+  }
+
 if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
     auto comp = impl_->previewPipeline_.composition();
     if (comp && impl_->renderer_) {
@@ -6578,6 +6601,12 @@ void CompositionRenderController::handleMouseRelease() {
     if (wasDragging) {
       finishViewportInteraction();
     }
+    markRenderDirty();
+  }
+
+  // Point Tracker gizmo release
+  if (impl_->trackerGizmo_) {
+    impl_->trackerGizmo_->handleMouseRelease();
     markRenderDirty();
   }
 }
@@ -8811,6 +8840,26 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
            gizmo_->activeHandle() == TransformGizmo::HandleType::Anchor);
       if (showAnchorCenterOverlay_ && selectedLayer && anchorOverlayToolActive) {
         ::Artifact::drawAnchorCenterOverlay(renderer_.get(), selectedLayer);
+      }
+      // Point Tracker overlay
+      {
+        auto* toolMgr = ArtifactToolManager::instance();
+        if (toolMgr && toolMgr->activeTool() == ToolType::PointTracker && trackerGizmo_) {
+          // 選択レイヤーが VideoLayer で tracker を持つ場合、gizmo に同期
+          if (selectedLayer) {
+            auto* videoLayer = qobject_cast<ArtifactVideoLayer*>(selectedLayer.get());
+            if (videoLayer && videoLayer->motionTrackerId() > 0) {
+              auto* tracker = ArtifactCore::TrackerManager::instance()
+                                   ->tracker(videoLayer->motionTrackerId());
+              trackerGizmo_->setTracker(tracker);
+              // 現在フレーム時刻を秒単位で通知
+              const double fps = comp ? comp->frameRate() : 24.0;
+              const double timeSec = currentFrame.framePosition() / fps;
+              trackerGizmo_->setCurrentFrame(timeSec);
+            }
+          }
+          ::Artifact::drawTrackerPointOverlay(renderer_.get(), trackerGizmo_.get());
+        }
       }
       drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
       drawViewportUiOverlay();
