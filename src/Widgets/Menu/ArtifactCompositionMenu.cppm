@@ -39,6 +39,9 @@ import Dialog.Composition;
 import FloatColorPickerDialog;
 import Artifact.Widgets.AppDialogs;
 import Widgets.Utils.CSS;
+import Geometry.ResolutionRemap;
+import Artifact.Widgets.ResolutionRemapDialog;
+import Undo.UndoManager;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -517,8 +520,50 @@ void ArtifactCompositionMenu::Impl::showSettings()
   if (!selectedVariantId.isEmpty() && responsiveLayout.hasVariant(selectedVariantId)) {
    responsiveLayout.activeVariantId = selectedVariantId;
   }
-  current->setResponsiveLayout(responsiveLayout);
-  current->setFrameRate(FrameRate(static_cast<float>(fpsSpin->value())));
+	  current->setResponsiveLayout(responsiveLayout);
+
+	  // --- Resolution remap wizard (consistent with ArtifactProjectManagerWidget) ---
+	  {
+	      const QSize oldSize = current->effectiveCompositionSize();
+	      if (oldSize != chosenSize) {
+	          bool hasMasks = false;
+	          int maskVerts = 0;
+	          bool hasAnchors = false;
+	          int layerCount = 0;
+	          for (const auto& layer : current->allLayerRef()) {
+	              if (!layer) continue;
+	              ++layerCount;
+	              if (layer->hasMasks()) {
+	                  hasMasks = true;
+	                  for (int mi = 0; mi < layer->maskCount(); ++mi) {
+	                      const auto lm = layer->mask(mi);
+	                      for (int pi = 0; pi < lm.maskPathCount(); ++pi) {
+	                          maskVerts += lm.maskPath(pi).vertexCount();
+	                      }
+	                  }
+	              }
+	          }
+	          hasAnchors = layerCount > 0;
+	          auto impact = ArtifactCore::ResolutionRemap::calculateImpact(
+	              oldSize, chosenSize, hasMasks, maskVerts > 0, hasAnchors);
+	          impact.maskVertexCount = maskVerts;
+
+	          ArtifactResolutionRemapDialog remapDialog(oldSize, chosenSize, impact);
+	          if (remapDialog.exec() == QDialog::Accepted && remapDialog.remapRequested()) {
+	              if (auto* mgr = UndoManager::instance()) {
+	                  mgr->push(std::make_unique<ChangeCompositionResolutionCommand>(
+	                      current, oldSize, chosenSize, remapDialog.selectedPolicy()));
+	              } else {
+	                  current->applyResolutionRemap(chosenSize, remapDialog.selectedPolicy());
+	              }
+	          } else {
+	              current->setCompositionSize(chosenSize);
+	          }
+	      }
+	  }
+	  // --- end remap wizard ---
+
+	  current->setFrameRate(FrameRate(static_cast<float>(fpsSpin->value())));
   current->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
  current->setBackGroundColor(FloatColor(backgroundColor.redF(),
                                          backgroundColor.greenF(),

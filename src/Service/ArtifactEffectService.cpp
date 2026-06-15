@@ -43,6 +43,7 @@ import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.LensDistortion;
 import Artifact.Effect.LiftGammaGain;
 import ExposureEffect;
+import GrayscaleEffect;
 import Artifact.Effect.Rasterizer.Blur;
 import Artifact.Effect.Rasterizer.DropShadow;
 import Artifact.Effect.Render.PBRMaterial;
@@ -165,6 +166,12 @@ W_OBJECT_IMPL(ArtifactEffectService)
    auto effect = std::make_unique<ExposureEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
    effect->setDisplayName(QStringLiteral("Exposure"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("effect.colorcorrection.grayscale")) {
+   auto effect = std::make_unique<GrayscaleEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Grayscale"));
    return effect;
   }
   if (effectId == QStringLiteral("brightness")) {
@@ -427,6 +434,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("effect.colorcorrection.brightness"), "Brightness / Contrast"});
   effects.push_back({EffectID("effect.colorcorrection.hsl"), "Hue / Saturation"});
   effects.push_back({EffectID("effect.colorcorrection.exposure"), "Exposure"});
+  effects.push_back({EffectID("effect.colorcorrection.grayscale"), "Grayscale"});
   effects.push_back({EffectID("effect.colorcorrection.colorwheels"), "Color Wheels"});
   effects.push_back({EffectID("effect.colorcorrection.curves"), "Curves"});
   effects.push_back({EffectID("effect.colorcorrection.tint"), "Tint"});
