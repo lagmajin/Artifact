@@ -891,7 +891,19 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
   if (auto* compLayer = dynamic_cast<ArtifactCompositionLayer*>(layer)) {
     if (auto childComp = compLayer->sourceComposition()) {
       const QSize childSize = childComp->settings().compositionSize();
-      QImage childImage = childComp->getThumbnail(childSize.width(), childSize.height());
+      // Map the parent timeline frame into the child composition's local time.
+      // When time remap is enabled on the precomp layer this applies the remap
+      // curve; otherwise it falls back to the layer's startTime/inPoint offset
+      // so the child is sampled at the right moment rather than always frame 0.
+      const int64_t parentFrame =
+          (cacheFrameNumber != std::numeric_limits<int64_t>::min())
+              ? cacheFrameNumber
+              : layer->currentFrame();
+      const double mappedFrameD =
+          compLayer->getSourceFrameAtCompFrame(parentFrame);
+      const int64_t childFrame = static_cast<int64_t>(std::llround(mappedFrameD));
+      QImage childImage = childComp->getThumbnailAtFrame(
+          childFrame, childSize.width(), childSize.height());
 
       if (!childImage.isNull()) {
         applySurfaceAndDraw(childImage, localRect, hasRasterizerEffectsOrMasks(layer));
