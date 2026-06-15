@@ -3,6 +3,10 @@
 #include <QVariant>
 #include <opencv2/core/mat.hpp>
 #include <opencv2/imgproc.hpp>
+#include <cstring>
+#include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
+#include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 
 #include <iostream>
 #include <vector>
@@ -47,6 +51,9 @@ import Image.ImageF32x4RGBAWithCache;
 import Image.ImageF32x4_RGBA;
 import Glow; // ArtifactCoreのOpenCVグロー実装
 import Property.Abstract;
+import Graphics.Compute;
+import Graphics.GPUcomputeContext;
+import Artifact.Render.DiligentDeviceManager;
 
 namespace Artifact {
 
@@ -112,10 +119,72 @@ void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
 }
 
 void GlowEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    // 現在はCPUバックエンドにフォールバック
-    // TODO: HLSLシェーダの実装
-    GlowEffectCPUImpl cpuImpl;
-    cpuImpl.applyCPU(src, dst);
+    if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+        GlowEffectCPUImpl cpuImpl;
+        cpuImpl.applyCPU(src, dst);
+        return;
+    }
+    auto gpuContext = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+    auto executor = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext);
+    if (!paramsCB_) {
+        Diligent::BufferDesc cbDesc;
+        cbDesc.Name = "Glow/ParamsCB";
+        cbDesc.Size = sizeof(ParamsCB);
+        cbDesc.Usage = Diligent::USAGE_DYNAMIC;
+        cbDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
+        cbDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
+        device_->CreateBuffer(cbDesc, nullptr, &paramsCB_);
+    }
+    if (!paramsCB_) { GlowEffectCPUImpl cpuImpl; cpuImpl.applyCPU(src, dst); return; }
+    static Diligent::ShaderResourceVariableDesc vars[] = {
+        {Diligent::SHADER_TYPE_COMPUTE, "GlowParams", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {Diligent::SHADER_TYPE_COMPUTE, "g_InputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+        {Diligent::SHADER_TYPE_COMPUTE, "g_OutputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
+    };
+    if (!pipelineReady_) {
+        ArtifactCore::ComputePipelineDesc desc;
+        desc.name = "Glow/PSO";
+        desc.shaderSource = kGlowHlsl;
+        desc.entryPoint = "main";
+        desc.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+        desc.variables = vars;
+        desc.variableCount = 3;
+        desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+        if (!executor->build(desc) || !executor->createShaderResourceBinding(true) || !executor->setBuffer("GlowParams", paramsCB_)) {
+            GlowEffectCPUImpl cpuImpl; cpuImpl.applyCPU(src, dst); return;
+        }
+        pipelineReady_ = true;
+    }
+    Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
+    if (!createTextureFromImage(src, device_, &inputTex, "Glow/InputTexture")) { GlowEffectCPUImpl cpuImpl; cpuImpl.applyCPU(src, dst); return; }
+    Diligent::TextureDesc outDesc = inputTex->GetDesc();
+    outDesc.Usage = Diligent::USAGE_DEFAULT;
+    outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
+    outDesc.Name = "Glow/OutputTexture";
+    Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex;
+    device_->CreateTexture(outDesc, nullptr, &outputTex);
+    if (!outputTex) { GlowEffectCPUImpl cpuImpl; cpuImpl.applyCPU(src, dst); return; }
+    void* mapped = nullptr;
+    context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+    if (!mapped) { GlowEffectCPUImpl cpuImpl; cpuImpl.applyCPU(src, dst); return; }
+    ParamsCB params{};
+    params.glowGain = glowGain_;
+    params.layerCount = layerCount_;
+    params.baseSigma = baseSigma_;
+    params.sigmaGrowth = sigmaGrowth_;
+    params.baseAlpha = baseAlpha_;
+    params.alphaFalloff = alphaFalloff_;
+    std::memcpy(mapped, &params, sizeof(params));
+    context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+    if (!executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
+        !executor->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
+        GlowEffectCPUImpl cpuImpl; cpuImpl.applyCPU(src, dst); return;
+    }
+    auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
+    executor->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    if (!readbackTexture(device_, context_, outputTex, dst, "Glow/StagingTexture")) {
+        GlowEffectCPUImpl cpuImpl; cpuImpl.applyCPU(src, dst); return;
+    }
 }
 
 class GlowEffect::Impl {
