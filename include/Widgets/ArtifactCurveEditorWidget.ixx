@@ -47,6 +47,7 @@ export namespace ArtifactCore {
   ~ArtifactCurveEditorWidget();
 
   void setTracks(const std::vector<CurveTrack>& tracks);
+  const std::vector<CurveTrack>& tracks() const;
   void setViewRange(float xMin, float xMax, float yMin, float yMax);
   void setCurrentFrame(int64_t frame);
   void setSpeedGraph(const QVector<TimeRemapKeyframe>& keyframes,
@@ -56,6 +57,7 @@ export namespace ArtifactCore {
   void fitToContent();
   void focusTrack(int trackIndex);
   void setHandleEditingEnabled(bool enabled);
+  void setKeyEditingEnabled(bool enabled);
 
  signals:
   void interactionStarted() W_SIGNAL(interactionStarted);

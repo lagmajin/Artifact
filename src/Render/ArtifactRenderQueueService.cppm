@@ -1341,6 +1341,10 @@ namespace Artifact
                 if (errorMessage) errorMessage->clear();
                 return backend;
             }
+            qWarning() << "[RenderQueue] GPU FFmpeg backend failed; falling back to native"
+                       << "jobId=" << job.compositionId.toString()
+                       << "codec=" << job.codec
+                       << "error=" << localError;
             if (errorMessage) *errorMessage = localError;
             return nullptr;
         };
@@ -1374,6 +1378,10 @@ namespace Artifact
                 if (errorMessage) errorMessage->clear();
                 return backend;
             }
+            qWarning() << "[RenderQueue] pipe-hw backend failed; falling back to pipe"
+                       << "jobId=" << job.compositionId.toString()
+                       << "codec=" << job.codec
+                       << "error=" << localError;
             if (errorMessage) *errorMessage = localError;
             return nullptr;
         };
@@ -1385,6 +1393,10 @@ namespace Artifact
                 if (errorMessage) errorMessage->clear();
                 return backend;
             }
+            qWarning() << "[RenderQueue] pipe-vulkan backend failed; falling back to pipe"
+                       << "jobId=" << job.compositionId.toString()
+                       << "codec=" << job.codec
+                       << "error=" << localError;
             if (errorMessage) *errorMessage = localError;
             return nullptr;
         };
@@ -1410,7 +1422,13 @@ namespace Artifact
             }
             if (auto nativeBackend = tryNative()) {
                 if (backendName) *backendName = QStringLiteral("native-fallback");
+                if (errorMessage) {
+                    *errorMessage = QStringLiteral("GPU backend unavailable, fell back to native FFmpeg encoding");
+                }
                 return nativeBackend;
+            }
+            if (errorMessage) {
+                *errorMessage = QStringLiteral("GPU backend unavailable and native fallback failed");
             }
             return tryPipe();
         case VideoEncodeBackendKind::Auto:
@@ -1421,6 +1439,9 @@ namespace Artifact
             if (auto nativeBackend = tryNative()) {
                 return nativeBackend;
             }
+            qWarning() << "[RenderQueue] auto backend fell back to pipe encoding"
+                       << "jobId=" << job.compositionId.toString()
+                       << "codec=" << job.codec;
             return tryPipe();
         }
     }

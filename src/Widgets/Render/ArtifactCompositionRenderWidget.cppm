@@ -5,6 +5,9 @@
 #include <tbb/tbb.h>
 #include <QWidget>
 #include <QMenu>
+#include <QCursor>
+#include <QHash>
+#include <QPixmap>
 #include <QResizeEvent>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -39,6 +42,7 @@ import Artifact.Event.Types;
 import Image.ImageF32x4_RGBA;
 import InputEvent;
 import Input.Operator;
+import Utils.Path;
 import Undo.UndoManager;
 import UI.ShortcutBindings;
 import Time.Rational;
@@ -151,6 +155,49 @@ Qt::CursorShape cursorForLayerDragMode(LayerDragMode mode, bool dragging)
    return Qt::ArrowCursor;
    }
   }
+
+const QCursor& hudCursor(const QString& iconName,
+                         const Qt::CursorShape fallbackShape,
+                         const int hotX = 12,
+                         const int hotY = 12)
+{
+  static QHash<QString, QCursor> cache;
+  const QString key = iconName + QStringLiteral("|%1|%2|%3")
+                                   .arg(static_cast<int>(fallbackShape))
+                                   .arg(hotX)
+                                   .arg(hotY);
+  auto it = cache.constFind(key);
+  if (it != cache.constEnd()) {
+    return it.value();
+  }
+
+  QPixmap pixmap(ArtifactCore::resolveIconPath(QStringLiteral("Studio/%1").arg(iconName)));
+  if (!pixmap.isNull()) {
+    pixmap = pixmap.scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    it = cache.insert(key, QCursor(pixmap, hotX, hotY));
+    return it.value();
+  }
+
+  it = cache.insert(key, QCursor(fallbackShape));
+  return it.value();
+}
+
+const QCursor& hudCursorForLayerDragMode(LayerDragMode mode, bool dragging)
+{
+  switch (mode) {
+  case LayerDragMode::Move:
+    return hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                     dragging ? Qt::ClosedHandCursor : Qt::OpenHandCursor);
+  case LayerDragMode::ScaleTL:
+  case LayerDragMode::ScaleTR:
+  case LayerDragMode::ScaleBL:
+  case LayerDragMode::ScaleBR:
+    return hudCursor(QStringLiteral("hud_cursor_scale_uniform.svg"),
+                     cursorForLayerDragMode(mode, dragging));
+  default:
+    return hudCursor(QStringLiteral("hud_cursor_select.svg"), Qt::ArrowCursor, 2, 2);
+  }
+}
 
 int compositionPreviewIntervalMs(
     const std::shared_ptr<ArtifactAbstractComposition>& comp)
@@ -384,12 +431,13 @@ int compositionPreviewIntervalMs(
   void updateHoverCursor(const QPointF& viewportPos)
   {
    if (isPanningViewport_) {
-    widget_->setCursor(Qt::ClosedHandCursor);
+    widget_->setCursor(hudCursor(QStringLiteral("hud_cursor_pan.svg"),
+                                 Qt::ClosedHandCursor));
     return;
    }
 
    if (isDraggingLayer_) {
-    widget_->setCursor(cursorForLayerDragMode(dragMode_, true));
+    widget_->setCursor(hudCursorForLayerDragMode(dragMode_, true));
     return;
    }
 
@@ -402,19 +450,27 @@ int compositionPreviewIntervalMs(
   auto comp = previewPipeline_.composition();
   if (!comp) {
    auto* tm = ArtifactApplicationManager::instance()->toolManager();
-   widget_->setCursor(tm && tm->activeTool() == ToolType::Hand ? Qt::OpenHandCursor : Qt::ArrowCursor);
+   widget_->setCursor(tm && tm->activeTool() == ToolType::Hand
+                          ? hudCursor(QStringLiteral("hud_cursor_pan.svg"),
+                                      Qt::OpenHandCursor)
+                          : hudCursor(QStringLiteral("hud_cursor_select.svg"),
+                                      Qt::ArrowCursor, 2, 2));
    return;
   }
 
   const auto hit = hitTestTopVisibleLayer(comp, renderer_.get(), viewportPos);
   if (hit.layer) {
-   widget_->setCursor(cursorForLayerDragMode(
+   widget_->setCursor(hudCursorForLayerDragMode(
        hitTestLayerDragMode(hit.bbox, viewportPos, renderer_.get()), false));
    return;
   }
 
    auto* tm = ArtifactApplicationManager::instance()->toolManager();
-   widget_->setCursor(tm && tm->activeTool() == ToolType::Hand ? Qt::OpenHandCursor : Qt::ArrowCursor);
+   widget_->setCursor(tm && tm->activeTool() == ToolType::Hand
+                          ? hudCursor(QStringLiteral("hud_cursor_pan.svg"),
+                                      Qt::OpenHandCursor)
+                          : hudCursor(QStringLiteral("hud_cursor_select.svg"),
+                                      Qt::ArrowCursor, 2, 2));
   }
  };
 
@@ -560,7 +616,8 @@ int compositionPreviewIntervalMs(
         impl_->eventBus_.subscribe<ToolChangedEvent>(
             [this](const ToolChangedEvent &event) {
               if (event.toolType == ToolType::Hand) {
-                setCursor(Qt::OpenHandCursor);
+                setCursor(hudCursor(QStringLiteral("hud_cursor_pan.svg"),
+                                    Qt::OpenHandCursor));
               } else {
                 unsetCursor();
               }
@@ -638,7 +695,8 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
   bool isHandShortcut = false; // Space checking needs explicit key tracking
 
   if (event->button() == Qt::MiddleButton || (event->button() == Qt::LeftButton && (tm->activeTool() == ToolType::Hand || isHandShortcut))) {
-   setCursor(Qt::ClosedHandCursor);
+   setCursor(hudCursor(QStringLiteral("hud_cursor_pan.svg"),
+                       Qt::ClosedHandCursor));
    impl_->lastMousePos_ = event->position();
    impl_->isPanningViewport_ = true;
    grabMouse();
@@ -775,8 +833,12 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
    }
   }
   auto* tm = ArtifactApplicationManager::instance()->toolManager();
-  if (tm->activeTool() == ToolType::Hand) setCursor(Qt::OpenHandCursor);
-  else impl_->updateHoverCursor(event->position());
+  if (tm->activeTool() == ToolType::Hand) {
+   setCursor(hudCursor(QStringLiteral("hud_cursor_pan.svg"),
+                       Qt::OpenHandCursor));
+  } else {
+   impl_->updateHoverCursor(event->position());
+  }
   impl_->isDraggingLayer_ = false;
   impl_->isPanningViewport_ = false;
   releaseMouse();

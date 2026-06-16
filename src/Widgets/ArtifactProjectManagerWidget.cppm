@@ -60,6 +60,8 @@ module;
 #include <QCheckBox>
 #include <QProgressBar>
 #include <QStandardPaths>
+#include <QCoreApplication>
+#include <QPointer>
 #include <QSet>
 #include <QDialog>
 #include <QJsonArray>
@@ -781,6 +783,64 @@ QString proxyFilePathForFootage(const QString& sourceFilePath)
     return QDir(proxyRoot).filePath(proxyName);
 }
 
+QString projectItemStatusChipText(ProjectItem* item)
+{
+    if (!item) {
+        return QStringLiteral("Unknown");
+    }
+
+    switch (item->type()) {
+    case eProjectItemType::Footage: {
+        const auto* footage = static_cast<FootageItem*>(item);
+        const QFileInfo info(footage ? footage->filePath : QString());
+        if (!info.exists()) {
+            return QStringLiteral("Missing");
+        }
+        const QString proxyPath = proxyFilePathForFootage(footage->filePath);
+        if (!proxyPath.isEmpty() && QFileInfo(proxyPath).exists()) {
+            const auto it = proxyMetadata().constFind(footage->filePath);
+            if (it != proxyMetadata().constEnd() && it->sourceLastModified.isValid()) {
+                const QFileInfo src(footage->filePath);
+                if (src.exists() && src.lastModified() > it->sourceLastModified) {
+                    return QStringLiteral("Proxy Stale");
+                }
+            }
+            return QStringLiteral("Proxy Ready");
+        }
+        return QStringLiteral("Ready");
+    }
+    case eProjectItemType::Composition:
+        return QStringLiteral("Live");
+    case eProjectItemType::Folder:
+        return QStringLiteral("Container");
+    case eProjectItemType::Solid:
+        return QStringLiteral("Static");
+    default:
+        return QStringLiteral("Item");
+    }
+}
+
+QColor projectItemStatusChipColor(const QString& statusText)
+{
+    if (statusText.contains(QStringLiteral("Missing"), Qt::CaseInsensitive)) {
+        return QColor(215, 84, 84);
+    }
+    if (statusText.contains(QStringLiteral("Stale"), Qt::CaseInsensitive)) {
+        return QColor(218, 166, 72);
+    }
+    if (statusText.contains(QStringLiteral("Proxy Ready"), Qt::CaseInsensitive)) {
+        return QColor(94, 178, 126);
+    }
+    if (statusText.contains(QStringLiteral("Ready"), Qt::CaseInsensitive) ||
+        statusText.contains(QStringLiteral("Live"), Qt::CaseInsensitive)) {
+        return QColor(88, 148, 205);
+    }
+    if (statusText.contains(QStringLiteral("Container"), Qt::CaseInsensitive)) {
+        return QColor(188, 151, 73);
+    }
+    return QColor(150, 160, 174);
+}
+
 void syncProxyPathToProject(const QString& sourceFilePath, const QString& proxyPath,
                             bool enabled, bool globalEnabled)
 {
@@ -1040,6 +1100,25 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
         }
     }
 
+    if (item->type() == eProjectItemType::Composition) {
+        auto* composition = static_cast<CompositionItem*>(item);
+        if (composition) {
+            if (auto* svc = ArtifactProjectService::instance()) {
+                const auto found = svc->findComposition(composition->compositionId);
+                if (auto comp = found.ptr.lock()) {
+                    const QSize compSize = comp->settings().compositionSize();
+                    const auto frameRange = comp->frameRange().normalized();
+                    lines << QStringLiteral("Size: %1x%2")
+                                  .arg(compSize.width())
+                                  .arg(compSize.height());
+                    lines << QStringLiteral("Timing: %1 fps • %2 frames")
+                                  .arg(QString::number(comp->frameRate().framerate(), 'f', 2))
+                                  .arg(frameRange.duration());
+                }
+            }
+        }
+    }
+
     return lines;
 }
 
@@ -1077,6 +1156,89 @@ QIcon loadProjectViewIcon(const QString& resourceRelativePath, const QString& fa
         return appStyle->standardIcon(QStyle::SP_FileIcon);
     }
     return icon;
+}
+
+QString projectViewIllustrationPath(const QString& relativePath)
+{
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString appRelative = QDir(appDir).filePath(QStringLiteral("Illustration/%1").arg(relativePath));
+    if (QFileInfo::exists(appRelative)) {
+        return appRelative;
+    }
+    const QString workspaceRelative = QDir(QDir::currentPath()).filePath(QStringLiteral("Artifact/App/Illustration/%1").arg(relativePath));
+    if (QFileInfo::exists(workspaceRelative)) {
+        return workspaceRelative;
+    }
+    const QString sourceRelative = QDir(appDir).filePath(QStringLiteral("../Artifact/App/Illustration/%1").arg(relativePath));
+    if (QFileInfo::exists(sourceRelative)) {
+        return QDir::cleanPath(sourceRelative);
+    }
+    return {};
+}
+
+QPixmap projectViewIllustration(const QString& relativePath, const QSize& targetSize)
+{
+    static QHash<QString, QPixmap> cache;
+    const QString key = QStringLiteral("%1|%2x%3")
+                            .arg(relativePath)
+                            .arg(targetSize.width())
+                            .arg(targetSize.height());
+    if (auto it = cache.constFind(key); it != cache.constEnd()) {
+        return *it;
+    }
+    const QString path = projectViewIllustrationPath(relativePath);
+    if (path.isEmpty()) {
+        return {};
+    }
+    QPixmap pix(path);
+    if (pix.isNull()) {
+        return {};
+    }
+    pix = pix.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    cache.insert(key, pix);
+    return pix;
+}
+
+void drawProjectViewEmptyState(QPainter& painter, const QRect& contentRect)
+{
+    if (contentRect.width() < 120 || contentRect.height() < 120) {
+        return;
+    }
+
+    const int imageSide = std::clamp(std::min(contentRect.width(), contentRect.height()) / 3, 112, 220);
+    const QPixmap illustration = projectViewIllustration(
+        QStringLiteral("Studio/project_view_empty.png"),
+        QSize(imageSide, imageSide));
+
+    const QPoint center = contentRect.center();
+    int y = center.y() - imageSide / 2 - 22;
+    if (!illustration.isNull()) {
+        const QRect imageRect(center.x() - illustration.width() / 2,
+                              y,
+                              illustration.width(),
+                              illustration.height());
+        painter.save();
+        painter.setOpacity(0.72);
+        painter.drawPixmap(imageRect.topLeft(), illustration);
+        painter.restore();
+        y = imageRect.bottom() + 12;
+    }
+
+    QFont titleFont = painter.font();
+    titleFont.setPointSize(std::max(10, titleFont.pointSize() + 1));
+    titleFont.setBold(true);
+    painter.setFont(titleFont);
+    painter.setPen(QColor(218, 224, 232, 210));
+    const QRect titleRect(contentRect.left() + 28, y, contentRect.width() - 56, 24);
+    painter.drawText(titleRect, Qt::AlignCenter, QStringLiteral("No project items yet"));
+
+    QFont bodyFont = painter.font();
+    bodyFont.setBold(false);
+    bodyFont.setPointSize(std::max(8, bodyFont.pointSize() - 1));
+    painter.setFont(bodyFont);
+    painter.setPen(QColor(160, 170, 182, 185));
+    const QRect bodyRect(contentRect.left() + 28, titleRect.bottom() + 4, contentRect.width() - 56, 22);
+    painter.drawText(bodyRect, Qt::AlignCenter, QStringLiteral("Import assets or create a composition to start."));
 }
 
 constexpr int kHeaderResizeHitRadius = 7;
@@ -1523,9 +1685,13 @@ void scheduleProjectViewRefresh(ArtifactProjectView* view)
         return;
     }
     view->setProperty(kRefreshQueuedProperty, true);
-    QTimer::singleShot(0, view, [view]() {
-        view->setProperty(kRefreshQueuedProperty, false);
-        view->refreshVisibleContent();
+    QPointer<ArtifactProjectView> viewPtr(view);
+    QTimer::singleShot(0, view, [viewPtr]() {
+        if (!viewPtr) {
+            return;
+        }
+        viewPtr->setProperty(kRefreshQueuedProperty, false);
+        viewPtr->refreshVisibleContent();
     });
 }
 
@@ -1589,6 +1755,10 @@ public:
     int tileContentTop = 34;
     int tileContentBottom = 10;
     int tileTextLines = 4;
+    int minTileWidth = 176;
+    int maxTileWidth = 320;
+    int minTileHeight = 192;
+    int maxTileHeight = 336;
 
     QString keyForIndex(QModelIndex index) const {
         index = index.siblingAtColumn(0);
@@ -1698,6 +1868,17 @@ public:
                      tileRect.top() + 10 + std::max(72, tilePreviewHeight) + 28,
                      tileRect.width() - 20,
                      tileRect.height() - (10 + std::max(72, tilePreviewHeight) + 36 + tileContentBottom));
+    }
+
+    void setTileDensityStep(const int deltaSteps) {
+        if (deltaSteps == 0) {
+            return;
+        }
+        const int step = deltaSteps > 0 ? 12 : -12;
+        tileWidth = std::clamp(tileWidth + step, minTileWidth, maxTileWidth);
+        tileHeight = std::clamp(tileHeight + step, minTileHeight, maxTileHeight);
+        tilePreviewHeight = std::clamp(tilePreviewHeight + step / 2, 88, tileHeight - 76);
+        tileTextLines = std::clamp(tileTextLines + (deltaSteps > 0 ? -1 : 1), 2, 5);
     }
 
     QPixmap previewForIndex(const QModelIndex& index, const QSize& targetSize) {
@@ -2437,6 +2618,12 @@ void ArtifactProjectView::paintListMode(QPaintEvent* event)
     }
     painter.setPen(Impl::Colors::HeaderSeparator);
     painter.drawLine(0, impl_->headerHeight - 1, width(), impl_->headerHeight - 1);
+
+    if (impl_->visibleRows.isEmpty()) {
+        drawProjectViewEmptyState(
+            painter,
+            QRect(0, impl_->headerHeight, width(), std::max(0, height() - impl_->headerHeight)));
+    }
 }
 
 void ArtifactProjectView::paintTileMode(QPaintEvent* event)
@@ -2453,6 +2640,11 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
     const QRect dirtyRect = event ? event->rect() : rect();
     const int viewWidth = std::max(1, width());
     const QFontMetrics fm = painter.fontMetrics();
+
+    if (impl_->visibleRows.isEmpty()) {
+        drawProjectViewEmptyState(painter, rect().adjusted(0, 8, 0, 0));
+        return;
+    }
 
     for (int row = 0; row < impl_->visibleRows.size(); ++row) {
         const auto& visibleRow = impl_->visibleRows[row];
@@ -2537,8 +2729,26 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
             } else if (type == eProjectItemType::Footage) {
                 placeholder = QColor(66, 148, 98);
             }
-            painter.setBrush(placeholder);
+            const QPixmap placeholderTexture = projectViewIllustration(
+                QStringLiteral("Studio/project_tile_placeholder.png"),
+                previewRect.size());
+            painter.save();
+            QPainterPath placeholderClip;
+            placeholderClip.addRoundedRect(previewRect, 6, 6);
+            painter.setClipPath(placeholderClip);
+            painter.fillRect(previewRect, placeholder.darker(118));
+            if (!placeholderTexture.isNull()) {
+                const QPoint textureTopLeft =
+                    previewRect.center() -
+                    QPoint(placeholderTexture.width() / 2, placeholderTexture.height() / 2);
+                painter.setOpacity(selected ? 0.86 : 0.72);
+                painter.drawPixmap(textureTopLeft, placeholderTexture);
+                painter.setOpacity(1.0);
+            }
+            painter.fillRect(previewRect, QColor(placeholder.red(), placeholder.green(), placeholder.blue(), 62));
+            painter.restore();
             painter.setPen(QPen(QColor(18, 18, 18, 170), 1.0));
+            painter.setBrush(Qt::NoBrush);
             painter.drawRoundedRect(previewRect.adjusted(0, 0, -1, -1), 6, 6);
             painter.setPen(QColor(245, 245, 245));
             QFont badgeFont = painter.font();
@@ -2594,6 +2804,25 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
         painter.drawText(badgeRect.adjusted(6, 0, -6, 0),
                          Qt::AlignCenter, badgeText);
 
+        const QString statusText = projectItemStatusChipText(item);
+        const QFontMetrics statusFm(painter.font());
+        const int statusW = std::min(tileRect.width() - 20,
+                                     statusFm.horizontalAdvance(statusText) + 10);
+        const QRect statusRect(tileRect.left() + 10,
+                               badgeRect.bottom() + 4,
+                               statusW,
+                               std::max(18, statusFm.height() + 4));
+        const QColor statusAccent = projectItemStatusChipColor(statusText);
+        QColor statusBg = statusAccent;
+        statusBg.setAlpha(selected ? 70 : 46);
+        QColor statusPen = statusAccent.lighter(selected ? 145 : 128);
+        painter.setBrush(statusBg);
+        painter.setPen(QPen(statusPen, 1.0));
+        painter.drawRoundedRect(statusRect, 6, 6);
+        painter.setPen(statusPen);
+        painter.drawText(statusRect.adjusted(6, 0, -6, 0),
+                         Qt::AlignCenter, statusText);
+
         if (item && item->type() == eProjectItemType::Composition) {
             auto* svc = ArtifactProjectService::instance();
             if (svc) {
@@ -2606,7 +2835,7 @@ void ArtifactProjectView::paintTileMode(QPaintEvent* event)
                     const int layoutW = std::min(tileRect.width() - 20,
                                                  layoutFm.horizontalAdvance(layoutSummary) + 10);
                     const QRect layoutRect(tileRect.right() - layoutW - 10,
-                                           badgeRect.bottom() + 4,
+                                           statusRect.bottom() + 4,
                                            layoutW,
                                            std::max(18, layoutFm.height() + 4));
                     painter.setBrush(selected ? QColor(255, 255, 255, 16)
@@ -2891,6 +3120,15 @@ void ArtifactProjectView::mouseMoveEvent(QMouseEvent* event) {
 
 void ArtifactProjectView::wheelEvent(QWheelEvent* event)
 {
+    if (impl_ && impl_->isTileMode() && (event->modifiers() & Qt::ControlModifier)) {
+        const int delta = event->angleDelta().y();
+        if (delta != 0) {
+            impl_->setTileDensityStep(delta > 0 ? 1 : -1);
+            refreshVisibleContent();
+            event->accept();
+            return;
+        }
+    }
     if (verticalScrollBar_) {
         verticalScrollBar_->setValue(verticalScrollBar_->value() - event->angleDelta().y());
     }
@@ -3894,11 +4132,9 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
          auto dialog = new CreateCompositionDialog(this);
          if (dialog->exec()) {
              const ArtifactCompositionInitParams params = dialog->acceptedInitParams();
-             QTimer::singleShot(0, this, [params]() {
-                 if (auto* svc = ArtifactProjectService::instance()) {
-                     svc->createComposition(params);
-                 }
-             });
+             if (auto* svc = ArtifactProjectService::instance()) {
+                 svc->createComposition(params);
+             }
          }
          dialog->deleteLater();
     }, loadProjectViewIcon(QStringLiteral("Studio/composition.svg")));
@@ -4183,6 +4419,37 @@ void ArtifactProjectView::mousePressEvent(QMouseEvent* event) {
         impl_->dragStartPos = mousePos;
         const QModelIndex idx = indexAt(mousePos);
         if (idx.isValid()) {
+            QModelIndex sourceIdx = idx;
+            if (auto* proxy = qobject_cast<const QSortFilterProxyModel*>(idx.model())) {
+                sourceIdx = proxy->mapToSource(idx).siblingAtColumn(0);
+            }
+            const QVariant typeVar = sourceIdx.data(
+                Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+            const bool isComposition =
+                typeVar.isValid() &&
+                typeVar.toInt() == static_cast<int>(eProjectItemType::Composition);
+            const bool alreadyCurrent =
+                selectionModel() && selectionModel()->currentIndex().siblingAtColumn(0) == idx.siblingAtColumn(0);
+            if (isComposition && alreadyCurrent && !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier))) {
+                QRect nameRect;
+                if (impl_->isTileMode()) {
+                    nameRect = impl_->tileTitleRect(visualRect(idx));
+                } else {
+                    const QRect rowRect = visualRect(idx);
+                    const int row = impl_->rowForIndex(idx);
+                    const int depth = (row >= 0 && row < impl_->visibleRows.size()) ? impl_->visibleRows[row].depth : 0;
+                    int textLeft = 8 + depth * impl_->indentWidth + (impl_->hasChildren(idx) ? 18 : 0);
+                    if (idx.siblingAtColumn(0).data(Qt::DecorationRole).canConvert<QIcon>()) {
+                        textLeft += 22;
+                    }
+                    nameRect = QRect(textLeft, rowRect.top(), std::max(48, impl_->columnWidths.value(0, 180) - textLeft - 8), rowRect.height());
+                }
+                if (nameRect.contains(mousePos)) {
+                    editIndex(idx);
+                    event->accept();
+                    return;
+                }
+            }
             const QRect rowRect = visualRect(idx);
             const int row = impl_->rowForIndex(idx);
             const int depth = (row >= 0 && row < impl_->visibleRows.size()) ? impl_->visibleRows[row].depth : 0;
@@ -4464,7 +4731,7 @@ public:
     bool syncingSelectionToComposition_ = false;
     ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
     std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
-    QTimer* thumbnailUpdateDebounce_ = nullptr;
+    bool projectRefreshQueued_ = false;
 
     QVector<CompositionItem*> selectedCompositionItems() const {
         QVector<CompositionItem*> items;
@@ -5617,7 +5884,9 @@ public:
     }
 
     void update() {
-        auto shared = ArtifactProjectService::instance()->getCurrentProjectSharedPtr();
+        auto* svc = ArtifactProjectService::instance();
+        std::shared_ptr<ArtifactProject> shared = svc ? svc->getCurrentProjectSharedPtr()
+                                                       : nullptr;
         if (!projectModel_) projectModel_ = new ArtifactProjectModel();
         projectModel_->setProject(shared);
 
@@ -6014,7 +6283,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->addWidget(impl_->compositionEditorPanel);
 
     impl_->searchBar = new QLineEdit(chromePanel);
-    impl_->searchBar->setPlaceholderText("Search (type:footage tag:png regex:shot_.* unused:true)...");
+    impl_->searchBar->setPlaceholderText(QString());
     impl_->searchBar->setClearButtonEnabled(true);
     {
         QFont f = impl_->searchBar->font();
@@ -6028,6 +6297,50 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         impl_->searchBar->setPalette(pal);
     }
     chromeLayout->addWidget(impl_->searchBar);
+
+    auto* searchGuide = new QLabel(impl_->searchBar);
+    searchGuide->setTextFormat(Qt::RichText);
+    searchGuide->setWordWrap(false);
+    searchGuide->setTextInteractionFlags(Qt::NoTextInteraction);
+    searchGuide->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    const QString accentHex = QColor(ArtifactCore::currentDCCTheme().accentColor).name();
+    searchGuide->setText(QStringLiteral(
+        "<span style=\"color:#9AA3AE;\">Search (</span> "
+        "<span style=\"color:%1; font-weight:600;\">type:footage</span> "
+        "<span style=\"color:#9AA3AE;\"> </span> "
+        "<span style=\"color:%1; font-weight:600;\">tag:png</span> "
+        "<span style=\"color:#9AA3AE;\"> </span> "
+        "<span style=\"color:%1; font-weight:600;\">regex:shot_.*</span> "
+        "<span style=\"color:#9AA3AE;\"> </span> "
+        "<span style=\"color:%1; font-weight:600;\">unused:true</span>"
+        "<span style=\"color:#9AA3AE;\">)...</span>")
+        .arg(accentHex));
+    {
+        QFont f = searchGuide->font();
+        f.setPointSizeF(std::max(8.5, f.pointSizeF() - 0.5));
+        searchGuide->setFont(f);
+        QPalette pal = searchGuide->palette();
+        pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(135));
+        searchGuide->setPalette(pal);
+    }
+    QPointer<QLabel> searchGuidePtr(searchGuide);
+    const auto updateSearchGuide = [searchGuidePtr](const QString& text) {
+        if (!searchGuidePtr) {
+            return;
+        }
+        const bool showGuide = text.trimmed().isEmpty();
+        searchGuidePtr->setVisible(showGuide);
+        if (showGuide) {
+            searchGuidePtr->adjustSize();
+            const QRect barRect = searchGuidePtr->parentWidget() ? searchGuidePtr->parentWidget()->rect() : QRect();
+            const int x = 10;
+            const int y = std::max(0, (barRect.height() - searchGuidePtr->height()) / 2);
+            searchGuidePtr->move(x, y);
+            searchGuidePtr->raise();
+        }
+    };
+    updateSearchGuide(impl_->searchBar->text());
+    QObject::connect(impl_->searchBar, &QLineEdit::textChanged, chromePanel, updateSearchGuide);
 
     auto* filterBarHost = new QWidget(chromePanel);
     filterBarHost->setObjectName(QStringLiteral("projectManagerFilterBar"));
@@ -6181,11 +6494,9 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
          auto dialog = new CreateCompositionDialog(this);
          if (dialog->exec()) {
              const ArtifactCompositionInitParams params = dialog->acceptedInitParams();
-             QTimer::singleShot(0, this, [params]() {
-                 if (auto* svc = ArtifactProjectService::instance()) {
-                     svc->createComposition(params);
-                 }
-             });
+             if (auto* svc = ArtifactProjectService::instance()) {
+                 svc->createComposition(params);
+             }
          }
          dialog->deleteLater();
     });
@@ -6211,21 +6522,27 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
          }
     });
 
-    // EventBus subscriptions
-    impl_->thumbnailUpdateDebounce_ = new QTimer(this);
-    impl_->thumbnailUpdateDebounce_->setSingleShot(true);
-    impl_->thumbnailUpdateDebounce_->setInterval(300);
-    connect(impl_->thumbnailUpdateDebounce_, &QTimer::timeout, this, [this]() {
-        updateRequested();
-    });
+    QPointer<ArtifactProjectManagerWidget> widgetPtr(this);
+    const auto queueProjectRefresh = [widgetPtr]() {
+        if (!widgetPtr || !widgetPtr->impl_ || widgetPtr->impl_->projectRefreshQueued_) {
+            return;
+        }
+        widgetPtr->impl_->projectRefreshQueued_ = true;
+        QMetaObject::invokeMethod(widgetPtr, [widgetPtr]() {
+            if (!widgetPtr) {
+                return;
+            }
+            widgetPtr->updateRequested();
+        }, Qt::QueuedConnection);
+    };
 
     impl_->eventBusSubscriptions_.push_back(
-        impl_->eventBus_.subscribe<CompositionCreatedEvent>([this](const CompositionCreatedEvent&) {
-        impl_->thumbnailUpdateDebounce_->start();
+        impl_->eventBus_.subscribe<CompositionCreatedEvent>([queueProjectRefresh](const CompositionCreatedEvent&) {
+        queueProjectRefresh();
     }));
     impl_->eventBusSubscriptions_.push_back(
-        impl_->eventBus_.subscribe<LayerChangedEvent>([this](const LayerChangedEvent&) {
-        impl_->thumbnailUpdateDebounce_->start();
+        impl_->eventBus_.subscribe<LayerChangedEvent>([queueProjectRefresh](const LayerChangedEvent&) {
+        queueProjectRefresh();
     }));
     impl_->eventBusSubscriptions_.push_back(
         impl_->eventBus_.subscribe<ProjectChangedEvent>([this](const ProjectChangedEvent&) {
@@ -6338,6 +6655,10 @@ void ArtifactProjectManagerWidget::paintEvent(QPaintEvent* event)
 }
 
 void ArtifactProjectManagerWidget::updateRequested() {
+    if (!impl_) {
+        return;
+    }
+    impl_->projectRefreshQueued_ = false;
     impl_->update();
     if (impl_) {
         impl_->refreshSelectionChrome();

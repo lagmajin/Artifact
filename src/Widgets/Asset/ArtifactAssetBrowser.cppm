@@ -593,26 +593,44 @@ void ArtifactBreadcrumbWidget::Impl::rebuild()
  } else {
   parts = current.split(QDir::separator(), Qt::SkipEmptyParts);
  }
+ auto addSeparator = [this]() {
+  auto* separator = new QLabel(QStringLiteral("/"), owner_);
+  separator->setObjectName(QStringLiteral("artifactBreadcrumbSeparator"));
+  layout_->addWidget(separator);
+ };
+ auto configureButton = [](QToolButton* button) {
+  button->setAutoRaise(true);
+  button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  button->setCursor(Qt::PointingHandCursor);
+ };
+ bool needsSeparator = false;
  if (!root.isEmpty()) {
   auto* rootButton = new QToolButton(owner_);
   rootButton->setText(QFileInfo(root).fileName().isEmpty() ? root : QFileInfo(root).fileName());
+  configureButton(rootButton);
   QObject::connect(rootButton, &QToolButton::clicked, owner_, [this, root]() {
    Q_EMIT static_cast<ArtifactBreadcrumbWidget*>(owner_)->pathClicked(root);
   });
   layout_->addWidget(rootButton);
   path = root;
+  needsSeparator = true;
  }
  for (const QString& part : parts) {
+  if (needsSeparator) {
+   addSeparator();
+  }
   if (!path.isEmpty()) {
    path += QDir::separator();
   }
   path += part;
   auto* button = new QToolButton(owner_);
   button->setText(part);
+  configureButton(button);
   QObject::connect(button, &QToolButton::clicked, owner_, [this, path]() {
    Q_EMIT static_cast<ArtifactBreadcrumbWidget*>(owner_)->pathClicked(path);
   });
   layout_->addWidget(button);
+  needsSeparator = true;
  }
  layout_->addStretch(1);
 }

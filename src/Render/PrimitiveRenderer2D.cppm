@@ -1344,9 +1344,36 @@ void PrimitiveRenderer2D::drawGlyphTextTransformed(float x, float y, const UniSt
                                                     const QMatrix4x4& transform,
                                                     float opacity)
 {
-    if (!impl_->pGlyphAtlas_ || text.length() == 0) return;
-    
-    // TODO: Implement transformed glyph rendering with matrix
+    if (!impl_->pGlyphAtlas_ || text.length() == 0 || !impl_->cmdBuf_) return;
+
+    // Build the packet the GPU path (DiligentImmediateSubmitter::submitGlyphTextTransformed)
+    // consumes. It owns the full shaping / atlas acquire / outline loop, so we only need to
+    // translate our high-level TextStyle/FloatColor/UniString inputs into its QFont/QString/
+    // float4/QRectF payload. (x,y) anchor the paragraph box origin; the box size is taken
+    // from the source text length as a generous single-line width estimate so shaping has room.
+    GlyphTextXformPkt pkt;
+    pkt.text     = text.toQString();
+    pkt.font     = QFont(QString::fromStdString(style.fontFamily));
+    pkt.font.setPointSizeF(style.fontSize);
+    pkt.font.setBold(style.fontWeight == FontWeight::Bold);
+    pkt.font.setItalic(style.fontStyle == FontStyle::Italic);
+    pkt.color    = { color.r(), color.g(), color.b(), opacity };
+    pkt.opacity  = opacity;
+    pkt.transform = transform;
+
+    // Paragraph box: origin at (x,y), width sized to the text so the shaper does not wrap.
+    // The submitter applies `transform` on top of the shaped glyph positions, so passing
+    // canvas-space coordinates here is correct for 3D-projected / rotated text.
+    QFontMetricsF fm(pkt.font);
+    const qreal boxW = fm.horizontalAdvance(pkt.text) + 4.0;
+    const qreal boxH = fm.height() + 2.0;
+    pkt.rect = QRectF(static_cast<qreal>(x), static_cast<qreal>(y), boxW, boxH);
+
+    // devicePixelRatio is used by the submitter to convert atlas pixels (rendered at the
+    // style's font size) back to device-independent units. Mirror the value used elsewhere.
+    pkt.devicePixelRatio = impl_->devicePixelRatio_ > 0.0f ? impl_->devicePixelRatio_ : 1.0f;
+
+    impl_->cmdBuf_->append(std::move(pkt));
 }
 
 void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
@@ -1355,9 +1382,92 @@ void PrimitiveRenderer2D::drawGlyphs(std::span<const GlyphItem> glyphs,
                                      float opacity)
 {
     if (!impl_->pGlyphAtlas_ || glyphs.empty() || !impl_->cmdBuf_) return;
-    
-    // TODO: Render pre-laid-out glyphs
-    // This variant is useful for animated text and text animators
+
+    // Pre-laid-out glyph path: callers (text animators, hand-shaped runs) supply GlyphItems
+    // whose basePosition/offsetPosition already encode final placement. We acquire each glyph
+    // from the atlas and emit an AtlasSpritePkt — the same primitive drawGlyphText() uses —
+    // so no extra GPU PSO is needed. This keeps animated text on the fast 2D path.
+    if (impl_->pGlyphAtlas_->isDirty() || !impl_->pGlyphAtlasTexture_) {
+        const QImage& img = impl_->pGlyphAtlas_->atlasImage();
+        if (!img.isNull() && impl_->pDevice_) {
+            TextureDesc texDesc;
+            texDesc.Name           = "GlyphAtlasTexture";
+            texDesc.Type           = RESOURCE_DIM_TEX_2D;
+            texDesc.Width          = img.width();
+            texDesc.Height         = img.height();
+            texDesc.MipLevels      = 1;
+            texDesc.Format         = TEX_FORMAT_RGBA8_UNORM;
+            texDesc.Usage          = USAGE_IMMUTABLE;
+            texDesc.BindFlags      = BIND_SHADER_RESOURCE;
+
+            TextureSubResData subData;
+            subData.pData  = img.constBits();
+            subData.Stride = img.bytesPerLine();
+
+            TextureData initData;
+            initData.pSubResources = &subData;
+            initData.NumSubresources = 1;
+
+            impl_->pGlyphAtlasTexture_.Release();
+            impl_->pDevice_->CreateTexture(texDesc, &initData, &impl_->pGlyphAtlasTexture_);
+            impl_->pGlyphAtlas_->clearDirty();
+        }
+    }
+    if (!impl_->pGlyphAtlasTexture_) return;
+    auto* pSRV = impl_->pGlyphAtlasTexture_->GetDefaultView(TEXTURE_VIEW_SHADER_RESOURCE);
+    if (!pSRV) return;
+
+    const auto viewportCB = impl_->viewport_.GetViewportCB();
+    const float zoom = std::max(viewportCB.zoom, 0.001f);
+    const float atlasW = static_cast<float>(impl_->pGlyphAtlas_->width());
+    const float atlasH = static_cast<float>(impl_->pGlyphAtlas_->height());
+
+    QFont qfont(QString::fromStdString(style.fontFamily));
+    qfont.setPointSizeF(style.fontSize);
+    qfont.setBold(style.fontWeight == FontWeight::Bold);
+    qfont.setItalic(style.fontStyle == FontStyle::Italic);
+
+    for (const GlyphItem& glyph : glyphs) {
+        GlyphKey key;
+        key.codePoint = glyph.charCode;
+        key.fontSize   = style.fontSize;
+        key.fontFamily = std::string(style.fontFamily);
+        key.styleFlags = (static_cast<uint32_t>(style.fontWeight) << 1) |
+                         (static_cast<uint32_t>(style.fontStyle) << 0);
+
+        const GlyphRect rect = impl_->pGlyphAtlas_->acquire(key, qfont);
+        if (!rect.valid) continue;
+
+        // basePosition (line origin from layout) + offsetPosition (per-glyph animation offset)
+        // give the final pen position in canvas space.
+        const float penX = static_cast<float>(glyph.basePosition.x() + glyph.offsetPosition.x());
+        const float penY = static_cast<float>(glyph.basePosition.y() + glyph.offsetPosition.y());
+        const float gx = penX + rect.bearingX;
+        const float gy = penY - rect.bearingY;
+        const float gw = static_cast<float>(rect.width);
+        const float gh = static_cast<float>(rect.height);
+
+        AtlasSpritePkt pkt;
+        pkt.pSRV = pSRV;
+        pkt.uvRect = { rect.u0(static_cast<int>(atlasW)), rect.v0(static_cast<int>(atlasH)),
+                       rect.u1(static_cast<int>(atlasW)), rect.v1(static_cast<int>(atlasH)) };
+        // Per-glyph opacity animation folds into alpha; color comes from the run.
+        const float a = std::clamp(opacity * static_cast<float>(glyph.offsetOpacity), 0.0f, 1.0f);
+        pkt.color = { color.r(), color.g(), color.b(), a };
+
+        if (impl_->useExternalMatrices_) {
+            pkt.xform.offset    = { gx, gy };
+            pkt.xform.scale     = { gw, gh };
+            pkt.xform.screenSize = viewportCB.screenSize;
+        } else {
+            pkt.xform.offset    = { (gx * zoom) + viewportCB.offset.x,
+                                    (gy * zoom) + viewportCB.offset.y };
+            pkt.xform.scale     = { gw * zoom, gh * zoom };
+            pkt.xform.screenSize = viewportCB.screenSize;
+        }
+
+        impl_->cmdBuf_->append(pkt);
+    }
 }
 
 QString PrimitiveRenderer2D::glyphAtlasDebugState() const

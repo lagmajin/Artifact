@@ -128,6 +128,25 @@ bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer);
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
 
+bool renderCrashTraceEnabled()
+{
+  static const bool enabled =
+      qEnvironmentVariableIsSet("ARTIFACT_RENDER_TRACE_CRASH") &&
+      qEnvironmentVariable("ARTIFACT_RENDER_TRACE_CRASH") != QStringLiteral("0");
+  return enabled;
+}
+
+void renderCrashTrace(const char* phase, quint64 frame, const QString& detail = {})
+{
+  if (!renderCrashTraceEnabled()) {
+    return;
+  }
+  qInfo().noquote() << QStringLiteral("[CompositionView][CrashTrace] frame=%1 phase=%2 %3")
+                           .arg(frame)
+                           .arg(QString::fromLatin1(phase))
+                           .arg(detail);
+}
+
 QVector<QPointF> maskSegmentPolyline(const MaskVertex &start,
                                      const MaskVertex &end,
                                      int subdivisions);
@@ -3037,7 +3056,6 @@ public:
   std::unique_ptr<Artifact3DGizmo> gizmo3D_;
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
   RenderPipeline renderPipeline_;
-  QTimer *renderTimer_ = nullptr;
   bool initialized_ = false;
   bool running_ = false;
   float devicePixelRatio_ = 1.0f;
@@ -3282,7 +3300,6 @@ public:
 
   // Render debounce timer: coalesces rapid LayerChangedEvent notifications
   // into a single renderOneFrame() call, preventing GPU saturation during drag
-  QTimer *renderDebounceTimer_ = nullptr;
   static constexpr qint64 kRenderDebounceIntervalMs = 16; // ~60fps baseline
   
   // Render tick infrastructure
@@ -3302,8 +3319,8 @@ public:
   float hostHeight_ = 0.0f;
   QPointer<QWidget> hostWidget_;
   bool viewportInteracting_ = false;
-  QTimer *viewportInteractionTimer_ = nullptr;
-  QTimer *resizeDebounceTimer_ = nullptr;
+  QElapsedTimer viewportInteractionElapsedTimer_;
+  int viewportInteractionIdleMs_ = 120;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   QSize pendingResizeSize_;
@@ -3752,12 +3769,8 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                 impl_->syncSelectedLayerOverlayState(
                     impl_->previewPipeline_.composition());
               }
-              // Debounce render: coalesce rapid property changes into single frame
-              if (impl_->renderDebounceTimer_) {
-                  impl_->renderDebounceTimer_->start(
-                      compositionPreviewIntervalMs(
-                          impl_->previewPipeline_.composition()));
-                }
+              // Coalesce rapid property changes on the fixed render tick.
+              markRenderDirty();
             }));
 
     impl_->eventBusSubscriptions_.push_back(
@@ -3867,66 +3880,56 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
     impl_->renderer_->fillToViewport();
   }
 
-  impl_->renderTimer_ = new QTimer(this);
-  impl_->renderTimer_->setTimerType(Qt::PreciseTimer);
-  connect(impl_->renderTimer_, &QTimer::timeout, this,
-          &CompositionRenderController::renderOneFrame);
-
-  impl_->viewportInteractionTimer_ = new QTimer(this);
-  impl_->viewportInteractionTimer_->setSingleShot(true);
-  connect(impl_->viewportInteractionTimer_, &QTimer::timeout, this,
-          &CompositionRenderController::finishViewportInteraction);
-
-  impl_->resizeDebounceTimer_ = new QTimer(this);
-  impl_->resizeDebounceTimer_->setSingleShot(true);
-  connect(impl_->resizeDebounceTimer_, &QTimer::timeout, this, [this]() {
-    if (!impl_->renderer_ || !impl_->hostWidget_.data()) {
-      return;
-    }
-    const QSize pending = impl_->pendingResizeSize_;
-    if (pending.isEmpty()) {
-      return;
-    }
-    impl_->pendingResizeSize_ = QSize();
-    impl_->renderer_->flushAndWait();
-    setViewportSize(static_cast<float>(pending.width()),
-                    static_cast<float>(pending.height()));
-    recreateSwapChain(impl_->hostWidget_.data());
-    markRenderDirty();
-  });
-
-  impl_->renderDebounceTimer_ = new QTimer(this);
-  impl_->renderDebounceTimer_->setSingleShot(true);
-  connect(impl_->renderDebounceTimer_, &QTimer::timeout, this,
-          &CompositionRenderController::onRenderDebounceTimeout);
-
   // Fixed-rate render tick: consumes renderDirty_ flag at ~60fps.
   // In Phase 1 this timer is infrastructure-only (renderDirty_ is never set).
   // Phase 2 will migrate event handlers to use markRenderDirty().
   impl_->renderTickTimer_ = new QTimer(this);
   impl_->renderTickTimer_->setInterval(
       compositionPreviewIntervalMs(impl_->previewPipeline_.composition()));
-  connect(impl_->renderTickTimer_, &QTimer::timeout, this, [this]() {
-    // Guard: skip if host is hidden or not initialized
-    if (!impl_->initialized_ || !impl_->renderer_ || !impl_->running_) {
+  QPointer<CompositionRenderController> controllerPtr(this);
+  connect(impl_->renderTickTimer_, &QTimer::timeout, this, [controllerPtr]() {
+    if (!controllerPtr || !controllerPtr->impl_) {
       return;
     }
-    if (auto *host = impl_->hostWidget_.data()) {
+    auto* controller = controllerPtr.data();
+    auto* impl = controller->impl_;
+    renderCrashTrace("tick-enter", impl->renderFrameCounter_);
+    if (impl->viewportInteracting_ && impl->viewportInteractionElapsedTimer_.isValid() &&
+        impl->viewportInteractionElapsedTimer_.elapsed() >= impl->viewportInteractionIdleMs_) {
+      renderCrashTrace("tick-finish-viewport-interaction", impl->renderFrameCounter_);
+      controller->finishViewportInteraction();
+    }
+    // Guard: skip if host is hidden or not initialized
+    if (!impl->initialized_ || !impl->renderer_ || !impl->running_) {
+      renderCrashTrace("tick-skip-not-ready", impl->renderFrameCounter_);
+      return;
+    }
+    if (auto *host = impl->hostWidget_.data()) {
       if (!host->isVisible()) {
+        renderCrashTrace("tick-skip-host-hidden", impl->renderFrameCounter_);
         return;
       }
     }
-    if (!impl_->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
+    if (!impl->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
+      if (!impl->viewportInteracting_ && impl->renderTickTimer_) {
+        impl->renderTickTimer_->stop();
+      }
       return; // No state change since last tick — skip
     }
-    if (impl_->renderInProgress_) {
+    if (impl->renderInProgress_) {
       // A render is already in progress — mark dirty so next tick retries
-      impl_->renderDirty_.store(true, std::memory_order_release);
+      impl->renderDirty_.store(true, std::memory_order_release);
+      renderCrashTrace("tick-skip-in-progress", impl->renderFrameCounter_);
       return;
     }
-    impl_->renderInProgress_ = true;
-    impl_->renderOneFrameImpl(this);
-    impl_->renderInProgress_ = false;
+    struct RenderInProgressGuard {
+      bool& flag;
+      explicit RenderInProgressGuard(bool& f) : flag(f) { flag = true; }
+      ~RenderInProgressGuard() { flag = false; }
+    } renderGuard(impl->renderInProgress_);
+    renderCrashTrace("tick-render-begin", impl->renderFrameCounter_);
+    impl->renderOneFrameImpl(controller);
+    renderCrashTrace("tick-render-end", impl->renderFrameCounter_);
   });
   impl_->renderTickTimer_->start();
 
@@ -3990,6 +3993,9 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 }
 
 void CompositionRenderController::destroy() {
+  if (impl_->renderTickTimer_) {
+    impl_->renderTickTimer_->stop();
+  }
   stop();
   impl_->compositionRenderer_.reset();
   impl_->surfaceCache_.clear();
@@ -4027,6 +4033,9 @@ void CompositionRenderController::start() {
 }
 
 void CompositionRenderController::stop() {
+  if (impl_->renderTickTimer_) {
+    impl_->renderTickTimer_->stop();
+  }
   if (!impl_->running_) {
     return;
   }
@@ -4144,8 +4153,10 @@ TransformGizmo::Mode CompositionRenderController::gizmoMode() const {
 void CompositionRenderController::notifyViewportInteractionActivity() {
   const bool wasInteracting = impl_->viewportInteracting_;
   impl_->viewportInteracting_ = true;
-  if (impl_->viewportInteractionTimer_) {
-    impl_->viewportInteractionTimer_->start(120);
+  impl_->viewportInteractionElapsedTimer_.restart();
+  if (impl_->running_ && impl_->renderTickTimer_ &&
+      !impl_->renderTickTimer_->isActive()) {
+    impl_->renderTickTimer_->start();
   }
   if (!wasInteracting) {
     impl_->invalidateBaseComposite();
@@ -4157,15 +4168,7 @@ void CompositionRenderController::finishViewportInteraction() {
     return;
   }
   impl_->viewportInteracting_ = false;
-  if (impl_->viewportInteractionTimer_) {
-    impl_->viewportInteractionTimer_->stop();
-  }
   impl_->invalidateBaseComposite();
-  markRenderDirty();
-}
-
-void CompositionRenderController::onRenderDebounceTimeout() {
-  // Debounce timer fired: render once, coalescing all pending property changes
   markRenderDirty();
 }
 
@@ -4205,10 +4208,6 @@ void CompositionRenderController::setComposition(
       impl_->renderTickTimer_->setInterval(
           compositionPreviewIntervalMs(impl_->previewPipeline_.composition()));
     }
-    if (impl_->renderDebounceTimer_) {
-      impl_->renderDebounceTimer_->setInterval(
-          compositionPreviewIntervalMs(impl_->previewPipeline_.composition()));
-    }
     markRenderDirty();
     return;
   }
@@ -4242,21 +4241,12 @@ void CompositionRenderController::setComposition(
       impl_->renderTickTimer_->setInterval(
           compositionPreviewIntervalMs(composition));
     }
-    if (impl_->renderDebounceTimer_) {
-      impl_->renderDebounceTimer_->setInterval(
-          compositionPreviewIntervalMs(composition));
-    }
-
     // コンポジションがセットされた瞬間に1フレーム描画
     markRenderDirty();
   } else if (!composition) {
     impl_->syncSelectedLayerOverlayState(composition);
     if (impl_->renderTickTimer_) {
       impl_->renderTickTimer_->setInterval(
-          compositionPreviewIntervalMs(nullptr));
-    }
-    if (impl_->renderDebounceTimer_) {
-      impl_->renderDebounceTimer_->setInterval(
           compositionPreviewIntervalMs(nullptr));
     }
     markRenderDirty();
@@ -6796,13 +6786,16 @@ bool CompositionRenderController::Impl::finalizePendingMaskCreation(
 
 void CompositionRenderController::Impl::renderOneFrameImpl(
     CompositionRenderController *owner) {
+  renderCrashTrace("render-enter", renderFrameCounter_);
   if (!owner || !initialized_ || !renderer_ || !running_) {
+    renderCrashTrace("render-skip-not-ready", renderFrameCounter_);
     return;
   }
   // Swapchain may not exist yet (deferred from 0×0 init).
   // Skip rendering — the first resize will create the swapchain and
   // trigger a new frame via the debounce timer.
   if (!renderer_->hasSwapChain()) {
+    renderCrashTrace("render-skip-no-swapchain", renderFrameCounter_);
     return;
   }
 
@@ -6814,23 +6807,31 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   }
   if (auto *host = hostWidget_.data()) {
     if (!host->isVisible()) {
+      renderCrashTrace("render-skip-host-hidden", renderFrameCounter_);
       return;
     }
   }
 
   struct RenderCostCaptureGuard {
     ArtifactIRenderer* renderer = nullptr;
-    explicit RenderCostCaptureGuard(ArtifactIRenderer* r) : renderer(r) {
+    quint64 frame = 0;
+    RenderCostCaptureGuard(ArtifactIRenderer* r, quint64 f) : renderer(r), frame(f) {
       if (renderer) {
         renderer->beginFrameCostCapture();
+        renderer->beginFrameGpuProfiling();
       }
     }
     ~RenderCostCaptureGuard() {
       if (renderer) {
+        renderCrashTrace("render-cost-guard-gpu-end-begin", frame);
+        renderer->endFrameGpuProfiling();
+        renderCrashTrace("render-cost-guard-gpu-end-end", frame);
+        renderCrashTrace("render-cost-guard-cost-end-begin", frame);
         renderer->endFrameCostCapture();
+        renderCrashTrace("render-cost-guard-cost-end-end", frame);
       }
     }
-  } renderCostGuard(renderer_.get());
+  };
 
   // 強制的なサイズ同期:
   // ホストウィジェットの物理サイズとスワップチェーンを一致させる
@@ -6843,8 +6844,17 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           << "[CompositionView] Widget size changed, scheduling swapchain "
              "update:"
           << curW << "x" << curH;
-      // Store logical pixels — setViewportSize applies DPR internally
-      pendingResizeSize_ = QSize(host->width(), host->height());
+      const QSize pending(host->width(), host->height());
+      pendingResizeSize_ = QSize();
+      if (owner && renderer_) {
+        renderCrashTrace("render-resize-begin", renderFrameCounter_,
+                         QStringLiteral("size=%1x%2").arg(pending.width()).arg(pending.height()));
+        owner->setViewportSize(static_cast<float>(pending.width()),
+                               static_cast<float>(pending.height()));
+        owner->recreateSwapChain(host);
+        owner->markRenderDirty();
+        renderCrashTrace("render-resize-end", renderFrameCounter_);
+      }
       return;
     }
   }
@@ -6878,6 +6888,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
   } traceGuard;
 
   renderer_->setSceneLights(std::vector<ArtifactCore::Light>{});
+  renderCrashTrace("render-after-scene-lights", renderFrameCounter_);
 
   auto comp = previewPipeline_.composition();
   if (auto *service = ArtifactProjectService::instance()) {
@@ -6892,10 +6903,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
   }
   if (!comp) {
+    renderCrashTrace("render-no-comp-present-begin", renderFrameCounter_);
     renderer_->setOverrideRTV(nullptr);
     renderer_->setClearColor(viewportClearColor_);
     renderer_->clearRenderTarget(viewportClearColor_);
     renderer_->present();
+    renderCrashTrace("render-no-comp-present-end", renderFrameCounter_);
     return;
   }
 
@@ -6913,13 +6926,19 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                    << "issues=" << projectDiagnostics.size();
       }
       lastRenderPathSummary_ = blockedSummary;
+      renderCrashTrace("render-preflight-blocked-present-begin", renderFrameCounter_);
       renderer_->setOverrideRTV(nullptr);
       renderer_->setClearColor(viewportClearColor_);
       renderer_->clearRenderTarget(viewportClearColor_);
       renderer_->present();
+      renderCrashTrace("render-preflight-blocked-present-end", renderFrameCounter_);
       return;
     }
   }
+
+  auto renderCostGuard =
+      std::make_unique<RenderCostCaptureGuard>(renderer_.get(), renderFrameCounter_);
+  renderCrashTrace("render-cost-begin", renderFrameCounter_);
 
   const QSize compSize = comp->settings().compositionSize();
   const float cw =
@@ -7284,20 +7303,32 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const int pipelineStateMask = (gpuBlendEnabled_ ? 0x1 : 0x0) |
                                   (renderPipeline_.ready() ? 0x2 : 0x0) |
                                   (blendPipelineReady_ ? 0x4 : 0x0);
+    renderCrashTrace("render-pipeline-state", renderFrameCounter_,
+                     QStringLiteral("enabled=%1 requested=%2 blendReady=%3 renderReady=%4 layers=%5")
+                         .arg(pipelineEnabled ? 1 : 0)
+                         .arg(gpuBlendPathRequested ? 1 : 0)
+                         .arg(blendPipelineReady_ ? 1 : 0)
+                         .arg(renderPipeline_.ready() ? 1 : 0)
+                         .arg(layers.size()));
     if (pipelineStateMask != lastPipelineStateMask_) {
       lastPipelineStateMask_ = pipelineStateMask;
       if (!pipelineEnabled) {
+        renderCrashTrace("render-gpu-blend-disabled-log-begin", renderFrameCounter_);
         qWarning() << "[CompositionView] GPU blend path disabled"
                    << "gpuBlendEnabled=" << gpuBlendEnabled_
                    << "renderPipelineReady=" << renderPipeline_.ready()
                    << "blendPipelineReady=" << blendPipelineReady_ << "size="
                    << QSize(static_cast<int>(cw), static_cast<int>(ch));
+        renderCrashTrace("render-gpu-blend-disabled-log-end", renderFrameCounter_);
       } else {
+        renderCrashTrace("render-gpu-blend-enabled-log-begin", renderFrameCounter_);
         qDebug() << "[CompositionView] GPU blend path enabled"
                  << "size="
                  << QSize(static_cast<int>(cw), static_cast<int>(ch));
+        renderCrashTrace("render-gpu-blend-enabled-log-end", renderFrameCounter_);
       }
     }
+    renderCrashTrace("render-after-pipeline-state-log", renderFrameCounter_);
     if (pipelineEnabled) {
       const QSize pipelineSize(static_cast<int>(renderPipeline_.width()),
                                static_cast<int>(renderPipeline_.height()));
@@ -7397,9 +7428,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
 
     // バックバッファ全体をクリア (外側ゴミ表示修正)
+    renderCrashTrace("render-clear-begin", renderFrameCounter_);
     renderer_->clearRenderTarget(viewportClearColor_);
+    renderCrashTrace("render-clear-end", renderFrameCounter_);
 
     if (useRamPreviewFallback) {
+      renderCrashTrace("render-branch-ram-preview", renderFrameCounter_);
       if (backgroundMode == CompositionBackgroundMode::MayaGradient) {
         drawViewportMayaGradientBackground(renderer_.get(), viewportW,
                                            viewportH, layerBgColor,
@@ -7423,6 +7457,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       basePassMs = markPhaseMs();
       layerPassMs = 0;
     } else if (pipelineEnabled) {
+    renderCrashTrace("render-branch-gpu-pipeline", renderFrameCounter_);
     // ============================================================
     // GPU パイプライン: レイヤー 0 枚でも frameOutOfRange でも常に描画
     // ============================================================
@@ -7756,6 +7791,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       layerPassMs = markPhaseMs();
     } else {
       // === Fallback path (GPU パイプラインなし) ===
+      renderCrashTrace("render-branch-fallback", renderFrameCounter_);
       renderer_->setViewportRect(viewportW, viewportH);
       const float prevZoom = renderer_->getZoom();
       float prevPanX = 0.0f;
@@ -8821,6 +8857,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     overlayMs = markPhaseMs();
 
     flushMs = 0;
+  renderCrashTrace("render-cost-end-begin", renderFrameCounter_);
+  renderCostGuard.reset();
+  renderCrashTrace("render-cost-end", renderFrameCounter_);
 
     if (!lastVideoDebug_.isEmpty() &&
         lastVideoDebug_ != lastEmittedVideoDebug_) {
@@ -8833,17 +8872,23 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     {
       ArtifactCore::ProfileScope _profPresent(
           "Present", ArtifactCore::ProfileCategory::Render);
+      renderCrashTrace("render-present-begin", renderFrameCounter_);
       renderer_->present();
+      renderCrashTrace("render-present-end", renderFrameCounter_);
     }
 
     if (auto *playback = ArtifactPlaybackService::instance()) {
       const auto previewSummary = playback->ramPreviewSummary();
+      const bool asyncRamPreviewReadbackEnabled =
+          qEnvironmentVariableIsSet("ARTIFACT_ENABLE_RAM_PREVIEW_ASYNC_READBACK");
       const bool shouldCaptureRamPreview =
+          asyncRamPreviewReadbackEnabled &&
           playback->isRamPreviewEnabled() && playbackPreviewStateValid &&
           playbackSameComposition && !playback->isPlaying() &&
           !viewportInteracting_ && !frameOutOfRange &&
           !playbackPreviewState.ready && playbackPreviewPendingBuild;
       if (shouldCaptureRamPreview) {
+        renderCrashTrace("render-async-readback-begin", renderFrameCounter_);
         // Asynchronous readback: GPU copy + fence wait runs on a worker thread,
         // avoiding a full GPU pipeline stall on the render thread.
         const auto weakPlayback = QPointer<ArtifactPlaybackService>(playback);
@@ -8865,6 +8910,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                   capturedPreviewDownsample, capturedEffectiveDownsample,
                   renderPath, QString(), true);
             });
+        renderCrashTrace("render-async-readback-end", renderFrameCounter_);
       }
     }
     presentMs = markPhaseMs();

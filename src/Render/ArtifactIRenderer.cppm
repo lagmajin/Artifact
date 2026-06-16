@@ -75,6 +75,10 @@ namespace {
   Diligent::float2 toDiligentFloat2(Detail::float2 value) { return { value.x, value.y }; }
   Detail::float2 toDetailFloat2(Diligent::float2 value)   { return { value.x, value.y }; }
 
+  bool nearlyEqual(float a, float b, float epsilon = 0.0001f) {
+    return std::abs(a - b) <= epsilon;
+  }
+
   constexpr size_t kArtifactChannelCount =
       static_cast<size_t>(ArtifactIRenderer::ChannelType::Custom) + 1;
 
@@ -234,17 +238,38 @@ namespace {
   bool m_upscaleEnabled = false;
   float m_upscaleSharpness = 1.0f;
   float m_upscaleScale = 1.0f;
-  mutable RefCntAutoPtr<ITexture> m_readbackStagingTex;
+  // ---- Readback ring -------------------------------------------------------
+  // Sync color readback historically used a single staging texture + fence, which
+  // serializes the GPU when two readbacks land in the same frame (e.g. thumbnail +
+  // main capture). A 2-slot ring lets the second copy proceed while the CPU maps
+  // the previous slot, hiding the fence wait on back-to-back captures.
+  struct ReadbackSlot {
+   RefCntAutoPtr<ITexture> staging;
+   RefCntAutoPtr<IFence>   fence;
+   Uint64 signaledValue  = 0;  // value last EnqueueSignal()'d
+   Uint64 completedValue = 0;  // value last observed as completed
+  };
+  static constexpr Uint32 kReadbackRingSize = 2;
+  mutable std::array<ReadbackSlot, kReadbackRingSize> m_readbackRing;
+  mutable Uint32       m_readbackRingIndex = 0;
+  mutable Uint32       m_readbackStagingWidth = 0;
+  mutable Uint32       m_readbackStagingHeight = 0;
   mutable TEXTURE_FORMAT m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
-  mutable RefCntAutoPtr<IFence> m_readbackFence;
-  mutable Uint32 m_readbackStagingWidth = 0;
-  mutable Uint32 m_readbackStagingHeight = 0;
-  mutable Uint64 m_readbackFenceValue = 0;
+
+  // Depth readback is a different format/usage and historically allocated a fresh
+  // staging texture + fence on every call. Caching them removes per-call device
+  // traffic from the depth inspection path.
+  mutable RefCntAutoPtr<ITexture> m_depthReadbackStaging;
+  mutable RefCntAutoPtr<IFence>   m_depthReadbackFence;
+  mutable Uint32 m_depthReadbackWidth = 0;
+  mutable Uint32 m_depthReadbackHeight = 0;
+  mutable Uint64 m_depthReadbackFenceValue = 0;
   mutable std::mutex m_readbackMutex;
   QWidget* widget_ = nullptr;
 
   bool m_initialized = false;
   bool m_frameQueryInitialized = false;
+  bool m_frameQueryActive = false;
   double m_lastGpuFrameTimeMs = 0.0;
   Uint32 m_frameQueryIndex = 0;
   static constexpr Uint32 FrameQueryCount = 2;
@@ -253,6 +278,8 @@ namespace {
   int m_offlineHeight = 0;
   float m_viewportWidth  = 0.0f;
   float m_viewportHeight = 0.0f;
+  float m_canvasWidth = -1.0f;
+  float m_canvasHeight = -1.0f;
   QMatrix4x4 meshViewMatrix_;
   QMatrix4x4 meshProjMatrix_;
 
@@ -462,10 +489,30 @@ namespace {
       ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     }
   }
-  void setCanvasSize(float w, float h)   { primitiveRenderer_.setCanvasSize(w, h); }
-  void setPan(float x, float y)          { primitiveRenderer_.setPan(x, y); }
+  void setCanvasSize(float w, float h) {
+    if (nearlyEqual(m_canvasWidth, w) && nearlyEqual(m_canvasHeight, h)) {
+      return;
+    }
+    primitiveRenderer_.setCanvasSize(w, h);
+    m_canvasWidth = w;
+    m_canvasHeight = h;
+  }
+  void setPan(float x, float y) {
+    float currentX = 0.0f;
+    float currentY = 0.0f;
+    primitiveRenderer_.getPan(currentX, currentY);
+    if (nearlyEqual(currentX, x) && nearlyEqual(currentY, y)) {
+      return;
+    }
+    primitiveRenderer_.setPan(x, y);
+  }
   void getPan(float& x, float& y) const  { primitiveRenderer_.getPan(x, y); }
-  void setZoom(float zoom)               { primitiveRenderer_.setZoom(zoom); }
+  void setZoom(float zoom) {
+    if (nearlyEqual(primitiveRenderer_.getZoom(), zoom)) {
+      return;
+    }
+    primitiveRenderer_.setZoom(zoom);
+  }
   float getZoom() const                  { return primitiveRenderer_.getZoom(); }
   void panBy(float dx, float dy)         { primitiveRenderer_.panBy(dx, dy); }
   void resetView()                       { primitiveRenderer_.resetView(); }
@@ -964,7 +1011,7 @@ namespace {
   primitiveRenderer_.setViewportSize(float(width), float(height));
   m_viewportWidth  = float(width);
   m_viewportHeight = float(height);
-  primitiveRenderer_.setCanvasSize(float(width), float(height));
+  setCanvasSize(float(width), float(height));
   primitiveRenderer_.resetView();
 
   if (auto ctx = deviceManager_.immediateContext()) {
@@ -1020,37 +1067,50 @@ namespace {
   const TEXTURE_FORMAT stagingFormat =
       useFloatReadback ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM;
 
-  // Staging texture mirrors the source format so we can either memcpy raw bytes
-  // for 8-bit sources or unpack half-floats for the HDR swap chain path.
-  if (!m_readbackStagingTex ||
-      m_readbackStagingWidth != srcWidth ||
-      m_readbackStagingHeight != srcHeight ||
-      m_readbackStagingFormat != stagingFormat)
-  {
-    TextureDesc stagDesc;
-    stagDesc.Name           = "ReadbackStagingTexture";
-    stagDesc.Type           = RESOURCE_DIM_TEX_2D;
-    stagDesc.Width          = srcWidth;
-    stagDesc.Height         = srcHeight;
-    stagDesc.MipLevels      = 1;
-    stagDesc.Format         = stagingFormat;
-    stagDesc.Usage          = USAGE_STAGING;
-    stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
-    stagDesc.BindFlags      = BIND_NONE;
-    device->CreateTexture(stagDesc, nullptr, &m_readbackStagingTex);
-    if (!m_readbackStagingTex) return {};
-    m_readbackStagingWidth = srcWidth;
+  // Staging textures mirror the source format so we can either memcpy raw bytes
+  // for 8-bit sources or unpack half-floats for the HDR swap chain path. A 2-slot
+  // ring is (re)allocated as a unit whenever the dimensions/format change.
+  const bool ringNeedsRealloc =
+      (m_readbackStagingWidth  != srcWidth) ||
+      (m_readbackStagingHeight != srcHeight) ||
+      (m_readbackStagingFormat != stagingFormat);
+  if (ringNeedsRealloc) {
+    for (auto& slot : m_readbackRing) {
+      TextureDesc stagDesc;
+      stagDesc.Name           = "ReadbackStagingTexture";
+      stagDesc.Type           = RESOURCE_DIM_TEX_2D;
+      stagDesc.Width          = srcWidth;
+      stagDesc.Height         = srcHeight;
+      stagDesc.MipLevels      = 1;
+      stagDesc.Format         = stagingFormat;
+      stagDesc.Usage          = USAGE_STAGING;
+      stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
+      stagDesc.BindFlags      = BIND_NONE;
+      device->CreateTexture(stagDesc, nullptr, &slot.staging);
+      if (!slot.staging) return {};
+
+      FenceDesc fDesc;
+      fDesc.Name = "ReadbackFence";
+      fDesc.Type = FENCE_TYPE_GENERAL;
+      device->CreateFence(fDesc, &slot.fence);
+      if (!slot.fence) return {};
+      slot.signaledValue  = 0;
+      slot.completedValue = 0;
+    }
+    m_readbackStagingWidth  = srcWidth;
     m_readbackStagingHeight = srcHeight;
     m_readbackStagingFormat = stagingFormat;
-   }
+    m_readbackRingIndex = 0;
+  }
 
-  if (!m_readbackFence) {
-   FenceDesc fDesc;
-   fDesc.Name = "ReadbackFence";
-   fDesc.Type = FENCE_TYPE_GENERAL;
-   device->CreateFence(fDesc, &m_readbackFence);
-   if (!m_readbackFence) return {};
-   m_readbackFenceValue = 0;
+  // Advance to the next ring slot. If the *other* slot still has a copy in
+  // flight, wait for it before we overwrite it — but in the steady state of
+  // alternating captures this wait is already satisfied, so it adds no latency.
+  ReadbackSlot& slot = m_readbackRing[m_readbackRingIndex];
+  m_readbackRingIndex = (m_readbackRingIndex + 1) % kReadbackRingSize;
+  if (slot.signaledValue > slot.completedValue) {
+    slot.fence->Wait(slot.signaledValue);
+    slot.completedValue = slot.signaledValue;
   }
 
   // Flush queued draws before reading back so both the 2D command buffer and
@@ -1065,20 +1125,21 @@ namespace {
   CopyTextureAttribs copyAttribs;
   copyAttribs.pSrcTexture              = srcTex;
   copyAttribs.SrcTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
-  copyAttribs.pDstTexture              = m_readbackStagingTex;
+  copyAttribs.pDstTexture              = slot.staging;
   copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
   ctx->CopyTexture(copyAttribs);
 
-  // Reused fence: CPU waits until GPU copy completion before mapping.
-  const Uint64 waitValue = ++m_readbackFenceValue;
-  ctx->EnqueueSignal(m_readbackFence, waitValue);
+  // Per-slot fence: CPU waits until this slot's GPU copy completes before mapping.
+  const Uint64 waitValue = ++slot.signaledValue;
+  ctx->EnqueueSignal(slot.fence, waitValue);
   ctx->Flush();
-  m_readbackFence->Wait(waitValue);
+  slot.fence->Wait(waitValue);
+  slot.completedValue = waitValue;
 
   // Map the staging texture. The fence wait above guarantees the GPU copy has
   // finished, so DO_NOT_WAIT is safe and avoids Vulkan backend warnings.
   MappedTextureSubresource mapped = {};
-  ctx->MapTextureSubresource(m_readbackStagingTex, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
+  ctx->MapTextureSubresource(slot.staging, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
   if (!mapped.pData) return {};
 
   QImage result(static_cast<int>(srcWidth), static_cast<int>(srcHeight),
@@ -1087,7 +1148,7 @@ namespace {
   const size_t sourceRowBytes =
       useFloatReadback ? static_cast<size_t>(srcWidth) * 8u : copyRowBytes;
   if (mapped.Stride < sourceRowBytes) {
-   ctx->UnmapTextureSubresource(m_readbackStagingTex, 0, 0);
+   ctx->UnmapTextureSubresource(slot.staging, 0, 0);
    return {};
   }
   if (!useFloatReadback) {
@@ -1116,7 +1177,7 @@ namespace {
         reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
    }
   }
-  ctx->UnmapTextureSubresource(m_readbackStagingTex, 0, 0);
+  ctx->UnmapTextureSubresource(slot.staging, 0, 0);
   return result;
  }
 
@@ -1154,27 +1215,38 @@ namespace {
 
   if (!srcTex || srcWidth == 0 || srcHeight == 0) return {};
 
-  TextureDesc stagDesc;
-  stagDesc.Name           = "DepthReadbackStagingTexture";
-  stagDesc.Type           = RESOURCE_DIM_TEX_2D;
-  stagDesc.Width          = srcWidth;
-  stagDesc.Height         = srcHeight;
-  stagDesc.MipLevels      = 1;
-  stagDesc.Format         = TEX_FORMAT_D32_FLOAT;
-  stagDesc.Usage          = USAGE_STAGING;
-  stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
-  stagDesc.BindFlags      = BIND_NONE;
+  // Depth staging/fence are cached: depth inspection happens repeatedly (gizmo
+  // picking, debug overlays) and recreating them per call generated avoidable
+  // device traffic. Reallocate only when the source size changes.
+  if (!m_depthReadbackStaging ||
+      m_depthReadbackWidth != srcWidth ||
+      m_depthReadbackHeight != srcHeight) {
+    TextureDesc stagDesc;
+    stagDesc.Name           = "DepthReadbackStagingTexture";
+    stagDesc.Type           = RESOURCE_DIM_TEX_2D;
+    stagDesc.Width          = srcWidth;
+    stagDesc.Height         = srcHeight;
+    stagDesc.MipLevels      = 1;
+    stagDesc.Format         = TEX_FORMAT_D32_FLOAT;
+    stagDesc.Usage          = USAGE_STAGING;
+    stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
+    stagDesc.BindFlags      = BIND_NONE;
+    device->CreateTexture(stagDesc, nullptr, &m_depthReadbackStaging);
+    if (!m_depthReadbackStaging) return {};
+    m_depthReadbackWidth  = srcWidth;
+    m_depthReadbackHeight = srcHeight;
+  }
+  ITexture* stagingTex = m_depthReadbackStaging;
 
-  RefCntAutoPtr<ITexture> stagingTex;
-  device->CreateTexture(stagDesc, nullptr, &stagingTex);
-  if (!stagingTex) return {};
-
-  RefCntAutoPtr<IFence> fence;
-  FenceDesc fenceDesc;
-  fenceDesc.Name = "DepthReadbackFence";
-  fenceDesc.Type = FENCE_TYPE_GENERAL;
-  device->CreateFence(fenceDesc, &fence);
-  if (!fence) return {};
+  if (!m_depthReadbackFence) {
+    FenceDesc fenceDesc;
+    fenceDesc.Name = "DepthReadbackFence";
+    fenceDesc.Type = FENCE_TYPE_GENERAL;
+    device->CreateFence(fenceDesc, &m_depthReadbackFence);
+    if (!m_depthReadbackFence) return {};
+    m_depthReadbackFenceValue = 0;
+  }
+  IFence* fence = m_depthReadbackFence;
 
   submitQueuedDraws(ctx);
   ctx->SetRenderTargets(0, nullptr, nullptr, RESOURCE_STATE_TRANSITION_MODE_NONE);
@@ -1185,7 +1257,7 @@ namespace {
   copyAttribs.pDstTexture = stagingTex;
   copyAttribs.DstTextureTransitionMode = RESOURCE_STATE_TRANSITION_MODE_TRANSITION;
   ctx->CopyTexture(copyAttribs);
-  const Uint64 fenceValue = 1;
+  const Uint64 fenceValue = ++m_depthReadbackFenceValue;
   ctx->EnqueueSignal(fence, fenceValue);
   ctx->Flush();
   fence->Wait(fenceValue);
@@ -1503,14 +1575,22 @@ namespace {
 
  void ArtifactIRenderer::Impl::beginFrameGpuProfiling()
  {
+  if (!qEnvironmentVariableIsSet("ARTIFACT_ENABLE_GPU_FRAME_QUERY")) {
+   return;
+  }
   initFrameQueries();
   auto& query = m_frameQueries[m_frameQueryIndex];
   if (!query || !deviceManager_.immediateContext()) return;
   deviceManager_.immediateContext()->BeginQuery(query);
+  m_frameQueryActive = true;
  }
 
  void ArtifactIRenderer::Impl::endFrameGpuProfiling()
  {
+  if (!m_frameQueryActive) {
+   return;
+  }
+  m_frameQueryActive = false;
   auto& query = m_frameQueries[m_frameQueryIndex];
   if (!query || !deviceManager_.immediateContext()) return;
   deviceManager_.immediateContext()->EndQuery(query);
@@ -1636,15 +1716,25 @@ namespace {
   cmdBuf_.reset();
   meshRenderers_.clear();
   meshRendererGeometry_.clear();
-  m_readbackStagingTex= nullptr;
-  m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
-  m_readbackFence = nullptr;
-  m_readbackStagingWidth = 0;
+  for (auto& slot : m_readbackRing) {
+   slot.staging = nullptr;
+   slot.fence   = nullptr;
+   slot.signaledValue  = 0;
+   slot.completedValue = 0;
+  }
+  m_readbackRingIndex    = 0;
+  m_readbackStagingWidth  = 0;
   m_readbackStagingHeight = 0;
-  m_readbackFenceValue = 0;
+  m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
+  m_depthReadbackStaging    = nullptr;
+  m_depthReadbackFence      = nullptr;
+  m_depthReadbackWidth      = 0;
+  m_depthReadbackHeight     = 0;
+  m_depthReadbackFenceValue = 0;
   m_layerRT = nullptr;
   m_layerDepthTex = nullptr;
   for (auto& query : m_frameQueries) query = nullptr;
+  m_frameQueryActive = false;
   primitiveRenderer_.destroy();
   primitiveRenderer3D_.destroy();
   particleRenderer_.reset();
@@ -1735,6 +1825,8 @@ namespace {
  QString ArtifactIRenderer::lastPresentStatus() const { return impl_->lastPresentStatus(); }
  void ArtifactIRenderer::beginFrameCostCapture() { impl_->beginFrameCostCapture(); }
  void ArtifactIRenderer::endFrameCostCapture() { impl_->endFrameCostCapture(); }
+ void ArtifactIRenderer::beginFrameGpuProfiling() { impl_->beginFrameGpuProfiling(); }
+ void ArtifactIRenderer::endFrameGpuProfiling() { impl_->endFrameGpuProfiling(); }
  ArtifactCore::RenderCostStats ArtifactIRenderer::frameCostStats() const { return impl_->frameCostStats(); }
  double ArtifactIRenderer::lastFrameGpuTimeMs() const { return impl_->lastFrameGpuTimeMs(); }
 

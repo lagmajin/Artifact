@@ -9,6 +9,7 @@ module;
 #include <QIODevice>
 #include <QDir>
 #include <QFile>
+#include <QSaveFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -38,6 +39,7 @@ import Core.Diagnostics.Trace;
 import Application.AppSettings;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
+import Artifact.Project.Manager;
 import Artifact.Render.Queue.Service;
 import Artifact.Widgets.CompositionRenderController;
 import Artifact.Widgets.FramePipelineViewWidget;
@@ -95,6 +97,63 @@ QString debugMcpStateFilePath()
         rootDir.mkpath(QStringLiteral("ArtifactStudio"));
     }
     return rootDir.filePath(QStringLiteral("ArtifactStudio/debug-mcp-state.json"));
+}
+
+QString frameDebugBundleFilePath()
+{
+    const QString envPath = qEnvironmentVariable("ARTIFACT_FRAME_DEBUG_BUNDLE_FILE");
+    if (!envPath.trimmed().isEmpty()) {
+        return envPath;
+    }
+
+    const QString appDataRoot = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QDir appDataDir(appDataRoot);
+    if (!appDataDir.exists()) {
+        appDataDir.mkpath(QStringLiteral("."));
+    }
+
+    const QString projectRoot = ArtifactProjectManager::getInstance().currentProjectRootPath().trimmed();
+    if (!projectRoot.isEmpty()) {
+        const QString projectFolderName = QFileInfo(projectRoot).fileName().trimmed().isEmpty()
+                                              ? QStringLiteral("project")
+                                              : QFileInfo(projectRoot).fileName().trimmed();
+        QDir projectDir(appDataDir.filePath(QStringLiteral("FrameDebug")));
+        if (!projectDir.exists(projectFolderName)) {
+            projectDir.mkpath(projectFolderName);
+        }
+        return projectDir.filePath(projectFolderName + QStringLiteral("/frame-debug-bundle.json"));
+    }
+
+    QDir rootDir(appDataDir.filePath(QStringLiteral("FrameDebug")));
+    if (!rootDir.exists()) {
+        rootDir.mkpath(QStringLiteral("."));
+    }
+    return rootDir.filePath(QStringLiteral("frame-debug-bundle.json"));
+}
+
+bool writeJsonObjectFile(const QString& filePath, const QJsonObject& object)
+{
+    QSaveFile file(filePath);
+    if (!file.open(QIODevice::WriteOnly)) {
+        return false;
+    }
+
+    const QJsonDocument doc(object);
+    if (file.write(doc.toJson(QJsonDocument::Indented)) < 0) {
+        return false;
+    }
+    return file.commit();
+}
+
+QJsonObject readJsonObjectFile(const QString& filePath)
+{
+    QFile file(filePath);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+
+    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
+    return doc.isObject() ? doc.object() : QJsonObject{};
 }
 
 QJsonObject readDebugMcpStateObject()
@@ -451,12 +510,71 @@ public:
     QWidget* exportPage_ = nullptr;
     QLabel* exportSummary_ = nullptr;
     QPlainTextEdit* exportText_ = nullptr;
+    QString captureBundlePath_;
+    qint64 captureBundleStampMs_ = -1;
     CompositionRenderController* controller_ = nullptr;
     int timerId_ = 0;
 
     explicit Impl(AppDebuggerWidget* owner, CompositionRenderController* controller)
         : owner_(owner), controller_(controller)
     {}
+
+    void restoreCaptureBundle()
+    {
+        captureBundlePath_ = frameDebugBundleFilePath();
+        const QJsonObject json = readJsonObjectFile(captureBundlePath_);
+        if (json.isEmpty()) {
+            captureBundleStampMs_ = -1;
+            return;
+        }
+
+        const auto bundle = ArtifactCore::FrameDebugBundle::fromJson(json);
+        if (bundle.capture.captureId.isEmpty() && bundle.history.empty()) {
+            captureBundleStampMs_ = -1;
+            return;
+        }
+
+        captureBundle_ = bundle;
+        hasCaptureBundle_ = true;
+        captureSelectedRow_ = 0;
+        captureBundleStampMs_ = QFileInfo(captureBundlePath_).lastModified().toMSecsSinceEpoch();
+    }
+
+    void persistCaptureBundle() const
+    {
+        if (!hasCaptureBundle_) {
+            return;
+        }
+        writeJsonObjectFile(captureBundlePath_.isEmpty() ? frameDebugBundleFilePath() : captureBundlePath_,
+                            captureBundle_.toJson());
+    }
+
+    void refreshCaptureBundleFromDisk()
+    {
+        const QString path = captureBundlePath_.isEmpty() ? frameDebugBundleFilePath() : captureBundlePath_;
+        const QFileInfo info(path);
+        if (!info.exists()) {
+            return;
+        }
+        const qint64 stampMs = info.lastModified().toMSecsSinceEpoch();
+        if (stampMs <= 0 || stampMs == captureBundleStampMs_) {
+            return;
+        }
+
+        const QJsonObject json = readJsonObjectFile(path);
+        if (json.isEmpty()) {
+            return;
+        }
+        const auto bundle = ArtifactCore::FrameDebugBundle::fromJson(json);
+        if (bundle.capture.captureId.isEmpty() && bundle.history.empty()) {
+            return;
+        }
+
+        captureBundle_ = bundle;
+        hasCaptureBundle_ = true;
+        captureSelectedRow_ = 0;
+        captureBundleStampMs_ = stampMs;
+    }
 
     void setupUI()
     {
@@ -528,6 +646,9 @@ public:
         captureHistorySplitter->setStretchFactor(0, 1);
         captureHistorySplitter->setStretchFactor(1, 3);
         captureLayout->addWidget(captureHistorySplitter);
+        restoreCaptureBundle();
+        syncCaptureHistoryList();
+        updateCaptureHistoryText();
 
         statePage_ = new QWidget(tabs_);
         auto* stateLayout = new QVBoxLayout(statePage_);
@@ -859,6 +980,67 @@ public:
                 .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.psoSwitches)))
                 .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.srbCommits)))
                 .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.bufferUpdates)));
+    }
+
+    static QString perfBaselineText(const ArtifactCore::FrameDebugSnapshot& snapshot,
+                                    CompositionRenderController* controller)
+    {
+        const double lastMs = controller ? controller->lastFrameTimeMs()
+                                         : snapshot.renderLastFrameMs;
+        const double avgMs = controller ? controller->averageFrameTimeMs()
+                                        : snapshot.renderAverageFrameMs;
+        const int visibleLayers = std::max(0, snapshot.visibleLayerCount);
+        const double drawPerVisibleLayer =
+            visibleLayers > 0
+                ? static_cast<double>(snapshot.renderCost.drawCalls) /
+                      static_cast<double>(visibleLayers)
+                : 0.0;
+        const double bufferUpdatesPerVisibleLayer =
+            visibleLayers > 0
+                ? static_cast<double>(snapshot.renderCost.bufferUpdates) /
+                      static_cast<double>(visibleLayers)
+                : 0.0;
+        const bool gpuTimerLooksActive =
+            snapshot.renderGpuFrameMs > 0.001 || snapshot.renderCost.drawCalls == 0;
+
+        QStringList lines;
+        lines << QStringLiteral("Composition Editor Perf Baseline");
+        lines << QStringLiteral("  frame: %1").arg(snapshot.frame.framePosition());
+        lines << QStringLiteral("  composition: %1")
+                     .arg(snapshot.compositionName.isEmpty()
+                              ? QStringLiteral("<none>")
+                              : snapshot.compositionName);
+        lines << QStringLiteral("  backend: %1")
+                     .arg(snapshot.renderBackend.isEmpty()
+                              ? QStringLiteral("<none>")
+                              : snapshot.renderBackend);
+        lines << QStringLiteral("  layers: total=%1 visible=%2 text=%3")
+                     .arg(snapshot.totalLayerCount)
+                     .arg(snapshot.visibleLayerCount)
+                     .arg(snapshot.textLayerCount);
+        lines << QStringLiteral("  timingMs: last=%1 avg=%2 gpu=%3")
+                     .arg(QString::number(lastMs, 'f', 2))
+                     .arg(QString::number(avgMs, 'f', 2))
+                     .arg(QString::number(snapshot.renderGpuFrameMs, 'f', 2));
+        lines << QStringLiteral("  renderCost: draw=%1 indexed=%2 pso=%3 srb=%4 bufferUpdates=%5")
+                     .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.drawCalls)))
+                     .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.indexedDrawCalls)))
+                     .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.psoSwitches)))
+                     .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.srbCommits)))
+                     .arg(QString::number(static_cast<qulonglong>(snapshot.renderCost.bufferUpdates)));
+        lines << QStringLiteral("  perVisibleLayer: draw=%1 bufferUpdates=%2")
+                     .arg(QString::number(drawPerVisibleLayer, 'f', 2))
+                     .arg(QString::number(bufferUpdatesPerVisibleLayer, 'f', 2));
+        lines << QStringLiteral("  gpuTimer: %1")
+                     .arg(gpuTimerLooksActive ? QStringLiteral("active-or-idle")
+                                              : QStringLiteral("not-updating"));
+        lines << QStringLiteral("  nPlusOneSignal: %1")
+                     .arg(visibleLayers > 0 &&
+                                  snapshot.renderCost.bufferUpdates >
+                                      static_cast<std::uint64_t>(visibleLayers)
+                              ? QStringLiteral("bufferUpdates exceed visible layer count")
+                              : QStringLiteral("not-obvious-from-snapshot"));
+        return lines.join(QStringLiteral("\n"));
     }
 
     static QString playbackQualityText(ArtifactPlaybackService* playbackSvc,
@@ -1232,6 +1414,7 @@ public:
 
     void refresh()
     {
+        refreshCaptureBundleFromDisk();
         const auto trace = ArtifactCore::TraceRecorder::instance().snapshot();
         const auto projectSvc = ArtifactProjectService::instance();
         const auto playbackSvc = ArtifactPlaybackService::instance();
@@ -1524,11 +1707,12 @@ public:
                                           .arg(visualDensityMonitorText(controllerSnapshot))
                                           .arg(warningText)
                                           .arg(nextText));
-            overviewSummary_->setToolTip(QStringLiteral("failedPasses=%1 totalPassUs=%2 queueJobs=%3 traceThreads=%4")
+            overviewSummary_->setToolTip(QStringLiteral("failedPasses=%1 totalPassUs=%2 queueJobs=%3 traceThreads=%4 bundle=%5")
                                              .arg(failedPasses)
                                              .arg(totalPassUs)
                                              .arg(queueSvc ? queueSvc->jobCount() : 0)
-                                             .arg(static_cast<int>(trace.threads.size())));
+                                             .arg(static_cast<int>(trace.threads.size()))
+                                             .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>")));
         }
 
         if (captureSummary_) {
@@ -1560,9 +1744,11 @@ public:
                                          .arg(static_cast<int>(controllerSnapshot.attachments.size()))
                                          .arg(static_cast<int>(trace.events.size()))
                                          .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>")));
-            captureSummary_->setToolTip(QStringLiteral("history=%1  currentCapture=%2")
+            captureSummary_->setToolTip(QStringLiteral("history=%1  currentCapture=%2  bundlePath=%3  updated=%4")
                                             .arg(hasCaptureBundle_ ? static_cast<int>(captureBundle_.history.size()) : 0)
-                                            .arg(hasCaptureBundle_ ? captureBundle_.capture.captureId : QStringLiteral("<none>")));
+                                            .arg(hasCaptureBundle_ ? captureBundle_.capture.captureId : QStringLiteral("<none>"))
+                                            .arg(captureBundlePath_.isEmpty() ? QStringLiteral("<unset>") : captureBundlePath_)
+                                            .arg(captureBundleStampMs_ > 0 ? QString::number(captureBundleStampMs_) : QStringLiteral("<unset>")));
         }
 
         if (hasControllerSnapshot) {
@@ -1592,6 +1778,7 @@ public:
             } else {
                 captureBundle_.capture = currentCapture;
             }
+            persistCaptureBundle();
         }
 
         syncCaptureHistoryList();
@@ -2104,7 +2291,7 @@ public:
         if (exportText_) {
             QStringList lines;
             lines << QStringLiteral("App Debug Export");
-            lines << QStringLiteral("summary:");
+            lines << QStringLiteral("shareableSummary:");
             lines << QStringLiteral("  frame: %1").arg(controllerSnapshot.frame.framePosition());
             lines << QStringLiteral("  composition: %1")
                           .arg(controllerSnapshot.compositionName.isEmpty() ? QStringLiteral("<none>")
@@ -2144,6 +2331,22 @@ public:
                                                  QStringLiteral("Blend / Mask Contract")));
             lines << QStringLiteral("  glyphState: %1")
                           .arg(resourceStateText(controllerSnapshot, QStringLiteral("glyphAtlas"), QStringLiteral("Glyph Atlas")));
+            lines << QStringLiteral("  bundlePath: %1")
+                          .arg(captureBundlePath_.isEmpty() ? QStringLiteral("<unset>") : captureBundlePath_);
+            lines << QStringLiteral("  bundlePresent: %1")
+                          .arg(hasCaptureBundle_ ? QStringLiteral("true") : QStringLiteral("false"));
+            lines << QStringLiteral("  bundleHistory: %1")
+                          .arg(hasCaptureBundle_ ? static_cast<int>(captureBundle_.history.size()) : 0);
+            lines << QStringLiteral("  bundleId: %1")
+                          .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>"));
+            lines << QString();
+            lines << QStringLiteral("sharingNotes:");
+            lines << QStringLiteral("  - bundlePath is the file to hand off for reproduction");
+            lines << QStringLiteral("  - captureHistory is newest-last and selectedRow is reflected in the UI");
+            lines << QStringLiteral("  - the JSON blocks below are machine-readable, but the summary above is the preferred paste target");
+            lines << QString();
+            lines << perfBaselineText(controllerSnapshot, controller_);
+            lines << QString();
             if (hasCaptureBundle_) {
                 lines << QStringLiteral("CaptureBundle JSON:");
                 lines << QString::fromUtf8(QJsonDocument(captureBundle_.toJson()).toJson(QJsonDocument::Indented));
@@ -2169,9 +2372,11 @@ public:
                                         .arg(static_cast<int>(trace.crashes.size()))
                                         .arg(ArtifactCore::toString(controllerSnapshot.compareMode))
                                         .arg(hasCaptureBundle_ ? captureBundle_.bundleId : QStringLiteral("<none>")));
-            exportSummary_->setToolTip(QStringLiteral("latestCrash=%1  history=%2")
+            exportSummary_->setToolTip(QStringLiteral("latestCrash=%1  history=%2  path=%3  updated=%4")
                                            .arg(crashText)
-                                           .arg(hasCaptureBundle_ ? static_cast<int>(captureBundle_.history.size()) : 0));
+                                           .arg(hasCaptureBundle_ ? static_cast<int>(captureBundle_.history.size()) : 0)
+                                           .arg(captureBundlePath_.isEmpty() ? QStringLiteral("<unset>") : captureBundlePath_)
+                                           .arg(captureBundleStampMs_ > 0 ? QString::number(captureBundleStampMs_) : QStringLiteral("<unset>")));
         }
     }
 };

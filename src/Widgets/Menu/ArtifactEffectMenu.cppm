@@ -41,7 +41,7 @@ EffectMenuCategory categoryForEffect(const EffectInfo& info)
   const QString name = info.displayName.toLower();
 
   if (id.startsWith(QStringLiteral("ofx."))) {
-    return {QStringLiteral("OFX"), QStringLiteral("Studio/effectmenu_settings.svg")};
+    return {QStringLiteral("OFX"), QStringLiteral("Studio/effect_ops_ofx.svg")};
   }
   if (id.contains(QStringLiteral("colorcorrection")) ||
       name.contains(QStringLiteral("color")) ||
@@ -53,7 +53,7 @@ EffectMenuCategory categoryForEffect(const EffectInfo& info)
       name.contains(QStringLiteral("tint")) ||
       name.contains(QStringLiteral("filter")) ||
       name.contains(QStringLiteral("gamma"))) {
-    return {QStringLiteral("カラー"), QStringLiteral("Studio/effectmenu_palette.svg")};
+    return {QStringLiteral("カラー"), QStringLiteral("Studio/effect_ops_color.svg")};
   }
   if (id.contains(QStringLiteral("blur")) ||
       id.contains(QStringLiteral("glow")) ||
@@ -62,7 +62,7 @@ EffectMenuCategory categoryForEffect(const EffectInfo& info)
       name.contains(QStringLiteral("glow")) ||
       name.contains(QStringLiteral("shadow")) ||
       name.contains(QStringLiteral("bloom"))) {
-    return {QStringLiteral("ブラー / ライト"), QStringLiteral("Studio/effectmenu_blur_on.svg")};
+    return {QStringLiteral("ブラー / ライト"), QStringLiteral("Studio/effect_ops_blur_light.svg")};
   }
   if (id.contains(QStringLiteral("distortion")) ||
       id.contains(QStringLiteral("displace")) ||
@@ -75,39 +75,39 @@ EffectMenuCategory categoryForEffect(const EffectInfo& info)
       name.contains(QStringLiteral("wave")) ||
       name.contains(QStringLiteral("twist")) ||
       name.contains(QStringLiteral("bend"))) {
-    return {QStringLiteral("ディストート"), QStringLiteral("Studio/effectmenu_transform.svg")};
+    return {QStringLiteral("ディストート"), QStringLiteral("Studio/effect_ops_distort.svg")};
   }
   if (id.contains(QStringLiteral("key")) ||
       name.contains(QStringLiteral("key"))) {
-    return {QStringLiteral("キーイング / マット"), QStringLiteral("Studio/effectmenu_check_circle.svg")};
+    return {QStringLiteral("キーイング / マット"), QStringLiteral("Studio/effect_ops_key.svg")};
   }
   if (id.contains(QStringLiteral("noise")) ||
       name.contains(QStringLiteral("noise")) ||
       name.contains(QStringLiteral("grain"))) {
-    return {QStringLiteral("ノイズ"), QStringLiteral("Studio/effectmenu_graphic_eq.svg")};
+    return {QStringLiteral("ノイズ"), QStringLiteral("Studio/effect_ops_noise.svg")};
   }
   if (id.contains(QStringLiteral("wipe")) ||
       name.contains(QStringLiteral("wipe"))) {
-    return {QStringLiteral("トランジション"), QStringLiteral("Studio/effectmenu_straighten.svg")};
+    return {QStringLiteral("トランジション"), QStringLiteral("Studio/effect_ops_transition.svg")};
   }
-  return {QStringLiteral("スタイライズ / 生成"), QStringLiteral("Studio/effectmenu_auto_awesome.svg")};
+  return {QStringLiteral("スタイライズ / 生成"), QStringLiteral("Studio/effect_ops_generate.svg")};
 }
 
 QString iconForEffect(const EffectInfo& info)
 {
   const QString id = info.id.toString();
   const QString name = info.displayName.toLower();
-  if (id.contains(QStringLiteral("blur"))) return QStringLiteral("Studio/effectmenu_blur_on.svg");
-  if (id.contains(QStringLiteral("glow")) || name.contains(QStringLiteral("bloom"))) return QStringLiteral("Studio/effectmenu_wb_sunny.svg");
-  if (id.contains(QStringLiteral("shadow"))) return QStringLiteral("Studio/effectmenu_vignette.svg");
-  if (id.contains(QStringLiteral("colorcorrection")) || name.contains(QStringLiteral("color"))) return QStringLiteral("Studio/effectmenu_palette.svg");
-  if (name.contains(QStringLiteral("brightness")) || name.contains(QStringLiteral("exposure"))) return QStringLiteral("Studio/effectmenu_brightness_6.svg");
-  if (name.contains(QStringLiteral("curves")) || name.contains(QStringLiteral("levels"))) return QStringLiteral("Studio/effectmenu_show_chart.svg");
-  if (id.contains(QStringLiteral("key"))) return QStringLiteral("Studio/effectmenu_check_circle.svg");
-  if (id.contains(QStringLiteral("noise"))) return QStringLiteral("Studio/effectmenu_graphic_eq.svg");
-  if (id.contains(QStringLiteral("wave")) || id.contains(QStringLiteral("twist")) || id.contains(QStringLiteral("displace"))) return QStringLiteral("Studio/effectmenu_swirl.svg");
-  if (id.startsWith(QStringLiteral("ofx."))) return QStringLiteral("Studio/effectmenu_settings.svg");
-  return QStringLiteral("Studio/effectmenu_auto_awesome.svg");
+  if (id.contains(QStringLiteral("blur"))) return QStringLiteral("Studio/effect_ops_blur_light.svg");
+  if (id.contains(QStringLiteral("glow")) || name.contains(QStringLiteral("bloom"))) return QStringLiteral("Studio/effect_ops_blur_light.svg");
+  if (id.contains(QStringLiteral("shadow"))) return QStringLiteral("Studio/effect_ops_shadow.svg");
+  if (id.contains(QStringLiteral("colorcorrection")) || name.contains(QStringLiteral("color"))) return QStringLiteral("Studio/effect_ops_color.svg");
+  if (name.contains(QStringLiteral("brightness")) || name.contains(QStringLiteral("exposure"))) return QStringLiteral("Studio/effect_ops_blur_light.svg");
+  if (name.contains(QStringLiteral("curves")) || name.contains(QStringLiteral("levels"))) return QStringLiteral("Studio/effect_ops_curve.svg");
+  if (id.contains(QStringLiteral("key"))) return QStringLiteral("Studio/effect_ops_key.svg");
+  if (id.contains(QStringLiteral("noise"))) return QStringLiteral("Studio/effect_ops_noise.svg");
+  if (id.contains(QStringLiteral("wave")) || id.contains(QStringLiteral("twist")) || id.contains(QStringLiteral("displace"))) return QStringLiteral("Studio/effect_ops_distort.svg");
+  if (id.startsWith(QStringLiteral("ofx."))) return QStringLiteral("Studio/effect_ops_ofx.svg");
+  return QStringLiteral("Studio/effect_ops_generate.svg");
 }
 
 void forceMenuIconsVisible(QMenu* menu)
@@ -159,11 +159,11 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
 {
   inspectorAction_ = new QAction(QStringLiteral("エフェクトコントロール"), menu);
   inspectorAction_->setShortcut(QKeySequence(Qt::Key_F3));
-  inspectorAction_->setIcon(menuIcon(QStringLiteral("Studio/effectmenu_inspector.svg")));
+  inspectorAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_control.svg")));
 
   removeAllAction_ = new QAction(QStringLiteral("選択レイヤーのエフェクトをすべて削除"), menu);
   removeAllAction_->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_X));
-  removeAllAction_->setIcon(menuIcon(QStringLiteral("Studio/effectmenu_remove_all.svg")));
+  removeAllAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_remove_all.svg")));
 
   menu->addAction(inspectorAction_);
   menu->addSeparator();

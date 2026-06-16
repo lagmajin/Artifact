@@ -2268,6 +2268,21 @@ QColor curveTrackColorForKey(const QString& key)
   return QColor::fromHsv(static_cast<int>(hash % 360), 170, 220, 255);
 }
 
+bool curveTrackHasCustomHandles(const CurveTrack& track, int index)
+{
+  if (index < 0 || index >= static_cast<int>(track.keys.size())) {
+    return false;
+  }
+
+  const auto& key = track.keys[index];
+  const bool hasIncoming =
+      index > 0 && (key.inHandleFrame != 0 || std::abs(key.inHandleValue) > 0.0001f);
+  const bool hasOutgoing =
+      index + 1 < static_cast<int>(track.keys.size()) &&
+      (key.outHandleFrame != 0 || std::abs(key.outHandleValue) > 0.0001f);
+  return hasIncoming || hasOutgoing;
+}
+
 CurveEditorPayload collectCurveEditorPayload(
     const ArtifactCompositionPtr& composition,
     ArtifactLayerSelectionManager* selectionManager)
@@ -2342,8 +2357,30 @@ CurveEditorPayload collectCurveEditorPayload(
           curveKey.frame = frames[i];
           curveKey.value = static_cast<float>(values[i]);
           curveKey.smooth = interpolations[i] == ArtifactCore::InterpolationType::Bezier;
+          const auto& sourceKeyframe = keyframes[static_cast<size_t>(i)];
 
-          if (interpolations[i] != ArtifactCore::InterpolationType::Constant) {
+          if (i > 0 && keyframes[static_cast<size_t>(i - 1)].interpolation ==
+                           ArtifactCore::InterpolationType::Bezier) {
+            const auto& prevKeyframe = keyframes[static_cast<size_t>(i - 1)];
+            const double dt = std::max(
+                1.0, static_cast<double>(frames[i] - frames[i - 1]));
+            const double dv = values[i] - values[i - 1];
+            curveKey.inHandleFrame = static_cast<int64_t>(
+                std::llround((prevKeyframe.cp2_x - 1.0f) * dt));
+            curveKey.inHandleValue = static_cast<float>(
+                std::abs(dv) > 1e-6 ? (prevKeyframe.cp2_y - 1.0f) * dv : 0.0);
+          }
+
+          if (i + 1 < frames.size() &&
+              sourceKeyframe.interpolation == ArtifactCore::InterpolationType::Bezier) {
+            const double dt = std::max(
+                1.0, static_cast<double>(frames[i + 1] - frames[i]));
+            const double dv = values[i + 1] - values[i];
+            curveKey.outHandleFrame = static_cast<int64_t>(
+                std::llround(sourceKeyframe.cp1_x * dt));
+            curveKey.outHandleValue = static_cast<float>(
+                std::abs(dv) > 1e-6 ? sourceKeyframe.cp1_y * dv : 0.0);
+          } else if (interpolations[i] != ArtifactCore::InterpolationType::Constant) {
             const double prevFrame = (i > 0) ? static_cast<double>(frames[i - 1])
                                              : static_cast<double>(frames[i]);
             const double nextFrame =
@@ -2352,7 +2389,8 @@ CurveEditorPayload collectCurveEditorPayload(
             const double prevValue = (i > 0) ? values[i - 1] : values[i];
             const double nextValue =
                 (i + 1 < values.size()) ? values[i + 1] : values[i];
-            const double inSpan = std::max(1.0, (static_cast<double>(frames[i]) - prevFrame) / 3.0);
+            const double inSpan =
+                std::max(1.0, (static_cast<double>(frames[i]) - prevFrame) / 3.0);
             const double outSpan =
                 std::max(1.0, (nextFrame - static_cast<double>(frames[i])) / 3.0);
             const double inSlope =
@@ -2366,10 +2404,14 @@ CurveEditorPayload collectCurveEditorPayload(
                        (nextFrame - static_cast<double>(frames[i])))
                     : 0.0;
 
-            curveKey.inHandleFrame = -static_cast<int64_t>(std::llround(inSpan));
-            curveKey.outHandleFrame = static_cast<int64_t>(std::llround(outSpan));
-            curveKey.inHandleValue = static_cast<float>(-inSlope * inSpan);
-            curveKey.outHandleValue = static_cast<float>(outSlope * outSpan);
+            if (i > 0) {
+              curveKey.inHandleFrame = -static_cast<int64_t>(std::llround(inSpan));
+              curveKey.inHandleValue = static_cast<float>(-inSlope * inSpan);
+            }
+            if (i + 1 < frames.size()) {
+              curveKey.outHandleFrame = static_cast<int64_t>(std::llround(outSpan));
+              curveKey.outHandleValue = static_cast<float>(outSlope * outSpan);
+            }
           }
 
           track.keys.push_back(curveKey);
@@ -2560,13 +2602,109 @@ bool applyCurveEditorMove(
   const RationalTime oldTime(oldKey.frame, static_cast<int64_t>(std::llround(fps)));
   const RationalTime newTime(newFrame, static_cast<int64_t>(std::llround(fps)));
 
-  const bool roving = property->getKeyFrameRovingAt(oldTime);
+  const auto keyframes = property->getKeyFrames();
+  const auto it = std::find_if(
+      keyframes.cbegin(), keyframes.cend(),
+      [&oldTime](const ArtifactCore::KeyFrame& keyframe) {
+        return keyframe.time == oldTime;
+      });
+  if (it == keyframes.cend()) {
+    return false;
+  }
+
+  const auto preservedKeyframe = *it;
   if (property->hasKeyFrameAt(oldTime)) {
     property->removeKeyFrame(oldTime);
   }
   property->addKeyFrame(newTime, QVariant(newValue),
-                        oldKey.smooth ? ArtifactCore::InterpolationType::Bezier : ArtifactCore::InterpolationType::Linear,
-                        0.42f, 0.0f, 0.58f, 1.0f, roving);
+                        preservedKeyframe.interpolation, preservedKeyframe.cp1_x,
+                        preservedKeyframe.cp1_y, preservedKeyframe.cp2_x,
+                        preservedKeyframe.cp2_y, preservedKeyframe.roving);
+  layer->changed();
+  return true;
+}
+
+bool applyCurveEditorTrackToProperty(
+    const ArtifactCompositionPtr& composition, const CurveTrackBinding& binding,
+    const CurveTrack& track)
+{
+  if (!composition || binding.layerId.isNil() || track.keys.empty()) {
+    return false;
+  }
+
+  auto layer = composition->layerById(binding.layerId);
+  if (!layer) {
+    return false;
+  }
+
+  const auto property = findLayerPropertyByPath(layer, binding.propertyPath);
+  if (!property) {
+    return false;
+  }
+
+  const auto originalKeyframes = property->getKeyFrames();
+  if (originalKeyframes.size() != track.keys.size()) {
+    return false;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  std::vector<ArtifactCore::KeyFrame> updatedKeyframes = originalKeyframes;
+  for (int i = 0; i < static_cast<int>(track.keys.size()); ++i) {
+    const auto& trackKey = track.keys[static_cast<size_t>(i)];
+    auto& keyframe = updatedKeyframes[static_cast<size_t>(i)];
+    keyframe.time = RationalTime(
+        trackKey.frame, static_cast<int64_t>(std::llround(fps)));
+    keyframe.value = QVariant(trackKey.value);
+  }
+
+  for (int i = 0; i + 1 < static_cast<int>(track.keys.size()); ++i) {
+    const auto& current = track.keys[static_cast<size_t>(i)];
+    const auto& next = track.keys[static_cast<size_t>(i + 1)];
+    auto& keyframe = updatedKeyframes[static_cast<size_t>(i)];
+
+    if (keyframe.interpolation == ArtifactCore::InterpolationType::Constant) {
+      continue;
+    }
+
+    const double dt = std::max<int64_t>(1, next.frame - current.frame);
+    const double dv = static_cast<double>(next.value) - current.value;
+    const bool bezierSegment =
+        current.smooth || next.smooth || curveTrackHasCustomHandles(track, i) ||
+        curveTrackHasCustomHandles(track, i + 1);
+
+    if (!bezierSegment) {
+      if (keyframe.interpolation == ArtifactCore::InterpolationType::Bezier) {
+        keyframe.interpolation = ArtifactCore::InterpolationType::Linear;
+      }
+      keyframe.cp1_x = 0.42f;
+      keyframe.cp1_y = 0.0f;
+      keyframe.cp2_x = 0.58f;
+      keyframe.cp2_y = 1.0f;
+      continue;
+    }
+
+    keyframe.interpolation = ArtifactCore::InterpolationType::Bezier;
+    keyframe.cp1_x = static_cast<float>(
+        std::clamp(static_cast<double>(current.outHandleFrame) / dt, 0.0, 1.0));
+    keyframe.cp2_x = static_cast<float>(
+        std::clamp(1.0 + static_cast<double>(next.inHandleFrame) / dt, 0.0, 1.0));
+    if (std::abs(dv) > 1e-6) {
+      keyframe.cp1_y = static_cast<float>(current.outHandleValue / dv);
+      keyframe.cp2_y = static_cast<float>(1.0 + next.inHandleValue / dv);
+    } else {
+      keyframe.cp1_y = 0.0f;
+      keyframe.cp2_y = 1.0f;
+    }
+  }
+
+  property->clearKeyFrames();
+  for (const auto& keyframe : updatedKeyframes) {
+    property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation,
+                          keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
+                          keyframe.cp2_y, keyframe.roving);
+  }
+  layer->changed();
   return true;
 }
 
@@ -3024,7 +3162,7 @@ public:
     if (searchBar_) {
       searchPreferredWidth_ =
           std::max(searchBar_->width(), searchBar_->sizeHint().width());
-      searchMinimumWidth_ = std::max(96, searchBar_->minimumSizeHint().width());
+      searchMinimumWidth_ = std::max(220, searchBar_->minimumSizeHint().width());
     }
   }
 
@@ -3085,8 +3223,8 @@ private:
   QWidget *timecode_ = nullptr;
   QWidget *searchBar_ = nullptr;
   QWidget *switches_ = nullptr;
-  int searchPreferredWidth_ = 190;
-  int searchMinimumWidth_ = 96;
+  int searchPreferredWidth_ = 260;
+  int searchMinimumWidth_ = 220;
 };
 
 class ViewportResizeFilter final : public QObject {
@@ -3549,6 +3687,12 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
     return;
   }
 
+  const bool editableValueGraph =
+      impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Value;
+  impl_->curveEditor_->setKeyEditingEnabled(editableValueGraph);
+  impl_->curveEditor_->setHandleEditingEnabled(editableValueGraph &&
+                                               impl_->curveHandleEditingEnabled_);
+
   ArtifactCompositionPtr composition;
   if (auto* svc = ArtifactProjectService::instance()) {
     composition = svc->currentComposition().lock();
@@ -3658,12 +3802,18 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
   }
   if (impl_->curveEditorHandleButton_) {
     const QSignalBlocker blocker(impl_->curveEditorHandleButton_);
-    impl_->curveEditorHandleButton_->setChecked(impl_->curveHandleEditingEnabled_);
+    impl_->curveEditorHandleButton_->setEnabled(editableValueGraph);
+    impl_->curveEditorHandleButton_->setChecked(editableValueGraph &&
+                                                impl_->curveHandleEditingEnabled_);
     impl_->curveEditorHandleButton_->setText(
-        impl_->curveHandleEditingEnabled_ ? QStringLiteral("Handles On")
-                                          : QStringLiteral("Handles Off"));
+        !editableValueGraph
+            ? QStringLiteral("Handles N/A")
+            : (impl_->curveHandleEditingEnabled_ ? QStringLiteral("Handles On")
+                                                 : QStringLiteral("Handles Off")));
     impl_->curveEditorHandleButton_->setToolTip(
-        impl_->curveHandleEditingEnabled_
+        !editableValueGraph
+            ? QStringLiteral("Speed Graph is read-only")
+            : impl_->curveHandleEditingEnabled_
             ? QStringLiteral("Bezier handle editing is enabled")
             : QStringLiteral("Bezier handle editing is disabled for safer graph edits"));
   }
@@ -4002,6 +4152,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto layerTreeView = new ArtifactLayerTimelinePanelWrapper();
   layerTreeView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  layerTreeView->setVisible(false);
   impl_->layerTimelinePanel_ = layerTreeView;
 
   auto leftSplitter = new DraggableSplitter(Qt::Horizontal);
@@ -4317,8 +4468,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                    });
   leftHeader->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   searchBar->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
-  searchBar->setMinimumWidth(96);
-  searchBar->setFixedWidth(190);
+  searchBar->setMinimumWidth(220);
+  searchBar->setFixedWidth(260);
   searchModeCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   searchModeCombo->setMinimumWidth(120);
   displayModeCombo->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
@@ -4437,7 +4588,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   globalSwitches->setFixedWidth(globalSwitches->sizeHint().width());
 
   auto searchBarLayout = new QHBoxLayout();
-  searchBarLayout->setSpacing(8);
+  searchBarLayout->setSpacing(10);
   searchBarLayout->setContentsMargins(0, 0, 8, 0);
   searchBarLayout->addWidget(leftHeader);
   searchBarLayout->addWidget(searchBar);
@@ -4447,13 +4598,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->addWidget(keyframeStatusLabel);
   searchBarLayout->addWidget(easingLabButton);
   searchBarLayout->addWidget(keyPatternButton);
-  searchBarLayout->addWidget(currentLayerLabel);
-  searchBarLayout->addWidget(recentLayerLabel);
-  searchBarLayout->addWidget(selectionSummaryLabel);
-  searchBarLayout->addWidget(frameSummaryLabel);
-  searchBarLayout->addWidget(zoomSummaryLabel);
-  searchBarLayout->addWidget(globalSwitches);
   searchBarLayout->addStretch(1);
+  searchBarLayout->addWidget(globalSwitches);
   searchBarLayout->setStretch(0, 0);
   searchBarLayout->setStretch(1, 0);
   searchBarLayout->setStretch(2, 0);
@@ -4462,12 +4608,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   searchBarLayout->setStretch(5, 0);
   searchBarLayout->setStretch(6, 0);
   searchBarLayout->setStretch(7, 0);
-  searchBarLayout->setStretch(8, 0);
+  searchBarLayout->setStretch(8, 1);
   searchBarLayout->setStretch(9, 0);
-  searchBarLayout->setStretch(10, 0);
-  searchBarLayout->setStretch(11, 0);
-  searchBarLayout->setStretch(12, 0);
-  searchBarLayout->setStretch(13, 1);
 
   // legacy direct signal connection disabled — prefer EventBus
   if (false) QObject::connect(globalSwitches, &ArtifactTimelineGlobalSwitches::shyChanged,
@@ -5251,6 +5393,18 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        return;
                      }
                      impl_->curveEditorDragging_ = false;
+                     if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Value &&
+                         impl_->curveEditor_ &&
+                         impl_->curveBindings_.size() == impl_->curveEditor_->tracks().size()) {
+                       const auto composition = safeCompositionLookup(impl_->compositionId_);
+                       if (composition) {
+                         for (int i = 0; i < impl_->curveBindings_.size(); ++i) {
+                           applyCurveEditorTrackToProperty(
+                               composition, impl_->curveBindings_[i],
+                               impl_->curveEditor_->tracks()[static_cast<size_t>(i)]);
+                         }
+                       }
+                     }
                      refreshCurveEditorTracks();
                    });
   QObject::connect(curveEditor, &ArtifactCurveEditorWidget::keyMoved, this,
@@ -6768,15 +6922,15 @@ void ArtifactTimelineWidget::updateSelectionState()
   } else {
     impl_->currentLayerLabel_->setText(QStringLiteral("Current: Open a composition"));
   }
-  impl_->currentLayerLabel_->setVisible(true);
+  impl_->currentLayerLabel_->setVisible(false);
   if (impl_->recentLayerLabel_) {
     impl_->recentLayerLabel_->setText(formatRecentLayersText(impl_->recentLayerNames_));
-    impl_->recentLayerLabel_->setVisible(true);
+    impl_->recentLayerLabel_->setVisible(false);
   }
   if (impl_->frameSummaryLabel_) {
     impl_->frameSummaryLabel_->setText(
         QStringLiteral("Status: %1 | Frame: %2").arg(compositionLabel).arg(frameLabelValue));
-    impl_->frameSummaryLabel_->setVisible(true);
+    impl_->frameSummaryLabel_->setVisible(false);
   }
   if (impl_->selectionSummaryLabel_) {
     QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
@@ -6799,7 +6953,7 @@ void ArtifactTimelineWidget::updateSelectionState()
               .arg(effectiveSelectedCount)
               .arg(formatSelectedKeyframeSummary(selectedMarkers, frameLabelValue)));
     }
-    impl_->selectionSummaryLabel_->setVisible(true);
+    impl_->selectionSummaryLabel_->setVisible(false);
   }
   if (impl_->curveEditorSummaryLabel_) {
     const int curveCount = static_cast<int>(impl_->curveTracks_.size());

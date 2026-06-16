@@ -28,33 +28,33 @@ import Application.AppSettings;
 
 namespace {
 
-constexpr auto kToolbarIconHome = "MaterialVS/toolbar/home_surface.svg";
-constexpr auto kToolbarIconSelect = "MaterialVS/toolbar/tool_select.svg";
-constexpr auto kToolbarIconHand = "MaterialVS/toolbar/tool_hand.svg";
-constexpr auto kToolbarIconZoom = "MaterialVS/toolbar/tool_zoom.svg";
-constexpr auto kToolbarIconMove = "MaterialVS/toolbar/tool_move.svg";
-constexpr auto kToolbarIconRotate = "MaterialVS/toolbar/tool_rotate.svg";
-constexpr auto kToolbarIconScale = "MaterialVS/toolbar/tool_scale.svg";
-constexpr auto kToolbarIconCamera = "MaterialVS/toolbar/tool_camera.svg";
-constexpr auto kToolbarIconAnchor = "MaterialVS/toolbar/tool_anchor.svg";
-constexpr auto kToolbarIconShape = "MaterialVS/toolbar/tool_shape.svg";
-constexpr auto kToolbarIconPen = "MaterialVS/toolbar/tool_pen.svg";
-constexpr auto kToolbarIconText = "MaterialVS/toolbar/tool_text.svg";
-constexpr auto kToolbarIconBrush = "MaterialVS/toolbar/tool_brush.svg";
-constexpr auto kToolbarIconClone = "MaterialVS/toolbar/tool_clone.svg";
-constexpr auto kToolbarIconEraser = "MaterialVS/toolbar/tool_eraser.svg";
-constexpr auto kToolbarIconPuppet = "MaterialVS/toolbar/tool_puppet.svg";
-constexpr auto kToolbarIconZoomIn = "MaterialVS/toolbar/zoom_in.svg";
-constexpr auto kToolbarIconZoomOut = "MaterialVS/toolbar/zoom_out.svg";
-constexpr auto kToolbarIconZoom100 = "MaterialVS/toolbar/zoom_100.svg";
-constexpr auto kToolbarIconZoomFit = "MaterialVS/toolbar/zoom_fit.svg";
-constexpr auto kToolbarIconGridOn = "MaterialVS/toolbar/grid_on.svg";
-constexpr auto kToolbarIconGridOff = "MaterialVS/toolbar/grid_off.svg";
-constexpr auto kToolbarIconGuidesOn = "MaterialVS/toolbar/guides_on.svg";
-constexpr auto kToolbarIconGuidesOff = "MaterialVS/toolbar/guides_off.svg";
-constexpr auto kToolbarIconViewNormal = "MaterialVS/toolbar/view_normal.svg";
-constexpr auto kToolbarIconViewGrid = "MaterialVS/toolbar/view_grid.svg";
-constexpr auto kToolbarIconViewDetail = "MaterialVS/toolbar/view_detail.svg";
+constexpr auto kToolbarIconHome = "Studio/toolbar_home_surface.svg";
+constexpr auto kToolbarIconSelect = "Studio/toolbar_tool_select.svg";
+constexpr auto kToolbarIconHand = "Studio/toolbar_tool_hand.svg";
+constexpr auto kToolbarIconZoom = "Studio/toolbar_tool_zoom.svg";
+constexpr auto kToolbarIconMove = "Studio/toolbar_tool_move.svg";
+constexpr auto kToolbarIconRotate = "Studio/toolbar_tool_rotate.svg";
+constexpr auto kToolbarIconScale = "Studio/toolbar_tool_scale.svg";
+constexpr auto kToolbarIconCamera = "Studio/toolbar_tool_camera.svg";
+constexpr auto kToolbarIconAnchor = "Studio/toolbar_tool_anchor.svg";
+constexpr auto kToolbarIconShape = "Studio/toolbar_tool_shape.svg";
+constexpr auto kToolbarIconPen = "Studio/toolbar_tool_pen.svg";
+constexpr auto kToolbarIconText = "Studio/toolbar_tool_text.svg";
+constexpr auto kToolbarIconBrush = "Studio/toolbar_tool_brush.svg";
+constexpr auto kToolbarIconClone = "Studio/toolbar_tool_clone.svg";
+constexpr auto kToolbarIconEraser = "Studio/toolbar_tool_eraser.svg";
+constexpr auto kToolbarIconPuppet = "Studio/toolbar_tool_puppet.svg";
+constexpr auto kToolbarIconZoomIn = "Studio/toolbar_zoom_in.svg";
+constexpr auto kToolbarIconZoomOut = "Studio/toolbar_zoom_out.svg";
+constexpr auto kToolbarIconZoom100 = "Studio/toolbar_zoom_100.svg";
+constexpr auto kToolbarIconZoomFit = "Studio/toolbar_zoom_fit.svg";
+constexpr auto kToolbarIconGridOn = "Studio/toolbar_grid_on.svg";
+constexpr auto kToolbarIconGridOff = "Studio/toolbar_grid_off.svg";
+constexpr auto kToolbarIconGuidesOn = "Studio/toolbar_guides_on.svg";
+constexpr auto kToolbarIconGuidesOff = "Studio/toolbar_guides_off.svg";
+constexpr auto kToolbarIconViewNormal = "Studio/toolbar_view_normal.svg";
+constexpr auto kToolbarIconViewGrid = "Studio/toolbar_view_grid.svg";
+constexpr auto kToolbarIconViewDetail = "Studio/toolbar_view_detail.svg";
 
 // ショートカットをリッチフォーマットに変換
 QString formatShortcutForTooltip(const QKeySequence &shortcut) {

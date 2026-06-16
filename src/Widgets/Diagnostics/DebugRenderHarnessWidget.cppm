@@ -112,6 +112,55 @@ QString resourceNoteFromResource(const ArtifactCore::FrameDebugSnapshot& snapsho
     }
     return QStringLiteral("none");
 }
+
+QString perfBaselineText(const ArtifactCore::FrameDebugSnapshot& snapshot)
+{
+    const int visibleLayers = std::max(0, snapshot.visibleLayerCount);
+    const double drawPerVisibleLayer =
+        visibleLayers > 0
+            ? static_cast<double>(snapshot.renderCost.drawCalls) /
+                  static_cast<double>(visibleLayers)
+            : 0.0;
+    const double bufferUpdatesPerVisibleLayer =
+        visibleLayers > 0
+            ? static_cast<double>(snapshot.renderCost.bufferUpdates) /
+                  static_cast<double>(visibleLayers)
+            : 0.0;
+    const bool gpuTimerLooksActive =
+        snapshot.renderGpuFrameMs > 0.001 || snapshot.renderCost.drawCalls == 0;
+
+    QStringList lines;
+    lines << QStringLiteral("Perf Baseline");
+    lines << QStringLiteral("composition: %1")
+                 .arg(snapshot.compositionName.isEmpty()
+                          ? QStringLiteral("<none>")
+                          : snapshot.compositionName);
+    lines << QStringLiteral("backend: %1")
+                 .arg(snapshot.renderBackend.isEmpty()
+                          ? QStringLiteral("<none>")
+                          : snapshot.renderBackend);
+    lines << QStringLiteral("layers: total=%1 visible=%2 text=%3")
+                 .arg(snapshot.totalLayerCount)
+                 .arg(snapshot.visibleLayerCount)
+                 .arg(snapshot.textLayerCount);
+    lines << QStringLiteral("timingMs: last=%1 avg=%2 gpu=%3")
+                 .arg(QString::number(snapshot.renderLastFrameMs, 'f', 2))
+                 .arg(QString::number(snapshot.renderAverageFrameMs, 'f', 2))
+                 .arg(QString::number(snapshot.renderGpuFrameMs, 'f', 2));
+    lines << QStringLiteral("renderCost: draw=%1 indexed=%2 pso=%3 srb=%4 bufferUpdates=%5")
+                 .arg(static_cast<qulonglong>(snapshot.renderCost.drawCalls))
+                 .arg(static_cast<qulonglong>(snapshot.renderCost.indexedDrawCalls))
+                 .arg(static_cast<qulonglong>(snapshot.renderCost.psoSwitches))
+                 .arg(static_cast<qulonglong>(snapshot.renderCost.srbCommits))
+                 .arg(static_cast<qulonglong>(snapshot.renderCost.bufferUpdates));
+    lines << QStringLiteral("perVisibleLayer: draw=%1 bufferUpdates=%2")
+                 .arg(QString::number(drawPerVisibleLayer, 'f', 2))
+                 .arg(QString::number(bufferUpdatesPerVisibleLayer, 'f', 2));
+    lines << QStringLiteral("gpuTimer: %1")
+                 .arg(gpuTimerLooksActive ? QStringLiteral("active-or-idle")
+                                          : QStringLiteral("not-updating"));
+    return lines.join(QStringLiteral("\n"));
+}
 }
 
 W_OBJECT_IMPL(DebugRenderHarnessWidget)
@@ -791,6 +840,8 @@ public:
             if (!snapshot_.failureReason.isEmpty()) {
                 lines << QStringLiteral("failureReason: %1").arg(snapshot_.failureReason);
             }
+            lines << QString();
+            lines << perfBaselineText(snapshot_);
         } else {
             lines << QStringLiteral("<no frame snapshot>");
         }

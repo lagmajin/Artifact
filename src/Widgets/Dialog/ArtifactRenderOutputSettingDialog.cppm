@@ -199,13 +199,14 @@ namespace Artifact
                .arg((nvencH264 || nvencHevc) ? QStringLiteral("NVENC available") : QStringLiteral("NVENC unavailable, will fallback"));
    lines << QStringLiteral("Vulkan encode: %1")
                .arg((vulkanH264 || vulkanHevc) ? QStringLiteral("available") : QStringLiteral("unavailable"));
+   lines << QStringLiteral("Fallback order: pipe-hw -> pipe-vulkan -> native -> pipe");
    if (visibleCodecs.isEmpty()) {
      lines << QStringLiteral("FFmpeg codecs: unavailable");
    } else {
      lines << QStringLiteral("FFmpeg codecs: %1").arg(visibleCodecs.join(QStringLiteral(", ")));
    }
    backendInfoLabel->setText(lines.join(QStringLiteral(" | ")));
-   backendInfoLabel->setToolTip(QStringLiteral("pipe-hw tries NVENC through FFmpeg.exe. pipe-vulkan tries h264_vulkan/hevc_vulkan and falls back to the software pipe backend if unavailable."));
+   backendInfoLabel->setToolTip(QStringLiteral("pipe-hw tries NVENC through FFmpeg.exe. pipe-vulkan tries h264_vulkan/hevc_vulkan. If they fail, Render Queue falls back in order to native FFmpeg, then pipe."));
  }
 
  QString ArtifactRenderOutputSettingDialog::Impl::resolveFfmpegExePath()
@@ -356,11 +357,18 @@ namespace Artifact
    if (advancedTimecodeLabel) {
      advancedTimecodeLabel->setText(QStringLiteral("ソース準拠 / %1 fps").arg(fpsText));
    }
-   if (advancedColorLabel) {
-     advancedColorLabel->setText(QStringLiteral("%1 / Rec.709").arg(backend == QStringLiteral("gpu") ? QStringLiteral("GPU") : QStringLiteral("自動")));
-   }
-   if (advancedEncodeLabel) {
-     QString text = QStringLiteral("2-pass / HW 支援 / 連続書き出し");
+  if (advancedColorLabel) {
+    advancedColorLabel->setText(QStringLiteral("%1 / Rec.709").arg(backend == QStringLiteral("gpu") ? QStringLiteral("GPU") : QStringLiteral("自動")));
+  }
+  if (advancedFilenameLabel) {
+    const QString backendText = backend == QStringLiteral("auto")
+        ? QStringLiteral("auto")
+        : backend;
+    advancedFilenameLabel->setText(QStringLiteral("ProjectName_[Preset]_[Date] / %1 / %2")
+                                      .arg(container, backendText));
+  }
+  if (advancedEncodeLabel) {
+    QString text = QStringLiteral("2-pass / HW 支援 / 連続書き出し");
      if (container == QStringLiteral("MOV") && codec == QStringLiteral("ProRes")) {
        text = QStringLiteral("ProRes 4444 推奨 / 透過対応");
      } else if (container == QStringLiteral("WebM") || codec == QStringLiteral("VP9")) {
