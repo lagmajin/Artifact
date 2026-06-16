@@ -21,6 +21,7 @@ module;
 #include <QPainter>
 #include <QImage>
 #include <QVector>
+#include <QVariant>
 #include <QtConcurrent>
 #include <QFutureWatcher>
 #include <wobjectimpl.h>
@@ -30,6 +31,7 @@ import std;
 
 import Artifact.Project.Manager;
 import Artifact.Project.Packager;
+import Artifact.Composition.Abstract;
 import Artifact.Composition.InitParams;
 import Artifact.Service.Project;
 import Application.AppSettings;
@@ -43,7 +45,8 @@ import Artifact.Layers.SolidImage;
 namespace Artifact {
 using namespace ArtifactCore;
 namespace {
-constexpr int kMaxRecentProjects = 5;
+constexpr int kMaxRecentProjects = 10;
+constexpr int kMaxRecentCompositions = 10;
 
 void addRecentProject(const QString& path)
 {
@@ -61,6 +64,40 @@ void addRecentProject(const QString& path)
         recent.removeLast();
     }
     settings->setRecentProjectPaths(recent);
+}
+
+void addRecentComposition(const QString& projectPath, const QString& compId,
+                          const QString& compName)
+{
+    if (projectPath.isEmpty() || compId.isEmpty()) {
+        return;
+    }
+    auto* settings = ArtifactAppSettings::instance();
+    if (!settings) {
+        return;
+    }
+    auto entries = settings->recentCompositionEntries();
+    QVariantList pruned;
+    pruned.reserve(entries.size() + 1);
+    // Drop any prior entry pointing at the same (project, comp) pair so the
+    // most recent access floats to the top.
+    for (const QVariant& v : entries) {
+        const QVariantMap m = v.toMap();
+        if (m.value(QStringLiteral("project")).toString() == projectPath &&
+            m.value(QStringLiteral("comp")).toString() == compId) {
+            continue;
+        }
+        pruned.append(v);
+    }
+    QVariantMap fresh;
+    fresh.insert(QStringLiteral("project"), projectPath);
+    fresh.insert(QStringLiteral("comp"), compId);
+    fresh.insert(QStringLiteral("name"), compName);
+    pruned.prepend(fresh);
+    while (pruned.size() > kMaxRecentCompositions) {
+        pruned.removeLast();
+    }
+    settings->setRecentCompositionEntries(pruned);
 }
 
 QStringList pruneMissingRecentProjects(const QStringList& paths)
@@ -177,7 +214,9 @@ public:
     QAction* exportWorkAreaAction = nullptr;
     QAction* exportProjectPackageAction = nullptr;
     QMenu* recentProjectsMenu = nullptr;
+    QMenu* recentCompositionsMenu = nullptr;
     QStringList cachedRecentProjects_; // 変更がない場合にメニューを再構築しないためのキャッシュ
+    QVariantList cachedRecentCompositions_; // 同上（コンポジションRecent）
     ArtifactFileMenu* menu_ = nullptr;
 
     void rebuildMenu();
@@ -191,7 +230,7 @@ public:
     void handleExportCurrentFrame();
     void handleExportWorkArea();
     void handleExportProjectPackage();
-    void openProjectPath(const QString& path, bool addToRecent);
+    void openProjectPath(const QString& path, bool addToRecent, const QString& targetCompId = QString());
 };
 
 ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
@@ -247,6 +286,8 @@ ArtifactFileMenu::Impl::Impl(ArtifactFileMenu* menu)
     menu->addAction(revealProjectFolderAction);
     recentProjectsMenu = menu->addMenu("最近使ったプロジェクト");
     recentProjectsMenu->setIcon(QIcon(resolveIconPath("Studio/filemenu_recent_projects.svg")));
+    recentCompositionsMenu = menu->addMenu("最近使ったコンポジション");
+    recentCompositionsMenu->setIcon(QIcon(resolveIconPath("Studio/filemenu_recent_projects.svg")));
     menu->addSeparator();
     menu->addAction(restartAction);
     menu->addAction(quitAction);
@@ -446,7 +487,7 @@ void ArtifactFileMenu::Impl::handleRevealProjectFolder()
     QDesktopServices::openUrl(QUrl::fromLocalFile(QFileInfo(path).absolutePath()));
 }
 
-void ArtifactFileMenu::Impl::openProjectPath(const QString& path, bool addToRecent)
+void ArtifactFileMenu::Impl::openProjectPath(const QString& path, bool addToRecent, const QString& targetCompId)
 {
     if (!menu_ || path.isEmpty()) {
         return;
@@ -478,6 +519,33 @@ void ArtifactFileMenu::Impl::openProjectPath(const QString& path, bool addToRece
     if (addToRecent) {
         addRecentProject(afterPath.isEmpty() ? path : afterPath);
     }
+
+    auto* svc = ArtifactProjectService::instance();
+    QString resolvedCompId = targetCompId;
+    QString resolvedCompName;
+    if (!targetCompId.isEmpty() && svc) {
+        // Try to switch to the requested composition before we cache it
+        // in the Recent list, so the entry reflects what the user asked
+        // for (not whatever the loader happened to leave active).
+        if (svc->findComposition(CompositionID(targetCompId)).success) {
+            svc->changeCurrentComposition(CompositionID(targetCompId));
+        }
+    }
+    if (svc) {
+        if (auto comp = svc->currentComposition().lock()) {
+            resolvedCompId = comp->id().toString();
+            const UniString nameUni = comp->settings().compositionName();
+            resolvedCompName = nameUni.toQString();
+        }
+    }
+    if (resolvedCompId.isEmpty()) {
+        return;
+    }
+    if (resolvedCompName.isEmpty()) {
+        resolvedCompName = QStringLiteral("Composition");
+    }
+    addRecentComposition(afterPath.isEmpty() ? path : afterPath,
+                         resolvedCompId, resolvedCompName);
 }
 
 void ArtifactFileMenu::Impl::handleExportCurrentFrame()
@@ -744,6 +812,49 @@ void ArtifactFileMenu::Impl::rebuildMenu()
                             return;
                         }
                         openProjectPath(path, true);
+                    });
+                }
+            }
+        }
+    }
+
+    if (recentCompositionsMenu) {
+        auto* settings = ArtifactAppSettings::instance();
+        const auto entries = settings ? settings->recentCompositionEntries() : QVariantList{};
+        if (entries != cachedRecentCompositions_) {
+            cachedRecentCompositions_ = entries;
+            recentCompositionsMenu->clear();
+            if (entries.isEmpty()) {
+                auto* noRecent = recentCompositionsMenu->addAction("なし");
+                noRecent->setIcon(QIcon(resolveIconPath("Studio/filemenu_empty_recent.svg")));
+                noRecent->setEnabled(false);
+            } else {
+                for (const QVariant& v : entries) {
+                    const QVariantMap m = v.toMap();
+                    const QString projectPath = m.value(QStringLiteral("project")).toString();
+                    const QString compId = m.value(QStringLiteral("comp")).toString();
+                    const QString compName = m.value(QStringLiteral("name")).toString();
+                    if (projectPath.isEmpty() || compId.isEmpty()) {
+                        continue;
+                    }
+                    QFileInfo fi(projectPath);
+                    const QString label = compName.isEmpty()
+                        ? fi.fileName()
+                        : QStringLiteral("%1 — %2").arg(compName, fi.fileName());
+                    auto* entry = recentCompositionsMenu->addAction(label);
+                    entry->setIcon(QIcon(resolveIconPath("Studio/filemenu_open_project.svg")));
+                    entry->setStatusTip(projectPath);
+                    entry->setToolTip(projectPath);
+                    QObject::connect(entry, &QAction::triggered, menu_, [this, projectPath, compId]() {
+                        if (!confirmUnsavedChanges(menu_, QStringLiteral("最近使ったコンポジションを開く"))) {
+                            return;
+                        }
+                        if (!QFileInfo(projectPath).exists()) {
+                            QMessageBox::warning(menu_, QStringLiteral("最近使ったコンポジション"),
+                                QStringLiteral("プロジェクトが見つかりません。\n%1").arg(projectPath));
+                            return;
+                        }
+                        openProjectPath(projectPath, true, compId);
                     });
                 }
             }

@@ -89,6 +89,25 @@ QString SetPropertyCommand::label() const {
     return QStringLiteral("Set Property: %1").arg(name_.toQString());
 }
 
+std::unique_ptr<UndoCommand> SetPropertyCommand::cloneForRepeat() const {
+    auto target = target_.lock();
+    if (!target) {
+        return nullptr;
+    }
+    // For a repeat we want the next "before" to be the current value of
+    // the property (i.e. the value left behind by the previous redo), so
+    // that subsequent undo/redo steps land on the same final state.
+    const QString propertyName = name_.toQString();
+    QVariant currentValue = newValue_;
+    for (const auto& prop : target->getProperties()) {
+        if (prop.getName() == propertyName) {
+            currentValue = prop.getValue();
+            break;
+        }
+    }
+    return std::make_unique<SetPropertyCommand>(target, name_, currentValue, newValue_);
+}
+
 // --- MoveLayerCommand ---
 MoveLayerCommand::MoveLayerCommand(ArtifactAbstractLayerPtr layer, float deltaX, float deltaY, int64_t frame)
     : layer_(layer), dx_(deltaX), dy_(deltaY), frame_(frame) {}
@@ -115,6 +134,17 @@ void MoveLayerCommand::redo() {
 
 QString MoveLayerCommand::label() const {
     return QStringLiteral("Move Layer");
+}
+
+std::unique_ptr<UndoCommand> MoveLayerCommand::cloneForRepeat() const {
+    auto layer = layer_.lock();
+    if (!layer) {
+        return nullptr;
+    }
+    // The same delta is reapplied at the same frame. This produces
+    // additive moves (e.g. "nudge right" repeats keep marching right) which
+    // is the intuitive behavior for repeat-last-action.
+    return std::make_unique<MoveLayerCommand>(layer, dx_, dy_, frame_);
 }
 
 // --- AddLayerCommand ---
@@ -148,6 +178,17 @@ QString AddLayerCommand::label() const {
         return QStringLiteral("Add Layer: %1").arg(layer_->id().toString());
     }
     return QStringLiteral("Add Layer");
+}
+
+std::unique_ptr<UndoCommand> AddLayerCommand::cloneForRepeat() const {
+    auto comp = comp_.lock();
+    if (!comp || !layer_) {
+        return nullptr;
+    }
+    // Repeat adds a fresh instance of the same layer with the same stack
+    // position, mirroring the original "add" behavior. The new layer gets
+    // its own id from the composition's appendLayer path.
+    return std::make_unique<AddLayerCommand>(comp, layer_, atTop_);
 }
 
 // --- RemoveLayerCommand ---
@@ -189,6 +230,15 @@ QString RemoveLayerCommand::label() const {
         return QStringLiteral("Remove Layer: %1").arg(layer_->id().toString());
     }
     return QStringLiteral("Remove Layer");
+}
+
+std::unique_ptr<UndoCommand> RemoveLayerCommand::cloneForRepeat() const {
+    auto comp = comp_.lock();
+    if (!comp || !layer_) {
+        return nullptr;
+    }
+    // Reuses the same layer pointer; originalIndex_ is recomputed on redo.
+    return std::make_unique<RemoveLayerCommand>(comp, layer_);
 }
 
 namespace {
@@ -239,6 +289,23 @@ QString MaskEditCommand::label() const {
     return QStringLiteral("Edit Mask");
 }
 
+std::unique_ptr<UndoCommand> MaskEditCommand::cloneForRepeat() const {
+    auto layer = layer_.lock();
+    if (!layer) {
+        return nullptr;
+    }
+    // Capture the layer's current mask set as the new "before" snapshot
+    // so the repeat undo lands back on the latest state, not the original.
+    std::vector<LayerMask> currentMasks;
+    if (layer->hasMasks()) {
+        currentMasks.reserve(static_cast<std::size_t>(layer->maskCount()));
+        for (int i = 0; i < layer->maskCount(); ++i) {
+            currentMasks.push_back(layer->mask(i));
+        }
+    }
+    return std::make_unique<MaskEditCommand>(layer, std::move(currentMasks), afterMasks_);
+}
+
 // --- ChangeLayerMatteReferencesCommand ---
 ChangeLayerMatteReferencesCommand::ChangeLayerMatteReferencesCommand(
     ArtifactAbstractLayerPtr layer,
@@ -264,6 +331,15 @@ void ChangeLayerMatteReferencesCommand::redo() {
 
 QString ChangeLayerMatteReferencesCommand::label() const {
     return QStringLiteral("Edit Track Mattes");
+}
+
+std::unique_ptr<UndoCommand> ChangeLayerMatteReferencesCommand::cloneForRepeat() const {
+    auto layer = layer_.lock();
+    if (!layer) {
+        return nullptr;
+    }
+    return std::make_unique<ChangeLayerMatteReferencesCommand>(
+        layer, layer->matteReferences(), afterRefs_);
 }
 
 
@@ -373,6 +449,43 @@ bool UndoManager::hasUnsavedChanges() const { return impl_->version_ != impl_->s
 void UndoManager::markAsSaved() { impl_->savedVersion_ = impl_->version_; }
 int64_t UndoManager::currentVersion() const { return impl_->version_; }
 
+bool UndoManager::canRepeat() const {
+    if (impl_->undoStack.empty()) {
+        return false;
+    }
+    const auto& top = impl_->undoStack.back();
+    if (!top) {
+        return false;
+    }
+    // Probe cloneForRepeat() without committing to a clone.
+    return top->cloneForRepeat() != nullptr;
+}
+
+QString UndoManager::repeatDescription() const {
+    if (impl_->undoStack.empty()) {
+        return QString();
+    }
+    const auto& top = impl_->undoStack.back();
+    return top ? top->label() : QString();
+}
+
+bool UndoManager::repeatLast() {
+    if (impl_->undoStack.empty()) {
+        return false;
+    }
+    const auto& top = impl_->undoStack.back();
+    if (!top) {
+        return false;
+    }
+    auto cloned = top->cloneForRepeat();
+    if (!cloned) {
+        return false;
+    }
+    // push() runs redo() on the clone, which is what we want for "repeat".
+    push(std::move(cloned));
+    return true;
+}
+
 // --- MoveLayerIndexCommand ---
 MoveLayerIndexCommand::MoveLayerIndexCommand(ArtifactCompositionPtr comp, ArtifactAbstractLayerPtr layer, int oldIndex, int newIndex)
     : comp_(comp), layer_(layer), oldIndex_(oldIndex), newIndex_(newIndex) {}
@@ -397,6 +510,17 @@ QString MoveLayerIndexCommand::label() const {
     return QStringLiteral("Move Layer: %1 → %2").arg(oldIndex_).arg(newIndex_);
 }
 
+std::unique_ptr<UndoCommand> MoveLayerIndexCommand::cloneForRepeat() const {
+    auto comp = comp_.lock();
+    auto layer = layer_.lock();
+    if (!comp || !layer) {
+        return nullptr;
+    }
+    // The current index becomes the "old" index; the same destination
+    // is reused, so each repeat kicks the layer toward the same slot.
+    return std::make_unique<MoveLayerIndexCommand>(comp, layer, newIndex_, newIndex_);
+}
+
 // --- RenameLayerCommand ---
 RenameLayerCommand::RenameLayerCommand(ArtifactAbstractLayerPtr layer, const QString& oldName, const QString& newName)
     : layer_(layer), oldName_(oldName), newName_(newName) {}
@@ -417,6 +541,14 @@ void RenameLayerCommand::redo() {
 
 QString RenameLayerCommand::label() const {
     return QStringLiteral("Rename Layer: %1 → %2").arg(oldName_).arg(newName_);
+}
+
+std::unique_ptr<UndoCommand> RenameLayerCommand::cloneForRepeat() const {
+    auto layer = layer_.lock();
+    if (!layer) {
+        return nullptr;
+    }
+    return std::make_unique<RenameLayerCommand>(layer, layer->layerName(), newName_);
 }
 
 // --- ChangeLayerOpacityCommand ---
@@ -441,6 +573,19 @@ QString ChangeLayerOpacityCommand::label() const {
     return QStringLiteral("Change Opacity: %1% → %2%").arg(oldOpacity_ * 100).arg(newOpacity_ * 100);
 }
 
+std::unique_ptr<UndoCommand> ChangeLayerOpacityCommand::cloneForRepeat() const {
+    auto layer = layer_.lock();
+    if (!layer) {
+        return nullptr;
+    }
+    // Re-apply the same opacity delta. "current → current + delta" mirrors
+    // MoveLayerCommand's behavior, which is the typical repeat semantics.
+    const float currentOpacity = layer->opacity();
+    const float delta = newOpacity_ - oldOpacity_;
+    return std::make_unique<ChangeLayerOpacityCommand>(
+        layer, currentOpacity, currentOpacity + delta);
+}
+
 // --- ChangeActiveVariantCommand ---
 ChangeActiveVariantCommand::ChangeActiveVariantCommand(ArtifactAbstractLayerPtr layer, size_t oldIndex, size_t newIndex)
     : layer_(layer), oldIndex_(oldIndex), newIndex_(newIndex) {}
@@ -463,6 +608,15 @@ void ChangeActiveVariantCommand::redo() {
 
 QString ChangeActiveVariantCommand::label() const {
     return QStringLiteral("Change Layer Variant");
+}
+
+std::unique_ptr<UndoCommand> ChangeActiveVariantCommand::cloneForRepeat() const {
+    auto layer = layer_.lock();
+    if (!layer) {
+        return nullptr;
+    }
+    return std::make_unique<ChangeActiveVariantCommand>(
+        layer, layer->getActiveVariantIndex(), newIndex_);
 }
 
 // --- CreateVariantCommand ---

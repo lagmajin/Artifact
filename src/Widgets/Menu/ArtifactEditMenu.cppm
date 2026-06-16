@@ -61,6 +61,7 @@ private:
   QAction* cutAction_ = nullptr;
   QAction* pasteAction_ = nullptr;
   QAction* deleteAction_ = nullptr;
+  QAction* repeatAction_ = nullptr;
 
   void handleCopyAction();
   void handleCutAction();
@@ -68,6 +69,8 @@ private:
   void handleDelete();
   void handleUndo();
   void handleRedo();
+  void handleRepeatLast();
+  void updateRepeatAction();
   void handleDuplicate();
   void handleSplit();
   void handleTrimIn();
@@ -96,6 +99,11 @@ private:
   redoAction = new QAction("やり直し (&R)");
   redoAction->setShortcut(shortcuts.shortcut(ShortcutId::Redo));
   redoAction->setIcon(QIcon(resolveIconPath("Studio/editmenu_redo.svg")));
+
+  repeatAction_ = new QAction("繰り返す (&.)");
+  repeatAction_->setShortcut(shortcuts.shortcut(ShortcutId::RepeatLastAction));
+  repeatAction_->setIconVisibleInMenu(false);
+  repeatAction_->setEnabled(false);
 
   duplicateAction = new QAction("複製 (&D)");
   duplicateAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
@@ -153,6 +161,7 @@ private:
   // Build menu
   menu->addAction(undoAction);
   menu->addAction(redoAction);
+  menu->addAction(repeatAction_);
   menu->addSeparator();
   menu->addAction(copyAction_);
   menu->addAction(cutAction_);
@@ -184,6 +193,7 @@ private:
   // Connections
   QObject::connect(undoAction, &QAction::triggered, menu, [this]() { handleUndo(); });
   QObject::connect(redoAction, &QAction::triggered, menu, [this]() { handleRedo(); });
+  QObject::connect(repeatAction_, &QAction::triggered, menu, [this]() { handleRepeatLast(); });
   QObject::connect(copyAction_, &QAction::triggered, menu, [this]() { handleCopyAction(); });
   QObject::connect(cutAction_, &QAction::triggered, menu, [this]() { handleCutAction(); });
   QObject::connect(pasteAction_, &QAction::triggered, menu, [this]() { handlePasteAction(); });
@@ -212,6 +222,12 @@ private:
           [this](const ProjectChangedEvent&) { rebuildMenu(); }));
 
   QObject::connect(menu, &QMenu::aboutToShow, menu, [this]() { rebuildMenu(); });
+
+  if (auto* undoMgr = UndoManager::instance()) {
+    QObject::connect(undoMgr, &UndoManager::historyChanged, menu,
+                     [this]() { updateRepeatAction(); });
+  }
+  updateRepeatAction();
  }
 
  ArtifactActiveContextService* ArtifactEditMenu::Impl::getActiveContext() {
@@ -240,6 +256,40 @@ private:
    }
    // UI 状態を同期
    syncUIState();
+  }
+ }
+
+ void ArtifactEditMenu::Impl::handleRepeatLast() {
+  auto* mgr = UndoManager::instance();
+  if (!mgr || !mgr->canRepeat()) {
+   return;
+  }
+  const QString desc = mgr->repeatDescription();
+  if (mgr->repeatLast()) {
+   qDebug().noquote() << "[Repeat]" << desc;
+   if (auto* sb = parentWidget_ ? parentWidget_->findChild<QStatusBar*>() : nullptr) {
+    sb->showMessage(QString("Repeat: %1").arg(desc), 3000);
+   }
+  }
+  syncUIState();
+ }
+
+ void ArtifactEditMenu::Impl::updateRepeatAction() {
+  if (!repeatAction_) {
+   return;
+  }
+  auto* mgr = UndoManager::instance();
+  if (!mgr || !mgr->canRepeat()) {
+   repeatAction_->setEnabled(false);
+   repeatAction_->setText(QStringLiteral("繰り返す (&.)"));
+   return;
+  }
+  const QString label = mgr->repeatDescription();
+  repeatAction_->setEnabled(true);
+  if (label.isEmpty()) {
+   repeatAction_->setText(QStringLiteral("繰り返す (&.)"));
+  } else {
+   repeatAction_->setText(QStringLiteral("繰り返す (&.) — %1").arg(label));
   }
  }
  

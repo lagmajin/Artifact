@@ -58,6 +58,16 @@ public:
     virtual void undo() = 0;
     virtual void redo() = 0;
     virtual QString label() const { return QStringLiteral("Command"); }
+
+    // Returns a fresh instance that, when redo() is invoked, reproduces
+    // the same effect as the original. Implementations must capture all
+    // parameters needed to redo() and produce an independent command (no
+    // shared mutable state with the source). The default returns nullptr
+    // so commands with side effects (dialogs, network I/O, randomness,
+    // external handles, etc.) opt-out by simply not overriding.
+    virtual std::unique_ptr<UndoCommand> cloneForRepeat() const {
+        return nullptr;
+    }
 };
 
 class SetPropertyCommand : public UndoCommand {
@@ -66,6 +76,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     std::weak_ptr<ArtifactAbstractEffect> target_;
     UniString name_;
@@ -79,6 +90,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     ArtifactAbstractLayerWeak layer_;
     float dx_, dy_;
@@ -91,6 +103,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     ArtifactCompositionWeakPtr comp_;
     ArtifactAbstractLayerPtr layer_;
@@ -104,6 +117,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     ArtifactCompositionWeakPtr comp_;
     ArtifactAbstractLayerPtr layer_;
@@ -118,6 +132,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     ArtifactAbstractLayerWeak layer_;
     std::vector<LayerMask> beforeMasks_;
@@ -132,6 +147,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     ArtifactAbstractLayerWeak layer_;
     std::vector<LayerMatteReference> beforeRefs_;
@@ -145,6 +161,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     ArtifactCompositionWeakPtr comp_;
     ArtifactAbstractLayerWeak layer_;
@@ -159,6 +176,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     ArtifactAbstractLayerWeak layer_;
     QString oldName_;
@@ -172,6 +190,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     ArtifactAbstractLayerWeak layer_;
     float oldOpacity_;
@@ -185,6 +204,7 @@ public:
     void undo() override;
     void redo() override;
     QString label() const override;
+    std::unique_ptr<UndoCommand> cloneForRepeat() const override;
 private:
     ArtifactAbstractLayerWeak layer_;
     size_t oldIndex_;
@@ -268,6 +288,17 @@ public:
     bool hasUnsavedChanges() const;
     void markAsSaved();
     int64_t currentVersion() const;
+
+    // === Repeat Last Action ===
+    // The last command on the undo stack is cloned (via cloneForRepeat())
+    // and re-applied. Returns true if a repeat was executed. The new command
+    // is pushed onto the undo stack as its own history entry, so it can be
+    // undone independently. Commands that opt out of repeat (e.g. dialog-
+    // driven or with non-deterministic side effects) return nullptr from
+    // cloneForRepeat() and will cause canRepeat()/repeatLast() to no-op.
+    bool canRepeat() const;
+    QString repeatDescription() const;
+    bool repeatLast();
 
     void notifyPropertyChanged(const QString& effectId);
     void notifyAnythingChanged();
