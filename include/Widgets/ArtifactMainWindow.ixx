@@ -9,6 +9,8 @@
 
 export module Artifact.MainWindow;
 
+class QWidget;
+
 import Artifact.Widgets.AudioMixer;               // Added
 import Audio.Mixer;                               // Added
 import Artifact.Widgets.AI.ArtifactAICloudWidget; // Added
@@ -25,6 +27,15 @@ class ArtifactMainWindow : public QMainWindow {
 private:
   class Impl;
   Impl *impl_;
+
+#ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
+  // Command Palette (experimental, feature-flagged). Lazily created in the
+  // constructor; toggled by Ctrl+Shift+P via keyPressEvent. No service
+  // wiring is added; the palette reads the existing menu hierarchy.
+  static QWidget *sPalette_instance();
+  static void setPalette_instance(QWidget *palette);
+  static QWidget *paletteInstance_;
+#endif
 
 protected:
   void keyPressEvent(QKeyEvent *event) override;

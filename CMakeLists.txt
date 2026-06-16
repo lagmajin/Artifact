@@ -52,6 +52,10 @@ file(GLOB_RECURSE POTENTIAL_SOURCES CONFIGURE_DEPENDS
     "include/**/*.ixx" "include/**/*.cppm"
 )
 
+if(NOT ARTIFACT_FEATURE_COMMAND_PALETTE)
+    list(FILTER POTENTIAL_SOURCES EXCLUDE REGEX "/Widgets/CommandPalette/")
+endif()
+
 set(APP_MODULES "")
 set(APP_IMPL "")
 set(_PROVIDED_MODULES "")
@@ -146,6 +150,8 @@ set_target_properties(Artifact PROPERTIES
 )
 
 # Version compile definitions
+option(ARTIFACT_FEATURE_COMMAND_PALETTE "Enable experimental command palette widget (shell only, no real action registration yet)" OFF)
+
 target_compile_definitions(Artifact PRIVATE
     ARTIFACT_VERSION_STRING="${ARTIFACT_VERSION}"
     ARTIFACT_VERSION_MAJOR=${ARTIFACT_VERSION_MAJOR}
@@ -155,6 +161,10 @@ target_compile_definitions(Artifact PRIVATE
     ARTIFACT_BUILD_TIMESTAMP="${ARTIFACT_BUILD_TIMESTAMP}"
     ARTIFACT_BUILD_DIRTY="${ARTIFACT_BUILD_DIRTY}"
 )
+
+if(ARTIFACT_FEATURE_COMMAND_PALETTE)
+    target_compile_definitions(Artifact PRIVATE ARTIFACT_FEATURE_COMMAND_PALETTE=1)
+endif()
 
 if(TARGET __CMAKE::CXX23)
     set_property(TARGET Artifact PROPERTY CXX_MODULE_STD ON)

@@ -113,6 +113,11 @@ export namespace Artifact {
 bool isDirty() const;
    QJsonObject toJson() const;
    bool addProjectItemsFromJson(const QJsonArray& items, ProjectItem* parent = nullptr);
+
+   // 拡張データ(JSON dict)。コマンドパレット MRU 等、周辺機能の
+   // プロジェクト保存受け口。既存サービス経路には接続しない。
+   QJsonObject extensionData() const;
+   void setExtensionData(const QJsonObject& data);
    void restoreProjectItems(const QJsonArray& items);
    void removeAllAssets();
     

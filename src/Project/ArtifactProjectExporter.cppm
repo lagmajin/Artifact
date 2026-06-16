@@ -109,6 +109,14 @@ namespace Artifact
 
   obj["_ai_metadata"] = aiMetadata;
 
+  // 拡張データ(コマンドパレット MRU 等)を保存
+  {
+   const QJsonObject ext = projectPtr_->extensionData();
+   if (!ext.isEmpty()) {
+    obj["_extension_data"] = ext;
+   }
+  }
+
   QJsonDocument doc(obj);
   QByteArray jsonData = doc.toJson(QJsonDocument::Indented);
 
