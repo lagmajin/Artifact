@@ -2940,6 +2940,115 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
   return oldInPoint != inPoint || oldOutPoint != outPoint ||
          oldStartTime != layer->startTime().framePosition();
 }
+
+qint64 clampedTimelineFrame(const double frame, const double durationFrames) {
+  return static_cast<qint64>(std::llround(std::clamp(
+      frame, 0.0, std::max<double>(0.0, durationFrames - 1.0))));
+}
+
+QString clipDisplayName(const ArtifactTimelineTrackPainterView::TrackClipVisual &clip) {
+  return clip.title.isEmpty() ? clip.clipId : clip.title;
+}
+
+bool applyClipMoveStartToFrame(const ArtifactAbstractLayerPtr &layer,
+                               const qint64 frame) {
+  return applyTimelineLayerRangeEdit(layer, frame, 0, true);
+}
+
+bool applyClipTrimInAtFrame(const ArtifactAbstractLayerPtr &layer,
+                            const qint64 frame) {
+  return applyTimelineLayerRangeEdit(layer, frame, 0, false);
+}
+
+bool applyClipTrimOutAtFrame(const ArtifactAbstractLayerPtr &layer,
+                             const qint64 frame) {
+  if (!layer) {
+    return false;
+  }
+  const qint64 duration =
+      std::max<qint64>(1, layer->outPoint().framePosition() -
+                              layer->inPoint().framePosition());
+  return applyTimelineLayerRangeEdit(layer, frame - duration, duration, false);
+}
+
+bool pushRippleTrimOutCommand(const ArtifactCompositionPtr &composition,
+                              const ArtifactAbstractLayerPtr &layer,
+                              const qint64 currentFrame) {
+  if (!composition || !layer) {
+    return false;
+  }
+  const auto beforeLayers =
+      collectRippleLaterLayers(composition, layer->id(),
+                               layer->outPoint().framePosition());
+  QVector<ArtifactAbstractLayerPtr> snapshotLayers;
+  snapshotLayers.reserve(beforeLayers.size() + 1);
+  snapshotLayers.push_back(layer);
+  for (const auto &laterLayer : beforeLayers) {
+    snapshotLayers.push_back(laterLayer);
+  }
+  const auto beforeSnapshots =
+      captureTimelineLayerStateSnapshots(composition, snapshotLayers);
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<RippleTrimOutCommand>(
+        composition->id(), layer->id(), currentFrame,
+        std::move(beforeSnapshots)));
+    return true;
+  }
+  return applyTimelineRippleTrimOut(composition->id(), layer->id().toString(),
+                                    currentFrame);
+}
+
+bool pushRippleTrimInCommand(const ArtifactCompositionPtr &composition,
+                             const ArtifactAbstractLayerPtr &layer,
+                             const qint64 currentFrame) {
+  if (!composition || !layer) {
+    return false;
+  }
+  const auto beforeLayers =
+      collectRippleLaterLayers(composition, layer->id(),
+                               layer->inPoint().framePosition());
+  QVector<ArtifactAbstractLayerPtr> snapshotLayers;
+  snapshotLayers.reserve(beforeLayers.size() + 1);
+  snapshotLayers.push_back(layer);
+  for (const auto &laterLayer : beforeLayers) {
+    snapshotLayers.push_back(laterLayer);
+  }
+  const auto beforeSnapshots =
+      captureTimelineLayerStateSnapshots(composition, snapshotLayers);
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<RippleTrimInCommand>(
+        composition->id(), layer->id(), currentFrame,
+        std::move(beforeSnapshots)));
+    return true;
+  }
+  return applyTimelineRippleTrimIn(composition->id(), layer->id().toString(),
+                                   currentFrame);
+}
+
+bool pushRippleDeleteCommand(const ArtifactCompositionPtr &composition,
+                             const ArtifactAbstractLayerPtr &layer) {
+  if (!composition || !layer) {
+    return false;
+  }
+  const auto beforeLayers =
+      collectRippleLaterLayers(composition, layer->id(),
+                               layer->inPoint().framePosition());
+  QVector<ArtifactAbstractLayerPtr> snapshotLayers;
+  snapshotLayers.reserve(beforeLayers.size() + 1);
+  snapshotLayers.push_back(layer);
+  for (const auto &laterLayer : beforeLayers) {
+    snapshotLayers.push_back(laterLayer);
+  }
+  const auto beforeSnapshots =
+      captureTimelineLayerStateSnapshots(composition, snapshotLayers);
+  if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<RippleDeleteCommand>(composition->id(),
+                                                    layer->id(),
+                                                    std::move(beforeSnapshots)));
+    return true;
+  }
+  return applyTimelineRippleDelete(composition->id(), layer->id().toString());
+}
 } // namespace
 
 class ArtifactTimelineTrackPainterView::Impl {
@@ -5673,92 +5782,25 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       event->accept();
       return;
     }
-  if (layer && (chosen == moveStartClipAct || chosen == trimInClipAct ||
+    if (layer && (chosen == moveStartClipAct || chosen == trimInClipAct ||
                   chosen == trimOutClipAct || chosen == rippleTrimOutClipAct ||
                   chosen == rippleTrimInClipAct ||
                   chosen == rippleDeleteClipAct)) {
-      const qint64 currentFrame = static_cast<qint64>(std::llround(
-          std::clamp(impl_->currentFrame_, 0.0,
-                     std::max<double>(0.0, static_cast<double>(impl_->durationFrames_ - 1.0)))));
+      const qint64 currentFrame =
+          clampedTimelineFrame(impl_->currentFrame_, impl_->durationFrames_);
       bool changed = false;
       if (chosen == moveStartClipAct) {
-        changed = applyTimelineLayerRangeEdit(layer, currentFrame, 0, true);
+        changed = applyClipMoveStartToFrame(layer, currentFrame);
       } else if (chosen == trimInClipAct) {
-        changed = applyTimelineLayerRangeEdit(layer, currentFrame, 0, false);
+        changed = applyClipTrimInAtFrame(layer, currentFrame);
       } else if (chosen == trimOutClipAct) {
-        const qint64 duration = layer->outPoint().framePosition() -
-                                layer->inPoint().framePosition();
-        changed = applyTimelineLayerRangeEdit(layer, currentFrame - duration,
-                                              duration, false);
+        changed = applyClipTrimOutAtFrame(layer, currentFrame);
       } else if (chosen == rippleTrimOutClipAct) {
-        const auto beforeLayers =
-            collectRippleLaterLayers(composition, layer->id(),
-                                     layer->outPoint().framePosition());
-        QVector<ArtifactAbstractLayerPtr> snapshotLayers;
-        snapshotLayers.reserve(beforeLayers.size() + 1);
-        snapshotLayers.push_back(layer);
-        for (const auto &laterLayer : beforeLayers) {
-          snapshotLayers.push_back(laterLayer);
-        }
-        const auto beforeSnapshots =
-            captureTimelineLayerStateSnapshots(composition, snapshotLayers);
-        if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::make_unique<RippleTrimOutCommand>(
-              composition->id(), layer->id(), currentFrame,
-              std::move(beforeSnapshots)));
-          changed = true;
-        } else {
-          changed = applyTimelineRippleTrimOut(composition->id(),
-                                               layer->id().toString(),
-                                               currentFrame);
-        }
+        changed = pushRippleTrimOutCommand(composition, layer, currentFrame);
       } else if (chosen == rippleTrimInClipAct) {
-        // Phase 2: Ripple Trim In。target と後続を snapshot に束ねて1コマンド化。
-        const auto beforeLayers =
-            collectRippleLaterLayers(composition, layer->id(),
-                                     layer->inPoint().framePosition());
-        QVector<ArtifactAbstractLayerPtr> snapshotLayers;
-        snapshotLayers.reserve(beforeLayers.size() + 1);
-        snapshotLayers.push_back(layer);
-        for (const auto &laterLayer : beforeLayers) {
-          snapshotLayers.push_back(laterLayer);
-        }
-        const auto beforeSnapshots =
-            captureTimelineLayerStateSnapshots(composition, snapshotLayers);
-        if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::make_unique<RippleTrimInCommand>(
-              composition->id(), layer->id(), currentFrame,
-              std::move(beforeSnapshots)));
-          changed = true;
-        } else {
-          changed = applyTimelineRippleTrimIn(composition->id(),
-                                              layer->id().toString(),
-                                              currentFrame);
-        }
+        changed = pushRippleTrimInCommand(composition, layer, currentFrame);
       } else if (chosen == rippleDeleteClipAct) {
-        // Phase 2: Ripple Delete (Close Gap)。target を 0 幅に潰して後続を詰める。
-        // レイヤー完全削除はしない（Undo の安全性のため）。完全削除が必要なら
-        // 既存の「Delete Layer」を使う。
-        const auto beforeLayers =
-            collectRippleLaterLayers(composition, layer->id(),
-                                     layer->inPoint().framePosition());
-        QVector<ArtifactAbstractLayerPtr> snapshotLayers;
-        snapshotLayers.reserve(beforeLayers.size() + 1);
-        snapshotLayers.push_back(layer);
-        for (const auto &laterLayer : beforeLayers) {
-          snapshotLayers.push_back(laterLayer);
-        }
-        const auto beforeSnapshots =
-            captureTimelineLayerStateSnapshots(composition, snapshotLayers);
-        if (auto *mgr = UndoManager::instance()) {
-          mgr->push(std::make_unique<RippleDeleteCommand>(
-              composition->id(), layer->id(),
-              std::move(beforeSnapshots)));
-          changed = true;
-        } else {
-          changed = applyTimelineRippleDelete(composition->id(),
-                                              layer->id().toString());
-        }
+        changed = pushRippleDeleteCommand(composition, layer);
       }
       if (changed) {
         // This view only emits projectChanged after a local edit has already
@@ -5767,8 +5809,9 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         // EventBus in higher-level widgets.
         Q_EMIT timelineDebugMessage(
             QStringLiteral("Edited %1 at F%2")
-                .arg(clip.title.isEmpty() ? clip.clipId : clip.title)
+                .arg(clipDisplayName(clip))
                 .arg(currentFrame));
+        update();
       }
       event->accept();
       return;
