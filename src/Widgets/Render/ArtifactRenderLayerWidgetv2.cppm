@@ -17,6 +17,9 @@ module;
 #include <QLinearGradient>
 #include <QMenu>
 #include <QPainter>
+#include <QCursor>
+#include <QHash>
+#include <QPixmap>
 #include <QStandardPaths>
 #include <QTransform>
 #include <memory>
@@ -52,6 +55,7 @@ import Artifact.Render.CompositionRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.Layer.Image;
 import Artifact.Widgets.TransformGizmo;
+import Utils.Path;
 
 namespace Artifact {
 
@@ -89,6 +93,66 @@ QString displayModeLabel(DisplayMode mode)
   case DisplayMode::Color:
   default:
     return QStringLiteral("Color");
+  }
+}
+
+const QCursor& hudCursor(const QString& iconName,
+                         const Qt::CursorShape fallbackShape,
+                         const int hotX = 12,
+                         const int hotY = 12)
+{
+  static QHash<QString, QCursor> cache;
+  const QString key = iconName + QStringLiteral("|%1|%2|%3")
+                                   .arg(static_cast<int>(fallbackShape))
+                                   .arg(hotX)
+                                   .arg(hotY);
+  auto it = cache.constFind(key);
+  if (it != cache.constEnd()) {
+    return it.value();
+  }
+
+  QPixmap pixmap(ArtifactCore::resolveIconPath(QStringLiteral("Studio/%1").arg(iconName)));
+  if (!pixmap.isNull()) {
+    pixmap = pixmap.scaled(24, 24, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    it = cache.insert(key, QCursor(pixmap, hotX, hotY));
+    return it.value();
+  }
+
+  it = cache.insert(key, QCursor(fallbackShape));
+  return it.value();
+}
+
+const QCursor& hudCursorForTransformHandle(TransformGizmo::HandleType handle,
+                                           bool dragging)
+{
+  switch (handle) {
+  case TransformGizmo::HandleType::Move:
+  case TransformGizmo::HandleType::Scale_Center:
+    return hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                     dragging ? Qt::ClosedHandCursor : Qt::SizeAllCursor);
+  case TransformGizmo::HandleType::Scale_L:
+  case TransformGizmo::HandleType::Scale_R:
+    return hudCursor(QStringLiteral("hud_cursor_scale_horizontal.svg"),
+                     Qt::SizeHorCursor);
+  case TransformGizmo::HandleType::Scale_T:
+  case TransformGizmo::HandleType::Scale_B:
+    return hudCursor(QStringLiteral("hud_cursor_scale_vertical.svg"),
+                     Qt::SizeVerCursor);
+  case TransformGizmo::HandleType::Scale_TL:
+  case TransformGizmo::HandleType::Scale_TR:
+  case TransformGizmo::HandleType::Scale_BL:
+  case TransformGizmo::HandleType::Scale_BR:
+    return hudCursor(QStringLiteral("hud_cursor_scale_uniform.svg"),
+                     Qt::SizeFDiagCursor);
+  case TransformGizmo::HandleType::Rotate:
+    return hudCursor(QStringLiteral("hud_cursor_rotate_corner.svg"),
+                     Qt::CrossCursor);
+  case TransformGizmo::HandleType::Anchor:
+    return hudCursor(QStringLiteral("hud_cursor_anchor.svg"),
+                     Qt::CrossCursor);
+  default:
+    return hudCursor(QStringLiteral("hud_cursor_select.svg"),
+                     Qt::ArrowCursor, 2, 2);
   }
 }
 
@@ -351,47 +415,125 @@ bool hitTestMaskHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& can
                        float threshold, int& maskIndex, int& pathIndex, int& vertexIndex,
                        MaskHandleType& handleType)
 {
- if (!layer) {
-  return false;
- }
- const QTransform globalTransform = layer->getGlobalTransform();
- bool invertible = false;
- const QTransform invTransform = globalTransform.inverted(&invertible);
- if (!invertible) {
-  return false;
- }
- const QPointF localPos = invTransform.map(canvasPos);
- const float thresholdSq = threshold * threshold;
- for (int m = 0; m < layer->maskCount(); ++m) {
-  const LayerMask mask = layer->mask(m);
-  if (!mask.isEnabled()) {
-   continue;
+  if (!layer) {
+    return false;
   }
-  for (int p = 0; p < mask.maskPathCount(); ++p) {
-   const MaskPath path = mask.maskPath(p);
-   for (int v = 0; v < path.vertexCount(); ++v) {
-    const MaskVertex vertex = path.vertex(v);
-    for (MaskHandleType candidate : {MaskHandleType::InTangent, MaskHandleType::OutTangent}) {
-     if ((candidate == MaskHandleType::InTangent && vertex.inTangent == QPointF(0, 0)) ||
-         (candidate == MaskHandleType::OutTangent && vertex.outTangent == QPointF(0, 0))) {
+  const QTransform globalTransform = layer->getGlobalTransform();
+  bool invertible = false;
+  const QTransform invTransform = globalTransform.inverted(&invertible);
+  if (!invertible) {
+    return false;
+  }
+  const QPointF localPos = invTransform.map(canvasPos);
+  const float thresholdSq = threshold * threshold;
+  for (int m = 0; m < layer->maskCount(); ++m) {
+    const LayerMask mask = layer->mask(m);
+    if (!mask.isEnabled()) {
       continue;
-     }
-     const QPointF handlePos = maskHandlePosition(path, v, candidate);
-     const QPointF delta = handlePos - localPos;
-     if (QPointF::dotProduct(delta, delta) <= thresholdSq) {
-      maskIndex = m;
-      pathIndex = p;
-      vertexIndex = v;
-      handleType = candidate;
-      return true;
-     }
     }
-   }
+    for (int p = 0; p < mask.maskPathCount(); ++p) {
+      const MaskPath path = mask.maskPath(p);
+      for (int v = 0; v < path.vertexCount(); ++v) {
+        const MaskVertex vertex = path.vertex(v);
+        for (MaskHandleType candidate : {MaskHandleType::InTangent, MaskHandleType::OutTangent}) {
+          if ((candidate == MaskHandleType::InTangent && vertex.inTangent == QPointF(0, 0)) ||
+              (candidate == MaskHandleType::OutTangent && vertex.outTangent == QPointF(0, 0))) {
+            continue;
+          }
+          const QPointF handlePos = maskHandlePosition(path, v, candidate);
+          const QPointF delta = handlePos - localPos;
+          if (QPointF::dotProduct(delta, delta) <= thresholdSq) {
+            maskIndex = m;
+            pathIndex = p;
+            vertexIndex = v;
+            handleType = candidate;
+            return true;
+          }
+        }
+      }
+    }
   }
- }
- return false;
+  return false;
 }
+
+FloatColor brightenColor(const FloatColor& color, const float factor)
+{
+  return {
+      std::clamp(color.r() * factor, 0.0f, 1.0f),
+      std::clamp(color.g() * factor, 0.0f, 1.0f),
+      std::clamp(color.b() * factor, 0.0f, 1.0f),
+      color.a()};
 }
+
+FloatColor withAlpha(const FloatColor& color, const float alpha)
+{
+  return {color.r(), color.g(), color.b(), std::clamp(alpha, 0.0f, 1.0f)};
+}
+
+FloatColor lerpColor(const FloatColor& a, const FloatColor& b, const float t)
+{
+  const float u = std::clamp(t, 0.0f, 1.0f);
+  return {
+      a.r() + (b.r() - a.r()) * u,
+      a.g() + (b.g() - a.g()) * u,
+      a.b() + (b.b() - a.b()) * u,
+      a.a() + (b.a() - a.a()) * u};
+}
+
+FloatColor maskModeColor(MaskMode mode)
+{
+  switch (mode) {
+  case MaskMode::Subtract:
+    return {0.96f, 0.50f, 0.30f, 1.0f};
+  case MaskMode::Intersect:
+    return {0.30f, 0.82f, 0.52f, 1.0f};
+  case MaskMode::Difference:
+    return {0.82f, 0.50f, 0.90f, 1.0f};
+  case MaskMode::Add:
+  default:
+    return {0.18f, 0.72f, 0.90f, 1.0f};
+  }
+}
+
+void drawMaskSolidHandle(ArtifactIRenderer* renderer,
+                         const Detail::float2& center,
+                         const float size,
+                         const FloatColor& fill,
+                         const bool active)
+{
+  if (!renderer) {
+    return;
+  }
+
+  const float half = size * 0.5f;
+  const float glowPad = active ? 2.6f : 1.4f;
+  const float innerInset = std::clamp(size * 0.18f, 1.0f, 2.6f);
+  renderer->drawSolidRect(center.x - half - glowPad,
+                          center.y - half - glowPad,
+                          size + glowPad * 2.0f,
+                          size + glowPad * 2.0f,
+                          withAlpha(fill, active ? 0.26f : 0.12f), 1.0f);
+  renderer->drawSolidRect(center.x - half + 1.2f,
+                          center.y - half + 1.2f,
+                          size, size,
+                          {0.0f, 0.0f, 0.0f, active ? 0.42f : 0.30f}, 1.0f);
+  renderer->drawSolidRect(center.x - half,
+                          center.y - half,
+                          size, size,
+                          brightenColor(fill, active ? 1.14f : 1.04f), 1.0f);
+  renderer->drawSolidRect(center.x - half + innerInset,
+                          center.y - half + innerInset,
+                          std::max(1.0f, size - innerInset * 2.0f),
+                          std::max(1.0f, size - innerInset * 2.0f),
+                          brightenColor(fill, active ? 1.28f : 1.14f), 1.0f);
+  renderer->drawRectOutline(center.x - half,
+                            center.y - half,
+                            size, size,
+                            active ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
+                                   : FloatColor{0.10f, 0.12f, 0.14f, 0.98f});
+}
+
+} // namespace
 
  class ArtifactLayerEditorWidgetV2::Impl {
  private:
@@ -1500,17 +1642,10 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
    return;
   }
 
-  const QTransform globalTransform = layer->getGlobalTransform();
-  const FloatColor maskLineShadowColor = {0.0f, 0.0f, 0.0f, 0.30f};
-  const FloatColor maskLineColor = {0.26f, 0.84f, 0.96f, 0.96f};
+ const QTransform globalTransform = layer->getGlobalTransform();
   const FloatColor maskPointShadowColor = {0.0f, 0.0f, 0.0f, 0.42f};
-  const FloatColor maskPointColor = {0.97f, 0.99f, 1.0f, 1.0f};
-  const FloatColor hoverColor = {1.0f, 0.76f, 0.28f, 1.0f};
-  const FloatColor dragColor = {1.0f, 0.40f, 0.24f, 1.0f};
-  const FloatColor handleLineColor = {0.74f, 0.82f, 0.92f, 0.55f};
-  const FloatColor handlePointColor = {0.70f, 0.90f, 1.0f, 0.95f};
-  const FloatColor handleHoverColor = {1.0f, 0.78f, 0.32f, 1.0f};
-  const FloatColor handleDragColor = {1.0f, 0.44f, 0.24f, 1.0f};
+  const FloatColor hoverColor = {0.98f, 0.72f, 0.24f, 1.0f};
+  const FloatColor dragColor = {0.98f, 0.42f, 0.18f, 1.0f};
 
   for (int m = 0; m < layer->maskCount(); ++m) {
    LayerMask mask = layer->mask(m);
@@ -1523,6 +1658,19 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
     if (vertexCount == 0) {
      continue;
     }
+    const FloatColor modeColor = maskModeColor(path.mode());
+    const FloatColor maskLineShadowColor = {0.0f, 0.0f, 0.0f, 0.36f};
+    const FloatColor maskLineColor = brightenColor(modeColor, 1.04f);
+    const FloatColor maskLineHighlightColor = brightenColor(modeColor, 1.32f);
+    const FloatColor handlePointColor =
+        withAlpha(lerpColor(modeColor, FloatColor{0.86f, 0.92f, 0.98f, 1.0f}, 0.52f), 0.98f);
+    const FloatColor handleHoverColor = lerpColor(modeColor, hoverColor, 0.72f);
+    const FloatColor handleDragColor = lerpColor(modeColor, dragColor, 0.82f);
+    const FloatColor vertexBaseColor =
+        withAlpha(lerpColor(modeColor, FloatColor{0.88f, 0.94f, 0.98f, 1.0f}, 0.46f), 1.0f);
+    const FloatColor tangentInColor = withAlpha(brightenColor(modeColor, 1.16f), 0.92f);
+    const FloatColor tangentOutColor =
+        withAlpha(lerpColor(modeColor, FloatColor{0.92f, 0.84f, 0.58f, 1.0f}, 0.26f), 0.92f);
 
     Detail::float2 lastCanvasPos{};
     for (int v = 0; v < vertexCount; ++v) {
@@ -1535,44 +1683,86 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
      const Detail::float2 outHandleCanvas = {(float)outHandlePos.x(), (float)outHandlePos.y()};
 
      if (vertex.inTangent != QPointF(0, 0)) {
-      renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, 4.0f, maskLineShadowColor);
-      renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, 2.0f, handleLineColor);
-      FloatColor handleColor = handlePointColor;
+      const bool isDraggingIn = isDraggingMaskHandle_ && draggingMaskIndex_ == m &&
+                                draggingPathIndex_ == p && draggingVertexIndex_ == v &&
+                                draggingMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent);
+      const bool isHoveringIn = hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
+                                hoveredVertexIndex_ == v &&
+                                hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent);
+      FloatColor tangentColor = tangentInColor;
+      FloatColor handleColor = tangentInColor;
+      float stemThickness = 2.2f;
+      float stemShadowThickness = 5.8f;
       if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
           draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+       tangentColor = handleDragColor;
        handleColor = handleDragColor;
+       stemThickness = 3.2f;
+       stemShadowThickness = 7.8f;
       } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
                  hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::InTangent)) {
+       tangentColor = handleHoverColor;
        handleColor = handleHoverColor;
+       stemThickness = 2.8f;
+       stemShadowThickness = 7.0f;
       }
-      renderer_->drawRectOutline(inHandleCanvas.x - 5.5f,
-                                  inHandleCanvas.y - 5.5f, 11.0f, 11.0f,
-                                  maskPointShadowColor);
-      renderer_->drawRectOutline(inHandleCanvas.x - 3.5f,
-                                  inHandleCanvas.y - 3.5f, 7.0f, 7.0f,
-                                  handleColor);
+      renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, stemShadowThickness, maskLineShadowColor);
+      renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas, stemThickness, tangentColor);
+      renderer_->drawThickLineLocal(currentCanvasPos, inHandleCanvas,
+                                    std::max(1.0f, stemThickness * 0.42f),
+                                    brightenColor(tangentColor, 1.20f));
+      drawMaskSolidHandle(renderer_.get(), inHandleCanvas, isDraggingIn || isHoveringIn ? 11.0f : 8.2f,
+                          handleColor, isDraggingIn || isHoveringIn);
      }
      if (vertex.outTangent != QPointF(0, 0)) {
-      renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, 4.0f, maskLineShadowColor);
-      renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, 2.0f, handleLineColor);
+      const bool isDraggingOut = isDraggingMaskHandle_ && draggingMaskIndex_ == m &&
+                                 draggingPathIndex_ == p && draggingVertexIndex_ == v &&
+                                 draggingMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent);
+      const bool isHoveringOut = hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
+                                 hoveredVertexIndex_ == v &&
+                                 hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent);
+      FloatColor tangentColor = tangentOutColor;
       FloatColor handleColor = handlePointColor;
+      float stemThickness = 2.2f;
+      float stemShadowThickness = 5.8f;
       if (isDraggingMaskHandle_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
           draggingVertexIndex_ == v && draggingMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
        handleColor = handleDragColor;
+       tangentColor = handleDragColor;
+       stemThickness = 3.2f;
+       stemShadowThickness = 7.8f;
       } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v &&
                  hoveredMaskHandleType_ == static_cast<int>(MaskHandleType::OutTangent)) {
        handleColor = handleHoverColor;
+       tangentColor = handleHoverColor;
+       stemThickness = 2.8f;
+       stemShadowThickness = 7.0f;
       }
-      renderer_->drawRectOutline(outHandleCanvas.x - 5.5f,
-                                  outHandleCanvas.y - 5.5f, 11.0f, 11.0f,
-                                  maskPointShadowColor);
-      renderer_->drawRectOutline(outHandleCanvas.x - 3.5f,
-                                  outHandleCanvas.y - 3.5f, 7.0f, 7.0f,
-                                  handleColor);
+      renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, stemShadowThickness, maskLineShadowColor);
+      renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas, stemThickness, tangentColor);
+      renderer_->drawThickLineLocal(currentCanvasPos, outHandleCanvas,
+                                    std::max(1.0f, stemThickness * 0.42f),
+                                    brightenColor(tangentColor, 1.18f));
+      drawMaskSolidHandle(renderer_.get(), outHandleCanvas, isDraggingOut || isHoveringOut ? 11.0f : 8.2f,
+                          handleColor, isDraggingOut || isHoveringOut);
      }
      if (v > 0) {
-      renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos, 6.0f, maskLineShadowColor);
-      renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos, 3.5f, maskLineColor);
+      const bool segmentActive =
+          (isDraggingMaskVertex_ && draggingMaskIndex_ == m && draggingPathIndex_ == p &&
+           (draggingVertexIndex_ == v || draggingVertexIndex_ == (v - 1))) ||
+          (hoveredMaskIndex_ == m && hoveredPathIndex_ == p &&
+           (hoveredVertexIndex_ == v || hoveredVertexIndex_ == (v - 1)));
+      const FloatColor currentLineBase = segmentActive
+          ? lerpColor(maskLineColor, hoverColor, isDraggingMaskVertex_ ? 0.72f : 0.58f)
+          : maskLineColor;
+      renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
+                                    segmentActive ? 8.8f : 7.0f, maskLineShadowColor);
+      renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
+                                    segmentActive ? 5.2f : 4.1f, currentLineBase);
+      renderer_->drawThickLineLocal(lastCanvasPos, currentCanvasPos,
+                                    segmentActive ? 2.2f : 1.5f,
+                                    brightenColor(segmentActive ? currentLineBase : maskLineHighlightColor,
+                                                  segmentActive ? 1.16f : 1.0f));
      }
      lastCanvasPos = currentCanvasPos;
     }
@@ -1582,35 +1772,36 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestMaskVertex(const ArtifactAbstract
      QPointF firstCanvasPos = globalTransform.map(firstVertex.position);
      renderer_->drawThickLineLocal(lastCanvasPos,
                                    {(float)firstCanvasPos.x(), (float)firstCanvasPos.y()},
-                                   7.0f, maskLineShadowColor);
+                                   7.4f, maskLineShadowColor);
      renderer_->drawThickLineLocal(lastCanvasPos,
                                    {(float)firstCanvasPos.x(), (float)firstCanvasPos.y()},
-                                   4.0f, maskLineColor);
+                                   4.3f, maskLineColor);
+     renderer_->drawThickLineLocal(lastCanvasPos,
+                                   {(float)firstCanvasPos.x(), (float)firstCanvasPos.y()},
+                                   1.6f, maskLineHighlightColor);
     }
 
     for (int v = 0; v < vertexCount; ++v) {
      MaskVertex vertex = path.vertex(v);
      QPointF canvasPos = globalTransform.map(vertex.position);
-     FloatColor currentColor = maskPointColor;
-     float currentRadius = 17.0f;
+     FloatColor currentColor = vertexBaseColor;
+     float currentRadius = 12.0f;
+     bool currentActive = false;
      if (isDraggingMaskVertex_ && draggingMaskIndex_ == m && draggingPathIndex_ == p && draggingVertexIndex_ == v) {
       currentColor = dragColor;
-      currentRadius = 21.0f;
+      currentRadius = 15.0f;
+      currentActive = true;
      } else if (hoveredMaskIndex_ == m && hoveredPathIndex_ == p && hoveredVertexIndex_ == v) {
       currentColor = hoverColor;
-      currentRadius = 21.0f;
+      currentRadius = 14.0f;
+      currentActive = true;
      }
-     renderer_->drawRectOutline(static_cast<float>(canvasPos.x()) -
-                                    (currentRadius + 3.0f) * 0.5f,
-                                static_cast<float>(canvasPos.y()) -
-                                    (currentRadius + 3.0f) * 0.5f,
-                                currentRadius + 3.0f, currentRadius + 3.0f,
-                                maskPointShadowColor);
-     renderer_->drawRectOutline(static_cast<float>(canvasPos.x()) -
-                                    currentRadius * 0.5f,
-                                static_cast<float>(canvasPos.y()) -
-                                    currentRadius * 0.5f,
-                                currentRadius, currentRadius, currentColor);
+     const Detail::float2 currentCanvasPos = {(float)canvasPos.x(), (float)canvasPos.y()};
+     renderer_->drawSolidRect(currentCanvasPos.x - (currentRadius + 3.2f) * 0.5f,
+                              currentCanvasPos.y - (currentRadius + 3.2f) * 0.5f,
+                              currentRadius + 3.2f, currentRadius + 3.2f,
+                              maskPointShadowColor, 1.0f);
+     drawMaskSolidHandle(renderer_.get(), currentCanvasPos, currentRadius, currentColor, currentActive);
     }
    }
   }
@@ -2101,7 +2292,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   {
    impl_->isPanning_ = true;
    impl_->lastMousePos_ = event->position(); // 前回位置を保存
-   setCursor(Qt::ClosedHandCursor);
+   setCursor(hudCursor(QStringLiteral("hud_cursor_pan.svg"),
+                       Qt::ClosedHandCursor));
    event->accept();
    return;
   }
@@ -2124,7 +2316,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      impl_->cornerRadiusDragAnchorX_ = static_cast<float>(event->position().x());
      impl_->cornerRadiusDragMaxCr_ = std::min(shape->shapeWidth(), shape->shapeHeight()) * 0.5f;
      impl_->paramHandleEditLayer_ = layer;
-     setCursor(Qt::SizeHorCursor);
+     setCursor(hudCursor(QStringLiteral("hud_cursor_scale_horizontal.svg"),
+                         Qt::SizeHorCursor));
      event->accept();
      return;
     }
@@ -2134,7 +2327,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      impl_->starInnerRadiusDragStart_ = shape->starInnerRadius();
      impl_->starInnerRadiusBefore_ = shape->starInnerRadius();
      impl_->paramHandleEditLayer_ = layer;
-     setCursor(Qt::SizeVerCursor);
+     setCursor(hudCursor(QStringLiteral("hud_cursor_scale_vertical.svg"),
+                         Qt::SizeVerCursor));
      event->accept();
      return;
     }
@@ -2142,8 +2336,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    if (layer && impl_->transformGizmo_->handleMousePress(
                       {event->position().x(), event->position().y()},
                       impl_->renderer_.get())) {
-    setCursor(impl_->transformGizmo_->cursorShapeForViewportPos(
-        {event->position().x(), event->position().y()}, impl_->renderer_.get()));
+    setCursor(hudCursorForTransformHandle(impl_->transformGizmo_->activeHandle(),
+                                          true));
     impl_->requestRender();
     event->accept();
     return;
@@ -2167,7 +2361,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       impl_->isDraggingPathTangent_ = true;
       impl_->draggingPathVertexIndex_ = ti;
       impl_->draggingPathTangentType_ = tt;
-      setCursor(Qt::ClosedHandCursor);
+      setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                          Qt::ClosedHandCursor));
       event->accept();
       return;
      }
@@ -2175,7 +2370,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       impl_->beginPathEditTransaction(layer);
       impl_->isDraggingPathVertex_ = true;
       impl_->draggingPathVertexIndex_ = vi;
-      setCursor(Qt::ClosedHandCursor);
+      setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                          Qt::ClosedHandCursor));
       event->accept();
       return;
      }
@@ -2203,7 +2399,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      impl_->beginShapeEditTransaction(layer);
      impl_->isDraggingShapeVertex_ = true;
      impl_->draggingShapeVertexIndex_ = vertexIndex;
-     setCursor(Qt::ClosedHandCursor);
+     setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                         Qt::ClosedHandCursor));
      event->accept();
      return;
     }
@@ -2212,7 +2409,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     if (impl_->hitTestShapeSegment(layer, canvasPoint, insertIndex)) {
       impl_->hoveredShapeSegmentIndex_ = std::max(0, insertIndex - 1);
       if (impl_->insertPointOnHoveredShapeSegment(layer, canvasPoint)) {
-       setCursor(Qt::ClosedHandCursor);
+       setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                           Qt::ClosedHandCursor));
        impl_->requestRender();
        event->accept();
        return;
@@ -2281,7 +2479,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       impl_->hoveredPathIndex_ = handlePathIndex;
       impl_->hoveredVertexIndex_ = handleVertexIndex;
       impl_->hoveredMaskHandleType_ = static_cast<int>(handleType);
-      setCursor(Qt::ClosedHandCursor);
+      setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                          Qt::ClosedHandCursor));
       event->accept();
       return;
     }
@@ -2307,7 +2506,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       impl_->draggingMaskIndex_ = maskIndex;
       impl_->draggingPathIndex_ = pathIndex;
       impl_->draggingVertexIndex_ = vertexIndex;
-     setCursor(Qt::ClosedHandCursor);
+     setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
+                         Qt::ClosedHandCursor));
      event->accept();
      return;
     }
@@ -2532,14 +2732,15 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      if (impl_->transformGizmo_->handleMouseMove(
              {event->position().x(), event->position().y()}, impl_->renderer_.get())) {
       impl_->requestRender();
-      setCursor(impl_->transformGizmo_->cursorShapeForViewportPos(
-          {event->position().x(), event->position().y()}, impl_->renderer_.get()));
+      setCursor(hudCursorForTransformHandle(impl_->transformGizmo_->activeHandle(),
+                                            true));
       event->accept();
       return;
      }
     } else {
-     setCursor(impl_->transformGizmo_->cursorShapeForViewportPos(
-         {event->position().x(), event->position().y()}, impl_->renderer_.get()));
+     const auto handle = impl_->transformGizmo_->handleAtViewportPos(
+         {event->position().x(), event->position().y()}, impl_->renderer_.get());
+     setCursor(hudCursorForTransformHandle(handle, false));
     }
    } else {
     unsetCursor();

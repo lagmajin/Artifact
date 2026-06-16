@@ -191,6 +191,7 @@ public:
  int selectedTrack_ = -1;
  int selectedKey_ = -1;
  bool handlesInteractive_ = true;
+  bool keyEditingEnabled_ = true;
 
  static constexpr int KEY_RADIUS = 5;
  static constexpr int HANDLE_RADIUS = 4;
@@ -557,6 +558,10 @@ void ArtifactCurveEditorWidget::setTracks(const std::vector<CurveTrack>& tracks)
  update();
 }
 
+const std::vector<CurveTrack>& ArtifactCurveEditorWidget::tracks() const {
+ return impl_->tracks_;
+}
+
 void ArtifactCurveEditorWidget::setViewRange(float xMin, float xMax, float yMin, float yMax) {
  impl_->xMin_ = xMin;
  impl_->xMax_ = xMax;
@@ -584,6 +589,15 @@ void ArtifactCurveEditorWidget::setSpeedGraph(
 
 void ArtifactCurveEditorWidget::setHandleEditingEnabled(bool enabled) {
  impl_->handlesInteractive_ = enabled;
+}
+
+void ArtifactCurveEditorWidget::setKeyEditingEnabled(bool enabled) {
+ impl_->keyEditingEnabled_ = enabled;
+ if (!enabled && impl_->dragMode_ != Impl::DragMode::ScrubPlayhead &&
+     impl_->dragMode_ != Impl::DragMode::Pan) {
+  impl_->dragMode_ = Impl::DragMode::None;
+ }
+ update();
 }
 
 void ArtifactCurveEditorWidget::fitToContent() {
@@ -713,6 +727,22 @@ void ArtifactCurveEditorWidget::mousePressEvent(QMouseEvent* event) {
   int64_t frame = static_cast<int64_t>(std::round(data.x()));
   impl_->currentFrame_ = frame;
   Q_EMIT currentFrameChanged(frame);
+  if (startedInteraction) {
+   Q_EMIT interactionStarted();
+  }
+  update();
+  return;
+ }
+
+ // Check for handle hit first
+ if (!impl_->keyEditingEnabled_) {
+  impl_->dragMode_ = Impl::DragMode::Pan;
+  impl_->dragStart_ = pos.toPoint();
+  impl_->dragStartXMin_ = impl_->xMin_;
+  impl_->dragStartXMax_ = impl_->xMax_;
+  impl_->dragStartYMin_ = impl_->yMin_;
+  impl_->dragStartYMax_ = impl_->yMax_;
+  startedInteraction = true;
   if (startedInteraction) {
    Q_EMIT interactionStarted();
   }
@@ -853,7 +883,8 @@ void ArtifactCurveEditorWidget::mouseReleaseEvent(QMouseEvent* /*event*/) {
 
   // Find new index of moved key
   for (int i = 0; i < static_cast<int>(keys.size()); ++i) {
-   if (keys[i].frame == impl_->dragOrigFrame_) {
+   if (keys[i].frame == impl_->dragOrigFrame_ &&
+       std::abs(keys[i].value - impl_->dragOrigValue_) < 0.0001f) {
     impl_->selectedKey_ = i;
     break;
    }
@@ -935,6 +966,10 @@ void ArtifactCurveEditorWidget::keyPressEvent(QKeyEvent* event) {
  }
 
  if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+  if (!impl_->keyEditingEnabled_) {
+   event->accept();
+   return;
+  }
   const int oldTrack = impl_->selectedTrack_;
   const int oldKey = impl_->selectedKey_;
   if (impl_->deleteSelectedKey()) {

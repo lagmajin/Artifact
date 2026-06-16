@@ -886,7 +886,8 @@ void drawBoxHandle(ArtifactIRenderer* renderer,
                    float size,
                    const FloatColor& fill,
                    const FloatColor& outline,
-                   float invZoom);
+                   float invZoom,
+                   bool active = false);
 
 void drawScaleCenterHandle(ArtifactIRenderer* renderer,
                            const QPointF& center,
@@ -922,7 +923,7 @@ void drawScaleCenterHandle(ArtifactIRenderer* renderer,
  renderer->drawSolidLine({static_cast<float>(center.x()), static_cast<float>(center.y())},
                          {static_cast<float>(xTip.x()), static_cast<float>(xTip.y())},
                          brighten(xColor, active ? 1.06f : 0.98f), lineThickness);
- drawBoxHandle(renderer, xTip, handleSize, brighten(xColor, 1.08f), outline, invZoom);
+ drawBoxHandle(renderer, xTip, handleSize, brighten(xColor, 1.08f), outline, invZoom, active);
 
  renderer->drawSolidLine({static_cast<float>(center.x() + 1.0f * invZoom),
                           static_cast<float>(center.y() + 1.0f * invZoom)},
@@ -932,12 +933,12 @@ void drawScaleCenterHandle(ArtifactIRenderer* renderer,
  renderer->drawSolidLine({static_cast<float>(center.x()), static_cast<float>(center.y())},
                          {static_cast<float>(yTip.x()), static_cast<float>(yTip.y())},
                          brighten(yColor, active ? 1.06f : 0.98f), lineThickness);
- drawBoxHandle(renderer, yTip, handleSize, brighten(yColor, 1.08f), outline, invZoom);
+ drawBoxHandle(renderer, yTip, handleSize, brighten(yColor, 1.08f), outline, invZoom, active);
 
  drawBoxHandle(renderer, center, std::clamp(handleSize * 1.08f, 8.0f, 16.0f),
                active ? FloatColor{1.0f, 0.92f, 0.35f, 1.0f}
                       : FloatColor{0.95f, 0.95f, 0.98f, 0.96f},
-               outline, invZoom);
+               outline, invZoom, active);
 }
 
 float distanceToSegment(const QPointF& p, const QPointF& a, const QPointF& b)
@@ -959,21 +960,54 @@ void drawBoxHandle(ArtifactIRenderer* renderer,
                    float size,
                    const FloatColor& fill,
                    const FloatColor& outline,
-                   float invZoom)
+                   float invZoom,
+                   bool active)
 {
  if (!renderer) {
   return;
  }
- Q_UNUSED(invZoom);
 
  const float half = size * 0.5f;
+ const float glowPad = active ? std::max(2.2f, 2.0f * invZoom) : std::max(1.0f, 0.8f * invZoom);
+ const float shadowShift = std::max(1.0f, 0.9f * invZoom);
+ const float innerInset = std::clamp(size * 0.16f, 1.0f, 2.4f);
+ const float coreInset = std::clamp(size * 0.28f, 1.4f, 3.0f);
+ const FloatColor shadow = {0.0f, 0.0f, 0.0f, active ? 0.42f : 0.28f};
+ const FloatColor glow = {fill.r(), fill.g(), fill.b(), active ? 0.26f : 0.12f};
+
+ renderer->drawSolidRect(static_cast<float>(center.x() - half - glowPad),
+                         static_cast<float>(center.y() - half - glowPad),
+                         size + glowPad * 2.0f,
+                         size + glowPad * 2.0f,
+                         glow, 1.0f);
+ renderer->drawSolidRect(static_cast<float>(center.x() - half + shadowShift),
+                         static_cast<float>(center.y() - half + shadowShift),
+                         size, size,
+                         shadow, 1.0f);
  renderer->drawSolidRect(static_cast<float>(center.x() - half),
                          static_cast<float>(center.y() - half),
                          size, size,
-                         brighten(fill, 1.08f), 1.0f);
+                         brighten(fill, active ? 1.14f : 1.08f), 1.0f);
+ renderer->drawSolidRect(static_cast<float>(center.x() - half + innerInset),
+                         static_cast<float>(center.y() - half + innerInset),
+                         std::max(1.0f, size - innerInset * 2.0f),
+                         std::max(1.0f, size - innerInset * 2.0f),
+                         brighten(fill, active ? 1.32f : 1.18f), 1.0f);
+ renderer->drawSolidRect(static_cast<float>(center.x() - half + coreInset),
+                         static_cast<float>(center.y() - half + coreInset),
+                         std::max(1.0f, size - coreInset * 2.0f),
+                         std::max(1.0f, size - coreInset * 2.0f),
+                         brighten(fill, active ? 0.92f : 0.98f), 1.0f);
  renderer->drawRectOutline(static_cast<float>(center.x() - half),
                            static_cast<float>(center.y() - half),
-                           size, size, outline);
+                           size, size,
+                           active ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
+                                  : outline);
+ renderer->drawRectOutline(static_cast<float>(center.x() - half + innerInset),
+                           static_cast<float>(center.y() - half + innerInset),
+                           std::max(1.0f, size - innerInset * 2.0f),
+                           std::max(1.0f, size - innerInset * 2.0f),
+                           FloatColor{1.0f, 1.0f, 1.0f, active ? 0.82f : 0.56f});
 }
 
 QPointF offsetPointAwayFromCenter(const QPointF& center, const QPointF& point, float amount)
@@ -1211,18 +1245,17 @@ const FloatColor& color,
                         const bool active)
 {
  const float shadowShift = std::max(0.7f, 0.65f * invZoom);
- const float shadowThickness = thickness + std::max(0.55f, 0.45f * invZoom);
- const float mainThickness = std::max(1.0f, thickness + std::max(0.2f, 0.18f * invZoom));
- const FloatColor shadow = { 0.0f, 0.0f, 0.0f, active ? 0.30f : 0.18f };
- const FloatColor mainColor = brighten(color, active ? 1.08f : 1.0f);
- if (!active) {
-  renderer->drawSolidLine(a, b, mainColor, mainThickness);
-  return;
- }
-  renderer->drawSolidLine({a.x + shadowShift, a.y + shadowShift},
-                           {b.x + shadowShift, b.y + shadowShift},
-                           shadow, shadowThickness);
-  renderer->drawSolidLine(a, b, mainColor, mainThickness);
+ const float shadowThickness = thickness + std::max(active ? 0.9f : 0.65f, 0.55f * invZoom);
+ const float mainThickness = std::max(1.0f, thickness + std::max(active ? 0.55f : 0.28f, 0.18f * invZoom));
+ const float highlightThickness = std::max(1.0f, mainThickness * (active ? 0.42f : 0.28f));
+ const FloatColor shadow = {0.0f, 0.0f, 0.0f, active ? 0.34f : 0.22f};
+ const FloatColor mainColor = brighten(color, active ? 1.10f : 1.02f);
+ const FloatColor highlight = brighten(color, active ? 1.34f : 1.18f);
+ renderer->drawSolidLine({a.x + shadowShift, a.y + shadowShift},
+                         {b.x + shadowShift, b.y + shadowShift},
+                         shadow, shadowThickness);
+ renderer->drawSolidLine(a, b, mainColor, mainThickness);
+ renderer->drawSolidLine(a, b, highlight, highlightThickness);
 }
 
 void drawEmphasizedRect(ArtifactIRenderer* renderer,
@@ -1330,8 +1363,8 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
   return;
  }
 
- // 選択されていない場合は描画しない（外部で制御されているべきだが念のため）
- if (!isSelected_) {
+ // 選択されていない時でもドラッグ中は残す
+ if (!isSelected_ && !isDragging_) {
   return;
  }
 
@@ -1474,17 +1507,19 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
 
  if (showScale) {
     const float handleSizeScale = std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize, 10.0f, 22.0f);
-    const FloatColor cornerFill = activeHandle_ == HandleType::Scale_TL ||
-                                  activeHandle_ == HandleType::Scale_TR ||
-                                  activeHandle_ == HandleType::Scale_BL ||
-                                  activeHandle_ == HandleType::Scale_BR
+    const bool cornerActive = activeHandle_ == HandleType::Scale_TL ||
+                              activeHandle_ == HandleType::Scale_TR ||
+                              activeHandle_ == HandleType::Scale_BL ||
+                              activeHandle_ == HandleType::Scale_BR;
+    const bool edgeActive = activeHandle_ == HandleType::Scale_T ||
+                            activeHandle_ == HandleType::Scale_B ||
+                            activeHandle_ == HandleType::Scale_L ||
+                            activeHandle_ == HandleType::Scale_R;
+    const FloatColor cornerFill = cornerActive
         ? FloatColor{1.0f, 0.95f, 0.72f, 1.0f}
         : (isTextLayer ? FloatColor{0.80f, 0.94f, 1.0f, 0.98f}
                        : FloatColor{0.94f, 0.96f, 0.98f, 0.96f});
-    const FloatColor axisFill = activeHandle_ == HandleType::Scale_T ||
-                                activeHandle_ == HandleType::Scale_B ||
-                                activeHandle_ == HandleType::Scale_L ||
-                                activeHandle_ == HandleType::Scale_R
+    const FloatColor axisFill = edgeActive
         ? FloatColor{0.68f, 0.96f, 0.82f, 1.0f}
         : (isTextLayer ? FloatColor{0.72f, 0.90f, 1.0f, 0.97f}
                        : FloatColor{0.90f, 0.94f, 0.96f, 0.95f});
@@ -1492,15 +1527,15 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
         ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
         : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
 
-   const float outward = std::max(5.0f, GizmoVisualStyle::scaleHandleOutset * 0.58f * invZoom);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tr_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, br_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, topPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bottomPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, leftPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, rightPoint, outward * 0.85f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom);
+   const float outward = std::max(6.5f, 14.0f * invZoom);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_TL);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tr_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_TR);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_BL);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, br_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_BR);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, topPoint, outward * 0.90f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_T);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bottomPoint, outward * 0.90f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_B);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, leftPoint, outward * 0.90f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_L);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, rightPoint, outward * 0.90f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_R);
 
   if (mode_ == Mode::Scale) {
    const QPointF mapOrigin = globalTransform.map(QPointF(0.0, 0.0));

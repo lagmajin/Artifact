@@ -255,6 +255,18 @@ namespace Artifact
     QString tooltip;
   };
 
+  static QString shortBackendLabel(const QString& backend)
+  {
+    const QString value = backend.trimmed().toLower();
+    if (value.isEmpty() || value == QStringLiteral("auto")) return QStringLiteral("auto");
+    if (value == QStringLiteral("pipe-hw")) return QStringLiteral("hw");
+    if (value == QStringLiteral("pipe-vulkan")) return QStringLiteral("vk");
+    if (value == QStringLiteral("native")) return QStringLiteral("native");
+    if (value == QStringLiteral("gpu") || value.startsWith(QStringLiteral("gpu:"))) return QStringLiteral("gpu");
+    if (value == QStringLiteral("external")) return QStringLiteral("ext");
+    return value.left(8);
+  }
+
   JobLineData buildJobLineData(int i) const {
     const auto& job = jobs[i];
     QString statusTag = "WAIT";
@@ -293,6 +305,10 @@ namespace Artifact
       .arg(progressBar)
       .arg(job.progress, 3)
       .arg(outputName);
+    QString lineSuffix = QStringLiteral("  enc:%1  rnd:%2")
+        .arg(shortBackendLabel(job.encoderBackend))
+        .arg(shortBackendLabel(job.renderBackend));
+    line += lineSuffix;
     QString tooltip = QString("Output: %1\nEncode: %2\nRender: %3")
         .arg(outputPath.isEmpty() ? QStringLiteral("(auto)") : outputPath)
         .arg(job.encoderBackend.isEmpty() ? QStringLiteral("auto") : job.encoderBackend)

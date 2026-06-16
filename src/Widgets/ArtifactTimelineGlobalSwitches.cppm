@@ -66,33 +66,33 @@ public:
         shyBtn = createBtn(
             "Hide Shy Layers",
             loadIconWithFallback(
-                QStringLiteral("MaterialVS/neutral/visibility_off.svg"),
-                QStringLiteral("MaterialVS/orange/visibility_off.svg")));
+                QStringLiteral("Studio/timeline_switch_shy.svg"),
+                QStringLiteral("Studio/layermenu_shy.svg")));
         motionBlurBtn = createBtn(
             "Enable Motion Blur",
             loadIconWithFallback(
-                QStringLiteral("MaterialVS/colored/E3E3E3/stopwatch.svg"),
-                QStringLiteral("stopwatch.png")));
+                QStringLiteral("Studio/timeline_switch_motion_blur.svg"),
+                QStringLiteral("Studio/timemenu_timer.svg")));
         frameBlendBtn = createBtn(
             "Enable Frame Blending",
             loadIconWithFallback(
-                QStringLiteral("MaterialVS/neutral/tune.svg"),
-                QStringLiteral("tune.png")));
+                QStringLiteral("Studio/timeline_switch_frame_blend.svg"),
+                QStringLiteral("Studio/tune.svg")));
         graphEditorBtn = createBtn(
             "Toggle Curve Editor / カーブエディタ切り替え (Ctrl+G)",
             loadIconWithFallback(
-                QStringLiteral("MaterialVS/neutral/view_sidebar.svg"),
-                QStringLiteral("view_sidebar.png")));
+                QStringLiteral("Studio/timeline_switch_curve_editor.svg"),
+                QStringLiteral("Studio/graphic_eq.svg")));
         motionPathBtn = createBtn(
             "Show Motion Path Overlay",
             loadIconWithFallback(
-                QStringLiteral("MaterialVS/neutral/timeline.svg"),
-                QStringLiteral("timeline.svg")));
+                QStringLiteral("Studio/timeline_switch_motion_path.svg"),
+                QStringLiteral("Studio/timeline.svg")));
         overscrollBtn = createBtn(
             "Allow Timeline Overscroll",
             loadIconWithFallback(
-                QStringLiteral("MaterialVS/neutral/swap_horiz.svg"),
-                QStringLiteral("swap_horiz.svg")));
+                QStringLiteral("Studio/timeline_switch_overscroll.svg"),
+                QStringLiteral("Studio/swap_horiz.svg")));
 
         layout->addStretch();
     }

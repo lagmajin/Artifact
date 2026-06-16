@@ -1,6 +1,7 @@
-﻿module;
+module;
 #include <utility>
 
+#include <QWidget>
 #include <QtWidgets/QMainWindow>
 #include <ads_globals.h>
 #include <functional>
@@ -8,8 +9,6 @@
 #include <wobjectcpp.h>
 
 export module Artifact.MainWindow;
-
-class QWidget;
 
 import Artifact.Widgets.AudioMixer;               // Added
 import Audio.Mixer;                               // Added

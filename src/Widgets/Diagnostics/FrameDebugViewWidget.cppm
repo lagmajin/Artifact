@@ -189,6 +189,7 @@ public:
 
         QStringList lines;
         lines << QStringLiteral("Frame Debug View");
+        lines << QStringLiteral("read-only frame inspector for pass/resource/attachment summaries");
         lines << QStringLiteral("frame: %1").arg(snapshot.frame.framePosition());
         lines << QStringLiteral("timestampMs: %1").arg(snapshot.timestampMs);
         lines << QStringLiteral("composition: %1").arg(snapshot.compositionName);
@@ -356,6 +357,7 @@ public:
         }
 
         text_->setPlainText(lines.join(QStringLiteral("\n")));
+        text_->setToolTip(QStringLiteral("Read-only snapshot view. Use App Debugger to compare bundles and inspect history."));
     }
 };
 

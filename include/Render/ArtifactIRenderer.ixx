@@ -93,6 +93,8 @@ public:
   QString lastPresentStatus() const;
   void beginFrameCostCapture();
   void endFrameCostCapture();
+  void beginFrameGpuProfiling();
+  void endFrameGpuProfiling();
   ArtifactCore::RenderCostStats frameCostStats() const;
   double lastFrameGpuTimeMs() const;
   QString particleDebugState() const;
