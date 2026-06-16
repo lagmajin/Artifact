@@ -95,6 +95,7 @@ namespace Artifact {
    QString aiNotes_;
    CreationDefaultsState creationDefaultsState_;
    GuideSet guideSet_;
+   QJsonObject extensionData_;
 
  public:
   Impl();
@@ -124,6 +125,11 @@ namespace Artifact {
   QStringList aiTags() const;
   void setAINotes(const QString& notes);
   QString aiNotes() const;
+
+  // 拡張データ(JSON dict)。コマンドパレット MRU 等、周辺機能の
+  // 保存受け口。既存サービス・メニュー経路には接続しない。
+  QJsonObject extensionData() const { return extensionData_; }
+  void setExtensionData(const QJsonObject& data) { extensionData_ = data; }
 
    // Layer management
    ArtifactLayerResult createLayerAndAddToComposition(const CompositionID& compositionId, ArtifactLayerInitParams& params);
@@ -685,6 +691,10 @@ void ArtifactProject::Impl::createCompositions(const QStringList& names) {}
   }
   if (!aiNotes_.isEmpty()) {
    result["ai_notes"] = aiNotes_;
+  }
+  // 拡張データ(コマンドパレット MRU 等)
+  if (!extensionData_.isEmpty()) {
+   result["extension_data"] = extensionData_;
   }
   result["creationDefaults"] = creationDefaultsState_.toJson();
   result["guideSet"] = guideSet_.toJson();
@@ -1304,6 +1314,18 @@ void ArtifactProject::setGuideSet(const GuideSet& guideSet)
  {
   return impl_->aiNotes();
  }
+
+QJsonObject ArtifactProject::extensionData() const
+{
+  return impl_ ? impl_->extensionData() : QJsonObject();
+}
+
+void ArtifactProject::setExtensionData(const QJsonObject& data)
+{
+  if (impl_) {
+    impl_->setExtensionData(data);
+  }
+}
 
  void ArtifactProject::removeAllCompositions()
  {

@@ -40,11 +40,14 @@ import Math.Interpolate;
 namespace Artifact {
 
 namespace {
+constexpr qreal kMenuBarVisualScale = 1.2;
+
 QFont scaledMenuFont(const QFont& baseFont)
 {
  const auto* settings = ArtifactCore::ArtifactAppSettings::instance();
  const int scalePercent = settings ? settings->menuBarFontScalePercent() : 132;
- const qreal factor = qBound(0.5, static_cast<qreal>(scalePercent) / 100.0, 2.0);
+ const qreal factor = qBound(0.5, static_cast<qreal>(scalePercent) / 100.0, 2.0) *
+                      kMenuBarVisualScale;
  QFont font = baseFont;
  const qreal pointSize = font.pointSizeF() > 0 ? font.pointSizeF() : 10.0;
  font.setPointSizeF(pointSize * factor);
@@ -58,13 +61,14 @@ int requiredMenuBarWidth(const QMenuBar* menuBar, const QFont& font)
  }
 
  const QFontMetrics fm(font);
+ const int visualIconSize = 19;
  int width = 0;
  for (const QAction* action : menuBar->actions()) {
   if (!action || !action->isVisible()) {
    continue;
   }
-  const int iconWidth = action->icon().isNull() ? 0 : 16;
-  const int spacing = action->icon().isNull() ? 0 : 4;
+  const int iconWidth = action->icon().isNull() ? 0 : visualIconSize;
+  const int spacing = action->icon().isNull() ? 0 : 5;
   width += fm.horizontalAdvance(action->text()) + iconWidth + spacing + 9;
  }
  return width + 8;

@@ -29,6 +29,7 @@ module;
 #include <cmath>
 #include <QMessageBox>
 #include <QMenu>
+#include <QObject>
 #include <QPointer>
 #include <QShowEvent>
 #include <QStatusBar>
@@ -60,6 +61,9 @@ import Widgets.Utils.CSS;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Application.AppSettings;
+#ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
+import Command.Palette;
+#endif
 
 namespace Artifact {
 
@@ -1061,6 +1065,21 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
 
   resize(2000,
          1200); // Increased initial window size to give central area more space
+
+#ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
+  {
+    // Command Palette: lazy-init a single application-scope widget the first
+    // time the main window is constructed. It self-registers the dummy
+    // actions on first boot. The hotkey is handled in keyPressEvent() below
+    // (no new QObject signal/slot connection is introduced by this block).
+    if (!sPalette_instance()) {
+      auto *palette = new Artifact::ArtifactCommandPaletteWidget(qApp);
+      palette->setMainWindow(this);
+      Artifact::ArtifactCommandPaletteWidget::bootDummyCommandPaletteActions();
+      setPalette_instance(palette);
+    }
+  }
+#endif
 }
 
 ArtifactMainWindow::~ArtifactMainWindow() {
@@ -1919,6 +1938,30 @@ void ArtifactMainWindow::setStartupLayoutFrozen(bool frozen) {
 }
 
 void ArtifactMainWindow::keyPressEvent(QKeyEvent *event) {
+#ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
+  if (event && event->modifiers() == (Qt::ControlModifier | Qt::ShiftModifier) &&
+      event->key() == Qt::Key_P) {
+    if (auto *palette = sPalette_instance()) {
+      if (palette->isVisible()) {
+        palette->hide();
+      } else {
+        palette->setProperty("hostWindow",
+                             QVariant::fromValue<QWidget *>(this));
+        // Re-collect actions on every show to keep the list current.
+        if (auto *cp = qobject_cast<Artifact::ArtifactCommandPaletteWidget *>(
+                palette)) {
+          cp->setMainWindow(this);
+          cp->refreshActionList();
+        }
+        palette->show();
+        palette->raise();
+        palette->activateWindow();
+      }
+      event->accept();
+      return;
+    }
+  }
+#endif
   QMainWindow::keyPressEvent(event);
 }
 
@@ -2043,5 +2086,15 @@ bool ArtifactMainWindow::eventFilter(QObject *watched, QEvent *event) {
 ArtifactAICloudWidget *ArtifactMainWindow::aiCloudWidget() const {
   return impl_->aiCloudWidget_;
 }
+
+#ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
+QWidget *ArtifactMainWindow::paletteInstance_ = nullptr;
+
+QWidget *ArtifactMainWindow::sPalette_instance() { return paletteInstance_; }
+
+void ArtifactMainWindow::setPalette_instance(QWidget *palette) {
+  paletteInstance_ = palette;
+}
+#endif
 
 } // namespace Artifact

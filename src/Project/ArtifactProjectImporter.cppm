@@ -312,6 +312,11 @@ namespace Artifact
    }
   }
 
+  // 拡張データ(コマンドパレット MRU 等)を復元
+  if (root.contains("_extension_data") && root["_extension_data"].isObject()) {
+   projectPtr->setExtensionData(root["_extension_data"].toObject());
+  }
+
   // 健康状態のチェックと自動修復の実行
   ArtifactProjectHealthChecker::checkAndRepair(projectPtr.get(), AutoRepairOptions{
       true, // repairFrameRanges

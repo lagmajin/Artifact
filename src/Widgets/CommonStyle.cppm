@@ -306,8 +306,8 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
       const QFontMetrics& fm = menuItem->fontMetrics;
       const int textWidth = fm.horizontalAdvance(menuItem->text);
       const int textHeight = fm.height();
-      const int iconWidth = menuItem->icon.isNull() ? 0 : 16;
-      const int spacing = menuItem->icon.isNull() ? 0 : 4;
+      const int iconWidth = menuItem->icon.isNull() ? 0 : 19;
+      const int spacing = menuItem->icon.isNull() ? 0 : 5;
       return QSize(std::max(contentsSize.width(), textWidth + iconWidth + spacing + 9),
                    std::max(contentsSize.height(), textHeight + 7));
     }
@@ -383,8 +383,8 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       const QFontMetrics& fm = menuItem->fontMetrics;
       const int textWidth = fm.horizontalAdvance(menuItem->text);
       const bool hasIcon = !menuItem->icon.isNull();
-      const int iconSize = hasIcon ? std::min(15, std::max(12, itemRect.height() - 6)) : 0;
-      const int spacing = hasIcon ? 4 : 0;
+      const int iconSize = hasIcon ? std::min(19, std::max(13, itemRect.height() - 5)) : 0;
+      const int spacing = hasIcon ? 5 : 0;
       const int contentWidth = textWidth + iconSize + spacing;
       int x = itemRect.left() + std::max(0, (itemRect.width() - contentWidth) / 2);
 
