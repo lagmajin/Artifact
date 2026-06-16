@@ -4992,22 +4992,18 @@ ArtifactIRenderer *CompositionRenderController::renderer() const {
 
 ArtifactCore::FrameDebugSnapshot
 CompositionRenderController::frameDebugSnapshot() const {
-  struct TraceScopeGuard {
-    ArtifactCore::TraceScopeRecord scope;
-    QElapsedTimer timer;
-    TraceScopeGuard() {
-      scope.name = QStringLiteral("CompositionRenderController::frameDebugSnapshot");
-      scope.domain = ArtifactCore::TraceDomain::Render;
-      timer.start();
+  ArtifactCore::TraceScopeRecord traceScope;
+  traceScope.name = QStringLiteral("CompositionRenderController::frameDebugSnapshot");
+  traceScope.domain = ArtifactCore::TraceDomain::Render;
+  QElapsedTimer traceTimer;
+  traceTimer.start();
+  const auto finalizeTraceScope = [&]() {
+    traceScope.endNs = traceTimer.nsecsElapsed();
+    if (traceScope.endNs <= traceScope.startNs) {
+      traceScope.endNs = traceScope.startNs + 1;
     }
-    ~TraceScopeGuard() {
-      scope.endNs = timer.nsecsElapsed();
-      if (scope.endNs <= scope.startNs) {
-        scope.endNs = scope.startNs + 1;
-      }
-      ArtifactCore::TraceRecorder::instance().recordScope(scope);
-    }
-  } traceGuard;
+    ArtifactCore::TraceRecorder::instance().recordScope(traceScope);
+  };
 
   ArtifactCore::FrameDebugSnapshot snapshot;
   const auto comp = impl_->previewPipeline_.composition();
@@ -5358,6 +5354,7 @@ CompositionRenderController::frameDebugSnapshot() const {
   snapshot.densityNextAction = densityNextActionForAxis(dominantAxis);
 
   ArtifactCore::TraceRecorder::instance().recordFrameDebugSnapshot(snapshot);
+  finalizeTraceScope();
   return snapshot;
 }
 
