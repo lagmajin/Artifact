@@ -3261,6 +3261,11 @@ public:
   bool infoOverlayVisible_ = false;
   QString infoOverlayTitle_;
   QString infoOverlayDetail_;
+  // Persistent key/value rows shown beneath the title/detail (selection
+  // info, timecode, zoom, etc.). Each row is rendered as `Key: Value` with
+  // the key dimmed. The first row that has a non-empty Key starts a new
+  // section; rows whose key is empty act as a blank separator.
+  QList<QPair<QString, QString>> infoOverlayKeyValues_;
   bool commandPaletteVisible_ = false;
   QString commandPaletteQuery_;
   QStringList commandPaletteItems_;
@@ -4706,6 +4711,32 @@ void CompositionRenderController::setInfoOverlayText(const QString &title,
   impl_->infoOverlayVisible_ = true;
   impl_->infoOverlayTitle_ = normalizedTitle;
   impl_->infoOverlayDetail_ = normalizedDetail;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+void CompositionRenderController::setInfoOverlayKeyValues(
+    const QList<QPair<QString, QString>>& rows) {
+  if (!impl_) {
+    return;
+  }
+  if (impl_->infoOverlayKeyValues_ == rows) {
+    return;
+  }
+  impl_->infoOverlayKeyValues_ = rows;
+  // Make sure the overlay stays visible even if the caller only wants to
+  // show key/value rows (e.g. selection HUD, time/zoom strip) without a
+  // title.
+  impl_->infoOverlayVisible_ = true;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+void CompositionRenderController::clearInfoOverlayKeyValues() {
+  if (!impl_ || impl_->infoOverlayKeyValues_.isEmpty()) {
+    return;
+  }
+  impl_->infoOverlayKeyValues_.clear();
   impl_->invalidateOverlayComposite();
   markRenderDirty();
 }
@@ -9348,8 +9379,17 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
                               ? QStringLiteral("Info")
                               : infoOverlayTitle_.trimmed();
     const QString detail = infoOverlayDetail_.trimmed();
-    ::Artifact::drawViewportInfoOverlay(renderer_.get(), overlayW, overlayH,
-                                        title, detail, &restoreCanvasSize);
+    // The rich HUD merges the title/detail (transient one-liner) with
+    // persistent key/value rows (selection info, timecode, zoom, etc.).
+    // When there are no key/value rows the legacy 2-line layout kicks in.
+    if (infoOverlayKeyValues_.isEmpty()) {
+      ::Artifact::drawViewportInfoOverlay(renderer_.get(), overlayW, overlayH,
+                                          title, detail, &restoreCanvasSize);
+    } else {
+      ::Artifact::drawViewportInfoOverlayWithKeyValues(
+          renderer_.get(), overlayW, overlayH, title, detail,
+          infoOverlayKeyValues_, &restoreCanvasSize);
+    }
   }
 
   {

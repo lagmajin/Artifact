@@ -130,6 +130,10 @@ void clearDropGhostPreview();
 // Lightweight info HUD used for selection / operation feedback.
 void setInfoOverlayText(const QString& title, const QString& detail = QString());
 void clearInfoOverlayText();
+// Persistent key/value rows shown beneath the title/detail. An empty
+// list hides the row block but leaves the title/detail alone.
+void setInfoOverlayKeyValues(const QList<QPair<QString, QString>>& rows);
+void clearInfoOverlayKeyValues();
 void showCommandPaletteOverlay(const QString& query, const QStringList& items);
 void showContextMenuOverlay(const QPointF& viewportPos, const QStringList& items,
                            const QString& title = QString(),

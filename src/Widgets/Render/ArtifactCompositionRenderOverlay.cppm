@@ -948,6 +948,63 @@ void drawViewportInfoOverlay(ArtifactIRenderer *renderer,
                detail.isEmpty() ? 0 : fm.horizontalAdvance(detail));
   const int contentHeight =
       detail.isEmpty() ? lineHeight : lineHeight * 2 + 4;
+  // Empty key/value list so the legacy 2-line layout is preserved.
+  drawViewportInfoOverlayWithKeyValuesImpl(renderer, overlayW, overlayH, title,
+                                           detail, {}, restoreCanvasSize);
+}
+
+void drawViewportInfoOverlayWithKeyValues(
+    ArtifactIRenderer *renderer, int overlayW, int overlayH,
+    const QString &title, const QString &detail,
+    const QList<QPair<QString, QString>> &keyValues,
+    const QSize *restoreCanvasSize) {
+  drawViewportInfoOverlayWithKeyValuesImpl(renderer, overlayW, overlayH, title,
+                                           detail, keyValues, restoreCanvasSize);
+}
+
+void drawViewportInfoOverlayWithKeyValuesImpl(
+    ArtifactIRenderer *renderer, int overlayW, int overlayH,
+    const QString &title, const QString &detail,
+    const QList<QPair<QString, QString>> &keyValues,
+    const QSize *restoreCanvasSize) {
+  if (!renderer) {
+    return;
+  }
+
+  QFont font = QApplication::font();
+  font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
+  QFont keyFont = font;
+  keyFont.setPointSizeF(font.pointSizeF() * 0.92);
+  const QFontMetrics fm(font);
+  const QFontMetrics keyFm(keyFont);
+  const int lineHeight = fm.height();
+  const int keyLineHeight = keyFm.height();
+  const int horizontalPadding = 24;
+  const int verticalPadding = 12;
+  const int rowGap = 2;
+
+  int contentWidth =
+      std::max(fm.horizontalAdvance(title),
+               detail.isEmpty() ? 0 : fm.horizontalAdvance(detail));
+  int contentHeight = lineHeight; // title
+  if (!detail.isEmpty()) {
+    contentHeight += lineHeight + 4;
+  }
+  if (!keyValues.isEmpty()) {
+    for (const auto &row : keyValues) {
+      if (row.first.isEmpty()) {
+        // Blank separator row: just adds a little vertical breathing room.
+        contentHeight += keyLineHeight / 2;
+        continue;
+      }
+      const int labelWidth = keyFm.horizontalAdvance(row.first + QStringLiteral(": "));
+      const int valueWidth = fm.horizontalAdvance(row.second);
+      contentWidth = std::max(contentWidth, labelWidth + valueWidth);
+      contentHeight += keyLineHeight + rowGap;
+    }
+  } else {
+    contentHeight = detail.isEmpty() ? lineHeight : lineHeight * 2 + 4;
+  }
   QRect labelRect(12, 12, contentWidth + 24, contentHeight + 12);
   if (labelRect.right() > overlayW - 8) {
     labelRect.moveRight(overlayW - 8);
@@ -973,6 +1030,35 @@ void drawViewportInfoOverlay(ArtifactIRenderer *renderer,
     renderer->drawText(detailRect, fm.elidedText(detail, Qt::ElideRight, detailRect.width()),
                        font, FloatColor{0.70f, 0.75f, 0.80f, 1.0f},
                        Qt::AlignLeft | Qt::AlignTop);
+  }
+  if (!keyValues.isEmpty()) {
+    int y = 6 + lineHeight + (detail.isEmpty() ? 0 : lineHeight + 4) + 6;
+    for (const auto &row : keyValues) {
+      if (row.first.isEmpty()) {
+        y += keyLineHeight / 2;
+        continue;
+      }
+      const QString label = row.first + QStringLiteral(": ");
+      const QString value = row.second;
+      const int availableWidth = labelRect.width() - 20;
+      const QString elidedValue =
+          fm.elidedText(value, Qt::ElideRight, availableWidth - keyFm.horizontalAdvance(label));
+      const QRect rowRect(labelRect.left() + 10, labelRect.top() + y,
+                         availableWidth, keyLineHeight);
+      renderer->drawText(QRect(rowRect.left(), rowRect.top(),
+                               keyFm.horizontalAdvance(label), keyLineHeight),
+                         label, keyFont,
+                         FloatColor{0.62f, 0.66f, 0.72f, 1.0f},
+                         Qt::AlignLeft | Qt::AlignTop);
+      renderer->drawText(QRect(rowRect.left() + keyFm.horizontalAdvance(label),
+                               rowRect.top(),
+                               rowRect.width() - keyFm.horizontalAdvance(label),
+                               keyLineHeight),
+                         elidedValue, font,
+                         FloatColor{0.92f, 0.96f, 1.0f, 1.0f},
+                         Qt::AlignLeft | Qt::AlignTop);
+      y += keyLineHeight + rowGap;
+    }
   }
   (void)restoreCanvasSize;
 }

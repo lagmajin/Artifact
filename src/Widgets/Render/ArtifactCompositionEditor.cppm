@@ -3757,6 +3757,131 @@ public:
                    CompositionEditorDeferredEvent::Kind::SelectionSync));
   }
 
+  // Collect everything the viewport HUD wants to show (selection info,
+  // timecode, zoom, pan) and push it to the render controller as a
+  // single key/value block. Called from any of the underlying signals
+  // (selection changed, playhead moved, viewport zoomed/panned) so the
+  // HUD never goes stale.
+  void refreshViewportHud(ArtifactCompositionEditor *owner) {
+    if (!owner || !renderController_) {
+      return;
+    }
+    QList<QPair<QString, QString>> rows;
+
+    // --- Selection block ---------------------------------------------
+    if (auto* app = ArtifactApplicationManager::instance()) {
+      if (auto* sel = app->layerSelectionManager()) {
+        const auto selected = sel->selectedLayers();
+        if (!selected.isEmpty()) {
+          const auto current = sel->currentLayer();
+          const ArtifactAbstractLayerPtr focus =
+              current ? current : *selected.begin();
+          if (focus) {
+            rows.append({QStringLiteral("選択"),
+                         QStringLiteral("%1 (%2 件)")
+                             .arg(focus->layerName().isEmpty()
+                                      ? QStringLiteral("(no name)")
+                                      : focus->layerName())
+                             .arg(selected.size())});
+            // Position
+            const auto t3 = focus->transform3D();
+            const double x = t3.positionX();
+            const double y = t3.positionY();
+            rows.append({QStringLiteral("位置"),
+                         QStringLiteral("%1 px, %2 px")
+                             .arg(QString::number(x, 'f', 1))
+                             .arg(QString::number(y, 'f', 1))});
+            // Scale (uniform-ish summary: just the X scale)
+            const double sx = t3.scaleX();
+            const double sy = t3.scaleY();
+            if (qFuzzyCompare(sx, sy)) {
+              rows.append({QStringLiteral("スケール"),
+                           QStringLiteral("%1%")
+                               .arg(QString::number(sx * 100.0, 'f', 1))});
+            } else {
+              rows.append({QStringLiteral("スケール"),
+                           QStringLiteral("%1% / %2%")
+                               .arg(QString::number(sx * 100.0, 'f', 1))
+                               .arg(QString::number(sy * 100.0, 'f', 1))});
+            }
+            // Opacity
+            const float opacity = focus->opacity();
+            rows.append({QStringLiteral("不透明度"),
+                         QStringLiteral("%1%")
+                             .arg(QString::number(opacity * 100.0, 'f', 0))});
+          }
+        } else {
+          rows.append({QStringLiteral("選択"),
+                       QStringLiteral("(なし)")});
+        }
+      }
+    }
+
+    // --- Playhead / timecode block ------------------------------------
+    if (auto* svc = ArtifactProjectService::instance()) {
+      if (auto comp = svc->currentComposition().lock()) {
+        const int64_t frame = comp->framePosition().framePosition();
+        const FrameRange workArea = comp->workAreaRange();
+        const int64_t total =
+            std::max<int64_t>(1, comp->frameRange().end());
+        const double fps = std::max(
+            1.0, static_cast<double>(comp->frameRate().framerate()));
+        const QString tc =
+            QStringLiteral("%1:%2:%3:%4")
+                .arg(static_cast<int>(frame / (3600 * 30)),
+                     2, 10, QChar('0'))
+                .arg(static_cast<int>((frame / (60 * 30)) % 60),
+                     2, 10, QChar('0'))
+                .arg(static_cast<int>((frame / 30) % 60),
+                     2, 10, QChar('0'))
+                .arg(static_cast<int>(frame % 30), 2, 10, QChar('0'));
+        rows.append({QString(), QString()}); // separator
+        rows.append({QStringLiteral("タイムコード"), tc});
+        rows.append({QStringLiteral("フレーム"),
+                     QStringLiteral("%1 / %2  (%3 fps)")
+                         .arg(frame)
+                         .arg(total)
+                         .arg(QString::number(fps, 'f', 0))});
+        if (workArea.end() > workArea.start()) {
+          rows.append({QStringLiteral("ワークエリア"),
+                       QStringLiteral("%1 - %2")
+                           .arg(workArea.start())
+                           .arg(workArea.end())});
+        }
+      }
+    }
+
+    // --- Viewport (zoom + pan) ----------------------------------------
+    if (renderController_->renderer()) {
+      const float zoom = renderController_->renderer()->getZoom();
+      float panX = 0.0f;
+      float panY = 0.0f;
+      renderController_->renderer()->getPan(panX, panY);
+      rows.append({QString(), QString()}); // separator
+      rows.append({QStringLiteral("ズーム"),
+                   QStringLiteral("%1%")
+                       .arg(QString::number(zoom * 100.0, 'f', 1))});
+      rows.append({QStringLiteral("パン"),
+                   QStringLiteral("%1, %2")
+                       .arg(QString::number(static_cast<double>(panX), 'f', 0))
+                       .arg(QString::number(static_cast<double>(panY), 'f', 0))});
+    }
+
+    // --- Tool block ---------------------------------------------------
+    if (auto* app = ArtifactApplicationManager::instance()) {
+      if (auto* toolMgr = app->toolManager()) {
+        const ToolType tool = toolMgr->activeTool();
+        const QString toolLabel = toolTypeToOverlayLabel(tool);
+        if (!toolLabel.isEmpty()) {
+          rows.append({QString(), QString()}); // separator
+          rows.append({QStringLiteral("ツール"), toolLabel});
+        }
+      }
+    }
+
+    renderController_->setInfoOverlayKeyValues(rows);
+  }
+
   void queueToolLabelSync(ArtifactCompositionEditor *owner) {
     if (!owner || toolLabelSyncQueued_) {
       return;
@@ -5046,6 +5171,17 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       impl_->queueToolLabelSync(this);
       impl_->queueSelectionSync(this);
     }
+
+    // Playback frame changes also need to refresh the rich HUD so the
+    // timecode row stays current while scrubbing / playing.
+    if (auto* playback = ArtifactPlaybackService::instance()) {
+      QObject::connect(playback, &ArtifactPlaybackService::frameChanged,
+                       this, [this](const FramePosition &) {
+                         if (impl_) {
+                           impl_->queueSelectionSync(this);
+                         }
+                       });
+    }
   }
 
   impl_->eventBusSubscriptions_.push_back(
@@ -5233,6 +5369,10 @@ bool ArtifactCompositionEditor::event(QEvent *event) {
       impl_->selectionSyncQueued_ = false;
       impl_->syncSelectionState(this);
       impl_->syncChromeSummary(this);
+      // The rich HUD reads selection / playhead / zoom / tool state, so
+      // the same deferred slot that already runs at the tail of every
+      // selection / playhead mutation is a good place to refresh it.
+      impl_->refreshViewportHud(this);
       return true;
     case CompositionEditorDeferredEvent::Kind::ToolLabelSync:
       impl_->toolLabelSyncQueued_ = false;
