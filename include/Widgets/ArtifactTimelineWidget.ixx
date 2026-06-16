@@ -81,6 +81,8 @@ class ArtifactTimelineWidget :public QWidget {
   void jumpToInPoint();
   void jumpToOutPoint();
   void toggleSoloSelectedLayer();
+  void snapSelectedLayersInToStart();
+  void snapSelectedLayersOutToEnd();
   bool handleTimelineAction(ArtifactTimelineAction action);
 
   /*signals:*/

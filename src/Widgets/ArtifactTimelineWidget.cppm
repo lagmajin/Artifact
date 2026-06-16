@@ -1443,6 +1443,91 @@ private:
   QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
 };
 
+// Snap the In point of a layer to the start of the composition. The Out
+// point moves by the same delta so the layer's duration is preserved
+// (mirrors the AE "Snap to In Point" feel, with the destination being
+// the composition's start frame).
+class SnapInToStartCommand final : public UndoCommand {
+public:
+  SnapInToStartCommand(CompositionID compositionId, LayerID layerId,
+                       QVector<TimelineLayerStateSnapshot> beforeSnapshots)
+      : compositionId_(std::move(compositionId)),
+        layerId_(std::move(layerId)),
+        beforeSnapshots_(std::move(beforeSnapshots)) {}
+
+  void undo() override
+  {
+    auto comp = safeCompositionLookup(compositionId_);
+    if (!comp) {
+      return;
+    }
+    restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void redo() override
+  {
+    if (applyTimelineLayerRangeEdit(compositionId_, layerId_.toString(), 0.0,
+                                    0.0, true)) {
+      if (auto* mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+      }
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Snap In to 0"); }
+
+private:
+  CompositionID compositionId_;
+  LayerID layerId_;
+  QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+};
+
+// Snap the Out point of a layer to the last frame of the composition. The
+// In point is left alone so the layer's body grows to meet the snap.
+class SnapOutToEndCommand final : public UndoCommand {
+public:
+  SnapOutToEndCommand(CompositionID compositionId, LayerID layerId,
+                      qint64 targetEnd,
+                      QVector<TimelineLayerStateSnapshot> beforeSnapshots)
+      : compositionId_(std::move(compositionId)),
+        layerId_(std::move(layerId)), targetEnd_(targetEnd),
+        beforeSnapshots_(std::move(beforeSnapshots)) {}
+
+  void undo() override
+  {
+    auto comp = safeCompositionLookup(compositionId_);
+    if (!comp) {
+      return;
+    }
+    restoreTimelineLayerStateSnapshots(comp, beforeSnapshots_);
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void redo() override
+  {
+    if (applyTimelineLayerRangeEdit(compositionId_, layerId_.toString(),
+                                    static_cast<double>(targetEnd_), 0.0,
+                                    false)) {
+      if (auto* mgr = UndoManager::instance()) {
+        mgr->notifyAnythingChanged();
+      }
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Snap Out to End"); }
+
+private:
+  CompositionID compositionId_;
+  LayerID layerId_;
+  qint64 targetEnd_ = 0;
+  QVector<TimelineLayerStateSnapshot> beforeSnapshots_;
+};
+
 bool propertyValueAsCurveNumber(const ArtifactCore::AbstractProperty &property,
                                const QVariant &value, double &outValue)
 {
@@ -6225,8 +6310,10 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     return;
   }
 
-  // Home / End キーで最初/最後のフレームへ
-  if (event->key() == Qt::Key_Home || event->key() == Qt::Key_End) {
+  // Home / End キーで最初/最後のフレームへ (Shift 付きはレイヤーの
+  // In/Out スナップに回すので、ここでは modifier なしだけ扱う)
+  if ((event->key() == Qt::Key_Home || event->key() == Qt::Key_End) &&
+      event->modifiers() == Qt::NoModifier) {
     auto *svc = ArtifactProjectService::instance();
     auto comp = svc ? svc->currentComposition().lock() : nullptr;
     if (comp) {
@@ -6486,6 +6573,12 @@ bool ArtifactTimelineWidget::handleTimelineAction(const ArtifactTimelineAction a
     return true;
   case ArtifactTimelineAction::SoloSelected:
     toggleSoloSelectedLayer();
+    return true;
+  case ArtifactTimelineAction::SnapInToStart:
+    snapSelectedLayersInToStart();
+    return true;
+  case ArtifactTimelineAction::SnapOutToEnd:
+    snapSelectedLayersOutToEnd();
     return true;
   case ArtifactTimelineAction::None:
     return false;
@@ -7122,6 +7215,101 @@ void ArtifactTimelineWidget::toggleSoloSelectedLayer()
     svc->clearAllLayerSoloInCurrentComposition();
   } else {
     svc->soloOnlyLayerInCurrentComposition(currentLayer->id());
+  }
+}
+
+void ArtifactTimelineWidget::snapSelectedLayersInToStart()
+{
+  // Resolve the current composition and walk the selected layers in the
+  // order they appear in the project so the resulting undo history reads
+  // top-to-bottom instead of in selection order.
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition || !impl_) {
+    return;
+  }
+  const auto layers = selectedTimelineLayers(
+      ArtifactApplicationManager::instance()
+          ? ArtifactApplicationManager::instance()->layerSelectionManager()
+          : nullptr);
+  if (layers.isEmpty()) {
+    return;
+  }
+
+  // Skip the operation entirely when every selected layer is already at
+  // 0. Push an empty command would just pollute the undo stack.
+  bool anyMoved = false;
+  for (const auto& layer : layers) {
+    if (layer && layer->inPoint().framePosition() != 0) {
+      anyMoved = true;
+      break;
+    }
+  }
+  if (!anyMoved) {
+    return;
+  }
+
+  // Single snapshot is enough because each layer's In point moves to 0
+  // independently. We still push one command per layer so a single undo
+  // step only reverts the affected layer (matches the per-layer ripple
+  // trim history the user is already used to).
+  for (const auto& layer : layers) {
+    if (!layer || layer->inPoint().framePosition() == 0) {
+      continue;
+    }
+    const auto snapshots = captureTimelineLayerStateSnapshots(composition, {layer});
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->push(std::make_unique<SnapInToStartCommand>(
+          composition->id(), layer->id(), snapshots));
+    } else {
+      applyTimelineLayerRangeEdit(composition->id(), layer->id().toString(),
+                                  0.0, 0.0, true);
+    }
+  }
+}
+
+void ArtifactTimelineWidget::snapSelectedLayersOutToEnd()
+{
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition || !impl_) {
+    return;
+  }
+  // Prefer the work area when one is set, so a trimmed composition
+  // doesn't get its layers dragged past the trim line.
+  const FrameRange workArea = composition->workAreaRange();
+  const bool hasWorkArea = workArea.end() > workArea.start();
+  qint64 targetEnd = hasWorkArea
+                         ? workArea.end()
+                         : composition->frameRange().end();
+  if (!hasWorkArea) {
+    targetEnd = std::max<int64_t>(0, targetEnd - 1);
+  }
+
+  const auto layers = selectedTimelineLayers(
+      ArtifactApplicationManager::instance()
+          ? ArtifactApplicationManager::instance()->layerSelectionManager()
+          : nullptr);
+  if (layers.isEmpty()) {
+    return;
+  }
+
+  for (const auto& layer : layers) {
+    if (!layer || layer->outPoint().framePosition() == targetEnd) {
+      continue;
+    }
+    const auto snapshots = captureTimelineLayerStateSnapshots(composition, {layer});
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->push(std::make_unique<SnapOutToEndCommand>(
+          composition->id(), layer->id(), targetEnd, snapshots));
+    } else {
+      applyTimelineLayerRangeEdit(composition->id(), layer->id().toString(),
+                                  static_cast<double>(targetEnd), 0.0, false);
+    }
   }
 }
 

@@ -26,6 +26,8 @@ enum class ArtifactTimelineAction {
   JumpToInPoint,
   JumpToOutPoint,
   SoloSelected,
+  SnapInToStart,
+  SnapOutToEnd,
 };
 
 inline ArtifactCore::ShortcutId timelineShortcutIdForAction(ArtifactTimelineAction action)
@@ -58,6 +60,10 @@ inline ArtifactCore::ShortcutId timelineShortcutIdForAction(ArtifactTimelineActi
     return ShortcutId::TimelineJumpToOutPoint;
   case ArtifactTimelineAction::SoloSelected:
     return ShortcutId::TimelineSoloSelected;
+  case ArtifactTimelineAction::SnapInToStart:
+    return ShortcutId::TimelineSnapInToStart;
+  case ArtifactTimelineAction::SnapOutToEnd:
+    return ShortcutId::TimelineSnapOutToEnd;
   case ArtifactTimelineAction::None:
     return ShortcutId::Undo;
   }
@@ -80,6 +86,8 @@ inline QVector<ArtifactTimelineAction> allTimelineActions()
       ArtifactTimelineAction::JumpToInPoint,
       ArtifactTimelineAction::JumpToOutPoint,
       ArtifactTimelineAction::SoloSelected,
+      ArtifactTimelineAction::SnapInToStart,
+      ArtifactTimelineAction::SnapOutToEnd,
   };
 }
 
@@ -112,6 +120,10 @@ inline QString timelineActionLabel(ArtifactTimelineAction action)
     return QStringLiteral("Jump to Out Point");
   case ArtifactTimelineAction::SoloSelected:
     return QStringLiteral("Toggle Solo Selected Layer");
+  case ArtifactTimelineAction::SnapInToStart:
+    return QStringLiteral("Snap Selected Layer In to 0");
+  case ArtifactTimelineAction::SnapOutToEnd:
+    return QStringLiteral("Snap Selected Layer Out to End");
   case ArtifactTimelineAction::None:
     return QStringLiteral("None");
   }
