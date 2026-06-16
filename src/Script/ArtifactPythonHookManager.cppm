@@ -175,6 +175,14 @@ sys.modules['artifact.workspace'] = _WorkspaceModule()
         const QVariantMap snap = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("currentCompositionSnapshot"), {}).toMap();
         return QString::fromUtf8(QJsonDocument::fromVariant(snap).toJson(QJsonDocument::Compact));
     });
+    registerWorkspaceMethod("currentCompositionThumbnailAtFrame", [](const std::vector<std::string>& args) -> QString {
+        int frame = args.size() > 0 ? QString::fromStdString(args[0]).toInt() : 0;
+        int width = args.size() > 1 ? QString::fromStdString(args[1]).toInt() : 256;
+        int height = args.size() > 2 ? QString::fromStdString(args[2]).toInt() : 144;
+        const QVariant result = WorkspaceAutomation::instance().invokeMethod(
+            QStringLiteral("currentCompositionThumbnailAtFrame"), {frame, width, height});
+        return QString::fromUtf8(QJsonDocument::fromVariant(result).toJson(QJsonDocument::Compact));
+    });
     registerWorkspaceMethod("listCompositions", []() {
         const QVariantList comps = WorkspaceAutomation::instance().invokeMethod(QStringLiteral("listCompositions"), {}).toList();
         return QString::fromUtf8(QJsonDocument::fromVariant(comps).toJson(QJsonDocument::Compact));

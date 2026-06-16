@@ -27,7 +27,7 @@ public:
   float majorEvery = 4.0f;
   float safeMargin = 0.10f;
   float baselineY = 0.82f;
-  float opacity = 0.55f;
+  float opacity = 0.70f;
   bool showGrid = true;
   bool showThirds = true;
   bool showCenter = true;
@@ -39,7 +39,7 @@ public:
   FloatColor guideColor() const
   {
     return renderAsDesign ? FloatColor{0.18f, 0.86f, 1.0f, 1.0f}
-                          : FloatColor{0.20f, 0.78f, 1.0f, 0.82f};
+                          : FloatColor{0.20f, 0.78f, 1.0f, 0.90f};
   }
 };
 
@@ -68,9 +68,9 @@ void ArtifactConstructionLayer::draw(ArtifactIRenderer* renderer) {
 
   const auto transform = getGlobalTransform4x4();
   const FloatColor cyan = impl_->guideColor();
-  const FloatColor faint = {cyan.red(), cyan.green(), cyan.blue(), impl_->renderAsDesign ? 0.22f : 0.12f};
-  const FloatColor strong = {cyan.red(), cyan.green(), cyan.blue(), impl_->renderAsDesign ? 0.92f : 0.62f};
-  const FloatColor warm = {1.0f, 0.72f, 0.22f, impl_->renderAsDesign ? 0.86f : 0.52f};
+  const FloatColor faint = {cyan.red(), cyan.green(), cyan.blue(), impl_->renderAsDesign ? 0.28f : 0.20f};
+  const FloatColor strong = {cyan.red(), cyan.green(), cyan.blue(), impl_->renderAsDesign ? 0.96f : 0.78f};
+  const FloatColor warm = {1.0f, 0.72f, 0.22f, impl_->renderAsDesign ? 0.92f : 0.68f};
 
   if (impl_->showGrid && impl_->gridSpacing > 2.0f) {
     const float spacing = std::max(2.0f, impl_->gridSpacing);
@@ -84,10 +84,10 @@ void ArtifactConstructionLayer::draw(ArtifactIRenderer* renderer) {
     const int majorEvery = std::max(1, static_cast<int>(std::round(impl_->majorEvery)));
     const float majorSpacing = spacing * static_cast<float>(majorEvery);
     for (float x = 0.0f; x <= w + 0.5f; x += majorSpacing) {
-      renderer->drawSolidRectTransformed(x - 1.0f, 0.0f, 2.0f, h, transform, strong, opacity * 0.55f);
+      renderer->drawSolidRectTransformed(x - 1.0f, 0.0f, 2.0f, h, transform, strong, opacity * 0.75f);
     }
     for (float y = 0.0f; y <= h + 0.5f; y += majorSpacing) {
-      renderer->drawSolidRectTransformed(0.0f, y - 1.0f, w, 2.0f, transform, strong, opacity * 0.55f);
+      renderer->drawSolidRectTransformed(0.0f, y - 1.0f, w, 2.0f, transform, strong, opacity * 0.75f);
     }
   }
 

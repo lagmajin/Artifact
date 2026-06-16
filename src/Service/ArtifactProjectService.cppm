@@ -1614,6 +1614,9 @@ bool ArtifactProjectService::groupSelectedLayersInCurrentComposition(
     anyReparented |= setLayerParentInCurrentComposition(layerId, groupId);
   }
 
+  if (auto groupLayer = std::dynamic_pointer_cast<ArtifactGroupLayer>(newGroup)) {
+    groupLayer->setCollapsed(false);
+  }
   selectLayer(groupId);
   return anyReparented;
 }
