@@ -433,19 +433,50 @@ void ArtifactFileMenu::Impl::handleNewComposition()
 
     bool ok = false;
     QStringList presetLabels;
-    presetLabels.reserve(presets.size());
+    presetLabels.reserve(presets.size() + 1);
+    // Hoist the user's last-chosen preset to the top of the list so the
+    // common case (creating another comp of the same shape) takes one
+    // click. The label is tagged with a leading "★ " marker so it's
+    // obvious why the order changed; the marker is stripped when we
+    // resolve the selection back to a PresetEntry.
+    const QString recentLabel = [this]() {
+        if (auto* settings = ArtifactAppSettings::instance()) {
+            return settings->recentCompositionPresetLabel();
+        }
+        return QString();
+    }();
+    int recentIndex = -1;
+    if (!recentLabel.isEmpty()) {
+        for (int i = 0; i < presets.size(); ++i) {
+            if (presets[i].label == recentLabel) {
+                recentIndex = i;
+                break;
+            }
+        }
+    }
+    if (recentIndex >= 0) {
+        presetLabels.push_back(QStringLiteral("★ %1").arg(recentLabel));
+    }
     for (const auto& preset : presets) {
         presetLabels.push_back(preset.label);
     }
-    const QString preset = QInputDialog::getItem(menu_, "新規コンポジション", "プリセット:", presetLabels, 0, false, &ok);
+    const int initialIndex = recentIndex >= 0 ? 0 : 0;
+    const QString preset = QInputDialog::getItem(menu_, "新規コンポジション", "プリセット:", presetLabels, initialIndex, false, &ok);
     if (!ok) return;
 
+    // Strip the marker so we can match against the canonical label.
+    const QString resolvedLabel = preset.startsWith(QStringLiteral("★ "))
+                                      ? preset.mid(2)
+                                      : preset;
     ArtifactCompositionInitParams params = ArtifactCompositionInitParams::hdPreset();
     for (const auto& entry : presets) {
-        if (entry.label == preset) {
+        if (entry.label == resolvedLabel) {
             params = entry.params;
             break;
         }
+    }
+    if (auto* settings = ArtifactAppSettings::instance()) {
+        settings->setRecentCompositionPresetLabel(resolvedLabel);
     }
 
     const QString name = QInputDialog::getText(menu_, "コンポジション名", "名前:", QLineEdit::Normal, "Composition", &ok);
