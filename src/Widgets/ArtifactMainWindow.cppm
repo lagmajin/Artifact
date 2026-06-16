@@ -604,6 +604,47 @@ public:
   QShortcut *nextCompositionShortcut = nullptr;
   QShortcut *previousCompositionShortcut = nullptr;
 
+  void refreshCompositionCycleShortcuts(ArtifactMainWindow *owner) {
+    if (!owner) {
+      return;
+    }
+
+    delete nextCompositionShortcut;
+    nextCompositionShortcut = nullptr;
+    delete previousCompositionShortcut;
+    previousCompositionShortcut = nullptr;
+
+    // Read the current shortcut bindings each time so changes from the
+    // settings dialog take effect without restarting the app.
+    const auto &shortcutBindings = ShortcutBindings::instance();
+
+    nextCompositionShortcut = new QShortcut(
+        shortcutBindings.shortcut(ShortcutId::CompositionNext), owner);
+    nextCompositionShortcut->setContext(Qt::ApplicationShortcut);
+    QObject::connect(nextCompositionShortcut, &QShortcut::activated, owner,
+                     []() {
+                       if (auto *svc = ArtifactProjectService::instance()) {
+                         const CompositionID target = cycleComposition(+1);
+                         if (!target.isNil()) {
+                           svc->changeCurrentComposition(target);
+                         }
+                       }
+                     });
+
+    previousCompositionShortcut = new QShortcut(
+        shortcutBindings.shortcut(ShortcutId::CompositionPrevious), owner);
+    previousCompositionShortcut->setContext(Qt::ApplicationShortcut);
+    QObject::connect(previousCompositionShortcut, &QShortcut::activated, owner,
+                     []() {
+                       if (auto *svc = ArtifactProjectService::instance()) {
+                         const CompositionID target = cycleComposition(-1);
+                         if (!target.isNil()) {
+                           svc->changeCurrentComposition(target);
+                         }
+                       }
+                     });
+  }
+
   bool createLazyDockWidgetNow(ArtifactMainWindow *owner, CDockWidget *dock) {
     if (!owner || !dock || dock->property("artifactLazyWidgetCreated").toBool()) {
       if (dock) {
@@ -762,32 +803,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   // Composition cycling shortcuts. They live on the main window with
   // ApplicationShortcut context so they work regardless of which dock
   // (timeline, viewer, project tree) currently owns the focus.
-  const auto& shortcutBindings = ShortcutBindings::instance();
-  impl_->nextCompositionShortcut = new QShortcut(
-      shortcutBindings.shortcut(ShortcutId::CompositionNext), this);
-  impl_->nextCompositionShortcut->setContext(Qt::ApplicationShortcut);
-  QObject::connect(impl_->nextCompositionShortcut, &QShortcut::activated, this,
-                   [this]() {
-                     if (auto* svc = ArtifactProjectService::instance()) {
-                       const CompositionID target = cycleComposition(+1);
-                       if (!target.isNil()) {
-                         svc->changeCurrentComposition(target);
-                       }
-                     }
-                   });
-
-  impl_->previousCompositionShortcut = new QShortcut(
-      shortcutBindings.shortcut(ShortcutId::CompositionPrevious), this);
-  impl_->previousCompositionShortcut->setContext(Qt::ApplicationShortcut);
-  QObject::connect(impl_->previousCompositionShortcut, &QShortcut::activated,
-                   this, [this]() {
-                     if (auto* svc = ArtifactProjectService::instance()) {
-                       const CompositionID target = cycleComposition(-1);
-                       if (!target.isNil()) {
-                         svc->changeCurrentComposition(target);
-                       }
-                     }
-                   });
+  impl_->refreshCompositionCycleShortcuts(this);
 
   QTimer::singleShot(0, this, [this]() {
     if (!impl_ || impl_->menuBarInitialized)
@@ -1175,6 +1191,7 @@ void ArtifactMainWindow::applyApplicationSettings() {
     return;
   }
   applyUiFontSettings();
+  impl_->refreshCompositionCycleShortcuts(this);
   if (impl_->toolBar) {
     impl_->toolBar->refreshFromSettings();
   }

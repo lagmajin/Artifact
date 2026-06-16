@@ -1717,8 +1717,9 @@ void ArtifactLayerMenu::Impl::handleAnalyzeForward()
     auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
     QObject::connect(&progress, &QProgressDialog::canceled, [cancelFlag]() { *cancelFlag = true; });
 
-    // トラッカー設定: NCC メソッドを設定
-    ArtifactCore::TrackerSettings settings;
+    // Preserve any user-tuned tracker settings and only switch the tracking
+    // method required for this analysis pass.
+    auto settings = tracker->settings();
     settings.method = ArtifactCore::TrackingMethod::NormalizedCrossCorrelation;
     tracker->setSettings(settings);
 
@@ -1784,7 +1785,9 @@ void ArtifactLayerMenu::Impl::handleAnalyzeBackward()
     auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
     QObject::connect(&progress, &QProgressDialog::canceled, [cancelFlag]() { *cancelFlag = true; });
 
-    ArtifactCore::TrackerSettings settings;
+    // Preserve any user-tuned tracker settings and only switch the tracking
+    // method required for this analysis pass.
+    auto settings = tracker->settings();
     settings.method = ArtifactCore::TrackingMethod::NormalizedCrossCorrelation;
     tracker->setSettings(settings);
 
@@ -1846,7 +1849,9 @@ void ArtifactLayerMenu::Impl::handleAnalyzeAll()
     auto cancelFlag = std::make_shared<std::atomic<bool>>(false);
     QObject::connect(&progress, &QProgressDialog::canceled, [cancelFlag]() { *cancelFlag = true; });
 
-    ArtifactCore::TrackerSettings settings;
+    // Preserve any user-tuned tracker settings and only switch the tracking
+    // method required for this analysis pass.
+    auto settings = tracker->settings();
     settings.method = ArtifactCore::TrackingMethod::NormalizedCrossCorrelation;
     tracker->setSettings(settings);
 

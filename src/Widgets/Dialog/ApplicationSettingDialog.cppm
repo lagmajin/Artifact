@@ -25,6 +25,7 @@ module;
 #include <QProgressBar>
 #include <QPushButton>
 #include <QMouseEvent>
+#include <QMetaObject>
 #include <QKeySequenceEdit>
 #include <QShowEvent>
 #include <QSlider>
@@ -36,6 +37,7 @@ module;
 #include <QThread>
 #include <QTimer>
 #include <QUrl>
+#include <QWidget>
 #include <QVBoxLayout>
 #include <utility>
 #include <cmath>
@@ -101,6 +103,21 @@ static void populateThemeCombo(QComboBox* combo)
 static QString canonicalThemeLabel(const QString& name)
 {
   return ArtifactCore::themePresetLabel(ArtifactCore::themePresetFromName(name));
+}
+
+static void refreshOpenMainWindows()
+{
+  if (!qApp) {
+    return;
+  }
+
+  for (QWidget* widget : qApp->topLevelWidgets()) {
+    if (!widget) {
+      continue;
+    }
+    QMetaObject::invokeMethod(widget, "applyApplicationSettings",
+                              Qt::QueuedConnection);
+  }
 }
 
 } // namespace
@@ -1342,6 +1359,7 @@ void ShortcutSettingPage::importPreset() {
   }
 
   loadSettings();
+  refreshOpenMainWindows();
 }
 
 void ShortcutSettingPage::loadSettings() {
@@ -1377,6 +1395,7 @@ void ShortcutSettingPage::saveSettings() {
   }
 
   applyTableToBindings();
+  refreshOpenMainWindows();
 }
 
 bool ShortcutSettingPage::eventFilter(QObject *watched, QEvent *event) {
