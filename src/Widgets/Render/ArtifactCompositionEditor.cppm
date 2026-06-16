@@ -119,6 +119,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Widgets.ProfilerOverlay;
 import Artifact.Widgets.ProfilerPanel;
+import Undo.UndoManager;
 import Artifact.Widgets.EventBusDebugger;
 import Artifact.Widget.Dialog.ScreenshotExport;
 import ArtifactCore.Utils.PerformanceProfiler;
@@ -891,6 +892,8 @@ public:
       items.push_back(label);
       actions.push_back(std::move(action));
     };
+
+    // --- Viewer operations (legacy set, kept first) ----------------------
     add(QStringLiteral("Reset View"), [this]() {
       if (controller_) controller_->resetView();
     });
@@ -912,6 +915,112 @@ public:
     add(QStringLiteral("Scale Tool"), [this]() {
       if (controller_) controller_->setGizmoMode(TransformGizmo::Mode::Scale);
     });
+
+    // --- App-wide commands ---------------------------------------------
+    // Pulling directly from the global services keeps the palette in sync
+    // with the menu items without re-implementing the handlers here.
+    auto* undoMgr = UndoManager::instance();
+    add(QStringLiteral("元に戻す (Undo)"), [undoMgr]() {
+      if (undoMgr) undoMgr->undo();
+    });
+    add(QStringLiteral("やり直し (Redo)"), [undoMgr]() {
+      if (undoMgr) undoMgr->redo();
+    });
+    add(QStringLiteral("繰り返す (Repeat Last)"), [undoMgr]() {
+      if (undoMgr) undoMgr->repeatLast();
+    });
+
+    auto* app = ArtifactApplicationManager::instance();
+    auto* selMgr = app ? app->layerSelectionManager() : nullptr;
+    auto* svc = ArtifactProjectService::instance();
+
+    add(QStringLiteral("すべて選択 (Select All)"), [selMgr]() {
+      if (!selMgr) return;
+      if (auto* svcInner = ArtifactProjectService::instance()) {
+        if (auto comp = svcInner->currentComposition().lock()) {
+          for (const auto& layer : comp->allLayer()) {
+            if (layer) selMgr->addToSelection(layer);
+          }
+        }
+      }
+    });
+    add(QStringLiteral("選択解除 (Deselect)"), [selMgr]() {
+      if (selMgr) selMgr->clearSelection();
+    });
+
+    add(QStringLiteral("選択を反転 (Invert Selection)"), [selMgr]() {
+      if (!selMgr) return;
+      if (auto* svcInner = ArtifactProjectService::instance()) {
+        if (auto comp = svcInner->currentComposition().lock()) {
+          const auto currentSelection = selMgr->selectedLayers();
+          selMgr->clearSelection();
+          for (const auto& layer : comp->allLayer()) {
+            if (!layer) continue;
+            if (!currentSelection.contains(layer)) {
+              selMgr->addToSelection(layer);
+            }
+          }
+        }
+      }
+    });
+
+    add(QStringLiteral("複製 (Duplicate)"), [selMgr, svc]() {
+      if (!selMgr || !svc) return;
+      const auto layers = selMgr->selectedLayers();
+      for (const auto& layer : layers) {
+        if (layer) svc->duplicateLayerInCurrentComposition(layer->id());
+      }
+    });
+
+    add(QStringLiteral("削除 (Delete)"), [selMgr, svc]() {
+      if (!selMgr || !svc) return;
+      if (auto comp = svc->currentComposition().lock()) {
+        for (const auto& layer : selMgr->selectedLayers()) {
+          if (layer) svc->removeLayerFromComposition(comp->id(), layer->id());
+        }
+        selMgr->clearSelection();
+      }
+    });
+
+    add(QStringLiteral("分割 (Split at Playhead)"), [selMgr, svc]() {
+      if (!selMgr || !svc) return;
+      if (auto comp = svc->currentComposition().lock()) {
+        for (const auto& layer : selMgr->selectedLayers()) {
+          if (layer) svc->splitLayerAtCurrentTime(comp->id(), layer->id());
+        }
+      }
+    });
+
+    add(QStringLiteral("検索… (Find by Name)"), [this]() {
+      if (!controller_) return;
+      // The palette disappears once the user picks an action, so we can
+      // prompt for a search term without losing the previously focused
+      // composition. We reuse the Edit menu's exact behavior to avoid
+      // surprises.
+      bool ok = false;
+      const QString searchText = QInputDialog::getText(
+          this, QStringLiteral("検索"),
+          QStringLiteral("レイヤー名の一部を入力:"), QLineEdit::Normal,
+          QString(), &ok);
+      if (!ok || searchText.trimmed().isEmpty()) return;
+      auto* appInner = ArtifactApplicationManager::instance();
+      auto* selMgrInner = appInner ? appInner->layerSelectionManager() : nullptr;
+      auto* svcInner = ArtifactProjectService::instance();
+      if (!selMgrInner || !svcInner) return;
+      if (auto comp = svcInner->currentComposition().lock()) {
+        selMgrInner->clearSelection();
+        int found = 0;
+        const QString lower = searchText.toLower();
+        for (const auto& layer : comp->allLayer()) {
+          if (layer && layer->layerName().toLower().contains(lower)) {
+            selMgrInner->addToSelection(layer);
+            ++found;
+          }
+        }
+        qDebug() << "[Palette] Found" << found << "layers matching" << searchText;
+      }
+    });
+
     viewportOverlayActions_ = actions;
     controller_->showCommandPaletteOverlay(QString(), items);
   }
