@@ -75,6 +75,7 @@ import Artifact.Layer.Composition;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Construction;
 import Artifact.Layer.Clone;
+import Artifact.Layer.Group;
 import Layer.Matte;
 import Artifact.Timeline.KeyframeModel;
 import Undo.UndoManager;
@@ -989,9 +990,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   
   auto parentHeader = impl_->parentHeaderButton = new QPushButton();
   parentHeader->setFixedWidth(kInlineParentWidth);
-  parentHeader->setIcon(impl_->parentIcon);
-  parentHeader->setIconSize(QSize(16, 16));
-  parentHeader->setToolTip(QStringLiteral("Parent Link"));
+  parentHeader->setToolTip(QString());
   parentHeader->setFlat(true);
   parentHeader->setFocusPolicy(Qt::NoFocus);
   parentHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
@@ -999,9 +998,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   
   auto blendHeader = impl_->blendHeaderButton = new QPushButton();
   blendHeader->setFixedWidth(kInlineBlendWidth);
-  blendHeader->setIcon(impl_->blendIcon);
-  blendHeader->setIconSize(QSize(16, 16));
-  blendHeader->setToolTip(QStringLiteral("Blend Mode"));
+  blendHeader->setToolTip(QString());
   blendHeader->setFlat(true);
   blendHeader->setFocusPolicy(Qt::NoFocus);
   blendHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
@@ -1123,6 +1120,22 @@ struct VisibleRow {
  QString stateText;
  LayerPresentationBadgeTone stateTone = LayerPresentationBadgeTone::Neutral;
 };
+
+QString groupLayerSummaryText(const ArtifactAbstractLayerPtr& layer)
+{
+ if (!layer || !layer->isGroupLayer()) {
+  return {};
+ }
+ auto* groupLayer = dynamic_cast<ArtifactGroupLayer*>(layer.get());
+ if (!groupLayer) {
+  return QStringLiteral("Group");
+ }
+ const int childCount = static_cast<int>(groupLayer->children().size());
+ if (childCount <= 0) {
+  return QStringLiteral("Empty Group");
+ }
+ return QStringLiteral("%1 items").arg(childCount);
+}
 
 QString summarizeLayerState(const ArtifactAbstractLayerPtr& layer)
 {
@@ -1897,7 +1910,8 @@ public:
     QString(),
     QString(),
     QString(),
-    presentation.timelineBadgeText,
+    node->isGroupLayer() ? groupLayerSummaryText(node)
+                         : presentation.timelineBadgeText,
     presentation.badgeTone,
     summarizeLayerState(node),
     summarizeLayerStateTone(node)
@@ -2972,7 +2986,18 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
       if (auto* svc = ArtifactProjectService::instance()) {
-        if (svc->groupSelectedLayersInCurrentComposition()) {
+        bool ok = false;
+        const QString groupName = QInputDialog::getText(
+            this,
+            QStringLiteral("グループ化"),
+            QStringLiteral("グループ名:"),
+            QLineEdit::Normal,
+            QStringLiteral("Group 1"),
+            &ok);
+        if (!ok) {
+          return;
+        }
+        if (svc->groupSelectedLayersInCurrentComposition(UniString(groupName))) {
           updateLayout();
         }
       }
@@ -3449,6 +3474,61 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
       menu.addSeparator();
     }
+    if (auto *groupLayer = dynamic_cast<ArtifactGroupLayer *>(layer.get())) {
+      QMenu *groupMenu = menu.addMenu(QStringLiteral("グループ"));
+      groupMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
+      const bool collapsed = groupLayer->isCollapsed();
+      QAction *toggleCollapseAct = groupMenu->addAction(
+          collapsed ? QStringLiteral("展開する") : QStringLiteral("折りたたむ"));
+      toggleCollapseAct->setIcon(QIcon(resolveIconPath(collapsed ? "Studio/arrow_drop_down.svg"
+                                                               : "Studio/arrow_right.svg")));
+      QAction *selectChildrenAct = groupMenu->addAction(QStringLiteral("子レイヤーを選択"));
+      selectChildrenAct->setIcon(QIcon(resolveIconPath("Studio/select_all.svg")));
+      QAction *showChildCountAct = groupMenu->addAction(
+          QStringLiteral("子レイヤー数: %1").arg(static_cast<int>(groupLayer->children().size())));
+      showChildCountAct->setEnabled(false);
+      groupMenu->addSeparator();
+      groupMenu->addAction(QStringLiteral("グループ名を変更..."), [triggerRenameLayer]() {
+        triggerRenameLayer();
+      });
+
+      QObject::connect(toggleCollapseAct, &QAction::triggered, groupMenu, [this, layer](bool) {
+        auto *group = dynamic_cast<ArtifactGroupLayer *>(layer.get());
+        if (!group) {
+          return;
+        }
+        group->setCollapsed(!group->isCollapsed());
+        if (auto comp = safeCompositionLookup(impl_->compositionId)) {
+          ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+              LayerChangedEvent{comp->id().toString(), group->id().toString(),
+                                LayerChangedEvent::ChangeType::Modified});
+        }
+        updateLayout();
+      });
+      QObject::connect(selectChildrenAct, &QAction::triggered, groupMenu, [this, layer](bool) {
+        auto *group = dynamic_cast<ArtifactGroupLayer *>(layer.get());
+        if (!group) {
+          return;
+        }
+        auto *svc = ArtifactProjectService::instance();
+        if (!svc) {
+          return;
+        }
+        bool first = true;
+        for (const auto& child : group->children()) {
+          if (!child) {
+            continue;
+          }
+          if (first) {
+            svc->selectLayer(child->id());
+            first = false;
+          } else if (auto *selection = ArtifactLayerSelectionManager::instance()) {
+            selection->addToSelection(child);
+          }
+        }
+      });
+      menu.addSeparator();
+    }
     const bool isImageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr;
     if (isImageLayer) {
       menu.addAction("Replace Image...", [triggerReplaceLayerSource]() {
@@ -3686,9 +3766,10 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       menu.addAction(QStringLiteral("Duplicate Selected Layers"), [triggerDuplicateSelectedLayers]() {
         triggerDuplicateSelectedLayers();
       });
-      menu.addAction(QStringLiteral("Group Selected Layers"), [triggerGroupSelectedLayers]() {
+      QAction* groupSelectedAct = menu.addAction(QStringLiteral("グループ化..."), [triggerGroupSelectedLayers]() {
         triggerGroupSelectedLayers();
       });
+      groupSelectedAct->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
       menu.addSeparator();
       QMenu* batchStateMenu = menu.addMenu(QStringLiteral("Batch State"));
       batchStateMenu->addAction(QStringLiteral("Show Selected"), [triggerSelectedVisibility]() {
@@ -4579,6 +4660,10 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
     if (isGroupRow) {
       const int toggleX = nameStartX + row.depth * indent + 2;
       const int textX = row.hasChildren ? (toggleX + toggleSize + 6) : (nameStartX + row.depth * indent + 4);
+      if (row.layer && row.layer->isGroupLayer()) {
+        p.fillRect(0, y, 4, rowH, mixColor(background, accent, 0.85));
+        p.fillRect(4, y + 1, 2, rowH - 2, mixColor(background, accent, 0.45));
+      }
       if (row.hasChildren) {
         const int toggleY = y + (rowH - toggleSize) / 2;
         QPolygonF tri;
@@ -4608,9 +4693,11 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
                    fm.elidedText(groupAux, Qt::ElideRight, badgeRect.width() - 16));
       }
       const QColor groupText = maskSelected ? accent.lighter(135)
-                                            : (row.auxiliaryTone == LayerPresentationBadgeTone::Neutral
+                                            : (row.layer && row.layer->isGroupLayer()
+                                                   ? mixColor(text, accent, 0.28)
+                                                   : (row.auxiliaryTone == LayerPresentationBadgeTone::Neutral
                                                    ? text
-                                                   : mixColor(text, accent, 0.18));
+                                                   : mixColor(text, accent, 0.18)));
       p.setPen(groupText);
       const int groupTextWidth = std::max(20, width() - textX - 8 - (groupAux.isEmpty() ? 0 : 100));
       p.drawText(textX, y, groupTextWidth, rowH, Qt::AlignVCenter | Qt::AlignLeft, row.label);

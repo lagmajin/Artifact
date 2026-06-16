@@ -14,6 +14,8 @@ module;
 #include <QColor>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QBuffer>
+#include <QImage>
 #include <QSet>
 #include <QMetaType>
 #include <QString>
@@ -110,6 +112,7 @@ public:
             {"workspaceDiagnostics", IDescribable::loc("Return a compact workspace diagnostics summary.", "Return a compact workspace diagnostics summary.", {}), "QVariantMap"},
             {"projectSnapshot", IDescribable::loc("Return the current project JSON snapshot.", "Return the current project JSON snapshot.", {}), "QVariantMap"},
             {"currentCompositionSnapshot", IDescribable::loc("Return the active composition snapshot.", "Return the active composition snapshot.", {}), "QVariantMap"},
+            {"currentCompositionThumbnailAtFrame", IDescribable::loc("Return a PNG thumbnail for the active composition at a frame.", "Return a PNG thumbnail for the active composition at a frame.", {}), "QVariantMap", {QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("frameNumber"), QStringLiteral("width"), QStringLiteral("height")}},
             {"selectionSnapshot", IDescribable::loc("Return the current layer selection snapshot.", "Return the current layer selection snapshot.", {}), "QVariantMap"},
             {"renderQueueSnapshot", IDescribable::loc("Return the render queue snapshot.", "Return the render queue snapshot.", {}), "QVariantMap"},
             {"renderQueueJobByIndex", IDescribable::loc("Return a render queue job snapshot by index.", "Return a render queue job snapshot by index.", {}), "QVariantMap", {QStringLiteral("int")}, {QStringLiteral("jobIndex")}},
@@ -285,6 +288,9 @@ public:
         }
         if (name == QStringLiteral("currentCompositionSnapshot")) {
             return currentCompositionSnapshot();
+        }
+        if (name == QStringLiteral("currentCompositionThumbnailAtFrame")) {
+            return currentCompositionThumbnailAtFrame(intArg(args, 0, 0), intArg(args, 1, 256), intArg(args, 2, 144));
         }
         if (name == QStringLiteral("selectionSnapshot")) {
             return selectionSnapshot();
@@ -995,6 +1001,34 @@ private:
         obj[QStringLiteral("available")] = true;
         obj[QStringLiteral("layerCount")] = comp->layerCount();
         return toVariantMap(obj);
+    }
+
+    static QVariantMap currentCompositionThumbnailAtFrame(int frameNumber, int width, int height)
+    {
+        QVariantMap result;
+        const auto comp = currentComposition();
+        if (!comp) {
+            result.insert(QStringLiteral("available"), false);
+            return result;
+        }
+
+        const QImage thumbnail = comp->getThumbnailAtFrame(frameNumber, width, height);
+        result.insert(QStringLiteral("available"), true);
+        result.insert(QStringLiteral("frameNumber"), frameNumber);
+        result.insert(QStringLiteral("width"), thumbnail.width());
+        result.insert(QStringLiteral("height"), thumbnail.height());
+        result.insert(QStringLiteral("format"), QStringLiteral("png"));
+
+        QByteArray encoded;
+        QBuffer buffer(&encoded);
+        if (buffer.open(QIODevice::WriteOnly) && thumbnail.save(&buffer, "PNG")) {
+            result.insert(QStringLiteral("pngBase64"), QString::fromLatin1(encoded.toBase64()));
+            result.insert(QStringLiteral("byteCount"), static_cast<int>(encoded.size()));
+        } else {
+            result.insert(QStringLiteral("available"), false);
+            result.insert(QStringLiteral("error"), QStringLiteral("Failed to encode thumbnail"));
+        }
+        return result;
     }
 
     static QVariantMap selectionSnapshot()
