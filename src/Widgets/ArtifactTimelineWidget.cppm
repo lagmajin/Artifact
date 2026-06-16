@@ -6484,6 +6484,9 @@ bool ArtifactTimelineWidget::handleTimelineAction(const ArtifactTimelineAction a
   case ArtifactTimelineAction::JumpToOutPoint:
     jumpToOutPoint();
     return true;
+  case ArtifactTimelineAction::SoloSelected:
+    toggleSoloSelectedLayer();
+    return true;
   case ArtifactTimelineAction::None:
     return false;
   }
@@ -7084,6 +7087,42 @@ void ArtifactTimelineWidget::jumpToOutPoint()
     impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
   }
   updateKeyframeState();
+}
+
+void ArtifactTimelineWidget::toggleSoloSelectedLayer()
+{
+  // Resolve the active layer through the selection manager so a multi-
+  // select narrows down to the current layer (the one the user is most
+  // likely looking at). Falling back to nullptr leaves the action as a
+  // no-op rather than surprising the user by soloing an arbitrary layer.
+  ArtifactAbstractLayerPtr currentLayer;
+  if (auto* app = ArtifactApplicationManager::instance()) {
+    if (auto* selMgr = app->layerSelectionManager()) {
+      currentLayer = selMgr->currentLayer();
+      if (!currentLayer) {
+        const auto selected = selMgr->selectedLayers();
+        if (!selected.isEmpty()) {
+          currentLayer = *selected.begin();
+        }
+      }
+    }
+  }
+  if (!currentLayer) {
+    return;
+  }
+
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+    return;
+  }
+
+  if (currentLayer->isSolo()) {
+    // Already soloed — clear all solo flags so the timeline reverts to
+    // its un-soloed state. This is the toggle half of the behavior.
+    svc->clearAllLayerSoloInCurrentComposition();
+  } else {
+    svc->soloOnlyLayerInCurrentComposition(currentLayer->id());
+  }
 }
 
 void ArtifactTimelineWidget::addKeyframeAtPlayhead()

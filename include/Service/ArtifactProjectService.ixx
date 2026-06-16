@@ -125,6 +125,7 @@ export namespace Artifact {
   bool setLayerShyInCurrentComposition(const LayerID& layerId, bool shy);
   bool soloOnlyLayerInCurrentComposition(const LayerID& layerId);
   bool smartSoloOnlyLayerInCurrentComposition(const LayerID& layerId);
+  bool clearAllLayerSoloInCurrentComposition();
   bool setLayerParentInCurrentComposition(const LayerID& layerId, const LayerID& parentLayerId);
   bool clearLayerParentInCurrentComposition(const LayerID& layerId);
   bool layerHasParentInCurrentComposition(const LayerID& layerId);

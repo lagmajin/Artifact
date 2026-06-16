@@ -13,6 +13,7 @@ module;
 #include <QImageReader>
 #include <QList>
 #include <QMessageBox>
+#include <QPushButton>
 #include <QPointer>
 #include <QRectF>
 #include <QSet>
@@ -31,6 +32,7 @@ import std;
 import Utils.String.UniString;
 import Artifact.Layer.Composition;
 import Artifact.Project.Manager;
+import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Render.Queue.Service;
 import Artifact.Project.RevisionService;
 import Artifact.Project.CreationDefaults;
@@ -62,6 +64,23 @@ import Undo.UndoManager;
 
 namespace Artifact {
 namespace {
+ArtifactProjectManagerWidget* findProjectManagerWidget()
+{
+  auto* activeWindow = QApplication::activeWindow();
+  if (!activeWindow) {
+    return nullptr;
+  }
+
+  auto* projectDock = activeWindow->findChild<ArtifactProjectManagerWidget*>(
+      QStringLiteral("artifactProjectManagerWidget"));
+  if (projectDock) {
+    return projectDock;
+  }
+
+  const auto docks = activeWindow->findChildren<ArtifactProjectManagerWidget*>();
+  return docks.isEmpty() ? nullptr : docks.first();
+}
+
 QString slugifyEffectId(const QString &text) {
   QString slug;
   slug.reserve(text.size());
@@ -1281,15 +1300,52 @@ void ArtifactProjectService::Impl::checkImportedAssetCompatibility(
 
   if (!videoWarnings.isEmpty()) {
     QString msg = QStringLiteral(
+        "以下の動画は編集向きではない圧縮形式です:\n\n%1\n\n"
+        "編集向きの代替例: ProRes, DNxHD, Animation, 画像シーケンス。\n"
+        "このままでも使えますが、プロキシを作成すると再生とフレーム精度のスクラブが安定します。\n\n"
         "The following video files use a compression format that is not "
-        "ideal for editing:\n\n%1\n\n"
+        "ideal for editing:\n\n%2\n\n"
         "Editing-friendly alternatives: ProRes, DNxHD, Animation, "
         "or image sequences.\n"
-        "Consider transcoding before use for smoother playback "
-        "and frame-accurate seeking.")
+        "You can generate proxies now for smoother playback and "
+        "frame-accurate seeking.")
+        .arg(videoWarnings.join(QStringLiteral("\n")))
         .arg(videoWarnings.join(QStringLiteral("\n")));
-    QMessageBox::warning(QApplication::activeWindow(),
-                         QStringLiteral("Video Codec Warning"), msg);
+
+    QMessageBox box(QApplication::activeWindow());
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(QStringLiteral("Video Codec Warning"));
+    box.setText(msg);
+    auto* createProxyButton = box.addButton(QStringLiteral("Create Proxy"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(qobject_cast<QPushButton*>(createProxyButton));
+
+    box.exec();
+
+    if (box.clickedButton() == createProxyButton) {
+      auto* projectManager = findProjectManagerWidget();
+      if (!projectManager) {
+        QMessageBox::information(QApplication::activeWindow(),
+                                 QStringLiteral("Proxy"),
+                                 QStringLiteral("Project Manager が見つからないため、プロキシ作成を開始できませんでした。"));
+        return;
+      }
+
+      for (const auto& path : importedPaths) {
+        if (path.isEmpty()) {
+          continue;
+        }
+        auto type = detector.detectByExtension(path);
+        if (type != ArtifactCore::FileType::Video) {
+          continue;
+        }
+        auto probe = ArtifactCore::probeVideoFile(path);
+        if (!probe.hasVideoStream || probe.isEditingFriendly) {
+          continue;
+        }
+        projectManager->generateProxyForFilePath(path);
+      }
+    }
   }
 }
 
@@ -1879,6 +1935,27 @@ bool ArtifactProjectService::soloOnlyLayerInCurrentComposition(
     candidate->setSolo(candidate->id() == layerId);
   }
   notifyProjectMutation(impl_->projectManager());
+  return true;
+}
+
+bool ArtifactProjectService::clearAllLayerSoloInCurrentComposition() {
+  auto comp = currentComposition().lock();
+  if (!comp) {
+    return false;
+  }
+  bool changed = false;
+  for (const auto& candidate : comp->allLayer()) {
+    if (!candidate) {
+      continue;
+    }
+    if (candidate->isSolo()) {
+      candidate->setSolo(false);
+      changed = true;
+    }
+  }
+  if (changed) {
+    notifyProjectMutation(impl_->projectManager());
+  }
   return true;
 }
 

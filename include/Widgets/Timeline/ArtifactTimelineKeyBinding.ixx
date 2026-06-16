@@ -25,6 +25,7 @@ enum class ArtifactTimelineAction {
   JumpToPreviousKeyframe,
   JumpToInPoint,
   JumpToOutPoint,
+  SoloSelected,
 };
 
 inline ArtifactCore::ShortcutId timelineShortcutIdForAction(ArtifactTimelineAction action)
@@ -55,6 +56,8 @@ inline ArtifactCore::ShortcutId timelineShortcutIdForAction(ArtifactTimelineActi
     return ShortcutId::TimelineJumpToInPoint;
   case ArtifactTimelineAction::JumpToOutPoint:
     return ShortcutId::TimelineJumpToOutPoint;
+  case ArtifactTimelineAction::SoloSelected:
+    return ShortcutId::TimelineSoloSelected;
   case ArtifactTimelineAction::None:
     return ShortcutId::Undo;
   }
@@ -76,6 +79,7 @@ inline QVector<ArtifactTimelineAction> allTimelineActions()
       ArtifactTimelineAction::JumpToPreviousKeyframe,
       ArtifactTimelineAction::JumpToInPoint,
       ArtifactTimelineAction::JumpToOutPoint,
+      ArtifactTimelineAction::SoloSelected,
   };
 }
 
@@ -106,6 +110,8 @@ inline QString timelineActionLabel(ArtifactTimelineAction action)
     return QStringLiteral("Jump to In Point");
   case ArtifactTimelineAction::JumpToOutPoint:
     return QStringLiteral("Jump to Out Point");
+  case ArtifactTimelineAction::SoloSelected:
+    return QStringLiteral("Toggle Solo Selected Layer");
   case ArtifactTimelineAction::None:
     return QStringLiteral("None");
   }

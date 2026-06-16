@@ -80,6 +80,7 @@ class ArtifactTimelineWidget :public QWidget {
   void jumpToLastKeyframe();
   void jumpToInPoint();
   void jumpToOutPoint();
+  void toggleSoloSelectedLayer();
   bool handleTimelineAction(ArtifactTimelineAction action);
 
   /*signals:*/
