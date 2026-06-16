@@ -31,6 +31,7 @@ module;
 #include <QMenu>
 #include <QPointer>
 #include <QShowEvent>
+#include <QShortcut>
 #include <QStatusBar>
 #include <QTimer>
 #include <QToolBar>
@@ -44,6 +45,8 @@ module Artifact.MainWindow;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
+import Artifact.Project.Items;
+import UI.ShortcutBindings;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
@@ -457,6 +460,57 @@ void scheduleQuitIfNoVisibleDocks(ArtifactMainWindow *window) {
   });
 }
 
+// Walk through the project's compositions (recursively, since they may be
+// nested under folders) and pick the sibling that is `direction` steps away
+// from the currently active composition. Wraps around the end so a
+// "next" call past the last composition lands on the first one.
+CompositionID cycleComposition(int direction) {
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) {
+    return {};
+  }
+  const auto items = svc->projectItems();
+  if (items.isEmpty()) {
+    return {};
+  }
+  QVector<CompositionID> order;
+  std::function<void(const QVector<ProjectItem*>&)> collect =
+      [&order, &collect](const QVector<ProjectItem*>& children) {
+        for (auto* item : children) {
+          if (!item) {
+            continue;
+          }
+          if (item->type() == eProjectItemType::Composition) {
+            auto* comp = static_cast<CompositionItem*>(item);
+            order.append(comp->compositionId);
+          }
+          if (!item->children.isEmpty()) {
+            collect(item->children);
+          }
+        }
+      };
+  collect(items);
+  if (order.isEmpty()) {
+    return {};
+  }
+
+  const auto current = svc->currentComposition();
+  int currentIndex = -1;
+  for (int i = 0; i < order.size(); ++i) {
+    if (!current.expired() && order[i] == current.lock()->id()) {
+      currentIndex = i;
+      break;
+    }
+  }
+  int nextIndex;
+  if (currentIndex < 0) {
+    nextIndex = direction > 0 ? 0 : order.size() - 1;
+  } else {
+    nextIndex = (currentIndex + direction + order.size()) % order.size();
+  }
+  return order[nextIndex];
+}
+
 void prepareFloatingDockContainer(ads::CFloatingDockContainer *floatingWidget,
                                   QObject *eventFilterOwner);
 
@@ -547,6 +601,8 @@ public:
   QMetaObject::Connection currentShapeLayerChangedConnection;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
+  QShortcut *nextCompositionShortcut = nullptr;
+  QShortcut *previousCompositionShortcut = nullptr;
 
   bool createLazyDockWidgetNow(ArtifactMainWindow *owner, CDockWidget *dock) {
     if (!owner || !dock || dock->property("artifactLazyWidgetCreated").toBool()) {
@@ -702,6 +758,36 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   CDockManager::setAutoHideConfigFlags(CDockManager::DefaultAutoHideConfig);
   CDockManager::setAutoHideConfigFlag(CDockManager::AutoHideButtonCheckable,
                                       true);
+
+  // Composition cycling shortcuts. They live on the main window with
+  // ApplicationShortcut context so they work regardless of which dock
+  // (timeline, viewer, project tree) currently owns the focus.
+  const auto& shortcutBindings = ShortcutBindings::instance();
+  impl_->nextCompositionShortcut = new QShortcut(
+      shortcutBindings.shortcut(ShortcutId::CompositionNext), this);
+  impl_->nextCompositionShortcut->setContext(Qt::ApplicationShortcut);
+  QObject::connect(impl_->nextCompositionShortcut, &QShortcut::activated, this,
+                   [this]() {
+                     if (auto* svc = ArtifactProjectService::instance()) {
+                       const CompositionID target = cycleComposition(+1);
+                       if (!target.isNil()) {
+                         svc->changeCurrentComposition(target);
+                       }
+                     }
+                   });
+
+  impl_->previousCompositionShortcut = new QShortcut(
+      shortcutBindings.shortcut(ShortcutId::CompositionPrevious), this);
+  impl_->previousCompositionShortcut->setContext(Qt::ApplicationShortcut);
+  QObject::connect(impl_->previousCompositionShortcut, &QShortcut::activated,
+                   this, [this]() {
+                     if (auto* svc = ArtifactProjectService::instance()) {
+                       const CompositionID target = cycleComposition(-1);
+                       if (!target.isNil()) {
+                         svc->changeCurrentComposition(target);
+                       }
+                     }
+                   });
 
   QTimer::singleShot(0, this, [this]() {
     if (!impl_ || impl_->menuBarInitialized)
