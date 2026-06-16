@@ -6478,6 +6478,12 @@ bool ArtifactTimelineWidget::handleTimelineAction(const ArtifactTimelineAction a
   case ArtifactTimelineAction::JumpToPreviousKeyframe:
     jumpToKeyframeHit(-1);
     return true;
+  case ArtifactTimelineAction::JumpToInPoint:
+    jumpToInPoint();
+    return true;
+  case ArtifactTimelineAction::JumpToOutPoint:
+    jumpToOutPoint();
+    return true;
   case ArtifactTimelineAction::None:
     return false;
   }
@@ -6987,6 +6993,82 @@ void ArtifactTimelineWidget::jumpToLastKeyframe()
   }
 
   const qint64 targetFrame = frames.back();
+  impl_->currentFrame_ = static_cast<double>(targetFrame);
+  if (impl_->painterTrackView_) {
+    impl_->painterTrackView_->setCurrentFrame(static_cast<double>(targetFrame));
+    const double ppf = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
+    const double centeredOffset = std::max(
+        0.0, static_cast<double>(targetFrame) * ppf -
+                 static_cast<double>(impl_->painterTrackView_->width()) * 0.5);
+    syncTimelineHorizontalOffset(centeredOffset);
+  } else {
+    syncPlayheadOverlay();
+  }
+  if (impl_->scrubBar_) {
+    impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
+  }
+  updateKeyframeState();
+}
+
+void ArtifactTimelineWidget::jumpToInPoint()
+{
+  if (!impl_) {
+    return;
+  }
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+  // Prefer the composition's work area in/out when the user has set one,
+  // otherwise fall back to the full frame range. This keeps "Home" honest
+  // even for fresh compositions that have not yet been trimmed.
+  const FrameRange workArea = composition->workAreaRange();
+  const bool hasWorkArea = workArea.end() > workArea.start();
+  const qint64 targetFrame = hasWorkArea ? workArea.start()
+                                         : composition->frameRange().start();
+  impl_->currentFrame_ = static_cast<double>(targetFrame);
+  if (impl_->painterTrackView_) {
+    impl_->painterTrackView_->setCurrentFrame(static_cast<double>(targetFrame));
+    const double ppf = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
+    const double centeredOffset = std::max(
+        0.0, static_cast<double>(targetFrame) * ppf -
+                 static_cast<double>(impl_->painterTrackView_->width()) * 0.5);
+    syncTimelineHorizontalOffset(centeredOffset);
+  } else {
+    syncPlayheadOverlay();
+  }
+  if (impl_->scrubBar_) {
+    impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
+  }
+  updateKeyframeState();
+}
+
+void ArtifactTimelineWidget::jumpToOutPoint()
+{
+  if (!impl_) {
+    return;
+  }
+  ArtifactCompositionPtr composition;
+  if (auto* svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return;
+  }
+  // Work area takes priority so the Out shortcut lands on the user's
+  // trimmed end. For untimed compositions we drop one frame so End lines
+  // up with the last renderable frame instead of an off-by-one frame past
+  // the duration.
+  const FrameRange workArea = composition->workAreaRange();
+  const bool hasWorkArea = workArea.end() > workArea.start();
+  qint64 targetFrame = hasWorkArea ? workArea.end()
+                                   : composition->frameRange().end();
+  if (!hasWorkArea) {
+    targetFrame = std::max<int64_t>(0, targetFrame - 1);
+  }
   impl_->currentFrame_ = static_cast<double>(targetFrame);
   if (impl_->painterTrackView_) {
     impl_->painterTrackView_->setCurrentFrame(static_cast<double>(targetFrame));

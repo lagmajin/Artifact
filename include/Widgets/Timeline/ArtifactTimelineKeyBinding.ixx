@@ -23,6 +23,8 @@ enum class ArtifactTimelineAction {
   JumpToLastKeyframe,
   JumpToNextKeyframe,
   JumpToPreviousKeyframe,
+  JumpToInPoint,
+  JumpToOutPoint,
 };
 
 inline ArtifactCore::ShortcutId timelineShortcutIdForAction(ArtifactTimelineAction action)
@@ -49,6 +51,10 @@ inline ArtifactCore::ShortcutId timelineShortcutIdForAction(ArtifactTimelineActi
     return ShortcutId::TimelineJumpToNextKeyframe;
   case ArtifactTimelineAction::JumpToPreviousKeyframe:
     return ShortcutId::TimelineJumpToPreviousKeyframe;
+  case ArtifactTimelineAction::JumpToInPoint:
+    return ShortcutId::TimelineJumpToInPoint;
+  case ArtifactTimelineAction::JumpToOutPoint:
+    return ShortcutId::TimelineJumpToOutPoint;
   case ArtifactTimelineAction::None:
     return ShortcutId::Undo;
   }
@@ -68,6 +74,8 @@ inline QVector<ArtifactTimelineAction> allTimelineActions()
       ArtifactTimelineAction::JumpToLastKeyframe,
       ArtifactTimelineAction::JumpToNextKeyframe,
       ArtifactTimelineAction::JumpToPreviousKeyframe,
+      ArtifactTimelineAction::JumpToInPoint,
+      ArtifactTimelineAction::JumpToOutPoint,
   };
 }
 
@@ -94,6 +102,10 @@ inline QString timelineActionLabel(ArtifactTimelineAction action)
     return QStringLiteral("Jump to Next Keyframe");
   case ArtifactTimelineAction::JumpToPreviousKeyframe:
     return QStringLiteral("Jump to Previous Keyframe");
+  case ArtifactTimelineAction::JumpToInPoint:
+    return QStringLiteral("Jump to In Point");
+  case ArtifactTimelineAction::JumpToOutPoint:
+    return QStringLiteral("Jump to Out Point");
   case ArtifactTimelineAction::None:
     return QStringLiteral("None");
   }

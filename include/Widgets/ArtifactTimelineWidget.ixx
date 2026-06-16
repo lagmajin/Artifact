@@ -78,6 +78,8 @@ class ArtifactTimelineWidget :public QWidget {
   void jumpToKeyframeHit(int step);
   void jumpToFirstKeyframe();
   void jumpToLastKeyframe();
+  void jumpToInPoint();
+  void jumpToOutPoint();
   bool handleTimelineAction(ArtifactTimelineAction action);
 
   /*signals:*/
