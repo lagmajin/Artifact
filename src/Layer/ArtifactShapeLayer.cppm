@@ -942,6 +942,63 @@ ArtifactCore::ShapeOperatorType ArtifactShapeLayer::shapeOperatorTypeAt(int inde
  return impl_->shapeOperators_[static_cast<size_t>(index)]->type();
 }
 
+void ArtifactShapeLayer::insertShapeOperator(int index, std::unique_ptr<ArtifactCore::ShapeOperator> op)
+{
+ if (!impl_ || !op) { return; }
+ auto& vec = impl_->shapeOperators_;
+ if (index < 0) { index = 0; }
+ if (index > static_cast<int>(vec.size())) { index = static_cast<int>(vec.size()); }
+ vec.insert(vec.begin() + index, std::move(op));
+ impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+
+std::unique_ptr<ArtifactCore::ShapeOperator> ArtifactShapeLayer::takeShapeOperator(int index)
+{
+ if (!impl_ || index < 0 || index >= static_cast<int>(impl_->shapeOperators_.size())) {
+  return nullptr;
+ }
+ auto& vec = impl_->shapeOperators_;
+ auto it = vec.begin() + index;
+ std::unique_ptr<ArtifactCore::ShapeOperator> taken = std::move(*it);
+ vec.erase(it);
+ impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+ return taken;
+}
+
+void ArtifactShapeLayer::removeShapeOperator(int index)
+{
+ if (!impl_ || index < 0 || index >= static_cast<int>(impl_->shapeOperators_.size())) {
+  return;
+ }
+ auto& vec = impl_->shapeOperators_;
+ vec.erase(vec.begin() + index);
+ impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+
+void ArtifactShapeLayer::moveShapeOperator(int fromIndex, int toIndex)
+{
+ if (!impl_) { return; }
+ auto& vec = impl_->shapeOperators_;
+ if (fromIndex < 0 || fromIndex >= static_cast<int>(vec.size())) { return; }
+ if (toIndex < 0 || toIndex >= static_cast<int>(vec.size())) { return; }
+ if (fromIndex == toIndex) { return; }
+ auto it = vec.begin();
+ std::rotate(it + fromIndex, it + fromIndex + (fromIndex < toIndex ? 1 : -1), it + toIndex + (fromIndex < toIndex ? 1 : 0));
+ impl_->markDirty();
+ impl_->localBoundsCacheDirty_ = true;
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+
 // ============================================================
 // toQImage (Software rendering)
 // ============================================================
@@ -1335,6 +1392,11 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
      opGroup.addProperty(makeProp(prefix + QStringLiteral("endOpacity"),
                                   ArtifactCore::PropertyType::Float,
                                   repeater->endOpacity(), -93));
+   } else if (auto merge =
+                  dynamic_cast<const ArtifactCore::MergePaths *>(op.get())) {
+     opGroup.addProperty(makeProp(prefix + QStringLiteral("mode"),
+                                  ArtifactCore::PropertyType::Integer,
+                                  merge->mode(), -100));
    } else if (auto offset =
                   dynamic_cast<const ArtifactCore::OffsetPaths *>(op.get())) {
      opGroup.addProperty(makeProp(prefix + QStringLiteral("offset"),
@@ -1534,9 +1596,15 @@ if (propertyPath == "shape.type") {
          } else if (field == "endOpacity") {
            repeater->setEndOpacity(value.toFloat());
            handled = true;
-         }
-       } else if (auto offset =
-                      dynamic_cast<ArtifactCore::OffsetPaths *>(op.get())) {
+          }
+        } else if (auto merge =
+                       dynamic_cast<ArtifactCore::MergePaths *>(op.get())) {
+          if (field == "mode") {
+            merge->setMode(value.toInt());
+            handled = true;
+          }
+        } else if (auto offset =
+                       dynamic_cast<ArtifactCore::OffsetPaths *>(op.get())) {
          if (field == "offset") {
            offset->setOffset(value.toFloat());
            handled = true;

@@ -266,6 +266,119 @@ private:
  bool beforeClosed_, afterClosed_;
 };
 
+class AddShapeOperatorCommand final : public Artifact::UndoCommand {
+public:
+ AddShapeOperatorCommand(Artifact::ArtifactAbstractLayerPtr layer,
+                         ArtifactCore::ShapeOperatorType type, int index)
+     : layer_(std::move(layer)), type_(type), index_(index) {}
+ void undo() override {
+  auto layer = layer_.lock();
+  if (!layer) return;
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->removeShapeOperator(index_);
+  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ void redo() override {
+  auto layer = layer_.lock();
+  if (!layer) return;
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->addShapeOperator(type_);
+  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ QString label() const override { return QStringLiteral("Add Shape Operator"); }
+private:
+ Artifact::ArtifactAbstractLayerWeak layer_;
+ ArtifactCore::ShapeOperatorType type_;
+ int index_;
+};
+
+class RemoveShapeOperatorCommand final : public Artifact::UndoCommand {
+public:
+ RemoveShapeOperatorCommand(Artifact::ArtifactAbstractLayerPtr layer,
+                            int index,
+                            std::unique_ptr<ArtifactCore::ShapeOperator> snapshot)
+     : layer_(std::move(layer)), index_(index), snapshot_(std::move(snapshot)) {}
+ void undo() override {
+  auto layer = layer_.lock();
+  if (!layer || !snapshot_) return;
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->insertShapeOperator(index_, snapshot_->clone());
+  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ void redo() override {
+  auto layer = layer_.lock();
+  if (!layer) return;
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->removeShapeOperator(index_);
+  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ QString label() const override { return QStringLiteral("Remove Shape Operator"); }
+private:
+ Artifact::ArtifactAbstractLayerWeak layer_;
+ int index_;
+ std::unique_ptr<ArtifactCore::ShapeOperator> snapshot_;
+};
+
+class MoveShapeOperatorCommand final : public Artifact::UndoCommand {
+public:
+ MoveShapeOperatorCommand(Artifact::ArtifactAbstractLayerPtr layer,
+                          int fromIndex, int toIndex)
+     : layer_(std::move(layer)), fromIndex_(fromIndex), toIndex_(toIndex) {}
+ void undo() override {
+  auto layer = layer_.lock();
+  if (!layer) return;
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->moveShapeOperator(toIndex_, fromIndex_);
+  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ void redo() override {
+  auto layer = layer_.lock();
+  if (!layer) return;
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->moveShapeOperator(fromIndex_, toIndex_);
+  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ QString label() const override { return QStringLiteral("Move Shape Operator"); }
+private:
+ Artifact::ArtifactAbstractLayerWeak layer_;
+ int fromIndex_, toIndex_;
+};
+
+class ClearShapeOperatorsCommand final : public Artifact::UndoCommand {
+public:
+ ClearShapeOperatorsCommand(Artifact::ArtifactAbstractLayerPtr layer,
+                            std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> snapshots)
+     : layer_(std::move(layer)), snapshots_(std::move(snapshots)) {}
+ void undo() override {
+  auto layer = layer_.lock();
+  if (!layer) return;
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  for (int i = 0; i < static_cast<int>(snapshots_.size()); ++i) {
+   shape->insertShapeOperator(i, snapshots_[static_cast<size_t>(i)]->clone());
+  }
+  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ void redo() override {
+  auto layer = layer_.lock();
+  if (!layer) return;
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->clearShapeOperators();
+  if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ QString label() const override { return QStringLiteral("Clear Shape Operators"); }
+private:
+ Artifact::ArtifactAbstractLayerWeak layer_;
+ std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> snapshots_;
+};
+
 enum class MaskHandleType { None, InTangent, OutTangent };
 
 QPointF maskHandlePosition(const MaskPath& path, int vertexIndex, MaskHandleType handleType)
@@ -2780,8 +2893,9 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* addRoundedCornersAct = nullptr;
  QAction* addWigglePathsAct = nullptr;
  QAction* addZigZagAct = nullptr;
- QAction* addTwistAct = nullptr;
- QAction* insertPointAct = nullptr;
+  QAction* addTwistAct = nullptr;
+  QAction* addHandDrawnWobbleAct = nullptr;
+  QAction* insertPointAct = nullptr;
  QAction* splitSegmentAct = nullptr;
  QAction* deletePointAct = nullptr;
  QAction* toggleClosedAct = nullptr;
@@ -2799,7 +2913,8 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
    addRoundedCornersAct = shapeOpsMenu->addAction(QStringLiteral("Rounded Corners"));
    addWigglePathsAct = shapeOpsMenu->addAction(QStringLiteral("Wiggle Paths"));
    addZigZagAct = shapeOpsMenu->addAction(QStringLiteral("ZigZag"));
-   addTwistAct = shapeOpsMenu->addAction(QStringLiteral("Twist"));
+    addTwistAct = shapeOpsMenu->addAction(QStringLiteral("Twist"));
+    addHandDrawnWobbleAct = shapeOpsMenu->addAction(QStringLiteral("Hand-Drawn Wobble"));
    clearShapeOperatorsAct = menu.addAction(QStringLiteral("Clear Shape Operators"));
    clearShapeOperatorsAct->setEnabled(shapeLayer->shapeOperatorCount() > 0);
    if (shapeLayer->hasCustomPolygon()) {
@@ -2826,37 +2941,52 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     if (shapeChosen) {
      bool handled = false;
      if (shapeChosen == clearShapeOperatorsAct) {
-      shapeLayer->clearShapeOperators();
+      std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> snapshots;
+      for (int i = shapeLayer->shapeOperatorCount() - 1; i >= 0; --i) {
+       snapshots.push_back(shapeLayer->takeShapeOperator(i));
+      }
+      std::reverse(snapshots.begin(), snapshots.end());
+      auto cmd = std::make_unique<ClearShapeOperatorsCommand>(
+          layer, std::move(snapshots));
+      Artifact::UndoManager::instance()->push(std::move(cmd));
       impl_->requestRender();
       event->accept();
       return;
      }
+     auto pushAddOp = [&](ArtifactCore::ShapeOperatorType type) {
+      int idx = shapeLayer->shapeOperatorCount();
+      auto cmd = std::make_unique<AddShapeOperatorCommand>(layer, type, idx);
+      Artifact::UndoManager::instance()->push(std::move(cmd));
+     };
      if (shapeChosen == addTrimPathsAct) {
-      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::TrimPaths);
+      pushAddOp(ArtifactCore::ShapeOperatorType::TrimPaths);
       handled = true;
      } else if (shapeChosen == addRepeaterAct) {
-      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::Repeater);
+      pushAddOp(ArtifactCore::ShapeOperatorType::Repeater);
       handled = true;
      } else if (shapeChosen == addMergePathsAct) {
-      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::MergePaths);
+      pushAddOp(ArtifactCore::ShapeOperatorType::MergePaths);
       handled = true;
      } else if (shapeChosen == addOffsetPathsAct) {
-      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::OffsetPaths);
+      pushAddOp(ArtifactCore::ShapeOperatorType::OffsetPaths);
       handled = true;
      } else if (shapeChosen == addPuckerBloatAct) {
-      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::PuckerBloat);
+      pushAddOp(ArtifactCore::ShapeOperatorType::PuckerBloat);
       handled = true;
      } else if (shapeChosen == addRoundedCornersAct) {
-      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::RoundedCorners);
+      pushAddOp(ArtifactCore::ShapeOperatorType::RoundedCorners);
       handled = true;
      } else if (shapeChosen == addWigglePathsAct) {
-      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::WigglePaths);
+      pushAddOp(ArtifactCore::ShapeOperatorType::WigglePaths);
       handled = true;
      } else if (shapeChosen == addZigZagAct) {
-      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::ZigZag);
+      pushAddOp(ArtifactCore::ShapeOperatorType::ZigZag);
       handled = true;
      } else if (shapeChosen == addTwistAct) {
-      shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::Twist);
+      pushAddOp(ArtifactCore::ShapeOperatorType::Twist);
+      handled = true;
+     } else if (shapeChosen == addHandDrawnWobbleAct) {
+      pushAddOp(ArtifactCore::ShapeOperatorType::HandDrawnWobble);
       handled = true;
      } else if (shapeLayer->hasCustomPolygon()) {
       if (shapeChosen == deletePointAct) {

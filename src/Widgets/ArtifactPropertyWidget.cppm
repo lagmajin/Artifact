@@ -384,6 +384,90 @@ void clearLayoutRecursive(QLayout *layout) {
 }
 } // namespace
 
+class MoveShapeOperatorCommand final : public UndoCommand {
+public:
+ MoveShapeOperatorCommand(ArtifactAbstractLayerPtr layer,
+                          int fromIndex, int toIndex)
+     : layer_(std::move(layer)), fromIndex_(fromIndex), toIndex_(toIndex) {}
+ void undo() override {
+  auto layer = layer_.lock();
+  if (!layer) return;
+  auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->moveShapeOperator(toIndex_, fromIndex_);
+  if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ void redo() override {
+  auto layer = layer_.lock();
+  if (!layer) return;
+  auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+  if (!shape) return;
+  shape->moveShapeOperator(fromIndex_, toIndex_);
+  if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+ }
+ QString label() const override { return QStringLiteral("Move Shape Operator"); }
+private:
+ ArtifactAbstractLayerWeak layer_;
+ int fromIndex_, toIndex_;
+};
+
+ class RemoveShapeOperatorCommand final : public UndoCommand {
+ public:
+  RemoveShapeOperatorCommand(ArtifactAbstractLayerPtr layer,
+                             int index,
+                             std::unique_ptr<ArtifactCore::ShapeOperator> snapshot)
+      : layer_(std::move(layer)), index_(index), snapshot_(std::move(snapshot)) {}
+  void undo() override {
+   auto layer = layer_.lock();
+   if (!layer || !snapshot_) return;
+   auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+   if (!shape) return;
+   shape->insertShapeOperator(index_, snapshot_->clone());
+   if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+  void redo() override {
+   auto layer = layer_.lock();
+   if (!layer) return;
+   auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+   if (!shape) return;
+   shape->removeShapeOperator(index_);
+   if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+  QString label() const override { return QStringLiteral("Remove Shape Operator"); }
+ private:
+  ArtifactAbstractLayerWeak layer_;
+  int index_;
+  std::unique_ptr<ArtifactCore::ShapeOperator> snapshot_;
+ };
+
+class SetShapeOperatorPropertyCommand final : public UndoCommand {
+ public:
+  SetShapeOperatorPropertyCommand(ArtifactAbstractLayerPtr layer,
+                                  QString propertyPath,
+                                  QVariant oldValue, QVariant newValue)
+      : layer_(std::move(layer)),
+        propertyPath_(std::move(propertyPath)),
+        oldValue_(std::move(oldValue)),
+        newValue_(std::move(newValue)) {}
+  void undo() override {
+   auto layer = layer_.lock();
+   if (!layer) return;
+   layer->setLayerPropertyValue(propertyPath_, oldValue_);
+   if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+  void redo() override {
+   auto layer = layer_.lock();
+   if (!layer) return;
+   layer->setLayerPropertyValue(propertyPath_, newValue_);
+   if (auto* mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+  QString label() const override { return QStringLiteral("Edit Shape Operator"); }
+ private:
+  ArtifactAbstractLayerWeak layer_;
+  QString propertyPath_;
+  QVariant oldValue_, newValue_;
+ };
+
 W_OBJECT_IMPL(ArtifactPropertyWidget)
 
 class ArtifactPropertyWidget::Impl {
@@ -2157,8 +2241,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     bool addedGroupProperties = false;
     std::vector<ArtifactPropertyEditorRowWidget *> groupRows;
     auto groupPreviewOpacity = std::make_shared<std::optional<float>>();
-    auto commitLayerValue = [this, layer, groupPreviewOpacity](
-                                const QString &name, const QVariant &value) {
+     auto commitLayerValue = [this, layer, groupPreviewOpacity](
+                                 const QString &name, const QVariant &value) {
       if (layer) {
         ScopedPropertyEditGuard guard(localPropertyEditDepth);
         if (name.compare(QStringLiteral("layer.opacity"),
