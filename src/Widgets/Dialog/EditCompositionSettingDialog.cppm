@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QDialog>
 #include <wobjectimpl.h>
 #include <QComboBox>
@@ -38,13 +38,9 @@
 #include <random>
 module Artifact.Dialog.EditComposition;
 
-
-
-
 import Widgets.Utils.CSS;
 import Widgets.EditableLabel;
 import DragSpinBox;
-
 
 namespace Artifact
 {
@@ -102,4 +98,3 @@ namespace Artifact
  
 
 };
-

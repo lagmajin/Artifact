@@ -1,5 +1,5 @@
-﻿module;
-#include <QWidget>
+module;
+#include <wobjectimpl.h>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -33,26 +33,38 @@
 #include <numeric>
 #include <regex>
 #include <random>
-module Artifact.Render.WrapperWidget;
+module Artifact.Test.ProjectManager;
 
+namespace Artifact
+{
+ class ArtifactTestProjectManager::Impl
+ {
+ private:
+ 	
+ 	
+ public:
+  Impl();
+  ~Impl();
+ };
 
+ ArtifactTestProjectManager::Impl::Impl()
+ {
+  
+ }
 
-
-import Artifact.Widgets.CompositionRenderWidget;
-
-
-namespace Artifact {
-
-	
-
- ArtifactRenderWrapperWidget::ArtifactRenderWrapperWidget(QWidget* parent /*= nullptr*/):QWidget(parent)
+ ArtifactTestProjectManager::Impl::~Impl()
  {
 
  }
 
- ArtifactRenderWrapperWidget::~ArtifactRenderWrapperWidget()
+ ArtifactTestProjectManager::ArtifactTestProjectManager():impl_(new Impl)
  {
 
+ }
+
+ ArtifactTestProjectManager::~ArtifactTestProjectManager()
+ {
+  delete impl_;
  }
 
 };

@@ -1,5 +1,4 @@
 module;
-
 #include <QHash>
 #include <QCoreApplication>
 #include <QDir>
@@ -59,11 +58,8 @@ namespace Artifact
  };
 
  ArtifactGlobalEffectManager::Impl::Impl() {}
-
  ArtifactGlobalEffectManager::Impl::~Impl() {}
-
  ArtifactGlobalEffectManager::ArtifactGlobalEffectManager() {}
-
  ArtifactGlobalEffectManager::~ArtifactGlobalEffectManager() {}
 
  void ArtifactGlobalEffectManager::loadPlugin() noexcept
@@ -99,7 +95,6 @@ namespace Artifact
    auto& registry = ArtifactPluginRegistry::instance();
    auto opt = registry.pluginById(id.toString().toStdString());
    if (opt) {
-     // Plugin registered in the registry — forwarding is active
      return;
    }
  }

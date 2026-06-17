@@ -607,6 +607,9 @@ void applyKeyframePropertySnapshots(
                             keyframe.interpolation, keyframe.cp1_x,
                             keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
                             keyframe.roving);
+      const RationalTime restoredTime(keyframe.time.rescaledTo(scale), scale);
+      property->setKeyFrameAnchorAt(restoredTime, keyframe.anchor);
+      property->setKeyFrameColorLabelAt(restoredTime, keyframe.colorLabel);
     }
 
     const QString layerKey = layer->id().toString();
@@ -659,6 +662,9 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr &composition,
             keyframe.value.isValid() ? keyframe.value : property->getValue(),
             keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
             keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
+        const RationalTime newTime(newFrame, scale);
+        property->setKeyFrameAnchorAt(newTime, keyframe.anchor);
+        property->setKeyFrameColorLabelAt(newTime, keyframe.colorLabel);
       }
     }
   }
@@ -1225,6 +1231,8 @@ bool sameKeyframeMarkerVisual(
          lhs.outgoingBezier == rhs.outgoingBezier &&
          lhs.bezier == rhs.bezier &&
          lhs.roving == rhs.roving &&
+         lhs.interpolation == rhs.interpolation &&
+         lhs.anchor == rhs.anchor &&
          lhs.color == rhs.color && lhs.label == rhs.label &&
          lhs.value == rhs.value;
 }
@@ -1259,6 +1267,8 @@ struct SelectedKeyframeRecord {
       ArtifactCore::InterpolationType::Linear;
   ArtifactCore::KeyFrame::ColorLabel colorLabel =
       ArtifactCore::KeyFrame::ColorLabel::None;
+  ArtifactCore::KeyFrame::Anchor anchor =
+      ArtifactCore::KeyFrame::Anchor::Absolute;
   float cp1_x = 0.42f;
   float cp1_y = 0.0f;
   float cp2_x = 0.58f;
@@ -1320,6 +1330,7 @@ QVector<SelectedKeyframeRecord> collectSelectedKeyframeRecords(
         it->value.isValid() ? it->value : property->getValue(),
         it->interpolation,
         it->colorLabel,
+        it->anchor,
         it->cp1_x,
         it->cp1_y,
         it->cp2_x,
@@ -1434,6 +1445,8 @@ bool cleanNearDuplicateKeyframesForProperty(
                           keyframe.interpolation, keyframe.cp1_x,
                           keyframe.cp1_y, keyframe.cp2_x, keyframe.cp2_y,
                           keyframe.roving);
+    property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+    property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
   }
 
   if (outRemovedCount) {
@@ -1598,6 +1611,8 @@ bool applyEvenKeyframeDistribution(
       keyframe.time = RationalTime(record.targetFrame, fpsScale);
       keyframe.value = record.value.isValid() ? record.value : property->getValue();
       keyframe.interpolation = record.interpolation;
+      keyframe.colorLabel = record.colorLabel;
+      keyframe.anchor = record.anchor;
       keyframe.cp1_x = record.cp1_x;
       keyframe.cp1_y = record.cp1_y;
       keyframe.cp2_x = record.cp2_x;
@@ -1628,6 +1643,8 @@ bool applyEvenKeyframeDistribution(
           keyframe.value.isValid() ? keyframe.value : property->getValue(),
           keyframe.interpolation, keyframe.cp1_x, keyframe.cp1_y,
           keyframe.cp2_x, keyframe.cp2_y, keyframe.roving);
+      property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+      property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
     }
 
     layer->changed();
@@ -1714,6 +1731,8 @@ bool repeatSelectedKeyframeRecords(
         keyframe.time = RationalTime(newFrame, fpsScale);
         keyframe.value = record.value.isValid() ? record.value : property->getValue();
         keyframe.interpolation = record.interpolation;
+        keyframe.colorLabel = record.colorLabel;
+        keyframe.anchor = record.anchor;
         keyframe.cp1_x = record.cp1_x;
         keyframe.cp1_y = record.cp1_y;
         keyframe.cp2_x = record.cp2_x;
@@ -1727,6 +1746,8 @@ bool repeatSelectedKeyframeRecords(
         property->addKeyFrame(keyframe.time, keyframe.value, keyframe.interpolation,
                               keyframe.cp1_x, keyframe.cp1_y, keyframe.cp2_x,
                               keyframe.cp2_y, keyframe.roving);
+        property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
+        property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
         if (outSelectionKeys) {
           outSelectionKeys->insert(keyframeSelectionKey(
               record.layerId, record.propertyPath, newFrame));
@@ -1786,7 +1807,10 @@ private:
                             keyframe.cp1_x,
                             keyframe.cp1_y,
                             keyframe.cp2_x,
-                            keyframe.cp2_y);
+                            keyframe.cp2_y,
+                            keyframe.roving);
+      property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+      property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
       layer->changed();
       changedLayerIds.insert(layer->id().toString());
     }
@@ -1919,6 +1943,8 @@ private:
                             keyframe.cp2_x,
                             keyframe.cp2_y,
                             keyframe.roving);
+      property->setKeyFrameAnchorAt(keyframe.time, keyframe.anchor);
+      property->setKeyFrameColorLabelAt(keyframe.time, keyframe.colorLabel);
       layer->changed();
       changedLayerIds.insert(layer->id().toString());
     }
@@ -2075,6 +2101,9 @@ bool markerAtCurrentFrame(
     const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual &marker,
     const double currentFrame);
 
+QString keyframeAnchorLabel(ArtifactCore::KeyFrame::Anchor anchor);
+QString keyframeInterpolationLabel(ArtifactCore::InterpolationType type);
+
 QString formatMarkerTooltip(
     const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual &marker,
     const double currentFrame, const bool hovered, const bool nearestToCurrent) {
@@ -2097,10 +2126,12 @@ QString formatMarkerTooltip(
                                                            : QStringLiteral("linear"));
   const QString interpolationText =
       QStringLiteral("Interpolation: %1")
-          .arg(marker.incomingBezier || marker.outgoingBezier
-                   ? QStringLiteral("Bezier (one or both sides)")
-                   : (marker.eased ? QStringLiteral("Ease / custom")
-                                   : QStringLiteral("Linear")));
+          .arg(keyframeInterpolationLabel(marker.interpolation));
+  const QString anchorText =
+      QStringLiteral("Anchor: %1").arg(keyframeAnchorLabel(marker.anchor));
+  const QString rovingText =
+      marker.roving ? QStringLiteral("Roving: On")
+                    : QStringLiteral("Roving: Off");
   const QString colorText = marker.labelColor.isValid()
                                 ? QStringLiteral("Label: %1").arg(marker.labelColor.name())
                                 : QStringLiteral("Label: None");
@@ -2120,7 +2151,8 @@ QString formatMarkerTooltip(
   QString tooltip = label + QStringLiteral("\n") + frameText + QStringLiteral("\n") +
          pathText + QStringLiteral("\n") + laneText + QStringLiteral("\n") +
          easingText + QStringLiteral("\n") + interpolationText +
-         QStringLiteral("\n") + colorText + QStringLiteral("\n") +
+         QStringLiteral("\n") + anchorText + QStringLiteral("\n") +
+         rovingText + QStringLiteral("\n") + colorText + QStringLiteral("\n") +
          selectionText +
          QStringLiteral("\n") + relationText + QStringLiteral("\n") +
          hoverText;
@@ -2188,6 +2220,126 @@ QColor keyframeColorLabelColor(const ArtifactCore::KeyFrame::ColorLabel label) {
   case ArtifactCore::KeyFrame::ColorLabel::None:
   default:
     return QColor();
+  }
+}
+
+QColor keyframeInterpolationColor(const ArtifactCore::InterpolationType type,
+                                  const bool selectedLayer) {
+  if (selectedLayer) {
+    return QColor(255, 255, 255);
+  }
+  switch (type) {
+  case ArtifactCore::InterpolationType::Constant:
+    return QColor(236, 184, 74);
+  case ArtifactCore::InterpolationType::Linear:
+    return QColor(247, 204, 83);
+  case ArtifactCore::InterpolationType::EaseIn:
+    return QColor(101, 190, 255);
+  case ArtifactCore::InterpolationType::EaseOut:
+    return QColor(83, 217, 188);
+  case ArtifactCore::InterpolationType::EaseInOut:
+    return QColor(110, 214, 255);
+  case ArtifactCore::InterpolationType::Bezier:
+    return QColor(126, 176, 255);
+  case ArtifactCore::InterpolationType::BackOut:
+  case ArtifactCore::InterpolationType::BounceOut:
+  case ArtifactCore::InterpolationType::ElasticOut:
+    return QColor(255, 151, 101);
+  case ArtifactCore::InterpolationType::Sine:
+  case ArtifactCore::InterpolationType::Cubic:
+  case ArtifactCore::InterpolationType::Exponential:
+    return QColor(149, 222, 129);
+  default:
+    return QColor(247, 204, 83);
+  }
+}
+
+QString keyframeAnchorLabel(const ArtifactCore::KeyFrame::Anchor anchor) {
+  switch (anchor) {
+  case ArtifactCore::KeyFrame::Anchor::LockToIn:
+    return QStringLiteral("Lock to In");
+  case ArtifactCore::KeyFrame::Anchor::LockToOut:
+    return QStringLiteral("Lock to Out");
+  case ArtifactCore::KeyFrame::Anchor::StretchWithLayer:
+    return QStringLiteral("Stretch with Layer");
+  case ArtifactCore::KeyFrame::Anchor::Absolute:
+  default:
+    return QStringLiteral("Absolute");
+  }
+}
+
+QString keyframeInterpolationLabel(const ArtifactCore::InterpolationType type) {
+  switch (type) {
+  case ArtifactCore::InterpolationType::Constant:
+    return QStringLiteral("Hold");
+  case ArtifactCore::InterpolationType::EaseIn:
+    return QStringLiteral("Ease In");
+  case ArtifactCore::InterpolationType::EaseOut:
+    return QStringLiteral("Ease Out");
+  case ArtifactCore::InterpolationType::EaseInOut:
+    return QStringLiteral("Ease In/Out");
+  case ArtifactCore::InterpolationType::Bezier:
+    return QStringLiteral("Bezier");
+  case ArtifactCore::InterpolationType::BackOut:
+    return QStringLiteral("Back");
+  case ArtifactCore::InterpolationType::BounceOut:
+    return QStringLiteral("Bounce");
+  case ArtifactCore::InterpolationType::ElasticOut:
+    return QStringLiteral("Elastic");
+  case ArtifactCore::InterpolationType::Sine:
+    return QStringLiteral("Sine");
+  case ArtifactCore::InterpolationType::Cubic:
+    return QStringLiteral("Cubic");
+  case ArtifactCore::InterpolationType::Exponential:
+    return QStringLiteral("Exponential");
+  case ArtifactCore::InterpolationType::Linear:
+  default:
+    return QStringLiteral("Linear");
+  }
+}
+
+QPolygonF keyframeShapePolygon(const QRectF &rect,
+                               const ArtifactCore::InterpolationType type) {
+  const QPointF c = rect.center();
+  switch (type) {
+  case ArtifactCore::InterpolationType::Constant:
+    return QPolygonF{QPointF(rect.left(), rect.top()),
+                     QPointF(rect.right(), rect.top()),
+                     QPointF(rect.right(), rect.bottom()),
+                     QPointF(rect.left(), rect.bottom())};
+  case ArtifactCore::InterpolationType::EaseIn:
+    return QPolygonF{QPointF(rect.right(), rect.top()),
+                     QPointF(rect.right(), rect.bottom()),
+                     QPointF(rect.left(), c.y())};
+  case ArtifactCore::InterpolationType::EaseOut:
+    return QPolygonF{QPointF(rect.left(), rect.top()),
+                     QPointF(rect.right(), c.y()),
+                     QPointF(rect.left(), rect.bottom())};
+  case ArtifactCore::InterpolationType::EaseInOut:
+    return QPolygonF{QPointF(c.x(), rect.top()),
+                     QPointF(rect.right(), c.y()),
+                     QPointF(c.x(), rect.bottom()),
+                     QPointF(rect.left(), c.y())};
+  case ArtifactCore::InterpolationType::Bezier:
+    return QPolygonF{QPointF(c.x(), rect.top()),
+                     QPointF(rect.right(), rect.top() + rect.height() * 0.28),
+                     QPointF(rect.right(), rect.bottom() - rect.height() * 0.28),
+                     QPointF(c.x(), rect.bottom()),
+                     QPointF(rect.left(), rect.bottom() - rect.height() * 0.28),
+                     QPointF(rect.left(), rect.top() + rect.height() * 0.28)};
+  case ArtifactCore::InterpolationType::BackOut:
+  case ArtifactCore::InterpolationType::BounceOut:
+  case ArtifactCore::InterpolationType::ElasticOut:
+    return QPolygonF{QPointF(c.x(), rect.top()),
+                     QPointF(rect.right(), rect.top() + rect.height() * 0.36),
+                     QPointF(rect.right() - rect.width() * 0.18, rect.bottom()),
+                     QPointF(rect.left() + rect.width() * 0.18, rect.bottom()),
+                     QPointF(rect.left(), rect.top() + rect.height() * 0.36)};
+  default:
+    return QPolygonF{QPointF(c.x(), rect.top()),
+                     QPointF(rect.right(), c.y()),
+                     QPointF(c.x(), rect.bottom()),
+                     QPointF(rect.left(), c.y())};
   }
 }
 
@@ -2683,9 +2835,8 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
           keyframe.interpolation == InterpolationType::Bezier;
       const bool eased = incomingEased || outgoingEased;
       const bool bezier = incomingBezier || outgoingBezier;
-      QColor color = selectedLayer ? QColor(255, 255, 255)
-                                   : (eased ? QColor(82, 208, 255)
-                                            : QColor(247, 204, 83));
+      QColor color =
+          keyframeInterpolationColor(keyframe.interpolation, selectedLayer);
       color.setAlpha(selectedLayer ? 255 : 245);
       const QColor labelColor =
           keyframeColorLabelColor(keyframe.colorLabel);
@@ -2709,6 +2860,8 @@ collectKeyframeMarkers(const ArtifactCompositionPtr &composition,
       marker.outgoingBezier = outgoingBezier;
       marker.bezier = bezier;
       marker.roving = keyframe.roving;
+      marker.interpolation = keyframe.interpolation;
+      marker.anchor = keyframe.anchor;
       marker.laneCount = 1;
       marker.laneIndex = 0;
       markers.push_back(std::move(marker));
@@ -2897,6 +3050,9 @@ QJsonArray serializeSelectedKeyframeMarkers(
     record.insert(QStringLiteral("value"), QJsonValue::fromVariant(it->value));
     record.insert(QStringLiteral("interpolation"),
                   static_cast<int>(it->interpolation));
+    record.insert(QStringLiteral("anchor"), static_cast<int>(it->anchor));
+    record.insert(QStringLiteral("colorLabel"), static_cast<int>(it->colorLabel));
+    record.insert(QStringLiteral("roving"), it->roving);
     record.insert(QStringLiteral("cp1_x"), it->cp1_x);
     record.insert(QStringLiteral("cp1_y"), it->cp1_y);
     record.insert(QStringLiteral("cp2_x"), it->cp2_x);
@@ -2972,6 +3128,15 @@ bool pasteKeyframesToLayers(
           static_cast<ArtifactCore::InterpolationType>(
               record.value(QStringLiteral("interpolation"))
                   .toInt(static_cast<int>(ArtifactCore::InterpolationType::Linear)));
+      const auto anchorValue =
+          static_cast<ArtifactCore::KeyFrame::Anchor>(
+              record.value(QStringLiteral("anchor"))
+                  .toInt(static_cast<int>(ArtifactCore::KeyFrame::Anchor::Absolute)));
+      const auto colorLabelValue =
+          static_cast<ArtifactCore::KeyFrame::ColorLabel>(
+              record.value(QStringLiteral("colorLabel"))
+                  .toInt(static_cast<int>(ArtifactCore::KeyFrame::ColorLabel::None)));
+      const bool roving = record.value(QStringLiteral("roving")).toBool(false);
       const float cp1_x =
           static_cast<float>(record.value(QStringLiteral("cp1_x")).toDouble(0.42));
       const float cp1_y =
@@ -2985,7 +3150,10 @@ bool pasteKeyframesToLayers(
         ++mergedExistingKeyframeCount;
       }
       property->addKeyFrame(time, value.isValid() ? value : property->getValue(),
-                            interpolationValue, cp1_x, cp1_y, cp2_x, cp2_y);
+                            interpolationValue, cp1_x, cp1_y, cp2_x, cp2_y,
+                            roving);
+      property->setKeyFrameAnchorAt(time, anchorValue);
+      property->setKeyFrameColorLabelAt(time, colorLabelValue);
       if (outSelectionKeys) {
         outSelectionKeys->insert(
             keyframeSelectionKey(layer->id(), propertyPath, newFrame));
@@ -4574,26 +4742,8 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                                           : (marker.laneCount > 1 ? 5 : 6);
     const QRectF diamondRect(center.x() - size, center.y() - size, size * 2.0,
                              size * 2.0);
-    const QPointF top(diamondRect.center().x(), diamondRect.top());
-    const QPointF right(diamondRect.right(), diamondRect.center().y());
-    const QPointF bottom(diamondRect.center().x(), diamondRect.bottom());
-    const QPointF left(diamondRect.left(), diamondRect.center().y());
-    QPolygonF diamond;
-    diamond << top << right << bottom << left;
-    QPolygonF leftHandle;
-    leftHandle << top
-               << QPointF(diamondRect.center().x() - size * 0.12, diamondRect.center().y() - size * 0.06)
-               << QPointF(diamondRect.center().x() - size * 0.12, diamondRect.center().y() + size * 0.06)
-               << left
-               << QPointF(diamondRect.center().x() - size * 0.12, diamondRect.center().y() + size * 0.06)
-               << QPointF(diamondRect.center().x() - size * 0.12, diamondRect.center().y() - size * 0.06);
-    QPolygonF rightHandle;
-    rightHandle << top
-                << QPointF(diamondRect.center().x() + size * 0.12, diamondRect.center().y() - size * 0.06)
-                << QPointF(diamondRect.center().x() + size * 0.12, diamondRect.center().y() + size * 0.06)
-                << right
-                << QPointF(diamondRect.center().x() + size * 0.12, diamondRect.center().y() + size * 0.06)
-                << QPointF(diamondRect.center().x() + size * 0.12, diamondRect.center().y() - size * 0.06);
+    const QPolygonF markerShape =
+        keyframeShapePolygon(diamondRect, marker.interpolation);
     const QRectF coreRect(diamondRect.center().x() - size * 0.18,
                           diamondRect.center().y() - size * 0.18,
                           size * 0.36, size * 0.36);
@@ -4606,23 +4756,33 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.setBrush(haloColor);
       p.drawEllipse(center, haloRadius, haloRadius);
     }
+    if (marker.laneCount > 1) {
+      QColor stackFill = marker.selectedLayer ? theme.accent.darker(135)
+                                              : marker.color.darker(145);
+      stackFill.setAlpha(marker.selected ? 170 : 115);
+      QColor stackStroke = theme.background.darker(180);
+      stackStroke.setAlpha(marker.selected ? 210 : 150);
+      p.setPen(QPen(stackStroke, 0.8));
+      p.setBrush(stackFill);
+      p.drawPolygon(keyframeShapePolygon(
+          diamondRect.translated(2.2, -2.2), marker.interpolation));
+    }
     if (marker.selected) {
       p.setPen(QPen(theme.accent.lighter(isHovered ? 175 : 160),
                     isHovered ? 2.5 : 2.0));
       p.setBrush(Qt::NoBrush);
-      p.drawPolygon(diamond);
+      p.drawPolygon(markerShape);
       p.setPen(QPen(theme.background.darker(175), 2.0));
-      p.drawPolygon(diamond);
+      p.drawPolygon(markerShape);
       p.setPen(QPen(theme.text.lighter(125), 1.0));
       p.setBrush(theme.accent.lighter(isHovered ? 150 : 140));
-      p.drawPolygon(leftHandle);
-      p.drawPolygon(rightHandle);
+      p.drawPolygon(markerShape);
     } else if (marker.selectedLayer) {
       p.setPen(QPen(atCurrentFrame ? theme.accent.lighter(145)
                                    : theme.background.darker(175),
                     atCurrentFrame ? 2.4 : 2.0));
       p.setBrush(Qt::NoBrush);
-      p.drawPolygon(diamond);
+      p.drawPolygon(markerShape);
       p.setPen(QPen(atCurrentFrame ? theme.accent.lighter(130)
                                    : theme.text.lighter(110),
                     atCurrentFrame ? 1.3 : 1.0));
@@ -4630,8 +4790,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
                      ? theme.accent.lighter(isHovered ? 145 : 132)
                      : (isHovered ? theme.text.lighter(125)
                                   : theme.text.lighter(110)));
-      p.drawPolygon(leftHandle);
-      p.drawPolygon(rightHandle);
+      p.drawPolygon(markerShape);
     } else {
       p.setPen(QPen(isHovered ? theme.text.lighter(145)
                                : theme.border.darker(160),
@@ -4639,8 +4798,7 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.setBrush(isHovered ? marker.color.lighter(115)
                            : (marker.eased ? marker.color.lighter(102)
                                            : marker.color));
-      p.drawPolygon(leftHandle);
-      p.drawPolygon(rightHandle);
+      p.drawPolygon(markerShape);
     }
     if (marker.incomingEased || marker.outgoingEased) {
       const QColor leftColor =
@@ -4688,6 +4846,32 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.setPen(QPen(outline, marker.selected ? 1.1 : 0.9));
       p.setBrush(Qt::NoBrush);
       p.drawRoundedRect(tagRect.adjusted(0.4, 0.4, -0.4, -0.4), 1.8, 1.8);
+    }
+    if (marker.anchor != ArtifactCore::KeyFrame::Anchor::Absolute) {
+      QColor anchorColor = marker.selectedLayer ? theme.accent.lighter(145)
+                                                : theme.text.lighter(135);
+      anchorColor.setAlpha(marker.selected ? 230 : 175);
+      p.setPen(QPen(anchorColor, marker.selected ? 1.6 : 1.25,
+                    marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer
+                        ? Qt::SolidLine
+                        : Qt::DashLine,
+                    Qt::RoundCap, Qt::RoundJoin));
+      p.setBrush(Qt::NoBrush);
+      const qreal y = diamondRect.bottom() + 2.2;
+      if (marker.anchor == ArtifactCore::KeyFrame::Anchor::LockToIn ||
+          marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer) {
+        p.drawLine(QPointF(diamondRect.left() - 1.0, y - 2.3),
+                   QPointF(diamondRect.left() - 1.0, y + 2.3));
+      }
+      if (marker.anchor == ArtifactCore::KeyFrame::Anchor::LockToOut ||
+          marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer) {
+        p.drawLine(QPointF(diamondRect.right() + 1.0, y - 2.3),
+                   QPointF(diamondRect.right() + 1.0, y + 2.3));
+      }
+      if (marker.anchor == ArtifactCore::KeyFrame::Anchor::StretchWithLayer) {
+        p.drawLine(QPointF(diamondRect.left() - 1.0, y),
+                   QPointF(diamondRect.right() + 1.0, y));
+      }
     }
     if (atCurrentFrame) {
       QColor coreFill = marker.selectedLayer ? theme.accent.lighter(165)

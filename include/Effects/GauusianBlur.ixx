@@ -114,6 +114,14 @@ public:
     bool supportsGPU() const override {
         return true;
     }
+
+    /**
+     * @brief ROI 拡張ヒント
+     *
+     * ガウスブラーのカーネル有効範囲は 3σ。
+     * sigma が動的に変わるため、インスタンスから取得する。
+     */
+    EffectROIHint roiHint() const override;
 };
 
 };

@@ -188,6 +188,10 @@ public:
     QAction* createAudioAction = nullptr;
     QAction* createSvgAction = nullptr;
     QAction* createModel3DAction = nullptr;
+    QAction* cycleLayerForwardAction = nullptr;
+    QAction* cycleLayerReverseAction = nullptr;
+    QAction* cycleShapeForwardAction = nullptr;
+    QAction* cycleShapeReverseAction = nullptr;
     QAction* createShapeRectAction = nullptr;
     QAction* createShapeSquareAction = nullptr;
     QAction* createShapePolygonAction = nullptr;
@@ -238,6 +242,8 @@ public:
     void handleCreateAudio();
     void handleCreateSvg();
     void handleCreateModel3D();
+    void handleCycleLayerCreation(bool reverse);
+    void handleCycleShapeCreation(bool reverse);
     void handleCreateShape(ShapeType type, const QString& nameBase);
     void handleCreateMotionTracker();
 
@@ -317,9 +323,21 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createModel3DAction = new QAction("3Dモデルレイヤー(&3)...", createMenu);
     createModel3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createModel3DAction->setToolTip(QStringLiteral("Import a 3D model as a layer"));
+    cycleLayerForwardAction = new QAction("レイヤーを次々作成", createMenu);
+    cycleLayerForwardAction->setToolTip(QStringLiteral("Cycle common layer creation presets"));
+    cycleLayerForwardAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_N));
+    cycleLayerReverseAction = new QAction("レイヤーを逆順で次々作成", createMenu);
+    cycleLayerReverseAction->setToolTip(QStringLiteral("Cycle common layer creation presets in reverse"));
+    cycleLayerReverseAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_N));
 
     createShapeMenu = new QMenu("シェイプ(&S)", createMenu);
     createShapeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
+    cycleShapeForwardAction = new QAction("シェイプを次々作成", createShapeMenu);
+    cycleShapeForwardAction->setToolTip(QStringLiteral("Cycle shape presets"));
+    cycleShapeForwardAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_S));
+    cycleShapeReverseAction = new QAction("シェイプを逆順で次々作成", createShapeMenu);
+    cycleShapeReverseAction->setToolTip(QStringLiteral("Cycle shape presets in reverse"));
+    cycleShapeReverseAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_S));
     createShapeRectAction = new QAction("四角形", createShapeMenu);
     createShapeRectAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
     createShapeSquareAction = new QAction("正方形", createShapeMenu);
@@ -338,6 +356,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createShapeMenu->addAction(createShapeTriangleAction);
     createShapeMenu->addAction(createShapeEllipseAction);
     createShapeMenu->addAction(createShapeStarAction);
+    createShapeMenu->addSeparator();
+    createShapeMenu->addAction(cycleShapeForwardAction);
+    createShapeMenu->addAction(cycleShapeReverseAction);
 
     trackCameraAction = new QAction("3Dカメラトラッキング(&T)", menu);
     trackCameraAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_videocam.svg")));
@@ -354,6 +375,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createAudioAction);
     createMenu->addAction(createSvgAction);
     createMenu->addAction(createModel3DAction);
+    createMenu->addAction(cycleLayerForwardAction);
+    createMenu->addAction(cycleLayerReverseAction);
     createMenu->addMenu(createShapeMenu);
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
@@ -477,12 +500,16 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createAudioAction) { handleCreateAudio(); return; }
         if (action == createSvgAction) { handleCreateSvg(); return; }
         if (action == createModel3DAction) { handleCreateModel3D(); return; }
+        if (action == cycleLayerForwardAction) { handleCycleLayerCreation(false); return; }
+        if (action == cycleLayerReverseAction) { handleCycleLayerCreation(true); return; }
         if (action == createShapeRectAction) { handleCreateShape(ShapeType::Rect, QStringLiteral("Shape 1")); return; }
         if (action == createShapeSquareAction) { handleCreateShape(ShapeType::Square, QStringLiteral("Square 1")); return; }
         if (action == createShapePolygonAction) { handleCreateShape(ShapeType::Polygon, QStringLiteral("Polygon 1")); return; }
         if (action == createShapeTriangleAction) { handleCreateShape(ShapeType::Triangle, QStringLiteral("Triangle 1")); return; }
         if (action == createShapeEllipseAction) { handleCreateShape(ShapeType::Ellipse, QStringLiteral("Ellipse 1")); return; }
         if (action == createShapeStarAction) { handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); return; }
+        if (action == cycleShapeForwardAction) { handleCycleShapeCreation(false); return; }
+        if (action == cycleShapeReverseAction) { handleCycleShapeCreation(true); return; }
         if (action == duplicateLayerAction) { handleDuplicateLayer(); return; }
         if (action == renameLayerAction) { handleRenameLayer(); return; }
         if (action == deleteLayerAction) { handleDeleteLayer(); return; }
@@ -1002,6 +1029,105 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
         params.setModelPath(importedPaths.first());
         service->addLayerToCurrentComposition(params);
     });
+}
+
+void ArtifactLayerMenu::Impl::handleCycleLayerCreation(bool reverse)
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+
+    enum class Preset { Solid, Null, Construction, Adjust, Text, Particle, Camera, Light };
+    static int lastIndex = -1;
+    static std::chrono::steady_clock::time_point lastAt{};
+    const auto now = std::chrono::steady_clock::now();
+    const bool armed = lastAt.time_since_epoch().count() > 0 &&
+                       (now - lastAt) <= std::chrono::seconds(4);
+    constexpr int count = 8;
+    if (!armed) {
+        lastIndex = reverse ? count - 1 : 0;
+    } else {
+        lastIndex = reverse ? (lastIndex - 1 + count) % count : (lastIndex + 1) % count;
+    }
+    lastAt = now;
+
+    switch (static_cast<Preset>(lastIndex)) {
+    case Preset::Solid: {
+        ArtifactSolidLayerInitParams params(uniqueLayerName(QStringLiteral("Solid 1")));
+        params.setColor(FloatColor(1.0f, 1.0f, 1.0f, 1.0f));
+        service->addLayerToCurrentComposition(params);
+        break;
+    }
+    case Preset::Null: {
+        ArtifactNullLayerInitParams params(uniqueLayerName(QStringLiteral("Null 1")));
+        service->addLayerToCurrentComposition(params);
+        break;
+    }
+    case Preset::Construction: {
+        ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Construction 1")),
+                                      LayerType::Construction);
+        service->addLayerToCurrentComposition(params);
+        break;
+    }
+    case Preset::Adjust: {
+        ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Adjustment Layer 1")),
+                                      LayerType::Adjustment);
+        service->addLayerToCurrentComposition(params);
+        break;
+    }
+    case Preset::Text: {
+        ArtifactTextLayerInitParams params(uniqueLayerName(QStringLiteral("Text 1")));
+        service->addLayerToCurrentComposition(params);
+        break;
+    }
+    case Preset::Particle: {
+        ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Particle 1")),
+                                      LayerType::Particle);
+        service->addLayerToCurrentComposition(params);
+        break;
+    }
+    case Preset::Camera: {
+        ArtifactCameraLayerInitParams params;
+        service->addLayerToCurrentComposition(params);
+        break;
+    }
+    case Preset::Light: {
+        ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Light 1")),
+                                      LayerType::Light);
+        service->addLayerToCurrentComposition(params);
+        break;
+    }
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleCycleShapeCreation(bool reverse)
+{
+    static int lastIndex = -1;
+    static std::chrono::steady_clock::time_point lastAt{};
+    const auto now = std::chrono::steady_clock::now();
+    const bool armed = lastAt.time_since_epoch().count() > 0 &&
+                       (now - lastAt) <= std::chrono::seconds(4);
+    constexpr int count = 6;
+    if (!armed) {
+        lastIndex = reverse ? count - 1 : 0;
+    } else {
+        lastIndex = reverse ? (lastIndex - 1 + count) % count : (lastIndex + 1) % count;
+    }
+    lastAt = now;
+
+    switch (lastIndex) {
+    case 0: handleCreateShape(ShapeType::Rect, QStringLiteral("Shape 1")); return;
+    case 1: handleCreateShape(ShapeType::Ellipse, QStringLiteral("Ellipse 1")); return;
+    case 2: handleCreateShape(ShapeType::Triangle, QStringLiteral("Triangle 1")); return;
+    case 3: handleCreateShape(ShapeType::Square, QStringLiteral("Square 1")); return;
+    case 4: handleCreateShape(ShapeType::Polygon, QStringLiteral("Polygon 1")); return;
+    case 5: handleCreateShape(ShapeType::Star, QStringLiteral("Star 1")); return;
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateShape(ShapeType type, const QString& nameBase)

@@ -1,5 +1,5 @@
 module;
-#include <wobjectimpl.h>
+#include <QVector>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -33,43 +33,42 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-module Artifact.Test.ProjectManager;
+module WindowManager;
 
 
 
-
-//#include <boost/asio/prefer.hpp>
 
 namespace Artifact
 {
- class ArtifactTestProjectManager::Impl
+
+
+ class WindowPluginManager::Impl
  {
  private:
- 	
  	
  public:
   Impl();
   ~Impl();
  };
 
- ArtifactTestProjectManager::Impl::Impl()
- {
-  
- }
-
- ArtifactTestProjectManager::Impl::~Impl()
+ WindowPluginManager::Impl::Impl()
  {
 
  }
 
- ArtifactTestProjectManager::ArtifactTestProjectManager():impl_(new Impl)
+ WindowPluginManager::Impl::~Impl()
  {
 
  }
 
- ArtifactTestProjectManager::~ArtifactTestProjectManager()
+ WindowPluginManager::~WindowPluginManager()
  {
-  delete impl_;
+
+ }
+
+ WindowPluginManager::WindowPluginManager()
+ {
+
  }
 
 };

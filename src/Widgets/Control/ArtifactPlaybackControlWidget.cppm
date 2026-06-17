@@ -1237,7 +1237,7 @@ void ArtifactPlaybackControlWidget::showEvent(QShowEvent* event)
     refreshSurfaceAfterDockLifecycle();
     QTimer::singleShot(0, this, [this]() {
         refreshSurfaceAfterDockLifecycle();
-        repaint();
+        update();
     });
 }
 

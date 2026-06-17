@@ -24,6 +24,8 @@ import Utils.Id;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Composition.Abstract;
 import Artifact.Layers.Selection.Manager;
+import Geometry.Interpolate;
+import Property.Abstract;
 
 W_REGISTER_ARGTYPE(ArtifactCore::LayerID)
 
@@ -53,6 +55,10 @@ export namespace Artifact
    bool outgoingBezier = false;
    bool bezier = false;
    bool roving = false;
+   ArtifactCore::InterpolationType interpolation =
+       ArtifactCore::InterpolationType::Linear;
+   ArtifactCore::KeyFrame::Anchor anchor =
+       ArtifactCore::KeyFrame::Anchor::Absolute;
    QColor color = QColor(247, 204, 83);
    QColor labelColor;
    QString label;

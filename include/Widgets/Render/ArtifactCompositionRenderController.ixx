@@ -17,6 +17,7 @@ export module Artifact.Widgets.CompositionRenderController;
 
 import Color.Float;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Abstract;
 import Artifact.Render.IRenderer;
 import Artifact.Grid.System;
 import Frame.Debug;
@@ -163,6 +164,8 @@ void zoomFit();
 void zoomFill();
   void zoom100();
   void focusSelectedLayer();
+  bool createFullLayerMaskForLayer(const ArtifactAbstractLayerPtr& layer);
+  bool cyclePresetLayerMaskForLayer(const ArtifactAbstractLayerPtr& layer, bool reverse = false);
   void setGizmoMode(TransformGizmo::Mode mode);
   TransformGizmo::Mode gizmoMode() const;
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;

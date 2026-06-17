@@ -1182,6 +1182,47 @@ void ArtifactTextLayer::setText(const UniString &text) {
 
 UniString ArtifactTextLayer::text() const { return impl_->text_; }
 
+void ArtifactTextLayer::setSourceTextAtFrame(const qint64 frame, const QString& text) {
+  const auto property = getProperty(QStringLiteral("text.value"));
+  if (!property) {
+    return;
+  }
+  const RationalTime time(frame, effectiveTextTimelineFps(this));
+  property->addKeyFrame(time, text);
+  markDirty();
+  changed();
+}
+
+QString ArtifactTextLayer::sourceTextAtFrame(const qint64 frame) const {
+  const auto property = getProperty(QStringLiteral("text.value"));
+  if (!property) {
+    return text().toQString();
+  }
+  const RationalTime time(frame, effectiveTextTimelineFps(this));
+  const QVariant value = property->interpolateValue(time);
+  return value.isValid() ? value.toString() : text().toQString();
+}
+
+QList<qint64> ArtifactTextLayer::sourceTextKeyframeFrames() const {
+  QList<qint64> frames;
+  const auto property = getProperty(QStringLiteral("text.value"));
+  if (!property) {
+    return frames;
+  }
+  const int fps = std::max<int>(1, static_cast<int>(effectiveTextTimelineFps(this)));
+  for (const auto& keyframe : property->getKeyFrames()) {
+    frames.push_back(keyframe.time.rescaledTo(fps));
+  }
+  std::sort(frames.begin(), frames.end());
+  frames.erase(std::unique(frames.begin(), frames.end()), frames.end());
+  return frames;
+}
+
+bool ArtifactTextLayer::hasSourceTextKeyframes() const {
+  const auto property = getProperty(QStringLiteral("text.value"));
+  return property && !property->getKeyFrames().empty();
+}
+
 void ArtifactTextLayer::setFontSize(float size) {
   if (size <= 0.0f)
     size = 1.0f;

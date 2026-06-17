@@ -119,6 +119,7 @@ module;
 module Artifact.Widgets.ProjectManagerWidget;
 
 import std;
+import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import FloatColorPickerDialog;
 import Widgets.Utils.CSS;
@@ -369,7 +370,8 @@ QString projectItemFootageKindLabel(const QString& path) {
     case AssetKind::Font:
         return QStringLiteral("Font");
     default:
-    return QStringLiteral("Footage");
+        return QStringLiteral("Footage");
+    }
 }
 
 int projectItemUsageCount(ProjectItem* item)
@@ -1361,9 +1363,10 @@ HeaderResizeHit headerResizeHit(const QVector<int>& columnWidths, const QPoint& 
 
 } // namespace
 
- W_OBJECT_IMPL(ArtifactProjectManagerWidget)
- W_OBJECT_IMPL(ArtifactProjectView)
- W_OBJECT_IMPL(ArtifactProjectManagerToolBox)
+namespace Artifact {
+ W_OBJECT_IMPL(Artifact::ArtifactProjectManagerWidget)
+ W_OBJECT_IMPL(Artifact::ArtifactProjectView)
+ W_OBJECT_IMPL(Artifact::ArtifactProjectManagerToolBox)
 
 // --- Preview/Info Panel at top ---
 class ProjectInfoPanel : public QWidget {
@@ -3250,7 +3253,7 @@ void ArtifactProjectView::resizeEvent(QResizeEvent* event)
         verticalScrollBar_->setGeometry(width() - 8, 0, 8, height());
     }
     updateScrollRange();
-    this->repaint();
+    update();
 }
 
 void ArtifactProjectView::showEvent(QShowEvent* event)

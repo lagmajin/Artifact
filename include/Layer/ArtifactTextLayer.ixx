@@ -68,6 +68,10 @@ public:
 
     void setText(const UniString& text);
     UniString text() const;
+    void setSourceTextAtFrame(qint64 frame, const QString& text);
+    QString sourceTextAtFrame(qint64 frame) const;
+    QList<qint64> sourceTextKeyframeFrames() const;
+    bool hasSourceTextKeyframes() const;
 
     void setFontSize(float size);
     float fontSize() const;

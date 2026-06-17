@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QList>
 #include <cmath>
 #include <vector>
@@ -24,11 +24,10 @@ LimiterEffect::LimiterEffect() {
 
 void LimiterEffect::initializeEngine() {
     float sr = static_cast<float>(sampleRate_);
-    lookaheadSamples_ = static_cast<int>(0.005f * sr); // 5ms lookahead
+    lookaheadSamples_ = static_cast<int>(0.005f * sr);
     if (lookaheadSamples_ < 1) lookaheadSamples_ = 1;
     if (lookaheadSamples_ > kMaxLookahead) lookaheadSamples_ = kMaxLookahead;
 
-    // Lookahead buffer will be sized per-process call
     lookaheadWritePos_ = 0;
     currentGain_ = 1.0f;
 }
@@ -49,8 +48,6 @@ ArtifactCore::AudioSegment LimiterEffect::process(const ArtifactCore::AudioSegme
     float inputGainLinear = dbToLinear(inputGain_);
     float releaseCoeff = std::exp(-1.0f / (releaseMs_ * 0.001f * sr));
 
-    // Lookahead approach: 2-pass
-    // Pass 1: Compute per-sample peak levels with input gain applied
     std::vector<float> peakLevels(numSamples, 0.0f);
     for (int i = 0; i < numSamples; ++i) {
         float peak = 0.0f;
@@ -61,12 +58,9 @@ ArtifactCore::AudioSegment LimiterEffect::process(const ArtifactCore::AudioSegme
         peakLevels[i] = peak;
     }
 
-    // Pass 1b: Look ahead to find the max peak within the lookahead window
-    // This allows the limiter to start reducing gain before the peak arrives
     std::vector<float> lookaheadPeak(numSamples, 0.0f);
     {
         float runningMax = 0.0f;
-        // Backward pass: propagate peaks forward within lookahead window
         for (int i = numSamples - 1; i >= 0; --i) {
             runningMax = peakLevels[i];
             int endLookahead = std::min(i + lookaheadSamples_, numSamples);
@@ -77,23 +71,18 @@ ArtifactCore::AudioSegment LimiterEffect::process(const ArtifactCore::AudioSegme
         }
     }
 
-    // Pass 2: Compute gain reduction and apply
     for (int i = 0; i < numSamples; ++i) {
         float targetGain = 1.0f;
         if (lookaheadPeak[i] > ceilingLinear) {
             targetGain = ceilingLinear / lookaheadPeak[i];
         }
 
-        // Smooth gain changes
         if (targetGain < currentGain_) {
-            // Attack: instant (brick-wall)
             currentGain_ = targetGain;
         } else {
-            // Release: smooth
             currentGain_ = releaseCoeff * currentGain_ + (1.0f - releaseCoeff) * targetGain;
         }
 
-        // Apply input gain + gain reduction
         float totalGain = inputGainLinear * currentGain_;
         for (int ch = 0; ch < numChannels; ++ch) {
             output.channelData[ch][i] = input.channelData[ch][i] * totalGain;

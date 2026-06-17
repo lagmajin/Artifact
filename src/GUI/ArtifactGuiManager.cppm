@@ -1,5 +1,6 @@
-#include "../../include/GUI/ArtifactGuiManager.hpp"
+module;
 
+module Artifact.Gui.Manager;
 namespace Artifact {
 
 ArtifactGuiManager::ArtifactGuiManager() = default;
