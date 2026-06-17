@@ -77,6 +77,7 @@ import Artifact.Layer.Construction;
 import Artifact.Layer.Clone;
 import Artifact.Layer.Group;
 import Layer.Matte;
+import Layer.BlendModeInfo;
 import Artifact.Timeline.KeyframeModel;
 import Undo.UndoManager;
 import Artifact.Service.Playback;
@@ -376,6 +377,11 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
     pal.setColor(QPalette::ButtonText, text);
     pal.setColor(QPalette::WindowText, text);
     pal.setColor(QPalette::Text, text);
+    pal.setColor(QPalette::Disabled, QPalette::ButtonText, text);
+    pal.setColor(QPalette::Disabled, QPalette::WindowText, text);
+    pal.setColor(QPalette::Disabled, QPalette::Text, text);
+    pal.setColor(QPalette::Disabled, QPalette::Button, buttonFill);
+    pal.setColor(QPalette::Disabled, QPalette::Window, buttonFill);
     pal.setColor(QPalette::Base, surface);
     pal.setColor(QPalette::Mid, border);
     pal.setColor(QPalette::Highlight, selection);
@@ -675,66 +681,18 @@ namespace {
 
   QString blendModeToText(const LAYER_BLEND_TYPE mode)
   {
-    switch (mode) {
-    case LAYER_BLEND_TYPE::BLEND_NORMAL: return QStringLiteral("Normal");
-    case LAYER_BLEND_TYPE::BLEND_ADD: return QStringLiteral("Add");
-    case LAYER_BLEND_TYPE::BLEND_MULTIPLY: return QStringLiteral("Multiply");
-    case LAYER_BLEND_TYPE::BLEND_SCREEN: return QStringLiteral("Screen");
-    case LAYER_BLEND_TYPE::BLEND_OVERLAY: return QStringLiteral("Overlay");
-    case LAYER_BLEND_TYPE::BLEND_DARKEN: return QStringLiteral("Darken");
-    case LAYER_BLEND_TYPE::BLEND_LIGHTEN: return QStringLiteral("Lighten");
-    case LAYER_BLEND_TYPE::BLEND_COLOR_DODGE: return QStringLiteral("Color Dodge");
-    case LAYER_BLEND_TYPE::BLEND_COLOR_BURN: return QStringLiteral("Color Burn");
-    case LAYER_BLEND_TYPE::BLEND_HARD_LIGHT: return QStringLiteral("Hard Light");
-    case LAYER_BLEND_TYPE::BLEND_SOFT_LIGHT: return QStringLiteral("Soft Light");
-    case LAYER_BLEND_TYPE::BLEND_DIFFERENCE: return QStringLiteral("Difference");
-    case LAYER_BLEND_TYPE::BLEND_EXCLUSION: return QStringLiteral("Exclusion");
-    case LAYER_BLEND_TYPE::BLEND_HUE: return QStringLiteral("Hue");
-    case LAYER_BLEND_TYPE::BLEND_SATURATION: return QStringLiteral("Saturation");
-    case LAYER_BLEND_TYPE::BLEND_COLOR: return QStringLiteral("Color");
-    case LAYER_BLEND_TYPE::BLEND_LUMINOSITY: return QStringLiteral("Luminosity");
-    default: return QStringLiteral("Unknown");
-    }
+    return blendModeDisplayName(toBlendMode(mode));
   }
 
   std::vector<std::pair<QString, LAYER_BLEND_TYPE>> blendModeItems()
   {
-    return {
-      {QStringLiteral("Normal"), LAYER_BLEND_TYPE::BLEND_NORMAL},
-      {QStringLiteral("Add"), LAYER_BLEND_TYPE::BLEND_ADD},
-      {QStringLiteral("Subtract"), LAYER_BLEND_TYPE::BLEND_SUBTRACT},
-      {QStringLiteral("Multiply"), LAYER_BLEND_TYPE::BLEND_MULTIPLY},
-      {QStringLiteral("Screen"), LAYER_BLEND_TYPE::BLEND_SCREEN},
-      {QStringLiteral("Overlay"), LAYER_BLEND_TYPE::BLEND_OVERLAY},
-      {QStringLiteral("Darken"), LAYER_BLEND_TYPE::BLEND_DARKEN},
-      {QStringLiteral("Lighten"), LAYER_BLEND_TYPE::BLEND_LIGHTEN},
-      {QStringLiteral("Color Dodge"), LAYER_BLEND_TYPE::BLEND_COLOR_DODGE},
-      {QStringLiteral("Color Burn"), LAYER_BLEND_TYPE::BLEND_COLOR_BURN},
-      {QStringLiteral("Linear Burn"), LAYER_BLEND_TYPE::BLEND_LINEAR_BURN},
-      {QStringLiteral("Classic Color Burn"), LAYER_BLEND_TYPE::BLEND_CLASSIC_COLOR_BURN},
-      {QStringLiteral("Divide"), LAYER_BLEND_TYPE::BLEND_DIVIDE},
-      {QStringLiteral("Linear Dodge"), LAYER_BLEND_TYPE::BLEND_LINEAR_DODGE},
-      {QStringLiteral("Classic Color Dodge"), LAYER_BLEND_TYPE::BLEND_CLASSIC_COLOR_DODGE},
-      {QStringLiteral("Hard Light"), LAYER_BLEND_TYPE::BLEND_HARD_LIGHT},
-      {QStringLiteral("Soft Light"), LAYER_BLEND_TYPE::BLEND_SOFT_LIGHT},
-      {QStringLiteral("Linear Light"), LAYER_BLEND_TYPE::BLEND_LINEAR_LIGHT},
-      {QStringLiteral("Vivid Light"), LAYER_BLEND_TYPE::BLEND_VIVID_LIGHT},
-      {QStringLiteral("Pin Light"), LAYER_BLEND_TYPE::BLEND_PIN_LIGHT},
-      {QStringLiteral("Hard Mix"), LAYER_BLEND_TYPE::BLEND_HARD_MIX},
-      {QStringLiteral("Difference"), LAYER_BLEND_TYPE::BLEND_DIFFERENCE},
-      {QStringLiteral("Classic Difference"), LAYER_BLEND_TYPE::BLEND_CLASSIC_DIFFERENCE},
-      {QStringLiteral("Exclusion"), LAYER_BLEND_TYPE::BLEND_EXCLUSION},
-      {QStringLiteral("Hue"), LAYER_BLEND_TYPE::BLEND_HUE},
-      {QStringLiteral("Saturation"), LAYER_BLEND_TYPE::BLEND_SATURATION},
-      {QStringLiteral("Color"), LAYER_BLEND_TYPE::BLEND_COLOR},
-      {QStringLiteral("Luminosity"), LAYER_BLEND_TYPE::BLEND_LUMINOSITY},
-      {QStringLiteral("Dissolve"), LAYER_BLEND_TYPE::BLEND_DISSOLVE},
-      {QStringLiteral("Dancing Dissolve"), LAYER_BLEND_TYPE::BLEND_DANCING_DISSOLVE},
-      {QStringLiteral("Stencil Alpha"), LAYER_BLEND_TYPE::BLEND_STENCIL_ALPHA},
-      {QStringLiteral("Stencil Luma"), LAYER_BLEND_TYPE::BLEND_STENCIL_LUMA},
-      {QStringLiteral("Silhouette Alpha"), LAYER_BLEND_TYPE::BLEND_SILHOUETTE_ALPHA},
-      {QStringLiteral("Silhouette Luma"), LAYER_BLEND_TYPE::BLEND_SILHOUETTE_LUMA}
-    };
+    std::vector<std::pair<QString, LAYER_BLEND_TYPE>> items;
+    items.reserve(blendModeCount);
+    for (std::size_t i = 0; i < blendModeCount; ++i) {
+      const auto mode = static_cast<BlendMode>(i);
+      items.emplace_back(blendModeDisplayName(mode), toLegacyBlendType(mode));
+    }
+    return items;
   }
 
   QString humanizeTimelinePropertyLabel(QString name)
@@ -955,26 +913,33 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   auto visButton = impl_->visibilityButton = new QPushButton();
   visButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   visButton->setIcon(impl_->visibilityIcon);
-  visButton->setFlat(true);
-  visButton->setEnabled(false);
+  visButton->setIconSize(QSize(15, 15));
+  visButton->setFocusPolicy(Qt::NoFocus);
+  visButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(visButton);
 
   auto lockButton = impl_->lockButton = new QPushButton();
   lockButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
-  lockButton->setEnabled(false);
+  lockButton->setIconSize(QSize(15, 15));
+  lockButton->setFocusPolicy(Qt::NoFocus);
+  lockButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(lockButton);
 
   auto soloButton = impl_->soloButton = new QPushButton();
   soloButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
-  soloButton->setEnabled(false);
+  soloButton->setIconSize(QSize(15, 15));
+  soloButton->setFocusPolicy(Qt::NoFocus);
+  soloButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(soloButton);
 
   auto audioButton = impl_->audioButton = new QPushButton();
   audioButton->setFixedSize(QSize(kLayerColumnWidth, kLayerHeaderButtonSize));
   if (!impl_->audioIcon.isNull()) audioButton->setIcon(impl_->audioIcon);
-  audioButton->setEnabled(false);
+  audioButton->setIconSize(QSize(15, 15));
+  audioButton->setFocusPolicy(Qt::NoFocus);
+  audioButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(audioButton);
 
   auto shyButton = impl_->shyButton = new QPushButton;
@@ -985,21 +950,20 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   applyLayerPanelButtonPalette(shyButton, true);
 
   auto layerNameButton = impl_->layerNameButton = new QPushButton("Layer Name");
-  layerNameButton->setEnabled(false);
+  layerNameButton->setFocusPolicy(Qt::NoFocus);
+  layerNameButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(layerNameButton);
   
-  auto parentHeader = impl_->parentHeaderButton = new QPushButton();
+  auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
   parentHeader->setFixedWidth(kInlineParentWidth);
   parentHeader->setToolTip(QString());
-  parentHeader->setFlat(true);
   parentHeader->setFocusPolicy(Qt::NoFocus);
   parentHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(parentHeader);
   
-  auto blendHeader = impl_->blendHeaderButton = new QPushButton();
+  auto blendHeader = impl_->blendHeaderButton = new QPushButton("Blend");
   blendHeader->setFixedWidth(kInlineBlendWidth);
   blendHeader->setToolTip(QString());
-  blendHeader->setFlat(true);
   blendHeader->setFocusPolicy(Qt::NoFocus);
   blendHeader->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(blendHeader);

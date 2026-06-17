@@ -8175,7 +8175,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const FloatColor activeMaskStrokeColor = {1.0f, 0.86f, 0.42f, 0.60f};
           const FloatColor activeMaskPointColor = {1.0f, 0.90f, 0.54f, 1.0f};
           const FloatColor activeMaskHandleColor = {1.0f, 0.82f, 0.40f, 1.0f};
-          constexpr float maskStrokeWidth = 4.2f;
+          constexpr float maskStrokeWidth = 5.2f;
           constexpr float handleStrokeWidth = 3.0f;
           const bool showMaskPath =
               owner->isLineDebugKindVisible(LineDebugKind::MaskPath);
@@ -8353,7 +8353,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           const FloatColor pendingPointShadowColor = {0.0f, 0.0f, 0.0f, 0.36f};
           const FloatColor pendingPointColor = {0.84f, 0.98f, 1.0f, 0.88f};
           const QTransform globalTransform = selectedLayer->getGlobalTransform();
-          constexpr float pendingStrokeWidth = 5.0f;
+          constexpr float pendingStrokeWidth = 5.8f;
 
           Detail::float2 lastCanvasPos;
           for (int v = 0; v < vertexCount; ++v) {
@@ -8565,13 +8565,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             bool hasLastPos = false;
             for (const auto &pt : motionPathCache_.pathPoints) {
               Detail::float2 currentPos(pt.x, pt.y);
-              const bool showMotionPath =
-                  owner->isLineDebugKindVisible(LineDebugKind::MotionPath);
               if (hasLastPos) {
                 drawTaggedSolidLine(renderer_.get(),
                                     {lastPos.x, lastPos.y},
                                     {currentPos.x, currentPos.y}, pathColor,
-                                    lineThickness, showMotionPath);
+                                    lineThickness, true);
               }
               renderer_->drawPoint(pt.x, pt.y, dotRadius * 0.6f,
                                    {0.8f, 0.8f, 0.8f, 0.7f});

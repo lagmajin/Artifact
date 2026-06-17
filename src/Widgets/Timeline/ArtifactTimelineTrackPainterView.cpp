@@ -1200,6 +1200,9 @@ bool sameTrackClipVisual(
          lhs.trackIndex == rhs.trackIndex &&
          std::abs(lhs.startFrame - rhs.startFrame) < 0.0001 &&
          std::abs(lhs.durationFrame - rhs.durationFrame) < 0.0001 &&
+         std::abs(lhs.trimMinStartFrame - rhs.trimMinStartFrame) < 0.0001 &&
+         std::abs(lhs.trimMaxEndFrame - rhs.trimMaxEndFrame) < 0.0001 &&
+         lhs.hasTrimSourceRange == rhs.hasTrimSourceRange &&
          lhs.title == rhs.title && lhs.fillColor == rhs.fillColor &&
          lhs.kind == rhs.kind &&
          lhs.selected == rhs.selected &&
@@ -2450,6 +2453,24 @@ clipRectFor(const ArtifactTimelineTrackPainterView::TrackClipVisual &clip,
                 std::max(8, trackH - 4));
 }
 
+QRectF sourceClipRectFor(
+    const ArtifactTimelineTrackPainterView::TrackClipVisual &clip,
+    const QVector<int> &heights, const QVector<int> &trackTops,
+    const double ppf, const double xOffset, const double yOffset) {
+  if (!clip.hasTrimSourceRange || clip.trackIndex < 0 ||
+      clip.trackIndex >= heights.size()) {
+    return {};
+  }
+
+  const int trackTop = trackTopAt(trackTops, heights, clip.trackIndex);
+  const int trackH = heights[clip.trackIndex];
+  const double clipX = clip.trimMinStartFrame * ppf - xOffset;
+  const double clipW =
+      std::max(2.0, (clip.trimMaxEndFrame - clip.trimMinStartFrame) * ppf);
+  return QRectF(clipX, trackTop + 2.0 - yOffset, clipW,
+                std::max(8, trackH - 4));
+}
+
 QPointF markerCenterFor(
     const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual &marker,
     const QVector<int> &heights, const QVector<int> &trackTops,
@@ -3116,6 +3137,8 @@ public:
   double dragStartX_ = 0.0;
   double dragOrigStartFrame_ = 0.0;
   double dragOrigDuration_ = 0.0;
+  double dragOrigTrimMinStartFrame_ = 0.0;
+  double dragOrigTrimMaxEndFrame_ = 0.0;
   int hoverClipIndex_ = -1;
   DragMode hoverEdge_ = DragMode::None;
   int hoverMarkerIndex_ = -1;
@@ -4251,6 +4274,21 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       continue;
     }
 
+    if (clip.hasTrimSourceRange) {
+      const QRectF sourceRect =
+          sourceClipRectFor(clip, impl_->trackHeights_, impl_->trackTops_, ppf,
+                            xOffset, yOffset);
+      if (sourceRect.isValid()) {
+        QColor sourceFill = clip.fillColor;
+        sourceFill.setAlpha(54);
+        QColor sourceBorder = clip.fillColor.lighter(118);
+        sourceBorder.setAlpha(92);
+        p.setPen(QPen(sourceBorder, 1.0));
+        p.setBrush(sourceFill);
+        p.drawRoundedRect(sourceRect, kClipCorner, kClipCorner);
+      }
+    }
+
     const bool isHovered = (i == impl_->hoverClipIndex_);
     const bool isSelected = clip.selected;
     QColor fill = clip.fillColor;
@@ -4886,6 +4924,10 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
       impl_->dragStartX_ = mouseX;
       impl_->dragOrigStartFrame_ = impl_->clips_[hit.clipIndex].startFrame;
       impl_->dragOrigDuration_ = impl_->clips_[hit.clipIndex].durationFrame;
+      impl_->dragOrigTrimMinStartFrame_ =
+          impl_->clips_[hit.clipIndex].trimMinStartFrame;
+      impl_->dragOrigTrimMaxEndFrame_ =
+          impl_->clips_[hit.clipIndex].trimMaxEndFrame;
       const auto &clip = impl_->clips_[hit.clipIndex];
       clipSelected(clip.clipId, clip.layerId);
       if (hit.mode == DragMode::MoveBody)
@@ -5057,18 +5099,32 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     switch (impl_->dragMode_) {
     case DragMode::MoveBody:
       clip.startFrame = impl_->dragOrigStartFrame_ + deltaFrames;
+      if (clip.hasTrimSourceRange) {
+        const double rangeDelta = clip.startFrame - impl_->dragOrigStartFrame_;
+        clip.trimMinStartFrame = impl_->dragOrigTrimMinStartFrame_ + rangeDelta;
+        clip.trimMaxEndFrame = impl_->dragOrigTrimMaxEndFrame_ + rangeDelta;
+      }
       break;
     case DragMode::ResizeLeft: {
       const double end = impl_->dragOrigStartFrame_ + impl_->dragOrigDuration_;
-      clip.startFrame =
-          std::min(impl_->dragOrigStartFrame_ + deltaFrames, end - 1.0);
+      const double minStart = clip.hasTrimSourceRange
+                                  ? impl_->dragOrigTrimMinStartFrame_
+                                  : 0.0;
+      clip.startFrame = std::clamp(impl_->dragOrigStartFrame_ + deltaFrames,
+                                   minStart, end - 1.0);
       clip.durationFrame = end - clip.startFrame;
       break;
     }
-    case DragMode::ResizeRight:
-      clip.durationFrame =
-          std::max(1.0, impl_->dragOrigDuration_ + deltaFrames);
+    case DragMode::ResizeRight: {
+      const double maxEnd = clip.hasTrimSourceRange
+                                ? impl_->dragOrigTrimMaxEndFrame_
+                                : std::numeric_limits<double>::max();
+      const double newEnd = std::clamp(
+          impl_->dragOrigStartFrame_ + impl_->dragOrigDuration_ + deltaFrames,
+          clip.startFrame + 1.0, maxEnd);
+      clip.durationFrame = std::max(1.0, newEnd - clip.startFrame);
       break;
+    }
     default:
       break;
     }
@@ -5084,9 +5140,17 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     const QRectF dirtyRect =
         clipRectFor(oldClip, impl_->trackHeights_, impl_->trackTops_, ppf,
                     impl_->horizontalOffset_, impl_->verticalOffset_)
+            .united(sourceClipRectFor(oldClip, impl_->trackHeights_,
+                                      impl_->trackTops_, ppf,
+                                      impl_->horizontalOffset_,
+                                      impl_->verticalOffset_))
             .united(clipRectFor(clip, impl_->trackHeights_, impl_->trackTops_, ppf,
                                 impl_->horizontalOffset_,
-                                impl_->verticalOffset_));
+                                impl_->verticalOffset_))
+            .united(sourceClipRectFor(clip, impl_->trackHeights_,
+                                      impl_->trackTops_, ppf,
+                                      impl_->horizontalOffset_,
+                                      impl_->verticalOffset_));
     update(dirtyRect.adjusted(-2.0, -2.0, 2.0, 2.0).toAlignedRect());
     event->accept();
     return;

@@ -44,8 +44,8 @@ namespace Artifact
  {
   // Vertical layout: timecode row on top, frame number row below.
   auto layout = new QVBoxLayout();
-  layout->setSpacing(1);
-  layout->setContentsMargins(10, 5, 8, 5);
+  layout->setSpacing(0);
+  layout->setContentsMargins(10, 3, 8, 3);
 
   impl_->timecodeLabel_->setObjectName("timeLabel");
   impl_->frameNumberLabel_->setObjectName("frameLabel");
@@ -76,8 +76,6 @@ namespace Artifact
   layout->addWidget(impl_->frameNumberLabel_);
 
   setLayout(layout);
-  setFixedHeight(54);
-
   QFont timeFont(QStringLiteral("Consolas"));
   timeFont.setStyleHint(QFont::Monospace);
   timeFont.setBold(true);
@@ -91,6 +89,11 @@ namespace Artifact
   impl_->frameNumberLabel_->setFont(frameFont);
 
   const QFontMetrics timeMetrics(timeFont);
+  const QFontMetrics frameMetrics(frameFont);
+  impl_->timecodeLabel_->setFixedHeight(timeMetrics.height() + 4);
+  impl_->frameNumberLabel_->setFixedHeight(frameMetrics.height() + 3);
+  setFixedHeight(timeMetrics.height() + frameMetrics.height() + 10);
+
   const int minimumWidth = 10 + timeMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 8;
   setMinimumWidth(minimumWidth);
   setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);

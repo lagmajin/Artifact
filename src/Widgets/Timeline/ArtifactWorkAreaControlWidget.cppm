@@ -1,10 +1,13 @@
 module;
 #include <QColor>
 #include <QEvent>
+#include <QFont>
+#include <QFontMetrics>
 #include <QPaintEvent>
 #include <QPen>
 #include <QRect>
 #include <QRectF>
+#include <QString>
 #include <QWidget>
 #include <QPainter>
 #include <QMouseEvent>
@@ -55,6 +58,7 @@ namespace Artifact
   bool hoveringRange{ false };
   double rulerPixelsPerFrame{ 0.0 };
   double rulerHorizontalOffset{ 0.0 };
+  double frameRate{ 30.0 };
  };
 
  
@@ -100,6 +104,14 @@ void WorkAreaControl::setEnd(float e) {
   if (totalFrames != clamped) {
     totalFrames = clamped;
     currentFrame = std::clamp(currentFrame, 0.0f, std::max(0.0f, totalFrames - 1.0f));
+    update();
+  }
+ }
+
+ void WorkAreaControl::setFrameRate(double fps) {
+  const double sanitized = std::max(1.0, fps);
+  if (std::abs(impl_->frameRate - sanitized) > 0.0001) {
+    impl_->frameRate = sanitized;
     update();
   }
  }
@@ -150,6 +162,38 @@ void WorkAreaControl::setEnd(float e) {
   // Bottom border for work area
   p.setPen(QPen(workAreaColor.lighter(118), 2));
   p.drawLine(x1, height() - 1, x2, height() - 1);
+
+  const double durationFrames =
+      std::max(0.0, static_cast<double>(end - start) *
+                        static_cast<double>(std::max(1.0f, totalFrames)));
+  const int durationSeconds =
+      static_cast<int>(std::llround(durationFrames / impl_->frameRate));
+  const int hours = durationSeconds / 3600;
+  const int minutes = (durationSeconds / 60) % 60;
+  const int seconds = durationSeconds % 60;
+  const QString durationText =
+      hours > 0
+          ? QStringLiteral("%1:%2:%3")
+                .arg(hours)
+                .arg(minutes, 2, 10, QLatin1Char('0'))
+                .arg(seconds, 2, 10, QLatin1Char('0'))
+          : QStringLiteral("%1:%2")
+                .arg(minutes)
+                .arg(seconds, 2, 10, QLatin1Char('0'));
+  if (rangeRect.width() > 28) {
+    QFont labelFont = p.font();
+    labelFont.setBold(true);
+    labelFont.setPointSize(std::max(8, labelFont.pointSize() - 1));
+    p.setFont(labelFont);
+    const QFontMetrics fm(labelFont);
+    const QRect labelRect = rangeRect.adjusted(8, 1, -8, -2);
+    p.setPen(QColor(0, 0, 0, 150));
+    p.drawText(labelRect.translated(0, 1), Qt::AlignCenter,
+               fm.elidedText(durationText, Qt::ElideRight, labelRect.width()));
+    p.setPen(QColor(255, 242, 210, 235));
+    p.drawText(labelRect, Qt::AlignCenter,
+               fm.elidedText(durationText, Qt::ElideRight, labelRect.width()));
+  }
 
   // Handles (Blue AE style) - highlight on hover
   const int handleTopInset = 1;

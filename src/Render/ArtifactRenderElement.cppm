@@ -1,6 +1,5 @@
 module;
 
-
 module Artifact.Render.Element;
 
 

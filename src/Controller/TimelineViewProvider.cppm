@@ -39,8 +39,8 @@ module;
 module Artifact.Controller.TimelineViewProvider;
 
 
-
-import Artifact.Composition.Abstract;
+import Utils.Id;
+import Artifact.Widgets.Timeline;
 
 namespace Artifact{
 

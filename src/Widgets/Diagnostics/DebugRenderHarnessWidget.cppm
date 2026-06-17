@@ -43,6 +43,7 @@ module Artifact.Widgets.DebugRenderHarnessWidget;
 import Frame.Debug;
 import Artifact.Layer.Particle;
 import Artifact.Layer.Video;
+import Layer.BlendModeInfo;
 
 namespace Artifact {
 
@@ -812,6 +813,18 @@ public:
         } else {
             lines << QStringLiteral("resourceNotes: <no snapshot>");
             lines << QStringLiteral("skippedReasons: <no snapshot>");
+        }
+
+        const QString blendCoverage = BlendModeCatalog::coverageReport().trimmed();
+        lines << QStringLiteral("blendCoverage: %1 lines")
+                     .arg(blendCoverage.isEmpty() ? 0 : blendCoverage.count(QChar::LineFeed) + 1);
+        if (!blendCoverage.isEmpty()) {
+            lines << QStringLiteral("blendCoveragePreview:");
+            const QStringList blendLines = blendCoverage.split(QChar::LineFeed, Qt::SkipEmptyParts);
+            const int previewLines = std::min(6, static_cast<int>(blendLines.size()));
+            for (int i = 0; i < previewLines; ++i) {
+                lines << QStringLiteral("  %1").arg(blendLines.at(i));
+            }
         }
 
         lines << QString();
