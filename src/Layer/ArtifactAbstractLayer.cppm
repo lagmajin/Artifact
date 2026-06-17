@@ -642,6 +642,23 @@ void ArtifactAbstractLayer::setStartTime(const FramePosition &pos) {
                       LayerDirtyReason::TimelineChanged);
 }
 
+void ArtifactAbstractLayer::setTimelineWindow(FramePosition inPoint, FramePosition outPoint) {
+  if (outPoint.framePosition() <= inPoint.framePosition()) {
+    outPoint = FramePosition(inPoint.framePosition() + 1);
+  }
+  setInPoint(inPoint);
+  setOutPoint(outPoint);
+}
+
+void ArtifactAbstractLayer::slideTimingBy(const qint64 deltaFrames) {
+  if (deltaFrames == 0) {
+    return;
+  }
+  const FramePosition nextIn(impl_->inPoint_.framePosition() + deltaFrames);
+  const FramePosition nextOut(impl_->outPoint_.framePosition() + deltaFrames);
+  setTimelineWindow(nextIn, nextOut);
+}
+
 bool ArtifactAbstractLayer::isActiveAt(const FramePosition &pos) const {
   return pos.framePosition() >= impl_->inPoint_.framePosition() &&
          pos.framePosition() < impl_->outPoint_.framePosition();
@@ -1258,6 +1275,8 @@ double ArtifactAbstractLayer::getSourceFrameAtCompFrame(int64_t compFrame) const
 bool ArtifactAbstractLayer::isNullLayer() const { return false; }
 
 bool ArtifactAbstractLayer::isConstructionLayer() const { return false; }
+
+bool ArtifactAbstractLayer::isCompositionBackgroundLayer() const { return false; }
 
 bool ArtifactAbstractLayer::shouldIncludeInFinalRender() const { return true; }
 

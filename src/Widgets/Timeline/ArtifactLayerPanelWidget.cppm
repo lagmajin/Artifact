@@ -6,6 +6,7 @@ module Artifact.Widgets.LayerPanelWidget;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Composition;
+import Artifact.Layer.CompositionBackground;
 import Artifact.Layer.Image;
 import Artifact.Layer.Video;
 
@@ -68,6 +69,17 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.capabilitySummaryText = layer->shouldIncludeInFinalRender()
         ? QStringLiteral("Editor + Export")
         : QStringLiteral("Editor only");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactCompositionBackgroundLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Composition Background Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Bg");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Composition Background Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Composition Background Layer");
+    descriptor.capabilitySummaryText = layer->shouldIncludeInFinalRender()
+        ? QStringLiteral("Specialized + Export")
+        : QStringLiteral("Specialized");
     descriptor.badgeTone = LayerPresentationBadgeTone::Special;
     return descriptor;
   }

@@ -27,6 +27,7 @@ import Artifact.Layer.Group;
 import Artifact.Layer.Clone;
 import Artifact.Layer.SDF;
 import Artifact.Layer.Construction;
+import Artifact.Layer.CompositionBackground;
 import Artifact.Layers.Model3D;
 import Artifact.Layer.Composition;
 //import Artifact.Layer.Video;
@@ -164,6 +165,9 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
   case LayerType::Construction:
    ptr = ArtifactAbstractLayerPtr(new ArtifactConstructionLayer());
    break;
+  case LayerType::CompositionBackground:
+   ptr = ArtifactAbstractLayerPtr(new ArtifactCompositionBackgroundLayer());
+   break;
   case LayerType::Model3D: {
    auto* modelLayer = new Artifact3DLayer();
    if (auto* modelParams =
@@ -213,12 +217,16 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
   }
 
  std::shared_ptr<ArtifactAbstractLayer> createArtifactLayerFromJson(const QJsonObject& json) {
-      if (!json.contains("type") && !json.value("isConstruction").toBool(false)) return nullptr;
+      if (!json.contains("type") &&
+          !json.value("isConstruction").toBool(false) &&
+          !json.value("isCompositionBackground").toBool(false)) return nullptr;
       LayerType type = json.contains("type")
           ? static_cast<LayerType>(json["type"].toInt())
           : LayerType::Construction;
       if (json.value("isConstruction").toBool(false)) {
           type = LayerType::Construction;
+      } else if (json.value("isCompositionBackground").toBool(false)) {
+          type = LayerType::CompositionBackground;
       }
       QString name = json.value("name").toString("Layer");
   ArtifactLayerFactory factory;
