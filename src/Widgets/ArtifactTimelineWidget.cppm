@@ -4152,7 +4152,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto layerTreeView = new ArtifactLayerTimelinePanelWrapper();
   layerTreeView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  layerTreeView->setVisible(false);
   impl_->layerTimelinePanel_ = layerTreeView;
 
   auto leftSplitter = new DraggableSplitter(Qt::Horizontal);
@@ -6125,6 +6124,8 @@ void ArtifactTimelineWidget::refreshTracks() {
       visual.trackIndex = trackIndex;
       visual.startFrame = clipStart;
       visual.durationFrame = clipDuration;
+      visual.trimMinStartFrame = clipStart;
+      visual.trimMaxEndFrame = clipStart + clipDuration;
       visual.title = layer->layerName();
       visual.fillColor = layerTimelineColor(layer);
       if (layer->hasAudio()) {
@@ -6156,6 +6157,33 @@ void ArtifactTimelineWidget::refreshTracks() {
         }
       } else if (std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
         visual.kind = ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video;
+      }
+      const qint64 inPointFrame = layer->inPoint().framePosition();
+      const qint64 startTimeFrame = layer->startTime().framePosition();
+      std::optional<double> sourceDurationFrames;
+      if (audioLayer && audioLayer->duration() > 0.0) {
+        sourceDurationFrames =
+            std::max(1.0, std::round(audioLayer->duration() * compositionFps));
+      } else if (const auto videoLayer =
+                     std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+        const auto &streamInfo = videoLayer->streamInfo();
+        if (streamInfo.frameCount > 0) {
+          sourceDurationFrames = static_cast<double>(streamInfo.frameCount);
+        } else if (streamInfo.duration > 0.0) {
+          sourceDurationFrames =
+              std::max(1.0, std::round(streamInfo.duration * compositionFps));
+        }
+      }
+      if (sourceDurationFrames && *sourceDurationFrames > 1.0) {
+        visual.trimMinStartFrame =
+            std::max(0.0, static_cast<double>(inPointFrame - startTimeFrame));
+        visual.trimMaxEndFrame =
+            std::max(visual.trimMinStartFrame + 1.0,
+                     visual.trimMinStartFrame + *sourceDurationFrames);
+        visual.hasTrimSourceRange =
+            visual.trimMinStartFrame < visual.startFrame - 0.0001 ||
+            visual.trimMaxEndFrame >
+                (visual.startFrame + visual.durationFrame + 0.0001);
       }
       painterClips.push_back(std::move(visual));
     }
@@ -6291,6 +6319,9 @@ void ArtifactTimelineWidget::syncWorkAreaFromCurrentComposition() {
   const auto comp = safeCompositionLookup(impl_->compositionId_);
   const double totalFrames = static_cast<double>(
       timelineCompositionFrameCount(comp, kDefaultTimelineFrames));
+  const double fps = comp ? std::max(1.0, static_cast<double>(
+                                             comp->frameRate().framerate()))
+                          : 30.0;
   const FrameRange workArea =
       comp ? comp->workAreaRange()
            : FrameRange(0, static_cast<int64_t>(totalFrames));
@@ -6302,6 +6333,7 @@ void ArtifactTimelineWidget::syncWorkAreaFromCurrentComposition() {
   impl_->workArea_->setStart(static_cast<float>(startNorm));
   impl_->workArea_->setEnd(static_cast<float>(endNorm));
   impl_->workArea_->setTotalFrames(static_cast<float>(totalFrames));
+  impl_->workArea_->setFrameRate(fps);
 }
 
 void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {

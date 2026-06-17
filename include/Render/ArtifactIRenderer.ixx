@@ -139,6 +139,7 @@ public:
 
   void setChannelEnabled(ChannelType channel, bool enabled);
   bool isChannelEnabled(ChannelType channel) const;
+  QImage readbackChannelToImage(ChannelType channel) const;
   void setCanvasSize(float w, float h);
   void setPan(float x, float y);
   void getPan(float &x, float &y) const;

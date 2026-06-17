@@ -37,6 +37,7 @@ export namespace Artifact
   void setEnd(float e);
   void setCurrentFrame(float frame);
   void setTotalFrames(float frames);
+  void setFrameRate(double fps);
   void setRulerPixelsPerFrame(double ppf);
   void setRulerHorizontalOffset(double offset);
 

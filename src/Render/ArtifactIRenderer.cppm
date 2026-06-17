@@ -9,7 +9,9 @@ module;
 #include <cstdint>
 #include <cmath>
 #include <algorithm>
+#include <atomic>
 #include <numeric>
+#include <memory>
 #include <mutex>
 #include <functional>
 #include <QImage>
@@ -98,6 +100,38 @@ namespace {
     flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Blue)] = true;
     flags[static_cast<size_t>(ArtifactIRenderer::ChannelType::Alpha)] = true;
     return flags;
+  }
+
+  ArtifactCore::ChannelType toCoreChannel(ArtifactIRenderer::ChannelType type)
+  {
+    switch (type) {
+    case ArtifactIRenderer::ChannelType::Red:        return ArtifactCore::ChannelType::Red;
+    case ArtifactIRenderer::ChannelType::Green:      return ArtifactCore::ChannelType::Green;
+    case ArtifactIRenderer::ChannelType::Blue:       return ArtifactCore::ChannelType::Blue;
+    case ArtifactIRenderer::ChannelType::Alpha:      return ArtifactCore::ChannelType::Alpha;
+    case ArtifactIRenderer::ChannelType::Depth:      return ArtifactCore::ChannelType::Depth;
+    case ArtifactIRenderer::ChannelType::NormalX:    return ArtifactCore::ChannelType::NormalX;
+    case ArtifactIRenderer::ChannelType::NormalY:    return ArtifactCore::ChannelType::NormalY;
+    case ArtifactIRenderer::ChannelType::NormalZ:    return ArtifactCore::ChannelType::NormalZ;
+    case ArtifactIRenderer::ChannelType::VelocityX:  return ArtifactCore::ChannelType::VelocityX;
+    case ArtifactIRenderer::ChannelType::VelocityY:  return ArtifactCore::ChannelType::VelocityY;
+    case ArtifactIRenderer::ChannelType::ObjectId:   return ArtifactCore::ChannelType::ObjectId;
+    case ArtifactIRenderer::ChannelType::MaterialId: return ArtifactCore::ChannelType::MaterialId;
+    case ArtifactIRenderer::ChannelType::Emission:   return ArtifactCore::ChannelType::Emission;
+    case ArtifactIRenderer::ChannelType::Custom:     return ArtifactCore::ChannelType::Custom;
+    }
+    return ArtifactCore::ChannelType::Custom;
+  }
+
+  int rgbaOffsetForChannel(ArtifactIRenderer::ChannelType type)
+  {
+    switch (type) {
+    case ArtifactIRenderer::ChannelType::Red:   return 0;
+    case ArtifactIRenderer::ChannelType::Green: return 1;
+    case ArtifactIRenderer::ChannelType::Blue:  return 2;
+    case ArtifactIRenderer::ChannelType::Alpha: return 3;
+    default: return -1;
+    }
   }
 
   uint8_t linearToSrgb8(float value)
@@ -249,12 +283,26 @@ namespace {
    Uint64 signaledValue  = 0;  // value last EnqueueSignal()'d
    Uint64 completedValue = 0;  // value last observed as completed
   };
+  struct AsyncReadbackSlot {
+   RefCntAutoPtr<ITexture> staging;
+   RefCntAutoPtr<IFence>   fence;
+   std::shared_ptr<std::atomic_bool> busy = std::make_shared<std::atomic_bool>(false);
+   Uint32 width = 0;
+   Uint32 height = 0;
+   TEXTURE_FORMAT format = TEX_FORMAT_UNKNOWN;
+  };
   static constexpr Uint32 kReadbackRingSize = 2;
+  static constexpr Uint32 kAsyncReadbackRingSize = 3;
   mutable std::array<ReadbackSlot, kReadbackRingSize> m_readbackRing;
+  mutable std::array<AsyncReadbackSlot, kAsyncReadbackRingSize> m_asyncReadbackRing;
   mutable Uint32       m_readbackRingIndex = 0;
+  mutable Uint32       m_asyncReadbackRingIndex = 0;
   mutable Uint32       m_readbackStagingWidth = 0;
   mutable Uint32       m_readbackStagingHeight = 0;
   mutable TEXTURE_FORMAT m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
+  mutable Uint32       m_asyncReadbackStagingWidth = 0;
+  mutable Uint32       m_asyncReadbackStagingHeight = 0;
+  mutable TEXTURE_FORMAT m_asyncReadbackStagingFormat = TEX_FORMAT_UNKNOWN;
 
   // Depth readback is a different format/usage and historically allocated a fresh
   // staging texture + fence on every call. Caching them removes per-call device
@@ -442,6 +490,7 @@ namespace {
   void initializeHeadless(int width, int height);
   QImage readbackToImage() const;
   QImage readbackDepthToImage() const;
+  QImage readbackChannelToImage(ArtifactIRenderer::ChannelType channel) const;
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
   void beginFrameGpuProfiling();
@@ -1287,6 +1336,36 @@ namespace {
   return result;
  }
 
+ QImage ArtifactIRenderer::Impl::readbackChannelToImage(ArtifactIRenderer::ChannelType channel) const
+ {
+  if (channel == ArtifactIRenderer::ChannelType::Depth) {
+   return readbackDepthToImage();
+  }
+
+  const int offset = rgbaOffsetForChannel(channel);
+  if (offset < 0) {
+   return {};
+  }
+
+  const QImage color = readbackToImage();
+  if (color.isNull()) {
+   return {};
+  }
+
+  const QImage rgba = (color.format() == QImage::Format_RGBA8888)
+                          ? color
+                          : color.convertToFormat(QImage::Format_RGBA8888);
+  QImage channelImage(rgba.width(), rgba.height(), QImage::Format_Grayscale8);
+  for (int y = 0; y < rgba.height(); ++y) {
+   const auto* src = rgba.constScanLine(y);
+   auto* dst = channelImage.scanLine(y);
+   for (int x = 0; x < rgba.width(); ++x) {
+    dst[x] = src[x * 4 + offset];
+   }
+  }
+  return channelImage;
+ }
+
  void ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
  {
   if (!deviceManager_.device() || !deviceManager_.immediateContext()) {
@@ -1334,11 +1413,16 @@ namespace {
   const TEXTURE_FORMAT stagingFormat =
       useFloatReadback ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM;
 
-  // Create/recreate staging texture if needed
   RefCntAutoPtr<ITexture> stagingTex;
-  {
+  RefCntAutoPtr<IFence> fence;
+  std::shared_ptr<std::atomic_bool> busyFlag;
+  bool cachedSlot = false;
+
+  auto createAsyncResources = [&](RefCntAutoPtr<ITexture>& outStaging,
+                                  RefCntAutoPtr<IFence>& outFence,
+                                  const char* name) -> bool {
     TextureDesc stagDesc;
-    stagDesc.Name           = "AsyncReadbackStaging";
+    stagDesc.Name           = name;
     stagDesc.Type           = RESOURCE_DIM_TEX_2D;
     stagDesc.Width          = srcWidth;
     stagDesc.Height         = srcHeight;
@@ -1347,21 +1431,87 @@ namespace {
     stagDesc.Usage          = USAGE_STAGING;
     stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
     stagDesc.BindFlags      = BIND_NONE;
-    device->CreateTexture(stagDesc, nullptr, &stagingTex);
-    if (!stagingTex) {
-      if (callback) callback(QImage());
-      return;
+    device->CreateTexture(stagDesc, nullptr, &outStaging);
+    if (!outStaging) {
+      return false;
+    }
+    FenceDesc fDesc;
+    fDesc.Name = name;
+    fDesc.Type = FENCE_TYPE_GENERAL;
+    device->CreateFence(fDesc, &outFence);
+    return outFence != nullptr;
+  };
+
+  {
+    std::lock_guard<std::mutex> guard(m_readbackMutex);
+    const bool formatChanged =
+        m_asyncReadbackStagingWidth != srcWidth ||
+        m_asyncReadbackStagingHeight != srcHeight ||
+        m_asyncReadbackStagingFormat != stagingFormat;
+    if (formatChanged) {
+      bool anyBusy = false;
+      for (const auto& slot : m_asyncReadbackRing) {
+        anyBusy = anyBusy || (slot.busy && slot.busy->load());
+      }
+      if (!anyBusy) {
+        for (auto& slot : m_asyncReadbackRing) {
+          slot.staging = nullptr;
+          slot.fence = nullptr;
+          slot.width = 0;
+          slot.height = 0;
+          slot.format = TEX_FORMAT_UNKNOWN;
+          if (!slot.busy) {
+            slot.busy = std::make_shared<std::atomic_bool>(false);
+          }
+          slot.busy->store(false);
+        }
+        m_asyncReadbackStagingWidth = srcWidth;
+        m_asyncReadbackStagingHeight = srcHeight;
+        m_asyncReadbackStagingFormat = stagingFormat;
+        m_asyncReadbackRingIndex = 0;
+      }
+    }
+
+    for (Uint32 attempt = 0; attempt < kAsyncReadbackRingSize; ++attempt) {
+      const Uint32 index = (m_asyncReadbackRingIndex + attempt) % kAsyncReadbackRingSize;
+      auto& slot = m_asyncReadbackRing[index];
+      if (slot.busy && slot.busy->load()) {
+        continue;
+      }
+      if (!slot.busy) {
+        slot.busy = std::make_shared<std::atomic_bool>(false);
+      }
+      if (!slot.staging || !slot.fence ||
+          slot.width != srcWidth ||
+          slot.height != srcHeight ||
+          slot.format != stagingFormat) {
+        if (!createAsyncResources(slot.staging, slot.fence, "AsyncReadbackRing")) {
+          slot.staging = nullptr;
+          slot.fence = nullptr;
+          slot.width = 0;
+          slot.height = 0;
+          slot.format = TEX_FORMAT_UNKNOWN;
+          continue;
+        }
+        slot.width = srcWidth;
+        slot.height = srcHeight;
+        slot.format = stagingFormat;
+      }
+      slot.busy->store(true);
+      stagingTex = slot.staging;
+      fence = slot.fence;
+      busyFlag = slot.busy;
+      cachedSlot = true;
+      m_asyncReadbackRingIndex = (index + 1) % kAsyncReadbackRingSize;
+      m_asyncReadbackStagingWidth = srcWidth;
+      m_asyncReadbackStagingHeight = srcHeight;
+      m_asyncReadbackStagingFormat = stagingFormat;
+      break;
     }
   }
 
-  // Create/reuse fence
-  RefCntAutoPtr<IFence> fence;
-  {
-    FenceDesc fDesc;
-    fDesc.Name = "AsyncReadbackFence";
-    fDesc.Type = FENCE_TYPE_GENERAL;
-    device->CreateFence(fDesc, &fence);
-    if (!fence) {
+  if (!stagingTex || !fence) {
+    if (!createAsyncResources(stagingTex, fence, "AsyncReadbackOneShot")) {
       if (callback) callback(QImage());
       return;
     }
@@ -1388,7 +1538,14 @@ namespace {
   const bool floatReadback = useFloatReadback;
 
   // Run fence wait + pixel conversion in background thread
-    [[maybe_unused]] auto future = QtConcurrent::run([fence, stagingTex, ctx, w, h, floatReadback, waitValue, cb = std::move(callback)]() mutable {
+    [[maybe_unused]] auto future = QtConcurrent::run([fence, stagingTex, ctx, w, h, floatReadback,
+                                                       waitValue, busyFlag, cachedSlot,
+                                                       cb = std::move(callback)]() mutable {
+    auto releaseSlot = [&]() {
+      if (cachedSlot && busyFlag) {
+        busyFlag->store(false);
+      }
+    };
     // Wait for GPU copy to complete
     fence->Wait(waitValue);
 
@@ -1396,6 +1553,7 @@ namespace {
     MappedTextureSubresource mapped = {};
     ctx->MapTextureSubresource(stagingTex, 0, 0, MAP_READ, MAP_FLAG_DO_NOT_WAIT, nullptr, mapped);
     if (!mapped.pData) {
+      releaseSlot();
       if (cb) cb(QImage());
       return;
     }
@@ -1408,6 +1566,7 @@ namespace {
 
     if (mapped.Stride < sourceRowBytes) {
       ctx->UnmapTextureSubresource(stagingTex, 0, 0);
+      releaseSlot();
       if (cb) cb(QImage());
       return;
     }
@@ -1439,6 +1598,7 @@ namespace {
     }
 
     ctx->UnmapTextureSubresource(stagingTex, 0, 0);
+    releaseSlot();
 
     // Invoke callback on the caller's thread (or thread pool)
     if (cb) cb(result);
@@ -1722,10 +1882,24 @@ namespace {
    slot.signaledValue  = 0;
    slot.completedValue = 0;
   }
+  for (auto& slot : m_asyncReadbackRing) {
+   slot.staging = nullptr;
+   slot.fence = nullptr;
+   slot.width = 0;
+   slot.height = 0;
+   slot.format = TEX_FORMAT_UNKNOWN;
+   if (slot.busy) {
+    slot.busy->store(false);
+   }
+  }
   m_readbackRingIndex    = 0;
+  m_asyncReadbackRingIndex = 0;
   m_readbackStagingWidth  = 0;
   m_readbackStagingHeight = 0;
   m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
+  m_asyncReadbackStagingWidth = 0;
+  m_asyncReadbackStagingHeight = 0;
+  m_asyncReadbackStagingFormat = TEX_FORMAT_UNKNOWN;
   m_depthReadbackStaging    = nullptr;
   m_depthReadbackFence      = nullptr;
   m_depthReadbackWidth      = 0;
@@ -1832,43 +2006,80 @@ namespace {
 
  QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
  QImage ArtifactIRenderer::readbackDepthToImage() const { return impl_->readbackDepthToImage(); }
+ QImage ArtifactIRenderer::readbackChannelToImage(ChannelType channel) const
+ {
+  return impl_->readbackChannelToImage(channel);
+ }
  ArtifactCore::MultiChannelImage ArtifactIRenderer::readbackToMultiChannelImage() const
  {
-  const QImage color = impl_->readbackToImage();
-  if (color.isNull()) {
+  const bool needRgba =
+      impl_->isChannelEnabled(ChannelType::Red) ||
+      impl_->isChannelEnabled(ChannelType::Green) ||
+      impl_->isChannelEnabled(ChannelType::Blue) ||
+      impl_->isChannelEnabled(ChannelType::Alpha);
+  const bool needDepth = impl_->isChannelEnabled(ChannelType::Depth);
+
+  QImage rgba;
+  if (needRgba) {
+   const QImage color = impl_->readbackToImage();
+   if (!color.isNull()) {
+    rgba = (color.format() == QImage::Format_RGBA8888)
+               ? color
+               : color.convertToFormat(QImage::Format_RGBA8888);
+   }
+  }
+
+  QImage depth;
+  if (needDepth) {
+   depth = impl_->readbackDepthToImage();
+  }
+
+  QSize imageSize;
+  if (!rgba.isNull()) {
+   imageSize = rgba.size();
+  } else if (!depth.isNull()) {
+   imageSize = depth.size();
+  } else {
    return {};
   }
 
-  const QImage rgba = (color.format() == QImage::Format_RGBA8888)
-                          ? color
-                          : color.convertToFormat(QImage::Format_RGBA8888);
-  ArtifactCore::MultiChannelImage image(rgba.width(), rgba.height());
-
-  auto writeChannel = [&](ArtifactCore::ChannelType type, int offset) {
-   auto channel = image.getChannel(type);
-   if (!channel) {
-    image.addChannel(type);
-    channel = image.getChannel(type);
+  ArtifactCore::MultiChannelImage image(imageSize.width(), imageSize.height());
+  constexpr std::array<ChannelType, 4> baseChannels = {
+      ChannelType::Red, ChannelType::Green, ChannelType::Blue, ChannelType::Alpha};
+  for (ChannelType baseChannel : baseChannels) {
+   if (!impl_->isChannelEnabled(baseChannel)) {
+    image.removeChannel(toCoreChannel(baseChannel));
    }
-   if (!channel) {
+  }
+
+  auto writeRgbaChannel = [&](ChannelType channelType, int offset) {
+   if (!impl_->isChannelEnabled(channelType) || rgba.isNull() || rgba.size() != imageSize) {
+    return;
+   }
+   const ArtifactCore::ChannelType type = toCoreChannel(channelType);
+   auto outChannel = image.getChannel(type);
+   if (!outChannel) {
+    image.addChannel(type);
+    outChannel = image.getChannel(type);
+   }
+   if (!outChannel) {
     return;
    }
    for (int y = 0; y < rgba.height(); ++y) {
     const auto* src = rgba.constScanLine(y);
-    auto* dst = channel->data() + static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
+    auto* dst = outChannel->data() + static_cast<size_t>(y) * static_cast<size_t>(rgba.width());
     for (int x = 0; x < rgba.width(); ++x) {
      dst[x] = static_cast<float>(src[x * 4 + offset]) / 255.0f;
     }
    }
   };
 
-  writeChannel(ArtifactCore::ChannelType::Red, 0);
-  writeChannel(ArtifactCore::ChannelType::Green, 1);
-  writeChannel(ArtifactCore::ChannelType::Blue, 2);
-  writeChannel(ArtifactCore::ChannelType::Alpha, 3);
+  writeRgbaChannel(ChannelType::Red, 0);
+  writeRgbaChannel(ChannelType::Green, 1);
+  writeRgbaChannel(ChannelType::Blue, 2);
+  writeRgbaChannel(ChannelType::Alpha, 3);
 
-  const QImage depth = impl_->readbackDepthToImage();
-  if (!depth.isNull() && depth.size() == rgba.size()) {
+  if (needDepth && !depth.isNull() && depth.size() == imageSize) {
    auto depthChannel = image.getChannel(ArtifactCore::ChannelType::Depth);
    if (!depthChannel) {
     image.addChannel(ArtifactCore::ChannelType::Depth);

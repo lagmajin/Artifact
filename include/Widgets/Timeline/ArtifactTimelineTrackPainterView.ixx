@@ -70,6 +70,9 @@ export namespace Artifact
    int trackIndex = -1;
    double startFrame = 0.0;
    double durationFrame = 1.0;
+   double trimMinStartFrame = 0.0;
+   double trimMaxEndFrame = 0.0;
+   bool hasTrimSourceRange = false;
    QString title;
    QColor fillColor = QColor(73, 126, 196);
    Kind kind = Kind::Generic;

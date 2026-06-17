@@ -1289,7 +1289,7 @@ public:
     ProjectInfoPanel(QWidget* parent = nullptr) : QWidget(parent) {
         setObjectName(QStringLiteral("projectInfoPanel"));
         setAutoFillBackground(true);
-        setFixedHeight(90);
+        setFixedHeight(96);
         const QColor background = QColor(ArtifactCore::currentDCCTheme().backgroundColor);
         const QColor surface = QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor);
         const QColor text = QColor(ArtifactCore::currentDCCTheme().textColor);
@@ -1300,11 +1300,11 @@ public:
         widgetPalette.setColor(QPalette::WindowText, text);
         setPalette(widgetPalette);
         auto layout = new QHBoxLayout(this);
-        layout->setContentsMargins(12, 8, 12, 8);
-        layout->setSpacing(15);
+        layout->setContentsMargins(8, 6, 10, 6);
+        layout->setSpacing(10);
 
         thumbnail = new QLabel();
-        thumbnail->setFixedSize(120, 68);
+        thumbnail->setFixedSize(150, 84);
         thumbnail->setAlignment(Qt::AlignCenter);
         thumbnail->setText("PREVIEW");
         thumbnail->setAutoFillBackground(true);
@@ -1318,8 +1318,8 @@ public:
         }
 
         auto infoLayout = new QVBoxLayout();
-        infoLayout->setSpacing(2);
-        infoLayout->setContentsMargins(0, 5, 0, 5);
+        infoLayout->setSpacing(1);
+        infoLayout->setContentsMargins(0, 2, 0, 2);
 
         titleLabel = new QLabel("Project");
         {
@@ -1333,6 +1333,8 @@ public:
         }
 
         detailsLabel = new QLabel("Select an item to inspect details");
+        detailsLabel->setWordWrap(false);
+        detailsLabel->setMinimumHeight(52);
         {
             QPalette pal = detailsLabel->palette();
             pal.setColor(QPalette::WindowText, muted);
@@ -6276,7 +6278,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     impl_->compositionEditorPanel->setVisible(false);
     {
         QSizePolicy policy = impl_->compositionEditorPanel->sizePolicy();
-        policy.setRetainSizeWhenHidden(true);
+        policy.setRetainSizeWhenHidden(false);
         impl_->compositionEditorPanel->setSizePolicy(policy);
         impl_->compositionEditorPanel->setMinimumHeight(176);
     }
