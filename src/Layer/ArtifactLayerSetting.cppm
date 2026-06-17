@@ -35,12 +35,8 @@ module;
 #include <random>
 module Artifact.Layer.Settings;
 
-
-
-
 import Utils.String.UniString;
 import Utils.Id;
-
 
 namespace Artifact {
 
@@ -104,7 +100,6 @@ namespace Artifact {
 
   ArtifactLayerSetting::ArtifactLayerSetting(ArtifactLayerSetting&& other) noexcept
   {
-    // Steal the impl pointer
     impl_ = other.impl_;
     other.impl_ = nullptr;
   }

@@ -79,8 +79,15 @@ public:
     bool supportsGPU() const override {
         return true;
     }
+
+    /**
+     * @brief ROI 拡張ヒント
+     *
+     * グローは複数のガウスブラー層を重ねる構造。
+     * 最大 sigma = baseSigma * sigmaGrowth^(layerCount-1)。
+     * その 3σ 分を ROI 拡張量とする。
+     */
+    EffectROIHint roiHint() const override;
 };
 
 };
-
-

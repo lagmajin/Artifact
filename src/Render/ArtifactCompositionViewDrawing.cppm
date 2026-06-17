@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
 
@@ -293,18 +293,35 @@ bool buildRasterizedSurfaceBuffer(ArtifactAbstractLayer* targetLayer,
     cpuImage.setFromCVMat(mat);
     ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
 
+    // 調整レイヤーのエフェクトは背面全体に作用するため、
+    // requiresFullFrame として扱い ROI 縮小によるサンプリング欠けを防ぐ。
+    const bool isAdjustment = targetLayer->isAdjustmentLayer();
+
     for (const auto& effect : effects) {
       if (!effect || !effect->isEnabled() ||
           effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
         continue;
       }
 
+      // ROI hint を収集して必要な拡張量を計算する。
+      // 調整レイヤーは hint に関わらず常に full-frame が必要。
       const EffectROIHint hint = effect->roiHint();
-      if (!hint.isEmpty()) {
-        qDebug() << "[Rasterizer] effect" << effect->displayName().toQString()
-                 << "roiHint: kind=" << static_cast<int>(hint.kind)
-                 << "expansionPx=" << hint.expansionPixels
-                 << "fullFrame=" << hint.requiresFullFrame;
+      if (isAdjustment && !hint.requiresFullFrame) {
+        // 調整レイヤーの場合は必ず full-frame 前提で処理するため、
+        // 縮小 ROI でエフェクトが欠けることはない（surface 自体が full-frame）。
+        qDebug()
+            << "[Rasterizer][AdjLayer] effect"
+            << effect->displayName().toQString()
+            << "treated as full-frame due to adjustment layer";
+      } else if (!hint.isEmpty()) {
+        // ROI 拡張が必要なエフェクト（ブラー、グローなど）のログ。
+        // 実際の ROI 拡張は上位の描画ループが担う。
+        // ここでは surface がすでに適切なサイズで渡されている前提。
+        qDebug()
+            << "[Rasterizer] effect" << effect->displayName().toQString()
+            << "roiHint: kind=" << static_cast<int>(hint.kind)
+            << "expansionPx=" << hint.expansionPixels
+            << "fullFrame=" << hint.requiresFullFrame;
       }
 
       ArtifactCore::ImageF32x4RGBAWithCache next;

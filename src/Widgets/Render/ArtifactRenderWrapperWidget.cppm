@@ -1,5 +1,5 @@
 module;
-#include <QVector>
+#include <QWidget>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -33,41 +33,18 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-module WindowManager;
+module Artifact.Render.WrapperWidget;
 
+import Artifact.Widgets.CompositionRenderWidget;
 
+namespace Artifact {
 
-
-
-namespace Artifact
-{
-
-
- class WindowPluginManager::Impl
- {
- private:
- 	
- public:
-  Impl();
-  ~Impl();
- };
-
- WindowPluginManager::Impl::Impl()
+ ArtifactRenderWrapperWidget::ArtifactRenderWrapperWidget(QWidget* parent /*= nullptr*/):QWidget(parent)
  {
 
  }
 
- WindowPluginManager::Impl::~Impl()
- {
-
- }
-
- WindowPluginManager::~WindowPluginManager()
- {
-
- }
-
- WindowPluginManager::WindowPluginManager()
+ ArtifactRenderWrapperWidget::~ArtifactRenderWrapperWidget()
  {
 
  }

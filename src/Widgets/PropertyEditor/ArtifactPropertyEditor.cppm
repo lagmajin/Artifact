@@ -54,6 +54,7 @@ import Artifact.Event.Types;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Service.Playback;
 import Artifact.Service.Project;
+import Artifact.Widgets.Timeline.KeyframeIconHelper;
 import Time.Rational;
 import FloatColorPickerDialog;
 import Artifact.Widgets.Dialog.FloatColorPickerHooks;
@@ -715,40 +716,6 @@ QIcon loadPropertyIcon(const QString &resourceRelativePath,
   if (!fallbackFileName.isEmpty()) {
     icon = loadSvgAsIcon(resolveIconPath(fallbackFileName));
   }
-  iconCache.insert(cacheKey, icon);
-  return icon;
-}
-
-QIcon cachedKeyframeIcon(const QSize &size = QSize(14, 14),
-                         const QColor &fillColor = QColor(QStringLiteral("#FFD84D")),
-                         const QColor &outlineColor = QColor(QStringLiteral("#FFF1A8"))) {
-  static QHash<QString, QIcon> iconCache;
-  const QString cacheKey = QStringLiteral("%1x%2:%3:%4")
-                               .arg(size.width())
-                               .arg(size.height())
-                               .arg(fillColor.rgba(), 8, 16, QLatin1Char('0'))
-                               .arg(outlineColor.rgba(), 8, 16, QLatin1Char('0'));
-  auto it = iconCache.constFind(cacheKey);
-  if (it != iconCache.constEnd()) {
-    return it.value();
-  }
-
-  const int width = qMax(1, size.width());
-  const int height = qMax(1, size.height());
-  QPixmap pixmap(width, height);
-  pixmap.fill(Qt::transparent);
-
-  QPainter painter(&pixmap);
-  painter.setRenderHint(QPainter::Antialiasing, true);
-  painter.setPen(QPen(outlineColor, 1.2));
-  painter.setBrush(fillColor);
-  painter.translate(width * 0.5, height * 0.5);
-  painter.rotate(45.0);
-  const QRectF square(-width * 0.24, -height * 0.24, width * 0.48, height * 0.48);
-  painter.drawRect(square);
-  painter.end();
-
-  QIcon icon(pixmap);
   iconCache.insert(cacheKey, icon);
   return icon;
 }
@@ -2244,8 +2211,12 @@ void ArtifactPropertyEditorRowWidget::updateKeyframeButtonIcon() {
                                    : QColor(QStringLiteral("#6E7681"));
   const QColor outlineColor = checked ? QColor(QStringLiteral("#FFF1A8"))
                                       : QColor(QStringLiteral("#B6C0CD"));
-  keyframeButton_->setIcon(
-      cachedKeyframeIcon(QSize(14, 14), fillColor, outlineColor));
+  KeyframeIconStyle style;
+  style.size = QSize(14, 14);
+  style.fillColor = fillColor;
+  style.outlineColor = outlineColor;
+  style.state = checked ? KeyframeIconState::Selected : KeyframeIconState::Normal;
+  keyframeButton_->setIcon(cachedKeyframeIcon(style));
 }
 
 void ArtifactPropertyEditorRowWidget::setKeyframeChecked(const bool checked) {

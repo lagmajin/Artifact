@@ -128,6 +128,61 @@ bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer);
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
 
+enum class QuickMaskPreset {
+  Full = 0,
+  LeftHalf,
+  RightHalf,
+  TopHalf,
+  BottomHalf,
+  CenterHalf,
+  QuarterTL,
+  QuarterTR,
+  Count
+};
+
+constexpr std::array<QuickMaskPreset, static_cast<size_t>(QuickMaskPreset::Count)> kQuickMaskPresetOrder = {
+    QuickMaskPreset::Full,
+    QuickMaskPreset::LeftHalf,
+    QuickMaskPreset::RightHalf,
+    QuickMaskPreset::TopHalf,
+    QuickMaskPreset::BottomHalf,
+    QuickMaskPreset::CenterHalf,
+    QuickMaskPreset::QuarterTL,
+    QuickMaskPreset::QuarterTR,
+};
+
+QRectF quickMaskPresetRect(QuickMaskPreset preset, const QRectF &bounds)
+{
+  const QRectF n = bounds.normalized();
+  const qreal x = n.x();
+  const qreal y = n.y();
+  const qreal w = n.width();
+  const qreal h = n.height();
+  const qreal halfW = w * 0.5;
+  const qreal halfH = h * 0.5;
+  switch (preset) {
+  case QuickMaskPreset::Full:
+    return n;
+  case QuickMaskPreset::LeftHalf:
+    return QRectF(x, y, halfW, h);
+  case QuickMaskPreset::RightHalf:
+    return QRectF(x + halfW, y, halfW, h);
+  case QuickMaskPreset::TopHalf:
+    return QRectF(x, y, w, halfH);
+  case QuickMaskPreset::BottomHalf:
+    return QRectF(x, y + halfH, w, halfH);
+  case QuickMaskPreset::CenterHalf:
+    return QRectF(x + w * 0.25, y + h * 0.25, halfW, halfH);
+  case QuickMaskPreset::QuarterTL:
+    return QRectF(x, y, halfW, halfH);
+  case QuickMaskPreset::QuarterTR:
+    return QRectF(x + halfW, y, halfW, halfH);
+  case QuickMaskPreset::Count:
+    break;
+  }
+  return n;
+}
+
 bool renderCrashTraceEnabled()
 {
   static const bool enabled =
@@ -3118,6 +3173,10 @@ public:
   bool pendingMaskCreation_ = false;
   LayerID pendingMaskLayerId_;
   MaskPath pendingMaskPath_;
+  std::chrono::steady_clock::time_point quickMaskPresetStartedAt_{};
+  LayerID quickMaskPresetLayerId_;
+  int quickMaskPresetMaskIndex_ = -1;
+  int quickMaskPresetIndex_ = -1;
   bool rectangleToolDragging_ = false;
   RectangleToolMode rectangleToolMode_ = RectangleToolMode::None;
   QPointF rectangleToolStartCanvasPos_;
@@ -3452,6 +3511,72 @@ public:
 
     maskEditBefore_.clear();
     maskEditDirty_ = false;
+  }
+
+  bool cyclePresetLayerMaskForLayer(const ArtifactAbstractLayerPtr &layer,
+                                    bool reverse) {
+    if (!layer) {
+      return false;
+    }
+
+    const QRectF localBounds = layer->localBounds().normalized();
+    if (!localBounds.isValid() || localBounds.width() < 1.0 ||
+        localBounds.height() < 1.0) {
+      return false;
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    constexpr auto kCycleWindow = std::chrono::seconds(4);
+    const bool isSameLayer =
+        !quickMaskPresetLayerId_.isNil() && quickMaskPresetLayerId_ == layer->id();
+    const bool isArmed = isSameLayer &&
+                         quickMaskPresetStartedAt_.time_since_epoch().count() > 0 &&
+                         now - quickMaskPresetStartedAt_ <= kCycleWindow;
+
+    if (!isArmed) {
+      quickMaskPresetLayerId_ = layer->id();
+      quickMaskPresetStartedAt_ = now;
+      quickMaskPresetIndex_ =
+          reverse ? static_cast<int>(kQuickMaskPresetOrder.size()) - 1 : 0;
+      quickMaskPresetMaskIndex_ = -1;
+    } else if (reverse) {
+      quickMaskPresetIndex_ =
+          (quickMaskPresetIndex_ - 1 + static_cast<int>(kQuickMaskPresetOrder.size())) %
+          static_cast<int>(kQuickMaskPresetOrder.size());
+    } else {
+      quickMaskPresetIndex_ =
+          (quickMaskPresetIndex_ + 1) % static_cast<int>(kQuickMaskPresetOrder.size());
+    }
+
+    const QuickMaskPreset preset =
+        kQuickMaskPresetOrder[static_cast<size_t>(quickMaskPresetIndex_)];
+    const QRectF presetRect = quickMaskPresetRect(preset, localBounds);
+
+    MaskPath path;
+    for (const QPointF &corner : rectCorners(presetRect)) {
+      MaskVertex vertex;
+      vertex.position = corner;
+      vertex.inTangent = QPointF(0.0, 0.0);
+      vertex.outTangent = QPointF(0.0, 0.0);
+      path.addVertex(vertex);
+    }
+    path.setClosed(true);
+
+    LayerMask mask;
+    mask.addMaskPath(path);
+
+    beginMaskEditTransaction(layer);
+    if (isArmed && quickMaskPresetMaskIndex_ >= 0 &&
+        quickMaskPresetMaskIndex_ < layer->maskCount()) {
+      layer->setMask(quickMaskPresetMaskIndex_, mask);
+    } else {
+      layer->addMask(mask);
+      quickMaskPresetMaskIndex_ = layer->maskCount() - 1;
+    }
+    markMaskEditDirty();
+    commitMaskEditTransaction();
+    publishLayerModified(layer, true);
+    return true;
   }
 
   void beginMotionPathDrag(const ArtifactAbstractLayerPtr &layer,
@@ -5414,6 +5539,19 @@ void CompositionRenderController::focusSelectedLayer() {
                                static_cast<float>(center.y()) * zoom);
   impl_->invalidateBaseComposite();
   markRenderDirty();
+}
+
+bool CompositionRenderController::createFullLayerMaskForLayer(
+    const ArtifactAbstractLayerPtr &layer) {
+  return cyclePresetLayerMaskForLayer(layer, false);
+}
+
+bool CompositionRenderController::cyclePresetLayerMaskForLayer(
+    const ArtifactAbstractLayerPtr &layer, bool reverse) {
+  if (!impl_ || !layer) {
+    return false;
+  }
+  return impl_->cyclePresetLayerMaskForLayer(layer, reverse);
 }
 
 LayerID CompositionRenderController::layerAtViewportPos(

@@ -428,4 +428,15 @@ void GaussianBlur::setPropertyValue(const UniString& name, const QVariant& value
     }
 }
 
+EffectROIHint GaussianBlur::roiHint() const {
+    // ガウスカーネルの有効範囲は 3σ。
+    // sigma が大きいほど広い入力領域が必要になる。
+    const float s = sigma();
+    return EffectROIHint{
+        .kind = EffectROIHintKind::Blur,
+        .expansionPixels = s * 3.0f,
+        .requiresFullFrame = false
+    };
+}
+
 }

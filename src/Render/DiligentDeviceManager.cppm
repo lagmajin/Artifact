@@ -17,9 +17,13 @@ module;
 #include <CommandQueueVk.h>
 #include <SwapChain.h>
 #include <RefCntAutoPtr.hpp>
+#include <d3d12.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
+#include <d3d12sdklayers.h>
 #include <windows.h>
+#include <wrl/client.h>
 
 module Artifact.Render.DiligentDeviceManager;
 
@@ -28,8 +32,33 @@ import Artifact.Render.Config;
 namespace Artifact {
 
 using namespace Diligent;
+using Microsoft::WRL::ComPtr;
 
 namespace {
+    void reportLiveD3D12Objects(IRenderDevice* device)
+    {
+#if D3D12_SUPPORTED
+        if (device == nullptr) {
+            return;
+        }
+        RefCntAutoPtr<IRenderDeviceD3D12> deviceD3D12{device, IID_RenderDeviceD3D12};
+        if (!deviceD3D12) {
+            return;
+        }
+        ID3D12Device* d3d12Device = deviceD3D12->GetD3D12Device();
+        if (d3d12Device == nullptr) {
+            return;
+        }
+        ComPtr<ID3D12DebugDevice> debugDevice;
+        if (FAILED(d3d12Device->QueryInterface(IID_PPV_ARGS(&debugDevice))) || !debugDevice) {
+            return;
+        }
+        debugDevice->ReportLiveDeviceObjects(D3D12_RLDO_DETAIL | D3D12_RLDO_IGNORE_INTERNAL);
+#else
+        (void)device;
+#endif
+    }
+
     constexpr Uint32 kAsyncShaderCompileThreads = 2;
 
     enum class RenderBackendPreference {
@@ -759,6 +788,8 @@ void DiligentDeviceManager::Impl::destroy()
         immediateContext_->Flush();
         immediateContext_->WaitForIdle();
     }
+
+    reportLiveD3D12Objects(device_.RawPtr());
 
     swapChain_.Release();
 

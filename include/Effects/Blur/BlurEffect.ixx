@@ -98,6 +98,22 @@ public:
     }
 
     bool supportsGPU() const override { return true; }
+
+    /**
+     * @brief ROI 拡張ヒント
+     *
+     * ブラーは周辺ピクセルをサンプリングするため、出力 ROI より radius * 3 ピクセル
+     * 広い入力領域が必要になる（3σ でガウス寄与がほぼゼロになる）。
+     */
+    EffectROIHint roiHint() const override {
+        // iterations が増えるほど実効半径が大きくなる。
+        const float effectiveRadius = radius_ * static_cast<float>(iterations_);
+        return EffectROIHint{
+            .kind = EffectROIHintKind::Blur,
+            .expansionPixels = effectiveRadius * 3.0f,
+            .requiresFullFrame = false
+        };
+    }
 };
 
 } // namespace Artifact

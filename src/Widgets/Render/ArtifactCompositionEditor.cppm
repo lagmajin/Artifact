@@ -2485,6 +2485,43 @@ protected:
       event->accept();
       return;
     }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_M &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        event->modifiers().testFlag(Qt::ShiftModifier) &&
+        event->modifiers().testFlag(Qt::AltModifier)) {
+      const auto layer = currentLayer();
+      if (controller_ && layer &&
+          controller_->cyclePresetLayerMaskForLayer(layer, true)) {
+        if (auto *toolManager =
+                ArtifactApplicationManager::instance()
+                    ? ArtifactApplicationManager::instance()->toolManager()
+                    : nullptr) {
+          toolManager->setActiveTool(ToolType::Pen);
+        }
+        controller_->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
+        controller_->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
+      }
+      event->accept();
+      return;
+    }
+    if (!event->isAutoRepeat() && event->key() == Qt::Key_M &&
+        event->modifiers().testFlag(Qt::ControlModifier) &&
+        event->modifiers().testFlag(Qt::ShiftModifier)) {
+      const auto layer = currentLayer();
+      if (controller_ && layer &&
+          controller_->createFullLayerMaskForLayer(layer)) {
+        if (auto *toolManager =
+                ArtifactApplicationManager::instance()
+                    ? ArtifactApplicationManager::instance()->toolManager()
+                    : nullptr) {
+          toolManager->setActiveTool(ToolType::Pen);
+        }
+        controller_->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
+        controller_->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
+      }
+      event->accept();
+      return;
+    }
     if (!event->isAutoRepeat() && event->key() == Qt::Key_M) {
       const auto now = std::chrono::steady_clock::now();
       const bool isDoublePress =

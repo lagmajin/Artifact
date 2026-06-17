@@ -27,17 +27,21 @@ module;
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#include <d3d12.h>
+#include <d3d12sdklayers.h>
+#include <wrl/client.h>
+#include <windows.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/RenderDevice.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/DeviceContext.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Query.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/SwapChain.h>
 #include <DiligentCore/Graphics/GraphicsEngine/interface/Texture.h>
 #include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/EngineFactoryD3D12.h>
+#include <DiligentCore/Graphics/GraphicsEngineD3D12/interface/RenderDeviceD3D12.h>
 #include <DiligentCore/Graphics/GraphicsEngineVulkan/interface/EngineFactoryVk.h>
 #include <DiligentCore/Common/interface/Float16.hpp>
 #include <DiligentCore/Common/interface/RefCntAutoPtr.hpp>
 #include <DiligentCore/Common/interface/BasicMath.hpp>
-#include <windows.h>
 
 module Artifact.Render.IRenderer;
 
@@ -74,6 +78,30 @@ namespace Artifact
  using float2 = Diligent::float2;
 
 namespace {
+  void reportLiveD3D12Objects(Diligent::IRenderDevice* device)
+  {
+#if D3D12_SUPPORTED
+    if (device == nullptr) {
+      return;
+    }
+    RefCntAutoPtr<IRenderDeviceD3D12> deviceD3D12{device, IID_RenderDeviceD3D12};
+    if (!deviceD3D12) {
+      return;
+    }
+    ID3D12Device* d3d12Device = deviceD3D12->GetD3D12Device();
+    if (d3d12Device == nullptr) {
+      return;
+    }
+    Microsoft::WRL::ComPtr<ID3D12DebugDevice> debugDevice;
+    if (FAILED(d3d12Device->QueryInterface(IID_PPV_ARGS(&debugDevice))) || !debugDevice) {
+      return;
+    }
+    debugDevice->ReportLiveDeviceObjects(D3D12_RLDO_DETAIL | D3D12_RLDO_IGNORE_INTERNAL);
+#else
+    (void)device;
+#endif
+  }
+
   Diligent::float2 toDiligentFloat2(Detail::float2 value) { return { value.x, value.y }; }
   Detail::float2 toDetailFloat2(Diligent::float2 value)   { return { value.x, value.y }; }
 
@@ -1914,6 +1942,7 @@ namespace {
   particleRenderer_.reset();
   gpuContext_.reset();
   shaderManager_.destroy();
+  reportLiveD3D12Objects(deviceManager_.device().RawPtr());
   deviceManager_.destroy();
   widget_                = nullptr;
   m_initialized          = false;

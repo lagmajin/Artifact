@@ -21,13 +21,11 @@ class TranslationManager::Impl
 {
 public:
  QString locale_ = QStringLiteral("en");
- QMap<QString, QString> strings_;       // key -> translated value
- QMap<QString, QString> fallbacks_;     // key -> fallback value (usually English)
+ QMap<QString, QString> strings_;
+ QMap<QString, QString> fallbacks_;
  QStringList availableLocales_;
  QString loadedDir_;
 
- // Flatten nested JSON object into dot-separated keys
- // { "menu": { "file": { "open": "Open" } } } -> { "menu.file.open": "Open" }
  static void flattenJson(const QJsonObject& obj, const QString& prefix, QMap<QString, QString>& out)
  {
   for (auto it = obj.begin(); it != obj.end(); ++it) {
@@ -103,13 +101,11 @@ bool TranslationManager::loadFromDirectory(const QString& dirPath)
  impl_->loadedDir_ = dirPath;
  impl_->scanAvailableLocales(dirPath);
 
- // Load fallback (English)
  const QString fallbackPath = dir.filePath(QStringLiteral("en.json"));
  if (QFile::exists(fallbackPath)) {
   impl_->loadLocaleFile(fallbackPath, impl_->fallbacks_);
  }
 
- // Load current locale
  const QString localePath = dir.filePath(impl_->locale_ + QStringLiteral(".json"));
  if (QFile::exists(localePath)) {
   impl_->strings_.clear();
