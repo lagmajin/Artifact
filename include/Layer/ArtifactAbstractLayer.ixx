@@ -114,7 +114,8 @@ enum class LayerType {
   Clone = 16,      // クローンレイヤー (MoGraph)
   SDF = 17,        // SDFレイマーチングレイヤー
   Model3D = 18,    // 3Dモデルレイヤー
-  Construction = 19 // 作業用の非レンダー設計レイヤー
+  Construction = 19, // 作業用の非レンダー設計レイヤー
+  CompositionBackground = 20 // コンポ背景を視覚化する特別レイヤー
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -331,6 +332,8 @@ public:
   virtual void setOutPoint(const FramePosition &pos);
   FramePosition startTime() const;
   void setStartTime(const FramePosition &pos);
+  void slideTimingBy(qint64 deltaFrames);
+  void setTimelineWindow(FramePosition inPoint, FramePosition outPoint);
 
   bool isActiveAt(const FramePosition &pos) const;
 
@@ -356,6 +359,7 @@ public:
   virtual bool isAdjustmentLayer() const;
   void setAdjustmentLayer(bool isAdjustment);
   virtual bool isConstructionLayer() const;
+  virtual bool isCompositionBackgroundLayer() const;
   virtual bool shouldIncludeInFinalRender() const;
 
   bool is3D() const;

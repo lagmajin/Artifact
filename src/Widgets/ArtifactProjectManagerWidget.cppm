@@ -137,6 +137,7 @@ import Artifact.Project.Cleanup;
 import Input.Operator;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Video;
+import Artifact.Layer.Composition;
 import Artifact.Layer.Search.Query;
 import Artifact.Event.Types;
 import Event.Bus;
@@ -368,8 +369,90 @@ QString projectItemFootageKindLabel(const QString& path) {
     case AssetKind::Font:
         return QStringLiteral("Font");
     default:
-        return QStringLiteral("Footage");
+    return QStringLiteral("Footage");
+}
+
+int projectItemUsageCount(ProjectItem* item)
+{
+    if (!item) {
+        return 0;
     }
+
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) {
+        return 0;
+    }
+
+    auto project = svc->getCurrentProjectSharedPtr();
+    if (!project) {
+        return 0;
+    }
+
+    const auto normalizePath = [](const QString& path) {
+        return QDir::cleanPath(path.trimmed());
+    };
+
+    const auto matchesFootagePath = [&](const FootageItem* footage, const QString& candidatePath) {
+        if (!footage) {
+            return false;
+        }
+        const QString normalizedCandidate = normalizePath(candidatePath);
+        if (normalizedCandidate.isEmpty()) {
+            return false;
+        }
+        if (normalizedCandidate == normalizePath(footage->filePath)) {
+            return true;
+        }
+        for (const QString& sequencePath : footage->sequencePaths) {
+            if (normalizedCandidate == normalizePath(sequencePath)) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    int usageCount = 0;
+    std::function<void(ProjectItem*)> walkItems;
+    walkItems = [&](ProjectItem* current) {
+        if (!current) {
+            return;
+        }
+        if (current->type() == eProjectItemType::Composition) {
+            auto* compItem = static_cast<CompositionItem*>(current);
+            const auto found = project->findComposition(compItem->compositionId);
+            auto comp = found.ptr.lock();
+            if (comp) {
+                for (const auto& layer : comp->allLayerRef()) {
+                    if (!layer) {
+                        continue;
+                    }
+                    if (item->type() == eProjectItemType::Composition) {
+                        auto* compositionLayer = dynamic_cast<ArtifactCompositionLayer*>(layer.get());
+                        if (compositionLayer && compositionLayer->sourceCompositionId() ==
+                                                    static_cast<CompositionItem*>(item)->compositionId) {
+                            ++usageCount;
+                        }
+                    } else if (item->type() == eProjectItemType::Footage) {
+                        auto* footageLayer = dynamic_cast<ArtifactVideoLayer*>(layer.get());
+                        if (footageLayer && matchesFootagePath(static_cast<FootageItem*>(item),
+                                                               footageLayer->sourceFile())) {
+                            ++usageCount;
+                        }
+                    }
+                }
+            }
+        }
+        for (auto* child : current->children) {
+            walkItems(child);
+        }
+    };
+
+    for (auto* root : project->projectItems()) {
+        walkItems(root);
+    }
+
+    return usageCount;
+}
 }
 
 QString projectItemTileBadgeText(ProjectItem* item)
@@ -1036,6 +1119,8 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
                              .arg(bgColor.name(QColor::HexArgb).toUpper());
                 lines << QStringLiteral("Composition ID: %1")
                              .arg(composition->compositionId.toString());
+                lines << QStringLiteral("Used In: %1")
+                             .arg(projectItemUsageCount(item));
             } else {
                 lines << QStringLiteral("Status: Composition data unavailable");
             }
@@ -1056,6 +1141,8 @@ QStringList projectItemMetadataLines(const QModelIndex& sourceIndex, ProjectItem
         } else {
             lines << QStringLiteral("Status: Missing");
         }
+        lines << QStringLiteral("Used In: %1")
+                     .arg(projectItemUsageCount(item));
 
         QString lowerPath = path.toLower();
         if (exists) {

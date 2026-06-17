@@ -269,6 +269,17 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  }
 
+ ArtifactCompositionBackgroundLayerInitParams::ArtifactCompositionBackgroundLayerInitParams()
+     :ArtifactLayerInitParams(UniString("Composition Background"), LayerType::CompositionBackground)
+ {
+
+ }
+
+ ArtifactCompositionBackgroundLayerInitParams::~ArtifactCompositionBackgroundLayerInitParams()
+ {
+
+ }
+
  ArtifactModel3DLayerInitParams::ArtifactModel3DLayerInitParams(const QString& name)
      : ArtifactLayerInitParams(name, LayerType::Model3D)
  {

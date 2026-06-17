@@ -178,6 +178,14 @@ export namespace Artifact {
   ~ArtifactCompositionLayerInitParams();
  };
 
+ class ArtifactCompositionBackgroundLayerInitParams :public ArtifactLayerInitParams {
+ private:
+
+ public:
+  ArtifactCompositionBackgroundLayerInitParams();
+  ~ArtifactCompositionBackgroundLayerInitParams();
+ };
+
  class ArtifactModel3DLayerInitParams : public ArtifactLayerInitParams {
  private:
   QString modelPath_;
