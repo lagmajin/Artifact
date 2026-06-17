@@ -2464,7 +2464,9 @@ void drawLayerForCompositionView(
       [&](ArtifactAbstractLayer *targetLayer, QImage &surface) {
         ArtifactCore::ImageF32x4_RGBA processed;
         if (buildRasterizedSurfaceBuffer(targetLayer, surface, &processed)) {
-          surface = processed.toQImage();
+          if (!processed.isEmpty()) {
+            surface = processed.toQImage();
+          }
         }
       };
 
@@ -2519,8 +2521,9 @@ void drawLayerForCompositionView(
           if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
             processedBuffer =
                 std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
-            if (!gpuTextureCacheManager ||
-                !layerUsesGpuTextureCacheForCompositionView(layer)) {
+            if (!processed.isEmpty() &&
+                (!gpuTextureCacheManager ||
+                 !layerUsesGpuTextureCacheForCompositionView(layer))) {
               surface = processed.toQImage();
             }
           }
@@ -2796,9 +2799,6 @@ void drawLayerForCompositionView(
       frameBuffer = videoLayer->decodeFrameToImageBuffer(layer->currentFrame());
       usedSyncFallback = !frameBuffer.isEmpty();
     }
-    if (!frameBuffer.isEmpty()) {
-      frame = frameBuffer.toQImage();
-    }
     if (videoDebugOut) {
       if (reason.isEmpty()) {
         if (!loaded) {
@@ -2830,6 +2830,25 @@ void drawLayerForCompositionView(
                           .arg(ip.framePosition())
                           .arg(op.framePosition())
                           .arg(layer->currentFrame());
+    }
+    if (!frameBuffer.isEmpty() && !hasRasterizer &&
+        layer->matteReferences().empty()) {
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(
+          layer, globalTransform4x4,
+          [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+            renderer->drawSpriteTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                frameBuffer, baseOpacity * instanceWeight);
+          });
+      return;
+    }
+    if (!frameBuffer.isEmpty()) {
+      frame = frameBuffer.toQImage();
     }
     if (!frame.isNull()) {
       applySurfaceAndDraw(frame, localRect, true);
