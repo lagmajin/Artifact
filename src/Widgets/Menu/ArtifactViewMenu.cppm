@@ -656,24 +656,11 @@ namespace Artifact {
    workspaceGroup = new QActionGroup(menu);
    workspaceGroup->setExclusive(true);
 
-   const auto iconPathForMode = [](const QString &key) -> QString {
-    if (key == QStringLiteral("default")) return QStringLiteral("Studio/viewmenu_workspace_default.svg");
-    if (key == QStringLiteral("import")) return QStringLiteral("Studio/viewmenu_workspace_import.svg");
-    if (key == QStringLiteral("layout")) return QStringLiteral("Studio/viewmenu_workspace_layout.svg");
-    if (key == QStringLiteral("animation")) return QStringLiteral("Studio/viewmenu_workspace_animation.svg");
-    if (key == QStringLiteral("vfx")) return QStringLiteral("Studio/viewmenu_workspace_vfx.svg");
-    if (key == QStringLiteral("compositing")) return QStringLiteral("Studio/viewmenu_workspace_compositing.svg");
-    if (key == QStringLiteral("text")) return QStringLiteral("Studio/viewmenu_workspace_text.svg");
-    if (key == QStringLiteral("export")) return QStringLiteral("Studio/viewmenu_workspace_export.svg");
-    if (key == QStringLiteral("debug")) return QStringLiteral("Studio/viewmenu_workspace_debug.svg");
-    if (key == QStringLiteral("audio")) return QStringLiteral("Studio/viewmenu_workspace_audio.svg");
-    return QStringLiteral("Studio/viewmenu_workspace.svg");
-   };
-
    for (const auto &info : Artifact::workspaceModeInfos()) {
     QAction *action = workspaceMenu->addAction(info.label);
-    action->setIcon(QIcon(resolveIconPath(iconPathForMode(info.key))));
+    action->setIcon(QIcon(resolveIconPath(info.iconPath)));
     action->setCheckable(true);
+    action->setData(static_cast<int>(info.mode));
     workspaceGroup->addAction(action);
     workspaceModeActions_.push_back(action);
     QObject::connect(action, &QAction::triggered, menu, [this, mode = info.mode]() {
@@ -960,22 +947,12 @@ namespace Artifact {
 
   const auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow);
   const WorkspaceMode mode = window ? window->workspaceMode() : WorkspaceMode::Default;
-  for (QAction *action : workspaceModeActions_) {
+   for (QAction *action : workspaceModeActions_) {
    if (!action) {
     continue;
    }
-   const QString text = action->text();
-   const bool checked =
-       (text == QStringLiteral("Default") && mode == WorkspaceMode::Default) ||
-       (text == QStringLiteral("Import") && mode == WorkspaceMode::Import) ||
-       (text == QStringLiteral("Layout") && mode == WorkspaceMode::Layout) ||
-       (text == QStringLiteral("Animation") && mode == WorkspaceMode::Animation) ||
-       (text == QStringLiteral("VFX") && mode == WorkspaceMode::VFX) ||
-       (text == QStringLiteral("Compositing") && mode == WorkspaceMode::Compositing) ||
-       (text == QStringLiteral("Text") && mode == WorkspaceMode::Text) ||
-       (text == QStringLiteral("Export") && mode == WorkspaceMode::Export) ||
-       (text == QStringLiteral("Debug") && mode == WorkspaceMode::Debug) ||
-       (text == QStringLiteral("Audio") && mode == WorkspaceMode::Audio);
+   const bool checked = action->data().isValid() &&
+                        action->data().toInt() == static_cast<int>(mode);
    action->setChecked(checked);
   }
  }

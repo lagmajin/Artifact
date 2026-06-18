@@ -14,6 +14,7 @@ export struct WorkspaceModeInfo {
   WorkspaceMode mode;
   QString key;
   QString label;
+  QString iconPath;
 };
 
 export WorkspaceMode workspaceModeFromText(const QString &text);
@@ -98,25 +99,25 @@ QStringList workspaceModeLabels() {
 QList<WorkspaceModeInfo> workspaceModeInfos() {
   return {
       {WorkspaceMode::Default, QStringLiteral("default"),
-       QStringLiteral("Default")},
+       QStringLiteral("Default"), QStringLiteral("Studio/viewmenu_workspace_default.svg")},
       {WorkspaceMode::Import, QStringLiteral("import"),
-       QStringLiteral("Import")},
+       QStringLiteral("Import"), QStringLiteral("Studio/viewmenu_workspace_import.svg")},
       {WorkspaceMode::Layout, QStringLiteral("layout"),
-       QStringLiteral("Layout")},
+       QStringLiteral("Layout"), QStringLiteral("Studio/viewmenu_workspace_layout.svg")},
       {WorkspaceMode::Animation, QStringLiteral("animation"),
-       QStringLiteral("Animation")},
+       QStringLiteral("Animation"), QStringLiteral("Studio/viewmenu_workspace_animation.svg")},
       {WorkspaceMode::VFX, QStringLiteral("vfx"),
-       QStringLiteral("VFX")},
+       QStringLiteral("VFX"), QStringLiteral("Studio/viewmenu_workspace_vfx.svg")},
       {WorkspaceMode::Compositing, QStringLiteral("compositing"),
-       QStringLiteral("Compositing")},
+       QStringLiteral("Compositing"), QStringLiteral("Studio/viewmenu_workspace_compositing.svg")},
       {WorkspaceMode::Text, QStringLiteral("text"),
-       QStringLiteral("Text")},
+       QStringLiteral("Text"), QStringLiteral("Studio/viewmenu_workspace_text.svg")},
       {WorkspaceMode::Export, QStringLiteral("export"),
-       QStringLiteral("Export")},
+       QStringLiteral("Export"), QStringLiteral("Studio/viewmenu_workspace_export.svg")},
       {WorkspaceMode::Debug, QStringLiteral("debug"),
-       QStringLiteral("Debug")},
+       QStringLiteral("Debug"), QStringLiteral("Studio/viewmenu_workspace_debug.svg")},
       {WorkspaceMode::Audio, QStringLiteral("audio"),
-       QStringLiteral("Audio")},
+       QStringLiteral("Audio"), QStringLiteral("Studio/viewmenu_workspace_audio.svg")},
   };
 }
 
