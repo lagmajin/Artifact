@@ -33,6 +33,7 @@ import Artifact.Widgets.CompositionEditor;
 import Application.AppSettings;
 import Core.FastSettingsStore;
 import Artifact.Workspace.Manager;
+import Artifact.Workspace.Modes;
 import Artifact.Widgets.ColorPaletteWidget;
 import Artifact.Widgets.ColorSciencePanel;
 import Artifact.Widgets.SecondaryPreviewWindow;
@@ -447,6 +448,7 @@ namespace Artifact {
    QAction* workspaceVfxAction = nullptr;
    QAction* workspaceCompositingAction = nullptr;
    QAction* workspaceAudioAction = nullptr;
+   QList<QAction*> workspaceModeActions_;
    QAction* saveWorkspacePresetAction = nullptr;
    QAction* deleteWorkspacePresetAction = nullptr;
    QAction* restoreWorkspaceSessionAction = nullptr;
@@ -654,49 +656,43 @@ namespace Artifact {
    workspaceGroup = new QActionGroup(menu);
    workspaceGroup->setExclusive(true);
 
-   workspaceDefaultAction = workspaceMenu->addAction("Default");
-   workspaceDefaultAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_workspace_default.svg")));
-   workspaceAnimationAction = workspaceMenu->addAction("Animation");
-   workspaceAnimationAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_workspace_animation.svg")));
-   workspaceVfxAction = workspaceMenu->addAction("VFX");
-   workspaceVfxAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_workspace_vfx.svg")));
-   workspaceCompositingAction = workspaceMenu->addAction("Compositing");
-   workspaceCompositingAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_workspace_compositing.svg")));
-   workspaceAudioAction = workspaceMenu->addAction("Audio");
-   workspaceAudioAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_workspace_audio.svg")));
+   const auto iconPathForMode = [](const QString &key) -> QString {
+    if (key == QStringLiteral("default")) return QStringLiteral("Studio/viewmenu_workspace_default.svg");
+    if (key == QStringLiteral("import")) return QStringLiteral("Studio/viewmenu_workspace_import.svg");
+    if (key == QStringLiteral("layout")) return QStringLiteral("Studio/viewmenu_workspace_layout.svg");
+    if (key == QStringLiteral("animation")) return QStringLiteral("Studio/viewmenu_workspace_animation.svg");
+    if (key == QStringLiteral("vfx")) return QStringLiteral("Studio/viewmenu_workspace_vfx.svg");
+    if (key == QStringLiteral("compositing")) return QStringLiteral("Studio/viewmenu_workspace_compositing.svg");
+    if (key == QStringLiteral("text")) return QStringLiteral("Studio/viewmenu_workspace_text.svg");
+    if (key == QStringLiteral("export")) return QStringLiteral("Studio/viewmenu_workspace_export.svg");
+    if (key == QStringLiteral("debug")) return QStringLiteral("Studio/viewmenu_workspace_debug.svg");
+    if (key == QStringLiteral("audio")) return QStringLiteral("Studio/viewmenu_workspace_audio.svg");
+    return QStringLiteral("Studio/viewmenu_workspace.svg");
+   };
 
-   for (auto* action : {workspaceDefaultAction, workspaceAnimationAction,
-                        workspaceVfxAction, workspaceCompositingAction,
-                        workspaceAudioAction}) {
+   for (const auto &info : Artifact::workspaceModeInfos()) {
+    QAction *action = workspaceMenu->addAction(info.label);
+    action->setIcon(QIcon(resolveIconPath(iconPathForMode(info.key))));
     action->setCheckable(true);
     workspaceGroup->addAction(action);
+    workspaceModeActions_.push_back(action);
+    QObject::connect(action, &QAction::triggered, menu, [this, mode = info.mode]() {
+     if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
+      window->setWorkspaceMode(mode);
+     }
+    });
+    if (info.mode == WorkspaceMode::Default) {
+     workspaceDefaultAction = action;
+    } else if (info.mode == WorkspaceMode::Animation) {
+     workspaceAnimationAction = action;
+    } else if (info.mode == WorkspaceMode::VFX) {
+     workspaceVfxAction = action;
+    } else if (info.mode == WorkspaceMode::Compositing) {
+     workspaceCompositingAction = action;
+    } else if (info.mode == WorkspaceMode::Audio) {
+     workspaceAudioAction = action;
+    }
    }
-
-   QObject::connect(workspaceDefaultAction, &QAction::triggered, menu, [this]() {
-    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
-     window->setWorkspaceMode(WorkspaceMode::Default);
-    }
-   });
-   QObject::connect(workspaceAnimationAction, &QAction::triggered, menu, [this]() {
-    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
-     window->setWorkspaceMode(WorkspaceMode::Animation);
-    }
-   });
-   QObject::connect(workspaceVfxAction, &QAction::triggered, menu, [this]() {
-    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
-     window->setWorkspaceMode(WorkspaceMode::VFX);
-    }
-   });
-   QObject::connect(workspaceCompositingAction, &QAction::triggered, menu, [this]() {
-    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
-     window->setWorkspaceMode(WorkspaceMode::Compositing);
-    }
-   });
-   QObject::connect(workspaceAudioAction, &QAction::triggered, menu, [this]() {
-    if (auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow)) {
-     window->setWorkspaceMode(WorkspaceMode::Audio);
-    }
-   });
 
    workspacePresetMenu = new QMenu("プリセット");
    workspacePresetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_presets.svg")));
@@ -958,19 +954,30 @@ namespace Artifact {
 
  void ArtifactViewMenu::Impl::refreshWorkspaceState()
  {
-  if (!workspaceDefaultAction || !workspaceAnimationAction ||
-      !workspaceVfxAction || !workspaceCompositingAction ||
-      !workspaceAudioAction) {
+  if (workspaceModeActions_.isEmpty()) {
    return;
   }
 
   const auto* window = qobject_cast<ArtifactMainWindow*>(mainWindow);
   const WorkspaceMode mode = window ? window->workspaceMode() : WorkspaceMode::Default;
-  workspaceDefaultAction->setChecked(mode == WorkspaceMode::Default);
-  workspaceAnimationAction->setChecked(mode == WorkspaceMode::Animation);
-  workspaceVfxAction->setChecked(mode == WorkspaceMode::VFX);
-  workspaceCompositingAction->setChecked(mode == WorkspaceMode::Compositing);
-  workspaceAudioAction->setChecked(mode == WorkspaceMode::Audio);
+  for (QAction *action : workspaceModeActions_) {
+   if (!action) {
+    continue;
+   }
+   const QString text = action->text();
+   const bool checked =
+       (text == QStringLiteral("Default") && mode == WorkspaceMode::Default) ||
+       (text == QStringLiteral("Import") && mode == WorkspaceMode::Import) ||
+       (text == QStringLiteral("Layout") && mode == WorkspaceMode::Layout) ||
+       (text == QStringLiteral("Animation") && mode == WorkspaceMode::Animation) ||
+       (text == QStringLiteral("VFX") && mode == WorkspaceMode::VFX) ||
+       (text == QStringLiteral("Compositing") && mode == WorkspaceMode::Compositing) ||
+       (text == QStringLiteral("Text") && mode == WorkspaceMode::Text) ||
+       (text == QStringLiteral("Export") && mode == WorkspaceMode::Export) ||
+       (text == QStringLiteral("Debug") && mode == WorkspaceMode::Debug) ||
+       (text == QStringLiteral("Audio") && mode == WorkspaceMode::Audio);
+   action->setChecked(checked);
+  }
  }
 
  void ArtifactViewMenu::Impl::refreshWorkspacePresetMenu()
