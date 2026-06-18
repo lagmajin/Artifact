@@ -122,6 +122,76 @@ bool isTimelineDockTitle(const QString &title) {
   return title.startsWith(QStringLiteral("Timeline"), Qt::CaseInsensitive);
 }
 
+struct WorkspaceVisibilityRule {
+  WorkspaceMode mode;
+  QStringList visibleTitles;
+  QStringList hiddenTitles;
+};
+
+const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
+  static const WorkspaceVisibilityRule rules[] = {
+      {WorkspaceMode::Default,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Properties"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Note",
+        "Layer Note", "Composition View (Software)",
+        "Layer View (Diligent)", "Layer View (Software)"}},
+      {WorkspaceMode::Import,
+       {"Project", "Asset Browser", "Inspector", "Properties"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Viewer",
+        "Composition Note", "Layer Note"}},
+      {WorkspaceMode::Layout,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Properties", "Composition Note", "Layer Note"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat"}},
+      {WorkspaceMode::Animation,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Composition Note", "Layer Note", "Properties",
+        "Composition View (Software)", "Layer View (Diligent)",
+        "Layer View (Software)"},
+       {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
+        "Playback Control"}},
+      {WorkspaceMode::VFX,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Composition Note", "Layer Note", "Properties",
+        "Composition View (Software)", "Layer View (Diligent)",
+        "Layer View (Software)"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Playback Control"}},
+      {WorkspaceMode::Compositing,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Composition Note", "Layer Note", "Properties",
+        "Layer View (Diligent)"},
+       {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
+        "Playback Control", "Composition View (Software)",
+        "Layer View (Software)"}},
+      {WorkspaceMode::Text,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Composition Note", "Layer Note", "Properties", "Contents Viewer"},
+       {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control"}},
+      {WorkspaceMode::Export,
+       {"Project", "Asset Browser", "Inspector", "Properties",
+        "Composition Viewer"},
+       {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
+        "Playback Control"}},
+      {WorkspaceMode::Debug,
+       {"Project", "Asset Browser", "Inspector", "Properties",
+        "Contents Viewer", "AI Chat", "Playback Control"},
+       {"Audio Mixer", "Composition Note", "Layer Note"}},
+      {WorkspaceMode::Audio,
+       {"Contents Viewer", "Audio Mixer", "Project", "Asset Browser",
+        "Inspector", "Properties"},
+       {"AI Cloud", "AI Chat", "Composition Viewer",
+        "Composition View (Software)", "Layer View (Diligent)",
+        "Layer View (Software)"}},
+  };
+  for (const auto &rule : rules) {
+    if (rule.mode == mode) {
+      return &rule;
+    }
+  }
+  return &rules[0];
+}
+
 QWidget *createLazyDockPlaceholder(QWidget *parent) {
   auto *placeholder = new QWidget(parent);
   placeholder->setAutoFillBackground(true);
@@ -243,88 +313,16 @@ void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
       window->setDockVisible(title, visible);
     }
   };
-
-  QStringList visibleTitles;
-  QStringList hiddenTitles;
-
-  switch (mode) {
-  case WorkspaceMode::Default:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Properties"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
-                    "Composition Note", "Layer Note",
-                    "Composition View (Software)", "Layer View (Diligent)",
-                    "Layer View (Software)"};
-    break;
-  case WorkspaceMode::Import:
-    visibleTitles = {"Project", "Asset Browser", "Inspector", "Properties"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
-                    "Composition Viewer", "Composition Note", "Layer Note"};
-    break;
-  case WorkspaceMode::Layout:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Properties", "Composition Note",
-                     "Layer Note"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat"};
-    break;
-  case WorkspaceMode::Animation:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "Composition View (Software)",
-                     "Layer View (Diligent)", "Layer View (Software)"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
-                    "Playback Control"};
-    break;
-  case WorkspaceMode::VFX:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "Composition View (Software)",
-                     "Layer View (Diligent)", "Layer View (Software)"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
-                    "Playback Control"};
-    break;
-  case WorkspaceMode::Compositing:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "Layer View (Diligent)"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
-                    "Playback Control", "Composition View (Software)",
-                    "Layer View (Software)"};
-    break;
-  case WorkspaceMode::Text:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "Contents Viewer"};
-    hiddenTitles = {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control"};
-    break;
-  case WorkspaceMode::Export:
-    visibleTitles = {"Project", "Asset Browser", "Inspector", "Properties",
-                     "Composition Viewer"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
-                    "Playback Control"};
-    break;
-  case WorkspaceMode::Debug:
-    visibleTitles = {"Project", "Asset Browser", "Inspector", "Properties",
-                     "Contents Viewer", "AI Chat", "Playback Control"};
-    hiddenTitles = {"Audio Mixer", "Composition Note", "Layer Note"};
-    break;
-  case WorkspaceMode::Audio:
-    visibleTitles = {"Contents Viewer", "Audio Mixer", "Project",
-                     "Asset Browser", "Inspector", "Properties"};
-    hiddenTitles = {"AI Cloud", "AI Chat", "Composition Viewer",
-                    "Composition View (Software)", "Layer View (Diligent)",
-                    "Layer View (Software)"};
-    break;
-  }
+  const WorkspaceVisibilityRule *rule = workspaceVisibilityRuleFor(mode);
 
   for (const QString &title : dockTitles) {
     setVisible(title, false);
   }
 
-  for (const QString &title : visibleTitles) {
+  for (const QString &title : rule->visibleTitles) {
     setVisible(title, true);
   }
-  for (const QString &title : hiddenTitles) {
+  for (const QString &title : rule->hiddenTitles) {
     setVisible(title, false);
   }
 
