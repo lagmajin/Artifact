@@ -630,8 +630,8 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
   auto *workspaceLayout = new QHBoxLayout();
   workspaceLayout->addWidget(new QLabel("Default Workspace:", this));
   impl_->workspaceModeCombo_ = new QComboBox(this);
-  for (const QString &label : Artifact::workspaceModeLabels()) {
-    impl_->workspaceModeCombo_->addItem(label);
+  for (const auto &info : Artifact::workspaceModeInfos()) {
+    impl_->workspaceModeCombo_->addItem(info.label);
   }
   workspaceLayout->addWidget(impl_->workspaceModeCombo_);
   workspaceLayout->addStretch();
@@ -682,10 +682,9 @@ void ProjectDefaultsSettingPage::loadSettings() {
   impl_->heightSpinBox_->setValue(settings->projectDefaultCompositionHeight());
   impl_->frameRateCombo_->setCurrentText(
       frameRateLabelFor(settings->projectDefaultCompositionFrameRate()));
-  impl_->workspaceModeCombo_->setCurrentText(
-      Artifact::workspaceModeText(
-          Artifact::workspaceModeFromText(
-              settings->projectDefaultWorkspaceModeText())));
+  const auto modeInfo = Artifact::workspaceModeInfo(
+      Artifact::workspaceModeFromText(settings->projectDefaultWorkspaceModeText()));
+  impl_->workspaceModeCombo_->setCurrentText(modeInfo.label);
   impl_->backgroundColor_ =
       QColor(settings->projectDefaultCompositionBackgroundColor());
   if (!impl_->backgroundColor_.isValid()) {
