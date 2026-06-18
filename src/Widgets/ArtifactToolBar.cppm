@@ -25,6 +25,7 @@ import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Service.Application;
 import Application.AppSettings;
+import Artifact.Workspace.Modes;
 
 namespace {
 
@@ -828,40 +829,8 @@ void ArtifactToolBar::setWorkspaceMode(WorkspaceMode mode) {
 
   impl_->updateDisplayMode();
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    QString modeText = QStringLiteral("Default");
-    switch (mode) {
-    case WorkspaceMode::Default:
-      modeText = QStringLiteral("Default");
-      break;
-    case WorkspaceMode::Import:
-      modeText = QStringLiteral("Import");
-      break;
-    case WorkspaceMode::Layout:
-      modeText = QStringLiteral("Layout");
-      break;
-    case WorkspaceMode::Animation:
-      modeText = QStringLiteral("Animation");
-      break;
-    case WorkspaceMode::VFX:
-      modeText = QStringLiteral("VFX");
-      break;
-    case WorkspaceMode::Compositing:
-      modeText = QStringLiteral("Compositing");
-      break;
-    case WorkspaceMode::Text:
-      modeText = QStringLiteral("Text");
-      break;
-    case WorkspaceMode::Export:
-      modeText = QStringLiteral("Export");
-      break;
-    case WorkspaceMode::Debug:
-      modeText = QStringLiteral("Debug");
-      break;
-    case WorkspaceMode::Audio:
-      modeText = QStringLiteral("Audio");
-      break;
-    }
-    settings->setProjectDefaultWorkspaceModeText(modeText);
+    settings->setProjectDefaultWorkspaceModeText(
+        Artifact::workspaceModeText(mode));
   }
   emit workspaceModeChanged(mode);
 }
