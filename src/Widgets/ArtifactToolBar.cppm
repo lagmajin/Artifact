@@ -44,6 +44,7 @@ constexpr auto kToolbarIconBrush = "Studio/toolbar_tool_brush.svg";
 constexpr auto kToolbarIconClone = "Studio/toolbar_tool_clone.svg";
 constexpr auto kToolbarIconEraser = "Studio/toolbar_tool_eraser.svg";
 constexpr auto kToolbarIconPuppet = "Studio/toolbar_tool_puppet.svg";
+constexpr auto kToolbarIconScrubPreview = "Studio/toolbar_tool_hand.svg";
 constexpr auto kToolbarIconZoomIn = "Studio/toolbar_zoom_in.svg";
 constexpr auto kToolbarIconZoomOut = "Studio/toolbar_zoom_out.svg";
 constexpr auto kToolbarIconZoom100 = "Studio/toolbar_zoom_100.svg";
@@ -101,6 +102,7 @@ QString toolLabelForType(Artifact::ToolType type)
     case Artifact::ToolType::AnchorPoint: return QStringLiteral("アンカー");
     case Artifact::ToolType::MotionSketch: return QStringLiteral("モーションスケッチ");
     case Artifact::ToolType::Puppet: return QStringLiteral("パペット");
+    case Artifact::ToolType::ScrubPreview: return QStringLiteral("スクラブ");
     case Artifact::ToolType::Pen:         return QStringLiteral("ペン");
     case Artifact::ToolType::Text:        return QStringLiteral("テキスト");
     case Artifact::ToolType::Shape:       return QStringLiteral("シェイプ");
@@ -191,6 +193,7 @@ public:
   QAction *eraserTool_ = nullptr;
   QAction *puppetTool_ = nullptr;
   QAction *motionSketchTool_ = nullptr;
+  QAction *scrubPreviewTool_ = nullptr;
 
   // Zoom actions
   QAction *zoomInAction_ = nullptr;
@@ -370,6 +373,11 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                          QStringLiteral("Material/push_pin.svg")},
              "パペット", "パペットピンツール (Ctrl+P)",
              QKeySequence(Qt::CTRL | Qt::Key_P));
+  createTool(impl_->scrubPreviewTool_,
+             QStringList{QString::fromLatin1(kToolbarIconScrubPreview),
+                         QStringLiteral("MaterialVS/neutral/pan_tool_alt.svg"),
+                         QStringLiteral("Material/pan_tool_alt.svg")},
+             "スクラブ", "スクラブプレビューツール", QKeySequence());
 
   // Set default tool
   impl_->selectTool_->setChecked(true);
@@ -531,6 +539,9 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                      } else if (action == impl_->motionSketchTool_) {
                        motionSketchToolRequested();
                        setTool(ToolType::MotionSketch);
+                     } else if (action == impl_->scrubPreviewTool_) {
+                       scrubPreviewToolRequested();
+                       setTool(ToolType::ScrubPreview);
                      }
                    });
 

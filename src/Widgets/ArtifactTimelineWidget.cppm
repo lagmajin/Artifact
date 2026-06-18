@@ -259,7 +259,7 @@ QString formatSelectedKeyframeSummary(
     const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
     const qint64 currentFrame) {
   if (markers.isEmpty()) {
-    return QStringLiteral("Keys: 0 selected | Lane: empty | Current: off");
+    return QStringLiteral("goal: inspect keyframes | now: none | warning: lane empty | next: add keyframe");
   }
 
   qint64 minFrame = std::numeric_limits<qint64>::max();
@@ -285,37 +285,88 @@ QString formatSelectedKeyframeSummary(
 
   const QString propertyText =
       propertyLabels.size() == 1
-          ? QStringLiteral("Property: %1")
-                .arg(*propertyLabels.begin())
-          : QStringLiteral("Properties: %1").arg(propertyLabels.size());
+          ? QStringLiteral("%1").arg(*propertyLabels.begin())
+          : QStringLiteral("%1 props").arg(propertyLabels.size());
 
   const QString frameText =
-      minFrame == maxFrame ? QStringLiteral("Frame: F%1").arg(minFrame)
-                           : QStringLiteral("Frames: F%1-F%2").arg(minFrame).arg(maxFrame);
-  const QString currentText =
-      hitsCurrentFrame ? QStringLiteral("Current: here")
-                       : QStringLiteral("Current: off");
+      minFrame == maxFrame ? QStringLiteral("F%1").arg(minFrame)
+                           : QStringLiteral("F%1-F%2").arg(minFrame).arg(maxFrame);
   QString previewText;
   if (!sampleLabels.isEmpty()) {
-    previewText = QStringLiteral("Preview: %1")
+    previewText = QStringLiteral("%1")
                       .arg(sampleLabels.join(QStringLiteral(", ")));
     if (propertyLabels.size() > sampleLabels.size()) {
       previewText += QStringLiteral(" (+%1 more)")
                          .arg(propertyLabels.size() - sampleLabels.size());
     }
   }
-  return QStringLiteral("Keys: %1 selected | %2 | %3 | %4%5")
-      .arg(markers.size())
-      .arg(propertyText)
-      .arg(frameText)
-      .arg(currentText)
+  const QString nowText =
+      QStringLiteral("keys=%1 prop=%2 frame=%3 current=%4")
+          .arg(markers.size())
+          .arg(propertyText)
+          .arg(frameText)
+          .arg(hitsCurrentFrame ? QStringLiteral("yes") : QStringLiteral("no"));
+  const QString warningText =
+      hitsCurrentFrame ? QStringLiteral("at current frame")
+                       : QStringLiteral("off current frame");
+  const QString nextText =
+      markers.size() == 1 ? QStringLiteral("add second")
+                          : QStringLiteral("refine selection");
+  return QStringLiteral("goal: keep keyframes readable | now: %1 | warning: %2 | next: %3%4")
+      .arg(nowText)
+      .arg(warningText)
+      .arg(nextText)
       .arg(previewText.isEmpty() ? QString() : QStringLiteral(" | %1").arg(previewText));
+}
+
+QString formatHoveredKeyframeSummary(
+    const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual &marker,
+    const qint64 currentFrame) {
+  if (marker.trackIndex < 0) {
+    return QString();
+  }
+
+  const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
+  const QString displayLabel =
+      marker.label.isEmpty()
+          ? ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
+                marker.propertyPath)
+          : marker.label;
+  const QString relationText =
+      frame == currentFrame ? QStringLiteral("current") : QStringLiteral("hover");
+  return QStringLiteral("%1 @ F%2 (%3)")
+      .arg(displayLabel)
+      .arg(frame)
+      .arg(relationText);
 }
 
 struct CachedAudioWaveform {
   QString signature;
   QVector<float> peaks;
   QVector<float> rms;
+};
+
+class TimelineToolCallbackButton final : public QToolButton {
+public:
+  using Callback = std::function<void()>;
+
+  explicit TimelineToolCallbackButton(QWidget *parent = nullptr)
+      : QToolButton(parent) {}
+
+  void setCallback(Callback callback) { callback_ = std::move(callback); }
+
+protected:
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    QToolButton::mouseReleaseEvent(event);
+    if (!isEnabled() || !callback_ || !event ||
+        event->button() != Qt::LeftButton || !rect().contains(event->pos())) {
+      return;
+    }
+    callback_();
+  }
+
+private:
+  Callback callback_;
 };
 
 QString audioWaveformCacheKey(const CompositionID &compositionId,
@@ -2268,21 +2319,6 @@ QColor curveTrackColorForKey(const QString& key)
   return QColor::fromHsv(static_cast<int>(hash % 360), 170, 220, 255);
 }
 
-bool curveTrackHasCustomHandles(const CurveTrack& track, int index)
-{
-  if (index < 0 || index >= static_cast<int>(track.keys.size())) {
-    return false;
-  }
-
-  const auto& key = track.keys[index];
-  const bool hasIncoming =
-      index > 0 && (key.inHandleFrame != 0 || std::abs(key.inHandleValue) > 0.0001f);
-  const bool hasOutgoing =
-      index + 1 < static_cast<int>(track.keys.size()) &&
-      (key.outHandleFrame != 0 || std::abs(key.outHandleValue) > 0.0001f);
-  return hasIncoming || hasOutgoing;
-}
-
 CurveEditorPayload collectCurveEditorPayload(
     const ArtifactCompositionPtr& composition,
     ArtifactLayerSelectionManager* selectionManager)
@@ -2669,9 +2705,7 @@ bool applyCurveEditorTrackToProperty(
 
     const double dt = std::max<int64_t>(1, next.frame - current.frame);
     const double dv = static_cast<double>(next.value) - current.value;
-    const bool bezierSegment =
-        current.smooth || next.smooth || curveTrackHasCustomHandles(track, i) ||
-        curveTrackHasCustomHandles(track, i + 1);
+    const bool bezierSegment = current.smooth || next.smooth;
 
     if (!bezierSegment) {
       if (keyframe.interpolation == ArtifactCore::InterpolationType::Bezier) {
@@ -3560,6 +3594,9 @@ public:
   QToolButton *curveEditorModeButton_ = nullptr;
   QToolButton *curveEditorFitButton_ = nullptr;
   QToolButton *curveEditorHandleButton_ = nullptr;
+  QToolButton *curveEditorAutoTangentButton_ = nullptr;
+  QToolButton *curveEditorFlatTangentButton_ = nullptr;
+  QToolButton *curveEditorLinearTangentButton_ = nullptr;
   QToolButton *curveEditorPinButton_ = nullptr;
   bool curveHandleEditingEnabled_ = false;
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
@@ -3572,6 +3609,7 @@ public:
   QString filterText_;
   QStringList recentLayerNames_;
   QString lastCurrentLayerName_;
+  LayerID lastAutoScrolledLayerId_;
   QVector<LayerID> searchResultLayerIds_;
   int searchResultIndex_ = -1;
   QVector<TimelineRowDescriptor> trackRows_;
@@ -3793,6 +3831,8 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
 
   impl_->curveEditor_->setCurrentFrame(
       static_cast<int64_t>(std::llround(std::max(0.0, impl_->currentFrame_))));
+  impl_->curveEditor_->setHandleEditingEnabled(editableValueGraph &&
+                                               impl_->curveHandleEditingEnabled_);
   if (impl_->graphEditorVisible_ && impl_->curveEditor_) {
     impl_->curveEditor_->focusTrack(impl_->focusedCurveTrackIndex_);
   }
@@ -3816,6 +3856,13 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
             : impl_->curveHandleEditingEnabled_
             ? QStringLiteral("Bezier handle editing is enabled")
             : QStringLiteral("Bezier handle editing is disabled for safer graph edits"));
+  }
+  for (auto *button : {impl_->curveEditorAutoTangentButton_,
+                       impl_->curveEditorFlatTangentButton_,
+                       impl_->curveEditorLinearTangentButton_}) {
+    if (button) {
+      button->setEnabled(editableValueGraph);
+    }
   }
   if (impl_->curveEditorPinButton_) {
     const QSignalBlocker blocker(impl_->curveEditorPinButton_);
@@ -4001,8 +4048,12 @@ bool ArtifactTimelineWidget::isGraphEditorFocusWidget(const QWidget *widget) con
   while (cursor) {
     if (cursor == impl_->curveEditor_ || cursor == impl_->curveEditorPage_ ||
         cursor == impl_->curvePropertyList_ ||
+        cursor == impl_->curveEditorModeButton_ ||
         cursor == impl_->curveEditorFitButton_ ||
         cursor == impl_->curveEditorHandleButton_ ||
+        cursor == impl_->curveEditorAutoTangentButton_ ||
+        cursor == impl_->curveEditorFlatTangentButton_ ||
+        cursor == impl_->curveEditorLinearTangentButton_ ||
         cursor == impl_->curveEditorPinButton_) {
       return true;
     }
@@ -4029,6 +4080,15 @@ void ArtifactTimelineWidget::advanceGraphEditorFocus(const bool reverse)
   }
   if (impl_->curveEditorHandleButton_) {
     focusOrder.push_back(impl_->curveEditorHandleButton_);
+  }
+  if (impl_->curveEditorAutoTangentButton_) {
+    focusOrder.push_back(impl_->curveEditorAutoTangentButton_);
+  }
+  if (impl_->curveEditorFlatTangentButton_) {
+    focusOrder.push_back(impl_->curveEditorFlatTangentButton_);
+  }
+  if (impl_->curveEditorLinearTangentButton_) {
+    focusOrder.push_back(impl_->curveEditorLinearTangentButton_);
   }
   if (impl_->curveEditorPinButton_) {
     focusOrder.push_back(impl_->curveEditorPinButton_);
@@ -4876,8 +4936,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   painterTrackView->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   curveEditor->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   curveEditor->setMinimumHeight(180);
-  curveEditor->setHandleEditingEnabled(false);
-  impl_->curveHandleEditingEnabled_ = false;
+  curveEditor->setHandleEditingEnabled(true);
+  impl_->curveHandleEditingEnabled_ = true;
   curveEditor->setVisible(true);
   impl_->curveEditorGraphMode_ = curveEditorGraphModeFromSettings();
 
@@ -4919,10 +4979,10 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->curveEditorHandleButton_ = new QToolButton(curveHeader);
   impl_->curveEditorHandleButton_->setAutoRaise(true);
   impl_->curveEditorHandleButton_->setCheckable(true);
-  impl_->curveEditorHandleButton_->setChecked(false);
-  impl_->curveEditorHandleButton_->setText(QStringLiteral("Handles Off"));
+  impl_->curveEditorHandleButton_->setChecked(true);
+  impl_->curveEditorHandleButton_->setText(QStringLiteral("Handles On"));
   impl_->curveEditorHandleButton_->setToolTip(
-      QStringLiteral("Bezier handle editing is disabled for safer graph edits"));
+      QStringLiteral("Bezier handle editing is enabled for Value graph keyframes"));
   QObject::connect(impl_->curveEditorHandleButton_, &QToolButton::toggled, this,
                    [this](bool enabled) {
                      if (!impl_ || !impl_->curveEditor_) {
@@ -4932,6 +4992,41 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      impl_->curveEditor_->setHandleEditingEnabled(enabled);
                      refreshCurveEditorTracks();
                    });
+  const auto makeTangentButton =
+      [curveHeader](const QString& text, const QString& tooltip) {
+        auto *button = new TimelineToolCallbackButton(curveHeader);
+        button->setAutoRaise(true);
+        button->setText(text);
+        button->setToolTip(tooltip);
+        return button;
+      };
+  impl_->curveEditorAutoTangentButton_ = makeTangentButton(
+      QStringLiteral("Auto"), QStringLiteral("Auto tangent for selected FCurve key"));
+  static_cast<TimelineToolCallbackButton *>(impl_->curveEditorAutoTangentButton_)
+      ->setCallback([this]() {
+        if (impl_ && impl_->curveEditor_ &&
+            impl_->curveEditor_->setSelectedKeyAutoTangents()) {
+          refreshCurveEditorTracks();
+        }
+      });
+  impl_->curveEditorFlatTangentButton_ = makeTangentButton(
+      QStringLiteral("Flat"), QStringLiteral("Flat tangent for selected FCurve key"));
+  static_cast<TimelineToolCallbackButton *>(impl_->curveEditorFlatTangentButton_)
+      ->setCallback([this]() {
+        if (impl_ && impl_->curveEditor_ &&
+            impl_->curveEditor_->setSelectedKeyFlatTangents()) {
+          refreshCurveEditorTracks();
+        }
+      });
+  impl_->curveEditorLinearTangentButton_ = makeTangentButton(
+      QStringLiteral("Linear"), QStringLiteral("Linear tangent for selected FCurve key"));
+  static_cast<TimelineToolCallbackButton *>(impl_->curveEditorLinearTangentButton_)
+      ->setCallback([this]() {
+        if (impl_ && impl_->curveEditor_ &&
+            impl_->curveEditor_->setSelectedKeyLinearTangents()) {
+          refreshCurveEditorTracks();
+        }
+      });
   impl_->curveEditorPinButton_ = new QToolButton(curveHeader);
   impl_->curveEditorPinButton_->setAutoRaise(true);
   impl_->curveEditorPinButton_->setCheckable(true);
@@ -4959,6 +5054,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   curveHeaderLayout->addWidget(impl_->curveEditorModeButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFitButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorHandleButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorAutoTangentButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorFlatTangentButton_);
+  curveHeaderLayout->addWidget(impl_->curveEditorLinearTangentButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorPinButton_);
   timeNavigatorWidget->setTotalFrames(kDefaultTimelineFrames);
   timeNavigatorWidget->setFixedHeight(kTimelineTopRowHeight);
@@ -5890,6 +5988,7 @@ ArtifactTimelineWidget::~ArtifactTimelineWidget() {
 void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
   impl_->compositionId_ = id;
   impl_->audioWaveformCache_.clear();
+  impl_->lastAutoScrolledLayerId_ = LayerID();
   if (impl_->layerTimelinePanel_) {
     impl_->layerTimelinePanel_->setComposition(id);
   }
@@ -6891,9 +6990,21 @@ void ArtifactTimelineWidget::updateKeyframeState()
           ? static_cast<int>(
                 impl_->painterTrackView_->selectedKeyframeMarkers().size())
           : 0;
+  const auto hoveredMarker =
+      impl_->painterTrackView_ ? impl_->painterTrackView_->hoveredKeyframeMarker()
+                               : ArtifactTimelineTrackPainterView::KeyframeMarkerVisual{};
+  const qint64 currentFrameValue =
+      static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_)));
   QString summary = formatKeyframeNavigationText(state);
   if (selectedKeyframeCount > 0) {
     summary += QStringLiteral(" | Selected keys: %1").arg(selectedKeyframeCount);
+  }
+  if (hoveredMarker.trackIndex >= 0) {
+    const QString hoveredText =
+        formatHoveredKeyframeSummary(hoveredMarker, currentFrameValue);
+    if (!hoveredText.isEmpty()) {
+      summary += QStringLiteral(" | %1").arg(hoveredText);
+    }
   }
   impl_->keyframeStatusLabel_->setText(summary);
   if (impl_->easingLabButton_) {
@@ -6926,8 +7037,10 @@ void ArtifactTimelineWidget::updateSelectionState()
     if (auto *selection = app->layerSelectionManager()) {
       currentLayer = selection->currentLayer();
       selectedCount = static_cast<int>(selection->selectedLayers().size());
-      if (impl_->layerTimelinePanel_ && currentLayer) {
+      if (impl_->layerTimelinePanel_ && currentLayer &&
+          currentLayer->id() != impl_->lastAutoScrolledLayerId_) {
         impl_->layerTimelinePanel_->scrollToLayer(currentLayer->id());
+        impl_->lastAutoScrolledLayerId_ = currentLayer->id();
       }
     }
   }
@@ -6971,19 +7084,52 @@ void ArtifactTimelineWidget::updateSelectionState()
       selectedMarkers = impl_->painterTrackView_->selectedKeyframeMarkers();
       selectedKeyframeCount = static_cast<int>(selectedMarkers.size());
     }
+    const auto hoveredMarker =
+        impl_->painterTrackView_ ? impl_->painterTrackView_->hoveredKeyframeMarker()
+                                 : ArtifactTimelineTrackPainterView::KeyframeMarkerVisual{};
     if (effectiveSelectedCount <= 0 && selectedKeyframeCount <= 0) {
       impl_->selectionSummaryLabel_->setText(
           QStringLiteral("Selection: 0 layers | Select a layer to continue"));
     } else if (effectiveSelectedCount > 0 && selectedKeyframeCount <= 0) {
       impl_->selectionSummaryLabel_->setText(
-          QStringLiteral("Selection: %1 layers | Keys: 0 selected | Lane: empty at F%2 | Add a keyframe at the playhead")
+          QStringLiteral("Selection: %1 layers | Keys: 0 | Lane: empty | Current: F%2 | Add keyframe at playhead")
               .arg(effectiveSelectedCount)
               .arg(frameLabelValue));
     } else {
-      impl_->selectionSummaryLabel_->setText(
+      QString selectionText =
           QStringLiteral("Selection: %1 layers | %2")
               .arg(effectiveSelectedCount)
-              .arg(formatSelectedKeyframeSummary(selectedMarkers, frameLabelValue)));
+              .arg(formatSelectedKeyframeSummary(selectedMarkers, frameLabelValue));
+      if (hoveredMarker.trackIndex >= 0) {
+        const QString hoveredText =
+            formatHoveredKeyframeSummary(hoveredMarker, frameLabelValue);
+        if (!hoveredText.isEmpty()) {
+          const bool hoveredAtCurrent = std::llround(hoveredMarker.frame) == frameLabelValue;
+          selectionText += hoveredAtCurrent
+                               ? QStringLiteral(" | Hovered(current): %1").arg(hoveredText)
+                               : QStringLiteral(" | Hovered: %1").arg(hoveredText);
+        }
+      }
+      if (selectedKeyframeCount > 0) {
+        qint64 nearestFrame = -1;
+        qint64 nearestDelta = std::numeric_limits<qint64>::max();
+        for (const auto& marker : selectedMarkers) {
+          const qint64 markerFrame = static_cast<qint64>(std::llround(marker.frame));
+          const qint64 delta = std::llabs(markerFrame - frameLabelValue);
+          if (delta < nearestDelta) {
+            nearestDelta = delta;
+            nearestFrame = markerFrame;
+          }
+        }
+        if (nearestFrame >= 0) {
+          selectionText += nearestDelta == 0
+                               ? QStringLiteral(" | Nearest: F%1 (current)").arg(nearestFrame)
+                               : QStringLiteral(" | Nearest: F%1 (%2)")
+                                     .arg(nearestFrame)
+                                     .arg(QString::number(nearestFrame - frameLabelValue));
+        }
+      }
+      impl_->selectionSummaryLabel_->setText(selectionText);
     }
     impl_->selectionSummaryLabel_->setVisible(false);
   }

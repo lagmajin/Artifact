@@ -24,6 +24,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QKeyEvent>
+#include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -679,6 +680,7 @@ public:
   QString focusedEffectId_;
   ArtifactAbstractLayerPtr lastSyncedLayer_;
   QString lastSyncedFocusedEffectId_;
+  QString lastEffectPropertyStateSignature_;
 
   struct EffectRack {
     QListWidget *listWidget = nullptr;
@@ -705,6 +707,7 @@ public:
   int refreshMask_ = 0;
   bool refreshQueued_ = false;
   bool suppressRackSelectionSync_ = false;
+  bool syncingEffectPropertyWidget_ = false;
 
   enum RefreshReason {
     CompositionNoteDirty = 1 << 0,
@@ -835,6 +838,13 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   if (!effectPropertyWidget) {
     return;
   }
+  if (syncingEffectPropertyWidget_) {
+    return;
+  }
+  syncingEffectPropertyWidget_ = true;
+  const auto clearSyncing = qScopeGuard([this]() {
+    syncingEffectPropertyWidget_ = false;
+  });
 
   const auto showEffectGuidance = [this](const QString &text,
                                          const bool showPropertyWidget) {
@@ -854,6 +864,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
         false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
+    lastEffectPropertyStateSignature_.clear();
     return;
   }
 
@@ -865,6 +876,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
         false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
+    lastEffectPropertyStateSignature_.clear();
     return;
   }
 
@@ -876,6 +888,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
         false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
+    lastEffectPropertyStateSignature_.clear();
     return;
   }
 
@@ -887,19 +900,13 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
         false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
+    lastEffectPropertyStateSignature_.clear();
     return;
   }
-
-  if (layer == lastSyncedLayer_ && focusedEffectId_ == lastSyncedFocusedEffectId_) {
-    return;
-  }
-
-  const bool layerChanged = layer != lastSyncedLayer_;
-  lastSyncedLayer_ = layer;
-  lastSyncedFocusedEffectId_ = focusedEffectId_;
 
   bool effectExists = false;
   QString focusedEffectName;
+  QString resolvedFocusedEffectId = focusedEffectId_.trimmed();
   if (!focusedEffectId_.trimmed().isEmpty()) {
     for (const auto &effect : layer->getEffects()) {
       if (effect && effect->effectID().toQString() == focusedEffectId_) {
@@ -912,18 +919,32 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
 
   if (!effectExists) {
     focusedEffectId_.clear();
+    resolvedFocusedEffectId.clear();
   }
+
+  const QString stateSignature =
+      QStringLiteral("%1|%2").arg(layer->id().toString(), resolvedFocusedEffectId);
+  if (layer == lastSyncedLayer_ &&
+      resolvedFocusedEffectId == lastSyncedFocusedEffectId_ &&
+      stateSignature == lastEffectPropertyStateSignature_) {
+    return;
+  }
+
+  const bool layerChanged = layer != lastSyncedLayer_;
+  lastSyncedLayer_ = layer;
+  lastSyncedFocusedEffectId_ = resolvedFocusedEffectId;
+  lastEffectPropertyStateSignature_ = stateSignature;
 
   if (layerChanged) {
     effectPropertyWidget->setLayer(layer);
   }
-  effectPropertyWidget->setFocusedEffectId(focusedEffectId_);
+  effectPropertyWidget->setFocusedEffectId(resolvedFocusedEffectId);
 
-  const bool hasFocus = !focusedEffectId_.trimmed().isEmpty();
+  const bool hasFocus = !resolvedFocusedEffectId.trimmed().isEmpty();
   showEffectGuidance(
       hasFocus
           ? QStringLiteral("Editing \"%1\" below. The same parameters are also mirrored in the Properties dock.")
-                .arg(focusedEffectName.isEmpty() ? focusedEffectId_
+                .arg(focusedEffectName.isEmpty() ? resolvedFocusedEffectId
                                                  : focusedEffectName)
           : QStringLiteral("Select an effect in any rack. Its parameters will appear below and in the Properties dock."),
       hasFocus);
@@ -1629,6 +1650,9 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
   lastCompositionNoteText_.clear();
   lastLayerNoteText_.clear();
   lastRackSignatures_.fill(QString());
+  lastSyncedLayer_.reset();
+  lastSyncedFocusedEffectId_.clear();
+  lastEffectPropertyStateSignature_.clear();
   refreshMask_ = 0;
   refreshQueued_ = false;
   focusedEffectId_.clear();
@@ -1684,6 +1708,9 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
   lastMatteInfoSignature_.clear();
   lastLayerNoteText_.clear();
   lastRackSignatures_.fill(QString());
+  lastSyncedLayer_.reset();
+  lastSyncedFocusedEffectId_.clear();
+  lastEffectPropertyStateSignature_.clear();
   refreshMask_ = 0;
   refreshQueued_ = false;
   focusedEffectId_.clear();

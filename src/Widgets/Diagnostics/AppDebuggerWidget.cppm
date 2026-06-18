@@ -1697,7 +1697,7 @@ public:
             const QString nextText = warningText == QStringLiteral("none")
                                          ? QStringLiteral("capture frame when behavior changes")
                                          : QStringLiteral("open the relevant diagnostic tab");
-            overviewSummary_->setText(QStringLiteral("Goal: inspect current app state  |  Now: project=%1 composition=%2 layer=%3 frame=%4 playback=%5 backend=%6  |  Visual Density Monitor: %7  |  Warning: %8  |  Next: %9")
+            overviewSummary_->setText(QStringLiteral("goal: inspect current app state | now: project=%1 comp=%2 layer=%3 frame=%4 play=%5 backend=%6 dens=%7 | warning: %8 | next: %9")
                                           .arg(projectText,
                                                compositionText,
                                                layerText)

@@ -52,6 +52,7 @@ void ArtifactToolManager::setActiveTool(ToolType type) {
    case ToolType::Slide: return "SlideTool";
    case ToolType::MotionSketch: return "MotionSketchTool";
    case ToolType::Puppet: return "PuppetTool";
+   case ToolType::ScrubPreview: return "ScrubPreviewTool";
    default: return "Unknown";
   }
  }

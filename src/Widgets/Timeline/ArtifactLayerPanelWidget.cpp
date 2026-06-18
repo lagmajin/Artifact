@@ -834,11 +834,12 @@ namespace {
                                            const QString& propertyPath,
                                            const RationalTime& currentTime)
   {
-   if (!composition || !layer || propertyPath.trimmed().isEmpty()) {
+   const QString trimmedPropertyPath = propertyPath.trimmed();
+   if (!composition || !layer || trimmedPropertyPath.isEmpty()) {
     return false;
    }
 
-   auto property = layer->getProperty(propertyPath);
+   auto property = layer->getProperty(trimmedPropertyPath);
    if (!property || !property->isAnimatable()) {
     return false;
    }
@@ -2430,7 +2431,17 @@ void ArtifactLayerPanelWidget::scrollToLayer(const LayerID& id)
     return;
   }
   impl_->selectedLayerId = id;
-  const int desiredTop = std::max(0, idx * impl_->rowHeight - (height() / 3));
+  const int rowTop = idx * impl_->rowHeight;
+  const int rowBottom = rowTop + impl_->rowHeight;
+  const int visibleTop = static_cast<int>(std::floor(impl_->verticalOffset));
+  const int visibleBottom = visibleTop + std::max(1, height());
+  const int comfort = std::max(impl_->rowHeight, height() / 8);
+  if (rowTop >= visibleTop + comfort &&
+      rowBottom <= visibleBottom - comfort) {
+    update();
+    return;
+  }
+  const int desiredTop = std::max(0, rowTop - (height() / 3));
   impl_->setVerticalOffset(static_cast<double>(desiredTop), this);
   update();
 }
@@ -2466,7 +2477,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     impl_->clearDragState();
     return;
   }
-  const auto& row = impl_->visibleRows[idx];
+  const auto row = impl_->visibleRows[idx];
   auto layer = row.layer;
   if (!layer) {
     impl_->clearDragState();
@@ -2497,13 +2508,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         propertyKeyframeMarkerRect(width(), impl_->rowViewportY(idx), rowH);
     if (keyframeRect.contains(event->pos())) {
      if (auto comp = safeCompositionLookup(impl_->compositionId)) {
-      togglePropertyKeyframeAtCurrentTime(comp, layer, row.propertyPath, currentTime);
+      const QString propertyPath = row.propertyPath.trimmed();
+      togglePropertyKeyframeAtCurrentTime(comp, layer, propertyPath, currentTime);
       auto* service = ArtifactProjectService::instance();
       if (service) {
        service->selectLayer(layer->id());
       }
       impl_->selectedLayerId = layer->id();
-      impl_->currentPropertyPath = row.propertyPath.trimmed();
+      impl_->currentPropertyPath = propertyPath;
       propertyFocusChanged(impl_->selectedLayerId, impl_->currentPropertyPath);
       update();
      }
