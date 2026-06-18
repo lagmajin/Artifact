@@ -20,6 +20,7 @@ module;
 #include <QJsonObject>
 #include <QJsonValue>
 #include <QMenu>
+#include <QToolButton>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
@@ -6545,10 +6546,15 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   }
 
   if (chosen == keyPatternDialogAct) {
-    if (auto *parentTimeline = qobject_cast<QWidget *>(parentWidget())) {
-      QMetaObject::invokeMethod(parentTimeline, [parentTimeline]() {
-        Q_UNUSED(parentTimeline);
-      });
+    QWidget *cursor = parentWidget();
+    while (cursor) {
+      if (auto *button = cursor->findChild<QToolButton *>(
+              QStringLiteral("timelineKeyPatternButton"),
+              Qt::FindChildrenRecursively)) {
+        button->click();
+        break;
+      }
+      cursor = cursor->parentWidget();
     }
     event->accept();
     return;
@@ -6607,9 +6613,22 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       event->accept();
       return;
     }
+    QVector<ArtifactAbstractLayerPtr> orderedLayers = selectedLayers.values().toVector();
+    std::sort(orderedLayers.begin(), orderedLayers.end(),
+              [](const auto &lhs, const auto &rhs) {
+                if (!lhs || !rhs) {
+                  return lhs && !rhs;
+                }
+                const qint64 lhsIn = lhs->inPoint().framePosition();
+                const qint64 rhsIn = rhs->inPoint().framePosition();
+                if (lhsIn != rhsIn) {
+                  return lhsIn < rhsIn;
+                }
+                return lhs->id().toString() < rhs->id().toString();
+              });
     const qint64 step = 4;
     qint64 cursor = contextFrame;
-    for (const auto &layer : selectedLayers) {
+    for (const auto &layer : orderedLayers) {
       if (!layer) {
         continue;
       }
