@@ -725,26 +725,20 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->toolBar = toolBar;
 
   auto *workspaceButton = new QToolButton(this);
-  workspaceButton->setText(QStringLiteral("Workspace"));
+  workspaceButton->setText(Artifact::workspaceModeInfo(WorkspaceMode::Default).label);
   workspaceButton->setPopupMode(QToolButton::InstantPopup);
   auto *workspaceMenu = new QMenu(workspaceButton);
-  const auto addWorkspaceAction = [this, workspaceMenu](const QString &label,
-                                                        WorkspaceMode mode) {
-    QAction *action = workspaceMenu->addAction(label);
-    QObject::connect(action, &QAction::triggered, this, [this, mode]() {
+  for (const auto &info : Artifact::workspaceModeInfos()) {
+    QAction *action = workspaceMenu->addAction(info.label);
+    action->setIcon(QIcon(resolveIconPath(info.iconPath)));
+    action->setData(static_cast<int>(info.mode));
+    QObject::connect(action, &QAction::triggered, this, [this, mode = info.mode]() {
       setWorkspaceMode(mode);
     });
+    if (info.mode == WorkspaceMode::Default) {
+      workspaceButton->setText(info.label);
+    }
   };
-  addWorkspaceAction(QStringLiteral("Default"), WorkspaceMode::Default);
-  addWorkspaceAction(QStringLiteral("Import"), WorkspaceMode::Import);
-  addWorkspaceAction(QStringLiteral("Layout"), WorkspaceMode::Layout);
-  addWorkspaceAction(QStringLiteral("Animation"), WorkspaceMode::Animation);
-  addWorkspaceAction(QStringLiteral("VFX"), WorkspaceMode::VFX);
-  addWorkspaceAction(QStringLiteral("Compositing"), WorkspaceMode::Compositing);
-  addWorkspaceAction(QStringLiteral("Text"), WorkspaceMode::Text);
-  addWorkspaceAction(QStringLiteral("Export"), WorkspaceMode::Export);
-  addWorkspaceAction(QStringLiteral("Debug"), WorkspaceMode::Debug);
-  addWorkspaceAction(QStringLiteral("Audio"), WorkspaceMode::Audio);
   workspaceButton->setMenu(workspaceMenu);
   toolBar->addWidget(workspaceButton);
 
@@ -779,6 +773,9 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                    [this](WorkspaceMode mode) {
                      if (impl_) {
                        impl_->workspaceMode_ = mode;
+                       if (auto *workspaceButton = findChild<QToolButton*>()) {
+                         workspaceButton->setText(Artifact::workspaceModeText(mode));
+                       }
                      }
                    });
 
