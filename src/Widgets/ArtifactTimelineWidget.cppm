@@ -4235,10 +4235,12 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   easingLabButton->setToolTip(QStringLiteral("Open Easing Lab (Comparison Tool)"));
   easingLabButton->setAutoRaise(true);
   easingLabButton->setVisible(false);
+  easingLabButton->setObjectName(QStringLiteral("timelineEasingLabButton"));
   keyPatternButton->setText(QStringLiteral("Pattern+"));
   keyPatternButton->setToolTip(QStringLiteral("Open Key Pattern Dialog"));
   keyPatternButton->setAutoRaise(true);
   keyPatternButton->setVisible(false);
+  keyPatternButton->setObjectName(QStringLiteral("timelineKeyPatternButton"));
   auto currentLayerLabel = new QLabel();
   auto recentLayerLabel = new QLabel();
   auto frameSummaryLabel = new QLabel();
