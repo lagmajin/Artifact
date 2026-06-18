@@ -53,7 +53,7 @@ module;
 #include <OpenImageIO/imageio.h>
 #include <opencv2/opencv.hpp>
 #include <QSlider>
-#include <QGroupBox>
+#include <QFrame>
 #include <QGridLayout>
 #include <QElapsedTimer>
 #include <QSet>
@@ -118,6 +118,31 @@ constexpr int kAssetThumbnailMinPx = 25;
 constexpr int kAssetThumbnailMaxPx = 256;
 constexpr int kAssetThumbnailDefaultPx = 96;
 constexpr auto kAssetBrowserContext = "Panel.AssetBrowser";
+
+void applyAssetBrowserPanelPalette(QWidget* widget)
+{
+  if (!widget) {
+    return;
+  }
+
+  QPalette pal = widget->palette();
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+  pal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+  pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+  pal.setColor(QPalette::Text, QColor(theme.textColor));
+  widget->setAutoFillBackground(true);
+  widget->setPalette(pal);
+}
+
+QFrame* makeAssetBrowserPanel(QWidget* parent = nullptr)
+{
+  auto* frame = new QFrame(parent);
+  frame->setFrameShape(QFrame::StyledPanel);
+  frame->setFrameShadow(QFrame::Plain);
+  applyAssetBrowserPanelPalette(frame);
+  return frame;
+}
 
 class RecentFolderButton final : public QToolButton {
  public:
@@ -780,11 +805,12 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   impl_->searchWidget->setClearButtonEnabled(true);
   impl_->searchWidget->setMinimumWidth(220);
   layout->setContentsMargins(0, 0, 0, 0);
-  layout->setSpacing(6);
+  layout->setSpacing(4);
   layout->addWidget(upButton);
   layout->addWidget(refreshButton);
   layout->addWidget(impl_->gridViewButton);
   layout->addWidget(impl_->listViewButton);
+  layout->addSpacing(10);
   layout->addStretch(1);
   layout->addWidget(impl_->searchWidget);
   setLayout(layout);
@@ -1904,6 +1930,8 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
 
   // File type filter buttons
   auto filterButtonsLayout = new QHBoxLayout();
+  filterButtonsLayout->setContentsMargins(0, 0, 0, 0);
+  filterButtonsLayout->setSpacing(4);
   impl_->filterButtonGroup_ = new QButtonGroup(this);
 
   auto allButton = new QToolButton();
@@ -2031,8 +2059,12 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    });
 
   auto vLayout = new QVBoxLayout();
+  vLayout->setContentsMargins(6, 6, 6, 6);
+  vLayout->setSpacing(6);
 
   auto layout = new QHBoxLayout();
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(6);
 
   auto directoryView = impl_->directoryView_ = new QTreeView();
   auto directoryModel = impl_->directoryModel_ = new AssetDirectoryModel(this);
@@ -2067,19 +2099,15 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
           });
 
   impl_->syncStateLabel_ = new QLabel(impl_->syncStateText(), this);
-  impl_->syncStateLabel_->setAlignment(Qt::AlignCenter);
-  {
-    QPalette pal = impl_->syncStateLabel_->palette();
-    pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
-    pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
-    pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
-    pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
-    impl_->syncStateLabel_->setAutoFillBackground(true);
-    impl_->syncStateLabel_->setPalette(pal);
-  }
+  impl_->syncStateLabel_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  impl_->syncStateLabel_->setMinimumHeight(24);
+  applyAssetBrowserPanelPalette(impl_->syncStateLabel_);
 
-  auto* leftHubCard = new QGroupBox(QStringLiteral("Library Hub"));
+  auto* leftHubCard = makeAssetBrowserPanel(this);
   auto* leftHubLayout = new QVBoxLayout();
+  leftHubLayout->setContentsMargins(8, 6, 8, 6);
+  leftHubLayout->setSpacing(4);
+  auto* leftHubTitle = new QLabel(QStringLiteral("Library Hub"), leftHubCard);
   impl_->currentPathLabel_ = new QLabel(QStringLiteral("Current: %1").arg(desktopPath), leftHubCard);
   impl_->leftHubSummaryLabel_ = new QLabel(leftHubCard);
   impl_->leftHubRecentLabel_ = new QLabel(leftHubCard);
@@ -2097,19 +2125,12 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   impl_->leftHubSummaryLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   impl_->leftHubRecentLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
   impl_->leftHubSelectionLabel_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-  {
-   QPalette pal = leftHubCard->palette();
-   pal.setColor(QPalette::Window, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
-   pal.setColor(QPalette::Base, QColor(ArtifactCore::currentDCCTheme().secondaryBackgroundColor));
-   pal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor));
-   pal.setColor(QPalette::Text, QColor(ArtifactCore::currentDCCTheme().textColor));
-   leftHubCard->setAutoFillBackground(true);
-   leftHubCard->setPalette(pal);
-   impl_->currentPathLabel_->setPalette(pal);
-   impl_->leftHubSummaryLabel_->setPalette(pal);
-   impl_->leftHubRecentLabel_->setPalette(pal);
-   impl_->leftHubSelectionLabel_->setPalette(pal);
-  }
+  applyAssetBrowserPanelPalette(leftHubTitle);
+  applyAssetBrowserPanelPalette(impl_->currentPathLabel_);
+  applyAssetBrowserPanelPalette(impl_->leftHubSummaryLabel_);
+  applyAssetBrowserPanelPalette(impl_->leftHubRecentLabel_);
+  applyAssetBrowserPanelPalette(impl_->leftHubSelectionLabel_);
+  leftHubLayout->addWidget(leftHubTitle);
   leftHubLayout->addWidget(impl_->currentPathLabel_);
   leftHubLayout->addWidget(impl_->leftHubRecentLabel_);
   leftHubLayout->addWidget(impl_->leftHubSelectionLabel_);
@@ -2252,8 +2273,10 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   });
 
   // Create thumbnail size adjustment
-  auto thumbnailControlGroup = new QGroupBox("Thumbnail Size");
+  auto thumbnailControlGroup = makeAssetBrowserPanel(this);
   auto thumbnailLayout = new QHBoxLayout();
+  thumbnailLayout->setContentsMargins(8, 5, 8, 5);
+  thumbnailLayout->setSpacing(6);
 
   auto sizeLabel = new QLabel(QStringLiteral("%1px").arg(kAssetThumbnailDefaultPx));
   auto sizeSlider = impl_->thumbnailSizeSlider_ = new QSlider(Qt::Horizontal);
@@ -2273,14 +2296,17 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     impl_->applyFilters();
   });
 
-  thumbnailLayout->addWidget(new QLabel("Size:"));
+  thumbnailLayout->addWidget(new QLabel("Thumbnail:"));
   thumbnailLayout->addWidget(sizeSlider);
   thumbnailLayout->addWidget(sizeLabel);
   thumbnailControlGroup->setLayout(thumbnailLayout);
 
   // Create file info panel
-  auto fileInfoGroup = new QGroupBox("File Details");
+  auto fileInfoGroup = makeAssetBrowserPanel(this);
   auto fileInfoLayout = new QVBoxLayout();
+  fileInfoLayout->setContentsMargins(8, 6, 8, 6);
+  fileInfoLayout->setSpacing(4);
+  auto* fileInfoTitle = new QLabel(QStringLiteral("File Details"), fileInfoGroup);
 
   auto fileInfoLabel = impl_->fileInfoLabel_ = new QLabel(QStringLiteral("Open a file to inspect details"));
   fileInfoLabel->setWordWrap(true);
@@ -2292,9 +2318,13 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     fileInfoLabel->setPalette(pal);
   }
 
+  applyAssetBrowserPanelPalette(fileInfoTitle);
+  applyAssetBrowserPanelPalette(fileInfoLabel);
+
+  fileInfoLayout->addWidget(fileInfoTitle);
   fileInfoLayout->addWidget(fileInfoLabel);
   fileInfoGroup->setLayout(fileInfoLayout);
-  fileInfoGroup->setMaximumHeight(150);
+  fileInfoGroup->setMaximumHeight(132);
 
   // Initial load
   impl_->applyFilters();
@@ -2314,21 +2344,32 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
         }
       }));
 
-  auto VBoxLayout = new  QVBoxLayout();
+  auto* navigationHeader = makeAssetBrowserPanel(this);
+  auto* navigationHeaderLayout = new QVBoxLayout(navigationHeader);
+  navigationHeaderLayout->setContentsMargins(8, 6, 8, 6);
+  navigationHeaderLayout->setSpacing(6);
+  navigationHeaderLayout->addWidget(breadcrumbBar);
+  navigationHeaderLayout->addWidget(assetToolBar);
+  navigationHeaderLayout->addLayout(filterButtonsLayout);
+
+  auto* browserSurface = makeAssetBrowserPanel(this);
+  auto* VBoxLayout = new QVBoxLayout(browserSurface);
+  VBoxLayout->setContentsMargins(0, 0, 0, 0);
+  VBoxLayout->setSpacing(6);
   VBoxLayout->addWidget(impl_->syncStateLabel_);
   VBoxLayout->addWidget(fileView);
   VBoxLayout->addWidget(fileInfoGroup);
   VBoxLayout->addWidget(thumbnailControlGroup);
 
   auto leftColumnLayout = new QVBoxLayout();
+  leftColumnLayout->setContentsMargins(0, 0, 0, 0);
+  leftColumnLayout->setSpacing(6);
   leftColumnLayout->addWidget(leftHubCard);
   leftColumnLayout->addWidget(directoryView, 1);
 
-  vLayout->addWidget(breadcrumbBar);
-  vLayout->addWidget(assetToolBar);
-  vLayout->addLayout(filterButtonsLayout);
+  vLayout->addWidget(navigationHeader);
   layout->addLayout(leftColumnLayout, 1);
-  layout->addLayout(VBoxLayout, 3);
+  layout->addWidget(browserSurface, 3);
   vLayout->addLayout(layout);
   setLayout(vLayout);
 
