@@ -2057,10 +2057,12 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   applyPropertyFieldPalette(editor_);
 
   // Load Icons
-  QIcon prevIcon =
-      loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_left.svg"));
-  QIcon nextIcon =
-      loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_right.svg"));
+  QIcon prevIcon = loadPropertyIcon(
+      QStringLiteral("Studio/property_key_previous.svg"),
+      QStringLiteral("Studio/property_key_previous.svg"));
+  QIcon nextIcon = loadPropertyIcon(
+      QStringLiteral("Studio/property_key_next.svg"),
+      QStringLiteral("Studio/property_key_next.svg"));
   QIcon resIcon =
       loadPropertyIcon(QStringLiteral("MaterialVS/neutral/undo.svg"));
   QIcon exprIcon = loadPropertyIcon(QStringLiteral("MaterialVS/blue/code.svg"));
@@ -2073,6 +2075,12 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   nextKeyBtn_->setIcon(nextIcon);
   prevKeyBtn_->setIconSize(QSize(10, 10));
   nextKeyBtn_->setIconSize(QSize(10, 10));
+  prevKeyBtn_->setObjectName(QStringLiteral("propertyPrevKeyButton"));
+  nextKeyBtn_->setObjectName(QStringLiteral("propertyNextKeyButton"));
+  prevKeyBtn_->setToolTip(
+      QStringLiteral("Previous keyframe: %1").arg(propertyName));
+  nextKeyBtn_->setToolTip(
+      QStringLiteral("Next keyframe: %1").arg(propertyName));
   prevKeyBtn_->setFlat(true);
   nextKeyBtn_->setFlat(true);
   prevKeyBtn_->setVisible(false);
@@ -2256,11 +2264,15 @@ void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString &tooltip) {
   if (supplementaryLabel_) {
     supplementaryLabel_->setToolTip(tooltip);
   }
-  keyframeButton_->setToolTip(tooltip);
-  prevKeyBtn_->setToolTip(tooltip);
-  nextKeyBtn_->setToolTip(tooltip);
-  resetButton_->setToolTip(tooltip);
-  expressionButton_->setToolTip(tooltip);
+  keyframeButton_->setToolTip(
+      QStringLiteral("Toggle keyframe: %1").arg(propertyName_));
+  prevKeyBtn_->setToolTip(
+      QStringLiteral("Previous keyframe: %1").arg(propertyName_));
+  nextKeyBtn_->setToolTip(
+      QStringLiteral("Next keyframe: %1").arg(propertyName_));
+  resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName_));
+  expressionButton_->setToolTip(
+      QStringLiteral("Expression: %1").arg(propertyName_));
 }
 
 void ArtifactPropertyEditorRowWidget::setSupplementaryText(
