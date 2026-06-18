@@ -67,29 +67,7 @@ WorkspaceMode workspaceModeFromText(const QString &text) {
 }
 
 QString workspaceModeText(WorkspaceMode mode) {
-  switch (mode) {
-  case WorkspaceMode::Default:
-    return QStringLiteral("Default");
-  case WorkspaceMode::Import:
-    return QStringLiteral("Import");
-  case WorkspaceMode::Layout:
-    return QStringLiteral("Layout");
-  case WorkspaceMode::Animation:
-    return QStringLiteral("Animation");
-  case WorkspaceMode::VFX:
-    return QStringLiteral("VFX");
-  case WorkspaceMode::Compositing:
-    return QStringLiteral("Compositing");
-  case WorkspaceMode::Text:
-    return QStringLiteral("Text");
-  case WorkspaceMode::Export:
-    return QStringLiteral("Export");
-  case WorkspaceMode::Debug:
-    return QStringLiteral("Debug");
-  case WorkspaceMode::Audio:
-    return QStringLiteral("Audio");
-  }
-  return QStringLiteral("Default");
+  return workspaceModeInfo(mode).label;
 }
 
 QStringList workspaceModeLabels() {

@@ -60,6 +60,7 @@ import Widgets.Dock.StyleManager;
 import Widgets.Utils.CSS;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
+import Artifact.Workspace.Modes;
 import Application.AppSettings;
 #ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
 import Command.Palette;
@@ -752,38 +753,9 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->toolOptionsBar->clearShapeOptions();
   impl_->toolOptionsHost = new QToolBar(this);
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    const QString workspaceModeText =
-        settings->projectDefaultWorkspaceModeText();
-    WorkspaceMode startupMode = WorkspaceMode::Default;
-    if (workspaceModeText.compare(QStringLiteral("Animation"),
-                                  Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Animation;
-    } else if (workspaceModeText.compare(QStringLiteral("Import"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Import;
-    } else if (workspaceModeText.compare(QStringLiteral("Layout"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Layout;
-    } else if (workspaceModeText.compare(QStringLiteral("VFX"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::VFX;
-    } else if (workspaceModeText.compare(QStringLiteral("Compositing"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Compositing;
-    } else if (workspaceModeText.compare(QStringLiteral("Text"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Text;
-    } else if (workspaceModeText.compare(QStringLiteral("Export"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Export;
-    } else if (workspaceModeText.compare(QStringLiteral("Debug"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Debug;
-    } else if (workspaceModeText.compare(QStringLiteral("Audio"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Audio;
-    }
-    impl_->workspaceMode_ = startupMode;
+    impl_->workspaceMode_ = Artifact::workspaceModeInfoForText(
+                                settings->projectDefaultWorkspaceModeText())
+                                .mode;
   }
   impl_->toolOptionsHost->setMovable(false);
   impl_->toolOptionsHost->setFloatable(false);
