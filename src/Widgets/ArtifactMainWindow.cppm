@@ -530,6 +530,7 @@ public:
   ArtifactToolBar *toolBar = nullptr;
   ArtifactToolOptionsBar *toolOptionsBar = nullptr;
   QToolBar *toolOptionsHost = nullptr;
+  QToolButton *workspaceButton = nullptr;
   QWidget *centralWidgetHost = nullptr;
   CDockWidget *primaryCenterDock = nullptr;
   bool primaryCenterDockAssigned = false;
@@ -725,6 +726,7 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->toolBar = toolBar;
 
   auto *workspaceButton = new QToolButton(this);
+  impl_->workspaceButton = workspaceButton;
   workspaceButton->setText(Artifact::workspaceModeInfo(WorkspaceMode::Default).label);
   workspaceButton->setPopupMode(QToolButton::InstantPopup);
   auto *workspaceMenu = new QMenu(workspaceButton);
@@ -751,6 +753,9 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                                 settings->projectDefaultWorkspaceModeText())
                                 .mode;
   }
+  if (impl_->workspaceButton) {
+    impl_->workspaceButton->setText(Artifact::workspaceModeText(impl_->workspaceMode_));
+  }
   impl_->toolOptionsHost->setMovable(false);
   impl_->toolOptionsHost->setFloatable(false);
   impl_->toolOptionsHost->setIconSize(QSize(16, 16));
@@ -773,8 +778,8 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                    [this](WorkspaceMode mode) {
                      if (impl_) {
                        impl_->workspaceMode_ = mode;
-                       if (auto *workspaceButton = findChild<QToolButton*>()) {
-                         workspaceButton->setText(Artifact::workspaceModeText(mode));
+                       if (impl_->workspaceButton) {
+                         impl_->workspaceButton->setText(Artifact::workspaceModeText(mode));
                        }
                      }
                    });
