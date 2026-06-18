@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 
 #include <wobjectdefs.h>
@@ -86,6 +86,7 @@ public:
   void eraserToolRequested() W_SIGNAL(eraserToolRequested);
   void puppetToolRequested() W_SIGNAL(puppetToolRequested);
   void motionSketchToolRequested() W_SIGNAL(motionSketchToolRequested);
+  void scrubPreviewToolRequested() W_SIGNAL(scrubPreviewToolRequested);
 
   // Zoom signals
   void zoomInRequested() W_SIGNAL(zoomInRequested);

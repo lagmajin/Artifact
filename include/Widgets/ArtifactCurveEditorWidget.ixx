@@ -58,6 +58,9 @@ export namespace ArtifactCore {
   void focusTrack(int trackIndex);
   void setHandleEditingEnabled(bool enabled);
   void setKeyEditingEnabled(bool enabled);
+  bool setSelectedKeyAutoTangents();
+  bool setSelectedKeyFlatTangents();
+  bool setSelectedKeyLinearTangents();
 
  signals:
   void interactionStarted() W_SIGNAL(interactionStarted);

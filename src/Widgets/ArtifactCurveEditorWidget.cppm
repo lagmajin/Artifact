@@ -539,6 +539,114 @@ public:
   }
   return true;
  }
+
+ bool selectedKeyBounds(CurveTrack*& outTrack, CurveKey*& outKey,
+                        const CurveKey*& outPrev, const CurveKey*& outNext) {
+  outTrack = nullptr;
+  outKey = nullptr;
+  outPrev = nullptr;
+  outNext = nullptr;
+  if (selectedTrack_ < 0 || selectedTrack_ >= static_cast<int>(tracks_.size())) {
+   return false;
+  }
+  auto& track = tracks_[selectedTrack_];
+  if (selectedKey_ < 0 || selectedKey_ >= static_cast<int>(track.keys.size())) {
+   return false;
+  }
+  outTrack = &track;
+  outKey = &track.keys[selectedKey_];
+  if (selectedKey_ > 0) {
+   outPrev = &track.keys[selectedKey_ - 1];
+  }
+  if (selectedKey_ + 1 < static_cast<int>(track.keys.size())) {
+   outNext = &track.keys[selectedKey_ + 1];
+  }
+  return true;
+ }
+
+ bool setSelectedTangentsFlat() {
+  CurveTrack* track = nullptr;
+  CurveKey* key = nullptr;
+  const CurveKey* prev = nullptr;
+  const CurveKey* next = nullptr;
+  if (!selectedKeyBounds(track, key, prev, next)) {
+   return false;
+  }
+  Q_UNUSED(track);
+  if (prev) {
+   const int64_t span = std::max<int64_t>(1, (key->frame - prev->frame) / 3);
+   key->inHandleFrame = -span;
+   key->inHandleValue = 0.0f;
+  }
+  if (next) {
+   const int64_t span = std::max<int64_t>(1, (next->frame - key->frame) / 3);
+   key->outHandleFrame = span;
+   key->outHandleValue = 0.0f;
+  }
+  key->smooth = true;
+  return true;
+ }
+
+ bool setSelectedTangentsAuto() {
+  CurveTrack* track = nullptr;
+  CurveKey* key = nullptr;
+  const CurveKey* prev = nullptr;
+  const CurveKey* next = nullptr;
+  if (!selectedKeyBounds(track, key, prev, next)) {
+   return false;
+  }
+  Q_UNUSED(track);
+  float slope = 0.0f;
+  if (prev && next) {
+   const float df = static_cast<float>(next->frame - prev->frame);
+   slope = df > 0.0f ? (next->value - prev->value) / df : 0.0f;
+  } else if (prev) {
+   const float df = static_cast<float>(key->frame - prev->frame);
+   slope = df > 0.0f ? (key->value - prev->value) / df : 0.0f;
+  } else if (next) {
+   const float df = static_cast<float>(next->frame - key->frame);
+   slope = df > 0.0f ? (next->value - key->value) / df : 0.0f;
+  }
+  if (prev) {
+   const int64_t span = std::max<int64_t>(1, (key->frame - prev->frame) / 3);
+   key->inHandleFrame = -span;
+   key->inHandleValue = -slope * static_cast<float>(span);
+  }
+  if (next) {
+   const int64_t span = std::max<int64_t>(1, (next->frame - key->frame) / 3);
+   key->outHandleFrame = span;
+   key->outHandleValue = slope * static_cast<float>(span);
+  }
+  key->smooth = true;
+  return true;
+ }
+
+ bool setSelectedTangentsLinear() {
+  CurveTrack* track = nullptr;
+  CurveKey* key = nullptr;
+  const CurveKey* prev = nullptr;
+  const CurveKey* next = nullptr;
+  if (!selectedKeyBounds(track, key, prev, next)) {
+   return false;
+  }
+  Q_UNUSED(track);
+  if (prev) {
+   const int64_t span = std::max<int64_t>(1, (key->frame - prev->frame) / 3);
+   const float slope = static_cast<float>((key->value - prev->value) /
+      static_cast<float>(std::max<int64_t>(1, key->frame - prev->frame)));
+   key->inHandleFrame = -span;
+   key->inHandleValue = -slope * static_cast<float>(span);
+  }
+  if (next) {
+   const int64_t span = std::max<int64_t>(1, (next->frame - key->frame) / 3);
+   const float slope = static_cast<float>((next->value - key->value) /
+      static_cast<float>(std::max<int64_t>(1, next->frame - key->frame)));
+   key->outHandleFrame = span;
+   key->outHandleValue = slope * static_cast<float>(span);
+  }
+  key->smooth = false;
+  return true;
+ }
 };
 
 ArtifactCurveEditorWidget::ArtifactCurveEditorWidget(QWidget* parent)
@@ -598,6 +706,33 @@ void ArtifactCurveEditorWidget::setKeyEditingEnabled(bool enabled) {
   impl_->dragMode_ = Impl::DragMode::None;
  }
  update();
+}
+
+bool ArtifactCurveEditorWidget::setSelectedKeyAutoTangents() {
+ if (!impl_->setSelectedTangentsAuto()) {
+  return false;
+ }
+ update();
+ Q_EMIT interactionFinished();
+ return true;
+}
+
+bool ArtifactCurveEditorWidget::setSelectedKeyFlatTangents() {
+ if (!impl_->setSelectedTangentsFlat()) {
+  return false;
+ }
+ update();
+ Q_EMIT interactionFinished();
+ return true;
+}
+
+bool ArtifactCurveEditorWidget::setSelectedKeyLinearTangents() {
+ if (!impl_->setSelectedTangentsLinear()) {
+  return false;
+ }
+ update();
+ Q_EMIT interactionFinished();
+ return true;
 }
 
 void ArtifactCurveEditorWidget::fitToContent() {
@@ -846,6 +981,7 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
    auto& key = impl_->tracks_[impl_->dragTrackIndex_].keys[impl_->dragKeyIndex_];
    key.inHandleFrame = static_cast<int64_t>(data.x()) - key.frame;
    key.inHandleValue = static_cast<float>(data.y()) - key.value;
+   key.smooth = true;
    update();
    break;
   }
@@ -855,6 +991,7 @@ void ArtifactCurveEditorWidget::mouseMoveEvent(QMouseEvent* event) {
    auto& key = impl_->tracks_[impl_->dragTrackIndex_].keys[impl_->dragKeyIndex_];
    key.outHandleFrame = static_cast<int64_t>(data.x()) - key.frame;
    key.outHandleValue = static_cast<float>(data.y()) - key.value;
+   key.smooth = true;
    update();
    break;
   }
