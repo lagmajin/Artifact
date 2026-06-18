@@ -550,10 +550,9 @@ static QString workspaceModeValueForLabel(const QString &label,
                                           const QString &fallback) {
   const QString normalized = label.trimmed();
   if (!normalized.isEmpty()) {
-    return Artifact::workspaceModeText(
-        Artifact::workspaceModeFromText(normalized));
+    return Artifact::workspaceModeInfoForText(normalized).label;
   }
-  return Artifact::workspaceModeText(Artifact::workspaceModeFromText(fallback));
+  return Artifact::workspaceModeInfoForText(fallback).label;
 }
 
 static void setButtonColor(QPushButton *button, const QColor &color) {
@@ -682,8 +681,8 @@ void ProjectDefaultsSettingPage::loadSettings() {
   impl_->heightSpinBox_->setValue(settings->projectDefaultCompositionHeight());
   impl_->frameRateCombo_->setCurrentText(
       frameRateLabelFor(settings->projectDefaultCompositionFrameRate()));
-  const auto modeInfo = Artifact::workspaceModeInfo(
-      Artifact::workspaceModeFromText(settings->projectDefaultWorkspaceModeText()));
+  const auto modeInfo =
+      Artifact::workspaceModeInfoForText(settings->projectDefaultWorkspaceModeText());
   impl_->workspaceModeCombo_->setCurrentText(modeInfo.label);
   impl_->backgroundColor_ =
       QColor(settings->projectDefaultCompositionBackgroundColor());
