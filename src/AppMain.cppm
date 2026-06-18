@@ -2483,11 +2483,13 @@ int main(int argc, char *argv[]) {
     mw->addDockedWidgetTabbed(QStringLiteral("Composition Note"),
                               ads::RightDockWidgetArea, compositionNoteWidget,
                               QStringLiteral("Inspector"));
+    mw->setDockVisible(QStringLiteral("Composition Note"), false);
     auto *layerNoteWidget =
         new ArtifactMarkdownNoteEditorWidget(MarkdownNoteTarget::Layer, mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Layer Note"),
                               ads::RightDockWidgetArea, layerNoteWidget,
                               QStringLiteral("Inspector"));
+    mw->setDockVisible(QStringLiteral("Layer Note"), false);
     auto *propertyPanel = new ArtifactPropertyWidget(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Properties"),
                               ads::RightDockWidgetArea, propertyPanel,

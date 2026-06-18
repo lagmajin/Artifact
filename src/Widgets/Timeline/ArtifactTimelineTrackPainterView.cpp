@@ -43,6 +43,7 @@ import ArtifactCore.Utils.PerformanceProfiler;
 import Widgets.Utils.CSS;
 import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
+import Artifact.Composition.InOutPoints;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.InitParams;
 import Artifact.Layers.Selection.Manager;
@@ -51,6 +52,7 @@ import Artifact.Audio.Waveform;
 import Artifact.Timeline.KeyframeModel;
 import Artifact.Timeline.KeyBinding;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 import Event.Bus;
 import Artifact.Event.Types;
 import File.TypeDetector;
@@ -351,6 +353,13 @@ struct KeyframeAreaHitResult {
   KeyframeAreaHitPart part = KeyframeAreaHitPart::None;
 };
 
+struct TimelineMarkerVisual {
+  double frame = 0.0;
+  MarkerType type = MarkerType::Comment;
+  QString comment;
+  QColor color;
+};
+
 bool isFlatAreaCandidate(const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual &lhs,
                          const ArtifactTimelineTrackPainterView::KeyframeMarkerVisual &rhs) {
   if (lhs.layerId != rhs.layerId || lhs.propertyPath != rhs.propertyPath ||
@@ -414,6 +423,49 @@ KeyframeAreaHitResult hitTestKeyframeAreas(
     }
   }
   return {};
+}
+
+QVector<TimelineMarkerVisual> collectTimelineMarkers() {
+  QVector<TimelineMarkerVisual> markers;
+  auto *service = ArtifactPlaybackService::instance();
+  auto *points = service ? service->inOutPoints() : nullptr;
+  if (!points) {
+    return markers;
+  }
+
+  const auto allMarkers = points->allMarkers();
+  markers.reserve(static_cast<int>(allMarkers.size()));
+  for (const auto *marker : allMarkers) {
+    if (!marker) {
+      continue;
+    }
+    TimelineMarkerVisual visual;
+    visual.frame = static_cast<double>(marker->position().framePosition());
+    visual.type = marker->type();
+    visual.comment = marker->comment();
+    visual.color = marker->color();
+    if (!visual.color.isValid()) {
+      switch (visual.type) {
+      case MarkerType::Comment:
+        visual.color = QColor(QStringLiteral("#F4D35E"));
+        break;
+      case MarkerType::Chapter:
+        visual.color = QColor(QStringLiteral("#7BD389"));
+        break;
+      case MarkerType::Flash:
+        visual.color = QColor(QStringLiteral("#F76F5D"));
+        break;
+      case MarkerType::WebLink:
+        visual.color = QColor(QStringLiteral("#55C1FF"));
+        break;
+      case MarkerType::Color:
+        visual.color = QColor(QStringLiteral("#D28DFF"));
+        break;
+      }
+    }
+    markers.push_back(std::move(visual));
+  }
+  return markers;
 }
 
 QString keyframeSelectionKey(const LayerID &layerId,
@@ -4402,6 +4454,30 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     p.setPen(
         QPen(major ? theme.border.lighter(112) : theme.border.darker(112), 1));
     p.drawLine(QPointF(x, dirtyRect.top()), QPointF(x, dirtyRect.bottom()));
+  }
+
+  // Timeline markers from composition in/out points.
+  const QVector<TimelineMarkerVisual> timelineMarkers = collectTimelineMarkers();
+  const qreal markerBandTop = 3.0;
+  const qreal markerBandBottom = 15.0;
+  for (const auto &marker : timelineMarkers) {
+    const qreal x = marker.frame * ppf - xOffset;
+    if (x < dirtyRect.left() - 20 || x > dirtyRect.right() + 20) {
+      continue;
+    }
+    QColor fill = marker.color;
+    fill.setAlpha(245);
+    QColor stroke = marker.color.darker(140);
+    stroke.setAlpha(220);
+    p.setPen(QPen(stroke, 1.0));
+    p.setBrush(fill);
+    p.drawLine(QPointF(x, markerBandTop), QPointF(x, markerBandBottom));
+    QPolygonF diamond;
+    diamond << QPointF(x, markerBandTop)
+            << QPointF(x + 5.0, markerBandTop + 5.0)
+            << QPointF(x, markerBandBottom)
+            << QPointF(x - 5.0, markerBandTop + 5.0);
+    p.drawPolygon(diamond);
   }
 
   // Clips.
