@@ -23,6 +23,8 @@ export QStringList workspaceModeLabels();
 export QList<WorkspaceModeInfo> workspaceModeInfos();
 export WorkspaceModeInfo workspaceModeInfo(WorkspaceMode mode);
 export WorkspaceModeInfo workspaceModeInfoForKey(const QString &key);
+export WorkspaceModeInfo workspaceModeInfoForLabel(const QString &label);
+export WorkspaceModeInfo workspaceModeInfoForText(const QString &text);
 
 } // namespace Artifact
 
@@ -111,6 +113,26 @@ WorkspaceModeInfo workspaceModeInfoForKey(const QString &key) {
   const QString normalized = key.trimmed().toLower();
   for (const auto &info : workspaceModeInfos()) {
     if (info.key == normalized) {
+      return info;
+    }
+  }
+  return workspaceModeInfos().front();
+}
+
+WorkspaceModeInfo workspaceModeInfoForLabel(const QString &label) {
+  const QString normalized = label.trimmed();
+  for (const auto &info : workspaceModeInfos()) {
+    if (info.label.compare(normalized, Qt::CaseInsensitive) == 0) {
+      return info;
+    }
+  }
+  return workspaceModeInfos().front();
+}
+
+WorkspaceModeInfo workspaceModeInfoForText(const QString &text) {
+  const QString normalized = text.trimmed().toLower();
+  for (const auto &info : workspaceModeInfos()) {
+    if (info.key == normalized || info.label.compare(text.trimmed(), Qt::CaseInsensitive) == 0) {
       return info;
     }
   }

@@ -1854,8 +1854,10 @@ int main(int argc, char *argv[]) {
     return PreviewQualityPreset::Preview;
   };
   auto workspaceModeFromSettings = [settings]() {
-    return Artifact::workspaceModeFromText(
-        settings ? settings->projectDefaultWorkspaceModeText() : QString());
+    return Artifact::workspaceModeInfoForText(
+               settings ? settings->projectDefaultWorkspaceModeText()
+                        : QString())
+        .mode;
   };
   applyThemeFromSettings();
   QApplication::setStyle(
