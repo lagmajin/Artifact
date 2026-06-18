@@ -736,6 +736,7 @@ public:
   void updateLayerNote();
   void updateLayerInfo();
   void updateEffectsList();
+  void updateEffectRackItemEnabled(const QString &effectId, bool enabled);
   void updatePropertiesForEffect(const QString &effectId);
   QString currentSelectedEffectIdFromRacks() const;
   void syncFocusedEffectFromRackSelection();
@@ -1124,7 +1125,12 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
     QObject::connect(toggleAction, &QAction::triggered,
                      [this, effectId, isEnabled]() {
                        if (setEffectEnabledById(effectId, !isEnabled)) {
-                         updateEffectsList();
+                         updateEffectRackItemEnabled(effectId, !isEnabled);
+                         if (statusLabel) {
+                           statusLabel->setText(
+                               QStringLiteral("Status: Effect %1")
+                                   .arg(!isEnabled ? "enabled" : "disabled"));
+                         }
                        }
                      });
   }
@@ -1914,6 +1920,59 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   syncEffectPropertyWidget();
 }
 
+void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
+    const QString &effectId, const bool enabled) {
+  const QString trimmedId = effectId.trimmed();
+  if (trimmedId.isEmpty()) {
+    return;
+  }
+
+  const auto &theme = ArtifactCore::currentDCCTheme();
+  const QColor textColor = QColor(theme.textColor.isEmpty()
+                                      ? QStringLiteral("#E3E7EC")
+                                      : theme.textColor);
+  const QColor accentColor = QColor(theme.accentColor.isEmpty()
+                                        ? QStringLiteral("#5E94C7")
+                                        : theme.accentColor);
+  const QString enabledPrefix = QStringLiteral("Enabled ");
+  const QString disabledPrefix = QStringLiteral("Disabled ");
+
+  for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
+    auto *list = racks[rackIndex].listWidget;
+    if (!list) {
+      continue;
+    }
+    for (int row = 0; row < list->count(); ++row) {
+      auto *item = list->item(row);
+      if (!item || item->data(Qt::UserRole).toString().trimmed() != trimmedId) {
+        continue;
+      }
+
+      QString effectName = item->text().trimmed();
+      if (effectName.startsWith(enabledPrefix)) {
+        effectName.remove(0, enabledPrefix.size());
+      } else if (effectName.startsWith(disabledPrefix)) {
+        effectName.remove(0, disabledPrefix.size());
+      }
+      effectName = effectName.trimmed();
+
+      const QColor rackColor =
+          toneColor(toneFromRackIndex(rackIndex), textColor, accentColor);
+      item->setText(QStringLiteral("%1 %2")
+                        .arg(enabled ? QStringLiteral("Enabled")
+                                     : QStringLiteral("Disabled"),
+                             effectName));
+      item->setData(Qt::UserRole + 1, enabled);
+      item->setForeground(enabled ? rackColor : rackColor.darker(140));
+      item->setToolTip(
+          QStringLiteral("%1 on this layer. Single click to edit parameters below. Double click toggles enable/disable. Right click for effect actions.")
+              .arg(effectName));
+      refreshRackButtons();
+      return;
+    }
+  }
+}
+
 void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
   if (currentLayerId_.isNil() || currentCompositionId_.isNil())
     return;
@@ -2557,7 +2616,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                      ? enabledData.toBool()
                                      : item->text().startsWith(QStringLiteral("Enabled"));
           if (impl_->setEffectEnabledById(effectId, !isEnabled)) {
-            impl_->updateEffectsList();
+            impl_->updateEffectRackItemEnabled(effectId, !isEnabled);
             if (impl_->statusLabel) {
               impl_->statusLabel->setText(
                   QStringLiteral("Status: Effect %1")
