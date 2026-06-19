@@ -174,6 +174,13 @@ struct LayerSelectionChangedEvent {
     QString compositionId;
     QString layerId;
     LayerSelectionChangeReason reason = LayerSelectionChangeReason::Unknown;
+    // Multi-layer selection metadata (backward compatible).
+    // selectedLayerIds is empty for legacy single-selection emitters; receivers
+    // that care about the full set must read selectionCount and selectedLayerIds
+    // and fall back to {layerId} when both are empty. The shared_ptr set itself
+    // is never transported here; consumers call LayerSelectionManager directly.
+    int selectionCount = 1;
+    QStringList selectedLayerIds;
 };
 
 struct LayerChangedEvent {

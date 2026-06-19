@@ -3167,6 +3167,11 @@ public:
   bool lodEnabled_ = true;
 
   LayerID selectedLayerId_;
+  // True while the current selection spans more than one layer. Driven by the
+  // LayerSelectionChangedEvent payload so the editor keeps multi-layer state
+  // instead of collapsing to the primary layer.
+  bool multiSelectionActive_ = false;
+  int multiSelectionCount_ = 0;
   bool isDraggingLayer_ = false;
   bool gizmoDragActive_ = false;
   bool textGizmoDragActive_ = false;

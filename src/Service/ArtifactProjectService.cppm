@@ -841,8 +841,9 @@ void ArtifactProjectService::Impl::installSelectionBridge(
     return;
   }
   auto publishSelectionChanged =
-      [this](ArtifactProjectService *targetOwner, const LayerID &layerId,
-             LayerSelectionChangeReason reason) {
+      [this, selectionManager](ArtifactProjectService *targetOwner,
+                               const LayerID &layerId,
+                               LayerSelectionChangeReason reason) {
         if (!targetOwner) {
           return;
         }
@@ -850,12 +851,26 @@ void ArtifactProjectService::Impl::installSelectionBridge(
           return;
         }
         lastForwardedLayerId_ = layerId;
-        ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(
-            LayerSelectionChangedEvent{
-                targetOwner->currentComposition().lock()
-                    ? targetOwner->currentComposition().lock()->id().toString()
-                    : QString(),
-                layerId.toString(), reason});
+        // Forward the full selection set so multi-layer selection is not
+        // collapsed to the primary layer. The shared_ptr set itself stays in
+        // the manager; only stable ids travel on the bus.
+        LayerSelectionChangedEvent ev;
+        ev.compositionId =
+            targetOwner->currentComposition().lock()
+                ? targetOwner->currentComposition().lock()->id().toString()
+                : QString();
+        ev.layerId = layerId.toString();
+        ev.reason = reason;
+        const auto all =
+            selectionManager ? selectionManager->selectedLayers()
+                             : QSet<ArtifactAbstractLayerPtr>{};
+        ev.selectionCount = static_cast<int>(all.size());
+        for (const auto &layer : all) {
+          if (layer) {
+            ev.selectedLayerIds << layer->id().toString();
+          }
+        }
+        ArtifactCore::globalEventBus().publish<LayerSelectionChangedEvent>(ev);
       };
   QObject::connect(
       selectionManager, &ArtifactLayerSelectionManager::selectionChanged,
