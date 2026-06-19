@@ -937,9 +937,13 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
                                   int direction) {
       if (!playback || !propertyPtr)
         return;
-      const auto track = propertyPtr->getKeyFrames();
+      auto track = propertyPtr->getKeyFrames();
       if (track.empty())
         return;
+      std::sort(track.begin(), track.end(),
+                [](const auto &lhs, const auto &rhs) {
+                  return lhs.time < rhs.time;
+                });
 
       const auto nowTime = currentTimeProvider
                                ? currentTimeProvider()
@@ -2145,6 +2149,11 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name();
     const bool isSourceReframe = groupName.compare(QStringLiteral("Source Reframe"),
                                                    Qt::CaseInsensitive) == 0;
+    auto sortedProps = inspectorProperties(groupDef.sortedProperties());
+    if (sortedProps.empty()) {
+      continue;
+    }
+
     QGroupBox *group = new QGroupBox(
         isSourceReframe ? QStringLiteral("Pan / Crop") : groupName);
     auto *groupLayout = new QVBoxLayout(group);
@@ -2152,8 +2161,6 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     groupLayout->setSpacing(5);
     applyPropertySectionBox(group);
     applyThemeTextPalette(group, 120);
-
-    auto sortedProps = inspectorProperties(groupDef.sortedProperties());
     bool addedGroupProperties = false;
     std::vector<ArtifactPropertyEditorRowWidget *> groupRows;
     auto groupPreviewOpacity = std::make_shared<std::optional<float>>();
@@ -2320,6 +2327,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     auto sortedProps = propGroup.sortedProperties();
+    if (sortedProps.empty()) {
+      delete group;
+      continue;
+    }
     bool addedGroupProperties = false;
     std::vector<ArtifactPropertyEditorRowWidget *> effectRows;
     addRowsFromProperties(

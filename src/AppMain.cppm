@@ -88,6 +88,7 @@ import Graphics;
 import SearchImage;
 import UI.Layout.State;
 import Core.FastSettingsStore;
+import Artifact.Workspace.Modes;
 import Artifact.AI.WorkspaceAutomation;
 
 import Artifact.TestRunner;
@@ -126,6 +127,7 @@ import Artifact.Widgets.CompositionRenderController;
 import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.MarkdownNoteEditorWidget;
+import Artifact.Widgets.ProjectMemoWidget;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Render.Queue.Service;
 import Core.Diagnostics.SessionLedger;
@@ -1852,38 +1854,10 @@ int main(int argc, char *argv[]) {
     return PreviewQualityPreset::Preview;
   };
   auto workspaceModeFromSettings = [settings]() {
-    const QString mode = settings
-                             ? settings->projectDefaultWorkspaceModeText().trimmed()
-                             : QString();
-    const QString normalized = mode.toLower();
-    if (normalized == QStringLiteral("animation")) {
-      return Artifact::WorkspaceMode::Animation;
-    }
-    if (normalized == QStringLiteral("import")) {
-      return Artifact::WorkspaceMode::Import;
-    }
-    if (normalized == QStringLiteral("layout")) {
-      return Artifact::WorkspaceMode::Layout;
-    }
-    if (normalized == QStringLiteral("vfx")) {
-      return Artifact::WorkspaceMode::VFX;
-    }
-    if (normalized == QStringLiteral("compositing")) {
-      return Artifact::WorkspaceMode::Compositing;
-    }
-    if (normalized == QStringLiteral("text")) {
-      return Artifact::WorkspaceMode::Text;
-    }
-    if (normalized == QStringLiteral("export")) {
-      return Artifact::WorkspaceMode::Export;
-    }
-    if (normalized == QStringLiteral("debug")) {
-      return Artifact::WorkspaceMode::Debug;
-    }
-    if (normalized == QStringLiteral("audio")) {
-      return Artifact::WorkspaceMode::Audio;
-    }
-    return Artifact::WorkspaceMode::Default;
+    return Artifact::workspaceModeInfoForText(
+               settings ? settings->projectDefaultWorkspaceModeText()
+                        : QString())
+        .mode;
   };
   applyThemeFromSettings();
   QApplication::setStyle(
@@ -2216,6 +2190,10 @@ int main(int argc, char *argv[]) {
     mw->addDockedWidgetTabbed(QStringLiteral("Asset Browser"),
                               ads::LeftDockWidgetArea, assetBrowser,
                               QStringLiteral("Project"));
+    auto *projectMemoWidget = new ArtifactProjectMemoWidget(mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Project Memo"),
+                              ads::LeftDockWidgetArea, projectMemoWidget,
+                              QStringLiteral("Project"));
     auto *contentsViewer = new ArtifactContentsViewer(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"),
                               ads::CenterDockWidgetArea, contentsViewer,
@@ -2406,6 +2384,28 @@ int main(int argc, char *argv[]) {
                 }
               }
             }));
+    appEventSubscriptions.push_back(
+        appEventBus.subscribe<CurrentCompositionChangedEvent>(
+            [projectMemoWidget](const CurrentCompositionChangedEvent &event) {
+              if (projectMemoWidget) {
+                projectMemoWidget->setCompositionId(event.compositionId);
+              }
+            }));
+    appEventSubscriptions.push_back(
+        appEventBus.subscribe<FrameChangedEvent>(
+            [projectMemoWidget](const FrameChangedEvent &event) {
+              if (projectMemoWidget) {
+                projectMemoWidget->setCurrentFrame(event.frame);
+              }
+            }));
+    QObject::connect(projectMemoWidget, &ArtifactProjectMemoWidget::memoJumpRequested,
+                     mw, [](qint64 frame) {
+                       auto *service = ArtifactProjectService::instance();
+                       auto comp = service ? service->currentComposition().lock() : nullptr;
+                       const QString compositionId = comp ? comp->id().toString() : QString();
+                       ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
+                           FrameChangedEvent{compositionId, frame});
+                     });
     QObject::connect(assetBrowser, &ArtifactAssetBrowser::selectionChanged, mw,
                      [projectManagerWidget,
                       selectionSyncGuard](const QStringList &selectedFiles) {

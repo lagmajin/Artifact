@@ -61,6 +61,7 @@ import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.Widgets.PropertyEditor;
 import Application.AppSettings;
+import Artifact.Workspace.Modes;
 import FloatColorPickerDialog;
 import Widgets.Utils.CSS;
 import UI.ShortcutBindings;
@@ -545,30 +546,13 @@ static double frameRateValueForLabel(const QString &label, double fallback) {
   return ok ? parsed : fallback;
 }
 
-static QString workspaceModeLabelFor(const QString &mode) {
-  const QString normalized = mode.trimmed();
-  if (normalized.compare(QStringLiteral("Animation"), Qt::CaseInsensitive) == 0) {
-    return QStringLiteral("Animation");
-  }
-  if (normalized.compare(QStringLiteral("VFX"), Qt::CaseInsensitive) == 0) {
-    return QStringLiteral("VFX");
-  }
-  if (normalized.compare(QStringLiteral("Compositing"), Qt::CaseInsensitive) == 0) {
-    return QStringLiteral("Compositing");
-  }
-  if (normalized.compare(QStringLiteral("Audio"), Qt::CaseInsensitive) == 0) {
-    return QStringLiteral("Audio");
-  }
-  return QStringLiteral("Default");
-}
-
 static QString workspaceModeValueForLabel(const QString &label,
                                           const QString &fallback) {
   const QString normalized = label.trimmed();
   if (!normalized.isEmpty()) {
-    return workspaceModeLabelFor(normalized);
+    return Artifact::workspaceModeInfoForText(normalized).label;
   }
-  return workspaceModeLabelFor(fallback);
+  return Artifact::workspaceModeInfoForText(fallback).label;
 }
 
 static void setButtonColor(QPushButton *button, const QColor &color) {
@@ -645,11 +629,9 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
   auto *workspaceLayout = new QHBoxLayout();
   workspaceLayout->addWidget(new QLabel("Default Workspace:", this));
   impl_->workspaceModeCombo_ = new QComboBox(this);
-  impl_->workspaceModeCombo_->addItem("Default");
-  impl_->workspaceModeCombo_->addItem("Animation");
-  impl_->workspaceModeCombo_->addItem("VFX");
-  impl_->workspaceModeCombo_->addItem("Compositing");
-  impl_->workspaceModeCombo_->addItem("Audio");
+  for (const auto &info : Artifact::workspaceModeInfos()) {
+    impl_->workspaceModeCombo_->addItem(info.label);
+  }
   workspaceLayout->addWidget(impl_->workspaceModeCombo_);
   workspaceLayout->addStretch();
   groupLayout->addLayout(workspaceLayout);
@@ -699,8 +681,9 @@ void ProjectDefaultsSettingPage::loadSettings() {
   impl_->heightSpinBox_->setValue(settings->projectDefaultCompositionHeight());
   impl_->frameRateCombo_->setCurrentText(
       frameRateLabelFor(settings->projectDefaultCompositionFrameRate()));
-  impl_->workspaceModeCombo_->setCurrentText(
-      workspaceModeLabelFor(settings->projectDefaultWorkspaceModeText()));
+  const auto modeInfo =
+      Artifact::workspaceModeInfoForText(settings->projectDefaultWorkspaceModeText());
+  impl_->workspaceModeCombo_->setCurrentText(modeInfo.label);
   impl_->backgroundColor_ =
       QColor(settings->projectDefaultCompositionBackgroundColor());
   if (!impl_->backgroundColor_.isValid()) {

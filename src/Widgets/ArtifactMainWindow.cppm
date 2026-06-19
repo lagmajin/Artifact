@@ -60,6 +60,7 @@ import Widgets.Dock.StyleManager;
 import Widgets.Utils.CSS;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
+import Artifact.Workspace.Modes;
 import Application.AppSettings;
 #ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
 import Command.Palette;
@@ -120,6 +121,76 @@ void applyDarkNativeTitleBar(QWidget *) {}
 namespace {
 bool isTimelineDockTitle(const QString &title) {
   return title.startsWith(QStringLiteral("Timeline"), Qt::CaseInsensitive);
+}
+
+struct WorkspaceVisibilityRule {
+  WorkspaceMode mode;
+  QStringList visibleTitles;
+  QStringList hiddenTitles;
+};
+
+const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
+  static const WorkspaceVisibilityRule rules[] = {
+      {WorkspaceMode::Default,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Properties"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Note",
+        "Layer Note", "Composition View (Software)",
+        "Layer View (Diligent)", "Layer View (Software)"}},
+      {WorkspaceMode::Import,
+       {"Project", "Asset Browser", "Inspector", "Properties"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Viewer",
+        "Composition Note", "Layer Note"}},
+      {WorkspaceMode::Layout,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Properties", "Composition Note", "Layer Note"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat"}},
+      {WorkspaceMode::Animation,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Composition Note", "Layer Note", "Properties",
+        "Composition View (Software)", "Layer View (Diligent)",
+        "Layer View (Software)"},
+       {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
+        "Playback Control"}},
+      {WorkspaceMode::VFX,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Composition Note", "Layer Note", "Properties",
+        "Composition View (Software)", "Layer View (Diligent)",
+        "Layer View (Software)"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Playback Control"}},
+      {WorkspaceMode::Compositing,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Composition Note", "Layer Note", "Properties",
+        "Layer View (Diligent)"},
+       {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
+        "Playback Control", "Composition View (Software)",
+        "Layer View (Software)"}},
+      {WorkspaceMode::Text,
+       {"Composition Viewer", "Project", "Asset Browser", "Inspector",
+        "Composition Note", "Layer Note", "Properties", "Contents Viewer"},
+       {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control"}},
+      {WorkspaceMode::Export,
+       {"Project", "Asset Browser", "Inspector", "Properties",
+        "Composition Viewer"},
+       {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
+        "Playback Control"}},
+      {WorkspaceMode::Debug,
+       {"Project", "Asset Browser", "Inspector", "Properties",
+        "Contents Viewer", "AI Chat", "Playback Control"},
+       {"Audio Mixer", "Composition Note", "Layer Note"}},
+      {WorkspaceMode::Audio,
+       {"Contents Viewer", "Audio Mixer", "Project", "Asset Browser",
+        "Inspector", "Properties"},
+       {"AI Cloud", "AI Chat", "Composition Viewer",
+        "Composition View (Software)", "Layer View (Diligent)",
+        "Layer View (Software)"}},
+  };
+  for (const auto &rule : rules) {
+    if (rule.mode == mode) {
+      return &rule;
+    }
+  }
+  return &rules[0];
 }
 
 QWidget *createLazyDockPlaceholder(QWidget *parent) {
@@ -243,88 +314,16 @@ void applyWorkspaceVisibility(ArtifactMainWindow *window, WorkspaceMode mode) {
       window->setDockVisible(title, visible);
     }
   };
-
-  QStringList visibleTitles;
-  QStringList hiddenTitles;
-
-  switch (mode) {
-  case WorkspaceMode::Default:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Properties"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
-                    "Composition Note", "Layer Note",
-                    "Composition View (Software)", "Layer View (Diligent)",
-                    "Layer View (Software)"};
-    break;
-  case WorkspaceMode::Import:
-    visibleTitles = {"Project", "Asset Browser", "Inspector", "Properties"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
-                    "Composition Viewer", "Composition Note", "Layer Note"};
-    break;
-  case WorkspaceMode::Layout:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Properties", "Composition Note",
-                     "Layer Note"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat"};
-    break;
-  case WorkspaceMode::Animation:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "Composition View (Software)",
-                     "Layer View (Diligent)", "Layer View (Software)"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
-                    "Playback Control"};
-    break;
-  case WorkspaceMode::VFX:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "Composition View (Software)",
-                     "Layer View (Diligent)", "Layer View (Software)"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Chat",
-                    "Playback Control"};
-    break;
-  case WorkspaceMode::Compositing:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "Layer View (Diligent)"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
-                    "Playback Control", "Composition View (Software)",
-                    "Layer View (Software)"};
-    break;
-  case WorkspaceMode::Text:
-    visibleTitles = {"Composition Viewer", "Project", "Asset Browser",
-                     "Inspector", "Composition Note", "Layer Note",
-                     "Properties", "Contents Viewer"};
-    hiddenTitles = {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control"};
-    break;
-  case WorkspaceMode::Export:
-    visibleTitles = {"Project", "Asset Browser", "Inspector", "Properties",
-                     "Composition Viewer"};
-    hiddenTitles = {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
-                    "Playback Control"};
-    break;
-  case WorkspaceMode::Debug:
-    visibleTitles = {"Project", "Asset Browser", "Inspector", "Properties",
-                     "Contents Viewer", "AI Chat", "Playback Control"};
-    hiddenTitles = {"Audio Mixer", "Composition Note", "Layer Note"};
-    break;
-  case WorkspaceMode::Audio:
-    visibleTitles = {"Contents Viewer", "Audio Mixer", "Project",
-                     "Asset Browser", "Inspector", "Properties"};
-    hiddenTitles = {"AI Cloud", "AI Chat", "Composition Viewer",
-                    "Composition View (Software)", "Layer View (Diligent)",
-                    "Layer View (Software)"};
-    break;
-  }
+  const WorkspaceVisibilityRule *rule = workspaceVisibilityRuleFor(mode);
 
   for (const QString &title : dockTitles) {
     setVisible(title, false);
   }
 
-  for (const QString &title : visibleTitles) {
+  for (const QString &title : rule->visibleTitles) {
     setVisible(title, true);
   }
-  for (const QString &title : hiddenTitles) {
+  for (const QString &title : rule->hiddenTitles) {
     setVisible(title, false);
   }
 
@@ -531,6 +530,7 @@ public:
   ArtifactToolBar *toolBar = nullptr;
   ArtifactToolOptionsBar *toolOptionsBar = nullptr;
   QToolBar *toolOptionsHost = nullptr;
+  QToolButton *workspaceButton = nullptr;
   QWidget *centralWidgetHost = nullptr;
   CDockWidget *primaryCenterDock = nullptr;
   bool primaryCenterDockAssigned = false;
@@ -726,26 +726,21 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->toolBar = toolBar;
 
   auto *workspaceButton = new QToolButton(this);
-  workspaceButton->setText(QStringLiteral("Workspace"));
+  impl_->workspaceButton = workspaceButton;
+  workspaceButton->setText(Artifact::workspaceModeInfo(WorkspaceMode::Default).label);
   workspaceButton->setPopupMode(QToolButton::InstantPopup);
   auto *workspaceMenu = new QMenu(workspaceButton);
-  const auto addWorkspaceAction = [this, workspaceMenu](const QString &label,
-                                                        WorkspaceMode mode) {
-    QAction *action = workspaceMenu->addAction(label);
-    QObject::connect(action, &QAction::triggered, this, [this, mode]() {
+  for (const auto &info : Artifact::workspaceModeInfos()) {
+    QAction *action = workspaceMenu->addAction(info.label);
+    action->setIcon(QIcon(resolveIconPath(info.iconPath)));
+    action->setData(static_cast<int>(info.mode));
+    QObject::connect(action, &QAction::triggered, this, [this, mode = info.mode]() {
       setWorkspaceMode(mode);
     });
+    if (info.mode == WorkspaceMode::Default) {
+      workspaceButton->setText(info.label);
+    }
   };
-  addWorkspaceAction(QStringLiteral("Default"), WorkspaceMode::Default);
-  addWorkspaceAction(QStringLiteral("Import"), WorkspaceMode::Import);
-  addWorkspaceAction(QStringLiteral("Layout"), WorkspaceMode::Layout);
-  addWorkspaceAction(QStringLiteral("Animation"), WorkspaceMode::Animation);
-  addWorkspaceAction(QStringLiteral("VFX"), WorkspaceMode::VFX);
-  addWorkspaceAction(QStringLiteral("Compositing"), WorkspaceMode::Compositing);
-  addWorkspaceAction(QStringLiteral("Text"), WorkspaceMode::Text);
-  addWorkspaceAction(QStringLiteral("Export"), WorkspaceMode::Export);
-  addWorkspaceAction(QStringLiteral("Debug"), WorkspaceMode::Debug);
-  addWorkspaceAction(QStringLiteral("Audio"), WorkspaceMode::Audio);
   workspaceButton->setMenu(workspaceMenu);
   toolBar->addWidget(workspaceButton);
 
@@ -754,38 +749,12 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->toolOptionsBar->clearShapeOptions();
   impl_->toolOptionsHost = new QToolBar(this);
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    const QString workspaceModeText =
-        settings->projectDefaultWorkspaceModeText();
-    WorkspaceMode startupMode = WorkspaceMode::Default;
-    if (workspaceModeText.compare(QStringLiteral("Animation"),
-                                  Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Animation;
-    } else if (workspaceModeText.compare(QStringLiteral("Import"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Import;
-    } else if (workspaceModeText.compare(QStringLiteral("Layout"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Layout;
-    } else if (workspaceModeText.compare(QStringLiteral("VFX"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::VFX;
-    } else if (workspaceModeText.compare(QStringLiteral("Compositing"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Compositing;
-    } else if (workspaceModeText.compare(QStringLiteral("Text"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Text;
-    } else if (workspaceModeText.compare(QStringLiteral("Export"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Export;
-    } else if (workspaceModeText.compare(QStringLiteral("Debug"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Debug;
-    } else if (workspaceModeText.compare(QStringLiteral("Audio"),
-                                         Qt::CaseInsensitive) == 0) {
-      startupMode = WorkspaceMode::Audio;
-    }
-    impl_->workspaceMode_ = startupMode;
+    impl_->workspaceMode_ = Artifact::workspaceModeInfoForText(
+                                settings->projectDefaultWorkspaceModeText())
+                                .mode;
+  }
+  if (impl_->workspaceButton) {
+    impl_->workspaceButton->setText(Artifact::workspaceModeText(impl_->workspaceMode_));
   }
   impl_->toolOptionsHost->setMovable(false);
   impl_->toolOptionsHost->setFloatable(false);
@@ -809,6 +778,9 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
                    [this](WorkspaceMode mode) {
                      if (impl_) {
                        impl_->workspaceMode_ = mode;
+                       if (impl_->workspaceButton) {
+                         impl_->workspaceButton->setText(Artifact::workspaceModeText(mode));
+                       }
                      }
                    });
 

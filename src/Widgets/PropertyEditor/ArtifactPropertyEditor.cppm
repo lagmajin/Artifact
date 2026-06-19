@@ -22,6 +22,7 @@ module;
 #include <QLabel>
 #include <QLineEdit>
 #include <QHash>
+#include <QLocale>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPaintEvent>
@@ -96,6 +97,14 @@ public:
   explicit PropertySliderWidget(QWidget *parent = nullptr)
       : QSlider(Qt::Horizontal, parent) {}
 
+  void setDisplayText(QString text) {
+    if (displayText_ == text) {
+      return;
+    }
+    displayText_ = std::move(text);
+    update();
+  }
+
 protected:
   void paintEvent(QPaintEvent *event) override {
     Q_UNUSED(event);
@@ -108,6 +117,7 @@ protected:
     const QColor trackFill = palette().color(QPalette::Highlight);
     const QColor handleFill = palette().color(QPalette::Button);
     const QColor handleBorder = palette().color(QPalette::Mid);
+    const QColor textColor = palette().color(QPalette::Text);
 
     painter.fillRect(rect(), surface);
 
@@ -121,15 +131,13 @@ protected:
         style()->subControlRect(QStyle::CC_Slider, &opt,
                                 QStyle::SC_SliderHandle, this);
 
-    const int trackThickness = 4;
-    QRect trackRect = grooveRect;
-    trackRect.setHeight(trackThickness);
-    trackRect.moveCenter(QPoint(trackRect.center().x(), grooveRect.center().y()));
-    trackRect = trackRect.adjusted(0, 0, -1, -1);
+    QRect trackRect = rect().adjusted(1, 1, -2, -2);
+    trackRect.setHeight(std::max(18, rect().height() - 4));
+    trackRect.moveCenter(QPoint(trackRect.center().x(), rect().center().y()));
 
     painter.setPen(Qt::NoPen);
     painter.setBrush(trackBase);
-    painter.drawRoundedRect(trackRect, 2.0, 2.0);
+    painter.drawRoundedRect(trackRect, 5.0, 5.0);
 
     QRect fillRect = trackRect;
     const bool reversed =
@@ -152,15 +160,35 @@ protected:
     }
 
     painter.setBrush(trackFill);
-    painter.drawRoundedRect(fillRect.intersected(trackRect), 2.0, 2.0);
+    painter.drawRoundedRect(fillRect.intersected(trackRect), 5.0, 5.0);
     painter.setPen(QPen(trackBorder, 1.0));
     painter.setBrush(Qt::NoBrush);
-    painter.drawRoundedRect(trackRect, 2.0, 2.0);
+    painter.drawRoundedRect(trackRect, 5.0, 5.0);
 
-    painter.setPen(QPen(handleBorder, 1.0));
-    painter.setBrush(handleFill);
-    painter.drawRoundedRect(handleRect.adjusted(0, 0, -1, -1), 3.0, 3.0);
+    QRect ghostHandleRect = handleRect.adjusted(2, 3, -2, -3);
+    if (ghostHandleRect.width() > 2 && ghostHandleRect.height() > 2) {
+      QColor ghostFill = handleFill;
+      ghostFill.setAlpha(70);
+      QColor ghostBorder = handleBorder;
+      ghostBorder.setAlpha(110);
+      painter.setPen(QPen(ghostBorder, 1.0));
+      painter.setBrush(ghostFill);
+      painter.drawRoundedRect(ghostHandleRect, 3.0, 3.0);
+    }
+
+    if (!displayText_.isEmpty()) {
+      QFont textFont = font();
+      textFont.setPointSize(std::max(10, textFont.pointSize()));
+      textFont.setWeight(QFont::DemiBold);
+      painter.setFont(textFont);
+      painter.setPen(textColor);
+      painter.drawText(trackRect.adjusted(10, 0, -10, 0),
+                       Qt::AlignCenter, displayText_);
+    }
   }
+
+private:
+  QString displayText_;
 };
 
 class PropertyCallbackButton final : public QPushButton {
@@ -201,6 +229,23 @@ QColor propertySurfaceColor(const bool elevated = false) {
   const QColor surface = themeColor(theme.secondaryBackgroundColor,
                                     QColor(QStringLiteral("#2B3038")));
   return blendColor(background, surface, elevated ? 0.64 : 0.54);
+}
+
+QString formatNumericSliderText(const double value, const QString &unit,
+                                const int decimals = 3) {
+  QString text = QLocale::system().toString(value, 'f', decimals);
+  while (text.contains(QLatin1Char('.')) &&
+         (text.endsWith(QLatin1Char('0')) || text.endsWith(QLatin1Char('.')))) {
+    text.chop(1);
+    if (text.endsWith(QLatin1Char('.'))) {
+      text.chop(1);
+      break;
+    }
+  }
+  if (!unit.isEmpty()) {
+    text += QStringLiteral(" ") + unit;
+  }
+  return text;
 }
 
 void applyThemeTextPalette(QWidget *widget, int shade = 100) {
@@ -969,13 +1014,23 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                      [this, property]() {
                        const QVariant defaultValue =
                            getPropertyDefaultValue(property);
+                       const double defaultNumericValue = defaultValue.toDouble();
                        if (spinBox_) {
-                         spinBox_->setValue(defaultValue.toDouble());
+                         spinBox_->setValue(defaultNumericValue);
                        }
                        if (slider_) {
                          const QSignalBlocker blocker(slider_);
                          slider_->setValue(floatToSliderPosition(
-                             defaultValue.toDouble(), softMin_, softMax_));
+                             defaultNumericValue, softMin_, softMax_));
+                         if (auto *propertySlider =
+                                 qobject_cast<PropertySliderWidget *>(slider_)) {
+                           propertySlider->setDisplayText(
+                               formatNumericSliderText(
+                                   defaultNumericValue,
+                                   spinBox_ ? spinBox_->suffix().trimmed()
+                                            : QString(),
+                                   3));
+                         }
                        }
                        commitCurrentValue();
                      });
@@ -1027,24 +1082,34 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   if (!meta.unit.isEmpty()) {
     spinBox_->setSuffix(QStringLiteral(" ") + meta.unit);
   }
+  const QString sliderUnit = meta.unit;
   spinBox_->setMinimumHeight(22);
   spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
   spinBox_->setFrame(false);
 
   if (slider_) {
     slider_->setRange(0, 10000); // 精度を向上
-    slider_->setMinimumHeight(16);
+    slider_->setMinimumHeight(24);
     slider_->setTracking(true); // ドラッグ中の追従を有効化
     slider_->setValue(floatToSliderPosition(property.getValue().toDouble(),
                                             softMin_, softMax_));
+    if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+      propertySlider->setDisplayText(
+          formatNumericSliderText(property.getValue().toDouble(), meta.unit, 3));
+    }
   }
 
   QObject::connect(spinBox_, &QDoubleSpinBox::valueChanged, this,
-                   [this](const double nextValue) {
+                   [this, sliderUnit](const double nextValue) {
                      if (slider_) {
                        const QSignalBlocker blocker(slider_);
                        slider_->setValue(
                            floatToSliderPosition(nextValue, softMin_, softMax_));
+                       if (auto *propertySlider =
+                               qobject_cast<PropertySliderWidget *>(slider_)) {
+                         propertySlider->setDisplayText(
+                             formatNumericSliderText(nextValue, sliderUnit, 3));
+                       }
                      }
                      if (spinBox_->hasFocus() && !sliderInteracting_) {
                        previewValue(nextValue);
@@ -1059,11 +1124,15 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     });
 
     QObject::connect(
-        slider_, &QSlider::valueChanged, this, [this](const int sliderValue) {
+        slider_, &QSlider::valueChanged, this, [this, sliderUnit](const int sliderValue) {
           const double nextValue =
               this->sliderPositionToFloat(sliderValue, softMin_, softMax_);
           const QSignalBlocker blocker(spinBox_);
           spinBox_->setValue(nextValue);
+          if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+            propertySlider->setDisplayText(
+                formatNumericSliderText(nextValue, sliderUnit, 3));
+          }
           if (sliderInteracting_) {
             previewValue(nextValue);
           }
@@ -1126,6 +1195,10 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
   if (slider_) {
     const QSignalBlocker sliderBlocker(slider_);
     slider_->setValue(this->floatToSliderPosition(nextValue, softMin_, softMax_));
+    if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+      propertySlider->setDisplayText(
+          formatNumericSliderText(nextValue, spinBox_->suffix().trimmed(), 3));
+    }
   }
 }
 
@@ -1234,23 +1307,33 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   if (!meta.unit.isEmpty()) {
     spinBox_->setSuffix(QStringLiteral(" ") + meta.unit);
   }
+  const QString sliderUnit = meta.unit;
   spinBox_->setMinimumHeight(22);
   spinBox_->setButtonSymbols(QAbstractSpinBox::NoButtons);
   spinBox_->setFrame(false);
 
   if (slider_) {
     slider_->setRange(0, 10000); // 精度を向上
-    slider_->setMinimumHeight(16);
+    slider_->setMinimumHeight(24);
     slider_->setTracking(true);
     slider_->setValue(
         intToSliderPosition(property.getValue().toInt(), softMin_, softMax_));
+    if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+      propertySlider->setDisplayText(
+          formatNumericSliderText(property.getValue().toInt(), meta.unit, 0));
+    }
   }
 
   QObject::connect(
-      spinBox_, &QSpinBox::valueChanged, this, [this](const int nextValue) {
+      spinBox_, &QSpinBox::valueChanged, this, [this, sliderUnit](const int nextValue) {
         if (slider_) {
           const QSignalBlocker blocker(slider_);
           slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
+          if (auto *propertySlider =
+                  qobject_cast<PropertySliderWidget *>(slider_)) {
+            propertySlider->setDisplayText(
+                formatNumericSliderText(nextValue, sliderUnit, 0));
+          }
         }
         if (spinBox_->hasFocus() && !sliderInteracting_) {
           previewValue(nextValue);
@@ -1264,11 +1347,16 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
       previewCurrentValue();
     });
     QObject::connect(slider_, &QSlider::valueChanged, this,
-                     [this](const int sliderValue) {
+                     [this, sliderUnit](const int sliderValue) {
                        const int nextValue =
                            sliderPositionToInt(sliderValue, softMin_, softMax_);
                        const QSignalBlocker blocker(spinBox_);
                        spinBox_->setValue(nextValue);
+                       if (auto *propertySlider =
+                               qobject_cast<PropertySliderWidget *>(slider_)) {
+                         propertySlider->setDisplayText(
+                             formatNumericSliderText(nextValue, sliderUnit, 0));
+                       }
                        if (sliderInteracting_) {
                          previewValue(nextValue);
                        }
@@ -1300,6 +1388,10 @@ void ArtifactIntPropertyEditor::setValueFromVariant(const QVariant &value) {
   if (slider_) {
     const QSignalBlocker sliderBlocker(slider_);
     slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
+    if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+      propertySlider->setDisplayText(
+          formatNumericSliderText(nextValue, spinBox_->suffix().trimmed(), 0));
+    }
   }
 }
 
@@ -1965,10 +2057,12 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   applyPropertyFieldPalette(editor_);
 
   // Load Icons
-  QIcon prevIcon =
-      loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_left.svg"));
-  QIcon nextIcon =
-      loadPropertyIcon(QStringLiteral("MaterialVS/neutral/arrow_right.svg"));
+  QIcon prevIcon = loadPropertyIcon(
+      QStringLiteral("Studio/property_key_previous.svg"),
+      QStringLiteral("Studio/property_key_previous.svg"));
+  QIcon nextIcon = loadPropertyIcon(
+      QStringLiteral("Studio/property_key_next.svg"),
+      QStringLiteral("Studio/property_key_next.svg"));
   QIcon resIcon =
       loadPropertyIcon(QStringLiteral("MaterialVS/neutral/undo.svg"));
   QIcon exprIcon = loadPropertyIcon(QStringLiteral("MaterialVS/blue/code.svg"));
@@ -1981,6 +2075,12 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   nextKeyBtn_->setIcon(nextIcon);
   prevKeyBtn_->setIconSize(QSize(10, 10));
   nextKeyBtn_->setIconSize(QSize(10, 10));
+  prevKeyBtn_->setObjectName(QStringLiteral("propertyPrevKeyButton"));
+  nextKeyBtn_->setObjectName(QStringLiteral("propertyNextKeyButton"));
+  prevKeyBtn_->setToolTip(
+      QStringLiteral("Previous keyframe: %1").arg(propertyName));
+  nextKeyBtn_->setToolTip(
+      QStringLiteral("Next keyframe: %1").arg(propertyName));
   prevKeyBtn_->setFlat(true);
   nextKeyBtn_->setFlat(true);
   prevKeyBtn_->setVisible(false);
@@ -2164,11 +2264,15 @@ void ArtifactPropertyEditorRowWidget::setEditorToolTip(const QString &tooltip) {
   if (supplementaryLabel_) {
     supplementaryLabel_->setToolTip(tooltip);
   }
-  keyframeButton_->setToolTip(tooltip);
-  prevKeyBtn_->setToolTip(tooltip);
-  nextKeyBtn_->setToolTip(tooltip);
-  resetButton_->setToolTip(tooltip);
-  expressionButton_->setToolTip(tooltip);
+  keyframeButton_->setToolTip(
+      QStringLiteral("Toggle keyframe: %1").arg(propertyName_));
+  prevKeyBtn_->setToolTip(
+      QStringLiteral("Previous keyframe: %1").arg(propertyName_));
+  nextKeyBtn_->setToolTip(
+      QStringLiteral("Next keyframe: %1").arg(propertyName_));
+  resetButton_->setToolTip(QStringLiteral("Reset: %1").arg(propertyName_));
+  expressionButton_->setToolTip(
+      QStringLiteral("Expression: %1").arg(propertyName_));
 }
 
 void ArtifactPropertyEditorRowWidget::setSupplementaryText(

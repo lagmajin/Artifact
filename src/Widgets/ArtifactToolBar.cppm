@@ -25,6 +25,7 @@ import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Service.Application;
 import Application.AppSettings;
+import Artifact.Workspace.Modes;
 
 namespace {
 
@@ -44,6 +45,7 @@ constexpr auto kToolbarIconBrush = "Studio/toolbar_tool_brush.svg";
 constexpr auto kToolbarIconClone = "Studio/toolbar_tool_clone.svg";
 constexpr auto kToolbarIconEraser = "Studio/toolbar_tool_eraser.svg";
 constexpr auto kToolbarIconPuppet = "Studio/toolbar_tool_puppet.svg";
+constexpr auto kToolbarIconScrubPreview = "Studio/toolbar_tool_hand.svg";
 constexpr auto kToolbarIconZoomIn = "Studio/toolbar_zoom_in.svg";
 constexpr auto kToolbarIconZoomOut = "Studio/toolbar_zoom_out.svg";
 constexpr auto kToolbarIconZoom100 = "Studio/toolbar_zoom_100.svg";
@@ -101,6 +103,7 @@ QString toolLabelForType(Artifact::ToolType type)
     case Artifact::ToolType::AnchorPoint: return QStringLiteral("アンカー");
     case Artifact::ToolType::MotionSketch: return QStringLiteral("モーションスケッチ");
     case Artifact::ToolType::Puppet: return QStringLiteral("パペット");
+    case Artifact::ToolType::ScrubPreview: return QStringLiteral("スクラブ");
     case Artifact::ToolType::Pen:         return QStringLiteral("ペン");
     case Artifact::ToolType::Text:        return QStringLiteral("テキスト");
     case Artifact::ToolType::Shape:       return QStringLiteral("シェイプ");
@@ -191,6 +194,7 @@ public:
   QAction *eraserTool_ = nullptr;
   QAction *puppetTool_ = nullptr;
   QAction *motionSketchTool_ = nullptr;
+  QAction *scrubPreviewTool_ = nullptr;
 
   // Zoom actions
   QAction *zoomInAction_ = nullptr;
@@ -370,6 +374,11 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                          QStringLiteral("Material/push_pin.svg")},
              "パペット", "パペットピンツール (Ctrl+P)",
              QKeySequence(Qt::CTRL | Qt::Key_P));
+  createTool(impl_->scrubPreviewTool_,
+             QStringList{QString::fromLatin1(kToolbarIconScrubPreview),
+                         QStringLiteral("MaterialVS/neutral/pan_tool_alt.svg"),
+                         QStringLiteral("Material/pan_tool_alt.svg")},
+             "スクラブ", "スクラブプレビューツール", QKeySequence());
 
   // Set default tool
   impl_->selectTool_->setChecked(true);
@@ -531,6 +540,9 @@ ArtifactToolBar::ArtifactToolBar(QWidget *parent)
                      } else if (action == impl_->motionSketchTool_) {
                        motionSketchToolRequested();
                        setTool(ToolType::MotionSketch);
+                     } else if (action == impl_->scrubPreviewTool_) {
+                       scrubPreviewToolRequested();
+                       setTool(ToolType::ScrubPreview);
                      }
                    });
 
@@ -817,40 +829,8 @@ void ArtifactToolBar::setWorkspaceMode(WorkspaceMode mode) {
 
   impl_->updateDisplayMode();
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-    QString modeText = QStringLiteral("Default");
-    switch (mode) {
-    case WorkspaceMode::Default:
-      modeText = QStringLiteral("Default");
-      break;
-    case WorkspaceMode::Import:
-      modeText = QStringLiteral("Import");
-      break;
-    case WorkspaceMode::Layout:
-      modeText = QStringLiteral("Layout");
-      break;
-    case WorkspaceMode::Animation:
-      modeText = QStringLiteral("Animation");
-      break;
-    case WorkspaceMode::VFX:
-      modeText = QStringLiteral("VFX");
-      break;
-    case WorkspaceMode::Compositing:
-      modeText = QStringLiteral("Compositing");
-      break;
-    case WorkspaceMode::Text:
-      modeText = QStringLiteral("Text");
-      break;
-    case WorkspaceMode::Export:
-      modeText = QStringLiteral("Export");
-      break;
-    case WorkspaceMode::Debug:
-      modeText = QStringLiteral("Debug");
-      break;
-    case WorkspaceMode::Audio:
-      modeText = QStringLiteral("Audio");
-      break;
-    }
-    settings->setProjectDefaultWorkspaceModeText(modeText);
+    settings->setProjectDefaultWorkspaceModeText(
+        Artifact::workspaceModeText(mode));
   }
   emit workspaceModeChanged(mode);
 }

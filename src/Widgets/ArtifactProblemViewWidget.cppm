@@ -35,6 +35,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Project;
 import Artifact.Project.Health;
+import Artifact.Widgets.ProjectHealthSummary;
 import Artifact.Service.Project;
 import Utils.Id;
 
@@ -487,7 +488,7 @@ ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
     root->addWidget(impl_->problemTree, 1);
 
     // Summary
-    impl_->summaryLabel = new QLabel("0 Errors, 0 Warnings, 0 Info", this);
+    impl_->summaryLabel = new QLabel("goal: inspect project issues | now: 0 | warning: none | next: refresh", this);
     {
         QPalette summaryPal = impl_->summaryLabel->palette();
         summaryPal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
@@ -764,12 +765,7 @@ void ArtifactProblemViewWidget::updateSummary(const std::vector<ArtifactCore::Pr
     }
 
     impl_->summaryLabel->setText(
-        QStringLiteral("%1 visible | %2 Errors, %3 Warnings, %4 Info | %5 view")
-            .arg(static_cast<int>(diagnostics.size()))
-            .arg(errors)
-            .arg(warnings)
-            .arg(infos)
-            .arg(groupingLabel(groupingModeFromIndex(impl_->groupingFilter ? impl_->groupingFilter->currentIndex() : 0))));
+        projectHealthSummaryText(static_cast<int>(diagnostics.size()), errors, warnings, infos, true));
 }
 
 } // namespace Artifact

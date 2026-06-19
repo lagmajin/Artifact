@@ -33,6 +33,7 @@ import std;
 
 import Artifact.Project;
 import Artifact.Project.Health;
+import Artifact.Widgets.ProjectHealthSummary;
 import Artifact.Service.Project;
 import Event.Bus;
 import Artifact.Event.Types;
@@ -190,7 +191,7 @@ public:
      */
     void refresh() {
         if (!project_) {
-            statusLabel_->setText("Open a project to inspect health.");
+            statusLabel_->setText(Artifact::projectHealthSummaryText(0, 0, 0, 0, false));
             applyStatusColor(QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
             issuesTree_->clear();
             lastReport_ = {};
@@ -217,15 +218,27 @@ public:
                                              [](const auto& diagnostic) {
                                                  return diagnostic.isWarning();
                                              });
+        int errorCount = 0;
+        int warningCount = 0;
+        int infoCount = 0;
+        for (const auto& diagnostic : diagnostics) {
+            if (diagnostic.isError()) {
+                ++errorCount;
+            } else if (diagnostic.isWarning()) {
+                ++warningCount;
+            } else {
+                ++infoCount;
+            }
+        }
 
         if (hasErrors) {
-            statusLabel_->setText("Project has Critical Issues");
+            statusLabel_->setText(Artifact::projectHealthSummaryText(static_cast<int>(diagnostics.size()), errorCount, warningCount, infoCount, true));
             applyStatusColor(QColor(QStringLiteral("#F44336")));
         } else if (hasWarnings || (!ArtifactProjectService::instance() && !lastReport_.issues.isEmpty())) {
-            statusLabel_->setText("Project has Minor Warnings");
+            statusLabel_->setText(Artifact::projectHealthSummaryText(static_cast<int>(diagnostics.size()), errorCount, warningCount, infoCount, true));
             applyStatusColor(QColor(QStringLiteral("#FF9800")));
         } else {
-            statusLabel_->setText("Project is Healthy");
+            statusLabel_->setText(Artifact::projectHealthSummaryText(static_cast<int>(diagnostics.size()), errorCount, warningCount, infoCount, true));
             applyStatusColor(QColor(QStringLiteral("#4CAF50")));
         }
 

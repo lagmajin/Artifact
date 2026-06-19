@@ -24,6 +24,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QKeyEvent>
+#include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QTabWidget>
@@ -679,6 +680,7 @@ public:
   QString focusedEffectId_;
   ArtifactAbstractLayerPtr lastSyncedLayer_;
   QString lastSyncedFocusedEffectId_;
+  QString lastEffectPropertyStateSignature_;
 
   struct EffectRack {
     QListWidget *listWidget = nullptr;
@@ -705,6 +707,7 @@ public:
   int refreshMask_ = 0;
   bool refreshQueued_ = false;
   bool suppressRackSelectionSync_ = false;
+  bool syncingEffectPropertyWidget_ = false;
 
   enum RefreshReason {
     CompositionNoteDirty = 1 << 0,
@@ -733,6 +736,7 @@ public:
   void updateLayerNote();
   void updateLayerInfo();
   void updateEffectsList();
+  void updateEffectRackItemEnabled(const QString &effectId, bool enabled);
   void updatePropertiesForEffect(const QString &effectId);
   QString currentSelectedEffectIdFromRacks() const;
   void syncFocusedEffectFromRackSelection();
@@ -835,6 +839,13 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   if (!effectPropertyWidget) {
     return;
   }
+  if (syncingEffectPropertyWidget_) {
+    return;
+  }
+  syncingEffectPropertyWidget_ = true;
+  const auto clearSyncing = qScopeGuard([this]() {
+    syncingEffectPropertyWidget_ = false;
+  });
 
   const auto showEffectGuidance = [this](const QString &text,
                                          const bool showPropertyWidget) {
@@ -854,6 +865,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
         false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
+    lastEffectPropertyStateSignature_.clear();
     return;
   }
 
@@ -865,6 +877,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
         false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
+    lastEffectPropertyStateSignature_.clear();
     return;
   }
 
@@ -876,6 +889,7 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
         false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
+    lastEffectPropertyStateSignature_.clear();
     return;
   }
 
@@ -887,19 +901,13 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
         false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
+    lastEffectPropertyStateSignature_.clear();
     return;
   }
-
-  if (layer == lastSyncedLayer_ && focusedEffectId_ == lastSyncedFocusedEffectId_) {
-    return;
-  }
-
-  const bool layerChanged = layer != lastSyncedLayer_;
-  lastSyncedLayer_ = layer;
-  lastSyncedFocusedEffectId_ = focusedEffectId_;
 
   bool effectExists = false;
   QString focusedEffectName;
+  QString resolvedFocusedEffectId = focusedEffectId_.trimmed();
   if (!focusedEffectId_.trimmed().isEmpty()) {
     for (const auto &effect : layer->getEffects()) {
       if (effect && effect->effectID().toQString() == focusedEffectId_) {
@@ -912,18 +920,32 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
 
   if (!effectExists) {
     focusedEffectId_.clear();
+    resolvedFocusedEffectId.clear();
   }
+
+  const QString stateSignature =
+      QStringLiteral("%1|%2").arg(layer->id().toString(), resolvedFocusedEffectId);
+  if (layer == lastSyncedLayer_ &&
+      resolvedFocusedEffectId == lastSyncedFocusedEffectId_ &&
+      stateSignature == lastEffectPropertyStateSignature_) {
+    return;
+  }
+
+  const bool layerChanged = layer != lastSyncedLayer_;
+  lastSyncedLayer_ = layer;
+  lastSyncedFocusedEffectId_ = resolvedFocusedEffectId;
+  lastEffectPropertyStateSignature_ = stateSignature;
 
   if (layerChanged) {
     effectPropertyWidget->setLayer(layer);
   }
-  effectPropertyWidget->setFocusedEffectId(focusedEffectId_);
+  effectPropertyWidget->setFocusedEffectId(resolvedFocusedEffectId);
 
-  const bool hasFocus = !focusedEffectId_.trimmed().isEmpty();
+  const bool hasFocus = !resolvedFocusedEffectId.trimmed().isEmpty();
   showEffectGuidance(
       hasFocus
           ? QStringLiteral("Editing \"%1\" below. The same parameters are also mirrored in the Properties dock.")
-                .arg(focusedEffectName.isEmpty() ? focusedEffectId_
+                .arg(focusedEffectName.isEmpty() ? resolvedFocusedEffectId
                                                  : focusedEffectName)
           : QStringLiteral("Select an effect in any rack. Its parameters will appear below and in the Properties dock."),
       hasFocus);
@@ -1103,7 +1125,12 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
     QObject::connect(toggleAction, &QAction::triggered,
                      [this, effectId, isEnabled]() {
                        if (setEffectEnabledById(effectId, !isEnabled)) {
-                         updateEffectsList();
+                         updateEffectRackItemEnabled(effectId, !isEnabled);
+                         if (statusLabel) {
+                           statusLabel->setText(
+                               QStringLiteral("Status: Effect %1")
+                                   .arg(!isEnabled ? "enabled" : "disabled"));
+                         }
                        }
                      });
   }
@@ -1629,6 +1656,9 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
   lastCompositionNoteText_.clear();
   lastLayerNoteText_.clear();
   lastRackSignatures_.fill(QString());
+  lastSyncedLayer_.reset();
+  lastSyncedFocusedEffectId_.clear();
+  lastEffectPropertyStateSignature_.clear();
   refreshMask_ = 0;
   refreshQueued_ = false;
   focusedEffectId_.clear();
@@ -1684,6 +1714,9 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
   lastMatteInfoSignature_.clear();
   lastLayerNoteText_.clear();
   lastRackSignatures_.fill(QString());
+  lastSyncedLayer_.reset();
+  lastSyncedFocusedEffectId_.clear();
+  lastEffectPropertyStateSignature_.clear();
   refreshMask_ = 0;
   refreshQueued_ = false;
   focusedEffectId_.clear();
@@ -1885,6 +1918,59 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   }
 
   syncEffectPropertyWidget();
+}
+
+void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
+    const QString &effectId, const bool enabled) {
+  const QString trimmedId = effectId.trimmed();
+  if (trimmedId.isEmpty()) {
+    return;
+  }
+
+  const auto &theme = ArtifactCore::currentDCCTheme();
+  const QColor textColor = QColor(theme.textColor.isEmpty()
+                                      ? QStringLiteral("#E3E7EC")
+                                      : theme.textColor);
+  const QColor accentColor = QColor(theme.accentColor.isEmpty()
+                                        ? QStringLiteral("#5E94C7")
+                                        : theme.accentColor);
+  const QString enabledPrefix = QStringLiteral("Enabled ");
+  const QString disabledPrefix = QStringLiteral("Disabled ");
+
+  for (int rackIndex = 0; rackIndex < kEffectRackCount; ++rackIndex) {
+    auto *list = racks[rackIndex].listWidget;
+    if (!list) {
+      continue;
+    }
+    for (int row = 0; row < list->count(); ++row) {
+      auto *item = list->item(row);
+      if (!item || item->data(Qt::UserRole).toString().trimmed() != trimmedId) {
+        continue;
+      }
+
+      QString effectName = item->text().trimmed();
+      if (effectName.startsWith(enabledPrefix)) {
+        effectName.remove(0, enabledPrefix.size());
+      } else if (effectName.startsWith(disabledPrefix)) {
+        effectName.remove(0, disabledPrefix.size());
+      }
+      effectName = effectName.trimmed();
+
+      const QColor rackColor =
+          toneColor(toneFromRackIndex(rackIndex), textColor, accentColor);
+      item->setText(QStringLiteral("%1 %2")
+                        .arg(enabled ? QStringLiteral("Enabled")
+                                     : QStringLiteral("Disabled"),
+                             effectName));
+      item->setData(Qt::UserRole + 1, enabled);
+      item->setForeground(enabled ? rackColor : rackColor.darker(140));
+      item->setToolTip(
+          QStringLiteral("%1 on this layer. Single click to edit parameters below. Double click toggles enable/disable. Right click for effect actions.")
+              .arg(effectName));
+      refreshRackButtons();
+      return;
+    }
+  }
 }
 
 void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
@@ -2530,7 +2616,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                      ? enabledData.toBool()
                                      : item->text().startsWith(QStringLiteral("Enabled"));
           if (impl_->setEffectEnabledById(effectId, !isEnabled)) {
-            impl_->updateEffectsList();
+            impl_->updateEffectRackItemEnabled(effectId, !isEnabled);
             if (impl_->statusLabel) {
               impl_->statusLabel->setText(
                   QStringLiteral("Status: Effect %1")

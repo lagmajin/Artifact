@@ -61,10 +61,6 @@ public:
     float sigmaGrowth_ = 1.8f;
     float baseAlpha_ = 0.3f;
     float alphaFalloff_ = 0.6f;
-    mutable Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device_;
-    mutable Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context_;
-    mutable Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB_;
-    mutable bool pipelineReady_ = false;
 
     void setGlowGain(float gain) { glowGain_ = gain; }
     float glowGain() const { return glowGain_; }
@@ -85,33 +81,57 @@ public:
 
 namespace {
 
+struct SharedRenderDeviceLease {
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice>& device;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext>& context;
+
+    ~SharedRenderDeviceLease()
+    {
+        context.Release();
+        device.Release();
+        releaseSharedRenderDevice();
+    }
+};
+
+bool imageBuffersDiffer(const ImageF32x4RGBAWithCache& a,
+                        const ImageF32x4RGBAWithCache& b)
+{
+    const auto& ai = a.image();
+    const auto& bi = b.image();
+    if (ai.width() != bi.width() || ai.height() != bi.height()) {
+        return true;
+    }
+    const float* ad = ai.rgba32fData();
+    const float* bd = bi.rgba32fData();
+    if (!ad || !bd) {
+        return false;
+    }
+    const int width = ai.width();
+    const int height = ai.height();
+    const int stepX = std::max(1, width / 8);
+    const int stepY = std::max(1, height / 8);
+    for (int y = 0; y < height; y += stepY) {
+        for (int x = 0; x < width; x += stepX) {
+            const size_t idx = (static_cast<size_t>(y) * width + x) * 4ull;
+            for (int c = 0; c < 4; ++c) {
+                if (std::abs(ad[idx + c] - bd[idx + c]) > 0.0005f) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 int kernelSizeForRadius(float radius) {
     const int estimated = static_cast<int>(std::ceil(std::max(0.5f, radius) * 2.5f));
     return std::max(3, (estimated * 2) + 1);
 }
 
-void writeGlowResultToDestination(const cv::Mat& glowResult, ImageF32x4RGBAWithCache& dst) {
-    if (glowResult.empty()) {
+void writeGlowResultToDestination(const cv::Mat& rgba32f, ImageF32x4RGBAWithCache& dst) {
+    if (rgba32f.empty()) {
         return;
     }
-
-    cv::Mat rgba8u;
-    switch (glowResult.channels()) {
-    case 4:
-        cv::cvtColor(glowResult, rgba8u, cv::COLOR_BGRA2RGBA);
-        break;
-    case 3:
-        cv::cvtColor(glowResult, rgba8u, cv::COLOR_BGR2RGBA);
-        break;
-    case 1:
-        cv::cvtColor(glowResult, rgba8u, cv::COLOR_GRAY2RGBA);
-        break;
-    default:
-        return;
-    }
-
-    cv::Mat rgba32f;
-    rgba8u.convertTo(rgba32f, CV_32FC4, 1.0 / 255.0);
     dst.image().setFromRGBA32F(rgba32f.ptr<float>(), rgba32f.cols, rgba32f.rows);
 }
 
@@ -165,7 +185,8 @@ void main(uint3 dtid : SV_DispatchThreadID) {
                 float d = (float)(x * x + y * y);
                 float wgt = exp(-0.5f * d / max(0.0001f, sigma * sigma));
                 float4 samplePx = sampleTex(g_InputTexture, int2(dtid.xy) + int2(x, y), w, h);
-                float bright = saturate((luminance(samplePx.rgb) - 0.6f) * g_GlowGain + 0.1f);
+                float lum = luminance(samplePx.rgb);
+                float bright = lum > 0.6f ? saturate(lum * g_GlowGain) : 0.0f;
                 layerAccum += samplePx.rgb * bright * wgt;
                 weightSum += wgt;
             }
@@ -317,14 +338,16 @@ void GlowEffectCPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
         glowAccum += layer * alphaWeight;
     }
 
-    const float alphaNorm = std::max(0.0001f, baseAlpha_ * (1.0f - std::pow(alphaFalloff_, static_cast<float>(layers))) / std::max(0.0001f, 1.0f - alphaFalloff_));
+    const float alphaNorm = std::max(
+        0.0001f,
+        baseAlpha_ * (1.0f - std::pow(alphaFalloff_, static_cast<float>(layers))) /
+            std::max(0.0001f, 1.0f - alphaFalloff_));
     cv::Mat result = color + glowAccum / alphaNorm;
+    cv::min(result, cv::Scalar::all(1.0), result);
+    cv::max(result, cv::Scalar::all(0.0), result);
     std::vector<cv::Mat> outChannels;
-    cv::split(srcMat, outChannels);
-    outChannels[0] = result;
-    outChannels[1] = result;
-    outChannels[2] = result;
-    outChannels[3] = alpha;
+    cv::split(result, outChannels);
+    outChannels.push_back(alpha);
     cv::Mat out;
     cv::merge(outChannels, out);
     writeGlowResultToDestination(out, dst);
@@ -342,53 +365,64 @@ void GlowEffectGPUImpl::applyCPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
 }
 
 void GlowEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4RGBAWithCache& dst) {
-    if (!acquireSharedRenderDeviceForCurrentBackend(device_, context_)) {
+    Diligent::RefCntAutoPtr<Diligent::IRenderDevice> device;
+    Diligent::RefCntAutoPtr<Diligent::IDeviceContext> context;
+    if (!acquireSharedRenderDeviceForCurrentBackend(device, context)) {
         applyCPU(src, dst);
         return;
     }
-    auto gpuContext = std::make_unique<ArtifactCore::GpuContext>(device_, context_);
+    const SharedRenderDeviceLease sharedDeviceLease{device, context};
+
+    auto gpuContext = std::make_unique<ArtifactCore::GpuContext>(device, context);
     auto executor = std::make_unique<ArtifactCore::ComputeExecutor>(*gpuContext);
-    if (!paramsCB_) {
-        Diligent::BufferDesc cbDesc;
-        cbDesc.Name = "Glow/ParamsCB";
-        cbDesc.Size = sizeof(ParamsCB);
-        cbDesc.Usage = Diligent::USAGE_DYNAMIC;
-        cbDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
-        cbDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
-        device_->CreateBuffer(cbDesc, nullptr, &paramsCB_);
+
+    Diligent::RefCntAutoPtr<Diligent::IBuffer> paramsCB;
+    Diligent::BufferDesc cbDesc;
+    cbDesc.Name = "Glow/ParamsCB";
+    cbDesc.Size = sizeof(ParamsCB);
+    cbDesc.Usage = Diligent::USAGE_DYNAMIC;
+    cbDesc.BindFlags = Diligent::BIND_UNIFORM_BUFFER;
+    cbDesc.CPUAccessFlags = Diligent::CPU_ACCESS_WRITE;
+    device->CreateBuffer(cbDesc, nullptr, &paramsCB);
+    if (!paramsCB) {
+        applyCPU(src, dst);
+        return;
     }
-    if (!paramsCB_) { applyCPU(src, dst); return; }
+
     static Diligent::ShaderResourceVariableDesc vars[] = {
         {Diligent::SHADER_TYPE_COMPUTE, "GlowParams", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
         {Diligent::SHADER_TYPE_COMPUTE, "g_InputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
         {Diligent::SHADER_TYPE_COMPUTE, "g_OutputTexture", Diligent::SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
     };
-    if (!pipelineReady_) {
-        ArtifactCore::ComputePipelineDesc desc;
-        desc.name = "Glow/PSO";
-        desc.shaderSource = kGlowHlsl;
-        desc.entryPoint = "main";
-        desc.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
-        desc.variables = vars;
-        desc.variableCount = 3;
-        desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
-        if (!executor->build(desc) || !executor->createShaderResourceBinding(true) || !executor->setBuffer("GlowParams", paramsCB_)) {
-            applyCPU(src, dst);
-            return;
-        }
-        pipelineReady_ = true;
+
+    ArtifactCore::ComputePipelineDesc desc;
+    desc.name = "Glow/PSO";
+    desc.shaderSource = kGlowHlsl;
+    desc.entryPoint = "main";
+    desc.sourceLanguage = Diligent::SHADER_SOURCE_LANGUAGE_HLSL;
+    desc.variables = vars;
+    desc.variableCount = 3;
+    desc.defaultVariableType = Diligent::SHADER_RESOURCE_VARIABLE_TYPE_STATIC;
+    if (!executor->build(desc) || !executor->createShaderResourceBinding(true)) {
+        applyCPU(src, dst);
+        return;
     }
+    if (!executor->setBuffer("GlowParams", paramsCB)) {
+        applyCPU(src, dst);
+        return;
+    }
+
     Diligent::RefCntAutoPtr<Diligent::ITexture> inputTex;
-    if (!createTextureFromImage(src, device_, &inputTex, "Glow/InputTexture")) { applyCPU(src, dst); return; }
+    if (!createTextureFromImage(src, device, &inputTex, "Glow/InputTexture")) { applyCPU(src, dst); return; }
     Diligent::TextureDesc outDesc = inputTex->GetDesc();
     outDesc.Usage = Diligent::USAGE_DEFAULT;
     outDesc.BindFlags = Diligent::BIND_UNORDERED_ACCESS | Diligent::BIND_SHADER_RESOURCE;
     outDesc.Name = "Glow/OutputTexture";
     Diligent::RefCntAutoPtr<Diligent::ITexture> outputTex;
-    device_->CreateTexture(outDesc, nullptr, &outputTex);
+    device->CreateTexture(outDesc, nullptr, &outputTex);
     if (!outputTex) { applyCPU(src, dst); return; }
     void* mapped = nullptr;
-    context_->MapBuffer(paramsCB_, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
+    context->MapBuffer(paramsCB, Diligent::MAP_WRITE, Diligent::MAP_FLAG_DISCARD, mapped);
     if (!mapped) { applyCPU(src, dst); return; }
     ParamsCB params{};
     params.glowGain = glowGain_;
@@ -398,17 +432,20 @@ void GlowEffectGPUImpl::applyGPU(const ImageF32x4RGBAWithCache& src, ImageF32x4R
     params.baseAlpha = baseAlpha_;
     params.alphaFalloff = alphaFalloff_;
     std::memcpy(mapped, &params, sizeof(params));
-    context_->UnmapBuffer(paramsCB_, Diligent::MAP_WRITE);
+    context->UnmapBuffer(paramsCB, Diligent::MAP_WRITE);
     if (!executor->setTextureView("g_InputTexture", inputTex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE)) ||
         !executor->setTextureView("g_OutputTexture", outputTex->GetDefaultView(Diligent::TEXTURE_VIEW_UNORDERED_ACCESS))) {
         applyCPU(src, dst);
         return;
     }
     auto attribs = ArtifactCore::ComputeExecutor::makeDispatchAttribs(outDesc.Width, outDesc.Height, 1, 8, 8, 1);
-    executor->dispatch(context_, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    if (!readbackTexture(device_, context_, outputTex, dst, "Glow/StagingTexture")) {
+    executor->dispatch(context, attribs, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+    if (!readbackTexture(device, context, outputTex, dst, "Glow/StagingTexture")) {
         applyCPU(src, dst);
         return;
+    }
+    if (!imageBuffersDiffer(src, dst)) {
+        applyCPU(src, dst);
     }
 }
 
@@ -588,6 +625,16 @@ void GlowEffect::setPropertyValue(const ArtifactCore::UniString& name, const QVa
     } else if (n == "alphaFalloff") {
         setAlphaFalloff(static_cast<float>(value.toDouble()));
     }
+}
+
+EffectROIHint GlowEffect::roiHint() const {
+    const int layers = std::max(1, layerCount());
+    const float sigmaMax = std::max(0.1f, baseSigma() + sigmaGrowth() * static_cast<float>(layers - 1));
+    return EffectROIHint{
+        .kind = EffectROIHintKind::Blur,
+        .expansionPixels = sigmaMax * 3.0f,
+        .requiresFullFrame = false
+    };
 }
 
 } // namespace Artifact
