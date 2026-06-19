@@ -20,6 +20,7 @@ module;
 #include <QRectF>
 #include <QSpinBox>
 #include <QSize>
+#include <QJsonObject>
 #include <QVBoxLayout>
 #include <QTimer>
 #include <numeric>
@@ -30,6 +31,7 @@ import std;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.Application.ProjectBundleIpc;
 import Artifact.Composition.Abstract;
 import Utils.Path;
 import Artifact.Composition.InitParams;
@@ -160,6 +162,7 @@ public:
  QAction* deleteAction = nullptr;
  QAction* settingsAction = nullptr;
  QAction* colorAction = nullptr;
+ QAction* sendAction = nullptr;
 
  void showCreate();
  void createFromPreset(const ArtifactCompositionInitParams& params);
@@ -200,6 +203,9 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  colorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
  colorAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_background.svg")));
 
+ sendAction = new QAction("メインプロジェクトへ送信(&T)...", menu);
+ sendAction->setIcon(QIcon(resolveIconPath("Studio/upload.svg")));
+
  menu->addAction(createAction);
  menu->addMenu(presetMenu);
  menu->addSeparator();
@@ -208,6 +214,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  menu->addAction(deleteAction);
  menu->addSeparator();
  menu->addAction(settingsAction);
+ menu->addAction(sendAction);
  menu->addSeparator();
  menu->addAction(colorAction);
 
@@ -219,6 +226,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  QObject::connect(renameAction, &QAction::triggered, menu, [this]() { renameCurrent(); });
  QObject::connect(deleteAction, &QAction::triggered, menu, [this]() { removeCurrent(); });
  QObject::connect(settingsAction, &QAction::triggered, menu, [this]() { showSettings(); });
+ QObject::connect(sendAction, &QAction::triggered, menu, [this]() { sendCurrentComposition(); });
  QObject::connect(colorAction, &QAction::triggered, menu, [this]() { showColor(); });
 }
 
@@ -616,6 +624,42 @@ void ArtifactCompositionMenu::Impl::showColor()
  }
 }
 
+void ArtifactCompositionMenu::Impl::sendCurrentComposition()
+{
+ auto* service = ArtifactProjectService::instance();
+ if (!service) {
+  QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
+                       QStringLiteral("Composition"),
+                       QStringLiteral("プロジェクトサービスが利用できません。"));
+  return;
+ }
+
+ auto current = service->currentComposition().lock();
+ if (!current) {
+  QMessageBox::information(mainWindow_ ? mainWindow_ : menu_,
+                          QStringLiteral("Composition"),
+                          QStringLiteral("送信するコンポジションがありません。"));
+  return;
+ }
+
+ QJsonObject bundle;
+ bundle[QStringLiteral("bundleKind")] = QStringLiteral("composition");
+ bundle[QStringLiteral("bundleTitle")] = current->settings().compositionName().toQString();
+ bundle[QStringLiteral("sourceProjectName")] = service->projectName().toQString();
+ bundle[QStringLiteral("sourceCompositionId")] = current->id().toString();
+ bundle[QStringLiteral("sourceCompositionName")] = current->settings().compositionName().toQString();
+ bundle[QStringLiteral("composition")] = current->toJson().object();
+
+ QString error;
+ if (!sendProjectBundleToMainProject(bundle, &error)) {
+  QMessageBox::warning(mainWindow_ ? mainWindow_ : menu_,
+                       QStringLiteral("Send Bundle"),
+                       error.isEmpty()
+                           ? QStringLiteral("Failed to send the composition to the main project.")
+                           : error);
+ }
+}
+
 ArtifactCompositionMenu::ArtifactCompositionMenu(QWidget* mainWindow, QWidget* parent)
  : QMenu(parent), impl_(new Impl(this, mainWindow))
 {
@@ -650,6 +694,7 @@ void ArtifactCompositionMenu::rebuildMenu()
  impl_->renameAction->setEnabled(hasComp);
  impl_->deleteAction->setEnabled(hasComp);
  impl_->settingsAction->setEnabled(hasComp);
+ impl_->sendAction->setEnabled(hasComp);
  impl_->colorAction->setEnabled(hasComp);
 }
 

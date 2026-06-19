@@ -5169,6 +5169,13 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
       p.setPen(QPen(rovingColor, marker.selected ? 1.6 : 1.2, Qt::DashLine));
       p.setBrush(Qt::NoBrush);
       p.drawEllipse(center, size + 5.0, size + 5.0);
+      p.setPen(rovingColor);
+      QFont badgeFont = p.font();
+      badgeFont.setBold(true);
+      badgeFont.setPointSizeF(std::max<qreal>(6.0, badgeFont.pointSizeF() - 1.5));
+      p.setFont(badgeFont);
+      const QRectF badgeRect(center.x() - 5.0, center.y() - 5.0, 10.0, 10.0);
+      p.drawText(badgeRect, Qt::AlignCenter, QStringLiteral("R"));
     }
     if (nearestToCurrent && !atCurrentFrame && !marker.selected) {
       QColor guideColor = marker.selectedLayer ? theme.accent.lighter(135)

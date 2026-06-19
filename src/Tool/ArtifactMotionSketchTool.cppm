@@ -136,13 +136,21 @@ bool ArtifactMotionSketchTool::finishSketch()
         }
     }
 
-    // Create keyframes on the layer's transform position
+    // Create keyframes on the layer's transform position.
     auto& t3d = layer->transform3D();
-    const double fps = 24.0;
+    const double fps = [&]() -> double {
+        if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+            return std::max(1.0, static_cast<double>(comp->frameRate().framerate()));
+        }
+        return 24.0;
+    }();
 
-    // Clear existing position keyframes for the frame range we'll use
-    const int startFrame = 0;
-    const int endFrame = startFrame + static_cast<int>(n * fps * impl_->sampleInterval);
+    const int startFrame = [&]() -> int {
+        if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+            return static_cast<int>(comp->framePosition().framePosition());
+        }
+        return 0;
+    }();
 
     for (size_t i = 0; i < n; ++i) {
         const double t = impl_->sampledTimes[i];

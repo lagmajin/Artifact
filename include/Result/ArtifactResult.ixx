@@ -1,54 +1,19 @@
 module;
-#include <iostream>
-#include <vector>
-#include <string>
-#include <map>
-#include <unordered_map>
-#include <set>
-#include <unordered_set>
-#include <memory>
-#include <algorithm>
-#include <cmath>
-#include <functional>
-#include <optional>
 #include <utility>
-#include <array>
-#include <chrono>
-#include <filesystem>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <type_traits>
-#include <variant>
-#include <any>
-#include <atomic>
-#include <queue>
-#include <deque>
-#include <list>
-#include <tuple>
-#include <numeric>
-#include <regex>
-#include <random>
+
 export module Artifact.Result;
 
-
-
-
+import Utils.Result;
 import Utils.String.UniString;
 
 export namespace Artifact {
 
- using namespace ArtifactCore;
+using namespace ArtifactCore;
 
- struct CreateCompositionResult {
+struct CreateCompositionResult {
   bool success = false;
+  Status status{};
   UniString message;
- };
-
-
-
-
- 
-
-
 };
+
+}

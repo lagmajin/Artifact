@@ -78,6 +78,7 @@ import Artifact.Layer.Clone;
 import Artifact.Layer.Group;
 import Layer.Matte;
 import Layer.BlendModeInfo;
+import Geometry.LayerAlignment;
 import Artifact.Timeline.KeyframeModel;
 import Undo.UndoManager;
 import Artifact.Service.Playback;
@@ -95,6 +96,21 @@ namespace Artifact
 
 namespace {
 constexpr auto kLayerPanelContext = "Panel.LayerTree";
+
+enum class MultiEditCycleMode {
+  None,
+  Align,
+  Distribute,
+  Shuffle
+};
+
+constexpr int kMultiEditCycleWindowMs = 4500;
+
+struct LayerPlacementSnapshot {
+  LayerID id;
+  QRectF bounds;
+  QPointF position;
+};
 
 QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
 {
@@ -132,7 +148,7 @@ void activateDock(QMainWindow* window, const QString& title)
   dock->raise();
   dock->activateWindow();
 }
-namespace {
+
   QColor themeColor(const QString& value, const QColor& fallback)
   {
     const QColor color(value);
@@ -1255,16 +1271,263 @@ bool isLayerSelectedInSelectionManager(const LayerID& id)
 
 QVector<LayerID> selectedLayerIdsInVisibleOrder(const QVector<VisibleRow>& rows)
 {
- QVector<LayerID> ids;
- for (const auto& row : rows) {
+  QVector<LayerID> ids;
+  for (const auto& row : rows) {
   if (row.kind != RowKind::Layer || !row.layer) {
    continue;
   }
   if (isLayerSelectedInSelectionManager(row.layer->id())) {
    ids.push_back(row.layer->id());
   }
- }
- return ids;
+  }
+  return ids;
+}
+
+QVector<LayerID> selectedLayerIdsInCompositionOrder(const ArtifactCompositionPtr& comp,
+                                                   const QVector<LayerID>& selectedIds)
+{
+  QVector<LayerID> ordered;
+  if (!comp || selectedIds.isEmpty()) {
+    return ordered;
+  }
+  QSet<QString> wanted;
+  for (const auto& id : selectedIds) {
+    if (!id.isNil()) {
+      wanted.insert(id.toString());
+    }
+  }
+  for (const auto& layer : comp->allLayer()) {
+    if (layer && wanted.contains(layer->id().toString())) {
+      ordered.push_back(layer->id());
+    }
+  }
+  return ordered;
+}
+
+std::vector<LayerPlacementSnapshot> captureLayerPlacements(
+    const ArtifactCompositionPtr& comp, const QVector<LayerID>& ids)
+{
+  std::vector<LayerPlacementSnapshot> snapshots;
+  if (!comp || ids.isEmpty()) {
+    return snapshots;
+  }
+  snapshots.reserve(static_cast<size_t>(ids.size()));
+  for (const auto& id : ids) {
+    auto layer = comp->layerById(id);
+    if (!layer) {
+      continue;
+    }
+    LayerPlacementSnapshot snapshot;
+    snapshot.id = id;
+    snapshot.bounds = layer->transformedBoundingBox();
+    snapshot.position = QPointF(layer->transform3D().positionX(),
+                                layer->transform3D().positionY());
+    snapshots.push_back(snapshot);
+  }
+  return snapshots;
+}
+
+bool applyAlignPreset(const ArtifactCompositionPtr& comp,
+                      const QVector<LayerID>& selectedIds, int presetIndex)
+{
+  if (!comp || selectedIds.size() < 2) {
+    return false;
+  }
+
+  auto snapshots = captureLayerPlacements(comp, selectedIds);
+  if (snapshots.size() < 2) {
+    return false;
+  }
+
+  std::vector<ArtifactCore::AlignmentObject> objects;
+  objects.reserve(snapshots.size());
+  for (const auto& snapshot : snapshots) {
+    ArtifactCore::AlignmentObject obj;
+    obj.bounds = snapshot.bounds;
+    obj.currentPosition = snapshot.position;
+    objects.push_back(obj);
+  }
+
+  const ArtifactCore::AlignType types[] = {
+      ArtifactCore::AlignType::Left,
+      ArtifactCore::AlignType::CenterHorizontal,
+      ArtifactCore::AlignType::Right,
+      ArtifactCore::AlignType::Top,
+      ArtifactCore::AlignType::CenterVertical,
+      ArtifactCore::AlignType::Bottom,
+  };
+  QRectF dummy;
+  ArtifactCore::LayerAlignment::align(
+      objects, types[presetIndex % (static_cast<int>(std::size(types)))],
+      ArtifactCore::AlignmentTarget::Selection, dummy);
+
+  const ArtifactCore::RationalTime time(0, 30000);
+  for (size_t i = 0; i < snapshots.size() && i < objects.size(); ++i) {
+    auto layer = comp->layerById(snapshots[i].id);
+    if (!layer) {
+      continue;
+    }
+    layer->transform3D().setPosition(time, objects[i].currentPosition.x(),
+                                     objects[i].currentPosition.y());
+    layer->changed();
+  }
+  return true;
+}
+
+bool applyDistributePreset(const ArtifactCompositionPtr& comp,
+                           const QVector<LayerID>& selectedIds, int presetIndex)
+{
+  if (!comp || selectedIds.size() < 3) {
+    return false;
+  }
+
+  auto snapshots = captureLayerPlacements(comp, selectedIds);
+  if (snapshots.size() < 3) {
+    return false;
+  }
+
+  std::vector<ArtifactCore::AlignmentObject> objects;
+  objects.reserve(snapshots.size());
+  for (const auto& snapshot : snapshots) {
+    ArtifactCore::AlignmentObject obj;
+    obj.bounds = snapshot.bounds;
+    obj.currentPosition = snapshot.position;
+    objects.push_back(obj);
+  }
+
+  const ArtifactCore::DistributeType types[] = {
+      ArtifactCore::DistributeType::Left,
+      ArtifactCore::DistributeType::CenterHorizontal,
+      ArtifactCore::DistributeType::Right,
+      ArtifactCore::DistributeType::Top,
+      ArtifactCore::DistributeType::CenterVertical,
+      ArtifactCore::DistributeType::Bottom,
+  };
+  ArtifactCore::LayerAlignment::distribute(
+      objects, types[presetIndex % (static_cast<int>(std::size(types)))]);
+
+  const ArtifactCore::RationalTime time(0, 30000);
+  for (size_t i = 0; i < snapshots.size() && i < objects.size(); ++i) {
+    auto layer = comp->layerById(snapshots[i].id);
+    if (!layer) {
+      continue;
+    }
+    layer->transform3D().setPosition(time, objects[i].currentPosition.x(),
+                                     objects[i].currentPosition.y());
+    layer->changed();
+  }
+  return true;
+}
+
+bool shuffleSelectedLayers(const ArtifactCompositionPtr& comp,
+                           const QVector<LayerID>& selectedIds, int presetIndex)
+{
+  if (!comp || selectedIds.size() < 2) {
+    return false;
+  }
+
+  auto orderedIds = selectedLayerIdsInCompositionOrder(comp, selectedIds);
+  if (orderedIds.size() < 2) {
+    return false;
+  }
+
+  switch (presetIndex % 4) {
+  case 0:
+    std::reverse(orderedIds.begin(), orderedIds.end());
+    break;
+  case 1:
+    if (orderedIds.size() > 2) {
+      QVector<LayerID> mixed;
+      mixed.reserve(orderedIds.size());
+      int left = 0;
+      int right = orderedIds.size() - 1;
+      while (left <= right) {
+        mixed.push_back(orderedIds[left++]);
+        if (left <= right) {
+          mixed.push_back(orderedIds[right--]);
+        }
+      }
+      orderedIds = mixed;
+    }
+    break;
+  case 2:
+    if (orderedIds.size() > 2) {
+      QVector<LayerID> shifted;
+      shifted.reserve(orderedIds.size());
+      for (int i = 1; i < orderedIds.size(); ++i) {
+        shifted.push_back(orderedIds[i]);
+      }
+      shifted.push_back(orderedIds.front());
+      orderedIds = shifted;
+    }
+    break;
+  default:
+    if (orderedIds.size() > 3) {
+      QVector<LayerID> spaced;
+      spaced.reserve(orderedIds.size());
+      for (int i = 0; i < orderedIds.size(); i += 2) {
+        spaced.push_back(orderedIds[i]);
+      }
+      for (int i = 1; i < orderedIds.size(); i += 2) {
+        spaced.push_back(orderedIds[i]);
+      }
+      orderedIds = spaced;
+    }
+    break;
+  }
+
+  const auto layers = comp->allLayer();
+  QVector<LayerID> untouched;
+  untouched.reserve(layers.size() - orderedIds.size());
+  QSet<QString> moved;
+  for (const auto& id : orderedIds) {
+    moved.insert(id.toString());
+  }
+  for (const auto& layer : layers) {
+    if (!layer || moved.contains(layer->id().toString())) {
+      continue;
+    }
+    untouched.push_back(layer->id());
+  }
+
+  int insertIndex = 0;
+  for (const auto& layerId : untouched) {
+    if (comp->layerById(layerId)) {
+      comp->moveLayerToIndex(layerId, insertIndex++);
+    }
+  }
+  for (const auto& layerId : orderedIds) {
+    if (comp->layerById(layerId)) {
+      comp->moveLayerToIndex(layerId, insertIndex++);
+    }
+  }
+  return true;
+}
+
+void nudgeSelectedLayerSpacing(const ArtifactCompositionPtr& comp,
+                               const QVector<LayerID>& selectedIds,
+                               Qt::Key key)
+{
+  if (!comp || selectedIds.size() < 2) {
+    return;
+  }
+  const int step = 8;
+  const int delta = (key == Qt::Key_Left || key == Qt::Key_Up) ? -step : step;
+  for (const auto& id : selectedIds) {
+    auto layer = comp->layerById(id);
+    if (!layer) {
+      continue;
+    }
+    const ArtifactCore::RationalTime time(0, 30000);
+    const float x = layer->transform3D().positionX();
+    const float y = layer->transform3D().positionY();
+    if (key == Qt::Key_Left || key == Qt::Key_Right) {
+      layer->transform3D().setPosition(time, x + delta, y);
+    } else {
+      layer->transform3D().setPosition(time, x, y + delta);
+    }
+    layer->changed();
+  }
 }
 
 QVector<LayerID> visibleLayerIdsInRange(const QVector<VisibleRow>& rows,
@@ -1614,6 +1877,9 @@ public:
   int dragInsertVisibleRow = -1;
   int dragMatteHoverVisibleRow = -1;
   bool dragMatteLinkMode = false;
+  MultiEditCycleMode multiEditMode = MultiEditCycleMode::None;
+  int multiEditPresetIndex = 0;
+  std::chrono::steady_clock::time_point multiEditStartedAt{};
   bool dragStarted_ = false;
   bool updatingLayout = false;  // 再帰呼び出し防止フラグ
   QTimer* layoutDebounceTimer = nullptr;
@@ -3987,6 +4253,24 @@ void ArtifactLayerPanelWidget::mouseMoveEvent(QMouseEvent* event)
           parts << matteSummaryLabel(mattes[i], static_cast<int>(i));
         }
         toolTipText = QStringLiteral("Track Mattes: %1").arg(parts.join(QStringLiteral(" | ")));
+      } else if (!impl_->dragStarted_) {
+        toolTipText = QStringLiteral("Alt-drag a layer here to create a Track Matte link");
+      }
+    } else if (impl_->dragStarted_ && impl_->dragMatteLinkMode &&
+               row.kind == RowKind::MatteStack) {
+      toolTipText = QStringLiteral("Drop here to set the Track Matte source");
+    }
+    if (impl_->dragStarted_ && impl_->dragMatteLinkMode && row.layer) {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      const auto sourceLayer = comp ? comp->layerById(impl_->draggedLayerId) : ArtifactAbstractLayerPtr{};
+      const QString sourceName = sourceLayer ? sourceLayer->layerName() : QStringLiteral("<unknown>");
+      const QString targetName = row.layer ? row.layer->layerName() : QStringLiteral("<unknown>");
+      if (matteDropWouldCreateCycle(comp, row.layer, sourceLayer ? sourceLayer->id() : LayerID())) {
+        toolTipText = QStringLiteral("Track Matte drop blocked: cycle would be created\nSource: %1\nTarget: %2")
+                          .arg(sourceName, targetName);
+      } else {
+        toolTipText = QStringLiteral("Track Matte link\nSource: %1\nTarget: %2")
+                          .arg(sourceName, targetName);
       }
     }
   }
@@ -4388,6 +4672,50 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     return true;
   };
 
+  const QVector<LayerID> selectedIds = selectedLayerIdsSnapshot();
+  auto* service = ArtifactProjectService::instance();
+  auto comp = service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
+
+  auto armMultiEditCycle = [this](MultiEditCycleMode mode, int presetCount) -> int {
+    const auto now = std::chrono::steady_clock::now();
+    const bool sameMode = impl_->multiEditMode == mode &&
+        impl_->multiEditStartedAt.time_since_epoch().count() > 0 &&
+        now - impl_->multiEditStartedAt <= std::chrono::milliseconds(kMultiEditCycleWindowMs);
+    if (!sameMode) {
+      impl_->multiEditMode = mode;
+      impl_->multiEditPresetIndex = 0;
+    } else {
+      impl_->multiEditPresetIndex = (impl_->multiEditPresetIndex + 1) % presetCount;
+    }
+    impl_->multiEditStartedAt = now;
+    return impl_->multiEditPresetIndex;
+  };
+
+  auto applyMultiEditPreset = [this, &comp, &service, &selectedIds](MultiEditCycleMode mode,
+                                                                   int presetIndex) -> bool {
+    bool changed = false;
+    switch (mode) {
+    case MultiEditCycleMode::Align:
+      changed = applyAlignPreset(comp, selectedIds, presetIndex);
+      break;
+    case MultiEditCycleMode::Distribute:
+      changed = applyDistributePreset(comp, selectedIds, presetIndex);
+      break;
+    case MultiEditCycleMode::Shuffle:
+      changed = shuffleSelectedLayers(comp, selectedIds, presetIndex);
+      break;
+    case MultiEditCycleMode::None:
+      break;
+    }
+    if (changed) {
+      if (service) {
+        service->selectLayer(selectedIds.isEmpty() ? LayerID() : selectedIds.last());
+      }
+      updateLayout();
+    }
+    return changed;
+  };
+
   if ((event->modifiers() & Qt::AltModifier) &&
       !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
     if (event->key() == Qt::Key_Up) {
@@ -4397,6 +4725,30 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
       }
     } else if (event->key() == Qt::Key_Down) {
       if (moveSelectedLayerBy(+1)) {
+        event->accept();
+        return;
+      }
+    }
+  }
+
+  if (!(event->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
+    if (event->key() == Qt::Key_A && selectedIds.size() >= 2) {
+      const int presetIndex = armMultiEditCycle(MultiEditCycleMode::Align, 6);
+      if (applyMultiEditPreset(MultiEditCycleMode::Align, presetIndex)) {
+        event->accept();
+        return;
+      }
+    }
+    if (event->key() == Qt::Key_D && selectedIds.size() >= 3) {
+      const int presetIndex = armMultiEditCycle(MultiEditCycleMode::Distribute, 6);
+      if (applyMultiEditPreset(MultiEditCycleMode::Distribute, presetIndex)) {
+        event->accept();
+        return;
+      }
+    }
+    if (event->key() == Qt::Key_R && selectedIds.size() >= 2) {
+      const int presetIndex = armMultiEditCycle(MultiEditCycleMode::Shuffle, 4);
+      if (applyMultiEditPreset(MultiEditCycleMode::Shuffle, presetIndex)) {
         event->accept();
         return;
       }
@@ -4414,6 +4766,17 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
   }
 
   if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
+   if ((impl_->multiEditMode == MultiEditCycleMode::Align ||
+        impl_->multiEditMode == MultiEditCycleMode::Distribute) &&
+       impl_->multiEditStartedAt.time_since_epoch().count() > 0 &&
+       std::chrono::steady_clock::now() - impl_->multiEditStartedAt <=
+           std::chrono::milliseconds(kMultiEditCycleWindowMs) &&
+       selectedIds.size() >= 2) {
+    nudgeSelectedLayerSpacing(comp, selectedIds, static_cast<Qt::Key>(event->key()));
+    updateLayout();
+    event->accept();
+    return;
+   }
    int selectedIdx = -1;
    for (int i = 0; i < impl_->visibleRows.size(); ++i) {
     if (impl_->visibleRows[i].layer && impl_->visibleRows[i].layer->id() == impl_->selectedLayerId) {
@@ -4607,6 +4970,27 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
       if (validMatteTarget) {
         p.fillRect(0, y, width(), rowH, mixColor(background, accent, 0.22));
         p.fillRect(0, y, 4, rowH, accent);
+        auto comp = safeCompositionLookup(impl_->compositionId);
+        const auto sourceLayer = comp ? comp->layerById(impl_->draggedLayerId) : ArtifactAbstractLayerPtr{};
+        const bool blocked = !row.layer || matteDropWouldCreateCycle(comp, row.layer,
+                                                                    sourceLayer ? sourceLayer->id()
+                                                                                : LayerID());
+        const QString badgeText = blocked ? QStringLiteral("MATTE BLOCKED")
+                                          : QStringLiteral("MATTE LINK");
+        QFont badgeFont = p.font();
+        badgeFont.setBold(true);
+        badgeFont.setPointSizeF(std::max<qreal>(7.0, badgeFont.pointSizeF() - 1.0));
+        p.setFont(badgeFont);
+        const QFontMetrics fm(badgeFont);
+        const int badgeW = fm.horizontalAdvance(badgeText) + 18;
+        const QRect badgeRect(width() - badgeW - 10, y + 5, badgeW, rowH - 10);
+        QColor badgeFill = blocked ? QColor(160, 76, 76) : accent;
+        badgeFill.setAlpha(220);
+        p.setPen(blocked ? QColor(95, 38, 38) : accent.darker(180));
+        p.setBrush(badgeFill);
+        p.drawRoundedRect(badgeRect, 4, 4);
+        p.setPen(blocked ? QColor(255, 236, 236) : mixColor(background, text, 0.95));
+        p.drawText(badgeRect.adjusted(8, 0, -8, 0), Qt::AlignVCenter | Qt::AlignLeft, badgeText);
       }
     }
 

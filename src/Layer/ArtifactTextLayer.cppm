@@ -1188,7 +1188,7 @@ void ArtifactTextLayer::setSourceTextAtFrame(const qint64 frame, const QString& 
     return;
   }
   const RationalTime time(frame, effectiveTextTimelineFps(this));
-  property->addKeyFrame(time, text);
+  property->addKeyFrame(time, text, InterpolationType::Constant);
   markDirty();
   changed();
 }

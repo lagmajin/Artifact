@@ -3,27 +3,21 @@ module;
 
 export module Artifact.Asset.Result;
 
-//import 
+import Utils.Result;
+import Utils.String.UniString;
 
-export namespace Artifact
-{
+export namespace Artifact {
 
-	struct FindAssetResult
-	{
-	 bool success = false;
-		
-	};
-	
-	struct RemoveAssetResult
-	{
-	 bool success = false;
-		
-	};
-
-
-
-
-
-
-
+struct FindAssetResult {
+  bool success = false;
+  Status status{};
+  UniString message;
 };
+
+struct RemoveAssetResult {
+  bool success = false;
+  Status status{};
+  UniString message;
+};
+
+}

@@ -203,10 +203,50 @@ bool pasteParametricCompositionBundle(const QJsonObject& bundle) {
     return ok;
 }
 
+bool pasteCompositionBundle(const QJsonObject& bundle) {
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) {
+        return false;
+    }
+    auto project = svc->getCurrentProjectSharedPtr();
+    if (!project) {
+        return false;
+    }
+
+    const QJsonObject compositionJson = bundle.value(QStringLiteral("composition")).toObject();
+    if (compositionJson.isEmpty()) {
+        return false;
+    }
+
+    auto composition = ArtifactAbstractComposition::fromJson(QJsonDocument(compositionJson));
+    if (!composition) {
+        return false;
+    }
+
+    const QString sourceName = compositionJson.value(QStringLiteral("name")).toString();
+    const QString finalName = bundle.value(QStringLiteral("bundleTitle")).toString().trimmed().isEmpty()
+        ? (sourceName.trimmed().isEmpty() ? QStringLiteral("Composition") : sourceName)
+        : bundle.value(QStringLiteral("bundleTitle")).toString().trimmed();
+
+    if (project->hasComposition(composition->id())) {
+        return false;
+    }
+
+    const bool ok = project->addImportedComposition(composition, finalName);
+    if (ok) {
+        project->setCurrentCompositionId(composition->id(), false);
+        project->projectChanged();
+    }
+    return ok;
+}
+
 bool applyProjectBundleLocally(const QJsonObject& bundle) {
     const QString bundleKind = bundle.value(QStringLiteral("bundleKind")).toString();
     if (bundleKind == QStringLiteral("parametric-composition")) {
         return pasteParametricCompositionBundle(bundle);
+    }
+    if (bundleKind == QStringLiteral("composition")) {
+        return pasteCompositionBundle(bundle);
     }
     if (bundleKind == QStringLiteral("layer")) {
         return pasteLayerBundle(bundle);

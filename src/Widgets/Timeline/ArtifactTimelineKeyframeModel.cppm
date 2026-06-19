@@ -150,6 +150,9 @@ QString ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
   if (propertyPath == QStringLiteral("transform.anchor.y")) {
     return QStringLiteral("Transform / Anchor Y");
   }
+  if (propertyPath == QStringLiteral("text.value")) {
+    return QStringLiteral("Source Text");
+  }
 
   QString fallback = propertyPath;
   fallback.replace(QLatin1Char('.'), QStringLiteral(" / "));

@@ -5437,6 +5437,40 @@ CompositionRenderController::frameDebugSnapshot() const {
         } else {
           selectedResource.note = impl_->lastVideoDebug_;
         }
+
+        if (layer->maskCount() > 0) {
+          QStringList maskNotes;
+          maskNotes.reserve(layer->maskCount());
+          int enabledMaskCount = 0;
+          int totalPathCount = 0;
+          for (int m = 0; m < layer->maskCount(); ++m) {
+            const LayerMask mask = layer->mask(m);
+            const int pathCount = mask.maskPathCount();
+            totalPathCount += pathCount;
+            if (mask.isEnabled()) {
+              ++enabledMaskCount;
+            }
+            maskNotes.push_back(
+                QStringLiteral("#%1 paths=%2 enabled=%3")
+                    .arg(m + 1)
+                    .arg(pathCount)
+                    .arg(mask.isEnabled() ? QStringLiteral("on")
+                                          : QStringLiteral("off")));
+          }
+
+          ArtifactCore::FrameDebugResourceRecord maskResource;
+          maskResource.label = QStringLiteral("Mask Inspector");
+          maskResource.type = QStringLiteral("mask");
+          maskResource.relation = QStringLiteral("selected");
+          maskResource.cacheHit = enabledMaskCount > 0;
+          maskResource.stale = false;
+          maskResource.note = QStringLiteral("maskCount=%1 enabled=%2 paths=%3 | %4")
+                                 .arg(layer->maskCount())
+                                 .arg(enabledMaskCount)
+                                 .arg(totalPathCount)
+                                 .arg(maskNotes.join(QStringLiteral("; ")));
+          snapshot.resources.push_back(maskResource);
+        }
       } else {
         selectedResource.note = impl_->lastVideoDebug_;
       }

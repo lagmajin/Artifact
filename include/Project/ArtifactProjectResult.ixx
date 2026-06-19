@@ -3,33 +3,36 @@ module;
 
 export module Artifact.Project.Result;
 
-export namespace Artifact
-{
-	enum eCreateProjectError
-	{
-		
-	};
+import Utils.Result;
+import Utils.String.UniString;
 
-	struct CreateProjectResult
-	{
-	 bool isSuccess = false;
-		
-	};
+export namespace Artifact {
 
-	struct CloseProjectResult
-	{
-	 bool isSuccess = false;
-	};
-
-
-	struct ProjectToJsonResult
-	{
-	 bool isSuccess = false;
-	};
-
-
-
-
-
-
+enum eCreateProjectError {
+  None = 0,
+  Unknown,
+  InvalidName,
+  DuplicateName,
+  NotFound,
+  Failed
 };
+
+struct CreateProjectResult {
+  bool isSuccess = false;
+  Status status{};
+  UniString message;
+};
+
+struct CloseProjectResult {
+  bool isSuccess = false;
+  Status status{};
+  UniString message;
+};
+
+struct ProjectToJsonResult {
+  bool isSuccess = false;
+  Status status{};
+  UniString message;
+};
+
+}
