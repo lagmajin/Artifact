@@ -1809,7 +1809,37 @@ struct KeyframeRangeTransformOptions {
   double scale = 1.0;
   double valueScale = 1.0;
   double valueOffset = 0.0;
+  bool reverseOrder = false;
+  int randomJitter = 0;
 };
+
+QVariant transformKeyframeValue(const ArtifactCore::AbstractProperty *property,
+                                const QVariant &value,
+                                const KeyframeRangeTransformOptions &options) {
+  if (!value.isValid() || !property) {
+    return value;
+  }
+
+  switch (property->getType()) {
+  case ArtifactCore::PropertyType::Float:
+  case ArtifactCore::PropertyType::Integer: {
+    const double base = value.toDouble();
+    const double transformed =
+        options.kind == KeyframeRangeTransformKind::ScaleValues
+            ? base * options.valueScale
+            : base + options.valueOffset;
+    return property->getType() == ArtifactCore::PropertyType::Integer
+               ? QVariant(static_cast<int>(std::llround(transformed)))
+               : QVariant(transformed);
+  }
+  case ArtifactCore::PropertyType::Boolean:
+    return value;
+  case ArtifactCore::PropertyType::Color:
+    return value;
+  default:
+    return value;
+  }
+}
 
 bool applySelectedKeyframeRangeTransform(
     const ArtifactCompositionPtr &composition,
@@ -1909,17 +1939,9 @@ bool applySelectedKeyframeRangeTransform(
 
       ArtifactCore::KeyFrame keyframe;
       keyframe.time = RationalTime(newFrame, fpsScale);
-      keyframe.value = record.value.isValid() ? record.value : property->getValue();
-      if (options.kind == KeyframeRangeTransformKind::ScaleValues ||
-          options.kind == KeyframeRangeTransformKind::OffsetValues) {
-        if (keyframe.value.canConvert<double>()) {
-          const double v = keyframe.value.toDouble();
-          const double scaled = options.kind == KeyframeRangeTransformKind::ScaleValues
-                                    ? v * options.valueScale
-                                    : v + options.valueOffset;
-          keyframe.value = scaled;
-        }
-      }
+      keyframe.value = transformKeyframeValue(
+          property.get(), record.value.isValid() ? record.value : property->getValue(),
+          options);
       keyframe.interpolation = record.interpolation;
       keyframe.colorLabel = record.colorLabel;
       keyframe.anchor = record.anchor;
@@ -6156,12 +6178,16 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *staggerEndAct = nullptr;
   QAction *cascadeClipsAct = nullptr;
   QAction *overlapClipsAct = nullptr;
+  QAction *reverseOrderStaggerAct = nullptr;
+  QAction *randomStaggerAct = nullptr;
   if (clipUnderCursor) {
     QMenu *staggerMenu = menu.addMenu(QStringLiteral("Clip Stagger"));
     staggerStartAct = staggerMenu->addAction(QStringLiteral("Stagger Start +4f"));
     staggerEndAct = staggerMenu->addAction(QStringLiteral("Stagger End +4f"));
     cascadeClipsAct = staggerMenu->addAction(QStringLiteral("Cascade Clips"));
     overlapClipsAct = staggerMenu->addAction(QStringLiteral("Overlap by 4 Frames"));
+    reverseOrderStaggerAct = staggerMenu->addAction(QStringLiteral("Reverse Order Stagger"));
+    randomStaggerAct = staggerMenu->addAction(QStringLiteral("Random Stagger"));
   }
   QAction *interpLinearAct = nullptr;
   QAction *interpEaseInAct = nullptr;
@@ -6598,7 +6624,8 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   }
 
   if (chosen == staggerStartAct || chosen == staggerEndAct ||
-      chosen == cascadeClipsAct || chosen == overlapClipsAct) {
+      chosen == cascadeClipsAct || chosen == overlapClipsAct ||
+      chosen == reverseOrderStaggerAct || chosen == randomStaggerAct) {
     auto *svc = ArtifactProjectService::instance();
     auto currentComp = svc ? svc->currentComposition().lock() : nullptr;
     auto *selManager = ArtifactApplicationManager::instance()
@@ -6626,6 +6653,13 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
                 }
                 return lhs->id().toString() < rhs->id().toString();
               });
+    if (chosen == reverseOrderStaggerAct) {
+      std::reverse(orderedLayers.begin(), orderedLayers.end());
+    } else if (chosen == randomStaggerAct) {
+      std::shuffle(orderedLayers.begin(), orderedLayers.end(),
+                   std::mt19937{static_cast<unsigned>(
+                       std::max<qint64>(1, contextFrame + 1))});
+    }
     const qint64 step = 4;
     qint64 cursor = contextFrame;
     for (const auto &layer : orderedLayers) {
