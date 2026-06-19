@@ -7672,10 +7672,10 @@ void ArtifactTimelineWidget::updateSelectionState()
   } else {
     impl_->currentLayerLabel_->setText(QStringLiteral("Current: Open a composition"));
   }
-  impl_->currentLayerLabel_->setVisible(false);
+  impl_->currentLayerLabel_->setVisible(currentLayer != nullptr);
   if (impl_->recentLayerLabel_) {
     impl_->recentLayerLabel_->setText(formatRecentLayersText(impl_->recentLayerNames_));
-    impl_->recentLayerLabel_->setVisible(false);
+    impl_->recentLayerLabel_->setVisible(!impl_->recentLayerNames_.isEmpty());
   }
   if (impl_->frameSummaryLabel_) {
     impl_->frameSummaryLabel_->setText(
