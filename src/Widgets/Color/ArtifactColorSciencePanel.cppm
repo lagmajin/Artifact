@@ -22,6 +22,7 @@ module;
 #include <QPixmap>
 #include <QPushButton>
 #include <QFrame>
+#include <QSettings>
 #include <QStandardPaths>
 #include <QSlider>
 #include <QUrl>
@@ -92,6 +93,8 @@ public:
   void refreshColorRuleTable();
   void syncColorRulesFromTable();
   QColor nearestPaletteColor(const QColor &input) const;
+  void loadColorRules();
+  void saveColorRules() const;
   ArtifactCore::ColorLUT lutForSource(const QString &source) const;
   QPixmap buildPreviewPixmap(const ArtifactCore::ColorLUT &lut,
                              const QString &title) const;
@@ -202,7 +205,7 @@ void ArtifactColorSciencePanel::Impl::setupColorRulesSection(QWidget *parent, QV
   auto *ruleLayout = new QVBoxLayout(ruleGroup);
 
   auto *ruleHeader = new QLabel(
-      "Build rules with target + operator + value. Rules are kept in-memory for now.");
+      "Build rules with target + operator + value. Operators and scopes are chooser-based, and rules are saved locally.");
   ruleHeader->setWordWrap(true);
   ruleLayout->addWidget(ruleHeader);
 
@@ -210,6 +213,11 @@ void ArtifactColorSciencePanel::Impl::setupColorRulesSection(QWidget *parent, QV
   ruleTable_->setColumnCount(5);
   ruleTable_->setHorizontalHeaderLabels({"Target", "Operator", "Value", "Scope", "Enforce"});
   ruleTable_->horizontalHeader()->setStretchLastSection(true);
+  ruleTable_->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+  ruleTable_->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+  ruleTable_->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+  ruleTable_->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+  ruleTable_->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
   ruleTable_->setSelectionBehavior(QAbstractItemView::SelectRows);
   ruleTable_->setSelectionMode(QAbstractItemView::SingleSelection);
   ruleTable_->setEditTriggers(QAbstractItemView::AllEditTriggers);
@@ -218,12 +226,26 @@ void ArtifactColorSciencePanel::Impl::setupColorRulesSection(QWidget *parent, QV
   auto *controls = new QHBoxLayout();
   addRuleButton_ = new QPushButton("Add Rule", ruleGroup);
   removeRuleButton_ = new QPushButton("Remove Rule", ruleGroup);
+  auto *duplicateRuleButton = new QPushButton("Duplicate Rule", ruleGroup);
+  auto *moveUpRuleButton = new QPushButton("Move Up", ruleGroup);
+  auto *moveDownRuleButton = new QPushButton("Move Down", ruleGroup);
+  auto *toggleAllEnforceButton = new QPushButton("Toggle All Enforce", ruleGroup);
+  auto *seedPresetButton = new QPushButton("Seed Preset", ruleGroup);
+  auto *seedHuePresetButton = new QPushButton("Seed Hue Preset", ruleGroup);
+  auto *resetRulesButton = new QPushButton("Reset Defaults", ruleGroup);
   snapColorEdit_ = new QLineEdit(ruleGroup);
   snapColorEdit_->setPlaceholderText("#RRGGBB or #AARRGGBB");
   snapToPaletteButton_ = new QPushButton("Snap To Palette Color", ruleGroup);
   snapResultLabel_ = new QLabel("No snap applied", ruleGroup);
   controls->addWidget(addRuleButton_);
   controls->addWidget(removeRuleButton_);
+  controls->addWidget(duplicateRuleButton);
+  controls->addWidget(moveUpRuleButton);
+  controls->addWidget(moveDownRuleButton);
+  controls->addWidget(toggleAllEnforceButton);
+  controls->addWidget(seedPresetButton);
+  controls->addWidget(seedHuePresetButton);
+  controls->addWidget(resetRulesButton);
   controls->addWidget(snapColorEdit_, 1);
   controls->addWidget(snapToPaletteButton_);
   ruleLayout->addLayout(controls);
@@ -242,21 +264,76 @@ void ArtifactColorSciencePanel::Impl::refreshColorRuleTable() {
   }
   ruleTable_->blockSignals(true);
   ruleTable_->setRowCount(static_cast<int>(colorRules_.size()));
+  const QStringList ops{QStringLiteral("=="), QStringLiteral("!="), QStringLiteral(">"),
+                        QStringLiteral("<"), QStringLiteral(">="), QStringLiteral("<=")};
+  const QStringList scopes{QStringLiteral("background"), QStringLiteral("palette"),
+                           QStringLiteral("surface"), QStringLiteral("text")};
   for (int row = 0; row < static_cast<int>(colorRules_.size()); ++row) {
     const auto &rule = colorRules_[row];
     auto *targetItem = new QTableWidgetItem(rule.target);
-    auto *opItem = new QTableWidgetItem(rule.op);
     auto *valueItem = new QTableWidgetItem(QString::number(rule.value, 'f', 3));
-    auto *scopeItem = new QTableWidgetItem(rule.scope);
     auto *enforceItem = new QTableWidgetItem();
+    auto *opItem = new QComboBox(ruleTable_);
+    opItem->addItems(ops);
+    opItem->setCurrentIndex(std::max(0, opItem->findText(rule.op)));
+    auto *scopeItem = new QComboBox(ruleTable_);
+    scopeItem->addItems(scopes);
+    scopeItem->setCurrentIndex(std::max(0, scopeItem->findText(rule.scope)));
     enforceItem->setCheckState(rule.enforce ? Qt::Checked : Qt::Unchecked);
     ruleTable_->setItem(row, 0, targetItem);
-    ruleTable_->setItem(row, 1, opItem);
+    ruleTable_->setCellWidget(row, 1, opItem);
     ruleTable_->setItem(row, 2, valueItem);
-    ruleTable_->setItem(row, 3, scopeItem);
+    ruleTable_->setCellWidget(row, 3, scopeItem);
     ruleTable_->setItem(row, 4, enforceItem);
+    QObject::connect(opItem, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                     ruleTable_, [this]() {
+                       syncColorRulesFromTable();
+                       saveColorRules();
+                     });
+    QObject::connect(scopeItem, QOverload<int>::of(&QComboBox::currentIndexChanged),
+                     ruleTable_, [this]() {
+                       syncColorRulesFromTable();
+                       saveColorRules();
+                     });
   }
   ruleTable_->blockSignals(false);
+}
+
+void ArtifactColorSciencePanel::Impl::loadColorRules() {
+  QSettings settings;
+  const int count = settings.beginReadArray(QStringLiteral("ColorScience/ConstraintRules"));
+  std::vector<ColorRuleRow> loaded;
+  loaded.reserve(std::max(0, count));
+  for (int i = 0; i < count; ++i) {
+    settings.setArrayIndex(i);
+    ColorRuleRow rule;
+    rule.target = settings.value(QStringLiteral("target"), QStringLiteral("main.alpha")).toString();
+    rule.op = settings.value(QStringLiteral("op"), QStringLiteral("==")).toString();
+    rule.value = settings.value(QStringLiteral("value"), 1.0).toDouble();
+    rule.scope = settings.value(QStringLiteral("scope"), QStringLiteral("background")).toString();
+    rule.enforce = settings.value(QStringLiteral("enforce"), true).toBool();
+    loaded.push_back(rule);
+  }
+  settings.endArray();
+  if (!loaded.empty()) {
+    colorRules_ = std::move(loaded);
+  }
+  refreshColorRuleTable();
+}
+
+void ArtifactColorSciencePanel::Impl::saveColorRules() const {
+  QSettings settings;
+  settings.beginWriteArray(QStringLiteral("ColorScience/ConstraintRules"));
+  for (int i = 0; i < static_cast<int>(colorRules_.size()); ++i) {
+    settings.setArrayIndex(i);
+    const auto &rule = colorRules_[i];
+    settings.setValue(QStringLiteral("target"), rule.target);
+    settings.setValue(QStringLiteral("op"), rule.op);
+    settings.setValue(QStringLiteral("value"), rule.value);
+    settings.setValue(QStringLiteral("scope"), rule.scope);
+    settings.setValue(QStringLiteral("enforce"), rule.enforce);
+  }
+  settings.endArray();
 }
 
 void ArtifactColorSciencePanel::Impl::syncColorRulesFromTable() {
@@ -268,9 +345,13 @@ void ArtifactColorSciencePanel::Impl::syncColorRulesFromTable() {
   for (int row = 0; row < ruleTable_->rowCount(); ++row) {
     ColorRuleRow rule;
     if (auto *item = ruleTable_->item(row, 0)) rule.target = item->text().trimmed();
-    if (auto *item = ruleTable_->item(row, 1)) rule.op = item->text().trimmed();
+    if (auto *combo = qobject_cast<QComboBox *>(ruleTable_->cellWidget(row, 1))) {
+      rule.op = combo->currentText().trimmed();
+    }
     if (auto *item = ruleTable_->item(row, 2)) rule.value = item->text().toDouble();
-    if (auto *item = ruleTable_->item(row, 3)) rule.scope = item->text().trimmed();
+    if (auto *combo = qobject_cast<QComboBox *>(ruleTable_->cellWidget(row, 3))) {
+      rule.scope = combo->currentText().trimmed();
+    }
     if (auto *item = ruleTable_->item(row, 4)) rule.enforce = item->checkState() == Qt::Checked;
     updated.push_back(rule);
   }
@@ -385,6 +466,7 @@ void ArtifactColorSciencePanel::Impl::updateUI() {
 
   seedDefaultConstraintPalette(paletteManager_);
 
+  loadColorRules();
   refreshLUTBrowser();
 }
 
@@ -483,6 +565,7 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
   connect(addRuleButton_, &QPushButton::clicked, [this]() {
     colorRules_.push_back({"main.alpha", "==", 1.0, "background", true});
     refreshColorRuleTable();
+    saveColorRules();
   });
 
   connect(removeRuleButton_, &QPushButton::clicked, [this]() {
@@ -495,10 +578,102 @@ void ArtifactColorSciencePanel::Impl::connectSignals() {
     }
     colorRules_.erase(colorRules_.begin() + row);
     refreshColorRuleTable();
+    saveColorRules();
+  });
+
+  connect(duplicateRuleButton, &QPushButton::clicked, [this]() {
+    if (!ruleTable_) {
+      return;
+    }
+    const int row = ruleTable_->currentRow();
+    if (row < 0 || row >= static_cast<int>(colorRules_.size())) {
+      return;
+    }
+    const auto rule = colorRules_[static_cast<size_t>(row)];
+    colorRules_.insert(colorRules_.begin() + row + 1, rule);
+    refreshColorRuleTable();
+    if (ruleTable_->rowCount() > row + 1) {
+      ruleTable_->selectRow(row + 1);
+    }
+    saveColorRules();
+  });
+
+  connect(moveUpRuleButton, &QPushButton::clicked, [this]() {
+    if (!ruleTable_) {
+      return;
+    }
+    const int row = ruleTable_->currentRow();
+    if (row <= 0 || row >= static_cast<int>(colorRules_.size())) {
+      return;
+    }
+    std::swap(colorRules_[static_cast<size_t>(row)],
+              colorRules_[static_cast<size_t>(row - 1)]);
+    refreshColorRuleTable();
+    ruleTable_->selectRow(row - 1);
+    saveColorRules();
+  });
+
+  connect(moveDownRuleButton, &QPushButton::clicked, [this]() {
+    if (!ruleTable_) {
+      return;
+    }
+    const int row = ruleTable_->currentRow();
+    if (row < 0 || row + 1 >= static_cast<int>(colorRules_.size())) {
+      return;
+    }
+    std::swap(colorRules_[static_cast<size_t>(row)],
+              colorRules_[static_cast<size_t>(row + 1)]);
+    refreshColorRuleTable();
+    ruleTable_->selectRow(row + 1);
+    saveColorRules();
+  });
+
+  connect(toggleAllEnforceButton, &QPushButton::clicked, [this]() {
+    if (colorRules_.empty()) {
+      return;
+    }
+    const bool anyDisabled = std::any_of(colorRules_.begin(), colorRules_.end(),
+                                         [](const ColorRuleRow &rule) {
+                                           return !rule.enforce;
+                                         });
+    for (auto &rule : colorRules_) {
+      rule.enforce = anyDisabled;
+    }
+    refreshColorRuleTable();
+    saveColorRules();
+  });
+
+  connect(seedPresetButton, &QPushButton::clicked, [this]() {
+    colorRules_.clear();
+    colorRules_.push_back({"main.alpha", "==", 1.0, "background", true});
+    colorRules_.push_back({"main.hue", ">=", 0.0, "palette", true});
+    colorRules_.push_back({"surface.sat", ">=", 0.0, "surface", true});
+    colorRules_.push_back({"text.luma", ">=", 0.0, "text", true});
+    refreshColorRuleTable();
+    saveColorRules();
+  });
+
+  connect(seedHuePresetButton, &QPushButton::clicked, [this]() {
+    colorRules_.clear();
+    colorRules_.push_back({"main.hue", ">=", 30.0, "palette", true});
+    colorRules_.push_back({"accent.hue", "<=", 210.0, "palette", true});
+    colorRules_.push_back({"surface.luma", ">=", 0.15, "surface", true});
+    colorRules_.push_back({"text.luma", ">=", 0.75, "text", true});
+    refreshColorRuleTable();
+    saveColorRules();
+  });
+
+  connect(resetRulesButton, &QPushButton::clicked, [this]() {
+    colorRules_.clear();
+    colorRules_.push_back({"main.alpha", "==", 1.0, "background", true});
+    colorRules_.push_back({"accent.hue", "==", 180.0, "palette", true});
+    refreshColorRuleTable();
+    saveColorRules();
   });
 
   connect(ruleTable_, &QTableWidget::itemChanged, [this](QTableWidgetItem *) {
     syncColorRulesFromTable();
+    saveColorRules();
   });
 
   connect(snapToPaletteButton_, &QPushButton::clicked, [this]() {

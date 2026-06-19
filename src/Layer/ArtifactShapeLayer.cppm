@@ -565,6 +565,9 @@ public:
  int width_ = 200;
  int height_ = 200;
  FloatColor fillColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+ bool fillGradientEnabled_ = false;
+ FloatColor fillGradientStartColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+ FloatColor fillGradientEndColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
  FloatColor strokeColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
  float strokeWidth_ = 0.0f;
  bool fillEnabled_ = true;
@@ -642,10 +645,6 @@ public:
                                                   shapeOperators_);
 
     if (!paths.empty()) {
-     QColor fc(static_cast<int>(fillColor_.r() * 255),
-               static_cast<int>(fillColor_.g() * 255),
-               static_cast<int>(fillColor_.b() * 255),
-               static_cast<int>(fillColor_.a() * 255));
      const bool canUseCustomStroke =
          hasCustomStrokeEffects() &&
          strokeAlign_ == StrokeAlign::Center &&
@@ -653,7 +652,15 @@ public:
          dashPattern_.empty();
      for (const QPainterPath& path : paths) {
       if (fillEnabled_) {
-       painter.fillPath(path, fc);
+       if (fillGradientEnabled_) {
+        const QRectF bounds = path.boundingRect();
+        QLinearGradient gradient(bounds.topLeft(), bounds.bottomLeft());
+        gradient.setColorAt(0.0, toQColor(fillGradientStartColor_));
+        gradient.setColorAt(1.0, toQColor(fillGradientEndColor_));
+        painter.fillPath(path, QBrush(gradient));
+       } else {
+        painter.fillPath(path, toQColor(fillColor_));
+       }
       }
 
       if (strokeEnabled_ && strokeWidth_ > 0) {
@@ -793,8 +800,42 @@ int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
 // Style
 // ============================================================
 
-void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+void ArtifactShapeLayer::setFillColor(const FloatColor& c) {
+ impl_->fillColor_ = c;
+ if (!impl_->fillGradientEnabled_) {
+  impl_->fillGradientStartColor_ = c;
+  impl_->fillGradientEndColor_ = c;
+ }
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
 FloatColor ArtifactShapeLayer::fillColor() const { return impl_->fillColor_; }
+void ArtifactShapeLayer::setFillGradientEnabled(bool enabled) {
+ impl_->fillGradientEnabled_ = enabled;
+ if (enabled) {
+  impl_->fillGradientStartColor_ = impl_->fillColor_;
+  impl_->fillGradientEndColor_ = impl_->fillColor_;
+ }
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+bool ArtifactShapeLayer::fillGradientEnabled() const { return impl_->fillGradientEnabled_; }
+void ArtifactShapeLayer::setFillGradientStartColor(const FloatColor& color) {
+ impl_->fillGradientStartColor_ = color;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+FloatColor ArtifactShapeLayer::fillGradientStartColor() const { return impl_->fillGradientStartColor_; }
+void ArtifactShapeLayer::setFillGradientEndColor(const FloatColor& color) {
+ impl_->fillGradientEndColor_ = color;
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+}
+FloatColor ArtifactShapeLayer::fillGradientEndColor() const { return impl_->fillGradientEndColor_; }
 void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) {
  impl_->strokeColor_ = c;
  if (!impl_->strokeGradientEnabled_) {
@@ -1167,6 +1208,36 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  fillEnabledProp->setDisplayLabel(QStringLiteral("Fill Enabled"));
   appearanceGroup.addProperty(fillEnabledProp);
 
+ auto fillGradientEnabledProp = makeProp(QStringLiteral("shape.fillGradientEnabled"),
+                                         ArtifactCore::PropertyType::Boolean,
+                                         impl_->fillGradientEnabled_, -208);
+ fillGradientEnabledProp->setDisplayLabel(QStringLiteral("Fill Gradient"));
+ appearanceGroup.addProperty(fillGradientEnabledProp);
+
+ auto fillGradientStartProp = makeProp(QStringLiteral("shape.fillGradientStartColor"),
+                                       ArtifactCore::PropertyType::Color,
+                                       QColor(
+  static_cast<int>(impl_->fillGradientStartColor_.r() * 255),
+  static_cast<int>(impl_->fillGradientStartColor_.g() * 255),
+  static_cast<int>(impl_->fillGradientStartColor_.b() * 255),
+  static_cast<int>(impl_->fillGradientStartColor_.a() * 255)
+  ),
+  -207);
+ fillGradientStartProp->setDisplayLabel(QStringLiteral("Fill Gradient Start"));
+ appearanceGroup.addProperty(fillGradientStartProp);
+
+ auto fillGradientEndProp = makeProp(QStringLiteral("shape.fillGradientEndColor"),
+                                     ArtifactCore::PropertyType::Color,
+                                     QColor(
+  static_cast<int>(impl_->fillGradientEndColor_.r() * 255),
+  static_cast<int>(impl_->fillGradientEndColor_.g() * 255),
+  static_cast<int>(impl_->fillGradientEndColor_.b() * 255),
+  static_cast<int>(impl_->fillGradientEndColor_.a() * 255)
+  ),
+  -206);
+ fillGradientEndProp->setDisplayLabel(QStringLiteral("Fill Gradient End"));
+ appearanceGroup.addProperty(fillGradientEndProp);
+
  auto strokeColorProp = makeProp(QStringLiteral("shape.strokeColor"),
                                  ArtifactCore::PropertyType::Color,
                                  QColor(
@@ -1175,39 +1246,39 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
   static_cast<int>(impl_->strokeColor_.b() * 255),
   static_cast<int>(impl_->strokeColor_.a() * 255)
   ),
-  -208);
+  -205);
  strokeColorProp->setDisplayLabel(QStringLiteral("Stroke Color"));
   appearanceGroup.addProperty(strokeColorProp);
 
  auto strokeWidthProp = makeProp(QStringLiteral("shape.strokeWidth"),
                                  ArtifactCore::PropertyType::Float,
-                                 impl_->strokeWidth_, -207);
+                                 impl_->strokeWidth_, -204);
  strokeWidthProp->setDisplayLabel(QStringLiteral("Stroke Width"));
   appearanceGroup.addProperty(strokeWidthProp);
 
  auto strokeEnabledProp = makeProp(QStringLiteral("shape.strokeEnabled"),
                                    ArtifactCore::PropertyType::Boolean,
-                                   impl_->strokeEnabled_, -206);
+                                   impl_->strokeEnabled_, -203);
  strokeEnabledProp->setDisplayLabel(QStringLiteral("Stroke Enabled"));
   appearanceGroup.addProperty(strokeEnabledProp);
 
  auto strokeTaperStartProp = makeProp(QStringLiteral("shape.strokeTaperStart"),
                                       ArtifactCore::PropertyType::Float,
-                                      impl_->strokeTaperStart_, -205, false);
+                                      impl_->strokeTaperStart_, -202, false);
  strokeTaperStartProp->setDisplayLabel(QStringLiteral("Taper Start"));
  strokeTaperStartProp->setTooltip(QStringLiteral("0.0 = thin, 1.0 = full width"));
  appearanceGroup.addProperty(strokeTaperStartProp);
 
  auto strokeTaperEndProp = makeProp(QStringLiteral("shape.strokeTaperEnd"),
                                     ArtifactCore::PropertyType::Float,
-                                    impl_->strokeTaperEnd_, -204, false);
+                                    impl_->strokeTaperEnd_, -201, false);
  strokeTaperEndProp->setDisplayLabel(QStringLiteral("Taper End"));
  strokeTaperEndProp->setTooltip(QStringLiteral("0.0 = thin, 1.0 = full width"));
  appearanceGroup.addProperty(strokeTaperEndProp);
 
  auto strokeGradientEnabledProp = makeProp(QStringLiteral("shape.strokeGradientEnabled"),
                                            ArtifactCore::PropertyType::Boolean,
-                                           impl_->strokeGradientEnabled_, -203);
+                                           impl_->strokeGradientEnabled_, -200);
  strokeGradientEnabledProp->setDisplayLabel(QStringLiteral("Stroke Gradient"));
  appearanceGroup.addProperty(strokeGradientEnabledProp);
 
@@ -1219,7 +1290,7 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
   static_cast<int>(impl_->strokeGradientStartColor_.b() * 255),
   static_cast<int>(impl_->strokeGradientStartColor_.a() * 255)
   ),
-  -202);
+  -199);
  strokeGradientStartProp->setDisplayLabel(QStringLiteral("Gradient Start"));
  appearanceGroup.addProperty(strokeGradientStartProp);
 
@@ -1231,27 +1302,27 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
   static_cast<int>(impl_->strokeGradientEndColor_.b() * 255),
   static_cast<int>(impl_->strokeGradientEndColor_.a() * 255)
   ),
-  -201);
+  -198);
  strokeGradientEndProp->setDisplayLabel(QStringLiteral("Gradient End"));
  appearanceGroup.addProperty(strokeGradientEndProp);
 
  auto strokeCapProp = makeProp(QStringLiteral("shape.strokeCap"),
                                ArtifactCore::PropertyType::Integer,
-                               static_cast<int>(impl_->strokeCap_), -200, false);
+                               static_cast<int>(impl_->strokeCap_), -197, false);
  strokeCapProp->setDisplayLabel(QStringLiteral("Stroke Cap"));
  strokeCapProp->setTooltip(QStringLiteral("0=Flat, 1=Round, 2=Square"));
   appearanceGroup.addProperty(strokeCapProp);
 
  auto strokeJoinProp = makeProp(QStringLiteral("shape.strokeJoin"),
                                 ArtifactCore::PropertyType::Integer,
-                                static_cast<int>(impl_->strokeJoin_), -199, false);
+                                static_cast<int>(impl_->strokeJoin_), -196, false);
  strokeJoinProp->setDisplayLabel(QStringLiteral("Stroke Join"));
  strokeJoinProp->setTooltip(QStringLiteral("0=Miter, 1=Round, 2=Bevel"));
   appearanceGroup.addProperty(strokeJoinProp);
 
  auto strokeAlignProp = makeProp(QStringLiteral("shape.strokeAlign"),
                                  ArtifactCore::PropertyType::Integer,
-                                 static_cast<int>(impl_->strokeAlign_), -198, false);
+                                 static_cast<int>(impl_->strokeAlign_), -195, false);
  strokeAlignProp->setDisplayLabel(QStringLiteral("Stroke Align"));
  strokeAlignProp->setTooltip(QStringLiteral("0=Center, 1=Inside, 2=Outside"));
   appearanceGroup.addProperty(strokeAlignProp);
@@ -1410,6 +1481,20 @@ if (propertyPath == "shape.type") {
  }
  if (propertyPath == "shape.fillEnabled") {
   setFillEnabled(value.toBool());
+  return true;
+ }
+ if (propertyPath == "shape.fillGradientEnabled") {
+  setFillGradientEnabled(value.toBool());
+  return true;
+ }
+ if (propertyPath == "shape.fillGradientStartColor") {
+  const auto c = value.value<QColor>();
+  setFillGradientStartColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+  return true;
+ }
+ if (propertyPath == "shape.fillGradientEndColor") {
+  const auto c = value.value<QColor>();
+  setFillGradientEndColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
   return true;
  }
  if (propertyPath == "shape.strokeColor") {
@@ -1626,6 +1711,15 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   obj["fillB"] = static_cast<double>(impl_->fillColor_.b());
   obj["fillA"] = static_cast<double>(impl_->fillColor_.a());
   obj["fillEnabled"] = impl_->fillEnabled_;
+  obj["fillGradientEnabled"] = impl_->fillGradientEnabled_;
+  obj["fillGradientStartR"] = static_cast<double>(impl_->fillGradientStartColor_.r());
+  obj["fillGradientStartG"] = static_cast<double>(impl_->fillGradientStartColor_.g());
+  obj["fillGradientStartB"] = static_cast<double>(impl_->fillGradientStartColor_.b());
+  obj["fillGradientStartA"] = static_cast<double>(impl_->fillGradientStartColor_.a());
+  obj["fillGradientEndR"] = static_cast<double>(impl_->fillGradientEndColor_.r());
+  obj["fillGradientEndG"] = static_cast<double>(impl_->fillGradientEndColor_.g());
+  obj["fillGradientEndB"] = static_cast<double>(impl_->fillGradientEndColor_.b());
+  obj["fillGradientEndA"] = static_cast<double>(impl_->fillGradientEndColor_.a());
   obj["strokeR"] = static_cast<double>(impl_->strokeColor_.r());
   obj["strokeG"] = static_cast<double>(impl_->strokeColor_.g());
   obj["strokeB"] = static_cast<double>(impl_->strokeColor_.b());
@@ -1692,6 +1786,17 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
       static_cast<float>(obj["fillB"].toDouble(1.0)),
       static_cast<float>(obj["fillA"].toDouble(1.0))));
   layer->setFillEnabled(obj["fillEnabled"].toBool(true));
+  layer->setFillGradientEnabled(obj["fillGradientEnabled"].toBool(false));
+  layer->setFillGradientStartColor(FloatColor(
+      static_cast<float>(obj["fillGradientStartR"].toDouble(layer->fillColor().r())),
+      static_cast<float>(obj["fillGradientStartG"].toDouble(layer->fillColor().g())),
+      static_cast<float>(obj["fillGradientStartB"].toDouble(layer->fillColor().b())),
+      static_cast<float>(obj["fillGradientStartA"].toDouble(layer->fillColor().a()))));
+  layer->setFillGradientEndColor(FloatColor(
+      static_cast<float>(obj["fillGradientEndR"].toDouble(layer->fillColor().r())),
+      static_cast<float>(obj["fillGradientEndG"].toDouble(layer->fillColor().g())),
+      static_cast<float>(obj["fillGradientEndB"].toDouble(layer->fillColor().b())),
+      static_cast<float>(obj["fillGradientEndA"].toDouble(layer->fillColor().a()))));
   layer->setStrokeColor(FloatColor(
       static_cast<float>(obj["strokeR"].toDouble(0.0)),
       static_cast<float>(obj["strokeG"].toDouble(0.0)),

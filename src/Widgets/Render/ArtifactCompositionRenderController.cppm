@@ -3658,8 +3658,49 @@ public:
     }
   }
 
+  void sync2DGizmosForLayers(const QVector<ArtifactAbstractLayerPtr> &layers) {
+    if (layers.isEmpty()) {
+      sync2DGizmosForLayer(nullptr);
+      return;
+    }
+    if (layers.size() == 1) {
+      sync2DGizmosForLayer(layers.front());
+      return;
+    }
+    if (textGizmo_) {
+      textGizmo_->setLayer(nullptr);
+    }
+    if (gizmo_) {
+      std::vector<ArtifactAbstractLayerPtr> targets;
+      targets.reserve(layers.size());
+      for (const auto &layer : layers) {
+        if (layer) {
+          targets.push_back(layer);
+        }
+      }
+      gizmo_->setTargetLayers(std::move(targets));
+    }
+  }
+
   void
   syncSelectedLayerOverlayState(const ArtifactCompositionPtr &composition) {
+    auto *app = ArtifactApplicationManager::instance();
+    auto *selection = app ? app->layerSelectionManager() : nullptr;
+    if (selection) {
+      const auto selected = selection->selectedLayers();
+      if (selected.size() > 1) {
+        QVector<ArtifactAbstractLayerPtr> layers;
+        layers.reserve(selected.size());
+        for (const auto &layer : selected) {
+          if (layer) {
+            layers.push_back(layer);
+          }
+        }
+        sync2DGizmosForLayers(layers);
+        return;
+      }
+    }
+
     ArtifactAbstractLayerPtr layer;
     if (composition && !selectedLayerId_.isNil()) {
       layer = composition->layerById(selectedLayerId_);
@@ -4343,8 +4384,11 @@ void CompositionRenderController::setComposition(
       impl_->applyCompositionState(composition);
     }
     if (composition && !impl_->selectedLayerId_.isNil()) {
-      impl_->sync2DGizmosForLayer(
-          composition->layerById(impl_->selectedLayerId_));
+      const auto selected = impl_->previewPipeline_.composition()
+                                ? impl_->previewPipeline_.composition()
+                                      ->layerById(impl_->selectedLayerId_)
+                                : ArtifactAbstractLayerPtr{};
+      impl_->sync2DGizmosForLayer(selected);
     } else if (!composition) {
       impl_->sync2DGizmosForLayer(nullptr);
     }
@@ -6841,6 +6885,15 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
   }
   return impl_->gizmo_->cursorShapeForViewportPos(physPos,
                                                   impl_->renderer_.get());
+}
+
+TransformGizmo::HandleType CompositionRenderController::transformHandleForViewportPos(
+    const QPointF &viewportPos) const {
+  if (!impl_ || !impl_->renderer_ || !impl_->gizmo_) {
+    return TransformGizmo::HandleType::None;
+  }
+  const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
+  return impl_->gizmo_->handleAtViewportPos(physPos, impl_->renderer_.get());
 }
 
 void CompositionRenderController::renderOneFrame() {
@@ -9345,19 +9398,34 @@ int CompositionRenderController::Impl::pieMenuItemAt(const QPointF &viewportPos)
   const QRectF rect = pieMenuRect();
   const QPointF center = rect.center();
   const QPointF delta = viewportPos - center;
-  const double dist = std::hypot(delta.x(), delta.y());
-  const double innerRadius = rect.width() * 0.19;
-  const double outerRadius = rect.width() * 0.48;
-  if (dist < innerRadius || dist > outerRadius) {
-    return -1;
-  }
-  const double angle = std::atan2(-delta.y(), delta.x()) * 180.0 / M_PI;
-  double normalized = angle < 0.0 ? angle + 360.0 : angle;
   const int count = static_cast<int>(pieMenuModel_.items.size());
   if (count <= 0) {
     return -1;
   }
   const double sectorSize = 360.0 / static_cast<double>(count);
+  const double orbitRadius = rect.width() * 0.34;
+  const double pillW = std::clamp(rect.width() * 0.36, 112.0, 154.0);
+  const double pillH = 28.0;
+  for (int i = 0; i < count; ++i) {
+    const double angle =
+        (90.0 - static_cast<double>(i) * sectorSize) * M_PI / 180.0;
+    const QPointF anchor(center.x() + std::cos(angle) * orbitRadius,
+                         center.y() - std::sin(angle) * orbitRadius);
+    const QRectF pill(anchor.x() - pillW * 0.5, anchor.y() - pillH * 0.5,
+                      pillW, pillH);
+    if (pill.contains(viewportPos)) {
+      return i;
+    }
+  }
+
+  const double dist = std::hypot(delta.x(), delta.y());
+  const double gestureDeadZone = rect.width() * 0.18;
+  const double gestureOuterRadius = rect.width() * 0.50;
+  if (dist < gestureDeadZone || dist > gestureOuterRadius) {
+    return -1;
+  }
+  const double angle = std::atan2(-delta.y(), delta.x()) * 180.0 / M_PI;
+  const double normalized = angle < 0.0 ? angle + 360.0 : angle;
   double shifted = normalized - (90.0 - sectorSize * 0.5);
   while (shifted < 0.0) {
     shifted += 360.0;

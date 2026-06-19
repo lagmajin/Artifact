@@ -8,6 +8,7 @@ export module Artifact.Project.Health;
 
 import Artifact.Project;
 import Artifact.Composition.Abstract;
+import Core.Diagnostics.ProjectDiagnostic;
 import Utils.Id;
 
 export namespace Artifact {
@@ -61,5 +62,8 @@ private:
     static void repairMissingAssets(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);
     static void repairBrokenReferences(ArtifactProject* project, AutoRepairResult& result, const AutoRepairOptions& options);
 };
+
+auto convertProjectHealthReportToDiagnostics(const ProjectHealthReport& report)
+    -> std::vector<ArtifactCore::ProjectDiagnostic>;
 
 } // namespace Artifact

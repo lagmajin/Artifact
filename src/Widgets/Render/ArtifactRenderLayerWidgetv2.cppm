@@ -1215,7 +1215,7 @@ QPointF ArtifactLayerEditorWidgetV2::Impl::starInnerRadiusHandleCanvasPos(const 
  const float innerR = outerR * shape.starInnerRadius();
  const float cx = shape.shapeWidth() * 0.5f;
  const float cy = shape.shapeHeight() * 0.5f;
- // Handle is on top axis from center, at innerR distance
+ // Put the handle on the first inner vertex so the user can feel the star ratio directly.
  return QPointF(cx, cy - innerR);
 }
 
@@ -1223,7 +1223,8 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestCornerRadiusHandle(const Artifact
 {
  if (!layer) return false;
  auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape || shape->shapeType() != Artifact::ShapeType::Rect) return false;
+ if (!shape || (shape->shapeType() != Artifact::ShapeType::Rect &&
+                shape->shapeType() != Artifact::ShapeType::Square)) return false;
  const QPointF localHandle = cornerRadiusHandleCanvasPos(*shape);
  const QTransform globalTransform = layer->getGlobalTransform();
  const QPointF worldHandle = globalTransform.map(localHandle);
@@ -1259,7 +1260,8 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeParamHandles(const ArtifactAbst
  const QTransform globalTransform = layer->getGlobalTransform();
  const float zoom = renderer_->getZoom();
  const float handleR = kParamHandleRadius / (zoom > 0.001f ? zoom : 1.0f);
- if (shape->shapeType() == Artifact::ShapeType::Rect) {
+ if (shape->shapeType() == Artifact::ShapeType::Rect ||
+     shape->shapeType() == Artifact::ShapeType::Square) {
   const QPointF localHandle = cornerRadiusHandleCanvasPos(*shape);
   const QPointF worldHandle = globalTransform.map(localHandle);
   const FloatColor col = hoveredCornerRadius_ ? FloatColor{1,0.6f,0,1} : FloatColor{0,0.7f,1,1};
@@ -1269,16 +1271,41 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeParamHandles(const ArtifactAbst
   renderer_->drawCircle(
       static_cast<float>(worldHandle.x()), static_cast<float>(worldHandle.y()),
       handleR, FloatColor{1,1,1,0.7f}, 1.0f, false);
+  QFont handleFont;
+  handleFont.setPixelSize(11);
+  renderer_->drawText(
+      QRectF(static_cast<float>(worldHandle.x() + 8.0f),
+             static_cast<float>(worldHandle.y() - 10.0f), 84.0f, 20.0f),
+      QStringLiteral("Corner Radius"), handleFont,
+      hoveredCornerRadius_ ? FloatColor{1.0f, 0.85f, 0.45f, 1.0f}
+                           : FloatColor{0.82f, 0.90f, 0.98f, 0.85f},
+      Qt::AlignLeft | Qt::AlignVCenter);
  } else if (shape->shapeType() == Artifact::ShapeType::Star) {
   const QPointF localHandle = starInnerRadiusHandleCanvasPos(*shape);
   const QPointF worldHandle = globalTransform.map(localHandle);
   const FloatColor col = hoveredStarInnerRadius_ ? FloatColor{1,0.6f,0,1} : FloatColor{0,0.7f,1,1};
+  renderer_->drawThickLineLocal(
+      {static_cast<float>(globalTransform.map(QPointF(shape->shapeWidth() * 0.5f,
+                                                      shape->shapeHeight() * 0.5f)).x()),
+       static_cast<float>(globalTransform.map(QPointF(shape->shapeWidth() * 0.5f,
+                                                      shape->shapeHeight() * 0.5f)).y())},
+      {static_cast<float>(worldHandle.x()), static_cast<float>(worldHandle.y())},
+      1.0f, FloatColor{1,1,1,0.35f});
   renderer_->drawCircle(
       static_cast<float>(worldHandle.x()), static_cast<float>(worldHandle.y()),
       handleR, col, 1.0f, true);
   renderer_->drawCircle(
       static_cast<float>(worldHandle.x()), static_cast<float>(worldHandle.y()),
       handleR, FloatColor{1,1,1,0.7f}, 1.0f, false);
+  QFont handleFont;
+  handleFont.setPixelSize(11);
+  renderer_->drawText(
+      QRectF(static_cast<float>(worldHandle.x() + 8.0f),
+             static_cast<float>(worldHandle.y() - 10.0f), 54.0f, 20.0f),
+      QStringLiteral("Inner"), handleFont,
+      hoveredStarInnerRadius_ ? FloatColor{1.0f, 0.85f, 0.45f, 1.0f}
+                              : FloatColor{0.82f, 0.90f, 0.98f, 0.85f},
+      Qt::AlignLeft | Qt::AlignVCenter);
  }
 }
 
@@ -2720,6 +2747,16 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     if (prevCr != impl_->hoveredCornerRadius_ || prevStar != impl_->hoveredStarInnerRadius_) {
      impl_->requestRender();
     }
+   if (impl_->hoveredCornerRadius_) {
+     setCursor(Qt::SizeFDiagCursor);
+    } else if (impl_->hoveredStarInnerRadius_) {
+     setCursor(Qt::CrossCursor);
+    } else if (shape->shapeType() == Artifact::ShapeType::Square &&
+               impl_->hitTestCornerRadiusHandle(layer, canvasPoint)) {
+     setCursor(Qt::SizeFDiagCursor);
+    } else {
+     unsetCursor();
+    }
    }
   }
 
@@ -2982,6 +3019,8 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* addWigglePathsAct = nullptr;
  QAction* addZigZagAct = nullptr;
  QAction* addTwistAct = nullptr;
+ QAction* toggleFillGradientAct = nullptr;
+ QAction* matchFillGradientAct = nullptr;
  QAction* insertPointAct = nullptr;
  QAction* splitSegmentAct = nullptr;
  QAction* deletePointAct = nullptr;
@@ -3001,6 +3040,10 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
    addWigglePathsAct = shapeOpsMenu->addAction(QStringLiteral("Wiggle Paths"));
    addZigZagAct = shapeOpsMenu->addAction(QStringLiteral("ZigZag"));
    addTwistAct = shapeOpsMenu->addAction(QStringLiteral("Twist"));
+   toggleFillGradientAct = menu.addAction(QStringLiteral("Fill Gradient"));
+   toggleFillGradientAct->setCheckable(true);
+   toggleFillGradientAct->setChecked(shapeLayer->fillGradientEnabled());
+   matchFillGradientAct = menu.addAction(QStringLiteral("Match Fill Gradient To Fill Color"));
    clearShapeOperatorsAct = menu.addAction(QStringLiteral("Clear Shape Operators"));
    clearShapeOperatorsAct->setEnabled(shapeLayer->shapeOperatorCount() > 0);
    if (shapeLayer->hasCustomPolygon()) {
@@ -3029,6 +3072,24 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
      if (shapeChosen == clearShapeOperatorsAct) {
       shapeLayer->clearShapeOperators();
       impl_->requestRender();
+      event->accept();
+      return;
+     }
+     if (shapeChosen == toggleFillGradientAct) {
+      shapeLayer->setFillGradientEnabled(!shapeLayer->fillGradientEnabled());
+      impl_->requestRender();
+      event->accept();
+      return;
+     }
+     if (shapeChosen == matchFillGradientAct) {
+      const FloatColor c = shapeLayer->fillColor();
+      shapeLayer->setFillGradientStartColor(c);
+      shapeLayer->setFillGradientEndColor(c);
+      if (!shapeLayer->fillGradientEnabled()) {
+       shapeLayer->setFillGradientEnabled(true);
+      } else {
+       impl_->requestRender();
+      }
       event->accept();
       return;
      }

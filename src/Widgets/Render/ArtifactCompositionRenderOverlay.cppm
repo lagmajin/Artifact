@@ -351,84 +351,79 @@ __declspec(dllexport) void drawViewportPieMenuOverlay(ArtifactIRenderer *rendere
   renderer->setPan(0.0f, 0.0f);
 
   const QPointF center = rect.center();
-  const float outerRadius = rect.width() * 0.48f;
-  const float innerRadius = rect.width() * 0.19f;
+  const float orbitRadius = rect.width() * 0.34f;
+  const float guideRadius = rect.width() * 0.18f;
+  const float centerRadius = rect.width() * 0.075f;
+  const float pillW = std::clamp(rect.width() * 0.36f, 112.0f, 154.0f);
+  const float pillH = 28.0f;
   const int count = static_cast<int>(model.items.size());
   const float sectorSize = 360.0f / static_cast<float>(std::max(1, count));
   renderer->drawSolidRect(0.0f, 0.0f, overlayWf, overlayHf,
-                          FloatColor{0.0f, 0.0f, 0.0f, 0.16f}, 1.0f);
+                          FloatColor{0.0f, 0.0f, 0.0f, 0.10f}, 1.0f);
   renderer->drawCircle(static_cast<float>(center.x()),
-                       static_cast<float>(center.y()), outerRadius + 8.0f,
-                       FloatColor{0.08f, 0.10f, 0.13f, 0.94f}, 1.0f, true);
+                       static_cast<float>(center.y()), guideRadius + 3.0f,
+                       FloatColor{0.22f, 0.36f, 0.50f, 0.36f}, 1.0f, true);
   renderer->drawCircle(static_cast<float>(center.x()),
-                       static_cast<float>(center.y()), innerRadius - 2.0f,
-                       FloatColor{0.05f, 0.06f, 0.08f, 0.98f}, 1.0f, true);
+                       static_cast<float>(center.y()), guideRadius,
+                       FloatColor{0.07f, 0.09f, 0.11f, 0.72f}, 1.0f, true);
+  renderer->drawCircle(static_cast<float>(center.x()),
+                       static_cast<float>(center.y()), centerRadius + 7.0f,
+                       FloatColor{0.02f, 0.025f, 0.03f, 0.95f}, 1.0f, true);
+  renderer->drawCircle(static_cast<float>(center.x()),
+                       static_cast<float>(center.y()), centerRadius,
+                       FloatColor{0.15f, 0.16f, 0.17f, 0.98f}, 1.0f, true);
 
   QFont labelFont = QApplication::font();
   labelFont.setPointSizeF(std::max(9.0, static_cast<double>(labelFont.pointSizeF())));
   labelFont.setWeight(QFont::DemiBold);
+  QFont numberFont = QApplication::font();
+  numberFont.setPointSizeF(std::max(8.0, static_cast<double>(numberFont.pointSizeF()) - 1.0));
+  numberFont.setWeight(QFont::DemiBold);
   QFont titleFont = QApplication::font();
-  titleFont.setPointSizeF(std::max(10.0, static_cast<double>(titleFont.pointSizeF()) + 1.0));
-  titleFont.setWeight(QFont::DemiBold);
+  titleFont.setPointSizeF(std::max(8.0, static_cast<double>(titleFont.pointSizeF()) - 1.0));
+  titleFont.setWeight(QFont::Normal);
 
   for (int i = 0; i < count; ++i) {
     const auto &item = model.items[static_cast<size_t>(i)];
-    const float startAngle = 90.0f - (i + 1) * sectorSize + sectorSize * 0.5f;
-    const float endAngle = startAngle + sectorSize;
-    const int steps = 10;
-    std::vector<Detail::float2> polygon;
-    polygon.reserve(static_cast<size_t>(steps + 3));
-    polygon.push_back({static_cast<float>(center.x()),
-                       static_cast<float>(center.y())});
-    for (int s = 0; s <= steps; ++s) {
-      const float t = static_cast<float>(s) / static_cast<float>(steps);
-      const float ang =
-          (startAngle + (endAngle - startAngle) * t) * static_cast<float>(M_PI) /
-          180.0f;
-      polygon.push_back({
-          static_cast<float>(center.x() + std::cos(ang) * outerRadius),
-          static_cast<float>(center.y() - std::sin(ang) * outerRadius)});
-    }
+    const float angle =
+        (90.0f - static_cast<float>(i) * sectorSize) * static_cast<float>(M_PI) /
+        180.0f;
+    const QPointF anchor(center.x() + std::cos(angle) * orbitRadius,
+                         center.y() - std::sin(angle) * orbitRadius);
+    const QRectF pill(anchor.x() - pillW * 0.5f, anchor.y() - pillH * 0.5f,
+                      pillW, pillH);
     const bool selected = (i == selectedIndex);
-    renderer->drawSolidPolygonLocal(
-        polygon, selected ? FloatColor{0.18f, 0.34f, 0.52f, 0.95f}
-                          : FloatColor{0.10f, 0.12f, 0.15f, 0.88f});
-
-    std::vector<Detail::float2> innerEdge;
-    innerEdge.reserve(static_cast<size_t>(steps + 3));
-    for (int s = 0; s <= steps; ++s) {
-      const float t = static_cast<float>(s) / static_cast<float>(steps);
-      const float ang =
-          (startAngle + (endAngle - startAngle) * t) * static_cast<float>(M_PI) /
-          180.0f;
-      innerEdge.push_back({
-          static_cast<float>(center.x() + std::cos(ang) * innerRadius),
-          static_cast<float>(center.y() - std::sin(ang) * innerRadius)});
+    renderer->drawRoundedPanel(
+        static_cast<float>(pill.left()), static_cast<float>(pill.top()),
+        static_cast<float>(pill.width()), static_cast<float>(pill.height()),
+        5.0f,
+        selected ? FloatColor{0.16f, 0.22f, 0.29f, 0.96f}
+                 : FloatColor{0.06f, 0.065f, 0.075f, 0.92f},
+        selected ? FloatColor{0.46f, 0.64f, 0.78f, 0.92f}
+                 : FloatColor{0.16f, 0.17f, 0.18f, 0.80f},
+        1.0f, 1.0f);
+    if (item.checked) {
+      renderer->drawSolidRect(static_cast<float>(pill.left() + 6.0),
+                              static_cast<float>(pill.center().y() - 4.0),
+                              4.0f, 8.0f,
+                              FloatColor{0.46f, 0.72f, 0.96f, 0.95f}, 1.0f);
     }
-    renderer->drawSolidPolygonLocal(innerEdge,
-                                    FloatColor{0.04f, 0.05f, 0.07f, 0.98f});
-
-    const float midAngle =
-        (startAngle + sectorSize * 0.5f) * static_cast<float>(M_PI) / 180.0f;
-    const float labelRadius = (innerRadius + outerRadius) * 0.5f;
-    const QPointF labelPos(center.x() + std::cos(midAngle) * labelRadius,
-                           center.y() - std::sin(midAngle) * labelRadius);
-    const QRectF textRect(labelPos.x() - sectorSize * 1.0f,
-                          labelPos.y() - 14.0f, sectorSize * 2.0f, 28.0f);
-    renderer->drawText(textRect, item.label, labelFont,
+    renderer->drawText(pill.adjusted(14.0, 0.0, -34.0, 0.0), item.label, labelFont,
                        item.enabled ? FloatColor{0.92f, 0.95f, 0.98f, 1.0f}
                                     : FloatColor{0.55f, 0.58f, 0.62f, 1.0f},
-                       Qt::AlignCenter);
+                       Qt::AlignLeft | Qt::AlignVCenter);
+    renderer->drawText(QRectF(pill.right() - 28.0, pill.top(), 22.0, pillH),
+                       QString::number(i + 1), numberFont,
+                       item.enabled ? FloatColor{0.50f, 0.53f, 0.58f, 1.0f}
+                                    : FloatColor{0.34f, 0.36f, 0.40f, 1.0f},
+                       Qt::AlignRight | Qt::AlignVCenter);
   }
 
-  renderer->drawCircle(static_cast<float>(center.x()),
-                       static_cast<float>(center.y()), innerRadius - 4.0f,
-                       FloatColor{0.03f, 0.04f, 0.06f, 1.0f}, 1.0f, true);
-  renderer->drawText(QRectF(center.x() - innerRadius, center.y() - innerRadius,
-                            innerRadius * 2.0f, innerRadius * 2.0f),
+  renderer->drawText(QRectF(center.x() - guideRadius, center.y() - guideRadius,
+                            guideRadius * 2.0f, guideRadius * 0.9f),
                      model.title.isEmpty() ? QStringLiteral("Menu")
                                            : model.title,
-                     titleFont, FloatColor{0.95f, 0.97f, 0.99f, 1.0f},
+                     titleFont, FloatColor{0.74f, 0.76f, 0.78f, 1.0f},
                      Qt::AlignCenter);
 
   renderer->setZoom(prevZoom);

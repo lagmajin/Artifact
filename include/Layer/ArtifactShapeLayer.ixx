@@ -54,6 +54,12 @@ public:
   // Style
   void setFillColor(const FloatColor &color);
   FloatColor fillColor() const;
+  void setFillGradientEnabled(bool enabled);
+  bool fillGradientEnabled() const;
+  void setFillGradientStartColor(const FloatColor &color);
+  FloatColor fillGradientStartColor() const;
+  void setFillGradientEndColor(const FloatColor &color);
+  FloatColor fillGradientEndColor() const;
   void setStrokeColor(const FloatColor &color);
   FloatColor strokeColor() const;
   void setStrokeWidth(float width);

@@ -218,6 +218,82 @@ QCursor makeMaskAddCursor()
   return cursor;
 }
 
+QCursor makeEditorMoveCursor()
+{
+  static const QCursor cursor = []() {
+    QPixmap pixmap(32, 32);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPen outline(QColor(0, 0, 0, 230), 3.5);
+    outline.setCapStyle(Qt::RoundCap);
+    outline.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(outline);
+    painter.drawLine(QPointF(16.0, 5.0), QPointF(16.0, 27.0));
+    painter.drawLine(QPointF(5.0, 16.0), QPointF(27.0, 16.0));
+    painter.drawLine(QPointF(16.0, 5.0), QPointF(12.5, 9.0));
+    painter.drawLine(QPointF(16.0, 5.0), QPointF(19.5, 9.0));
+    painter.drawLine(QPointF(16.0, 27.0), QPointF(12.5, 23.0));
+    painter.drawLine(QPointF(16.0, 27.0), QPointF(19.5, 23.0));
+    painter.drawLine(QPointF(5.0, 16.0), QPointF(9.0, 12.5));
+    painter.drawLine(QPointF(5.0, 16.0), QPointF(9.0, 19.5));
+    painter.drawLine(QPointF(27.0, 16.0), QPointF(23.0, 12.5));
+    painter.drawLine(QPointF(27.0, 16.0), QPointF(23.0, 19.5));
+
+    QPen inner(QColor(255, 255, 255, 250), 1.8);
+    inner.setCapStyle(Qt::RoundCap);
+    inner.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(inner);
+    painter.drawLine(QPointF(16.0, 5.0), QPointF(16.0, 27.0));
+    painter.drawLine(QPointF(5.0, 16.0), QPointF(27.0, 16.0));
+    painter.drawLine(QPointF(16.0, 5.0), QPointF(12.5, 9.0));
+    painter.drawLine(QPointF(16.0, 5.0), QPointF(19.5, 9.0));
+    painter.drawLine(QPointF(16.0, 27.0), QPointF(12.5, 23.0));
+    painter.drawLine(QPointF(16.0, 27.0), QPointF(19.5, 23.0));
+    painter.drawLine(QPointF(5.0, 16.0), QPointF(9.0, 12.5));
+    painter.drawLine(QPointF(5.0, 16.0), QPointF(9.0, 19.5));
+    painter.drawLine(QPointF(27.0, 16.0), QPointF(23.0, 12.5));
+    painter.drawLine(QPointF(27.0, 16.0), QPointF(23.0, 19.5));
+
+    painter.end();
+    return QCursor(pixmap, 16, 16);
+  }();
+  return cursor;
+}
+
+QCursor makeEditorRotateCursor()
+{
+  static const QCursor cursor = []() {
+    QPixmap pixmap(32, 32);
+    pixmap.fill(Qt::transparent);
+
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    QPen outline(QColor(0, 0, 0, 230), 4.0);
+    outline.setCapStyle(Qt::RoundCap);
+    outline.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(outline);
+    painter.drawArc(QRectF(7.0, 7.0, 18.0, 18.0), 35 * 16, 285 * 16);
+    painter.drawLine(QPointF(22.0, 5.0), QPointF(27.0, 6.5));
+    painter.drawLine(QPointF(22.0, 5.0), QPointF(23.5, 10.5));
+
+    QPen inner(QColor(255, 255, 255, 250), 2.0);
+    inner.setCapStyle(Qt::RoundCap);
+    inner.setJoinStyle(Qt::RoundJoin);
+    painter.setPen(inner);
+    painter.drawArc(QRectF(7.0, 7.0, 18.0, 18.0), 35 * 16, 285 * 16);
+    painter.drawLine(QPointF(22.0, 5.0), QPointF(27.0, 6.5));
+    painter.drawLine(QPointF(22.0, 5.0), QPointF(23.5, 10.5));
+
+    painter.end();
+    return QCursor(pixmap, 16, 16);
+  }();
+  return cursor;
+}
+
 void polishEditorMenu(QMenu* menu, QWidget* owner)
 {
   if (!menu) {
@@ -421,6 +497,14 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
     if (radius > 0.0f) {
       detail += QStringLiteral(" - r%1").arg(radius, 0, 'f', 1);
     }
+  }
+
+  if (shape->fillGradientEnabled()) {
+    const auto start = shape->fillGradientStartColor();
+    const auto end = shape->fillGradientEndColor();
+    detail += QStringLiteral(" - Fill gradient %1→%2")
+                  .arg(QColor::fromRgbF(start.r(), start.g(), start.b(), start.a()).name(QColor::HexArgb),
+                       QColor::fromRgbF(end.r(), end.g(), end.b(), end.a()).name(QColor::HexArgb));
   }
 
   detail += QStringLiteral(" - Vertex edit ready");
@@ -1715,10 +1799,21 @@ public:
     auto *toolManager = app ? app->toolManager() : nullptr;
     const ToolType activeTool =
         toolManager ? toolManager->activeTool() : ToolType::Selection;
+    const auto gizmoHandle = controller_->transformHandleForViewportPos(pos);
     const Qt::CursorShape cursorShape =
         controller_->cursorShapeForViewportPos(pos);
     if (activeTool == ToolType::Pen && cursorShape == Qt::CrossCursor) {
       setCursor(makeMaskAddCursor());
+      return;
+    }
+    if (activeTool == ToolType::Selection &&
+        gizmoHandle == TransformGizmo::HandleType::Rotate) {
+      setCursor(makeEditorRotateCursor());
+      return;
+    }
+    if (activeTool == ToolType::Selection &&
+        gizmoHandle == TransformGizmo::HandleType::Move) {
+      setCursor(makeEditorMoveCursor());
       return;
     }
     setCursor(cursorShape);
@@ -4331,6 +4426,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   const auto addToolAction = [&](const QString &text, const QString &iconName,
                                  ToolType toolType, bool checked) {
     QAction *action = toolMenu->addAction(loadIconWithFallback(iconName), text);
+    action->setIconVisibleInMenu(true);
     action->setCheckable(true);
     action->setChecked(checked);
     toolGroup->addAction(action);
@@ -4373,6 +4469,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     action->setCheckable(true);
     action->setChecked(checked);
     action->setIcon(loadEditorMenuIcon(iconPath));
+    action->setIconVisibleInMenu(true);
     gizmoGroup->addAction(action);
     connect(action, &QAction::triggered, this, [this, mode]() {
       if (impl_->renderController_) {
@@ -4485,9 +4582,13 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   };
   const auto addPivotAction = [&](const QString &text, bool useCenter,
                                   bool checked) {
-    QAction *action = pivotMenu->addAction(text);
+    const QString iconPath =
+        useCenter ? QStringLiteral("Studio/effectmenu_filter_center_focus.svg")
+                  : QStringLiteral("Studio/effectmenu_straighten.svg");
+    QAction *action = pivotMenu->addAction(loadIconWithFallback(iconPath), text);
     action->setCheckable(true);
     action->setChecked(checked);
+    action->setIconVisibleInMenu(true);
     pivotGroup->addAction(action);
     connect(action, &QAction::triggered, this,
             [applyPivotPreset, useCenter]() { applyPivotPreset(useCenter); });
@@ -4614,25 +4715,58 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   auto *displayMenu = new QMenu(this);
   polishEditorMenu(displayMenu, this);
-  QAction *solidBgAct = displayMenu->addAction("Solid");
-  QAction *solidColorAct = displayMenu->addAction("Solid Color...");
-  QAction *checkerboardAct = displayMenu->addAction("Checkerboard");
+  QAction *solidBgAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/compositionmenu_background.svg")),
+      "Solid");
+  QAction *solidColorAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/compositionmenu_background.svg")),
+      "Solid Color...");
+  QAction *checkerboardAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/viewmenu_grid_on.svg")),
+      "Checkerboard");
   auto *checkerboardSizeMenu = displayMenu->addMenu("Checkerboard Size");
   polishEditorMenu(checkerboardSizeMenu, this);
-  QAction *mayaBgAct = displayMenu->addAction("Maya Gradient");
+  QAction *mayaBgAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/compositionmenu_background.svg")),
+      "Maya Gradient");
   auto *bgGroup = new QActionGroup(displayMenu);
   bgGroup->setExclusive(true);
   bgGroup->addAction(solidBgAct);
   bgGroup->addAction(checkerboardAct);
   bgGroup->addAction(mayaBgAct);
-  QAction *gridAct = displayMenu->addAction("Grid");
-  QAction *guidesAct = displayMenu->addAction("Guides");
-  QAction *safeMarginsAct = displayMenu->addAction("Safe Area");
-  QAction *anchorCenterAct = displayMenu->addAction("Anchor / Center");
-  QAction *cameraOverlayAct = displayMenu->addAction("Camera Frustum");
-  QAction *densityHeatmapAct = displayMenu->addAction("Density Heatmap");
+  QAction *gridAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/viewmenu_grid_on.svg")),
+      "Grid");
+  QAction *guidesAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/viewmenu_panels.svg")),
+      "Guides");
+  QAction *safeMarginsAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/viewmenu_aspect_ratio.svg")),
+      "Safe Area");
+  QAction *anchorCenterAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/effectmenu_filter_center_focus.svg")),
+      "Anchor / Center");
+  QAction *cameraOverlayAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/effectmenu_camera_alt.svg")),
+      "Camera Frustum");
+  QAction *densityHeatmapAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/effectmenu_graphic_eq.svg")),
+      "Density Heatmap");
   displayMenu->addSeparator();
-  QAction *gpuBlendAct = displayMenu->addAction("GPU Blend Path");
+  QAction *gpuBlendAct = displayMenu->addAction(
+      loadIconWithFallback(QStringLiteral("Studio/effectmenu_transform.svg")),
+      "GPU Blend Path");
+  solidBgAct->setIconVisibleInMenu(true);
+  solidColorAct->setIconVisibleInMenu(true);
+  checkerboardAct->setIconVisibleInMenu(true);
+  mayaBgAct->setIconVisibleInMenu(true);
+  gridAct->setIconVisibleInMenu(true);
+  guidesAct->setIconVisibleInMenu(true);
+  safeMarginsAct->setIconVisibleInMenu(true);
+  anchorCenterAct->setIconVisibleInMenu(true);
+  cameraOverlayAct->setIconVisibleInMenu(true);
+  densityHeatmapAct->setIconVisibleInMenu(true);
+  gpuBlendAct->setIconVisibleInMenu(true);
   impl_->densityHeatmapAction_ = densityHeatmapAct;
   const std::array<float, 8> checkerboardSizes{
       8.0f, 12.0f, 16.0f, 24.0f, 32.0f, 48.0f, 64.0f, 96.0f};

@@ -99,50 +99,6 @@ QString assetPathFromDiagnostic(const ArtifactCore::ProjectDiagnostic& diag)
     }
     return match.captured(1).trimmed();
 }
-
-auto convertHealthReportToDiagnostics(const ProjectHealthReport& report)
-    -> std::vector<ArtifactCore::ProjectDiagnostic>
-{
-    std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
-    diagnostics.reserve(static_cast<size_t>(report.issues.size()));
-
-    for (const auto& issue : report.issues) {
-        ArtifactCore::DiagnosticSeverity severity = ArtifactCore::DiagnosticSeverity::Info;
-        ArtifactCore::DiagnosticCategory category = ArtifactCore::DiagnosticCategory::Custom;
-
-        switch (issue.severity) {
-        case HealthIssueSeverity::Error:
-            severity = ArtifactCore::DiagnosticSeverity::Error;
-            break;
-        case HealthIssueSeverity::Warning:
-            severity = ArtifactCore::DiagnosticSeverity::Warning;
-            break;
-        case HealthIssueSeverity::Info:
-        default:
-            severity = ArtifactCore::DiagnosticSeverity::Info;
-            break;
-        }
-
-        if (issue.category == QStringLiteral("CircularReference")) {
-            category = ArtifactCore::DiagnosticCategory::CircularDep;
-        } else if (issue.category == QStringLiteral("MissingAsset")) {
-            category = ArtifactCore::DiagnosticCategory::File;
-        } else if (issue.category == QStringLiteral("FrameRange")) {
-            category = ArtifactCore::DiagnosticCategory::Configuration;
-        } else if (issue.category == QStringLiteral("BrokenReference")) {
-            category = ArtifactCore::DiagnosticCategory::Reference;
-        } else if (issue.category == QStringLiteral("Naming")) {
-            category = ArtifactCore::DiagnosticCategory::Configuration;
-        }
-
-        ArtifactCore::ProjectDiagnostic diag(severity, category, issue.message);
-        diag.setDescription(issue.message);
-        diag.setSourceCompId(issue.targetName);
-        diagnostics.push_back(diag);
-    }
-
-    return diagnostics;
-}
 } // namespace
 
 /**
@@ -205,8 +161,7 @@ public:
             lastReport_ = {};
         } else {
             lastReport_ = ArtifactProjectHealthChecker::check(project_);
-            // Use the service's conversion logic directly (or inline)
-            diagnostics = convertHealthReportToDiagnostics(lastReport_);
+            diagnostics = convertProjectHealthReportToDiagnostics(lastReport_);
         }
 
         // Update overall status

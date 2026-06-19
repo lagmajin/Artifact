@@ -256,7 +256,21 @@ void ArtifactEffectMenu::Impl::buildEffectCatalog()
   }
 
   QHash<QString, QMenu*> categoryMenus;
-  const auto effects = effectService->availableEffects();
+  auto effects = effectService->availableEffects();
+  std::stable_sort(effects.begin(), effects.end(),
+                   [](const EffectInfo& a, const EffectInfo& b) {
+                     const auto ca = categoryForEffect(a);
+                     const auto cb = categoryForEffect(b);
+                     if (ca.title != cb.title) {
+                       return ca.title < cb.title;
+                     }
+                     const QString ad = a.displayName.toLower();
+                     const QString bd = b.displayName.toLower();
+                     if (ad != bd) {
+                       return ad < bd;
+                     }
+                     return a.id.toQString() < b.id.toQString();
+                   });
   for (const auto& info : effects) {
     const auto category = categoryForEffect(info);
     QMenu* categoryMenu = categoryMenus.value(category.title, nullptr);

@@ -30,7 +30,25 @@ protected:
       event->ignore();
       return;
     }
-    QDoubleSpinBox::wheelEvent(event);
+    const Qt::KeyboardModifiers modifiers = event->modifiers();
+    double factor = 1.0;
+    if (modifiers.testFlag(Qt::AltModifier)) {
+      factor = 0.01;
+    } else if (modifiers.testFlag(Qt::ShiftModifier)) {
+      factor = 0.1;
+    } else if (modifiers.testFlag(Qt::ControlModifier)) {
+      factor = 10.0;
+    }
+
+    const QPoint numSteps = event->angleDelta() / 120;
+    if (numSteps.isNull()) {
+      event->ignore();
+      return;
+    }
+    const double nextValue = value() +
+                             static_cast<double>(numSteps.y()) * singleStep() * factor;
+    setValue(nextValue);
+    event->accept();
   }
 
   QValidator::State validate(QString &input, int &pos) const override {
@@ -81,7 +99,25 @@ protected:
       event->ignore();
       return;
     }
-    QSpinBox::wheelEvent(event);
+    const Qt::KeyboardModifiers modifiers = event->modifiers();
+    double factor = 1.0;
+    if (modifiers.testFlag(Qt::AltModifier)) {
+      factor = 0.01;
+    } else if (modifiers.testFlag(Qt::ShiftModifier)) {
+      factor = 0.1;
+    } else if (modifiers.testFlag(Qt::ControlModifier)) {
+      factor = 10.0;
+    }
+
+    const QPoint numSteps = event->angleDelta() / 120;
+    if (numSteps.isNull()) {
+      event->ignore();
+      return;
+    }
+    const int delta = static_cast<int>(std::lround(static_cast<double>(numSteps.y()) *
+                                                   static_cast<double>(singleStep()) * factor));
+    setValue(value() + delta);
+    event->accept();
   }
 
   QValidator::State validate(QString &input, int &pos) const override {

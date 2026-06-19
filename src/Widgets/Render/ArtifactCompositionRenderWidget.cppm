@@ -4,9 +4,11 @@
 #include <windows.h>
 #include <tbb/tbb.h>
 #include <QWidget>
+#include <QAction>
 #include <QMenu>
 #include <QCursor>
 #include <QHash>
+#include <QIcon>
 #include <QPixmap>
 #include <QResizeEvent>
 #include <QMouseEvent>
@@ -715,15 +717,24 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
                   ArtifactApplicationManager::instance()->layerSelectionManager()->selectLayer(hit.layer);
                   
                   QMenu menu(this);
-                  menu.addAction("Center in Comp", [layer = hit.layer, comp]() {
+                  auto *centerAct = menu.addAction("Center in Comp", [layer = hit.layer, comp]() {
                       auto size = comp->settings().compositionSize();
                       auto& t3 = layer->transform3D();
                       t3.setPosition(ArtifactCore::RationalTime(comp->framePosition().framePosition(), 30000), size.width() / 2.0f, size.height() / 2.0f);
                       layer->changed();
                   });
+                  centerAct->setIcon(QIcon(ArtifactCore::resolveIconPath(
+                      QStringLiteral("Studio/viewmenu_fit_screen.svg"))));
+                  centerAct->setIconVisibleInMenu(true);
                   menu.addSeparator();
-                  menu.addAction("Bring to Front", [layer = hit.layer, comp]() { comp->bringToFront(layer->id()); });
-                  menu.addAction("Send to Back", [layer = hit.layer, comp]() { comp->sendToBack(layer->id()); });
+                  auto *frontAct = menu.addAction("Bring to Front", [layer = hit.layer, comp]() { comp->bringToFront(layer->id()); });
+                  frontAct->setIcon(QIcon(ArtifactCore::resolveIconPath(
+                      QStringLiteral("Studio/effectmenu_layers.svg"))));
+                  frontAct->setIconVisibleInMenu(true);
+                  auto *backAct = menu.addAction("Send to Back", [layer = hit.layer, comp]() { comp->sendToBack(layer->id()); });
+                  backAct->setIcon(QIcon(ArtifactCore::resolveIconPath(
+                      QStringLiteral("Studio/layermenu_view_comfy.svg"))));
+                  backAct->setIconVisibleInMenu(true);
                   menu.exec(event->globalPosition().toPoint());
               }
       }

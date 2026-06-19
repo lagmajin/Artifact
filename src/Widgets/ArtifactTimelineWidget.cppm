@@ -16,6 +16,7 @@ module;
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QInputDialog>
 #include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QShowEvent>
@@ -267,6 +268,7 @@ QString formatSelectedKeyframeSummary(
   QSet<QString> propertyLabels;
   QStringList sampleLabels;
   bool hitsCurrentFrame = false;
+  bool touchesSelectedLayer = false;
   for (const auto &marker : markers) {
     const qint64 frame = static_cast<qint64>(std::llround(marker.frame));
     minFrame = std::min(minFrame, frame);
@@ -277,6 +279,7 @@ QString formatSelectedKeyframeSummary(
                   marker.propertyPath)
             : marker.label;
     hitsCurrentFrame |= (frame == currentFrame);
+    touchesSelectedLayer |= marker.selectedLayer;
     propertyLabels.insert(displayLabel);
     if (sampleLabels.size() < 3 && !sampleLabels.contains(displayLabel)) {
       sampleLabels.push_back(displayLabel);
@@ -301,17 +304,20 @@ QString formatSelectedKeyframeSummary(
     }
   }
   const QString nowText =
-      QStringLiteral("keys=%1 prop=%2 frame=%3 current=%4")
+      QStringLiteral("keys=%1 prop=%2 frame=%3 current=%4 selected=%5")
           .arg(markers.size())
           .arg(propertyText)
           .arg(frameText)
-          .arg(hitsCurrentFrame ? QStringLiteral("yes") : QStringLiteral("no"));
+          .arg(hitsCurrentFrame ? QStringLiteral("yes") : QStringLiteral("no"))
+          .arg(touchesSelectedLayer ? QStringLiteral("yes") : QStringLiteral("no"));
   const QString warningText =
       hitsCurrentFrame ? QStringLiteral("at current frame")
-                       : QStringLiteral("off current frame");
+                       : (touchesSelectedLayer ? QStringLiteral("selected layer only")
+                                              : QStringLiteral("off current frame"));
   const QString nextText =
-      markers.size() == 1 ? QStringLiteral("add second")
-                          : QStringLiteral("refine selection");
+      markers.size() == 1 ? QStringLiteral("add another")
+                          : (hitsCurrentFrame ? QStringLiteral("use current marker")
+                                              : QStringLiteral("refine selection"));
   return QStringLiteral("goal: keep keyframes readable | now: %1 | warning: %2 | next: %3%4")
       .arg(nowText)
       .arg(warningText)
@@ -625,6 +631,271 @@ QVector<ArtifactAbstractLayerPtr> selectedTimelineLayers(
             });
   return layers;
 }
+
+enum class ClipArrangeOperation {
+  None,
+  StairStep,
+  Sequence,
+  SetDuration
+};
+
+enum class ClipArrangeOrder {
+  LayerStackTopToBottom,
+  LayerStackBottomToTop,
+  CurrentInTime,
+  SelectionOrder,
+  Name
+};
+
+enum class ClipArrangeDurationAnchor {
+  KeepIn,
+  KeepOut,
+  KeepCenter
+};
+
+struct ClipArrangeTarget {
+  LayerID layerId;
+  qint64 originalIn = 0;
+  qint64 originalOut = 1;
+  int stackIndex = 0;
+  int selectionIndex = 0;
+  QString name;
+
+  qint64 duration() const {
+    return std::max<qint64>(1, originalOut - originalIn);
+  }
+};
+
+struct ClipArrangeRange {
+  LayerID layerId;
+  qint64 inFrame = 0;
+  qint64 outFrame = 1;
+};
+
+QString clipArrangeOrderLabel(const ClipArrangeOrder order, const bool reverse)
+{
+  QString text;
+  switch (order) {
+  case ClipArrangeOrder::LayerStackTopToBottom:
+    text = QStringLiteral("Top -> Bottom");
+    break;
+  case ClipArrangeOrder::LayerStackBottomToTop:
+    text = QStringLiteral("Bottom -> Top");
+    break;
+  case ClipArrangeOrder::CurrentInTime:
+    text = QStringLiteral("Current In Time");
+    break;
+  case ClipArrangeOrder::SelectionOrder:
+    text = QStringLiteral("Selection Order");
+    break;
+  case ClipArrangeOrder::Name:
+    text = QStringLiteral("Name");
+    break;
+  }
+  return reverse ? QStringLiteral("Reverse ") + text : text;
+}
+
+QVector<ClipArrangeTarget> collectClipArrangeTargets(
+    const ArtifactCompositionPtr& composition,
+    ArtifactLayerSelectionManager* selectionManager,
+    const QVector<TimelineRowDescriptor>& trackRows)
+{
+  QVector<ClipArrangeTarget> targets;
+  if (!composition || !selectionManager) {
+    return targets;
+  }
+
+  const auto layers = selectedTimelineLayers(selectionManager);
+  if (layers.size() < 2) {
+    return targets;
+  }
+
+  QHash<QString, int> stackIndices;
+  for (int i = 0; i < trackRows.size(); ++i) {
+    const auto& row = trackRows.at(i);
+    if (row.kind == TimelineRowKind::Layer && !row.layerId.isNil()) {
+      stackIndices.insert(row.layerId.toString(), i);
+    }
+  }
+
+  targets.reserve(layers.size());
+  int selectionIndex = 0;
+  for (const auto& layer : layers) {
+    if (!layer || layer->id().isNil()) {
+      continue;
+    }
+    ClipArrangeTarget target;
+    target.layerId = layer->id();
+    target.originalIn = layer->inPoint().framePosition();
+    target.originalOut =
+        std::max<qint64>(target.originalIn + 1, layer->outPoint().framePosition());
+    target.stackIndex = stackIndices.value(layer->id().toString(), selectionIndex);
+    target.selectionIndex = selectionIndex++;
+    target.name = layer->layerName();
+    targets.push_back(std::move(target));
+  }
+  return targets;
+}
+
+QVector<ClipArrangeTarget> orderedClipArrangeTargets(
+    QVector<ClipArrangeTarget> targets,
+    const ClipArrangeOrder order,
+    const bool reverse)
+{
+  std::stable_sort(targets.begin(), targets.end(),
+                   [order](const ClipArrangeTarget& lhs,
+                           const ClipArrangeTarget& rhs) {
+    switch (order) {
+    case ClipArrangeOrder::LayerStackTopToBottom:
+      return lhs.stackIndex < rhs.stackIndex;
+    case ClipArrangeOrder::LayerStackBottomToTop:
+      return lhs.stackIndex > rhs.stackIndex;
+    case ClipArrangeOrder::CurrentInTime:
+      return lhs.originalIn < rhs.originalIn;
+    case ClipArrangeOrder::SelectionOrder:
+      return lhs.selectionIndex < rhs.selectionIndex;
+    case ClipArrangeOrder::Name:
+      return QString::localeAwareCompare(lhs.name, rhs.name) < 0;
+    }
+    return lhs.selectionIndex < rhs.selectionIndex;
+  });
+  if (reverse) {
+    std::reverse(targets.begin(), targets.end());
+  }
+  return targets;
+}
+
+QVector<ClipArrangeRange> calculateClipArrangeRanges(
+    const QVector<ClipArrangeTarget>& originalTargets,
+    const ClipArrangeOperation operation,
+    const ClipArrangeOrder order,
+    const bool reverse,
+    const qint64 baseFrame,
+    const qint64 parameter,
+    const ClipArrangeDurationAnchor anchor)
+{
+  QVector<ClipArrangeRange> ranges;
+  if (originalTargets.isEmpty()) {
+    return ranges;
+  }
+
+  const auto targets = orderedClipArrangeTargets(originalTargets, order, reverse);
+  ranges.reserve(targets.size());
+
+  if (operation == ClipArrangeOperation::StairStep) {
+    for (int i = 0; i < targets.size(); ++i) {
+      const auto& target = targets.at(i);
+      const qint64 inFrame =
+          std::max<qint64>(0, baseFrame + static_cast<qint64>(i) * parameter);
+      ranges.push_back({target.layerId, inFrame, inFrame + target.duration()});
+    }
+  } else if (operation == ClipArrangeOperation::Sequence) {
+    qint64 cursor = std::max<qint64>(0, baseFrame);
+    for (int i = 0; i < targets.size(); ++i) {
+      const auto& target = targets.at(i);
+      const qint64 inFrame = std::max<qint64>(0, cursor);
+      const qint64 outFrame = inFrame + target.duration();
+      ranges.push_back({target.layerId, inFrame, outFrame});
+      cursor = outFrame + parameter;
+    }
+  } else if (operation == ClipArrangeOperation::SetDuration) {
+    const qint64 duration = std::max<qint64>(1, parameter);
+    for (const auto& target : targets) {
+      qint64 inFrame = target.originalIn;
+      qint64 outFrame = target.originalOut;
+      switch (anchor) {
+      case ClipArrangeDurationAnchor::KeepIn:
+        outFrame = inFrame + duration;
+        break;
+      case ClipArrangeDurationAnchor::KeepOut:
+        inFrame = std::max<qint64>(0, outFrame - duration);
+        outFrame = inFrame + duration;
+        break;
+      case ClipArrangeDurationAnchor::KeepCenter: {
+        const qint64 center = (target.originalIn + target.originalOut) / 2;
+        inFrame = std::max<qint64>(0, center - duration / 2);
+        outFrame = inFrame + duration;
+        break;
+      }
+      }
+      ranges.push_back({target.layerId, inFrame, std::max<qint64>(inFrame + 1, outFrame)});
+    }
+  }
+
+  return ranges;
+}
+
+void applyClipArrangeRanges(const ArtifactCompositionPtr& composition,
+                            const QVector<ClipArrangeRange>& ranges)
+{
+  if (!composition || ranges.isEmpty()) {
+    return;
+  }
+  for (const auto& range : ranges) {
+    if (range.layerId.isNil()) {
+      continue;
+    }
+    const auto layer = composition->layerById(range.layerId);
+    if (!layer) {
+      continue;
+    }
+    const qint64 inFrame = std::max<qint64>(0, range.inFrame);
+    const qint64 outFrame = std::max<qint64>(inFrame + 1, range.outFrame);
+    layer->setInPoint(FramePosition(inFrame));
+    layer->setOutPoint(FramePosition(outFrame));
+    layer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{composition->id().toString(), layer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+  }
+}
+
+QVector<ClipArrangeRange> rangesFromTargets(
+    const QVector<ClipArrangeTarget>& targets)
+{
+  QVector<ClipArrangeRange> ranges;
+  ranges.reserve(targets.size());
+  for (const auto& target : targets) {
+    ranges.push_back({target.layerId, target.originalIn, target.originalOut});
+  }
+  return ranges;
+}
+
+class ClipArrangeCommand final : public UndoCommand {
+public:
+  ClipArrangeCommand(CompositionID compositionId,
+                     QVector<ClipArrangeRange> before,
+                     QVector<ClipArrangeRange> after,
+                     QString label)
+      : compositionId_(std::move(compositionId)),
+        before_(std::move(before)),
+        after_(std::move(after)),
+        label_(std::move(label)) {}
+
+  void undo() override
+  {
+    applyClipArrangeRanges(safeCompositionLookup(compositionId_), before_);
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void redo() override
+  {
+    applyClipArrangeRanges(safeCompositionLookup(compositionId_), after_);
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QString label() const override { return label_; }
+
+private:
+  CompositionID compositionId_;
+  QVector<ClipArrangeRange> before_;
+  QVector<ClipArrangeRange> after_;
+  QString label_;
+};
 
 QString keyframeSelectionKey(const LayerID& layerId,
                              const QString& propertyPath,
@@ -3563,6 +3834,21 @@ private:
 
 W_OBJECT_IMPL(ArtifactTimelineWidget)
 
+struct ClipArrangeAdjustState {
+  bool active = false;
+  ClipArrangeOperation operation = ClipArrangeOperation::None;
+  ClipArrangeOrder order = ClipArrangeOrder::LayerStackTopToBottom;
+  ClipArrangeDurationAnchor durationAnchor = ClipArrangeDurationAnchor::KeepIn;
+  bool reverse = false;
+  int baseMode = 0;
+  qint64 baseFrame = 0;
+  qint64 playheadBaseFrame = 0;
+  qint64 selectionMinInFrame = 0;
+  qint64 firstSelectedInFrame = 0;
+  qint64 parameter = 0;
+  QVector<ClipArrangeTarget> targets;
+};
+
 class ArtifactTimelineWidget::Impl {
 private:
 public:
@@ -3579,6 +3865,7 @@ public:
   QLabel *frameSummaryLabel_ = nullptr;
   QLabel *zoomSummaryLabel_ = nullptr;
   QLabel *selectionSummaryLabel_ = nullptr;
+  QLabel *clipArrangeHudLabel_ = nullptr;
   ArtifactLayerTimelinePanelWrapper *layerTimelinePanel_ = nullptr;
   ArtifactTimelineTrackPainterView *painterTrackView_ = nullptr;
   QWidget *timelinePainterPage_ = nullptr;
@@ -3647,6 +3934,7 @@ public:
   bool audioPreviewActive_ = false;
   QString audioWaveformSummary_;
   QHash<QString, CachedAudioWaveform> audioWaveformCache_;
+  ClipArrangeAdjustState clipArrangeAdjust_;
 };
 
 CurveEditorGraphMode curveEditorGraphModeFromSettings()
@@ -5824,6 +6112,22 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   setLayout(layout);
 
+  auto *clipArrangeHud = new QLabel(this);
+  clipArrangeHud->setVisible(false);
+  clipArrangeHud->setAutoFillBackground(true);
+  clipArrangeHud->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+  clipArrangeHud->setMargin(10);
+  {
+    QFont font = clipArrangeHud->font();
+    font.setBold(true);
+    clipArrangeHud->setFont(font);
+    QPalette pal = clipArrangeHud->palette();
+    pal.setColor(QPalette::Window, QColor(24, 28, 34, 226));
+    pal.setColor(QPalette::WindowText, QColor(230, 236, 244));
+    clipArrangeHud->setPalette(pal);
+  }
+  impl_->clipArrangeHudLabel_ = clipArrangeHud;
+
   // EventBus に載っている広域状態変化を購読する
   // scheduleRefresh: ProjectChangedEvent と LayerChangedEvent が同一フレームで両方発火しても
   // refreshTracks() が 1 回だけ実行されるようにデバウンスする。
@@ -6477,6 +6781,301 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
         std::max<double>(0.001, static_cast<double>(impl_->painterTrackView_->pixelsPerFrame()));
     return zoomTimelineBy(2.0 / currentPpf);
   };
+  const auto updateClipArrangeHud = [this]() {
+    if (!impl_ || !impl_->clipArrangeHudLabel_) {
+      return;
+    }
+    const auto& state = impl_->clipArrangeAdjust_;
+    if (!state.active) {
+      impl_->clipArrangeHudLabel_->hide();
+      return;
+    }
+    QString title;
+    QString param;
+    if (state.operation == ClipArrangeOperation::StairStep) {
+      title = QStringLiteral("Stair Step");
+      param = QStringLiteral("Step: %1f").arg(state.parameter);
+    } else if (state.operation == ClipArrangeOperation::Sequence) {
+      title = QStringLiteral("Sequence");
+      param = QStringLiteral("Gap: %1f").arg(state.parameter);
+    } else if (state.operation == ClipArrangeOperation::SetDuration) {
+      title = QStringLiteral("Set Duration");
+      param = QStringLiteral("Duration: %1f").arg(state.parameter);
+    }
+    QString baseText = QStringLiteral("Base: Playhead");
+    if (state.operation == ClipArrangeOperation::SetDuration) {
+      switch (state.durationAnchor) {
+      case ClipArrangeDurationAnchor::KeepIn:
+        baseText = QStringLiteral("Anchor: Keep In");
+        break;
+      case ClipArrangeDurationAnchor::KeepOut:
+        baseText = QStringLiteral("Anchor: Keep Out");
+        break;
+      case ClipArrangeDurationAnchor::KeepCenter:
+        baseText = QStringLiteral("Anchor: Keep Center");
+        break;
+      }
+    } else if (state.baseMode == 1) {
+      baseText = QStringLiteral("Base: Selection Min In");
+    } else if (state.baseMode == 2) {
+      baseText = QStringLiteral("Base: First Selected In");
+    }
+    impl_->clipArrangeHudLabel_->setText(
+        QStringLiteral("%1\n%2\n%3\nOrder: %4\nEnter: Apply / Esc: Cancel")
+            .arg(title, param,
+                 baseText,
+                 clipArrangeOrderLabel(state.order, state.reverse)));
+    impl_->clipArrangeHudLabel_->adjustSize();
+    const QSize size = impl_->clipArrangeHudLabel_->sizeHint();
+    const int x = std::max(12, width() - size.width() - 20);
+    const int y = 48;
+    impl_->clipArrangeHudLabel_->setGeometry(
+        QRect(QPoint(x, y), size.expandedTo(QSize(260, 76))));
+    impl_->clipArrangeHudLabel_->raise();
+    impl_->clipArrangeHudLabel_->show();
+  };
+  const auto applyClipArrangePreview = [this, &updateClipArrangeHud]() -> bool {
+    if (!impl_ || !impl_->clipArrangeAdjust_.active) {
+      return false;
+    }
+    const auto comp = safeCompositionLookup(impl_->compositionId_);
+    if (!comp) {
+      return false;
+    }
+    const auto& state = impl_->clipArrangeAdjust_;
+    applyClipArrangeRanges(comp, rangesFromTargets(state.targets));
+    const auto ranges = calculateClipArrangeRanges(
+        state.targets, state.operation, state.order, state.reverse,
+        state.baseFrame, state.parameter, state.durationAnchor);
+    applyClipArrangeRanges(comp, ranges);
+    refreshTracks();
+    updateSelectionState();
+    updateClipArrangeHud();
+    return true;
+  };
+  const auto finishClipArrange = [this, &updateClipArrangeHud](const bool apply) -> bool {
+    if (!impl_ || !impl_->clipArrangeAdjust_.active) {
+      return false;
+    }
+    const auto comp = safeCompositionLookup(impl_->compositionId_);
+    if (!comp) {
+      impl_->clipArrangeAdjust_ = {};
+      updateClipArrangeHud();
+      return false;
+    }
+    const auto state = impl_->clipArrangeAdjust_;
+    const auto before = rangesFromTargets(state.targets);
+    const auto after = calculateClipArrangeRanges(
+        state.targets, state.operation, state.order, state.reverse,
+        state.baseFrame, state.parameter, state.durationAnchor);
+    if (!apply) {
+      applyClipArrangeRanges(comp, before);
+      impl_->clipArrangeAdjust_ = {};
+      refreshTracks();
+      updateSelectionState();
+      updateClipArrangeHud();
+      Q_EMIT timelineDebugMessage(QStringLiteral("Clip Arrange canceled"));
+      return true;
+    }
+    if (auto* mgr = UndoManager::instance()) {
+      QString label = QStringLiteral("Arrange Clips");
+      if (state.operation == ClipArrangeOperation::StairStep) {
+        label = QStringLiteral("Stair Step Clips");
+      } else if (state.operation == ClipArrangeOperation::Sequence) {
+        label = QStringLiteral("Sequence Clips");
+      } else if (state.operation == ClipArrangeOperation::SetDuration) {
+        label = QStringLiteral("Set Clip Duration");
+      }
+      mgr->push(std::make_unique<ClipArrangeCommand>(
+          impl_->compositionId_, before, after, label));
+    } else {
+      applyClipArrangeRanges(comp, after);
+    }
+    impl_->clipArrangeAdjust_ = {};
+    refreshTracks();
+    updateSelectionState();
+    updateClipArrangeHud();
+    Q_EMIT timelineDebugMessage(QStringLiteral("Clip Arrange applied"));
+    return true;
+  };
+  const auto beginClipArrange = [this, &applyClipArrangePreview, &updateClipArrangeHud](
+                                    const ClipArrangeOperation operation,
+                                    const qint64 parameter) -> bool {
+    if (!impl_) {
+      return false;
+    }
+    const auto comp = safeCompositionLookup(impl_->compositionId_);
+    ArtifactLayerSelectionManager* selectionManager = nullptr;
+    if (auto* app = ArtifactApplicationManager::instance()) {
+      selectionManager = app->layerSelectionManager();
+    }
+    const auto targets =
+        collectClipArrangeTargets(comp, selectionManager, impl_->trackRows_);
+    if (!comp || targets.size() < 2) {
+      Q_EMIT timelineDebugMessage(
+          QStringLiteral("Clip Arrange needs at least two selected clips."));
+      return false;
+    }
+    qint64 baseFrame = targets.front().originalIn;
+    for (const auto& target : targets) {
+      baseFrame = std::min<qint64>(baseFrame, target.originalIn);
+    }
+    const qint64 minInFrame = baseFrame;
+    const qint64 firstSelectedInFrame = targets.front().originalIn;
+    if (impl_->painterTrackView_) {
+      baseFrame = std::max<qint64>(
+          0, static_cast<qint64>(std::llround(impl_->painterTrackView_->currentFrame())));
+    }
+    impl_->clipArrangeAdjust_ = {};
+    impl_->clipArrangeAdjust_.active = true;
+    impl_->clipArrangeAdjust_.operation = operation;
+    impl_->clipArrangeAdjust_.order = ClipArrangeOrder::LayerStackTopToBottom;
+    impl_->clipArrangeAdjust_.durationAnchor = ClipArrangeDurationAnchor::KeepIn;
+    impl_->clipArrangeAdjust_.baseMode = 0;
+    impl_->clipArrangeAdjust_.baseFrame = baseFrame;
+    impl_->clipArrangeAdjust_.playheadBaseFrame = baseFrame;
+    impl_->clipArrangeAdjust_.selectionMinInFrame = minInFrame;
+    impl_->clipArrangeAdjust_.firstSelectedInFrame = firstSelectedInFrame;
+    impl_->clipArrangeAdjust_.parameter = std::max<qint64>(
+        operation == ClipArrangeOperation::Sequence ? std::numeric_limits<qint64>::min() : 1,
+        parameter);
+    impl_->clipArrangeAdjust_.targets = targets;
+    updateClipArrangeHud();
+    return applyClipArrangePreview();
+  };
+  const auto alignClipArrangeToPlayhead =
+      [this](const bool alignOut) -> bool {
+    if (!impl_) {
+      return false;
+    }
+    const auto comp = safeCompositionLookup(impl_->compositionId_);
+    ArtifactLayerSelectionManager* selectionManager = nullptr;
+    if (auto* app = ArtifactApplicationManager::instance()) {
+      selectionManager = app->layerSelectionManager();
+    }
+    const auto targets =
+        collectClipArrangeTargets(comp, selectionManager, impl_->trackRows_);
+    if (!comp || targets.size() < 2) {
+      Q_EMIT timelineDebugMessage(
+          QStringLiteral("Align clips needs at least two selected clips."));
+      return false;
+    }
+    const qint64 frame = std::max<qint64>(
+        0, static_cast<qint64>(std::llround(
+               impl_->painterTrackView_ ? impl_->painterTrackView_->currentFrame()
+                                        : impl_->currentFrame_)));
+    QVector<ClipArrangeRange> after;
+    after.reserve(targets.size());
+    for (const auto& target : targets) {
+      const qint64 duration = target.duration();
+      const qint64 inFrame = alignOut ? std::max<qint64>(0, frame - duration)
+                                      : frame;
+      after.push_back({target.layerId, inFrame, inFrame + duration});
+    }
+    const auto before = rangesFromTargets(targets);
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->push(std::make_unique<ClipArrangeCommand>(
+          impl_->compositionId_, before, after,
+          alignOut ? QStringLiteral("Align Clip Out")
+                   : QStringLiteral("Align Clip In")));
+    } else {
+      applyClipArrangeRanges(comp, after);
+    }
+    refreshTracks();
+    updateSelectionState();
+    Q_EMIT timelineDebugMessage(
+        alignOut ? QStringLiteral("Aligned selected clip out-points to playhead")
+                 : QStringLiteral("Aligned selected clip in-points to playhead"));
+    return true;
+  };
+
+  if (impl_ && impl_->clipArrangeAdjust_.active && event) {
+    const int nudge = (event->modifiers() & Qt::ShiftModifier) ? 10 : 1;
+    if (event->key() == Qt::Key_Left || event->key() == Qt::Key_Right) {
+      const int direction = event->key() == Qt::Key_Right ? 1 : -1;
+      impl_->clipArrangeAdjust_.parameter += direction * nudge;
+      if (impl_->clipArrangeAdjust_.operation != ClipArrangeOperation::Sequence) {
+        impl_->clipArrangeAdjust_.parameter =
+            std::max<qint64>(1, impl_->clipArrangeAdjust_.parameter);
+      }
+      applyClipArrangePreview();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Up) {
+      impl_->clipArrangeAdjust_.reverse = !impl_->clipArrangeAdjust_.reverse;
+      applyClipArrangePreview();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Down) {
+      auto& state = impl_->clipArrangeAdjust_;
+      if (state.operation == ClipArrangeOperation::SetDuration) {
+        if (state.durationAnchor == ClipArrangeDurationAnchor::KeepIn) {
+          state.durationAnchor = ClipArrangeDurationAnchor::KeepOut;
+        } else if (state.durationAnchor == ClipArrangeDurationAnchor::KeepOut) {
+          state.durationAnchor = ClipArrangeDurationAnchor::KeepCenter;
+        } else {
+          state.durationAnchor = ClipArrangeDurationAnchor::KeepIn;
+        }
+      } else {
+        state.baseMode = (state.baseMode + 1) % 3;
+        if (state.baseMode == 0) {
+          state.baseFrame = state.playheadBaseFrame;
+        } else if (state.baseMode == 1) {
+          state.baseFrame = state.selectionMinInFrame;
+        } else {
+          state.baseFrame = state.firstSelectedInFrame;
+        }
+      }
+      applyClipArrangePreview();
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+      finishClipArrange(true);
+      event->accept();
+      return;
+    }
+    if (event->key() == Qt::Key_Escape) {
+      finishClipArrange(false);
+      event->accept();
+      return;
+    }
+  }
+  if (event && (event->modifiers() & Qt::ControlModifier) &&
+      (event->modifiers() & Qt::AltModifier)) {
+    if (event->key() == Qt::Key_S) {
+      if (beginClipArrange(ClipArrangeOperation::StairStep, 3)) {
+        event->accept();
+        return;
+      }
+    } else if (event->key() == Qt::Key_Q) {
+      if (beginClipArrange(ClipArrangeOperation::Sequence, 0)) {
+        event->accept();
+        return;
+      }
+    } else if (event->key() == Qt::Key_D) {
+      bool ok = false;
+      const int duration = QInputDialog::getInt(
+          this, QStringLiteral("Set Clip Duration"),
+          QStringLiteral("Duration (frames)"), 24, 1, 100000, 1, &ok);
+      if (ok && beginClipArrange(ClipArrangeOperation::SetDuration, duration)) {
+        event->accept();
+        return;
+      }
+    } else if (event->key() == Qt::Key_I) {
+      if (alignClipArrangeToPlayhead(false)) {
+        event->accept();
+        return;
+      }
+    } else if (event->key() == Qt::Key_O) {
+      if (alignClipArrangeToPlayhead(true)) {
+        event->accept();
+        return;
+      }
+    }
+  }
   if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineZoomIn)) {
     if (zoomTimelineBy(1.12)) {
       event->accept();
@@ -7012,6 +7611,7 @@ void ArtifactTimelineWidget::updateKeyframeState()
     }
   }
   impl_->keyframeStatusLabel_->setText(summary);
+  impl_->keyframeStatusLabel_->setVisible(true);
   if (impl_->easingLabButton_) {
     const bool hasSelection =
         impl_->painterTrackView_ &&
@@ -7080,7 +7680,7 @@ void ArtifactTimelineWidget::updateSelectionState()
   if (impl_->frameSummaryLabel_) {
     impl_->frameSummaryLabel_->setText(
         QStringLiteral("Status: %1 | Frame: %2").arg(compositionLabel).arg(frameLabelValue));
-    impl_->frameSummaryLabel_->setVisible(false);
+    impl_->frameSummaryLabel_->setVisible(true);
   }
   if (impl_->selectionSummaryLabel_) {
     QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
@@ -7136,7 +7736,7 @@ void ArtifactTimelineWidget::updateSelectionState()
       }
       impl_->selectionSummaryLabel_->setText(selectionText);
     }
-    impl_->selectionSummaryLabel_->setVisible(false);
+    impl_->selectionSummaryLabel_->setVisible(true);
   }
   if (impl_->curveEditorSummaryLabel_) {
     const int curveCount = static_cast<int>(impl_->curveTracks_.size());

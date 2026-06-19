@@ -61,6 +61,7 @@ export namespace Artifact {
   Mode mode() const;
 
   void setLayer(ArtifactAbstractLayerPtr layer);
+  void setTargetLayers(std::vector<ArtifactAbstractLayerPtr> layers);
   void draw(ArtifactIRenderer* renderer);
   Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
   HandleType handleAtViewportPos(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
@@ -80,6 +81,7 @@ export namespace Artifact {
   bool allowsHandle(HandleType handle) const;
   
   ArtifactAbstractLayerPtr layer_;
+  std::vector<ArtifactAbstractLayerPtr> targetLayers_;
   Mode mode_ = Mode::All;
   HandleType activeHandle_ = HandleType::None;
   bool isDragging_ = false;

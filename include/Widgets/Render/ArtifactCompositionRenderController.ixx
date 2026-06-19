@@ -198,6 +198,7 @@ TransformGizmo* gizmo() const;
  ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
  Ray createPickingRay(const QPointF& viewportPos) const;
  Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
+ TransformGizmo::HandleType transformHandleForViewportPos(const QPointF& viewportPos) const;
 
 public /*slots*/:
 

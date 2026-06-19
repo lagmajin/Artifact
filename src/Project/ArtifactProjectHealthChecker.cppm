@@ -22,6 +22,87 @@ import Frame.Position;
 
 namespace Artifact {
 
+namespace {
+ArtifactCore::DiagnosticCategory diagnosticCategoryFromHealthCategory(const QString& category)
+{
+    if (category == QStringLiteral("CircularReference")) {
+        return ArtifactCore::DiagnosticCategory::CircularDep;
+    }
+    if (category == QStringLiteral("MissingAsset")) {
+        return ArtifactCore::DiagnosticCategory::File;
+    }
+    if (category == QStringLiteral("FrameRange")) {
+        return ArtifactCore::DiagnosticCategory::Configuration;
+    }
+    if (category == QStringLiteral("BrokenReference")) {
+        return ArtifactCore::DiagnosticCategory::Reference;
+    }
+    if (category == QStringLiteral("Naming")) {
+        return ArtifactCore::DiagnosticCategory::Configuration;
+    }
+    if (category == QStringLiteral("Spelling")) {
+        return ArtifactCore::DiagnosticCategory::Custom;
+    }
+    return ArtifactCore::DiagnosticCategory::Custom;
+}
+
+ArtifactCore::DiagnosticSeverity diagnosticSeverityFromHealthSeverity(HealthIssueSeverity severity)
+{
+    switch (severity) {
+    case HealthIssueSeverity::Error:
+        return ArtifactCore::DiagnosticSeverity::Error;
+    case HealthIssueSeverity::Warning:
+        return ArtifactCore::DiagnosticSeverity::Warning;
+    case HealthIssueSeverity::Info:
+    default:
+        return ArtifactCore::DiagnosticSeverity::Info;
+    }
+}
+
+QString fixActionForHealthCategory(const QString& category)
+{
+    if (category == QStringLiteral("MissingAsset")) {
+        return QStringLiteral("Relink the missing asset or remove the footage entry");
+    }
+    if (category == QStringLiteral("BrokenReference")) {
+        return QStringLiteral("Open the composition and replace or remove the broken reference");
+    }
+    if (category == QStringLiteral("CircularReference")) {
+        return QStringLiteral("Break the composition nesting cycle");
+    }
+    if (category == QStringLiteral("FrameRange")) {
+        return QStringLiteral("Normalize the composition or layer frame range");
+    }
+    if (category == QStringLiteral("Naming")) {
+        return QStringLiteral("Rename the item to a production-safe label");
+    }
+    if (category == QStringLiteral("Spelling")) {
+        return QStringLiteral("Review the suggested spelling correction");
+    }
+    return QStringLiteral("Inspect the reported issue");
+}
+} // namespace
+
+auto convertProjectHealthReportToDiagnostics(const ProjectHealthReport& report)
+    -> std::vector<ArtifactCore::ProjectDiagnostic>
+{
+    std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
+    diagnostics.reserve(static_cast<size_t>(report.issues.size()));
+
+    for (const auto& issue : report.issues) {
+        ArtifactCore::ProjectDiagnostic diag(
+            diagnosticSeverityFromHealthSeverity(issue.severity),
+            diagnosticCategoryFromHealthCategory(issue.category),
+            issue.message);
+        diag.setDescription(issue.message);
+        diag.setSourceCompId(issue.targetName);
+        diag.setFixAction(fixActionForHealthCategory(issue.category));
+        diagnostics.push_back(diag);
+    }
+
+    return diagnostics;
+}
+
 ProjectHealthReport ArtifactProjectHealthChecker::check(ArtifactProject* project) {
     ProjectHealthReport report;
     if (!project) {

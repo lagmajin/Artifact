@@ -1286,7 +1286,26 @@ TransformGizmo::TransformGizmo() {}
 TransformGizmo::~TransformGizmo() {}
 
 QRectF TransformGizmo::currentCanvasBoundingRect() const {
- if (!layer_) return QRectF();
+ if (!layer_ && targetLayers_.empty()) return QRectF();
+
+ if (targetLayers_.size() > 1) {
+  QRectF unionRect;
+  for (const auto &target : targetLayers_) {
+   if (!target) {
+    continue;
+   }
+   const QRectF localRect = target->localBounds();
+   if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
+    continue;
+   }
+   const QRectF bbox = target->getGlobalTransform().mapRect(localRect);
+   if (!bbox.isValid() || bbox.width() <= 0.0 || bbox.height() <= 0.0) {
+    continue;
+   }
+   unionRect = unionRect.isValid() ? unionRect.united(bbox) : bbox;
+  }
+  return unionRect;
+ }
 
  const QRectF localRect = layer_->localBounds();
  if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
@@ -1305,7 +1324,23 @@ void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
     return;
   }
   layer_ = std::move(layer);
+  targetLayers_.clear();
+  if (layer_) {
+   targetLayers_.push_back(layer_);
+  }
   // レイヤーが変更されたらキャッシュを無効化
+  geometryCacheValid_ = false;
+  if (!isDragging_) {
+    activeHandle_ = HandleType::None;
+  }
+}
+
+void TransformGizmo::setTargetLayers(std::vector<ArtifactAbstractLayerPtr> layers) {
+  if (targetLayers_ == layers) {
+    return;
+  }
+  targetLayers_ = std::move(layers);
+  layer_ = targetLayers_.empty() ? ArtifactAbstractLayerPtr{} : targetLayers_.front();
   geometryCacheValid_ = false;
   if (!isDragging_) {
     activeHandle_ = HandleType::None;
@@ -1970,7 +2005,7 @@ Qt::CursorShape TransformGizmo::cursorShapeForViewportPos(const QPointF& viewpor
  const auto handle = hitTest(viewportPos, renderer);
  switch (handle) {
 case HandleType::Move:
-  return Qt::SizeAllCursor;
+  return isDragging_ ? Qt::ClosedHandCursor : Qt::OpenHandCursor;
  case HandleType::Scale_TL:
  case HandleType::Scale_BR:
   return Qt::SizeFDiagCursor;
