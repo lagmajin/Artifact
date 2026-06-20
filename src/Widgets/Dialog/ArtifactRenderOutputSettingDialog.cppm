@@ -300,9 +300,18 @@ namespace Artifact
    const bool alphaEnabled = alphaEnabledCheck ? alphaEnabledCheck->isChecked()
        : (container != QStringLiteral("MP4") || codec == QStringLiteral("ProRes") || codec == QStringLiteral("VP9"));
 
-   const QString alphaText = alphaEnabled ? QStringLiteral("Alphaあり") : QStringLiteral("Alphaなし");
+  const QString alphaText = alphaEnabled ? QStringLiteral("Alphaあり") : QStringLiteral("Alphaなし");
+  const bool isWebPlayer = container == QStringLiteral("HTML") || codec == QStringLiteral("CSS");
+  const QString usageText = isWebPlayer
+      ? QStringLiteral("Web player")
+      : (container == QStringLiteral("WebM") || codec == QStringLiteral("VP9")
+             ? QStringLiteral("Web video")
+             : (container == QStringLiteral("PNG Sequence")
+                    ? QStringLiteral("Image sequence")
+                    : QStringLiteral("Standard export")));
    QStringList lines;
    lines << QStringLiteral("<span style='font-size:14px;font-weight:600;'>%1</span>").arg(presetName.isEmpty() ? QStringLiteral("未選択") : presetName);
+   lines << QStringLiteral("<span>Usage: %1</span>").arg(usageText);
    lines << QStringLiteral("<span>Container: %1</span>").arg(container);
    lines << QStringLiteral("<span>Codec: %1</span>").arg(codec);
    lines << QStringLiteral("<span>%1</span>").arg(alphaText);
@@ -321,7 +330,9 @@ namespace Artifact
   const bool alphaEnabled = alphaEnabledCheck ? alphaEnabledCheck->isChecked() : true;
 
   QString guide;
-  if (format == QStringLiteral("WebM") || codec == QStringLiteral("VP9")) {
+  if (format == QStringLiteral("HTML") || codec == QStringLiteral("CSS")) {
+    guide = QStringLiteral("Web向け。ブラウザで直接開ける self-contained player。");
+  } else if (format == QStringLiteral("WebM") || codec == QStringLiteral("VP9")) {
     guide = QStringLiteral("Web向け。透過を扱いやすい。");
    } else if (format == QStringLiteral("MOV") && codec == QStringLiteral("ProRes")) {
      guide = QStringLiteral("編集向け。ProRes 4444 なら透過を残しやすい。");
@@ -473,6 +484,7 @@ void ArtifactRenderOutputSettingDialog::Impl::updateFrameRatePreflight()
     else if (presetContainer == "tiff" || presetContainer == "tif") formatText = "TIFF Sequence";
     else if (presetContainer == "bmp") formatText = "BMP Sequence";
     else if (presetContainer == "exr") formatText = "EXR Sequence";
+    else if (presetContainer == "html") formatText = "HTML";
     else formatText = preset->container.toUpper();
 
     const int formatIndex = formatCombo->findText(formatText);
@@ -486,9 +498,10 @@ void ArtifactRenderOutputSettingDialog::Impl::updateFrameRatePreflight()
     // Codec
     const QString presetCodec = preset->codec.toLower();
     QString codecText;
-    if (presetCodec == "h264") codecText = "H.264";
+   if (presetCodec == "h264") codecText = "H.264";
     else if (presetCodec == "h265") codecText = "H.265";
     else if (presetCodec == "prores") codecText = "ProRes";
+    else if (presetCodec == "css") codecText = "CSS / HTML player";
     else if (presetCodec == "mjpeg" || presetCodec == "jpeg") codecText = "JPEG";
     else codecText = preset->codec;
     codecProfile = preset->codecProfile;
@@ -506,7 +519,12 @@ void ArtifactRenderOutputSettingDialog::Impl::updateFrameRatePreflight()
     QString path = outputPathEdit->text().trimmed();
     if (!path.isEmpty()) {
      QString ext;
-     if (preset->isImageSequence) {
+     if (preset->container.toLower() == QStringLiteral("html") || preset->codec.toLower() == QStringLiteral("css")) {
+      ext = QStringLiteral("html");
+     }
+     if (preset->container.toLower() == QStringLiteral("html")) {
+      ext = QStringLiteral("html");
+     } else if (preset->isImageSequence) {
       ext = preset->container.toLower();
       } else if (preset->codec.toLower() == QStringLiteral("prores")) {
        ext = QStringLiteral("mov");
@@ -608,7 +626,8 @@ QString ArtifactRenderOutputSettingDialog::Impl::normalizeRenderBackend(const QS
     impl_->formatCombo = new QComboBox();
     impl_->formatCombo->addItems(QStringList{
       "MP4", "MOV", "AVI", "WebM", "MKV",
-      "PNG Sequence", "JPEG Sequence", "TIFF Sequence", "BMP Sequence", "EXR Sequence"
+      "PNG Sequence", "JPEG Sequence", "TIFF Sequence", "BMP Sequence", "EXR Sequence",
+      "HTML"
     });
     formLayout->addRow("Container:", impl_->formatCombo);
 

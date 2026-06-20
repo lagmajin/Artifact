@@ -259,11 +259,13 @@ QString formatSelectedKeyframeSummary(
     const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
     const qint64 currentFrame) {
   if (markers.isEmpty()) {
-    return QStringLiteral("goal: inspect keyframes | now: none | warning: lane empty | next: add keyframe");
+    return QStringLiteral("goal: inspect keyframes | now: none | warning: lane empty | next: add/remove at playhead");
   }
 
   qint64 minFrame = std::numeric_limits<qint64>::max();
   qint64 maxFrame = std::numeric_limits<qint64>::min();
+  qint64 nearestFrame = -1;
+  qint64 nearestDelta = std::numeric_limits<qint64>::max();
   QSet<QString> propertyLabels;
   QStringList sampleLabels;
   bool hitsCurrentFrame = false;
@@ -277,6 +279,11 @@ QString formatSelectedKeyframeSummary(
                   marker.propertyPath)
             : marker.label;
     hitsCurrentFrame |= (frame == currentFrame);
+    const qint64 delta = std::llabs(frame - currentFrame);
+    if (delta < nearestDelta) {
+      nearestDelta = delta;
+      nearestFrame = frame;
+    }
     propertyLabels.insert(displayLabel);
     if (sampleLabels.size() < 3 && !sampleLabels.contains(displayLabel)) {
       sampleLabels.push_back(displayLabel);
@@ -301,21 +308,32 @@ QString formatSelectedKeyframeSummary(
     }
   }
   const QString nowText =
-      QStringLiteral("keys=%1 prop=%2 frame=%3 current=%4")
+      QStringLiteral("keys=%1 prop=%2 frame=%3 current=%4 state=%5")
           .arg(markers.size())
           .arg(propertyText)
           .arg(frameText)
-          .arg(hitsCurrentFrame ? QStringLiteral("yes") : QStringLiteral("no"));
+          .arg(hitsCurrentFrame ? QStringLiteral("yes") : QStringLiteral("no"))
+          .arg(hitsCurrentFrame ? QStringLiteral("selected+current")
+                                : QStringLiteral("selected"));
   const QString warningText =
       hitsCurrentFrame ? QStringLiteral("at current frame")
                        : QStringLiteral("off current frame");
   const QString nextText =
-      markers.size() == 1 ? QStringLiteral("add second")
-                          : QStringLiteral("refine selection");
-  return QStringLiteral("goal: keep keyframes readable | now: %1 | warning: %2 | next: %3%4")
+      markers.size() == 1 ? QStringLiteral("add one more")
+                          : QStringLiteral("narrow selection");
+  const QString proximityText =
+      nearestFrame >= 0
+          ? (nearestDelta == 0
+                 ? QStringLiteral("nearest=current")
+                 : QStringLiteral("nearest=F%1 (%2)")
+                       .arg(nearestFrame)
+                       .arg(QString::number(nearestFrame - currentFrame)))
+          : QStringLiteral("nearest=none");
+  return QStringLiteral("goal: keep keyframes readable | now: %1 | warning: %2 | next: %3 | %4%5")
       .arg(nowText)
       .arg(warningText)
       .arg(nextText)
+      .arg(proximityText)
       .arg(previewText.isEmpty() ? QString() : QStringLiteral(" | %1").arg(previewText));
 }
 
@@ -7094,7 +7112,7 @@ void ArtifactTimelineWidget::updateSelectionState()
           QStringLiteral("Selection: 0 layers | Select a layer to continue"));
     } else if (effectiveSelectedCount > 0 && selectedKeyframeCount <= 0) {
       impl_->selectionSummaryLabel_->setText(
-          QStringLiteral("Selection: %1 layers | Keys: 0 | Lane: empty | Current: F%2 | Add keyframe at playhead")
+          QStringLiteral("Selection: %1 layers | Keys: 0 | Lane: empty | Current: F%2 | Add/remove keyframe at playhead")
               .arg(effectiveSelectedCount)
               .arg(frameLabelValue));
     } else {

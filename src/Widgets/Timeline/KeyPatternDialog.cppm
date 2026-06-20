@@ -33,7 +33,8 @@ static QString valueTextFor(const QVariant &value) {
   return value.toString();
 }
 
-static QString frameTextFor(const ArtifactCore::KeyFrame &keyframe) {
+template <typename KeyframeLike>
+static QString frameTextFor(const KeyframeLike &keyframe) {
   return QStringLiteral("%1").arg(QString::number(keyframe.time.value()));
 }
 

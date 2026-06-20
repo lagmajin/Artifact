@@ -63,6 +63,20 @@ QString ArtifactBatchRenderer::resolveFileNamePattern(
     return result;
 }
 
+static QString presetOutputExtension(const ArtifactRenderFormatPreset* preset)
+{
+    if (!preset) {
+        return QStringLiteral("mp4");
+    }
+    if (!preset->container.trimmed().isEmpty()) {
+        return preset->container.trimmed().toLower();
+    }
+    if (!preset->codec.trimmed().isEmpty()) {
+        return preset->codec.trimmed().toLower();
+    }
+    return QStringLiteral("mp4");
+}
+
 int ArtifactBatchRenderer::addAllCompositions(
     const QString& outputDir,
     const QString& fileNamePattern)
@@ -102,15 +116,16 @@ int ArtifactBatchRenderer::addCompositions(
         const QString compName = comp->settings().compositionName().toQString();
         const QString safeName = resolveFileNamePattern(fileNamePattern, compName);
 
-        // Generate output path
+        const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(
+            QStringLiteral("h264_mp4_standard"));
+        const QString outputExt = presetOutputExtension(preset);
+
         QDir dir(outputDir);
         if (!dir.exists()) dir.mkpath(".");
-        const QString outputPath = dir.filePath(safeName + ".mp4");
+        const QString outputPath = dir.filePath(safeName + QStringLiteral(".") + outputExt);
 
-        // Add to render queue
-        queue->addRenderQueueForComposition(id, compName);
+        queue->addRenderQueueWithPreset(id, compName, QStringLiteral("h264_mp4_standard"));
 
-        // Set output path and frame range from composition
         const int compIndex = queue->jobCount() - 1;
         if (compIndex >= 0) {
             queue->setJobOutputPathAt(compIndex, outputPath);
@@ -153,25 +168,27 @@ int ArtifactBatchRenderer::addCompositionsWithTemplate(
 
         // Determine extension from preset
         const auto* preset = ArtifactRenderFormatPresetManager::instance().findPresetById(tmpl.presetId);
-        const QString ext = preset ? preset->container : "mp4";
+        const QString ext = presetOutputExtension(preset);
         const QString outputPath = dir.filePath(resolvedName + "." + ext);
 
-        queue->addRenderQueueForComposition(id, compName);
+        queue->addRenderQueueWithPreset(id, compName, tmpl.presetId.isEmpty()
+                                                     ? QStringLiteral("h264_mp4_standard")
+                                                     : tmpl.presetId);
         const int idx = queue->jobCount() - 1;
         if (idx >= 0) {
             queue->setJobOutputPathAt(idx, outputPath);
-            if (!tmpl.presetId.isEmpty()) {
-                // Use addRenderQueueWithPreset-equivalent via output settings
-                QString outFmt, codec, codecProfile;
-                int w, h, bitrate;
-                double fps;
-                if (queue->jobOutputSettingsAt(idx, &outFmt, &codec, &codecProfile, &w, &h, &fps, &bitrate)) {
-                    queue->setJobOutputSettingsAt(idx, outFmt, codec, codecProfile,
-                        tmpl.overrideWidth > 0 ? tmpl.overrideWidth : w,
-                        tmpl.overrideHeight > 0 ? tmpl.overrideHeight : h,
-                        tmpl.overrideFps > 0.0 ? tmpl.overrideFps : fps,
-                        bitrate);
-                }
+            QString outFmt, codec, codecProfile;
+            int w, h, bitrate;
+            double fps;
+            if (queue->jobOutputSettingsAt(idx, &outFmt, &codec, &codecProfile, &w, &h, &fps, &bitrate)) {
+                queue->setJobOutputSettingsAt(idx, outFmt, codec, codecProfile,
+                    tmpl.overrideWidth > 0 ? tmpl.overrideWidth : w,
+                    tmpl.overrideHeight > 0 ? tmpl.overrideHeight : h,
+                    tmpl.overrideFps > 0.0 ? tmpl.overrideFps : fps,
+                    bitrate);
+            }
+            if (tmpl.startFrame >= 0 && tmpl.endFrame >= tmpl.startFrame) {
+                queue->setJobFrameRangeAt(idx, tmpl.startFrame, tmpl.endFrame);
             }
         }
         added++;

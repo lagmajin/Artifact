@@ -211,3 +211,7 @@ export namespace Artifact {
 
 
 };
+
+export namespace Artifact {
+std::vector<ArtifactCore::ProjectDiagnostic> convertProjectHealthReportToDiagnostics(const ProjectHealthReport& report);
+}

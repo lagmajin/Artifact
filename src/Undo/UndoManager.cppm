@@ -569,7 +569,7 @@ void restoreLayerSnapshotForResolutionRemap(
         } else {
             prop->clearKeyFrames();
             for (const auto& k : psnap.keyframes) {
-                prop->addKeyFrame(k.time, k.value, k.interpolation,
+                prop->addKeyFrame(k.time, k.value, static_cast<int>(k.interpolation),
                                   k.cp1_x, k.cp1_y, k.cp2_x, k.cp2_y, k.roving);
             }
         }

@@ -748,7 +748,7 @@ void ProfilerPanelWidget::paintEvent(QPaintEvent*) {
         p.drawText(Impl::kColBar,  curY + fm.ascent(), QStringLiteral("last"));
         curY += Impl::kRowH;
 
-        QVector<ArtifactCore::TraceThreadRecord> hotThreads = trace.threads;
+        auto hotThreads = trace.threads;
         std::sort(hotThreads.begin(), hotThreads.end(), [](const auto& a, const auto& b) {
             if (a.lockDepth == b.lockDepth) {
                 if (a.lockCount == b.lockCount) {

@@ -44,6 +44,7 @@ import Application.AppSettings;
 import Clipboard.ClipboardManager;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Widgets.Utils.CSS;
+import Artifact.Widgets.Timeline;
 import Artifact.Application.Manager;
 import Artifact.Service.Application;
 import Artifact.Tool.Service;
@@ -113,6 +114,33 @@ void setMenuIcon(QMenu *menu, const QString &name) {
   if (menu) {
     menu->setIcon(timelineStudioIcon(name));
   }
+}
+
+bool moveTimelineLayer(const CompositionID &compositionId,
+                       const QString &layerIdText,
+                       const qint64 startFrame,
+                       const qint64 durationFrame) {
+  auto *svc = ArtifactProjectService::instance();
+  if (!svc || layerIdText.trimmed().isEmpty()) {
+    return false;
+  }
+  auto result = svc->findComposition(compositionId);
+  if (!result.success) {
+    return false;
+  }
+  const auto composition = result.ptr.lock();
+  if (!composition) {
+    return false;
+  }
+  const auto layer = composition->layerById(LayerID(layerIdText));
+  if (!layer) {
+    return false;
+  }
+  layer->setInPoint(FramePosition(startFrame));
+  layer->setOutPoint(FramePosition(std::max<qint64>(startFrame + 1, startFrame + durationFrame)));
+  layer->setStartTime(FramePosition(startFrame));
+  layer->changed();
+  return true;
 }
 
 LayerType inferDroppedLayerType(const QString &filePath) {
@@ -1806,9 +1834,11 @@ enum class KeyframeRangeTransformKind {
 struct KeyframeRangeTransformOptions {
   KeyframeRangeTransformKind kind = KeyframeRangeTransformKind::Stretch;
   qint64 targetDuration = 0;
+  qint64 targetStartFrame = 0;
   double scale = 1.0;
   double valueScale = 1.0;
   double valueOffset = 0.0;
+  bool useTargetStartFrame = false;
   bool reverseOrder = false;
   int randomJitter = 0;
 };
@@ -1935,6 +1965,12 @@ bool applySelectedKeyframeRangeTransform(
       case KeyframeRangeTransformKind::ScaleValues:
       case KeyframeRangeTransformKind::OffsetValues:
         break;
+      }
+
+      if (options.useTargetStartFrame &&
+          options.kind != KeyframeRangeTransformKind::ScaleValues &&
+          options.kind != KeyframeRangeTransformKind::OffsetValues) {
+        newFrame += options.targetStartFrame - firstFrame;
       }
 
       ArtifactCore::KeyFrame keyframe;
@@ -2589,6 +2625,75 @@ double snappedKeyframeDragTargetFrame(
     targetFrame = currentFrame;
     if (outSnapLabel) {
       *outSnapLabel = QStringLiteral("current frame");
+    }
+  }
+
+  return targetFrame;
+}
+
+double snapTimelineFrameToEditTargets(
+    const double rawFrame, const QVector<ArtifactTimelineTrackPainterView::TrackClipVisual> &clips,
+    const QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> &markers,
+    const double currentFrame, const Qt::KeyboardModifiers modifiers,
+    QString *outSnapLabel = nullptr, const int ignoreClipIndex = -1) {
+  double targetFrame = rawFrame;
+  if (outSnapLabel) {
+    outSnapLabel->clear();
+  }
+
+  if (modifiers & Qt::AltModifier) {
+    if (outSnapLabel) {
+      *outSnapLabel = QStringLiteral("snap override");
+    }
+    return targetFrame;
+  }
+
+  auto trySnap = [&](const double candidate, const QString &label) {
+    if (std::abs(targetFrame - candidate) <= kKeyframeSnapToPlayheadThresholdFrames) {
+      targetFrame = candidate;
+      if (outSnapLabel) {
+        *outSnapLabel = label;
+      }
+      return true;
+    }
+    return false;
+  };
+
+  if (modifiers & Qt::ShiftModifier) {
+    targetFrame = std::round(targetFrame / 10.0) * 10.0;
+    if (outSnapLabel) {
+      *outSnapLabel = QStringLiteral("10 frame increments");
+    }
+  }
+
+  if (trySnap(currentFrame, QStringLiteral("current frame"))) {
+    return targetFrame;
+  }
+
+  if (auto *svc = ArtifactProjectService::instance()) {
+    if (auto comp = svc->currentComposition().lock()) {
+      const ArtifactCore::FrameRange workArea = comp->workAreaRange();
+      if (trySnap(static_cast<double>(workArea.start()), QStringLiteral("work area start")) ||
+          trySnap(static_cast<double>(workArea.end()), QStringLiteral("work area end"))) {
+        return targetFrame;
+      }
+    }
+  }
+
+  for (int i = 0; i < clips.size(); ++i) {
+    if (i == ignoreClipIndex) {
+      continue;
+    }
+    const auto &clip = clips.at(i);
+    if (trySnap(clip.startFrame, QStringLiteral("layer in point")) ||
+        trySnap(clip.startFrame + clip.durationFrame, QStringLiteral("layer out point"))) {
+      return targetFrame;
+    }
+  }
+
+  for (const auto &marker : markers) {
+    if (trySnap(marker.frame, QStringLiteral("keyframe"))) {
+      return targetFrame;
     }
   }
 
@@ -5591,22 +5696,30 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
     const double deltaFrames =
         (mouseX - impl_->dragStartX_) / std::max(0.001, ppf);
     auto &clip = impl_->clips_[impl_->dragClipIndex_];
+    QString clipSnapLabel;
     switch (impl_->dragMode_) {
-    case DragMode::MoveBody:
-      clip.startFrame = impl_->dragOrigStartFrame_ + deltaFrames;
+    case DragMode::MoveBody: {
+      clip.startFrame = snapTimelineFrameToEditTargets(
+          impl_->dragOrigStartFrame_ + deltaFrames, impl_->clips_,
+          impl_->keyframeMarkers_, impl_->currentFrame_, event->modifiers(),
+          &clipSnapLabel, impl_->dragClipIndex_);
       if (clip.hasTrimSourceRange) {
         const double rangeDelta = clip.startFrame - impl_->dragOrigStartFrame_;
         clip.trimMinStartFrame = impl_->dragOrigTrimMinStartFrame_ + rangeDelta;
         clip.trimMaxEndFrame = impl_->dragOrigTrimMaxEndFrame_ + rangeDelta;
       }
       break;
+    }
     case DragMode::ResizeLeft: {
       const double end = impl_->dragOrigStartFrame_ + impl_->dragOrigDuration_;
       const double minStart = clip.hasTrimSourceRange
                                   ? impl_->dragOrigTrimMinStartFrame_
                                   : 0.0;
-      clip.startFrame = std::clamp(impl_->dragOrigStartFrame_ + deltaFrames,
-                                   minStart, end - 1.0);
+      const double snappedStart = snapTimelineFrameToEditTargets(
+          impl_->dragOrigStartFrame_ + deltaFrames, impl_->clips_,
+          impl_->keyframeMarkers_, impl_->currentFrame_, event->modifiers(),
+          &clipSnapLabel, impl_->dragClipIndex_);
+      clip.startFrame = std::clamp(snappedStart, minStart, end - 1.0);
       clip.durationFrame = end - clip.startFrame;
       break;
     }
@@ -5614,9 +5727,11 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
       const double maxEnd = clip.hasTrimSourceRange
                                 ? impl_->dragOrigTrimMaxEndFrame_
                                 : std::numeric_limits<double>::max();
-      const double newEnd = std::clamp(
+      const double snappedEnd = snapTimelineFrameToEditTargets(
           impl_->dragOrigStartFrame_ + impl_->dragOrigDuration_ + deltaFrames,
-          clip.startFrame + 1.0, maxEnd);
+          impl_->clips_, impl_->keyframeMarkers_, impl_->currentFrame_,
+          event->modifiers(), &clipSnapLabel, impl_->dragClipIndex_);
+      const double newEnd = std::clamp(snappedEnd, clip.startFrame + 1.0, maxEnd);
       clip.durationFrame = std::max(1.0, newEnd - clip.startFrame);
       break;
     }
@@ -5626,10 +5741,13 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
 
     // Debug message emission
     const QString status =
-        QStringLiteral("Layer: %1 | Start: %2 | Dur: %3")
+        QStringLiteral("Layer: %1 | Start: %2 | Dur: %3%4")
             .arg(clip.title.isEmpty() ? clip.clipId : clip.title)
             .arg(QString::number(clip.startFrame, 'f', 1))
-            .arg(QString::number(clip.durationFrame, 'f', 1));
+            .arg(QString::number(clip.durationFrame, 'f', 1))
+            .arg(clipSnapLabel.isEmpty()
+                     ? QString()
+                     : QStringLiteral(" | Snap: %1").arg(clipSnapLabel));
     Q_EMIT timelineDebugMessage(status);
 
     const QRectF dirtyRect =
@@ -6118,6 +6236,8 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *stretchSelectedKeyframesAct = nullptr;
   QAction *reverseSelectedKeyframesAct = nullptr;
   QAction *normalizeSelectedKeyframesAct = nullptr;
+  QAction *moveSelectedKeyframesToPlayheadAct = nullptr;
+  QAction *fitSelectedKeyframesToWorkAreaAct = nullptr;
   QAction *scaleSelectedKeyframesAct = nullptr;
   QAction *offsetSelectedKeyframesAct = nullptr;
   if (!selectedMarkers.isEmpty()) {
@@ -6127,6 +6247,10 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     stretchSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Stretch Keys"));
     reverseSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Reverse Keys"));
     normalizeSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Normalize Duration"));
+    moveSelectedKeyframesToPlayheadAct =
+        editMenu->addAction(QStringLiteral("Move Keys to Playhead"));
+    fitSelectedKeyframesToWorkAreaAct =
+        editMenu->addAction(QStringLiteral("Fit Keys to Work Area"));
     scaleSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Scale Values"));
     offsetSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Offset Values"));
   }
@@ -6300,6 +6424,9 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *rippleTrimInClipAct = nullptr;
   QAction *rippleDeleteClipAct = nullptr;
   QAction *moveStartClipAct = nullptr;
+  QAction *moveSelectedToPlayheadAct = nullptr;
+  QAction *fitSelectedToWorkAreaAct = nullptr;
+  QAction *setWorkAreaToSelectedAct = nullptr;
   QAction *deleteClipAct = nullptr;
   if (clipUnderCursor) {
     if (!markerUnderCursor) {
@@ -6316,6 +6443,13 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         menu.addAction(QStringLiteral("Ripple Trim In at Playhead"));
     rippleDeleteClipAct =
         menu.addAction(QStringLiteral("Ripple Delete (Close Gap)"));
+    QMenu *rangeMenu = menu.addMenu(QStringLiteral("Selection Range"));
+    moveSelectedToPlayheadAct =
+        rangeMenu->addAction(QStringLiteral("Move Selected to Playhead"));
+    fitSelectedToWorkAreaAct =
+        rangeMenu->addAction(QStringLiteral("Fit Selected to Work Area"));
+    setWorkAreaToSelectedAct =
+        rangeMenu->addAction(QStringLiteral("Set Work Area to Selected"));
     deleteClipAct = menu.addAction(QStringLiteral("Delete Layer"));
   }
 
@@ -6459,6 +6593,8 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
 
   if (chosen == shrinkSelectedKeyframesAct || chosen == stretchSelectedKeyframesAct ||
       chosen == reverseSelectedKeyframesAct || chosen == normalizeSelectedKeyframesAct ||
+      chosen == moveSelectedKeyframesToPlayheadAct ||
+      chosen == fitSelectedKeyframesToWorkAreaAct ||
       chosen == scaleSelectedKeyframesAct || chosen == offsetSelectedKeyframesAct) {
     ArtifactCompositionPtr currentComposition = composition;
     if (!currentComposition) {
@@ -6483,6 +6619,19 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       } else if (chosen == normalizeSelectedKeyframesAct) {
         options.kind = KeyframeRangeTransformKind::Normalize;
         options.targetDuration = std::max<qint64>(1, contextFrame + 1);
+      } else if (chosen == moveSelectedKeyframesToPlayheadAct) {
+        options.kind = KeyframeRangeTransformKind::Stretch;
+        options.scale = 1.0;
+        options.useTargetStartFrame = true;
+        options.targetStartFrame = static_cast<qint64>(std::llround(
+            std::clamp(impl_->currentFrame_, 0.0,
+                       std::max<double>(0.0, static_cast<double>(impl_->durationFrames_ - 1.0)))));
+      } else if (chosen == fitSelectedKeyframesToWorkAreaAct) {
+        const ArtifactCore::FrameRange workArea = currentComposition->workAreaRange();
+        options.kind = KeyframeRangeTransformKind::Normalize;
+        options.targetDuration = std::max<qint64>(1, workArea.end() - workArea.start());
+        options.useTargetStartFrame = true;
+        options.targetStartFrame = std::max<qint64>(0, workArea.start());
       } else if (chosen == scaleSelectedKeyframesAct) {
         options.kind = KeyframeRangeTransformKind::ScaleValues;
         options.valueScale = 1.25;
@@ -6674,22 +6823,22 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         continue;
       }
       if (chosen == staggerStartAct) {
-        applyTimelineLayerMove(impl_->compositionId_, layer->id().toString(),
-                               cursor, 0.0);
+        moveTimelineLayer(currentComp->id(), layer->id().toString(),
+                          cursor, 0.0);
         cursor += step;
       } else if (chosen == staggerEndAct) {
         const qint64 duration = layer->outPoint().framePosition() -
                                 layer->inPoint().framePosition();
-        applyTimelineLayerMove(impl_->compositionId_, layer->id().toString(),
-                               std::max<qint64>(0, cursor - duration), 0.0);
+        moveTimelineLayer(currentComp->id(), layer->id().toString(),
+                          std::max<qint64>(0, cursor - duration), 0.0);
         cursor += step;
       } else if (chosen == cascadeClipsAct) {
-        applyTimelineLayerMove(impl_->compositionId_, layer->id().toString(),
-                               cursor, 0.0);
+        moveTimelineLayer(currentComp->id(), layer->id().toString(),
+                          cursor, 0.0);
         cursor = layer->outPoint().framePosition();
       } else if (chosen == overlapClipsAct) {
-        applyTimelineLayerMove(impl_->compositionId_, layer->id().toString(),
-                               cursor, 0.0);
+        moveTimelineLayer(currentComp->id(), layer->id().toString(),
+                          cursor, 0.0);
         cursor += std::max<qint64>(1, layer->outPoint().framePosition() -
                                         layer->inPoint().framePosition() - step);
       }
@@ -6762,6 +6911,87 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
         event->accept();
         return;
       }
+    }
+    event->accept();
+    return;
+  }
+
+  if ((chosen == moveSelectedToPlayheadAct || chosen == fitSelectedToWorkAreaAct ||
+       chosen == setWorkAreaToSelectedAct) &&
+      composition) {
+    auto *selManager = ArtifactApplicationManager::instance()
+                           ? ArtifactApplicationManager::instance()->layerSelectionManager()
+                           : nullptr;
+    const auto selectedLayers = selManager ? selManager->selectedLayers()
+                                           : QSet<ArtifactAbstractLayerPtr>{};
+    QVector<ArtifactAbstractLayerPtr> orderedLayers = selectedLayers.values().toVector();
+    std::sort(orderedLayers.begin(), orderedLayers.end(),
+              [](const auto &lhs, const auto &rhs) {
+                if (!lhs || !rhs) {
+                  return lhs && !rhs;
+                }
+                const qint64 lhsIn = lhs->inPoint().framePosition();
+                const qint64 rhsIn = rhs->inPoint().framePosition();
+                if (lhsIn != rhsIn) {
+                  return lhsIn < rhsIn;
+                }
+                return lhs->id().toString() < rhs->id().toString();
+              });
+
+    if (orderedLayers.isEmpty() && clipUnderCursor) {
+      const auto &clip = impl_->clips_[clipHit.clipIndex];
+      if (auto layer = composition->layerById(clip.layerId)) {
+        orderedLayers.push_back(layer);
+      }
+    }
+
+    bool changed = false;
+    const qint64 currentFrame = static_cast<qint64>(std::llround(
+        std::clamp(impl_->currentFrame_, 0.0,
+                   std::max<double>(0.0, static_cast<double>(impl_->durationFrames_ - 1.0)))));
+
+    if (chosen == moveSelectedToPlayheadAct) {
+      for (const auto &layer : orderedLayers) {
+        if (!layer || layer->isLocked()) {
+          continue;
+        }
+        changed |= applyTimelineLayerRangeEdit(layer, currentFrame, 0, true);
+      }
+    } else if (chosen == fitSelectedToWorkAreaAct) {
+      const ArtifactCore::FrameRange workArea = composition->workAreaRange();
+      const qint64 workStart = std::max<qint64>(0, workArea.start());
+      const qint64 workDuration = std::max<qint64>(1, workArea.end() - workStart);
+      for (const auto &layer : orderedLayers) {
+        if (!layer || layer->isLocked()) {
+          continue;
+        }
+        changed |= applyTimelineLayerRangeEdit(layer, workStart, workDuration, false);
+      }
+    } else if (chosen == setWorkAreaToSelectedAct && !orderedLayers.isEmpty()) {
+      qint64 minIn = std::numeric_limits<qint64>::max();
+      qint64 maxOut = 0;
+      for (const auto &layer : orderedLayers) {
+        if (!layer) {
+          continue;
+        }
+        minIn = std::min(minIn, layer->inPoint().framePosition());
+        maxOut = std::max(maxOut, layer->outPoint().framePosition());
+      }
+      if (minIn != std::numeric_limits<qint64>::max() && maxOut > minIn) {
+        composition->setWorkAreaRange(ArtifactCore::FrameRange(minIn, maxOut));
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      const QString actionText =
+          chosen == moveSelectedToPlayheadAct
+              ? QStringLiteral("Moved selected layers to playhead")
+              : chosen == fitSelectedToWorkAreaAct
+                    ? QStringLiteral("Fit selected layers to work area")
+                    : QStringLiteral("Set work area to selected layers");
+      Q_EMIT timelineDebugMessage(actionText);
+      update();
     }
     event->accept();
     return;

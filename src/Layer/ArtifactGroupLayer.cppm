@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <algorithm>
 #include <QDebug>
+#include <QImage>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSize>
@@ -36,9 +37,53 @@ public:
     Diligent::Uint32 cachedWidth = 0;
     Diligent::Uint32 cachedHeight = 0;
     Diligent::TEXTURE_FORMAT cachedFormat = Diligent::TEX_FORMAT_UNKNOWN;
+    qint64 cachedMaskSignature = -1;
+    int cachedMaskWidth = 0;
+    int cachedMaskHeight = 0;
+    QImage cachedMaskImage;
     // Optional per-group texture manager for pooled allocations
     std::unique_ptr<ArtifactCore::TextureManager> textureManager;
 };
+
+static qint64 maskSignatureForLayer(const ArtifactAbstractLayer *layer, int width, int height)
+{
+    if (!layer) {
+        return -1;
+    }
+
+    qint64 signature = 1469598103934665603LL;
+    auto mix = [&signature](qint64 value) {
+        signature ^= value;
+        signature *= 1099511628211LL;
+    };
+
+    mix(width);
+    mix(height);
+    const int count = layer->maskCount();
+    mix(count);
+    for (int i = 0; i < count; ++i) {
+        const LayerMask mask = layer->mask(i);
+        mix(mask.isEnabled() ? 1 : 0);
+        const int pathCount = mask.maskPathCount();
+        mix(pathCount);
+        for (int p = 0; p < pathCount; ++p) {
+            const MaskPath path = mask.maskPath(p);
+            mix(path.isClosed() ? 1 : 0);
+            mix(static_cast<int>(path.mode()));
+            mix(path.isInverted() ? 1 : 0);
+            mix(static_cast<int>(std::lround(path.opacity() * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.feather() * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.featherHorizontal() * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.featherVertical() * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.featherInner() * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.featherOuter() * 1000.0f)));
+            mix(static_cast<int>(std::lround(path.expansion() * 1000.0f)));
+            mix(path.vertexCount());
+            mix(qHash(path.name().toQString()));
+        }
+    }
+    return signature;
+}
 
 ArtifactGroupLayer::ArtifactGroupLayer()
     : groupImpl_(std::make_unique<GroupImpl>()) {
@@ -192,18 +237,27 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
     if (hasMasks()) {
         const int maskW = static_cast<int>(desc.Width);
         const int maskH = static_cast<int>(desc.Height);
-        cv::Mat maskMat(maskH, maskW, CV_32FC4, cv::Scalar(1.0f, 1.0f, 1.0f, 1.0f));
-        const int mCount = maskCount();
-        for (int mi = 0; mi < mCount; ++mi) {
-            LayerMask m = mask(mi);
-            if (!m.isEnabled()) continue;
-            m.applyToImage(maskW, maskH, &maskMat);
+        const qint64 signature = maskSignatureForLayer(this, maskW, maskH);
+        if (groupImpl_->cachedMaskImage.isNull() ||
+            groupImpl_->cachedMaskWidth != maskW ||
+            groupImpl_->cachedMaskHeight != maskH ||
+            groupImpl_->cachedMaskSignature != signature) {
+            cv::Mat maskMat(maskH, maskW, CV_32FC4, cv::Scalar(1.0f, 1.0f, 1.0f, 1.0f));
+            const int mCount = maskCount();
+            for (int mi = 0; mi < mCount; ++mi) {
+                LayerMask m = mask(mi);
+                if (!m.isEnabled()) continue;
+                m.applyToImage(maskW, maskH, &maskMat);
+            }
+            groupImpl_->cachedMaskImage = ArtifactCore::CvUtils::cvMatToQImage(maskMat);
+            groupImpl_->cachedMaskWidth = maskW;
+            groupImpl_->cachedMaskHeight = maskH;
+            groupImpl_->cachedMaskSignature = signature;
         }
-        QImage maskImage = ArtifactCore::CvUtils::cvMatToQImage(maskMat);
-        if (!maskImage.isNull()) {
+        if (!groupImpl_->cachedMaskImage.isNull()) {
             renderer->drawMaskedTextureLocal(0.0f, 0.0f, static_cast<float>(desc.Width),
                                              static_cast<float>(desc.Height), tempSRV,
-                                             maskImage, 1.0f);
+                                             groupImpl_->cachedMaskImage, 1.0f);
         } else {
             renderer->drawSpriteTransformed(0.0f, 0.0f, static_cast<float>(desc.Width),
                                            static_cast<float>(desc.Height), screenIdentity, tempSRV, 1.0f);
@@ -231,6 +285,8 @@ void ArtifactGroupLayer::addChild(ArtifactAbstractLayerPtr layer) {
     groupImpl_->cachedWidth = 0;
     groupImpl_->cachedHeight = 0;
     groupImpl_->cachedFormat = Diligent::TEX_FORMAT_UNKNOWN;
+    groupImpl_->cachedMaskImage = QImage{};
+    groupImpl_->cachedMaskSignature = -1;
     Q_EMIT changed();
 }
 
@@ -252,6 +308,8 @@ void ArtifactGroupLayer::removeChild(const LayerID& id) {
         groupImpl_->cachedWidth = 0;
         groupImpl_->cachedHeight = 0;
         groupImpl_->cachedFormat = Diligent::TEX_FORMAT_UNKNOWN;
+        groupImpl_->cachedMaskImage = QImage{};
+        groupImpl_->cachedMaskSignature = -1;
         Q_EMIT changed();
     }
 }
@@ -270,6 +328,8 @@ void ArtifactGroupLayer::clearChildren() {
     groupImpl_->cachedWidth = 0;
     groupImpl_->cachedHeight = 0;
     groupImpl_->cachedFormat = Diligent::TEX_FORMAT_UNKNOWN;
+    groupImpl_->cachedMaskImage = QImage{};
+    groupImpl_->cachedMaskSignature = -1;
     Q_EMIT changed();
 }
 

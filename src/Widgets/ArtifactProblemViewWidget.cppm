@@ -69,78 +69,6 @@ enum class ProblemGroupingMode {
     Source
 };
 
-auto convertHealthReportToDiagnostics(const ProjectHealthReport& report)
-    -> std::vector<ArtifactCore::ProjectDiagnostic>
-{
-    std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
-    diagnostics.reserve(static_cast<size_t>(report.issues.size()));
-
-    const auto fixActionForCategory = [](const QString& category) {
-        if (category == QStringLiteral("MissingAsset")) {
-            return QStringLiteral("Relink the missing asset or remove the footage entry");
-        }
-        if (category == QStringLiteral("BrokenReference")) {
-            return QStringLiteral("Open the composition and replace or remove the broken reference");
-        }
-        if (category == QStringLiteral("CircularReference")) {
-            return QStringLiteral("Break the composition nesting cycle");
-        }
-        if (category == QStringLiteral("FrameRange")) {
-            return QStringLiteral("Normalize the composition or layer frame range");
-        }
-        if (category == QStringLiteral("Naming")) {
-            return QStringLiteral("Rename the item to a production-safe label");
-        }
-        if (category == QStringLiteral("Spelling")) {
-            return QStringLiteral("Review the suggested spelling correction");
-        }
-        return QStringLiteral("Inspect the reported issue");
-    };
-
-    for (const auto& issue : report.issues) {
-        ArtifactCore::DiagnosticSeverity severity = ArtifactCore::DiagnosticSeverity::Info;
-        ArtifactCore::DiagnosticCategory category = ArtifactCore::DiagnosticCategory::Custom;
-
-        switch (issue.severity) {
-        case HealthIssueSeverity::Error:
-            severity = ArtifactCore::DiagnosticSeverity::Error;
-            break;
-        case HealthIssueSeverity::Warning:
-            severity = ArtifactCore::DiagnosticSeverity::Warning;
-            break;
-        case HealthIssueSeverity::Info:
-        default:
-            severity = ArtifactCore::DiagnosticSeverity::Info;
-            break;
-        }
-
-        if (issue.category == QStringLiteral("CircularReference")) {
-            category = ArtifactCore::DiagnosticCategory::CircularDep;
-        } else if (issue.category == QStringLiteral("MissingAsset")) {
-            category = ArtifactCore::DiagnosticCategory::File;
-        } else if (issue.category == QStringLiteral("FrameRange")) {
-            category = ArtifactCore::DiagnosticCategory::Configuration;
-        } else if (issue.category == QStringLiteral("BrokenReference")) {
-            category = ArtifactCore::DiagnosticCategory::Reference;
-        } else if (issue.category == QStringLiteral("Naming")) {
-            category = ArtifactCore::DiagnosticCategory::Configuration;
-        } else if (issue.category == QStringLiteral("Spelling")) {
-            category = ArtifactCore::DiagnosticCategory::Custom;
-        }
-
-        ArtifactCore::ProjectDiagnostic diag(
-            severity,
-            category,
-            issue.message);
-        diag.setDescription(issue.message);
-        diag.setSourceCompId(issue.targetName);
-        diag.setFixAction(fixActionForCategory(issue.category));
-        diagnostics.push_back(diag);
-    }
-
-    return diagnostics;
-}
-
 bool severityMatchesFilter(ArtifactCore::DiagnosticSeverity severity, int index)
 {
     switch (index) {
@@ -370,7 +298,7 @@ void populateDiagnosticItem(QTreeWidgetItem* item, const ArtifactCore::ProjectDi
     item->setToolTip(2, diag.getDescription().isEmpty() ? diag.getMessage() : diag.getDescription());
     item->setToolTip(3, assetPath.isEmpty()
                             ? (diag.getFixAction().isEmpty() ? sourceText : diag.getFixAction())
-                            : assetPath);
+                            : QStringLiteral("Asset path: %1").arg(assetPath));
     item->setData(0, Qt::UserRole, diag.getId());
     item->setData(0, Qt::UserRole + 1, diag.getSourceCompId());
     item->setData(0, Qt::UserRole + 2, diag.getSourceLayerId());
@@ -455,7 +383,7 @@ ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
     auto* actionLayout = new QHBoxLayout();
     actionLayout->setSpacing(8);
 
-    impl_->refreshButton = new QPushButton("Refresh", this);
+    impl_->refreshButton = new QPushButton("Rescan", this);
     impl_->clearButton = new QPushButton("Clear", this);
     impl_->refreshButton->installEventFilter(this);
     impl_->clearButton->installEventFilter(this);
@@ -488,7 +416,7 @@ ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
     root->addWidget(impl_->problemTree, 1);
 
     // Summary
-    impl_->summaryLabel = new QLabel("goal: inspect project issues | now: 0 | warning: none | next: refresh", this);
+    impl_->summaryLabel = new QLabel("goal: inspect project diagnostics | now: 0 | warning: none | next: rescan", this);
     {
         QPalette summaryPal = impl_->summaryLabel->palette();
         summaryPal.setColor(QPalette::WindowText, QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
@@ -564,7 +492,7 @@ void ArtifactProblemViewWidget::refreshFromCurrentProject()
 
     // Fallback when service not available
     const auto healthReport = ArtifactProjectHealthChecker::check(project);
-    const auto diagnostics = convertHealthReportToDiagnostics(healthReport);
+    const auto diagnostics = convertProjectHealthReportToDiagnostics(healthReport);
     loadDiagnostics(diagnostics);
 }
 

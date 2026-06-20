@@ -90,14 +90,14 @@ protected:
         painter.setPen(QColor(60, 60, 80));
         painter.drawRect(content);
 
-        if (snapshot_.events.isEmpty()) {
+        if (snapshot_.events.empty()) {
             painter.setPen(QColor(190, 190, 200));
             painter.drawText(content, Qt::AlignCenter, QStringLiteral("No trace events yet"));
             return;
         }
 
-        qint64 minNs = snapshot_.events.first().startNs;
-        qint64 maxNs = snapshot_.events.first().endNs;
+        qint64 minNs = snapshot_.events.front().startNs;
+        qint64 maxNs = snapshot_.events.front().endNs;
         for (const auto& event : snapshot_.events) {
             minNs = std::min(minNs, event.startNs);
             maxNs = std::max(maxNs, std::max(event.startNs, event.endNs));
@@ -319,7 +319,7 @@ public:
                 lines << QString();
             }
             lines << QStringLiteral("Hot threads:");
-            QVector<ArtifactCore::TraceThreadRecord> hotThreads = snapshot.threads;
+            auto hotThreads = snapshot.threads;
             std::sort(hotThreads.begin(), hotThreads.end(), [](const auto& a, const auto& b) {
                 if (a.lockDepth == b.lockDepth) {
                     return a.lockCount > b.lockCount;
@@ -446,7 +446,7 @@ public:
                 }
                 lines << line;
             }
-            if (snapshot.events.isEmpty()) {
+            if (snapshot.events.empty()) {
                 lines << QStringLiteral("<no events>");
             }
 

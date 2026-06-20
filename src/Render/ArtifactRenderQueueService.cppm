@@ -28,6 +28,7 @@ module;
 #include <QRegularExpression>
 #include <QProcess>
 #include <QCoreApplication>
+#include <QTextStream>
 #include <opencv2/opencv.hpp>
 #include <wobjectimpl.h>
 #include <mutex>
@@ -3704,6 +3705,9 @@ namespace Artifact
                      ext == QStringLiteral("webm") || ext == QStringLiteral("wmv") ||
                      ext == QStringLiteral("gif") || ext == QStringLiteral("apng") ||
                      ext == QStringLiteral("webp"));
+                const bool isHtmlPlayer = ext == QStringLiteral("html") ||
+                    format == QStringLiteral("html") ||
+                    job.codec.trimmed().toLower() == QStringLiteral("css");
 
                 const int startF = job.startFrame;
                 const int endF = job.endFrame;
@@ -3712,6 +3716,7 @@ namespace Artifact
                 std::atomic<bool> success = true;
                 std::atomic<int> framesRendered = 0;
                 QString failureReason;
+                QStringList htmlFrameFiles;
 
                 if (impl_->usesExternalRenderer(job)) {
                     const bool externalSuccess = impl_->runExternalRendererJob(job, i, &failureReason);
@@ -3904,6 +3909,25 @@ namespace Artifact
                             success.store(false, std::memory_order_relaxed);
                             break;
                         }
+                    } else if (isHtmlPlayer) {
+                        const QString frameExt = QStringLiteral("png");
+                        QString baseName = outInfo.completeBaseName();
+                        if (baseName.isEmpty()) baseName = QStringLiteral("render");
+                        const QString framePath = outDir.filePath(
+                            QStringLiteral("%1_%2.%3")
+                                .arg(baseName)
+                                .arg(f, 4, 10, QChar('0'))
+                                .arg(frameExt));
+                        ArtifactCore::ImageExporter exporter;
+                        ArtifactCore::ImageExportOptions imgOpts;
+                        imgOpts.format = frameExt;
+                        const auto result = exporter.write(qimg, framePath, imgOpts);
+                        if (!result.success) {
+                            success.store(false, std::memory_order_relaxed);
+                            failureReason = QStringLiteral("Failed to save HTML export frame: %1").arg(result.errorMessage);
+                            break;
+                        }
+                        htmlFrameFiles.push_back(QFileInfo(framePath).fileName());
                     } else if (ext == QStringLiteral("svg")) {
                         // SVG frame: write as vector SVG
                         QString bn = outInfo.completeBaseName();
@@ -3947,6 +3971,26 @@ namespace Artifact
                 // 終了処理
                 if (videoBackend) {
                     videoBackend->close();
+                }
+
+                if (success.load(std::memory_order_relaxed) && isHtmlPlayer) {
+                    const double htmlDuration =
+                        std::max(1.0, static_cast<double>(htmlFrameFiles.size()) /
+                                           std::max(1.0, job.frameRate));
+                    const QString html = ArtifactCore::HtmlPlayerWriter::generateFrameSequencePlayer(
+                        job.compositionName,
+                        QSize(job.resolutionWidth, job.resolutionHeight),
+                        htmlFrameFiles,
+                        htmlDuration);
+                    QFile htmlFile(outputPath);
+                    if (!htmlFile.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                        success.store(false, std::memory_order_relaxed);
+                        failureReason = QStringLiteral("Failed to write HTML export file");
+                    } else {
+                        QTextStream stream(&htmlFile);
+                        stream << html;
+                        htmlFile.close();
+                    }
                 }
 
                 if (success.load(std::memory_order_relaxed) && wantsIntegratedRender && !audioSourcePathForMux.isEmpty()) {

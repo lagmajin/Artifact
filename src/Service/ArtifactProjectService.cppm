@@ -317,7 +317,7 @@ auto mapHealthCategoryToDiagnostic(const QString &category)
   return ArtifactCore::DiagnosticCategory::Custom;
 }
 
-auto convertProjectHealthReportToDiagnostics(const ProjectHealthReport &report)
+auto convertProjectHealthReportToDiagnosticsImpl(const ProjectHealthReport &report)
     -> std::vector<ArtifactCore::ProjectDiagnostic> {
   std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
   diagnostics.reserve(static_cast<size_t>(report.issues.size()));
@@ -728,6 +728,12 @@ private:
   UniString childName_;
 };
 } // namespace
+
+std::vector<ArtifactCore::ProjectDiagnostic>
+Artifact::convertProjectHealthReportToDiagnostics(const ProjectHealthReport &report)
+{
+  return convertProjectHealthReportToDiagnosticsImpl(report);
+}
 
 class ArtifactProjectService::Impl {
 private:
@@ -2745,7 +2751,7 @@ ProjectHealthReport ArtifactProjectService::currentProjectHealthReport() const {
 std::vector<ArtifactCore::ProjectDiagnostic>
 ArtifactProjectService::currentProjectDiagnostics() const {
   std::vector<ArtifactCore::ProjectDiagnostic> diagnostics =
-      convertProjectHealthReportToDiagnostics(currentProjectHealthReport());
+      Artifact::convertProjectHealthReportToDiagnostics(currentProjectHealthReport());
 
   const auto project = getCurrentProjectSharedPtr();
   if (project) {
@@ -2776,10 +2782,21 @@ QString ArtifactProjectService::currentProjectHealthStateToken() const
   }
 
   const auto diagnostics = currentProjectDiagnostics();
-  const bool hasIssues = std::any_of(
+  const bool hasErrors = std::any_of(
       diagnostics.begin(), diagnostics.end(),
-      [](const auto& diagnostic) { return diagnostic.isError() || diagnostic.isWarning(); });
-  return hasIssues ? QStringLiteral("issues") : QStringLiteral("healthy");
+      [](const auto& diagnostic) { return diagnostic.isError(); });
+  if (hasErrors) {
+    return QStringLiteral("error");
+  }
+
+  const bool hasWarnings = std::any_of(
+      diagnostics.begin(), diagnostics.end(),
+      [](const auto& diagnostic) { return diagnostic.isWarning(); });
+  if (hasWarnings) {
+    return QStringLiteral("warning");
+  }
+
+  return QStringLiteral("healthy");
 }
 
 ChangeCompositionResult

@@ -1597,11 +1597,11 @@ void ArtifactInspectorWidget::Impl::updateLayerInfo() {
     const auto theme = ArtifactCore::currentDCCTheme();
     applyInspectorLabelPalette(statusLabel, true);
   }
-  setEffectsStateText(
+      setEffectsStateText(
       maskCount > 0
-          ? QStringLiteral("Mask / roto editing is available for this layer.")
+          ? QStringLiteral("Mask editing is available for this layer. Roto fields are also available where supported.")
           : QStringLiteral(
-                "No masks on this layer. Use Mask tool to create one."),
+                "No masks on this layer. Use the Mask tool to create one."),
       true);
 
   qDebug() << "[Inspector] Updated layer info:" << layerName

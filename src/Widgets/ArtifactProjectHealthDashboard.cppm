@@ -100,55 +100,12 @@ QString assetPathFromDiagnostic(const ArtifactCore::ProjectDiagnostic& diag)
     return match.captured(1).trimmed();
 }
 
-auto convertHealthReportToDiagnostics(const ProjectHealthReport& report)
-    -> std::vector<ArtifactCore::ProjectDiagnostic>
-{
-    std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
-    diagnostics.reserve(static_cast<size_t>(report.issues.size()));
-
-    for (const auto& issue : report.issues) {
-        ArtifactCore::DiagnosticSeverity severity = ArtifactCore::DiagnosticSeverity::Info;
-        ArtifactCore::DiagnosticCategory category = ArtifactCore::DiagnosticCategory::Custom;
-
-        switch (issue.severity) {
-        case HealthIssueSeverity::Error:
-            severity = ArtifactCore::DiagnosticSeverity::Error;
-            break;
-        case HealthIssueSeverity::Warning:
-            severity = ArtifactCore::DiagnosticSeverity::Warning;
-            break;
-        case HealthIssueSeverity::Info:
-        default:
-            severity = ArtifactCore::DiagnosticSeverity::Info;
-            break;
-        }
-
-        if (issue.category == QStringLiteral("CircularReference")) {
-            category = ArtifactCore::DiagnosticCategory::CircularDep;
-        } else if (issue.category == QStringLiteral("MissingAsset")) {
-            category = ArtifactCore::DiagnosticCategory::File;
-        } else if (issue.category == QStringLiteral("FrameRange")) {
-            category = ArtifactCore::DiagnosticCategory::Configuration;
-        } else if (issue.category == QStringLiteral("BrokenReference")) {
-            category = ArtifactCore::DiagnosticCategory::Reference;
-        } else if (issue.category == QStringLiteral("Naming")) {
-            category = ArtifactCore::DiagnosticCategory::Configuration;
-        }
-
-        ArtifactCore::ProjectDiagnostic diag(severity, category, issue.message);
-        diag.setDescription(issue.message);
-        diag.setSourceCompId(issue.targetName);
-        diagnostics.push_back(diag);
-    }
-
-    return diagnostics;
-}
 } // namespace
 
 /**
  * @brief Artifact Project Health Dashboard
  * 
- * A standalone widget to visualize project health issues detected by ArtifactProjectHealthChecker.
+ * A standalone widget to visualize project health diagnostics detected by ArtifactProjectHealthChecker.
  */
 export class ArtifactProjectHealthDashboard : public QWidget {
     W_OBJECT(ArtifactProjectHealthDashboard)
@@ -193,20 +150,19 @@ public:
         if (!project_) {
             statusLabel_->setText(Artifact::projectHealthSummaryText(0, 0, 0, 0, false));
             applyStatusColor(QColor(ArtifactCore::currentDCCTheme().textColor).darker(130));
-            issuesTree_->clear();
+            diagnosticsTree_->clear();
             lastReport_ = {};
             return;
         }
 
-        issuesTree_->clear();
+        diagnosticsTree_->clear();
         std::vector<ArtifactCore::ProjectDiagnostic> diagnostics;
         if (ArtifactProjectService::instance()) {
             diagnostics = ArtifactProjectService::instance()->currentProjectDiagnostics();
             lastReport_ = {};
         } else {
             lastReport_ = ArtifactProjectHealthChecker::check(project_);
-            // Use the service's conversion logic directly (or inline)
-            diagnostics = convertHealthReportToDiagnostics(lastReport_);
+            diagnostics = convertProjectHealthReportToDiagnostics(lastReport_);
         }
 
         // Update overall status
@@ -231,22 +187,29 @@ public:
             }
         }
 
+        const QString summaryText =
+            Artifact::projectHealthSummaryText(static_cast<int>(diagnostics.size()),
+                                               errorCount,
+                                               warningCount,
+                                               infoCount,
+                                               true);
+
         if (hasErrors) {
-            statusLabel_->setText(Artifact::projectHealthSummaryText(static_cast<int>(diagnostics.size()), errorCount, warningCount, infoCount, true));
+            statusLabel_->setText(summaryText);
             applyStatusColor(QColor(QStringLiteral("#F44336")));
         } else if (hasWarnings || (!ArtifactProjectService::instance() && !lastReport_.issues.isEmpty())) {
-            statusLabel_->setText(Artifact::projectHealthSummaryText(static_cast<int>(diagnostics.size()), errorCount, warningCount, infoCount, true));
+            statusLabel_->setText(summaryText);
             applyStatusColor(QColor(QStringLiteral("#FF9800")));
         } else {
-            statusLabel_->setText(Artifact::projectHealthSummaryText(static_cast<int>(diagnostics.size()), errorCount, warningCount, infoCount, true));
+            statusLabel_->setText(summaryText);
             applyStatusColor(QColor(QStringLiteral("#4CAF50")));
         }
 
         const bool canRepair = hasErrors || hasWarnings || (!ArtifactProjectService::instance() && !lastReport_.issues.isEmpty());
 
-        // Add issues to tree
+        // Add diagnostics to tree
         for (const auto& diagnostic : diagnostics) {
-            auto item = new QTreeWidgetItem(issuesTree_);
+            auto item = new QTreeWidgetItem(diagnosticsTree_);
             
             // Set Icon based on severity
             QIcon icon;
@@ -280,9 +243,9 @@ public:
                                     : item->data(0, Qt::UserRole + 3).toString());
         }
 
-        issuesTree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
-        issuesTree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-        issuesTree_->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+        diagnosticsTree_->header()->setSectionResizeMode(1, QHeaderView::Stretch);
+        diagnosticsTree_->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+        diagnosticsTree_->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
         if (fixBtn_) {
             fixBtn_->setEnabled(canRepair);
         }
@@ -362,7 +325,7 @@ private:
 
         // Header Panel
         auto headerLayout = new QHBoxLayout();
-        statusLabel_ = new QLabel("Loading...");
+        statusLabel_ = new QLabel("Scanning diagnostics...");
         {
             QFont f = statusLabel_->font();
             f.setBold(true);
@@ -373,7 +336,7 @@ private:
             statusLabel_->setPalette(pal);
         }
         
-        auto refreshBtn = new QPushButton("Scan Project");
+        auto refreshBtn = new QPushButton("Rescan");
         refreshBtn->setFixedWidth(120);
         {
             QPalette pal = refreshBtn->palette();
@@ -388,17 +351,17 @@ private:
         headerLayout->addWidget(refreshBtn);
         mainLayout->addLayout(headerLayout);
 
-        // Issues Tree
-        issuesTree_ = new QTreeWidget();
-        QStringList headers = {"", "Issue Description", "Source", "Category"};
-        issuesTree_->setHeaderLabels(headers);
-        issuesTree_->setColumnWidth(0, 30);
-        issuesTree_->setColumnWidth(2, 120);
-        issuesTree_->setColumnWidth(3, 100);
-        issuesTree_->setAlternatingRowColors(true);
-        issuesTree_->setIndentation(0);
+        // Diagnostics Tree
+        diagnosticsTree_ = new QTreeWidget();
+        QStringList headers = {"", "Message", "Source", "Category"};
+        diagnosticsTree_->setHeaderLabels(headers);
+        diagnosticsTree_->setColumnWidth(0, 30);
+        diagnosticsTree_->setColumnWidth(2, 120);
+        diagnosticsTree_->setColumnWidth(3, 100);
+        diagnosticsTree_->setAlternatingRowColors(true);
+        diagnosticsTree_->setIndentation(0);
         {
-            QPalette pal = issuesTree_->palette();
+            QPalette pal = diagnosticsTree_->palette();
             pal.setColor(QPalette::Window, background);
             pal.setColor(QPalette::Base, surface);
             pal.setColor(QPalette::AlternateBase, background.darker(110));
@@ -408,9 +371,9 @@ private:
             pal.setColor(QPalette::HighlightedText, QColor(QStringLiteral("#FFFFFF")));
             pal.setColor(QPalette::Button, surface);
             pal.setColor(QPalette::ButtonText, text);
-            issuesTree_->setPalette(pal);
+            diagnosticsTree_->setPalette(pal);
         }
-        mainLayout->addWidget(issuesTree_);
+        mainLayout->addWidget(diagnosticsTree_);
 
         // Footer Actions
         auto footerLayout = new QHBoxLayout();
@@ -455,7 +418,7 @@ private:
     }
 
     ArtifactProject* project_ = nullptr;
-    QTreeWidget* issuesTree_ = nullptr;
+    QTreeWidget* diagnosticsTree_ = nullptr;
     QLabel* statusLabel_ = nullptr;
     QPushButton* fixBtn_ = nullptr;
     ProjectHealthReport lastReport_;

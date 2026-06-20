@@ -58,6 +58,7 @@ import Artifact.Menu.View;
 import Widgets.ToolBar;
 import Widgets.Dock.StyleManager;
 import Widgets.Utils.CSS;
+import Utils.Path;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Workspace.Modes;

@@ -97,6 +97,28 @@ QString editablePathDisplayLabel(const QString &propertyPath) {
     }
   }
 
+  if (parts.size() >= 3 &&
+      parts[0].compare(QStringLiteral("text"), Qt::CaseInsensitive) == 0 &&
+      parts[1].compare(QStringLiteral("animators"), Qt::CaseInsensitive) == 0) {
+    const int animatorIndex = parts[2].toInt();
+    if (parts.size() == 3) {
+      return QStringLiteral("Text Animator %1")
+          .arg(animatorIndex + 1);
+    }
+    if (parts.size() < 4) {
+      return QStringLiteral("Text Animator %1")
+          .arg(animatorIndex + 1);
+    }
+    const QString field = parts[3];
+    QString fieldLabel = field;
+    if (!fieldLabel.isEmpty()) {
+      fieldLabel[0] = fieldLabel[0].toUpper();
+    }
+    return QStringLiteral("Text Animator %1 / %2")
+        .arg(animatorIndex + 1)
+        .arg(fieldLabel);
+  }
+
   return QStringLiteral("%1 / %2")
       .arg(rootLabel, propertyPath.mid(propertyPath.indexOf(QLatin1Char('.')) + 1));
 }
@@ -152,6 +174,12 @@ QString ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
   }
   if (propertyPath == QStringLiteral("text.value")) {
     return QStringLiteral("Source Text");
+  }
+  if (propertyPath == QStringLiteral("text.animatorCount")) {
+    return QStringLiteral("Text Animators / Count");
+  }
+  if (propertyPath == QStringLiteral("text.animatorPreset")) {
+    return QStringLiteral("Text Animators / Preset");
   }
 
   QString fallback = propertyPath;

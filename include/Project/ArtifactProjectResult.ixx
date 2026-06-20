@@ -19,20 +19,20 @@ enum eCreateProjectError {
 
 struct CreateProjectResult {
   bool isSuccess = false;
-  Status status{};
-  UniString message;
+  ArtifactCore::Status status{};
+  ArtifactCore::UniString message;
 };
 
 struct CloseProjectResult {
   bool isSuccess = false;
-  Status status{};
-  UniString message;
+  ArtifactCore::Status status{};
+  ArtifactCore::UniString message;
 };
 
 struct ProjectToJsonResult {
   bool isSuccess = false;
-  Status status{};
-  UniString message;
+  ArtifactCore::Status status{};
+  ArtifactCore::UniString message;
 };
 
 }

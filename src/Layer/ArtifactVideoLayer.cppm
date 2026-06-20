@@ -20,9 +20,11 @@ module;
 #include <QRectF>
 #include <QSizeF>
 #include <opencv2/opencv.hpp>
+#if VULKAN_SUPPORTED
 #include <vulkan/vulkan_core.h>
 #include <RenderDeviceVk.h>
 #include <CommandQueueVk.h>
+#endif
 #include <mutex>
 #include <unordered_map>
 #include <deque>
@@ -1580,6 +1582,7 @@ std::shared_ptr<ArtifactVideoLayer> ArtifactVideoLayer::fromJson(const QJsonObje
 void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
 {
     if (!impl_->videoEnabled_ || !impl_->isLoaded_ || impl_->opening_.load()) return;
+#if VULKAN_SUPPORTED
     constexpr bool kEnableVulkanVideoFrames = true;
     if (kEnableVulkanVideoFrames && renderer && !impl_->vulkanDeviceConfigured_ && impl_->playbackController_) {
         auto device = renderer->device();
@@ -1603,6 +1606,7 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
             }
         }
     }
+#endif
     const int64_t sourceFrame = currentSourceFrame(this);
     const int64_t timelineFrame = impl_->currentTimelineFrame_;
 

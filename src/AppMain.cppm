@@ -128,6 +128,8 @@ import Artifact.Widgets.RenderLayerEditor;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.MarkdownNoteEditorWidget;
 import Artifact.Widgets.ProjectMemoWidget;
+import Artifact.Widgets.ClipBufferWidget;
+import Artifact.Widgets.ContextShortcutHelperWidget;
 import Artifact.Widgets.Render.QueueManager;
 import Artifact.Render.Queue.Service;
 import Core.Diagnostics.SessionLedger;
@@ -2194,6 +2196,14 @@ int main(int argc, char *argv[]) {
     mw->addDockedWidgetTabbed(QStringLiteral("Project Memo"),
                               ads::LeftDockWidgetArea, projectMemoWidget,
                               QStringLiteral("Project"));
+    auto *clipBufferWidget = new ArtifactClipBufferWidget(mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Clip Buffer"),
+                              ads::LeftDockWidgetArea, clipBufferWidget,
+                              QStringLiteral("Project"));
+    auto *shortcutHelperWidget = new ArtifactContextShortcutHelperWidget(mw);
+    mw->addDockedWidgetTabbed(QStringLiteral("Shortcut Helper"),
+                              ads::LeftDockWidgetArea, shortcutHelperWidget,
+                              QStringLiteral("Project"));
     auto *contentsViewer = new ArtifactContentsViewer(mw);
     mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"),
                               ads::CenterDockWidgetArea, contentsViewer,
@@ -2406,6 +2416,14 @@ int main(int argc, char *argv[]) {
                        ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
                            FrameChangedEvent{compositionId, frame});
                      });
+    QObject::connect(clipBufferWidget, &ArtifactClipBufferWidget::clipPasteRequested, mw, [](const QVariant &data) {
+        // Handle clip paste logic or delegate to global paste
+        if (auto *service = ArtifactProjectService::instance()) {
+            // Emulate or invoke paste
+        }
+    });
+    // Dynamically update shortcutHelperWidget's WorkspaceMode on focus/workspace updates if required
+    // (Workspace modes changes can trigger shortcutHelperWidget->setWorkspaceMode)
     QObject::connect(assetBrowser, &ArtifactAssetBrowser::selectionChanged, mw,
                      [projectManagerWidget,
                       selectionSyncGuard](const QStringList &selectedFiles) {

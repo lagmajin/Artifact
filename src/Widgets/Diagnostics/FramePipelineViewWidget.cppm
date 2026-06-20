@@ -444,9 +444,9 @@ public:
             lines << QStringLiteral("  lanes: %1").arg(static_cast<int>(lastFrame.lanes.size()));
             for (const auto& lane : lastFrame.lanes) {
                 lines << QStringLiteral("  - %1 scopes=%2")
-                              .arg(laneNameForDomain(lane.scopes.isEmpty()
+                              .arg(laneNameForDomain(lane.scopes.empty()
                                                          ? ArtifactCore::TraceDomain::Timeline
-                                                         : lane.scopes.first().domain))
+                                                         : lane.scopes.front().domain))
                               .arg(static_cast<int>(lane.scopes.size()));
             }
         }
@@ -466,9 +466,9 @@ public:
                         scopeNames << (scope.name.isEmpty() ? QStringLiteral("<scope>") : scope.name);
                     }
                 }
-                const ArtifactCore::TraceDomain laneDomain = lane.scopes.isEmpty()
+                const ArtifactCore::TraceDomain laneDomain = lane.scopes.empty()
                     ? ArtifactCore::TraceDomain::Timeline
-                    : lane.scopes.first().domain;
+                    : lane.scopes.front().domain;
                 lines << QStringLiteral("  - %1 scopes=%2 totalNs=%3 samples=%4")
                               .arg(laneNameForDomain(laneDomain))
                               .arg(static_cast<int>(lane.scopes.size()))

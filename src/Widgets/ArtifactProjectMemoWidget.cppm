@@ -13,7 +13,7 @@ module Artifact.Widgets.ProjectMemoWidget;
 
 import std;
 import Artifact.Widgets.ProjectMemoModel;
-import ArtifactCore.Localization;
+import Localization.Localization;
 
 namespace Artifact {
 
@@ -147,7 +147,7 @@ void ArtifactProjectMemoWidget::Impl::onDoubleClicked(const QModelIndex &index) 
   if (it == memos.cend()) {
     return;
   }
-  memoJumpRequested(it->frame);
+  widget->memoJumpRequested(it->frame);
 }
 
 ArtifactProjectMemoWidget::ArtifactProjectMemoWidget(QWidget *parent)

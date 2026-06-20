@@ -250,7 +250,7 @@ public:
         lines << QStringLiteral("  locks: %1 -> %2")
                       .arg(hasPreviousTrace_ ? static_cast<int>(previousTrace_.locks.size()) : 0)
                       .arg(static_cast<int>(trace.locks.size()));
-        if (hasPreviousTrace_ && !previousTrace_.threads.isEmpty() && !trace.threads.isEmpty()) {
+        if (hasPreviousTrace_ && !previousTrace_.threads.empty() && !trace.threads.empty()) {
             int prevHotDepth = 0;
             QString prevHotThread;
             for (const auto& thread : previousTrace_.threads) {

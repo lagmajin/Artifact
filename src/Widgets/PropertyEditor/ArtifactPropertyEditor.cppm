@@ -1023,7 +1023,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                          slider_->setValue(floatToSliderPosition(
                              defaultNumericValue, softMin_, softMax_));
                          if (auto *propertySlider =
-                                 qobject_cast<PropertySliderWidget *>(slider_)) {
+                                 static_cast<PropertySliderWidget *>(slider_)) {
                            propertySlider->setDisplayText(
                                formatNumericSliderText(
                                    defaultNumericValue,
@@ -1093,7 +1093,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     slider_->setTracking(true); // ドラッグ中の追従を有効化
     slider_->setValue(floatToSliderPosition(property.getValue().toDouble(),
                                             softMin_, softMax_));
-    if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+    if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
       propertySlider->setDisplayText(
           formatNumericSliderText(property.getValue().toDouble(), meta.unit, 3));
     }
@@ -1106,7 +1106,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                        slider_->setValue(
                            floatToSliderPosition(nextValue, softMin_, softMax_));
                        if (auto *propertySlider =
-                               qobject_cast<PropertySliderWidget *>(slider_)) {
+                               static_cast<PropertySliderWidget *>(slider_)) {
                          propertySlider->setDisplayText(
                              formatNumericSliderText(nextValue, sliderUnit, 3));
                        }
@@ -1129,7 +1129,7 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
               this->sliderPositionToFloat(sliderValue, softMin_, softMax_);
           const QSignalBlocker blocker(spinBox_);
           spinBox_->setValue(nextValue);
-          if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+          if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
             propertySlider->setDisplayText(
                 formatNumericSliderText(nextValue, sliderUnit, 3));
           }
@@ -1195,7 +1195,7 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
   if (slider_) {
     const QSignalBlocker sliderBlocker(slider_);
     slider_->setValue(this->floatToSliderPosition(nextValue, softMin_, softMax_));
-    if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+    if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
       propertySlider->setDisplayText(
           formatNumericSliderText(nextValue, spinBox_->suffix().trimmed(), 3));
     }
@@ -1318,7 +1318,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     slider_->setTracking(true);
     slider_->setValue(
         intToSliderPosition(property.getValue().toInt(), softMin_, softMax_));
-    if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+          if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
       propertySlider->setDisplayText(
           formatNumericSliderText(property.getValue().toInt(), meta.unit, 0));
     }
@@ -1330,7 +1330,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
           const QSignalBlocker blocker(slider_);
           slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
           if (auto *propertySlider =
-                  qobject_cast<PropertySliderWidget *>(slider_)) {
+                  static_cast<PropertySliderWidget *>(slider_)) {
             propertySlider->setDisplayText(
                 formatNumericSliderText(nextValue, sliderUnit, 0));
           }
@@ -1353,7 +1353,7 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
                        const QSignalBlocker blocker(spinBox_);
                        spinBox_->setValue(nextValue);
                        if (auto *propertySlider =
-                               qobject_cast<PropertySliderWidget *>(slider_)) {
+                               static_cast<PropertySliderWidget *>(slider_)) {
                          propertySlider->setDisplayText(
                              formatNumericSliderText(nextValue, sliderUnit, 0));
                        }
@@ -1388,7 +1388,7 @@ void ArtifactIntPropertyEditor::setValueFromVariant(const QVariant &value) {
   if (slider_) {
     const QSignalBlocker sliderBlocker(slider_);
     slider_->setValue(intToSliderPosition(nextValue, softMin_, softMax_));
-    if (auto *propertySlider = qobject_cast<PropertySliderWidget *>(slider_)) {
+    if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
       propertySlider->setDisplayText(
           formatNumericSliderText(nextValue, spinBox_->suffix().trimmed(), 0));
     }

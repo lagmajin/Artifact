@@ -458,6 +458,9 @@ QString densityAxisDisplayName(const QString &axis)
   return QStringLiteral("density");
 }
 
+QString densityWarningForDominantAxis(const QString &axis, double score);
+QString densityNextActionForAxis(const QString &axis);
+
 FloatColor densityAxisColor(const QString &axis)
 {
   if (axis == QStringLiteral("visual")) {
@@ -638,9 +641,16 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
           .arg(QString::number(dominantScore * 100.0, 'f', 0)),
       detailFont, FloatColor{0.70f, 0.78f, 0.86f, 1.0f},
       Qt::AlignLeft | Qt::AlignVCenter);
+  renderer->drawText(
+      QRectF(panelX + 12.0f, panelY + 41.0f, panelW - 24.0f, 13.0f),
+      QStringLiteral("warn: %1 | next: %2")
+          .arg(densityWarningForDominantAxis(dominantAxis, dominantScore),
+               densityNextActionForAxis(dominantAxis)),
+      detailFont, FloatColor{0.62f, 0.72f, 0.82f, 1.0f},
+      Qt::AlignLeft | Qt::AlignVCenter);
   if (selectedLayer) {
     renderer->drawText(
-        QRectF(panelX + 12.0f, panelY + 41.0f, panelW - 24.0f, 13.0f),
+        QRectF(panelX + 12.0f, panelY + 55.0f, panelW - 24.0f, 13.0f),
         QStringLiteral("focus: %1  |  masks %2  effects %3  mattes %4")
             .arg(selectedLayer->layerName().trimmed().isEmpty()
                      ? QStringLiteral("<selected>")
@@ -652,10 +662,10 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
         Qt::AlignLeft | Qt::AlignVCenter);
   }
 
-  const float heatTop = panelY + (selectedLayer ? 58.0f : 44.0f);
+  const float heatTop = panelY + (selectedLayer ? 72.0f : 58.0f);
   const float heatLeft = panelX + 12.0f;
   const float heatWidth = panelW - 24.0f;
-  const float heatHeight = std::max(18.0f, panelH - (selectedLayer ? 78.0f : 64.0f));
+  const float heatHeight = std::max(18.0f, panelH - (selectedLayer ? 92.0f : 78.0f));
   const float legendCellW = heatWidth / static_cast<float>(kColumns);
   const float legendCellH = heatHeight / static_cast<float>(kRows);
   for (int row = 0; row < kRows; ++row) {
@@ -761,6 +771,9 @@ QString densityLevelFromScore(double score)
   }
   return QStringLiteral("low");
 }
+
+QString densityWarningForDominantAxis(const QString &axis, double score);
+QString densityNextActionForAxis(const QString &axis);
 
 QString densityWarningForDominantAxis(const QString &axis, double score)
 {

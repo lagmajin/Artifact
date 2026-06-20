@@ -1666,7 +1666,7 @@ public:
                                             ? QStringLiteral("<none>")
                                             : controllerSnapshot.renderBackend;
             QString lastCrashText = QStringLiteral("<none>");
-            if (!trace.crashes.isEmpty()) {
+            if (!trace.crashes.empty()) {
                 lastCrashText = trace.crashes.back().summary.isEmpty()
                                     ? QStringLiteral("<no-summary>")
                                     : trace.crashes.back().summary.left(48);
@@ -1687,9 +1687,11 @@ public:
                 warningText = QStringLiteral("frame failed");
             } else if (failedPasses > 0) {
                 warningText = QStringLiteral("%1 failed passes").arg(failedPasses);
-            } else if (projectHealthText == QStringLiteral("issues")) {
-                warningText = QStringLiteral("project health issues");
-            } else if (!trace.crashes.isEmpty()) {
+            } else if (projectHealthText == QStringLiteral("error")) {
+                warningText = QStringLiteral("project health error");
+            } else if (projectHealthText == QStringLiteral("warning")) {
+                warningText = QStringLiteral("project health warning");
+            } else if (!trace.crashes.empty()) {
                 warningText = QStringLiteral("recent crash: %1").arg(lastCrashText);
             } else if (!controllerSnapshot.densityLabel.isEmpty()) {
                 warningText = densityWarningText(controllerSnapshot);
@@ -1845,8 +1847,8 @@ public:
                 }
             }
 
-            if (!trace.threads.isEmpty()) {
-                QVector<ArtifactCore::TraceThreadRecord> hotThreads = trace.threads;
+            if (!trace.threads.empty()) {
+                auto hotThreads = trace.threads;
                 std::sort(hotThreads.begin(), hotThreads.end(), [](const auto& a, const auto& b) {
                     if (a.lockDepth == b.lockDepth) {
                         return a.lockCount > b.lockCount;
@@ -1865,7 +1867,7 @@ public:
                 }
             }
 
-            if (!trace.locks.isEmpty()) {
+            if (!trace.locks.empty()) {
                 struct MutexChainRow {
                     QString name;
                     int balance = 0;
@@ -1910,7 +1912,7 @@ public:
                 }
             }
 
-            if (!trace.crashes.isEmpty()) {
+            if (!trace.crashes.empty()) {
                 lines << QStringLiteral("recentCrashes:");
                 const int crashRows = std::min(static_cast<int>(trace.crashes.size()), 3);
                 for (int i = 0; i < crashRows; ++i) {
@@ -2103,7 +2105,7 @@ public:
         if (captureTraceTimelineView_) {
             std::uint64_t focusThreadId = 0;
             QString focusMutexName;
-            if (!trace.threads.isEmpty()) {
+            if (!trace.threads.empty()) {
                 auto hotThreads = trace.threads;
                 std::sort(hotThreads.begin(), hotThreads.end(), [](const auto& a, const auto& b) {
                     if (a.lockDepth == b.lockDepth) {
@@ -2111,9 +2113,9 @@ public:
                     }
                     return a.lockDepth > b.lockDepth;
                 });
-                focusThreadId = hotThreads.first().threadId;
+                focusThreadId = hotThreads.front().threadId;
             }
-            if (!trace.locks.isEmpty()) {
+            if (!trace.locks.empty()) {
                 struct MutexChainRow {
                     QString name;
                     int balance = 0;
@@ -2143,7 +2145,7 @@ public:
                     return a.balance > b.balance;
                 });
                 if (!rows.isEmpty()) {
-                    focusMutexName = rows.first().name;
+                    focusMutexName = rows.front().name;
                 }
             }
             captureTraceTimelineView_->setFocusedThreadId(focusThreadId);
@@ -2154,7 +2156,7 @@ public:
         if (traceTimelineView_) {
             std::uint64_t focusThreadId = 0;
             QString focusMutexName;
-            if (!trace.threads.isEmpty()) {
+            if (!trace.threads.empty()) {
                 auto hotThreads = trace.threads;
                 std::sort(hotThreads.begin(), hotThreads.end(), [](const auto& a, const auto& b) {
                     if (a.lockDepth == b.lockDepth) {
@@ -2162,9 +2164,9 @@ public:
                     }
                     return a.lockDepth > b.lockDepth;
                 });
-                focusThreadId = hotThreads.first().threadId;
+                focusThreadId = hotThreads.front().threadId;
             }
-            if (!trace.locks.isEmpty()) {
+            if (!trace.locks.empty()) {
                 struct MutexChainRow {
                     QString name;
                     int balance = 0;
@@ -2194,7 +2196,7 @@ public:
                     return a.balance > b.balance;
                 });
                 if (!rows.isEmpty()) {
-                    focusMutexName = rows.first().name;
+                    focusMutexName = rows.front().name;
                 }
             }
             traceTimelineView_->setFocusedThreadId(focusThreadId);
@@ -2260,7 +2262,7 @@ public:
 
         if (diagnosticsSummary_) {
             QString lastCrashText = QStringLiteral("<none>");
-            if (!trace.crashes.isEmpty()) {
+            if (!trace.crashes.empty()) {
                 const auto& crash = trace.crashes.back();
                 lastCrashText = crash.summary.isEmpty() ? QStringLiteral("<no-summary>") : crash.summary.left(48);
             }
@@ -2362,7 +2364,7 @@ public:
 
         if (exportSummary_) {
             QString crashText = QStringLiteral("<none>");
-            if (!trace.crashes.isEmpty()) {
+            if (!trace.crashes.empty()) {
                 crashText = trace.crashes.back().summary.isEmpty() ? QStringLiteral("<no-summary>")
                                                                   : trace.crashes.back().summary.left(48);
             }

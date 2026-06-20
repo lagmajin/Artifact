@@ -2490,16 +2490,14 @@ protected:
         event->modifiers().testFlag(Qt::ShiftModifier) &&
         event->modifiers().testFlag(Qt::AltModifier)) {
       const auto layer = currentLayer();
+      auto *editor = qobject_cast<ArtifactCompositionEditor *>(parentWidget());
       if (controller_ && layer &&
           controller_->cyclePresetLayerMaskForLayer(layer, true)) {
-        if (auto *toolManager =
-                ArtifactApplicationManager::instance()
-                    ? ArtifactApplicationManager::instance()->toolManager()
-                    : nullptr) {
-          toolManager->setActiveTool(ToolType::Pen);
+        if (editor && editor->renderController()) {
+          editor->renderController()->setGizmoMode(TransformGizmo::Mode::Move);
+          editor->renderController()->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
+          editor->renderController()->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
         }
-        controller_->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
-        controller_->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
       }
       event->accept();
       return;
@@ -2508,16 +2506,14 @@ protected:
         event->modifiers().testFlag(Qt::ControlModifier) &&
         event->modifiers().testFlag(Qt::ShiftModifier)) {
       const auto layer = currentLayer();
+      auto *editor = qobject_cast<ArtifactCompositionEditor *>(parentWidget());
       if (controller_ && layer &&
           controller_->createFullLayerMaskForLayer(layer)) {
-        if (auto *toolManager =
-                ArtifactApplicationManager::instance()
-                    ? ArtifactApplicationManager::instance()->toolManager()
-                    : nullptr) {
-          toolManager->setActiveTool(ToolType::Pen);
+        if (editor && editor->renderController()) {
+          editor->renderController()->setGizmoMode(TransformGizmo::Mode::Move);
+          editor->renderController()->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
+          editor->renderController()->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
         }
-        controller_->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
-        controller_->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
       }
       event->accept();
       return;
@@ -2530,14 +2526,15 @@ protected:
       lastMaskShortcutPressTime_ = now;
       lastMaskShortcutPressValid_ = true;
 
-      if (auto *toolManager =
-              ArtifactApplicationManager::instance()
-                  ? ArtifactApplicationManager::instance()->toolManager()
-                  : nullptr) {
-        toolManager->setActiveTool(ToolType::Pen);
+      auto *editor = qobject_cast<ArtifactCompositionEditor *>(parentWidget());
+      if (editor && editor->renderController()) {
+        editor->renderController()->setGizmoMode(TransformGizmo::Mode::Move);
       }
       if (controller_) {
-        controller_->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
+        if (editor && editor->renderController()) {
+          editor->renderController()->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
+          editor->renderController()->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
+        }
         if (isDoublePress) {
           controller_->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
         }
@@ -2546,12 +2543,9 @@ protected:
       return;
     }
     if (event->key() == Qt::Key_F && !event->isAutoRepeat()) {
-      auto *toolManager =
-          ArtifactApplicationManager::instance()
-              ? ArtifactApplicationManager::instance()->toolManager()
-              : nullptr;
-      const bool isMaskTool =
-          toolManager && toolManager->activeTool() == ToolType::Pen;
+      auto *editor = qobject_cast<ArtifactCompositionEditor *>(parentWidget());
+      const bool isMaskTool = editor && editor->renderController() &&
+                               editor->renderController()->gizmoMode() == TransformGizmo::Mode::Move;
       if (controller_ && isMaskTool) {
         const bool nextVisible =
             !controller_->isLineDebugKindVisible(LineDebugKind::MaskHandle);
@@ -3695,6 +3689,31 @@ public:
                    CompositionEditorDeferredEvent::Kind::ToolLabelSync));
   }
 
+  void activateMaskEditingTool() {
+    if (auto *toolManager =
+            ArtifactApplicationManager::instance()
+                ? ArtifactApplicationManager::instance()->toolManager()
+                : nullptr) {
+      toolManager->setActiveTool(ToolType::Pen);
+    }
+  }
+
+  bool isMaskEditingToolActive() const {
+    auto *toolManager =
+        ArtifactApplicationManager::instance()
+            ? ArtifactApplicationManager::instance()->toolManager()
+            : nullptr;
+    return toolManager && toolManager->activeTool() == ToolType::Pen;
+  }
+
+  void showMaskEditingGuides() {
+    if (!renderController_) {
+      return;
+    }
+    renderController_->setLineDebugKindVisible(LineDebugKind::MaskPath, true);
+    renderController_->setLineDebugKindVisible(LineDebugKind::MaskHandle, true);
+  }
+
   void syncChromeSummary(ArtifactCompositionEditor *owner) {
     Q_UNUSED(owner);
     if (!chromeStrip_ || !chromeTitleLabel_ || !chromeDetailLabel_ ||
@@ -3980,6 +3999,14 @@ public:
       const QString layerName = current->layerName().trimmed();
       const QString title =
           layerName.isEmpty() ? current->id().toString() : layerName;
+      const auto *toolManager =
+          ArtifactApplicationManager::instance()
+              ? ArtifactApplicationManager::instance()->toolManager()
+              : nullptr;
+      const QString activeToolLabel =
+          toolManager && toolManager->activeTool() == ToolType::Pen
+              ? QStringLiteral("Mask editing")
+              : QStringLiteral("Transform/Select");
       QString detail =
           selectedCount <= 1
               ? QStringLiteral("Selection: 1 layer")
@@ -3993,13 +4020,13 @@ public:
       }
       renderController_->setInfoOverlayText(
           QStringLiteral("Current: %1").arg(title),
-          QStringLiteral("%1 | %2").arg(detail, statusText));
+          QStringLiteral("%1 | %2 | %3").arg(detail, activeToolLabel, statusText));
     } else {
       renderController_->setInfoOverlayText(
           QStringLiteral("Current: Composition Editor"),
           selectedCount <= 0
-              ? QStringLiteral("Selection: 0 layers | Status: idle | Open a composition")
-              : QStringLiteral("Selection: %1 layers | %2").arg(selectedCount).arg(statusText));
+              ? QStringLiteral("Selection: 0 layers | Tool: Mask editing | Status: idle | Open a composition")
+              : QStringLiteral("Selection: %1 layers | Tool: Mask editing | %2").arg(selectedCount).arg(statusText));
     }
     if (editTextAction_) {
       editTextAction_->setEnabled(
@@ -4333,6 +4360,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     QAction *action = toolMenu->addAction(loadIconWithFallback(iconName), text);
     action->setCheckable(true);
     action->setChecked(checked);
+    if (toolType == ToolType::Pen) {
+      action->setToolTip(QStringLiteral("Enter Mask editing; Roto fields appear in property panels where supported."));
+    }
     toolGroup->addAction(action);
     connect(action, &QAction::triggered, this, [this, toolType, text]() {
       if (auto *toolManager =
@@ -4359,6 +4389,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->toolModeButton_->setText(QStringLiteral("Select"));
   impl_->toolModeButton_->setMenu(toolMenu);
   impl_->toolModeButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->toolModeButton_->setToolTip(QStringLiteral("Select current editing tool. Mask opens mask editing."));
   impl_->topToolbar_->addWidget(impl_->toolModeButton_);
 
   auto *gizmoMenu = new QMenu(this);

@@ -497,18 +497,18 @@ QString humanizePropertyLabel(QString name) {
     const bool isRotoPath =
         parts.front().compare(QStringLiteral("roto"), Qt::CaseInsensitive) == 0;
     if (isMaskPath || isRotoPath) {
-      const QString rootLabel =
+      const QString entryLabel =
           isRotoPath ? QStringLiteral("Roto") : QStringLiteral("Mask");
       if (parts.size() == 3 &&
           parts[2].compare(QStringLiteral("enabled"), Qt::CaseInsensitive) == 0) {
         return QStringLiteral("%1 %2 / Enabled")
-            .arg(rootLabel)
+            .arg(entryLabel)
             .arg(parts[1].toInt() + 1);
       }
       if (parts.size() == 5 &&
           parts[2].compare(QStringLiteral("path"), Qt::CaseInsensitive) == 0) {
         const QString pathLabel = QStringLiteral("%1 %2 / Path %3")
-                                      .arg(rootLabel)
+                                      .arg(entryLabel)
                                       .arg(parts[1].toInt() + 1)
                                       .arg(parts[3].toInt() + 1);
         const QString field = parts[4];

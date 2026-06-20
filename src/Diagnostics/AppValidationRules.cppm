@@ -51,12 +51,11 @@ auto ArtifactMissingFileRule::validate(const void* project) -> std::vector<Artif
 
         // パスがあり、かつファイルが存在しない場合
         if (!sourcePath.isEmpty() && !QFileInfo::exists(sourcePath)) {
-            diagnostics.push_back(
-                ArtifactCore::ProjectDiagnostic::createMissingFile(
-                    sourcePath,
-                    layer->id().toString() // IDを文字列に変換して渡す
-                )
-            );
+            auto diagnostic = ArtifactCore::ProjectDiagnostic::createMissingFile(
+                sourcePath,
+                layer->id().toString());
+            diagnostic.setSourceCompId(comp->id().toString());
+            diagnostics.push_back(diagnostic);
         }
     }
 
@@ -83,12 +82,11 @@ auto ArtifactPerformanceRule::validate(const void* project) -> std::vector<Artif
 
     // 解像度が 4K (3840x2160) を超える場合に警告
     if ((width > 3840 || height > 2160) && (width > 0 && height > 0)) {
-        diagnostics.push_back(
-            ArtifactCore::ProjectDiagnostic::createPerformanceWarning(
-                QString("高解像度コンポジション: %1x%2").arg(width).arg(height),
-                comp->id().toString()
-            )
-        );
+        auto diagnostic = ArtifactCore::ProjectDiagnostic::createPerformanceWarning(
+            QString("高解像度コンポジション: %1x%2").arg(width).arg(height),
+            comp->id().toString());
+        diagnostic.setSourceCompId(comp->id().toString());
+        diagnostics.push_back(diagnostic);
     }
 
     return diagnostics;
@@ -135,10 +133,11 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
 
             // Check 1: missing source
             if (!layerMap.contains(sourceId)) {
-                diagnostics.push_back(
-                    ArtifactCore::ProjectDiagnostic::createMissingMatte(
-                        QStringLiteral("Matte source '%1' not found").arg(sourceId),
-                        layerId));
+                auto diagnostic = ArtifactCore::ProjectDiagnostic::createMissingMatte(
+                    QStringLiteral("Matte source '%1' not found").arg(sourceId),
+                    layerId);
+                diagnostic.setSourceCompId(comp->id().toString());
+                diagnostics.push_back(diagnostic);
                 continue;
             }
 
@@ -151,6 +150,7 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
                         QStringLiteral("Layer '%1' references itself as matte source").arg(layerName)));
                 auto& d = diagnostics.back();
                 d.setSourceLayerId(layerId);
+                d.setSourceCompId(comp->id().toString());
                 d.setFixAction(QStringLiteral("Select a different layer as the matte source"));
                 continue;
             }
@@ -217,6 +217,7 @@ auto ArtifactMatteReferenceRule::validate(const void* project) -> std::vector<Ar
             diagnostics.push_back(
                 ArtifactCore::ProjectDiagnostic::createCircularDependency(
                     cycleStr, comp->id().toString()));
+            diagnostics.back().setSourceLayerId(layerId);
         }
     }
 

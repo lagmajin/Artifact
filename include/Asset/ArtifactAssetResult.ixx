@@ -10,14 +10,14 @@ export namespace Artifact {
 
 struct FindAssetResult {
   bool success = false;
-  Status status{};
-  UniString message;
+  ArtifactCore::Status status{};
+  ArtifactCore::UniString message;
 };
 
 struct RemoveAssetResult {
   bool success = false;
-  Status status{};
-  UniString message;
+  ArtifactCore::Status status{};
+  ArtifactCore::UniString message;
 };
 
 }

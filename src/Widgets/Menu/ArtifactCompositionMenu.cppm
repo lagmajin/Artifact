@@ -171,6 +171,7 @@ public:
  void removeCurrent();
  void showSettings();
  void showColor();
+ void sendCurrentComposition();
 };
 
 ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* mainWindow)
