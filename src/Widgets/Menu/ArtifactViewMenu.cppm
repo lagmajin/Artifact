@@ -157,6 +157,12 @@ namespace Artifact {
    double panY = 0.0;
   };
 
+  struct SelectionSetEntry {
+   QString name;
+   QStringList layerIds;
+   int frame = 0;
+  };
+
   class ViewportBookmarkStore {
   public:
    QString storePath() const
@@ -307,6 +313,130 @@ namespace Artifact {
    }
   };
 
+  class SelectionSetStore {
+  public:
+   QString storePath() const
+   {
+    const QString appData =
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    return QDir(appData).filePath(QStringLiteral("SelectionSets/selection_sets.cbor"));
+   }
+
+   static QString entriesKey(const QString& compositionId)
+   {
+    return QStringLiteral("SelectionSets/%1/Entries").arg(compositionId.trimmed());
+   }
+
+   static QVariantMap entryToVariantMap(const SelectionSetEntry& entry)
+   {
+    QVariantMap map;
+    map.insert(QStringLiteral("name"), entry.name);
+    map.insert(QStringLiteral("layerIds"), entry.layerIds);
+    map.insert(QStringLiteral("frame"), entry.frame);
+    return map;
+   }
+
+   static std::optional<SelectionSetEntry> entryFromVariantMap(const QVariantMap& map)
+   {
+    const QString name = map.value(QStringLiteral("name")).toString().trimmed();
+    if (name.isEmpty()) {
+     return std::nullopt;
+    }
+    SelectionSetEntry entry;
+    entry.name = name;
+    entry.layerIds = map.value(QStringLiteral("layerIds")).toStringList();
+    entry.frame = map.value(QStringLiteral("frame"), 0).toInt();
+    return entry;
+   }
+
+   QStringList selectionSetNames(const QString& compositionId) const
+   {
+    if (compositionId.trimmed().isEmpty()) {
+     return {};
+    }
+    ArtifactCore::FastSettingsStore store(storePath());
+    const QVariantList list = store.value(entriesKey(compositionId), QVariantList()).toList();
+    QStringList names;
+    for (const QVariant& item : list) {
+     const auto entry = entryFromVariantMap(item.toMap());
+     if (entry) {
+      names.push_back(entry->name);
+     }
+    }
+    names.removeDuplicates();
+    return names;
+   }
+
+   std::optional<SelectionSetEntry> selectionSet(const QString& compositionId,
+                                                 const QString& selectionSetName) const
+   {
+    if (compositionId.trimmed().isEmpty()) {
+     return std::nullopt;
+    }
+    const QString wanted = selectionSetName.trimmed();
+    if (wanted.isEmpty()) {
+     return std::nullopt;
+    }
+    ArtifactCore::FastSettingsStore store(storePath());
+    const QVariantList list = store.value(entriesKey(compositionId), QVariantList()).toList();
+    for (const QVariant& item : list) {
+     const auto entry = entryFromVariantMap(item.toMap());
+     if (entry && entry->name.compare(wanted, Qt::CaseInsensitive) == 0) {
+      return entry;
+     }
+    }
+    return std::nullopt;
+   }
+
+   bool saveSelectionSet(const QString& compositionId, const SelectionSetEntry& entry) const
+   {
+    const QString compId = compositionId.trimmed();
+    if (compId.isEmpty() || entry.name.trimmed().isEmpty()) {
+     return false;
+    }
+    ArtifactCore::FastSettingsStore store(storePath());
+    const QString key = entriesKey(compId);
+    QVariantList list = store.value(key, QVariantList()).toList();
+    bool replaced = false;
+    for (QVariant& item : list) {
+     QVariantMap map = item.toMap();
+     const QString existingName = map.value(QStringLiteral("name")).toString().trimmed();
+     if (existingName.compare(entry.name, Qt::CaseInsensitive) == 0) {
+      item = entryToVariantMap(entry);
+      replaced = true;
+      break;
+     }
+    }
+    if (!replaced) {
+     list.push_back(entryToVariantMap(entry));
+    }
+    store.setValue(key, list);
+    return store.sync();
+   }
+  };
+
+  std::optional<SelectionSetEntry> currentSelectionSetState()
+  {
+   auto* app = ArtifactApplicationManager::instance();
+   auto* selection = app ? app->layerSelectionManager() : nullptr;
+   auto* playback = ArtifactPlaybackService::instance();
+   if (!selection) {
+    return std::nullopt;
+   }
+   const auto layers = selection->selectedLayers();
+   if (layers.isEmpty()) {
+    return std::nullopt;
+   }
+   SelectionSetEntry entry;
+   for (const auto& layer : layers) {
+    if (layer) {
+     entry.layerIds.push_back(layer->id().toString());
+    }
+   }
+   entry.frame = playback ? playback->currentFrame().framePosition() : 0;
+   return entry;
+  }
+
   std::optional<ViewportBookmarkEntry> currentViewportBookmarkState(
       ArtifactCompositionEditor* editor)
   {
@@ -420,6 +550,8 @@ namespace Artifact {
    QMenu* viewportBookmarkMenu = nullptr;
    QAction* saveViewportBookmarkAction = nullptr;
    QAction* deleteViewportBookmarkAction = nullptr;
+   QMenu* selectionSetMenu = nullptr;
+   QAction* saveSelectionSetAction = nullptr;
    
    QMenu* resolutionMenu = nullptr;
    QActionGroup* resolutionGroup = nullptr;
@@ -472,6 +604,7 @@ namespace Artifact {
    void refreshWorkspaceState();
    void refreshWorkspacePresetMenu();
    void refreshViewportBookmarkMenu();
+   void refreshSelectionSetMenu();
    void rebuildWindowPanelsMenu();
    void showProjectPanel();
    void showSecondaryPreview();
@@ -499,6 +632,8 @@ namespace Artifact {
 
    viewportBookmarkMenu = new QMenu("Viewport ブックマーク(&B)");
    viewportBookmarkMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+   selectionSetMenu = new QMenu("Selection セット(&S)");
+   selectionSetMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
 
    resolutionMenu = new QMenu("解像度(&R)");
    resolutionMenu->setIcon(QIcon(resolveIconPath("Studio/viewmenu_resolution_full.svg")));
@@ -750,6 +885,7 @@ namespace Artifact {
     refreshWorkspaceState();
     refreshWorkspacePresetMenu();
     refreshViewportBookmarkMenu();
+    refreshSelectionSetMenu();
    });
 
    menu->addAction(zoomInAction);
@@ -758,6 +894,7 @@ namespace Artifact {
    menu->addAction(fitToScreenAction);
    menu->addSeparator();
    menu->addMenu(viewportBookmarkMenu);
+   menu->addMenu(selectionSetMenu);
    menu->addSeparator();
    menu->addMenu(resolutionMenu);
    menu->addMenu(qualityPresetMenu);
@@ -1361,6 +1498,120 @@ void ArtifactViewMenu::Impl::refreshViewportBookmarkMenu()
                              .arg(bookmarkName));
                     }
                    });
+ }
+}
+
+void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
+{
+ if (!selectionSetMenu || !menu_) {
+  return;
+ }
+
+ selectionSetMenu->clear();
+ saveSelectionSetAction =
+     selectionSetMenu->addAction("現在の選択を保存...");
+ saveSelectionSetAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_save.svg")));
+
+ QObject::connect(saveSelectionSetAction, &QAction::triggered, menu_,
+                   [this]() {
+                    QWidget* dialogParent = mainWindow
+                                                ? static_cast<QWidget*>(mainWindow)
+                                                : static_cast<QWidget*>(menu_);
+                    if (!dialogParent) {
+                     return;
+                    }
+                    auto* app = ArtifactApplicationManager::instance();
+                    auto* selection = app ? app->layerSelectionManager() : nullptr;
+                    auto* comp = selection ? selection->activeComposition() : ArtifactCompositionPtr{};
+                    if (!selection || !comp) {
+                     QMessageBox::information(
+                         dialogParent, QStringLiteral("Selection セット"),
+                         QStringLiteral("保存先のコンポジションまたは選択が見つかりません。"));
+                     return;
+                    }
+                    const auto state = currentSelectionSetState();
+                    if (!state) {
+                     QMessageBox::warning(
+                         dialogParent, QStringLiteral("Selection セット"),
+                         QStringLiteral("現在の選択を取得できませんでした。"));
+                     return;
+                    }
+
+                    bool ok = false;
+                    const QString name = QInputDialog::getText(
+                        dialogParent, QStringLiteral("Selection セットを保存"),
+                        QStringLiteral("セット名を入力してください"), QLineEdit::Normal,
+                        QStringLiteral("Selection Set"), &ok).trimmed();
+                    if (!ok || name.isEmpty()) {
+                     return;
+                    }
+
+                    state->name = name;
+                    SelectionSetStore store;
+                    if (!store.saveSelectionSet(comp->id().toString(), *state)) {
+                     QMessageBox::warning(
+                         dialogParent, QStringLiteral("Selection セット"),
+                         QStringLiteral("Selection set の保存に失敗しました。"));
+                    }
+                   });
+
+ selectionSetMenu->addSeparator();
+
+ const auto editor = activeCompositionEditor(mainWindow ? mainWindow : (menu_ ? menu_->window() : nullptr));
+ const auto comp = currentViewportComposition(editor);
+ const QString compositionId = comp ? comp->id().toString() : QString();
+ SelectionSetStore store;
+ const QStringList names = comp ? store.selectionSetNames(compositionId) : QStringList{};
+
+ if (!editor || !comp || names.isEmpty()) {
+  QAction* empty = selectionSetMenu->addAction("(no selection sets)");
+  empty->setIcon(QIcon(resolveIconPath("Studio/viewmenu_empty_state.svg")));
+  empty->setEnabled(false);
+  return;
+ }
+
+ for (const QString& name : names) {
+  QAction* action = selectionSetMenu->addAction(name);
+  action->setIcon(QIcon(resolveIconPath("Studio/viewmenu_bookmarks.svg")));
+  QObject::connect(action, &QAction::triggered, menu_,
+                    [this, name, compositionId]() {
+                     QWidget* dialogParent = mainWindow
+                                                 ? static_cast<QWidget*>(mainWindow)
+                                                 : static_cast<QWidget*>(menu_);
+                     if (!dialogParent) {
+                      return;
+                     }
+                     auto* app = ArtifactApplicationManager::instance();
+                     auto* selection = app ? app->layerSelectionManager() : nullptr;
+                     auto* comp = selection ? selection->activeComposition() : ArtifactCompositionPtr{};
+                     if (!selection || !comp) {
+                      return;
+                     }
+                     SelectionSetStore store;
+                     const auto entry = store.selectionSet(compositionId, name);
+                     if (!entry) {
+                      QMessageBox::warning(
+                          dialogParent, QStringLiteral("Selection セット"),
+                          QStringLiteral("Selection set「%1」を読み込めませんでした。").arg(name));
+                      return;
+                     }
+                     selection->clearSelection();
+                     const auto layers = comp->allLayer();
+                     for (const QString& idText : entry->layerIds) {
+                      const LayerID id(idText);
+                      for (const auto& layer : layers) {
+                       if (layer && layer->id() == id) {
+                        selection->addToSelection(layer);
+                        break;
+                       }
+                      }
+                     }
+                     if (entry->frame >= 0) {
+                      if (auto* playback = ArtifactPlaybackService::instance()) {
+                       playback->goToFrame(FramePosition(entry->frame));
+                      }
+                     }
+                    });
  }
 }
 
