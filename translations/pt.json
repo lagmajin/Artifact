@@ -1,0 +1,19 @@
+{
+  "app": {
+    "name": "Artifact",
+    "ready": "Ready",
+    "modified": "Modified"
+  },
+  "menu": {
+    "file": {
+      "label": "File",
+      "new_project": "New Project",
+      "open_project": "Open Project",
+      "save_project": "Save Project",
+      "save_as": "Save As...",
+      "import": "Import...",
+      "export": "Export...",
+      "quit": "Quit"
+    }
+  }
+}
