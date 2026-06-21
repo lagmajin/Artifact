@@ -270,6 +270,26 @@ connect(animationMenu, &ArtifactAnimationMenu::freezeFrameRequested, menuBar, [t
    timeline->selectAllKeyframes();
   }
  });
+ connect(animationMenu, &ArtifactAnimationMenu::reverseSelectedKeyframesRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->reverseSelectedKeyframes();
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::reverseAllKeyframesInLayerRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->reverseAllKeyframesInCurrentLayer();
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::reverseAllKeyframesInSelectedLayersRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->reverseAllKeyframesInSelectedLayers();
+  }
+ });
+ connect(animationMenu, &ArtifactAnimationMenu::reverseAllKeyframesInCompositionRequested, menuBar, [this]() {
+  if (auto* timeline = activeTimelineWidget(mainWindow_)) {
+   timeline->reverseAllKeyframesInComposition();
+  }
+ });
  connect(animationMenu, &ArtifactAnimationMenu::copyKeyframesRequested, menuBar, [this]() {
   if (auto* timeline = activeTimelineWidget(mainWindow_)) {
    timeline->copySelectedKeyframes();

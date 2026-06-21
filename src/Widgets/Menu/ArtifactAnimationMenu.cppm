@@ -185,6 +185,10 @@ bool hasActiveExpressionTarget(QWidget* root)
   QAction* addKeyframeAction = nullptr;
   QAction* removeKeyframeAction = nullptr;
   QAction* selectAllKeyframesAction = nullptr;
+  QAction* reverseSelectedKeyframesAction = nullptr;
+  QAction* reverseAllKeyframesInLayerAction = nullptr;
+  QAction* reverseAllKeyframesInSelectedLayersAction = nullptr;
+  QAction* reverseAllKeyframesInCompositionAction = nullptr;
   QAction* copyKeyframesAction = nullptr;
   QAction* pasteKeyframesAction = nullptr;
 
@@ -341,6 +345,17 @@ bool hasActiveExpressionTarget(QWidget* root)
   impl_->selectAllKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_select_all.svg")));
   impl_->selectAllKeyframesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_A));
 
+  auto* reverseMenu = addMenu("キーフレーム反転(&R)");
+  reverseMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
+  impl_->reverseSelectedKeyframesAction = reverseMenu->addAction("選択キーフレームを反転");
+  impl_->reverseSelectedKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
+  impl_->reverseAllKeyframesInLayerAction = reverseMenu->addAction("現在のレイヤーのキーフレームをすべて反転");
+  impl_->reverseAllKeyframesInLayerAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
+  impl_->reverseAllKeyframesInSelectedLayersAction = reverseMenu->addAction("選択レイヤーのキーフレームをすべて反転");
+  impl_->reverseAllKeyframesInSelectedLayersAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
+  impl_->reverseAllKeyframesInCompositionAction = reverseMenu->addAction("コンポ全体のキーフレームをすべて反転");
+  impl_->reverseAllKeyframesInCompositionAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
+
   impl_->copyKeyframesAction = addAction("キーフレームをコピー");
   impl_->copyKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_content_copy.svg")));
   impl_->copyKeyframesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_C));
@@ -470,6 +485,10 @@ bool hasActiveExpressionTarget(QWidget* root)
    if (action == impl_->addKeyframeAction) { Q_EMIT addKeyframeRequested(); return; }
    if (action == impl_->removeKeyframeAction) { Q_EMIT removeKeyframeRequested(); return; }
    if (action == impl_->selectAllKeyframesAction) { Q_EMIT selectAllKeyframesRequested(); return; }
+   if (action == impl_->reverseSelectedKeyframesAction) { Q_EMIT reverseSelectedKeyframesRequested(); return; }
+   if (action == impl_->reverseAllKeyframesInLayerAction) { Q_EMIT reverseAllKeyframesInLayerRequested(); return; }
+   if (action == impl_->reverseAllKeyframesInSelectedLayersAction) { Q_EMIT reverseAllKeyframesInSelectedLayersRequested(); return; }
+   if (action == impl_->reverseAllKeyframesInCompositionAction) { Q_EMIT reverseAllKeyframesInCompositionRequested(); return; }
    if (action == impl_->copyKeyframesAction) { Q_EMIT copyKeyframesRequested(); return; }
    if (action == impl_->pasteKeyframesAction) { Q_EMIT pasteKeyframesRequested(); return; }
    if (action == impl_->linearInterpolationAction) { Q_EMIT applyInterpolationRequested(ArtifactCore::InterpolationType::Linear); return; }
