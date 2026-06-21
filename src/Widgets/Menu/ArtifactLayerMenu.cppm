@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <QAction>
 #include <QActionGroup>
+#include <QApplication>
 #include <QDesktopServices>
 #include <QFile>
 #include <QInputDialog>
@@ -54,6 +55,41 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
+
+enum class LayerCreationPlacementMode {
+    CompositionStart,
+    Playhead,
+    WorkAreaStart,
+    SelectedLayerIn,
+    SelectedLayerOut,
+    AfterSelected,
+    BeforeSelected,
+    CustomFrame
+};
+
+enum class LayerCreationDurationMode {
+    Default,
+    ToCompEnd,
+    WorkArea,
+    MatchSelected,
+    SourceDuration,
+    CustomFrames,
+    Infinite
+};
+
+LayerCreationPlacementMode& layerCreationPlacementMode()
+{
+    static LayerCreationPlacementMode mode = LayerCreationPlacementMode::CompositionStart;
+    return mode;
+}
+
+bool placeAtCurrentFrameRequested()
+{
+    const bool preferPlayhead =
+        layerCreationPlacementMode() == LayerCreationPlacementMode::Playhead;
+    const bool altPressed = (QApplication::keyboardModifiers() & Qt::AltModifier) != 0;
+    return preferPlayhead ^ altPressed;
+}
 
 QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
 {
@@ -172,6 +208,7 @@ public:
 
     QMenu* createMenu = nullptr;
     QMenu* createShapeMenu = nullptr;
+    QMenu* createPlacementMenu = nullptr;
     QMenu* switchMenu = nullptr;
     QMenu* selectMenu = nullptr;
     QMenu* proxyMenu = nullptr;
@@ -188,6 +225,9 @@ public:
     QAction* createAudioAction = nullptr;
     QAction* createSvgAction = nullptr;
     QAction* createModel3DAction = nullptr;
+    QAction* createPlane3DAction = nullptr;
+    QAction* placementAtCompStartAction = nullptr;
+    QAction* placementAtPlayheadAction = nullptr;
     QAction* cycleLayerForwardAction = nullptr;
     QAction* cycleLayerReverseAction = nullptr;
     QAction* cycleShapeForwardAction = nullptr;
@@ -242,6 +282,7 @@ public:
     void handleCreateAudio();
     void handleCreateSvg();
     void handleCreateModel3D();
+    void handleCreatePlane3D();
     void handleCycleLayerCreation(bool reverse);
     void handleCycleShapeCreation(bool reverse);
     void handleCreateShape(ShapeType type, const QString& nameBase);
@@ -323,6 +364,24 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createModel3DAction = new QAction("3Dモデルレイヤー(&3)...", createMenu);
     createModel3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
     createModel3DAction->setToolTip(QStringLiteral("Import a 3D model as a layer"));
+    createPlane3DAction = new QAction("3D平面レイヤー(&P)", createMenu);
+    createPlane3DAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_square.svg")));
+    createPlane3DAction->setToolTip(QStringLiteral("Create a fixed plane as a 3D layer"));
+    createPlacementMenu = new QMenu("作成位置(&O)", createMenu);
+    createPlacementMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    auto* placementGroup = new QActionGroup(createPlacementMenu);
+    placementGroup->setExclusive(true);
+    placementAtCompStartAction = new QAction("コンポジション開始", createPlacementMenu);
+    placementAtCompStartAction->setCheckable(true);
+    placementAtCompStartAction->setChecked(true);
+    placementAtCompStartAction->setToolTip(QStringLiteral("新規レイヤーをコンポジション開始に配置します"));
+    placementAtPlayheadAction = new QAction("再生ヘッド", createPlacementMenu);
+    placementAtPlayheadAction->setCheckable(true);
+    placementAtPlayheadAction->setToolTip(QStringLiteral("新規レイヤーを再生ヘッドに配置します"));
+    placementGroup->addAction(placementAtCompStartAction);
+    placementGroup->addAction(placementAtPlayheadAction);
+    createPlacementMenu->addAction(placementAtCompStartAction);
+    createPlacementMenu->addAction(placementAtPlayheadAction);
     cycleLayerForwardAction = new QAction("レイヤーを次々作成", createMenu);
     cycleLayerForwardAction->setToolTip(QStringLiteral("Cycle common layer creation presets"));
     cycleLayerForwardAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_N));
@@ -375,6 +434,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createAudioAction);
     createMenu->addAction(createSvgAction);
     createMenu->addAction(createModel3DAction);
+    createMenu->addAction(createPlane3DAction);
+    createMenu->addMenu(createPlacementMenu);
     createMenu->addAction(cycleLayerForwardAction);
     createMenu->addAction(cycleLayerReverseAction);
     createMenu->addMenu(createShapeMenu);
@@ -500,6 +561,19 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createAudioAction) { handleCreateAudio(); return; }
         if (action == createSvgAction) { handleCreateSvg(); return; }
         if (action == createModel3DAction) { handleCreateModel3D(); return; }
+        if (action == createPlane3DAction) { handleCreatePlane3D(); return; }
+        if (action == placementAtCompStartAction) {
+            layerCreationPlacementMode() = LayerCreationPlacementMode::CompositionStart;
+            placementAtCompStartAction->setChecked(true);
+            placementAtPlayheadAction->setChecked(false);
+            return;
+        }
+        if (action == placementAtPlayheadAction) {
+            layerCreationPlacementMode() = LayerCreationPlacementMode::Playhead;
+            placementAtCompStartAction->setChecked(false);
+            placementAtPlayheadAction->setChecked(true);
+            return;
+        }
         if (action == cycleLayerForwardAction) { handleCycleLayerCreation(false); return; }
         if (action == cycleLayerReverseAction) { handleCycleLayerCreation(true); return; }
         if (action == createShapeRectAction) { handleCreateShape(ShapeType::Rect, QStringLiteral("Shape 1")); return; }
@@ -642,6 +716,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createAudioAction->setEnabled(hasProject);
     createSvgAction->setEnabled(hasProject);
     createModel3DAction->setEnabled(hasProject);
+    createPlane3DAction->setEnabled(hasProject);
     createShapeRectAction->setEnabled(hasProject);
     createShapeSquareAction->setEnabled(hasProject);
     createShapePolygonAction->setEnabled(hasProject);
@@ -802,7 +877,7 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
         }
         QTimer::singleShot(0, menu, [service, params, menu]() {
             Q_UNUSED(menu);
-            service->addLayerToCurrentComposition(params);
+            service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         });
     });
     dialog.setModal(true);
@@ -822,7 +897,7 @@ void ArtifactLayerMenu::Impl::handleCreateNull()
         params.setWidth(size.width());
         params.setHeight(size.height());
     }
-    service->addLayerToCurrentComposition(params);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
     if (menu_) {
         Q_EMIT menu_->nullLayerCreated();
     }
@@ -837,7 +912,7 @@ void ArtifactLayerMenu::Impl::handleCreateConstruction()
 
     ArtifactLayerInitParams params(uniqueLayerName(u8"Construction Layer 1"), LayerType::Construction);
     if (auto* service = ArtifactProjectService::instance()) {
-        service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
     }
 }
 
@@ -848,7 +923,7 @@ void ArtifactLayerMenu::Impl::handleCreateAdjust()
         return;
     }
     ArtifactLayerInitParams params(uniqueLayerName(u8"Adjustment Layer 1"), LayerType::Adjustment);
-    ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
+    ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 
 void ArtifactLayerMenu::Impl::handleCreateText()
@@ -858,7 +933,7 @@ void ArtifactLayerMenu::Impl::handleCreateText()
         return;
     }
     ArtifactTextLayerInitParams params(uniqueLayerName(u8"Text 1"));
-    ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
+    ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 
 void ArtifactLayerMenu::Impl::handleCreateParticle()
@@ -868,7 +943,7 @@ void ArtifactLayerMenu::Impl::handleCreateParticle()
         return;
     }
     ArtifactLayerInitParams params(uniqueLayerName(u8"Particle 1"), LayerType::Particle);
-    ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
+    ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 
 void ArtifactLayerMenu::Impl::handleCreateCamera()
@@ -895,7 +970,7 @@ void ArtifactLayerMenu::Impl::handleCreateCamera()
                                  ? uniqueLayerName(u8"Camera 1")
                                  : dialog.cameraName()));
 
-    service->addLayerToCurrentComposition(params);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 
     auto* app = ArtifactApplicationManager::instance();
     auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
@@ -932,7 +1007,7 @@ void ArtifactLayerMenu::Impl::handleCreateLight()
 
     ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Light 1")),
                                    LayerType::Light);
-    service->addLayerToCurrentComposition(params);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 
 void ArtifactLayerMenu::Impl::handleCreateAudio()
@@ -953,7 +1028,7 @@ void ArtifactLayerMenu::Impl::handleCreateAudio()
 
     ArtifactAudioInitParams params(uniqueLayerName(QFileInfo(path).baseName()));
     params.setAudioPath(path);
-    ArtifactProjectService::instance()->addLayerToCurrentComposition(params);
+    ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 
 void ArtifactLayerMenu::Impl::handleCreateSvg()
@@ -996,7 +1071,7 @@ void ArtifactLayerMenu::Impl::handleCreateSvg()
         }
         ArtifactSvgInitParams params(layerName);
         params.setSvgPath(importedPaths.first());
-        service->addLayerToCurrentComposition(params);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
     });
 }
 
@@ -1027,8 +1102,23 @@ void ArtifactLayerMenu::Impl::handleCreateModel3D()
         }
         ArtifactModel3DLayerInitParams params(layerName);
         params.setModelPath(importedPaths.first());
-        service->addLayerToCurrentComposition(params);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
     });
+}
+
+void ArtifactLayerMenu::Impl::handleCreatePlane3D()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    ArtifactFixedGeometry3DLayerInitParams params(uniqueLayerName(QStringLiteral("3D Plane 1")),
+                                                  FixedGeometry3D::Plane);
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 }
 
 void ArtifactLayerMenu::Impl::handleCycleLayerCreation(bool reverse)
@@ -1060,46 +1150,46 @@ void ArtifactLayerMenu::Impl::handleCycleLayerCreation(bool reverse)
     case Preset::Solid: {
         ArtifactSolidLayerInitParams params(uniqueLayerName(QStringLiteral("Solid 1")));
         params.setColor(FloatColor(1.0f, 1.0f, 1.0f, 1.0f));
-        service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         break;
     }
     case Preset::Null: {
         ArtifactNullLayerInitParams params(uniqueLayerName(QStringLiteral("Null 1")));
-        service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         break;
     }
     case Preset::Construction: {
         ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Construction 1")),
                                       LayerType::Construction);
-        service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         break;
     }
     case Preset::Adjust: {
         ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Adjustment Layer 1")),
                                       LayerType::Adjustment);
-        service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         break;
     }
     case Preset::Text: {
         ArtifactTextLayerInitParams params(uniqueLayerName(QStringLiteral("Text 1")));
-        service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         break;
     }
     case Preset::Particle: {
         ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Particle 1")),
                                       LayerType::Particle);
-        service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         break;
     }
     case Preset::Camera: {
         ArtifactCameraLayerInitParams params;
-        service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         break;
     }
     case Preset::Light: {
         ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Light 1")),
                                       LayerType::Light);
-        service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
         break;
     }
     }
@@ -1142,7 +1232,7 @@ void ArtifactLayerMenu::Impl::handleCreateShape(ShapeType type, const QString& n
     }
 
     ArtifactLayerInitParams params(uniqueLayerName(nameBase), LayerType::Shape);
-    service->addLayerToCurrentComposition(params);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
 
     if (auto* app = ArtifactApplicationManager::instance()) {
         if (auto* selectionManager = app->layerSelectionManager()) {
