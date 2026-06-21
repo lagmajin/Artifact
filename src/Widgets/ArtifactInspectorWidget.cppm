@@ -675,6 +675,7 @@ public:
   QPushButton *physicsComponentButton = nullptr;
   QPushButton *scriptComponentButton = nullptr;
   QPushButton *mographComponentButton = nullptr;
+  QPushButton *openScriptButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
   QLabel *statusLabel = nullptr;
 
@@ -1022,6 +1023,26 @@ bool layerBooleanProperty(const ArtifactAbstractLayerPtr &layer,
   const auto property = layer->getProperty(propertyPath);
   return property ? property->getValue().toBool() : false;
 }
+
+QString resolveScriptBindingPath(const ArtifactAbstractLayerPtr &layer) {
+  if (!layer) {
+    return {};
+  }
+  const QJsonObject binding = layer->scriptBinding();
+  const QStringList keys = {
+      QStringLiteral("path"),
+      QStringLiteral("file"),
+      QStringLiteral("scriptPath"),
+      QStringLiteral("scriptFile"),
+  };
+  for (const auto &key : keys) {
+    const QString value = binding.value(key).toString().trimmed();
+    if (!value.isEmpty()) {
+      return value;
+    }
+  }
+  return {};
+}
 } // namespace
 
 void ArtifactInspectorWidget::Impl::updateComponentControls(
@@ -1087,6 +1108,18 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
         componentPropertyWidget->updateProperties();
       }
     }
+  }
+
+  if (openScriptButton) {
+    const QString scriptPath = resolveScriptBindingPath(layer);
+    const bool canOpen = hasLayer && !scriptPath.trimmed().isEmpty();
+    openScriptButton->setEnabled(canOpen);
+    openScriptButton->setVisible(hasLayer);
+    openScriptButton->setText(canOpen ? QStringLiteral("Open Script")
+                                      : QStringLiteral("Open Script"));
+    openScriptButton->setToolTip(
+        canOpen ? QStringLiteral("Open the script file linked to this layer.")
+                : QStringLiteral("No script file is linked to this layer yet."));
   }
 }
 
@@ -1481,6 +1514,7 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote() {
     compositionNoteEdit->blockSignals(false);
     if (compositionNoteGroup) {
       compositionNoteGroup->setEnabled(false);
+      compositionNoteGroup->hide();
     }
     return;
   }
@@ -1494,6 +1528,7 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote() {
     compositionNoteEdit->blockSignals(false);
     if (compositionNoteGroup) {
       compositionNoteGroup->setEnabled(false);
+      compositionNoteGroup->hide();
     }
     return;
   }
@@ -1507,6 +1542,7 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote() {
     compositionNoteEdit->blockSignals(false);
     if (compositionNoteGroup) {
       compositionNoteGroup->setEnabled(false);
+      compositionNoteGroup->hide();
     }
     return;
   }
@@ -1522,6 +1558,7 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote() {
         compositionNoteEdit->setEnabled(true);
         if (compositionNoteGroup) {
           compositionNoteGroup->setEnabled(true);
+          compositionNoteGroup->hide();
         }
       });
 
@@ -1530,6 +1567,7 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote() {
     compositionNoteEdit->setEnabled(true);
     if (compositionNoteGroup) {
       compositionNoteGroup->setEnabled(true);
+      compositionNoteGroup->hide();
     }
     return;
   }
@@ -1541,6 +1579,7 @@ void ArtifactInspectorWidget::Impl::updateCompositionNote() {
   }
   if (compositionNoteGroup) {
     compositionNoteGroup->setEnabled(true);
+    compositionNoteGroup->hide();
   }
 }
 
@@ -1566,6 +1605,7 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
     layerNoteEdit->blockSignals(false);
     if (layerNoteGroup) {
       layerNoteGroup->setEnabled(false);
+      layerNoteGroup->hide();
     }
     return;
   }
@@ -1579,6 +1619,7 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
     layerNoteEdit->blockSignals(false);
     if (layerNoteGroup) {
       layerNoteGroup->setEnabled(false);
+      layerNoteGroup->hide();
     }
     return;
   }
@@ -1592,6 +1633,7 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
     layerNoteEdit->blockSignals(false);
     if (layerNoteGroup) {
       layerNoteGroup->setEnabled(false);
+      layerNoteGroup->hide();
     }
     return;
   }
@@ -1605,6 +1647,7 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
     layerNoteEdit->blockSignals(false);
     if (layerNoteGroup) {
       layerNoteGroup->setEnabled(false);
+      layerNoteGroup->hide();
     }
     return;
   }
@@ -1621,6 +1664,7 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
                          layerNoteEdit->setEnabled(true);
                          if (layerNoteGroup) {
                            layerNoteGroup->setEnabled(true);
+                           layerNoteGroup->hide();
                          }
                        });
 
@@ -1629,6 +1673,7 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
     layerNoteEdit->setEnabled(true);
     if (layerNoteGroup) {
       layerNoteGroup->setEnabled(true);
+      layerNoteGroup->hide();
     }
     return;
   }
@@ -1640,6 +1685,7 @@ void ArtifactInspectorWidget::Impl::updateLayerNote() {
   }
   if (layerNoteGroup) {
     layerNoteGroup->setEnabled(true);
+    layerNoteGroup->hide();
   }
 }
 
@@ -1783,6 +1829,7 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
   }
   if (compositionNoteGroup) {
     compositionNoteGroup->setEnabled(false);
+    compositionNoteGroup->hide();
   }
   if (layerNoteEdit) {
     layerNoteEdit->blockSignals(true);
@@ -1792,6 +1839,7 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
   }
   if (layerNoteGroup) {
     layerNoteGroup->setEnabled(false);
+    layerNoteGroup->hide();
   }
   layerNameLabel->setText("Layer: Open a project to inspect layers");
   layerTypeLabel->setText("Type: N/A");
@@ -1865,6 +1913,7 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
   }
   if (layerNoteGroup) {
     layerNoteGroup->setEnabled(false);
+    layerNoteGroup->hide();
   }
 
   // エフェクトリストもクリア
@@ -2582,18 +2631,23 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->physicsComponentButton = new QPushButton("+ Physics");
   impl_->scriptComponentButton = new QPushButton("+ Script");
   impl_->mographComponentButton = new QPushButton("+ MoGraph");
+  impl_->openScriptButton = new QPushButton("Open Script");
   applyInspectorButton(impl_->physicsComponentButton, true);
   applyInspectorButton(impl_->scriptComponentButton, false);
   applyInspectorButton(impl_->mographComponentButton, false);
+  applyInspectorButton(impl_->openScriptButton, false);
   impl_->physicsComponentButton->setToolTip(
       QStringLiteral("Toggle the layer physics component."));
   impl_->scriptComponentButton->setToolTip(
       QStringLiteral("Toggle the layer script component."));
   impl_->mographComponentButton->setToolTip(
       QStringLiteral("Toggle the layer MoGraph component."));
+  impl_->openScriptButton->setToolTip(
+      QStringLiteral("Open the script file linked to this layer."));
   componentsButtonLayout->addWidget(impl_->physicsComponentButton);
   componentsButtonLayout->addWidget(impl_->scriptComponentButton);
   componentsButtonLayout->addWidget(impl_->mographComponentButton);
+  componentsButtonLayout->addWidget(impl_->openScriptButton);
   componentsLayout->addLayout(componentsButtonLayout);
   impl_->componentPropertyWidget = new ArtifactPropertyWidget();
   impl_->componentPropertyWidget->setVisible(false);
@@ -2716,6 +2770,40 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                    [toggleComponent]() {
                      toggleComponent(QStringLiteral("component.mograph.enabled"),
                                      QStringLiteral("MoGraph"));
+                   });
+  QObject::connect(impl_->openScriptButton, &QPushButton::clicked, this,
+                   [this]() {
+                     if (impl_->currentCompositionId_.isNil() ||
+                         impl_->currentLayerId_.isNil()) {
+                       return;
+                     }
+                     auto projectService = ArtifactProjectService::instance();
+                     if (!projectService) {
+                       return;
+                     }
+                     auto findResult =
+                         projectService->findComposition(impl_->currentCompositionId_);
+                     if (!findResult.success) {
+                       return;
+                     }
+                     auto comp = findResult.ptr.lock();
+                     if (!comp) {
+                       return;
+                     }
+                     auto layer = comp->layerById(impl_->currentLayerId_);
+                     if (!layer) {
+                       return;
+                     }
+                     const QString scriptPath = resolveScriptBindingPath(layer);
+                     if (scriptPath.trimmed().isEmpty()) {
+                       return;
+                     }
+                     const QFileInfo info(scriptPath);
+                     const QString openPath =
+                         info.isDir() ? info.absoluteFilePath()
+                                      : info.absoluteFilePath();
+                     QDesktopServices::openUrl(
+                         QUrl::fromLocalFile(openPath));
                    });
 
   layerInfoWidget->setLayout(layerInfoLayout);

@@ -57,6 +57,7 @@ import Core.Diagnostics.SessionLedger;
 import MediaSource;
 import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Service.ActiveContext;
+import Artifact.Service.Playback;
 import Undo.UndoManager;
 // import Artifact.Render.FrameCache;
 
@@ -496,38 +497,6 @@ void updateLastUsedCreationDefaults(const std::shared_ptr<ArtifactProject>& proj
   project->setCreationDefaultsState(state);
 }
 
-void normalizeNewImageLayerTransform(const ArtifactCompositionPtr &comp,
-                                     const ArtifactAbstractLayerPtr &layer) {
-  if (!comp || !layer) {
-    return;
-  }
-
-  auto imageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer);
-  if (!imageLayer) {
-    return;
-  }
-
-  auto &t3d = layer->transform3D();
-  if (std::abs(t3d.positionX()) > 0.001f || std::abs(t3d.positionY()) > 0.001f ||
-      std::abs(t3d.anchorX()) > 0.001f || std::abs(t3d.anchorY()) > 0.001f) {
-    return;
-  }
-
-  const QRectF localBounds = layer->localBounds();
-  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
-      localBounds.height() <= 0.0) {
-    return;
-  }
-
-  const QPointF targetAnchor = localBounds.center();
-  const RationalTime time(comp->framePosition().framePosition(), 30000);
-  t3d.setAnchor(time, static_cast<float>(targetAnchor.x()),
-                static_cast<float>(targetAnchor.y()), t3d.anchorZ());
-  t3d.setPosition(time, static_cast<float>(targetAnchor.x()),
-                  static_cast<float>(targetAnchor.y()));
-  layer->setDirty(LayerDirtyFlag::Transform);
-}
-
 // Precompose cycle detection:
 // Returns true if moving `layers` into a fresh child composition of `parent`
 // would create a cycle. This happens when any of the selected layers is a
@@ -743,7 +712,8 @@ public:
   static ArtifactProjectManager &projectManager();
   void installSelectionBridge(ArtifactProjectService *owner);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams &params,
-                                    bool selectNewLayer = true);
+                                    bool selectNewLayer = true,
+                                    bool placeAtCurrentFrame = false);
   void addAssetFromPath(const UniString &path);
   QStringList importAssetsFromPaths(const QStringList &sourcePaths);
   void importAssetsFromPathsAsync(const QStringList &sourcePaths,
@@ -916,7 +886,8 @@ ArtifactProjectManager &ArtifactProjectService::Impl::projectManager() {
 }
 
 void ArtifactProjectService::Impl::addLayerToCurrentComposition(
-    const ArtifactLayerInitParams &params, bool selectNewLayer) {
+    const ArtifactLayerInitParams &params, bool selectNewLayer,
+    bool placeAtCurrentFrame) {
   auto &manager = ArtifactProjectService::Impl::projectManager();
   LayerID selectedLayerId;
   if (auto *selectionManager = ArtifactLayerSelectionManager::instance()) {
@@ -949,8 +920,19 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
         result.layer->setPosition3D(
             QVector3D(compCenterX, compCenterY, current.z()));
       }
+      if (placeAtCurrentFrame) {
+        const qint64 activeFrame =
+            ArtifactPlaybackService::instance()
+                ? ArtifactPlaybackService::instance()->currentFrame().framePosition()
+                : comp->framePosition().framePosition();
+        const qint64 duration =
+            std::max<qint64>(1, result.layer->outPoint().framePosition() -
+                                   result.layer->inPoint().framePosition());
+        result.layer->setInPoint(FramePosition(activeFrame));
+        result.layer->setOutPoint(FramePosition(activeFrame + duration));
+        result.layer->setStartTime(FramePosition(activeFrame));
+      }
 
-      normalizeNewImageLayerTransform(comp, result.layer);
     }
 
     if (auto project = manager.getCurrentProjectSharedPtr()) {

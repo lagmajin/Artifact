@@ -1003,7 +1003,7 @@ void ArtifactCompositionRenderWidget::enterEvent(QEnterEvent* event) {
       else if (shortcuts.matches(event, ShortcutId::HandTool)) tm->setActiveTool(ToolType::Hand);
       else if (shortcuts.matches(event, ShortcutId::ZoomTool)) tm->setActiveTool(ToolType::Zoom);
       else if (shortcuts.matches(event, ShortcutId::RotateTool)) tm->setActiveTool(ToolType::Rotation);
-      else if (event->key() == Qt::Key_Space) ctx->togglePlayPause();
+      else if (shortcuts.matches(event, ShortcutId::PlaybackToggle)) ctx->togglePlayPause();
       else if (event->key() == Qt::Key_Home) ctx->goToStart();
       else if (event->key() == Qt::Key_End) ctx->goToEnd();
       else if (event->key() == Qt::Key_PageUp) ctx->prevFrame();

@@ -1015,16 +1015,16 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
   double positionX =
-      evaluateDouble(QStringLiteral("transform.position.x"), t.positionXAt(time));
+      evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
   double positionY =
-      evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
+      evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
   const double positionZ = t.positionZAt(time);
   double rotation =
-      evaluateDouble(QStringLiteral("transform.rotation"), t.rotationAt(time));
+      evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
   const double scaleX =
-      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleXAt(time));
+      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
   const double scaleY =
-      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleYAt(time));
+      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleY());
   const double anchorX =
       evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorXAt(time));
   const double anchorY =
@@ -1252,7 +1252,7 @@ bool ArtifactAbstractLayer::isCloneLayer() const { return false; }
 
 bool ArtifactAbstractLayer::hasAudio() const { return false; }
 
-bool ArtifactAbstractLayer::hasVideo() const { return true; }
+bool ArtifactAbstractLayer::hasVideo() const { return false; }
 
 Size_2D ArtifactAbstractLayer::sourceSize() const { return impl_->sourceSize_; }
 
@@ -2271,17 +2271,15 @@ QJsonObject ArtifactAbstractLayer::scriptBinding() const {
 
 void ArtifactAbstractLayer::setScriptBinding(const QJsonObject& binding) {
   impl_->scriptBinding_ = binding;
-  impl_->scriptComponentEnabled_ = !binding.isEmpty();
   notifyLayerMutation(this, LayerDirtyFlag::Property,
                       LayerDirtyReason::PropertyChanged);
 }
 
 void ArtifactAbstractLayer::clearScriptBinding() {
-  if (impl_->scriptBinding_.isEmpty() && !impl_->scriptComponentEnabled_) {
+  if (impl_->scriptBinding_.isEmpty()) {
     return;
   }
   impl_->scriptBinding_ = QJsonObject{};
-  impl_->scriptComponentEnabled_ = false;
   notifyLayerMutation(this, LayerDirtyFlag::Property,
                       LayerDirtyReason::PropertyChanged);
 }
@@ -2329,6 +2327,40 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   // トランスフォームのプロパティグループ（優先度を高く設定）
   PropertyGroup transformGroup(QStringLiteral("Transform"));
   const auto &t3 = transform3D();
+
+  PropertyGroup initialGroup(QStringLiteral("Initial"));
+  const auto sz = sourceSize();
+  auto sourceWidthProp =
+      makeProp(QStringLiteral("source.width"), PropertyType::Integer,
+               sz.width, -500);
+  sourceWidthProp->setDisplayLabel(QStringLiteral("Initial Width"));
+  sourceWidthProp->setUnit(QStringLiteral("px"));
+  sourceWidthProp->setTooltip(
+      QStringLiteral("Base layer width. This value is not keyframeable."));
+  sourceWidthProp->setHardRange(1.0, 16384.0);
+  sourceWidthProp->setSoftRange(1.0, 4096.0);
+  initialGroup.addProperty(sourceWidthProp);
+
+  auto sourceHeightProp =
+      makeProp(QStringLiteral("source.height"), PropertyType::Integer,
+               sz.height, -499);
+  sourceHeightProp->setDisplayLabel(QStringLiteral("Initial Height"));
+  sourceHeightProp->setUnit(QStringLiteral("px"));
+  sourceHeightProp->setTooltip(
+      QStringLiteral("Base layer height. This value is not keyframeable."));
+  sourceHeightProp->setHardRange(1.0, 16384.0);
+  sourceHeightProp->setSoftRange(1.0, 4096.0);
+  initialGroup.addProperty(sourceHeightProp);
+
+  auto initialRotationProp =
+      makeProp(QStringLiteral("transform.initialRotation"),
+               PropertyType::Float, t3.initialRotation(), -498);
+  initialRotationProp->setDisplayLabel(QStringLiteral("Initial Angle"));
+  initialRotationProp->setUnit(QStringLiteral("deg"));
+  initialRotationProp->setTooltip(
+      QStringLiteral("Base layer angle. This value is not keyframeable."));
+  initialRotationProp->setSoftRange(-180.0, 180.0);
+  initialGroup.addProperty(initialRotationProp);
 
   auto posXProp = makeProp(QStringLiteral("transform.position.x"),
                            PropertyType::Float, t3.positionX(), -300);
@@ -2400,12 +2432,6 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   startTimeProp->setTooltip(
       QStringLiteral("Layer start offset in source time"));
   layerGroup.addProperty(startTimeProp);
-
-  const auto sz = sourceSize();
-  layerGroup.addProperty(makeProp(QStringLiteral("source.width"),
-                                  PropertyType::Integer, sz.width, -40));
-  layerGroup.addProperty(makeProp(QStringLiteral("source.height"),
-                                  PropertyType::Integer, sz.height, -30));
 
   // 物理演算プロパティグループ
   PropertyGroup physicsGroup(QStringLiteral("Physics"));
@@ -2623,7 +2649,8 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   }
 
   std::vector<PropertyGroup> groups;
-  groups.reserve(4 + maskGroups.size());
+  groups.reserve(5 + maskGroups.size());
+  groups.push_back(std::move(initialGroup));
   groups.push_back(std::move(transformGroup));
   groups.push_back(std::move(componentGroup));
   groups.push_back(std::move(physicsGroup));
@@ -2830,6 +2857,16 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
 
+  auto &t3 = transform3D();
+  const RationalTime currentTime = currentTimelineTime(this);
+
+  if (propertyPath == QStringLiteral("transform.initialRotation")) {
+    t3.setInitialRotation(currentTime, static_cast<float>(value.toDouble()));
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::TransformChanged);
+    return true;
+  }
+
   // トランスフォームのプロパティ
   if (propertyPath.startsWith(QStringLiteral("transform."))) {
       if (impl_->activeVariantIndex_ != 0) {
@@ -2840,9 +2877,6 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
           }
       }
   }
-
-  auto &t3 = transform3D();
-  const RationalTime currentTime = currentTimelineTime(this);
 
   if (propertyPath == QStringLiteral("transform.position.x")) {
     t3.setPosition(currentTime, value.toDouble(), t3.positionYAt(currentTime));
@@ -2903,7 +2937,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("source.width")) {
     const auto cur = sourceSize();
-    const int width = value.toInt();
+    const int width = std::max(1, value.toInt());
     if (cur.width == width) {
       return true;
     }
@@ -2914,7 +2948,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("source.height")) {
     const auto cur = sourceSize();
-    const int height = value.toInt();
+    const int height = std::max(1, value.toInt());
     if (cur.height == height) {
       return true;
     }

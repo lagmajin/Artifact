@@ -2370,8 +2370,12 @@ CurveEditorPayload collectCurveEditorPayload(
 
   const auto layers = selectedTimelineLayers(selectionManager);
   if (layers.isEmpty()) {
+    payload.summary = QStringLiteral("Select a layer to continue");
     return payload;
   }
+
+  QStringList signatureParts;
+  int totalKeyCount = 0;
 
   for (const auto& layer : layers) {
     if (!layer) {
@@ -2488,14 +2492,28 @@ CurveEditorPayload collectCurveEditorPayload(
           }
 
           track.keys.push_back(curveKey);
+          signatureParts.push_back(
+              QStringLiteral("%1:%2:%3:%4:%5")
+                  .arg(layer->id().toString(), property->getName(),
+                       QString::number(curveKey.frame),
+                       QString::number(curveKey.value, 'f', 6),
+                       QString::number(static_cast<int>(interpolations[i]))));
         }
 
+        totalKeyCount += static_cast<int>(track.keys.size());
         payload.bindings.push_back(CurveTrackBinding{layer->id(), property->getName()});
         payload.tracks.push_back(std::move(track));
       }
     }
   }
 
+  payload.signature = signatureParts.join(QLatin1Char('|'));
+  payload.summary =
+      payload.tracks.empty()
+          ? QStringLiteral("No editable numeric keyframes")
+          : QStringLiteral("%1, %2")
+                .arg(formatCurveTrackCountSummary(static_cast<int>(payload.tracks.size())))
+                .arg(formatKeyframeCountSummary(totalKeyCount));
   return payload;
 }
 
@@ -2513,8 +2531,12 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
 
   const auto layers = selectedTimelineLayers(selectionManager);
   if (layers.isEmpty()) {
+    payload.summary = QStringLiteral("Select a layer to continue");
     return payload;
   }
+
+  QStringList signatureParts;
+  int totalKeyCount = 0;
 
   for (const auto& layer : layers) {
     if (!layer) {
@@ -2600,6 +2622,12 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
           curveKey.inHandleValue = 0.0f;
           curveKey.outHandleValue = 0.0f;
           track.keys.push_back(curveKey);
+          signatureParts.push_back(
+              QStringLiteral("%1:%2:speed:%3:%4:%5")
+                  .arg(layer->id().toString(), property->getName(),
+                       QString::number(curveKey.frame),
+                       QString::number(curveKey.value, 'f', 6),
+                       QString::number(static_cast<int>(interpolation))));
         }
 
         for (int i = 0; i < track.keys.size(); ++i) {
@@ -2637,12 +2665,20 @@ CurveEditorPayload collectCurveEditorSpeedPayload(
           key.smooth = true;
         }
 
+        totalKeyCount += static_cast<int>(track.keys.size());
         payload.bindings.push_back(CurveTrackBinding{layer->id(), property->getName()});
         payload.tracks.push_back(std::move(track));
       }
     }
   }
 
+  payload.signature = signatureParts.join(QLatin1Char('|'));
+  payload.summary =
+      payload.tracks.empty()
+          ? QStringLiteral("No editable numeric keyframes")
+          : QStringLiteral("%1, %2")
+                .arg(formatCurveTrackCountSummary(static_cast<int>(payload.tracks.size())))
+                .arg(formatKeyframeCountSummary(totalKeyCount));
   return payload;
 }
 
@@ -3341,6 +3377,11 @@ public:
   }
 
   void syncGeometryToPanel() {
+    if (!enabled_) {
+      hide();
+      return;
+    }
+
     auto *panel = parentWidget();
     if (!panel || !scrubBar_ || !trackView_) {
       hide();
@@ -3380,6 +3421,20 @@ public:
     lastX_ = newX;
   }
 
+  void setOverlayEnabled(const bool enabled) {
+    if (enabled_ == enabled) {
+      return;
+    }
+    enabled_ = enabled;
+    lastX_ = -9999;
+    if (!enabled_) {
+      hide();
+      return;
+    }
+    syncGeometryToPanel();
+    update();
+  }
+
 protected:
   void paintEvent(QPaintEvent *event) override {
     Q_UNUSED(event);
@@ -3414,6 +3469,7 @@ private:
 
   ArtifactTimelineScrubBar *scrubBar_ = nullptr;
   ArtifactTimelineTrackPainterView *trackView_ = nullptr;
+  bool enabled_ = true;
   int lastX_ = -9999;
 };
 
@@ -3483,6 +3539,12 @@ public:
   void syncPlayheadOverlay() {
     if (playheadOverlay_) {
       playheadOverlay_->updatePlayhead();
+    }
+  }
+
+  void setPlayheadOverlayEnabled(const bool enabled) {
+    if (playheadOverlay_) {
+      playheadOverlay_->setOverlayEnabled(enabled);
     }
   }
 
@@ -5483,6 +5545,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                        impl_->timelineModeStack_->setCurrentWidget(
                            active ? impl_->curveEditorPage_ : impl_->timelinePainterPage_);
                      }
+                     if (impl_->rightPanel_) {
+                       impl_->rightPanel_->setPlayheadOverlayEnabled(!active);
+                     }
                      if (impl_->curvePropertyPanel_) {
                        impl_->curvePropertyPanel_->setVisible(active);
                      }
@@ -6671,8 +6736,8 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
     }
   }
 
-  // スペースキーで再生/一時停止
-  if (event->key() == Qt::Key_Space) {
+  // 再生/一時停止
+  if (shortcuts.matches(event, ArtifactCore::ShortcutId::PlaybackToggle)) {
     if (auto *svc = ArtifactPlaybackService::instance()) {
       svc->togglePlayPause();
     }
@@ -7312,6 +7377,7 @@ void ArtifactTimelineWidget::syncPlayheadOverlay()
   }
 
   if (impl_->rightPanel_) {
+    impl_->rightPanel_->setPlayheadOverlayEnabled(!impl_->graphEditorVisible_);
     impl_->rightPanel_->syncPlayheadOverlay();
   }
 }
@@ -7682,6 +7748,50 @@ void ArtifactTimelineWidget::selectAllKeyframes()
   }
   impl_->painterTrackView_->selectAllKeyframeMarkers();
   updateKeyframeState();
+}
+
+void ArtifactTimelineWidget::reverseSelectedKeyframes()
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+  if (impl_->painterTrackView_->reverseSelectedKeyframeMarkers()) {
+    updateKeyframeState();
+    updateSelectionState();
+  }
+}
+
+void ArtifactTimelineWidget::reverseAllKeyframesInCurrentLayer()
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+  if (impl_->painterTrackView_->reverseAllKeyframesInCurrentLayer()) {
+    updateKeyframeState();
+    updateSelectionState();
+  }
+}
+
+void ArtifactTimelineWidget::reverseAllKeyframesInSelectedLayers()
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+  if (impl_->painterTrackView_->reverseAllKeyframesInSelectedLayers()) {
+    updateKeyframeState();
+    updateSelectionState();
+  }
+}
+
+void ArtifactTimelineWidget::reverseAllKeyframesInComposition()
+{
+  if (!impl_ || !impl_->painterTrackView_) {
+    return;
+  }
+  if (impl_->painterTrackView_->reverseAllKeyframesInComposition()) {
+    updateKeyframeState();
+    updateSelectionState();
+  }
 }
 
 void ArtifactTimelineWidget::copySelectedKeyframes()

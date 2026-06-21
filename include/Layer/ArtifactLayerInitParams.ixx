@@ -197,6 +197,17 @@ export namespace Artifact {
   void setModelPath(const QString& path) { modelPath_ = path; }
  };
 
+ class ArtifactFixedGeometry3DLayerInitParams : public ArtifactLayerInitParams {
+ private:
+  FixedGeometry3D geometry_ = FixedGeometry3D::Cube;
+
+ public:
+  explicit ArtifactFixedGeometry3DLayerInitParams(const QString& name, FixedGeometry3D geometry);
+  ~ArtifactFixedGeometry3DLayerInitParams();
+  FixedGeometry3D geometry() const;
+  void setGeometry(FixedGeometry3D geometry);
+ };
+
 };
 
 W_REGISTER_ARGTYPE(Artifact::ArtifactSolidLayerInitParams)

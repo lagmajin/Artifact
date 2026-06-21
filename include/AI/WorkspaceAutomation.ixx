@@ -4013,7 +4013,8 @@ private:
         }
         auto slotsObj = obj[QStringLiteral("templateSlots")].toObject();
         QJsonObject slot;
-        slot[QStringLiteral("name")] = slotName;
+        slot[QStringLiteral("slotId")] = slotName;
+        slot[QStringLiteral("displayName")] = slotName;
         slot[QStringLiteral("defaultValue")] = defaultValue;
         slot[QStringLiteral("required")] = true;
         slotsObj[slotName] = slot;
@@ -4043,9 +4044,11 @@ private:
             for (auto it = templateSlotsObj.begin(); it != templateSlotsObj.end(); ++it) {
                 QJsonObject slot;
                 slot[QStringLiteral("layerId")] = layer->id().toString();
+                slot[QStringLiteral("slotId")] = it.key();
                 slot[QStringLiteral("slotName")] = it.key();
                 const auto slotData = it.value().toObject();
                 slot[QStringLiteral("defaultValue")] = slotData[QStringLiteral("defaultValue")];
+                slot[QStringLiteral("required")] = slotData.value(QStringLiteral("required")).toBool(true);
                 result.append(QVariant(slot));
             }
         }
@@ -4075,9 +4078,20 @@ private:
             const auto layer = comp->layerById(LayerID(layerId));
             if (!layer) continue;
 
-            // Apply value based on slot type (for now, treat as text replacement)
-            // This would need to be extended for image/media/color slots
-            layer->setLayerNote(QStringLiteral("%1=%2").arg(slotName, value));
+            // Preserve the slot map in the layer note so later passes can resolve it consistently.
+            QJsonObject noteObj;
+            const QString note = layer->layerNote();
+            if (!note.isEmpty()) {
+                QJsonParseError noteErr;
+                noteObj = QJsonDocument::fromJson(note.toUtf8(), &noteErr).object();
+            }
+            auto slotValues = noteObj[QStringLiteral("slotValues")].toObject();
+            QJsonObject slotValue;
+            slotValue[QStringLiteral("slotId")] = slotName;
+            slotValue[QStringLiteral("value")] = value;
+            slotValues[slotName] = slotValue;
+            noteObj[QStringLiteral("slotValues")] = slotValues;
+            layer->setLayerNote(QString::fromUtf8(QJsonDocument(noteObj).toJson(QJsonDocument::Compact)));
         }
         return true;
     }

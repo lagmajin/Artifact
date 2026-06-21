@@ -57,6 +57,10 @@ export namespace Artifact {
    void addKeyframeRequested() W_SIGNAL(addKeyframeRequested);
    void removeKeyframeRequested() W_SIGNAL(removeKeyframeRequested);
    void selectAllKeyframesRequested() W_SIGNAL(selectAllKeyframesRequested);
+   void reverseSelectedKeyframesRequested() W_SIGNAL(reverseSelectedKeyframesRequested);
+   void reverseAllKeyframesInLayerRequested() W_SIGNAL(reverseAllKeyframesInLayerRequested);
+   void reverseAllKeyframesInSelectedLayersRequested() W_SIGNAL(reverseAllKeyframesInSelectedLayersRequested);
+   void reverseAllKeyframesInCompositionRequested() W_SIGNAL(reverseAllKeyframesInCompositionRequested);
    void copyKeyframesRequested() W_SIGNAL(copyKeyframesRequested);
    void pasteKeyframesRequested() W_SIGNAL(pasteKeyframesRequested);
 

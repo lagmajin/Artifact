@@ -26,6 +26,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Color.Float;
 import Time.Rational;
+import Animation.Transform3D;
 import Artifact.Service.Project;
 import Widgets.Utils.CSS;
 import ArtifactCore.Utils.PerformanceProfiler;
@@ -1024,14 +1025,8 @@ QPointF offsetPointAwayFromCenter(const QPointF& center, const Detail::float2& p
 
 QPointF resizeBadgeAnchorForHandle(const QRectF& box, const TransformGizmo::HandleType handle)
 {
- switch (handle) {
- case TransformGizmo::HandleType::Scale_TL:
- case TransformGizmo::HandleType::Scale_L:
- case TransformGizmo::HandleType::Scale_BL:
-  return box.topLeft();
- default:
-  return box.topRight();
- }
+ Q_UNUSED(handle);
+ return box.topLeft();
 }
 
 void drawResizeBadge(ArtifactIRenderer* renderer,
@@ -1046,26 +1041,25 @@ void drawResizeBadge(ArtifactIRenderer* renderer,
  }
 
  QFont badgeFont = QApplication::font();
- badgeFont.setPointSizeF(std::max(8.0, static_cast<double>(badgeFont.pointSizeF())));
+ badgeFont.setPointSizeF(std::max(11.5, static_cast<double>(badgeFont.pointSizeF()) + 1.5));
+ badgeFont.setBold(true);
  const QFontMetrics fm(badgeFont);
  float textW = 0.0f;
  for (const auto& line : lines) {
   textW = std::max(textW, static_cast<float>(fm.horizontalAdvance(line.trimmed())));
  }
- textW += 20.0f;
+ textW += 26.0f;
  const float lineH = static_cast<float>(fm.height());
- const float lineGap = 2.0f;
+ const float lineGap = 4.0f;
  const float textH = static_cast<float>(lines.size()) * lineH +
                      std::max(0.0f, static_cast<float>(lines.size() - 1) * lineGap) +
-                     10.0f;
- const float pad = std::max(8.0f, 8.0f * invZoom);
+                     14.0f;
+ const float pad = std::max(10.0f, 10.0f * invZoom);
  const float margin = std::max(8.0f, 10.0f * invZoom);
 
- QPointF pos = anchor;
- if (anchor.x() <= box.center().x()) {
-  pos += QPointF(-textW - pad, -textH - pad);
- } else {
-  pos += QPointF(pad, -textH - pad);
+ QPointF pos(box.left() + pad, box.top() + pad);
+ if (box.height() < textH + pad * 2.0f) {
+  pos = QPointF(box.left() + pad, box.top() - textH - pad);
  }
 
  auto clampToBounds = [&](const float minX, const float minY, const float maxX, const float maxY) {
@@ -1100,7 +1094,7 @@ void drawResizeBadge(ArtifactIRenderer* renderer,
    continue;
   }
   const QRectF lineRect(textRect.left() + 10.0f,
-                        textRect.top() + 5.0f + static_cast<float>(i) * (lineH + lineGap),
+                        textRect.top() + 7.0f + static_cast<float>(i) * (lineH + lineGap),
                         textRect.width() - 20.0f,
                         lineH);
   renderer->drawText(lineRect, line, badgeFont,
@@ -1113,6 +1107,9 @@ struct TransformSnapshot {
  bool hasPositionKey = false;
  bool hasRotationKey = false;
  bool hasScaleKey = false;
+ bool positionAnimated = false;
+ bool rotationAnimated = false;
+ bool scaleAnimated = false;
  bool hasTextBoxState = false;
  float positionX = 0.0f;
  float positionY = 0.0f;
@@ -1138,6 +1135,9 @@ TransformSnapshot captureTransformSnapshot(const ArtifactAbstractLayerPtr& layer
  snapshot.hasPositionKey = t3d.hasPositionKeyFrameAt(time);
  snapshot.hasRotationKey = t3d.hasRotationKeyFrameAt(time);
  snapshot.hasScaleKey = t3d.hasScaleKeyFrameAt(time);
+ snapshot.positionAnimated = t3d.getPositionKeyFrameCount() > 0;
+ snapshot.rotationAnimated = t3d.getRotationKeyFrameCount() > 0;
+ snapshot.scaleAnimated = t3d.getScaleKeyFrameCount() > 0;
  snapshot.positionX = t3d.positionX();
  snapshot.positionY = t3d.positionY();
  snapshot.rotation = t3d.rotation();
@@ -1154,6 +1154,48 @@ TransformSnapshot captureTransformSnapshot(const ArtifactAbstractLayerPtr& layer
  }
 
  return snapshot;
+}
+
+void applyPositionSnapshot(ArtifactCore::AnimatableTransform3D& t3d,
+                           const ArtifactCore::RationalTime& time,
+                           const TransformSnapshot& snapshot)
+{
+ if (snapshot.hasPositionKey) {
+  t3d.setPosition(time, snapshot.positionX, snapshot.positionY);
+ } else {
+  t3d.removePositionKeyFrameAt(time);
+  if (!snapshot.positionAnimated) {
+   t3d.setInitialPosition(time, snapshot.positionX, snapshot.positionY);
+  }
+ }
+}
+
+void applyRotationSnapshot(ArtifactCore::AnimatableTransform3D& t3d,
+                           const ArtifactCore::RationalTime& time,
+                           const TransformSnapshot& snapshot)
+{
+ if (snapshot.hasRotationKey) {
+  t3d.setRotation(time, snapshot.rotation);
+ } else {
+  t3d.removeRotationKeyFrameAt(time);
+  if (!snapshot.rotationAnimated) {
+   t3d.setInitialRotation(time, snapshot.rotation);
+  }
+ }
+}
+
+void applyScaleSnapshot(ArtifactCore::AnimatableTransform3D& t3d,
+                        const ArtifactCore::RationalTime& time,
+                        const TransformSnapshot& snapshot)
+{
+ if (snapshot.hasScaleKey) {
+  t3d.setScale(time, snapshot.scaleX, snapshot.scaleY);
+ } else {
+  t3d.removeScaleKeyFrameAt(time);
+  if (!snapshot.scaleAnimated) {
+   t3d.setInitialScale(time, snapshot.scaleX, snapshot.scaleY);
+  }
+ }
 }
 
 class TransformUndoCommand final : public UndoCommand {
@@ -1179,6 +1221,9 @@ private:
       current.hasPositionKey == snapshot.hasPositionKey &&
       current.hasRotationKey == snapshot.hasRotationKey &&
       current.hasScaleKey == snapshot.hasScaleKey &&
+      current.positionAnimated == snapshot.positionAnimated &&
+      current.rotationAnimated == snapshot.rotationAnimated &&
+      current.scaleAnimated == snapshot.scaleAnimated &&
       current.hasTextBoxState == snapshot.hasTextBoxState &&
       std::abs(current.positionX - snapshot.positionX) <= 0.0001f &&
       std::abs(current.positionY - snapshot.positionY) <= 0.0001f &&
@@ -1194,23 +1239,9 @@ private:
    return;
   }
 
-  if (snapshot.hasPositionKey) {
-   t3d.setPosition(time, snapshot.positionX, snapshot.positionY);
-  } else {
-   t3d.removePositionKeyFrameAt(time);
-  }
-
-  if (snapshot.hasRotationKey) {
-   t3d.setRotation(time, snapshot.rotation);
-  } else {
-   t3d.removeRotationKeyFrameAt(time);
-  }
-
-  if (snapshot.hasScaleKey) {
-   t3d.setScale(time, snapshot.scaleX, snapshot.scaleY);
-  } else {
-   t3d.removeScaleKeyFrameAt(time);
-  }
+  applyPositionSnapshot(t3d, time, snapshot);
+  applyRotationSnapshot(t3d, time, snapshot);
+  applyScaleSnapshot(t3d, time, snapshot);
   if (snapshot.hasTextBoxState) {
    if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
     textLayer->setMaxWidth(snapshot.textBoxWidth);
@@ -1425,6 +1456,19 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  const QPointF bottomPoint = cachedPoints_.bottom;
  const QPointF leftPoint = cachedPoints_.left;
  const QPointF rightPoint = cachedPoints_.right;
+ const float bboxOutset = std::max(1.25f, lineThickness * 0.62f);
+ const Detail::float2 tl_bbox(
+     static_cast<float>(offsetPointAwayFromCenter(centerPoint, tl_c, bboxOutset).x()),
+     static_cast<float>(offsetPointAwayFromCenter(centerPoint, tl_c, bboxOutset).y()));
+ const Detail::float2 tr_bbox(
+     static_cast<float>(offsetPointAwayFromCenter(centerPoint, tr_c, bboxOutset).x()),
+     static_cast<float>(offsetPointAwayFromCenter(centerPoint, tr_c, bboxOutset).y()));
+ const Detail::float2 bl_bbox(
+     static_cast<float>(offsetPointAwayFromCenter(centerPoint, bl_c, bboxOutset).x()),
+     static_cast<float>(offsetPointAwayFromCenter(centerPoint, bl_c, bboxOutset).y()));
+ const Detail::float2 br_bbox(
+     static_cast<float>(offsetPointAwayFromCenter(centerPoint, br_c, bboxOutset).x()),
+     static_cast<float>(offsetPointAwayFromCenter(centerPoint, br_c, bboxOutset).y()));
 
  if (showMove) {
   ArtifactCore::ProfileScope _profMove(
@@ -1472,10 +1516,10 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  if (showBBox) {
   ArtifactCore::ProfileScope _profScale(
       "TransformGizmoScale", ArtifactCore::ProfileCategory::Render);
-  drawEmphasizedLine(renderer, tl_c, tr_c, gizmoColor, lineThickness, invZoom, isActive);
-  drawEmphasizedLine(renderer, tr_c, br_c, gizmoColor, lineThickness, invZoom, isActive);
-  drawEmphasizedLine(renderer, br_c, bl_c, gizmoColor, lineThickness, invZoom, isActive);
-  drawEmphasizedLine(renderer, bl_c, tl_c, gizmoColor, lineThickness, invZoom, isActive);
+  drawEmphasizedLine(renderer, tl_bbox, tr_bbox, gizmoColor, lineThickness, invZoom, isActive);
+  drawEmphasizedLine(renderer, tr_bbox, br_bbox, gizmoColor, lineThickness, invZoom, isActive);
+  drawEmphasizedLine(renderer, br_bbox, bl_bbox, gizmoColor, lineThickness, invZoom, isActive);
+  drawEmphasizedLine(renderer, bl_bbox, tl_bbox, gizmoColor, lineThickness, invZoom, isActive);
   if (isTextLayer) {
    const float margin = std::max(0.0f, textEffectMargin(*textLayer));
    const QRectF paragraphRect =
@@ -1506,7 +1550,9 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
  }
 
  if (showScale) {
-    const float handleSizeScale = std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize, 10.0f, 22.0f);
+    const float handleSizeScale =
+        std::clamp(handleSize * GizmoVisualStyle::scaleHandleSize * 1.16f,
+                   12.0f, 26.0f);
     const bool cornerActive = activeHandle_ == HandleType::Scale_TL ||
                               activeHandle_ == HandleType::Scale_TR ||
                               activeHandle_ == HandleType::Scale_BL ||
@@ -1527,15 +1573,17 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
         ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
         : FloatColor{0.12f, 0.12f, 0.12f, 1.0f};
 
-   const float outward = std::max(6.5f, 14.0f * invZoom);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_TL);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tr_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_TR);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bl_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_BL);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, br_c, outward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_BR);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, topPoint, outward * 0.90f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_T);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bottomPoint, outward * 0.90f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_B);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, leftPoint, outward * 0.90f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_L);
-   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, rightPoint, outward * 0.90f), handleSizeScale * 0.92f, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_R);
+   const float cornerOutward = handleSizeScale * 0.5f;
+   const float edgeHandleSize = handleSizeScale * 0.96f;
+   const float edgeOutward = edgeHandleSize * 0.5f;
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tl_c, cornerOutward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_TL);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, tr_c, cornerOutward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_TR);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bl_c, cornerOutward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_BL);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, br_c, cornerOutward), handleSizeScale, cornerFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_BR);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, topPoint, edgeOutward), edgeHandleSize, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_T);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, bottomPoint, edgeOutward), edgeHandleSize, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_B);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, leftPoint, edgeOutward), edgeHandleSize, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_L);
+   drawBoxHandle(renderer, offsetPointAwayFromCenter(centerPoint, rightPoint, edgeOutward), edgeHandleSize, axisFill, boxOutline, invZoom, activeHandle_ == HandleType::Scale_R);
 
   if (mode_ == Mode::Scale) {
    const QPointF mapOrigin = globalTransform.map(QPointF(0.0, 0.0));
@@ -1839,12 +1887,18 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  auto checkLocalPoint = [&](const QPointF& localPoint) {
   QPointF worldPoint = globalTransform.map(localPoint);
   auto vPos = renderer->canvasToViewport({(float)worldPoint.x(), (float)worldPoint.y()});
-  QRectF handleRect = handleRectForViewport({vPos.x, vPos.y}, HANDLE_SIZE);
+  const float hitHandleSize = std::clamp(
+      static_cast<float>(HANDLE_SIZE) * 2.2f * invZoom, 14.0f, 24.0f);
+  QRectF handleRect = handleRectForViewport({vPos.x, vPos.y}, hitHandleSize);
   return handleRect.contains(viewportPos);
  };
 
  const QPointF centerPoint = localRect.center();
- const float scaleOutset = std::max(2.75f, GizmoVisualStyle::scaleHandleOutset * 0.65f * invZoom);
+ const float scaleHandleSize =
+     std::clamp(static_cast<float>(HANDLE_SIZE) * 1.62f * 1.5f *
+                    GizmoVisualStyle::scaleHandleSize * 1.16f * invZoom,
+                12.0f, 26.0f);
+ const float scaleOutset = scaleHandleSize * 0.5f;
  const QPointF topPoint(localRect.center().x(), localRect.top());
  const QPointF bottomPoint(localRect.center().x(), localRect.bottom());
  const QPointF leftPoint(localRect.left(), localRect.center().y());
@@ -1857,10 +1911,11 @@ TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, A
  const QPointF trHit = offsetPointAwayFromCenter(centerPoint, trPoint, scaleOutset);
  const QPointF blHit = offsetPointAwayFromCenter(centerPoint, blPoint, scaleOutset);
  const QPointF brHit = offsetPointAwayFromCenter(centerPoint, brPoint, scaleOutset);
- const QPointF topHit = offsetPointAwayFromCenter(centerPoint, topPoint, scaleOutset * 0.58f);
- const QPointF bottomHit = offsetPointAwayFromCenter(centerPoint, bottomPoint, scaleOutset * 0.58f);
- const QPointF leftHit = offsetPointAwayFromCenter(centerPoint, leftPoint, scaleOutset * 0.58f);
- const QPointF rightHit = offsetPointAwayFromCenter(centerPoint, rightPoint, scaleOutset * 0.58f);
+ const float edgeOutset = scaleOutset * 0.96f;
+ const QPointF topHit = offsetPointAwayFromCenter(centerPoint, topPoint, edgeOutset);
+ const QPointF bottomHit = offsetPointAwayFromCenter(centerPoint, bottomPoint, edgeOutset);
+ const QPointF leftHit = offsetPointAwayFromCenter(centerPoint, leftPoint, edgeOutset);
+ const QPointF rightHit = offsetPointAwayFromCenter(centerPoint, rightPoint, edgeOutset);
 
  if (allowsHandle(HandleType::Scale_TR) && checkLocalPoint(trHit)) return HandleType::Scale_TR;
  if (allowsHandle(HandleType::Scale_BL) && checkLocalPoint(blHit)) return HandleType::Scale_BL;
@@ -2018,6 +2073,9 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
   dragStartHasPositionKey_ = t3d.hasPositionKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
   dragStartHasRotationKey_ = t3d.hasRotationKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
   dragStartHasScaleKey_ = t3d.hasScaleKeyFrameAt(ArtifactCore::RationalTime(dragStartFrame_, 24));
+  dragStartPositionAnimated_ = t3d.getPositionKeyFrameCount() > 0;
+  dragStartRotationAnimated_ = t3d.getRotationKeyFrameCount() > 0;
+  dragStartScaleAnimated_ = t3d.getScaleKeyFrameCount() > 0;
   dragStartHasTextBoxState_ = false;
   dragStartGlobalTransform_ = layer_->getGlobalTransform();
   dragStartBoundingBox_ = layer_->transformedBoundingBox();
@@ -2096,6 +2154,30 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  QPointF delta = currentCanvasPos - dragStartCanvasPos_;
  ArtifactCore::RationalTime time(layer_->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
  auto &t3d = layer_->transform3D();
+ const auto setDragPosition = [&t3d, &time, this](float x, float y) {
+  if (dragStartHasPositionKey_ || dragStartPositionAnimated_) {
+   t3d.setPosition(time, x, y);
+  } else {
+   t3d.removePositionKeyFrameAt(time);
+   t3d.setInitialPosition(time, x, y);
+  }
+ };
+ const auto setDragRotation = [&t3d, &time, this](float degrees) {
+  if (dragStartHasRotationKey_ || dragStartRotationAnimated_) {
+   t3d.setRotation(time, degrees);
+  } else {
+   t3d.removeRotationKeyFrameAt(time);
+   t3d.setInitialRotation(time, degrees);
+  }
+ };
+ const auto setDragScale = [&t3d, &time, this](float x, float y) {
+  if (dragStartHasScaleKey_ || dragStartScaleAnimated_) {
+   t3d.setScale(time, x, y);
+  } else {
+   t3d.removeScaleKeyFrameAt(time);
+   t3d.setInitialScale(time, x, y);
+  }
+ };
  const auto shouldPublishDragMutation = [this]() -> bool {
   constexpr auto kDragMutationNotifyInterval = std::chrono::milliseconds(33);
   const auto now = std::chrono::steady_clock::now();
@@ -2149,7 +2231,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     newY += static_cast<float>(currentBBox.top() - alignedTop);
    }
 
-      t3d.setPosition(time, newX, newY);
+      setDragPosition(newX, newY);
       layer_->setDirty(LayerDirtyFlag::Transform);
       publishDragMutation();
   } else if (activeHandle_ == HandleType::Anchor) {
@@ -2188,9 +2270,9 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
                   static_cast<float>(targetLocalAnchor.x()),
                   static_cast<float>(targetLocalAnchor.y()),
                   t3d.anchorZ());
-    t3d.setPosition(time,
-                    dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
-                    dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
+    setDragPosition(
+        dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
+        dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
     layer_->setDirty(LayerDirtyFlag::Transform);
     if (isDragging_) {
      publishDragMutation();
@@ -2204,16 +2286,16 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    dragAccumulatedRotationDelta_ +=
        normalizeAngleDeltaDegrees(currentAngle - previousAngle);
    const float newRotation = dragStartRotation_ + dragAccumulatedRotationDelta_;
-   t3d.setRotation(time, newRotation);
+   setDragRotation(newRotation);
 
    const QPointF localOffset = pivotLocal - dragStartAnchor_;
    const QPointF startOffset = applyScaleRotateToVector(
        localOffset, dragStartScaleX_, dragStartScaleY_, dragStartRotation_);
    const QPointF newOffset = applyScaleRotateToVector(
        localOffset, dragStartScaleX_, dragStartScaleY_, newRotation);
-   t3d.setPosition(time,
-                   dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
-                   dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
+   setDragPosition(
+       dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
+       dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
    layer_->setDirty(LayerDirtyFlag::Transform);
    if (isDragging_) {
     publishDragMutation();
@@ -2243,10 +2325,10 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    const QPointF newOffset = applyScaleRotateToVector(
        localOffset, newScaleX, newScaleY, dragStartRotation_);
 
-   t3d.setScale(time, newScaleX, newScaleY);
-   t3d.setPosition(time,
-                   dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
-                   dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
+   setDragScale(newScaleX, newScaleY);
+   setDragPosition(
+       dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
+       dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
    layer_->setDirty(LayerDirtyFlag::Transform);
    publishDragMutation();
   } else if (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_R) {
@@ -2322,7 +2404,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
          newFixedLocal - dragStartAnchor_, dragStartScaleX_, dragStartScaleY_,
          dragStartRotation_);
 
-     t3d.setPosition(time, static_cast<float>(newPos.x()),
+     setDragPosition(static_cast<float>(newPos.x()),
                      static_cast<float>(newPos.y()));
      layer_->setDirty(LayerDirtyFlag::Source);
      layer_->setDirty(LayerDirtyFlag::Transform);
@@ -2339,8 +2421,8 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      const float newPosX = static_cast<float>(targetBox.left()) - newScaleX * (localLeft - anchorX);
      const float newPosY = static_cast<float>(targetBox.top()) - newScaleY * (localTop - anchorY);
 
-     t3d.setScale(time, newScaleX, newScaleY);
-     t3d.setPosition(time, newPosX, newPosY);
+     setDragScale(newScaleX, newScaleY);
+     setDragPosition(newPosX, newPosY);
 
      layer_->setDirty(LayerDirtyFlag::Transform);
      publishDragMutation();
@@ -2360,6 +2442,9 @@ void TransformGizmo::handleMouseRelease() {
    dragStartHasPositionKey_,
    dragStartHasRotationKey_,
    dragStartHasScaleKey_,
+   dragStartPositionAnimated_,
+   dragStartRotationAnimated_,
+   dragStartScaleAnimated_,
    dragStartHasTextBoxState_,
    static_cast<float>(dragStartLayerPos_.x()),
    static_cast<float>(dragStartLayerPos_.y()),

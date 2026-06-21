@@ -59,6 +59,27 @@ export namespace Artifact
  QDateTime lastModified;
  QStringList sequencePaths;
  QIcon icon;  // Optional: custom icon/thumbnail
+
+  bool operator==(const AssetMenuItem& other) const
+  {
+   return name == other.name &&
+          type == other.type &&
+          path == other.path &&
+          isFolder == other.isFolder &&
+          isSequence == other.isSequence &&
+          sequenceFrameCount == other.sequenceFrameCount &&
+          sequenceStartFrame == other.sequenceStartFrame &&
+          sequencePadding == other.sequencePadding &&
+          fileSizeBytes == other.fileSizeBytes &&
+          lastModified == other.lastModified &&
+          sequencePaths == other.sequencePaths &&
+          icon.cacheKey() == other.icon.cacheKey();
+  }
+
+  bool operator!=(const AssetMenuItem& other) const
+  {
+   return !(*this == other);
+  }
 };
 
  enum class AssetMenuRole

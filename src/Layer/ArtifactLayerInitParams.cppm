@@ -280,7 +280,7 @@ LayerType ArtifactLayerInitParams::layerType() const
 
  }
 
- ArtifactModel3DLayerInitParams::ArtifactModel3DLayerInitParams(const QString& name)
+ArtifactModel3DLayerInitParams::ArtifactModel3DLayerInitParams(const QString& name)
      : ArtifactLayerInitParams(name, LayerType::Model3D)
  {
  }
@@ -288,6 +288,25 @@ LayerType ArtifactLayerInitParams::layerType() const
  ArtifactModel3DLayerInitParams::~ArtifactModel3DLayerInitParams()
  {
  }
+
+ ArtifactFixedGeometry3DLayerInitParams::ArtifactFixedGeometry3DLayerInitParams(const QString& name, FixedGeometry3D geometry)
+     : ArtifactLayerInitParams(name, LayerType::Model3D), geometry_(geometry)
+ {
+ }
+
+ ArtifactFixedGeometry3DLayerInitParams::~ArtifactFixedGeometry3DLayerInitParams()
+ {
+ }
+
+FixedGeometry3D ArtifactFixedGeometry3DLayerInitParams::geometry() const
+{
+ return geometry_;
+}
+
+void ArtifactFixedGeometry3DLayerInitParams::setGeometry(FixedGeometry3D geometry)
+{
+ geometry_ = geometry;
+}
 
 
 };

@@ -2679,11 +2679,18 @@ void drawLayerForCompositionView(
       surface.fill(toQColor(color));
       applySurfaceAndDraw(surface, localRect, true);
     } else {
-      renderer->drawSolidRectTransformed(
-          static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
-          static_cast<float>(localRect.width()),
-          static_cast<float>(localRect.height()), globalTransform4x4, color,
-          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(
+          layer, globalTransform4x4,
+          [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+            renderer->drawSolidRectTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                color, baseOpacity * instanceWeight);
+          });
     }
     return;
   }
@@ -2698,11 +2705,18 @@ void drawLayerForCompositionView(
       surface.fill(toQColor(color));
       applySurfaceAndDraw(surface, localRect, true);
     } else {
-      renderer->drawSolidRectTransformed(
-          static_cast<float>(localRect.x()), static_cast<float>(localRect.y()),
-          static_cast<float>(localRect.width()),
-          static_cast<float>(localRect.height()), globalTransform4x4, color,
-          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(
+          layer, globalTransform4x4,
+          [&](const QMatrix4x4 &instanceTransform, float instanceWeight) {
+            renderer->drawSolidRectTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                color, baseOpacity * instanceWeight);
+          });
     }
     return;
   }
@@ -6634,6 +6648,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
   if (impl_->textGizmo_ && impl_->textGizmo_->isDragging()) {
     impl_->textGizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
     notifyViewportInteractionActivity();
+    impl_->invalidateBaseComposite();
     markRenderDirty();
     return;
   }
@@ -6642,7 +6657,7 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
     impl_->gizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
     if (impl_->gizmo_->isDragging()) {
       notifyViewportInteractionActivity();
-      // Phase 3: Use fixed-rate render tick instead of 33ms throttle + renderOneFrame().
+      impl_->invalidateBaseComposite();
       markRenderDirty();
       return;
     }

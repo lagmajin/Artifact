@@ -107,6 +107,7 @@ public: // Actions - can be triggered manually
     void clearInOutPoints();
     void goToInPoint();
     void goToOutPoint();
+    void moveWorkAreaToCurrentFrame();
     
     // Markers
     void addMarker(const QString& comment = QString());

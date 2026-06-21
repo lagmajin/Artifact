@@ -2433,7 +2433,9 @@ protected:
       return;
     }
 
-    if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+    if (!event->isAutoRepeat() &&
+        ArtifactCore::ShortcutBindings::instance().matches(
+            event, ArtifactCore::ShortcutId::PlaybackToggle)) {
       spacePressed_ = true;
       didSpacePan_ = false;
       setCursor(Qt::OpenHandCursor);
@@ -2651,7 +2653,9 @@ protected:
        return;
      }
 
-     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
+     if (!event->isAutoRepeat() &&
+         ArtifactCore::ShortcutBindings::instance().matches(
+             event, ArtifactCore::ShortcutId::PlaybackToggle)) {
        spacePressed_ = false;
        const bool shouldTogglePlayback = !didSpacePan_;
        didSpacePan_ = false;

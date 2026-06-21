@@ -83,6 +83,7 @@ public:
     static inline const QString ACTION_CLEAR_IN_OUT = "playback.clear_in_out";
     static inline const QString ACTION_GOTO_IN_POINT = "playback.goto_in_point";
     static inline const QString ACTION_GOTO_OUT_POINT = "playback.goto_out_point";
+    static inline const QString ACTION_MOVE_WORK_AREA = "playback.move_work_area";
     
     static inline const QString ACTION_ADD_MARKER = "playback.add_marker";
     static inline const QString ACTION_ADD_CHAPTER = "playback.add_chapter";
@@ -133,6 +134,7 @@ ArtifactPlaybackShortcuts::ArtifactPlaybackShortcuts(QObject* parent)
     am->registerAction(Impl::ACTION_CLEAR_IN_OUT, "Clear In/Out Points", "Clear both points", "Markers");
     am->registerAction(Impl::ACTION_GOTO_IN_POINT, "Go to In Point", "Jump to in point", "Navigation");
     am->registerAction(Impl::ACTION_GOTO_OUT_POINT, "Go to Out Point", "Jump to out point", "Navigation");
+    am->registerAction(Impl::ACTION_MOVE_WORK_AREA, "Move Work Area", "Move work area to current frame", "Timeline");
     
     // Marker actions
     am->registerAction(Impl::ACTION_ADD_MARKER, "Add Marker", "Add marker at current frame", "Markers");
@@ -178,6 +180,12 @@ ArtifactPlaybackShortcuts::ArtifactPlaybackShortcuts(QObject* parent)
                          clearAllMarkers();
                      });
     clearMarkersAction->setCategory("Markers");
+    auto* moveWorkAreaAction = am->createAction(
+        Impl::ACTION_MOVE_WORK_AREA,
+        "Move Work Area",
+        "Move work area to current frame",
+        [this]() { moveWorkAreaToCurrentFrame(); });
+    moveWorkAreaAction->setCategory("Timeline");
     
     // Speed actions
     am->registerAction(Impl::ACTION_SPEED_NORMAL, "Normal Speed", "Set playback speed to 100%", "Speed");
@@ -256,6 +264,8 @@ void ArtifactPlaybackShortcuts::registerDefaultBindings(KeyMap* keyMap) {
                       am->getAction(Impl::ACTION_GOTO_IN_POINT), "Go to In Point");
     keyMap->addBinding(Qt::Key_End, InputEvent::Modifiers(),
                       am->getAction(Impl::ACTION_GOTO_OUT_POINT), "Go to Out Point");
+    keyMap->addBinding(Qt::Key_W, kAlt,
+                      am->getAction(Impl::ACTION_MOVE_WORK_AREA), "Move Work Area");
     
     // ==================== Markers ====================
     
@@ -500,6 +510,13 @@ void ArtifactPlaybackShortcuts::goToOutPoint() {
         }
     }
     emit shortcutExecuted(Impl::ACTION_GOTO_OUT_POINT);
+}
+
+void ArtifactPlaybackShortcuts::moveWorkAreaToCurrentFrame() {
+    if (auto* service = ArtifactPlaybackService::instance()) {
+        service->moveWorkAreaToCurrentFrame();
+    }
+    emit shortcutExecuted(Impl::ACTION_MOVE_WORK_AREA);
 }
 
 // ==================== Marker Actions ====================

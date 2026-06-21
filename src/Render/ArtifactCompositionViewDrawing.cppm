@@ -649,12 +649,18 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       surface.fill(toQColor(color));
       applySurfaceAndDraw(surface, localRect, true);
     } else {
-      renderer->drawSolidRectTransformed(
-          static_cast<float>(localRect.x()),
-          static_cast<float>(localRect.y()),
-          static_cast<float>(localRect.width()),
-          static_cast<float>(localRect.height()), globalTransform4x4, color,
-          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(
+          layer, globalTransform4x4,
+          [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+            renderer->drawSolidRectTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                color, baseOpacity * instanceWeight);
+          });
     }
     return;
   }
@@ -669,12 +675,18 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       surface.fill(toQColor(color));
       applySurfaceAndDraw(surface, localRect, true);
     } else {
-      renderer->drawSolidRectTransformed(
-          static_cast<float>(localRect.x()),
-          static_cast<float>(localRect.y()),
-          static_cast<float>(localRect.width()),
-          static_cast<float>(localRect.height()), globalTransform4x4, color,
-          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity()));
+      const float baseOpacity =
+          (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());
+      drawWithClonerEffect(
+          layer, globalTransform4x4,
+          [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
+            renderer->drawSolidRectTransformed(
+                static_cast<float>(localRect.x()),
+                static_cast<float>(localRect.y()),
+                static_cast<float>(localRect.width()),
+                static_cast<float>(localRect.height()), instanceTransform,
+                color, baseOpacity * instanceWeight);
+          });
     }
     return;
   }

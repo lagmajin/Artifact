@@ -358,8 +358,6 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       copy.palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabledText);
       copy.palette.setColor(QPalette::Disabled, QPalette::Text, disabledText);
       copy.palette.setColor(QPalette::Disabled, QPalette::WindowText, disabledText);
-      copy.icon = QIcon();
-      copy.maxIconWidth = 0;
       painter->restore();
       return QProxyStyle::drawControl(element, &copy, painter, widget);
     }

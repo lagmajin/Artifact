@@ -155,6 +155,7 @@ public:
   void setFrameRate(const FrameRate &rate);
   void setWorkAreaStartAtCurrentFrame();
   void setWorkAreaEndAtCurrentFrame();
+  void moveWorkAreaToCurrentFrame();
 
   // Playback speed
   float playbackSpeed() const;

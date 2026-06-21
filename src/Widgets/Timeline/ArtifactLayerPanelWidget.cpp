@@ -58,6 +58,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Widgets.PrecomposeDialog;
 import Artifact.Composition.Abstract;
+import Translation.Manager;
 import Artifact.Layer.Abstract;
 import UI.ShortcutBindings;
 import Artifact.Layer.Image;
@@ -878,6 +879,11 @@ namespace {
 }
 
 namespace Artifact {
+
+QString tt(const char* key, const char* fallback)
+{
+  return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
+}
 
  // ============================================================================
  // ArtifactLayerPanelHeaderWidget Implementation
@@ -2840,16 +2846,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           const auto matteRefs = layer->matteReferences();
           if (matteIndex < static_cast<int>(matteRefs.size())) {
             QMenu menu(this);
-            QAction *focusAction = menu.addAction(QStringLiteral("Focus source"));
+            QAction *focusAction = menu.addAction(tt("layer_panel.focus_source", "Focus source"));
             focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_focus")},
                                              {QStringLiteral("index"), matteIndex}});
 
-            QMenu *typeMenu = menu.addMenu(QStringLiteral("Set matte type"));
+            QMenu *typeMenu = menu.addMenu(tt("layer_panel.set_matte_type", "Set matte type"));
             const QStringList typeLabels = {
-                QStringLiteral("Alpha"),
-                QStringLiteral("Luma"),
-                QStringLiteral("Inverted Alpha"),
-                QStringLiteral("Inverted Luma")};
+                tt("layer_panel.alpha", "Alpha"),
+                tt("layer_panel.luma", "Luma"),
+                tt("layer_panel.inverted_alpha", "Inverted Alpha"),
+                tt("layer_panel.inverted_luma", "Inverted Luma")};
             for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
               QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
               typeAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_type")},
@@ -3146,8 +3152,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
       const auto response = QMessageBox::question(
-          this, QStringLiteral("Delete Layer"),
-          QStringLiteral("Delete layer \"%1\"?").arg(layer->layerName()),
+          this, tt("layer_panel.delete_layer_title", "Delete Layer"),
+          tt("layer_panel.delete_layer_message", "Delete layer \"%1\"?").arg(layer->layerName()),
           QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
       if (response != QMessageBox::Yes) {
         return;
@@ -3172,8 +3178,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         return;
       }
       const auto response = QMessageBox::question(
-          this, QStringLiteral("Delete Layers"),
-          QStringLiteral("Delete %1 selected layers?").arg(selectedIds.size()),
+          this, tt("layer_panel.delete_layers_title", "Delete Layers"),
+          tt("layer_panel.delete_layers_message", "Delete %1 selected layers?").arg(selectedIds.size()),
           QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
       if (response != QMessageBox::Yes) {
         return;
@@ -3469,8 +3475,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                       : layer->layerName();
       bool ok = false;
       const QString newName = QInputDialog::getText(
-          this, QStringLiteral("Rename Composition"),
-          QStringLiteral("New composition name:"),
+          this, tt("layer_panel.rename_composition_title", "Rename Composition"),
+          tt("layer_panel.new_composition_name", "New composition name:"),
           QLineEdit::Normal, currentName, &ok);
       if (!ok || newName.trimmed().isEmpty()) {
         return;
@@ -3508,8 +3514,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (auto* svc = ArtifactProjectService::instance()) {
         bool ok = false;
         const QString newName = QInputDialog::getText(
-            this, QStringLiteral("Rename Layer"),
-            QStringLiteral("New layer name:"),
+            this, tt("layer_panel.rename_layer_title", "Rename Layer"),
+            tt("layer_panel.new_layer_name", "New layer name:"),
             QLineEdit::Normal, layer->layerName(), &ok);
         if (!ok || newName.trimmed().isEmpty()) {
           return;
@@ -3775,26 +3781,26 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
     const bool isImageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr;
     if (isImageLayer) {
-      menu.addAction("Replace Image...", [triggerReplaceLayerSource]() {
+      menu.addAction(tt("layer_panel.replace_image", "Replace Image..."), [triggerReplaceLayerSource]() {
         triggerReplaceLayerSource();
       });
       menu.addSeparator();
     }
     const bool isVideoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr;
     if (isVideoLayer) {
-      QMenu* videoMenu = menu.addMenu(QStringLiteral("Video"));
+      QMenu* videoMenu = menu.addMenu(QStringLiteral("ビデオ"));
       videoMenu->setIcon(QIcon(resolveIconPath("Studio/videocam.svg")));
       QAction* replaceVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/file_open.svg")),
-                                                      QStringLiteral("Replace Source..."));
+                                                      QStringLiteral("ソースを置換..."));
       QAction* reloadVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/replay.svg")),
-                                                    QStringLiteral("Reload Source"));
+                                                    QStringLiteral("ソースを再読み込み"));
       QAction* revealVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/folder_open.svg")),
-                                                    QStringLiteral("Reveal Source"));
+                                                    QStringLiteral("ソースを表示"));
       videoMenu->addSeparator();
       QAction* muteAudioAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/settings.svg")),
-                                                   QStringLiteral("Toggle Audio Mute"));
+                                                   QStringLiteral("音声ミュートを切替"));
       QAction* toggleVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/visibility.svg")),
-                                                     QStringLiteral("Toggle Video Enabled"));
+                                                     QStringLiteral("映像有効を切替"));
 
       const QString currentVideoPath = videoSourcePath();
       reloadVideoAct->setEnabled(!currentVideoPath.trimmed().isEmpty());
@@ -3834,7 +3840,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
         }
       });
       videoMenu->addSeparator();
-      QMenu* proxyMenu = videoMenu->addMenu(QStringLiteral("Proxy"));
+      QMenu* proxyMenu = videoMenu->addMenu(QStringLiteral("プロキシ"));
       proxyMenu->setIcon(QIcon(resolveIconPath("Studio/resolution_half.svg")));
       QAction* proxyNoneAct = proxyMenu->addAction(QStringLiteral("無効"));
       proxyNoneAct->setIcon(QIcon(resolveIconPath("Studio/resolution_full.svg")));
@@ -3888,19 +3894,19 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       menu.addSeparator();
     }
     if (!variants.empty()) {
-      menu.addAction(QStringLiteral("Variant Picker..."), [this, layer]() {
+      menu.addAction(QStringLiteral("バリアントを選択..."), [this, layer]() {
         showVariantPickerMenu(this, layer, QCursor::pos());
       });
       menu.addSeparator();
     }
     const auto matteRefs = layer->matteReferences();
     if (!matteRefs.empty()) {
-      QMenu *matteMenu = menu.addMenu(QStringLiteral("Track Matte"));
+      QMenu *matteMenu = menu.addMenu(QStringLiteral("トラックマット"));
       const QStringList typeLabels = {
-          QStringLiteral("Alpha"),
-          QStringLiteral("Luma"),
-          QStringLiteral("Inverted Alpha"),
-          QStringLiteral("Inverted Luma")};
+          QStringLiteral("アルファ"),
+          QStringLiteral("ルーマ"),
+          QStringLiteral("反転アルファ"),
+          QStringLiteral("反転ルーマ")};
       for (int matteIndex = 0; matteIndex < static_cast<int>(matteRefs.size()); ++matteIndex) {
         const auto &ref = matteRefs[matteIndex];
         QString sourceName = QStringLiteral("<missing>");
@@ -3911,12 +3917,12 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           }
         }
         QMenu *refMenu = matteMenu->addMenu(
-            QStringLiteral("Matte %1: %2").arg(matteIndex + 1).arg(sourceName));
-        QAction *focusAction = refMenu->addAction(QStringLiteral("Focus source"));
+            QStringLiteral("マット %1: %2").arg(matteIndex + 1).arg(sourceName));
+        QAction *focusAction = refMenu->addAction(QStringLiteral("ソースにフォーカス"));
         focusAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_focus")},
                                          {QStringLiteral("index"), matteIndex}});
 
-        QMenu *typeMenu = refMenu->addMenu(QStringLiteral("Set matte type"));
+        QMenu *typeMenu = refMenu->addMenu(QStringLiteral("マット種別を設定"));
         for (int typeIndex = 0; typeIndex < typeLabels.size(); ++typeIndex) {
           QAction *typeAction = typeMenu->addAction(typeLabels[typeIndex]);
           typeAction->setData(QVariantMap{{QStringLiteral("kind"), QStringLiteral("matte_type")},
@@ -3927,7 +3933,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       menu.addSeparator();
     }
     QMenu* stateMenu = menu.addMenu(QStringLiteral("状態"));
-    stateMenu->addAction(QStringLiteral("表示/非表示を切替"), [this, layer]() {
+    stateMenu->addAction(QStringLiteral("表示を切替"), [this, layer]() {
       if (!layer) {
         return;
       }
@@ -3964,7 +3970,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     });
     stateMenu->addSeparator();
-    stateMenu->addAction(QStringLiteral("Smart Solo"), [this, layer]() {
+    stateMenu->addAction(QStringLiteral("スマートソロ"), [this, layer]() {
       if (!layer) {
         return;
       }
@@ -3975,10 +3981,10 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     });
 
     QMenu* utilityMenu = menu.addMenu(QStringLiteral("レイヤー操作"));
-    utilityMenu->addAction(QStringLiteral("Inspector を開く"), [triggerOpenInspector]() {
+    utilityMenu->addAction(QStringLiteral("インスペクターを開く"), [triggerOpenInspector]() {
       triggerOpenInspector();
     });
-    utilityMenu->addAction(QStringLiteral("Properties を開く"), [triggerOpenProperties]() {
+    utilityMenu->addAction(QStringLiteral("プロパティを開く"), [triggerOpenProperties]() {
       triggerOpenProperties();
     });
     utilityMenu->addSeparator();
@@ -4002,12 +4008,12 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     // Precompose is valid for any non-empty selection (single layer included),
     // so it lives outside the multi-selection-only block to match the AE flow.
     if (!selectedIds.isEmpty()) {
-      menu.addAction(QStringLiteral("Precompose Selected Layers"), [triggerPrecomposeSelectedLayers]() {
+      menu.addAction(QStringLiteral("選択レイヤーをプリコンポーズ"), [triggerPrecomposeSelectedLayers]() {
         triggerPrecomposeSelectedLayers();
       });
     }
     if (selectedIds.size() > 1) {
-      menu.addAction(QStringLiteral("Duplicate Selected Layers"), [triggerDuplicateSelectedLayers]() {
+      menu.addAction(QStringLiteral("選択レイヤーを複製"), [triggerDuplicateSelectedLayers]() {
         triggerDuplicateSelectedLayers();
       });
       QAction* groupSelectedAct = menu.addAction(QStringLiteral("グループ化..."), [triggerGroupSelectedLayers]() {
@@ -4015,33 +4021,33 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       });
       groupSelectedAct->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
       menu.addSeparator();
-      QMenu* batchStateMenu = menu.addMenu(QStringLiteral("Batch State"));
-      batchStateMenu->addAction(QStringLiteral("Show Selected"), [triggerSelectedVisibility]() {
+      QMenu* batchStateMenu = menu.addMenu(QStringLiteral("一括状態"));
+      batchStateMenu->addAction(QStringLiteral("表示"), [triggerSelectedVisibility]() {
         triggerSelectedVisibility(true);
       });
-      batchStateMenu->addAction(QStringLiteral("Hide Selected"), [triggerSelectedVisibility]() {
+      batchStateMenu->addAction(QStringLiteral("非表示"), [triggerSelectedVisibility]() {
         triggerSelectedVisibility(false);
       });
-      batchStateMenu->addAction(QStringLiteral("Lock Selected"), [triggerSelectedLock]() {
+      batchStateMenu->addAction(QStringLiteral("ロック"), [triggerSelectedLock]() {
         triggerSelectedLock(true);
       });
-      batchStateMenu->addAction(QStringLiteral("Unlock Selected"), [triggerSelectedLock]() {
+      batchStateMenu->addAction(QStringLiteral("ロック解除"), [triggerSelectedLock]() {
         triggerSelectedLock(false);
       });
-      batchStateMenu->addAction(QStringLiteral("Solo Selected"), [triggerSelectedSolo]() {
+      batchStateMenu->addAction(QStringLiteral("ソロ"), [triggerSelectedSolo]() {
         triggerSelectedSolo(true);
       });
-      batchStateMenu->addAction(QStringLiteral("Unsolo Selected"), [triggerSelectedSolo]() {
+      batchStateMenu->addAction(QStringLiteral("ソロ解除"), [triggerSelectedSolo]() {
         triggerSelectedSolo(false);
       });
-      batchStateMenu->addAction(QStringLiteral("Shy Selected"), [triggerSelectedShy]() {
+      batchStateMenu->addAction(QStringLiteral("シャイ"), [triggerSelectedShy]() {
         triggerSelectedShy(true);
       });
-      batchStateMenu->addAction(QStringLiteral("Unshy Selected"), [triggerSelectedShy]() {
+      batchStateMenu->addAction(QStringLiteral("シャイ解除"), [triggerSelectedShy]() {
         triggerSelectedShy(false);
       });
       menu.addSeparator();
-      menu.addAction(QStringLiteral("Delete Selected Layers"), [triggerDeleteSelectedLayers]() {
+      menu.addAction(QStringLiteral("選択レイヤーを削除"), [triggerDeleteSelectedLayers]() {
         triggerDeleteSelectedLayers();
       });
       menu.addSeparator();

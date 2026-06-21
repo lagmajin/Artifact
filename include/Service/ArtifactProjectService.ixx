@@ -108,6 +108,9 @@ export namespace Artifact {
   void addLayer(const CompositionID& id, const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params);
   void addLayerToCurrentComposition(const ArtifactLayerInitParams& params, bool selectNewLayer);
+  void addLayerToCurrentComposition(const ArtifactLayerInitParams& params,
+                                    bool selectNewLayer,
+                                    bool placeAtCurrentFrame);
   bool groupSelectedLayersInCurrentComposition(const UniString& groupName = UniString(QStringLiteral("Group 1")));
   bool ungroupSelectedGroupInCurrentComposition();
   bool removeLayerFromComposition(const CompositionID& compositionId, const LayerID& layerId);

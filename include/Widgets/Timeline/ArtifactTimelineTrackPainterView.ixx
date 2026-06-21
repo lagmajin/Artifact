@@ -141,6 +141,10 @@ export namespace Artifact
   QVector<KeyframeMarkerVisual> selectedKeyframeMarkers() const;
   KeyframeMarkerVisual hoveredKeyframeMarker() const;
   void selectAllKeyframeMarkers();
+  bool reverseSelectedKeyframeMarkers();
+  bool reverseAllKeyframesInCurrentLayer();
+  bool reverseAllKeyframesInSelectedLayers();
+  bool reverseAllKeyframesInComposition();
   void selectSamePropertyKeyframeMarkers();
   void selectNeighborKeyframeMarkers();
   void clearKeyframeSelection();

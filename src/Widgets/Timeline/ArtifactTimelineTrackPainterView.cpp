@@ -60,6 +60,7 @@ import Artifact.Timeline.KeyBinding;
 import Artifact.Service.Project;
 import Event.Bus;
 import Artifact.Event.Types;
+import Translation.Manager;
 import File.TypeDetector;
 import Frame.Position;
 import Property.Abstract;
@@ -72,6 +73,11 @@ namespace Artifact {
 W_OBJECT_IMPL(ArtifactTimelineTrackPainterView)
 
 namespace {
+QString tt(const char* key, const char* fallback)
+{
+  return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
+}
+
 std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr &layer, const QString &propertyPath);
 
@@ -2323,24 +2329,24 @@ QString formatClipTooltip(
   const QString kindText = [&]() {
     switch (clip.kind) {
     case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Audio:
-      return QStringLiteral("Kind: Audio");
+      return tt("timeline.kind_audio", "Kind: Audio");
     case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Video:
-      return QStringLiteral("Kind: Video");
+      return tt("timeline.kind_video", "Kind: Video");
     case ArtifactTimelineTrackPainterView::TrackClipVisual::Kind::Generic:
     default:
-      return QStringLiteral("Kind: Generic");
+      return tt("timeline.kind_generic", "Kind: Generic");
     }
   }();
-  const QString startText = QStringLiteral("Start: F%1")
+  const QString startText = tt("timeline.start_frame", "Start: F%1")
                                 .arg(QString::number(clip.startFrame, 'f', 1));
   const QString endText =
-      QStringLiteral("End: F%1")
+      tt("timeline.end_frame", "End: F%1")
           .arg(QString::number(clip.startFrame + clip.durationFrame, 'f', 1));
   const QString durationText =
-      QStringLiteral("Duration: %1 frames")
+      tt("timeline.duration_frames", "Duration: %1 frames")
           .arg(QString::number(clip.durationFrame, 'f', 1));
-  const QString stateText = clip.selected ? QStringLiteral("State: Selected")
-                                          : QStringLiteral("State: Idle");
+  const QString stateText = clip.selected ? tt("timeline.state_selected", "State: Selected")
+                                          : tt("timeline.state_idle", "State: Idle");
   QStringList lines;
   lines << title << startText << endText << durationText << stateText << kindText;
   if (!clip.waveformPeaks.isEmpty()) {
@@ -2367,41 +2373,41 @@ QString formatMarkerTooltip(
                 marker.propertyPath)
           : marker.label;
   const QString frameText =
-      QStringLiteral("Frame: F%1").arg(QString::number(marker.frame, 'f', 1));
-  const QString pathText = QStringLiteral("Path: %1").arg(marker.propertyPath);
-  const QString laneText = marker.laneCount > 1 ? QStringLiteral("Lane: %1/%2")
+      tt("timeline.frame", "Frame: F%1").arg(QString::number(marker.frame, 'f', 1));
+  const QString pathText = tt("timeline.path", "Path: %1").arg(marker.propertyPath);
+  const QString laneText = marker.laneCount > 1 ? tt("timeline.lane_with_count", "Lane: %1/%2")
                                                       .arg(marker.laneIndex + 1)
                                                       .arg(marker.laneCount)
-                                                : QStringLiteral("Lane: 1/1");
-  const QString easingText = QStringLiteral("Incoming: %1 | Outgoing: %2")
-                                 .arg(marker.incomingEased ? QStringLiteral("eased")
-                                                           : QStringLiteral("linear"))
-                                 .arg(marker.outgoingEased ? QStringLiteral("eased")
-                                                           : QStringLiteral("linear"));
+                                                : tt("timeline.lane_single", "Lane: 1/1");
+  const QString easingText = tt("timeline.incoming_outgoing", "Incoming: %1 | Outgoing: %2")
+                                 .arg(marker.incomingEased ? tt("timeline.eased", "eased")
+                                                           : tt("timeline.linear", "linear"))
+                                 .arg(marker.outgoingEased ? tt("timeline.eased", "eased")
+                                                           : tt("timeline.linear", "linear"));
   const QString interpolationText =
-      QStringLiteral("Interpolation: %1")
+      tt("timeline.interpolation_value", "Interpolation: %1")
           .arg(keyframeInterpolationLabel(marker.interpolation));
   const QString anchorText =
-      QStringLiteral("Anchor: %1").arg(keyframeAnchorLabel(marker.anchor));
+      tt("timeline.anchor_value", "Anchor: %1").arg(keyframeAnchorLabel(marker.anchor));
   const QString rovingText =
-      marker.roving ? QStringLiteral("Roving: On")
-                    : QStringLiteral("Roving: Off");
+      marker.roving ? tt("timeline.roving_on", "Roving: On")
+                    : tt("timeline.roving_off", "Roving: Off");
   const QString colorText = marker.labelColor.isValid()
-                                ? QStringLiteral("Label: %1").arg(marker.labelColor.name())
-                                : QStringLiteral("Label: None");
+                                ? tt("timeline.label_value", "Label: %1").arg(marker.labelColor.name())
+                                : tt("timeline.label_none", "Label: None");
   const QString selectionText =
       marker.selected
-          ? QStringLiteral("Selection: Selected keyframe")
-          : (marker.selectedLayer ? QStringLiteral("Selection: Selected layer")
-                                  : QStringLiteral("Selection: Idle"));
+          ? tt("timeline.selection_keyframe", "Selection: Selected keyframe")
+          : (marker.selectedLayer ? tt("timeline.selection_layer", "Selection: Selected layer")
+                                  : tt("timeline.selection_idle", "Selection: Idle"));
   const QString relationText =
       markerAtCurrentFrame(marker, currentFrame)
-          ? QStringLiteral("Relation: At current frame")
-          : (nearestToCurrent ? QStringLiteral("Relation: Nearest to current")
-                              : QStringLiteral("Relation: Off current"));
+          ? tt("timeline.relation_current", "Relation: At current frame")
+          : (nearestToCurrent ? tt("timeline.relation_nearest", "Relation: Nearest to current")
+                              : tt("timeline.relation_off_current", "Relation: Off current"));
   const QString hoverText =
-      hovered ? QStringLiteral("State: Hovered")
-              : QStringLiteral("State: Visible");
+      hovered ? tt("timeline.state_hovered", "State: Hovered")
+              : tt("timeline.state_visible", "State: Visible");
   QString tooltip = label + QStringLiteral("\n") + frameText + QStringLiteral("\n") +
          pathText + QStringLiteral("\n") + laneText + QStringLiteral("\n") +
          easingText + QStringLiteral("\n") + interpolationText +
@@ -2411,7 +2417,7 @@ QString formatMarkerTooltip(
          QStringLiteral("\n") + relationText + QStringLiteral("\n") +
          hoverText;
   if (marker.selected) {
-    tooltip += QStringLiteral("\nShortcuts: Delete / Backspace remove, Ctrl+D duplicates here, Left / Right move, Shift+Left / Shift+Right move by 10 frames.");
+    tooltip += QStringLiteral("\n") + tt("timeline.shortcuts_keyframe", "Shortcuts: Delete / Backspace remove, Ctrl+D duplicates here, Left / Right move, Shift+Left / Shift+Right move by 10 frames.");
   }
   return tooltip;
 }
@@ -2420,26 +2426,26 @@ QString formatKeyframeDragTooltip(const int selectionCount, const double deltaFr
                                   const double targetFrame,
                                   const QString &snapLabel) {
   const QString countText =
-      selectionCount == 1 ? QStringLiteral("1 keyframe")
-                          : QStringLiteral("%1 keyframes").arg(selectionCount);
-  QString tooltip = QStringLiteral("Moving %1\nDelta: %2 frames\nTarget: F%3")
+      selectionCount == 1 ? tt("timeline.one_keyframe", "1 keyframe")
+                          : tt("timeline.many_keyframes", "%1 keyframes").arg(selectionCount);
+  QString tooltip = tt("timeline.moving_keyframes", "Moving %1\nDelta: %2 frames\nTarget: F%3")
       .arg(countText)
       .arg(QString::number(deltaFrames, 'f', 1))
       .arg(QString::number(targetFrame, 'f', 1));
   if (!snapLabel.isEmpty()) {
-    tooltip += QStringLiteral("\nSnap: %1").arg(snapLabel);
+    tooltip += QStringLiteral("\n") + tt("timeline.snap_label", "Snap: %1").arg(snapLabel);
   }
   return tooltip;
 }
 
 QString formatKeyframeCollisionLabel(const int count) {
   return count == 1
-             ? QStringLiteral("collides with 1 existing keyframe")
-             : QStringLiteral("collides with %1 existing keyframes").arg(count);
+             ? tt("timeline.collision_single", "collides with 1 existing keyframe")
+             : tt("timeline.collision_many", "collides with %1 existing keyframes").arg(count);
 }
 
 QString formatKeyframeNoun(const int count) {
-  return count == 1 ? QStringLiteral("keyframe") : QStringLiteral("keyframes");
+  return count == 1 ? tt("timeline.keyframe_singular", "keyframe") : tt("timeline.keyframe_plural", "keyframes");
 }
 
 bool triggerTimelineShortcut(QWidget *source, const int key,
@@ -2454,7 +2460,7 @@ bool triggerTimelineShortcut(QWidget *source, const int key,
 }
 
 QString formatFrameUnit(const qint64 count) {
-  return count == 1 ? QStringLiteral("frame") : QStringLiteral("frames");
+  return count == 1 ? tt("timeline.frame_singular", "frame") : tt("timeline.frame_plural", "frames");
 }
 
 QColor keyframeColorLabelColor(const ArtifactCore::KeyFrame::ColorLabel label) {
@@ -2511,44 +2517,44 @@ QColor keyframeInterpolationColor(const ArtifactCore::InterpolationType type,
 QString keyframeAnchorLabel(const ArtifactCore::KeyFrame::Anchor anchor) {
   switch (anchor) {
   case ArtifactCore::KeyFrame::Anchor::LockToIn:
-    return QStringLiteral("Lock to In");
+    return tt("timeline.lock_to_in", "Lock to In");
   case ArtifactCore::KeyFrame::Anchor::LockToOut:
-    return QStringLiteral("Lock to Out");
+    return tt("timeline.lock_to_out", "Lock to Out");
   case ArtifactCore::KeyFrame::Anchor::StretchWithLayer:
-    return QStringLiteral("Stretch with Layer");
+    return tt("timeline.stretch_with_layer", "Stretch with Layer");
   case ArtifactCore::KeyFrame::Anchor::Absolute:
   default:
-    return QStringLiteral("Absolute");
+    return tt("timeline.absolute", "Absolute");
   }
 }
 
 QString keyframeInterpolationLabel(const ArtifactCore::InterpolationType type) {
   switch (type) {
   case ArtifactCore::InterpolationType::Constant:
-    return QStringLiteral("Hold");
+    return tt("timeline.hold", "Hold");
   case ArtifactCore::InterpolationType::EaseIn:
-    return QStringLiteral("Ease In");
+    return tt("timeline.ease_in", "Ease In");
   case ArtifactCore::InterpolationType::EaseOut:
-    return QStringLiteral("Ease Out");
+    return tt("timeline.ease_out", "Ease Out");
   case ArtifactCore::InterpolationType::EaseInOut:
-    return QStringLiteral("Ease In/Out");
+    return tt("timeline.ease_in_out", "Ease In/Out");
   case ArtifactCore::InterpolationType::Bezier:
-    return QStringLiteral("Bezier");
+    return tt("timeline.bezier", "Bezier");
   case ArtifactCore::InterpolationType::BackOut:
-    return QStringLiteral("Back");
+    return tt("timeline.back", "Back");
   case ArtifactCore::InterpolationType::BounceOut:
-    return QStringLiteral("Bounce");
+    return tt("timeline.bounce", "Bounce");
   case ArtifactCore::InterpolationType::ElasticOut:
-    return QStringLiteral("Elastic");
+    return tt("timeline.elastic", "Elastic");
   case ArtifactCore::InterpolationType::Sine:
-    return QStringLiteral("Sine");
+    return tt("timeline.sine", "Sine");
   case ArtifactCore::InterpolationType::Cubic:
-    return QStringLiteral("Cubic");
+    return tt("timeline.cubic", "Cubic");
   case ArtifactCore::InterpolationType::Exponential:
-    return QStringLiteral("Exponential");
+    return tt("timeline.exponential", "Exponential");
   case ArtifactCore::InterpolationType::Linear:
   default:
-    return QStringLiteral("Linear");
+    return tt("timeline.linear", "Linear");
   }
 }
 
@@ -3975,6 +3981,305 @@ ArtifactTimelineTrackPainterView::selectedKeyframeMarkers() const {
     }
   }
   return selected;
+}
+
+bool ArtifactTimelineTrackPainterView::reverseSelectedKeyframeMarkers() {
+  if (!impl_) {
+    return false;
+  }
+
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return false;
+  }
+
+  QVector<KeyframeMarkerVisual> targets = selectedKeyframeMarkers();
+  if (targets.isEmpty() && impl_->hoverMarkerIndex_ >= 0 &&
+      impl_->hoverMarkerIndex_ < impl_->keyframeMarkers_.size()) {
+    targets.push_back(impl_->keyframeMarkers_[impl_->hoverMarkerIndex_]);
+  }
+  if (targets.isEmpty()) {
+    return false;
+  }
+
+  const auto refs = collectPropertyRefsFromMarkers(targets);
+  const auto beforeSnapshots =
+      captureKeyframePropertySnapshots(composition, refs);
+  const QSet<QString> beforeSelectionKeys = impl_->selectedMarkerKeys_;
+
+  KeyframeRangeTransformOptions options;
+  options.kind = KeyframeRangeTransformKind::Reverse;
+  QSet<QString> nextSelectionKeys;
+  int affectedCount = 0;
+  const bool changed = applySelectedKeyframeRangeTransform(
+      composition, targets, options, &nextSelectionKeys, &affectedCount);
+  if (!changed) {
+    return false;
+  }
+
+  const auto afterSnapshots =
+      captureKeyframePropertySnapshots(composition, refs);
+  if (auto *mgr = UndoManager::instance()) {
+    QPointer<ArtifactTimelineTrackPainterView> self(this);
+    const QSet<QString> afterSelectionKeys = nextSelectionKeys;
+    mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+        QStringLiteral("Reverse Selected Keyframes"),
+        [self, composition, afterSnapshots, afterSelectionKeys]() {
+          applyKeyframePropertySnapshots(composition, afterSnapshots);
+          if (!self) {
+            return;
+          }
+          ArtifactLayerSelectionManager *selectionManager = nullptr;
+          if (auto *app = ArtifactApplicationManager::instance()) {
+            selectionManager = app->layerSelectionManager();
+          }
+          self->syncSelectionState(composition, selectionManager,
+                                   self->impl_->trackRows_, true);
+          self->setSelectedKeyframeKeys(afterSelectionKeys);
+        },
+        [self, composition, beforeSnapshots, beforeSelectionKeys]() {
+          applyKeyframePropertySnapshots(composition, beforeSnapshots);
+          if (!self) {
+            return;
+          }
+          ArtifactLayerSelectionManager *selectionManager = nullptr;
+          if (auto *app = ArtifactApplicationManager::instance()) {
+            selectionManager = app->layerSelectionManager();
+          }
+          self->syncSelectionState(composition, selectionManager,
+                                   self->impl_->trackRows_, true);
+          self->setSelectedKeyframeKeys(beforeSelectionKeys);
+        }));
+  }
+
+  impl_->selectedMarkerKeys_ = std::move(nextSelectionKeys);
+  ArtifactLayerSelectionManager *selectionManager = nullptr;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+  syncSelectionState(composition, selectionManager, impl_->trackRows_, true);
+  Q_EMIT timelineDebugMessage(
+      QStringLiteral("Reversed %1 %2")
+          .arg(affectedCount)
+          .arg(formatKeyframeNoun(affectedCount)));
+  update();
+  return true;
+}
+
+namespace {
+QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>
+collectAllKeyframeMarkersForLayers(
+    const QVector<ArtifactAbstractLayerPtr> &layers) {
+  QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual> markers;
+  for (const auto &layer : layers) {
+    if (!layer) {
+      continue;
+    }
+    for (const auto &group : layer->getLayerPropertyGroups()) {
+      for (const auto &property : group.sortedProperties()) {
+        if (!property || !property->isAnimatable()) {
+          continue;
+        }
+        const auto keyframes = property->getKeyFrames();
+        for (const auto &keyframe : keyframes) {
+          ArtifactTimelineTrackPainterView::KeyframeMarkerVisual marker;
+          marker.layerId = layer->id();
+          marker.propertyPath = property->getName();
+          marker.frame = static_cast<double>(
+              keyframe.time.rescaledTo(keyframe.time.scale()));
+          marker.value = keyframe.value;
+          marker.interpolation = keyframe.interpolation;
+          marker.anchor = keyframe.anchor;
+          marker.roving = keyframe.roving;
+          markers.push_back(std::move(marker));
+        }
+      }
+    }
+  }
+  return markers;
+}
+
+bool reverseAllKeyframeMarkersWithSelection(
+    ArtifactTimelineTrackPainterView *self,
+    const ArtifactCompositionPtr &composition,
+    const QVector<ArtifactAbstractLayerPtr> &layers,
+    const QVector<TimelineRowDescriptor> &trackRows,
+    const QSet<QString> &beforeSelectionKeys,
+    const QString &undoText,
+    const QString &debugText) {
+  if (!self || !composition || layers.isEmpty()) {
+    return false;
+  }
+
+  const auto targets = collectAllKeyframeMarkersForLayers(layers);
+  if (targets.isEmpty()) {
+    return false;
+  }
+
+  const auto refs = collectPropertyRefsFromMarkers(targets);
+  const auto beforeSnapshots =
+      captureKeyframePropertySnapshots(composition, refs);
+
+  KeyframeRangeTransformOptions options;
+  options.kind = KeyframeRangeTransformKind::Reverse;
+  QSet<QString> nextSelectionKeys;
+  int affectedCount = 0;
+  const bool changed = applySelectedKeyframeRangeTransform(
+      composition, targets, options, &nextSelectionKeys, &affectedCount);
+  if (!changed) {
+    return false;
+  }
+
+  const auto afterSnapshots =
+      captureKeyframePropertySnapshots(composition, refs);
+  if (auto *mgr = UndoManager::instance()) {
+    QPointer<ArtifactTimelineTrackPainterView> view(self);
+    const QSet<QString> afterSelectionKeys = nextSelectionKeys;
+    mgr->push(std::make_unique<TimelineKeyframeSnapshotCommand>(
+        undoText,
+        [view, composition, afterSnapshots, afterSelectionKeys, trackRows]() {
+          applyKeyframePropertySnapshots(composition, afterSnapshots);
+          if (!view) {
+            return;
+          }
+          ArtifactLayerSelectionManager *selectionManager = nullptr;
+          if (auto *app = ArtifactApplicationManager::instance()) {
+            selectionManager = app->layerSelectionManager();
+          }
+          view->syncSelectionState(composition, selectionManager, trackRows, true);
+          view->setSelectedKeyframeKeys(afterSelectionKeys);
+        },
+        [view, composition, beforeSnapshots, beforeSelectionKeys, trackRows]() {
+          applyKeyframePropertySnapshots(composition, beforeSnapshots);
+          if (!view) {
+            return;
+          }
+          ArtifactLayerSelectionManager *selectionManager = nullptr;
+          if (auto *app = ArtifactApplicationManager::instance()) {
+            selectionManager = app->layerSelectionManager();
+          }
+          view->syncSelectionState(composition, selectionManager, trackRows, true);
+          view->setSelectedKeyframeKeys(beforeSelectionKeys);
+        }));
+  }
+
+  self->setSelectedKeyframeKeys(nextSelectionKeys);
+  ArtifactLayerSelectionManager *selectionManager = nullptr;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    selectionManager = app->layerSelectionManager();
+  }
+  self->syncSelectionState(composition, selectionManager, trackRows, true);
+  Q_EMIT self->timelineDebugMessage(
+      QStringLiteral("%1 %2 %3")
+          .arg(debugText)
+          .arg(affectedCount)
+          .arg(formatKeyframeNoun(affectedCount)));
+  self->update();
+  return true;
+}
+} // namespace
+
+bool ArtifactTimelineTrackPainterView::reverseAllKeyframesInCurrentLayer() {
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return false;
+  }
+
+  ArtifactAbstractLayerPtr layer;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    if (auto *selection = app->layerSelectionManager()) {
+      layer = selection->currentLayer();
+    }
+  }
+  if (!layer) {
+    return false;
+  }
+
+  return reverseAllKeyframeMarkersWithSelection(
+      this, composition, QVector<ArtifactAbstractLayerPtr>{layer},
+      impl_ ? impl_->trackRows_ : QVector<TimelineRowDescriptor>{},
+      impl_ ? impl_->selectedMarkerKeys_ : QSet<QString>{},
+      QStringLiteral("Reverse All Keyframes in Layer"),
+      QStringLiteral("Reversed all keyframes in layer:"));
+}
+
+bool ArtifactTimelineTrackPainterView::reverseAllKeyframesInSelectedLayers() {
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return false;
+  }
+
+  QVector<ArtifactAbstractLayerPtr> layers;
+  if (auto *app = ArtifactApplicationManager::instance()) {
+    if (auto *selection = app->layerSelectionManager()) {
+      const auto selectedLayers = selection->selectedLayers();
+      if (selectedLayers.isEmpty()) {
+        if (auto currentLayer = selection->currentLayer()) {
+          layers.push_back(currentLayer);
+        }
+      } else {
+        if (auto currentLayer = selection->currentLayer();
+            currentLayer && selectedLayers.contains(currentLayer)) {
+          layers.push_back(currentLayer);
+        }
+        for (const auto &selectedLayer : selectedLayers) {
+          if (!selectedLayer ||
+              (!layers.isEmpty() && selectedLayer == layers.front())) {
+            continue;
+          }
+          layers.push_back(selectedLayer);
+        }
+      }
+    }
+  }
+  if (layers.isEmpty()) {
+    return false;
+  }
+
+  return reverseAllKeyframeMarkersWithSelection(
+      this, composition, layers,
+      impl_ ? impl_->trackRows_ : QVector<TimelineRowDescriptor>{},
+      impl_ ? impl_->selectedMarkerKeys_ : QSet<QString>{},
+      QStringLiteral("Reverse All Keyframes in Selected Layers"),
+      QStringLiteral("Reversed all keyframes in selected layers:"));
+}
+
+bool ArtifactTimelineTrackPainterView::reverseAllKeyframesInComposition() {
+  ArtifactCompositionPtr composition;
+  if (auto *svc = ArtifactProjectService::instance()) {
+    composition = svc->currentComposition().lock();
+  }
+  if (!composition) {
+    return false;
+  }
+
+  QVector<ArtifactAbstractLayerPtr> layers;
+  const auto allLayers = composition->allLayer();
+  layers.reserve(allLayers.size());
+  for (const auto &layer : allLayers) {
+    if (layer) {
+      layers.push_back(layer);
+    }
+  }
+  if (layers.isEmpty()) {
+    return false;
+  }
+
+  return reverseAllKeyframeMarkersWithSelection(
+      this, composition, layers,
+      impl_ ? impl_->trackRows_ : QVector<TimelineRowDescriptor>{},
+      impl_ ? impl_->selectedMarkerKeys_ : QSet<QString>{},
+      QStringLiteral("Reverse All Keyframes in Composition"),
+      QStringLiteral("Reversed all keyframes in composition:"));
 }
 
 ArtifactTimelineTrackPainterView::KeyframeMarkerVisual
@@ -6198,18 +6503,18 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *jumpToMarkerAct = nullptr;
   if (markerUnderCursor) {
     const auto &marker = impl_->keyframeMarkers_[markerHit.markerIndex];
-    const QString label =
-         marker.label.isEmpty() ? QStringLiteral("Keyframe") : marker.label;
-     jumpToMarkerAct = menu.addAction(QStringLiteral("Jump to %1").arg(label));
+     const QString label =
+         marker.label.isEmpty() ? tt("timeline.marker", "Keyframe") : marker.label;
+     jumpToMarkerAct = menu.addAction(tt("timeline.jump_to_marker", "Jump to %1").arg(label));
      setActionIcon(jumpToMarkerAct, QStringLiteral("timeline_keyframe_select"));
    }
   QAction *addKeyframeAct = nullptr;
   QAction *removeKeyframeAct = nullptr;
   if (canEditFocusedProperty) {
     menu.addSeparator();
-    addKeyframeAct = menu.addAction(QStringLiteral("Add Keyframe at Playhead"));
+    addKeyframeAct = menu.addAction(tt("timeline.add_keyframe_at_playhead", "Add Keyframe at Playhead"));
     removeKeyframeAct =
-        menu.addAction(QStringLiteral("Remove Keyframe at Playhead"));
+        menu.addAction(tt("timeline.remove_keyframe_at_playhead", "Remove Keyframe at Playhead"));
     setActionIcon(addKeyframeAct, QStringLiteral("timeline_keyframe_add"));
     setActionIcon(removeKeyframeAct, QStringLiteral("timeline_keyframe_remove"));
   }
@@ -6231,60 +6536,69 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   if (hasKeyframeTarget) {
     menu.addSeparator();
     selectSamePropertyKeyframesAct =
-        menu.addAction(QStringLiteral("Select Same Property Keyframes"));
+        menu.addAction(tt("timeline.select_same_property_keyframes", "Select Same Property Keyframes"));
     selectNeighborKeyframesAct =
-        menu.addAction(QStringLiteral("Select Neighbor Keyframes"));
+        menu.addAction(tt("timeline.select_neighbor_keyframes", "Select Neighbor Keyframes"));
     setActionIcon(selectSamePropertyKeyframesAct, QStringLiteral("timeline_keyframe_select"));
     setActionIcon(selectNeighborKeyframesAct, QStringLiteral("timeline_keyframe_select"));
   }
   QAction *duplicateSelectedKeyframesAct = nullptr;
   if (hasKeyframeTarget) {
     duplicateSelectedKeyframesAct =
-        menu.addAction(QStringLiteral("Duplicate Keyframes Here"));
+        menu.addAction(tt("timeline.duplicate_keyframes_here", "Duplicate Keyframes Here"));
     setActionIcon(duplicateSelectedKeyframesAct, QStringLiteral("timeline_keyframe_duplicate"));
   }
   QAction *shrinkSelectedKeyframesAct = nullptr;
   QAction *stretchSelectedKeyframesAct = nullptr;
   QAction *reverseSelectedKeyframesAct = nullptr;
+  QAction *reverseAllCurrentLayerKeyframesAct = nullptr;
+  QAction *reverseAllSelectedLayersKeyframesAct = nullptr;
+  QAction *reverseAllCompositionKeyframesAct = nullptr;
   QAction *normalizeSelectedKeyframesAct = nullptr;
   QAction *moveSelectedKeyframesToPlayheadAct = nullptr;
   QAction *fitSelectedKeyframesToWorkAreaAct = nullptr;
   QAction *scaleSelectedKeyframesAct = nullptr;
   QAction *offsetSelectedKeyframesAct = nullptr;
   if (!selectedMarkers.isEmpty()) {
-    QMenu *editMenu = menu.addMenu(QStringLiteral("Keyframe Edit"));
+    QMenu *editMenu = menu.addMenu(tt("timeline.keyframe_edit", "Keyframe Edit"));
     setMenuIcon(editMenu, QStringLiteral("timeline_keyframe_interpolation"));
-    shrinkSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Shrink Keys"));
-    stretchSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Stretch Keys"));
-    reverseSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Reverse Keys"));
-    normalizeSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Normalize Duration"));
+    shrinkSelectedKeyframesAct = editMenu->addAction(tt("timeline.shrink_keys", "Shrink Keys"));
+    stretchSelectedKeyframesAct = editMenu->addAction(tt("timeline.stretch_keys", "Stretch Keys"));
+    reverseSelectedKeyframesAct = editMenu->addAction(tt("timeline.reverse_keys", "Reverse Keys"));
+    reverseAllCurrentLayerKeyframesAct =
+        editMenu->addAction(tt("timeline.reverse_all_layer_keys", "Reverse All Keys in Layer"));
+    reverseAllSelectedLayersKeyframesAct =
+        editMenu->addAction(tt("timeline.reverse_all_selected_layer_keys", "Reverse All Keys in Selected Layers"));
+    reverseAllCompositionKeyframesAct =
+        editMenu->addAction(tt("timeline.reverse_all_comp_keys", "Reverse All Keys in Composition"));
+    normalizeSelectedKeyframesAct = editMenu->addAction(tt("timeline.normalize_duration", "Normalize Duration"));
     moveSelectedKeyframesToPlayheadAct =
-        editMenu->addAction(QStringLiteral("Move Keys to Playhead"));
+        editMenu->addAction(tt("timeline.move_keys_to_playhead", "Move Keys to Playhead"));
     fitSelectedKeyframesToWorkAreaAct =
-        editMenu->addAction(QStringLiteral("Fit Keys to Work Area"));
-    scaleSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Scale Values"));
-    offsetSelectedKeyframesAct = editMenu->addAction(QStringLiteral("Offset Values"));
+        editMenu->addAction(tt("timeline.fit_keys_to_work_area", "Fit Keys to Work Area"));
+    scaleSelectedKeyframesAct = editMenu->addAction(tt("timeline.scale_values", "Scale Values"));
+    offsetSelectedKeyframesAct = editMenu->addAction(tt("timeline.offset_values", "Offset Values"));
   }
   QAction *distributeSelectedKeyframesAct = nullptr;
   QAction *repeatSelectedKeyframesAct = nullptr;
   if (selectedMarkers.size() >= 2) {
-    QMenu *arrangeMenu = menu.addMenu(QStringLiteral("Arrange"));
+    QMenu *arrangeMenu = menu.addMenu(tt("timeline.arrange", "Arrange"));
     setMenuIcon(arrangeMenu, QStringLiteral("timeline_keyframe_interpolation"));
     distributeSelectedKeyframesAct =
-        arrangeMenu->addAction(QStringLiteral("Distribute Evenly"));
+        arrangeMenu->addAction(tt("timeline.distribute_evenly", "Distribute Evenly"));
     repeatSelectedKeyframesAct =
-        arrangeMenu->addAction(QStringLiteral("Repeat Pattern..."));
+        arrangeMenu->addAction(tt("timeline.repeat_pattern", "Repeat Pattern..."));
     setActionIcon(distributeSelectedKeyframesAct, QStringLiteral("timeline_keyframe_interpolation"));
     setActionIcon(repeatSelectedKeyframesAct, QStringLiteral("timeline_keyframe_duplicate"));
   } else if (hasKeyframeTarget) {
     menu.addSeparator();
     repeatSelectedKeyframesAct =
-        menu.addAction(QStringLiteral("Repeat Pattern..."));
+        menu.addAction(tt("timeline.repeat_pattern", "Repeat Pattern..."));
     setActionIcon(repeatSelectedKeyframesAct, QStringLiteral("timeline_keyframe_duplicate"));
   }
   QAction *keyPatternDialogAct = nullptr;
   if (canEditFocusedProperty) {
-    keyPatternDialogAct = menu.addAction(QStringLiteral("Key Pattern Dialog"));
+    keyPatternDialogAct = menu.addAction(tt("timeline.key_pattern_dialog", "Key Pattern Dialog"));
     setActionIcon(keyPatternDialogAct, QStringLiteral("timeline_keyframe_interpolation"));
   }
   QAction *copySelectedKeyframesAct = nullptr;
@@ -6292,28 +6606,28 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *pasteKeyframesAct = nullptr;
   if (hasKeyframeTarget) {
     copySelectedKeyframesAct =
-        menu.addAction(QStringLiteral("Copy Selected Keyframes"));
+        menu.addAction(tt("timeline.copy_selected_keyframes", "Copy Selected Keyframes"));
     cutSelectedKeyframesAct =
-        menu.addAction(QStringLiteral("Cut Selected Keyframes"));
+        menu.addAction(tt("timeline.cut_selected_keyframes", "Cut Selected Keyframes"));
     setActionIcon(copySelectedKeyframesAct, QStringLiteral("timeline_keyframe_copy"));
     setActionIcon(cutSelectedKeyframesAct, QStringLiteral("timeline_keyframe_remove"));
   }
   if (ClipboardManager::instance().hasKeyframeData()) {
     pasteKeyframesAct =
-        menu.addAction(QStringLiteral("Paste Keyframes at Playhead"));
+        menu.addAction(tt("timeline.paste_keyframes_at_playhead", "Paste Keyframes at Playhead"));
     setActionIcon(pasteKeyframesAct, QStringLiteral("timeline_keyframe_paste"));
   }
   QAction *deleteSelectedKeyframesAct = nullptr;
   if (hasKeyframeTarget) {
     menu.addSeparator();
     deleteSelectedKeyframesAct =
-        menu.addAction(QStringLiteral("Delete Selected Keyframes"));
+        menu.addAction(tt("timeline.delete_selected_keyframes", "Delete Selected Keyframes"));
     setActionIcon(deleteSelectedKeyframesAct, QStringLiteral("timeline_keyframe_remove"));
   }
   QAction *cleanSelectedKeyframesAct = nullptr;
   if (!cleanTargetRefs.isEmpty()) {
     cleanSelectedKeyframesAct =
-        menu.addAction(QStringLiteral("Keyframe Clean"));
+        menu.addAction(tt("timeline.keyframe_clean", "Keyframe Clean"));
     setActionIcon(cleanSelectedKeyframesAct, QStringLiteral("timeline_keyframe_clean"));
   }
   QAction *staggerStartAct = nullptr;
@@ -6323,13 +6637,13 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *reverseOrderStaggerAct = nullptr;
   QAction *randomStaggerAct = nullptr;
   if (clipUnderCursor) {
-    QMenu *staggerMenu = menu.addMenu(QStringLiteral("Clip Stagger"));
-    staggerStartAct = staggerMenu->addAction(QStringLiteral("Stagger Start +4f"));
-    staggerEndAct = staggerMenu->addAction(QStringLiteral("Stagger End +4f"));
-    cascadeClipsAct = staggerMenu->addAction(QStringLiteral("Cascade Clips"));
-    overlapClipsAct = staggerMenu->addAction(QStringLiteral("Overlap by 4 Frames"));
-    reverseOrderStaggerAct = staggerMenu->addAction(QStringLiteral("Reverse Order Stagger"));
-    randomStaggerAct = staggerMenu->addAction(QStringLiteral("Random Stagger"));
+    QMenu *staggerMenu = menu.addMenu(tt("timeline.clip_stagger", "Clip Stagger"));
+    staggerStartAct = staggerMenu->addAction(tt("timeline.stagger_start_4f", "Stagger Start +4f"));
+    staggerEndAct = staggerMenu->addAction(tt("timeline.stagger_end_4f", "Stagger End +4f"));
+    cascadeClipsAct = staggerMenu->addAction(tt("timeline.cascade_clips", "Cascade Clips"));
+    overlapClipsAct = staggerMenu->addAction(tt("timeline.overlap_by_4_frames", "Overlap by 4 Frames"));
+    reverseOrderStaggerAct = staggerMenu->addAction(tt("timeline.reverse_order_stagger", "Reverse Order Stagger"));
+    randomStaggerAct = staggerMenu->addAction(tt("timeline.random_stagger", "Random Stagger"));
   }
   QAction *interpLinearAct = nullptr;
   QAction *interpEaseInAct = nullptr;
@@ -6340,14 +6654,14 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QMenu *interpolationMenu = nullptr;
   if (!interpolationTargets.isEmpty()) {
     menu.addSeparator();
-    interpolationMenu = menu.addMenu(QStringLiteral("Interpolation"));
+    interpolationMenu = menu.addMenu(tt("timeline.interpolation", "Interpolation"));
     setMenuIcon(interpolationMenu, QStringLiteral("timeline_keyframe_interpolation"));
-    interpLinearAct = interpolationMenu->addAction(QStringLiteral("Linear"));
-    interpEaseInAct = interpolationMenu->addAction(QStringLiteral("Ease In"));
-    interpEaseOutAct = interpolationMenu->addAction(QStringLiteral("Ease Out"));
-    interpEaseInOutAct = interpolationMenu->addAction(QStringLiteral("Ease In/Out"));
-    interpHoldAct = interpolationMenu->addAction(QStringLiteral("Hold"));
-    interpBezierAct = interpolationMenu->addAction(QStringLiteral("Bezier"));
+    interpLinearAct = interpolationMenu->addAction(tt("timeline.linear", "Linear"));
+    interpEaseInAct = interpolationMenu->addAction(tt("timeline.ease_in", "Ease In"));
+    interpEaseOutAct = interpolationMenu->addAction(tt("timeline.ease_out", "Ease Out"));
+    interpEaseInOutAct = interpolationMenu->addAction(tt("timeline.ease_in_out", "Ease In/Out"));
+    interpHoldAct = interpolationMenu->addAction(tt("timeline.hold", "Hold"));
+    interpBezierAct = interpolationMenu->addAction(tt("timeline.bezier", "Bezier"));
     setActionIcon(interpLinearAct, QStringLiteral("timeline_keyframe_interpolation"));
     setActionIcon(interpEaseInAct, QStringLiteral("timeline_keyframe_interpolation"));
     setActionIcon(interpEaseOutAct, QStringLiteral("timeline_keyframe_interpolation"));
@@ -6359,14 +6673,14 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *rovingOffAct = nullptr;
   QMenu *rovingMenu = nullptr;
   if (!interpolationTargets.isEmpty()) {
-    rovingMenu = menu.addMenu(QStringLiteral("Roving"));
+    rovingMenu = menu.addMenu(tt("timeline.roving", "Roving"));
     setMenuIcon(rovingMenu, QStringLiteral("timeline_keyframe_roving"));
     const bool anyRoving = std::any_of(interpolationTargets.cbegin(), interpolationTargets.cend(),
                                        [](const auto &marker) { return marker.roving; });
     const bool allRoving = std::all_of(interpolationTargets.cbegin(), interpolationTargets.cend(),
                                        [](const auto &marker) { return marker.roving; });
-    rovingOnAct = rovingMenu->addAction(QStringLiteral("Mark as Roving"));
-    rovingOffAct = rovingMenu->addAction(QStringLiteral("Clear Roving"));
+    rovingOnAct = rovingMenu->addAction(tt("timeline.mark_as_roving", "Mark as Roving"));
+    rovingOffAct = rovingMenu->addAction(tt("timeline.clear_roving", "Clear Roving"));
     setActionIcon(rovingOnAct, QStringLiteral("timeline_keyframe_roving"));
     setActionIcon(rovingOffAct, QStringLiteral("timeline_keyframe_anchor"));
     rovingOnAct->setCheckable(true);
@@ -6386,27 +6700,27 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   QAction *colorPurpleAct = nullptr;
   QAction *colorGrayAct = nullptr;
   if (!selectedMarkers.isEmpty()) {
-    QMenu *anchorMenu = menu.addMenu(QStringLiteral("Keyframe Anchor"));
+    QMenu *anchorMenu = menu.addMenu(tt("timeline.keyframe_anchor", "Keyframe Anchor"));
     setMenuIcon(anchorMenu, QStringLiteral("timeline_keyframe_anchor"));
-    anchorAbsoluteAct = anchorMenu->addAction(QStringLiteral("Absolute"));
-    anchorLockToInAct = anchorMenu->addAction(QStringLiteral("Lock to In Point"));
-    anchorLockToOutAct = anchorMenu->addAction(QStringLiteral("Lock to Out Point"));
-    anchorStretchAct = anchorMenu->addAction(QStringLiteral("Stretch with Layer"));
+    anchorAbsoluteAct = anchorMenu->addAction(tt("timeline.absolute", "Absolute"));
+    anchorLockToInAct = anchorMenu->addAction(tt("timeline.lock_to_in_point", "Lock to In Point"));
+    anchorLockToOutAct = anchorMenu->addAction(tt("timeline.lock_to_out_point", "Lock to Out Point"));
+    anchorStretchAct = anchorMenu->addAction(tt("timeline.stretch_with_layer", "Stretch with Layer"));
     setActionIcon(anchorAbsoluteAct, QStringLiteral("timeline_keyframe_anchor"));
     setActionIcon(anchorLockToInAct, QStringLiteral("timemenu_in_point"));
     setActionIcon(anchorLockToOutAct, QStringLiteral("timemenu_out_point"));
     setActionIcon(anchorStretchAct, QStringLiteral("timeline_keyframe_roving"));
   }
   if (!selectedMarkers.isEmpty()) {
-    QMenu *colorMenu = menu.addMenu(QStringLiteral("Keyframe Color Label"));
+    QMenu *colorMenu = menu.addMenu(tt("timeline.keyframe_color_label", "Keyframe Color Label"));
     setMenuIcon(colorMenu, QStringLiteral("timeline_keyframe_color"));
-    colorNoneAct = colorMenu->addAction(QStringLiteral("None"));
-    colorRedAct = colorMenu->addAction(QStringLiteral("Red"));
-    colorBlueAct = colorMenu->addAction(QStringLiteral("Blue"));
-    colorYellowAct = colorMenu->addAction(QStringLiteral("Yellow"));
-    colorGreenAct = colorMenu->addAction(QStringLiteral("Green"));
-    colorPurpleAct = colorMenu->addAction(QStringLiteral("Purple"));
-    colorGrayAct = colorMenu->addAction(QStringLiteral("Gray"));
+    colorNoneAct = colorMenu->addAction(tt("timeline.none", "None"));
+    colorRedAct = colorMenu->addAction(tt("timeline.red", "Red"));
+    colorBlueAct = colorMenu->addAction(tt("timeline.blue", "Blue"));
+    colorYellowAct = colorMenu->addAction(tt("timeline.yellow", "Yellow"));
+    colorGreenAct = colorMenu->addAction(tt("timeline.green", "Green"));
+    colorPurpleAct = colorMenu->addAction(tt("timeline.purple", "Purple"));
+    colorGrayAct = colorMenu->addAction(tt("timeline.gray", "Gray"));
     setActionIcon(colorNoneAct, QStringLiteral("timeline_keyframe_color"));
     setActionIcon(colorRedAct, QStringLiteral("timeline_keyframe_color"));
     setActionIcon(colorBlueAct, QStringLiteral("timeline_keyframe_color"));
@@ -6420,9 +6734,9 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   if (markerUnderCursor && canEditFocusedProperty) {
     menu.addSeparator();
     addMarkerFrameAct =
-        menu.addAction(QStringLiteral("Add Keyframe at Marker Frame"));
+        menu.addAction(tt("timeline.add_keyframe_at_marker_frame", "Add Keyframe at Marker Frame"));
     removeMarkerFrameAct =
-        menu.addAction(QStringLiteral("Remove Keyframe at Marker Frame"));
+        menu.addAction(tt("timeline.remove_keyframe_at_marker_frame", "Remove Keyframe at Marker Frame"));
     setActionIcon(addMarkerFrameAct, QStringLiteral("timeline_keyframe_add"));
     setActionIcon(removeMarkerFrameAct, QStringLiteral("timeline_keyframe_remove"));
   }
@@ -6443,25 +6757,25 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     if (!markerUnderCursor) {
       menu.addSeparator();
     }
-    splitClipAct = menu.addAction(QStringLiteral("Split Layer at Playhead"));
-    duplicateClipAct = menu.addAction(QStringLiteral("Duplicate Layer"));
-    moveStartClipAct = menu.addAction(QStringLiteral("Move Start to Playhead"));
-    trimInClipAct = menu.addAction(QStringLiteral("Trim In at Playhead"));
-    trimOutClipAct = menu.addAction(QStringLiteral("Trim Out at Playhead"));
+    splitClipAct = menu.addAction(tt("timeline.split_layer_at_playhead", "Split Layer at Playhead"));
+    duplicateClipAct = menu.addAction(tt("timeline.duplicate_layer", "Duplicate Layer"));
+    moveStartClipAct = menu.addAction(tt("timeline.move_start_to_playhead", "Move Start to Playhead"));
+    trimInClipAct = menu.addAction(tt("timeline.trim_in_at_playhead", "Trim In at Playhead"));
+    trimOutClipAct = menu.addAction(tt("timeline.trim_out_at_playhead", "Trim Out at Playhead"));
     rippleTrimOutClipAct =
-        menu.addAction(QStringLiteral("Ripple Trim Out at Playhead"));
+        menu.addAction(tt("timeline.ripple_trim_out_at_playhead", "Ripple Trim Out at Playhead"));
     rippleTrimInClipAct =
-        menu.addAction(QStringLiteral("Ripple Trim In at Playhead"));
+        menu.addAction(tt("timeline.ripple_trim_in_at_playhead", "Ripple Trim In at Playhead"));
     rippleDeleteClipAct =
-        menu.addAction(QStringLiteral("Ripple Delete (Close Gap)"));
-    QMenu *rangeMenu = menu.addMenu(QStringLiteral("Selection Range"));
+        menu.addAction(tt("timeline.ripple_delete_close_gap", "Ripple Delete (Close Gap)"));
+    QMenu *rangeMenu = menu.addMenu(tt("timeline.selection_range", "Selection Range"));
     moveSelectedToPlayheadAct =
-        rangeMenu->addAction(QStringLiteral("Move Selected to Playhead"));
+        rangeMenu->addAction(tt("timeline.move_selected_to_playhead", "Move Selected to Playhead"));
     fitSelectedToWorkAreaAct =
-        rangeMenu->addAction(QStringLiteral("Fit Selected to Work Area"));
+        rangeMenu->addAction(tt("timeline.fit_selected_to_work_area", "Fit Selected to Work Area"));
     setWorkAreaToSelectedAct =
-        rangeMenu->addAction(QStringLiteral("Set Work Area to Selected"));
-    deleteClipAct = menu.addAction(QStringLiteral("Delete Layer"));
+        rangeMenu->addAction(tt("timeline.set_work_area_to_selected", "Set Work Area to Selected"));
+    deleteClipAct = menu.addAction(tt("timeline.delete_layer", "Delete Layer"));
   }
 
   const QAction *chosen = menu.exec(event->globalPos());
@@ -6603,10 +6917,32 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
   }
 
   if (chosen == shrinkSelectedKeyframesAct || chosen == stretchSelectedKeyframesAct ||
-      chosen == reverseSelectedKeyframesAct || chosen == normalizeSelectedKeyframesAct ||
+      chosen == reverseSelectedKeyframesAct || chosen == reverseAllCurrentLayerKeyframesAct ||
+      chosen == reverseAllSelectedLayersKeyframesAct || chosen == reverseAllCompositionKeyframesAct ||
+      chosen == normalizeSelectedKeyframesAct ||
       chosen == moveSelectedKeyframesToPlayheadAct ||
       chosen == fitSelectedKeyframesToWorkAreaAct ||
       chosen == scaleSelectedKeyframesAct || chosen == offsetSelectedKeyframesAct) {
+    if (chosen == reverseSelectedKeyframesAct) {
+      reverseSelectedKeyframeMarkers();
+      event->accept();
+      return;
+    }
+    if (chosen == reverseAllCurrentLayerKeyframesAct) {
+      reverseAllKeyframesInCurrentLayer();
+      event->accept();
+      return;
+    }
+    if (chosen == reverseAllSelectedLayersKeyframesAct) {
+      reverseAllKeyframesInSelectedLayers();
+      event->accept();
+      return;
+    }
+    if (chosen == reverseAllCompositionKeyframesAct) {
+      reverseAllKeyframesInComposition();
+      event->accept();
+      return;
+    }
     ArtifactCompositionPtr currentComposition = composition;
     if (!currentComposition) {
       if (auto *svc = ArtifactProjectService::instance()) {
@@ -6625,8 +6961,6 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
       } else if (chosen == stretchSelectedKeyframesAct) {
         options.kind = KeyframeRangeTransformKind::Stretch;
         options.scale = 2.0;
-      } else if (chosen == reverseSelectedKeyframesAct) {
-        options.kind = KeyframeRangeTransformKind::Reverse;
       } else if (chosen == normalizeSelectedKeyframesAct) {
         options.kind = KeyframeRangeTransformKind::Normalize;
         options.targetDuration = std::max<qint64>(1, contextFrame + 1);

@@ -20,6 +20,7 @@
 #include <QMetaObject>
 #include <QDir>
 #include <QPalette>
+#include <QPushButton>
 #include <QStandardPaths>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -609,14 +610,7 @@ bool propertyMatchesFilter(const ArtifactCore::AbstractProperty &property,
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer);
 
 bool shouldHideInspectorProperty(const QString &propertyName) {
-  return propertyName.compare(QStringLiteral("layer.visible"),
-                              Qt::CaseInsensitive) == 0 ||
-         propertyName.compare(QStringLiteral("layer.locked"),
-                              Qt::CaseInsensitive) == 0 ||
-         propertyName.compare(QStringLiteral("layer.guide"),
-                              Qt::CaseInsensitive) == 0 ||
-         propertyName.compare(QStringLiteral("layer.solo"),
-                              Qt::CaseInsensitive) == 0;
+  return false;
 }
 
 void applyInspectorPropertyPresentation(
@@ -1936,6 +1930,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   const std::unordered_set<std::string> keyLayerProperties = {
       "layer.name",        "transform.position.x", "transform.position.y",
       "transform.scale.x", "transform.scale.y",    "transform.rotation",
+      "transform.initialRotation", "source.width", "source.height",
       "layer.opacity"};
 
   const ArtifactAbstractLayerPtr layer = currentLayer;
@@ -2167,6 +2162,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
     QGroupBox *group = new QGroupBox(
         isSourceReframe ? QStringLiteral("Pan / Crop") : groupName);
+    if (groupName.compare(QStringLiteral("Initial"), Qt::CaseInsensitive) == 0) {
+      group->setCheckable(true);
+      group->setChecked(true);
+    }
     auto *groupLayout = new QVBoxLayout(group);
     groupLayout->setContentsMargins(10, 8, 10, 8);
     groupLayout->setSpacing(5);
@@ -2216,6 +2215,43 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     };
 
     if (isSourceReframe) {
+      bool sourceCropEnabled = false;
+      for (const auto &prop : sortedProps) {
+        if (prop &&
+            prop->getName().compare(QStringLiteral("sourceCrop.enabled"),
+                                    Qt::CaseInsensitive) == 0) {
+          sourceCropEnabled = prop->getValue().toBool();
+          break;
+        }
+      }
+
+      if (!sourceCropEnabled) {
+        auto *enableButton = new QPushButton(QStringLiteral("Show Pan / Crop"),
+                                             group);
+        enableButton->setCursor(Qt::PointingHandCursor);
+        groupLayout->addWidget(enableButton);
+        QObject::connect(enableButton, &QPushButton::clicked, group,
+                         [this, layer]() {
+                           if (!layer) {
+                             return;
+                           }
+                           ScopedPropertyEditGuard guard(localPropertyEditDepth);
+                           layer->setLayerPropertyValue(
+                               QStringLiteral("sourceCrop.enabled"), true);
+                           notifyLayerPropertyAnimationChanged(layer);
+                         });
+
+        auto *note = new QLabel(
+            QStringLiteral("Enable Pan / Crop to reveal source window and motion controls."),
+            group);
+        note->setObjectName(QStringLiteral("propertySectionNote"));
+        note->setWordWrap(true);
+        applyPropertySectionLabel(note, false);
+        applyThemeTextPalette(note, 120);
+        groupLayout->addWidget(note);
+
+        addedGroupProperties = true;
+      } else {
       auto *note = new QLabel(
           QStringLiteral("Source reframe behaves like Pan/Crop: the window looks into the source, then layer transform places it in comp."));
       note->setObjectName(QStringLiteral("propertySectionNote"));
@@ -2281,6 +2317,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
             layer, &addedGroupProperties, &propertyEditors, &motionRows,
             decorateLayerRow, updateLayerRowValue);
         groupRows.insert(groupRows.end(), motionRows.begin(), motionRows.end());
+      }
       }
     } else {
       addRowsFromProperties(

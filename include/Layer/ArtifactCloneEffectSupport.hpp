@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMatrix4x4>
+#include <Graphics/InstanceData.h>
 
 #include <functional>
 #include <vector>
@@ -19,10 +20,21 @@ struct CloneRenderInstance {
 std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstractLayer* layer,
                                                       const QMatrix4x4& baseTransform);
 
+std::vector<ArtifactCore::InstanceData> cloneRenderInstanceData(
+    const ArtifactAbstractLayer* layer,
+    const QMatrix4x4& baseTransform);
+
 inline std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstractLayerPtr& layer,
                                                              const QMatrix4x4& baseTransform)
 {
     return cloneRenderInstances(layer.get(), baseTransform);
+}
+
+inline std::vector<ArtifactCore::InstanceData> cloneRenderInstanceData(
+    const ArtifactAbstractLayerPtr& layer,
+    const QMatrix4x4& baseTransform)
+{
+    return cloneRenderInstanceData(layer.get(), baseTransform);
 }
 
 void drawWithClonerEffect(const ArtifactAbstractLayer* layer,

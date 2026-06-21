@@ -1708,6 +1708,22 @@ void ArtifactPlaybackService::setWorkAreaEndAtCurrentFrame() {
   impl_->applyCurrentPlaybackFrameRangeToEngine();
 }
 
+void ArtifactPlaybackService::moveWorkAreaToCurrentFrame() {
+  if (!impl_->currentComposition_) {
+    return;
+  }
+  const auto range = impl_->currentComposition_->workAreaRange();
+  const int64_t duration = std::max<int64_t>(1, range.end() - range.start());
+  const int64_t activeFrame = currentFrame().framePosition();
+  impl_->currentComposition_->setWorkAreaRange(
+      FrameRange(activeFrame, activeFrame + duration));
+  ArtifactCore::globalEventBus().publish<WorkAreaChangedEvent>({
+      impl_->currentComposition_->id().toString(),
+      impl_->currentComposition_->workAreaRange().start(),
+      impl_->currentComposition_->workAreaRange().end()});
+  impl_->applyCurrentPlaybackFrameRangeToEngine();
+}
+
 float ArtifactPlaybackService::playbackSpeed() const {
   return impl_->engine_
              ? impl_->engine_->playbackSpeed()

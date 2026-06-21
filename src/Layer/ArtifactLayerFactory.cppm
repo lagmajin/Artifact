@@ -168,9 +168,12 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
   case LayerType::CompositionBackground:
    ptr = ArtifactAbstractLayerPtr(new ArtifactCompositionBackgroundLayer());
    break;
-  case LayerType::Model3D: {
+ case LayerType::Model3D: {
    auto* modelLayer = new Artifact3DLayer();
-   if (auto* modelParams =
+   if (auto* fixedParams =
+           dynamic_cast<ArtifactFixedGeometry3DLayerInitParams*>(&params)) {
+    modelLayer->setFixedGeometry(fixedParams->geometry());
+   } else if (auto* modelParams =
            dynamic_cast<ArtifactModel3DLayerInitParams*>(&params)) {
     const QString path = modelParams->modelPath();
     if (!path.isEmpty()) {
@@ -231,7 +234,23 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
       QString name = json.value("name").toString("Layer");
   ArtifactLayerFactory factory;
       if (type == LayerType::Model3D &&
-          (json.contains("sourcePath") || json.contains("modelPath"))) {
+          (json.contains("sourcePath") || json.contains("modelPath") || json.contains("fixedGeometry"))) {
+          if (json.contains("fixedGeometry")) {
+              ArtifactFixedGeometry3DLayerInitParams fixedParams(
+                  name, static_cast<FixedGeometry3D>(json.value("fixedGeometry").toInt()));
+              auto result = factory.createLayer(fixedParams);
+              if (result.success && result.layer) {
+                  if (auto modelLayer = dynamic_cast<Artifact3DLayer*>(result.layer.get())) {
+                      if (json.contains("renderMode")) {
+                          modelLayer->setRenderMode(static_cast<RenderMode>(json.value("renderMode").toInt()));
+                      }
+                  }
+                  result.layer->fromJsonProperties(json);
+                  ArtifactAbstractLayerPtr layer = result.layer;
+                  return layer;
+              }
+              return nullptr;
+          }
           ArtifactModel3DLayerInitParams modelParams(name);
           if (json.contains("sourcePath")) {
               modelParams.setModelPath(json.value("sourcePath").toString());

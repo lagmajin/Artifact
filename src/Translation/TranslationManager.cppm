@@ -11,6 +11,7 @@ module;
 #include <QFileInfo>
 #include <QDebug>
 #include <QMap>
+#include <QLocale>
 
 module Translation.Manager;
 
@@ -25,6 +26,44 @@ public:
  QMap<QString, QString> fallbacks_;
  QStringList availableLocales_;
  QString loadedDir_;
+
+ static QString normalizeLocale(const QString& locale)
+ {
+  const QString trimmed = locale.trimmed().toLower().replace('_', '-');
+  if (trimmed.startsWith(QStringLiteral("ja"))) return QStringLiteral("ja");
+  if (trimmed.startsWith(QStringLiteral("en"))) return QStringLiteral("en");
+  if (trimmed.startsWith(QStringLiteral("zh-tw")) || trimmed.startsWith(QStringLiteral("zh-hant")))
+   return QStringLiteral("zh-TW");
+  if (trimmed.startsWith(QStringLiteral("zh"))) return QStringLiteral("zh");
+  if (trimmed.startsWith(QStringLiteral("ko"))) return QStringLiteral("ko");
+  if (trimmed.startsWith(QStringLiteral("fr"))) return QStringLiteral("fr");
+  if (trimmed.startsWith(QStringLiteral("de"))) return QStringLiteral("de");
+  if (trimmed.startsWith(QStringLiteral("es"))) return QStringLiteral("es");
+  if (trimmed.startsWith(QStringLiteral("pt-br")) || trimmed.startsWith(QStringLiteral("pt-pt")) || trimmed.startsWith(QStringLiteral("pt")))
+   return QStringLiteral("pt");
+  if (trimmed.startsWith(QStringLiteral("ru"))) return QStringLiteral("ru");
+  if (trimmed.startsWith(QStringLiteral("ar"))) return QStringLiteral("ar");
+  return trimmed;
+ }
+
+ static QString systemLocaleCode()
+ {
+  const QLocale sys = QLocale::system();
+  const QString name = sys.name().toLower();
+  if (name.startsWith(QStringLiteral("ja"))) return QStringLiteral("ja");
+  if (name.startsWith(QStringLiteral("en"))) return QStringLiteral("en");
+  if (name.startsWith(QStringLiteral("zh_tw")) || name.startsWith(QStringLiteral("zh-hant")))
+   return QStringLiteral("zh-TW");
+  if (name.startsWith(QStringLiteral("zh"))) return QStringLiteral("zh");
+  if (name.startsWith(QStringLiteral("ko"))) return QStringLiteral("ko");
+  if (name.startsWith(QStringLiteral("fr"))) return QStringLiteral("fr");
+  if (name.startsWith(QStringLiteral("de"))) return QStringLiteral("de");
+  if (name.startsWith(QStringLiteral("es"))) return QStringLiteral("es");
+  if (name.startsWith(QStringLiteral("pt_br")) || name.startsWith(QStringLiteral("pt-pt")) || name.startsWith(QStringLiteral("pt"))) return QStringLiteral("pt");
+  if (name.startsWith(QStringLiteral("ru"))) return QStringLiteral("ru");
+  if (name.startsWith(QStringLiteral("ar"))) return QStringLiteral("ar");
+  return QStringLiteral("en");
+ }
 
  static void flattenJson(const QJsonObject& obj, const QString& prefix, QMap<QString, QString>& out)
  {
@@ -72,7 +111,10 @@ public:
   QDir dir(dirPath);
   const QFileInfoList entries = dir.entryInfoList(QStringList() << QStringLiteral("*.json"), QDir::Files);
   for (const QFileInfo& fi : entries) {
-   availableLocales_.append(fi.baseName());
+   const QString normalized = normalizeLocale(fi.baseName());
+   if (!availableLocales_.contains(normalized)) {
+    availableLocales_.append(normalized);
+   }
   }
  }
 };
@@ -100,6 +142,9 @@ bool TranslationManager::loadFromDirectory(const QString& dirPath)
 
  impl_->loadedDir_ = dirPath;
  impl_->scanAvailableLocales(dirPath);
+ if (impl_->locale_ == QStringLiteral("en") && !impl_->availableLocales_.contains(QStringLiteral("en"))) {
+  impl_->locale_ = impl_->availableLocales_.isEmpty() ? QStringLiteral("en") : impl_->availableLocales_.first();
+ }
 
  const QString fallbackPath = dir.filePath(QStringLiteral("en.json"));
  if (QFile::exists(fallbackPath)) {
@@ -126,12 +171,13 @@ bool TranslationManager::loadFromFile(const QString& filePath)
 
 void TranslationManager::setLocale(const QString& locale)
 {
- if (locale == impl_->locale_) return;
- impl_->locale_ = locale;
+ const QString normalized = Impl::normalizeLocale(locale);
+ if (normalized == impl_->locale_) return;
+ impl_->locale_ = normalized;
 
  if (!impl_->loadedDir_.isEmpty()) {
   impl_->strings_.clear();
-  const QString localePath = QDir(impl_->loadedDir_).filePath(locale + QStringLiteral(".json"));
+  const QString localePath = QDir(impl_->loadedDir_).filePath(impl_->locale_ + QStringLiteral(".json"));
   if (QFile::exists(localePath)) {
    impl_->loadLocaleFile(localePath, impl_->strings_);
    qDebug() << "[TranslationManager] switched to locale" << locale << "(" << impl_->strings_.size() << "strings)";

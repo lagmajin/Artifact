@@ -4,6 +4,7 @@
 #include <functional>
 #include <memory>
 #include <vector>
+#include <Graphics/InstanceData.h>
 #include <QMatrix4x4>
 #include <QString>
 #include <QVariant>
@@ -34,6 +35,8 @@ float cloneComponentFloatProperty(const ArtifactAbstractLayer* layer,
 std::vector<CloneRenderInstance> mographComponentInstances(
     const ArtifactAbstractLayer* layer,
     const QMatrix4x4& baseTransform);
+ArtifactCore::InstanceData cloneRenderInstanceToInstanceData(
+    const CloneRenderInstance& instance);
 
 export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstractLayer* layer,
                                                              const QMatrix4x4& baseTransform)
@@ -43,14 +46,16 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
         return instances;
     }
 
+    bool hasEnabledCloner = false;
     for (const auto& effect : layer->getEffects()) {
         const auto cloner = std::dynamic_pointer_cast<ClonerGenerator>(effect);
         if (!cloner || !cloner->isEnabled()) {
             continue;
         }
+        hasEnabledCloner = true;
 
         const auto clones = cloner->generateCloneData();
-        instances.reserve(clones.size());
+        instances.reserve(instances.size() + clones.size());
         for (const auto& clone : clones) {
             if (!clone.visible) {
                 continue;
@@ -61,10 +66,13 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
             instance.weight = std::clamp(clone.weight, 0.0f, 1.0f);
             instances.push_back(instance);
         }
-        if (!instances.empty()) {
-            return instances;
+    }
+
+    if (hasEnabledCloner) {
+        if (instances.empty()) {
+            instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
         }
-        break;
+        return instances;
     }
 
     instances = mographComponentInstances(layer, baseTransform);
@@ -86,9 +94,41 @@ export void drawWithClonerEffect(const ArtifactAbstractLayer* layer,
     }
 }
 
+export std::vector<ArtifactCore::InstanceData> cloneRenderInstanceData(
+    const ArtifactAbstractLayer* layer,
+    const QMatrix4x4& baseTransform)
+{
+    std::vector<ArtifactCore::InstanceData> instanceData;
+    const auto instances = cloneRenderInstances(layer, baseTransform);
+    instanceData.reserve(instances.size());
+    for (const auto& instance : instances) {
+        instanceData.push_back(cloneRenderInstanceToInstanceData(instance));
+    }
+    return instanceData;
+}
+
 } // namespace Artifact
 
 namespace Artifact {
+
+ArtifactCore::InstanceData cloneRenderInstanceToInstanceData(
+    const CloneRenderInstance& instance)
+{
+    ArtifactCore::InstanceData gpuInstance{};
+    const float* matPtr = instance.transform.constData();
+    for (int i = 0; i < 16; ++i) {
+        gpuInstance.transform[i] = matPtr[i];
+    }
+    gpuInstance.color[0] = 1.0f;
+    gpuInstance.color[1] = 1.0f;
+    gpuInstance.color[2] = 1.0f;
+    gpuInstance.color[3] = 1.0f;
+    gpuInstance.weight = std::clamp(instance.weight, 0.0f, 1.0f);
+    gpuInstance.timeOffset = 0.0f;
+    gpuInstance.padding[0] = 0.0f;
+    gpuInstance.padding[1] = 0.0f;
+    return gpuInstance;
+}
 
 bool cloneComponentBoolProperty(const ArtifactAbstractLayer* layer,
                                 const QString& propertyPath)

@@ -468,7 +468,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
   impl_->durationSpinBox->setValue(10.0);
 
   impl_->bgColorButton = new QPushButton("Pick Color");
-  impl_->bgColorButton->setFixedSize(100, 24);
+  impl_->bgColorButton->setFixedSize(80, 24);
   updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
   
   formLayout->addRow("Preset:", impl_->resolutionCombobox_);

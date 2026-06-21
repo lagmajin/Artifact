@@ -100,6 +100,9 @@ export namespace Artifact {
   bool dragStartHasPositionKey_ = false;
   bool dragStartHasRotationKey_ = false;
   bool dragStartHasScaleKey_ = false;
+  bool dragStartPositionAnimated_ = false;
+  bool dragStartRotationAnimated_ = false;
+  bool dragStartScaleAnimated_ = false;
   bool dragStartHasTextBoxState_ = false;
   QTransform dragStartGlobalTransform_;
   QRectF dragStartBoundingBox_;

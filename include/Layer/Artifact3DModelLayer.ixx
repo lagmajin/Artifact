@@ -16,19 +16,30 @@ export namespace Artifact {
    Solid
  };
 
+ enum class FixedGeometry3D {
+   Auto = 0,
+   Plane,
+   Cube
+ };
+
  class Artifact3DLayer : public ArtifactAbstractLayer
  {
  private:
    class Impl;
    Impl* impl_;
    void createCubeMesh();
+   void createPlaneMesh();
+   void createFixedGeometryMesh(FixedGeometry3D geometry);
    void updateSourceSizeFromMesh();
 
  public:
     Artifact3DLayer();
+    explicit Artifact3DLayer(FixedGeometry3D geometry);
     ~Artifact3DLayer();
     void loadFromFile();
     void loadFromFile(const QString& filePath);
+    void setFixedGeometry(FixedGeometry3D geometry);
+    FixedGeometry3D fixedGeometry() const;
 
    // Render mode
    RenderMode renderMode() const;

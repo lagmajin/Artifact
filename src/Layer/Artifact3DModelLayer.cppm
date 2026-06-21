@@ -80,6 +80,7 @@ QString detectSiblingBaseColorTexture(const QString& modelPath)
 class Artifact3DLayer::Impl {
 public:
   RenderMode renderMode_ = RenderMode::Wireframe;
+  FixedGeometry3D fixedGeometry_ = FixedGeometry3D::Auto;
   ArtifactCore::Material material_ = ArtifactCore::Material::makeDefault();
   Mesh mesh_; // The 3D mesh data
   QString sourcePath_;
@@ -93,12 +94,20 @@ Artifact3DLayer::Artifact3DLayer() : impl_(new Impl()) {
   // Set the 3D flag directly as well (redundant but safe)
   setIs3D(true);
   // Load default mesh (cube)
-  loadFromFile();
+  createFixedGeometryMesh(FixedGeometry3D::Cube);
+  impl_->meshLoaded_ = true;
+  updateSourceSizeFromMesh();
+}
+
+Artifact3DLayer::Artifact3DLayer(FixedGeometry3D geometry) : impl_(new Impl()) {
+  setIs3D(true);
+  setFixedGeometry(geometry);
 }
 Artifact3DLayer::~Artifact3DLayer() { delete impl_; }
 
 void Artifact3DLayer::loadFromFile() {
   impl_->sourcePath_.clear();
+  impl_->fixedGeometry_ = FixedGeometry3D::Auto;
   // Try loading via MeshImporter (ufbx for FBX, tinyobj for OBJ)
   ArtifactCore::MeshImporter importer;
   auto mesh = importer.importMeshFromFile(UniString("")); // Will be set by user
@@ -123,6 +132,7 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
     qWarning() << "[Artifact3DLayer] Ignoring empty source path reload";
     return;
   }
+  impl_->fixedGeometry_ = FixedGeometry3D::Auto;
 
   ArtifactCore::MeshImporter importer;
   auto mesh = importer.importMeshFromFile(UniString(filePath));
@@ -202,6 +212,21 @@ void Artifact3DLayer::loadFromFile(const QString &filePath) {
   }
 }
 
+void Artifact3DLayer::setFixedGeometry(FixedGeometry3D geometry)
+{
+  impl_->fixedGeometry_ = geometry;
+  impl_->sourcePath_.clear();
+  createFixedGeometryMesh(geometry);
+  impl_->meshLoaded_ = true;
+  updateSourceSizeFromMesh();
+  impl_->renderMode_ = RenderMode::Wireframe;
+}
+
+FixedGeometry3D Artifact3DLayer::fixedGeometry() const
+{
+  return impl_->fixedGeometry_;
+}
+
 QString Artifact3DLayer::sourcePath() const { return impl_->sourcePath_; }
 
 UniString Artifact3DLayer::className() const { return QStringLiteral("Artifact3DLayer"); }
@@ -211,6 +236,7 @@ QJsonObject Artifact3DLayer::toJson() const {
   obj["type"] = static_cast<int>(LayerType::Model3D);
   obj["sourcePath"] = impl_->sourcePath_;
   obj["renderMode"] = static_cast<int>(impl_->renderMode_);
+  obj["fixedGeometry"] = static_cast<int>(impl_->fixedGeometry_);
   obj["material.baseColorTexture"] = impl_->material_.baseColorTexture().toQString();
   obj["material.metallicRoughnessTexture"] =
       impl_->material_.metallicRoughnessTexture().toQString();
@@ -230,6 +256,10 @@ void Artifact3DLayer::fromJsonProperties(const QJsonObject& obj)
                                  : obj.value("sourcePath").toString();
   if (!sourcePath.isEmpty()) {
     loadFromFile(sourcePath);
+  }
+
+  if (obj.contains("fixedGeometry")) {
+    setFixedGeometry(static_cast<FixedGeometry3D>(obj.value("fixedGeometry").toInt()));
   }
 
   if (obj.contains("renderMode")) {
@@ -305,6 +335,46 @@ void Artifact3DLayer::createCubeMesh() {
   // Right face
   impl_->mesh_.addPolygon({1, 2, 6});
   impl_->mesh_.addPolygon({1, 6, 5});
+}
+
+void Artifact3DLayer::createPlaneMesh()
+{
+  const float halfSize = 0.5f;
+  QVector<QVector3D> positions = {
+      QVector3D(-halfSize, -halfSize, 0.0f),
+      QVector3D(halfSize, -halfSize, 0.0f),
+      QVector3D(halfSize, halfSize, 0.0f),
+      QVector3D(-halfSize, halfSize, 0.0f)
+  };
+
+  impl_->mesh_.setVertexCount(4);
+  auto &vertexAttrs = impl_->mesh_.vertexAttributes();
+  auto positionAttr = vertexAttrs.add<QVector3D>("position");
+  positionAttr->data() = positions;
+  auto normalAttr = vertexAttrs.add<QVector3D>("normal");
+  auto uvAttr = vertexAttrs.add<QVector2D>("uv");
+  for (int i = 0; i < positions.size(); ++i) {
+    (*normalAttr)[i] = QVector3D(0.0f, 0.0f, 1.0f);
+    (*uvAttr)[i] = QVector2D((positions[i].x() + halfSize) / (2.0f * halfSize),
+                             (positions[i].y() + halfSize) / (2.0f * halfSize));
+  }
+  impl_->mesh_.addPolygon({0, 1, 2});
+  impl_->mesh_.addPolygon({0, 2, 3});
+}
+
+void Artifact3DLayer::createFixedGeometryMesh(FixedGeometry3D geometry)
+{
+  impl_->mesh_ = Mesh();
+  switch (geometry) {
+  case FixedGeometry3D::Plane:
+    createPlaneMesh();
+    break;
+  case FixedGeometry3D::Cube:
+  case FixedGeometry3D::Auto:
+  default:
+    createCubeMesh();
+    break;
+  }
 }
 
 void Artifact3DLayer::updateSourceSizeFromMesh() {

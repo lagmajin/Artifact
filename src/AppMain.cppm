@@ -21,6 +21,7 @@ module;
 #include <QAbstractButton>
 #include <QAbstractScrollArea>
 #include <QApplication>
+#include <QLocale>
 #include <QColor>
 #include <QCommandLineOption>
 #include <QDateTime>
@@ -1753,6 +1754,26 @@ int main(int argc, char *argv[]) {
         ArtifactCore::LocalizationManager::instance().setLanguage(targetLang);
       }
     }
+    if (ArtifactCore::LocalizationManager::instance().language() == ArtifactCore::LocaleLanguage::Auto) {
+      const QLocale sysLocale = QLocale::system();
+      ArtifactCore::LocaleLanguage targetLang = ArtifactCore::LocaleLanguage::English;
+      switch (sysLocale.language()) {
+        case QLocale::Japanese:
+          targetLang = ArtifactCore::LocaleLanguage::Japanese;
+          break;
+        case QLocale::Chinese:
+          targetLang = sysLocale.name().startsWith(QStringLiteral("zh_TW"))
+              ? ArtifactCore::LocaleLanguage::ChineseTraditional
+              : ArtifactCore::LocaleLanguage::ChineseSimplified;
+          break;
+        default:
+          targetLang = ArtifactCore::LocaleLanguage::English;
+          break;
+      }
+      ArtifactCore::LocalizationManager::instance().setLanguage(targetLang);
+      qInfo() << "[AppMain] Language inferred from system locale:" << sysLocale.name()
+              << "->" << ArtifactCore::LocalizationManager::instance().languageCode();
+    }
   }
 
   QApplication a(argc, argv);
@@ -1766,10 +1787,36 @@ int main(int argc, char *argv[]) {
   // ============================================================
   {
     auto &loc = ArtifactCore::LocalizationManager::instance();
+    const QLocale sysLocale = QLocale::system();
+    const QString sysName = sysLocale.name().toLower();
+    QString initialLocale = QStringLiteral("en");
+    if (sysName.startsWith(QStringLiteral("ja"))) {
+      initialLocale = QStringLiteral("ja");
+    } else if (sysName.startsWith(QStringLiteral("zh_tw")) || sysName.startsWith(QStringLiteral("zh-hant"))) {
+      initialLocale = QStringLiteral("zh-TW");
+    } else if (sysName.startsWith(QStringLiteral("zh"))) {
+      initialLocale = QStringLiteral("zh");
+    } else if (sysName.startsWith(QStringLiteral("ko"))) {
+      initialLocale = QStringLiteral("ko");
+    } else if (sysName.startsWith(QStringLiteral("fr"))) {
+      initialLocale = QStringLiteral("fr");
+    } else if (sysName.startsWith(QStringLiteral("de"))) {
+      initialLocale = QStringLiteral("de");
+    } else if (sysName.startsWith(QStringLiteral("es"))) {
+      initialLocale = QStringLiteral("es");
+    } else if (sysName.startsWith(QStringLiteral("pt_br")) || sysName.startsWith(QStringLiteral("pt-pt")) || sysName.startsWith(QStringLiteral("pt"))) {
+      initialLocale = QStringLiteral("pt");
+    } else if (sysName.startsWith(QStringLiteral("ru"))) {
+      initialLocale = QStringLiteral("ru");
+    } else if (sysName.startsWith(QStringLiteral("ar"))) {
+      initialLocale = QStringLiteral("ar");
+    }
+    Artifact::TranslationManager::instance().setLocale(initialLocale);
     const QString translationsDir =
         QDir(QCoreApplication::applicationDirPath())
             .filePath(QStringLiteral("translations"));
     if (QDir(translationsDir).exists()) {
+      Artifact::TranslationManager::instance().loadFromDirectory(translationsDir);
       loc.loadFromDirectory(translationsDir);
       qDebug() << "[AppMain] Localization loaded, locale:" << loc.languageCode();
     } else {
@@ -2142,7 +2189,8 @@ int main(int argc, char *argv[]) {
     frameDebugTimer->setInterval(std::chrono::milliseconds(250));
     frameDebugTimer->setCallback([mw, refreshFrameDebugWidgets]() {
       QMetaObject::invokeMethod(
-          mw, [refreshFrameDebugWidgets]() { refreshFrameDebugWidgets(); },
+          mw,
+          [refreshFrameDebugWidgets]() mutable { refreshFrameDebugWidgets(); },
           Qt::QueuedConnection);
     });
     frameDebugTimer->start();
