@@ -1093,7 +1093,6 @@ namespace Artifact {
  ArtifactViewMenu::ArtifactViewMenu(QWidget* parent/*=nullptr*/):QMenu(parent),impl_(new Impl(this))
  {
   setTitle("表示(&V)");
-  setIcon(QIcon(resolveIconPath("Studio/menubar_view.svg")));
   setTearOffEnabled(false);
   impl_->refreshEnabledState();
  }

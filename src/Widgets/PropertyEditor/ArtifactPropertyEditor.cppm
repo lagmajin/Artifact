@@ -69,6 +69,7 @@ W_OBJECT_IMPL(ArtifactTextAnimatorColorEditor)
 namespace {
 constexpr int kPropertyRowMinHeight = 32;
 constexpr int kPropertyRowLabelMinHeight = 24;
+constexpr int kPropertyRowLabelWidth = 132;
 constexpr int kPropertyRowMarginH = 10;
 constexpr int kPropertyRowMarginV = 5;
 constexpr int kPropertyRowSpacing = 8;
@@ -79,6 +80,7 @@ constexpr int kPropertyKeyButtonSize = 22;
 constexpr int kPropertyResetButtonSize = 24;
 constexpr int kPropertyExprButtonWidth = 26;
 constexpr int kPropertyExprButtonHeight = 24;
+constexpr int kNumericEditorValueWidth = 110;
 // Fixed width for the aux-button container so the row doesn't resize on hover.
 constexpr int kAuxButtonAreaWidth =
     kPropertyNavButtonWidth + kPropertyActionSpacing +
@@ -1039,6 +1041,9 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
+  spinBox_->setMinimumWidth(kNumericEditorValueWidth);
+  spinBox_->setMaximumWidth(kNumericEditorValueWidth);
+  spinBox_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   if (slider_) {
     if (g_numericEditorLayoutMode ==
         ArtifactNumericEditorLayoutMode::SliderThenValue) {
@@ -1150,15 +1155,64 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
 }
 
 bool ArtifactFloatPropertyEditor::eventFilter(QObject *watched, QEvent *event) {
-  if (slider_ && watched == slider_ && event->type() == QEvent::MouseButtonPress) {
+  if (!slider_ || watched != slider_) {
+    return ArtifactAbstractPropertyEditor::eventFilter(watched, event);
+  }
+
+  auto sliderValueForX = [this](const int x) {
+    const double ratio =
+        static_cast<double>(x) / static_cast<double>(std::max(1, slider_->width()));
+    return static_cast<int>(std::round(std::clamp(ratio, 0.0, 1.0) *
+                                       static_cast<double>(slider_->maximum())));
+  };
+
+  if (event->type() == QEvent::MouseButtonPress) {
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
     if (mouseEvent->button() == Qt::LeftButton) {
-      double ratio = static_cast<double>(mouseEvent->pos().x()) /
-                     static_cast<double>(std::max(1, slider_->width()));
-      int newValue = static_cast<int>(std::clamp(ratio, 0.0, 1.0) * 10000.0);
-      slider_->setValue(newValue);
-      previewCurrentValue();
-      commitCurrentValue();
+      sliderDragArmed_ = true;
+      sliderDragActive_ = false;
+      sliderInteracting_ = true;
+      sliderDragStartPos_ = mouseEvent->pos();
+      sliderDragStartValue_ = slider_->value();
+      slider_->setSliderDown(true);
+      return true;
+    }
+  }
+  if (event->type() == QEvent::MouseMove && sliderDragArmed_) {
+    auto *mouseEvent = static_cast<QMouseEvent *>(event);
+    if (!(mouseEvent->buttons() & Qt::LeftButton)) {
+      sliderDragArmed_ = false;
+      sliderDragActive_ = false;
+      sliderInteracting_ = false;
+      slider_->setSliderDown(false);
+      return true;
+    }
+    if (!sliderDragActive_ &&
+        (mouseEvent->pos() - sliderDragStartPos_).manhattanLength() <
+            QApplication::startDragDistance()) {
+      return true;
+    }
+    sliderDragActive_ = true;
+    slider_->setValue(sliderValueForX(mouseEvent->pos().x()));
+    return true;
+  }
+  if (event->type() == QEvent::MouseButtonRelease && sliderDragArmed_) {
+    auto *mouseEvent = static_cast<QMouseEvent *>(event);
+    if (mouseEvent->button() == Qt::LeftButton) {
+      if (sliderDragActive_) {
+        slider_->setValue(sliderValueForX(mouseEvent->pos().x()));
+      } else {
+        const QSignalBlocker blocker(slider_);
+        slider_->setValue(sliderDragStartValue_);
+      }
+      sliderDragArmed_ = false;
+      const bool shouldCommit = sliderDragActive_;
+      sliderDragActive_ = false;
+      sliderInteracting_ = false;
+      slider_->setSliderDown(false);
+      if (shouldCommit) {
+        commitCurrentValue();
+      }
       return true;
     }
   }
@@ -1260,6 +1314,9 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   auto *layout = new QHBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
+  spinBox_->setMinimumWidth(kNumericEditorValueWidth);
+  spinBox_->setMaximumWidth(kNumericEditorValueWidth);
+  spinBox_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   if (slider_) {
     if (g_numericEditorLayoutMode ==
         ArtifactNumericEditorLayoutMode::SliderThenValue) {
@@ -1409,16 +1466,64 @@ QWidget *ArtifactIntPropertyEditor::scrubTargetWidget() const {
 }
 
 bool ArtifactIntPropertyEditor::eventFilter(QObject *watched, QEvent *event) {
-  if (slider_ && watched == slider_ && event->type() == QEvent::MouseButtonPress) {
+  if (!slider_ || watched != slider_) {
+    return ArtifactAbstractPropertyEditor::eventFilter(watched, event);
+  }
+
+  auto sliderValueForX = [this](const int x) {
+    const double ratio =
+        static_cast<double>(x) / static_cast<double>(std::max(1, slider_->width()));
+    return static_cast<int>(std::round(std::clamp(ratio, 0.0, 1.0) *
+                                       static_cast<double>(slider_->maximum())));
+  };
+
+  if (event->type() == QEvent::MouseButtonPress) {
     auto *mouseEvent = static_cast<QMouseEvent *>(event);
     if (mouseEvent->button() == Qt::LeftButton) {
-      const double ratio = static_cast<double>(mouseEvent->pos().x()) /
-                           static_cast<double>(std::max(1, slider_->width()));
-      const int newValue =
-          static_cast<int>(std::clamp(ratio, 0.0, 1.0) * 10000.0);
-      slider_->setValue(newValue);
-      previewCurrentValue();
-      commitCurrentValue();
+      sliderDragArmed_ = true;
+      sliderDragActive_ = false;
+      sliderInteracting_ = true;
+      sliderDragStartPos_ = mouseEvent->pos();
+      sliderDragStartValue_ = slider_->value();
+      slider_->setSliderDown(true);
+      return true;
+    }
+  }
+  if (event->type() == QEvent::MouseMove && sliderDragArmed_) {
+    auto *mouseEvent = static_cast<QMouseEvent *>(event);
+    if (!(mouseEvent->buttons() & Qt::LeftButton)) {
+      sliderDragArmed_ = false;
+      sliderDragActive_ = false;
+      sliderInteracting_ = false;
+      slider_->setSliderDown(false);
+      return true;
+    }
+    if (!sliderDragActive_ &&
+        (mouseEvent->pos() - sliderDragStartPos_).manhattanLength() <
+            QApplication::startDragDistance()) {
+      return true;
+    }
+    sliderDragActive_ = true;
+    slider_->setValue(sliderValueForX(mouseEvent->pos().x()));
+    return true;
+  }
+  if (event->type() == QEvent::MouseButtonRelease && sliderDragArmed_) {
+    auto *mouseEvent = static_cast<QMouseEvent *>(event);
+    if (mouseEvent->button() == Qt::LeftButton) {
+      if (sliderDragActive_) {
+        slider_->setValue(sliderValueForX(mouseEvent->pos().x()));
+      } else {
+        const QSignalBlocker blocker(slider_);
+        slider_->setValue(sliderDragStartValue_);
+      }
+      sliderDragArmed_ = false;
+      const bool shouldCommit = sliderDragActive_;
+      sliderDragActive_ = false;
+      sliderInteracting_ = false;
+      slider_->setSliderDown(false);
+      if (shouldCommit) {
+        commitCurrentValue();
+      }
       return true;
     }
   }
@@ -2039,7 +2144,8 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   label_->setObjectName(QStringLiteral("propertyRowLabel"));
   label_->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
   label_->setMinimumHeight(kPropertyRowLabelMinHeight);
-  label_->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Fixed);
+  label_->setFixedWidth(kPropertyRowLabelWidth);
+  label_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
   label_->setAutoFillBackground(false);
   applyPropertyLabelPalette(label_);
 

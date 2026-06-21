@@ -5,7 +5,7 @@ module;
 
 export module Artifact.Workspace.Modes;
 
-import Widgets.ToolBar;
+export import Widgets.ToolBar;
 
 export namespace Artifact {
 

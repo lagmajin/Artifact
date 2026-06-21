@@ -381,6 +381,12 @@ public:
 
   // Physics component
   PhysicsLayerComponent physicsComponent_;
+  bool scriptComponentEnabled_ = false;
+  bool mographComponentEnabled_ = false;
+  int mographCloneCount_ = 3;
+  float mographOffsetX_ = 160.0f;
+  float mographOffsetY_ = 48.0f;
+  QJsonObject scriptBinding_;
 
   // Matte components (Asset-based track mattes)
   std::vector<LayerMatteReference> mattes_;
@@ -1008,22 +1014,53 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     const QVariant animatedValue = property.interpolateValue(time);
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
-  const double positionX =
-      evaluateDouble(QStringLiteral("transform.position.x"), t.positionX());
-  const double positionY =
-      evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
-  const double positionZ = t.positionZ();
-  const double rotation =
-      evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
+  double positionX =
+      evaluateDouble(QStringLiteral("transform.position.x"), t.positionXAt(time));
+  double positionY =
+      evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
+  const double positionZ = t.positionZAt(time);
+  double rotation =
+      evaluateDouble(QStringLiteral("transform.rotation"), t.rotationAt(time));
   const double scaleX =
-      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
+      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleXAt(time));
   const double scaleY =
-      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleY());
+      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleYAt(time));
   const double anchorX =
-      evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorX());
+      evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorXAt(time));
   const double anchorY =
-      evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
-  const double anchorZ = t.anchorZ();
+      evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorYAt(time));
+  const double anchorZ = t.anchorZAt(time);
+
+  if (impl_->physicsComponent_.enabled()) {
+    const double fps = effectiveLayerFrameRate(this);
+    const int64_t curFrame = currentTimelineFrame(this);
+    const RationalTime prevTime(curFrame - 1, fps);
+    auto evalAt = [this, &prevTime, &t](const QString &path, double fallback) {
+      const auto it = impl_->propertyCache_.constFind(path);
+      if (it == impl_->propertyCache_.constEnd() || !it.value()) {
+        return fallback;
+      }
+      const QVariant v = it.value()->interpolateValue(prevTime);
+      return v.isValid() ? v.toDouble() : fallback;
+    };
+
+    const LayerPhysicsFrameOutput physicsOutput = impl_->physicsComponent_.apply(
+        LayerPhysicsFrameInput{
+            positionX,
+            positionY,
+            rotation,
+            evalAt(QStringLiteral("transform.position.x"), t.positionXAt(prevTime)),
+            evalAt(QStringLiteral("transform.position.y"), t.positionYAt(prevTime)),
+            evalAt(QStringLiteral("transform.rotation"), t.rotationAt(prevTime)),
+            time.toDouble(),
+            fps,
+            curFrame});
+
+    positionX = physicsOutput.positionX;
+    positionY = physicsOutput.positionY;
+    rotation = physicsOutput.rotation;
+  }
+
   const QTransform local2D = impl_->modifiers_.apply(
       makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
                            anchorX, anchorY),
@@ -1638,6 +1675,16 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["effects"] = effectsArr;
   obj["isAdjustment"] = impl_->isAdjustmentLayer_;
   obj["physics"] = impl_->physicsComponent_.settings().toJson();
+  QJsonObject componentsObj;
+  componentsObj["scriptEnabled"] = impl_->scriptComponentEnabled_;
+  componentsObj["mographEnabled"] = impl_->mographComponentEnabled_;
+  componentsObj["mographCloneCount"] = impl_->mographCloneCount_;
+  componentsObj["mographOffsetX"] = static_cast<double>(impl_->mographOffsetX_);
+  componentsObj["mographOffsetY"] = static_cast<double>(impl_->mographOffsetY_);
+  if (!impl_->scriptBinding_.isEmpty()) {
+    componentsObj["scriptBinding"] = impl_->scriptBinding_;
+  }
+  obj["components"] = componentsObj;
 
   QJsonArray variantsArr;
   for (const auto& varPtr : impl_->variants_) {
@@ -1908,6 +1955,20 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   if (obj.contains("physics") && obj["physics"].isObject()) {
       impl_->physicsComponent_.settings().fromJson(obj["physics"].toObject());
       impl_->physicsComponent_.reset();
+  }
+  if (obj.contains("components") && obj["components"].isObject()) {
+      const QJsonObject componentsObj = obj["components"].toObject();
+      impl_->scriptComponentEnabled_ =
+          componentsObj.value(QStringLiteral("scriptEnabled")).toBool(false);
+      impl_->mographComponentEnabled_ =
+          componentsObj.value(QStringLiteral("mographEnabled")).toBool(false);
+      impl_->mographCloneCount_ = std::max(
+          1, componentsObj.value(QStringLiteral("mographCloneCount")).toInt(3));
+      impl_->mographOffsetX_ = static_cast<float>(
+          componentsObj.value(QStringLiteral("mographOffsetX")).toDouble(160.0));
+      impl_->mographOffsetY_ = static_cast<float>(
+          componentsObj.value(QStringLiteral("mographOffsetY")).toDouble(48.0));
+      impl_->scriptBinding_ = componentsObj.value(QStringLiteral("scriptBinding")).toObject();
   }
 
   if (obj.contains("variants") && obj["variants"].isArray()) {
@@ -2204,6 +2265,31 @@ int ArtifactAbstractLayer::modifierCount() const { return impl_->modifierCount()
 
 bool ArtifactAbstractLayer::hasModifiers() const { return impl_->hasModifiers(); }
 
+QJsonObject ArtifactAbstractLayer::scriptBinding() const {
+  return impl_->scriptBinding_;
+}
+
+void ArtifactAbstractLayer::setScriptBinding(const QJsonObject& binding) {
+  impl_->scriptBinding_ = binding;
+  impl_->scriptComponentEnabled_ = !binding.isEmpty();
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
+
+void ArtifactAbstractLayer::clearScriptBinding() {
+  if (impl_->scriptBinding_.isEmpty() && !impl_->scriptComponentEnabled_) {
+    return;
+  }
+  impl_->scriptBinding_ = QJsonObject{};
+  impl_->scriptComponentEnabled_ = false;
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
+
+bool ArtifactAbstractLayer::hasScriptBinding() const {
+  return !impl_->scriptBinding_.isEmpty();
+}
+
 std::vector<ArtifactCore::PropertyGroup>
 ArtifactAbstractLayer::getLayerPropertyGroups() const {
   using namespace ArtifactCore;
@@ -2383,6 +2469,32 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   wiggleAmpProp->setSoftRange(0.0, 100.0);
   physicsGroup.addProperty(wiggleAmpProp);
 
+  PropertyGroup componentGroup(QStringLiteral("Components"));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.script.enabled"),
+               PropertyType::Boolean, impl_->scriptComponentEnabled_, -100));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.enabled"),
+               PropertyType::Boolean, impl_->mographComponentEnabled_, -90));
+  auto mographCloneCountProp =
+      makeProp(QStringLiteral("component.mograph.cloneCount"),
+               PropertyType::Integer, impl_->mographCloneCount_, -80);
+  mographCloneCountProp->setHardRange(1.0, 256.0);
+  mographCloneCountProp->setSoftRange(1.0, 32.0);
+  componentGroup.addProperty(mographCloneCountProp);
+  auto mographOffsetXProp =
+      makeProp(QStringLiteral("component.mograph.offsetX"),
+               PropertyType::Float,
+               static_cast<double>(impl_->mographOffsetX_), -70);
+  mographOffsetXProp->setSoftRange(-1000.0, 1000.0);
+  componentGroup.addProperty(mographOffsetXProp);
+  auto mographOffsetYProp =
+      makeProp(QStringLiteral("component.mograph.offsetY"),
+               PropertyType::Float,
+               static_cast<double>(impl_->mographOffsetY_), -60);
+  mographOffsetYProp->setSoftRange(-1000.0, 1000.0);
+  componentGroup.addProperty(mographOffsetYProp);
+
   auto isAdjustmentProp =
       makeProp(QStringLiteral("layer.isAdjustment"), PropertyType::Boolean,
                isAdjustmentLayer(), -50);
@@ -2511,8 +2623,9 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   }
 
   std::vector<PropertyGroup> groups;
-  groups.reserve(3 + maskGroups.size());
+  groups.reserve(4 + maskGroups.size());
   groups.push_back(std::move(transformGroup));
+  groups.push_back(std::move(componentGroup));
   groups.push_back(std::move(physicsGroup));
   groups.push_back(std::move(layerGroup));
   for (auto &group : maskGroups) {
@@ -2688,6 +2801,32 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("physics.wiggleAmp")) {
     impl_->physicsComponent_.settings().wiggleAmp = static_cast<float>(value.toDouble());
+    return true;
+  }
+
+  if (propertyPath == QStringLiteral("component.script.enabled")) {
+    impl_->scriptComponentEnabled_ = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("component.mograph.enabled")) {
+    impl_->mographComponentEnabled_ = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("component.mograph.cloneCount")) {
+    impl_->mographCloneCount_ = std::max(1, value.toInt());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("component.mograph.offsetX")) {
+    impl_->mographOffsetX_ = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("component.mograph.offsetY")) {
+    impl_->mographOffsetY_ = static_cast<float>(value.toDouble());
+    Q_EMIT changed();
     return true;
   }
 

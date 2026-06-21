@@ -589,6 +589,17 @@ bool propertyMatchesFilter(const ArtifactCore::AbstractProperty &property,
     return true;
   }
 
+  const QStringList alternatives = query.split(QLatin1Char('|'),
+                                               Qt::SkipEmptyParts);
+  if (alternatives.size() > 1) {
+    for (const QString &alternative : alternatives) {
+      if (propertyMatchesFilter(property, alternative.trimmed())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   const QString key = property.getName();
   const QString friendly = humanizePropertyLabel(key);
   return key.contains(query, Qt::CaseInsensitive) ||

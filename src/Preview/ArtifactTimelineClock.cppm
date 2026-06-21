@@ -1,7 +1,7 @@
 module;
 #include <wobjectimpl.h>
 #include <QObject>
-#include <QTimer>
+#include <QMetaObject>
 #include <QString>
 
 #include <iostream>
@@ -42,6 +42,7 @@ module Artifact.Preview.Clock;
 
 
 
+import Thread.PreciseTicker;
 import Frame.Rate;
 import Frame.Range;
 import Frame.Position;
@@ -55,7 +56,7 @@ namespace Artifact
  {
  public:
   TimelineClock timelineClock_;  // xNbN
-  QTimer* uiUpdateTimer_;        // UIXVp^C}[i60fpsj
+  std::unique_ptr<ArtifactCore::PreciseTicker> uiUpdateTimer_;        // UIXVp^C}[i60fpsj
   ArtifactTimelineClock* parent_;
   
   QString lastTimecode_;
@@ -63,17 +64,23 @@ namespace Artifact
   
   Impl(ArtifactTimelineClock* parent)
    : parent_(parent)
-   , uiUpdateTimer_(new QTimer(parent))
+   , uiUpdateTimer_(std::make_unique<ArtifactCore::PreciseTicker>())
   {
    // UIXV60fpsi16msԊuj
-   uiUpdateTimer_->setInterval(16);
-   
-   QObject::connect(uiUpdateTimer_, &QTimer::timeout, parent, [this]() {
-    updateUI();
+   uiUpdateTimer_->setInterval(std::chrono::milliseconds(16));
+   uiUpdateTimer_->setCallback([this]() {
+    if (!parent_) {
+     return;
+    }
+    QMetaObject::invokeMethod(parent_, [this]() { updateUI(); }, Qt::QueuedConnection);
    });
   }
   
-  ~Impl() = default;
+  ~Impl() {
+   if (uiUpdateTimer_) {
+    uiUpdateTimer_->stop();
+   }
+  }
   
   void updateUI() {
    // ĐԂςʒm

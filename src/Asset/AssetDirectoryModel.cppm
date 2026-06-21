@@ -455,6 +455,9 @@ namespace Artifact {
  }
 
  void AssetDirectoryModel::setAssetRootPath(const QString& path) {
+  if (impl_->assetRootPath == path) {
+   return;
+  }
   impl_->assetRootPath = path;
   beginResetModel();
   impl_->buildRootTree();
@@ -462,6 +465,9 @@ namespace Artifact {
  }
 
  void AssetDirectoryModel::setPackageRootPath(const QString& path) {
+  if (impl_->packageRootPath == path) {
+   return;
+  }
   impl_->packageRootPath = path;
   beginResetModel();
   impl_->buildRootTree();

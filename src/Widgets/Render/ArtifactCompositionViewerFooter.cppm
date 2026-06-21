@@ -6,8 +6,8 @@
 #include <QComboBox>
 #include <QToolButton>
 #include <QSize>
+#include <QMetaObject>
 #include <wobjectimpl.h>
-#include <QTimer>
 
 #include <iostream>
 #include <vector>
@@ -47,6 +47,7 @@ module Artifact.Widgets.CompositionFooter;
 
 
 
+import Thread.PreciseTicker;
 import Utils.Path;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
@@ -136,7 +137,7 @@ namespace Artifact {
   int ramPreviewRequestedFrameCount_ = 0;
   int ramPreviewPlayableFrameCount_ = 0;
   bool isPlaying_ = false;
-  QTimer* refreshTimer = nullptr;
+  std::unique_ptr<ArtifactCore::PreciseTicker> refreshTimer = nullptr;
  };
 
  ArtifactCompositionViewerFooter::Impl::Impl()
@@ -165,14 +166,13 @@ namespace Artifact {
   memLabel = new QLabel("Mem: N/A");
   ramPreviewLabel = new QLabel("RAM: N/A");
   selectionLabel = new QLabel("");
-  refreshTimer = new QTimer();
+  refreshTimer = std::make_unique<ArtifactCore::PreciseTicker>();
  }
 
  ArtifactCompositionViewerFooter::Impl::~Impl()
  {
   if (refreshTimer) {
    refreshTimer->stop();
-   delete refreshTimer;
   }
   delete pSnapShotButton;
   delete pShutterButton;
@@ -252,22 +252,25 @@ namespace Artifact {
   });
 
   // Periodic refresh to update displayed FPS/Mem if set externally
-  connect(impl_->refreshTimer, &QTimer::timeout, this, [this]() {
-    auto* playback = ArtifactPlaybackService::instance();
-    if (playback) {
-      const auto summary = playback->ramPreviewSummary();
-      impl_->ramPreviewRequestedFrameCount_ = summary.requestedFrames;
-      impl_->ramPreviewPlayableFrameCount_ = summary.playableFrames;
-      impl_->ramPreviewCachedFrameCount_ = summary.inRamFrames;
-      impl_->ramPreviewHitRate_ = summary.hitRate;
-    }
-    impl_->fpsLabel->setText(QString("FPS: %1").arg(impl_->fps_ > 0.0 ? QString::number(impl_->fps_, 'f', 1) : QString("N/A")));
-    impl_->memLabel->setText(QString("Mem: %1 MB").arg(impl_->memMB_ ? QString::number(impl_->memMB_) : QString("N/A")));
-    impl_->ramPreviewLabel->setText(
-        ramPreviewFooterText(playback, impl_->ramPreviewHitRate_,
-                             impl_->ramPreviewCachedFrameCount_));
+  impl_->refreshTimer->setInterval(std::chrono::milliseconds(1000));
+  impl_->refreshTimer->setCallback([this]() {
+    QMetaObject::invokeMethod(this, [this]() {
+      auto* playback = ArtifactPlaybackService::instance();
+      if (playback) {
+        const auto summary = playback->ramPreviewSummary();
+        impl_->ramPreviewRequestedFrameCount_ = summary.requestedFrames;
+        impl_->ramPreviewPlayableFrameCount_ = summary.playableFrames;
+        impl_->ramPreviewCachedFrameCount_ = summary.inRamFrames;
+        impl_->ramPreviewHitRate_ = summary.hitRate;
+      }
+      impl_->fpsLabel->setText(QString("FPS: %1").arg(impl_->fps_ > 0.0 ? QString::number(impl_->fps_, 'f', 1) : QString("N/A")));
+      impl_->memLabel->setText(QString("Mem: %1 MB").arg(impl_->memMB_ ? QString::number(impl_->memMB_) : QString("N/A")));
+      impl_->ramPreviewLabel->setText(
+          ramPreviewFooterText(playback, impl_->ramPreviewHitRate_,
+                               impl_->ramPreviewCachedFrameCount_));
+    }, Qt::QueuedConnection);
   });
-  impl_->refreshTimer->start(1000);
+  impl_->refreshTimer->start();
  }
 
  ArtifactCompositionViewerFooter::~ArtifactCompositionViewerFooter()

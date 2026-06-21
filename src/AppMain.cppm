@@ -51,6 +51,7 @@ module;
 #include <QSortFilterProxyModel>
 #include <QStandardPaths>
 #include <QStyleFactory>
+#include <QMetaObject>
 #include <QTimer>
 #include <QThread>
 #include <QUrl>
@@ -74,6 +75,7 @@ import Core.AI.Context;
 import Core.AI.McpBridge;
 
 import Application.AppSettings;
+import Thread.PreciseTicker;
 import Artifact.Widgets.PlaybackControlWidget;
 import Artifact.Widgets.PlaybackControlTestWidget;
 import Transform;
@@ -2136,10 +2138,13 @@ int main(int argc, char *argv[]) {
         debugHarnessWidget->setFrameDebugSnapshot(snapshot);
       }
     };
-    auto* frameDebugTimer = new QTimer(mw);
-    frameDebugTimer->setInterval(250);
-    QObject::connect(frameDebugTimer, &QTimer::timeout, mw,
-                     refreshFrameDebugWidgets);
+    auto frameDebugTimer = std::make_shared<ArtifactCore::PreciseTicker>();
+    frameDebugTimer->setInterval(std::chrono::milliseconds(250));
+    frameDebugTimer->setCallback([mw, refreshFrameDebugWidgets]() {
+      QMetaObject::invokeMethod(
+          mw, [refreshFrameDebugWidgets]() { refreshFrameDebugWidgets(); },
+          Qt::QueuedConnection);
+    });
     frameDebugTimer->start();
 
     // Update StatusBar console summary
@@ -2909,44 +2914,50 @@ int main(int argc, char *argv[]) {
     auto hasFrameUpdate = std::make_shared<std::atomic_bool>(false);
     auto frameCounter = std::make_shared<std::atomic<int>>(0);
 
-    auto *uiTimer = new QTimer(mw);
-    uiTimer->setInterval(33); // ~30Hz UI update
-    QObject::connect(uiTimer, &QTimer::timeout, mw,
-                     [status, latestFrame, hasFrameUpdate]() {
-                       if (hasFrameUpdate->exchange(false)) {
-                         status->setFrame(latestFrame->load());
-                       }
-                     });
+    auto uiTimer = std::make_shared<ArtifactCore::PreciseTicker>();
+    uiTimer->setInterval(std::chrono::milliseconds(33)); // ~30Hz UI update
+    uiTimer->setCallback([status, latestFrame, hasFrameUpdate]() {
+      QMetaObject::invokeMethod(
+          status,
+          [status, latestFrame, hasFrameUpdate]() {
+            if (hasFrameUpdate->exchange(false)) {
+              status->setFrame(latestFrame->load());
+            }
+          },
+          Qt::QueuedConnection);
+    });
     uiTimer->start();
 
-    auto *statsTimer = new QTimer(mw);
-    statsTimer->setInterval(500);
+    auto statsTimer = std::make_shared<ArtifactCore::PreciseTicker>();
+    statsTimer->setInterval(std::chrono::milliseconds(500));
     auto fpsElapsed = std::make_shared<QElapsedTimer>();
     auto smoothedFps = std::make_shared<double>(0.0);
     fpsElapsed->start();
-    QObject::connect(
-        statsTimer, &QTimer::timeout, mw,
-        [status, fpsElapsed, frameCounter, smoothedFps]() {
-          status->setMemoryMB(processWorkingSetMB());
-          const qint64 elapsedMs = fpsElapsed->elapsed();
-          if (elapsedMs > 0) {
-            const int frames = frameCounter->exchange(0);
-            if (frames > 0) {
-              const double sampleFps =
-                  frames * 1000.0 / static_cast<double>(elapsedMs);
-              if (*smoothedFps <= 0.0) {
-                *smoothedFps = sampleFps;
-              } else {
-                // Half-second sampling is noisy, so soften display swings a bit.
-                *smoothedFps = (*smoothedFps * 0.75) + (sampleFps * 0.25);
+    statsTimer->setCallback([status, fpsElapsed, frameCounter, smoothedFps]() {
+      QMetaObject::invokeMethod(
+          status,
+          [status, fpsElapsed, frameCounter, smoothedFps]() {
+            status->setMemoryMB(processWorkingSetMB());
+            const qint64 elapsedMs = fpsElapsed->elapsed();
+            if (elapsedMs > 0) {
+              const int frames = frameCounter->exchange(0);
+              if (frames > 0) {
+                const double sampleFps =
+                    frames * 1000.0 / static_cast<double>(elapsedMs);
+                if (*smoothedFps <= 0.0) {
+                  *smoothedFps = sampleFps;
+                } else {
+                  *smoothedFps = (*smoothedFps * 0.75) + (sampleFps * 0.25);
+                }
+              }
+              if (*smoothedFps > 0.0) {
+                status->setFPS(*smoothedFps);
               }
             }
-            if (*smoothedFps > 0.0) {
-              status->setFPS(*smoothedFps);
-            }
-          }
-          fpsElapsed->restart();
-        });
+            fpsElapsed->restart();
+          },
+          Qt::QueuedConnection);
+    });
     statsTimer->start();
 
     auto *recoveryTimer = new QTimer(mw);

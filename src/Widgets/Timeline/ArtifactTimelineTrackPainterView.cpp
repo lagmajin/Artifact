@@ -3641,6 +3641,7 @@ public:
   QPoint dragAreaStartPoint_;
   double dragMarkerOrigFrame_ = 0.0;
   double dragMarkerTargetFrame_ = 0.0;
+  qint64 dragMarkerLastPaintFrame_ = std::numeric_limits<qint64>::min();
   double dragAreaOrigStartFrame_ = 0.0;
   double dragAreaOrigEndFrame_ = 0.0;
   QString dragMarkerSnapLabel_;
@@ -5446,6 +5447,7 @@ void ArtifactTimelineTrackPainterView::mousePressEvent(QMouseEvent *event) {
         impl_->dragMarkerIndex_ = markerHit.markerIndex;
         impl_->dragMarkerStartPoint_ = event->position().toPoint();
         impl_->dragMarkerOrigFrame_ = marker.frame;
+        impl_->dragMarkerLastPaintFrame_ = std::numeric_limits<qint64>::min();
         impl_->dragMarkerSelectionIndices_ =
             selectedMarkerIndices(impl_->keyframeMarkers_);
         impl_->dragMarkerSelectionOrigFrames_.clear();
@@ -5635,7 +5637,15 @@ void ArtifactTimelineTrackPainterView::mouseMoveEvent(QMouseEvent *event) {
                            .arg(formatKeyframeCollisionLabel(dragCollisionCount));
         }
       }
+      const qint64 roundedTargetFrame =
+          static_cast<qint64>(std::llround(targetFrame));
+      if (roundedTargetFrame == impl_->dragMarkerLastPaintFrame_ &&
+          snapLabel == impl_->dragMarkerSnapLabel_) {
+        event->accept();
+        return;
+      }
       impl_->dragMarkerTargetFrame_ = targetFrame;
+      impl_->dragMarkerLastPaintFrame_ = roundedTargetFrame;
       impl_->dragMarkerSnapLabel_ = snapLabel;
       updateHoverToolTip(
           this, event->globalPosition().toPoint(),
@@ -6049,6 +6059,7 @@ void ArtifactTimelineTrackPainterView::mouseReleaseEvent(QMouseEvent *event) {
     impl_->dragMarkerSelectionIndices_.clear();
     impl_->dragMarkerSelectionOrigFrames_.clear();
     impl_->dragMarkerTargetFrame_ = 0.0;
+    impl_->dragMarkerLastPaintFrame_ = std::numeric_limits<qint64>::min();
     impl_->dragMarkerSnapLabel_.clear();
     impl_->pendingMarkerSingleClick_ = false;
     impl_->pendingMarkerSingleClickKey_.clear();
@@ -7496,6 +7507,7 @@ void ArtifactTimelineTrackPainterView::leaveEvent(QEvent *event) {
   impl_->draggingMarker_ = false;
   impl_->dragMarkerIndex_ = -1;
   impl_->dragMarkerTargetFrame_ = 0.0;
+  impl_->dragMarkerLastPaintFrame_ = std::numeric_limits<qint64>::min();
   impl_->dragMarkerSnapLabel_.clear();
   impl_->dragMarkerSelectionIndices_.clear();
   impl_->dragMarkerSelectionOrigFrames_.clear();

@@ -66,7 +66,7 @@ ArtifactClipBufferWidget::Impl::Impl(ArtifactClipBufferWidget *parent)
     QObject::connect(listView_, &QListView::doubleClicked, parent, [this](const QModelIndex &idx) { onDoubleClicked(idx); });
 
     // Subscribe to EventBus copies if applicable
-    copySubscription_ = ArtifactCore::globalEventBus().subscribe<ArtifactCore::FrameChangedEvent>(
+    copySubscription_ = ArtifactCore::globalEventBus().subscribe<FrameChangedEvent>(
         [this](const auto &) {
             // Placeholder
         });

@@ -10,13 +10,14 @@ module;
 #include <QColor>
 #include <QFont>
 #include <QFontMetrics>
+#include <QMetaObject>
 #include <QPainter>
 #include <QResizeEvent>
-#include <QTimer>
 #include <QWidget>
 
 module Artifact.Widgets.ProfilerOverlay;
 
+import Thread.PreciseTicker;
 import ArtifactCore.Utils.PerformanceProfiler;
 
 namespace Artifact {
@@ -65,7 +66,7 @@ std::string cleanName(const std::string& raw) {
 
 class ProfilerOverlayWidget::Impl {
 public:
-    QTimer*  refreshTimer = nullptr;
+    std::unique_ptr<ArtifactCore::PreciseTicker> refreshTimer = nullptr;
     int      barFrameCount = 60;
 
     static constexpr int kPad        = 8;
@@ -97,10 +98,12 @@ ProfilerOverlayWidget::ProfilerOverlayWidget(QWidget* parent)
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
 
-    impl_->refreshTimer = new QTimer(this);
-    impl_->refreshTimer->setInterval(150);
-    connect(impl_->refreshTimer, &QTimer::timeout, this,
-            static_cast<void (QWidget::*)()>(&QWidget::update));
+    impl_->refreshTimer = std::make_unique<ArtifactCore::PreciseTicker>();
+    impl_->refreshTimer->setInterval(std::chrono::milliseconds(150));
+    impl_->refreshTimer->setCallback([this]() {
+        QMetaObject::invokeMethod(
+            this, [this]() { update(); }, Qt::QueuedConnection);
+    });
     impl_->refreshTimer->start();
 
     setFixedSize(impl_->calcWidth(), impl_->calcHeight());

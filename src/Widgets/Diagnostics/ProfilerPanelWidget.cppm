@@ -13,16 +13,17 @@ module;
 #include <QFont>
 #include <QFontMetrics>
 #include <QGuiApplication>
+#include <QMetaObject>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QRect>
 #include <QResizeEvent>
 #include <QString>
-#include <QTimer>
 #include <QWidget>
 
 module Artifact.Widgets.ProfilerPanel;
 
+import Thread.PreciseTicker;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Core.Diagnostics.Trace;
 
@@ -97,7 +98,7 @@ void drawMiniBar(QPainter& p, const QRect& r, double fraction,
 // ---------------------------------------------------------------------------
 class ProfilerPanelWidget::Impl {
 public:
-    QTimer* timer           = nullptr;
+    std::unique_ptr<ArtifactCore::PreciseTicker> timer = nullptr;
     int     histN           = 90;
     bool    btnHovered      = false;
     bool    resetBtnHovered = false;
@@ -151,10 +152,12 @@ ProfilerPanelWidget::ProfilerPanelWidget(QWidget* parent)
     setAttribute(Qt::WA_NoSystemBackground, true);
     setFixedSize(Impl::kW, impl_->calcHeight());
 
-    impl_->timer = new QTimer(this);
-    impl_->timer->setInterval(200);
-    connect(impl_->timer, &QTimer::timeout, this,
-            static_cast<void (QWidget::*)()>(&QWidget::update));
+    impl_->timer = std::make_unique<ArtifactCore::PreciseTicker>();
+    impl_->timer->setInterval(std::chrono::milliseconds(200));
+    impl_->timer->setCallback([this]() {
+        QMetaObject::invokeMethod(
+            this, [this]() { update(); }, Qt::QueuedConnection);
+    });
     impl_->timer->start();
 }
 

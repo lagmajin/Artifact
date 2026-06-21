@@ -16,6 +16,7 @@ module;
 #include <QLinearGradient>
 #include <QLoggingCategory>
 #include <QMatrix4x4>
+#include <QMetaObject>
 #include <QMutex>
 #include <QPainter>
 #include <QPointer>
@@ -110,6 +111,7 @@ import Artifact.Service.Playback; // 追加
 import Application.AppSettings;
 import Playback.State;
 import Thread.Helper;
+import Thread.PreciseTicker;
 import Event.Bus;
 import Artifact.Event.Types;
 import Undo.UndoManager;
@@ -3149,7 +3151,8 @@ public:
   bool renderScheduled_ = false;
 
   // Fixed-rate render tick (Phase 1: infrastructure only)
-  QTimer *renderTickTimer_ = nullptr;
+  std::unique_ptr<ArtifactCore::PreciseTicker> renderTickDriver_;
+  std::atomic_bool renderTickPosted_{false};
   std::atomic_bool renderDirty_{false};
   static constexpr int kRenderTickIntervalMs = 16; // ~60fps
   QElapsedTimer startupTimer_;
@@ -4037,58 +4040,66 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
     impl_->renderer_->fillToViewport();
   }
 
-  // Fixed-rate render tick: consumes renderDirty_ flag at ~60fps.
-  // In Phase 1 this timer is infrastructure-only (renderDirty_ is never set).
-  // Phase 2 will migrate event handlers to use markRenderDirty().
-  impl_->renderTickTimer_ = new QTimer(this);
-  impl_->renderTickTimer_->setInterval(
-      compositionPreviewIntervalMs(impl_->previewPipeline_.composition()));
-  QPointer<CompositionRenderController> controllerPtr(this);
-  connect(impl_->renderTickTimer_, &QTimer::timeout, this, [controllerPtr]() {
-    if (!controllerPtr || !controllerPtr->impl_) {
+  // Precise render tick: clocked from ArtifactCore and marshalled back onto the
+  // UI thread to keep swapchain / QWidget access thread-safe.
+  impl_->renderTickDriver_ = std::make_unique<ArtifactCore::PreciseTicker>();
+  impl_->renderTickDriver_->setInterval(std::chrono::milliseconds(
+      compositionPreviewIntervalMs(impl_->previewPipeline_.composition())));
+  impl_->renderTickDriver_->setCallback([this]() {
+    if (!impl_ || impl_->renderTickPosted_.exchange(true, std::memory_order_acq_rel)) {
       return;
     }
-    auto* controller = controllerPtr.data();
-    auto* impl = controller->impl_;
-    renderCrashTrace("tick-enter", impl->renderFrameCounter_);
-    if (impl->viewportInteracting_ && impl->viewportInteractionElapsedTimer_.isValid() &&
-        impl->viewportInteractionElapsedTimer_.elapsed() >= impl->viewportInteractionIdleMs_) {
-      renderCrashTrace("tick-finish-viewport-interaction", impl->renderFrameCounter_);
-      controller->finishViewportInteraction();
-    }
-    // Guard: skip if host is hidden or not initialized
-    if (!impl->initialized_ || !impl->renderer_ || !impl->running_) {
-      renderCrashTrace("tick-skip-not-ready", impl->renderFrameCounter_);
-      return;
-    }
-    if (auto *host = impl->hostWidget_.data()) {
-      if (!host->isVisible()) {
-        renderCrashTrace("tick-skip-host-hidden", impl->renderFrameCounter_);
-        return;
-      }
-    }
-    if (!impl->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
-      if (!impl->viewportInteracting_ && impl->renderTickTimer_) {
-        impl->renderTickTimer_->stop();
-      }
-      return; // No state change since last tick — skip
-    }
-    if (impl->renderInProgress_) {
-      // A render is already in progress — mark dirty so next tick retries
-      impl->renderDirty_.store(true, std::memory_order_release);
-      renderCrashTrace("tick-skip-in-progress", impl->renderFrameCounter_);
-      return;
-    }
-    struct RenderInProgressGuard {
-      bool& flag;
-      explicit RenderInProgressGuard(bool& f) : flag(f) { flag = true; }
-      ~RenderInProgressGuard() { flag = false; }
-    } renderGuard(impl->renderInProgress_);
-    renderCrashTrace("tick-render-begin", impl->renderFrameCounter_);
-    impl->renderOneFrameImpl(controller);
-    renderCrashTrace("tick-render-end", impl->renderFrameCounter_);
+    QMetaObject::invokeMethod(
+        this,
+        [this]() {
+          if (!impl_) {
+            return;
+          }
+          impl_->renderTickPosted_.store(false, std::memory_order_release);
+          renderCrashTrace("tick-enter", impl_->renderFrameCounter_);
+          if (impl_->viewportInteracting_ &&
+              impl_->viewportInteractionElapsedTimer_.isValid() &&
+              impl_->viewportInteractionElapsedTimer_.elapsed() >=
+                  impl_->viewportInteractionIdleMs_) {
+            renderCrashTrace("tick-finish-viewport-interaction",
+                             impl_->renderFrameCounter_);
+            finishViewportInteraction();
+          }
+          if (!impl_->initialized_ || !impl_->renderer_ || !impl_->running_) {
+            renderCrashTrace("tick-skip-not-ready", impl_->renderFrameCounter_);
+            return;
+          }
+          if (auto *host = impl_->hostWidget_.data()) {
+            if (!host->isVisible()) {
+              renderCrashTrace("tick-skip-host-hidden",
+                               impl_->renderFrameCounter_);
+              return;
+            }
+          }
+          if (!impl_->renderDirty_.exchange(false, std::memory_order_acq_rel)) {
+            if (!impl_->viewportInteracting_ && impl_->renderTickDriver_) {
+              impl_->renderTickDriver_->stop();
+            }
+            return;
+          }
+          if (impl_->renderInProgress_) {
+            impl_->renderDirty_.store(true, std::memory_order_release);
+            renderCrashTrace("tick-skip-in-progress",
+                             impl_->renderFrameCounter_);
+            return;
+          }
+          struct RenderInProgressGuard {
+            bool& flag;
+            explicit RenderInProgressGuard(bool& f) : flag(f) { flag = true; }
+            ~RenderInProgressGuard() { flag = false; }
+          } renderGuard(impl_->renderInProgress_);
+          renderCrashTrace("tick-render-begin", impl_->renderFrameCounter_);
+          impl_->renderOneFrameImpl(this);
+          renderCrashTrace("tick-render-end", impl_->renderFrameCounter_);
+        },
+        Qt::QueuedConnection);
   });
-  impl_->renderTickTimer_->start();
+  impl_->renderTickDriver_->start();
 
   // PlaybackService のフレーム変更に合わせて再描画
   impl_->eventBusSubscriptions_.push_back(
@@ -4101,7 +4112,10 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
             }
             // comp->goToFrame() は ArtifactPlaybackService::syncCurrentCompositionFrame()
             // が publishFrame より先に投入済みのため、ここで重複呼び出しは不要。
-            impl_->invalidateOverlayComposite();
+            const auto *playback = ArtifactPlaybackService::instance();
+            if (!playback || !playback->isPlaying()) {
+              impl_->invalidateOverlayComposite();
+            }
             markRenderDirty();
           }));
   if (!impl_->gpuTextureCacheManager_) {
@@ -4150,8 +4164,8 @@ void CompositionRenderController::initialize(QWidget *hostWidget) {
 }
 
 void CompositionRenderController::destroy() {
-  if (impl_->renderTickTimer_) {
-    impl_->renderTickTimer_->stop();
+  if (impl_->renderTickDriver_) {
+    impl_->renderTickDriver_->stop();
   }
   stop();
   impl_->compositionRenderer_.reset();
@@ -4180,8 +4194,8 @@ void CompositionRenderController::start() {
     return;
   }
   impl_->running_ = true;
-  if (impl_->renderTickTimer_ && !impl_->renderTickTimer_->isActive()) {
-    impl_->renderTickTimer_->start();
+  if (impl_->renderTickDriver_ && !impl_->renderTickDriver_->isRunning()) {
+    impl_->renderTickDriver_->start();
   }
   impl_->invalidateBaseComposite();
   // Continuous timer removed for performance.
@@ -4190,8 +4204,8 @@ void CompositionRenderController::start() {
 }
 
 void CompositionRenderController::stop() {
-  if (impl_->renderTickTimer_) {
-    impl_->renderTickTimer_->stop();
+  if (impl_->renderTickDriver_) {
+    impl_->renderTickDriver_->stop();
   }
   if (!impl_->running_) {
     return;
@@ -4311,9 +4325,9 @@ void CompositionRenderController::notifyViewportInteractionActivity() {
   const bool wasInteracting = impl_->viewportInteracting_;
   impl_->viewportInteracting_ = true;
   impl_->viewportInteractionElapsedTimer_.restart();
-  if (impl_->running_ && impl_->renderTickTimer_ &&
-      !impl_->renderTickTimer_->isActive()) {
-    impl_->renderTickTimer_->start();
+  if (impl_->running_ && impl_->renderTickDriver_ &&
+      !impl_->renderTickDriver_->isRunning()) {
+    impl_->renderTickDriver_->start();
   }
   if (!wasInteracting) {
     impl_->invalidateBaseComposite();
@@ -4361,9 +4375,9 @@ void CompositionRenderController::setComposition(
       impl_->previewPipeline_.setComposition(composition);
       impl_->bindCompositionChanged(this, composition);
     }
-    if (impl_->renderTickTimer_) {
-      impl_->renderTickTimer_->setInterval(
-          compositionPreviewIntervalMs(impl_->previewPipeline_.composition()));
+    if (impl_->renderTickDriver_) {
+      impl_->renderTickDriver_->setInterval(std::chrono::milliseconds(
+          compositionPreviewIntervalMs(impl_->previewPipeline_.composition())));
     }
     markRenderDirty();
     return;
@@ -4394,17 +4408,17 @@ void CompositionRenderController::setComposition(
     impl_->renderer_->fillToViewport();
 
     impl_->syncSelectedLayerOverlayState(composition);
-    if (impl_->renderTickTimer_) {
-      impl_->renderTickTimer_->setInterval(
-          compositionPreviewIntervalMs(composition));
+    if (impl_->renderTickDriver_) {
+      impl_->renderTickDriver_->setInterval(
+          std::chrono::milliseconds(compositionPreviewIntervalMs(composition)));
     }
     // コンポジションがセットされた瞬間に1フレーム描画
     markRenderDirty();
   } else if (!composition) {
     impl_->syncSelectedLayerOverlayState(composition);
-    if (impl_->renderTickTimer_) {
-      impl_->renderTickTimer_->setInterval(
-          compositionPreviewIntervalMs(nullptr));
+    if (impl_->renderTickDriver_) {
+      impl_->renderTickDriver_->setInterval(
+          std::chrono::milliseconds(compositionPreviewIntervalMs(nullptr)));
     }
     markRenderDirty();
   }
@@ -5372,6 +5386,20 @@ CompositionRenderController::frameDebugSnapshot() const {
       pass.note = note;
       return pass;
     };
+    auto addBinding = [](ArtifactCore::FrameDebugPassRecord &pass,
+                         const QString &key, const QString &value,
+                         const QString &stage = QString(),
+                         const QString &note = QString()) {
+      ArtifactCore::FrameDebugBindingRecord binding;
+      binding.key = key;
+      binding.value = value;
+      binding.stage = stage;
+      binding.note = note;
+      pass.debugBindings.push_back(std::move(binding));
+    };
+    const QString backendName =
+        snapshot.renderBackend.isEmpty() ? QStringLiteral("unknown")
+                                         : snapshot.renderBackend;
 
     ArtifactCore::FrameDebugPassRecord setupPass =
         makePass(QStringLiteral("setup"), ArtifactCore::FrameDebugPassKind::Clear,
@@ -5394,6 +5422,73 @@ CompositionRenderController::frameDebugSnapshot() const {
         makePass(QStringLiteral("present"),
                  ArtifactCore::FrameDebugPassKind::Readback,
                  impl_->lastPresentMs_);
+    setupPass.name = QStringLiteral("Viewport Setup");
+    setupPass.backend = backendName;
+    setupPass.shaderName = QStringLiteral("fixed-function/setup");
+    setupPass.previewResourceLabel = QStringLiteral("viewport");
+    addBinding(setupPass, QStringLiteral("hostWidth"),
+               QString::number(std::max(1, static_cast<int>(std::lround(impl_->hostWidth_)))));
+    addBinding(setupPass, QStringLiteral("hostHeight"),
+               QString::number(std::max(1, static_cast<int>(std::lround(impl_->hostHeight_)))));
+    addBinding(setupPass, QStringLiteral("canvasWidth"),
+               QString::number(std::max(1, static_cast<int>(std::lround(impl_->lastCanvasWidth_)))));
+    addBinding(setupPass, QStringLiteral("canvasHeight"),
+               QString::number(std::max(1, static_cast<int>(std::lround(impl_->lastCanvasHeight_)))));
+
+    basePass.name = QStringLiteral("Composition Background");
+    basePass.backend = backendName;
+    basePass.shaderName = QStringLiteral("checkerboard/grid/clear");
+    basePass.previewResourceLabel = QStringLiteral("viewport");
+    addBinding(basePass, QStringLiteral("viewportSize"),
+               QStringLiteral("%1 x %2")
+                   .arg(std::max(1, static_cast<int>(std::lround(impl_->hostWidth_))))
+                   .arg(std::max(1, static_cast<int>(std::lround(impl_->hostHeight_)))),
+               QStringLiteral("pixel"));
+    addBinding(basePass, QStringLiteral("backgroundMode"),
+               QStringLiteral("composition-editor"));
+    addBinding(basePass, QStringLiteral("renderPathSummary"),
+               impl_->lastRenderPathSummary_.isEmpty() ? QStringLiteral("<none>")
+                                                       : impl_->lastRenderPathSummary_);
+
+    layerPass.name = QStringLiteral("Layer Content");
+    layerPass.backend = backendName;
+    layerPass.shaderName = QStringLiteral("legacy-composition-draw");
+    layerPass.previewResourceLabel =
+        snapshot.selectedLayerName.isEmpty() ||
+                snapshot.selectedLayerName == QStringLiteral("<none>")
+            ? QStringLiteral("viewport")
+            : snapshot.selectedLayerName;
+    addBinding(layerPass, QStringLiteral("selectedLayer"),
+               snapshot.selectedLayerName.isEmpty() ? QStringLiteral("<none>")
+                                                    : snapshot.selectedLayerName);
+    addBinding(layerPass, QStringLiteral("visibleLayerCount"),
+               QString::number(snapshot.visibleLayerCount));
+    addBinding(layerPass, QStringLiteral("selectedLayerEffects"),
+               QString::number(snapshot.selectedLayerEffectCount));
+    addBinding(layerPass, QStringLiteral("selectedLayerMasks"),
+               QString::number(snapshot.selectedLayerMaskCount));
+
+    overlayPass.name = QStringLiteral("Editor Overlay / Gizmo");
+    overlayPass.backend = backendName;
+    overlayPass.shaderName = QStringLiteral("overlay-helpers");
+    overlayPass.previewResourceLabel = QStringLiteral("viewport");
+    addBinding(overlayPass, QStringLiteral("selection"),
+               snapshot.selectedLayerName.isEmpty() ? QStringLiteral("<none>")
+                                                    : snapshot.selectedLayerName);
+    addBinding(overlayPass, QStringLiteral("overlayStage"),
+               QStringLiteral("gizmo/hud/helpers"));
+
+    flushPass.name = QStringLiteral("Flush / Resolve");
+    flushPass.backend = backendName;
+    flushPass.shaderName = QStringLiteral("resolve");
+    flushPass.previewResourceLabel = QStringLiteral("viewport");
+
+    presentPass.name = QStringLiteral("Present / Readback");
+    presentPass.backend = backendName;
+    presentPass.shaderName = QStringLiteral("readback");
+    presentPass.previewResourceLabel = QStringLiteral("viewport");
+    addBinding(presentPass, QStringLiteral("readbackTarget"),
+               QStringLiteral("viewport"));
 
     ArtifactCore::FrameDebugAttachmentRecord outputAttachment;
     outputAttachment.name = QStringLiteral("viewport");
@@ -5496,6 +5591,11 @@ CompositionRenderController::frameDebugSnapshot() const {
     snapshot.passes.push_back(overlayPass);
     snapshot.passes.push_back(flushPass);
     snapshot.passes.push_back(presentPass);
+    if (impl_->renderer_) {
+      const auto rendererPasses = impl_->renderer_->frameDebugPasses();
+      snapshot.passes.insert(snapshot.passes.end(), rendererPasses.begin(),
+                             rendererPasses.end());
+    }
   }
 
   const double visualRaw = snapshot.visibleLayerCount * 0.08 +
@@ -6908,9 +7008,9 @@ void CompositionRenderController::renderOneFrame() {
 
 void CompositionRenderController::markRenderDirty() {
   impl_->renderDirty_.store(true, std::memory_order_release);
-  if (impl_->running_ && impl_->renderTickTimer_ &&
-      !impl_->renderTickTimer_->isActive()) {
-    impl_->renderTickTimer_->start();
+  if (impl_->running_ && impl_->renderTickDriver_ &&
+      !impl_->renderTickDriver_->isRunning()) {
+    impl_->renderTickDriver_->start();
   }
 }
 

@@ -346,12 +346,12 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   const int centerY = h - railBottomInset - railHalfH;
   const int trackLeft = impl_->trackLeft(w);
   const int trackRight = impl_->trackRight(w);
-  const int topBandHeight = std::max(11, h / 3);
+  const int topBandHeight = std::max(12, h / 3);
   const QRect railRect(trackLeft, centerY - railHalfH + 2, std::max(1, trackRight - trackLeft + 1), railHalfH * 2);
 
-  const QColor bgTop = theme.background.lighter(112);
-  const QColor bgBottom = theme.background.darker(116);
-  const QColor railColor = theme.surface.darker(108);
+  const QColor bgTop = theme.background.darker(112);
+  const QColor bgBottom = theme.background.darker(124);
+  const QColor railColor = theme.surface.darker(112);
   const QColor railBorder = theme.border;
   const QColor cacheBaseColor(84, 198, 120);
   
@@ -363,15 +363,15 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   QRect topBand = r;
   topBand.setHeight(topBandHeight);
   QLinearGradient topBandGrad(topBand.topLeft(), topBand.bottomLeft());
-  topBandGrad.setColorAt(0.0, theme.surface.lighter(118));
-  topBandGrad.setColorAt(1.0, theme.surface.darker(112));
+  topBandGrad.setColorAt(0.0, theme.surface.lighter(112));
+  topBandGrad.setColorAt(1.0, theme.surface.darker(118));
   p.fillRect(topBand, topBandGrad);
 
-  p.setPen(theme.background.darker(180));
+  p.setPen(theme.background.darker(160));
   p.drawLine(r.topLeft(), r.topRight());
-  p.setPen(theme.background.darker(220));
+  p.setPen(theme.background.darker(210));
   p.drawLine(r.bottomLeft(), r.bottomRight());
-  p.setPen(theme.border.lighter(110));
+  p.setPen(theme.border.darker(115));
   p.drawRect(r.adjusted(0, 0, -1, -1));
 
   // ── ルーラー描画 ──────────────────────
@@ -390,7 +390,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
                                static_cast<int>(std::ceil((xOff + w) / ppf)) + 1);
 
    QFont rulerFont;
-   rulerFont.setPixelSize(9);
+   rulerFont.setPixelSize(8);
    p.setFont(rulerFont);
 
    double lastLabelRight = -1.0;
@@ -399,14 +399,14 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
     if (rx < 0.0 || rx > w) continue;
     const bool isMajor = (f % majorStep) == 0;
     const int tickH = isMajor ? (topBandHeight - 2) : (topBandHeight / 2);
-    p.setPen(QPen(isMajor ? theme.border.lighter(150) : theme.border.darker(115), 1));
+     p.setPen(QPen(isMajor ? theme.border.lighter(138) : theme.border.darker(124), 1));
     p.drawLine(QPointF(rx, topBandHeight - tickH), QPointF(rx, topBandHeight - 1));
     if (isMajor) {
      const QString label = QString::number(f);
      const double labelW = static_cast<double>(QFontMetrics(p.font()).horizontalAdvance(label));
      const double labelX = rx + 3.0;
      if (labelX <= lastLabelRight + 6.0) continue;
-     p.setPen(theme.text.darker(130));
+     p.setPen(theme.text.darker(150));
      p.drawText(QRectF(labelX, 0.0, labelW + 6.0, topBandHeight - 2), Qt::AlignLeft | Qt::AlignVCenter, label);
      lastLabelRight = labelX + labelW;
     }
@@ -414,7 +414,7 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   }
 
   // ── レール描画 ──────────────────────
-  p.setPen(QPen(railBorder, 1));
+  p.setPen(QPen(railBorder.darker(116), 1));
   p.setBrush(railColor);
   p.drawRoundedRect(railRect, railHalfH, railHalfH);
 
@@ -426,8 +426,8 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    const int cacheRight = std::clamp(std::max(cacheStartX, cacheEndX), railRect.left(), railRect.right());
    const QRect cacheRect(cacheLeft, railRect.top(), std::max(1, cacheRight - cacheLeft + 1), railRect.height());
    if (cacheRect.width() > 1) {
-    QColor requestedColor = cacheBaseColor;
-    requestedColor.setAlpha(66);
+    QColor requestedColor(218, 166, 76);
+    requestedColor.setAlpha(68);
     p.setPen(Qt::NoPen);
     p.setBrush(requestedColor);
     p.drawRoundedRect(cacheRect.adjusted(0, 1, -1, -1), railHalfH, railHalfH);
@@ -477,15 +477,15 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
   };
 
   QColor onDiskColor(88, 148, 255);
-  onDiskColor.setAlpha(132);
+  onDiskColor.setAlpha(118);
   drawFrameRuns(impl_->onDiskBitmap_, onDiskColor, 1, 1);
 
   QColor cachedColor = cacheBaseColor.lighter(112);
-  cachedColor.setAlpha(210);
+  cachedColor.setAlpha(184);
   drawFrameRuns(impl_->cacheBitmap_, cachedColor, 2, 2);
 
   QColor failedColor(232, 92, 92);
-  failedColor.setAlpha(220);
+  failedColor.setAlpha(200);
   drawFrameRuns(impl_->failedBitmap_, failedColor, 4, 4);
 
   // ── 再生ヘッド描画 ──────────────────────
@@ -525,9 +525,9 @@ void ArtifactTimelineScrubBar::setCurrentFrame(const FramePosition& frame)
    .arg(hh, 2, 10, QChar('0')).arg(mm, 2, 10, QChar('0'))
    .arg(ss, 2, 10, QChar('0')).arg(ff, 2, 10, QChar('0'));
 
-  p.setPen(theme.text);
+  p.setPen(theme.text.darker(112));
   p.drawText(QRect(10, 0, 88, h), Qt::AlignVCenter | Qt::AlignLeft, leftLabel);
-  p.setPen(theme.text.darker(130));
+  p.setPen(theme.text.darker(150));
   p.drawText(QRect(w - 128, 0, 118, h), Qt::AlignVCenter | Qt::AlignRight, rightLabel);
  }
 

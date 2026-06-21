@@ -17,6 +17,7 @@ module;
 #include <RenderDevice.h>
 #include <functional>
 #include <memory>
+#include <vector>
 
 export module Artifact.Render.IRenderer;
 
@@ -96,6 +97,7 @@ public:
   void beginFrameGpuProfiling();
   void endFrameGpuProfiling();
   ArtifactCore::RenderCostStats frameCostStats() const;
+  std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
   double lastFrameGpuTimeMs() const;
   QString particleDebugState() const;
   QString glyphAtlasDebugState() const;

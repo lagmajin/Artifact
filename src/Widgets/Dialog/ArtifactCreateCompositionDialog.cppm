@@ -296,6 +296,12 @@ QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
                 255);
 }
 
+QColor& sessionCompositionBackgroundColor()
+{
+  static QColor color;
+  return color;
+}
+
 QPointF anchorPointForPreset(const CompositionAnchorPreset preset)
 {
   switch (preset) {
@@ -555,6 +561,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
       QColor c = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
       if (c.isValid()) {
           impl_->bgColor = c;
+          sessionCompositionBackgroundColor() = c;
           updateColorButtonPreview(impl_->bgColorButton, c);
       }
   });
@@ -581,6 +588,9 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
     const QColor defaultBg(
         settings->projectDefaultCompositionBackgroundColor());
   impl_->bgColor = normalizedCompositionBackgroundDefault(defaultBg);
+  if (sessionCompositionBackgroundColor().isValid()) {
+    impl_->bgColor = sessionCompositionBackgroundColor();
+  }
   updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
   }
 
@@ -703,6 +713,7 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
      params.setPixelAspectRatio(AspectRatio(static_cast<int>(aspect * 10000), 10000));
      params.setDurationSeconds(impl_->durationSpinBox->value());
      QColor c = impl_->bgColor;
+     sessionCompositionBackgroundColor() = c;
      params.setBackgroundColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
      params.setCompositionAnchorPoint(QPointF(
          impl_->anchorXSpinBox ? impl_->anchorXSpinBox->value() : 0.5,

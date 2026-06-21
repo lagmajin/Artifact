@@ -1471,7 +1471,9 @@ void ArtifactPlaybackService::play() {
   if (impl_->engine_) {
     impl_->engine_->play();
   }
-  impl_->prewarmRamPreviewAround(currentFrame());
+  if (impl_->ramPreviewEnabled_) {
+    impl_->prewarmRamPreviewAround(currentFrame());
+  }
 }
 
 void ArtifactPlaybackService::pause() {
@@ -1500,10 +1502,10 @@ void ArtifactPlaybackService::stop() {
 }
 
 void ArtifactPlaybackService::togglePlayPause() {
-  if (impl_->engine_) {
-    impl_->engine_->togglePlayPause();
-  } else if (impl_->controller_) {
-    impl_->controller_->togglePlayPause();
+  if (isPlaying()) {
+    pause();
+  } else {
+    play();
   }
 }
 
@@ -1617,12 +1619,25 @@ FramePosition ArtifactPlaybackService::currentFrame() const {
 }
 
 void ArtifactPlaybackService::setCurrentFrame(const FramePosition &position) {
+  if (currentFrame() == position) {
+    return;
+  }
+  const bool wasPlaying = isPlaying();
   if (impl_->engine_) {
     impl_->engine_->setCurrentFrame(position);
   } else if (impl_->controller_) {
     impl_->controller_->setCurrentFrame(position);
   }
-  impl_->prewarmRamPreviewAround(position);
+  impl_->syncCurrentCompositionFrame(position);
+  const QString compositionId =
+      impl_->currentComposition_ ? impl_->currentComposition_->id().toString()
+                                 : QString();
+  ArtifactCore::globalEventBus().publish<FrameChangedEvent>(
+      FrameChangedEvent{compositionId, position.framePosition()});
+  Q_EMIT frameChanged(position);
+  if (!wasPlaying) {
+    impl_->prewarmRamPreviewAround(position);
+  }
 }
 
 FrameRange ArtifactPlaybackService::frameRange() const {

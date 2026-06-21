@@ -1203,9 +1203,17 @@ static constexpr float kParamHandleRadius = 6.0f;
 
 QPointF ArtifactLayerEditorWidgetV2::Impl::cornerRadiusHandleCanvasPos(const ArtifactShapeLayer& shape) const
 {
- // Top-right corner, inset by cornerRadius along top edge (local coords: origin at 0,0)
+ // Top-right corner, inset by cornerRadius along top edge.
+ // Square shapes are centered inside the layer bounds, so derive the local rect first.
  const float cr = shape.cornerRadius();
  const float w = static_cast<float>(shape.shapeWidth());
+ if (shape.shapeType() == Artifact::ShapeType::Square) {
+  const float h = static_cast<float>(shape.shapeHeight());
+  const float side = std::min(w, h);
+  const float left = (w - side) * 0.5f;
+  const float top = (h - side) * 0.5f;
+  return QPointF(left + side - cr, top);
+ }
  return QPointF(w - cr, 0.0f);
 }
 
@@ -1221,9 +1229,10 @@ QPointF ArtifactLayerEditorWidgetV2::Impl::starInnerRadiusHandleCanvasPos(const 
 
 bool ArtifactLayerEditorWidgetV2::Impl::hitTestCornerRadiusHandle(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos) const
 {
- if (!layer) return false;
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape || shape->shapeType() != Artifact::ShapeType::Rect) return false;
+if (!layer) return false;
+auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+if (!shape || (shape->shapeType() != Artifact::ShapeType::Rect &&
+               shape->shapeType() != Artifact::ShapeType::Square)) return false;
  const QPointF localHandle = cornerRadiusHandleCanvasPos(*shape);
  const QTransform globalTransform = layer->getGlobalTransform();
  const QPointF worldHandle = globalTransform.map(localHandle);
@@ -1253,13 +1262,14 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestStarInnerRadiusHandle(const Artif
 
 void ArtifactLayerEditorWidgetV2::Impl::drawShapeParamHandles(const ArtifactAbstractLayerPtr& layer)
 {
- if (!renderer_ || !layer) return;
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape) return;
- const QTransform globalTransform = layer->getGlobalTransform();
- const float zoom = renderer_->getZoom();
- const float handleR = kParamHandleRadius / (zoom > 0.001f ? zoom : 1.0f);
- if (shape->shapeType() == Artifact::ShapeType::Rect) {
+if (!renderer_ || !layer) return;
+auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+if (!shape) return;
+const QTransform globalTransform = layer->getGlobalTransform();
+const float zoom = renderer_->getZoom();
+const float handleR = kParamHandleRadius / (zoom > 0.001f ? zoom : 1.0f);
+if (shape->shapeType() == Artifact::ShapeType::Rect ||
+    shape->shapeType() == Artifact::ShapeType::Square) {
   const QPointF localHandle = cornerRadiusHandleCanvasPos(*shape);
   const QPointF worldHandle = globalTransform.map(localHandle);
   const FloatColor col = hoveredCornerRadius_ ? FloatColor{1,0.6f,0,1} : FloatColor{0,0.7f,1,1};

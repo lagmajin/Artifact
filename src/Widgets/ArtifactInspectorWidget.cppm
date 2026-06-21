@@ -27,6 +27,7 @@
 #include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QStringList>
 #include <QTabWidget>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -669,6 +670,12 @@ public:
   QLabel *layerTypeLabel = nullptr;
   MatteInfoLabel *matteInfoLabel = nullptr;
   ProxyInfoLabel *proxyInfoLabel = nullptr;
+  QGroupBox *componentsGroup = nullptr;
+  QLabel *componentsSummaryLabel = nullptr;
+  QPushButton *physicsComponentButton = nullptr;
+  QPushButton *scriptComponentButton = nullptr;
+  QPushButton *mographComponentButton = nullptr;
+  ArtifactPropertyWidget *componentPropertyWidget = nullptr;
   QLabel *statusLabel = nullptr;
 
   // Effects Pipeline Tab
@@ -683,6 +690,7 @@ public:
   QString lastEffectPropertyStateSignature_;
 
   struct EffectRack {
+    QGroupBox *groupBox = nullptr;
     QListWidget *listWidget = nullptr;
     QPushButton *addButton = nullptr;
     QPushButton *removeButton = nullptr;
@@ -735,6 +743,9 @@ public:
   void updateCompositionNote();
   void updateLayerNote();
   void updateLayerInfo();
+  void updateComponentControls(const ArtifactAbstractLayerPtr &layer);
+  void focusComponentProperties(const ArtifactAbstractLayerPtr &layer,
+                                const QString &filterText);
   void updateEffectsList();
   void updateEffectRackItemEnabled(const QString &effectId, bool enabled);
   void updatePropertiesForEffect(const QString &effectId);
@@ -951,6 +962,43 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
       hasFocus);
 }
 
+QString componentInspectorFilterForProperty(const QString &propertyPath) {
+  if (propertyPath.startsWith(QStringLiteral("physics."),
+                              Qt::CaseInsensitive)) {
+    return QStringLiteral("physics");
+  }
+  if (propertyPath.startsWith(QStringLiteral("component.script."),
+                              Qt::CaseInsensitive)) {
+    return QStringLiteral("script");
+  }
+  if (propertyPath.startsWith(QStringLiteral("component.mograph."),
+                              Qt::CaseInsensitive)) {
+    return QStringLiteral("mograph");
+  }
+  return QStringLiteral("physics|script|mograph");
+}
+
+QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
+  if (!layer) {
+    return QStringLiteral("physics|script|mograph");
+  }
+  const auto physics = layer->getProperty(QStringLiteral("physics.enabled"));
+  if (physics && physics->getValue().toBool()) {
+    return QStringLiteral("physics");
+  }
+  const auto script =
+      layer->getProperty(QStringLiteral("component.script.enabled"));
+  if (script && script->getValue().toBool()) {
+    return QStringLiteral("script");
+  }
+  const auto mograph =
+      layer->getProperty(QStringLiteral("component.mograph.enabled"));
+  if (mograph && mograph->getValue().toBool()) {
+    return QStringLiteral("mograph");
+  }
+  return QStringLiteral("physics|script|mograph");
+}
+
 void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
                                                         bool visible) {
   if (!effectsStateLabel)
@@ -961,6 +1009,102 @@ void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
   }
   effectsStateLabel->setText(text);
   effectsStateLabel->setVisible(visible);
+}
+
+namespace {
+bool layerBooleanProperty(const ArtifactAbstractLayerPtr &layer,
+                          const QString &propertyPath) {
+  if (!layer) {
+    return false;
+  }
+  const auto groups = layer->getLayerPropertyGroups();
+  Q_UNUSED(groups);
+  const auto property = layer->getProperty(propertyPath);
+  return property ? property->getValue().toBool() : false;
+}
+} // namespace
+
+void ArtifactInspectorWidget::Impl::updateComponentControls(
+    const ArtifactAbstractLayerPtr &layer) {
+  const bool hasLayer = static_cast<bool>(layer);
+  const bool physicsEnabled =
+      hasLayer && layerBooleanProperty(layer, QStringLiteral("physics.enabled"));
+  const bool scriptEnabled =
+      hasLayer && layerBooleanProperty(
+                      layer, QStringLiteral("component.script.enabled"));
+  const bool mographEnabled =
+      hasLayer && layerBooleanProperty(
+                      layer, QStringLiteral("component.mograph.enabled"));
+
+  if (componentsGroup) {
+    componentsGroup->setEnabled(hasLayer);
+  }
+  if (physicsComponentButton) {
+    physicsComponentButton->setEnabled(hasLayer);
+    physicsComponentButton->setText(physicsEnabled ? QStringLiteral("Physics On")
+                                                   : QStringLiteral("+ Physics"));
+  }
+  if (scriptComponentButton) {
+    scriptComponentButton->setEnabled(hasLayer);
+    scriptComponentButton->setText(scriptEnabled ? QStringLiteral("Script On")
+                                                 : QStringLiteral("+ Script"));
+  }
+  if (mographComponentButton) {
+    mographComponentButton->setEnabled(hasLayer);
+    mographComponentButton->setText(mographEnabled ? QStringLiteral("MoGraph On")
+                                                   : QStringLiteral("+ MoGraph"));
+  }
+  if (componentsSummaryLabel) {
+    QStringList active;
+    if (physicsEnabled) {
+      active.push_back(QStringLiteral("Physics"));
+    }
+    if (scriptEnabled) {
+      active.push_back(QStringLiteral("Script"));
+    }
+    if (mographEnabled) {
+      active.push_back(QStringLiteral("MoGraph"));
+    }
+    componentsSummaryLabel->setText(
+        hasLayer ? (active.isEmpty()
+                        ? QStringLiteral("Components: none")
+                        : QStringLiteral("Components: %1")
+                              .arg(active.join(QStringLiteral(", "))))
+                 : QStringLiteral("Components: select a layer"));
+    applyInspectorLabelPalette(componentsSummaryLabel, active.isEmpty());
+  }
+
+  if (componentPropertyWidget) {
+    componentPropertyWidget->setVisible(hasLayer);
+    if (!hasLayer) {
+      componentPropertyWidget->clear();
+    } else {
+      componentPropertyWidget->setLayer(layer);
+      if (componentPropertyWidget->filterText().trimmed().isEmpty()) {
+        componentPropertyWidget->setFilterText(
+            defaultComponentInspectorFilter(layer));
+      } else {
+        componentPropertyWidget->updateProperties();
+      }
+    }
+  }
+}
+
+void ArtifactInspectorWidget::Impl::focusComponentProperties(
+    const ArtifactAbstractLayerPtr &layer, const QString &filterText) {
+  if (!componentPropertyWidget) {
+    return;
+  }
+  if (!layer) {
+    componentPropertyWidget->clear();
+    componentPropertyWidget->setVisible(false);
+    return;
+  }
+  componentPropertyWidget->setVisible(true);
+  componentPropertyWidget->setLayer(layer);
+  componentPropertyWidget->setFilterText(filterText.trimmed().isEmpty()
+                                             ? defaultComponentInspectorFilter(layer)
+                                             : filterText);
 }
 
 QString ArtifactInspectorWidget::Impl::computeLayerInfoSignature(
@@ -980,6 +1124,18 @@ QString ArtifactInspectorWidget::Impl::computeLayerInfoSignature(
   signature += describeLayerPresentation(layer).typeText;
   signature += QLatin1Char('|');
   signature += QString::number(layer->maskCount());
+  signature += QLatin1Char('|');
+  signature += layerBooleanProperty(layer, QStringLiteral("physics.enabled"))
+                   ? QLatin1Char('1')
+                   : QLatin1Char('0');
+  signature +=
+      layerBooleanProperty(layer, QStringLiteral("component.script.enabled"))
+          ? QLatin1Char('1')
+          : QLatin1Char('0');
+  signature +=
+      layerBooleanProperty(layer, QStringLiteral("component.mograph.enabled"))
+          ? QLatin1Char('1')
+          : QLatin1Char('0');
   signature += QLatin1Char('|');
   signature += layer->layerNote();
   signature += QLatin1Char('|');
@@ -1588,6 +1744,7 @@ void ArtifactInspectorWidget::Impl::updateLayerInfo() {
     proxyInfoLabel->setEnabled(true);
     applyInspectorLabelPalette(proxyInfoLabel, proxyText.contains(QStringLiteral("none"), Qt::CaseInsensitive));
   }
+  updateComponentControls(layer);
   const QString capabilityText = presentation.capabilitySummaryText.isEmpty()
                                      ? QString()
                                      : QStringLiteral(" | %1").arg(presentation.capabilitySummaryText);
@@ -1648,6 +1805,7 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
     proxyInfoLabel->setEnabled(false);
     proxyInfoLabel->setProxyContext(ArtifactAbstractLayerPtr{});
   }
+  updateComponentControls(ArtifactAbstractLayerPtr{});
   statusLabel->setText("Status: Open a project to inspect layers");
   currentCompositionId_ = CompositionID();
   currentLayerId_ = LayerID();
@@ -1665,6 +1823,10 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
   if (effectPropertyWidget) {
     effectPropertyWidget->clear();
     effectPropertyWidget->setVisible(false);
+  }
+  if (componentPropertyWidget) {
+    componentPropertyWidget->clear();
+    componentPropertyWidget->setVisible(false);
   }
   if (effectParametersHintLabel) {
     effectParametersHintLabel->setText(
@@ -1688,6 +1850,7 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
     proxyInfoLabel->setEnabled(false);
     proxyInfoLabel->setProxyContext(ArtifactAbstractLayerPtr{});
   }
+  updateComponentControls(ArtifactAbstractLayerPtr{});
   statusLabel->setText("Status: Select a layer to inspect details");
   currentLayerId_ = LayerID();
   if (layerNoteConnection_) {
@@ -1723,6 +1886,10 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
   if (effectPropertyWidget) {
     effectPropertyWidget->clear();
     effectPropertyWidget->setVisible(false);
+  }
+  if (componentPropertyWidget) {
+    componentPropertyWidget->clear();
+    componentPropertyWidget->setVisible(false);
   }
   if (effectParametersHintLabel) {
     effectParametersHintLabel->setText(
@@ -2403,6 +2570,44 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   applyInspectorLabelPalette(impl_->proxyInfoLabel, false);
   layerInfoLayout->addWidget(impl_->proxyInfoLabel);
 
+  impl_->componentsGroup = new QGroupBox("Components");
+  applyInspectorSectionBox(impl_->componentsGroup);
+  auto componentsLayout = new QVBoxLayout();
+  impl_->componentsSummaryLabel = new QLabel("Components: select a layer");
+  impl_->componentsSummaryLabel->setWordWrap(true);
+  applyInspectorLabelPalette(impl_->componentsSummaryLabel, true);
+  componentsLayout->addWidget(impl_->componentsSummaryLabel);
+
+  auto componentsButtonLayout = new QHBoxLayout();
+  impl_->physicsComponentButton = new QPushButton("+ Physics");
+  impl_->scriptComponentButton = new QPushButton("+ Script");
+  impl_->mographComponentButton = new QPushButton("+ MoGraph");
+  applyInspectorButton(impl_->physicsComponentButton, true);
+  applyInspectorButton(impl_->scriptComponentButton, false);
+  applyInspectorButton(impl_->mographComponentButton, false);
+  impl_->physicsComponentButton->setToolTip(
+      QStringLiteral("Toggle the layer physics component."));
+  impl_->scriptComponentButton->setToolTip(
+      QStringLiteral("Toggle the layer script component."));
+  impl_->mographComponentButton->setToolTip(
+      QStringLiteral("Toggle the layer MoGraph component."));
+  componentsButtonLayout->addWidget(impl_->physicsComponentButton);
+  componentsButtonLayout->addWidget(impl_->scriptComponentButton);
+  componentsButtonLayout->addWidget(impl_->mographComponentButton);
+  componentsLayout->addLayout(componentsButtonLayout);
+  impl_->componentPropertyWidget = new ArtifactPropertyWidget();
+  impl_->componentPropertyWidget->setVisible(false);
+  impl_->componentPropertyWidget->setMinimumHeight(220);
+  impl_->componentPropertyWidget->setFilterText(
+      QStringLiteral("physics|script|mograph"));
+  componentsLayout->addWidget(impl_->componentPropertyWidget);
+  componentsLayout->setContentsMargins(
+      kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,
+      kInspectorNoteMargin);
+  impl_->componentsGroup->setLayout(componentsLayout);
+  impl_->componentsGroup->setEnabled(false);
+  layerInfoLayout->addWidget(impl_->componentsGroup);
+
   layerInfoLayout->setAlignment(Qt::AlignTop);
   layerInfoLayout->setContentsMargins(
       kInspectorSectionMarginL, kInspectorSectionMarginT,
@@ -2457,6 +2662,62 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
         layer->setLayerNote(impl_->layerNoteEdit->toPlainText());
       });
 
+  auto toggleComponent = [this](const QString &propertyPath,
+                                const QString &displayName) {
+    if (impl_->currentCompositionId_.isNil() ||
+        impl_->currentLayerId_.isNil()) {
+      return;
+    }
+    auto projectService = ArtifactProjectService::instance();
+    if (!projectService) {
+      return;
+    }
+    auto findResult =
+        projectService->findComposition(impl_->currentCompositionId_);
+    if (!findResult.success) {
+      return;
+    }
+    auto comp = findResult.ptr.lock();
+    if (!comp) {
+      return;
+    }
+    auto layer = comp->layerById(impl_->currentLayerId_);
+    if (!layer) {
+      return;
+    }
+    const bool nextEnabled = !layerBooleanProperty(layer, propertyPath);
+    if (layer->setLayerPropertyValue(propertyPath, nextEnabled)) {
+      impl_->focusComponentProperties(
+          layer, componentInspectorFilterForProperty(propertyPath));
+      impl_->updateComponentControls(layer);
+      impl_->lastLayerInfoSignature_.clear();
+      impl_->scheduleRefresh(
+          ArtifactInspectorWidget::Impl::LayerInfoDirty |
+          ArtifactInspectorWidget::Impl::EffectsDirty);
+      if (impl_->statusLabel) {
+        impl_->statusLabel->setText(
+            QStringLiteral("Status: %1 component %2")
+                .arg(displayName, nextEnabled ? QStringLiteral("enabled")
+                                              : QStringLiteral("disabled")));
+      }
+    }
+  };
+  QObject::connect(impl_->physicsComponentButton, &QPushButton::clicked, this,
+                   [toggleComponent]() {
+                     toggleComponent(QStringLiteral("physics.enabled"),
+                                     QStringLiteral("Physics"));
+                   });
+  QObject::connect(impl_->scriptComponentButton, &QPushButton::clicked, this,
+                   [toggleComponent]() {
+                     toggleComponent(QStringLiteral("component.script.enabled"),
+                                     QStringLiteral("Script"));
+                   });
+  QObject::connect(impl_->mographComponentButton, &QPushButton::clicked, this,
+                   [toggleComponent]() {
+                     toggleComponent(QStringLiteral("component.mograph.enabled"),
+                                     QStringLiteral("MoGraph"));
+                   });
+
   layerInfoWidget->setLayout(layerInfoLayout);
   impl_->tabWidget->addTab(layerInfoWidget, "Layer Info");
 
@@ -2487,12 +2748,14 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
 
   for (int i = 0; i < 5; ++i) {
     auto rackGroup = new QGroupBox(rackNames[i]);
+    impl_->racks[i].groupBox = rackGroup;
     applyInspectorSectionBox(rackGroup);
     auto rackLayout = new QVBoxLayout();
 
     impl_->racks[i].listWidget = new QListWidget();
     const bool rasterizerRack =
         stageFromRackIndex(i) == EffectPipelineStage::Rasterizer;
+    rackGroup->setVisible(rasterizerRack);
     impl_->racks[i].listWidget->setMinimumHeight(rasterizerRack ? 72 : 36);
     impl_->racks[i].listWidget->setMaximumHeight(rasterizerRack ? 100 : 56);
     impl_->racks[i].listWidget->setUniformItemSizes(true);

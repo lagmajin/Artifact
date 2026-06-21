@@ -336,7 +336,6 @@ ArtifactEffectMenu::ArtifactEffectMenu(QWidget* parent /*= nullptr*/)
     : QMenu(parent), impl_(new Impl(this))
 {
   setTitle(QStringLiteral("エフェクト(&T)"));
-  setIcon(menuIcon(QStringLiteral("Studio/menubar_effect.svg")));
   setTearOffEnabled(false);
   impl_->refreshEnabledState();
 }

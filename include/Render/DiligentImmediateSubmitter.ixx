@@ -38,6 +38,9 @@ public:
     void setDeferredContext(RefCntAutoPtr<IDeviceContext> deferred);
     void setPrimitiveRenderer3D(PrimitiveRenderer3D* renderer);
     void setParticleRenderer(ArtifactCore::ParticleRenderer* renderer);
+    void beginFrameDebugCapture();
+    std::vector<ArtifactCore::FrameDebugPassRecord> endFrameDebugCapture();
+    std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
 
     void submit(RenderCommandBuffer& buf, IDeviceContext* ctx) override;
 
@@ -74,6 +77,8 @@ private:
     ArtifactCore::RenderCostStats* m_frameCostStats_ = nullptr;
     PrimitiveRenderer3D* m_primitiveRenderer3D_ = nullptr;
     ArtifactCore::ParticleRenderer* m_particleRenderer_ = nullptr;
+    std::vector<ArtifactCore::FrameDebugPassRecord> m_currentFrameDebugPasses_;
+    std::vector<ArtifactCore::FrameDebugPassRecord> m_lastFrameDebugPasses_;
 
     // H3: Current PSO for per-submit deduplication
     IPipelineState* m_currentPSO_ = nullptr;
@@ -139,6 +144,7 @@ private:
     void submitParticles     (const ParticlePkt&,       IDeviceContext*, ITextureView*);
     void submitGlyphText     (const GlyphTextPkt&,      IDeviceContext*, ITextureView*);
     void submitGlyphTextTransformed(const GlyphTextXformPkt&, IDeviceContext*, ITextureView*);
+    void recordDebugPass(const ArtifactCore::FrameDebugPassRecord& pass);
 };
 
 } // namespace Artifact

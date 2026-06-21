@@ -306,9 +306,7 @@ QSize ArtifactCommonStyle::sizeFromContents(ContentsType type,
       const QFontMetrics& fm = menuItem->fontMetrics;
       const int textWidth = fm.horizontalAdvance(menuItem->text);
       const int textHeight = fm.height();
-      const int iconWidth = menuItem->icon.isNull() ? 0 : 19;
-      const int spacing = menuItem->icon.isNull() ? 0 : 5;
-      return QSize(std::max(contentsSize.width(), textWidth + iconWidth + spacing + 9),
+      return QSize(std::max(contentsSize.width(), textWidth + 9),
                    std::max(contentsSize.height(), textHeight + 7));
     }
   }
@@ -360,6 +358,8 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
       copy.palette.setColor(QPalette::Disabled, QPalette::ButtonText, disabledText);
       copy.palette.setColor(QPalette::Disabled, QPalette::Text, disabledText);
       copy.palette.setColor(QPalette::Disabled, QPalette::WindowText, disabledText);
+      copy.icon = QIcon();
+      copy.maxIconWidth = 0;
       painter->restore();
       return QProxyStyle::drawControl(element, &copy, painter, widget);
     }
@@ -382,18 +382,8 @@ void ArtifactCommonStyle::drawControl(ControlElement element, const QStyleOption
 
       const QFontMetrics& fm = menuItem->fontMetrics;
       const int textWidth = fm.horizontalAdvance(menuItem->text);
-      const bool hasIcon = !menuItem->icon.isNull();
-      const int iconSize = hasIcon ? std::min(19, std::max(13, itemRect.height() - 5)) : 0;
-      const int spacing = hasIcon ? 5 : 0;
-      const int contentWidth = textWidth + iconSize + spacing;
+      const int contentWidth = textWidth;
       int x = itemRect.left() + std::max(0, (itemRect.width() - contentWidth) / 2);
-
-      if (hasIcon) {
-        const QRect iconRect(x, itemRect.center().y() - iconSize / 2, iconSize, iconSize);
-        const QIcon::Mode mode = enabled ? QIcon::Normal : QIcon::Disabled;
-        menuItem->icon.paint(painter, iconRect, Qt::AlignCenter, mode);
-        x += iconSize + spacing;
-      }
 
       painter->setPen(enabled ? menuText : disabledText);
       painter->drawText(QRect(x, itemRect.top(), textWidth, itemRect.height()),

@@ -3,7 +3,6 @@
 #include <QElapsedTimer>
 #include <QMetaObject>
 #include <QThread>
-#include <QTimer>
 #include <wobjectimpl.h>
 
 #include <algorithm>
@@ -46,6 +45,7 @@ import Frame.Position;
 import Frame.Rate;
 import Frame.Range;
 import Artifact.Composition.InOutPoints;
+import Thread.PreciseTicker;
 
 namespace Artifact {
 
@@ -63,7 +63,7 @@ public:
   bool looping_ = false;
   bool realTime_ = true;
 
-  QTimer *timer_ = nullptr;
+  std::unique_ptr<ArtifactCore::PreciseTicker> timer_;
   QElapsedTimer elapsedTimer_;
   qint64 lastFrameTime_ = 0;
   std::function<double()> audioClockProvider_ = nullptr;
@@ -74,24 +74,44 @@ public:
   // Output monitoring
   bool outputMonitoringEnabled_ = false;
   std::function<void(bool, bool, const QString &)> outputMonitorCallback_;
+  QObject *owner_ = nullptr;
 
   Impl(QObject *owner) {
-    timer_ = new QTimer(owner);
-    timer_->setTimerType(Qt::PreciseTimer);
+    owner_ = owner;
+    timer_ = std::make_unique<ArtifactCore::PreciseTicker>();
+    timer_->setCallback([this]() {
+      if (!owner_) {
+        return;
+      }
+      QMetaObject::invokeMethod(
+          owner_,
+          [this]() {
+            if (owner_) {
+              static_cast<ArtifactCompositionPlaybackController *>(owner_)
+                  ->onTimerTick();
+            }
+          },
+          Qt::QueuedConnection);
+    });
   }
 
-  ~Impl() { delete timer_; }
+  ~Impl() {
+    if (timer_) {
+      timer_->stop();
+    }
+  }
 
   void startTimer() {
-    if (!timer_->isActive()) {
+    if (timer_ && !timer_->isRunning()) {
       elapsedTimer_.start();
       lastFrameTime_ = 0;
+      timer_->setInterval(std::chrono::milliseconds(calculateInterval()));
       timer_->start();
     }
   }
 
   void stopTimer() {
-    if (timer_->isActive()) {
+    if (timer_ && timer_->isRunning()) {
       timer_->stop();
     }
   }
@@ -170,12 +190,7 @@ public:
 
 ArtifactCompositionPlaybackController::ArtifactCompositionPlaybackController(
     QObject *parent)
-    : QObject(parent), impl_(new Impl(this)) {
-
-  // タイマーのタイムアウトを接続
-  connect(impl_->timer_, &QTimer::timeout, this,
-          &ArtifactCompositionPlaybackController::onTimerTick);
-}
+    : QObject(parent), impl_(new Impl(this)) {}
 
 ArtifactCompositionPlaybackController::
     ~ArtifactCompositionPlaybackController() {
@@ -193,7 +208,8 @@ void ArtifactCompositionPlaybackController::play() {
 
   PlaybackState oldState = impl_->state_;
   impl_->state_ = PlaybackState::Playing;
-  impl_->timer_->setInterval(impl_->calculateInterval());
+  impl_->timer_->setInterval(
+      std::chrono::milliseconds(impl_->calculateInterval()));
   impl_->startTimer();
 
   qDebug() << "[PlaybackController] state transition:" << (int)oldState << "->"
@@ -312,6 +328,9 @@ FramePosition ArtifactCompositionPlaybackController::currentFrame() const {
 
 void ArtifactCompositionPlaybackController::setCurrentFrame(
     const FramePosition &position) {
+  if (impl_->currentFrame_ == position) {
+    return;
+  }
   impl_->currentFrame_ = position;
   Q_EMIT frameChanged(impl_->currentFrame_);
 }
@@ -334,7 +353,8 @@ void ArtifactCompositionPlaybackController::setFrameRate(
     const FrameRate &rate) {
   impl_->frameRate_ = rate;
   if (impl_->state_ == PlaybackState::Playing) {
-    impl_->timer_->setInterval(impl_->calculateInterval());
+    impl_->timer_->setInterval(
+        std::chrono::milliseconds(impl_->calculateInterval()));
   }
   Q_EMIT playbackSpeedChanged(impl_->playbackSpeed_);
 }
@@ -346,7 +366,8 @@ float ArtifactCompositionPlaybackController::playbackSpeed() const {
 void ArtifactCompositionPlaybackController::setPlaybackSpeed(float speed) {
   impl_->playbackSpeed_ = qBound(0.1f, speed, 10.0f);
   if (impl_->state_ == PlaybackState::Playing) {
-    impl_->timer_->setInterval(impl_->calculateInterval());
+    impl_->timer_->setInterval(
+        std::chrono::milliseconds(impl_->calculateInterval()));
   }
   Q_EMIT playbackSpeedChanged(impl_->playbackSpeed_);
 }

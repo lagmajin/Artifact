@@ -8,6 +8,7 @@ module;
 #include <QAbstractButton>
 #include <QLabel>
 #include <QPaintEvent>
+#include <QPoint>
 #include <QPushButton>
 #include <QVariant>
 #include <QColor>
@@ -97,6 +98,10 @@ private:
     double softMin_ = 0.0;
     double softMax_ = 1.0;
     bool sliderInteracting_ = false;
+    bool sliderDragArmed_ = false;
+    bool sliderDragActive_ = false;
+    QPoint sliderDragStartPos_;
+    int sliderDragStartValue_ = 0;
 };
 
 class ArtifactIntPropertyEditor final : public ArtifactAbstractPropertyEditor {
@@ -121,6 +126,10 @@ private:
     int softMin_ = 0;
     int softMax_ = 100;
     bool sliderInteracting_ = false;
+    bool sliderDragArmed_ = false;
+    bool sliderDragActive_ = false;
+    QPoint sliderDragStartPos_;
+    int sliderDragStartValue_ = 0;
 };
 
 class ArtifactAnimatorCountPropertyEditor final : public ArtifactAbstractPropertyEditor {

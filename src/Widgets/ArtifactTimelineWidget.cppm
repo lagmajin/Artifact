@@ -100,13 +100,32 @@ using namespace ArtifactCore;
 using namespace ArtifactWidgets;
 
 namespace {
+void styleTimelineToolButton(QToolButton* button)
+{
+  if (!button) {
+    return;
+  }
+  button->setAutoRaise(true);
+  button->setCursor(Qt::PointingHandCursor);
+  button->setMinimumHeight(24);
+  button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+  QFont font = button->font();
+  font.setPixelSize(11);
+  button->setFont(font);
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  QPalette pal = button->palette();
+  pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+  pal.setColor(QPalette::WindowText, QColor(theme.textColor));
+  button->setPalette(pal);
+}
+
 std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer, const QString& propertyPath);
 
 constexpr double kTimelineRowHeight = 28.0;
 constexpr int kTimelineTopRowHeight = 16; // aligns with right ruler row
 constexpr int kTimelineHeaderRowHeight =
-    42; // matches the timecode widget height so the readout is not compressed
+    50; // keeps the two-line timecode readout from being compressed
 constexpr int kTimelineWorkAreaRowHeight = 26;
 constexpr int kDefaultTimelineFrames = 300;
 inline double timelineFrameMax(const double duration) {
@@ -1718,7 +1737,7 @@ CurveEditorSnapshot buildCurveEditorSnapshot(
 
   snapshot.signature = signatureParts.join(QLatin1Char('|'));
   if (snapshot.tracks.empty()) {
-    snapshot.summary = QStringLiteral("No numeric keyframes");
+    snapshot.summary = QStringLiteral("No editable numeric keyframes");
   } else {
     snapshot.summary = QStringLiteral("%1, %2")
                           .arg(formatCurveTrackCountSummary(static_cast<int>(snapshot.tracks.size())))
@@ -1734,7 +1753,7 @@ QString curveEditorSummaryForTracks(
     totalKeyCount += static_cast<int>(track.keys.size());
   }
   if (tracks.empty()) {
-    return QStringLiteral("No numeric keyframes");
+    return QStringLiteral("No editable numeric keyframes");
   }
   return QStringLiteral("%1, %2")
       .arg(formatCurveTrackCountSummary(static_cast<int>(tracks.size())))
@@ -3308,10 +3327,12 @@ private:
 
 class TimelinePlayheadOverlayWidget final : public QWidget {
 public:
-  TimelinePlayheadOverlayWidget(ArtifactTimelineScrubBar *scrubBar,
+  TimelinePlayheadOverlayWidget(ArtifactTimelineNavigatorWidget *navigator,
+                                ArtifactTimelineScrubBar *scrubBar,
                                 ArtifactTimelineTrackPainterView *trackView,
                                 QWidget *parent)
       : QWidget(parent), scrubBar_(scrubBar), trackView_(trackView) {
+    Q_UNUSED(navigator);
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAttribute(Qt::WA_TranslucentBackground, true);
@@ -3326,7 +3347,8 @@ public:
       return;
     }
 
-    const int top = scrubBar_->mapTo(panel, QPoint(0, 0)).y();
+    QWidget *topAnchor = static_cast<QWidget *>(scrubBar_);
+    const int top = topAnchor->mapTo(panel, QPoint(0, 0)).y();
     const int panelHeight = std::max(0, panel->height());
     const QRect nextGeometry(0, std::clamp(top, 0, panelHeight),
                              std::max(0, panel->width()),
@@ -3450,7 +3472,8 @@ public:
     rightPanelLayout->addWidget(timelineModeStack_, 1);
 
     playheadOverlay_ =
-        new TimelinePlayheadOverlayWidget(scrubBar_, painterTrackView_, this);
+        new TimelinePlayheadOverlayWidget(navigator_, scrubBar_,
+                                          painterTrackView_, this);
     playheadOverlay_->syncGeometryToPanel();
   }
 
@@ -3804,7 +3827,7 @@ void ArtifactTimelineWidget::refreshCurveEditorTracks()
                                  : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>();
     summary = QStringLiteral("%1 | %2")
                   .arg(impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed
-                           ? QStringLiteral("Speed Graph")
+                           ? QStringLiteral("Speed Graph (read-only)")
                            : QStringLiteral("Value Graph"),
                        summary);
     if (!selectedMarkers.isEmpty()) {
@@ -4963,14 +4986,21 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   auto *curveHeader = new QWidget();
   curveHeader->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  {
+    QPalette pal = curveHeader->palette();
+    const auto& theme = ArtifactCore::currentDCCTheme();
+    pal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor).darker(110));
+    curveHeader->setPalette(pal);
+    curveHeader->setAutoFillBackground(true);
+  }
   auto *curveHeaderLayout = new QHBoxLayout(curveHeader);
-  curveHeaderLayout->setContentsMargins(6, 4, 6, 4);
-  curveHeaderLayout->setSpacing(6);
+  curveHeaderLayout->setContentsMargins(8, 5, 8, 5);
+  curveHeaderLayout->setSpacing(4);
   impl_->curveEditorSummaryLabel_ = new QLabel(QStringLiteral("カーブエディタ"));
   impl_->curveEditorSummaryLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   impl_->curveEditorSummaryLabel_->setToolTip(QStringLiteral("選択したキーフレームのカーブ編集ビュー"));
   impl_->curveEditorModeButton_ = new QToolButton(curveHeader);
-  impl_->curveEditorModeButton_->setAutoRaise(true);
+  styleTimelineToolButton(impl_->curveEditorModeButton_);
   impl_->curveEditorModeButton_->setCursor(Qt::PointingHandCursor);
   impl_->curveEditorModeButton_->setToolTip(QStringLiteral("Switch between Value and Speed graph modes"));
   QObject::connect(impl_->curveEditorModeButton_, &QToolButton::clicked, this, [this]() {
@@ -4989,7 +5019,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
           : QStringLiteral("Value"));
   impl_->curveEditorFitButton_ = new QToolButton(curveHeader);
   impl_->curveEditorFitButton_->setText(QStringLiteral("Fit"));
-  impl_->curveEditorFitButton_->setAutoRaise(true);
+  styleTimelineToolButton(impl_->curveEditorFitButton_);
   impl_->curveEditorFitButton_->setToolTip(QStringLiteral("表示中のカーブに合わせてビューを調整"));
   QObject::connect(impl_->curveEditorFitButton_, &QToolButton::clicked, this, [this]() {
     if (impl_ && impl_->curveEditor_) {
@@ -4997,7 +5027,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     }
   });
   impl_->curveEditorHandleButton_ = new QToolButton(curveHeader);
-  impl_->curveEditorHandleButton_->setAutoRaise(true);
+  styleTimelineToolButton(impl_->curveEditorHandleButton_);
   impl_->curveEditorHandleButton_->setCheckable(true);
   impl_->curveEditorHandleButton_->setChecked(true);
   impl_->curveEditorHandleButton_->setText(QStringLiteral("Handles On"));
@@ -5015,7 +5045,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   const auto makeTangentButton =
       [curveHeader](const QString& text, const QString& tooltip) {
         auto *button = new TimelineToolCallbackButton(curveHeader);
-        button->setAutoRaise(true);
+        styleTimelineToolButton(button);
         button->setText(text);
         button->setToolTip(tooltip);
         return button;
@@ -5048,7 +5078,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         }
       });
   impl_->curveEditorPinButton_ = new QToolButton(curveHeader);
-  impl_->curveEditorPinButton_->setAutoRaise(true);
+  styleTimelineToolButton(impl_->curveEditorPinButton_);
   impl_->curveEditorPinButton_->setCheckable(true);
   impl_->curveEditorPinButton_->setChecked(false);
   impl_->curveEditorPinButton_->setText(QStringLiteral("Solo Off"));

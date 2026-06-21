@@ -2098,6 +2098,9 @@ protected:
         (event->button() == Qt::LeftButton && spacePressed_)) {
       isPanning_ = true;
       isPanningWithMiddle_ = (event->button() == Qt::MiddleButton);
+      if (spacePressed_) {
+        didSpacePan_ = true;
+      }
       lastMousePos_ = event->position();
       if (controller_) {
         controller_->notifyViewportInteractionActivity();
@@ -2432,6 +2435,7 @@ protected:
 
     if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
       spacePressed_ = true;
+      didSpacePan_ = false;
       setCursor(Qt::OpenHandCursor);
       event->accept();
       return;
@@ -2649,6 +2653,8 @@ protected:
 
      if (event->key() == Qt::Key_Space && !event->isAutoRepeat()) {
        spacePressed_ = false;
+       const bool shouldTogglePlayback = !didSpacePan_;
+       didSpacePan_ = false;
        if (!isPanningWithMiddle_) {
          isPanning_ = false;
        }
@@ -2659,6 +2665,9 @@ protected:
        if (controller_) {
          setCursor(controller_->cursorShapeForViewportPos(
              mapFromGlobal(QCursor::pos())));
+       }
+       if (shouldTogglePlayback) {
+         togglePlaybackPreview();
        }
        event->accept();
        return;
@@ -2756,6 +2765,21 @@ protected:
       return;
     }
     temporaryPlaybackActive_ = true;
+    playback->play();
+    if (controller_) {
+      controller_->start();
+    }
+  }
+
+  void togglePlaybackPreview() {
+    auto *playback = ArtifactPlaybackService::instance();
+    if (!playback) {
+      return;
+    }
+    if (playback->isPlaying()) {
+      playback->pause();
+      return;
+    }
     playback->play();
     if (controller_) {
       controller_->start();
@@ -3036,6 +3060,7 @@ protected:
   bool isPanningWithMiddle_ = false;
   bool isAltZooming_ = false;
   bool spacePressed_ = false;
+  bool didSpacePan_ = false;
   std::chrono::steady_clock::time_point lastMaskShortcutPressTime_{};
   bool lastMaskShortcutPressValid_ = false;
   bool pendingInitialFit_ = true;

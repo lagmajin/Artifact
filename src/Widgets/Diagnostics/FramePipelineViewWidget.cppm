@@ -204,16 +204,24 @@ public:
         const int passCount = static_cast<int>(snapshot_.passes.size());
         const int resourceCount = static_cast<int>(snapshot_.resources.size());
         const int attachmentCount = static_cast<int>(snapshot_.attachments.size());
+        int bindingCount = 0;
+        qint64 passTotalUs = 0;
+        for (const auto& pass : snapshot_.passes) {
+            bindingCount += static_cast<int>(pass.debugBindings.size());
+            passTotalUs += std::max<qint64>(0, pass.durationUs);
+        }
         const int laneCount = trace_.frames.empty() ? 0 : static_cast<int>(trace_.frames.back().lanes.size());
         const qint64 spanNs = trace_.frames.empty() ? 0 : (trace_.frames.back().frameEndNs - trace_.frames.back().frameStartNs);
 
-        summary_->setText(QStringLiteral("frame=%1  render=%2ms/%3ms  passes=%4  resources=%5  attachments=%6  lanes=%7  traceSpanNs=%8")
+        summary_->setText(QStringLiteral("frame=%1  render=%2ms/%3ms  passCpu=%4ms  passes=%5  resources=%6  attachments=%7  bindings=%8  lanes=%9  traceSpanNs=%10")
                               .arg(QString::number(frameIndex))
                               .arg(QString::number(snapshot_.renderLastFrameMs, 'f', 1))
                               .arg(QString::number(snapshot_.renderAverageFrameMs, 'f', 1))
+                              .arg(QString::number(static_cast<double>(passTotalUs) / 1000.0, 'f', 2))
                               .arg(passCount)
                               .arg(resourceCount)
                               .arg(attachmentCount)
+                              .arg(bindingCount)
                               .arg(laneCount)
                               .arg(spanNs));
         if (canvas_) {
@@ -291,14 +299,45 @@ public:
                     hazards = QStringLiteral(" ok");
                 }
 
-                lines << QStringLiteral("  %1. %2 [%3/%4] %5 -> %6%7")
+                lines << QStringLiteral("  %1. %2 [%3/%4 %5ms] %6 -> %7%8")
                               .arg(i + 1)
                               .arg(pass.name)
                               .arg(ArtifactCore::toString(pass.kind))
                               .arg(ArtifactCore::toString(pass.status))
+                              .arg(QString::number(static_cast<double>(std::max<qint64>(0, pass.durationUs)) / 1000.0, 'f', 2))
                               .arg(inputs.isEmpty() ? QStringLiteral("<none>") : inputs.join(QStringLiteral(", ")))
                               .arg(outputs.isEmpty() ? QStringLiteral("<none>") : outputs.join(QStringLiteral(", ")))
                               .arg(hazards);
+                if (!pass.backend.isEmpty()) {
+                    lines << QStringLiteral("      backend: %1").arg(pass.backend);
+                }
+                if (!pass.shaderName.isEmpty()) {
+                    lines << QStringLiteral("      shader: %1").arg(pass.shaderName);
+                }
+                if (!pass.previewResourceLabel.isEmpty()) {
+                    lines << QStringLiteral("      preview: %1").arg(pass.previewResourceLabel);
+                }
+                if (!pass.debugBindings.empty()) {
+                    lines << QStringLiteral("      bindings:");
+                    for (const auto& binding : pass.debugBindings) {
+                        QString bindingLine =
+                            QStringLiteral("        %1 = %2")
+                                .arg(binding.key.isEmpty() ? QStringLiteral("<key?>")
+                                                           : binding.key,
+                                     binding.value.isEmpty() ? QStringLiteral("<empty>")
+                                                             : binding.value);
+                        if (!binding.stage.isEmpty()) {
+                            bindingLine += QStringLiteral("  stage=%1").arg(binding.stage);
+                        }
+                        if (!binding.note.isEmpty()) {
+                            bindingLine += QStringLiteral("  note=%1").arg(binding.note);
+                        }
+                        lines << bindingLine;
+                    }
+                }
+                if (!pass.note.isEmpty()) {
+                    lines << QStringLiteral("      note: %1").arg(pass.note);
+                }
 
                 lastOutputs = outputs;
             }

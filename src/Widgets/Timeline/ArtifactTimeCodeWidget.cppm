@@ -44,8 +44,8 @@ namespace Artifact
  {
   // Vertical layout: timecode row on top, frame number row below.
   auto layout = new QVBoxLayout();
-  layout->setSpacing(0);
-  layout->setContentsMargins(10, 3, 8, 3);
+ layout->setSpacing(1);
+  layout->setContentsMargins(12, 6, 10, 6);
 
   impl_->timecodeLabel_->setObjectName("timeLabel");
   impl_->frameNumberLabel_->setObjectName("frameLabel");
@@ -79,20 +79,20 @@ namespace Artifact
   QFont timeFont(QStringLiteral("Consolas"));
   timeFont.setStyleHint(QFont::Monospace);
   timeFont.setBold(true);
-  timeFont.setPointSize(18);
+  timeFont.setPixelSize(20);
   impl_->timecodeLabel_->setFont(timeFont);
 
   QFont frameFont(QStringLiteral("Consolas"));
   frameFont.setStyleHint(QFont::Monospace);
   frameFont.setBold(false);
-  frameFont.setPointSize(10);
+  frameFont.setPixelSize(11);
   impl_->frameNumberLabel_->setFont(frameFont);
 
   const QFontMetrics timeMetrics(timeFont);
   const QFontMetrics frameMetrics(frameFont);
-  impl_->timecodeLabel_->setFixedHeight(timeMetrics.height() + 4);
-  impl_->frameNumberLabel_->setFixedHeight(frameMetrics.height() + 3);
-  setFixedHeight(timeMetrics.height() + frameMetrics.height() + 10);
+  impl_->timecodeLabel_->setMinimumHeight(timeMetrics.height() + 4);
+  impl_->frameNumberLabel_->setMinimumHeight(frameMetrics.height() + 5);
+  setMinimumHeight(timeMetrics.height() + frameMetrics.height() + 18);
 
   const int minimumWidth = 10 + timeMetrics.horizontalAdvance(QStringLiteral("00:00:00:00")) + 8;
   setMinimumWidth(minimumWidth);
@@ -136,9 +136,13 @@ namespace Artifact
  void ArtifactTimeCodeWidget::paintEvent(QPaintEvent* event)
  {
  QPainter painter(this);
-  painter.fillRect(rect(), palette().window().color());
-  painter.setPen(QPen(QColor(ArtifactCore::currentDCCTheme().borderColor), 1));
-  painter.drawLine(rect().bottomLeft(), rect().bottomRight());
+  const auto& theme = ArtifactCore::currentDCCTheme();
+  painter.fillRect(rect(), QColor(theme.secondaryBackgroundColor).darker(108));
+  painter.setPen(QPen(QColor(theme.borderColor).darker(115), 1));
+  painter.drawRect(rect().adjusted(0, 0, -1, -1));
+  QColor accent(theme.accentColor);
+  accent.setAlpha(18);
+  painter.fillRect(QRect(rect().left(), rect().top(), rect().width(), 2), accent);
   QWidget::paintEvent(event);
  }
 
@@ -160,23 +164,24 @@ ArtifactTimelineSearchBarWidget::ArtifactTimelineSearchBarWidget(QWidget* parent
   : QWidget(parent), impl_(new Impl())
  {
   auto layout = new QHBoxLayout(this);
-  layout->setSpacing(8);
-  layout->setContentsMargins(4, 3, 4, 3);
+  layout->setSpacing(6);
+  layout->setContentsMargins(6, 5, 6, 5);
 
   impl_->searchLineEdit_->setObjectName("timelineSearchBox");
   
   // Set a clear button equivalent
   impl_->searchLineEdit_->setClearButtonEnabled(true);
-  impl_->searchLineEdit_->setMinimumHeight(26);
-  setFixedHeight(34);
+  impl_->searchLineEdit_->setMinimumHeight(28);
+  setFixedHeight(38);
   impl_->searchLineEdit_->installEventFilter(this);
   {
    const auto& theme = ArtifactCore::currentDCCTheme();
    QPalette searchPal = impl_->searchLineEdit_->palette();
-   searchPal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+   searchPal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor).darker(106));
    searchPal.setColor(QPalette::Text, QColor(theme.textColor));
-   searchPal.setColor(QPalette::PlaceholderText, QColor(theme.textColor).darker(140));
-   searchPal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+   searchPal.setColor(QPalette::PlaceholderText, QColor(theme.textColor).darker(155));
+   searchPal.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor).darker(108));
+   searchPal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor).darker(108));
    impl_->searchLineEdit_->setPalette(searchPal);
   }
 

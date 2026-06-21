@@ -28,6 +28,7 @@ module;
 #include <QSet>
 #include <QHash>
 #include <QPalette>
+#include <QSize>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
 import std;
@@ -704,7 +705,10 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
     });
 
     adjustSize();
-    setMinimumSize(size());
+    const int preferredWidth = std::max(width(), 620);
+    const int preferredHeight = std::max(height(), 720);
+    resize(preferredWidth, preferredHeight);
+    setMinimumSize(QSize(620, 720));
 }
 
 CreateSolidLayerSettingDialog::~CreateSolidLayerSettingDialog()
@@ -840,7 +844,8 @@ EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent)
     });
 
     adjustSize();
-    setMinimumSize(size());
+    resize(std::max(width(), 560), height());
+    setMinimumSize(QSize(560, height()));
 }
 
 EditPlaneLayerSettingDialog::~EditPlaneLayerSettingDialog()

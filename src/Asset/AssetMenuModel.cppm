@@ -179,6 +179,9 @@ QMimeData* AssetMenuModel::mimeData(const QModelIndexList& indexes) const
 
  void AssetMenuModel::setItems(const QList<AssetMenuItem>& items)
  {
+  if (impl_->items_ == items) {
+   return;
+  }
   beginResetModel();
   impl_->items_ = items;
   endResetModel();
@@ -222,6 +225,9 @@ QMimeData* AssetMenuModel::mimeData(const QModelIndexList& indexes) const
 
  void AssetMenuModel::clear()
  {
+  if (impl_->items_.isEmpty()) {
+   return;
+  }
   beginResetModel();
   impl_->items_.clear();
   endResetModel();

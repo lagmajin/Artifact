@@ -532,6 +532,7 @@ namespace {
   void beginFrameCostCapture();
   void endFrameCostCapture();
   ArtifactCore::RenderCostStats frameCostStats() const;
+  std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
    bool isInitialized() const { return m_initialized; }
   void readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
 
@@ -927,7 +928,6 @@ namespace {
  }
 
  ArtifactIRenderer::Impl::~Impl() {}
-
  // ---------------------------------------------------------------------------
  // initialize
  // ---------------------------------------------------------------------------
@@ -1799,25 +1799,32 @@ namespace {
   return m_lastGpuFrameTimeMs;
  }
 
- void ArtifactIRenderer::Impl::beginFrameCostCapture()
- {
+void ArtifactIRenderer::Impl::beginFrameCostCapture()
+{
   m_currentFrameCostStats_ = {};
   lastParticleDebug_.clear();
+  submitter_.beginFrameDebugCapture();
   submitter_.setFrameCostStats(&m_currentFrameCostStats_);
   primitiveRenderer3D_.setFrameCostStats(&m_currentFrameCostStats_);
- }
+}
 
- void ArtifactIRenderer::Impl::endFrameCostCapture()
- {
+void ArtifactIRenderer::Impl::endFrameCostCapture()
+{
   submitter_.setFrameCostStats(nullptr);
   primitiveRenderer3D_.setFrameCostStats(nullptr);
+  submitter_.endFrameDebugCapture();
   m_lastFrameCostStats_ = m_currentFrameCostStats_;
- }
+}
 
- ArtifactCore::RenderCostStats ArtifactIRenderer::Impl::frameCostStats() const
- {
+ArtifactCore::RenderCostStats ArtifactIRenderer::Impl::frameCostStats() const
+{
   return m_lastFrameCostStats_;
- }
+}
+
+std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDebugPasses() const
+{
+  return submitter_.frameDebugPasses();
+}
 
  // ---------------------------------------------------------------------------
  // clear / flush / destroy
@@ -2031,6 +2038,7 @@ namespace {
  void ArtifactIRenderer::beginFrameGpuProfiling() { impl_->beginFrameGpuProfiling(); }
  void ArtifactIRenderer::endFrameGpuProfiling() { impl_->endFrameGpuProfiling(); }
  ArtifactCore::RenderCostStats ArtifactIRenderer::frameCostStats() const { return impl_->frameCostStats(); }
+ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::frameDebugPasses() const { return impl_->frameDebugPasses(); }
  double ArtifactIRenderer::lastFrameGpuTimeMs() const { return impl_->lastFrameGpuTimeMs(); }
 
  QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }

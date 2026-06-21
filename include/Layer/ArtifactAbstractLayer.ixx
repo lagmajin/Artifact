@@ -440,6 +440,13 @@ public:
    bool hasModifiers() const;
    /*Modifiers*/
 
+  /*Script*/
+  QJsonObject scriptBinding() const;
+  void setScriptBinding(const QJsonObject& binding);
+  void clearScriptBinding();
+  bool hasScriptBinding() const;
+  /*Script*/
+
   /*Thumbnail*/
   QImage getThumbnail(int width = 128, int height = 128) const;
   /*Thumbnail*/

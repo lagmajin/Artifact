@@ -99,6 +99,9 @@ public:
 
     void setCurrentFrameText(const QString& text)
     {
+        if (currentText_ == text) {
+            return;
+        }
         currentText_ = text;
         updateGeometry();
         update();
@@ -106,6 +109,9 @@ public:
 
     void setEndFrameText(const QString& text)
     {
+        if (endText_ == text) {
+            return;
+        }
         endText_ = text;
         updateGeometry();
         update();
@@ -113,6 +119,9 @@ public:
 
     void setRangeTexts(const QString& inText, const QString& outText)
     {
+        if (inText_ == inText && outText_ == outText) {
+            return;
+        }
         inText_ = inText;
         outText_ = outText;
         updateGeometry();

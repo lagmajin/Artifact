@@ -5,7 +5,7 @@ module;
 #include <QLabel>
 #include <QComboBox>
 #include <QWindow>
-#include <QTimer>
+#include <QMetaObject>
 #include <QShowEvent>
 #include <QHideEvent>
 #include <QMouseEvent>
@@ -49,6 +49,7 @@ module;
 #include <random>
 module Artifact.Widgets.ModelViewer;
 
+import Thread.PreciseTicker;
 import Utils.String.UniString;
 import Color.Float;
 import MeshImporter;
@@ -94,7 +95,7 @@ public:
     QComboBox* modeCombo = nullptr;
     QLabel* statusLabel = nullptr;
     NavHudLabel* navHud_ = nullptr;
-    QTimer* renderTimer_ = nullptr;
+    std::unique_ptr<ArtifactCore::PreciseTicker> renderTimer_;
 
     explicit Impl(Artifact3DModelViewer* widget)
         : owner(widget)
@@ -225,11 +226,14 @@ Artifact3DModelViewer::Artifact3DModelViewer(QWidget* parent)
     setDisplayMode(DisplayMode::Solid);
     impl_->updateStatus();
 
-    impl_->renderTimer_ = new QTimer(this);
-    connect(impl_->renderTimer_, &QTimer::timeout, this, &Artifact3DModelViewer::requestUpdate);
+    impl_->renderTimer_ = std::make_unique<ArtifactCore::PreciseTicker>();
+    impl_->renderTimer_->setInterval(std::chrono::milliseconds(16));
+    impl_->renderTimer_->setCallback([this]() {
+        QMetaObject::invokeMethod(this, [this]() { requestUpdate(); }, Qt::QueuedConnection);
+    });
     // Start only when visible; stopped in hideEvent.
     if (isVisible()) {
-        impl_->renderTimer_->start(16);
+        impl_->renderTimer_->start();
     }
 }
 
@@ -501,8 +505,8 @@ bool Artifact3DModelViewer::eventFilter(QObject* obj, QEvent* event)
 void Artifact3DModelViewer::showEvent(QShowEvent* event)
 {
     QWidget::showEvent(event);
-    if (impl_->renderTimer_ && !impl_->renderTimer_->isActive()) {
-        impl_->renderTimer_->start(16);
+    if (impl_->renderTimer_ && !impl_->renderTimer_->isRunning()) {
+        impl_->renderTimer_->start();
     }
 }
 

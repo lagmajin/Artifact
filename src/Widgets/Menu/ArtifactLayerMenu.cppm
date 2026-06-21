@@ -1763,7 +1763,6 @@ ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)
 {
     impl_->mainWindow_ = mainWindow ? mainWindow->window() : nullptr;
     setTitle("レイヤー(&L)");
-    setIcon(QIcon(resolveIconPath("Studio/menubar_layer.svg")));
 }
 
 ArtifactLayerMenu::~ArtifactLayerMenu()
