@@ -383,6 +383,18 @@ public:
     PhysicsLayerComponent physicsComponent_;
     bool scriptComponentEnabled_ = false;
     bool mographComponentEnabled_ = false;
+    bool layoutComponentEnabled_ = false;
+    int layoutMode_ = 0;
+    int layoutAnchorMode_ = 0;
+    int layoutHorizontalPin_ = 0;
+    int layoutVerticalPin_ = 0;
+    int layoutScaleMode_ = 0;
+    bool layoutSafeAreaEnabled_ = false;
+    float layoutSafeAreaPaddingX_ = 0.0f;
+    float layoutSafeAreaPaddingY_ = 0.0f;
+    int layoutStackDirection_ = 0;
+    float layoutGap_ = 24.0f;
+    int layoutMaxPerRow_ = 0;
     int mographMode_ = 0;
     int mographCloneCount_ = 3;
     float mographOffsetX_ = 160.0f;
@@ -1692,6 +1704,18 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   QJsonObject componentsObj;
   componentsObj["scriptEnabled"] = impl_->scriptComponentEnabled_;
   componentsObj["mographEnabled"] = impl_->mographComponentEnabled_;
+  componentsObj["layoutEnabled"] = impl_->layoutComponentEnabled_;
+  componentsObj["layoutMode"] = impl_->layoutMode_;
+  componentsObj["layoutAnchorMode"] = impl_->layoutAnchorMode_;
+  componentsObj["layoutHorizontalPin"] = impl_->layoutHorizontalPin_;
+  componentsObj["layoutVerticalPin"] = impl_->layoutVerticalPin_;
+  componentsObj["layoutScaleMode"] = impl_->layoutScaleMode_;
+  componentsObj["layoutSafeAreaEnabled"] = impl_->layoutSafeAreaEnabled_;
+  componentsObj["layoutSafeAreaPaddingX"] = static_cast<double>(impl_->layoutSafeAreaPaddingX_);
+  componentsObj["layoutSafeAreaPaddingY"] = static_cast<double>(impl_->layoutSafeAreaPaddingY_);
+  componentsObj["layoutStackDirection"] = impl_->layoutStackDirection_;
+  componentsObj["layoutGap"] = static_cast<double>(impl_->layoutGap_);
+  componentsObj["layoutMaxPerRow"] = impl_->layoutMaxPerRow_;
   componentsObj["mographMode"] = impl_->mographMode_;
   componentsObj["mographCloneCount"] = impl_->mographCloneCount_;
   componentsObj["mographOffsetX"] = static_cast<double>(impl_->mographOffsetX_);
@@ -1990,6 +2014,30 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("scriptEnabled")).toBool(false);
         impl_->mographComponentEnabled_ =
             componentsObj.value(QStringLiteral("mographEnabled")).toBool(false);
+        impl_->layoutComponentEnabled_ =
+            componentsObj.value(QStringLiteral("layoutEnabled")).toBool(false);
+        impl_->layoutMode_ =
+            componentsObj.value(QStringLiteral("layoutMode")).toInt(0);
+        impl_->layoutAnchorMode_ =
+            componentsObj.value(QStringLiteral("layoutAnchorMode")).toInt(0);
+        impl_->layoutHorizontalPin_ =
+            componentsObj.value(QStringLiteral("layoutHorizontalPin")).toInt(0);
+        impl_->layoutVerticalPin_ =
+            componentsObj.value(QStringLiteral("layoutVerticalPin")).toInt(0);
+        impl_->layoutScaleMode_ =
+            componentsObj.value(QStringLiteral("layoutScaleMode")).toInt(0);
+        impl_->layoutSafeAreaEnabled_ =
+            componentsObj.value(QStringLiteral("layoutSafeAreaEnabled")).toBool(false);
+        impl_->layoutSafeAreaPaddingX_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("layoutSafeAreaPaddingX")).toDouble(0.0));
+        impl_->layoutSafeAreaPaddingY_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("layoutSafeAreaPaddingY")).toDouble(0.0));
+        impl_->layoutStackDirection_ =
+            componentsObj.value(QStringLiteral("layoutStackDirection")).toInt(0);
+        impl_->layoutGap_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("layoutGap")).toDouble(24.0));
+        impl_->layoutMaxPerRow_ =
+            std::max(0, componentsObj.value(QStringLiteral("layoutMaxPerRow")).toInt(0));
         impl_->mographMode_ =
             componentsObj.value(QStringLiteral("mographMode")).toInt(0);
         impl_->mographCloneCount_ = std::max(
@@ -2559,6 +2607,45 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
       makeProp(QStringLiteral("component.mograph.enabled"),
                PropertyType::Boolean, impl_->mographComponentEnabled_, -90));
   componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.enabled"),
+               PropertyType::Boolean, impl_->layoutComponentEnabled_, -89));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.mode"),
+               PropertyType::Integer, impl_->layoutMode_, -88));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.anchorMode"),
+               PropertyType::Integer, impl_->layoutAnchorMode_, -87));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.horizontalPin"),
+               PropertyType::Integer, impl_->layoutHorizontalPin_, -86));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.verticalPin"),
+               PropertyType::Integer, impl_->layoutVerticalPin_, -85));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.scaleMode"),
+               PropertyType::Integer, impl_->layoutScaleMode_, -84));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.safeAreaEnabled"),
+               PropertyType::Boolean, impl_->layoutSafeAreaEnabled_, -83));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.safeAreaPaddingX"),
+               PropertyType::Float,
+               static_cast<double>(impl_->layoutSafeAreaPaddingX_), -82));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.safeAreaPaddingY"),
+               PropertyType::Float,
+               static_cast<double>(impl_->layoutSafeAreaPaddingY_), -81));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.stackDirection"),
+               PropertyType::Integer, impl_->layoutStackDirection_, -80));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.gap"),
+               PropertyType::Float,
+               static_cast<double>(impl_->layoutGap_), -79));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.layout.maxPerRow"),
+               PropertyType::Integer, impl_->layoutMaxPerRow_, -78));
+  componentGroup.addProperty(
       makeProp(QStringLiteral("component.mograph.mode"),
                PropertyType::Integer, impl_->mographMode_, -85));
   auto mographCloneCountProp =
@@ -2934,6 +3021,66 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     Q_EMIT changed();
     return true;
   }
+    if (propertyPath == QStringLiteral("component.layout.enabled")) {
+      impl_->layoutComponentEnabled_ = value.toBool();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.mode")) {
+      impl_->layoutMode_ = value.toInt();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.anchorMode")) {
+      impl_->layoutAnchorMode_ = value.toInt();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.horizontalPin")) {
+      impl_->layoutHorizontalPin_ = value.toInt();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.verticalPin")) {
+      impl_->layoutVerticalPin_ = value.toInt();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.scaleMode")) {
+      impl_->layoutScaleMode_ = value.toInt();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.safeAreaEnabled")) {
+      impl_->layoutSafeAreaEnabled_ = value.toBool();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.safeAreaPaddingX")) {
+      impl_->layoutSafeAreaPaddingX_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.safeAreaPaddingY")) {
+      impl_->layoutSafeAreaPaddingY_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.stackDirection")) {
+      impl_->layoutStackDirection_ = value.toInt();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.gap")) {
+      impl_->layoutGap_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.layout.maxPerRow")) {
+      impl_->layoutMaxPerRow_ = std::max(0, value.toInt());
+      Q_EMIT changed();
+      return true;
+    }
     if (propertyPath == QStringLiteral("component.mograph.enabled")) {
       impl_->mographComponentEnabled_ = value.toBool();
       Q_EMIT changed();
