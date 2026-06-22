@@ -674,7 +674,7 @@ public:
   QLabel *componentsSummaryLabel = nullptr;
   QPushButton *physicsComponentButton = nullptr;
   QPushButton *scriptComponentButton = nullptr;
-  QPushButton *mographComponentButton = nullptr;
+  QPushButton *cloneComponentButton = nullptr;
   QPushButton *openScriptButton = nullptr;
   ArtifactPropertyWidget *componentPropertyWidget = nullptr;
   QLabel *statusLabel = nullptr;
@@ -974,14 +974,14 @@ QString componentInspectorFilterForProperty(const QString &propertyPath) {
   }
   if (propertyPath.startsWith(QStringLiteral("component.mograph."),
                               Qt::CaseInsensitive)) {
-    return QStringLiteral("mograph");
+    return QStringLiteral("clone");
   }
-  return QStringLiteral("physics|script|mograph");
+  return QStringLiteral("physics|script|clone");
 }
 
 QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
-    return QStringLiteral("physics|script|mograph");
+    return QStringLiteral("physics|script|clone");
   }
   const auto physics = layer->getProperty(QStringLiteral("physics.enabled"));
   if (physics && physics->getValue().toBool()) {
@@ -992,12 +992,12 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
   if (script && script->getValue().toBool()) {
     return QStringLiteral("script");
   }
-  const auto mograph =
+  const auto clone =
       layer->getProperty(QStringLiteral("component.mograph.enabled"));
-  if (mograph && mograph->getValue().toBool()) {
-    return QStringLiteral("mograph");
+  if (clone && clone->getValue().toBool()) {
+    return QStringLiteral("clone");
   }
-  return QStringLiteral("physics|script|mograph");
+  return QStringLiteral("physics|script|clone");
 }
 
 void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
@@ -1053,7 +1053,7 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   const bool scriptEnabled =
       hasLayer && layerBooleanProperty(
                       layer, QStringLiteral("component.script.enabled"));
-  const bool mographEnabled =
+  const bool cloneEnabled =
       hasLayer && layerBooleanProperty(
                       layer, QStringLiteral("component.mograph.enabled"));
 
@@ -1070,10 +1070,10 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     scriptComponentButton->setText(scriptEnabled ? QStringLiteral("Script On")
                                                  : QStringLiteral("+ Script"));
   }
-  if (mographComponentButton) {
-    mographComponentButton->setEnabled(hasLayer);
-    mographComponentButton->setText(mographEnabled ? QStringLiteral("MoGraph On")
-                                                   : QStringLiteral("+ MoGraph"));
+  if (cloneComponentButton) {
+    cloneComponentButton->setEnabled(hasLayer);
+    cloneComponentButton->setText(cloneEnabled ? QStringLiteral("Clone On")
+                                               : QStringLiteral("+ Clone"));
   }
   if (componentsSummaryLabel) {
     QStringList active;
@@ -1083,8 +1083,8 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     if (scriptEnabled) {
       active.push_back(QStringLiteral("Script"));
     }
-    if (mographEnabled) {
-      active.push_back(QStringLiteral("MoGraph"));
+    if (cloneEnabled) {
+      active.push_back(QStringLiteral("Clone"));
     }
     componentsSummaryLabel->setText(
         hasLayer ? (active.isEmpty()
@@ -2630,30 +2630,30 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   auto componentsButtonLayout = new QHBoxLayout();
   impl_->physicsComponentButton = new QPushButton("+ Physics");
   impl_->scriptComponentButton = new QPushButton("+ Script");
-  impl_->mographComponentButton = new QPushButton("+ MoGraph");
+  impl_->cloneComponentButton = new QPushButton("+ Clone");
   impl_->openScriptButton = new QPushButton("Open Script");
   applyInspectorButton(impl_->physicsComponentButton, true);
   applyInspectorButton(impl_->scriptComponentButton, false);
-  applyInspectorButton(impl_->mographComponentButton, false);
+  applyInspectorButton(impl_->cloneComponentButton, false);
   applyInspectorButton(impl_->openScriptButton, false);
   impl_->physicsComponentButton->setToolTip(
       QStringLiteral("Toggle the layer physics component."));
   impl_->scriptComponentButton->setToolTip(
       QStringLiteral("Toggle the layer script component."));
-  impl_->mographComponentButton->setToolTip(
-      QStringLiteral("Toggle the layer MoGraph component."));
+  impl_->cloneComponentButton->setToolTip(
+      QStringLiteral("Toggle the layer Clone component."));
   impl_->openScriptButton->setToolTip(
       QStringLiteral("Open the script file linked to this layer."));
   componentsButtonLayout->addWidget(impl_->physicsComponentButton);
   componentsButtonLayout->addWidget(impl_->scriptComponentButton);
-  componentsButtonLayout->addWidget(impl_->mographComponentButton);
+  componentsButtonLayout->addWidget(impl_->cloneComponentButton);
   componentsButtonLayout->addWidget(impl_->openScriptButton);
   componentsLayout->addLayout(componentsButtonLayout);
   impl_->componentPropertyWidget = new ArtifactPropertyWidget();
   impl_->componentPropertyWidget->setVisible(false);
   impl_->componentPropertyWidget->setMinimumHeight(220);
   impl_->componentPropertyWidget->setFilterText(
-      QStringLiteral("physics|script|mograph"));
+      QStringLiteral("physics|script|clone"));
   componentsLayout->addWidget(impl_->componentPropertyWidget);
   componentsLayout->setContentsMargins(
       kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,
@@ -2766,10 +2766,10 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                      toggleComponent(QStringLiteral("component.script.enabled"),
                                      QStringLiteral("Script"));
                    });
-  QObject::connect(impl_->mographComponentButton, &QPushButton::clicked, this,
+  QObject::connect(impl_->cloneComponentButton, &QPushButton::clicked, this,
                    [toggleComponent]() {
                      toggleComponent(QStringLiteral("component.mograph.enabled"),
-                                     QStringLiteral("MoGraph"));
+                                     QStringLiteral("Clone"));
                    });
   QObject::connect(impl_->openScriptButton, &QPushButton::clicked, this,
                    [this]() {
