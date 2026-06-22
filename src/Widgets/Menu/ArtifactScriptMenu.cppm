@@ -37,14 +37,18 @@ public:
  QAction* openMenuScriptAction = nullptr;
  QAction* openHooksFolderAction = nullptr;
  QAction* openMacrosFolderAction = nullptr;
+ QMenu* aeUtilityMenu = nullptr;
  QMenu* hooksMenu = nullptr;
  QMenu* macrosMenu = nullptr;
  std::vector<QAction*> hookActions;
  std::vector<QAction*> macroActions;
+ std::vector<QAction*> aeUtilityActions;
 
  QString scriptsRootPath() const;
  QString menuScriptPath() const;
  QString macrosRootPath() const;
+ QString aeUtilityRootPath() const;
+ QString aeUtilityScriptPath(const QString& fileName) const;
  QString hooksRootPath() const;
  bool ensureScriptsWorkspaceScaffold() const;
  bool ensureTextFile(const QString& path, const QString& contents) const;
@@ -52,6 +56,7 @@ public:
  void openFile(const QString& path) const;
  void runHook(const QString& hookName);
  void runMacroFile(const QString& filePath);
+ void refreshAeUtilityActions();
  void refreshHookActions();
  void refreshMacroActions();
 };
@@ -152,9 +157,45 @@ bool ArtifactScriptMenu::Impl::ensureScriptsWorkspaceScaffold() const
  for (const QString& hookName : ArtifactPythonHookManager::knownHooks()) {
   hookReadme += QStringLiteral("- %1.py\n").arg(hookName);
  }
- return ensureTextFile(QDir(hooksRootPath()).filePath(QStringLiteral("README.txt")),
-                       hookReadme);
-}
+ if (!ensureTextFile(QDir(hooksRootPath()).filePath(QStringLiteral("README.txt")),
+                     hookReadme)) {
+  return false;
+ }
+
+ QDir(macrosRootPath()).mkpath(QStringLiteral("ae_utility_pack"));
+
+ if (!ensureTextFile(
+         aeUtilityScriptPath(QStringLiteral("quick_rename_layers.py")),
+         QStringLiteral(
+             "# ArtifactStudio AE utility pack\n"
+             "# Quick Rename Layers\n"
+             "\n"
+             "print(\"Quick Rename Layers stub\")\n"))) {
+  return false;
+ }
+
+ if (!ensureTextFile(
+         aeUtilityScriptPath(QStringLiteral("clean_layers.py")),
+         QStringLiteral(
+             "# ArtifactStudio AE utility pack\n"
+             "# Clean Layers\n"
+             "\n"
+             "print(\"Clean Layers stub\")\n"))) {
+  return false;
+ }
+
+ if (!ensureTextFile(
+         aeUtilityScriptPath(QStringLiteral("trim_comp_to_content.py")),
+         QStringLiteral(
+             "# ArtifactStudio AE utility pack\n"
+             "# Trim Comp to Content\n"
+             "\n"
+             "print(\"Trim Comp to Content stub\")\n"))) {
+  return false;
+ }
+
+ return true;
+ }
 
 void ArtifactScriptMenu::Impl::openFolder(const QString& path) const
 {
@@ -329,6 +370,50 @@ void ArtifactScriptMenu::Impl::refreshMacroActions()
  }
 }
 
+void ArtifactScriptMenu::Impl::refreshAeUtilityActions()
+{
+ if (!aeUtilityMenu) {
+  return;
+ }
+
+ for (QAction* action : aeUtilityActions) {
+  if (action) {
+   aeUtilityMenu->removeAction(action);
+   delete action;
+  }
+ }
+ aeUtilityActions.clear();
+
+ ensureScriptsWorkspaceScaffold();
+ const QStringList fileNames = {
+     QStringLiteral("quick_rename_layers.py"),
+     QStringLiteral("clean_layers.py"),
+     QStringLiteral("trim_comp_to_content.py")};
+
+ bool hasAny = false;
+ for (const QString& fileName : fileNames) {
+  const QString path = aeUtilityScriptPath(fileName);
+  const QFileInfo info(path);
+  QAction* action = aeUtilityMenu->addAction(info.baseName());
+  action->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_run_macro.svg")));
+  action->setData(info.absoluteFilePath());
+  action->setToolTip(info.absoluteFilePath());
+  action->setEnabled(info.exists());
+  QObject::connect(action, &QAction::triggered, menu_, [this, path]() {
+   runMacroFile(path);
+  });
+  aeUtilityActions.push_back(action);
+  hasAny = hasAny || info.exists();
+ }
+
+ if (!hasAny) {
+  QAction* emptyAction = aeUtilityMenu->addAction(tr("No AE Utility Scripts Yet"));
+  emptyAction->setEnabled(false);
+  emptyAction->setToolTip(tr("Use the scaffolded stubs under %1").arg(aeUtilityRootPath()));
+  aeUtilityActions.push_back(emptyAction);
+ }
+}
+
 ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  : menu_(menu)
 {
@@ -358,6 +443,9 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  macrosMenu = new QMenu(tr("Macro Commands"));
  macrosMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros.svg")));
 
+ aeUtilityMenu = new QMenu(tr("AE Utility Pack"));
+ aeUtilityMenu->setIcon(QIcon(resolveIconPath("Studio/scriptmenu_macros.svg")));
+
  const QStringList hookNames = ArtifactPythonHookManager::knownHooks();
  for (const QString& hookName : hookNames) {
   QAction* action = hooksMenu->addAction(hookName);
@@ -376,8 +464,10 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  menu->addAction(openMacrosFolderAction);
  menu->addSeparator();
  menu->addMenu(macrosMenu);
+ menu->addMenu(aeUtilityMenu);
  menu->addMenu(hooksMenu);
  refreshMacroActions();
+ refreshAeUtilityActions();
  refreshHookActions();
 
  QObject::connect(openScriptsFolderAction, &QAction::triggered, menu, [this]() {
@@ -394,6 +484,9 @@ ArtifactScriptMenu::Impl::Impl(ArtifactScriptMenu* menu)
  });
  QObject::connect(macrosMenu, &QMenu::aboutToShow, menu, [this]() {
   refreshMacroActions();
+ });
+ QObject::connect(aeUtilityMenu, &QMenu::aboutToShow, menu, [this]() {
+  refreshAeUtilityActions();
  });
  QObject::connect(hooksMenu, &QMenu::aboutToShow, menu, [this]() {
   refreshHookActions();
