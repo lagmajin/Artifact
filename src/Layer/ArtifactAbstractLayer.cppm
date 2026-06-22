@@ -379,14 +379,28 @@ public:
   int labelColorIndex_ = 0;
   float opacity_ = 1.0f; // Opacity (0.0 - 1.0)
 
-  // Physics component
-  PhysicsLayerComponent physicsComponent_;
-  bool scriptComponentEnabled_ = false;
-  bool mographComponentEnabled_ = false;
-  int mographCloneCount_ = 3;
-  float mographOffsetX_ = 160.0f;
-  float mographOffsetY_ = 48.0f;
-  QJsonObject scriptBinding_;
+    // Physics component
+    PhysicsLayerComponent physicsComponent_;
+    bool scriptComponentEnabled_ = false;
+    bool mographComponentEnabled_ = false;
+    int mographMode_ = 0;
+    int mographCloneCount_ = 3;
+    float mographOffsetX_ = 160.0f;
+    float mographOffsetY_ = 48.0f;
+    float mographOffsetZ_ = 0.0f;
+    int mographColumns_ = 3;
+    int mographRows_ = 3;
+    int mographDepth_ = 1;
+    float mographSpacingX_ = 160.0f;
+    float mographSpacingY_ = 48.0f;
+    float mographSpacingZ_ = 0.0f;
+    int mographRadialCount_ = 8;
+    float mographRadius_ = 160.0f;
+    float mographStartAngle_ = 0.0f;
+    float mographEndAngle_ = 360.0f;
+    float mographRotationStep_ = 0.0f;
+    float mographOpacityDecay_ = 0.0f;
+    QJsonObject scriptBinding_;
 
   // Matte components (Asset-based track mattes)
   std::vector<LayerMatteReference> mattes_;
@@ -1678,9 +1692,23 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   QJsonObject componentsObj;
   componentsObj["scriptEnabled"] = impl_->scriptComponentEnabled_;
   componentsObj["mographEnabled"] = impl_->mographComponentEnabled_;
+  componentsObj["mographMode"] = impl_->mographMode_;
   componentsObj["mographCloneCount"] = impl_->mographCloneCount_;
   componentsObj["mographOffsetX"] = static_cast<double>(impl_->mographOffsetX_);
   componentsObj["mographOffsetY"] = static_cast<double>(impl_->mographOffsetY_);
+  componentsObj["mographOffsetZ"] = static_cast<double>(impl_->mographOffsetZ_);
+  componentsObj["mographColumns"] = impl_->mographColumns_;
+  componentsObj["mographRows"] = impl_->mographRows_;
+  componentsObj["mographDepth"] = impl_->mographDepth_;
+  componentsObj["mographSpacingX"] = static_cast<double>(impl_->mographSpacingX_);
+  componentsObj["mographSpacingY"] = static_cast<double>(impl_->mographSpacingY_);
+  componentsObj["mographSpacingZ"] = static_cast<double>(impl_->mographSpacingZ_);
+  componentsObj["mographRadialCount"] = impl_->mographRadialCount_;
+  componentsObj["mographRadius"] = static_cast<double>(impl_->mographRadius_);
+  componentsObj["mographStartAngle"] = static_cast<double>(impl_->mographStartAngle_);
+  componentsObj["mographEndAngle"] = static_cast<double>(impl_->mographEndAngle_);
+  componentsObj["mographRotationStep"] = static_cast<double>(impl_->mographRotationStep_);
+  componentsObj["mographOpacityDecay"] = static_cast<double>(impl_->mographOpacityDecay_);
   if (!impl_->scriptBinding_.isEmpty()) {
     componentsObj["scriptBinding"] = impl_->scriptBinding_;
   }
@@ -1958,18 +1986,46 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
   }
   if (obj.contains("components") && obj["components"].isObject()) {
       const QJsonObject componentsObj = obj["components"].toObject();
-      impl_->scriptComponentEnabled_ =
-          componentsObj.value(QStringLiteral("scriptEnabled")).toBool(false);
-      impl_->mographComponentEnabled_ =
-          componentsObj.value(QStringLiteral("mographEnabled")).toBool(false);
-      impl_->mographCloneCount_ = std::max(
-          1, componentsObj.value(QStringLiteral("mographCloneCount")).toInt(3));
-      impl_->mographOffsetX_ = static_cast<float>(
-          componentsObj.value(QStringLiteral("mographOffsetX")).toDouble(160.0));
-      impl_->mographOffsetY_ = static_cast<float>(
-          componentsObj.value(QStringLiteral("mographOffsetY")).toDouble(48.0));
-      impl_->scriptBinding_ = componentsObj.value(QStringLiteral("scriptBinding")).toObject();
-  }
+        impl_->scriptComponentEnabled_ =
+            componentsObj.value(QStringLiteral("scriptEnabled")).toBool(false);
+        impl_->mographComponentEnabled_ =
+            componentsObj.value(QStringLiteral("mographEnabled")).toBool(false);
+        impl_->mographMode_ =
+            componentsObj.value(QStringLiteral("mographMode")).toInt(0);
+        impl_->mographCloneCount_ = std::max(
+            1, componentsObj.value(QStringLiteral("mographCloneCount")).toInt(3));
+        impl_->mographOffsetX_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographOffsetX")).toDouble(160.0));
+        impl_->mographOffsetY_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographOffsetY")).toDouble(48.0));
+        impl_->mographOffsetZ_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographOffsetZ")).toDouble(0.0));
+        impl_->mographColumns_ = std::max(
+            1, componentsObj.value(QStringLiteral("mographColumns")).toInt(3));
+        impl_->mographRows_ = std::max(
+            1, componentsObj.value(QStringLiteral("mographRows")).toInt(3));
+        impl_->mographDepth_ = std::max(
+            1, componentsObj.value(QStringLiteral("mographDepth")).toInt(1));
+        impl_->mographSpacingX_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographSpacingX")).toDouble(160.0));
+        impl_->mographSpacingY_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographSpacingY")).toDouble(48.0));
+        impl_->mographSpacingZ_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographSpacingZ")).toDouble(0.0));
+        impl_->mographRadialCount_ = std::max(
+            1, componentsObj.value(QStringLiteral("mographRadialCount")).toInt(8));
+        impl_->mographRadius_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographRadius")).toDouble(160.0));
+        impl_->mographStartAngle_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographStartAngle")).toDouble(0.0));
+        impl_->mographEndAngle_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographEndAngle")).toDouble(360.0));
+        impl_->mographRotationStep_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographRotationStep")).toDouble(0.0));
+        impl_->mographOpacityDecay_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("mographOpacityDecay")).toDouble(0.0));
+        impl_->scriptBinding_ = componentsObj.value(QStringLiteral("scriptBinding")).toObject();
+    }
 
   if (obj.contains("variants") && obj["variants"].isArray()) {
       impl_->variants_.clear();
@@ -2502,6 +2558,9 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   componentGroup.addProperty(
       makeProp(QStringLiteral("component.mograph.enabled"),
                PropertyType::Boolean, impl_->mographComponentEnabled_, -90));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.mode"),
+               PropertyType::Integer, impl_->mographMode_, -85));
   auto mographCloneCountProp =
       makeProp(QStringLiteral("component.mograph.cloneCount"),
                PropertyType::Integer, impl_->mographCloneCount_, -80);
@@ -2520,6 +2579,45 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                static_cast<double>(impl_->mographOffsetY_), -60);
   mographOffsetYProp->setSoftRange(-1000.0, 1000.0);
   componentGroup.addProperty(mographOffsetYProp);
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.offsetZ"), PropertyType::Float,
+               static_cast<double>(impl_->mographOffsetZ_), -59));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.columns"), PropertyType::Integer,
+               impl_->mographColumns_, -58));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.rows"), PropertyType::Integer,
+               impl_->mographRows_, -57));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.depth"), PropertyType::Integer,
+               impl_->mographDepth_, -56));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.spacingX"), PropertyType::Float,
+               static_cast<double>(impl_->mographSpacingX_), -55));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.spacingY"), PropertyType::Float,
+               static_cast<double>(impl_->mographSpacingY_), -54));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.spacingZ"), PropertyType::Float,
+               static_cast<double>(impl_->mographSpacingZ_), -53));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.radialCount"), PropertyType::Integer,
+               impl_->mographRadialCount_, -52));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.radius"), PropertyType::Float,
+               static_cast<double>(impl_->mographRadius_), -51));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.startAngle"), PropertyType::Float,
+               static_cast<double>(impl_->mographStartAngle_), -50));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.endAngle"), PropertyType::Float,
+               static_cast<double>(impl_->mographEndAngle_), -49));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.rotationStep"), PropertyType::Float,
+               static_cast<double>(impl_->mographRotationStep_), -48));
+  componentGroup.addProperty(
+      makeProp(QStringLiteral("component.mograph.opacityDecay"), PropertyType::Float,
+               static_cast<double>(impl_->mographOpacityDecay_), -47));
 
   auto isAdjustmentProp =
       makeProp(QStringLiteral("layer.isAdjustment"), PropertyType::Boolean,
@@ -2836,26 +2934,96 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     Q_EMIT changed();
     return true;
   }
-  if (propertyPath == QStringLiteral("component.mograph.enabled")) {
-    impl_->mographComponentEnabled_ = value.toBool();
-    Q_EMIT changed();
-    return true;
-  }
-  if (propertyPath == QStringLiteral("component.mograph.cloneCount")) {
-    impl_->mographCloneCount_ = std::max(1, value.toInt());
-    Q_EMIT changed();
-    return true;
-  }
+    if (propertyPath == QStringLiteral("component.mograph.enabled")) {
+      impl_->mographComponentEnabled_ = value.toBool();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.mode")) {
+      impl_->mographMode_ = value.toInt();
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.cloneCount")) {
+      impl_->mographCloneCount_ = std::max(1, value.toInt());
+      Q_EMIT changed();
+      return true;
+    }
   if (propertyPath == QStringLiteral("component.mograph.offsetX")) {
     impl_->mographOffsetX_ = static_cast<float>(value.toDouble());
     Q_EMIT changed();
     return true;
   }
-  if (propertyPath == QStringLiteral("component.mograph.offsetY")) {
-    impl_->mographOffsetY_ = static_cast<float>(value.toDouble());
-    Q_EMIT changed();
-    return true;
-  }
+    if (propertyPath == QStringLiteral("component.mograph.offsetY")) {
+      impl_->mographOffsetY_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.offsetZ")) {
+      impl_->mographOffsetZ_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.columns")) {
+      impl_->mographColumns_ = std::max(1, value.toInt());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.rows")) {
+      impl_->mographRows_ = std::max(1, value.toInt());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.depth")) {
+      impl_->mographDepth_ = std::max(1, value.toInt());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.spacingX")) {
+      impl_->mographSpacingX_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.spacingY")) {
+      impl_->mographSpacingY_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.spacingZ")) {
+      impl_->mographSpacingZ_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.radialCount")) {
+      impl_->mographRadialCount_ = std::max(1, value.toInt());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.radius")) {
+      impl_->mographRadius_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.startAngle")) {
+      impl_->mographStartAngle_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.endAngle")) {
+      impl_->mographEndAngle_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.rotationStep")) {
+      impl_->mographRotationStep_ = static_cast<float>(value.toDouble());
+      Q_EMIT changed();
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.mograph.opacityDecay")) {
+      impl_->mographOpacityDecay_ = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+      Q_EMIT changed();
+      return true;
+    }
 
   auto &t3 = transform3D();
   const RationalTime currentTime = currentTimelineTime(this);
