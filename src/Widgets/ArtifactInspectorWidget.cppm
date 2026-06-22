@@ -963,39 +963,9 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
       hasFocus);
 }
 
-QString componentInspectorFilterForProperty(const QString &propertyPath) {
-  if (propertyPath.startsWith(QStringLiteral("physics."),
-                              Qt::CaseInsensitive)) {
-    return QStringLiteral("physics");
-  }
-  if (propertyPath.startsWith(QStringLiteral("component.script."),
-                              Qt::CaseInsensitive)) {
-    return QStringLiteral("script");
-  }
-  if (propertyPath.startsWith(QStringLiteral("component.mograph."),
-                              Qt::CaseInsensitive)) {
-    return QStringLiteral("clone");
-  }
-  return QStringLiteral("physics|script|clone");
-}
-
 QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
     return QStringLiteral("physics|script|clone");
-  }
-  const auto physics = layer->getProperty(QStringLiteral("physics.enabled"));
-  if (physics && physics->getValue().toBool()) {
-    return QStringLiteral("physics");
-  }
-  const auto script =
-      layer->getProperty(QStringLiteral("component.script.enabled"));
-  if (script && script->getValue().toBool()) {
-    return QStringLiteral("script");
-  }
-  const auto clone =
-      layer->getProperty(QStringLiteral("component.mograph.enabled"));
-  if (clone && clone->getValue().toBool()) {
-    return QStringLiteral("clone");
   }
   return QStringLiteral("physics|script|clone");
 }
@@ -2741,8 +2711,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     }
     const bool nextEnabled = !layerBooleanProperty(layer, propertyPath);
     if (layer->setLayerPropertyValue(propertyPath, nextEnabled)) {
-      impl_->focusComponentProperties(
-          layer, componentInspectorFilterForProperty(propertyPath));
+      impl_->focusComponentProperties(layer,
+                                      defaultComponentInspectorFilter(layer));
       impl_->updateComponentControls(layer);
       impl_->lastLayerInfoSignature_.clear();
       impl_->scheduleRefresh(
