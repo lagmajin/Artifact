@@ -146,6 +146,7 @@ import Artifact.Layer.InitParams;
 import Clipboard.ClipboardManager;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.CreatePlaneLayerDialog;
+import Artifact.Menu.Layer;
 import Artifact.Widgets.AppDialogs;
 import Dialog.Composition;
 import Geometry.ResolutionRemap;
@@ -4243,13 +4244,12 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
             return;
         }
         CreateSolidLayerSettingDialog dialog(this);
-        QObject::connect(&dialog, &CreateSolidLayerSettingDialog::submit, this, [svc](const ArtifactSolidLayerInitParams& params) {
-            if (svc) {
-                svc->addLayerToCurrentComposition(params);
-            }
-        });
         dialog.setModal(true);
-        dialog.exec();
+        if (dialog.exec() == QDialog::Accepted && svc) {
+            svc->addLayerToCurrentComposition(
+                dialog.submittedParams(), true,
+                dialog.submittedPlacementMode() == LayerCreationPlacementMode::Playhead);
+        }
     }, loadProjectViewIcon(QStringLiteral("Studio/palette.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_folder"), QStringLiteral("Folder"), [this]() {
         impl_->createFolderAtSelection(this);

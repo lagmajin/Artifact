@@ -31,6 +31,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Artifact.Service.Project;
 import Artifact.Service.ActiveContext;
+import Artifact.Layers.Selection.Manager;
 import Utils.Path;
 import Utils.Id;
 import Utils.String.UniString;
@@ -42,6 +43,10 @@ import Artifact.Layer.Composition;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Video;
 import Artifact.Layer.Camera;
+import Artifact.Layer.Particle;
+import Layer.Blend;
+import Color.Float;
+import Artifact.Project.Manager;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.PrecomposeDialog;
@@ -55,17 +60,6 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 namespace {
-
-enum class LayerCreationPlacementMode {
-    CompositionStart,
-    Playhead,
-    WorkAreaStart,
-    SelectedLayerIn,
-    SelectedLayerOut,
-    AfterSelected,
-    BeforeSelected,
-    CustomFrame
-};
 
 enum class LayerCreationDurationMode {
     Default,
@@ -89,6 +83,11 @@ bool placeAtCurrentFrameRequested()
         layerCreationPlacementMode() == LayerCreationPlacementMode::Playhead;
     const bool altPressed = (QApplication::keyboardModifiers() & Qt::AltModifier) != 0;
     return preferPlayhead ^ altPressed;
+}
+
+bool placeAtCurrentFrameRequested(const LayerCreationPlacementMode mode)
+{
+    return mode == LayerCreationPlacementMode::Playhead;
 }
 
 QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
@@ -192,6 +191,25 @@ QString uniqueLayerName(const QString& baseName)
     return makeUniqueSequentialName(baseName, currentLayerNames());
 }
 
+ArtifactAbstractLayerPtr addDebugSolidBlendLayer(
+    const CompositionID& compositionId, const QString& name, const QSize& size,
+    const FloatColor& color, const LAYER_BLEND_TYPE blendMode, const float opacity)
+{
+    auto& manager = ArtifactProjectManager::getInstance();
+    ArtifactSolidLayerInitParams params(name);
+    params.setWidth(std::max(1, size.width()));
+    params.setHeight(std::max(1, size.height()));
+    params.setColor(color);
+    auto result = manager.addLayerToComposition(
+        compositionId, static_cast<ArtifactLayerInitParams&>(params));
+    if (!result.success || !result.layer) {
+        return {};
+    }
+    result.layer->setBlendMode(blendMode);
+    result.layer->setOpacity(std::clamp(opacity, 0.0f, 1.0f));
+    return result.layer;
+}
+
 } // namespace
 
 W_OBJECT_IMPL(ArtifactLayerMenu)
@@ -212,6 +230,7 @@ public:
     QMenu* switchMenu = nullptr;
     QMenu* selectMenu = nullptr;
     QMenu* proxyMenu = nullptr;
+    QMenu* debugMenu = nullptr;
     QActionGroup* proxyQualityGroup = nullptr;
 
     QAction* createSolidAction = nullptr;
@@ -264,6 +283,9 @@ public:
     QAction* clearParentAction = nullptr;
     QAction* openInspectorAction = nullptr;
     QAction* openPropertiesAction = nullptr;
+
+    QAction* addDebugBlendLayersAction = nullptr;
+    QAction* addDebugBillboardLayerAction = nullptr;
 
     QAction* precomposeAction = nullptr;
     QAction* unprecomposeAction = nullptr;
@@ -481,6 +503,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
 
     proxyMenu = new QMenu("Proxy 画質(&Q)", menu);
     proxyMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_resolution_half.svg")));
+    debugMenu = new QMenu("デバッグレイヤー(&D)", menu);
+    debugMenu->setIcon(QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
     proxyQualityGroup = new QActionGroup(menu);
     proxyQualityGroup->setExclusive(true);
     proxyNoneAction = proxyMenu->addAction("無効");
@@ -512,6 +536,18 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     openPropertiesAction = new QAction("Properties を開く", menu);
     openPropertiesAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
 
+    addDebugBlendLayersAction = new QAction("Debug Blend Test Layers...", debugMenu);
+    addDebugBlendLayersAction->setIcon(QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
+    addDebugBlendLayersAction->setToolTip(
+        QStringLiteral("Debug 用の合成テストレイヤーをまとめて追加します"));
+    debugMenu->addAction(addDebugBlendLayersAction);
+
+    addDebugBillboardLayerAction = new QAction("Debug Billboard Layer...", debugMenu);
+    addDebugBillboardLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    addDebugBillboardLayerAction->setToolTip(
+        QStringLiteral("ビルボード描画の検証用に、見やすい粒子レイヤーを追加します"));
+    debugMenu->addAction(addDebugBillboardLayerAction);
+
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
     precomposeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
     precomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_view_comfy.svg")));
@@ -536,6 +572,7 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addMenu(switchMenu);
     menu->addMenu(selectMenu);
     menu->addMenu(proxyMenu);
+    menu->addMenu(debugMenu);
     menu->addSeparator();
     menu->addAction(openInspectorAction);
     menu->addAction(openPropertiesAction);
@@ -605,6 +642,107 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == clearSelectedProxyAction) { handleClearSelectedProxies(); return; }
         if (action == openInspectorAction) { handleOpenInspector(); return; }
         if (action == openPropertiesAction) { handleOpenProperties(); return; }
+        if (action == addDebugBlendLayersAction) {
+            auto* projectService = ArtifactProjectService::instance();
+            if (!projectService) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "ProjectService が利用できません。");
+                return;
+            }
+            auto comp = projectService->currentComposition().lock();
+            if (!comp) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "先にコンポジションを開いてください。");
+                return;
+            }
+
+            const QSize compSize = comp->effectiveCompositionSize().isValid()
+                                       ? comp->effectiveCompositionSize()
+                                       : QSize(1920, 1080);
+            const CompositionID compositionId = comp->id();
+
+            ArtifactAbstractLayerPtr lastCreatedLayer;
+            lastCreatedLayer = addDebugSolidBlendLayer(
+                compositionId, QStringLiteral("Debug Base Plate"), compSize,
+                FloatColor(0.32f, 0.32f, 0.36f, 1.0f), LAYER_BLEND_TYPE::BLEND_NORMAL,
+                1.0f);
+            if (!lastCreatedLayer) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "デバッグ用ベースレイヤーの追加に失敗しました。");
+                return;
+            }
+
+            lastCreatedLayer = addDebugSolidBlendLayer(
+                compositionId, QStringLiteral("Debug Multiply Plate"), compSize,
+                FloatColor(0.78f, 0.42f, 0.18f, 1.0f), LAYER_BLEND_TYPE::BLEND_MULTIPLY,
+                0.58f);
+            if (!lastCreatedLayer) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "Multiply テストレイヤーの追加に失敗しました。");
+                return;
+            }
+
+            lastCreatedLayer = addDebugSolidBlendLayer(
+                compositionId, QStringLiteral("Debug Screen Plate"), compSize,
+                FloatColor(0.18f, 0.72f, 0.98f, 1.0f), LAYER_BLEND_TYPE::BLEND_SCREEN,
+                0.52f);
+            if (!lastCreatedLayer) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "Screen テストレイヤーの追加に失敗しました。");
+                return;
+            }
+
+            projectService->selectLayer(lastCreatedLayer->id());
+            QMessageBox::information(
+                menu_->window(), "Debug Layers",
+                QStringLiteral("Debug blend test layers を追加しました。\n\n"
+                               "- Debug Base Plate\n"
+                               "- Debug Multiply Plate\n"
+                               "- Debug Screen Plate\n\n"
+                               "タイムライン上で並び替えたり、不透明度を変えて合成検証できます。"));
+            return;
+        }
+        if (action == addDebugBillboardLayerAction) {
+            auto* service = ArtifactProjectService::instance();
+            if (!service) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "ProjectService が利用できません。");
+                return;
+            }
+            const auto comp = service->currentComposition().lock();
+            if (!comp) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "先にコンポジションを開いてください。");
+                return;
+            }
+
+            ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Debug Billboard Particle")),
+                                           LayerType::Particle);
+            service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+
+            const auto created = ArtifactLayerSelectionManager::instance()
+                                     ? ArtifactLayerSelectionManager::instance()->currentLayer()
+                                     : ArtifactAbstractLayerPtr{};
+            const auto particleLayer = std::dynamic_pointer_cast<ArtifactParticleLayer>(created);
+            if (!particleLayer) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "Particle レイヤーの生成に失敗しました。");
+                return;
+            }
+
+            particleLayer->setLayerName(QStringLiteral("Debug Billboard Particle"));
+            particleLayer->loadPreset(QStringLiteral("sparkles"));
+            particleLayer->setOpacity(1.0f);
+            particleLayer->changed();
+            service->selectLayer(particleLayer->id());
+
+            QMessageBox::information(
+                menu_->window(), "Debug Layers",
+                QStringLiteral("Debug Billboard Particle を追加しました。\n\n"
+                               "sparkles プリセットを使うので、ビルボード描画の見え方を"
+                               "確認しやすいはずです。"));
+            return;
+        }
         if (action == precomposeAction) { handlePrecompose(); return; }
         if (action == unprecomposeAction) { handleUnprecompose(); return; }
         if (action == groupSelectionAction) { handleGroupSelection(); return; }
@@ -870,18 +1008,18 @@ void ArtifactLayerMenu::Impl::handleCreateSolid()
     }
     auto* const menu = menu_;
     QWidget* parentWindow = mainWindow_ ? mainWindow_ : (menu_ ? menu_->window() : nullptr);
-    CreateSolidLayerSettingDialog dialog(parentWindow);
-    QObject::connect(&dialog, &CreateSolidLayerSettingDialog::submit, menu, [service, menu](const ArtifactSolidLayerInitParams& params) {
-        if (!service) {
-            return;
-        }
-        QTimer::singleShot(0, menu, [service, params, menu]() {
-            Q_UNUSED(menu);
-            service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
-        });
-    });
+    CreateSolidLayerSettingDialog dialog(layerCreationPlacementMode(), parentWindow);
     dialog.setModal(true);
-    dialog.exec();
+    if (dialog.exec() != QDialog::Accepted || !service) {
+        return;
+    }
+    const ArtifactSolidLayerInitParams params = dialog.submittedParams();
+    const bool placeAtCurrentFrame =
+        placeAtCurrentFrameRequested(dialog.submittedPlacementMode());
+    QTimer::singleShot(0, menu, [service, params, menu, placeAtCurrentFrame]() {
+        Q_UNUSED(menu);
+        service->addLayerToCurrentComposition(params, true, placeAtCurrentFrame);
+    });
 }
 
 void ArtifactLayerMenu::Impl::handleCreateNull()

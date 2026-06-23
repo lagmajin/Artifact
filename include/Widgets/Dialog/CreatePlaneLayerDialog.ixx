@@ -8,6 +8,7 @@ export module Artifact.Widgets.CreatePlaneLayerDialog;
 
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.InitParams;
+import Artifact.Menu.Layer;
 import Color.Float;
 import Artifact.Layers.SolidImage;
 
@@ -28,6 +29,10 @@ export namespace Artifact {
   ~PlaneLayerSettingPage();
   void setDefaultFocus();
   void setInitialParams(int p_width, int p_height, const FloatColor& color);
+  void setInitialGradientParams(ArtifactSolidFillType fillType,
+                                const FloatColor& startColor,
+                                const FloatColor& endColor,
+                                float angleDegrees);
   ArtifactSolidLayerInitParams getInitParams(const QString& name) const;
  //signals:
   void editComplete();
@@ -53,8 +58,11 @@ export namespace Artifact {
   void showEvent(QShowEvent* event) override;
  public:
   explicit CreateSolidLayerSettingDialog(QWidget* parent = nullptr);
+  explicit CreateSolidLayerSettingDialog(LayerCreationPlacementMode defaultPlacementMode, QWidget* parent = nullptr);
   ~CreateSolidLayerSettingDialog();
   void showAnimated();
+  ArtifactSolidLayerInitParams submittedParams() const;
+  LayerCreationPlacementMode submittedPlacementMode() const;
   public/*signals*/:
  	void submit(const ArtifactSolidLayerInitParams& params) W_SIGNAL(submit,params);
  };

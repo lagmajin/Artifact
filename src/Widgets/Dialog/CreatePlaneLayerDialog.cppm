@@ -18,6 +18,7 @@ module;
 #include <QIcon>
 #include <QPixmap>
 #include <QColor>
+#include <QDoubleSpinBox>
 #include <QPen>
 #include <QPainter>
 #include <wobjectimpl.h>
@@ -35,6 +36,7 @@ import std;
 import Widgets.Dialog.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.InitParams;
+import Artifact.Menu.Layer;
 import Widgets.Utils.CSS;
 import Widgets.EditableLabel;
 import DragSpinBox;
@@ -300,11 +302,19 @@ public:
     QComboBox*    unitCombo         = nullptr;
     QComboBox*    pixelAspectCombo  = nullptr;
     QPushButton*  bgColorButton     = nullptr;
+    QPushButton*  gradientStartColorButton = nullptr;
+    QPushButton*  gradientEndColorButton = nullptr;
+    QWidget*      gradientEndRow    = nullptr;
     QPushButton*  matchCompButton   = nullptr;
     QLineEdit*    hexColorEdit      = nullptr;
+    QComboBox*    fillModeCombo     = nullptr;
+    QDoubleSpinBox* gradientAngleSpin = nullptr;
     QCheckBox*    fitToCompCheck    = nullptr;
 
     QColor bgColor = QColor(255, 255, 255, 255);
+    QColor gradientStartColor = QColor(255, 255, 255, 255);
+    QColor gradientEndColor = QColor(51, 51, 51, 255);
+    ArtifactSolidFillType fillType = ArtifactSolidFillType::Solid;
 };
 
 PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
@@ -340,9 +350,27 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     impl_->bgColorButton->setFixedSize(40, 24);
     updateColorButtonPreview(impl_->bgColorButton, impl_->bgColor);
 
+    impl_->gradientStartColorButton = new QPushButton(this);
+    impl_->gradientStartColorButton->setFixedSize(40, 24);
+    updateColorButtonPreview(impl_->gradientStartColorButton, impl_->gradientStartColor);
+
+    impl_->gradientEndColorButton = new QPushButton(this);
+    impl_->gradientEndColorButton->setFixedSize(40, 24);
+    updateColorButtonPreview(impl_->gradientEndColorButton, impl_->gradientEndColor);
+
     impl_->hexColorEdit = new QLineEdit(this);
     impl_->hexColorEdit->setFixedWidth(140);
     updateHexFromColor(impl_->hexColorEdit, impl_->bgColor);
+
+    impl_->fillModeCombo = new QComboBox(this);
+    impl_->fillModeCombo->addItem(QStringLiteral("単色"), static_cast<int>(ArtifactSolidFillType::Solid));
+    impl_->fillModeCombo->addItem(QStringLiteral("線形グラデーション"), static_cast<int>(ArtifactSolidFillType::LinearGradient));
+
+    impl_->gradientAngleSpin = new QDoubleSpinBox(this);
+    impl_->gradientAngleSpin->setRange(-360.0, 360.0);
+    impl_->gradientAngleSpin->setDecimals(1);
+    impl_->gradientAngleSpin->setSingleStep(15.0);
+    impl_->gradientAngleSpin->setValue(90.0);
 
     impl_->matchCompButton = new QPushButton(u8"コンポジションサイズを使用", this);
 
@@ -412,6 +440,39 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         vbox->addWidget(makeRow(this, u8"カラー", 100, ctrl));
     }
 
+    vbox->addWidget(makeRow(this, u8"塗り", 100, impl_->fillModeCombo));
+
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(6);
+        ctrlLay->addWidget(impl_->gradientStartColorButton);
+        ctrlLay->addStretch();
+        vbox->addWidget(makeRow(this, u8"開始色", 100, ctrl));
+    }
+
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(6);
+        ctrlLay->addWidget(impl_->gradientEndColorButton);
+        ctrlLay->addStretch();
+        impl_->gradientEndRow = makeRow(this, u8"終了色", 100, ctrl);
+        vbox->addWidget(impl_->gradientEndRow);
+    }
+
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(4);
+        ctrlLay->addWidget(impl_->gradientAngleSpin, 1);
+        ctrlLay->addWidget(new QLabel(QStringLiteral("deg"), this));
+        vbox->addWidget(makeRow(this, u8"角度", 100, ctrl));
+    }
+
     // fitToCompCheck row (indented to align with controls)
     {
         auto* checkRow = new QWidget(this);
@@ -477,6 +538,34 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         Q_EMIT colorChanged(suggestedPlaneLayerName(c));
     });
 
+    auto openPicker = [this](QPushButton* button, QColor* targetColor, const QString& title) {
+        FloatColorPicker picker(this);
+        picker.setWindowTitle(title);
+        picker.setInitialColor(FloatColor(
+            targetColor->redF(),
+            targetColor->greenF(),
+            targetColor->blueF(),
+            targetColor->alphaF()));
+
+        if (picker.exec() != QDialog::Accepted) return;
+
+        const FloatColor picked = picker.getColor();
+        const QColor c = QColor::fromRgbF(picked.r(), picked.g(), picked.b(), picked.a());
+        if (!c.isValid()) return;
+        *targetColor = c;
+        updateColorButtonPreview(button, c);
+    };
+
+    QObject::connect(impl_->gradientStartColorButton, &QPushButton::clicked, this, [this, openPicker]() {
+        openPicker(impl_->gradientStartColorButton, &impl_->gradientStartColor,
+                   QStringLiteral("グラデーション開始色を選択"));
+    });
+
+    QObject::connect(impl_->gradientEndColorButton, &QPushButton::clicked, this, [this, openPicker]() {
+        openPicker(impl_->gradientEndColorButton, &impl_->gradientEndColor,
+                   QStringLiteral("グラデーション終了色を選択"));
+    });
+
     QObject::connect(impl_->hexColorEdit, &QLineEdit::editingFinished, this, [this]() {
         QColor c(impl_->hexColorEdit->text().trimmed());
         if (c.isValid()) {
@@ -488,6 +577,21 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
 
     QObject::connect(impl_->matchCompButton, &QPushButton::clicked,
                      this, &PlaneLayerSettingPage::resizeCompositionSize);
+
+    auto syncGradientUi = [this]() {
+        const bool gradientEnabled = impl_->fillModeCombo->currentData().toInt() ==
+                                     static_cast<int>(ArtifactSolidFillType::LinearGradient);
+        impl_->gradientStartColorButton->setEnabled(gradientEnabled);
+        impl_->gradientEndColorButton->setEnabled(gradientEnabled);
+        impl_->gradientAngleSpin->setEnabled(gradientEnabled);
+        if (impl_->gradientEndRow) impl_->gradientEndRow->setVisible(gradientEnabled);
+    };
+    QObject::connect(impl_->fillModeCombo, &QComboBox::currentIndexChanged, this,
+                     [this, syncGradientUi](int) {
+        impl_->fillType = static_cast<ArtifactSolidFillType>(impl_->fillModeCombo->currentData().toInt());
+        syncGradientUi();
+    });
+    syncGradientUi();
 }
 
 PlaneLayerSettingPage::~PlaneLayerSettingPage()
@@ -528,6 +632,23 @@ void PlaneLayerSettingPage::setInitialParams(int p_width, int p_height, const Fl
     updateHexFromColor(impl_->hexColorEdit, c);
 }
 
+void PlaneLayerSettingPage::setInitialGradientParams(const ArtifactSolidFillType fillType,
+                                                     const FloatColor& startColor,
+                                                     const FloatColor& endColor,
+                                                     const float angleDegrees)
+{
+    impl_->fillType = fillType;
+    impl_->gradientStartColor = QColor::fromRgbF(startColor.r(), startColor.g(), startColor.b(), startColor.a());
+    impl_->gradientEndColor = QColor::fromRgbF(endColor.r(), endColor.g(), endColor.b(), endColor.a());
+    updateColorButtonPreview(impl_->gradientStartColorButton, impl_->gradientStartColor);
+    updateColorButtonPreview(impl_->gradientEndColorButton, impl_->gradientEndColor);
+    const int index = impl_->fillModeCombo->findData(static_cast<int>(fillType));
+    if (index >= 0) {
+        impl_->fillModeCombo->setCurrentIndex(index);
+    }
+    impl_->gradientAngleSpin->setValue(angleDegrees);
+}
+
 ArtifactSolidLayerInitParams PlaneLayerSettingPage::getInitParams(const QString& name) const
 {
     ArtifactSolidLayerInitParams params(name);
@@ -535,6 +656,16 @@ ArtifactSolidLayerInitParams PlaneLayerSettingPage::getInitParams(const QString&
     params.setHeight(impl_->heightSpinBox->value());
     QColor c = impl_->bgColor;
     params.setColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+    params.setFillType(impl_->fillType);
+    params.setGradientStartColor(FloatColor(impl_->gradientStartColor.redF(),
+                                            impl_->gradientStartColor.greenF(),
+                                            impl_->gradientStartColor.blueF(),
+                                            impl_->gradientStartColor.alphaF()));
+    params.setGradientEndColor(FloatColor(impl_->gradientEndColor.redF(),
+                                          impl_->gradientEndColor.greenF(),
+                                          impl_->gradientEndColor.blueF(),
+                                          impl_->gradientEndColor.alphaF()));
+    params.setGradientAngleDegrees(static_cast<float>(impl_->gradientAngleSpin->value()));
     return params;
 }
 
@@ -649,14 +780,25 @@ public:
     EditableLabel*    nameEditableLabel = nullptr;
     PlaneLayerSettingPage* settingPage  = nullptr;
     QDialogButtonBox* dialogButtonBox   = nullptr;
+    QComboBox*        placementCombo    = nullptr;
+    ArtifactSolidLayerInitParams submittedParams = ArtifactSolidLayerInitParams(QStringLiteral("Solid Layer"));
+    LayerCreationPlacementMode submittedPlacementMode =
+        LayerCreationPlacementMode::CompositionStart;
     QPoint m_dragPosition;
     bool   m_isDragging = false;
 };
 
 CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
+    : CreateSolidLayerSettingDialog(LayerCreationPlacementMode::CompositionStart, parent)
+{
+}
+
+CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(
+    const LayerCreationPlacementMode defaultPlacementMode, QWidget* parent)
     : QDialog(parent), impl_(new Impl())
 {
     setWindowTitle(u8"平面設定");
+    impl_->submittedPlacementMode = defaultPlacementMode;
 
     auto chrome = buildDialogChrome(this);
     impl_->dialogButtonBox = chrome.buttonBox;
@@ -678,6 +820,21 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
         chrome.scrollLayout->addWidget(nameRow);
     }
 
+    chrome.scrollLayout->addWidget(makeSectionHeader(u8"作成", chrome.scrollContent));
+    {
+        impl_->placementCombo = new QComboBox(chrome.scrollContent);
+        impl_->placementCombo->addItem(
+            QStringLiteral("コンポの最初"),
+            static_cast<int>(LayerCreationPlacementMode::CompositionStart));
+        impl_->placementCombo->addItem(
+            QStringLiteral("プレイヘッド位置"),
+            static_cast<int>(LayerCreationPlacementMode::Playhead));
+        const int index = impl_->placementCombo->findData(static_cast<int>(defaultPlacementMode));
+        impl_->placementCombo->setCurrentIndex(index >= 0 ? index : 0);
+        chrome.scrollLayout->addWidget(
+            makeRow(chrome.scrollContent, u8"作成位置", 100, impl_->placementCombo));
+    }
+
     // Settings page (サイズ + カラー sections)
     auto* settingPage = impl_->settingPage = new PlaneLayerSettingPage(chrome.scrollContent);
     settingPage->resizeCompositionSize();
@@ -692,8 +849,12 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
         QString name = impl_->nameEditableLabel
             ? impl_->nameEditableLabel->text()
             : suggestedPlaneLayerName(QColor(255, 255, 255, 255));
-        ArtifactSolidLayerInitParams params = impl_->settingPage->getInitParams(name);
-        Q_EMIT submit(params);
+        impl_->submittedParams = impl_->settingPage->getInitParams(name);
+        if (impl_->placementCombo) {
+            impl_->submittedPlacementMode = static_cast<LayerCreationPlacementMode>(
+                impl_->placementCombo->currentData().toInt());
+        }
+        Q_EMIT submit(impl_->submittedParams);
         accept();
     });
     QObject::connect(chrome.buttonBox, &QDialogButtonBox::rejected, this, &QDialog::reject);
@@ -714,6 +875,16 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(QWidget* parent)
 CreateSolidLayerSettingDialog::~CreateSolidLayerSettingDialog()
 {
     delete impl_;
+}
+
+ArtifactSolidLayerInitParams CreateSolidLayerSettingDialog::submittedParams() const
+{
+    return impl_->submittedParams;
+}
+
+LayerCreationPlacementMode CreateSolidLayerSettingDialog::submittedPlacementMode() const
+{
+    return impl_->submittedPlacementMode;
 }
 
 void CreateSolidLayerSettingDialog::keyPressEvent(QKeyEvent* event)
@@ -832,6 +1003,10 @@ EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent)
             impl_->targetLayer->setLayerName(name);
             impl_->targetLayer->setSize(params.width(), params.height());
             impl_->targetLayer->setColor(params.color());
+            impl_->targetLayer->setFillType(params.fillType());
+            impl_->targetLayer->setGradientStartColor(params.gradientStartColor());
+            impl_->targetLayer->setGradientEndColor(params.gradientEndColor());
+            impl_->targetLayer->setGradientAngleDegrees(params.gradientAngleDegrees());
         }
         accept();
     });
@@ -918,6 +1093,10 @@ void EditPlaneLayerSettingDialog::setupEdit(std::shared_ptr<ArtifactSolidImageLa
     if (impl_->settingPage) {
         auto size = layer->sourceSize();
         impl_->settingPage->setInitialParams(size.width, size.height, layer->color());
+        impl_->settingPage->setInitialGradientParams(layer->fillType(),
+                                                     layer->gradientStartColor(),
+                                                     layer->gradientEndColor(),
+                                                     layer->gradientAngleDegrees());
     }
 }
 
