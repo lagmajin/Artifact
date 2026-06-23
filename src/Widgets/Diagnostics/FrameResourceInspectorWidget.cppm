@@ -2,14 +2,18 @@ module;
 #include <algorithm>
 #include <cstddef>
 #include <QAbstractItemView>
+#include <QObject>
 #include <QHeaderView>
 #include <QLabel>
+#include <QComboBox>
 #include <QModelIndex>
+#include <QPixmap>
 #include <QSplitter>
 #include <QTableWidgetItem>
 #include <QTableWidget>
 #include <QPlainTextEdit>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QStringList>
 #include <wobjectimpl.h>
 
@@ -22,6 +26,7 @@ W_OBJECT_IMPL(FrameResourceInspectorWidget)
 class FrameResourceInspectorWidget::Impl {
 public:
     void updateDetailForRow(int row);
+    void updatePreviewForRow(int row);
 
     class ResourceTableWidget : public QTableWidget {
     public:
@@ -35,6 +40,7 @@ public:
             QTableWidget::currentChanged(current, previous);
             if (impl_) {
                 impl_->updateDetailForRow(current.row());
+                impl_->updatePreviewForRow(current.row());
             }
         }
 
@@ -46,6 +52,9 @@ public:
     QLabel* summary_ = nullptr;
     ResourceTableWidget* table_ = nullptr;
     QPlainTextEdit* detail_ = nullptr;
+    QComboBox* previewMode_ = nullptr;
+    QLabel* previewInfo_ = nullptr;
+    QLabel* previewImage_ = nullptr;
     ArtifactCore::FrameDebugSnapshot snapshot_;
     ArtifactCore::TraceSnapshot trace_;
     bool hasSnapshot_ = false;
@@ -92,6 +101,37 @@ public:
         splitter->setStretchFactor(0, 3);
         splitter->setStretchFactor(1, 1);
         layout->addWidget(splitter);
+
+        auto* previewBar = new QHBoxLayout();
+        previewBar->setContentsMargins(8, 6, 8, 6);
+        previewBar->setSpacing(8);
+        auto* previewLabel = new QLabel(QStringLiteral("Preview"), owner_);
+        previewBar->addWidget(previewLabel);
+        previewMode_ = new QComboBox(owner_);
+        previewMode_->addItem(QStringLiteral("After"));
+        previewMode_->addItem(QStringLiteral("Before"));
+        previewMode_->addItem(QStringLiteral("Diff"));
+        previewMode_->addItem(QStringLiteral("Alpha"));
+        previewBar->addWidget(previewMode_);
+        previewBar->addStretch(1);
+        layout->addLayout(previewBar);
+
+        previewInfo_ = new QLabel(owner_);
+        previewInfo_->setTextFormat(Qt::PlainText);
+        previewInfo_->setWordWrap(true);
+        layout->addWidget(previewInfo_);
+
+        previewImage_ = new QLabel(owner_);
+        previewImage_->setAlignment(Qt::AlignCenter);
+        previewImage_->setMinimumHeight(220);
+        previewImage_->setText(QStringLiteral("No preview available"));
+        layout->addWidget(previewImage_);
+
+        QObject::connect(previewMode_, &QComboBox::currentIndexChanged, owner_,
+                         [this](int) {
+                           const int row = table_ ? table_->currentRow() : -1;
+                           updatePreviewForRow(row >= 0 ? row : 0);
+                         });
     }
 
     void showFrameDebugSnapshot(const ArtifactCore::FrameDebugSnapshot& snapshot,
@@ -153,6 +193,21 @@ public:
 
         const int currentRow = table_ ? table_->currentRow() : -1;
         updateDetailForRow(currentRow >= 0 ? currentRow : 0);
+        updatePreviewForRow(currentRow >= 0 ? currentRow : 0);
+    }
+
+    const ArtifactCore::FrameDebugImagePreviewRecord* previewForKey(
+        const QString& key) const
+    {
+        const QString normalizedKey = key.trimmed();
+        for (const auto& preview : snapshot_.previews) {
+            if (preview.key == normalizedKey || preview.label == normalizedKey ||
+                preview.key.compare(normalizedKey, Qt::CaseInsensitive) == 0 ||
+                preview.label.compare(normalizedKey, Qt::CaseInsensitive) == 0) {
+                return &preview;
+            }
+        }
+        return nullptr;
     }
 
     QString resourceDetails(const ArtifactCore::FrameDebugResourceRecord& resource) const
@@ -401,6 +456,65 @@ void Artifact::FrameResourceInspectorWidget::Impl::updateDetailForRow(int row)
 
     detail_->setPlainText(lines.join(QStringLiteral("\n")));
 };
+
+void Artifact::FrameResourceInspectorWidget::Impl::updatePreviewForRow(int row)
+{
+    if (!previewImage_ || !previewInfo_ || !hasSnapshot_ || row < 0) {
+        return;
+    }
+
+    const ArtifactCore::FrameDebugImagePreviewRecord* preview = nullptr;
+    const int resourceCount = static_cast<int>(snapshot_.resources.size());
+    if (row < resourceCount) {
+        const auto& resource = snapshot_.resources[static_cast<std::size_t>(row)];
+        preview = previewForKey(resource.label);
+        if (!preview && resource.type == QStringLiteral("particle")) {
+            preview = previewForKey(QStringLiteral("Particle Draw"));
+        }
+    } else if (row < resourceCount + static_cast<int>(snapshot_.attachments.size())) {
+        preview = previewForKey(snapshot_.attachments[static_cast<std::size_t>(row - resourceCount)].name);
+    }
+
+    if (!preview) {
+        previewInfo_->setText(QStringLiteral("Preview unavailable for the selected resource."));
+        previewImage_->setPixmap(QPixmap());
+        previewImage_->setText(QStringLiteral("No preview available"));
+        return;
+    }
+
+    const QString mode =
+        previewMode_ ? previewMode_->currentText() : QStringLiteral("After");
+    QImage image;
+    if (mode == QStringLiteral("Before")) {
+        image = preview->beforeImage;
+    } else if (mode == QStringLiteral("Diff")) {
+        image = preview->diffImage;
+    } else if (mode == QStringLiteral("Alpha")) {
+        image = preview->alphaImage;
+    } else {
+        image = preview->afterImage;
+    }
+
+    previewInfo_->setText(
+        QStringLiteral("%1 | %2 | %3")
+            .arg(preview->label.isEmpty() ? preview->key : preview->label,
+                 mode,
+                 preview->note.isEmpty() ? QStringLiteral("note=<none>")
+                                         : preview->note));
+
+    if (image.isNull()) {
+        previewImage_->setPixmap(QPixmap());
+        previewImage_->setText(QStringLiteral("Selected mode is unavailable for this preview"));
+        return;
+    }
+
+    const QSize targetSize(
+        std::max(160, previewImage_->width() - 8),
+        std::max(160, previewImage_->height() - 8));
+    previewImage_->setText(QString());
+    previewImage_->setPixmap(QPixmap::fromImage(image).scaled(
+        targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
 
 Artifact::FrameResourceInspectorWidget::FrameResourceInspectorWidget(QWidget* parent)
     : QWidget(parent), impl_(new Impl(this))

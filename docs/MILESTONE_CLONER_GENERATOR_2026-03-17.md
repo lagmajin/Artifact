@@ -1,13 +1,13 @@
-# M12 MoGraph Generator Foundation (2026-03-17)
+# M12 Cloner Generator Foundation (2026-03-17)
 
 日付：2026-03-17  
-目標：Cinema 4D MoGraph 風のジェネレーター/エフェクターシステムを実装する
+目標：Cloner system 風のジェネレーター/エフェクターシステムを実装する
 
 ---
 
 ## Goal
 
-- オブジェクトを複製・変形する MoGraph 風ジェネレーターを実装
+- オブジェクトを複製・変形する Cloner 風ジェネレーターを実装
 - 複数エフェクターをスタックして適用可能に
 - リアルタイムプレビューで動作を確認可能
 
@@ -27,7 +27,7 @@
 
 ## Design Concept
 
-### Cinema 4D MoGraph を参考にした理由
+### Cloner system を参考にした理由
 
 1. **直感的な操作** - ジェネレーターで生成、エフェクターで変形
 2. **モジュラー構成** - 組み合わせで無限の表現
@@ -42,7 +42,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    MoGraph Pipeline                         │
+│                    Cloner Pipeline                         │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐  │
@@ -101,31 +101,31 @@ enum class EffectPipelineStage {
 | **Rack 4** | Rasterizer | ラスタライズ | Blur, Glow, DropShadow, Wave, Spherize |
 | **（予備）** | LayerTransform | レイヤー変形 | Transform2D |
 
-### MoGraph エフェクターの統合方針
+### Cloner エフェクターの統合方針
 
-**Generator ステージ（Rack 1）に MoGraph ジェネレーターを配置**
+**Generator ステージ（Rack 1）に Cloner ジェネレーターを配置**
 
 ```
-MoGraph Generator Pipeline:
+Cloner Generator Pipeline:
 ┌──────────────────────────────────────────────────────────┐
 │ Rack 1: Generator                                        │
 │ ┌────────────────────────────────────────────────────┐   │
-│ │ MoGraph Generator (Cloner/Matrix/Fracture)         │   │
+│ │ Cloner Generator (Cloner/Matrix/Fracture)         │   │
 │ └────────────────────────────────────────────────────┘   │
 │                                                          │
 │ Rack 2: GeometryTransform                                │
 │ ┌────────────────────────────────────────────────────┐   │
-│ │ MoGraph Effector 1 (Plain/Random/Step/Delay)       │   │
+│ │ Cloner Effector 1 (Plain/Random/Step/Delay)       │   │
 │ └────────────────────────────────────────────────────┘   │
 │                                                          │
 │ Rack 3: MaterialRender                                   │
 │ ┌────────────────────────────────────────────────────┐   │
-│ │ MoGraph Effector 2 (Shader/Color/Field)            │   │
+│ │ Cloner Effector 2 (Shader/Color/Field)            │   │
 │ └────────────────────────────────────────────────────┘   │
 │                                                          │
 │ Rack 4: Rasterizer                                       │
 │ ┌────────────────────────────────────────────────────┐   │
-│ │ MoGraph Effector 3 (Blur/Glow/Distortion)          │   │
+│ │ Cloner Effector 3 (Blur/Glow/Distortion)          │   │
 │ └────────────────────────────────────────────────────┘   │
 └──────────────────────────────────────────────────────────┘
 ```
@@ -133,13 +133,13 @@ MoGraph Generator Pipeline:
 ### 統合メリット
 
 1. **既存構造を再利用** - 新しい UI システム不要
-2. **既存エフェクトと併用可能** - 従来エフェクトと MoGraph の混在
+2. **既存エフェクトと併用可能** - 従来エフェクトと Cloner の混在
 3. **段階的導入** - 1 つのステージから実装開始可能
 4. **既存 Inspector UI 継続利用** - チェックボックス/順序制御/パラメータ表示
 
 ---
 
-## MoGraph 拡張仕様
+## Cloner 拡張仕様
 
 ### 新規データ構造
 
@@ -173,7 +173,7 @@ struct GeneratorContext {
 };
 
 // エフェクターコンテキスト
-struct MoGraphEffectorContext {
+struct ClonerEffectorContext {
     double time = 0.0;         // 現在時間
     int frameIndex = 0;        // フレーム番号
     float frameRate = 30.0f;   // フレームレート
@@ -185,8 +185,8 @@ struct MoGraphEffectorContext {
 ### 基底クラス
 
 ```cpp
-// MoGraph ジェネレーター基底
-class ArtifactMoGraphGenerator : public ArtifactAbstractEffect {
+// Cloner ジェネレーター基底
+class ArtifactClonerGenerator : public ArtifactAbstractEffect {
 public:
     virtual MatrixData generate(const GeneratorContext& ctx) = 0;
     
@@ -196,10 +196,10 @@ public:
     }
 };
 
-// MoGraph エフェクター基底
-class ArtifactMoGraphEffector : public ArtifactAbstractEffect {
+// Cloner エフェクター基底
+class ArtifactClonerEffector : public ArtifactAbstractEffect {
 public:
-    virtual void process(MatrixData& data, const MoGraphEffectorContext& ctx) = 0;
+    virtual void process(MatrixData& data, const ClonerEffectorContext& ctx) = 0;
     
     float strength() const { return strength_; }
     void setStrength(float s) { strength_ = s; }
@@ -213,12 +213,12 @@ protected:
 
 ## Milestones
 
-### M-MOGRAPH-1: Generator Foundation
+### M-CLONER-1: Generator Foundation
 
 **目標**: ジェネレーター基底クラスと Cloner 実装
 
 **完了条件**:
-- [ ] `ArtifactMoGraphGenerator` 基底クラス
+- [ ] `ArtifactClonerGenerator` 基底クラス
 - [ ] `ArtifactClonerGenerator` 実装（グリッド/放射状/ランダム）
 - [ ] `ArtifactMatrixData` データ構造
 - [ ] Inspector からパラメータ編集
@@ -226,14 +226,14 @@ protected:
 **API 案**:
 ```cpp
 // ジェネレーター基底
-class ArtifactMoGraphGenerator {
+class ArtifactClonerGenerator {
 public:
     virtual MatrixData generate(const GeneratorContext& ctx) = 0;
     virtual std::vector<PropertyGroup> getProperties() const;
 };
 
 // Cloner ジェネレーター
-class ArtifactClonerGenerator : public ArtifactMoGraphGenerator {
+class ArtifactClonerGenerator : public ArtifactClonerGenerator {
 public:
     enum class Mode { Grid, Radial, Random, Object };
     
@@ -265,12 +265,12 @@ private:
 
 ---
 
-### M-MOGRAPH-2: Effector Foundation
+### M-CLONER-2: Effector Foundation
 
 **目標**: エフェクター基底と Plain/Random 実装
 
 **完了条件**:
-- [ ] `ArtifactMoGraphEffector` 基底クラス
+- [ ] `ArtifactClonerEffector` 基底クラス
 - [ ] `ArtifactPlainEffector` 実装（位置/回転/スケール）
 - [ ] `ArtifactRandomEffector` 実装（ランダム変形）
 - [ ] エフェクターのスタック管理
@@ -279,7 +279,7 @@ private:
 **API 案**:
 ```cpp
 // エフェクター基底
-class ArtifactMoGraphEffector {
+class ArtifactClonerEffector {
 public:
     virtual void process(MatrixData& data, const EffectorContext& ctx) = 0;
     virtual std::vector<PropertyGroup> getProperties() const;
@@ -290,7 +290,7 @@ public:
 };
 
 // Plain エフェクター（基本変形）
-class ArtifactPlainEffector : public ArtifactMoGraphEffector {
+class ArtifactPlainEffector : public ArtifactClonerEffector {
 public:
     void setPositionOffset(const Vector3& offset);
     void setRotationOffset(const Vector3& eulerDeg);
@@ -305,7 +305,7 @@ private:
 };
 
 // Random エフェクター
-class ArtifactRandomEffector : public ArtifactMoGraphEffector {
+class ArtifactRandomEffector : public ArtifactClonerEffector {
 public:
     void setRandomSeed(int seed);
     void setRandomPosition(const Vector3& range);
@@ -326,12 +326,12 @@ private:
 
 ---
 
-### M-MOGRAPH-3: UI Integration
+### M-CLONER-3: UI Integration
 
 **目標**: Inspector 統合とプレビュー
 
 **完了条件**:
-- [ ] MoGraph Generator/Effectors カテゴリ
+- [ ] Cloner Generator/Effectors カテゴリ
 - [ ] エフェクター追加ダイアログ
 - [ ] エフェクタースタック UI（順序変更）
 - [ ] パラメータプロパティ表示
@@ -340,7 +340,7 @@ private:
 **UI 構成案**:
 ```
 ┌─────────────────────────────────────┐
-│ MoGraph                             │
+│ Cloner                             │
 ├─────────────────────────────────────┤
 │ Generator: [Cloner        ▼]        │
 │                                     │
@@ -362,7 +362,7 @@ private:
 
 ---
 
-### M-MOGRAPH-4: Additional Effectors
+### M-CLONER-4: Additional Effectors
 
 **目標**: 追加エフェクターで表現力向上
 
@@ -382,7 +382,7 @@ private:
 
 ---
 
-### M-MOGRAPH-5: Animation & Time
+### M-CLONER-5: Animation & Time
 
 **目標**: タイムライン連携とアニメーション
 
@@ -412,11 +412,11 @@ struct EffectorContext {
 
 ## Recommended Order
 
-1. **M-MOGRAPH-1** - Generator Foundation（Cloner 実装）
-2. **M-MOGRAPH-2** - Effector Foundation（Plain/Random）
-3. **M-MOGRAPH-3** - UI Integration（Inspector 統合）
-4. **M-MOGRAPH-4** - Additional Effectors（Step/Delay 等）
-5. **M-MOGRAPH-5** - Animation & Time（キーフレーム連携）
+1. **M-CLONER-1** - Generator Foundation（Cloner 実装）
+2. **M-CLONER-2** - Effector Foundation（Plain/Random）
+3. **M-CLONER-3** - UI Integration（Inspector 統合）
+4. **M-CLONER-4** - Additional Effectors（Step/Delay 等）
+5. **M-CLONER-5** - Animation & Time（キーフレーム連携）
 
 ---
 
@@ -424,11 +424,11 @@ struct EffectorContext {
 
 | フェーズ | 見積時間 |
 | --- | --- |
-| M-MOGRAPH-1 | 6-10h |
-| M-MOGRAPH-2 | 6-10h |
-| M-MOGRAPH-3 | 4-6h |
-| M-MOGRAPH-4 | 8-12h |
-| M-MOGRAPH-5 | 6-10h |
+| M-CLONER-1 | 6-10h |
+| M-CLONER-2 | 6-10h |
+| M-CLONER-3 | 4-6h |
+| M-CLONER-4 | 8-12h |
+| M-CLONER-5 | 6-10h |
 | **合計** | **30-48h** |
 
 ---
@@ -443,9 +443,9 @@ struct EffectorContext {
 
 ### 新規実装
 - `MatrixData` - 変換行列配列
-- `MoGraphGenerator` - ジェネレーター基底
-- `MoGraphEffector` - エフェクター基底
-- `MoGraphLayer` - MoGraph 専用レイヤー
+- `ClonerGenerator` - ジェネレーター基底
+- `ClonerEffector` - エフェクター基底
+- `ClonerLayer` - Cloner 専用レイヤー
 
 ---
 
@@ -481,7 +481,7 @@ DiligentEngine / Software Renderer 両対応：
 
 ```cpp
 // Renderer 側でインスタンス描画
-void renderMoGraphLayer(ArtifactMoGraphLayer* layer, ArtifactIRenderer* renderer) {
+void renderClonerLayer(ArtifactClonerLayer* layer, ArtifactIRenderer* renderer) {
     const MatrixData& data = layer->getMatrixData();
     
     for (const auto& inst : data.instances) {
@@ -502,17 +502,18 @@ void renderMoGraphLayer(ArtifactMoGraphLayer* layer, ArtifactIRenderer* renderer
 - **Inheritance Effector** - 親オブジェクトから継承
 - **Volume Effector** - ボリュームベース
 - **Fields System** - 影響範囲フィールド（C4D 風）
-- **MoGraph Selection** - インデックス選択
+- **Cloner Selection** - インデックス選択
 - **Render Instance** - 軽量インスタンス描画
 
 ---
 
 ## First Step
 
-**M-MOGRAPH-1** から着手。
+**M-CLONER-1** から着手。
 
 最初にやること：
 1. `MatrixData` データ構造実装
-2. `ArtifactMoGraphGenerator` 基底クラス
+2. `ArtifactClonerGenerator` 基底クラス
 3. `ArtifactClonerGenerator`（Grid/Radial/Random モード）
 4. テスト用プレビューウィジェット
+

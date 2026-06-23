@@ -4,6 +4,7 @@ module;
 #include <QWidget>
 #include <QDialog>
 #include <QTabWidget>
+#include <QTabBar>
 #include <QDialogButtonBox>
 #include <QBoxLayout>
 #include <QHBoxLayout>
@@ -293,7 +294,7 @@ QColor normalizedCompositionBackgroundDefault(const QColor &storedColor)
   }
 
   return QColor(storedColor.red(), storedColor.green(), storedColor.blue(),
-                255);
+                storedColor.alpha());
 }
 
 QColor& sessionCompositionBackgroundColor()
@@ -553,6 +554,9 @@ CompositionAnchorPreset nearestAnchorPreset(const QPointF &value)
                                         impl_->bgColor.greenF(),
                                         impl_->bgColor.blueF(),
                                         1.0f));
+      if (auto* tabBar = picker.findChild<QTabBar*>()) {
+          tabBar->setCurrentIndex(1);
+      }
       if (picker.exec() != QDialog::Accepted) {
           return;
       }

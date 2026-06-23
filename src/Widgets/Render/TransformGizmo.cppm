@@ -263,7 +263,7 @@ SnapGuideSet buildSnapGuides(const std::shared_ptr<ArtifactAbstractComposition>&
 
  for (const auto& other : comp->allLayerRef()) {
   if (!other || !other->isVisible() || (ignoreLayer && other->id() == ignoreLayer->id()) ||
-      other->isLocked()) {
+      other->isLocked() || other->isTransformLocked()) {
    continue;
   }
   appendBoundsToSnapGuides(other->transformedBoundingBox(), guides);
@@ -287,7 +287,7 @@ SnapGuideSet buildSpacingGuides(const std::shared_ptr<ArtifactAbstractCompositio
 
  for (const auto& other : comp->allLayerRef()) {
   if (!other || !other->isVisible() || (ignoreLayer && other->id() == ignoreLayer->id()) ||
-      other->isLocked()) {
+      other->isLocked() || other->isTransformLocked()) {
    continue;
   }
   appendEdgeBoundsToSnapGuides(other->transformedBoundingBox(), guides);
@@ -2412,8 +2412,14 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     } else {
      const double baseW = std::max(1.0, startBox.width());
      const double baseH = std::max(1.0, startBox.height());
-     const float newScaleX = dragStartScaleX_ * static_cast<float>(targetBox.width() / baseW);
-     const float newScaleY = dragStartScaleY_ * static_cast<float>(targetBox.height() / baseH);
+     const float newScaleX =
+         handleAffectsWidth(activeHandle_)
+             ? dragStartScaleX_ * static_cast<float>(targetBox.width() / baseW)
+             : dragStartScaleX_;
+     const float newScaleY =
+         handleAffectsHeight(activeHandle_)
+             ? dragStartScaleY_ * static_cast<float>(targetBox.height() / baseH)
+             : dragStartScaleY_;
      const float localLeft = static_cast<float>(localBounds.left());
      const float localTop = static_cast<float>(localBounds.top());
      const float anchorX = dragStartAnchor_.x();

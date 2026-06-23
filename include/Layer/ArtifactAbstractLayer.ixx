@@ -111,7 +111,7 @@ enum class LayerType {
   Group = 13,
   Folder = 14,
   Particle = 15,   // パーティクルレイヤー
-  Clone = 16,      // クローンレイヤー (MoGraph)
+  Clone = 16,      // クローンレイヤー (Cloner)
   SDF = 17,        // SDFレイマーチングレイヤー
   Model3D = 18,    // 3Dモデルレイヤー
   Construction = 19, // 作業用の非レンダー設計レイヤー
@@ -388,6 +388,12 @@ public:
   void setSolo(bool solo);
   bool isLocked() const;
   void setLocked(bool locked);
+  bool isSelectionLocked() const;
+  void setSelectionLocked(bool locked);
+  bool isTransformLocked() const;
+  void setTransformLocked(bool locked);
+  bool isTimingLocked() const;
+  void setTimingLocked(bool locked);
   bool isShy() const;
   void setShy(bool shy);
 
@@ -500,3 +506,4 @@ inline uint qHash(const Artifact::ArtifactAbstractLayerPtr &key,
 }
 
 } // namespace Artifact
+

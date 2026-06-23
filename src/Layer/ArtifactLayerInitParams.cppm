@@ -111,6 +111,10 @@ LayerType ArtifactLayerInitParams::layerType() const
   int width_ = 1920;
   int height_ = 1080;
   FloatColor color_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+  ArtifactSolidFillType fillType_ = ArtifactSolidFillType::Solid;
+  FloatColor gradientStartColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+  FloatColor gradientEndColor_ = FloatColor(0.2f, 0.2f, 0.2f, 1.0f);
+  float gradientAngleDegrees_ = 90.0f;
  };
 
  ArtifactSolidLayerInitParams::ArtifactSolidLayerInitParams(const QString& name) :ArtifactLayerInitParams(name,LayerType::Solid), impl_(new Impl())
@@ -157,6 +161,14 @@ LayerType ArtifactLayerInitParams::layerType() const
  void ArtifactSolidLayerInitParams::setHeight(int height) { impl_->height_ = height; }
  FloatColor ArtifactSolidLayerInitParams::color() const { return impl_->color_; }
  void ArtifactSolidLayerInitParams::setColor(const FloatColor& color) { impl_->color_ = color; }
+ ArtifactSolidFillType ArtifactSolidLayerInitParams::fillType() const { return impl_->fillType_; }
+ void ArtifactSolidLayerInitParams::setFillType(ArtifactSolidFillType fillType) { impl_->fillType_ = fillType; }
+ FloatColor ArtifactSolidLayerInitParams::gradientStartColor() const { return impl_->gradientStartColor_; }
+ void ArtifactSolidLayerInitParams::setGradientStartColor(const FloatColor& color) { impl_->gradientStartColor_ = color; }
+ FloatColor ArtifactSolidLayerInitParams::gradientEndColor() const { return impl_->gradientEndColor_; }
+ void ArtifactSolidLayerInitParams::setGradientEndColor(const FloatColor& color) { impl_->gradientEndColor_ = color; }
+ float ArtifactSolidLayerInitParams::gradientAngleDegrees() const { return impl_->gradientAngleDegrees_; }
+ void ArtifactSolidLayerInitParams::setGradientAngleDegrees(float degrees) { impl_->gradientAngleDegrees_ = degrees; }
 
  ArtifactTextLayerInitParams::ArtifactTextLayerInitParams(const QString& name) :ArtifactLayerInitParams(name, LayerType::Text)
  {

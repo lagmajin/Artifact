@@ -41,6 +41,7 @@ class ArtifactTimelineWidget :public QWidget {
   void toggleGraphEditorMode(bool active, Qt::FocusReason reason = Qt::OtherFocusReason);
   void advanceGraphEditorFocus(bool reverse);
   bool isGraphEditorFocusWidget(const QWidget* widget) const;
+  void setCurrentFrameForAll(double frame);
  protected:
   void paintEvent(QPaintEvent* event) override;
   void focusInEvent(QFocusEvent* event) override;
@@ -55,7 +56,8 @@ class ArtifactTimelineWidget :public QWidget {
   explicit ArtifactTimelineWidget(QWidget* parent = nullptr);
   ~ArtifactTimelineWidget();
   void update();
- void setComposition(const CompositionID& id);
+  void setComposition(const CompositionID& id);
+  double currentFrame() const;
 
   // Layer management
   void onLayerCreated(const CompositionID& compId, const LayerID& layerId);

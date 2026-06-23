@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QColor>
 #include <QApplication>
@@ -18,10 +18,13 @@
 #include <QJsonObject>
 #include <QMenu>
 #include <QMetaObject>
+#include <QMouseEvent>
 #include <QDir>
 #include <QPalette>
 #include <QPushButton>
+#include <QToolButton>
 #include <QStandardPaths>
+#include <QSettings>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -93,6 +96,40 @@ namespace {
 constexpr int kPropertyLabelMinWidth = 132;
 constexpr int kPropertyLabelMaxWidth = 184;
 
+class CollapsibleSectionButton final : public QToolButton {
+public:
+  explicit CollapsibleSectionButton(QWidget *parent = nullptr)
+      : QToolButton(parent) {
+    setCheckable(true);
+    setAutoRaise(true);
+    setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  }
+
+  void setTarget(QWidget *target) {
+    target_ = target;
+    applyState(isChecked());
+  }
+
+protected:
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (event) {
+      event->accept();
+    }
+    toggle();
+    applyState(isChecked());
+  }
+
+private:
+  void applyState(bool expanded) {
+    setArrowType(expanded ? Qt::DownArrow : Qt::RightArrow);
+    if (target_) {
+      target_->setVisible(expanded);
+    }
+  }
+
+  QWidget *target_ = nullptr;
+};
+
 QColor themeColor(const QString &value, const QColor &fallback) {
   const QColor color(value);
   return color.isValid() ? color : fallback;
@@ -104,6 +141,108 @@ QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
                           a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
                           a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
                           a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
+}
+
+std::shared_ptr<ArtifactCore::AbstractProperty>
+findPropertyByName(const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties,
+                   const QString &name) {
+  auto it = std::find_if(
+      properties.begin(), properties.end(),
+      [&name](const std::shared_ptr<ArtifactCore::AbstractProperty> &property) {
+        return property &&
+               property->getName().compare(name, Qt::CaseInsensitive) == 0;
+      });
+  return it != properties.end() ? *it : nullptr;
+}
+
+bool boolPropertyValue(
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties,
+    const QString &name, const bool fallback = false) {
+  if (const auto property = findPropertyByName(properties, name)) {
+    return property->getValue().toBool();
+  }
+  return fallback;
+}
+
+int intPropertyValue(
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties,
+    const QString &name, const int fallback = 0) {
+  if (const auto property = findPropertyByName(properties, name)) {
+    return property->getValue().toInt();
+  }
+  return fallback;
+}
+
+std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProperties(
+    const ArtifactAbstractLayerPtr &layer, const QString &groupName,
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties) {
+  const QString normalizedGroup = groupName.trimmed();
+  const auto layerBool = [&layer](const QString &name, const bool fallback = false) {
+    if (!layer) {
+      return fallback;
+    }
+    const auto property = layer->getProperty(name);
+    return property ? property->getValue().toBool() : fallback;
+  };
+  const auto layerInt = [&layer](const QString &name, const int fallback = 0) {
+    if (!layer) {
+      return fallback;
+    }
+    const auto property = layer->getProperty(name);
+    return property ? property->getValue().toInt() : fallback;
+  };
+  const auto groupBool = [&properties, &layerBool](const QString &name,
+                                                   const bool fallback = false) {
+    if (const auto property = findPropertyByName(properties, name)) {
+      return property->getValue().toBool();
+    }
+    return layerBool(name, fallback);
+  };
+  const auto groupInt = [&properties, &layerInt](const QString &name,
+                                                 const int fallback = 0) {
+    if (const auto property = findPropertyByName(properties, name)) {
+      return property->getValue().toInt();
+    }
+    return layerInt(name, fallback);
+  };
+  if (normalizedGroup.compare(QStringLiteral("Cloner"), Qt::CaseInsensitive) == 0) {
+    const int mode = groupInt(QStringLiteral("component.cloner.mode"), 0);
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
+    filtered.reserve(properties.size());
+    for (const auto &property : properties) {
+      if (!property) {
+        continue;
+      }
+      const QString name = property->getName();
+      const bool isLinearOnly =
+          name == QStringLiteral("component.cloner.cloneCount") ||
+          name == QStringLiteral("component.cloner.offsetX") ||
+          name == QStringLiteral("component.cloner.offsetY") ||
+          name == QStringLiteral("component.cloner.offsetZ");
+      const bool isGridOnly =
+          name == QStringLiteral("component.cloner.columns") ||
+          name == QStringLiteral("component.cloner.rows") ||
+          name == QStringLiteral("component.cloner.depth") ||
+          name == QStringLiteral("component.cloner.spacingX") ||
+          name == QStringLiteral("component.cloner.spacingY") ||
+          name == QStringLiteral("component.cloner.spacingZ");
+      const bool isRadialOnly =
+          name == QStringLiteral("component.cloner.radialCount") ||
+          name == QStringLiteral("component.cloner.radius") ||
+          name == QStringLiteral("component.cloner.startAngle") ||
+          name == QStringLiteral("component.cloner.endAngle");
+
+      if ((mode == 0 && (isGridOnly || isRadialOnly)) ||
+          (mode == 1 && (isLinearOnly || isRadialOnly)) ||
+          (mode == 2 && (isLinearOnly || isGridOnly))) {
+        continue;
+      }
+      filtered.push_back(property);
+    }
+    return filtered;
+  }
+
+  return properties;
 }
 
 int64_t playbackFrameRateValue(ArtifactPlaybackService *playback) {
@@ -393,6 +532,7 @@ public:
   QWidget *containerWidget = nullptr;
   QVBoxLayout *mainLayout = nullptr;
   ArtifactAbstractLayerPtr currentLayer;
+  QSet<ArtifactAbstractLayerPtr> targetLayers;
   QMetaObject::Connection currentLayerChangedConnection;
   QTimer *rebuildTimer = nullptr;
   QTimer *updateValuesTimer = nullptr;
@@ -404,6 +544,7 @@ public:
   bool needsRebuildWhenVisible = false;
   bool valueColumnFirst = false;
   bool sliderBeforeValue = false;
+  bool favoriteOnly = false;
   bool isPlaying = false;
   int localPropertyEditDepth = 0;
   QHash<QString, ArtifactPropertyEditorRowWidget *> propertyEditors;
@@ -684,6 +825,37 @@ inspectorProperties(
   }
   return filtered;
 }
+
+// --- Favorites ---
+namespace {
+QStringList loadFavoriteProperties() {
+  QSettings settings(QStringLiteral("Artifact"),
+                     QStringLiteral("PropertyFavorites"));
+  return settings.value(QStringLiteral("favorites")).toStringList();
+}
+
+void saveFavoriteProperties(const QStringList &favorites) {
+  QSettings settings(QStringLiteral("Artifact"),
+                     QStringLiteral("PropertyFavorites"));
+  settings.setValue(QStringLiteral("favorites"), favorites);
+}
+
+bool isFavorite(const QString &propertyPath) {
+  return loadFavoriteProperties().contains(propertyPath,
+                                           Qt::CaseInsensitive);
+}
+
+void toggleFavorite(const QString &propertyPath) {
+  auto favs = loadFavoriteProperties();
+  const int idx = favs.indexOf(propertyPath, Qt::CaseInsensitive);
+  if (idx >= 0) {
+    favs.removeAt(idx);
+  } else {
+    favs.push_back(propertyPath);
+  }
+  saveFavoriteProperties(favs);
+}
+} // anonymous namespace
 
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
@@ -1045,6 +1217,7 @@ void addRowsFromProperties(
     const ArtifactAbstractLayerPtr &layer,
     bool *addedAny,
     QHash<QString, ArtifactPropertyEditorRowWidget *> *registry = nullptr,
+    QSet<QString> *reusedKeys = nullptr,
     std::vector<ArtifactPropertyEditorRowWidget *> *collectedRows = nullptr,
     const std::function<void(ArtifactPropertyEditorRowWidget *,
                              const std::shared_ptr<ArtifactCore::AbstractProperty> &)>
@@ -1066,7 +1239,11 @@ void addRowsFromProperties(
       }
       layout->addWidget(row);
       if (registry) {
-        registry->insert(ptr->getName(), row);
+        const QString key = ptr->getName();
+        registry->insert(key, row);
+        if (reusedKeys) {
+          reusedKeys->insert(key);
+        }
       }
       if (collectedRows) {
         collectedRows->push_back(row);
@@ -1114,6 +1291,17 @@ QString ArtifactPropertyWidget::Impl::computeRebuildSignature() const {
   QString signature;
   signature.reserve(2048);
 
+  signature += QStringLiteral("layers:");
+  {
+    QStringList ids;
+    for (const auto &tl : targetLayers) {
+      if (tl) { ids.push_back(tl->id().toString()); }
+    }
+    ids.sort();
+    signature += ids.join(QLatin1Char(','));
+  }
+  signature += QLatin1Char('\n');
+
   signature += QStringLiteral("layer:");
   signature +=
       currentLayer ? currentLayer->id().toString() : QStringLiteral("<none>");
@@ -1133,6 +1321,10 @@ QString ArtifactPropertyWidget::Impl::computeRebuildSignature() const {
 
   signature += QStringLiteral("sliderBeforeValue:");
   signature += sliderBeforeValue ? QStringLiteral("1") : QStringLiteral("0");
+  signature += QLatin1Char('\n');
+
+  signature += QStringLiteral("favoriteOnly:");
+  signature += favoriteOnly ? QStringLiteral("1") : QStringLiteral("0");
   signature += QLatin1Char('\n');
 
   if (!currentLayer) {
@@ -1307,10 +1499,10 @@ void ArtifactPropertyWidget::Impl::invalidatePropertyValueCache() {
 QSize ArtifactPropertyWidget::sizeHint() const { return QSize(300, 600); }
 
 void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
-  if (impl_->currentLayer == layer) {
-    // Same layer object – still refresh values in case they changed externally
+  if (impl_->currentLayer == layer && impl_->targetLayers.size() <= 1) {
+    // Same layer object can still need a full rebuild when visibility or groups change.
     impl_->invalidatePropertyValueCache();
-    impl_->scheduleUpdateValues();
+    updateProperties();
     return;
   }
 
@@ -1319,6 +1511,10 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
   }
 
   impl_->currentLayer = layer;
+  impl_->targetLayers.clear();
+  if (layer) {
+    impl_->targetLayers.insert(layer);
+  }
   impl_->invalidatePropertyValueCache();
 
   // Connect to new layer
@@ -1330,11 +1526,46 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
                     return;
                   }
                   impl_->invalidatePropertyValueCache();
-                  impl_->scheduleUpdateValues();
+                  impl_->scheduleRebuild();
                 });
   }
 
   updateProperties();
+}
+
+void ArtifactPropertyWidget::setLayers(const QSet<ArtifactAbstractLayerPtr>& layers) {
+  if (layers.isEmpty()) {
+    clear();
+    return;
+  }
+
+  if (impl_->currentLayerChangedConnection) {
+    QObject::disconnect(impl_->currentLayerChangedConnection);
+  }
+
+  // Use first layer as the primary for display
+  auto primary = *layers.begin();
+  impl_->currentLayer = primary;
+  impl_->targetLayers = layers;
+  impl_->invalidatePropertyValueCache();
+
+  if (primary) {
+    impl_->currentLayerChangedConnection =
+        connect(primary.get(), &ArtifactAbstractLayer::changed,
+                this, [this]() {
+                  if (impl_->localPropertyEditDepth > 0) {
+                    return;
+                  }
+                  impl_->invalidatePropertyValueCache();
+                  impl_->scheduleRebuild();
+                });
+  }
+
+  updateProperties();
+}
+
+int ArtifactPropertyWidget::targetLayersCount() const {
+  return static_cast<int>(impl_->targetLayers.size());
 }
 
 void ArtifactPropertyWidget::setFocusedEffectId(const QString &effectId) {
@@ -1346,6 +1577,7 @@ void ArtifactPropertyWidget::setFocusedEffectId(const QString &effectId) {
 
 void ArtifactPropertyWidget::clear() {
   impl_->currentLayer = nullptr;
+  impl_->targetLayers.clear();
   impl_->focusedEffectId.clear();
   impl_->invalidatePropertyValueCache();
   updateProperties();
@@ -1388,6 +1620,17 @@ void ArtifactPropertyWidget::setSliderBeforeValue(const bool enabled) {
 
 bool ArtifactPropertyWidget::sliderBeforeValue() const {
   return impl_->sliderBeforeValue;
+}
+
+void ArtifactPropertyWidget::setFavoriteOnly(const bool enabled) {
+  if (impl_->favoriteOnly == enabled)
+    return;
+  impl_->favoriteOnly = enabled;
+  updateProperties();
+}
+
+bool ArtifactPropertyWidget::favoriteOnly() const {
+  return impl_->favoriteOnly;
 }
 
 void ArtifactPropertyWidget::updateProperties() { impl_->scheduleRebuild(80); }
@@ -1920,18 +2163,42 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                    });
   mainLayout->addWidget(searchEdit);
 
+  // Favorite-only toggle
+  auto *favRow = new QWidget();
+  favRow->setObjectName(QStringLiteral("favoriteToggleRow"));
+  auto *favLayout = new QHBoxLayout(favRow);
+  favLayout->setContentsMargins(4, 2, 4, 2);
+  auto *favToggle = new QPushButton(favoriteOnly ? QStringLiteral("★ Only")
+                                                  : QStringLiteral("☆ Only"));
+  favToggle->setCheckable(true);
+  favToggle->setChecked(favoriteOnly);
+  favToggle->setObjectName(QStringLiteral("favoriteToggleButton"));
+  favToggle->setFlat(true);
+  favToggle->setCursor(Qt::PointingHandCursor);
+  favToggle->setToolTip(QStringLiteral("Show only favorite properties"));
+  favLayout->addWidget(favToggle);
+  favLayout->addStretch();
+   QObject::connect(favToggle, &QPushButton::toggled, owner,
+                    [this](bool checked) {
+                      if (owner) {
+                        owner->setFavoriteOnly(checked);
+                      }
+                    });
+  mainLayout->addWidget(favRow);
+
+  // Multi-selection badge
+  if (targetLayers.size() > 1) {
+    auto *multiBadge = new QLabel(
+        QStringLiteral("✏️ Editing %1 layers").arg(targetLayers.size()));
+    multiBadge->setObjectName(QStringLiteral("multiLayerBadge"));
+    multiBadge->setAlignment(Qt::AlignCenter);
+    multiBadge->setStyleSheet(QStringLiteral(
+        "background: #3C5B76; color: #E3E7EC; padding: 4px 8px; "
+        "border-radius: 4px; font-weight: bold; font-size: 11px;"));
+    mainLayout->addWidget(multiBadge);
+  }
+
   bool hasAnyProperties = false;
-
-  auto *summaryGroup = new QGroupBox(QStringLiteral("Summary"));
-  auto *summaryLayout = new QVBoxLayout(summaryGroup);
-  summaryLayout->setContentsMargins(10, 8, 10, 8);
-  summaryLayout->setSpacing(5);
-
-  const std::unordered_set<std::string> keyLayerProperties = {
-      "layer.name",        "transform.position.x", "transform.position.y",
-      "transform.scale.x", "transform.scale.y",    "transform.rotation",
-      "transform.initialRotation", "source.width", "source.height",
-      "layer.opacity"};
 
   const ArtifactAbstractLayerPtr layer = currentLayer;
   auto *playback = ArtifactPlaybackService::instance();
@@ -1948,104 +2215,25 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
   const auto layerGroups = layer ? layer->getLayerPropertyGroups()
                                  : std::vector<ArtifactCore::PropertyGroup>{};
-  if (layer) {
-    const auto presentation = describeLayerPresentation(layer);
-    summaryGroup->setTitle(presentation.propertySummaryTitle);
-    if (!presentation.capabilitySummaryText.isEmpty()) {
-      auto *capabilityLabel = new QLabel(
-          QStringLiteral("Capability: %1").arg(presentation.capabilitySummaryText),
-          summaryGroup);
-      capabilityLabel->setObjectName(QStringLiteral("propertySectionNote"));
-      capabilityLabel->setWordWrap(true);
-      applyPresentationToneLabel(capabilityLabel, presentation.badgeTone, false);
-      summaryLayout->addWidget(capabilityLabel);
-    }
-  }
-  const auto ownerSnapshots =
-      ArtifactCore::PropertyRegistryReadOnlyAdapter::queryAllOwners();
-  if (!ownerSnapshots.isEmpty()) {
-    QString ownerSummaryText = QStringLiteral("Snapshot owners:");
-    int validOwnerCount = 0;
-    for (const auto &ownerSnapshot : ownerSnapshots) {
-      if (!ownerSnapshot.isValid) {
-        continue;
-      }
-      ++validOwnerCount;
-      ownerSummaryText += QLatin1Char('\n');
-      ownerSummaryText += QStringLiteral("* ");
-      ownerSummaryText += ownerSnapshot.displayName.isEmpty()
-                              ? ownerSnapshot.ownerPath
-                              : ownerSnapshot.displayName;
-      ownerSummaryText += QStringLiteral(" (");
-      ownerSummaryText += QString::number(ownerSnapshot.propertyCount);
-      ownerSummaryText += QStringLiteral(" properties)");
-    }
-    if (validOwnerCount > 0) {
-      auto *ownerLabel = new QLabel(ownerSummaryText, summaryGroup);
-      ownerLabel->setObjectName(QStringLiteral("propertySectionNote"));
-      ownerLabel->setWordWrap(true);
-      applyPropertySectionLabel(ownerLabel, false);
-      summaryLayout->addWidget(ownerLabel);
-    }
-  }
-  std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
-      layerSummaryProperties;
-  for (const auto &groupDef : layerGroups) {
-    auto sortedProps = inspectorProperties(groupDef.sortedProperties());
-    auto picked =
-        prioritizedSummaryProperties(sortedProps, keyLayerProperties, 6);
-    layerSummaryProperties.insert(layerSummaryProperties.end(), picked.begin(),
-                                  picked.end());
-  }
 
-  auto removePropertyByName = [&layerSummaryProperties](
-                                  const QString &propertyName) {
-    auto it = std::find_if(
-        layerSummaryProperties.begin(), layerSummaryProperties.end(),
-        [&propertyName](
-            const std::shared_ptr<ArtifactCore::AbstractProperty> &property) {
-          return property && property->getName().compare(
-                                 propertyName, Qt::CaseInsensitive) == 0;
-        });
-    if (it == layerSummaryProperties.end()) {
-      return std::shared_ptr<ArtifactCore::AbstractProperty>();
-    }
-    auto property = *it;
-    layerSummaryProperties.erase(it);
-    return property;
-  };
-
-  bool hasSummaryProperties = false;
-  std::vector<ArtifactPropertyEditorRowWidget *> summaryRows;
-  applyPropertySectionBox(summaryGroup);
-  if (auto layerNameProperty =
-          removePropertyByName(QStringLiteral("layer.name"))) {
-    if (auto *row = createPropertyRow(
-            summaryGroup, layerNameProperty,
-            [this, layer](const QString &name, const QVariant &value) {
-              if (layer) {
-                ScopedPropertyEditGuard guard(localPropertyEditDepth);
-                layer->setLayerPropertyValue(name, value);
-                notifyLayerPropertyAnimationChanged(layer);
-              }
-            },
-            {}, currentLayerTime, notifyLayerKeyframeChanged, layer)) {
-      summaryLayout->addWidget(row);
-      propertyEditors.insert(layerNameProperty->getName(), row);
-      summaryRows.push_back(row);
-      hasSummaryProperties = true;
-    }
-  }
-
-  auto summaryPreviewOpacity = std::make_shared<std::optional<float>>();
   const auto decorateLayerRow =
-      [layer](ArtifactPropertyEditorRowWidget *row,
-              const std::shared_ptr<ArtifactCore::AbstractProperty> &property) {
+      [this, layer](ArtifactPropertyEditorRowWidget *row,
+                    const std::shared_ptr<ArtifactCore::AbstractProperty> &property) {
         if (!row || !property) {
           return;
         }
         updateScaleSupplementaryText(row, layer, property,
                                      property->getValue());
+        const QString propName = property->getName();
+        const bool fav = isFavorite(propName);
+        row->setShowFavoriteButton(true);
+        row->setFavoriteChecked(fav);
+        row->setFavoriteHandler([this, propName](bool checked) {
+          toggleFavorite(propName);
+          if (favoriteOnly) {
+            scheduleRebuild(0);
+          }
+        });
       };
   const auto updateLayerRowValue =
       [layer](ArtifactPropertyEditorRowWidget *row,
@@ -2053,163 +2241,120 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
               const QVariant &value) {
         updateScaleSupplementaryText(row, layer, property, value);
       };
-  addRowsFromProperties(
-      summaryGroup, summaryLayout, layerSummaryProperties, filterText,
-      [this, layer, summaryPreviewOpacity](const QString &name, const QVariant &value) {
-        if (layer) {
-          ScopedPropertyEditGuard guard(localPropertyEditDepth);
-          if (name.compare(QStringLiteral("layer.opacity"),
-                           Qt::CaseInsensitive) == 0) {
-            const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
-            const float oldOpacity =
-                summaryPreviewOpacity->value_or(layer->opacity());
-            summaryPreviewOpacity->reset();
-            if (std::abs(oldOpacity - newOpacity) > 0.0001f) {
-              auto *cmd = new ChangeLayerOpacityCommand(layer, oldOpacity,
-                                                        newOpacity);
-              UndoManager::instance()->push(
-                  std::unique_ptr<ChangeLayerOpacityCommand>(cmd));
-            }
-          } else {
-            layer->setLayerPropertyValue(name, value);
-            notifyLayerPropertyAnimationChanged(layer);
-          }
-        }
-      },
-      [this, layer, summaryPreviewOpacity](const QString &name, const QVariant &value) {
-        if (layer) {
-          ScopedPropertyEditGuard guard(localPropertyEditDepth);
-          if (name.compare(QStringLiteral("layer.opacity"),
-                           Qt::CaseInsensitive) == 0) {
-            const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
-            if (!summaryPreviewOpacity->has_value()) {
-              *summaryPreviewOpacity = layer->opacity();
-            }
-            layer->setOpacity(newOpacity);
-          } else {
-            layer->setLayerPropertyValue(name, value);
-            notifyLayerPropertyAnimationChanged(layer);
-          }
-        }
-      },
-      currentLayerTime,
-      notifyLayerKeyframeChanged,
-      layer,
-      &hasSummaryProperties, &propertyEditors, &summaryRows,
-      decorateLayerRow, updateLayerRowValue);
 
   const auto effects = layer->getEffects();
   const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
-  for (const auto &effect : effects) {
-    if (!effect) {
-      continue;
-    }
-    if (hasFocusedEffect && effect->effectID().toQString() != focusedEffectId) {
-      continue;
-    }
-
-    ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
-    for (const auto &property : effect->getProperties()) {
-      propGroup.addProperty(
-          std::make_shared<ArtifactCore::AbstractProperty>(property));
-    }
-
-    auto effectSummary =
-        prioritizedSummaryProperties(propGroup.sortedProperties(), {}, 3);
-    if (effectSummary.empty()) {
-      continue;
-    }
-
-    auto *effectLabel = new QLabel(effect->displayName().toQString(), summaryGroup);
-    effectLabel->setObjectName(QStringLiteral("propertySectionLabel"));
-    applyPropertySectionLabel(effectLabel, false);
-    summaryLayout->addWidget(effectLabel);
-
-    std::vector<ArtifactPropertyEditorRowWidget *> effectSummaryRows;
-    addRowsFromProperties(
-        summaryGroup, summaryLayout, effectSummary, filterText,
-        [this, layer, effect](const QString &name, const QVariant &value) {
-          ScopedPropertyEditGuard guard(localPropertyEditDepth);
-          effect->setPropertyValue(name, value);
-          notifyLayerPropertyAnimationChanged(layer);
-        },
-        {},
-        currentLayerTime,
-        {},
-        layer,
-        &hasSummaryProperties, &propertyEditors, &effectSummaryRows,
-        {});
-    alignPropertyRowLabels(effectSummaryRows, 132, 176);
-  }
-
-  if (hasSummaryProperties) {
-    alignPropertyRowLabels(summaryRows, 132, 176);
-    mainLayout->addWidget(summaryGroup);
-    hasAnyProperties = true;
-  } else {
-    delete summaryGroup;
-  }
 
   for (const auto &groupDef : layerGroups) {
     const QString groupName =
         groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name();
     const bool isSourceReframe = groupName.compare(QStringLiteral("Source Reframe"),
                                                    Qt::CaseInsensitive) == 0;
-    auto sortedProps = inspectorProperties(groupDef.sortedProperties());
+    auto sortedProps =
+        filteredGroupProperties(layer, groupName,
+                                inspectorProperties(groupDef.sortedProperties()));
+    // Apply favorites filter when in favorite-only mode
+    if (favoriteOnly) {
+      const auto favs = loadFavoriteProperties();
+      if (!favs.isEmpty()) {
+        std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> favFiltered;
+        favFiltered.reserve(sortedProps.size());
+        for (const auto &p : sortedProps) {
+          if (p && favs.contains(p->getName(), Qt::CaseInsensitive)) {
+            favFiltered.push_back(p);
+          }
+        }
+        sortedProps.swap(favFiltered);
+      } else {
+        sortedProps.clear();
+      }
+    }
     if (sortedProps.empty()) {
       continue;
     }
 
     QGroupBox *group = new QGroupBox(
         isSourceReframe ? QStringLiteral("Pan / Crop") : groupName);
-    if (groupName.compare(QStringLiteral("Initial"), Qt::CaseInsensitive) == 0) {
-      group->setCheckable(true);
-      group->setChecked(true);
-    }
     auto *groupLayout = new QVBoxLayout(group);
     groupLayout->setContentsMargins(10, 8, 10, 8);
     groupLayout->setSpacing(5);
     applyPropertySectionBox(group);
     applyThemeTextPalette(group, 120);
+    QWidget *sectionBody = group;
+    CollapsibleSectionButton *collapseButton = nullptr;
+    if (groupName.compare(QStringLiteral("Initial"), Qt::CaseInsensitive) == 0 ||
+        groupName.compare(QStringLiteral("Rig"), Qt::CaseInsensitive) == 0 ||
+        groupName.compare(QStringLiteral("Rig Controls"), Qt::CaseInsensitive) == 0) {
+      collapseButton = new CollapsibleSectionButton(group);
+      collapseButton->setText(groupName);
+      collapseButton->setChecked(false);
+      sectionBody = new QWidget(group);
+      auto *sectionBodyLayout = new QVBoxLayout(sectionBody);
+      sectionBodyLayout->setContentsMargins(0, 0, 0, 0);
+      sectionBodyLayout->setSpacing(5);
+      groupLayout->addWidget(collapseButton);
+      groupLayout->addWidget(sectionBody);
+      collapseButton->setTarget(sectionBody);
+    }
+    QVBoxLayout *contentLayout = groupLayout;
+    if (sectionBody != group) {
+      contentLayout = static_cast<QVBoxLayout *>(sectionBody->layout());
+    }
     bool addedGroupProperties = false;
     std::vector<ArtifactPropertyEditorRowWidget *> groupRows;
     auto groupPreviewOpacity = std::make_shared<std::optional<float>>();
     auto commitLayerValue = [this, layer, groupPreviewOpacity](
-                                const QString &name, const QVariant &value) {
-      if (layer) {
-        ScopedPropertyEditGuard guard(localPropertyEditDepth);
-        if (name.compare(QStringLiteral("layer.opacity"),
-                         Qt::CaseInsensitive) == 0) {
-          const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
-          const float oldOpacity =
-              groupPreviewOpacity->value_or(layer->opacity());
-          groupPreviewOpacity->reset();
+                                 const QString &name, const QVariant &value) {
+      if (!layer) { return; }
+      ScopedPropertyEditGuard guard(localPropertyEditDepth);
+      if (name.compare(QStringLiteral("layer.opacity"),
+                       Qt::CaseInsensitive) == 0) {
+        const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
+        for (const auto &tl : this->targetLayers) {
+          if (!tl) { continue; }
+          const float oldOpacity = groupPreviewOpacity->value_or(tl->opacity());
           if (std::abs(oldOpacity - newOpacity) > 0.0001f) {
-            auto *cmd = new ChangeLayerOpacityCommand(layer, oldOpacity,
-                                                      newOpacity);
+            auto *cmd = new ChangeLayerOpacityCommand(tl, oldOpacity, newOpacity);
             UndoManager::instance()->push(
                 std::unique_ptr<ChangeLayerOpacityCommand>(cmd));
           }
-        } else {
-          layer->setLayerPropertyValue(name, value);
-          notifyLayerPropertyAnimationChanged(layer);
+        }
+        groupPreviewOpacity->reset();
+      } else {
+        for (const auto &tl : this->targetLayers) {
+          if (!tl) { continue; }
+          tl->setLayerPropertyValue(name, value);
+          notifyLayerPropertyAnimationChanged(tl);
+        }
+        if (name.startsWith(QStringLiteral("component.cloner."), Qt::CaseInsensitive) ||
+            name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0) {
+          scheduleRebuild(0);
         }
       }
     };
     auto previewLayerValue = [this, layer, groupPreviewOpacity](
-                                 const QString &name, const QVariant &value) {
-      if (layer) {
-        ScopedPropertyEditGuard guard(localPropertyEditDepth);
-        if (name.compare(QStringLiteral("layer.opacity"),
-                         Qt::CaseInsensitive) == 0) {
-          const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
-          if (!groupPreviewOpacity->has_value()) {
-            *groupPreviewOpacity = layer->opacity();
-          }
-          layer->setOpacity(newOpacity);
-        } else {
-          layer->setLayerPropertyValue(name, value);
-          notifyLayerPropertyAnimationChanged(layer);
+                                  const QString &name, const QVariant &value) {
+      if (!layer) { return; }
+      ScopedPropertyEditGuard guard(localPropertyEditDepth);
+      if (name.compare(QStringLiteral("layer.opacity"),
+                       Qt::CaseInsensitive) == 0) {
+        const float newOpacity = std::clamp(value.toFloat(), 0.0f, 1.0f);
+        if (!groupPreviewOpacity->has_value()) {
+          *groupPreviewOpacity = layer->opacity();
+        }
+        for (const auto &tl : this->targetLayers) {
+          if (!tl) { continue; }
+          tl->setOpacity(newOpacity);
+        }
+      } else {
+        for (const auto &tl : targetLayers) {
+          if (!tl) { continue; }
+          tl->setLayerPropertyValue(name, value);
+          notifyLayerPropertyAnimationChanged(tl);
+        }
+        if (name.startsWith(QStringLiteral("component.cloner."), Qt::CaseInsensitive) ||
+            name.compare(QStringLiteral("component.layout.enabled"), Qt::CaseInsensitive) == 0) {
+          scheduleRebuild(0);
         }
       }
     };
@@ -2229,7 +2374,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         auto *enableButton = new QPushButton(QStringLiteral("Show Pan / Crop"),
                                              group);
         enableButton->setCursor(Qt::PointingHandCursor);
-        groupLayout->addWidget(enableButton);
+        contentLayout->addWidget(enableButton);
         QObject::connect(enableButton, &QPushButton::clicked, group,
                          [this, layer]() {
                            if (!layer) {
@@ -2248,7 +2393,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         note->setWordWrap(true);
         applyPropertySectionLabel(note, false);
         applyThemeTextPalette(note, 120);
-        groupLayout->addWidget(note);
+        contentLayout->addWidget(note);
 
         addedGroupProperties = true;
       } else {
@@ -2258,7 +2403,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       note->setWordWrap(true);
       applyPropertySectionLabel(note, false);
       applyThemeTextPalette(note, 120);
-      groupLayout->addWidget(note);
+      contentLayout->addWidget(note);
 
       auto collectProps = [](const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &src,
                              const auto &names) {
@@ -2293,13 +2438,14 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         auto *windowLabel = new QLabel(QStringLiteral("Window"), group);
         windowLabel->setObjectName(QStringLiteral("propertySectionLabel"));
         applyPropertySectionLabel(windowLabel, true);
-        groupLayout->addWidget(windowLabel);
+        contentLayout->addWidget(windowLabel);
 
         std::vector<ArtifactPropertyEditorRowWidget *> windowRows;
         addRowsFromProperties(
-            group, groupLayout, windowProps, filterText, commitLayerValue,
+            group, contentLayout, windowProps, filterText, commitLayerValue,
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
-            layer, &addedGroupProperties, &propertyEditors, &windowRows,
+            layer, &addedGroupProperties, &propertyEditors, &reusedKeys,
+            &windowRows,
             decorateLayerRow, updateLayerRowValue);
         groupRows.insert(groupRows.end(), windowRows.begin(), windowRows.end());
       }
@@ -2308,13 +2454,14 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         auto *motionLabel = new QLabel(QStringLiteral("Motion"), group);
         motionLabel->setObjectName(QStringLiteral("propertySectionLabel"));
         applyPropertySectionLabel(motionLabel, true);
-        groupLayout->addWidget(motionLabel);
+        contentLayout->addWidget(motionLabel);
 
         std::vector<ArtifactPropertyEditorRowWidget *> motionRows;
         addRowsFromProperties(
-            group, groupLayout, motionProps, filterText, commitLayerValue,
+            group, contentLayout, motionProps, filterText, commitLayerValue,
             previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
-            layer, &addedGroupProperties, &propertyEditors, &motionRows,
+            layer, &addedGroupProperties, &propertyEditors, &reusedKeys,
+            &motionRows,
             decorateLayerRow, updateLayerRowValue);
         groupRows.insert(groupRows.end(), motionRows.begin(), motionRows.end());
       }
@@ -2323,7 +2470,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       addRowsFromProperties(
           group, groupLayout, sortedProps, filterText, commitLayerValue,
           previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
-          layer, &addedGroupProperties, &propertyEditors, &groupRows,
+          layer, &addedGroupProperties, &propertyEditors, &reusedKeys,
+          &groupRows,
           decorateLayerRow, updateLayerRowValue);
     }
     if (addedGroupProperties) {
@@ -2375,6 +2523,22 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     auto sortedProps = propGroup.sortedProperties();
+    // Apply favorites filter for effects too when in favorite-only mode
+    if (favoriteOnly) {
+      const auto favs = loadFavoriteProperties();
+      if (!favs.isEmpty()) {
+        std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> favFiltered;
+        favFiltered.reserve(sortedProps.size());
+        for (const auto &p : sortedProps) {
+          if (p && favs.contains(p->getName(), Qt::CaseInsensitive)) {
+            favFiltered.push_back(p);
+          }
+        }
+        sortedProps.swap(favFiltered);
+      } else {
+        sortedProps.clear();
+      }
+    }
     if (sortedProps.empty()) {
       delete group;
       continue;
@@ -2392,7 +2556,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         currentLayerTime,
         {},
         layer,
-        &addedGroupProperties, &propertyEditors, &effectRows);
+        &addedGroupProperties, &propertyEditors, &reusedKeys, &effectRows,
+        decorateLayerRow);
 
     if (addedGroupProperties) {
       alignPropertyRowLabels(effectRows, 132, 176);
@@ -2431,3 +2596,5 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 }
 
 } // namespace Artifact
+
+

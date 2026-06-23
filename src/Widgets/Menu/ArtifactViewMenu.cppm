@@ -28,6 +28,7 @@ import std;
 
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.Application.Manager;
 import Artifact.MainWindow;
 import Artifact.Widgets.CompositionEditor;
 import Application.AppSettings;
@@ -1522,14 +1523,14 @@ void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
                     }
                     auto* app = ArtifactApplicationManager::instance();
                     auto* selection = app ? app->layerSelectionManager() : nullptr;
-                    auto* comp = selection ? selection->activeComposition() : ArtifactCompositionPtr{};
+                    auto comp = selection ? selection->activeComposition() : ArtifactCompositionPtr{};
                     if (!selection || !comp) {
                      QMessageBox::information(
                          dialogParent, QStringLiteral("Selection セット"),
                          QStringLiteral("保存先のコンポジションまたは選択が見つかりません。"));
                      return;
                     }
-                    const auto state = currentSelectionSetState();
+                    auto state = currentSelectionSetState();
                     if (!state) {
                      QMessageBox::warning(
                          dialogParent, QStringLiteral("Selection セット"),
@@ -1583,7 +1584,7 @@ void ArtifactViewMenu::Impl::refreshSelectionSetMenu()
                      }
                      auto* app = ArtifactApplicationManager::instance();
                      auto* selection = app ? app->layerSelectionManager() : nullptr;
-                     auto* comp = selection ? selection->activeComposition() : ArtifactCompositionPtr{};
+                      auto comp = selection ? selection->activeComposition() : ArtifactCompositionPtr{};
                      if (!selection || !comp) {
                       return;
                      }

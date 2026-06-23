@@ -68,6 +68,9 @@ namespace Artifact {
  }
 
  void ArtifactLayerSelectionManager::selectLayer(const ArtifactAbstractLayerPtr& layer) {
+  if (layer && (layer->isLocked() || layer->isSelectionLocked())) {
+   return;
+  }
   const bool sameSingleSelection =
       impl_->selectedLayers_.size() == 1 && impl_->selectedLayers_.contains(layer);
   if (!sameSingleSelection) {
@@ -88,7 +91,7 @@ namespace Artifact {
  }
 
  void ArtifactLayerSelectionManager::addToSelection(const ArtifactAbstractLayerPtr& layer) {
-  if (!layer) return;
+  if (!layer || layer->isLocked() || layer->isSelectionLocked()) return;
   const bool currentChanged = impl_->currentLayer_ != layer;
   bool changed = false;
   if (!impl_->selectedLayers_.contains(layer)) {

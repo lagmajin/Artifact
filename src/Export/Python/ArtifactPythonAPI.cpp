@@ -13,6 +13,7 @@ module Artifact.PythonAPI;
 import Script.Python.Engine;
 import Artifact.Application.Manager;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Composition.Abstract;
 import Property;
@@ -24,6 +25,11 @@ import Frame.Range;
 namespace Artifact {
 
 namespace {
+ArtifactPlaybackService* playbackService()
+{
+    return ArtifactPlaybackService::instance();
+}
+
 bool toBool(const std::string& value)
 {
     const QString v = QString::fromStdString(value).trimmed().toLower();
@@ -211,7 +217,9 @@ void ArtifactPythonAPI::registerLayerAPI() {
             }
 
             if (clearMarkers && !markersCleared) {
-                service->clearAllMarkers();
+                if (auto* playback = playbackService()) {
+                    playback->clearAllMarkers();
+                }
                 markersCleared = true;
                 changed = true;
             }
@@ -308,7 +316,7 @@ void ArtifactPythonAPI::registerLayerAPI() {
 
         const qint64 startFrame = std::max<qint64>(0, minIn - paddingFrames);
         const qint64 endFrame = std::max<qint64>(startFrame + 1, maxOut + paddingFrames);
-        const FrameRange trimmedRange(FramePosition(startFrame), FramePosition(endFrame));
+        const FrameRange trimmedRange{FramePosition(startFrame), FramePosition(endFrame)};
         comp->setFrameRange(trimmedRange);
         if (setWorkArea) {
             comp->setWorkAreaRange(trimmedRange);

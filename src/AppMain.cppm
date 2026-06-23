@@ -2093,6 +2093,7 @@ int main(int argc, char *argv[]) {
   compositionEditorTimer.restart();
   compositionEditor->setSizePolicy(QSizePolicy::Expanding,
                                    QSizePolicy::Expanding);
+  compositionEditor->setMinimumSize(720, 420);
   suppressScrollBarsForViewportWidget(compositionEditor);
   mw->addDockedWidget(QStringLiteral("Composition Viewer"),
                       ads::CenterDockWidgetArea, compositionEditor);
@@ -2571,6 +2572,8 @@ int main(int argc, char *argv[]) {
         ads::RightDockWidgetArea, aiCloud, QString());
     mw->setDockVisible(QStringLiteral("AI Cloud"), false);
     mw->setDockVisible(QStringLiteral("Audio Mixer"), false);
+    mw->setDockVisible(QStringLiteral("Composition Note"), false);
+    mw->setDockVisible(QStringLiteral("Layer Note"), false);
     mw->setDockVisible(QStringLiteral("Composition View (Software)"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Diligent)"), false);
     mw->setDockVisible(QStringLiteral("Layer View (Software)"), false);
@@ -3160,6 +3163,8 @@ int main(int argc, char *argv[]) {
              << startupParallelism;
   });
 
-  mw->show();
+  QTimer::singleShot(0, mw, [mw]() {
+    mw->show();
+  });
   return a.exec();
 }

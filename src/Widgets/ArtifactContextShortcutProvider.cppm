@@ -39,6 +39,9 @@ QList<ArtifactShortcutHelpEntry> ArtifactContextShortcutProvider::getShortcutsFo
         addEntry(ArtifactCore::ShortcutId::TimelineAddKeyframeAtPlayhead, QStringLiteral("Timeline"), QStringLiteral("Add keyframe at playhead"));
         addEntry(ArtifactCore::ShortcutId::TimelineRemoveKeyframeAtPlayhead, QStringLiteral("Timeline"), QStringLiteral("Remove keyframe at playhead"));
         addEntry(ArtifactCore::ShortcutId::TimelineCleanKeyframes, QStringLiteral("Timeline"), QStringLiteral("Clean duplicate keyframes"));
+        addEntry(ArtifactCore::ShortcutId::TimelineEaseIn, QStringLiteral("Timeline"), QStringLiteral("Apply ease in to selected keyframes"));
+        addEntry(ArtifactCore::ShortcutId::TimelineEaseOut, QStringLiteral("Timeline"), QStringLiteral("Apply ease out to selected keyframes"));
+        addEntry(ArtifactCore::ShortcutId::TimelineEaseInOut, QStringLiteral("Timeline"), QStringLiteral("Apply ease in/out to selected keyframes"));
         addEntry(ArtifactCore::ShortcutId::TimelineJumpToFirstKeyframe, QStringLiteral("Timeline Navigation"), QStringLiteral("Jump to first keyframe"));
         addEntry(ArtifactCore::ShortcutId::TimelineJumpToLastKeyframe, QStringLiteral("Timeline Navigation"), QStringLiteral("Jump to last keyframe"));
         addEntry(ArtifactCore::ShortcutId::TimelineJumpToNextKeyframe, QStringLiteral("Timeline Navigation"), QStringLiteral("Jump to next keyframe"));

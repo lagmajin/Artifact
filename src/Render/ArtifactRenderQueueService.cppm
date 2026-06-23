@@ -2801,7 +2801,7 @@ namespace Artifact
             const int compH = std::max(16, compSize.height());
             // RGBA8888 で直接作成（ARGB→RGBA 変換の問題を回避）
             QImage canvas(QSize(compW, compH), QImage::Format_RGBA8888);
-            canvas.fill(Qt::transparent);
+            canvas.fill(toQColor(composition->backgroundColor()));
 
             QPainter painter(&canvas);
             painter.setRenderHint(QPainter::Antialiasing, true);
@@ -2878,7 +2878,7 @@ namespace Artifact
             GPUTextureCacheManager gpuTextureCacheManager;
             gpuTextureCacheManager.setDevice(gpuRenderer_->device());
 
-            gpuRenderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+            gpuRenderer_->setClearColor(comp->backgroundColor());
             gpuRenderer_->clear();
             const auto& layers = comp->allLayerRef();
             const ArtifactCore::FramePosition currentPos(job.startFrame);
@@ -3867,7 +3867,7 @@ namespace Artifact
                                     << " tileSize=" << tileSz;
                         }
 
-                        impl_->gpuRenderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+                        impl_->gpuRenderer_->setClearColor((*compositionForRender)->backgroundColor());
                         impl_->gpuRenderer_->clear();
 
                         (*compositionForRender)->goToFrame(f);

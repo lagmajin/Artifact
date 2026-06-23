@@ -1508,8 +1508,9 @@ EmitterParams ParticlePresets::sparkles()
 {
     EmitterParams params;
     params.shape = EmitterShape::Point;
-    params.mode = EmissionMode::Continuous;
-    params.rate = 30.0f;
+    params.mode = EmissionMode::Burst;
+    params.burstCount = 96;
+    params.burstInterval = 0.0f;
     params.lifeMin = 0.3f;
     params.lifeMax = 0.8f;
     params.speedMin = 0.0f;

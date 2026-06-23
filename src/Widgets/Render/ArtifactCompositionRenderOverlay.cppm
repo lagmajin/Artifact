@@ -735,6 +735,54 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
   }
 }
 
+void drawClonerFrameOverlay(ArtifactIRenderer *renderer,
+                            const ArtifactAbstractLayerPtr &layer)
+{
+  if (!renderer || !layer) {
+    return;
+  }
+
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+      localBounds.height() <= 0.0) {
+    return;
+  }
+
+  const QTransform globalTransform = layer->getGlobalTransform();
+  const QPointF tl = globalTransform.map(localBounds.topLeft());
+  const QPointF tr = globalTransform.map(localBounds.topRight());
+  const QPointF br = globalTransform.map(localBounds.bottomRight());
+  const QPointF bl = globalTransform.map(localBounds.bottomLeft());
+
+  const FloatColor outerColor{0.96f, 0.56f, 0.18f, 0.90f};
+  const FloatColor innerColor{0.18f, 0.10f, 0.04f, 0.64f};
+
+  renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          outerColor, 1.7f);
+  renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          outerColor, 1.7f);
+  renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          outerColor, 1.7f);
+  renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          outerColor, 1.7f);
+  renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          innerColor, 0.8f);
+  renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                          {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          innerColor, 0.8f);
+  renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                          {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          innerColor, 0.8f);
+  renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                          {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                          innerColor, 0.8f);
+}
+
 void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
                                 const ArtifactAbstractLayerPtr &layer,
                                 bool isActiveCamera)

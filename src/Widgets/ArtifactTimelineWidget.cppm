@@ -524,6 +524,9 @@ bool applyTimelineLayerRangeEdit(const CompositionID &compositionId,
   const int64_t oldInPoint = layer->inPoint().framePosition();
   const int64_t oldOutPoint = layer->outPoint().framePosition();
   const int64_t oldStartTime = layer->startTime().framePosition();
+  if (layer->isTimingLocked()) {
+    return false;
+  }
   const int64_t oldDuration = std::max<int64_t>(1, oldOutPoint - oldInPoint);
 
   const int64_t inPoint =
@@ -1129,6 +1132,9 @@ void restoreTimelineLayerStateSnapshot(const ArtifactCompositionPtr& composition
 
   const auto layer = composition->layerById(snapshot.layerId);
   if (!layer) {
+    return;
+  }
+  if (layer->isTimingLocked()) {
     return;
   }
 
@@ -3677,6 +3683,9 @@ public:
   QLabel *keyframeStatusLabel_ = nullptr;
   QToolButton *easingLabButton_ = nullptr;
   QToolButton *keyPatternButton_ = nullptr;
+  QToolButton *keyframeEaseInButton_ = nullptr;
+  QToolButton *keyframeEaseOutButton_ = nullptr;
+  QToolButton *keyframeEaseInOutButton_ = nullptr;
   QLabel *currentLayerLabel_ = nullptr;
   QLabel *recentLayerLabel_ = nullptr;
   QLabel *frameSummaryLabel_ = nullptr;
@@ -4334,6 +4343,13 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   auto keyframeStatusLabel = new QLabel();
   auto easingLabButton = new QToolButton();
   auto keyPatternButton = new QToolButton();
+  auto keyframeAddButton = new QToolButton();
+  auto keyframeRemoveButton = new QToolButton();
+  auto keyframeCopyButton = new QToolButton();
+  auto keyframePasteButton = new QToolButton();
+  auto keyframeEaseInButton = new QToolButton();
+  auto keyframeEaseOutButton = new QToolButton();
+  auto keyframeEaseInOutButton = new QToolButton();
   easingLabButton->setText(QStringLiteral("Ease+"));
   easingLabButton->setToolTip(QStringLiteral("Open Easing Lab (Comparison Tool)"));
   easingLabButton->setAutoRaise(true);
@@ -4344,6 +4360,27 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   keyPatternButton->setAutoRaise(true);
   keyPatternButton->setVisible(false);
   keyPatternButton->setObjectName(QStringLiteral("timelineKeyPatternButton"));
+  keyframeAddButton->setText(QStringLiteral("+K"));
+  keyframeAddButton->setToolTip(QStringLiteral("Add keyframe at playhead"));
+  keyframeRemoveButton->setText(QStringLiteral("-K"));
+  keyframeRemoveButton->setToolTip(QStringLiteral("Remove keyframe at playhead"));
+  keyframeCopyButton->setText(QStringLiteral("Copy"));
+  keyframeCopyButton->setToolTip(QStringLiteral("Copy selected keyframes"));
+  keyframePasteButton->setText(QStringLiteral("Paste"));
+  keyframePasteButton->setToolTip(QStringLiteral("Paste keyframes at playhead"));
+  styleTimelineToolButton(keyframeAddButton);
+  styleTimelineToolButton(keyframeRemoveButton);
+  styleTimelineToolButton(keyframeCopyButton);
+  styleTimelineToolButton(keyframePasteButton);
+  keyframeEaseInButton->setText(QStringLiteral("Ease In"));
+  keyframeEaseInButton->setToolTip(QStringLiteral("Apply Ease In to selected keyframes"));
+  keyframeEaseOutButton->setText(QStringLiteral("Ease Out"));
+  keyframeEaseOutButton->setToolTip(QStringLiteral("Apply Ease Out to selected keyframes"));
+  keyframeEaseInOutButton->setText(QStringLiteral("Ease"));
+  keyframeEaseInOutButton->setToolTip(QStringLiteral("Apply Ease In/Out to selected keyframes"));
+  styleTimelineToolButton(keyframeEaseInButton);
+  styleTimelineToolButton(keyframeEaseOutButton);
+  styleTimelineToolButton(keyframeEaseInOutButton);
   auto currentLayerLabel = new QLabel();
   auto recentLayerLabel = new QLabel();
   auto frameSummaryLabel = new QLabel();
@@ -4355,6 +4392,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->keyframeStatusLabel_ = keyframeStatusLabel;
   impl_->easingLabButton_ = easingLabButton;
   impl_->keyPatternButton_ = keyPatternButton;
+  impl_->keyframeEaseInButton_ = keyframeEaseInButton;
+  impl_->keyframeEaseOutButton_ = keyframeEaseOutButton;
+  impl_->keyframeEaseInOutButton_ = keyframeEaseInOutButton;
   impl_->currentLayerLabel_ = currentLayerLabel;
   impl_->recentLayerLabel_ = recentLayerLabel;
   impl_->frameSummaryLabel_ = frameSummaryLabel;
@@ -4527,12 +4567,20 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                            applyInterpolationToSelectedKeyframes(interpolation);
                          });
       };
+  const auto& shortcutBindings = ArtifactCore::ShortcutBindings::instance();
   applyInterpolationShortcut(QKeySequence(Qt::Key_F9),
                              ArtifactCore::InterpolationType::EaseInOut);
   applyInterpolationShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F9),
                              ArtifactCore::InterpolationType::EaseIn);
   applyInterpolationShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F9),
                               ArtifactCore::InterpolationType::EaseOut);
+  applyInterpolationShortcut(shortcutBindings.shortcut(ArtifactCore::ShortcutId::TimelineEaseIn),
+                             ArtifactCore::InterpolationType::EaseIn);
+  applyInterpolationShortcut(shortcutBindings.shortcut(ArtifactCore::ShortcutId::TimelineEaseOut),
+                             ArtifactCore::InterpolationType::EaseOut);
+  applyInterpolationShortcut(
+      shortcutBindings.shortcut(ArtifactCore::ShortcutId::TimelineEaseInOut),
+      ArtifactCore::InterpolationType::EaseInOut);
   auto *undoShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z), this);
   QObject::connect(undoShortcut, &QShortcut::activated, this, []() {
     if (auto *mgr = UndoManager::instance()) {
@@ -4943,6 +4991,23 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   QObject::connect(keyPatternButton, &QToolButton::clicked, this,
                    [this]() { showKeyPatternDialog(); });
+  QObject::connect(keyframeAddButton, &QToolButton::clicked, this,
+                   [this]() { addKeyframeAtPlayhead(); });
+  QObject::connect(keyframeRemoveButton, &QToolButton::clicked, this,
+                   [this]() { removeKeyframeAtPlayhead(); });
+  QObject::connect(keyframeCopyButton, &QToolButton::clicked, this,
+                   [this]() { copySelectedKeyframes(); });
+  QObject::connect(keyframePasteButton, &QToolButton::clicked, this,
+                   [this]() { pasteKeyframesAtPlayhead(); });
+  QObject::connect(keyframeEaseInButton, &QToolButton::clicked, this, [this]() {
+    applyInterpolationToSelectedKeyframes(ArtifactCore::InterpolationType::EaseIn);
+  });
+  QObject::connect(keyframeEaseOutButton, &QToolButton::clicked, this, [this]() {
+    applyInterpolationToSelectedKeyframes(ArtifactCore::InterpolationType::EaseOut);
+  });
+  QObject::connect(keyframeEaseInOutButton, &QToolButton::clicked, this, [this]() {
+    applyInterpolationToSelectedKeyframes(ArtifactCore::InterpolationType::EaseInOut);
+  });
 
   auto leftTopSpacer = new QWidget();
   leftTopSpacer->setFixedHeight(kTimelineTopRowHeight);
@@ -5061,6 +5126,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   impl_->curveEditorSummaryLabel_ = new QLabel(QStringLiteral("カーブエディタ"));
   impl_->curveEditorSummaryLabel_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
   impl_->curveEditorSummaryLabel_->setToolTip(QStringLiteral("選択したキーフレームのカーブ編集ビュー"));
+  curveHeaderLayout->addWidget(impl_->curveEditorSummaryLabel_);
+  curveHeaderLayout->addWidget(keyframeAddButton);
+  curveHeaderLayout->addWidget(keyframeRemoveButton);
+  curveHeaderLayout->addWidget(keyframeCopyButton);
+  curveHeaderLayout->addWidget(keyframePasteButton);
+  curveHeaderLayout->addWidget(keyframeEaseInButton);
+  curveHeaderLayout->addWidget(keyframeEaseOutButton);
+  curveHeaderLayout->addWidget(keyframeEaseInOutButton);
   impl_->curveEditorModeButton_ = new QToolButton(curveHeader);
   styleTimelineToolButton(impl_->curveEditorModeButton_);
   impl_->curveEditorModeButton_->setCursor(Qt::PointingHandCursor);
@@ -5162,7 +5235,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      }
                      refreshCurveEditorTracks();
                    });
-  curveHeaderLayout->addWidget(impl_->curveEditorSummaryLabel_);
   curveHeaderLayout->addWidget(impl_->curveEditorModeButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorFitButton_);
   curveHeaderLayout->addWidget(impl_->curveEditorHandleButton_);
@@ -5262,10 +5334,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
         std::clamp(static_cast<int>(std::llround(clamped)), 0,
                    std::max(0, scrubBar->totalFrames() - 1));
 
-    impl_->currentFrame_ = clamped;
-    painterTrackView->setCurrentFrame(clamped);
-    scrubBar->setCurrentFrame(FramePosition(clampedFrame));
-    scrubBar->setVisualFrame(clamped);
+    setCurrentFrameForAll(clamped);
     syncPlayheadOverlay();
 
     if (auto *app = ArtifactApplicationManager::instance()) {
@@ -5688,15 +5757,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                    });
   QObject::connect(curveEditor, &ArtifactCurveEditorWidget::currentFrameChanged, this,
                    [this](int64_t frame) {
-                     impl_->currentFrame_ = static_cast<double>(frame);
-                     if (impl_->painterTrackView_) {
-                       impl_->painterTrackView_->setCurrentFrame(static_cast<double>(frame));
-                     }
-                     if (impl_->scrubBar_) {
-                       const QSignalBlocker blocker(impl_->scrubBar_);
-                       impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(frame)));
-                       impl_->scrubBar_->setVisualFrame(static_cast<double>(frame));
-                     }
+                     setCurrentFrameForAll(static_cast<double>(frame));
                      syncPlayheadOverlay();
                      if (auto *app = ArtifactApplicationManager::instance()) {
                        if (auto *ctx = app->activeContextService()) {
@@ -5852,18 +5913,14 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
             const FramePosition frame(event.frame);
             const bool isPlaying = ArtifactPlaybackService::instance() &&
                                    ArtifactPlaybackService::instance()->isPlaying();
-            if (impl_->painterTrackView_ && !isPlaying) {
-              impl_->painterTrackView_->setCurrentFrame(
-                  static_cast<double>(frame.framePosition()));
-            }
-            impl_->currentFrame_ = static_cast<double>(frame.framePosition());
             if (impl_->curveEditor_ && !isPlaying) {
               impl_->curveEditor_->setCurrentFrame(frame.framePosition());
             }
+            {
+              const QSignalBlocker blocker(scrubBar);
+              setCurrentFrameForAll(static_cast<double>(frame.framePosition()));
+            }
             syncPlayheadOverlay();
-            const QSignalBlocker blocker(scrubBar);
-            scrubBar->setCurrentFrame(frame);
-            scrubBar->setVisualFrame(static_cast<double>(frame.framePosition()));
             if (isPlaying) {
               // Only re-anchor the smooth interpolation clock on large drift
               // (audio sync correction, seek). Normal per-frame events must NOT
@@ -6079,13 +6136,7 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
               if (auto* playback = ArtifactPlaybackService::instance()) {
                 const double frame =
                     static_cast<double>(playback->currentFrame().framePosition());
-                impl_->currentFrame_ = frame;
-                if (impl_->painterTrackView_) {
-                  impl_->painterTrackView_->setCurrentFrame(frame);
-                }
-                if (impl_->navigator_) {
-                  impl_->navigator_->setCurrentFrame(frame);
-                }
+                setCurrentFrameForAll(frame);
                 syncPlayheadOverlay();
               }
               updateCacheVisuals();
@@ -6176,8 +6227,7 @@ void ArtifactTimelineWidget::setComposition(const CompositionID &id) {
         if (impl_->navigator_) {
           impl_->navigator_->setTotalFrames(std::max(1, totalFrames));
         }
-        impl_->painterTrackView_->setCurrentFrame(0.0);
-        impl_->currentFrame_ = 0.0;
+        setCurrentFrameForAll(0.0);
         syncPlayheadOverlay();
         if (auto *app = ArtifactApplicationManager::instance()) {
           if (auto *ctx = app->activeContextService()) {
@@ -6409,7 +6459,6 @@ void ArtifactTimelineWidget::refreshTracks() {
         : static_cast<double>(kDefaultTimelineFrames);
     impl_->painterTrackView_->setDurationFrames(
         std::max(1.0, durationFrames));
-    impl_->painterTrackView_->setCurrentFrame(impl_->currentFrame_);
     syncPlayheadOverlay();
     impl_->painterTrackView_->setClips(painterClips);
     const double syncedOffset = impl_->layerTimelinePanel_
@@ -7128,6 +7177,27 @@ void ArtifactTimelineWidget::updateKeyframeState()
         !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
     impl_->easingLabButton_->setVisible(hasSelection);
   }
+  if (impl_->keyframeEaseInButton_) {
+    const bool hasSelection =
+        impl_->painterTrackView_ &&
+        !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
+    impl_->keyframeEaseInButton_->setEnabled(hasSelection);
+    impl_->keyframeEaseInButton_->setVisible(hasSelection);
+  }
+  if (impl_->keyframeEaseOutButton_) {
+    const bool hasSelection =
+        impl_->painterTrackView_ &&
+        !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
+    impl_->keyframeEaseOutButton_->setEnabled(hasSelection);
+    impl_->keyframeEaseOutButton_->setVisible(hasSelection);
+  }
+  if (impl_->keyframeEaseInOutButton_) {
+    const bool hasSelection =
+        impl_->painterTrackView_ &&
+        !impl_->painterTrackView_->selectedKeyframeMarkers().isEmpty();
+    impl_->keyframeEaseInOutButton_->setEnabled(hasSelection);
+    impl_->keyframeEaseInOutButton_->setVisible(hasSelection);
+  }
   if (impl_->keyPatternButton_) {
     const bool hasPropertyContext = impl_->layerTimelinePanel_ &&
                                     !impl_->layerTimelinePanel_->currentPropertyPath().trimmed().isEmpty();
@@ -7360,6 +7430,32 @@ void ArtifactTimelineWidget::syncTimelineViewportFromNavigator()
   syncPlayheadOverlay();
 }
 
+double ArtifactTimelineWidget::currentFrame() const
+{
+  return impl_ ? impl_->currentFrame_ : 0.0;
+}
+
+void ArtifactTimelineWidget::setCurrentFrameForAll(double frame)
+{
+  if (!impl_) return;
+  const double clamped = std::max(0.0, frame);
+  impl_->currentFrame_ = clamped;
+  if (impl_->painterTrackView_) {
+    impl_->painterTrackView_->setCurrentFrame(clamped);
+  }
+  if (impl_->scrubBar_) {
+    const int clampedInt = std::max(0, static_cast<int>(std::llround(clamped)));
+    impl_->scrubBar_->setCurrentFrame(FramePosition(clampedInt));
+    impl_->scrubBar_->setVisualFrame(clamped);
+  }
+  if (impl_->navigator_) {
+    impl_->navigator_->setCurrentFrame(clamped);
+  }
+  if (impl_->workArea_) {
+    impl_->workArea_->setCurrentFrame(static_cast<float>(clamped));
+  }
+}
+
 void ArtifactTimelineWidget::syncPlayheadOverlay()
 {
   if (!impl_ || !impl_->painterTrackView_) {
@@ -7473,19 +7569,13 @@ void ArtifactTimelineWidget::jumpToKeyframeHit(int step)
     return;
   }
 
-  impl_->currentFrame_ = static_cast<double>(targetFrame);
+  setCurrentFrameForAll(static_cast<double>(targetFrame));
   if (impl_->painterTrackView_) {
-    impl_->painterTrackView_->setCurrentFrame(static_cast<double>(targetFrame));
     const double ppf = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
     const double centeredOffset = std::max(
         0.0, static_cast<double>(targetFrame) * ppf -
-                 static_cast<double>(impl_->painterTrackView_->width()) * 0.5);
+                static_cast<double>(impl_->painterTrackView_->width()) * 0.5);
     syncTimelineHorizontalOffset(centeredOffset);
-  } else {
-    syncPlayheadOverlay();
-  }
-  if (impl_->scrubBar_) {
-    impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
   }
   updateKeyframeState();
 }
@@ -7514,19 +7604,13 @@ void ArtifactTimelineWidget::jumpToFirstKeyframe()
   }
 
   const qint64 targetFrame = frames.front();
-  impl_->currentFrame_ = static_cast<double>(targetFrame);
+  setCurrentFrameForAll(static_cast<double>(targetFrame));
   if (impl_->painterTrackView_) {
-    impl_->painterTrackView_->setCurrentFrame(static_cast<double>(targetFrame));
     const double ppf = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
     const double centeredOffset = std::max(
         0.0, static_cast<double>(targetFrame) * ppf -
-                 static_cast<double>(impl_->painterTrackView_->width()) * 0.5);
+                static_cast<double>(impl_->painterTrackView_->width()) * 0.5);
     syncTimelineHorizontalOffset(centeredOffset);
-  } else {
-    syncPlayheadOverlay();
-  }
-  if (impl_->scrubBar_) {
-    impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
   }
   updateKeyframeState();
 }
@@ -7555,19 +7639,13 @@ void ArtifactTimelineWidget::jumpToLastKeyframe()
   }
 
   const qint64 targetFrame = frames.back();
-  impl_->currentFrame_ = static_cast<double>(targetFrame);
+  setCurrentFrameForAll(static_cast<double>(targetFrame));
   if (impl_->painterTrackView_) {
-    impl_->painterTrackView_->setCurrentFrame(static_cast<double>(targetFrame));
     const double ppf = std::max(0.01, impl_->painterTrackView_->pixelsPerFrame());
     const double centeredOffset = std::max(
         0.0, static_cast<double>(targetFrame) * ppf -
-                 static_cast<double>(impl_->painterTrackView_->width()) * 0.5);
+                static_cast<double>(impl_->painterTrackView_->width()) * 0.5);
     syncTimelineHorizontalOffset(centeredOffset);
-  } else {
-    syncPlayheadOverlay();
-  }
-  if (impl_->scrubBar_) {
-    impl_->scrubBar_->setCurrentFrame(FramePosition(static_cast<int>(targetFrame)));
   }
   updateKeyframeState();
 }
@@ -7599,7 +7677,7 @@ void ArtifactTimelineWidget::addKeyframeAtPlayhead()
     return;
   }
 
-  const qint64 frame = static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_)));
+  const qint64 frame = static_cast<qint64>(std::llround(currentFrame()));
   const auto refs = collectAnimatablePropertyRefs(layers);
   const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
   bool changed = false;

@@ -41,9 +41,15 @@ export module Artifact.Layer.InitParams;
 import Utils.String.Like;
 import Utils.String.UniString;
 import Artifact.Layer.Abstract;
+import Artifact.Layers.Model3D;
 import Color.Float;
 
 export namespace Artifact {
+
+ enum class ArtifactSolidFillType {
+  Solid = 0,
+  LinearGradient = 1
+ };
 
 
  class ArtifactLayerInitParams
@@ -85,6 +91,14 @@ export namespace Artifact {
   void setHeight(int height);
   FloatColor color() const;
   void setColor(const FloatColor& color);
+  ArtifactSolidFillType fillType() const;
+  void setFillType(ArtifactSolidFillType fillType);
+  FloatColor gradientStartColor() const;
+  void setGradientStartColor(const FloatColor& color);
+  FloatColor gradientEndColor() const;
+  void setGradientEndColor(const FloatColor& color);
+  float gradientAngleDegrees() const;
+  void setGradientAngleDegrees(float degrees);
  };
 
  class ArtifactTextLayerInitParams : public ArtifactLayerInitParams

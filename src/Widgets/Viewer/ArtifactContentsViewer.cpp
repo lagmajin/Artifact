@@ -58,7 +58,6 @@ module;
 #include <functional>
 #include <optional>
 
-import Application.AppSettings;
 #include <utility>
 #include <array>
 #include <mutex>
@@ -82,9 +81,7 @@ import Application.AppSettings;
 #include <random>
 #include <limits>
 module Artifact.Contents.Viewer;
-
-
-
+import Application.AppSettings;
 
 import Artifact.Preview.Pipeline;
 import MediaPlaybackController;

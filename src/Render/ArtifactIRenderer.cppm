@@ -1,4 +1,4 @@
-module;
+﻿module;
 #include <utility>
 // ArtifactIRenderer maintenance rule:
 // Do not rewrite the existing D3D12-specific path by guesswork.
@@ -868,11 +868,32 @@ namespace {
       view = particleViewMatrix_;
       proj = particleProjMatrix_;
     } else {
-      // 2D fallback: replicate PrimitiveRenderer2D's internal pan/zoom transform.
-      view.translate(panX, panY, 0.0f);
-      view.scale(zoom, zoom, 1.0f);
-      proj.ortho(0.0f, m_viewportWidth, m_viewportHeight, 0.0f, -1.0f, 1.0f);
+      // 2D fallback: mirror PrimitiveRenderer2D's canvas->NDC path exactly.
+      view.setToIdentity();
+      proj.setToIdentity();
+      proj.translate(-1.0f, 1.0f, 0.0f);
+      proj.scale(2.0f / m_viewportWidth, -2.0f / m_viewportHeight, 1.0f);
+      const bool disablePanZoom =
+          qEnvironmentVariableIsSet("ARTIFACT_DEBUG_PARTICLE_NO_PAN_ZOOM");
+      if (!disablePanZoom) {
+        proj.scale(zoom, zoom, 1.0f);
+        proj.translate(panX / std::max(zoom, 0.001f),
+                       panY / std::max(zoom, 0.001f),
+                       0.0f);
+      }
     }
+
+    qInfo() << "[ParticleRenderer] matrices"
+            << "viewRow0=" << view.row(0)
+            << "viewRow1=" << view.row(1)
+            << "viewRow2=" << view.row(2)
+            << "viewRow3=" << view.row(3)
+            << "projRow0=" << proj.row(0)
+            << "projRow1=" << proj.row(1)
+            << "projRow2=" << proj.row(2)
+            << "projRow3=" << proj.row(3)
+            << "panZoomDisabled="
+            << (qEnvironmentVariableIsSet("ARTIFACT_DEBUG_PARTICLE_NO_PAN_ZOOM") ? 1 : 0);
 
     auto* pRTV = primitiveRenderer_.currentRTV();
     if (!pRTV) {
@@ -908,6 +929,28 @@ namespace {
     pkt.viewMatrix = view.transposed();
     pkt.projMatrix = proj.transposed();
     cmdBuf_.append(std::move(pkt));
+
+    if (qEnvironmentVariableIsSet("ARTIFACT_DEBUG_PARTICLE_BILLBOARD_TEST")) {
+      QImage debugBillboard(128, 128, QImage::Format_ARGB32_Premultiplied);
+      debugBillboard.fill(QColor::fromRgbF(0.0f, 0.0f, 0.0f, 0.0f));
+      {
+        QPainter painter(&debugBillboard);
+        painter.setRenderHint(QPainter::Antialiasing, true);
+        painter.setPen(QPen(QColor::fromRgbF(1.0f, 0.34f, 0.12f, 1.0f), 10.0));
+        painter.setBrush(QColor::fromRgbF(0.98f, 0.76f, 0.18f, 0.95f));
+        painter.drawRoundedRect(QRectF(10.0, 10.0, 108.0, 108.0), 22.0, 22.0);
+        painter.setPen(QPen(QColor::fromRgbF(0.10f, 0.10f, 0.12f, 1.0f), 7.0));
+        painter.drawLine(QPointF(28.0, 64.0), QPointF(100.0, 64.0));
+        painter.drawLine(QPointF(64.0, 28.0), QPointF(64.0, 100.0));
+      }
+      primitiveRenderer3D_.drawBillboardQuad(
+          QVector3D(m_viewportWidth * 0.5f, m_viewportHeight * 0.5f, 0.0f),
+          QVector2D(320.0f, 320.0f), debugBillboard,
+          FloatColor{1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 0.0f);
+      qInfo() << "[ParticleRenderer] billboard-test drawn"
+              << "center=" << m_viewportWidth * 0.5f << m_viewportHeight * 0.5f
+              << "size=320x320";
+    }
   }
  };
 
@@ -2584,9 +2627,14 @@ bool ArtifactIRenderer::convertLayerToFloat(
 
  void ArtifactIRenderer::clearRenderTarget(const FloatColor& color)
  {
-  // Clear via beginning a new frame / clearing viewport
-  // Actual clear implementation depends on Diligent's clear API
-  (void)color;
+  auto ctx = impl_->deviceManager_.immediateContext();
+  if (!ctx) return;
+  if (!impl_->m_layerRT) return;
+  auto* rtv = impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+  if (!rtv) return;
+  const float clearColor[] = { color.r(), color.g(), color.b(), color.a() };
+  ctx->SetRenderTargets(1, &rtv, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  ctx->ClearRenderTarget(rtv, clearColor, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
  }
 
  void ArtifactIRenderer::drawOffscreenTexture(void* textureView, const QRectF& bounds, float opacity)

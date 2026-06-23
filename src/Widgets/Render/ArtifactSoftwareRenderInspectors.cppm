@@ -13,6 +13,7 @@ module;
 #include <QFrame>
 #include <QPainter>
 #include <QPainterPath>
+#include <QLinearGradient>
 #include <QPixmap>
 #include <QResizeEvent>
 #include <QShowEvent>
@@ -27,6 +28,7 @@ module;
 #include <QStringList>
 #include <QVector>
 #include <vector>
+#include <cmath>
 #include <wobjectimpl.h>
 
 #include <algorithm>
@@ -386,6 +388,36 @@ QColor toQColor(const FloatColor& color, const float alphaScale = 1.0f)
         std::clamp(color.a() * alphaScale, 0.0f, 1.0f));
 }
 
+QPointF gradientPointForAngle(const float angleDegrees, const QSize& size, const bool startPoint)
+{
+    const float radians = angleDegrees * 3.14159265358979323846f / 180.0f;
+    const QPointF center(static_cast<qreal>(size.width()) * 0.5,
+                         static_cast<qreal>(size.height()) * 0.5);
+    const qreal dx = std::cos(radians);
+    const qreal dy = -std::sin(radians);
+    const qreal halfSpan = std::max(1.0, std::hypot(static_cast<double>(size.width()),
+                                                    static_cast<double>(size.height()))) * 0.5;
+    const qreal sign = startPoint ? -1.0 : 1.0;
+    return QPointF(center.x() + dx * halfSpan * sign,
+                   center.y() + dy * halfSpan * sign);
+}
+
+void fillRectWithLinearGradient(QPainter& painter,
+                                const QRectF& rect,
+                                const FloatColor& startColor,
+                                const FloatColor& endColor,
+                                const float angleDegrees,
+                                const qreal opacityScale)
+{
+    const QSize gradientSize(std::max(1, static_cast<int>(std::round(rect.width()))),
+                             std::max(1, static_cast<int>(std::round(rect.height()))));
+    QLinearGradient gradient(gradientPointForAngle(angleDegrees, gradientSize, true),
+                             gradientPointForAngle(angleDegrees, gradientSize, false));
+    gradient.setColorAt(0.0, toQColor(startColor, static_cast<float>(opacityScale)));
+    gradient.setColorAt(1.0, toQColor(endColor, static_cast<float>(opacityScale)));
+    painter.fillRect(rect, gradient);
+}
+
 QPainter::CompositionMode compositionModeForLayer(const ArtifactAbstractLayerPtr& layer)
 {
     return compositionMode(ArtifactCore::toBlendMode(layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL));
@@ -488,13 +520,33 @@ QImage renderLayerSurface(const ArtifactAbstractLayerPtr& layer)
 
     if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
         QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
-        image.fill(toQColor(solidLayer->color()));
+        if (solidLayer->isGradientEnabled()) {
+            QPainter painter(&image);
+            fillRectWithLinearGradient(painter,
+                                       QRectF(0.0, 0.0, layerSize.width(), layerSize.height()),
+                                       solidLayer->gradientStartColor(),
+                                       solidLayer->gradientEndColor(),
+                                       solidLayer->gradientAngleDegrees(),
+                                       1.0);
+        } else {
+            image.fill(toQColor(solidLayer->color()));
+        }
         return image;
     }
 
     if (const auto solid2DLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
         QImage image(layerSize, QImage::Format_ARGB32_Premultiplied);
-        image.fill(toQColor(solid2DLayer->color()));
+        if (solid2DLayer->isGradientEnabled()) {
+            QPainter painter(&image);
+            fillRectWithLinearGradient(painter,
+                                       QRectF(0.0, 0.0, layerSize.width(), layerSize.height()),
+                                       solid2DLayer->gradientStartColor(),
+                                       solid2DLayer->gradientEndColor(),
+                                       solid2DLayer->gradientAngleDegrees(),
+                                       1.0);
+        } else {
+            image.fill(toQColor(solid2DLayer->color()));
+        }
         return image;
     }
 
@@ -559,9 +611,27 @@ void drawLayerOnCanvas(QPainter& painter, const ArtifactAbstractLayerPtr& layer,
     // 4. Draw Content
     const auto size = layer->sourceSize();
     if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer)) {
-        painter.fillRect(QRectF(0, 0, size.width, size.height), toQColor(solidLayer->color()));
+        if (solidLayer->isGradientEnabled()) {
+            fillRectWithLinearGradient(painter,
+                                       QRectF(0, 0, size.width, size.height),
+                                       solidLayer->gradientStartColor(),
+                                       solidLayer->gradientEndColor(),
+                                       solidLayer->gradientAngleDegrees(),
+                                       finalOpacity);
+        } else {
+            painter.fillRect(QRectF(0, 0, size.width, size.height), toQColor(solidLayer->color()));
+        }
     } else if (const auto solid2D = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(layer)) {
-        painter.fillRect(QRectF(0, 0, size.width, size.height), toQColor(solid2D->color()));
+        if (solid2D->isGradientEnabled()) {
+            fillRectWithLinearGradient(painter,
+                                       QRectF(0, 0, size.width, size.height),
+                                       solid2D->gradientStartColor(),
+                                       solid2D->gradientEndColor(),
+                                       solid2D->gradientAngleDegrees(),
+                                       finalOpacity);
+        } else {
+            painter.fillRect(QRectF(0, 0, size.width, size.height), toQColor(solid2D->color()));
+        }
     } else if (!surface.isNull()) {
         painter.drawImage(QRectF(0.0, 0.0, size.width, size.height), surface);
     }

@@ -212,12 +212,10 @@ void ArtifactGroupLayer::draw(ArtifactIRenderer* renderer) {
 
     // Draw children into temporary RT
     renderer->setOverrideRTV(tempRTV);
-    // Use the renderer's viewport clear color but ensure opaque alpha to avoid
-    // bilinear edge-bleeding when the temp RT is later sampled and blended.
+    // Keep the renderer's clear color intact here; forcing alpha to 1.0 breaks
+    // transparent group compositing and can leak opaque fill into the temp RT.
     const FloatColor oldClear = renderer->getClearColor();
-    FloatColor fillColor = oldClear;
-    fillColor.setAlpha(1.0f);
-    renderer->setClearColor(fillColor);
+    renderer->setClearColor(oldClear);
     renderer->clear();
     for (auto& child : groupImpl_->children) {
         if (child && child->isVisible()) {

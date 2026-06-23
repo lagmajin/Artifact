@@ -38,6 +38,7 @@ module;
 #include <QToolButton>
 #include <QTreeView>
 #include <QWidget>
+#include <QFileDialog>
 #include <wobjectimpl.h>
 
 module Artifact.MainWindow;
@@ -53,6 +54,10 @@ import Text.Style;
 import Utils.String.UniString;
 import Widgets.ToolOptionsBar;
 import Artifact.Widgets.ProjectManagerWidget;
+import Artifact.Widgets.Welcome;
+import Artifact.Project.Manager;
+import Artifact.Service.Project;
+import Artifact.Composition.InitParams;
 import Menu.MenuBar;
 import Artifact.Menu.View;
 import Widgets.ToolBar;
@@ -144,32 +149,32 @@ const WorkspaceVisibilityRule *workspaceVisibilityRuleFor(WorkspaceMode mode) {
         "Composition Note", "Layer Note"}},
       {WorkspaceMode::Layout,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Properties", "Composition Note", "Layer Note"},
-       {"Audio Mixer", "Contents Viewer", "AI Chat"}},
+        "Properties"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Composition Note",
+        "Layer Note"}},
       {WorkspaceMode::Animation,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Composition Note", "Layer Note", "Properties",
-        "Composition View (Software)", "Layer View (Diligent)",
-        "Layer View (Software)"},
+        "Properties", "Composition View (Software)",
+        "Layer View (Diligent)", "Layer View (Software)"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
-        "Playback Control"}},
+        "Playback Control", "Composition Note", "Layer Note"}},
       {WorkspaceMode::VFX,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Composition Note", "Layer Note", "Properties",
-        "Composition View (Software)", "Layer View (Diligent)",
-        "Layer View (Software)"},
-       {"Audio Mixer", "Contents Viewer", "AI Chat", "Playback Control"}},
+        "Properties", "Composition View (Software)",
+        "Layer View (Diligent)", "Layer View (Software)"},
+       {"Audio Mixer", "Contents Viewer", "AI Chat", "Playback Control",
+        "Composition Note", "Layer Note"}},
       {WorkspaceMode::Compositing,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Composition Note", "Layer Note", "Properties",
-        "Layer View (Diligent)"},
+        "Properties", "Layer View (Diligent)"},
        {"Audio Mixer", "Contents Viewer", "AI Cloud", "AI Chat",
         "Playback Control", "Composition View (Software)",
-        "Layer View (Software)"}},
+        "Layer View (Software)", "Composition Note", "Layer Note"}},
       {WorkspaceMode::Text,
        {"Composition Viewer", "Project", "Asset Browser", "Inspector",
-        "Composition Note", "Layer Note", "Properties", "Contents Viewer"},
-       {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control"}},
+        "Properties", "Contents Viewer"},
+       {"Audio Mixer", "AI Cloud", "AI Chat", "Playback Control",
+        "Composition Note", "Layer Note"}},
       {WorkspaceMode::Export,
        {"Project", "Asset Browser", "Inspector", "Properties",
         "Composition Viewer"},
@@ -541,6 +546,7 @@ public:
   Qt::WindowStates immersivePreviousWindowState_ = Qt::WindowNoState;
   QHash<CDockWidget *, bool> immersiveDockVisibility_;
   QPointer<CDockWidget> immersiveTargetDock_;
+  ArtifactWelcomeWidget* welcomeWidget = nullptr;
   bool menuBarInitialized = false;
   bool initialLayoutApplied = false;
   bool startupRefreshScheduled = false;
@@ -1017,6 +1023,9 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   QObject::connect(impl_->dockManager, &CDockManager::floatingWidgetCreated,
                    this, [this](ads::CFloatingDockContainer *floatingWidget) {
                      prepareFloatingDockContainer(floatingWidget, this);
+                     if (impl_ && impl_->dockManager) {
+                       prepareDockDropOverlays(impl_->dockManager);
+                     }
                    });
   impl_->dockStyleManager->setGlowEnabled(true);
   impl_->dockStyleManager->setGlowColor(
@@ -1035,6 +1044,65 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
   impl_->dockManager->setCentralWidget(centralDock);
   impl_->primaryCenterDock = centralDock;
   impl_->dockStyleManager->applyStyle();
+
+  // Welcome widget — overlay over central area when no project is open
+  impl_->welcomeWidget = new Artifact::ArtifactWelcomeWidget(impl_->centralWidgetHost);
+  impl_->welcomeWidget->setGeometry(impl_->centralWidgetHost->rect());
+  impl_->welcomeWidget->raise();
+  impl_->welcomeWidget->show();
+  // Sync welcome widget size with central host when it resizes
+  impl_->centralWidgetHost->installEventFilter(this);
+  QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::openRecentProject, this,
+      [this](const QString& path) {
+          if (!path.isEmpty()) {
+              ArtifactProjectManager::getInstance().loadFromFile(path);
+          }
+      });
+  QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::createNewComposition, this,
+      [this]() {
+          auto* svc = ArtifactProjectService::instance();
+          if (!svc) return;
+          if (!svc->hasProject()) {
+              ArtifactProjectManager::getInstance().createProject();
+          }
+          svc->createComposition(ArtifactCompositionInitParams::hdPreset());
+      });
+  QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::importAsset, this,
+      [this]() {
+          auto* svc = ArtifactProjectService::instance();
+          if (!svc || !svc->hasProject()) {
+              ArtifactProjectManager::getInstance().createProject();
+              svc = ArtifactProjectService::instance();
+          }
+          if (svc) {
+              const QStringList files = QFileDialog::getOpenFileNames(
+                  this, QStringLiteral("Import Assets"));
+              if (!files.isEmpty()) {
+                  svc->importAssetsFromPaths(files);
+              }
+          }
+      });
+  QObject::connect(impl_->welcomeWidget, &ArtifactWelcomeWidget::openProject, this,
+      [this]() {
+          const QString path = QFileDialog::getOpenFileName(
+              this, QStringLiteral("Open Project"));
+          if (!path.isEmpty()) {
+              ArtifactProjectManager::getInstance().loadFromFile(path);
+          }
+      });
+  // Listen for project changes to toggle welcome visibility
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ProjectChangedEvent>(
+          [this](const ProjectChangedEvent&) {
+              if (!impl_ || !impl_->welcomeWidget) return;
+              const auto& mgr = ArtifactProjectManager::getInstance();
+              const bool noProject = mgr.currentProjectPath().isEmpty()
+                                     && !mgr.isProjectCreated();
+              impl_->welcomeWidget->setVisible(noProject);
+              if (noProject) {
+                  impl_->welcomeWidget->refreshRecentProjects();
+              }
+          }));
 
   resize(2000,
          1200); // Increased initial window size to give central area more space
@@ -1110,6 +1178,7 @@ void ArtifactMainWindow::addDockedWidget(const QString &title,
       impl_->dockWidgets.push_back(impl_->primaryCenterDock);
     }
     wireDockWidgetSignals(impl_->primaryCenterDock, this);
+    prepareDockDropOverlays(impl_->dockManager);
     impl_->dockStyleManager->applyStyle();
     if (title == "AI Cloud") {
       impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
@@ -1125,6 +1194,7 @@ void ArtifactMainWindow::addDockedWidget(const QString &title,
   impl_->dockManager->addDockWidget(area, dock);
   impl_->dockWidgets.push_back(dock);
   wireDockWidgetSignals(dock, this);
+  prepareDockDropOverlays(impl_->dockManager);
   impl_->dockStyleManager->applyStyle();
   if (title == "AI Cloud") {
     impl_->aiCloudWidget_ = qobject_cast<ArtifactAICloudWidget *>(widget);
@@ -1202,6 +1272,7 @@ void ArtifactMainWindow::addDockedWidgetTabbedWithId(
     dock->raise();
   }
   wireDockWidgetSignals(dock, this);
+  prepareDockDropOverlays(impl_->dockManager);
   impl_->dockStyleManager->applyStyle();
   if (!impl_->startupLayoutFrozen) {
     applyWorkspaceMode(this, impl_->workspaceMode_);
@@ -1265,6 +1336,7 @@ void ArtifactMainWindow::addLazyDockedWidgetTabbedWithId(
   impl_->dockWidgets.push_back(dock);
   wireDockWidgetSignals(dock, this);
   dock->toggleView(false);
+  prepareDockDropOverlays(impl_->dockManager);
 
   QObject::connect(
       dock, &ads::CDockWidget::visibilityChanged, this,
@@ -1329,6 +1401,7 @@ void ArtifactMainWindow::addDockedWidgetFloating(
     dock->toggleView(true);
   }
   wireDockWidgetSignals(dock, this);
+  prepareDockDropOverlays(impl_->dockManager);
   impl_->dockStyleManager->applyStyle();
   if (!impl_->startupLayoutFrozen) {
     applyWorkspaceMode(this, impl_->workspaceMode_);
@@ -1379,6 +1452,7 @@ void ArtifactMainWindow::addLazyDockedWidgetFloating(
 
   impl_->dockWidgets.push_back(dock);
   wireDockWidgetSignals(dock, this);
+  prepareDockDropOverlays(impl_->dockManager);
   if (!impl_->startupLayoutFrozen) {
     dock->toggleView(true);
   } else {
@@ -2051,6 +2125,13 @@ bool ArtifactMainWindow::eventFilter(QObject *watched, QEvent *event) {
     default:
       break;
     }
+  }
+
+  // Keep welcome widget sized to central host
+  if (watched == impl_->centralWidgetHost && event && event->type() == QEvent::Resize) {
+      if (impl_->welcomeWidget) {
+          impl_->welcomeWidget->setGeometry(static_cast<QWidget*>(watched)->rect());
+      }
   }
 
   return QMainWindow::eventFilter(watched, event);

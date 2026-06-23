@@ -928,9 +928,11 @@ void ArtifactProjectService::Impl::addLayerToCurrentComposition(
         const qint64 duration =
             std::max<qint64>(1, result.layer->outPoint().framePosition() -
                                    result.layer->inPoint().framePosition());
+        if (!result.layer->isTimingLocked()) {
         result.layer->setInPoint(FramePosition(activeFrame));
         result.layer->setOutPoint(FramePosition(activeFrame + duration));
         result.layer->setStartTime(FramePosition(activeFrame));
+        }
       }
 
     }
@@ -1480,6 +1482,12 @@ void ArtifactProjectService::addLayerToCurrentComposition(
   impl_->addLayerToCurrentComposition(params, selectNewLayer);
 }
 
+void ArtifactProjectService::addLayerToCurrentComposition(
+    const ArtifactLayerInitParams &params, bool selectNewLayer,
+    bool placeAtCurrentFrame) {
+  impl_->addLayerToCurrentComposition(params, selectNewLayer, placeAtCurrentFrame);
+}
+
 bool ArtifactProjectService::ungroupSelectedGroupInCurrentComposition()
 {
     auto comp = currentComposition().lock();
@@ -1774,7 +1782,7 @@ bool ArtifactProjectService::isLayerLockedInCurrentComposition(
     return false;
   }
   auto layer = comp->layerById(layerId);
-  return layer ? layer->isLocked() : false;
+  return layer ? (layer->isLocked() || layer->isTimingLocked()) : false;
 }
 
 bool ArtifactProjectService::isLayerSoloInCurrentComposition(
@@ -2304,6 +2312,9 @@ void ArtifactProjectService::splitLayerAtCurrentTime(
   }
 
   const auto oldOut = layer->outPoint();
+  if (layer->isTimingLocked()) {
+    return;
+  }
   layer->setOutPoint(now);
 
   auto result = impl_->projectManager().duplicateLayerInComposition(
@@ -2314,6 +2325,10 @@ void ArtifactProjectService::splitLayerAtCurrentTime(
   }
 
   auto newLayer = result.layer;
+  if (newLayer->isTimingLocked()) {
+    layer->setOutPoint(oldOut);
+    return;
+  }
   newLayer->setInPoint(now);
   newLayer->setOutPoint(oldOut);
   ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});

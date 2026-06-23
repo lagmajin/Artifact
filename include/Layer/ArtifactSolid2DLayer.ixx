@@ -36,6 +36,7 @@ export module Artifact.Layer.Solid2D;
 
 
 import Color.Float;
+import Artifact.Layer.InitParams;
 import Artifact.Layers.Abstract._2D;
 
 export namespace Artifact
@@ -52,6 +53,15 @@ export namespace Artifact
   ~ArtifactSolid2DLayer();
   FloatColor color() const;
   void setColor(const FloatColor& color);
+  ArtifactSolidFillType fillType() const;
+  void setFillType(ArtifactSolidFillType fillType);
+  bool isGradientEnabled() const;
+  FloatColor gradientStartColor() const;
+  void setGradientStartColor(const FloatColor& color);
+  FloatColor gradientEndColor() const;
+  void setGradientEndColor(const FloatColor& color);
+  float gradientAngleDegrees() const;
+  void setGradientAngleDegrees(float degrees);
   void setSize(int width, int height);
   QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject& obj) override;

@@ -10,6 +10,16 @@ export module Artifact.Menu.Layer;
 
 export namespace Artifact {
 
+ enum class LayerCreationPlacementMode {
+  CompositionStart,
+  Playhead,
+  WorkAreaStart,
+  SelectedLayerIn,
+  SelectedLayerOut,
+  AfterSelected,
+  BeforeSelected,
+  CustomFrame
+ };
 
 
  class ArtifactLayerMenu:public QMenu {

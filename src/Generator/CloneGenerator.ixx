@@ -152,7 +152,8 @@ namespace Artifact {
         // 既存の QVector<QMatrix4x4> を返すメソッド（互換性のため残す）
         QVector<QMatrix4x4> generateTransforms() const;
 
-        // 【NEW】MoGraphアーキテクチャ用：CloneDataの配列を生成する
+        // 【NEW】Clonerアーキテクチャ用：CloneDataの配列を生成する
         std::vector<CloneData> generateCloneData() const;
     };
 }
+

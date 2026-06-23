@@ -151,6 +151,18 @@ private:
     int maxCount_ = 16;
 };
 
+class ArtifactDashPatternPropertyEditor final : public ArtifactAbstractPropertyEditor {
+public:
+    explicit ArtifactDashPatternPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
+    QVariant value() const override;
+    void setValueFromVariant(const QVariant& value) override;
+
+private:
+    void applyPreset(const QString& pattern);
+    QComboBox* presetCombo_ = nullptr;
+    QLineEdit* customEdit_ = nullptr;
+};
+
 class ArtifactRotationPropertyEditor final : public ArtifactAbstractPropertyEditor {
 public:
     explicit ArtifactRotationPropertyEditor(const ArtifactCore::AbstractProperty& property, QWidget* parent = nullptr);
@@ -315,6 +327,10 @@ public:
     void setShowExpressionButton(bool visible);
     void setShowResetButton(bool visible);
     void setShowKeyframeButton(bool visible);
+    void setShowFavoriteButton(bool visible);
+    void setFavoriteChecked(bool checked);
+    bool isFavoriteChecked() const;
+    void setFavoriteHandler(std::function<void(bool)> handler);
     
     void setKeyframeChecked(bool checked);
     void setKeyframeModeEnabled(bool enabled);
@@ -337,11 +353,13 @@ private:
     QPushButton* keyframeButton_ = nullptr;
     QPushButton* resetButton_ = nullptr;
     QPushButton* expressionButton_ = nullptr;
+    QPushButton* favoriteButton_ = nullptr;
     QPushButton* prevKeyBtn_ = nullptr;
     QPushButton* nextKeyBtn_ = nullptr;
     
     std::function<void()> expressionHandler_;
     std::function<void()> resetHandler_;
+    std::function<void(bool)> favoriteHandler_;
     KeyFrameHandler keyframeHandler_;
     NavigationHandler navigationHandler_;
     std::function<void(ArtifactCore::KeyFrame::Anchor)> keyframeAnchorHandler_;

@@ -79,6 +79,10 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
    if (auto* solidParams = dynamic_cast<ArtifactSolidLayerInitParams*>(&params)) {
     solidLayer->setSize(solidParams->width(), solidParams->height());
     solidLayer->setColor(solidParams->color());
+    solidLayer->setFillType(solidParams->fillType());
+    solidLayer->setGradientStartColor(solidParams->gradientStartColor());
+    solidLayer->setGradientEndColor(solidParams->gradientEndColor());
+    solidLayer->setGradientAngleDegrees(solidParams->gradientAngleDegrees());
    } else {
     solidLayer->setSize(1920, 1080);
    }

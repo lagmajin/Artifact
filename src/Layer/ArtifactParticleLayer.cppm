@@ -88,8 +88,22 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
 
     const float scaleX = std::hypot(transform.m11(), transform.m21());
     const float scaleY = std::hypot(transform.m12(), transform.m22());
-    const float scale = std::max(0.001f, (scaleX + scaleY) * 0.5f);
+    const float scale = std::max(0.001f, std::max(scaleX, scaleY));
 
+    qInfo() << "[ParticleLayer] transform"
+            << "m11=" << transform.m11()
+            << "m12=" << transform.m12()
+            << "m21=" << transform.m21()
+            << "m22=" << transform.m22()
+            << "dx=" << transform.dx()
+            << "dy=" << transform.dy()
+            << "scaleX=" << scaleX
+            << "scaleY=" << scaleY
+            << "scale=" << scale
+            << "opacity=" << opacity
+            << "sourceCount=" << source.particles.size();
+
+    bool loggedFirstParticle = false;
     for (const auto& src : source.particles) {
         ArtifactCore::ParticleVertex v;
         v.px = src.px;
@@ -111,10 +125,19 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         v.px = static_cast<float>(mapped.x());
         v.py = static_cast<float>(mapped.y());
         v.a = std::clamp(v.a * opacity, 0.0f, 1.0f);
-        v.size = src.size * scale;
+        v.size = std::max(2.0f, src.size * scale);
         if (v.stretch <= 0.0f) {
             const float speed = std::hypot(src.vx, src.vy);
             v.stretch = std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
+        }
+        if (!loggedFirstParticle) {
+            qInfo() << "[ParticleLayer] particle0"
+                    << "src=(" << src.px << "," << src.py << ")"
+                    << "mapped=(" << mapped.x() << "," << mapped.y() << ")"
+                    << "size=" << src.size << "->" << v.size
+                    << "alpha=" << src.a << "->" << v.a
+                    << "stretch=" << src.stretch << "->" << v.stretch;
+            loggedFirstParticle = true;
         }
         transformed.particles.push_back(v);
     }
@@ -149,6 +172,7 @@ QVector3D defaultEmitterPositionForPreset(const QString& presetName,
 class ArtifactParticleLayer::Impl {
 public:
     std::unique_ptr<ParticleSystem> particleSystem;
+    std::vector<EmitterParams> savedEmitterParams;
     QImage cachedFrame;
     int64_t cachedFrameNumber = -1;
     bool playing = true;
@@ -158,6 +182,21 @@ public:
     
     Impl() {
         particleSystem = std::make_unique<ParticleSystem>();
+    }
+
+    void rebuildSavedEmitterParamsFromSystem()
+    {
+        savedEmitterParams.clear();
+        if (!particleSystem) {
+            return;
+        }
+        savedEmitterParams.reserve(particleSystem->emitters().size());
+        for (const auto& emitter : particleSystem->emitters()) {
+            if (!emitter) {
+                continue;
+            }
+            savedEmitterParams.push_back(emitter->params());
+        }
     }
 
     void scaleEmitterPositions(float scaleX, float scaleY)
@@ -174,6 +213,7 @@ public:
                                         params.position.z());
             emitter->setParams(params);
         }
+        rebuildSavedEmitterParamsFromSystem();
     }
 };
 
@@ -222,8 +262,9 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         const auto sourceData = impl_->particleSystem->captureRenderData();
         qInfo() << "[ParticleLayer] GPU path: particleCount=" << sourceData.particles.size();
         if (!sourceData.particles.empty()) {
+            const QTransform globalTransform = getGlobalTransform();
             const ArtifactCore::ParticleRenderData renderData =
-                transformParticleRenderData(sourceData, getGlobalTransform(), opacity());
+                transformParticleRenderData(sourceData, globalTransform, opacity());
             renderer->drawParticles(renderData);
         } else {
             qWarning() << "[ParticleLayer] GPU path: NO PARTICLES - emitter may not generate";
@@ -320,10 +361,8 @@ QJsonObject ArtifactParticleLayer::toJson() const
     
     // Save emitters
     QJsonArray emittersArray;
-    for (const auto& emitter : impl_->particleSystem->emitters()) {
+    for (const auto& params : impl_->savedEmitterParams) {
         QJsonObject emitterJson;
-        const auto& params = emitter->params();
-        
         emitterJson["shape"] = static_cast<int>(params.shape);
         emitterJson["mode"] = static_cast<int>(params.mode);
         emitterJson["rate"] = params.rate;
@@ -533,6 +572,7 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             
             addEmitter(params);
         }
+        impl_->rebuildSavedEmitterParamsFromSystem();
     }
 }
 
@@ -556,13 +596,20 @@ void ArtifactParticleLayer::createParticleSystem()
             static_cast<float>(impl_->width) / 2.0f,
             static_cast<float>(impl_->height) / 2.0f,
             0.0f);
-        params.rate = 30.0f;
+        params.rate = 100.0f;
+        params.scaleMin = 10.0f;
+        params.scaleMax = 20.0f;
+        params.scaleEndMin = 2.0f;
+        params.scaleEndMax = 5.0f;
+        params.colorStart = QColor(255, 200, 50, 255);
+        params.colorEnd = QColor(255, 50, 0, 0);
         // 冒頭フレームでも粒子が蓄積した状態で描画されるよう、プリウォームを有効化する。
         // goToFrame() 側が frame <= 1 のときだけ preWarm() を呼ぶため、
         // タイムライン途中のシミュレーション見た目には影響しない。
         params.preWarm = true;
         emitter->setParams(params);
     }
+    impl_->rebuildSavedEmitterParamsFromSystem();
     clearFrameCache();
     emit particleSystemChanged();
 }
@@ -579,6 +626,7 @@ void ArtifactParticleLayer::resetParticleSystem()
 ParticleEmitter* ArtifactParticleLayer::addEmitter()
 {
     auto* emitter = impl_->particleSystem->createEmitter();
+    impl_->rebuildSavedEmitterParamsFromSystem();
     clearFrameCache();
     emit emitterAdded(impl_->particleSystem->emitterCount() - 1);
     return emitter;
@@ -589,6 +637,7 @@ ParticleEmitter* ArtifactParticleLayer::addEmitter(const EmitterParams& params)
     auto* emitter = addEmitter();
     if (emitter) {
         emitter->setParams(params);
+        impl_->rebuildSavedEmitterParamsFromSystem();
     }
     return emitter;
 }
@@ -596,6 +645,7 @@ ParticleEmitter* ArtifactParticleLayer::addEmitter(const EmitterParams& params)
 void ArtifactParticleLayer::removeEmitter(int index)
 {
     impl_->particleSystem->removeEmitter(index);
+    impl_->rebuildSavedEmitterParamsFromSystem();
     clearFrameCache();
     emit emitterRemoved(index);
 }
@@ -603,6 +653,7 @@ void ArtifactParticleLayer::removeEmitter(int index)
 void ArtifactParticleLayer::clearEmitters()
 {
     impl_->particleSystem->clearEmitters();
+    impl_->savedEmitterParams.clear();
     clearFrameCache();
 }
 
@@ -906,6 +957,7 @@ void ArtifactParticleLayer::loadPreset(const QString& presetName)
     params.position =
         defaultEmitterPositionForPreset(presetName, impl_->width, impl_->height);
     addEmitter(params);
+    impl_->rebuildSavedEmitterParamsFromSystem();
     emit particleSystemChanged();
 }
 
@@ -976,6 +1028,33 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
     }
     if (propertyPath == QStringLiteral("particle.timeScale")) {
         setTimeScale(static_cast<float>(value.toDouble()));
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.emitterCount")) {
+        const int targetCount = std::max(0, value.toInt());
+        const int currentCount = emitterCount();
+        if (targetCount == currentCount) {
+            return true;
+        }
+
+        while (emitterCount() < targetCount) {
+            EmitterParams params;
+            if (!impl_->savedEmitterParams.empty()) {
+                params = impl_->savedEmitterParams.back();
+            } else if (auto* firstEmitter = firstEmitterOrCreate(impl_->particleSystem.get())) {
+                params = firstEmitter->params();
+            }
+            addEmitter(params);
+        }
+
+        while (emitterCount() > targetCount) {
+            removeEmitter(emitterCount() - 1);
+        }
+
+        impl_->rebuildSavedEmitterParamsFromSystem();
+        clearFrameCache();
+        Q_EMIT particleSystemChanged();
         Q_EMIT changed();
         return true;
     }

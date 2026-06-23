@@ -53,6 +53,26 @@ QPointF mapPoint(const QMatrix4x4& transform, const QPointF& point) {
  return QPointF(v.x(), v.y());
 }
 
+QString dashPatternToString(const std::vector<float>& pattern) {
+ if (pattern.empty()) return {};
+ QStringList parts;
+ for (float v : pattern) parts << QString::number(static_cast<double>(v), 'f', 1);
+ return parts.join(QStringLiteral(","));
+}
+
+std::vector<float> stringToDashPattern(const QString& str) {
+ if (str.trimmed().isEmpty()) return {};
+ const auto parts = str.split(QStringLiteral(","), Qt::SkipEmptyParts);
+ std::vector<float> result;
+ result.reserve(parts.size());
+ for (const auto& p : parts) {
+  bool ok = false;
+  float v = static_cast<float>(p.trimmed().toDouble(&ok));
+  if (ok && v > 0.0f) result.push_back(v);
+ }
+ return result;
+}
+
 FloatColor mixColor(const FloatColor& a, const FloatColor& b, const float t) {
  const float clampedT = std::clamp(t, 0.0f, 1.0f);
  return FloatColor(
@@ -1238,23 +1258,30 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  auto strokeCapProp = makeProp(QStringLiteral("shape.strokeCap"),
                                ArtifactCore::PropertyType::Integer,
                                static_cast<int>(impl_->strokeCap_), -200, false);
- strokeCapProp->setDisplayLabel(QStringLiteral("Stroke Cap"));
- strokeCapProp->setTooltip(QStringLiteral("0=Flat, 1=Round, 2=Square"));
-  appearanceGroup.addProperty(strokeCapProp);
+  strokeCapProp->setDisplayLabel(QStringLiteral("Stroke Cap"));
+  strokeCapProp->setTooltip(QStringLiteral("0=Flat, 1=Round, 2=Square"));
+   appearanceGroup.addProperty(strokeCapProp);
 
  auto strokeJoinProp = makeProp(QStringLiteral("shape.strokeJoin"),
                                 ArtifactCore::PropertyType::Integer,
                                 static_cast<int>(impl_->strokeJoin_), -199, false);
- strokeJoinProp->setDisplayLabel(QStringLiteral("Stroke Join"));
- strokeJoinProp->setTooltip(QStringLiteral("0=Miter, 1=Round, 2=Bevel"));
-  appearanceGroup.addProperty(strokeJoinProp);
+  strokeJoinProp->setDisplayLabel(QStringLiteral("Stroke Join"));
+  strokeJoinProp->setTooltip(QStringLiteral("0=Miter, 1=Round, 2=Bevel"));
+   appearanceGroup.addProperty(strokeJoinProp);
 
  auto strokeAlignProp = makeProp(QStringLiteral("shape.strokeAlign"),
-                                 ArtifactCore::PropertyType::Integer,
-                                 static_cast<int>(impl_->strokeAlign_), -198, false);
- strokeAlignProp->setDisplayLabel(QStringLiteral("Stroke Align"));
- strokeAlignProp->setTooltip(QStringLiteral("0=Center, 1=Inside, 2=Outside"));
-  appearanceGroup.addProperty(strokeAlignProp);
+                                ArtifactCore::PropertyType::Integer,
+                                static_cast<int>(impl_->strokeAlign_), -198, false);
+  strokeAlignProp->setDisplayLabel(QStringLiteral("Stroke Align"));
+  strokeAlignProp->setTooltip(QStringLiteral("0=Center, 1=Inside, 2=Outside"));
+   appearanceGroup.addProperty(strokeAlignProp);
+
+ auto dashPatternProp = makeProp(QStringLiteral("shape.dashPattern"),
+                                 ArtifactCore::PropertyType::String,
+                                 dashPatternToString(impl_->dashPattern_), -197, false);
+ dashPatternProp->setDisplayLabel(QStringLiteral("Dash Pattern"));
+ dashPatternProp->setTooltip(QStringLiteral("Comma-separated dash lengths (empty=solid). E.g. '4,2' = 4px dash, 2px gap"));
+  appearanceGroup.addProperty(dashPatternProp);
 
  groups.push_back(appearanceGroup);
 
@@ -1483,6 +1510,10 @@ if (propertyPath == "shape.type") {
   setStrokeAlign(static_cast<StrokeAlign>(value.toInt()));
   return true;
  }
+ if (propertyPath == "shape.dashPattern") {
+  setDashPattern(stringToDashPattern(value.toString()));
+  return true;
+ }
 
  if (propertyPath.startsWith("shape.operator.")) {
    QStringList parts = propertyPath.split('.');
@@ -1646,6 +1677,7 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   obj["strokeCap"] = static_cast<int>(impl_->strokeCap_);
   obj["strokeJoin"] = static_cast<int>(impl_->strokeJoin_);
   obj["strokeAlign"] = static_cast<int>(impl_->strokeAlign_);
+  obj["dashPattern"] = dashPatternToString(impl_->dashPattern_);
   obj["cornerRadius"] = static_cast<double>(impl_->cornerRadius_);
   obj["starPoints"] = impl_->starPoints_;
   obj["starInnerRadius"] = static_cast<double>(impl_->starInnerRadius_);
@@ -1724,6 +1756,7 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
   layer->setStrokeCap(static_cast<StrokeCap>(obj["strokeCap"].toInt(0)));
   layer->setStrokeJoin(static_cast<StrokeJoin>(obj["strokeJoin"].toInt(0)));
   layer->setStrokeAlign(static_cast<StrokeAlign>(obj["strokeAlign"].toInt(0)));
+  layer->setDashPattern(stringToDashPattern(obj["dashPattern"].toString()));
   layer->setCornerRadius(static_cast<float>(obj["cornerRadius"].toDouble(0.0)));
   layer->setStarPoints(obj["starPoints"].toInt(5));
   layer->setStarInnerRadius(

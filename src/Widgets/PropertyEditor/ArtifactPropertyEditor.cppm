@@ -531,6 +531,7 @@ bool shouldShowNumericSlider(const ArtifactCore::AbstractProperty &property) {
   if (name == QStringLiteral("size") ||
       name.endsWith(QStringLiteral(".size"), Qt::CaseInsensitive) ||
       name == QStringLiteral("shape.width") ||
+      name == QStringLiteral("solid.gradientAngleDegrees") ||
       name == QStringLiteral("shape.height") ||
       name.startsWith(QStringLiteral("transform.position"),
                       Qt::CaseInsensitive) ||
@@ -597,6 +598,12 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
         {6, QStringLiteral("Wiggly Position")},
         {7, QStringLiteral("Blur Reveal")}};
   }
+  if (name == QStringLiteral("component.cloner.mode")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Linear")},
+        {1, QStringLiteral("Grid")},
+        {2, QStringLiteral("Radial")}};
+  }
   if (name == QStringLiteral("orientation")) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Horizontal")}, {1, QStringLiteral("Vertical")}};
@@ -608,6 +615,29 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
         {1, QStringLiteral("Subtract")},
         {2, QStringLiteral("Intersect")},
         {3, QStringLiteral("Difference")}};
+  }
+  if (name == QStringLiteral("shape.strokeCap")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Flat")},
+        {1, QStringLiteral("Round")},
+        {2, QStringLiteral("Square")}};
+  }
+  if (name == QStringLiteral("shape.strokeJoin")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Miter")},
+        {1, QStringLiteral("Round")},
+        {2, QStringLiteral("Bevel")}};
+  }
+  if (name == QStringLiteral("shape.strokeAlign")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Center")},
+        {1, QStringLiteral("Inside")},
+        {2, QStringLiteral("Outside")}};
+  }
+  if (name == QStringLiteral("solid.fillType")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Solid")},
+        {1, QStringLiteral("Linear Gradient")}};
   }
 
   return std::nullopt;
@@ -1689,6 +1719,79 @@ void ArtifactAnimatorCountPropertyEditor::syncUi() {
   }
 }
 
+ArtifactDashPatternPropertyEditor::ArtifactDashPatternPropertyEditor(
+    const ArtifactCore::AbstractProperty &property, QWidget *parent)
+    : ArtifactAbstractPropertyEditor(parent) {
+  setObjectName(QStringLiteral("propertyDashPatternEditor"));
+
+  auto *layout = new QHBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(4);
+
+  presetCombo_ = new QComboBox(this);
+  presetCombo_->addItem(QStringLiteral("Solid"), QString());
+  presetCombo_->addItem(QStringLiteral("Dotted"), QStringLiteral("2,4"));
+  presetCombo_->addItem(QStringLiteral("Dashed"), QStringLiteral("6,3"));
+  presetCombo_->addItem(QStringLiteral("Dash-Dot"), QStringLiteral("6,3,2,3"));
+  presetCombo_->addItem(QStringLiteral("Dash-Dot-Dot"), QStringLiteral("6,3,2,3,2,3"));
+  presetCombo_->addItem(QStringLiteral("Custom"), QString());
+  presetCombo_->setMinimumHeight(22);
+  applyPropertyFieldPalette(presetCombo_, true);
+
+  customEdit_ = new QLineEdit(this);
+  customEdit_->setPlaceholderText(QStringLiteral("e.g. 4,2"));
+  customEdit_->setMinimumHeight(22);
+  customEdit_->setEnabled(false);
+  applyPropertyFieldPalette(customEdit_, true);
+
+  layout->addWidget(presetCombo_, 1);
+  layout->addWidget(customEdit_, 1);
+
+  QObject::connect(presetCombo_, &QComboBox::currentIndexChanged, this, [this](int idx) {
+    const QString pattern = presetCombo_->itemData(idx).toString();
+    customEdit_->setEnabled(pattern.isEmpty() && idx == presetCombo_->count() - 1);
+    if (!pattern.isEmpty()) {
+      customEdit_->setText(pattern);
+      commitValue(pattern);
+    }
+  });
+
+  QObject::connect(customEdit_, &QLineEdit::editingFinished, this, [this]() {
+    commitValue(customEdit_->text());
+  });
+
+  setValueFromVariant(property.getValue());
+}
+
+QVariant ArtifactDashPatternPropertyEditor::value() const {
+  if (!customEdit_) return {};
+  return customEdit_->text();
+}
+
+void ArtifactDashPatternPropertyEditor::setValueFromVariant(const QVariant &value) {
+  const QString pattern = value.toString();
+  customEdit_->setText(pattern);
+  for (int i = 0; i < presetCombo_->count(); ++i) {
+    if (presetCombo_->itemData(i).toString() == pattern) {
+      presetCombo_->setCurrentIndex(i);
+      customEdit_->setEnabled(false);
+      return;
+    }
+  }
+  if (!pattern.isEmpty()) {
+    presetCombo_->setCurrentIndex(presetCombo_->count() - 1);
+    customEdit_->setEnabled(true);
+  } else {
+    presetCombo_->setCurrentIndex(0);
+    customEdit_->setEnabled(false);
+  }
+}
+
+void ArtifactDashPatternPropertyEditor::applyPreset(const QString& pattern) {
+  customEdit_->setText(pattern);
+  commitValue(pattern);
+}
+
 ArtifactRotationPropertyEditor::ArtifactRotationPropertyEditor(
     const ArtifactCore::AbstractProperty &property, QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent) {
@@ -2230,6 +2333,22 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   expressionButton_->setFocusPolicy(Qt::NoFocus);
   applyPropertyButtonPalette(expressionButton_);
 
+  // Favorite (star) button — uses Unicode ★/☆ for reliable cross-platform display
+  favoriteButton_ = new QPushButton(this);
+  favoriteButton_->setObjectName(QStringLiteral("propertyFavButton"));
+  favoriteButton_->setToolTip(
+      QStringLiteral("Favorite: %1").arg(propertyName));
+  favoriteButton_->setFixedSize(kPropertyKeyButtonSize, kPropertyKeyButtonSize);
+  favoriteButton_->setCheckable(true);
+  favoriteButton_->setText(QStringLiteral("\u2606")); // ☆
+  QFont starFont = favoriteButton_->font();
+  starFont.setPointSize(11);
+  favoriteButton_->setFont(starFont);
+  favoriteButton_->setFlat(true);
+  favoriteButton_->setVisible(false);
+  favoriteButton_->setFocusPolicy(Qt::NoFocus);
+  applyPropertyButtonPalette(favoriteButton_);
+
   // Fixed-width container that always reserves the same horizontal space.
   auto *auxContainer = new QWidget(this);
   auxContainer->setFixedWidth(kAuxButtonAreaWidth);
@@ -2243,6 +2362,7 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
   auxLayout->addWidget(nextKeyBtn_);
   auxLayout->addWidget(resetButton_);
   auxLayout->addWidget(expressionButton_);
+  auxLayout->addWidget(favoriteButton_);
 
   scrubTarget_ = editor_->scrubTargetWidget();
   if (!scrubTarget_) {
@@ -2275,6 +2395,15 @@ ArtifactPropertyEditorRowWidget::ArtifactPropertyEditorRowWidget(
       expressionHandler_();
     }
   });
+  QObject::connect(favoriteButton_, &QPushButton::toggled, this,
+                   [this](bool checked) {
+                     favoriteButton_->setText(checked
+                        ? QStringLiteral("\u2605")  // ★ filled
+                        : QStringLiteral("\u2606")); // ☆ outline
+                     if (favoriteHandler_) {
+                       favoriteHandler_(checked);
+                     }
+                   });
 
   QObject::connect(keyframeButton_, &QPushButton::toggled, this,
                    [this](bool checked) {
@@ -2412,6 +2541,28 @@ void ArtifactPropertyEditorRowWidget::setShowKeyframeButton(
   update();
 }
 
+void ArtifactPropertyEditorRowWidget::setShowFavoriteButton(const bool visible) {
+  favoriteButton_->setProperty("baseVisible", visible);
+  updateAuxControlVisibility();
+  update();
+}
+
+void ArtifactPropertyEditorRowWidget::setFavoriteChecked(const bool checked) {
+  favoriteButton_->setChecked(checked);
+  favoriteButton_->setText(checked
+      ? QStringLiteral("\u2605")  // ★
+      : QStringLiteral("\u2606")); // ☆
+}
+
+bool ArtifactPropertyEditorRowWidget::isFavoriteChecked() const {
+  return favoriteButton_->isChecked();
+}
+
+void ArtifactPropertyEditorRowWidget::setFavoriteHandler(
+    std::function<void(bool)> handler) {
+  favoriteHandler_ = std::move(handler);
+}
+
 void ArtifactPropertyEditorRowWidget::updateKeyframeButtonIcon() {
   if (!keyframeButton_) {
     return;
@@ -2467,14 +2618,17 @@ void ArtifactPropertyEditorRowWidget::updateAuxControlVisibility() {
   const bool exprVisible = expressionButton_->property("baseVisible").toBool();
   const bool navVisible = prevKeyBtn_->property("baseVisible").toBool() &&
                           nextKeyBtn_->property("baseVisible").toBool();
+  const bool favVisible = favoriteButton_->property("baseVisible").toBool();
 
   resetButton_->setVisible(resetVisible);
   expressionButton_->setVisible(exprVisible);
+  favoriteButton_->setVisible(favVisible);
   prevKeyBtn_->setVisible(keyVisible && navVisible);
   nextKeyBtn_->setVisible(keyVisible && navVisible);
 
   resetButton_->setEnabled(resetVisible && hover);
   expressionButton_->setEnabled(exprVisible && hover);
+  favoriteButton_->setEnabled(favVisible && hover);
   prevKeyBtn_->setEnabled(keyVisible && navVisible && hover);
   nextKeyBtn_->setEnabled(keyVisible && navVisible && hover);
 }
@@ -2864,6 +3018,9 @@ createPropertyEditorWidget(const ArtifactCore::AbstractProperty &property,
       property.getName() == QStringLiteral("text.animatorCount")) {
     return new ArtifactAnimatorCountPropertyEditor(property, parent);
   }
+  if (property.getName() == QStringLiteral("shape.dashPattern")) {
+    return new ArtifactDashPatternPropertyEditor(property, parent);
+  }
 
   switch (property.getType()) {
   case ArtifactCore::PropertyType::Float:
@@ -2993,3 +3150,5 @@ void ArtifactObjectReferencePropertyEditor::updateReferenceDisplay() {
 }
 
 } // namespace Artifact
+
+

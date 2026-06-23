@@ -97,8 +97,8 @@ namespace Artifact
         if (!composition) return;
 
         ITextureView* pRTV = pRenderTarget_->GetDefaultView(TEXTURE_VIEW_RENDER_TARGET);
-        // 背景色はコンポジションの設定から取得すべきだが、一旦クリア
-        float ClearColor[] = { 0.0f, 0.0f, 0.0f, 1.0f }; 
+        const auto bgColor = composition->backgroundColor();
+        float ClearColor[] = { bgColor.r(), bgColor.g(), bgColor.b(), bgColor.a() };
         
         pContext_->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
         pContext_->ClearRenderTarget(pRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);

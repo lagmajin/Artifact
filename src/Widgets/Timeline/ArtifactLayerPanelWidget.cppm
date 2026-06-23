@@ -8,6 +8,7 @@ import Artifact.Layer.Audio;
 import Artifact.Layer.Composition;
 import Artifact.Layer.CompositionBackground;
 import Artifact.Layer.Image;
+import Artifact.Layer.Particle;
 import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -108,6 +109,15 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
     descriptor.inspectorTypeLabel = QStringLiteral("Type: Image Layer");
     descriptor.capabilitySummaryText = QStringLiteral("Image");
     descriptor.badgeTone = LayerPresentationBadgeTone::Media;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactParticleLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Particle Layer");
+    descriptor.timelineBadgeText = QStringLiteral("Particle");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Particle Layer");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Particle Layer");
+    descriptor.capabilitySummaryText = QStringLiteral("Particle");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
     return descriptor;
   }
   if (dynamic_cast<ArtifactVideoLayer *>(layer.get())) {

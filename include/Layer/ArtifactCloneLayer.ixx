@@ -27,17 +27,33 @@ class MeshRenderer;  // forward declaration
 
 enum class CloneMode {
     Linear,
+    LinearJitter,
+    Curve,
     Grid,
     Radial
 };
 
 class ArtifactCloneLayerSettings {
 public:
+    struct TransformStage {
+        QVector3D offset = QVector3D(0.0f, 0.0f, 0.0f);
+        QVector3D scale = QVector3D(1.0f, 1.0f, 1.0f);
+        float rotation = 0.0f;
+        bool enabled = false;
+    };
+
     CloneMode mode = CloneMode::Linear;
     int cloneCount = 5;
     
     // Linear
     QVector3D offset = QVector3D(100.0f, 0.0f, 0.0f);
+    QVector3D jitter = QVector3D(20.0f, 20.0f, 0.0f);
+    int seed = 1;
+
+    // Curve
+    float curveRadius = 300.0f;
+    float curveStartAngle = -60.0f;
+    float curveEndAngle = 60.0f;
     
     // Grid
     int columns = 3;
@@ -54,6 +70,11 @@ public:
     float rotationStep = 0.0f;
     float opacityDecay = 0.0f;
     bool useEffector = true;
+
+    // Transform stages
+    TransformStage transform1;
+    TransformStage transform2;
+    TransformStage transform3;
     
     LayerID sourceLayerId;
 };

@@ -49,7 +49,7 @@ export namespace Artifact {
     //
     //   指定された中心軸（center + axis方向）からの距離に基づき、
     //   円筒状に influence が減衰する。
-    //   MoGraph の Radial フィールドに相当する。
+    //   Cloner の Radial フィールドに相当する。
     // ─────────────────────────────────────────────────────────
 
     class RadialField : public ArtifactAbstractField {
@@ -130,3 +130,4 @@ export namespace Artifact {
     };
 
 }
+

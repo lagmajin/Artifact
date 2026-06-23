@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
@@ -125,6 +125,7 @@ import Artifact.Effect.Wave;
 import Artifact.Effect.Spherize;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.ArtifactPropertyWidget;
+import Artifact.Layers.Selection.Manager;
 import Artifact.Widgets.AppDialogs;
 
 namespace Artifact {
@@ -966,9 +967,9 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
 
 QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
-    return QStringLiteral("physics|script|layout|clone");
+    return QStringLiteral("physics|script|layout|cloner");
   }
-  return QStringLiteral("physics|script|layout|clone");
+  return QStringLiteral("physics|script|layout|cloner");
 }
 
 void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
@@ -1019,6 +1020,7 @@ QString resolveScriptBindingPath(const ArtifactAbstractLayerPtr &layer) {
 void ArtifactInspectorWidget::Impl::updateComponentControls(
     const ArtifactAbstractLayerPtr &layer) {
   const bool hasLayer = static_cast<bool>(layer);
+  const bool canEditComponents = hasLayer;
   const bool physicsEnabled =
       hasLayer && layerBooleanProperty(layer, QStringLiteral("physics.enabled"));
   const bool scriptEnabled =
@@ -1029,30 +1031,42 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
                       layer, QStringLiteral("component.layout.enabled"));
   const bool cloneEnabled =
       hasLayer && layerBooleanProperty(
-                      layer, QStringLiteral("component.mograph.enabled"));
+                      layer, QStringLiteral("component.cloner.enabled"));
 
   if (componentsGroup) {
-    componentsGroup->setEnabled(hasLayer);
+    componentsGroup->setEnabled(canEditComponents);
   }
   if (physicsComponentButton) {
-    physicsComponentButton->setEnabled(hasLayer);
+    physicsComponentButton->setEnabled(canEditComponents);
     physicsComponentButton->setText(physicsEnabled ? QStringLiteral("Physics On")
                                                    : QStringLiteral("+ Physics"));
+    physicsComponentButton->setToolTip(
+        canEditComponents ? QStringLiteral("Toggle the layer physics component.")
+                          : QStringLiteral("Select a layer inside a composition to add Physics."));
   }
   if (scriptComponentButton) {
-    scriptComponentButton->setEnabled(hasLayer);
+    scriptComponentButton->setEnabled(canEditComponents);
     scriptComponentButton->setText(scriptEnabled ? QStringLiteral("Script On")
                                                  : QStringLiteral("+ Script"));
+    scriptComponentButton->setToolTip(
+        canEditComponents ? QStringLiteral("Toggle the layer script component.")
+                          : QStringLiteral("Select a layer inside a composition to add Script."));
   }
   if (layoutComponentButton) {
-    layoutComponentButton->setEnabled(hasLayer);
+    layoutComponentButton->setEnabled(canEditComponents);
     layoutComponentButton->setText(layoutEnabled ? QStringLiteral("Layout On")
                                                  : QStringLiteral("+ Layout"));
+    layoutComponentButton->setToolTip(
+        canEditComponents ? QStringLiteral("Toggle the layer Layout component.")
+                          : QStringLiteral("Select a layer inside a composition to add Layout."));
   }
   if (cloneComponentButton) {
-    cloneComponentButton->setEnabled(hasLayer);
-    cloneComponentButton->setText(cloneEnabled ? QStringLiteral("Clone On")
-                                               : QStringLiteral("+ Clone"));
+    cloneComponentButton->setEnabled(canEditComponents);
+    cloneComponentButton->setText(cloneEnabled ? QStringLiteral("Cloner On")
+                                               : QStringLiteral("+ Cloner"));
+    cloneComponentButton->setToolTip(
+        canEditComponents ? QStringLiteral("Toggle the layer Cloner component.")
+                          : QStringLiteral("Select a layer inside a composition to add Cloner."));
   }
   if (componentsSummaryLabel) {
     QStringList active;
@@ -1066,14 +1080,14 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
       active.push_back(QStringLiteral("Layout"));
     }
     if (cloneEnabled) {
-      active.push_back(QStringLiteral("Clone"));
+      active.push_back(QStringLiteral("Cloner"));
     }
     componentsSummaryLabel->setText(
         hasLayer ? (active.isEmpty()
                         ? QStringLiteral("Components: none")
                         : QStringLiteral("Components: %1")
                               .arg(active.join(QStringLiteral(", "))))
-                 : QStringLiteral("Components: select a layer"));
+                 : QStringLiteral("Components: select a layer in a composition to add components"));
     applyInspectorLabelPalette(componentsSummaryLabel, active.isEmpty());
   }
 
@@ -1082,7 +1096,14 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     if (!hasLayer) {
       componentPropertyWidget->clear();
     } else {
-      componentPropertyWidget->setLayer(layer);
+      // Check for multi-selection
+      auto *selMgr = ArtifactLayerSelectionManager::instance();
+      const auto selected = selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
+      if (selected.size() > 1) {
+        componentPropertyWidget->setLayers(selected);
+      } else {
+        componentPropertyWidget->setLayer(layer);
+      }
       if (componentPropertyWidget->filterText().trimmed().isEmpty()) {
         componentPropertyWidget->setFilterText(
             defaultComponentInspectorFilter(layer));
@@ -1101,7 +1122,8 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
                                       : QStringLiteral("Open Script"));
     openScriptButton->setToolTip(
         canOpen ? QStringLiteral("Open the script file linked to this layer.")
-                : QStringLiteral("No script file is linked to this layer yet."));
+                : (hasLayer ? QStringLiteral("No script file is linked to this layer yet.")
+                            : QStringLiteral("Select a layer inside a composition to open its script.")));
   }
 }
 
@@ -1116,7 +1138,14 @@ void ArtifactInspectorWidget::Impl::focusComponentProperties(
     return;
   }
   componentPropertyWidget->setVisible(true);
-  componentPropertyWidget->setLayer(layer);
+  // Check for multi-selection
+  auto *selMgr = ArtifactLayerSelectionManager::instance();
+  const auto selected = selMgr ? selMgr->selectedLayers() : QSet<ArtifactAbstractLayerPtr>{};
+  if (selected.size() > 1) {
+    componentPropertyWidget->setLayers(selected);
+  } else {
+    componentPropertyWidget->setLayer(layer);
+  }
   componentPropertyWidget->setFilterText(filterText.trimmed().isEmpty()
                                              ? defaultComponentInspectorFilter(layer)
                                              : filterText);
@@ -1148,7 +1177,7 @@ QString ArtifactInspectorWidget::Impl::computeLayerInfoSignature(
           ? QLatin1Char('1')
           : QLatin1Char('0');
   signature +=
-      layerBooleanProperty(layer, QStringLiteral("component.mograph.enabled"))
+      layerBooleanProperty(layer, QStringLiteral("component.cloner.enabled"))
           ? QLatin1Char('1')
           : QLatin1Char('0');
   signature += QLatin1Char('|');
@@ -1733,7 +1762,7 @@ void ArtifactInspectorWidget::Impl::updateLayerInfo() {
     const auto theme = ArtifactCore::currentDCCTheme();
     QFont nameFont = layerNameLabel->font();
     nameFont.setBold(true);
-    nameFont.setPointSize(nameFont.pointSize() + 1);
+    nameFont.setPointSize(13);
     layerNameLabel->setFont(nameFont);
     applyInspectorLabelPalette(layerNameLabel, true);
 
@@ -2579,6 +2608,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   {
     QFont f = impl_->layerNameLabel->font();
     f.setBold(true);
+    f.setPointSize(13);
     impl_->layerNameLabel->setFont(f);
     applyInspectorLabelPalette(impl_->layerNameLabel, true);
   }
@@ -2613,7 +2643,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->physicsComponentButton = new QPushButton("+ Physics");
   impl_->scriptComponentButton = new QPushButton("+ Script");
   impl_->layoutComponentButton = new QPushButton("+ Layout");
-  impl_->cloneComponentButton = new QPushButton("+ Clone");
+  impl_->cloneComponentButton = new QPushButton("+ Cloner");
   impl_->openScriptButton = new QPushButton("Open Script");
   applyInspectorButton(impl_->physicsComponentButton, true);
   applyInspectorButton(impl_->scriptComponentButton, false);
@@ -2627,7 +2657,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->layoutComponentButton->setToolTip(
       QStringLiteral("Toggle the layer Layout component."));
   impl_->cloneComponentButton->setToolTip(
-      QStringLiteral("Toggle the layer Clone component."));
+      QStringLiteral("Toggle the layer Cloner component."));
   impl_->openScriptButton->setToolTip(
       QStringLiteral("Open the script file linked to this layer."));
   componentsButtonLayout->addWidget(impl_->physicsComponentButton);
@@ -2640,7 +2670,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->componentPropertyWidget->setVisible(false);
   impl_->componentPropertyWidget->setMinimumHeight(220);
   impl_->componentPropertyWidget->setFilterText(
-      QStringLiteral("physics|script|layout|clone"));
+      QStringLiteral("physics|script|layout|cloner"));
   componentsLayout->addWidget(impl_->componentPropertyWidget);
   componentsLayout->setContentsMargins(
       kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,
@@ -2760,8 +2790,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                    });
   QObject::connect(impl_->cloneComponentButton, &QPushButton::clicked, this,
                    [toggleComponent]() {
-                     toggleComponent(QStringLiteral("component.mograph.enabled"),
-                                     QStringLiteral("Clone"));
+                     toggleComponent(QStringLiteral("component.cloner.enabled"),
+                                     QStringLiteral("Cloner"));
                    });
   QObject::connect(impl_->openScriptButton, &QPushButton::clicked, this,
                    [this]() {
@@ -3068,3 +3098,5 @@ void ArtifactInspectorWidget::contextMenuEvent(QContextMenuEvent *event) {
 }
 
 } // namespace Artifact
+
+

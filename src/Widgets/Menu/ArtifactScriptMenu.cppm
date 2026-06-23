@@ -87,7 +87,17 @@ QString ArtifactScriptMenu::Impl::menuScriptPath() const
 
 QString ArtifactScriptMenu::Impl::macrosRootPath() const
 {
- return QDir(scriptsRootPath()).filePath(QStringLiteral("macros"));
+  return QDir(scriptsRootPath()).filePath(QStringLiteral("macros"));
+}
+
+QString ArtifactScriptMenu::Impl::aeUtilityRootPath() const
+{
+  return QDir(macrosRootPath()).filePath(QStringLiteral("ae_utility_pack"));
+}
+
+QString ArtifactScriptMenu::Impl::aeUtilityScriptPath(const QString& fileName) const
+{
+  return QDir(aeUtilityRootPath()).filePath(fileName);
 }
 
 bool ArtifactScriptMenu::Impl::ensureTextFile(const QString& path,

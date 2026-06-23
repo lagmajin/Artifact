@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <compare>
 #include <utility>
 #include <QDebug>
@@ -372,6 +372,9 @@ public:
   int64_t currentFrame() const { return currentFrame_; }
 
   bool isLocked_ = false;
+  bool isSelectionLocked_ = false;
+  bool isTransformLocked_ = false;
+  bool isTimingLocked_ = false;
   bool isGuide_ = false;
   bool isSolo_ = false;
   bool isShy_ = false;
@@ -382,7 +385,7 @@ public:
     // Physics component
     PhysicsLayerComponent physicsComponent_;
     bool scriptComponentEnabled_ = false;
-    bool mographComponentEnabled_ = false;
+    bool clonerComponentEnabled_ = false;
     bool layoutComponentEnabled_ = false;
     int layoutMode_ = 0;
     int layoutAnchorMode_ = 0;
@@ -395,23 +398,23 @@ public:
     int layoutStackDirection_ = 0;
     float layoutGap_ = 24.0f;
     int layoutMaxPerRow_ = 0;
-    int mographMode_ = 0;
-    int mographCloneCount_ = 3;
-    float mographOffsetX_ = 160.0f;
-    float mographOffsetY_ = 48.0f;
-    float mographOffsetZ_ = 0.0f;
-    int mographColumns_ = 3;
-    int mographRows_ = 3;
-    int mographDepth_ = 1;
-    float mographSpacingX_ = 160.0f;
-    float mographSpacingY_ = 48.0f;
-    float mographSpacingZ_ = 0.0f;
-    int mographRadialCount_ = 8;
-    float mographRadius_ = 160.0f;
-    float mographStartAngle_ = 0.0f;
-    float mographEndAngle_ = 360.0f;
-    float mographRotationStep_ = 0.0f;
-    float mographOpacityDecay_ = 0.0f;
+    int clonerMode_ = 0;
+    int clonerCloneCount_ = 3;
+    float clonerOffsetX_ = 160.0f;
+    float clonerOffsetY_ = 48.0f;
+    float clonerOffsetZ_ = 0.0f;
+    int clonerColumns_ = 3;
+    int clonerRows_ = 3;
+    int clonerDepth_ = 1;
+    float clonerSpacingX_ = 160.0f;
+    float clonerSpacingY_ = 48.0f;
+    float clonerSpacingZ_ = 0.0f;
+    int clonerRadialCount_ = 8;
+    float clonerRadius_ = 160.0f;
+    float clonerStartAngle_ = 0.0f;
+    float clonerEndAngle_ = 360.0f;
+    float clonerRotationStep_ = 0.0f;
+    float clonerOpacityDecay_ = 0.0f;
     QJsonObject scriptBinding_;
 
   // Matte components (Asset-based track mattes)
@@ -615,6 +618,9 @@ int64_t ArtifactAbstractLayer::currentFrame() const {
 
 FramePosition ArtifactAbstractLayer::inPoint() const { return impl_->inPoint_; }
 void ArtifactAbstractLayer::setInPoint(const FramePosition &pos) {
+  if (impl_->isTimingLocked_) {
+    return;
+  }
   const FramePosition oldIn = impl_->inPoint_;
   const FramePosition oldOut = impl_->outPoint_;
   if (!assignIfChanged(impl_->inPoint_, pos)) {
@@ -637,6 +643,9 @@ FramePosition ArtifactAbstractLayer::outPoint() const {
   return impl_->outPoint_;
 }
 void ArtifactAbstractLayer::setOutPoint(const FramePosition &pos) {
+  if (impl_->isTimingLocked_) {
+    return;
+  }
   const FramePosition oldIn = impl_->inPoint_;
   const FramePosition oldOut = impl_->outPoint_;
   if (!assignIfChanged(impl_->outPoint_, pos)) {
@@ -659,6 +668,9 @@ FramePosition ArtifactAbstractLayer::startTime() const {
   return impl_->startTime_;
 }
 void ArtifactAbstractLayer::setStartTime(const FramePosition &pos) {
+  if (impl_->isTimingLocked_) {
+    return;
+  }
   if (!assignIfChanged(impl_->startTime_, pos)) {
     return;
   }
@@ -667,6 +679,9 @@ void ArtifactAbstractLayer::setStartTime(const FramePosition &pos) {
 }
 
 void ArtifactAbstractLayer::setTimelineWindow(FramePosition inPoint, FramePosition outPoint) {
+  if (impl_->isTimingLocked_) {
+    return;
+  }
   if (outPoint.framePosition() <= inPoint.framePosition()) {
     outPoint = FramePosition(inPoint.framePosition() + 1);
   }
@@ -675,6 +690,9 @@ void ArtifactAbstractLayer::setTimelineWindow(FramePosition inPoint, FramePositi
 }
 
 void ArtifactAbstractLayer::slideTimingBy(const qint64 deltaFrames) {
+  if (impl_->isTimingLocked_) {
+    return;
+  }
   if (deltaFrames == 0) {
     return;
   }
@@ -707,6 +725,30 @@ void ArtifactAbstractLayer::setSolo(bool solo) {
 bool ArtifactAbstractLayer::isLocked() const { return impl_->isLocked_; }
 void ArtifactAbstractLayer::setLocked(bool locked) {
   if (!assignIfChanged(impl_->isLocked_, locked)) {
+    return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::Visibility,
+                      LayerDirtyReason::PropertyChanged);
+}
+bool ArtifactAbstractLayer::isSelectionLocked() const { return impl_->isSelectionLocked_; }
+void ArtifactAbstractLayer::setSelectionLocked(bool locked) {
+  if (!assignIfChanged(impl_->isSelectionLocked_, locked)) {
+    return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::Visibility,
+                      LayerDirtyReason::PropertyChanged);
+}
+bool ArtifactAbstractLayer::isTransformLocked() const { return impl_->isTransformLocked_; }
+void ArtifactAbstractLayer::setTransformLocked(bool locked) {
+  if (!assignIfChanged(impl_->isTransformLocked_, locked)) {
+    return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::Visibility,
+                      LayerDirtyReason::PropertyChanged);
+}
+bool ArtifactAbstractLayer::isTimingLocked() const { return impl_->isTimingLocked_; }
+void ArtifactAbstractLayer::setTimingLocked(bool locked) {
+  if (!assignIfChanged(impl_->isTimingLocked_, locked)) {
     return;
   }
   notifyLayerMutation(this, LayerDirtyFlag::Visibility,
@@ -1620,6 +1662,9 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["is3D"] = is3D();
   obj["blendMode"] = static_cast<int>(layerBlendType());
   obj["isLocked"] = impl_->isLocked_;
+  obj["isSelectionLocked"] = impl_->isSelectionLocked_;
+  obj["isTransformLocked"] = impl_->isTransformLocked_;
+  obj["isTimingLocked"] = impl_->isTimingLocked_;
   obj["isGuide"] = impl_->isGuide_;
   obj["isSolo"] = impl_->isSolo_;
   obj["isShy"] = impl_->isShy_;
@@ -1703,7 +1748,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["physics"] = impl_->physicsComponent_.settings().toJson();
   QJsonObject componentsObj;
   componentsObj["scriptEnabled"] = impl_->scriptComponentEnabled_;
-  componentsObj["mographEnabled"] = impl_->mographComponentEnabled_;
+  componentsObj["clonerEnabled"] = impl_->clonerComponentEnabled_;
   componentsObj["layoutEnabled"] = impl_->layoutComponentEnabled_;
   componentsObj["layoutMode"] = impl_->layoutMode_;
   componentsObj["layoutAnchorMode"] = impl_->layoutAnchorMode_;
@@ -1716,23 +1761,23 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["layoutStackDirection"] = impl_->layoutStackDirection_;
   componentsObj["layoutGap"] = static_cast<double>(impl_->layoutGap_);
   componentsObj["layoutMaxPerRow"] = impl_->layoutMaxPerRow_;
-  componentsObj["mographMode"] = impl_->mographMode_;
-  componentsObj["mographCloneCount"] = impl_->mographCloneCount_;
-  componentsObj["mographOffsetX"] = static_cast<double>(impl_->mographOffsetX_);
-  componentsObj["mographOffsetY"] = static_cast<double>(impl_->mographOffsetY_);
-  componentsObj["mographOffsetZ"] = static_cast<double>(impl_->mographOffsetZ_);
-  componentsObj["mographColumns"] = impl_->mographColumns_;
-  componentsObj["mographRows"] = impl_->mographRows_;
-  componentsObj["mographDepth"] = impl_->mographDepth_;
-  componentsObj["mographSpacingX"] = static_cast<double>(impl_->mographSpacingX_);
-  componentsObj["mographSpacingY"] = static_cast<double>(impl_->mographSpacingY_);
-  componentsObj["mographSpacingZ"] = static_cast<double>(impl_->mographSpacingZ_);
-  componentsObj["mographRadialCount"] = impl_->mographRadialCount_;
-  componentsObj["mographRadius"] = static_cast<double>(impl_->mographRadius_);
-  componentsObj["mographStartAngle"] = static_cast<double>(impl_->mographStartAngle_);
-  componentsObj["mographEndAngle"] = static_cast<double>(impl_->mographEndAngle_);
-  componentsObj["mographRotationStep"] = static_cast<double>(impl_->mographRotationStep_);
-  componentsObj["mographOpacityDecay"] = static_cast<double>(impl_->mographOpacityDecay_);
+  componentsObj["clonerMode"] = impl_->clonerMode_;
+  componentsObj["clonerCloneCount"] = impl_->clonerCloneCount_;
+  componentsObj["clonerOffsetX"] = static_cast<double>(impl_->clonerOffsetX_);
+  componentsObj["clonerOffsetY"] = static_cast<double>(impl_->clonerOffsetY_);
+  componentsObj["clonerOffsetZ"] = static_cast<double>(impl_->clonerOffsetZ_);
+  componentsObj["clonerColumns"] = impl_->clonerColumns_;
+  componentsObj["clonerRows"] = impl_->clonerRows_;
+  componentsObj["clonerDepth"] = impl_->clonerDepth_;
+  componentsObj["clonerSpacingX"] = static_cast<double>(impl_->clonerSpacingX_);
+  componentsObj["clonerSpacingY"] = static_cast<double>(impl_->clonerSpacingY_);
+  componentsObj["clonerSpacingZ"] = static_cast<double>(impl_->clonerSpacingZ_);
+  componentsObj["clonerRadialCount"] = impl_->clonerRadialCount_;
+  componentsObj["clonerRadius"] = static_cast<double>(impl_->clonerRadius_);
+  componentsObj["clonerStartAngle"] = static_cast<double>(impl_->clonerStartAngle_);
+  componentsObj["clonerEndAngle"] = static_cast<double>(impl_->clonerEndAngle_);
+  componentsObj["clonerRotationStep"] = static_cast<double>(impl_->clonerRotationStep_);
+  componentsObj["clonerOpacityDecay"] = static_cast<double>(impl_->clonerOpacityDecay_);
   if (!impl_->scriptBinding_.isEmpty()) {
     componentsObj["scriptBinding"] = impl_->scriptBinding_;
   }
@@ -1935,6 +1980,12 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     setVisible(obj["isVisible"].toBool());
   if (obj.contains("isLocked"))
     setLocked(obj["isLocked"].toBool());
+  if (obj.contains("isSelectionLocked"))
+    setSelectionLocked(obj["isSelectionLocked"].toBool());
+  if (obj.contains("isTransformLocked"))
+    setTransformLocked(obj["isTransformLocked"].toBool());
+  if (obj.contains("isTimingLocked"))
+    setTimingLocked(obj["isTimingLocked"].toBool());
   if (obj.contains("isGuide"))
     setGuide(obj["isGuide"].toBool());
   if (obj.contains("isSolo"))
@@ -2012,8 +2063,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       const QJsonObject componentsObj = obj["components"].toObject();
         impl_->scriptComponentEnabled_ =
             componentsObj.value(QStringLiteral("scriptEnabled")).toBool(false);
-        impl_->mographComponentEnabled_ =
-            componentsObj.value(QStringLiteral("mographEnabled")).toBool(false);
+        impl_->clonerComponentEnabled_ =
+            componentsObj.value(QStringLiteral("clonerEnabled")).toBool(false);
         impl_->layoutComponentEnabled_ =
             componentsObj.value(QStringLiteral("layoutEnabled")).toBool(false);
         impl_->layoutMode_ =
@@ -2038,40 +2089,40 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("layoutGap")).toDouble(24.0));
         impl_->layoutMaxPerRow_ =
             std::max(0, componentsObj.value(QStringLiteral("layoutMaxPerRow")).toInt(0));
-        impl_->mographMode_ =
-            componentsObj.value(QStringLiteral("mographMode")).toInt(0);
-        impl_->mographCloneCount_ = std::max(
-            1, componentsObj.value(QStringLiteral("mographCloneCount")).toInt(3));
-        impl_->mographOffsetX_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographOffsetX")).toDouble(160.0));
-        impl_->mographOffsetY_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographOffsetY")).toDouble(48.0));
-        impl_->mographOffsetZ_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographOffsetZ")).toDouble(0.0));
-        impl_->mographColumns_ = std::max(
-            1, componentsObj.value(QStringLiteral("mographColumns")).toInt(3));
-        impl_->mographRows_ = std::max(
-            1, componentsObj.value(QStringLiteral("mographRows")).toInt(3));
-        impl_->mographDepth_ = std::max(
-            1, componentsObj.value(QStringLiteral("mographDepth")).toInt(1));
-        impl_->mographSpacingX_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographSpacingX")).toDouble(160.0));
-        impl_->mographSpacingY_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographSpacingY")).toDouble(48.0));
-        impl_->mographSpacingZ_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographSpacingZ")).toDouble(0.0));
-        impl_->mographRadialCount_ = std::max(
-            1, componentsObj.value(QStringLiteral("mographRadialCount")).toInt(8));
-        impl_->mographRadius_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographRadius")).toDouble(160.0));
-        impl_->mographStartAngle_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographStartAngle")).toDouble(0.0));
-        impl_->mographEndAngle_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographEndAngle")).toDouble(360.0));
-        impl_->mographRotationStep_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographRotationStep")).toDouble(0.0));
-        impl_->mographOpacityDecay_ = static_cast<float>(
-            componentsObj.value(QStringLiteral("mographOpacityDecay")).toDouble(0.0));
+        impl_->clonerMode_ =
+            componentsObj.value(QStringLiteral("clonerMode")).toInt(0);
+        impl_->clonerCloneCount_ = std::max(
+            1, componentsObj.value(QStringLiteral("clonerCloneCount")).toInt(3));
+        impl_->clonerOffsetX_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerOffsetX")).toDouble(160.0));
+        impl_->clonerOffsetY_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerOffsetY")).toDouble(48.0));
+        impl_->clonerOffsetZ_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerOffsetZ")).toDouble(0.0));
+        impl_->clonerColumns_ = std::max(
+            1, componentsObj.value(QStringLiteral("clonerColumns")).toInt(3));
+        impl_->clonerRows_ = std::max(
+            1, componentsObj.value(QStringLiteral("clonerRows")).toInt(3));
+        impl_->clonerDepth_ = std::max(
+            1, componentsObj.value(QStringLiteral("clonerDepth")).toInt(1));
+        impl_->clonerSpacingX_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerSpacingX")).toDouble(160.0));
+        impl_->clonerSpacingY_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerSpacingY")).toDouble(48.0));
+        impl_->clonerSpacingZ_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerSpacingZ")).toDouble(0.0));
+        impl_->clonerRadialCount_ = std::max(
+            1, componentsObj.value(QStringLiteral("clonerRadialCount")).toInt(8));
+        impl_->clonerRadius_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerRadius")).toDouble(160.0));
+        impl_->clonerStartAngle_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerStartAngle")).toDouble(0.0));
+        impl_->clonerEndAngle_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerEndAngle")).toDouble(360.0));
+        impl_->clonerRotationStep_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerRotationStep")).toDouble(0.0));
+        impl_->clonerOpacityDecay_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerOpacityDecay")).toDouble(0.0));
         impl_->scriptBinding_ = componentsObj.value(QStringLiteral("scriptBinding")).toObject();
     }
 
@@ -2408,6 +2459,12 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                                   PropertyType::Boolean, isVisible(), -190));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.locked"),
                                   PropertyType::Boolean, isLocked(), -180));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.selectionLocked"),
+                                  PropertyType::Boolean, isSelectionLocked(), -179));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.transformLocked"),
+                                  PropertyType::Boolean, isTransformLocked(), -178));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.timingLocked"),
+                                  PropertyType::Boolean, isTimingLocked(), -177));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.guide"),
                                   PropertyType::Boolean, isGuide(), -170));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.solo"),
@@ -2600,111 +2657,151 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   physicsGroup.addProperty(wiggleAmpProp);
 
   PropertyGroup componentGroup(QStringLiteral("Components"));
-  componentGroup.addProperty(
+  auto scriptComponentEnabledProp =
       makeProp(QStringLiteral("component.script.enabled"),
-               PropertyType::Boolean, impl_->scriptComponentEnabled_, -100));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.enabled"),
-               PropertyType::Boolean, impl_->mographComponentEnabled_, -90));
-  componentGroup.addProperty(
+               PropertyType::Boolean, impl_->scriptComponentEnabled_, -100);
+  scriptComponentEnabledProp->setDisplayLabel(QStringLiteral("Script Component Enabled"));
+  componentGroup.addProperty(scriptComponentEnabledProp);
+
+  auto clonerComponentEnabledProp =
+      makeProp(QStringLiteral("component.cloner.enabled"),
+               PropertyType::Boolean, impl_->clonerComponentEnabled_, -90);
+  clonerComponentEnabledProp->setDisplayLabel(QStringLiteral("Cloner Enabled"));
+  componentGroup.addProperty(clonerComponentEnabledProp);
+  PropertyGroup layoutGroup(QStringLiteral("Layout"));
+  PropertyGroup clonerGroup(QStringLiteral("Cloner"));
+  auto layoutComponentEnabledProp =
       makeProp(QStringLiteral("component.layout.enabled"),
-               PropertyType::Boolean, impl_->layoutComponentEnabled_, -89));
-  componentGroup.addProperty(
+               PropertyType::Boolean, impl_->layoutComponentEnabled_, -89);
+  layoutComponentEnabledProp->setDisplayLabel(QStringLiteral("Layout Enabled"));
+  layoutGroup.addProperty(layoutComponentEnabledProp);
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.mode"),
-               PropertyType::Integer, impl_->layoutMode_, -88));
-  componentGroup.addProperty(
+                PropertyType::Integer, impl_->layoutMode_, -88));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.anchorMode"),
-               PropertyType::Integer, impl_->layoutAnchorMode_, -87));
-  componentGroup.addProperty(
+                PropertyType::Integer, impl_->layoutAnchorMode_, -87));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.horizontalPin"),
-               PropertyType::Integer, impl_->layoutHorizontalPin_, -86));
-  componentGroup.addProperty(
+                PropertyType::Integer, impl_->layoutHorizontalPin_, -86));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.verticalPin"),
-               PropertyType::Integer, impl_->layoutVerticalPin_, -85));
-  componentGroup.addProperty(
+                PropertyType::Integer, impl_->layoutVerticalPin_, -85));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.scaleMode"),
-               PropertyType::Integer, impl_->layoutScaleMode_, -84));
-  componentGroup.addProperty(
+                PropertyType::Integer, impl_->layoutScaleMode_, -84));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.safeAreaEnabled"),
-               PropertyType::Boolean, impl_->layoutSafeAreaEnabled_, -83));
-  componentGroup.addProperty(
+                PropertyType::Boolean, impl_->layoutSafeAreaEnabled_, -83));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.safeAreaPaddingX"),
-               PropertyType::Float,
-               static_cast<double>(impl_->layoutSafeAreaPaddingX_), -82));
-  componentGroup.addProperty(
+                PropertyType::Float,
+                static_cast<double>(impl_->layoutSafeAreaPaddingX_), -82));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.safeAreaPaddingY"),
-               PropertyType::Float,
-               static_cast<double>(impl_->layoutSafeAreaPaddingY_), -81));
-  componentGroup.addProperty(
+                PropertyType::Float,
+                static_cast<double>(impl_->layoutSafeAreaPaddingY_), -81));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.stackDirection"),
-               PropertyType::Integer, impl_->layoutStackDirection_, -80));
-  componentGroup.addProperty(
+                PropertyType::Integer, impl_->layoutStackDirection_, -80));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.gap"),
-               PropertyType::Float,
-               static_cast<double>(impl_->layoutGap_), -79));
-  componentGroup.addProperty(
+                PropertyType::Float,
+                static_cast<double>(impl_->layoutGap_), -79));
+  layoutGroup.addProperty(
       makeProp(QStringLiteral("component.layout.maxPerRow"),
-               PropertyType::Integer, impl_->layoutMaxPerRow_, -78));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.mode"),
-               PropertyType::Integer, impl_->mographMode_, -85));
-  auto mographCloneCountProp =
-      makeProp(QStringLiteral("component.mograph.cloneCount"),
-               PropertyType::Integer, impl_->mographCloneCount_, -80);
-  mographCloneCountProp->setHardRange(1.0, 256.0);
-  mographCloneCountProp->setSoftRange(1.0, 32.0);
-  componentGroup.addProperty(mographCloneCountProp);
-  auto mographOffsetXProp =
-      makeProp(QStringLiteral("component.mograph.offsetX"),
+                PropertyType::Integer, impl_->layoutMaxPerRow_, -78));
+  auto clonerModeProp =
+      makeProp(QStringLiteral("component.cloner.mode"),
+               PropertyType::Integer, impl_->clonerMode_, -85);
+  clonerModeProp->setDisplayLabel(QStringLiteral("Mode"));
+  clonerGroup.addProperty(clonerModeProp);
+  auto clonerCloneCountProp =
+      makeProp(QStringLiteral("component.cloner.cloneCount"),
+                PropertyType::Integer, impl_->clonerCloneCount_, -80);
+  clonerCloneCountProp->setDisplayLabel(QStringLiteral("Count"));
+  clonerCloneCountProp->setHardRange(1.0, 256.0);
+  clonerCloneCountProp->setSoftRange(1.0, 32.0);
+  clonerGroup.addProperty(clonerCloneCountProp);
+  auto clonerOffsetXProp =
+      makeProp(QStringLiteral("component.cloner.offsetX"),
                PropertyType::Float,
-               static_cast<double>(impl_->mographOffsetX_), -70);
-  mographOffsetXProp->setSoftRange(-1000.0, 1000.0);
-  componentGroup.addProperty(mographOffsetXProp);
-  auto mographOffsetYProp =
-      makeProp(QStringLiteral("component.mograph.offsetY"),
+               static_cast<double>(impl_->clonerOffsetX_), -70);
+  clonerOffsetXProp->setDisplayLabel(QStringLiteral("Offset X"));
+  clonerOffsetXProp->setSoftRange(-1000.0, 1000.0);
+  clonerGroup.addProperty(clonerOffsetXProp);
+  auto clonerOffsetYProp =
+      makeProp(QStringLiteral("component.cloner.offsetY"),
                PropertyType::Float,
-               static_cast<double>(impl_->mographOffsetY_), -60);
-  mographOffsetYProp->setSoftRange(-1000.0, 1000.0);
-  componentGroup.addProperty(mographOffsetYProp);
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.offsetZ"), PropertyType::Float,
-               static_cast<double>(impl_->mographOffsetZ_), -59));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.columns"), PropertyType::Integer,
-               impl_->mographColumns_, -58));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.rows"), PropertyType::Integer,
-               impl_->mographRows_, -57));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.depth"), PropertyType::Integer,
-               impl_->mographDepth_, -56));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.spacingX"), PropertyType::Float,
-               static_cast<double>(impl_->mographSpacingX_), -55));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.spacingY"), PropertyType::Float,
-               static_cast<double>(impl_->mographSpacingY_), -54));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.spacingZ"), PropertyType::Float,
-               static_cast<double>(impl_->mographSpacingZ_), -53));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.radialCount"), PropertyType::Integer,
-               impl_->mographRadialCount_, -52));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.radius"), PropertyType::Float,
-               static_cast<double>(impl_->mographRadius_), -51));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.startAngle"), PropertyType::Float,
-               static_cast<double>(impl_->mographStartAngle_), -50));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.endAngle"), PropertyType::Float,
-               static_cast<double>(impl_->mographEndAngle_), -49));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.rotationStep"), PropertyType::Float,
-               static_cast<double>(impl_->mographRotationStep_), -48));
-  componentGroup.addProperty(
-      makeProp(QStringLiteral("component.mograph.opacityDecay"), PropertyType::Float,
-               static_cast<double>(impl_->mographOpacityDecay_), -47));
+               static_cast<double>(impl_->clonerOffsetY_), -60);
+  clonerOffsetYProp->setDisplayLabel(QStringLiteral("Offset Y"));
+  clonerOffsetYProp->setSoftRange(-1000.0, 1000.0);
+  clonerGroup.addProperty(clonerOffsetYProp);
+  auto clonerOffsetZProp =
+      makeProp(QStringLiteral("component.cloner.offsetZ"), PropertyType::Float,
+               static_cast<double>(impl_->clonerOffsetZ_), -59);
+  clonerOffsetZProp->setDisplayLabel(QStringLiteral("Offset Z"));
+  clonerGroup.addProperty(clonerOffsetZProp);
+  auto clonerColumnsProp =
+      makeProp(QStringLiteral("component.cloner.columns"), PropertyType::Integer,
+               impl_->clonerColumns_, -58);
+  clonerColumnsProp->setDisplayLabel(QStringLiteral("Columns"));
+  clonerGroup.addProperty(clonerColumnsProp);
+  auto clonerRowsProp =
+      makeProp(QStringLiteral("component.cloner.rows"), PropertyType::Integer,
+               impl_->clonerRows_, -57);
+  clonerRowsProp->setDisplayLabel(QStringLiteral("Rows"));
+  clonerGroup.addProperty(clonerRowsProp);
+  auto clonerDepthProp =
+      makeProp(QStringLiteral("component.cloner.depth"), PropertyType::Integer,
+               impl_->clonerDepth_, -56);
+  clonerDepthProp->setDisplayLabel(QStringLiteral("Depth"));
+  clonerGroup.addProperty(clonerDepthProp);
+  auto clonerSpacingXProp =
+      makeProp(QStringLiteral("component.cloner.spacingX"), PropertyType::Float,
+               static_cast<double>(impl_->clonerSpacingX_), -55);
+  clonerSpacingXProp->setDisplayLabel(QStringLiteral("Spacing X"));
+  clonerGroup.addProperty(clonerSpacingXProp);
+  auto clonerSpacingYProp =
+      makeProp(QStringLiteral("component.cloner.spacingY"), PropertyType::Float,
+               static_cast<double>(impl_->clonerSpacingY_), -54);
+  clonerSpacingYProp->setDisplayLabel(QStringLiteral("Spacing Y"));
+  clonerGroup.addProperty(clonerSpacingYProp);
+  auto clonerSpacingZProp =
+      makeProp(QStringLiteral("component.cloner.spacingZ"), PropertyType::Float,
+               static_cast<double>(impl_->clonerSpacingZ_), -53);
+  clonerSpacingZProp->setDisplayLabel(QStringLiteral("Spacing Z"));
+  clonerGroup.addProperty(clonerSpacingZProp);
+  auto clonerRadialCountProp =
+      makeProp(QStringLiteral("component.cloner.radialCount"), PropertyType::Integer,
+               impl_->clonerRadialCount_, -52);
+  clonerRadialCountProp->setDisplayLabel(QStringLiteral("Count"));
+  clonerGroup.addProperty(clonerRadialCountProp);
+  auto clonerRadiusProp =
+      makeProp(QStringLiteral("component.cloner.radius"), PropertyType::Float,
+               static_cast<double>(impl_->clonerRadius_), -51);
+  clonerRadiusProp->setDisplayLabel(QStringLiteral("Radius"));
+  clonerGroup.addProperty(clonerRadiusProp);
+  auto clonerStartAngleProp =
+      makeProp(QStringLiteral("component.cloner.startAngle"), PropertyType::Float,
+               static_cast<double>(impl_->clonerStartAngle_), -50);
+  clonerStartAngleProp->setDisplayLabel(QStringLiteral("Start Angle"));
+  clonerGroup.addProperty(clonerStartAngleProp);
+  auto clonerEndAngleProp =
+      makeProp(QStringLiteral("component.cloner.endAngle"), PropertyType::Float,
+               static_cast<double>(impl_->clonerEndAngle_), -49);
+  clonerEndAngleProp->setDisplayLabel(QStringLiteral("End Angle"));
+  clonerGroup.addProperty(clonerEndAngleProp);
+  auto clonerRotationStepProp =
+      makeProp(QStringLiteral("component.cloner.rotationStep"), PropertyType::Float,
+               static_cast<double>(impl_->clonerRotationStep_), -48);
+  clonerRotationStepProp->setDisplayLabel(QStringLiteral("Rotation Step"));
+  clonerGroup.addProperty(clonerRotationStepProp);
+  auto clonerOpacityDecayProp =
+      makeProp(QStringLiteral("component.cloner.opacityDecay"), PropertyType::Float,
+               static_cast<double>(impl_->clonerOpacityDecay_), -47);
+  clonerOpacityDecayProp->setDisplayLabel(QStringLiteral("Opacity Decay"));
+  clonerGroup.addProperty(clonerOpacityDecayProp);
 
   auto isAdjustmentProp =
       makeProp(QStringLiteral("layer.isAdjustment"), PropertyType::Boolean,
@@ -2834,11 +2931,13 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   }
 
   std::vector<PropertyGroup> groups;
-  groups.reserve(5 + maskGroups.size());
+  groups.reserve(7 + maskGroups.size());
   groups.push_back(std::move(initialGroup));
   groups.push_back(std::move(transformGroup));
-  groups.push_back(std::move(componentGroup));
   groups.push_back(std::move(physicsGroup));
+  groups.push_back(std::move(componentGroup));
+  groups.push_back(std::move(layoutGroup));
+  groups.push_back(std::move(clonerGroup));
   groups.push_back(std::move(layerGroup));
   for (auto &group : maskGroups) {
     groups.push_back(std::move(group));
@@ -2895,6 +2994,18 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
   }
   if (propertyPath == QStringLiteral("layer.locked")) {
     setLocked(value.toBool());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.selectionLocked")) {
+    setSelectionLocked(value.toBool());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.transformLocked")) {
+    setTransformLocked(value.toBool());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.timingLocked")) {
+    setTimingLocked(value.toBool());
     return true;
   }
   if (propertyPath == QStringLiteral("layer.guide")) {
@@ -3081,93 +3192,93 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.enabled")) {
-      impl_->mographComponentEnabled_ = value.toBool();
+    if (propertyPath == QStringLiteral("component.cloner.enabled")) {
+      impl_->clonerComponentEnabled_ = value.toBool();
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.mode")) {
-      impl_->mographMode_ = value.toInt();
+    if (propertyPath == QStringLiteral("component.cloner.mode")) {
+      impl_->clonerMode_ = value.toInt();
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.cloneCount")) {
-      impl_->mographCloneCount_ = std::max(1, value.toInt());
+    if (propertyPath == QStringLiteral("component.cloner.cloneCount")) {
+      impl_->clonerCloneCount_ = std::max(1, value.toInt());
       Q_EMIT changed();
       return true;
     }
-  if (propertyPath == QStringLiteral("component.mograph.offsetX")) {
-    impl_->mographOffsetX_ = static_cast<float>(value.toDouble());
+  if (propertyPath == QStringLiteral("component.cloner.offsetX")) {
+    impl_->clonerOffsetX_ = static_cast<float>(value.toDouble());
     Q_EMIT changed();
     return true;
   }
-    if (propertyPath == QStringLiteral("component.mograph.offsetY")) {
-      impl_->mographOffsetY_ = static_cast<float>(value.toDouble());
+    if (propertyPath == QStringLiteral("component.cloner.offsetY")) {
+      impl_->clonerOffsetY_ = static_cast<float>(value.toDouble());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.offsetZ")) {
-      impl_->mographOffsetZ_ = static_cast<float>(value.toDouble());
+    if (propertyPath == QStringLiteral("component.cloner.offsetZ")) {
+      impl_->clonerOffsetZ_ = static_cast<float>(value.toDouble());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.columns")) {
-      impl_->mographColumns_ = std::max(1, value.toInt());
+    if (propertyPath == QStringLiteral("component.cloner.columns")) {
+      impl_->clonerColumns_ = std::max(1, value.toInt());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.rows")) {
-      impl_->mographRows_ = std::max(1, value.toInt());
+    if (propertyPath == QStringLiteral("component.cloner.rows")) {
+      impl_->clonerRows_ = std::max(1, value.toInt());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.depth")) {
-      impl_->mographDepth_ = std::max(1, value.toInt());
+    if (propertyPath == QStringLiteral("component.cloner.depth")) {
+      impl_->clonerDepth_ = std::max(1, value.toInt());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.spacingX")) {
-      impl_->mographSpacingX_ = static_cast<float>(value.toDouble());
+    if (propertyPath == QStringLiteral("component.cloner.spacingX")) {
+      impl_->clonerSpacingX_ = static_cast<float>(value.toDouble());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.spacingY")) {
-      impl_->mographSpacingY_ = static_cast<float>(value.toDouble());
+    if (propertyPath == QStringLiteral("component.cloner.spacingY")) {
+      impl_->clonerSpacingY_ = static_cast<float>(value.toDouble());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.spacingZ")) {
-      impl_->mographSpacingZ_ = static_cast<float>(value.toDouble());
+    if (propertyPath == QStringLiteral("component.cloner.spacingZ")) {
+      impl_->clonerSpacingZ_ = static_cast<float>(value.toDouble());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.radialCount")) {
-      impl_->mographRadialCount_ = std::max(1, value.toInt());
+    if (propertyPath == QStringLiteral("component.cloner.radialCount")) {
+      impl_->clonerRadialCount_ = std::max(1, value.toInt());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.radius")) {
-      impl_->mographRadius_ = static_cast<float>(value.toDouble());
+    if (propertyPath == QStringLiteral("component.cloner.radius")) {
+      impl_->clonerRadius_ = static_cast<float>(value.toDouble());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.startAngle")) {
-      impl_->mographStartAngle_ = static_cast<float>(value.toDouble());
+    if (propertyPath == QStringLiteral("component.cloner.startAngle")) {
+      impl_->clonerStartAngle_ = static_cast<float>(value.toDouble());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.endAngle")) {
-      impl_->mographEndAngle_ = static_cast<float>(value.toDouble());
+    if (propertyPath == QStringLiteral("component.cloner.endAngle")) {
+      impl_->clonerEndAngle_ = static_cast<float>(value.toDouble());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.rotationStep")) {
-      impl_->mographRotationStep_ = static_cast<float>(value.toDouble());
+    if (propertyPath == QStringLiteral("component.cloner.rotationStep")) {
+      impl_->clonerRotationStep_ = static_cast<float>(value.toDouble());
       Q_EMIT changed();
       return true;
     }
-    if (propertyPath == QStringLiteral("component.mograph.opacityDecay")) {
-      impl_->mographOpacityDecay_ = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+    if (propertyPath == QStringLiteral("component.cloner.opacityDecay")) {
+      impl_->clonerOpacityDecay_ = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
       Q_EMIT changed();
       return true;
     }
@@ -3206,13 +3317,13 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("transform.scale.x")) {
-    t3.setScale(currentTime, value.toDouble(), t3.scaleYAt(currentTime));
+    t3.setScale(currentTime, value.toDouble(), t3.scaleY());
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
   }
   if (propertyPath == QStringLiteral("transform.scale.y")) {
-    t3.setScale(currentTime, t3.scaleXAt(currentTime), value.toDouble());
+    t3.setScale(currentTime, t3.scaleX(), value.toDouble());
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;
@@ -3442,3 +3553,5 @@ void ArtifactAbstractLayer::setOpacity(float value) {
 }
 
 } // namespace Artifact
+
+

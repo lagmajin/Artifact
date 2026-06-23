@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <algorithm>
 #include <functional>
@@ -33,7 +33,7 @@ float cloneComponentFloatProperty(const ArtifactAbstractLayer* layer,
                                     const QString& propertyPath,
                                     float fallback);
 int cloneComponentMode(const ArtifactAbstractLayer* layer);
-std::vector<CloneRenderInstance> mographComponentInstances(
+std::vector<CloneRenderInstance> clonerComponentInstances(
       const ArtifactAbstractLayer* layer,
       const QMatrix4x4& baseTransform);
 ArtifactCore::InstanceData cloneRenderInstanceToInstanceData(
@@ -76,7 +76,7 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
         return instances;
     }
 
-    instances = mographComponentInstances(layer, baseTransform);
+    instances = clonerComponentInstances(layer, baseTransform);
     if (!instances.empty()) {
         return instances;
     }
@@ -165,27 +165,27 @@ float cloneComponentFloatProperty(const ArtifactAbstractLayer* layer,
 
 int cloneComponentMode(const ArtifactAbstractLayer* layer)
 {
-    return cloneComponentIntProperty(layer, QStringLiteral("component.mograph.mode"), 0);
+    return cloneComponentIntProperty(layer, QStringLiteral("component.cloner.mode"), 0);
 }
 
-std::vector<CloneRenderInstance> mographComponentInstances(
+std::vector<CloneRenderInstance> clonerComponentInstances(
       const ArtifactAbstractLayer* layer,
       const QMatrix4x4& baseTransform)
   {
     std::vector<CloneRenderInstance> instances;
     if (!cloneComponentBoolProperty(
-            layer, QStringLiteral("component.mograph.enabled"))) {
+            layer, QStringLiteral("component.cloner.enabled"))) {
         return instances;
     }
 
     const int mode = cloneComponentMode(layer);
     if (mode == 1) {
-        const int cols = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.mograph.columns"), 3));
-        const int rows = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.mograph.rows"), 3));
-        const int depth = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.mograph.depth"), 1));
-        const float spacingX = cloneComponentFloatProperty(layer, QStringLiteral("component.mograph.spacingX"), 160.0f);
-        const float spacingY = cloneComponentFloatProperty(layer, QStringLiteral("component.mograph.spacingY"), 48.0f);
-        const float spacingZ = cloneComponentFloatProperty(layer, QStringLiteral("component.mograph.spacingZ"), 0.0f);
+        const int cols = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.columns"), 3));
+        const int rows = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.rows"), 3));
+        const int depth = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.depth"), 1));
+        const float spacingX = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.spacingX"), 160.0f);
+        const float spacingY = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.spacingY"), 48.0f);
+        const float spacingZ = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.spacingZ"), 0.0f);
         const int total = cols * rows * depth;
         instances.reserve(static_cast<size_t>(total));
         const QVector3D startPos(
@@ -205,12 +205,12 @@ std::vector<CloneRenderInstance> mographComponentInstances(
           }
         }
     } else if (mode == 2) {
-        const int count = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.mograph.radialCount"), 8));
-        const float radius = cloneComponentFloatProperty(layer, QStringLiteral("component.mograph.radius"), 160.0f);
-        const float startAngle = cloneComponentFloatProperty(layer, QStringLiteral("component.mograph.startAngle"), 0.0f);
-        const float endAngle = cloneComponentFloatProperty(layer, QStringLiteral("component.mograph.endAngle"), 360.0f);
-        const float rotationStep = cloneComponentFloatProperty(layer, QStringLiteral("component.mograph.rotationStep"), 0.0f);
-        const float opacityDecay = cloneComponentFloatProperty(layer, QStringLiteral("component.mograph.opacityDecay"), 0.0f);
+        const int count = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.radialCount"), 8));
+        const float radius = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.radius"), 160.0f);
+        const float startAngle = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.startAngle"), 0.0f);
+        const float endAngle = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.endAngle"), 360.0f);
+        const float rotationStep = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.rotationStep"), 0.0f);
+        const float opacityDecay = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.opacityDecay"), 0.0f);
         const float angleStep = count > 1 ? (endAngle - startAngle) / static_cast<float>(count - 1) : 0.0f;
         instances.reserve(static_cast<size_t>(count));
         for (int i = 0; i < count; ++i) {
@@ -225,17 +225,17 @@ std::vector<CloneRenderInstance> mographComponentInstances(
         }
     } else {
         const int count = std::max(1, cloneComponentIntProperty(
-               layer, QStringLiteral("component.mograph.cloneCount"), 3));
+               layer, QStringLiteral("component.cloner.cloneCount"), 3));
         const float offsetX = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.mograph.offsetX"), 160.0f);
+            layer, QStringLiteral("component.cloner.offsetX"), 160.0f);
         const float offsetY = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.mograph.offsetY"), 48.0f);
+            layer, QStringLiteral("component.cloner.offsetY"), 48.0f);
         const float offsetZ = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.mograph.offsetZ"), 0.0f);
+            layer, QStringLiteral("component.cloner.offsetZ"), 0.0f);
         const float rotationStep = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.mograph.rotationStep"), 0.0f);
+            layer, QStringLiteral("component.cloner.rotationStep"), 0.0f);
         const float opacityDecay = cloneComponentFloatProperty(
-            layer, QStringLiteral("component.mograph.opacityDecay"), 0.0f);
+            layer, QStringLiteral("component.cloner.opacityDecay"), 0.0f);
         instances.reserve(static_cast<size_t>(count));
         for (int i = 0; i < count; ++i) {
             QMatrix4x4 cloneTransform;
@@ -254,3 +254,5 @@ std::vector<CloneRenderInstance> mographComponentInstances(
   }
 
 } // namespace Artifact
+
+

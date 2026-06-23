@@ -62,6 +62,7 @@ import Frame.Debug;
 import Core.Diagnostics.Trace;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Clone;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Light;
@@ -129,6 +130,131 @@ bool isLayerEffectivelyVisible(const ArtifactAbstractLayerPtr &layer);
 
 namespace {
 Q_LOGGING_CATEGORY(compositionViewLog, "artifact.compositionview")
+
+QImage ensurePreviewImage(const QImage& image) {
+  if (image.isNull()) {
+    return {};
+  }
+  return image.format() == QImage::Format_RGBA8888
+             ? image
+             : image.convertToFormat(QImage::Format_RGBA8888);
+}
+
+QImage makePreviewDiffImage(const QImage& before, const QImage& after) {
+  if (before.isNull() || after.isNull() || before.size() != after.size()) {
+    return {};
+  }
+
+  const QImage lhs = ensurePreviewImage(before);
+  const QImage rhs = ensurePreviewImage(after);
+  if (lhs.isNull() || rhs.isNull() || lhs.size() != rhs.size()) {
+    return {};
+  }
+
+  QImage diff(lhs.size(), QImage::Format_RGBA8888);
+  for (int y = 0; y < lhs.height(); ++y) {
+    const QRgb* lhsRow = reinterpret_cast<const QRgb*>(lhs.constScanLine(y));
+    const QRgb* rhsRow = reinterpret_cast<const QRgb*>(rhs.constScanLine(y));
+    QRgb* outRow = reinterpret_cast<QRgb*>(diff.scanLine(y));
+    for (int x = 0; x < lhs.width(); ++x) {
+      outRow[x] = qRgba(std::abs(qRed(lhsRow[x]) - qRed(rhsRow[x])),
+                        std::abs(qGreen(lhsRow[x]) - qGreen(rhsRow[x])),
+                        std::abs(qBlue(lhsRow[x]) - qBlue(rhsRow[x])),
+                        255);
+    }
+  }
+  return diff;
+}
+
+void addSnapshotPreview(ArtifactCore::FrameDebugSnapshot& snapshot,
+                        const QString& key, const QString& label,
+                        const QString& note, const QImage& beforeImage,
+                        const QImage& afterImage, const QImage& alphaImage) {
+  ArtifactCore::FrameDebugImagePreviewRecord preview;
+  preview.key = key;
+  preview.label = label;
+  preview.note = note;
+  preview.beforeImage = ensurePreviewImage(beforeImage);
+  preview.afterImage = ensurePreviewImage(afterImage);
+  preview.alphaImage = alphaImage;
+  preview.diffImage =
+      makePreviewDiffImage(preview.beforeImage, preview.afterImage);
+  snapshot.previews.push_back(std::move(preview));
+}
+
+void drawClonerFrameOverlay(ArtifactIRenderer* renderer,
+                            const ArtifactAbstractLayerPtr& layer)
+{
+  if (!renderer || !layer) {
+    return;
+  }
+
+  const auto cloneLayer = std::dynamic_pointer_cast<ArtifactCloneLayer>(layer);
+  if (!cloneLayer) {
+    return;
+  }
+
+  const QRectF localBounds = layer->localBounds();
+  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+      localBounds.height() <= 0.0) {
+    return;
+  }
+
+  const auto clones = cloneLayer->generateCloneData();
+  if (clones.empty()) {
+    return;
+  }
+
+  const QTransform globalTransform = layer->getGlobalTransform();
+  const FloatColor outerColor{0.96f, 0.56f, 0.18f, 0.90f};
+  const FloatColor innerColor{0.18f, 0.10f, 0.04f, 0.64f};
+
+  const auto mapClonePoint = [&](const QMatrix4x4& cloneTransform,
+                                 const QPointF& point) -> QPointF {
+    const QVector4D mapped =
+        cloneTransform * QVector4D(static_cast<float>(point.x()),
+                                   static_cast<float>(point.y()), 0.0f, 1.0f);
+    return globalTransform.map(
+        QPointF(static_cast<qreal>(mapped.x()), static_cast<qreal>(mapped.y())));
+  };
+
+  for (const auto& clone : clones) {
+    if (!clone.visible) {
+      continue;
+    }
+
+    const QPointF tl = mapClonePoint(clone.transform, localBounds.topLeft());
+    const QPointF tr = mapClonePoint(clone.transform, localBounds.topRight());
+    const QPointF br =
+        mapClonePoint(clone.transform, localBounds.bottomRight());
+    const QPointF bl = mapClonePoint(clone.transform, localBounds.bottomLeft());
+
+    renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            outerColor, 1.7f);
+    renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            outerColor, 1.7f);
+    renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            outerColor, 1.7f);
+    renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            outerColor, 1.7f);
+    renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            innerColor, 0.8f);
+    renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            innerColor, 0.8f);
+    renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            innerColor, 0.8f);
+    renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            innerColor, 0.8f);
+  }
+}
 
 enum class QuickMaskPreset {
   Full = 0,
@@ -3067,24 +3193,31 @@ void drawCompositionBackgroundDirect(ArtifactIRenderer *renderer, float cw,
   if (!renderer || cw <= 0.0f || ch <= 0.0f) {
     return;
   }
-  const FloatColor opaqueBgColor{bgColor.r(), bgColor.g(), bgColor.b(), 1.0f};
   if (mode == CompositionBackgroundMode::Solid) {
-    renderer->drawRectLocal(0.f, 0.f, cw, ch, opaqueBgColor, 1.0f);
+    if (bgColor.a() > 0.0f) {
+      renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+    }
     return;
   }
   if (mode == CompositionBackgroundMode::Checkerboard) {
     // Checkerboard is the viewport background; the composition area itself
     // should stay filled with the composition bg color.
-    renderer->drawRectLocal(0.f, 0.f, cw, ch, opaqueBgColor, 1.0f);
+    if (bgColor.a() > 0.0f) {
+      renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+    }
     return;
   }
   // MayaGradient only affects the viewport background; the composition area
   // itself is always rendered with the solid bgColor.
   if (mode == CompositionBackgroundMode::MayaGradient) {
-    renderer->drawRectLocal(0.f, 0.f, cw, ch, opaqueBgColor, 1.0f);
+    if (bgColor.a() > 0.0f) {
+      renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+    }
     return;
   }
-  renderer->drawRectLocal(0.f, 0.f, cw, ch, opaqueBgColor, 1.0f);
+  if (bgColor.a() > 0.0f) {
+    renderer->drawRectLocal(0.f, 0.f, cw, ch, bgColor, 1.0f);
+  }
 }
 
 void drawViewportMayaGradientBackground(ArtifactIRenderer *renderer, float vw,
@@ -3401,6 +3534,8 @@ public:
   int pieMenuSelectedIndex_ = -1;
   // Full-frame clear color used before composition content is drawn.
   FloatColor viewportClearColor_;
+  QImage lastLayerRtPreview_;
+  QImage lastAccumRtPreview_;
   FloatColor lastBgColorCache_ = {-1.f, -1.f, -1.f, -1.f};
   CompositionID lastBackgroundCompositionId_;
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
@@ -5524,6 +5659,79 @@ CompositionRenderController::frameDebugSnapshot() const {
 
     snapshot.attachments.push_back(outputAttachment);
 
+    if (impl_->renderer_) {
+      ArtifactCore::FrameDebugResourceRecord layerTargetResource;
+      layerTargetResource.label = QStringLiteral("Layer RT");
+      layerTargetResource.type = QStringLiteral("rt");
+      layerTargetResource.relation = QStringLiteral("intermediate");
+      layerTargetResource.cacheHit = true;
+      layerTargetResource.texture.valid = true;
+      layerTargetResource.texture.name = QStringLiteral("Layer RT");
+      layerTargetResource.texture.format = QStringLiteral("render-target");
+      layerTargetResource.texture.width = std::max(1, static_cast<int>(std::lround(impl_->lastCanvasWidth_)));
+      layerTargetResource.texture.height = std::max(1, static_cast<int>(std::lround(impl_->lastCanvasHeight_)));
+      layerTargetResource.texture.mipLevel = 0;
+      layerTargetResource.texture.mipLevels = 1;
+      layerTargetResource.texture.sliceIndex = 0;
+      layerTargetResource.texture.arrayLayers = 1;
+      layerTargetResource.texture.sampleCount = 1;
+      layerTargetResource.texture.srgb = false;
+      layerTargetResource.note = QStringLiteral("previewSource=layer-render-target");
+      snapshot.resources.push_back(layerTargetResource);
+
+      ArtifactCore::FrameDebugResourceRecord accumResource;
+      accumResource.label = QStringLiteral("Accum RT");
+      accumResource.type = QStringLiteral("rt");
+      accumResource.relation = QStringLiteral("intermediate");
+      accumResource.cacheHit = true;
+      accumResource.texture.valid = true;
+      accumResource.texture.name = QStringLiteral("Accum RT");
+      accumResource.texture.format = QStringLiteral("render-target");
+      accumResource.texture.width = std::max(1, static_cast<int>(std::lround(impl_->lastCanvasWidth_)));
+      accumResource.texture.height = std::max(1, static_cast<int>(std::lround(impl_->lastCanvasHeight_)));
+      accumResource.texture.mipLevel = 0;
+      accumResource.texture.mipLevels = 1;
+      accumResource.texture.sliceIndex = 0;
+      accumResource.texture.arrayLayers = 1;
+      accumResource.texture.sampleCount = 1;
+      accumResource.texture.srgb = false;
+      accumResource.note = QStringLiteral("previewSource=accum-render-target");
+      snapshot.resources.push_back(accumResource);
+    }
+
+    if (impl_->renderer_) {
+      const QImage viewportAfter = impl_->renderer_->readbackToImage();
+      const QImage viewportAlpha =
+          impl_->renderer_->readbackChannelToImage(ArtifactIRenderer::ChannelType::Alpha);
+      addSnapshotPreview(snapshot, QStringLiteral("viewport"),
+                         QStringLiteral("Viewport Final"),
+                         QStringLiteral("before=unavailable after=final-present alpha=readback"),
+                         QImage(), viewportAfter, viewportAlpha);
+      addSnapshotPreview(snapshot, QStringLiteral("Particle Draw"),
+                         QStringLiteral("Particle Draw"),
+                         QStringLiteral("previewSource=final-viewport before=unavailable"),
+                         QImage(), viewportAfter, viewportAlpha);
+      addSnapshotPreview(snapshot, QStringLiteral("Blend / Mask Contract"),
+                         QStringLiteral("Blend / Mask Contract"),
+                         QStringLiteral("previewSource=final-viewport before=unavailable"),
+                         QImage(), viewportAfter, viewportAlpha);
+      addSnapshotPreview(snapshot, QStringLiteral("Layer RT"),
+                         QStringLiteral("Layer RT"),
+                         QStringLiteral("previewSource=layer-render-target before=unavailable"),
+                         QImage(), impl_->lastLayerRtPreview_, viewportAlpha);
+      addSnapshotPreview(snapshot, QStringLiteral("Accum RT"),
+                         QStringLiteral("Accum RT"),
+                         QStringLiteral("previewSource=accum-render-target before=unavailable"),
+                         QImage(), impl_->lastAccumRtPreview_, viewportAlpha);
+      if (!snapshot.selectedLayerName.isEmpty() &&
+          snapshot.selectedLayerName != QStringLiteral("<none>")) {
+        addSnapshotPreview(snapshot, snapshot.selectedLayerName,
+                           snapshot.selectedLayerName,
+                           QStringLiteral("previewSource=final-viewport before=unavailable"),
+                           QImage(), viewportAfter, viewportAlpha);
+      }
+    }
+
     if (!snapshot.selectedLayerName.isEmpty() &&
         snapshot.selectedLayerName != QStringLiteral("<none>")) {
       const auto selectedLayer = comp ? comp->layerById(selectedLayerId)
@@ -5595,6 +5803,14 @@ CompositionRenderController::frameDebugSnapshot() const {
         }
       } else {
         selectedResource.note = impl_->lastVideoDebug_;
+      }
+      if (impl_->renderer_) {
+        const QImage viewportAfter = impl_->renderer_->readbackToImage();
+        const QImage viewportAlpha =
+            impl_->renderer_->readbackChannelToImage(ArtifactIRenderer::ChannelType::Alpha);
+        addSnapshotPreview(snapshot, selectedResource.label, selectedResource.label,
+                           QStringLiteral("resource-preview=selected-layer final-readback"),
+                           QImage(), viewportAfter, viewportAlpha);
       }
       snapshot.resources.push_back(selectedResource);
     }
@@ -6135,7 +6351,7 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
         auto &layer = layers[i];
         if (!isLayerEffectivelyVisible(layer))
           continue;
-        if (layer->isLocked() && !ignoreLocked)
+        if ((layer->isLocked() || layer->isSelectionLocked()) && !ignoreLocked)
           continue;
         if (!layer->isActiveAt(currentFrame))
           continue;
@@ -7617,8 +7833,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           << "frameOutOfRange=" << frameOutOfRange;
     }
 
+    const bool transparentCompositionBackgroundRequested =
+        currentBgColor.a() < 0.999f;
     const bool pipelineEnabled =
-        gpuBlendPathRequested && renderPipeline_.ready();
+        gpuBlendPathRequested && renderPipeline_.ready() &&
+        !transparentCompositionBackgroundRequested;
     const int pipelineStateMask = (gpuBlendEnabled_ ? 0x1 : 0x0) |
                                   (renderPipeline_.ready() ? 0x2 : 0x0) |
                                   (blendPipelineReady_ ? 0x4 : 0x0);
@@ -7629,6 +7848,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                          .arg(blendPipelineReady_ ? 1 : 0)
                          .arg(renderPipeline_.ready() ? 1 : 0)
                          .arg(layers.size()));
+    if (transparentCompositionBackgroundRequested && gpuBlendPathRequested &&
+        renderPipeline_.ready()) {
+      qCDebug(compositionViewLog)
+          << "[CompositionView] transparent composition background forces fallback path"
+          << "alpha=" << currentBgColor.a();
+    }
     if (pipelineStateMask != lastPipelineStateMask_) {
       lastPipelineStateMask_ = pipelineStateMask;
       if (!pipelineEnabled) {
@@ -7846,27 +8071,29 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setOverrideRTV(nullptr);
       renderer_->unbindColorTargetsForCompute();
 
-      ++layerToFloatConvertCount;
-      const bool convertedBackgroundToFloat = renderer_->convertLayerToFloat(
-          blendPipeline_.get(), layerSRV, layerFloatUAV,
-          static_cast<Diligent::Uint32>(renderPipeline_.width()),
-          static_cast<Diligent::Uint32>(renderPipeline_.height()));
-      Diligent::ITextureView *backgroundBlendSrc =
-          convertedBackgroundToFloat ? layerFloatSRV : layerSRV;
-      if (!convertedBackgroundToFloat) {
-        qWarning() << "[CompositionView] background-to-float conversion failed; "
-                      "falling back to legacy background SRV";
-      }
-      ++blendDispatchCount;
-      if (renderer_->blendLayers(blendPipeline_.get(), backgroundBlendSrc,
-                                 accumSRV, tempUAV,
-                                 ArtifactCore::BlendMode::Normal, 1.0f)) {
-        renderPipeline_.swapAccumAndTemp();
-        accumSRV = renderPipeline_.accumSRV();
-        tempUAV = renderPipeline_.tempUAV();
-      } else {
-        ++blendFailureCount;
-        qWarning() << "[CompositionView] background seed blend failed";
+      if (layerBgColor.a() > 0.0f) {
+        ++layerToFloatConvertCount;
+        const bool convertedBackgroundToFloat = renderer_->convertLayerToFloat(
+            blendPipeline_.get(), layerSRV, layerFloatUAV,
+            static_cast<Diligent::Uint32>(renderPipeline_.width()),
+            static_cast<Diligent::Uint32>(renderPipeline_.height()));
+        Diligent::ITextureView *backgroundBlendSrc =
+            convertedBackgroundToFloat ? layerFloatSRV : layerSRV;
+        if (!convertedBackgroundToFloat) {
+          qWarning() << "[CompositionView] background-to-float conversion failed; "
+                        "falling back to legacy background SRV";
+        }
+        ++blendDispatchCount;
+        if (renderer_->blendLayers(blendPipeline_.get(), backgroundBlendSrc,
+                                   accumSRV, tempUAV,
+                                   ArtifactCore::BlendMode::Normal, 1.0f)) {
+          renderPipeline_.swapAccumAndTemp();
+          accumSRV = renderPipeline_.accumSRV();
+          tempUAV = renderPipeline_.tempUAV();
+        } else {
+          ++blendFailureCount;
+          qWarning() << "[CompositionView] background seed blend failed";
+        }
       }
 
       basePassMs = markPhaseMs();
@@ -8061,6 +8288,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         }
       }
 
+      if (renderer_) {
+        renderer_->setOverrideRTV(layerRTV);
+        lastLayerRtPreview_ = renderer_->readbackToImage();
+        renderer_->setOverrideRTV(renderPipeline_.accumRTV());
+        lastAccumRtPreview_ = renderer_->readbackToImage();
+        renderer_->setOverrideRTV(nullptr);
+      }
+
       // ==== オフスクリーン描画後: ホスト viewport に戻す ====
       renderer_->setViewportRect(origViewW, origViewH);
 
@@ -8073,11 +8308,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setUseExternalMatrices(false);
       renderer_->resetGizmoCameraMatrices();
       renderer_->reset3DCameraMatrices();
+      const bool transparentCompositionBackground = layerBgColor.a() < 0.999f;
       if (backgroundMode == CompositionBackgroundMode::MayaGradient) {
         drawViewportMayaGradientBackground(renderer_.get(), origViewW,
                                            origViewH, bgColor,
                                            cachedMayaGradientSprite_);
-      } else if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
+      } else if (backgroundMode == CompositionBackgroundMode::Checkerboard ||
+                 transparentCompositionBackground) {
         drawViewportCheckerboardBackground(renderer_.get(), origViewW,
                                            origViewH,
                                            checkerboardTileSize_);
@@ -8090,10 +8327,24 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                       cachedMayaGradientSprite_);
 
       // -- 4: オフスクリーン RT を viewport-space のまま描画。
+      // blend pipeline output is premultiplied, while the sprite present path
+      // expects straight alpha. Convert once before the final blit.
+      Diligent::ITextureView* finalPresentSRV = accumSRV;
+      ++layerToFloatConvertCount;
+      const bool convertedAccumToStraight = renderer_->convertLayerToFloat(
+          blendPipeline_.get(), accumSRV, layerFloatUAV,
+          static_cast<Diligent::Uint32>(renderPipeline_.width()),
+          static_cast<Diligent::Uint32>(renderPipeline_.height()));
+      if (convertedAccumToStraight) {
+        finalPresentSRV = layerFloatSRV;
+      } else {
+        qWarning() << "[CompositionView] accum-to-straight conversion failed; "
+                      "presenting premultiplied accum directly";
+      }
       renderer_->setCanvasSize(origViewW, origViewH);
       renderer_->setZoom(1.0f);
       renderer_->setPan(0.0f, 0.0f);
-      renderer_->drawSprite(0.0f, 0.0f, rcw, rch, renderPipeline_.accumSRV(),
+      renderer_->drawSprite(0.0f, 0.0f, rcw, rch, finalPresentSRV,
                             1.0f);
 
       // コンポジションのキャンバス座標系に戻す
@@ -8119,6 +8370,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setUseExternalMatrices(false);
       renderer_->resetGizmoCameraMatrices();
       renderer_->reset3DCameraMatrices();
+      const bool transparentCompositionBackground = layerBgColor.a() < 0.999f;
       if (backgroundMode == CompositionBackgroundMode::MayaGradient) {
         renderer_->setCanvasSize(viewportW, viewportH);
         renderer_->setZoom(1.0f);
@@ -8131,7 +8383,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderer_->setPan(prevPanX, prevPanY);
       }
       renderer_->setCanvasSize(cw, ch); // キャンバスを Composition Space に設定
-      if (backgroundMode == CompositionBackgroundMode::Checkerboard) {
+      if (backgroundMode == CompositionBackgroundMode::Checkerboard ||
+          transparentCompositionBackground) {
         renderer_->setCanvasSize(viewportW, viewportH);
         renderer_->setZoom(1.0f);
         renderer_->setPan(0.0f, 0.0f);
@@ -9152,6 +9405,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       if (selectedLayer) {
         if (!showGizmoOverlay_) {
           ::Artifact::drawSelectionOverlay(renderer_.get(), selectedLayer);
+        }
+        if (selectedLayer->isCloneLayer()) {
+          ::Artifact::drawClonerFrameOverlay(renderer_.get(), selectedLayer);
         }
         const bool selectedLayerIsActiveCamera =
             activeCamera && activeCamera->id() == selectedLayer->id();

@@ -793,7 +793,7 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
 
  void ArtifactAbstractComposition::setBackGroundColor(const FloatColor& color)
  {
-  impl_->backgroundColor_ = FloatColor(color.r(), color.g(), color.b(), 1.0f);
+  impl_->backgroundColor_ = color;
   Q_EMIT changed();
  }
 

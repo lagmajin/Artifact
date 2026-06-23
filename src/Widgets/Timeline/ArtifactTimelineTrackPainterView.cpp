@@ -78,6 +78,28 @@ QString tt(const char* key, const char* fallback)
   return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
 }
 
+bool shouldHideTimelinePropertyGroup(const QString &groupName);
+
+QMessageBox::StandardButton centeredQuestion(QWidget* parent,
+                                             const QString& title,
+                                             const QString& text)
+{
+  QMessageBox box(parent ? parent->window() : nullptr);
+  box.setWindowTitle(title);
+  box.setIcon(QMessageBox::Question);
+  box.setText(text);
+  box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+  box.setDefaultButton(QMessageBox::No);
+  box.adjustSize();
+  if (QWidget* owner = parent ? parent->window() : nullptr) {
+    const QRect ownerRect = owner->frameGeometry();
+    const QSize dialogSize = box.sizeHint();
+    box.move(ownerRect.center() -
+             QPoint(dialogSize.width() / 2, dialogSize.height() / 2));
+  }
+  return static_cast<QMessageBox::StandardButton>(box.exec());
+}
+
 std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr &layer, const QString &propertyPath);
 
@@ -294,16 +316,13 @@ bool deleteSelectedLayersFromTimeline(QWidget *parent) {
   if (layerIds.size() == 1) {
     const QString message =
         service->layerRemovalConfirmationMessage(comp->id(), layerIds.front());
-    confirmed = QMessageBox::question(parent, QStringLiteral("Delete Layer"),
-                                      message, QMessageBox::Yes | QMessageBox::No,
-                                      QMessageBox::No) == QMessageBox::Yes;
+    confirmed = centeredQuestion(parent, QStringLiteral("Delete Layer"),
+                                 message) == QMessageBox::Yes;
   } else {
-    confirmed = QMessageBox::question(
-                   parent, QStringLiteral("Delete Layers"),
-                   QStringLiteral("Delete %1 selected layers?")
-                       .arg(layerIds.size()),
-                   QMessageBox::Yes | QMessageBox::No, QMessageBox::No) ==
-               QMessageBox::Yes;
+    confirmed =
+        centeredQuestion(parent, QStringLiteral("Delete Layers"),
+                         QStringLiteral("Delete %1 selected layers?")
+                             .arg(layerIds.size())) == QMessageBox::Yes;
   }
   if (!confirmed) {
     return false;
@@ -398,6 +417,7 @@ struct KeyframeAreaVisual {
   double startFrame = 0.0;
   double endFrame = 0.0;
   QVariant value;
+  QVariant endValue;
   QRectF bodyRect;
   QRectF leftHandleRect;
   QRectF rightHandleRect;
@@ -448,10 +468,44 @@ QVector<KeyframeAreaVisual> collectKeyframeAreas(
     const QRectF leftHandleRect(leftX - 3.0, bodyRect.top(), 8.0, bodyRect.height());
     const QRectF rightHandleRect(rightX - 5.0, bodyRect.top(), 8.0, bodyRect.height());
     areas.push_back({i, i + 1, start.trackIndex, start.layerId, start.propertyPath,
-                     start.frame, end.frame, start.value, bodyRect, leftHandleRect,
-                     rightHandleRect});
+                     start.frame, end.frame, start.value, end.value, bodyRect,
+                     leftHandleRect, rightHandleRect});
   }
   return areas;
+}
+
+QColor keyframeAreaTintFor(const KeyframeAreaVisual& area, const TimelineThemeColors& theme)
+{
+  auto numeric = [](const QVariant& v, bool* ok) -> double {
+    if (v.canConvert<double>()) {
+      return v.toDouble(ok);
+    }
+    if (ok) {
+      *ok = false;
+    }
+    return 0.0;
+  };
+
+  bool okStart = false;
+  bool okEnd = false;
+  const double startValue = numeric(area.value, &okStart);
+  const double endValue = numeric(area.endValue, &okEnd);
+  if (!okStart || !okEnd) {
+    QColor neutral = theme.accent;
+    neutral.setAlpha(52);
+    return neutral;
+  }
+
+  const double delta = endValue - startValue;
+  if (std::abs(delta) < 1e-6) {
+    QColor neutral = theme.text;
+    neutral.setAlpha(50);
+    return neutral;
+  }
+
+  QColor tint = delta > 0.0 ? QColor(255, 134, 95) : QColor(90, 170, 255);
+  tint.setAlpha(60);
+  return tint;
 }
 
 KeyframeAreaHitResult hitTestKeyframeAreas(
@@ -507,6 +561,9 @@ QVector<KeyframePropertyRef> collectAnimatablePropertyRefs(
 
   QSet<QString> seen;
   for (const auto &group : layer->getLayerPropertyGroups()) {
+    if (shouldHideTimelinePropertyGroup(group.name())) {
+      continue;
+    }
     for (const auto &property : group.sortedProperties()) {
       if (!property || !property->isAnimatable()) {
         continue;
@@ -1292,6 +1349,13 @@ bool sameKeyframeMarkerVisual(
          lhs.anchor == rhs.anchor &&
          lhs.color == rhs.color && lhs.label == rhs.label &&
          lhs.value == rhs.value;
+}
+
+bool shouldHideTimelinePropertyGroup(const QString &groupName) {
+  const QString normalized = groupName.trimmed();
+  return normalized.compare(QStringLiteral("Initial"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Rig"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Rig Controls"), Qt::CaseInsensitive) == 0;
 }
 
 std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
@@ -3581,6 +3645,9 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
                            : 30.0;
     const int64_t frameScale = static_cast<int64_t>(std::llround(fps));
     for (const auto &group : layer->getLayerPropertyGroups()) {
+      if (shouldHideTimelinePropertyGroup(group.name())) {
+        continue;
+      }
       for (const auto &property : group.sortedProperties()) {
         if (!property || !property->isAnimatable()) {
           continue;
@@ -5353,8 +5420,13 @@ void ArtifactTimelineTrackPainterView::paintEvent(QPaintEvent *event) {
     const bool isSelected = area.startMarkerIndex >= 0 &&
                             area.startMarkerIndex < impl_->keyframeMarkers_.size() &&
                             impl_->keyframeMarkers_[area.startMarkerIndex].selected;
-    QColor fill = isSelected ? theme.accent.lighter(150) : QColor(247, 204, 83);
-    fill.setAlpha(isHovered ? 110 : 56);
+    QColor fill = keyframeAreaTintFor(area, theme);
+    if (isSelected) {
+      fill = theme.accent.lighter(145);
+      fill.setAlpha(isHovered ? 122 : 78);
+    } else if (isHovered) {
+      fill.setAlpha(std::min(140, fill.alpha() + 24));
+    }
     QColor border = isSelected ? theme.accent.lighter(138) : theme.border.lighter(112);
     border.setAlpha(isHovered ? 235 : 150);
     p.setPen(QPen(border, isHovered ? 2.0 : 1.0));

@@ -34,6 +34,7 @@
 #include <QWidget>
 #include <QVBoxLayout>
 #include <QScrollArea>
+#include <QSet>
 
 export module Artifact.Widgets.ArtifactPropertyWidget;
 
@@ -58,6 +59,8 @@ public:
     QSize sizeHint() const override;
 
     void setLayer(Artifact::ArtifactAbstractLayerPtr layer);
+    void setLayers(const QSet<Artifact::ArtifactAbstractLayerPtr>& layers);
+    int targetLayersCount() const;
     void setFocusedEffectId(const QString& effectId);
     void clear();
     void setFilterText(const QString& text);
@@ -66,6 +69,8 @@ public:
     bool valueColumnFirst() const;
     void setSliderBeforeValue(bool enabled);
     bool sliderBeforeValue() const;
+    void setFavoriteOnly(bool enabled);
+    bool favoriteOnly() const;
 
     void updateProperties();
     bool openActiveExpressionCopilot();

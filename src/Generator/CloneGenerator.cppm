@@ -45,7 +45,7 @@ module Generator.Clone;
 
 
 
-import Artifact.Effect.Clone.Core; // MoGraphコアをインポート
+import Artifact.Effect.Clone.Core; // Clonerコアをインポート
 import Generator.DistributionModes;
 
 namespace Artifact
@@ -579,3 +579,4 @@ namespace Artifact
  }
 
 };
+

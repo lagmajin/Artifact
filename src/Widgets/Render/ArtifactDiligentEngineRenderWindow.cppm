@@ -533,6 +533,7 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   float r = static_cast<float>(clearColor_.redF());
   float g = static_cast<float>(clearColor_.greenF());
   float b = static_cast<float>(clearColor_.blueF());
+  float a = static_cast<float>(clearColor_.alphaF());
   if (shadingMode_ == ShadingMode::Wireframe) {
    r = (std::min)(1.0f, r + 0.10f);
    g = (std::min)(1.0f, g + 0.10f);
@@ -540,7 +541,7 @@ QVector3D ArtifactDiligentEngineRenderWindow::previewTarget() const
   } else if (shadingMode_ == ShadingMode::SolidWithWire) {
    b = (std::min)(1.0f, b + 0.12f);
   }
-  const float ClearColor[] = { r, g, b, 1.0f };
+  const float ClearColor[] = { r, g, b, a };
   // Let the engine perform required state transitions
   pImmediateContext->ClearRenderTarget(pRTV, ClearColor, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
   pImmediateContext->ClearDepthStencil(pDSV, CLEAR_DEPTH_FLAG, 1.f, 0, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);

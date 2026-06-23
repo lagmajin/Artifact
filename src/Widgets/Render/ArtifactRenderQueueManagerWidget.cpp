@@ -619,9 +619,12 @@ namespace Artifact
     QString path = impl_->service->jobOutputPathAt(idx);
     auto* reveal = menu.addAction("Reveal in Explorer");
     auto* open = menu.addAction("Open File");
+    menu.addSeparator();
+    auto* copyPath = menu.addAction("Copy Path");
     auto* act = menu.exec(impl_->jobListWidget->mapToGlobal(pos));
     if (act == reveal) ArtifactCore::openInExplorer(path, true);
     else if (act == open) QDesktopServices::openUrl(QUrl::fromLocalFile(path));
+    else if (act == copyPath) QApplication::clipboard()->setText(path);
   });
 
   connect(impl_->jobListWidget, &QListWidget::currentRowChanged, this, [this](int row) {
