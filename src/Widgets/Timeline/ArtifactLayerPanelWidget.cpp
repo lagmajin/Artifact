@@ -95,6 +95,10 @@ namespace Artifact
 {
  using namespace ArtifactCore;
 
+QMessageBox::StandardButton centeredQuestion(QWidget* parent,
+                                             const QString& title,
+                                             const QString& text);
+
 namespace {
 constexpr auto kLayerPanelContext = "Panel.LayerTree";
 
@@ -3151,10 +3155,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (!layer) {
         return;
       }
-      const auto response = QMessageBox::question(
+      const auto response = centeredQuestion(
           this, tt("layer_panel.delete_layer_title", "Delete Layer"),
-          tt("layer_panel.delete_layer_message", "Delete layer \"%1\"?").arg(layer->layerName()),
-          QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+          tt("layer_panel.delete_layer_message", "Delete layer \"%1\"?").arg(layer->layerName()));
       if (response != QMessageBox::Yes) {
         return;
       }
@@ -3177,10 +3180,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (selectedIds.size() <= 1) {
         return;
       }
-      const auto response = QMessageBox::question(
+      const auto response = centeredQuestion(
           this, tt("layer_panel.delete_layers_title", "Delete Layers"),
-          tt("layer_panel.delete_layers_message", "Delete %1 selected layers?").arg(selectedIds.size()),
-          QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+          tt("layer_panel.delete_layers_message", "Delete %1 selected layers?").arg(selectedIds.size()));
       if (response != QMessageBox::Yes) {
         return;
       }
@@ -4961,13 +4963,18 @@ void ArtifactLayerPanelWidget::paintEvent(QPaintEvent* event)
 
     const QColor rowBase = (i % 2 == 0) ? background : mixColor(background, surface, 0.25);
     const QColor rowHover = mixColor(background, text, 0.08);
-    const QColor rowSelected = mixColor(background, accent, 0.34);
+    const QColor rowSelected = mixColor(background, accent, 0.48);
     if (propertyFocused) {
       p.fillRect(0, y, width(), rowH, mixColor(background, selection, 0.32));
     } else if (maskSelected) {
       p.fillRect(0, y, width(), rowH, mixColor(background, accent, 0.30));
     } else if (layerSelected) {
-      p.fillRect(0, y, width(), rowH, rowSelected); // Modo-like Amber selection
+      QColor selectedEdge = mixColor(accent, text, 0.15);
+      selectedEdge.setAlpha(220);
+      p.fillRect(0, y, width(), rowH, rowSelected); // Stronger amber selection
+      p.fillRect(0, y, 4, rowH, selectedEdge);
+      p.fillRect(0, y, width(), 1, selectedEdge);
+      p.fillRect(0, y + rowH - 1, width(), 1, selectedEdge.darker(110));
     }
     else if (i == impl_->hoveredLayerIndex) p.fillRect(0, y, width(), rowH, rowHover); // Subtle grey hover
     else p.fillRect(0, y, width(), rowH, rowBase);

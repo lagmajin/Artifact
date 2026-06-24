@@ -1,4 +1,7 @@
 module;
+#include <QApplication>
+#include <QMessageBox>
+#include <QScreen>
 #include <QString>
 
 module Artifact.Widgets.LayerPanelWidget;
@@ -7,11 +10,34 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Audio;
 import Artifact.Layer.Composition;
 import Artifact.Layer.CompositionBackground;
+import Artifact.Layer.Camera;
+import Artifact.Layer.Light;
 import Artifact.Layer.Image;
 import Artifact.Layer.Particle;
 import Artifact.Layer.Video;
 
 namespace Artifact {
+
+QMessageBox::StandardButton centeredQuestion(QWidget* parent,
+                                             const QString& title,
+                                             const QString& text)
+{
+  QMessageBox box(parent ? parent->window() : nullptr);
+  box.setWindowTitle(title);
+  box.setIcon(QMessageBox::Question);
+  box.setText(text);
+  box.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+  box.setDefaultButton(QMessageBox::No);
+  box.adjustSize();
+
+  if (const QScreen* screen = QApplication::primaryScreen()) {
+    const QRect available = screen->availableGeometry();
+    const QSize dialogSize = box.sizeHint();
+    box.move(available.center() - QPoint(dialogSize.width() / 2, dialogSize.height() / 2));
+  }
+
+  return static_cast<QMessageBox::StandardButton>(box.exec());
+}
 
 LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLayerPtr& layer)
 {
@@ -82,6 +108,24 @@ LayerPresentationDescriptor describeLayerPresentation(const ArtifactAbstractLaye
         ? QStringLiteral("Specialized + Export")
         : QStringLiteral("Specialized");
     descriptor.badgeTone = LayerPresentationBadgeTone::Special;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactCameraLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Camera");
+    descriptor.timelineBadgeText = QStringLiteral("Camera");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Camera");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Camera");
+    descriptor.capabilitySummaryText = QStringLiteral("View control");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
+    return descriptor;
+  }
+  if (dynamic_cast<ArtifactLightLayer *>(layer.get())) {
+    descriptor.typeText = QStringLiteral("Light");
+    descriptor.timelineBadgeText = QStringLiteral("Light");
+    descriptor.propertySummaryTitle = QStringLiteral("Summary · Light");
+    descriptor.inspectorTypeLabel = QStringLiteral("Type: Light");
+    descriptor.capabilitySummaryText = QStringLiteral("Scene lighting");
+    descriptor.badgeTone = LayerPresentationBadgeTone::Motion;
     return descriptor;
   }
   if (layer->is3D()) {
