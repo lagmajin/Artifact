@@ -292,6 +292,25 @@ QRect sourceCropToRect(const Artifact::SourceCrop& crop, const QSize& sourceSize
         QRect(0, 0, sourceSize.width(), sourceSize.height()));
 }
 
+ArtifactCore::ImageF32x4_RGBA makeTransparentCropCanvas(
+    const ArtifactCore::ImageF32x4_RGBA& source, const QRect& cropRect)
+{
+    if (source.isEmpty() || !cropRect.isValid() || cropRect.width() <= 0 || cropRect.height() <= 0) {
+        return source;
+    }
+
+    ArtifactCore::ImageF32x4_RGBA canvas;
+    canvas.resize(source.width(), source.height());
+    canvas.fill(ArtifactCore::FloatRGBA(0.0f, 0.0f, 0.0f, 0.0f));
+    for (int y = 0; y < cropRect.height(); ++y) {
+        for (int x = 0; x < cropRect.width(); ++x) {
+            canvas.setPixel(cropRect.x() + x, cropRect.y() + y,
+                            source.getPixel(cropRect.x() + x, cropRect.y() + y));
+        }
+    }
+    return canvas;
+}
+
 void publishVideoLayerModified(ArtifactVideoLayer* layer)
 {
     if (!layer) {
@@ -467,7 +486,10 @@ public:
 
     void cancelPendingDecode() {
         decodeGeneration_.fetch_add(1, std::memory_order_acq_rel);
-        decoding_ = false;
+        // Only clear decoding_ if it matches current generation
+        if (decoding_.load(std::memory_order_acquire)) {
+            decoding_ = false;
+        }
         decodeTargetFrame_ = -1;
         decodeRetryPending_ = false;
         decodeFuture_ = QFuture<ArtifactCore::ImageF32x4_RGBA>();
@@ -1076,7 +1098,10 @@ void ArtifactVideoLayer::decodeCurrentFrame()
                        << threadDiagnosticsTag()
                        << threadIdTag();
         }
-        impl_->decoding_ = false;
+        // Only clear decoding_ flag if this decode matches the current generation
+        if (decodeGeneration == impl_->decodeGeneration_.load(std::memory_order_acquire)) {
+            impl_->decoding_ = false;
+        }
         QPointer<ArtifactVideoLayer> guarded(this);
         QMetaObject::invokeMethod(
             this,
@@ -1638,12 +1663,9 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
     }
     const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
     const bool useCrop = cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0;
-    if (useCrop) {
-        size = Size_2D(cropRect.width(), cropRect.height());
-    }
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
     const ArtifactCore::ImageF32x4_RGBA renderBuffer =
-        useCrop ? frameBuffer.crop(cropRect.x(), cropRect.y(), cropRect.width(), cropRect.height())
+        useCrop ? makeTransparentCropCanvas(frameBuffer, cropRect)
                 : frameBuffer;
     drawWithClonerEffect(this, baseTransform, [renderer, renderBuffer, size, this](const QMatrix4x4& transform, float weight) {
         renderer->drawSpriteTransformed(0.0f, 0.0f,
@@ -1664,12 +1686,6 @@ QRectF ArtifactVideoLayer::localBounds() const
     if (size.width <= 0 || size.height <= 0) {
         return QRectF();
     }
-
-    const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
-    if (cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0) {
-        return QRectF(0.0, 0.0, static_cast<qreal>(cropRect.width()), static_cast<qreal>(cropRect.height()));
-    }
-
     return QRectF(0.0, 0.0, static_cast<qreal>(size.width), static_cast<qreal>(size.height));
 }
 

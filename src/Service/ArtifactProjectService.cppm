@@ -58,6 +58,7 @@ import MediaSource;
 import Core.Diagnostics.ProjectDiagnostic;
 import Artifact.Service.ActiveContext;
 import Artifact.Service.Playback;
+import Artifact.Audio.ScrubController;
 import Undo.UndoManager;
 // import Artifact.Render.FrameCache;
 
@@ -2524,6 +2525,110 @@ bool ArtifactProjectService::moveEffectInLayerInCurrentComposition(
   return true;
 }
 
+bool ArtifactProjectService::addEffectToCurrentComposition(
+    std::shared_ptr<ArtifactAbstractEffect> effect) {
+  auto comp = currentComposition().lock();
+  if (!comp || !effect) {
+    return false;
+  }
+  const QString uniqueId = uniqueEffectIdForLayer(
+      comp->getEffects(), effect->displayName().toQString(),
+      effect->effectID().toQString());
+  effect->setEffectID(UniString::fromQString(uniqueId));
+  comp->addEffect(std::move(effect));
+  notifyProjectMutation(impl_->projectManager());
+  return true;
+}
+
+bool ArtifactProjectService::removeEffectFromCurrentComposition(
+    const QString &effectId) {
+  if (effectId.trimmed().isEmpty()) {
+    return false;
+  }
+  auto comp = currentComposition().lock();
+  if (!comp) {
+    return false;
+  }
+  comp->removeEffect(UniString(effectId.toStdString()));
+  notifyProjectMutation(impl_->projectManager());
+  return true;
+}
+
+bool ArtifactProjectService::setEffectEnabledInCurrentComposition(
+    const QString &effectId, bool enabled) {
+  if (effectId.trimmed().isEmpty()) {
+    return false;
+  }
+  auto comp = currentComposition().lock();
+  if (!comp) {
+    return false;
+  }
+  for (const auto &effect : comp->getEffects()) {
+    if (effect && effect->effectID().toQString() == effectId) {
+      effect->setEnabled(enabled);
+      comp->changed();
+      notifyProjectMutation(impl_->projectManager());
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ArtifactProjectService::moveEffectInCurrentComposition(
+    const QString &effectId, int direction) {
+  if (effectId.trimmed().isEmpty() || direction == 0) {
+    return false;
+  }
+  auto comp = currentComposition().lock();
+  if (!comp) {
+    return false;
+  }
+  auto effects = comp->getEffects();
+  int currentIndex = -1;
+  EffectPipelineStage currentStage = EffectPipelineStage::Generator;
+  for (int i = 0; i < static_cast<int>(effects.size()); ++i) {
+    const auto &effect = effects[i];
+    if (effect && effect->effectID().toQString() == effectId) {
+      currentIndex = i;
+      currentStage = effect->pipelineStage();
+      break;
+    }
+  }
+  if (currentIndex < 0) {
+    return false;
+  }
+
+  int swapIndex = -1;
+  if (direction < 0) {
+    for (int i = currentIndex - 1; i >= 0; --i) {
+      if (effects[i] && effects[i]->pipelineStage() == currentStage) {
+        swapIndex = i;
+        break;
+      }
+    }
+  } else {
+    for (int i = currentIndex + 1; i < static_cast<int>(effects.size()); ++i) {
+      if (effects[i] && effects[i]->pipelineStage() == currentStage) {
+        swapIndex = i;
+        break;
+      }
+    }
+  }
+  if (swapIndex < 0 || swapIndex == currentIndex) {
+    return false;
+  }
+
+  std::swap(effects[currentIndex], effects[swapIndex]);
+  comp->clearEffects();
+  for (const auto &effect : effects) {
+    if (effect) {
+      comp->addEffect(effect);
+    }
+  }
+  notifyProjectMutation(impl_->projectManager());
+  return true;
+}
+
 QString ArtifactProjectService::layerRemovalConfirmationMessage(
     const CompositionID &compositionId, const LayerID &layerId) const {
   if (compositionId.isNil() || layerId.isNil()) {
@@ -2756,6 +2861,13 @@ ArtifactProjectService::currentProjectDiagnostics() const {
     appendAppValidationDiagnostics(project, appDiagnostics);
     for (const auto& diagnostic : appDiagnostics) {
       appendUniqueDiagnostic(diagnostics, diagnostic);
+    }
+
+    // Audio scrub runtime diagnostics
+    const auto scrubDiagnostics =
+        ArtifactAudioScrubController::instance().gatherDiagnostics();
+    for (const auto& diag : scrubDiagnostics) {
+      appendUniqueDiagnostic(diagnostics, diag);
     }
   }
 

@@ -115,6 +115,11 @@ LayerType ArtifactLayerInitParams::layerType() const
   FloatColor gradientStartColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
   FloatColor gradientEndColor_ = FloatColor(0.2f, 0.2f, 0.2f, 1.0f);
   float gradientAngleDegrees_ = 90.0f;
+  bool gradientReverse_ = false;
+  float gradientCenterX_ = 0.5f;
+  float gradientCenterY_ = 0.5f;
+  float gradientScale_ = 1.0f;
+  float gradientOffset_ = 0.0f;
  };
 
  ArtifactSolidLayerInitParams::ArtifactSolidLayerInitParams(const QString& name) :ArtifactLayerInitParams(name,LayerType::Solid), impl_(new Impl())
@@ -169,6 +174,16 @@ LayerType ArtifactLayerInitParams::layerType() const
  void ArtifactSolidLayerInitParams::setGradientEndColor(const FloatColor& color) { impl_->gradientEndColor_ = color; }
  float ArtifactSolidLayerInitParams::gradientAngleDegrees() const { return impl_->gradientAngleDegrees_; }
  void ArtifactSolidLayerInitParams::setGradientAngleDegrees(float degrees) { impl_->gradientAngleDegrees_ = degrees; }
+ bool ArtifactSolidLayerInitParams::gradientReverse() const { return impl_->gradientReverse_; }
+ void ArtifactSolidLayerInitParams::setGradientReverse(bool reverse) { impl_->gradientReverse_ = reverse; }
+ float ArtifactSolidLayerInitParams::gradientCenterX() const { return impl_->gradientCenterX_; }
+ void ArtifactSolidLayerInitParams::setGradientCenterX(float value) { impl_->gradientCenterX_ = value; }
+ float ArtifactSolidLayerInitParams::gradientCenterY() const { return impl_->gradientCenterY_; }
+ void ArtifactSolidLayerInitParams::setGradientCenterY(float value) { impl_->gradientCenterY_ = value; }
+ float ArtifactSolidLayerInitParams::gradientScale() const { return impl_->gradientScale_; }
+ void ArtifactSolidLayerInitParams::setGradientScale(float value) { impl_->gradientScale_ = value; }
+ float ArtifactSolidLayerInitParams::gradientOffset() const { return impl_->gradientOffset_; }
+ void ArtifactSolidLayerInitParams::setGradientOffset(float value) { impl_->gradientOffset_ = value; }
 
  ArtifactTextLayerInitParams::ArtifactTextLayerInitParams(const QString& name) :ArtifactLayerInitParams(name, LayerType::Text)
  {

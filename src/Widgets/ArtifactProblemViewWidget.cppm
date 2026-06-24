@@ -101,6 +101,8 @@ bool categoryMatchesFilter(ArtifactCore::DiagnosticCategory category, int index)
     case 7:
         return category == ArtifactCore::DiagnosticCategory::Configuration;
     case 8:
+        return category == ArtifactCore::DiagnosticCategory::Audio;
+    case 9:
         return category == ArtifactCore::DiagnosticCategory::Custom;
     default:
         return true;
@@ -137,6 +139,8 @@ QString categoryText(ArtifactCore::DiagnosticCategory category)
         return QStringLiteral("File");
     case ArtifactCore::DiagnosticCategory::Configuration:
         return QStringLiteral("Configuration");
+    case ArtifactCore::DiagnosticCategory::Audio:
+        return QStringLiteral("Audio");
     case ArtifactCore::DiagnosticCategory::Custom:
     default:
         return QStringLiteral("Custom");
@@ -367,6 +371,7 @@ ArtifactProblemViewWidget::ArtifactProblemViewWidget(QWidget* parent)
         "Performance",
         "Files",
         "Config",
+        "Audio",
         "Custom"
     });
     impl_->categoryFilter->installEventFilter(this);

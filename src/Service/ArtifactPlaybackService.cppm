@@ -110,6 +110,37 @@ QString ramPreviewPriorityNote(const ArtifactRamPreviewPriorityState &state) {
   return QStringLiteral("unknown");
 }
 
+QString ramPreviewPriorityReason(const ArtifactRamPreviewPriorityState &state) {
+  if (!state.inCompositionRange) {
+    return QStringLiteral("out-of-range");
+  }
+  if (state.currentFrame) {
+    return QStringLiteral("immediate");
+  }
+  if (!state.inWorkArea) {
+    return QStringLiteral("out-of-range");
+  }
+  if (state.nextQueued) {
+    return QStringLiteral("directional");
+  }
+  if (state.pendingBuild && state.playing) {
+    return QStringLiteral("directional");
+  }
+  if (state.distanceFromCurrent <= 3) {
+    return QStringLiteral("near");
+  }
+  if (state.pendingBuild) {
+    return QStringLiteral("safety-backfill");
+  }
+  if (state.inWorkArea) {
+    return QStringLiteral("work-area");
+  }
+  if (!state.band.trimmed().isEmpty()) {
+    return state.band.trimmed();
+  }
+  return QStringLiteral("unknown");
+}
+
 class ArtifactPlaybackService; // forward declaration to use pointer in Impl
 
 W_OBJECT_IMPL(ArtifactPlaybackService)
@@ -556,6 +587,62 @@ public:
                : ramPreviewBuildQueue_.pendingFrames.front();
   }
 
+  std::vector<int64_t> orderedRamPreviewFramesForRange(const FrameRange &range) const {
+    std::vector<int64_t> orderedFrames;
+    if (!currentComposition_) {
+      return orderedFrames;
+    }
+
+    const int64_t start = std::max<int64_t>(0, range.start());
+    const int64_t endExclusive = std::max<int64_t>(
+        start, std::min<int64_t>(static_cast<int64_t>(frameCacheStates_.size()),
+                                 range.end()));
+    if (endExclusive <= start) {
+      return orderedFrames;
+    }
+
+    const int64_t currentFrame =
+        engine_ ? engine_->currentFrame().framePosition()
+                : (controller_ ? controller_->currentFrame().framePosition() : 0);
+    const bool playing = owner_ && owner_->state() == PlaybackState::Playing;
+    const bool reverse = owner_ && owner_->playbackSpeed() < 0.0f;
+
+    std::vector<int64_t> forwardBand;
+    std::vector<int64_t> backwardBand;
+    orderedFrames.reserve(static_cast<size_t>(endExclusive - start));
+    forwardBand.reserve(static_cast<size_t>(endExclusive - start));
+    backwardBand.reserve(static_cast<size_t>(endExclusive - start));
+
+    for (int64_t frame = start; frame < endExclusive; ++frame) {
+      if (frame == currentFrame) {
+        orderedFrames.push_back(frame);
+        continue;
+      }
+      const bool onDirectionalSide = reverse ? frame < currentFrame : frame > currentFrame;
+      if (playing && onDirectionalSide) {
+        forwardBand.push_back(frame);
+      } else {
+        backwardBand.push_back(frame);
+      }
+    }
+
+    auto appendByDistance = [&](std::vector<int64_t> &frames) {
+      std::stable_sort(frames.begin(), frames.end(), [&](int64_t a, int64_t b) {
+        const int64_t da = std::llabs(a - currentFrame);
+        const int64_t db = std::llabs(b - currentFrame);
+        if (da != db) {
+          return da < db;
+        }
+        return reverse ? a > b : a < b;
+      });
+      orderedFrames.insert(orderedFrames.end(), frames.begin(), frames.end());
+    };
+
+    appendByDistance(forwardBand);
+    appendByDistance(backwardBand);
+    return orderedFrames;
+  }
+
   void cancelRamPreviewBuild(const QString &reason = {}) {
     ++ramPreviewBuildQueue_.generation;
     ramPreviewBuildQueue_.active = false;
@@ -598,7 +685,8 @@ public:
     const int64_t endExclusive = std::max<int64_t>(
         start, std::min<int64_t>(static_cast<int64_t>(frameCacheStates_.size()),
                                  range.end()));
-    for (int64_t frame = start; frame < endExclusive; ++frame) {
+    const auto orderedFrames = orderedRamPreviewFramesForRange(range);
+    for (const int64_t frame : orderedFrames) {
       markFrameRequested(frame, normalizedReason);
       if (frameNeedsRamPreviewBuild(frame)) {
         ramPreviewBuildQueue_.pendingFrames.push_back(frame);
@@ -1275,7 +1363,7 @@ public:
     return state;
   }
 
-  ArtifactRamPreviewPriorityState ramPreviewPriorityState(
+ArtifactRamPreviewPriorityState ramPreviewPriorityState(
       const int64_t frame) const {
     ArtifactRamPreviewPriorityState state;
 
@@ -1316,17 +1404,15 @@ public:
       state.band = QStringLiteral("out-of-range");
     } else if (state.currentFrame) {
       state.band = QStringLiteral("immediate");
-    } else if (!state.inWorkArea) {
-      state.band = QStringLiteral("outside-work-area");
+    } else if (state.distanceFromCurrent <= nearRadius) {
+      state.band = QStringLiteral("near");
     } else if (state.nextQueued ||
                (state.pendingBuild && state.playing && directionalSide)) {
       state.band = QStringLiteral("directional");
-    } else if (state.distanceFromCurrent <= nearRadius) {
-      state.band = QStringLiteral("near");
     } else if (state.pendingBuild) {
       state.band = QStringLiteral("safety-backfill");
     } else if (state.inWorkArea) {
-      state.band = QStringLiteral("work-area-preferred");
+      state.band = QStringLiteral("work-area");
     } else {
       state.band = QStringLiteral("unknown");
     }
@@ -1334,8 +1420,15 @@ public:
     return state;
   }
 
+  QString ramPreviewPriorityReason(const int64_t frame) const {
+    return Artifact::ramPreviewPriorityReason(ramPreviewPriorityState(frame));
+  }
+
   ArtifactRamPreviewSummary ramPreviewSummary() const {
     ArtifactRamPreviewSummary summary;
+    const auto currentPriority = ramPreviewPriorityState(
+        engine_ ? engine_->currentFrame().framePosition()
+                : (controller_ ? controller_->currentFrame().framePosition() : 0));
     summary.enabled = ramPreviewEnabled_;
     summary.range = ramPreviewRange_;
     summary.requestedFrames = ramPreviewRequestedFrameCount();
@@ -1362,6 +1455,8 @@ public:
         ramPreviewPlaybackFallbackWhilePlaying_;
     summary.buildQueueGeneration = ramPreviewBuildQueue_.generation;
     summary.buildQueueReason = ramPreviewBuildQueue_.reason;
+    summary.currentPriorityBand = ramPreviewPriorityNote(currentPriority);
+    summary.currentPriorityReason = Artifact::ramPreviewPriorityReason(currentPriority);
     summary.hitRate = ramPreviewHitRate();
     return summary;
   }
@@ -2199,6 +2294,10 @@ ArtifactPlaybackService::ramPreviewPriorityState(const int64_t frame) const {
 
 ArtifactRamPreviewSummary ArtifactPlaybackService::ramPreviewSummary() const {
   return impl_ ? impl_->ramPreviewSummary() : ArtifactRamPreviewSummary{};
+}
+
+QString ArtifactPlaybackService::ramPreviewPriorityReason(const int64_t frame) const {
+  return impl_ ? impl_->ramPreviewPriorityReason(frame) : QString{};
 }
 
 bool ArtifactPlaybackService::isRamPreviewFramePendingBuild(

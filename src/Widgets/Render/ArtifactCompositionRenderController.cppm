@@ -58,6 +58,7 @@ import Artifact.Render.ROI;
 import Artifact.Render.Context;
 import Artifact.Widgets.CompositionRenderOverlay;
 import Artifact.Preview.Pipeline;
+import Core.Camera;
 import Frame.Debug;
 import Core.Diagnostics.Trace;
 import Artifact.Composition.Abstract;
@@ -89,6 +90,11 @@ import Artifact.Service.ActiveContext;
 import Artifact.Widgets.TransformGizmo;
 import Artifact.Widgets.TextGizmo;
 import Artifact.Widgets.Gizmo3D;
+import Artifact.Widgets.PointTrackerGizmo;
+import Artifact.Tool.PointTracker;
+import Tracking.MotionTracker;
+import Track.NccTracker;
+import Artifact.Render.OffscreenComposition;
 import Artifact.Widgets.PieMenu;
 import UI.View.Orientation.Navigator;
 import Geometry.CameraGuide;
@@ -3290,6 +3296,9 @@ public:
   std::unique_ptr<TransformGizmo> gizmo_;
   std::unique_ptr<TextGizmo> textGizmo_;
   std::unique_ptr<Artifact3DGizmo> gizmo3D_;
+  std::unique_ptr<ArtifactPointTrackerGizmo> trackerGizmo_;
+  ArtifactCore::MotionTracker* trackerMotionTracker_ = nullptr;
+  std::unique_ptr<Artifact::OffscreenCompositionRenderer> trackerOffscreenRenderer_;
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
   RenderPipeline renderPipeline_;
   bool initialized_ = false;
@@ -3333,6 +3342,7 @@ public:
   bool isDraggingLayer_ = false;
   bool gizmoDragActive_ = false;
   bool textGizmoDragActive_ = false;
+  bool trackerGizmoDragActive_ = false;
   bool pendingMaskCreation_ = false;
   LayerID pendingMaskLayerId_;
   MaskPath pendingMaskPath_;
@@ -3809,12 +3819,31 @@ public:
   }
 
   void sync2DGizmosForLayer(const ArtifactAbstractLayerPtr &layer) {
+    std::vector<ArtifactAbstractLayerPtr> selectedTargets;
+    if (auto *app = ArtifactApplicationManager::instance()) {
+      if (auto *selection = app->layerSelectionManager()) {
+        for (const auto &candidate : selection->selectedLayers()) {
+          if (candidate) {
+            selectedTargets.push_back(candidate);
+          }
+        }
+      }
+    }
+    if (selectedTargets.empty() && layer) {
+      selectedTargets.push_back(layer);
+    }
     const bool useTextGizmo = layerUsesTextGizmo(layer);
     if (textGizmo_) {
       textGizmo_->setLayer(useTextGizmo ? layer : nullptr);
     }
     if (gizmo_) {
-      gizmo_->setLayer(useTextGizmo ? nullptr : layer);
+      if (useTextGizmo) {
+        gizmo_->setLayer(nullptr);
+      } else if (selectedTargets.size() > 1) {
+        gizmo_->setTargetLayers(std::move(selectedTargets));
+      } else {
+        gizmo_->setLayer(layer);
+      }
     }
   }
 
@@ -4000,6 +4029,7 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
   impl_->gizmo_ = std::make_unique<TransformGizmo>();
   impl_->textGizmo_ = std::make_unique<TextGizmo>();
   impl_->gizmo3D_ = std::make_unique<Artifact3DGizmo>(this);
+  impl_->trackerGizmo_ = std::make_unique<ArtifactPointTrackerGizmo>();
 
   // Connect to project service to track layer selection
   if (auto *svc = ArtifactProjectService::instance()) {
@@ -5700,7 +5730,10 @@ CompositionRenderController::frameDebugSnapshot() const {
     }
 
     if (impl_->renderer_) {
-      const QImage viewportAfter = impl_->renderer_->readbackToImage();
+      QImage viewportAfter = impl_->renderer_->readbackToImage();
+      if (comp) {
+        applyCompositionFinalEffectsToImage(comp.get(), viewportAfter);
+      }
       const QImage viewportAlpha =
           impl_->renderer_->readbackChannelToImage(ArtifactIRenderer::ChannelType::Alpha);
       addSnapshotPreview(snapshot, QStringLiteral("viewport"),
@@ -5805,7 +5838,10 @@ CompositionRenderController::frameDebugSnapshot() const {
         selectedResource.note = impl_->lastVideoDebug_;
       }
       if (impl_->renderer_) {
-        const QImage viewportAfter = impl_->renderer_->readbackToImage();
+        QImage viewportAfter = impl_->renderer_->readbackToImage();
+        if (comp) {
+          applyCompositionFinalEffectsToImage(comp.get(), viewportAfter);
+        }
         const QImage viewportAlpha =
             impl_->renderer_->readbackChannelToImage(ArtifactIRenderer::ChannelType::Alpha);
         addSnapshotPreview(snapshot, selectedResource.label, selectedResource.label,
@@ -6326,6 +6362,20 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
         impl_->gizmoDragRenderTimer_.restart();
         return;
       }
+    }
+  }
+
+  // Tracker gizmo hit test (TrackPoint tool)
+  if (activeTool == ToolType::TrackPoint && impl_->trackerGizmo_) {
+    if (!impl_->trackerMotionTracker_) {
+      trackerInitialize();
+    }
+    impl_->trackerGizmo_->handleMousePress(viewportPos, impl_->renderer_.get());
+    if (impl_->trackerGizmo_->isDragging()) {
+      impl_->trackerGizmoDragActive_ = true;
+      notifyViewportInteractionActivity();
+      impl_->gizmoDragRenderTimer_.restart();
+      return;
     }
   }
 
@@ -6879,6 +6929,14 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
     }
   }
 
+  if (impl_->trackerGizmo_ && impl_->trackerGizmo_->isDragging()) {
+    impl_->trackerGizmo_->handleMouseMove(viewportPos, impl_->renderer_.get());
+    notifyViewportInteractionActivity();
+    impl_->invalidateBaseComposite();
+    markRenderDirty();
+    return;
+  }
+
   if (needsRender) {
     markRenderDirty();
   }
@@ -7108,6 +7166,17 @@ void CompositionRenderController::handleMouseRelease() {
     }
     markRenderDirty();
   }
+
+  if (impl_->trackerGizmo_) {
+    const bool wasTrackerDragging = impl_->trackerGizmoDragActive_;
+    impl_->trackerGizmoDragActive_ = false;
+    impl_->trackerGizmo_->handleMouseRelease();
+    impl_->invalidateOverlayComposite();
+    if (wasTrackerDragging) {
+      finishViewportInteraction();
+    }
+    markRenderDirty();
+  }
 }
 
 bool CompositionRenderController::hasPendingMaskEdit() const {
@@ -7120,6 +7189,214 @@ TransformGizmo *CompositionRenderController::gizmo() const {
 
 Artifact3DGizmo *CompositionRenderController::gizmo3D() const {
   return impl_->gizmo3D_.get();
+}
+
+ArtifactPointTrackerGizmo *CompositionRenderController::trackerGizmo() const {
+  return impl_->trackerGizmo_.get();
+}
+
+void CompositionRenderController::trackerInitialize() {
+  auto* tm = ArtifactCore::TrackerManager::instance().createTracker(
+      QStringLiteral("Point Tracker"));
+  impl_->trackerMotionTracker_ = tm;
+  if (impl_->trackerGizmo_) {
+    impl_->trackerGizmo_->setTracker(tm);
+  }
+}
+
+static void ensureOffscreenRenderer(
+    std::unique_ptr<Artifact::OffscreenCompositionRenderer>& renderer,
+    ArtifactIRenderer* mainRenderer, int width, int height)
+{
+  if (!renderer && mainRenderer) {
+    auto device = mainRenderer->device();
+    if (device) {
+      renderer = std::make_unique<Artifact::OffscreenCompositionRenderer>(
+          device, static_cast<unsigned int>(width), static_cast<unsigned int>(height));
+    }
+  }
+}
+
+void CompositionRenderController::trackerTrackForward() {
+  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_) return;
+  auto* tracker = impl_->trackerMotionTracker_;
+  auto* gizmo = impl_->trackerGizmo_.get();
+  auto* renderer = impl_->renderer_.get();
+  if (!renderer) return;
+
+  auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return;
+
+  const float fps = comp->frameRate().framerate();
+  if (fps <= 0.0f) return;
+
+  const QSize compSize = comp->settings().compositionSize();
+  const int compW = compSize.width();
+  const int compH = compSize.height();
+  if (compW <= 0 || compH <= 0) return;
+
+  ensureOffscreenRenderer(impl_->trackerOffscreenRenderer_, renderer, compW, compH);
+  if (!impl_->trackerOffscreenRenderer_) return;
+
+  tracker->clearTrackingData();
+  const auto& st = gizmo->state();
+  tracker->addTrackPoint({st.innerCenter.x(), st.innerCenter.y()});
+
+  const int frameCount = 30;
+  const double frameStep = 1.0 / fps;
+
+  for (int i = 0; i <= frameCount; ++i) {
+    const double timeSec = i * frameStep;
+    ArtifactCore::FramePosition pos(static_cast<int64_t>(i));
+    QImage frame = impl_->trackerOffscreenRenderer_->renderToQImage(pos, comp.get());
+    if (!frame.isNull()) {
+      tracker->setFrame(timeSec, frame);
+    }
+  }
+
+  tracker->trackForward(0.0, frameCount * frameStep);
+
+  gizmo->setTracker(tracker);
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerTrackBackward() {
+  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_) return;
+  auto* tracker = impl_->trackerMotionTracker_;
+  auto* gizmo = impl_->trackerGizmo_.get();
+  auto* renderer = impl_->renderer_.get();
+  if (!renderer) return;
+
+  auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return;
+
+  const float fps = comp->frameRate().framerate();
+  if (fps <= 0.0f) return;
+
+  const QSize compSize = comp->settings().compositionSize();
+  const int compW = compSize.width();
+  const int compH = compSize.height();
+  if (compW <= 0 || compH <= 0) return;
+
+  ensureOffscreenRenderer(impl_->trackerOffscreenRenderer_, renderer, compW, compH);
+  if (!impl_->trackerOffscreenRenderer_) return;
+
+  tracker->clearTrackingData();
+  const auto& st = gizmo->state();
+  tracker->addTrackPoint({st.innerCenter.x(), st.innerCenter.y()});
+
+  const int frameCount = 30;
+  const double frameStep = 1.0 / fps;
+
+  for (int i = frameCount; i >= 0; --i) {
+    const double timeSec = i * frameStep;
+    ArtifactCore::FramePosition pos(static_cast<int64_t>(i));
+    QImage frame = impl_->trackerOffscreenRenderer_->renderToQImage(pos, comp.get());
+    if (!frame.isNull()) {
+      tracker->setFrame(timeSec, frame);
+    }
+  }
+
+  tracker->trackBackward(frameCount * frameStep, 0.0);
+
+  gizmo->setTracker(tracker);
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerTrackAll() {
+  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_) return;
+  auto* tracker = impl_->trackerMotionTracker_;
+  auto* gizmo = impl_->trackerGizmo_.get();
+  auto* renderer = impl_->renderer_.get();
+  if (!renderer) return;
+
+  auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return;
+
+  const int64_t totalFrames = comp->frameRange().duration();
+  const float fps = comp->frameRate().framerate();
+  if (totalFrames <= 0 || fps <= 0.0f) return;
+
+  const QSize compSize = comp->settings().compositionSize();
+  const int compW = compSize.width();
+  const int compH = compSize.height();
+  if (compW <= 0 || compH <= 0) return;
+
+  ensureOffscreenRenderer(impl_->trackerOffscreenRenderer_, renderer, compW, compH);
+  if (!impl_->trackerOffscreenRenderer_) return;
+
+  tracker->clearTrackingData();
+  const auto& st = gizmo->state();
+  tracker->addTrackPoint({st.innerCenter.x(), st.innerCenter.y()});
+
+  for (int64_t i = 0; i < totalFrames; ++i) {
+    const double timeSec = static_cast<double>(i) / fps;
+    ArtifactCore::FramePosition pos(i);
+    QImage frame = impl_->trackerOffscreenRenderer_->renderToQImage(pos, comp.get());
+    if (!frame.isNull()) {
+      tracker->setFrame(timeSec, frame);
+    }
+  }
+
+  tracker->trackAll();
+
+  gizmo->setTracker(tracker);
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerApplyToPosition() {
+  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_) return;
+
+  auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return;
+
+  ArtifactAbstractLayerPtr targetLayer;
+  if (!impl_->selectedLayerId_.isNil()) {
+    targetLayer = comp->layerById(impl_->selectedLayerId_);
+  }
+
+  Artifact::ArtifactPointTrackerTool::ApplyOptions opts;
+  opts.createNullLayer = true;
+  opts.applyToSelectedLayer = (targetLayer != nullptr);
+
+  Artifact::ArtifactPointTrackerTool::applyTrackingResult(
+      comp.get(), *impl_->trackerMotionTracker_, opts, targetLayer);
+
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerApplyToAnchor() {
+  if (!impl_->trackerMotionTracker_ || !impl_->trackerGizmo_) return;
+
+  auto comp = impl_->previewPipeline_.composition();
+  if (!comp) return;
+
+  ArtifactAbstractLayerPtr targetLayer;
+  if (!impl_->selectedLayerId_.isNil()) {
+    targetLayer = comp->layerById(impl_->selectedLayerId_);
+  }
+
+  Artifact::ArtifactPointTrackerTool::ApplyOptions opts;
+  opts.createNullLayer = false;
+  opts.applyToSelectedLayer = (targetLayer != nullptr);
+  opts.writeAnchor = true;
+
+  Artifact::ArtifactPointTrackerTool::applyTrackingResult(
+      comp.get(), *impl_->trackerMotionTracker_, opts, targetLayer);
+
+  markRenderDirty();
+}
+
+void CompositionRenderController::trackerDelete() {
+  if (impl_->trackerMotionTracker_) {
+    ArtifactCore::TrackerManager::instance().removeTracker(
+        impl_->trackerMotionTracker_->id());
+    impl_->trackerMotionTracker_ = nullptr;
+  }
+  if (impl_->trackerGizmo_) {
+    impl_->trackerGizmo_->setTracker(nullptr);
+  }
+  markRenderDirty();
 }
 
 CompositionRenderController::CameraFrustumVisual
@@ -7191,6 +7468,15 @@ Qt::CursorShape CompositionRenderController::cursorShapeForViewportPos(
 
   if (activeTool == ToolType::Puppet) {
     return Qt::PointingHandCursor;
+  }
+
+  if (activeTool == ToolType::TrackPoint) {
+    if (impl_->renderer_ && impl_->trackerGizmo_) {
+      const QPointF physPos = viewportPos * impl_->devicePixelRatio_;
+      return impl_->trackerGizmo_->cursorShapeForViewportPos(
+          physPos, impl_->renderer_.get());
+    }
+    return Qt::CrossCursor;
   }
 
   if (!impl_->renderer_) {
@@ -7650,6 +7936,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
 
     cameraViewMatrix = activeCamera->viewMatrix();
     cameraProjMatrix = activeCamera->projectionMatrix(aspect);
+    if (activeCamera->stereoMode() != StereoMode::Mono) {
+      const ArtifactCore::StereoCamera stereoCamera =
+          ArtifactCore::StereoCamera::fromHmd(cameraViewMatrix.inverted(),
+                                              activeCamera->ipd(),
+                                              activeCamera->nearClipPlane(),
+                                              activeCamera->farClipPlane());
+      cameraViewMatrix = stereoCamera.leftEyeView;
+    }
     has3DCamera = true;
   }
   int64_t effectiveEndFrame = 0;
@@ -8728,6 +9022,18 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
         }
 
+        // Tracker Gizmo overlay (independent of selection)
+        {
+          const auto* tm = ArtifactApplicationManager::instance()
+                               ? ArtifactApplicationManager::instance()->toolManager()
+                               : nullptr;
+          if (trackerGizmo_ && tm && tm->activeTool() == ToolType::TrackPoint) {
+            ArtifactCore::ProfileScope _profTracker(
+                "TrackerGizmo", ArtifactCore::ProfileCategory::Render);
+            trackerGizmo_->draw(renderer_.get());
+          }
+        }
+
         // Mask Overlay Drawing
         const int maskCount = selectedLayer->maskCount();
         if (maskCount > 0 && renderer_ &&
@@ -9470,10 +9776,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         const int capturedPreviewDownsample = previewDownsample_;
         const int capturedEffectiveDownsample = effectivePreviewDownsample;
         const bool capturedPipelineEnabled = pipelineEnabled;
+        const QString capturedPriorityReason = previewSummary.currentPriorityReason;
         renderer_->readbackToImageAsync(
             [weakPlayback, capturedFramePos, capturedCompId,
              capturedPreviewDownsample, capturedEffectiveDownsample,
-             capturedPipelineEnabled](const QImage& capturedFrame) {
+             capturedPipelineEnabled, capturedPriorityReason](const QImage& capturedFrame) {
               if (!weakPlayback || capturedFrame.isNull()) return;
               const QString renderPath = capturedPipelineEnabled
                   ? QStringLiteral("gpu-blend")
@@ -9481,7 +9788,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               weakPlayback->storeCompositionPreviewFrameImage(
                   capturedFramePos, capturedFrame, capturedCompId,
                   capturedPreviewDownsample, capturedEffectiveDownsample,
-                  renderPath, QString(), true);
+                  renderPath, capturedPriorityReason, true);
             });
         renderCrashTrace("render-async-readback-end", renderFrameCounter_);
       }

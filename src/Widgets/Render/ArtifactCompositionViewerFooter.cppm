@@ -91,6 +91,9 @@ QString ramPreviewFooterText(Artifact::ArtifactPlaybackService* playback,
   const float hitRate = summary.hitRate > 0.0f ? summary.hitRate : hitRateFallback;
   const int inRamFrames =
       summary.inRamFrames > 0 ? summary.inRamFrames : cachedFrameCountFallback;
+  const QString prioritySuffix = summary.currentPriorityReason.trimmed().isEmpty()
+                                     ? QString()
+                                     : QStringLiteral(" | prio %1").arg(summary.currentPriorityReason);
   return QStringLiteral("RAM: playable %1/%2 | requested %3 | pending %4 | next %5 | range %6 | progress %7 | failed %8 | inRam %9 | onDisk %10 | readyMissingImage %11 | current %12%13 | hit%14")
       .arg(summary.playableFrames)
       .arg(summary.rangeFrames)
@@ -105,7 +108,7 @@ QString ramPreviewFooterText(Artifact::ArtifactPlaybackService* playback,
       .arg(summary.onDiskFrames)
       .arg(summary.readyMissingImageFrames)
       .arg(currentFrame)
-      .arg(ramPreviewStateNote(playback))
+      .arg(ramPreviewStateNote(playback) + prioritySuffix)
       .arg(QString::number(hitRate * 100.0f, 'f', 0) + QStringLiteral("%"));
 }
 }

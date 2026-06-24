@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <iostream>
 #include <vector>
@@ -41,6 +41,7 @@ export module Artifact.Widgets.ArtifactPropertyWidget;
 
 
 import Artifact.Layer.Abstract;
+import Artifact.Effect.Abstract;
 
 export namespace Artifact {
 
@@ -59,6 +60,8 @@ public:
     QSize sizeHint() const override;
 
     void setLayer(Artifact::ArtifactAbstractLayerPtr layer);
+    void setCompositionEffects(
+        const std::vector<std::shared_ptr<Artifact::ArtifactAbstractEffect>>& effects);
     void setLayers(const QSet<Artifact::ArtifactAbstractLayerPtr>& layers);
     int targetLayersCount() const;
     void setFocusedEffectId(const QString& effectId);

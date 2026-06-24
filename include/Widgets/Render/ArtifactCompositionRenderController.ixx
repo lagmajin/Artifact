@@ -30,6 +30,7 @@ import Geometry.CameraGuide;
 import Utils.Id;
 import Artifact.LOD.Manager;
 import Artifact.Widgets.TransformGizmo;
+import Artifact.Widgets.PointTrackerGizmo;
 import UI.View.Orientation.Navigator;
 
 export namespace Artifact {
@@ -181,6 +182,7 @@ void handleMouseMove(const QPointF& viewportPos);
 
 TransformGizmo* gizmo() const;
  class Artifact3DGizmo* gizmo3D() const;
+ ArtifactPointTrackerGizmo* trackerGizmo() const;
  struct CameraFrustumVisual {
   bool valid = false;
   LayerID layerId = LayerID::Nil();
@@ -197,7 +199,16 @@ TransformGizmo* gizmo() const;
  void setViewportOrientation(ArtifactCore::ViewOrientationHotspot hotspot);
  ArtifactCore::ViewOrientationHotspot viewportOrientation() const;
  Ray createPickingRay(const QPointF& viewportPos) const;
- Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
+  Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos) const;
+
+  // Tracker operations (TrackPoint tool)
+  void trackerInitialize();
+  void trackerTrackForward();
+  void trackerTrackBackward();
+  void trackerTrackAll();
+  void trackerApplyToPosition();
+  void trackerApplyToAnchor();
+  void trackerDelete();
 
 public /*slots*/:
 

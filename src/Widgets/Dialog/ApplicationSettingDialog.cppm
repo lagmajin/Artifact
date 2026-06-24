@@ -29,6 +29,7 @@ module;
 #include <QShowEvent>
 #include <QSlider>
 #include <QSpinBox>
+#include <QDoubleSpinBox>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QString>
@@ -62,6 +63,7 @@ import Artifact.Widgets.AI.ArtifactAICloudSettingsWidget;
 import Artifact.Widgets.PropertyEditor;
 import Application.AppSettings;
 import Artifact.Workspace.Modes;
+import Artifact.Audio.ScrubController;
 import FloatColorPickerDialog;
 import Widgets.Utils.CSS;
 import UI.ShortcutBindings;
@@ -637,7 +639,7 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
   groupLayout->addLayout(workspaceLayout);
 
   auto *bgLayout = new QHBoxLayout();
-  bgLayout->addWidget(new QLabel("Default Background Color:", this));
+  bgLayout->addWidget(new QLabel("Default Composition Background Color:", this));
   impl_->backgroundColorButton_ = new QPushButton(this);
   bgLayout->addWidget(impl_->backgroundColorButton_);
   bgLayout->addStretch();
@@ -650,7 +652,7 @@ ProjectDefaultsSettingPage::ProjectDefaultsSettingPage(QWidget *parent)
                    [this]() {
                      ArtifactWidgets::FloatColorPicker picker(this);
                      picker.setWindowTitle(
-                         QStringLiteral("Select Default Background Color"));
+                         QStringLiteral("Select Default Composition Background Color"));
                      picker.setInitialColor(ArtifactCore::FloatColor(
                          impl_->backgroundColor_.redF(),
                          impl_->backgroundColor_.greenF(),
@@ -725,7 +727,7 @@ QList<SettingItemInfo> ProjectDefaultsSettingPage::searchableItems() const {
                    "Initial workspace mode used for new projects",
                    "Project Defaults", impl_->workspaceModeCombo_});
   items.push_back({"Default Background Color",
-                   "Default background color for new compositions",
+                   "Default background color for new compositions only",
                    "Project Defaults", impl_->backgroundColorButton_});
   return items;
 }
@@ -1454,6 +1456,7 @@ public:
   MemoryAndCpuSettingPage *memoryPage_;
   ShortcutSettingPage *shortcutPage_;
   PluginSettingPage *pluginPage_;
+  AudioScrubSettingPage *audioScrubPage_;
 
   void setupUI(ApplicationSettingDialog *dialog);
   void onCategoryChanged(int index);
@@ -1463,7 +1466,7 @@ ApplicationSettingDialog::Impl::Impl()
     : categoryList_(nullptr), settingPages_(nullptr), buttonBox_(nullptr),
       generalPage_(nullptr), importPage_(nullptr), previewPage_(nullptr),
       projectPage_(nullptr), compositionPage_(nullptr), memoryPage_(nullptr),
-      shortcutPage_(nullptr), pluginPage_(nullptr) {}
+      shortcutPage_(nullptr), pluginPage_(nullptr), audioScrubPage_(nullptr) {}
 
 ApplicationSettingDialog::Impl::~Impl() {}
 
@@ -1484,6 +1487,7 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   categoryList_->addItem("Composition View");
   categoryList_->addItem("Memory & Performance");
   categoryList_->addItem("Shortcuts");
+  categoryList_->addItem("Audio Scrubbing");
   categoryList_->addItem("Plugins");
   categoryList_->setCurrentRow(0);
   contentLayout->addWidget(categoryList_);
@@ -1507,6 +1511,7 @@ void ApplicationSettingDialog::Impl::setupUI(ApplicationSettingDialog *dialog) {
   settingPages_->addWidget(compositionPage_);
   settingPages_->addWidget(memoryPage_);
   settingPages_->addWidget(shortcutPage_);
+  settingPages_->addWidget(audioScrubPage_ = new AudioScrubSettingPage(dialog));
   settingPages_->addWidget(pluginPage_ = new PluginSettingPage(dialog));
 
   contentLayout->addWidget(settingPages_, 1);
@@ -1556,6 +1561,9 @@ void ApplicationSettingDialog::loadSettings() {
   if (impl_->shortcutPage_) {
     impl_->shortcutPage_->loadSettings();
   }
+  if (impl_->audioScrubPage_) {
+    impl_->audioScrubPage_->loadSettings();
+  }
 }
 
 void ApplicationSettingDialog::saveSettings() {
@@ -1567,6 +1575,9 @@ void ApplicationSettingDialog::saveSettings() {
   impl_->memoryPage_->saveSettings();
   if (impl_->shortcutPage_) {
     impl_->shortcutPage_->saveSettings();
+  }
+  if (impl_->audioScrubPage_) {
+    impl_->audioScrubPage_->saveSettings();
   }
 
   ArtifactAppSettings::instance()->sync();
@@ -1780,6 +1791,80 @@ void AISettingPage::saveSettings() {
   }
 }
 QList<SettingItemInfo> AISettingPage::searchableItems() const { return {}; }
+
+// ── AudioScrubSettingPage ──────────────────────────
+class AudioScrubSettingPage::Impl {
+public:
+  QCheckBox *enabledCheckBox_;
+  QComboBox *latencyCombo_;
+  QDoubleSpinBox *volumeScaleSpinBox_;
+};
+
+AudioScrubSettingPage::AudioScrubSettingPage(QWidget *parent)
+    : QWidget(parent), impl_(new Impl()) {
+  auto *mainLayout = new QVBoxLayout(this);
+
+  auto *group = new QGroupBox(QStringLiteral("Audio Scrubbing"), this);
+  auto *layout = new QVBoxLayout(group);
+
+  impl_->enabledCheckBox_ =
+      new QCheckBox(QStringLiteral("Enable audio scrubbing during timeline drag"), this);
+  layout->addWidget(impl_->enabledCheckBox_);
+
+  auto *latencyRow = new QHBoxLayout();
+  latencyRow->addWidget(new QLabel(QStringLiteral("Latency target:"), this));
+  impl_->latencyCombo_ = new QComboBox(this);
+  impl_->latencyCombo_->addItems({
+      QStringLiteral("5 ms"),
+      QStringLiteral("10 ms"),
+      QStringLiteral("20 ms"),
+      QStringLiteral("50 ms"),
+  });
+  latencyRow->addWidget(impl_->latencyCombo_);
+  latencyRow->addStretch();
+  layout->addLayout(latencyRow);
+
+  auto *volumeRow = new QHBoxLayout();
+  volumeRow->addWidget(new QLabel(QStringLiteral("Volume scale:"), this));
+  impl_->volumeScaleSpinBox_ = new QDoubleSpinBox(this);
+  impl_->volumeScaleSpinBox_->setRange(0.0, 1.0);
+  impl_->volumeScaleSpinBox_->setSingleStep(0.05);
+  impl_->volumeScaleSpinBox_->setDecimals(2);
+  impl_->volumeScaleSpinBox_->setValue(0.5);
+  volumeRow->addWidget(impl_->volumeScaleSpinBox_);
+  volumeRow->addStretch();
+  layout->addLayout(volumeRow);
+
+  mainLayout->addWidget(group);
+  mainLayout->addStretch();
+}
+
+AudioScrubSettingPage::~AudioScrubSettingPage() { delete impl_; }
+
+void AudioScrubSettingPage::loadSettings() {
+  auto &ctrl = Artifact::ArtifactAudioScrubController::instance();
+  impl_->enabledCheckBox_->setChecked(ctrl.isEnabled());
+  const int latency = ctrl.latencyTargetMs();
+  int idx = 0;
+  if (latency <= 5) idx = 0;
+  else if (latency <= 10) idx = 1;
+  else if (latency <= 20) idx = 2;
+  else idx = 3;
+  impl_->latencyCombo_->setCurrentIndex(idx);
+  impl_->volumeScaleSpinBox_->setValue(ctrl.volumeScale());
+}
+
+void AudioScrubSettingPage::saveSettings() {
+  auto &ctrl = Artifact::ArtifactAudioScrubController::instance();
+  ctrl.setEnabled(impl_->enabledCheckBox_->isChecked());
+  static constexpr int kLatencyValues[] = {5, 10, 20, 50};
+  const int latencyMs = kLatencyValues[qMin(3, impl_->latencyCombo_->currentIndex())];
+  ctrl.setLatencyTargetMs(latencyMs);
+  ctrl.setVolumeScale(static_cast<float>(impl_->volumeScaleSpinBox_->value()));
+  ctrl.saveSettings();
+}
+
+QList<SettingItemInfo> AudioScrubSettingPage::searchableItems() const { return {}; }
 
 void ApplicationSettingDialog::showEvent(QShowEvent *event) {
   QDialog::showEvent(event);

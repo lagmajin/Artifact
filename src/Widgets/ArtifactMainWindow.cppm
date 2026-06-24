@@ -673,12 +673,23 @@ public:
       return;
     }
 
+    auto fmtDash = [](const std::vector<float> &pat) {
+      QStringList parts;
+      for (auto v : pat)
+        parts << QString::number(static_cast<double>(v), 'f', 1);
+      return parts.join(QStringLiteral(","));
+    };
+
     toolOptionsBar->setShapeOptions(
         static_cast<int>(shapeLayer->shapeType()),
         std::max(1, shapeLayer->shapeWidth()),
         std::max(1, shapeLayer->shapeHeight()), shapeLayer->fillEnabled(),
         shapeLayer->strokeEnabled(),
         static_cast<int>(std::lround(std::max(0.0f, shapeLayer->strokeWidth()))),
+        static_cast<int>(shapeLayer->strokeCap()),
+        static_cast<int>(shapeLayer->strokeJoin()),
+        static_cast<int>(shapeLayer->strokeAlign()),
+        fmtDash(shapeLayer->dashPattern()),
         static_cast<int>(std::lround(std::max(0.0f, shapeLayer->cornerRadius()))),
         std::max(3, shapeLayer->starPoints()),
         std::clamp(static_cast<int>(
@@ -944,6 +955,37 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
             shapeLayer->setStrokeWidth(strokeWidth);
             changed = true;
           }
+        } else if (optionName == QStringLiteral("strokeCap")) {
+          const auto cap = static_cast<Artifact::StrokeCap>(value.toInt());
+          if (shapeLayer->strokeCap() != cap) {
+            shapeLayer->setStrokeCap(cap);
+            changed = true;
+          }
+        } else if (optionName == QStringLiteral("strokeJoin")) {
+          const auto join = static_cast<Artifact::StrokeJoin>(value.toInt());
+          if (shapeLayer->strokeJoin() != join) {
+            shapeLayer->setStrokeJoin(join);
+            changed = true;
+          }
+        } else if (optionName == QStringLiteral("strokeAlign")) {
+          const auto align = static_cast<Artifact::StrokeAlign>(value.toInt());
+          if (shapeLayer->strokeAlign() != align) {
+            shapeLayer->setStrokeAlign(align);
+            changed = true;
+          }
+        } else if (optionName == QStringLiteral("dashPattern")) {
+          const QString text = value.toString();
+          std::vector<float> pattern;
+          const auto parts = text.split(QStringLiteral(","),
+                                        Qt::SkipEmptyParts);
+          for (const auto &p : parts) {
+            bool ok = false;
+            const float v = p.trimmed().toFloat(&ok);
+            if (ok && v > 0.0f)
+              pattern.push_back(v);
+          }
+          shapeLayer->setDashPattern(pattern);
+          changed = true;
         } else if (optionName == QStringLiteral("shapePrimary")) {
           switch (shapeLayer->shapeType()) {
           case Artifact::ShapeType::Rect:

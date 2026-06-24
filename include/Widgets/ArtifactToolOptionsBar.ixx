@@ -26,7 +26,9 @@ public:
                       bool enabled = true);
   void clearTextOptions();
   void setShapeOptions(int shapeType, int width, int height, bool fillEnabled,
-                       bool strokeEnabled, int strokeWidth, int cornerRadius,
+                       bool strokeEnabled, int strokeWidth, int strokeCap,
+                       int strokeJoin, int strokeAlign,
+                       const QString &dashPattern, int cornerRadius,
                        int starPoints, int starInnerRadiusPercent,
                        int polygonSides, bool enabled = true);
   void clearShapeOptions();

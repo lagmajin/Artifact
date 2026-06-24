@@ -32,7 +32,12 @@ export namespace Artifact {
   void setInitialGradientParams(ArtifactSolidFillType fillType,
                                 const FloatColor& startColor,
                                 const FloatColor& endColor,
-                                float angleDegrees);
+                                float angleDegrees,
+                                bool reverse = false,
+                                float centerX = 0.5f,
+                                float centerY = 0.5f,
+                                float scale = 1.0f,
+                                float offset = 0.0f);
   ArtifactSolidLayerInitParams getInitParams(const QString& name) const;
  //signals:
   void editComplete();

@@ -137,6 +137,10 @@ export namespace Artifact {
   bool removeEffectFromLayerInCurrentComposition(const LayerID& layerId, const QString& effectId);
   bool setEffectEnabledInLayerInCurrentComposition(const LayerID& layerId, const QString& effectId, bool enabled);
   bool moveEffectInLayerInCurrentComposition(const LayerID& layerId, const QString& effectId, int direction);
+  bool addEffectToCurrentComposition(std::shared_ptr<ArtifactAbstractEffect> effect);
+  bool removeEffectFromCurrentComposition(const QString& effectId);
+  bool setEffectEnabledInCurrentComposition(const QString& effectId, bool enabled);
+  bool moveEffectInCurrentComposition(const QString& effectId, int direction);
   QString layerRemovalConfirmationMessage(const CompositionID& compositionId, const LayerID& layerId) const;
   bool removeProjectItem(ProjectItem* item);
   bool moveProjectItem(ProjectItem* item, ProjectItem* newParent);

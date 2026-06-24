@@ -35,6 +35,7 @@ export namespace Artifact {
   // ArtifactAbstractLayer overrides
   void draw(ArtifactIRenderer* renderer) override;
   UniString className() const override { return "ArtifactLightLayer"; }
+  bool shouldIncludeInFinalRender() const override { return false; }
 
   // Light specific properties
   LightType lightType() const;

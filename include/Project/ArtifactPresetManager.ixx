@@ -42,6 +42,7 @@ export module Artifact.Project.PresetManager;
 
 import std;
 import Artifact.Effect.Abstract;
+import Artifact.Mask.LayerMask;
 import Property.Abstract;
 import Artifact.Color.Palette;
 
@@ -56,6 +57,11 @@ public:
 
     static QJsonObject effectToPresetJson(const ArtifactAbstractEffectPtr& effect);
     static bool applyPresetJsonToEffect(ArtifactAbstractEffectPtr& effect, const QJsonObject& json);
+
+    static QJsonObject maskToPresetJson(const LayerMask& mask);
+    static bool applyPresetJsonToMask(LayerMask& mask, const QJsonObject& json);
+    static bool saveMaskPreset(const LayerMask& mask, const QString& filePath);
+    static bool loadMaskPreset(LayerMask& mask, const QString& filePath);
 
     // Color Palette
     static bool saveColorPaletteMapping(const ArtifactCore::Color::ColorPaletteManager& manager, const QString& filePath);

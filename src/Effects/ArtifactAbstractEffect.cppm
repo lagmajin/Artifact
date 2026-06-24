@@ -62,6 +62,12 @@ public:
     std::shared_ptr<ArtifactEffectImplBase> cpuImpl_;
     std::shared_ptr<ArtifactEffectImplBase> gpuImpl_;
     EffectContext context_;
+    bool maskEnabled = false;
+    std::shared_ptr<ImageF32x4_RGBA> maskImage;
+    QString maskLayerId;
+    QString maskName;
+    bool maskInverted = false;
+    float maskOpacity = 1.0f;
 };
 
 ArtifactAbstractEffect::ArtifactAbstractEffect() : impl_(new Impl()) {}
@@ -121,6 +127,40 @@ EffectPipelineStage ArtifactAbstractEffect::pipelineStage() const { return impl_
 
 void ArtifactAbstractEffect::setPipelineStage(EffectPipelineStage stage) { impl_->pipelineStage = stage; }
 
+bool ArtifactAbstractEffect::hasMask() const {
+    return impl_->maskEnabled || !impl_->maskLayerId.isEmpty() || !impl_->maskName.isEmpty();
+}
+
+void ArtifactAbstractEffect::setMaskEnabled(bool enabled) { impl_->maskEnabled = enabled; }
+
+bool ArtifactAbstractEffect::maskEnabled() const { return impl_->maskEnabled; }
+
+void ArtifactAbstractEffect::setMaskImage(const std::shared_ptr<ImageF32x4_RGBA>& maskImage) {
+    impl_->maskImage = maskImage;
+}
+
+std::shared_ptr<ImageF32x4_RGBA> ArtifactAbstractEffect::maskImage() const {
+    return impl_->maskImage;
+}
+
+void ArtifactAbstractEffect::setMaskLayerId(const QString& layerId) { impl_->maskLayerId = layerId; }
+
+QString ArtifactAbstractEffect::maskLayerId() const { return impl_->maskLayerId; }
+
+void ArtifactAbstractEffect::setMaskName(const QString& name) { impl_->maskName = name; }
+
+QString ArtifactAbstractEffect::maskName() const { return impl_->maskName; }
+
+void ArtifactAbstractEffect::setMaskInverted(bool inverted) { impl_->maskInverted = inverted; }
+
+bool ArtifactAbstractEffect::maskInverted() const { return impl_->maskInverted; }
+
+void ArtifactAbstractEffect::setMaskOpacity(float opacity) {
+    impl_->maskOpacity = std::clamp(opacity, 0.0f, 1.0f);
+}
+
+float ArtifactAbstractEffect::maskOpacity() const { return impl_->maskOpacity; }
+
 void ArtifactAbstractEffect::applyCPUOnly(const ImageF32x4RGBAWithCache& src,
                                          ImageF32x4RGBAWithCache& dst) {
     const ComputeMode previousMode = impl_->mode;
@@ -142,6 +182,51 @@ void ArtifactAbstractEffect::applyConfigured(const ImageF32x4RGBAWithCache& src,
         impl_->mode = ComputeMode::CPU;
         apply(src, dst);
         impl_->mode = previousMode;
+    }
+
+    if (!impl_->maskEnabled || !impl_->maskImage) {
+        return;
+    }
+
+    const ImageF32x4_RGBA& maskSrc = *impl_->maskImage;
+    if (maskSrc.width() <= 0 || maskSrc.height() <= 0 ||
+        dst.width() <= 0 || dst.height() <= 0 ||
+        maskSrc.width() != dst.width() || maskSrc.height() != dst.height()) {
+        return;
+    }
+
+    ImageF32x4_RGBA& dstImage = dst.image();
+    const ImageF32x4_RGBA srcCopy = src.image().DeepCopy();
+    const int width = dstImage.width();
+    const int height = dstImage.height();
+
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const FloatRGBA maskPixel = maskSrc.getPixel(x, y);
+            float maskAlpha = maskPixel.a();
+            if (impl_->maskInverted) {
+                maskAlpha = 1.0f - maskAlpha;
+            }
+            maskAlpha = std::clamp(maskAlpha * impl_->maskOpacity, 0.0f, 1.0f);
+            if (maskAlpha <= 0.0f) {
+                dstImage.setPixel(x, y, srcCopy.getPixel(x, y));
+                continue;
+            }
+            if (maskAlpha >= 1.0f) {
+                continue;
+            }
+
+            const FloatRGBA basePixel = srcCopy.getPixel(x, y);
+            const FloatRGBA effectPixel = dstImage.getPixel(x, y);
+            const float inv = 1.0f - maskAlpha;
+            dstImage.setPixel(
+                x, y,
+                FloatRGBA(
+                    basePixel.r() * inv + effectPixel.r() * maskAlpha,
+                    basePixel.g() * inv + effectPixel.g() * maskAlpha,
+                    basePixel.b() * inv + effectPixel.b() * maskAlpha,
+                    basePixel.a() * inv + effectPixel.a() * maskAlpha));
+        }
     }
 }
 
@@ -212,13 +297,51 @@ std::shared_ptr<ArtifactEffectImplBase> ArtifactAbstractEffect::gpuImpl() const 
 }
 
 std::vector<ArtifactCore::AbstractProperty> ArtifactAbstractEffect::getProperties() const {
-    // Default: return empty list. Subclasses should override to expose properties.
-    return {};
+    std::vector<ArtifactCore::AbstractProperty> props;
+    props.reserve(5);
+
+    auto makeProp = [](const char* name, const QVariant& value) {
+        ArtifactCore::AbstractProperty prop;
+        prop.setName(QString::fromUtf8(name));
+        prop.setValue(value);
+        return prop;
+    };
+
+    props.push_back(makeProp("mask.enabled", impl_->maskEnabled));
+    props.push_back(makeProp("mask.hasImage", static_cast<bool>(impl_->maskImage)));
+    props.push_back(makeProp("mask.layerId", impl_->maskLayerId));
+    props.push_back(makeProp("mask.name", impl_->maskName));
+    props.push_back(makeProp("mask.inverted", impl_->maskInverted));
+    props.push_back(makeProp("mask.opacity", impl_->maskOpacity));
+    return props;
 }
 
 void ArtifactAbstractEffect::setPropertyValue(const ArtifactCore::UniString& name, const QVariant& value) {
-    Q_UNUSED(name);
-    Q_UNUSED(value);
+    const QString key = name.toQString();
+    if (key == QStringLiteral("mask.enabled")) {
+        setMaskEnabled(value.toBool());
+        return;
+    }
+    if (key == QStringLiteral("mask.hasImage")) {
+        Q_UNUSED(value);
+        return;
+    }
+    if (key == QStringLiteral("mask.layerId")) {
+        setMaskLayerId(value.toString());
+        return;
+    }
+    if (key == QStringLiteral("mask.name")) {
+        setMaskName(value.toString());
+        return;
+    }
+    if (key == QStringLiteral("mask.inverted")) {
+        setMaskInverted(value.toBool());
+        return;
+    }
+    if (key == QStringLiteral("mask.opacity")) {
+        setMaskOpacity(value.toFloat());
+        return;
+    }
     // Default: no-op. Subclasses override.
 }
 

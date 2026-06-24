@@ -981,6 +981,8 @@ public:
         typeText = QStringLiteral("Video Layer");
       } else if (className.contains(QStringLiteral("Camera"), Qt::CaseInsensitive)) {
         typeText = QStringLiteral("Camera Layer");
+      } else if (className.contains(QStringLiteral("Light"), Qt::CaseInsensitive)) {
+        typeText = QStringLiteral("Light Layer");
       } else if (className.contains(QStringLiteral("Composition"), Qt::CaseInsensitive)) {
         typeText = QStringLiteral("Precomp Layer");
       } else if (targetLayer->is3D()) {
@@ -1699,6 +1701,41 @@ public:
           clipboardHasLayerData);
       addSeparator();
       add(QStringLiteral("Command Palette"), [this]() { showCommandPalette(); });
+    }
+
+    // Tracker context menu (when TrackPoint tool is active)
+    {
+      const auto *app = ArtifactApplicationManager::instance();
+      const auto *tm = app ? app->toolManager() : nullptr;
+      if (tm && tm->activeTool() == ToolType::TrackPoint) {
+        addSeparator();
+        add(QStringLiteral("Track Forward"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerTrackForward();
+            });
+        add(QStringLiteral("Track Backward"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerTrackBackward();
+            });
+        add(QStringLiteral("Track All"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerTrackAll();
+            });
+        addSeparator();
+        add(QStringLiteral("Apply to Layer Position"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerApplyToPosition();
+            });
+        add(QStringLiteral("Apply to Layer Anchor"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerApplyToAnchor();
+            });
+        addSeparator();
+        add(QStringLiteral("Delete Tracker"),
+            [this, ctrl = controller_]() {
+              if (ctrl) ctrl->trackerDelete();
+            });
+      }
     }
 
     viewportOverlayActions_ = actions;
@@ -4084,6 +4121,9 @@ public:
     case ToolType::Pen:
       toolModeButton_->setText(QStringLiteral("Mask"));
       break;
+    case ToolType::AnchorPoint:
+      toolModeButton_->setText(QStringLiteral("Anchor"));
+      break;
     default:
       toolModeButton_->setText(QStringLiteral("Tool"));
       break;
@@ -4391,6 +4431,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     action->setChecked(checked);
     if (toolType == ToolType::Pen) {
       action->setToolTip(QStringLiteral("Enter Mask editing; Roto fields appear in property panels where supported."));
+    } else if (toolType == ToolType::AnchorPoint) {
+      action->setToolTip(QStringLiteral("Enter Anchor editing; drag the anchor point directly in the viewport."));
     }
     toolGroup->addAction(action);
     connect(action, &QAction::triggered, this, [this, toolType, text]() {
@@ -4414,11 +4456,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   addToolAction(QStringLiteral("Mask"),
                 QStringLiteral("MaterialVS/neutral/draw.svg"), ToolType::Pen,
                 false);
+  addToolAction(QStringLiteral("Anchor"),
+                QStringLiteral("MaterialVS/neutral/transform.svg"),
+                ToolType::AnchorPoint, false);
   impl_->toolModeButton_ = new QToolButton(this);
   impl_->toolModeButton_->setText(QStringLiteral("Select"));
   impl_->toolModeButton_->setMenu(toolMenu);
   impl_->toolModeButton_->setPopupMode(QToolButton::InstantPopup);
-  impl_->toolModeButton_->setToolTip(QStringLiteral("Select current editing tool. Mask opens mask editing."));
+  impl_->toolModeButton_->setToolTip(QStringLiteral("Select current editing tool. Mask opens mask editing. Anchor opens pivot editing."));
   impl_->topToolbar_->addWidget(impl_->toolModeButton_);
 
   auto *gizmoMenu = new QMenu(this);

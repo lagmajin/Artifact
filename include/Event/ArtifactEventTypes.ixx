@@ -2,6 +2,7 @@ module;
 #include <utility>
 #include <QString>
 #include <QStringList>
+#include <QVariant>
 
 export module Artifact.Event.Types;
 
@@ -212,6 +213,22 @@ enum class PlaybackSkipMode {
 
 struct PlaybackSkipModeChangedEvent {
     PlaybackSkipMode mode;
+};
+
+struct ClipCopiedEvent {
+    QString compositionId;
+    QString layerId;
+    QString layerName;
+    qint64 frame = 0;
+    QVariant data;
+};
+
+struct ClipCutEvent {
+    QString compositionId;
+    QString layerId;
+    QString layerName;
+    qint64 frame = 0;
+    QVariant data;
 };
 
 } // namespace Artifact

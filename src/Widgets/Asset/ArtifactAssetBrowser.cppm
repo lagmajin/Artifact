@@ -92,12 +92,15 @@ module Widgets.AssetBrowser;
 
 import Widgets.Utils.CSS;
 import Artifact.Service.Project;
+import Artifact.Application.Manager;
 import Artifact.Service.FootageInterpret;
 import Widgets.Dialog.InterpretFootage;
 import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Project.Manager;
 import Artifact.Project.Cleanup;
+import Artifact.Project.PresetManager;
+import Artifact.Mask.LayerMask;
 import AssetMenuModel;
 import AssetDirectoryModel;
 import Utils.String.UniString;
@@ -2696,7 +2699,12 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    }
 
    info += QString("Size: %1 KB<br>").arg(fileInfo.size() / 1024);
-   info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
+   const QString lowerName = fileInfo.fileName().toLower();
+   if (lowerName.endsWith(QStringLiteral(".mask.json"))) {
+    info += QStringLiteral("Type: Mask Preset<br>");
+   } else {
+    info += QString("Type: %1<br>").arg(fileInfo.suffix().toUpper());
+   }
    info += QString("Modified: %1<br>").arg(fileInfo.lastModified().toString("yyyy-MM-dd hh:mm"));
    info += QString("Favorite: %1<br>").arg(impl_->isFavoriteAssetPath(filePath) ? QStringLiteral("Yes") : QStringLiteral("No"));
    info += QString("Project: %1<br>").arg(impl_->isImportedAssetPath(filePath) ? QStringLiteral("Imported") : QStringLiteral("Not Imported"));
@@ -2704,8 +2712,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    info += QString("Status: %1<br>").arg(impl_->isMissingAssetPath(filePath) ? QStringLiteral("Missing") : QStringLiteral("OK"));
 
    // Get detailed information based on file type
-   QString fileName = fileInfo.fileName();
-   QString lowerName = fileName.toLower();
+   const QString fileName = fileInfo.fileName();
 
    // Image files
    if (lowerName.endsWith(".png") || lowerName.endsWith(".jpg") ||
@@ -2759,6 +2766,9 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
     info += QString("Kind: Font<br>");
     // Font-specific information could be added here if needed
    }
+   else if (fileName.toLower().endsWith(QStringLiteral(".mask.json"))) {
+    info += QString("Kind: Mask Preset<br>");
+   }
 
    impl_->fileInfoLabel_->setText(info);
 }
@@ -2774,16 +2784,24 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 
   // Create context menu
   QMenu contextMenu;
+  QMenu* frequentMenu = contextMenu.addMenu(QStringLiteral("Frequent"));
+  QMenu* allMenu = contextMenu.addMenu(QStringLiteral("All"));
+
+  auto addAction = [this](QMenu* menu, const QString& text, auto&& callback) -> QAction* {
+    if (!menu) {
+      return nullptr;
+    }
+    QAction* action = menu->addAction(text);
+    connect(action, &QAction::triggered, this, std::forward<decltype(callback)>(callback));
+    return action;
+  };
 
   // New Folder action (always available)
-  QAction* newFolderAction = contextMenu.addAction("New Folder (Ctrl+Shift+N)");
-  connect(newFolderAction, &QAction::triggered, this, [this]() {
+  addAction(frequentMenu, QStringLiteral("New Folder (Ctrl+Shift+N)"), [this]() {
    if (impl_) {
     impl_->createNewFolder();
    }
   });
-
-  contextMenu.addSeparator();
 
   const QStringList selectedAssetPaths = impl_->selectedAssetPaths();
   const QStringList importTargets = selectedAssetPaths.isEmpty() ? QStringList{filePath} : selectedAssetPaths;
@@ -2792,8 +2810,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   const QString addActionLabel = importTargets.size() > 1
    ? QStringLiteral("Add %1 Items to Project").arg(importTargets.size())
    : QStringLiteral("Add to Project");
-  QAction* addToProjectAction = contextMenu.addAction(addActionLabel);
-  connect(addToProjectAction, &QAction::triggered, this, [this, importTargets, filePath]() {
+  addAction(frequentMenu, addActionLabel, [this, importTargets, filePath]() {
    if (importTargets.isEmpty() && filePath.isEmpty()) return;
    auto* svc = ArtifactProjectService::instance();
    if (!svc) return;
@@ -2804,19 +2821,15 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    }
   });
 
-  contextMenu.addSeparator();
-
   if (!item.isFolder) {
-   QAction* previewAction = contextMenu.addAction("Preview in Contents Viewer");
-   connect(previewAction, &QAction::triggered, this, [this, filePath]() {
+   addAction(frequentMenu, QStringLiteral("Preview in Contents Viewer"), [this, filePath]() {
     if (filePath.isEmpty()) return;
     itemDoubleClicked(filePath);
    });
   }
 
 if (item.isFolder) {
-    QAction* openFolderAction = contextMenu.addAction("Open Folder");
-    connect(openFolderAction, &QAction::triggered, this, [this, filePath]() {
+    addAction(frequentMenu, QStringLiteral("Open Folder"), [this, filePath]() {
      if (filePath.isEmpty()) return;
      impl_->currentDirectoryPath_ = filePath;
      impl_->clearThumbnailCache();
@@ -2824,13 +2837,11 @@ if (item.isFolder) {
      impl_->syncDirectorySelection();
      folderChanged(filePath);
     });
-    contextMenu.addSeparator();
    }
 
 // Relink action for footage items
 if (!item.isFolder) {
-  QAction* relinkAction = contextMenu.addAction("Relink Selected Footage...");
-  connect(relinkAction, &QAction::triggered, this, [this, filePath]() {
+  addAction(allMenu, QStringLiteral("Relink Selected Footage..."), [this, filePath]() {
     if (filePath.isEmpty()) return;
     // Show file dialog to select new file path
     QString newPath = QFileDialog::getOpenFileName(nullptr, "Relink Footage", QDir::homePath(), "All Files (*.*)");
@@ -2902,8 +2913,7 @@ if (!item.isFolder) {
   // Open in File Explorer action
   // Open in File Explorer action
   const bool favorite = impl_->isFavoriteAssetPath(filePath);
-  QAction* favoriteAction = contextMenu.addAction(favorite ? "Remove from Favorites" : "Add to Favorites");
-  connect(favoriteAction, &QAction::triggered, this, [this, filePath]() {
+  addAction(frequentMenu, favorite ? QStringLiteral("Remove from Favorites") : QStringLiteral("Add to Favorites"), [this, filePath]() {
    if (filePath.isEmpty()) return;
    if (!impl_->directoryModel_) return;
    impl_->toggleFavoritePath(filePath);
@@ -2911,25 +2921,54 @@ if (!item.isFolder) {
    impl_->syncDirectorySelection();
   });
 
-   // Open in File Explorer action
-   QAction* openInExplorerAction = contextMenu.addAction("Open in File Explorer");
-   connect(openInExplorerAction, &QAction::triggered, this, [filePath]() {
+  if (filePath.toLower().endsWith(QStringLiteral(".mask.json"))) {
+    addAction(frequentMenu, QStringLiteral("Apply Mask Preset to Selected Layer"), [this, filePath]() {
+      auto* app = ArtifactApplicationManager::instance();
+      auto* selectionManager = app ? app->layerSelectionManager() : nullptr;
+      if (!selectionManager) {
+        QMessageBox::information(this, QStringLiteral("Mask Preset"),
+                                 QStringLiteral("適用先レイヤーが見つかりません。"));
+        return;
+      }
+      auto layer = selectionManager->currentLayer();
+      if (!layer) {
+        QMessageBox::information(this, QStringLiteral("Mask Preset"),
+                                 QStringLiteral("先に適用先レイヤーを選択してください。"));
+        return;
+      }
+      LayerMask mask;
+      if (!ArtifactPresetManager::loadMaskPreset(mask, filePath)) {
+        QMessageBox::warning(this, QStringLiteral("Mask Preset"),
+                             QStringLiteral("マスクプリセットを読み込めませんでした。"));
+        return;
+      }
+      const auto choice = QMessageBox::question(
+          this, QStringLiteral("Mask Preset"),
+          QStringLiteral("マスクを置換しますか？\n\n"
+                         "Yes: 置換\nNo: 追加"),
+          QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+      if (choice == QMessageBox::Yes) {
+        layer->clearMasks();
+      }
+      layer->addMask(mask);
+      layer->changed();
+    });
+  }
+
+  // Open in File Explorer action
+   addAction(allMenu, QStringLiteral("Open in File Explorer"), [filePath]() {
     QFileInfo fileInfo(filePath);
     QString folderPath = fileInfo.dir().absolutePath();
     QDesktopServices::openUrl(QUrl::fromLocalFile(folderPath));
    });
 
   // Copy file path action
-  QAction* copyPathAction = contextMenu.addAction("Copy File Path");
-  connect(copyPathAction, &QAction::triggered, this, [filePath]() {
+  addAction(frequentMenu, QStringLiteral("Copy File Path"), [filePath]() {
    QApplication::clipboard()->setText(filePath);
   });
 
-  contextMenu.addSeparator();
-
   // Rename action (F2)
-  QAction* renameAction = contextMenu.addAction("Rename (F2)");
-  connect(renameAction, &QAction::triggered, this, [this]() {
+  addAction(allMenu, QStringLiteral("Rename (F2)"), [this]() {
    if (impl_) {
     impl_->renameSelected();
    }
@@ -2939,18 +2978,14 @@ if (!item.isFolder) {
   const QString deleteLabel = selectedAssetPaths.size() > 1
    ? QStringLiteral("Delete %1 Items (Del)").arg(selectedAssetPaths.size())
    : QStringLiteral("Delete (Del)");
-  QAction* deleteAction = contextMenu.addAction(deleteLabel);
-  connect(deleteAction, &QAction::triggered, this, [this]() {
+  addAction(allMenu, deleteLabel, [this]() {
    if (impl_) {
     impl_->deleteSelected();
    }
   });
 
-  contextMenu.addSeparator();
-
   // Show file properties action
-  QAction* showPropertiesAction = contextMenu.addAction("Properties");
-  connect(showPropertiesAction, &QAction::triggered, this, [filePath]() {
+  addAction(frequentMenu, QStringLiteral("Properties"), [filePath]() {
    QFileInfo fileInfo(filePath);
    QString info = QString("Name: %1\nSize: %2 bytes\nType: %3\nPath: %4")
      .arg(fileInfo.fileName())

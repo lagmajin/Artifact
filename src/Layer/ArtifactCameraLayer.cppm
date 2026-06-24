@@ -51,6 +51,8 @@ struct ArtifactCameraLayer::Impl {
 
     // Projection mode
     ProjectionMode projectionMode_ = ProjectionMode::Perspective;
+    StereoMode stereoMode_ = StereoMode::Mono;
+    float ipd_ = 0.064f;
 
     // Perspective-specific
     float fov_ = 0.0f; // 0 = auto from zoom, >0 = manual FOV
@@ -173,6 +175,12 @@ void ArtifactCameraLayer::setProjectionMode(ProjectionMode mode) {
     changed();
 }
 
+StereoMode ArtifactCameraLayer::stereoMode() const { return camImpl_->stereoMode_; }
+void ArtifactCameraLayer::setStereoMode(StereoMode mode) {
+    camImpl_->stereoMode_ = mode;
+    changed();
+}
+
 float ArtifactCameraLayer::fov() const {
     if (camImpl_->useManualFov_) {
         return camImpl_->fov_;
@@ -222,6 +230,12 @@ void ArtifactCameraLayer::setNearClipPlane(float d) {
 float ArtifactCameraLayer::farClipPlane() const { return camImpl_->farClipPlane_; }
 void ArtifactCameraLayer::setFarClipPlane(float d) {
     camImpl_->farClipPlane_ = std::max(camImpl_->nearClipPlane_ + 0.01f, d);
+    changed();
+}
+
+float ArtifactCameraLayer::ipd() const { return camImpl_->ipd_; }
+void ArtifactCameraLayer::setIpd(float ipd) {
+    camImpl_->ipd_ = std::max(0.0f, ipd);
     changed();
 }
 
@@ -283,6 +297,13 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
         static_cast<int>(camImpl_->projectionMode_), -150);
     modeProp->setTooltip(QStringLiteral("0 = Perspective, 1 = Orthographic"));
     projectionOptions.addProperty(modeProp);
+
+    auto stereoModeProp = persistentLayerProperty(
+        QStringLiteral("Camera Options/Stereo Mode"),
+        ArtifactCore::PropertyType::Integer,
+        static_cast<int>(camImpl_->stereoMode_), -149);
+    stereoModeProp->setTooltip(QStringLiteral("0 = Mono, 1 = TopBottom, 2 = SideBySide"));
+    projectionOptions.addProperty(stereoModeProp);
 
     auto manualFovProp = persistentLayerProperty(
         QStringLiteral("Camera Options/Manual FOV"),
@@ -346,6 +367,15 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactCameraLayer::getLayerPropertyGr
     farProp->setUnit(QStringLiteral("px"));
     clippingOptions.addProperty(farProp);
 
+    auto ipdProp = persistentLayerProperty(QStringLiteral("Camera Options/IPD"),
+                                           ArtifactCore::PropertyType::Float,
+                                           static_cast<double>(camImpl_->ipd_), -114);
+    ipdProp->setHardRange(0.0, 1.0);
+    ipdProp->setSoftRange(0.02, 0.10);
+    ipdProp->setUnit(QStringLiteral("m"));
+    ipdProp->setTooltip(QStringLiteral("Inter-pupillary distance for stereo preview"));
+    clippingOptions.addProperty(ipdProp);
+
     // DOF related
     lensOptions.addProperty(persistentLayerProperty(
         QStringLiteral("Camera Options/Depth of Field"),
@@ -398,6 +428,9 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
     if (propertyPath == "Camera Options/Projection Mode") {
         setProjectionMode(static_cast<ProjectionMode>(value.toInt()));
         return true;
+    } else if (propertyPath == "Camera Options/Stereo Mode") {
+        setStereoMode(static_cast<StereoMode>(value.toInt()));
+        return true;
     } else if (propertyPath == "Camera Options/Manual FOV") {
         setUseManualFov(value.toBool());
         return true;
@@ -418,6 +451,9 @@ bool ArtifactCameraLayer::setLayerPropertyValue(const QString& propertyPath, con
         return true;
     } else if (propertyPath == "Camera Options/Far Clip") {
         setFarClipPlane(value.toFloat());
+        return true;
+    } else if (propertyPath == "Camera Options/IPD") {
+        setIpd(value.toFloat());
         return true;
     } else if (propertyPath == "Camera Options/Depth of Field") {
         setDepthOfField(value.toBool());
@@ -443,6 +479,7 @@ QJsonObject ArtifactCameraLayer::toJson() const
 {
     QJsonObject obj = ArtifactAbstractLayer::toJson();
     obj["cameraProjectionMode"] = static_cast<int>(camImpl_->projectionMode_);
+    obj["cameraStereoMode"] = static_cast<int>(camImpl_->stereoMode_);
     obj["cameraUseManualFov"] = camImpl_->useManualFov_;
     obj["cameraFov"] = static_cast<double>(camImpl_->fov_);
     obj["cameraZoom"] = static_cast<double>(camImpl_->zoom_);
@@ -455,6 +492,7 @@ QJsonObject ArtifactCameraLayer::toJson() const
     obj["cameraOrthoHeight"] = static_cast<double>(camImpl_->orthoHeight_);
     obj["cameraNearClip"] = static_cast<double>(camImpl_->nearClipPlane_);
     obj["cameraFarClip"] = static_cast<double>(camImpl_->farClipPlane_);
+    obj["cameraIpd"] = static_cast<double>(camImpl_->ipd_);
     return obj;
 }
 
@@ -463,6 +501,9 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
     ArtifactAbstractLayer::fromJsonProperties(obj);
     if (obj.contains("cameraProjectionMode")) {
         setProjectionMode(static_cast<ProjectionMode>(obj.value("cameraProjectionMode").toInt()));
+    }
+    if (obj.contains("cameraStereoMode")) {
+        setStereoMode(static_cast<StereoMode>(obj.value("cameraStereoMode").toInt()));
     }
     if (obj.contains("cameraUseManualFov")) {
         setUseManualFov(obj.value("cameraUseManualFov").toBool());
@@ -499,6 +540,9 @@ void ArtifactCameraLayer::fromJsonProperties(const QJsonObject& obj)
     }
     if (obj.contains("cameraFarClip")) {
         setFarClipPlane(static_cast<float>(obj.value("cameraFarClip").toDouble(camImpl_->farClipPlane_)));
+    }
+    if (obj.contains("cameraIpd")) {
+        setIpd(static_cast<float>(obj.value("cameraIpd").toDouble(camImpl_->ipd_)));
     }
 }
 

@@ -65,10 +65,11 @@ ArtifactClipBufferWidget::Impl::Impl(ArtifactClipBufferWidget *parent)
     QObject::connect(clearButton_, &QPushButton::clicked, parent, [this]() { onClear(); });
     QObject::connect(listView_, &QListView::doubleClicked, parent, [this](const QModelIndex &idx) { onDoubleClicked(idx); });
 
-    // Subscribe to EventBus copies if applicable
-    copySubscription_ = ArtifactCore::globalEventBus().subscribe<FrameChangedEvent>(
-        [this](const auto &) {
-            // Placeholder
+    // Subscribe to copy/cut events to populate clip buffer history
+    copySubscription_ = ArtifactCore::globalEventBus().subscribe<ClipCopiedEvent>(
+        [this](const ClipCopiedEvent &e) {
+            handleClipboardCopy(e.layerName, e.frame,
+                                QStringLiteral("Copied"), e.data);
         });
 }
 

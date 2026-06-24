@@ -73,6 +73,38 @@ QRect sourceCropToRect(const Artifact::SourceCrop& crop, const QSize& sourceSize
         QRect(0, 0, sourceSize.width(), sourceSize.height()));
 }
 
+QImage makeTransparentCropCanvas(const QImage& source, const QRect& cropRect)
+{
+    if (source.isNull() || !cropRect.isValid() || cropRect.width() <= 0 || cropRect.height() <= 0) {
+        return source;
+    }
+
+    QImage canvas(source.size(), QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(Qt::transparent);
+    QPainter painter(&canvas);
+    painter.drawImage(cropRect.topLeft(), source.copy(cropRect));
+    return canvas;
+}
+
+ArtifactCore::ImageF32x4_RGBA makeTransparentCropCanvas(
+    const ArtifactCore::ImageF32x4_RGBA& source, const QRect& cropRect)
+{
+    if (source.isEmpty() || !cropRect.isValid() || cropRect.width() <= 0 || cropRect.height() <= 0) {
+        return source;
+    }
+
+    ArtifactCore::ImageF32x4_RGBA canvas;
+    canvas.resize(source.width(), source.height());
+    canvas.fill(ArtifactCore::FloatRGBA(0.0f, 0.0f, 0.0f, 0.0f));
+    for (int y = 0; y < cropRect.height(); ++y) {
+        for (int x = 0; x < cropRect.width(); ++x) {
+            canvas.setPixel(cropRect.x() + x, cropRect.y() + y,
+                            source.getPixel(cropRect.x() + x, cropRect.y() + y));
+        }
+    }
+    return canvas;
+}
+
 QImage loadImageViaOIIO(const QString& path, QSize* sizeOut = nullptr, QString* errorOut = nullptr)
 {
     const std::string utf8Path = path.toUtf8().toStdString();
@@ -526,16 +558,12 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
 
     const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
     const bool useCrop = cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0;
-    if (useCrop) {
-        size = Size_2D(cropRect.width(), cropRect.height());
-    }
 
     const QMatrix4x4 baseTransform = getGlobalTransform4x4();
     if (hasCurrentFrameBuffer()) {
         const ArtifactCore::ImageF32x4_RGBA& buffer = currentFrameBuffer();
         const ArtifactCore::ImageF32x4_RGBA renderBuffer =
-            useCrop ? buffer.crop(cropRect.x(), cropRect.y(), cropRect.width(), cropRect.height())
-                    : buffer;
+            useCrop ? makeTransparentCropCanvas(buffer, cropRect) : buffer;
         drawWithClonerEffect(this, baseTransform, [renderer, renderBuffer, size, this](const QMatrix4x4& transform, float weight) {
             renderer->drawSpriteTransformed(0.0f, 0.0f,
                                             static_cast<float>(size.width),
@@ -549,7 +577,7 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
     QImage img = toQImage();
     if (img.isNull()) return;
     if (useCrop) {
-        img = img.copy(cropRect);
+        img = makeTransparentCropCanvas(img, cropRect);
     }
 
     drawWithClonerEffect(this, baseTransform, [renderer, img, size, this](const QMatrix4x4& transform, float weight) {
@@ -637,7 +665,12 @@ QImage ArtifactImageLayer::toQImage() const
             QStringLiteral("No cache available, using placeholder"));
         return makeMissingImagePlaceholder(QSize(256, 256), QStringLiteral("Missing image"));
     }
-    return *impl_->cache_;
+    const QImage& base = *impl_->cache_;
+    const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(base.width(), base.height()));
+    if (cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0) {
+        return makeTransparentCropCanvas(base, cropRect);
+    }
+    return base;
 }
 
 const ArtifactCore::ImageF32x4_RGBA& ArtifactImageLayer::currentFrameBuffer() const
@@ -691,11 +724,6 @@ QRectF ArtifactImageLayer::localBounds() const
     const auto size = sourceSize();
     if (size.width <= 0 || size.height <= 0) {
         return QRectF();
-    }
-
-    const QRect cropRect = sourceCropToRect(impl_->sourceCrop_, QSize(size.width, size.height));
-    if (cropRect.isValid() && cropRect.width() > 0 && cropRect.height() > 0) {
-        return QRectF(0.0, 0.0, static_cast<qreal>(cropRect.width()), static_cast<qreal>(cropRect.height()));
     }
 
     if (!impl_->fitToLayer_ && impl_->width_ > 0 && impl_->height_ > 0) {

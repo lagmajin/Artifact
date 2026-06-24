@@ -1316,6 +1316,67 @@ QVector<LayerID> selectedLayerIdsInCompositionOrder(const ArtifactCompositionPtr
   return ordered;
 }
 
+QVector<LayerID> layerIdsWithStride(const QVector<LayerID>& orderedIds, int stride, int offset)
+{
+  QVector<LayerID> ids;
+  if (stride <= 0) {
+    return ids;
+  }
+  for (int i = offset; i < orderedIds.size(); i += stride) {
+    ids.push_back(orderedIds[i]);
+  }
+  return ids;
+}
+
+QVector<LayerID> layerIdsWithSameName(const ArtifactCompositionPtr& comp, const QVector<LayerID>& selectedIds)
+{
+  QVector<LayerID> ids;
+  if (!comp || selectedIds.isEmpty()) {
+    return ids;
+  }
+
+  QSet<QString> names;
+  for (const auto& id : selectedIds) {
+    auto layer = comp->layerById(id);
+    if (!layer) {
+      continue;
+    }
+    const QString name = layer->layerName().trimmed();
+    if (!name.isEmpty()) {
+      names.insert(name);
+    }
+  }
+  if (names.isEmpty()) {
+    return ids;
+  }
+
+  for (const auto& layer : comp->allLayer()) {
+    if (!layer) {
+      continue;
+    }
+    if (names.contains(layer->layerName().trimmed())) {
+      ids.push_back(layer->id());
+    }
+  }
+  return ids;
+}
+
+void replaceSelectionWithIds(const ArtifactCompositionPtr& comp, const QVector<LayerID>& ids)
+{
+  auto* selectionManager = currentLayerSelectionManager();
+  if (!selectionManager) {
+    return;
+  }
+
+  selectionManager->setActiveComposition(comp);
+  selectionManager->clearSelection();
+  for (const auto& id : ids) {
+    if (comp) {
+      selectionManager->addToSelection(comp->layerById(id));
+    }
+  }
+}
+
 std::vector<LayerPlacementSnapshot> captureLayerPlacements(
     const ArtifactCompositionPtr& comp, const QVector<LayerID>& ids)
 {
@@ -3707,8 +3768,10 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     auto comp = safeCompositionLookup(impl_->compositionId);
     QMenu menu(this);
+    QMenu* frequentMenu = menu.addMenu(QStringLiteral("Frequent"));
+    QMenu* allMenu = menu.addMenu(QStringLiteral("All"));
     if (auto *compLayer = dynamic_cast<ArtifactCompositionLayer *>(layer.get())) {
-      QMenu *precompMenu = menu.addMenu(QStringLiteral("プリコンポーズ"));
+      QMenu *precompMenu = allMenu->addMenu(QStringLiteral("プリコンポーズ"));
       precompMenu->addAction(QStringLiteral("コンポジションを開く"),
                              [triggerOpenComposition]() {
                                triggerOpenComposition();
@@ -3724,10 +3787,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       if (compLayer->sourceCompositionId().isNil()) {
         precompMenu->setEnabled(false);
       }
-      menu.addSeparator();
     }
     if (auto *groupLayer = dynamic_cast<ArtifactGroupLayer *>(layer.get())) {
-      QMenu *groupMenu = menu.addMenu(QStringLiteral("グループ"));
+      QMenu *groupMenu = allMenu->addMenu(QStringLiteral("グループ"));
       groupMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
       const bool collapsed = groupLayer->isCollapsed();
       QAction *toggleCollapseAct = groupMenu->addAction(
@@ -3779,18 +3841,16 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
           }
         }
       });
-      menu.addSeparator();
     }
     const bool isImageLayer = std::dynamic_pointer_cast<ArtifactImageLayer>(layer) != nullptr;
     if (isImageLayer) {
-      menu.addAction(tt("layer_panel.replace_image", "Replace Image..."), [triggerReplaceLayerSource]() {
+      allMenu->addAction(tt("layer_panel.replace_image", "Replace Image..."), [triggerReplaceLayerSource]() {
         triggerReplaceLayerSource();
       });
-      menu.addSeparator();
     }
     const bool isVideoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer) != nullptr;
     if (isVideoLayer) {
-      QMenu* videoMenu = menu.addMenu(QStringLiteral("ビデオ"));
+      QMenu* videoMenu = allMenu->addMenu(QStringLiteral("ビデオ"));
       videoMenu->setIcon(QIcon(resolveIconPath("Studio/videocam.svg")));
       QAction* replaceVideoAct = videoMenu->addAction(QIcon(resolveIconPath("Studio/file_open.svg")),
                                                       QStringLiteral("ソースを置換..."));
@@ -3893,17 +3953,15 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       generateProxyAct->setEnabled(!videoSourcePath().trimmed().isEmpty());
       revealProxyAct->setEnabled(hasProxy);
       clearProxyAct->setEnabled(hasProxy);
-      menu.addSeparator();
     }
     if (!variants.empty()) {
-      menu.addAction(QStringLiteral("バリアントを選択..."), [this, layer]() {
+      allMenu->addAction(QStringLiteral("バリアントを選択..."), [this, layer]() {
         showVariantPickerMenu(this, layer, QCursor::pos());
       });
-      menu.addSeparator();
     }
     const auto matteRefs = layer->matteReferences();
     if (!matteRefs.empty()) {
-      QMenu *matteMenu = menu.addMenu(QStringLiteral("トラックマット"));
+      QMenu *matteMenu = allMenu->addMenu(QStringLiteral("トラックマット"));
       const QStringList typeLabels = {
           QStringLiteral("アルファ"),
           QStringLiteral("ルーマ"),
@@ -3932,9 +3990,8 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
                                           {QStringLiteral("type"), typeIndex}});
         }
       }
-      menu.addSeparator();
     }
-    QMenu* stateMenu = menu.addMenu(QStringLiteral("状態"));
+    QMenu* stateMenu = frequentMenu->addMenu(QStringLiteral("状態"));
     stateMenu->addAction(QStringLiteral("表示を切替"), [this, layer]() {
       if (!layer) {
         return;
@@ -3982,7 +4039,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     });
 
-    QMenu* utilityMenu = menu.addMenu(QStringLiteral("レイヤー操作"));
+    QMenu* utilityMenu = allMenu->addMenu(QStringLiteral("レイヤー操作"));
     utilityMenu->addAction(QStringLiteral("インスペクターを開く"), [triggerOpenInspector]() {
       triggerOpenInspector();
     });
@@ -4006,24 +4063,46 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     utilityMenu->addAction(QStringLiteral("レイヤーを削除"), [triggerDeleteLayer]() {
       triggerDeleteLayer();
     });
+    QMenu* selectPatternMenu = utilityMenu->addMenu(QStringLiteral("選択補助"));
+    selectPatternMenu->addAction(QStringLiteral("2個おき"), [this, selectedVisibleIds]() {
+      replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
+                              layerIdsWithStride(selectedVisibleIds, 2, 0));
+    });
+    selectPatternMenu->addAction(QStringLiteral("3個おき"), [this, selectedVisibleIds]() {
+      replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
+                              layerIdsWithStride(selectedVisibleIds, 3, 0));
+    });
+    selectPatternMenu->addSeparator();
+    selectPatternMenu->addAction(QStringLiteral("偶数"), [this, selectedVisibleIds]() {
+      replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
+                              layerIdsWithStride(selectedVisibleIds, 2, 1));
+    });
+    selectPatternMenu->addAction(QStringLiteral("奇数"), [this, selectedVisibleIds]() {
+      replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
+                              layerIdsWithStride(selectedVisibleIds, 2, 0));
+    });
+    selectPatternMenu->addSeparator();
+    selectPatternMenu->addAction(QStringLiteral("同名だけ"), [this, selectedIds]() {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      replaceSelectionWithIds(comp, layerIdsWithSameName(comp, selectedIds));
+    });
     utilityMenu->addSeparator();
     // Precompose is valid for any non-empty selection (single layer included),
     // so it lives outside the multi-selection-only block to match the AE flow.
     if (!selectedIds.isEmpty()) {
-      menu.addAction(QStringLiteral("選択レイヤーをプリコンポーズ"), [triggerPrecomposeSelectedLayers]() {
+      allMenu->addAction(QStringLiteral("選択レイヤーをプリコンポーズ"), [triggerPrecomposeSelectedLayers]() {
         triggerPrecomposeSelectedLayers();
       });
     }
     if (selectedIds.size() > 1) {
-      menu.addAction(QStringLiteral("選択レイヤーを複製"), [triggerDuplicateSelectedLayers]() {
+      allMenu->addAction(QStringLiteral("選択レイヤーを複製"), [triggerDuplicateSelectedLayers]() {
         triggerDuplicateSelectedLayers();
       });
-      QAction* groupSelectedAct = menu.addAction(QStringLiteral("グループ化..."), [triggerGroupSelectedLayers]() {
+      QAction* groupSelectedAct = allMenu->addAction(QStringLiteral("グループ化..."), [triggerGroupSelectedLayers]() {
         triggerGroupSelectedLayers();
       });
       groupSelectedAct->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
-      menu.addSeparator();
-      QMenu* batchStateMenu = menu.addMenu(QStringLiteral("一括状態"));
+      QMenu* batchStateMenu = allMenu->addMenu(QStringLiteral("一括状態"));
       batchStateMenu->addAction(QStringLiteral("表示"), [triggerSelectedVisibility]() {
         triggerSelectedVisibility(true);
       });
@@ -4048,11 +4127,9 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       batchStateMenu->addAction(QStringLiteral("シャイ解除"), [triggerSelectedShy]() {
         triggerSelectedShy(false);
       });
-      menu.addSeparator();
-      menu.addAction(QStringLiteral("選択レイヤーを削除"), [triggerDeleteSelectedLayers]() {
+      allMenu->addAction(QStringLiteral("選択レイヤーを削除"), [triggerDeleteSelectedLayers]() {
         triggerDeleteSelectedLayers();
       });
-      menu.addSeparator();
     }
     QAction *chosenAction = menu.exec(event->globalPos());
     if (chosenAction) {

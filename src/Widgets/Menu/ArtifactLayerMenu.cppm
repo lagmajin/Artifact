@@ -47,6 +47,8 @@ import Artifact.Layer.Particle;
 import Layer.Blend;
 import Color.Float;
 import Artifact.Project.Manager;
+import Artifact.Project.PresetManager;
+import Artifact.Mask.LayerMask;
 import Artifact.Widgets.ProjectManagerWidget;
 import Artifact.Composition.Abstract;
 import Artifact.Widgets.PrecomposeDialog;
@@ -278,6 +280,8 @@ public:
     QAction* clearProxyAction = nullptr;
     QAction* generateSelectedProxyAction = nullptr;
     QAction* clearSelectedProxyAction = nullptr;
+    QAction* saveMaskPresetAction = nullptr;
+    QAction* loadMaskPresetAction = nullptr;
 
     QAction* selectParentAction = nullptr;
     QAction* clearParentAction = nullptr;
@@ -325,6 +329,8 @@ public:
     void handleClearProxy();
     void handleGenerateSelectedProxies();
     void handleClearSelectedProxies();
+    void handleSaveMaskPreset();
+    void handleLoadMaskPreset();
 
     void handleSelectParent();
     void handleClearParent();
@@ -526,6 +532,11 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     clearProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
     clearSelectedProxyAction = proxyMenu->addAction("選択レイヤーのプロキシを削除");
     clearSelectedProxyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
+    proxyMenu->addSeparator();
+    saveMaskPresetAction = proxyMenu->addAction("マスクをプリセットとして保存...");
+    saveMaskPresetAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_save.svg")));
+    loadMaskPresetAction = proxyMenu->addAction("マスクプリセットを適用...");
+    loadMaskPresetAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_folder_open.svg")));
     for (auto *action : {proxyNoneAction, proxyQuarterAction, proxyHalfAction, proxyFullAction}) {
         action->setCheckable(true);
         proxyQualityGroup->addAction(action);
@@ -640,6 +651,8 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == revealProxyAction) { handleRevealProxy(); return; }
         if (action == clearProxyAction) { handleClearProxy(); return; }
         if (action == clearSelectedProxyAction) { handleClearSelectedProxies(); return; }
+        if (action == saveMaskPresetAction) { handleSaveMaskPreset(); return; }
+        if (action == loadMaskPresetAction) { handleLoadMaskPreset(); return; }
         if (action == openInspectorAction) { handleOpenInspector(); return; }
         if (action == openPropertiesAction) { handleOpenProperties(); return; }
         if (action == addDebugBlendLayersAction) {
@@ -840,6 +853,14 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     const bool hasProject = service && service->hasProject();
     const bool hasComp = hasCurrentComposition();
     const bool hasLayer = hasSelectedLayer();
+    bool hasMask = false;
+    if (hasLayer && service) {
+        if (auto comp = service->currentComposition().lock()) {
+            if (auto layer = comp->layerById(selectedLayerId_)) {
+                hasMask = layer->hasMasks();
+            }
+        }
+    }
     const bool hasParent = hasLayer && service && service->layerHasParentInCurrentComposition(selectedLayerId_);
 
     // Creation actions can auto-create first composition when a project exists.
@@ -985,6 +1006,8 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     clearProxyAction->setEnabled(isVideoSelected && hasProxy);
     generateSelectedProxyAction->setEnabled(selectedVideoCount > 1);
     clearSelectedProxyAction->setEnabled(selectedVideoCount > 1 && selectedVideoProxyCount > 0);
+    saveMaskPresetAction->setEnabled(hasMask);
+    loadMaskPresetAction->setEnabled(hasLayer);
     if (isVideoSelected) {
         proxyNoneAction->setChecked(proxyQuality == ProxyQuality::None);
         proxyQuarterAction->setChecked(proxyQuality == ProxyQuality::Quarter);
@@ -1709,6 +1732,89 @@ void ArtifactLayerMenu::Impl::handleClearSelectedProxies()
     if (!anyCleared) {
         QMessageBox::information(menu_->window(), QStringLiteral("Proxy"), QStringLiteral("削除できるプロキシがありませんでした。"));
     }
+}
+
+void ArtifactLayerMenu::Impl::handleSaveMaskPreset()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return;
+    }
+    auto layer = comp->layerById(selectedLayerId_);
+    if (!layer || !layer->hasMasks()) {
+        QMessageBox::information(menu_->window(), QStringLiteral("Mask Preset"),
+                                 QStringLiteral("保存するマスクがありません。"));
+        return;
+    }
+
+    const QString filePath = QFileDialog::getSaveFileName(
+        menu_ ? menu_->window() : nullptr,
+        QStringLiteral("マスクプリセットを保存"),
+        QString(),
+        QStringLiteral("Mask Preset (*.mask.json *.json);;All Files (*.*)"));
+    if (filePath.isEmpty()) {
+        return;
+    }
+    QString resolvedPath = filePath;
+    if (!resolvedPath.endsWith(QStringLiteral(".mask.json"), Qt::CaseInsensitive) &&
+        !resolvedPath.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) {
+        resolvedPath += QStringLiteral(".mask.json");
+    }
+
+    LayerMask mask;
+    for (int i = 0; i < layer->maskCount(); ++i) {
+        const LayerMask sourceMask = layer->mask(i);
+        for (int p = 0; p < sourceMask.maskPathCount(); ++p) {
+            mask.addMaskPath(sourceMask.maskPath(p));
+        }
+    }
+
+    if (!ArtifactPresetManager::saveMaskPreset(mask, resolvedPath)) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Mask Preset"),
+                             QStringLiteral("マスクプリセットを保存できませんでした。"));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleLoadMaskPreset()
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return;
+    }
+    auto layer = comp->layerById(selectedLayerId_);
+    if (!layer) {
+        return;
+    }
+
+    const QString filePath = QFileDialog::getOpenFileName(
+        menu_ ? menu_->window() : nullptr,
+        QStringLiteral("マスクプリセットを適用"),
+        QString(),
+        QStringLiteral("Mask Preset (*.mask.json *.json);;All Files (*.*)"));
+    if (filePath.isEmpty()) {
+        return;
+    }
+
+    LayerMask mask;
+    if (!ArtifactPresetManager::loadMaskPreset(mask, filePath)) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Mask Preset"),
+                             QStringLiteral("マスクプリセットを読み込めませんでした。"));
+        return;
+    }
+
+    layer->clearMasks();
+    layer->addMask(mask);
+    layer->changed();
 }
 
 void ArtifactLayerMenu::Impl::handleSelectParent()

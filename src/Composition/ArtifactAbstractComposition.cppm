@@ -35,6 +35,8 @@ import Artifact.Composition.InitParams;
 import Artifact.Composition.Result;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Factory;
+import Artifact.Effect.Abstract;
+import Artifact.Render.CompositionViewDrawing;
 import Artifact.Event.Types;
 import Event.Bus;
 //import Playback.Clock;
@@ -253,6 +255,143 @@ ArtifactCore::AssetID assetIdForPath(const QString& path)
   return ArtifactCore::AssetID(QCryptographicHash::hash(normalized.toUtf8(), QCryptographicHash::Sha256).toHex().constData());
 }
 
+QString slugifyEffectId(const QString& text)
+{
+  QString slug;
+  slug.reserve(text.size());
+  bool lastWasDash = false;
+  for (const QChar ch : text.trimmed().toLower()) {
+    if (ch.isLetterOrNumber()) {
+      slug.append(ch);
+      lastWasDash = false;
+    } else if (!slug.isEmpty() && !lastWasDash) {
+      slug.append(QChar('-'));
+      lastWasDash = true;
+    }
+  }
+  while (slug.endsWith(QChar('-'))) {
+    slug.chop(1);
+  }
+  return slug.isEmpty() ? QStringLiteral("effect") : slug;
+}
+
+QString uniqueEffectIdForComposition(
+    const std::vector<std::shared_ptr<ArtifactAbstractEffect>>& effects,
+    const QString& displayName,
+    const QString& preferredId)
+{
+  QString baseId = preferredId.trimmed();
+  if (baseId.isEmpty()) {
+    baseId = slugifyEffectId(displayName);
+  }
+
+  const auto idExists = [&effects](const QString& candidate) {
+    return std::any_of(
+        effects.begin(), effects.end(),
+        [&candidate](const std::shared_ptr<ArtifactAbstractEffect>& effect) {
+          return effect && effect->effectID().toQString() == candidate;
+        });
+  };
+
+  if (!idExists(baseId)) {
+    return baseId;
+  }
+
+  QString uniqueId = baseId;
+  int suffix = 2;
+  while (idExists(uniqueId)) {
+    uniqueId = QStringLiteral("%1-%2").arg(baseId).arg(suffix++);
+  }
+  return uniqueId;
+}
+
+QJsonObject serializeEffect(const std::shared_ptr<ArtifactAbstractEffect>& effect)
+{
+  QJsonObject eobj;
+  if (!effect) {
+    return eobj;
+  }
+  eobj["id"] = effect->effectID().toQString();
+  eobj["displayName"] = effect->displayName().toQString();
+  eobj["enabled"] = effect->isEnabled();
+  eobj["pipelineStage"] = static_cast<int>(effect->pipelineStage());
+
+  QJsonArray propsArr;
+  for (const auto& property : effect->getProperties()) {
+    QJsonObject pobj;
+    pobj["name"] = property.getName();
+    pobj["type"] = static_cast<int>(property.getType());
+    switch (property.getType()) {
+    case ArtifactCore::PropertyType::Float:
+    case ArtifactCore::PropertyType::Integer:
+    case ArtifactCore::PropertyType::Boolean:
+    case ArtifactCore::PropertyType::String:
+      pobj["value"] = QJsonValue::fromVariant(property.getValue());
+      break;
+    case ArtifactCore::PropertyType::Color: {
+      const QColor color = property.getColorValue();
+      QJsonObject colorObj;
+      colorObj["r"] = color.redF();
+      colorObj["g"] = color.greenF();
+      colorObj["b"] = color.blueF();
+      colorObj["a"] = color.alphaF();
+      pobj["value"] = colorObj;
+      break;
+    }
+    default:
+      pobj["value"] = QJsonValue();
+      break;
+    }
+    propsArr.append(pobj);
+  }
+  eobj["properties"] = propsArr;
+  return eobj;
+}
+
+std::shared_ptr<ArtifactAbstractEffect> deserializeEffect(const QJsonObject& eobj)
+{
+  auto effect = std::make_shared<ArtifactAbstractEffect>();
+  effect->setEffectID(UniString::fromQString(eobj.value(QStringLiteral("id")).toString()));
+  effect->setDisplayName(UniString::fromQString(
+      eobj.value(QStringLiteral("displayName")).toString(effect->effectID().toQString())));
+  effect->setEnabled(eobj.value(QStringLiteral("enabled")).toBool(true));
+  if (eobj.contains(QStringLiteral("pipelineStage"))) {
+    effect->setPipelineStage(static_cast<EffectPipelineStage>(
+        eobj.value(QStringLiteral("pipelineStage")).toInt(
+            static_cast<int>(EffectPipelineStage::Rasterizer))));
+  }
+
+  const auto propsArr = eobj.value(QStringLiteral("properties")).toArray();
+  for (const auto& value : propsArr) {
+    if (!value.isObject()) {
+      continue;
+    }
+    const QJsonObject pobj = value.toObject();
+    const QString name = pobj.value(QStringLiteral("name")).toString();
+    if (name.trimmed().isEmpty()) {
+      continue;
+    }
+    const auto type = static_cast<ArtifactCore::PropertyType>(
+        pobj.value(QStringLiteral("type")).toInt(
+            static_cast<int>(ArtifactCore::PropertyType::String)));
+    QVariant propertyValue;
+    if (type == ArtifactCore::PropertyType::Color &&
+        pobj.value(QStringLiteral("value")).isObject()) {
+      const QJsonObject colorObj = pobj.value(QStringLiteral("value")).toObject();
+      QColor color;
+      color.setRedF(static_cast<float>(colorObj.value(QStringLiteral("r")).toDouble(0.0)));
+      color.setGreenF(static_cast<float>(colorObj.value(QStringLiteral("g")).toDouble(0.0)));
+      color.setBlueF(static_cast<float>(colorObj.value(QStringLiteral("b")).toDouble(0.0)));
+      color.setAlphaF(static_cast<float>(colorObj.value(QStringLiteral("a")).toDouble(1.0)));
+      propertyValue = color;
+    } else {
+      propertyValue = pobj.value(QStringLiteral("value")).toVariant();
+    }
+    effect->setPropertyValue(UniString::fromQString(name), propertyValue);
+  }
+  return effect;
+}
+
 Artifact::ResponsiveLayoutVariant makeDefaultResponsiveLayoutVariant(const QSize& size)
  {
    Artifact::ResponsiveLayoutVariant variant;
@@ -330,6 +469,7 @@ class ArtifactAbstractComposition::Impl {
   CompositionID id_;
   QString compositionNote_;
   FloatColor backgroundColor_ = { 0.47f, 0.47f, 0.47f, 1.0f };
+  std::vector<std::shared_ptr<ArtifactAbstractEffect>> effects_;
   mutable QImage thumbnailCache_;
   mutable QSize thumbnailCacheSize_;
   mutable bool thumbnailCacheValid_ = false;
@@ -357,6 +497,12 @@ class ArtifactAbstractComposition::Impl {
    void moveLayerToIndex(const LayerID& id, int newIndex);
    void bringToFront(const LayerID& id);
    void sendToBack(const LayerID& id);
+   void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
+   void removeEffect(const UniString& effectID);
+   void clearEffects();
+   std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
+   std::shared_ptr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
+   int effectCount() const;
 
     bool isPlaying_ = false;
 
@@ -801,6 +947,94 @@ ArtifactAbstractLayerPtr ArtifactAbstractComposition::layerById(const LayerID& i
  {
   return impl_->backgroundColor_;
  }
+
+ void ArtifactAbstractComposition::Impl::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
+ {
+  if (!effect) {
+   return;
+  }
+  const QString uniqueId = uniqueEffectIdForComposition(
+      effects_, effect->displayName().toQString(), effect->effectID().toQString());
+  effect->setEffectID(UniString::fromQString(uniqueId));
+  effects_.push_back(std::move(effect));
+  invalidateThumbnailCache();
+ }
+
+ void ArtifactAbstractComposition::Impl::removeEffect(const UniString& effectID)
+ {
+  const auto it = std::remove_if(
+      effects_.begin(), effects_.end(),
+      [&effectID](const std::shared_ptr<ArtifactAbstractEffect>& effect) {
+       return effect && effect->effectID() == effectID;
+      });
+  if (it != effects_.end()) {
+   effects_.erase(it, effects_.end());
+   invalidateThumbnailCache();
+  }
+ }
+
+ void ArtifactAbstractComposition::Impl::clearEffects()
+ {
+  effects_.clear();
+  invalidateThumbnailCache();
+ }
+
+ std::vector<std::shared_ptr<ArtifactAbstractEffect>>
+ ArtifactAbstractComposition::Impl::getEffects() const
+ {
+  return effects_;
+ }
+
+ std::shared_ptr<ArtifactAbstractEffect>
+ ArtifactAbstractComposition::Impl::getEffect(const UniString& effectID) const
+ {
+  for (const auto& effect : effects_) {
+   if (effect && effect->effectID() == effectID) {
+    return effect;
+   }
+  }
+  return nullptr;
+ }
+
+ int ArtifactAbstractComposition::Impl::effectCount() const
+ {
+  return static_cast<int>(effects_.size());
+ }
+
+ void ArtifactAbstractComposition::addEffect(std::shared_ptr<ArtifactAbstractEffect> effect)
+ {
+  impl_->addEffect(std::move(effect));
+  changed();
+ }
+
+ void ArtifactAbstractComposition::removeEffect(const UniString& effectID)
+ {
+  impl_->removeEffect(effectID);
+  changed();
+ }
+
+ void ArtifactAbstractComposition::clearEffects()
+ {
+  impl_->clearEffects();
+  changed();
+ }
+
+ std::vector<std::shared_ptr<ArtifactAbstractEffect>>
+ ArtifactAbstractComposition::getEffects() const
+ {
+  return impl_->getEffects();
+ }
+
+ std::shared_ptr<ArtifactAbstractEffect>
+ ArtifactAbstractComposition::getEffect(const UniString& effectID) const
+ {
+  return impl_->getEffect(effectID);
+ }
+
+ int ArtifactAbstractComposition::effectCount() const
+ {
+  return impl_->effectCount();
+ }
  
  void ArtifactAbstractComposition::setFramePosition(const FramePosition& position)
  {
@@ -1241,6 +1475,13 @@ QJsonDocument ArtifactAbstractComposition::toJson() const{
     backgroundColorObj["a"] = impl_->backgroundColor_.a();
     obj["backgroundColor"] = backgroundColorObj;
     obj["responsiveLayout"] = impl_->responsiveLayout_.toJson();
+    QJsonArray effectsArray;
+    for (const auto& effect : impl_->effects_) {
+        if (effect) {
+            effectsArray.append(serializeEffect(effect));
+        }
+    }
+    obj["effects"] = effectsArray;
     QJsonArray layersArray;
     for (const auto& layer : impl_->layerMultiIndex_.all()) {
         if (layer) {
@@ -1308,6 +1549,16 @@ ArtifactCompositionPtr ArtifactAbstractComposition::fromJson(const QJsonDocument
         }
     } else {
         comp->impl_->responsiveLayout_ = makeDefaultResponsiveLayoutSet(comp->impl_->settings_.compositionSize());
+    }
+
+    if (obj.contains("effects") && obj["effects"].isArray()) {
+        const QJsonArray effectsArray = obj["effects"].toArray();
+        for (const auto& value : effectsArray) {
+            if (!value.isObject()) {
+                continue;
+            }
+            comp->addEffect(deserializeEffect(value.toObject()));
+        }
     }
 
     if (obj.contains("layers") && obj["layers"].isArray()) {
@@ -1427,10 +1678,13 @@ QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const
         }
         const QImage thumbnail = layer->getThumbnail(safeWidth, safeHeight);
         if (!thumbnail.isNull()) {
-            impl_->thumbnailCache_ = thumbnail;
+            QImage composedThumbnail = thumbnail;
+            applyCompositionFinalEffectsToImage(const_cast<ArtifactAbstractComposition*>(this),
+                                               composedThumbnail);
+            impl_->thumbnailCache_ = composedThumbnail;
             impl_->thumbnailCacheSize_ = targetSize;
             impl_->thumbnailCacheValid_ = true;
-            return thumbnail;
+            return composedThumbnail;
         }
     }
 
@@ -1439,7 +1693,10 @@ QImage ArtifactAbstractComposition::getThumbnail(int width, int height) const
     impl_->thumbnailCache_.fill(QColor(24, 24, 24, 255));
     impl_->thumbnailCacheSize_ = targetSize;
     impl_->thumbnailCacheValid_ = true;
-    return impl_->thumbnailCache_;
+    QImage fallback = impl_->thumbnailCache_;
+    applyCompositionFinalEffectsToImage(const_cast<ArtifactAbstractComposition*>(this),
+                                       fallback);
+    return fallback;
 }
 
 QImage ArtifactAbstractComposition::getThumbnailAtFrame(int64_t frameNumber,
@@ -1460,7 +1717,9 @@ QImage ArtifactAbstractComposition::getThumbnailAtFrame(int64_t frameNumber,
         }
         const QImage thumbnail = layer->getThumbnail(safeWidth, safeHeight);
         if (!thumbnail.isNull()) {
-            return thumbnail;
+            QImage composedThumbnail = thumbnail;
+            applyCompositionFinalEffectsToImage(this, composedThumbnail);
+            return composedThumbnail;
         }
     }
 

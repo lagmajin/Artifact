@@ -18,6 +18,12 @@ export namespace Artifact {
   Orthographic = 1,
  };
 
+ enum class StereoMode : int {
+  Mono = 0,
+  TopBottom = 1,
+  SideBySide = 2,
+ };
+
  // AfterEffects compatible Camera Layer
  class ArtifactCameraLayer : public ArtifactAbstractLayer {
   W_OBJECT(ArtifactCameraLayer)
@@ -55,6 +61,9 @@ export namespace Artifact {
   ProjectionMode projectionMode() const;
   void setProjectionMode(ProjectionMode mode);
 
+  StereoMode stereoMode() const;
+  void setStereoMode(StereoMode mode);
+
   // Perspective-specific
   float fov() const;
   void setFov(float fovDegrees);
@@ -75,6 +84,9 @@ export namespace Artifact {
 
   float farClipPlane() const;
   void setFarClipPlane(float distance);
+
+  float ipd() const;
+  void setIpd(float ipd);
 
   // Projection / View
   QMatrix4x4 viewMatrix() const;

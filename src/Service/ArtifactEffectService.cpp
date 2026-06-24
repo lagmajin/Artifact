@@ -638,6 +638,59 @@ W_OBJECT_IMPL(ArtifactEffectService)
   return EffectServiceResult::fail("Failed to duplicate effect");
  }
 
+ EffectServiceResult ArtifactEffectService::addEffectToCurrentComposition(const EffectID& effectId)
+ {
+  auto* ps = ArtifactProjectService::instance();
+  if (!ps) return EffectServiceResult::fail("Project service not available");
+
+  auto effect = createEffect(effectId);
+  if (!effect) {
+   effect = std::make_unique<ArtifactAbstractEffect>();
+   effect->setEffectID(effectId.toString());
+   effect->setDisplayName(effectId.toString());
+  }
+
+  auto effectPtr = std::shared_ptr<ArtifactAbstractEffect>(effect.release());
+  if (ps->addEffectToCurrentComposition(effectPtr)) {
+   const QString actualEffectId = effectPtr ? effectPtr->effectID().toQString() : effectId.toString();
+   return EffectServiceResult::ok(actualEffectId);
+  }
+  return EffectServiceResult::fail("Failed to add composition effect");
+ }
+
+ EffectServiceResult ArtifactEffectService::removeEffectFromCurrentComposition(const QString& effectId)
+ {
+  auto* ps = ArtifactProjectService::instance();
+  if (!ps) return EffectServiceResult::fail("Project service not available");
+
+  if (ps->removeEffectFromCurrentComposition(effectId)) {
+   return EffectServiceResult::ok(effectId);
+  }
+  return EffectServiceResult::fail("Failed to remove composition effect");
+ }
+
+ EffectServiceResult ArtifactEffectService::setCompositionEffectEnabled(const QString& effectId, bool enabled)
+ {
+  auto* ps = ArtifactProjectService::instance();
+  if (!ps) return EffectServiceResult::fail("Project service not available");
+
+  if (ps->setEffectEnabledInCurrentComposition(effectId, enabled)) {
+   return EffectServiceResult::ok(effectId);
+  }
+  return EffectServiceResult::fail("Failed to set composition effect enabled state");
+ }
+
+ EffectServiceResult ArtifactEffectService::moveCompositionEffect(const QString& effectId, int direction)
+ {
+  auto* ps = ArtifactProjectService::instance();
+  if (!ps) return EffectServiceResult::fail("Project service not available");
+
+  if (ps->moveEffectInCurrentComposition(effectId, direction)) {
+   return EffectServiceResult::ok(effectId);
+  }
+  return EffectServiceResult::fail("Failed to move composition effect");
+ }
+
  EffectServiceResult ArtifactEffectService::setEffectProperty(const LayerID& layerId,
   const QString& effectId, const QString& propertyName, const QVariant& value)
  {
@@ -681,6 +734,46 @@ W_OBJECT_IMPL(ArtifactEffectService)
     Q_EMIT effectChanged(layerId, effectId);
     return EffectServiceResult::ok(effectId);
    }
+
+  return EffectServiceResult::fail("Effect not found");
+ }
+
+ EffectServiceResult ArtifactEffectService::setCompositionEffectProperty(const QString& effectId,
+  const QString& propertyName, const QVariant& value)
+ {
+  auto* ps = ArtifactProjectService::instance();
+  if (!ps) return EffectServiceResult::fail("Project service not available");
+
+  auto comp = ps->currentComposition().lock();
+  if (!comp) {
+   return EffectServiceResult::fail("Composition not available");
+  }
+  const QString normalizedPropertyName = propertyName.trimmed();
+  if (effectId.trimmed().isEmpty() || normalizedPropertyName.isEmpty()) {
+   return EffectServiceResult::fail("Property not found");
+  }
+
+  for (const auto &effect : comp->getEffects()) {
+   if (!effect || effect->effectID().toQString() != effectId) {
+    continue;
+   }
+   const auto properties = effect->getProperties();
+   const auto propertyExists = std::any_of(
+       properties.begin(), properties.end(),
+       [&normalizedPropertyName](const ArtifactCore::AbstractProperty &property) {
+         return property.getName().compare(normalizedPropertyName, Qt::CaseInsensitive) == 0;
+       });
+   if (!propertyExists) {
+    return EffectServiceResult::fail("Property not found");
+   }
+   effect->setPropertyValue(UniString::fromQString(normalizedPropertyName), value);
+   comp->changed();
+   if (auto project = ps->getCurrentProjectSharedPtr()) {
+    ArtifactCore::globalEventBus().publish<ProjectChangedEvent>({QString(), QString()});
+    project->projectChanged();
+   }
+   return EffectServiceResult::ok(effectId);
+  }
 
   return EffectServiceResult::fail("Effect not found");
  }

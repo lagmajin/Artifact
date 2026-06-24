@@ -13,6 +13,7 @@ module;
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QFileDialog>
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
@@ -79,8 +80,10 @@ import Utils.String.UniString;
 import Widgets.Utils.CSS;
 
 import Artifact.Service.Project;
+import Artifact.Project.PresetManager;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
+import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
 import Artifact.Layer.Video;
 import Artifact.Event.Types;
@@ -738,6 +741,10 @@ public:
   bool removeEffectById(const QString &effectId);
   bool setEffectEnabledById(const QString &effectId, bool enabled);
   bool moveEffectById(const QString &effectId, int direction);
+  bool editingCompositionEffects() const;
+  ArtifactCompositionPtr currentEffectComposition() const;
+  std::vector<ArtifactAbstractEffectPtr> currentEffectStack() const;
+  ArtifactAbstractEffectPtr currentEffectById(const QString &effectId) const;
   void handleProjectCreated();
   void handleProjectClosed();
   void handleCompositionCreated(const CompositionID &id);
@@ -849,6 +856,50 @@ void ArtifactInspectorWidget::Impl::syncFocusedEffectFromRackSelection() {
   refreshRackButtons();
 }
 
+bool ArtifactInspectorWidget::Impl::editingCompositionEffects() const {
+  return !currentCompositionId_.isNil() && currentLayerId_.isNil();
+}
+
+ArtifactCompositionPtr ArtifactInspectorWidget::Impl::currentEffectComposition()
+    const {
+  auto projectService = ArtifactProjectService::instance();
+  if (!projectService || currentCompositionId_.isNil()) {
+    return {};
+  }
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) {
+    return {};
+  }
+  return findResult.ptr.lock();
+}
+
+std::vector<ArtifactAbstractEffectPtr>
+ArtifactInspectorWidget::Impl::currentEffectStack() const {
+  auto comp = currentEffectComposition();
+  if (!comp) {
+    return {};
+  }
+  if (editingCompositionEffects()) {
+    return comp->getEffects();
+  }
+  auto layer = comp->layerById(currentLayerId_);
+  return layer ? layer->getEffects() : std::vector<ArtifactAbstractEffectPtr>{};
+}
+
+ArtifactAbstractEffectPtr
+ArtifactInspectorWidget::Impl::currentEffectById(const QString &effectId) const {
+  const QString trimmedId = effectId.trimmed();
+  if (trimmedId.isEmpty()) {
+    return {};
+  }
+  for (const auto &effect : currentEffectStack()) {
+    if (effect && effect->effectID().toQString() == trimmedId) {
+      return effect;
+    }
+  }
+  return {};
+}
+
 void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   if (!effectPropertyWidget) {
     return;
@@ -871,11 +922,10 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
   };
 
   auto projectService = ArtifactProjectService::instance();
-  if (!projectService || currentCompositionId_.isNil() ||
-      currentLayerId_.isNil()) {
+  if (!projectService || currentCompositionId_.isNil()) {
     effectPropertyWidget->clear();
     showEffectGuidance(
-        QStringLiteral("Open a composition, then select a layer and effect. The selected effect's parameters appear below."),
+        QStringLiteral("Open a composition, then select a layer or composition effect."),
         false);
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
@@ -904,6 +954,36 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
     lastSyncedLayer_.reset();
     lastSyncedFocusedEffectId_.clear();
     lastEffectPropertyStateSignature_.clear();
+    return;
+  }
+
+  if (editingCompositionEffects()) {
+    const auto effect = currentEffectById(focusedEffectId_);
+    if (!effect) {
+      focusedEffectId_.clear();
+    }
+    const QString resolvedFocusedEffectId = focusedEffectId_.trimmed();
+    const QString stateSignature =
+        QStringLiteral("composition:%1|%2")
+            .arg(comp->id().toString(), resolvedFocusedEffectId);
+    if (!lastSyncedLayer_ &&
+        resolvedFocusedEffectId == lastSyncedFocusedEffectId_ &&
+        stateSignature == lastEffectPropertyStateSignature_) {
+      return;
+    }
+    lastSyncedLayer_.reset();
+    lastSyncedFocusedEffectId_ = resolvedFocusedEffectId;
+    lastEffectPropertyStateSignature_ = stateSignature;
+    effectPropertyWidget->setCompositionEffects(comp->getEffects());
+    effectPropertyWidget->setFocusedEffectId(resolvedFocusedEffectId);
+    const bool hasFocus = !resolvedFocusedEffectId.isEmpty();
+    showEffectGuidance(
+        hasFocus
+            ? QStringLiteral("Editing composition effect \"%1\" below.")
+                  .arg(effect ? effect->displayName().toQString()
+                              : resolvedFocusedEffectId)
+            : QStringLiteral("Select a composition effect in any rack."),
+        hasFocus);
     return;
   }
 
@@ -965,11 +1045,39 @@ void ArtifactInspectorWidget::Impl::syncEffectPropertyWidget() {
       hasFocus);
 }
 
+namespace {
+bool layerBooleanProperty(const ArtifactAbstractLayerPtr &layer,
+                          const QString &propertyPath);
+}
+
 QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
-    return QStringLiteral("physics|script|layout|cloner");
+    return QStringLiteral(
+        "physics.enabled|component.script.enabled|"
+        "component.layout.enabled|component.cloner.enabled");
   }
-  return QStringLiteral("physics|script|layout|cloner");
+  QStringList filters = {
+      QStringLiteral("physics.enabled"),
+      QStringLiteral("component.script.enabled"),
+      QStringLiteral("component.layout.enabled"),
+      QStringLiteral("component.cloner.enabled"),
+  };
+
+  if (layerBooleanProperty(layer, QStringLiteral("physics.enabled"))) {
+    filters.push_back(QStringLiteral("physics."));
+  }
+  if (layerBooleanProperty(layer, QStringLiteral("component.script.enabled"))) {
+    filters.push_back(QStringLiteral("component.script."));
+  }
+  if (layerBooleanProperty(layer, QStringLiteral("component.layout.enabled"))) {
+    filters.push_back(QStringLiteral("component.layout."));
+  }
+  if (layerBooleanProperty(layer, QStringLiteral("component.cloner.enabled"))) {
+    filters.push_back(QStringLiteral("component.cloner."));
+  }
+
+  filters.removeDuplicates();
+  return filters.join(QStringLiteral("|"));
 }
 
 void ArtifactInspectorWidget::Impl::setEffectsStateText(const QString &text,
@@ -1246,6 +1354,8 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
     updateLayerInfo();
     updateEffectsList();
   });
+  QAction *saveMaskAction = menu.addAction("Save Mask Preset...");
+  QAction *loadMaskAction = menu.addAction("Load Mask Preset...");
   menu.addSeparator();
   menu.addAction("Show Layer Info Tab", [this]() {
     if (tabWidget)
@@ -1267,6 +1377,94 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
       if (rack.listWidget)
         rack.listWidget->setMaximumHeight(100);
     }
+  });
+  QObject::connect(saveMaskAction, &QAction::triggered, [this]() {
+    if (currentLayerId_.isNil() || currentCompositionId_.isNil()) {
+      return;
+    }
+    auto *projectService = ArtifactProjectService::instance();
+    if (!projectService) {
+      return;
+    }
+    auto findResult = projectService->findComposition(currentCompositionId_);
+    if (!findResult.success) {
+      return;
+    }
+    auto comp = findResult.ptr.lock();
+    if (!comp) {
+      return;
+    }
+    auto layer = comp->layerById(currentLayerId_);
+    if (!layer || !layer->hasMasks()) {
+      QMessageBox::information(containerWidget, QStringLiteral("Mask Preset"),
+                               QStringLiteral("保存するマスクがありません。"));
+      return;
+    }
+    const QString filePath = QFileDialog::getSaveFileName(
+        containerWidget, QStringLiteral("マスクプリセットを保存"), QString(),
+        QStringLiteral("Mask Preset (*.mask.json *.json);;All Files (*.*)"));
+    if (filePath.isEmpty()) {
+      return;
+    }
+    QString resolvedPath = filePath;
+    if (!resolvedPath.endsWith(QStringLiteral(".mask.json"), Qt::CaseInsensitive) &&
+        !resolvedPath.endsWith(QStringLiteral(".json"), Qt::CaseInsensitive)) {
+      resolvedPath += QStringLiteral(".mask.json");
+    }
+    LayerMask mask;
+    for (int i = 0; i < layer->maskCount(); ++i) {
+      const LayerMask sourceMask = layer->mask(i);
+      for (int p = 0; p < sourceMask.maskPathCount(); ++p) {
+        mask.addMaskPath(sourceMask.maskPath(p));
+      }
+    }
+    if (!ArtifactPresetManager::saveMaskPreset(mask, resolvedPath)) {
+      QMessageBox::warning(containerWidget, QStringLiteral("Mask Preset"),
+                           QStringLiteral("マスクプリセットを保存できませんでした。"));
+    }
+  });
+  QObject::connect(loadMaskAction, &QAction::triggered, [this]() {
+    if (currentLayerId_.isNil() || currentCompositionId_.isNil()) {
+      return;
+    }
+    auto *projectService = ArtifactProjectService::instance();
+    if (!projectService) {
+      return;
+    }
+    auto findResult = projectService->findComposition(currentCompositionId_);
+    if (!findResult.success) {
+      return;
+    }
+    auto comp = findResult.ptr.lock();
+    if (!comp) {
+      return;
+    }
+    auto layer = comp->layerById(currentLayerId_);
+    if (!layer) {
+      return;
+    }
+    const QString filePath = QFileDialog::getOpenFileName(
+        containerWidget, QStringLiteral("マスクプリセットを適用"), QString(),
+        QStringLiteral("Mask Preset (*.mask.json *.json);;All Files (*.*)"));
+    if (filePath.isEmpty()) {
+      return;
+    }
+    LayerMask mask;
+    if (!ArtifactPresetManager::loadMaskPreset(mask, filePath)) {
+      QMessageBox::warning(containerWidget, QStringLiteral("Mask Preset"),
+                           QStringLiteral("マスクプリセットを読み込めませんでした。"));
+      return;
+    }
+    const auto choice = QMessageBox::question(
+        containerWidget, QStringLiteral("Mask Preset"),
+        QStringLiteral("マスクを置換しますか？\n\n"
+                       "Yes: 置換\nNo: 追加"),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+    if (choice == QMessageBox::Yes) {
+      layer->clearMasks();
+    }
+    layer->addMask(mask);
+    layer->changed();
   });
   menu.exec(globalPos);
 }
@@ -1298,25 +1496,9 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
 
   bool isEnabled = false;
   bool found = false;
-  auto projectService = ArtifactProjectService::instance();
-  if (projectService && !currentCompositionId_.isNil() &&
-      !currentLayerId_.isNil()) {
-    auto findResult = projectService->findComposition(currentCompositionId_);
-    if (findResult.success) {
-      auto comp = findResult.ptr.lock();
-      if (comp) {
-        auto layer = comp->layerById(currentLayerId_);
-        if (layer) {
-          for (const auto &effect : layer->getEffects()) {
-            if (effect && effect->effectID().toQString() == effectId) {
-              isEnabled = effect->isEnabled();
-              found = true;
-              break;
-            }
-          }
-        }
-      }
-    }
+  if (const auto effect = currentEffectById(effectId)) {
+    isEnabled = effect->isEnabled();
+    found = true;
   }
 
   if (found) {
@@ -1374,8 +1556,7 @@ void ArtifactInspectorWidget::Impl::showRackContextMenu(
 }
 
 bool ArtifactInspectorWidget::Impl::removeEffectById(const QString &effectId) {
-  if (effectId.isEmpty() || currentLayerId_.isNil() ||
-      currentCompositionId_.isNil())
+  if (effectId.isEmpty() || currentCompositionId_.isNil())
     return false;
 
   auto projectService = ArtifactProjectService::instance();
@@ -1389,7 +1570,10 @@ bool ArtifactInspectorWidget::Impl::removeEffectById(const QString &effectId) {
   auto comp = findResult.ptr.lock();
   if (!comp)
     return false;
-  Q_UNUSED(comp);
+
+  if (editingCompositionEffects()) {
+    return projectService->removeEffectFromCurrentComposition(effectId);
+  }
 
   return projectService->removeEffectFromLayerInCurrentComposition(
       currentLayerId_, effectId);
@@ -1397,8 +1581,7 @@ bool ArtifactInspectorWidget::Impl::removeEffectById(const QString &effectId) {
 
 bool ArtifactInspectorWidget::Impl::setEffectEnabledById(
     const QString &effectId, bool enabled) {
-  if (effectId.isEmpty() || currentLayerId_.isNil() ||
-      currentCompositionId_.isNil())
+  if (effectId.isEmpty() || currentCompositionId_.isNil())
     return false;
 
   auto projectService = ArtifactProjectService::instance();
@@ -1412,7 +1595,11 @@ bool ArtifactInspectorWidget::Impl::setEffectEnabledById(
   auto comp = findResult.ptr.lock();
   if (!comp)
     return false;
-  Q_UNUSED(comp);
+
+  if (editingCompositionEffects()) {
+    return projectService->setEffectEnabledInCurrentComposition(effectId,
+                                                                enabled);
+  }
 
   return projectService->setEffectEnabledInLayerInCurrentComposition(
       currentLayerId_, effectId, enabled);
@@ -1420,8 +1607,7 @@ bool ArtifactInspectorWidget::Impl::setEffectEnabledById(
 
 bool ArtifactInspectorWidget::Impl::moveEffectById(const QString &effectId,
                                                    int direction) {
-  if (effectId.isEmpty() || currentLayerId_.isNil() ||
-      currentCompositionId_.isNil())
+  if (effectId.isEmpty() || currentCompositionId_.isNil())
     return false;
 
   auto projectService = ArtifactProjectService::instance();
@@ -1434,7 +1620,10 @@ bool ArtifactInspectorWidget::Impl::moveEffectById(const QString &effectId,
   auto comp = findResult.ptr.lock();
   if (!comp)
     return false;
-  Q_UNUSED(comp);
+
+  if (editingCompositionEffects()) {
+    return projectService->moveEffectInCurrentComposition(effectId, direction);
+  }
 
   return projectService->moveEffectInLayerInCurrentComposition(
       currentLayerId_, effectId, direction);
@@ -1927,12 +2116,6 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
     layerNoteGroup->hide();
   }
 
-  // エフェクトリストもクリア
-  for (auto &rack : racks) {
-    if (rack.listWidget) {
-      rack.listWidget->clear();
-    }
-  }
   lastLayerInfoSignature_.clear();
   lastMatteInfoSignature_.clear();
   lastLayerNoteText_.clear();
@@ -1956,9 +2139,13 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
         QStringLiteral("Select an effect row above to edit color controls."));
     effectParametersHintLabel->setVisible(true);
   }
-  setEffectRackEnabled(false);
-  setEffectsStateText("Select a layer to manage color controls.", true);
-  refreshRackButtons();
+  if (currentCompositionId_.isNil()) {
+    setEffectRackEnabled(false);
+    setEffectsStateText("Open a composition to manage color controls.", true);
+    refreshRackButtons();
+  } else {
+    updateEffectsList();
+  }
 }
 
 void ArtifactInspectorWidget::Impl::setEffectRackEnabled(bool enabled) {
@@ -1982,8 +2169,7 @@ void ArtifactInspectorWidget::Impl::setEffectRackEnabled(bool enabled) {
 }
 
 void ArtifactInspectorWidget::Impl::refreshRackButtons() {
-  const bool canEdit =
-      !currentLayerId_.isNil() && !currentCompositionId_.isNil();
+  const bool canEdit = !currentCompositionId_.isNil();
   for (auto &rack : racks) {
     if (rack.addButton) {
       rack.addButton->setEnabled(canEdit);
@@ -2006,13 +2192,6 @@ void ArtifactInspectorWidget::Impl::refreshRackButtons() {
 }
 
 void ArtifactInspectorWidget::Impl::updateEffectsList() {
-  if (currentLayerId_.isNil()) {
-    setEffectRackEnabled(false);
-    setEffectsStateText("Select a layer to manage effects.", true);
-    refreshRackButtons();
-    return;
-  }
-
   auto projectService = ArtifactProjectService::instance();
   if (!projectService) {
     setEffectRackEnabled(false);
@@ -2044,15 +2223,14 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     return;
   }
 
-  auto layer = comp->layerById(currentLayerId_);
-  if (!layer) {
+  if (!editingCompositionEffects() && currentLayerId_.isNil()) {
     setEffectRackEnabled(false);
     setEffectsStateText("Select a layer to manage effects.", true);
     refreshRackButtons();
     return;
   }
 
-  auto effects = layer->getEffects();
+  auto effects = currentEffectStack();
   setEffectRackEnabled(true);
   int effectCount = 0;
   std::array<std::vector<ArtifactAbstractEffectPtr>, kEffectRackCount>
@@ -2106,8 +2284,11 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
       auto *item = new QListWidgetItem(itemText);
       item->setData(Qt::UserRole, effect->effectID().toQString());
       item->setData(Qt::UserRole + 1, effect->isEnabled());
-      item->setToolTip(QStringLiteral("%1 on this layer. Single click to edit parameters below. Double click toggles enable/disable. Right click for effect actions.")
-                           .arg(effectName));
+      item->setToolTip(
+          QStringLiteral("%1 on this %2. Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
+              .arg(effectName,
+                   editingCompositionEffects() ? QStringLiteral("composition")
+                                               : QStringLiteral("layer")));
       item->setForeground(effect->isEnabled() ? rackColor : rackColor.darker(140));
       racks[i].listWidget->addItem(item);
     }
@@ -2192,8 +2373,10 @@ void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
       item->setData(Qt::UserRole + 1, enabled);
       item->setForeground(enabled ? rackColor : rackColor.darker(140));
       item->setToolTip(
-          QStringLiteral("%1 on this layer. Single click to edit parameters below. Double click toggles enable/disable. Right click for effect actions.")
-              .arg(effectName));
+          QStringLiteral("%1 on this %2. Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
+              .arg(effectName,
+                   editingCompositionEffects() ? QStringLiteral("composition")
+                                               : QStringLiteral("layer")));
       refreshRackButtons();
       return;
     }
@@ -2201,7 +2384,7 @@ void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
 }
 
 void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
-  if (currentLayerId_.isNil() || currentCompositionId_.isNil())
+  if (currentCompositionId_.isNil())
     return;
 
   auto projectService = ArtifactProjectService::instance();
@@ -2216,22 +2399,31 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
   if (!comp)
     return;
 
-  auto layer = comp->layerById(currentLayerId_);
-  if (!layer)
+  if (!editingCompositionEffects() && !comp->layerById(currentLayerId_)) {
     return;
+  }
 
   QMenu effectMenu;
 
   auto addAndRefresh = [this, projectService](
                            std::shared_ptr<ArtifactAbstractEffect> newEffect) {
     if (newEffect) {
-      if (projectService->addEffectToLayerInCurrentComposition(currentLayerId_,
-                                                               newEffect)) {
+      const bool added = editingCompositionEffects()
+                             ? projectService->addEffectToCurrentComposition(
+                                   newEffect)
+                             : projectService
+                                   ->addEffectToLayerInCurrentComposition(
+                                       currentLayerId_, newEffect);
+      if (added) {
         focusedEffectId_ = newEffect->effectID().toQString();
         updateEffectsList();
         if (statusLabel) {
-          statusLabel->setText(QStringLiteral("Status: Effect added - %1. Parameters are shown below in the Effects tab.")
-                                   .arg(newEffect->displayName().toQString()));
+          statusLabel->setText(
+              QStringLiteral("Status: %1 effect added - %2.")
+                  .arg(editingCompositionEffects()
+                           ? QStringLiteral("Composition")
+                           : QStringLiteral("Layer"),
+                       newEffect->displayName().toQString()));
         }
         if (tabWidget) {
           tabWidget->setCurrentIndex(1); // Effects
@@ -2468,7 +2660,7 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex) {
   if (selectedItems.isEmpty())
     return;
 
-  if (currentLayerId_.isNil() || currentCompositionId_.isNil())
+  if (currentCompositionId_.isNil())
     return;
 
   auto projectService = ArtifactProjectService::instance();
@@ -2483,10 +2675,9 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex) {
   if (!comp)
     return;
 
-  auto layer = comp->layerById(currentLayerId_);
-  if (!layer)
+  if (!editingCompositionEffects() && !comp->layerById(currentLayerId_)) {
     return;
-  Q_UNUSED(layer);
+  }
 
   if (!ArtifactMessageBox::confirmDelete(
           containerWidget, QStringLiteral("Remove Effect"),
@@ -2498,8 +2689,15 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex) {
   for (auto item : selectedItems) {
     UniString effectID(item->data(Qt::UserRole).toString().toStdString());
     if (effectID.length() > 0) {
-      if (projectService->removeEffectFromLayerInCurrentComposition(
-              currentLayerId_, effectID.toQString())) {
+      const bool removed = editingCompositionEffects()
+                               ? projectService
+                                     ->removeEffectFromCurrentComposition(
+                                         effectID.toQString())
+                               : projectService
+                                     ->removeEffectFromLayerInCurrentComposition(
+                                         currentLayerId_,
+                                         effectID.toQString());
+      if (removed) {
         qDebug() << "[Inspector] Effect removed:" << effectID.toQString();
         ++removedCount;
       }

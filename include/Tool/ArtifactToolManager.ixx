@@ -31,7 +31,9 @@ export namespace Artifact {
   // Deformation / Utility Tools
   MotionSketch,
   Puppet,
-  ScrubPreview
+  ScrubPreview,
+  // 2D Tracking
+  TrackPoint
  };
 
  class ArtifactToolManager : public QObject {

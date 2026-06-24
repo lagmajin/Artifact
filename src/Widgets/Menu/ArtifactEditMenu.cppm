@@ -20,6 +20,7 @@ import Artifact.Event.Types;
 import Artifact.Application.Manager;
 import Artifact.Project.Manager;
 import Artifact.Service.ActiveContext;
+import Artifact.Service.Application;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
@@ -29,6 +30,7 @@ import Undo.UndoManager;
 import UI.ShortcutBindings;
 import ApplicationSettingDialog;
 import Artifact.Service.Project;
+import Artifact.Service.Playback;
 import Utils.Path;
 
 namespace Artifact {
@@ -264,15 +266,28 @@ private:
   if (selected.isEmpty()) return;
 
   QJsonArray layersArray;
+  QString firstLayerName;
   for (const auto& layer : selected) {
    if (layer) {
     layersArray.append(layer->toJson());
+    if (firstLayerName.isEmpty()) {
+     firstLayerName = layer->layerName();
+    }
    }
   }
 
   ArtifactCore::ClipboardManager::instance().copyLayers(layersArray,
                                                         layersArray.size());
   qDebug() << "[Edit] Copied" << selected.size() << "layer(s)";
+
+  // Publish event for clip buffer panel
+  qint64 currentFrame = 0;
+  if (auto* ps = ArtifactPlaybackService::instance()) {
+   currentFrame = ps->currentFrame().framePosition();
+  }
+  ArtifactCore::globalEventBus().publish<ClipCopiedEvent>(
+      ClipCopiedEvent{QString(), QString(), firstLayerName, currentFrame, QVariant(layersArray)});
+
   rebuildMenu();
  }
 
@@ -280,6 +295,20 @@ private:
  {
   handleCopyAction();
   handleDelete();
+
+  // Publish cut event for clip buffer panel
+  qint64 currentFrame = 0;
+  QString compId;
+  if (auto* ps = ArtifactPlaybackService::instance()) {
+   currentFrame = ps->currentFrame().framePosition();
+  }
+  if (auto* svc2 = ArtifactProjectService::instance()) {
+   if (auto comp = svc2->currentComposition().lock()) {
+    compId = comp->id().toString();
+   }
+  }
+  ArtifactCore::globalEventBus().publish<ClipCutEvent>(
+      ClipCutEvent{compId, QString(), QString(), currentFrame, QVariant()});
  }
 
  void ArtifactEditMenu::Impl::handlePasteAction()

@@ -2834,10 +2834,12 @@ namespace Artifact
 
             const int outW = std::max(16, job.resolutionWidth);
             const int outH = std::max(16, job.resolutionHeight);
+            QImage finalFrame = canvas;
             if (canvas.width() != outW || canvas.height() != outH) {
-                return canvas.scaled(outW, outH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+                finalFrame = canvas.scaled(outW, outH, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
             }
-            return canvas;
+            applyCompositionFinalEffectsToImage(composition.get(), finalFrame);
+            return finalFrame;
         }
 
         bool renderSingleFrameGPU(const ArtifactRenderJob& job, int index, QString* outputPath, QString* errorMessage) {
@@ -2901,6 +2903,7 @@ namespace Artifact
                 if (errorMessage) *errorMessage = QStringLiteral("GPU readback failed");
                 return false;
             }
+            applyCompositionFinalEffectsToImage(comp.get(), frame);
 
             // 出力パス決定
             const QString outPath = resolveDummyOutputPath(job, index);
@@ -3881,6 +3884,8 @@ namespace Artifact
                         }
                         impl_->gpuRenderer_->flush();
                         qimg = impl_->gpuRenderer_->readbackToImage();
+                        applyCompositionFinalEffectsToImage(
+                            compositionForRender->get(), qimg);
                     } else {
                         // 経路A: QPainter ソフトウェアコンポジット
                         qimg = impl_->renderSingleFrameComposition(job, *compositionForRender, f);

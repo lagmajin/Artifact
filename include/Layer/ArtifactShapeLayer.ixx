@@ -112,6 +112,8 @@ public:
 
   // Shape operators (AE-style path operators)
   void addShapeOperator(ArtifactCore::ShapeOperatorType type);
+  bool removeShapeOperatorAt(int index);
+  bool moveShapeOperator(int fromIndex, int toIndex);
   void clearShapeOperators();
   int shapeOperatorCount() const;
   ArtifactCore::ShapeOperatorType shapeOperatorTypeAt(int index) const;

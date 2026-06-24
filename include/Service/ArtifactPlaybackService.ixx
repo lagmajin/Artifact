@@ -85,6 +85,8 @@ struct ArtifactRamPreviewSummary {
   bool playbackFallbackWhilePlaying = false;
   uint64_t buildQueueGeneration = 0;
   QString buildQueueReason;
+  QString currentPriorityBand;
+  QString currentPriorityReason;
   float hitRate = 0.0f;
 };
 
@@ -105,6 +107,8 @@ QString ramPreviewStatusNote(const ArtifactRamPreviewFrameCacheState &state);
 QString ramPreviewNotReadyReason(const ArtifactRamPreviewFrameCacheState &state);
 
 QString ramPreviewPriorityNote(const ArtifactRamPreviewPriorityState &state);
+
+QString ramPreviewPriorityReason(const ArtifactRamPreviewPriorityState &state);
 
 class ArtifactPlaybackService : public QObject {
   W_OBJECT(ArtifactPlaybackService)
@@ -233,6 +237,7 @@ public:
   std::vector<bool> ramPreviewCacheBitmap() const;
   ArtifactRamPreviewFrameCacheState ramPreviewFrameState(int64_t frame) const;
   ArtifactRamPreviewPriorityState ramPreviewPriorityState(int64_t frame) const;
+  QString ramPreviewPriorityReason(int64_t frame) const;
   ArtifactRamPreviewSummary ramPreviewSummary() const;
   bool isRamPreviewFramePendingBuild(int64_t frame) const;
   int64_t nextRamPreviewBuildFrame() const;

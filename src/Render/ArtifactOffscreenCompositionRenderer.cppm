@@ -30,7 +30,7 @@ namespace Artifact
     {
     public:
         OffscreenCompositionRenderer(RefCntAutoPtr<IRenderDevice> pDevice, Uint32 width, Uint32 height);
-        ~OffscreenCompositionRenderer();
+        ~OffscreenCompositionRenderer() = default;
 
         // 指定された時刻のフレームをレンダリング
         void renderFrame(const FramePosition& position, ArtifactAbstractComposition* composition);
@@ -59,7 +59,7 @@ namespace Artifact
     };
 }
 
-
+module :private;
 
 namespace Artifact
 {
@@ -75,9 +75,6 @@ namespace Artifact
         renderer_->setCanvasSize((float)width_, (float)height_);
         renderer_->setViewportSize((float)width_, (float)height_);
     }
-
-    OffscreenCompositionRenderer::~OffscreenCompositionRenderer() = default;
-
     void OffscreenCompositionRenderer::initializeResources()
     {
         TextureDesc TexDesc;

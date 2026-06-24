@@ -532,6 +532,10 @@ bool shouldShowNumericSlider(const ArtifactCore::AbstractProperty &property) {
       name.endsWith(QStringLiteral(".size"), Qt::CaseInsensitive) ||
       name == QStringLiteral("shape.width") ||
       name == QStringLiteral("solid.gradientAngleDegrees") ||
+      name == QStringLiteral("solid.gradientCenterX") ||
+      name == QStringLiteral("solid.gradientCenterY") ||
+      name == QStringLiteral("solid.gradientScale") ||
+      name == QStringLiteral("solid.gradientOffset") ||
       name == QStringLiteral("shape.height") ||
       name.startsWith(QStringLiteral("transform.position"),
                       Qt::CaseInsensitive) ||

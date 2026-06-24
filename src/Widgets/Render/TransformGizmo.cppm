@@ -1267,6 +1267,53 @@ private:
  TransformSnapshot after_;
 };
 
+struct MultiTransformEntry {
+ ArtifactAbstractLayerWeak layer;
+ TransformSnapshot before;
+ TransformSnapshot after;
+};
+
+class MultiTransformUndoCommand final : public UndoCommand {
+public:
+ MultiTransformUndoCommand(int64_t frame, std::vector<MultiTransformEntry> entries)
+     : frame_(frame), entries_(std::move(entries)) {}
+
+ void undo() override { apply(true); }
+ void redo() override { apply(false); }
+ QString label() const override { return QStringLiteral("Transform Layers"); }
+
+private:
+ void apply(bool useBefore) {
+  const ArtifactCore::RationalTime time(frame_, 24);
+  for (auto &entry : entries_) {
+   auto layer = entry.layer.lock();
+   if (!layer) {
+    continue;
+   }
+   const TransformSnapshot &snapshot = useBefore ? entry.before : entry.after;
+   auto &t3d = layer->transform3D();
+   applyPositionSnapshot(t3d, time, snapshot);
+   applyRotationSnapshot(t3d, time, snapshot);
+   applyScaleSnapshot(t3d, time, snapshot);
+   if (snapshot.hasTextBoxState) {
+    if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
+     textLayer->setMaxWidth(snapshot.textBoxWidth);
+     textLayer->setBoxHeight(snapshot.textBoxHeight);
+    }
+    layer->setDirty(LayerDirtyFlag::Source);
+   }
+   layer->setDirty(LayerDirtyFlag::Transform);
+   layer->changed();
+  }
+  if (auto *mgr = UndoManager::instance()) {
+   mgr->notifyAnythingChanged();
+  }
+ }
+
+ int64_t frame_ = 0;
+ std::vector<MultiTransformEntry> entries_;
+};
+
 void drawEmphasizedLine(ArtifactIRenderer* renderer,
                         const Detail::float2& a,
                         const Detail::float2& b,
@@ -1336,11 +1383,28 @@ void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
     return;
   }
   layer_ = std::move(layer);
+  targetLayers_.clear();
+  if (layer_) {
+    targetLayers_.push_back(layer_);
+  }
   // レイヤーが変更されたらキャッシュを無効化
   geometryCacheValid_ = false;
   if (!isDragging_) {
     activeHandle_ = HandleType::None;
   }
+}
+
+void TransformGizmo::setTargetLayers(std::vector<ArtifactAbstractLayerPtr> layers) {
+  targetLayers_ = std::move(layers);
+  layer_ = targetLayers_.empty() ? ArtifactAbstractLayerPtr{} : targetLayers_.front();
+  geometryCacheValid_ = false;
+  if (!isDragging_) {
+    activeHandle_ = HandleType::None;
+  }
+}
+
+const std::vector<ArtifactAbstractLayerPtr>& TransformGizmo::targetLayers() const {
+  return targetLayers_;
 }
 
 void TransformGizmo::updateGeometryCache(const QTransform& globalTransform, const QRectF& localRect, float zoom) {
@@ -2149,6 +2213,14 @@ case Mode::Scale:
 bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRenderer* renderer) {
  if (!isDragging_ || !layer_ || !renderer) return false;
 
+ const auto targets = [&]() -> std::vector<ArtifactAbstractLayerPtr> {
+  if (!targetLayers_.empty()) {
+   return targetLayers_;
+  }
+  return layer_ ? std::vector<ArtifactAbstractLayerPtr>{layer_}
+                : std::vector<ArtifactAbstractLayerPtr>{};
+ }();
+
  auto canvasMouse = renderer->viewportToCanvas({(float)viewportPos.x(), (float)viewportPos.y()});
  QPointF currentCanvasPos(canvasMouse.x, canvasMouse.y);
  QPointF delta = currentCanvasPos - dragStartCanvasPos_;
@@ -2201,7 +2273,7 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
  activeSnapLines_.clear();
  activeSnapLabels_.clear();
 
-  if (activeHandle_ == HandleType::Move) {
+ if (activeHandle_ == HandleType::Move) {
    float newX = dragStartLayerPos_.x() + static_cast<float>(delta.x());
    float newY = dragStartLayerPos_.y() + static_cast<float>(delta.y());
    const bool enableSnapping = !(QGuiApplication::keyboardModifiers() & Qt::AltModifier);
@@ -2231,8 +2303,18 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     newY += static_cast<float>(currentBBox.top() - alignedTop);
    }
 
-      setDragPosition(newX, newY);
-      layer_->setDirty(LayerDirtyFlag::Transform);
+      for (const auto& target : targets) {
+       if (!target) continue;
+       auto& targetT3d = target->transform3D();
+       const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+       if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+        targetT3d.setPosition(targetTime, newX, newY);
+       } else {
+        targetT3d.removePositionKeyFrameAt(targetTime);
+        targetT3d.setInitialPosition(targetTime, newX, newY);
+       }
+       target->setDirty(LayerDirtyFlag::Transform);
+      }
       publishDragMutation();
   } else if (activeHandle_ == HandleType::Anchor) {
    bool invertible = false;
@@ -2266,14 +2348,26 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     const QPointF compensation = applyScaleRotateToVector(
         deltaAnchor, dragStartScaleX_, dragStartScaleY_, dragStartRotation_);
 
-    t3d.setAnchor(time,
-                  static_cast<float>(targetLocalAnchor.x()),
-                  static_cast<float>(targetLocalAnchor.y()),
-                  t3d.anchorZ());
-    setDragPosition(
-        dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
-        dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
-    layer_->setDirty(LayerDirtyFlag::Transform);
+    for (const auto& target : targets) {
+     if (!target) continue;
+     auto& targetT3d = target->transform3D();
+     const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+     targetT3d.setAnchor(targetTime,
+                         static_cast<float>(targetLocalAnchor.x()),
+                         static_cast<float>(targetLocalAnchor.y()),
+                         targetT3d.anchorZ());
+     if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+      targetT3d.setPosition(targetTime,
+                            dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
+                            dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
+     } else {
+      targetT3d.removePositionKeyFrameAt(targetTime);
+      targetT3d.setInitialPosition(targetTime,
+                                   dragStartLayerPos_.x() + static_cast<float>(compensation.x()),
+                                   dragStartLayerPos_.y() + static_cast<float>(compensation.y()));
+     }
+     target->setDirty(LayerDirtyFlag::Transform);
+    }
     if (isDragging_) {
      publishDragMutation();
     }
@@ -2286,17 +2380,38 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    dragAccumulatedRotationDelta_ +=
        normalizeAngleDeltaDegrees(currentAngle - previousAngle);
    const float newRotation = dragStartRotation_ + dragAccumulatedRotationDelta_;
-   setDragRotation(newRotation);
+   for (const auto& target : targets) {
+    if (!target) continue;
+    auto& targetT3d = target->transform3D();
+    const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+    if (targetT3d.hasRotationKeyFrameAt(targetTime) || targetT3d.getRotationKeyFrameCount() > 0) {
+     targetT3d.setRotation(targetTime, newRotation);
+    } else {
+     targetT3d.removeRotationKeyFrameAt(targetTime);
+     targetT3d.setInitialRotation(targetTime, newRotation);
+    }
+    target->setDirty(LayerDirtyFlag::Transform);
+   }
 
    const QPointF localOffset = pivotLocal - dragStartAnchor_;
    const QPointF startOffset = applyScaleRotateToVector(
        localOffset, dragStartScaleX_, dragStartScaleY_, dragStartRotation_);
    const QPointF newOffset = applyScaleRotateToVector(
        localOffset, dragStartScaleX_, dragStartScaleY_, newRotation);
-   setDragPosition(
-       dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
-       dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
-   layer_->setDirty(LayerDirtyFlag::Transform);
+   for (const auto& target : targets) {
+    if (!target) continue;
+    auto& targetT3d = target->transform3D();
+    const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+    const float newX = dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x());
+    const float newY = dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y());
+    if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+     targetT3d.setPosition(targetTime, newX, newY);
+    } else {
+     targetT3d.removePositionKeyFrameAt(targetTime);
+     targetT3d.setInitialPosition(targetTime, newX, newY);
+    }
+    target->setDirty(LayerDirtyFlag::Transform);
+   }
    if (isDragging_) {
     publishDragMutation();
    }
@@ -2325,11 +2440,26 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
    const QPointF newOffset = applyScaleRotateToVector(
        localOffset, newScaleX, newScaleY, dragStartRotation_);
 
-   setDragScale(newScaleX, newScaleY);
-   setDragPosition(
-       dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x()),
-       dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y()));
-   layer_->setDirty(LayerDirtyFlag::Transform);
+   for (const auto& target : targets) {
+    if (!target) continue;
+    auto& targetT3d = target->transform3D();
+    const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+    if (targetT3d.hasScaleKeyFrameAt(targetTime) || targetT3d.getScaleKeyFrameCount() > 0) {
+     targetT3d.setScale(targetTime, newScaleX, newScaleY);
+    } else {
+     targetT3d.removeScaleKeyFrameAt(targetTime);
+     targetT3d.setInitialScale(targetTime, newScaleX, newScaleY);
+    }
+    const float newX = dragStartLayerPos_.x() + static_cast<float>(startOffset.x() - newOffset.x());
+    const float newY = dragStartLayerPos_.y() + static_cast<float>(startOffset.y() - newOffset.y());
+    if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+     targetT3d.setPosition(targetTime, newX, newY);
+    } else {
+     targetT3d.removePositionKeyFrameAt(targetTime);
+     targetT3d.setInitialPosition(targetTime, newX, newY);
+    }
+    target->setDirty(LayerDirtyFlag::Transform);
+   }
    publishDragMutation();
   } else if (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_R) {
   if (std::abs(delta.x()) < 0.01 && std::abs(delta.y()) < 0.01) {
@@ -2404,10 +2534,21 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
          newFixedLocal - dragStartAnchor_, dragStartScaleX_, dragStartScaleY_,
          dragStartRotation_);
 
-     setDragPosition(static_cast<float>(newPos.x()),
-                     static_cast<float>(newPos.y()));
-     layer_->setDirty(LayerDirtyFlag::Source);
-     layer_->setDirty(LayerDirtyFlag::Transform);
+     for (const auto& target : targets) {
+      if (!target) continue;
+      auto& targetT3d = target->transform3D();
+      const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+      if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+       targetT3d.setPosition(targetTime, static_cast<float>(newPos.x()),
+                             static_cast<float>(newPos.y()));
+      } else {
+       targetT3d.removePositionKeyFrameAt(targetTime);
+       targetT3d.setInitialPosition(targetTime, static_cast<float>(newPos.x()),
+                                    static_cast<float>(newPos.y()));
+      }
+      target->setDirty(LayerDirtyFlag::Source);
+      target->setDirty(LayerDirtyFlag::Transform);
+     }
      publishDragMutation();
     } else {
      const double baseW = std::max(1.0, startBox.width());
@@ -2427,10 +2568,24 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
      const float newPosX = static_cast<float>(targetBox.left()) - newScaleX * (localLeft - anchorX);
      const float newPosY = static_cast<float>(targetBox.top()) - newScaleY * (localTop - anchorY);
 
-     setDragScale(newScaleX, newScaleY);
-     setDragPosition(newPosX, newPosY);
-
-     layer_->setDirty(LayerDirtyFlag::Transform);
+     for (const auto& target : targets) {
+      if (!target) continue;
+      auto& targetT3d = target->transform3D();
+      const ArtifactCore::RationalTime targetTime(target->currentFrame(), TRANSFORM_KEYFRAME_SCALE);
+      if (targetT3d.hasScaleKeyFrameAt(targetTime) || targetT3d.getScaleKeyFrameCount() > 0) {
+       targetT3d.setScale(targetTime, newScaleX, newScaleY);
+      } else {
+       targetT3d.removeScaleKeyFrameAt(targetTime);
+       targetT3d.setInitialScale(targetTime, newScaleX, newScaleY);
+      }
+      if (targetT3d.hasPositionKeyFrameAt(targetTime) || targetT3d.getPositionKeyFrameCount() > 0) {
+       targetT3d.setPosition(targetTime, newPosX, newPosY);
+      } else {
+       targetT3d.removePositionKeyFrameAt(targetTime);
+       targetT3d.setInitialPosition(targetTime, newPosX, newPosY);
+      }
+      target->setDirty(LayerDirtyFlag::Transform);
+     }
      publishDragMutation();
     }
    }
@@ -2444,50 +2599,58 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
 void TransformGizmo::handleMouseRelease() {
  if (isDragging_ && layer_) {
   const ArtifactCore::RationalTime time(dragStartFrame_, 24);
-  const TransformSnapshot before{
-   dragStartHasPositionKey_,
-   dragStartHasRotationKey_,
-   dragStartHasScaleKey_,
-   dragStartPositionAnimated_,
-   dragStartRotationAnimated_,
-   dragStartScaleAnimated_,
-   dragStartHasTextBoxState_,
-   static_cast<float>(dragStartLayerPos_.x()),
-   static_cast<float>(dragStartLayerPos_.y()),
-   dragStartRotation_,
-   dragStartScaleX_,
-   dragStartScaleY_,
-   static_cast<float>(dragStartAnchor_.x()),
-   static_cast<float>(dragStartAnchor_.y()),
-   dragStartAnchorZ_,
-   dragStartTextBoxWidth_,
-   dragStartTextBoxHeight_
-  };
-  const TransformSnapshot after = captureTransformSnapshot(layer_, time);
-
-  const bool changed = before.hasPositionKey != after.hasPositionKey ||
-                       before.hasRotationKey != after.hasRotationKey ||
-                       before.hasScaleKey != after.hasScaleKey ||
-                       before.hasTextBoxState != after.hasTextBoxState ||
-                       std::abs(before.positionX - after.positionX) > 0.0001f ||
-                       std::abs(before.positionY - after.positionY) > 0.0001f ||
-                       std::abs(before.rotation - after.rotation) > 0.0001f ||
-                       std::abs(before.scaleX - after.scaleX) > 0.0001f ||
-                       std::abs(before.scaleY - after.scaleY) > 0.0001f ||
-                       std::abs(before.textBoxWidth - after.textBoxWidth) > 0.0001f ||
-                       std::abs(before.textBoxHeight - after.textBoxHeight) > 0.0001f;
-
-  if (changed) {
-   if (auto* mgr = UndoManager::instance()) {
-    mgr->push(std::make_unique<TransformUndoCommand>(layer_, dragStartFrame_, before, after));
+  std::vector<MultiTransformEntry> undoEntries;
+  const auto targets = !targetLayers_.empty() ? targetLayers_ : std::vector<ArtifactAbstractLayerPtr>{layer_};
+  undoEntries.reserve(targets.size());
+  bool anyChanged = false;
+  for (const auto &target : targets) {
+   if (!target) {
+    continue;
    }
-   if (auto* comp = static_cast<ArtifactAbstractComposition*>(layer_->composition())) {
-    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
-        LayerChangedEvent{comp->id().toString(), layer_->id().toString(),
-                          LayerChangedEvent::ChangeType::Modified});
+   const TransformSnapshot before{
+    dragStartHasPositionKey_,
+    dragStartHasRotationKey_,
+    dragStartHasScaleKey_,
+    dragStartPositionAnimated_,
+    dragStartRotationAnimated_,
+    dragStartScaleAnimated_,
+    dragStartHasTextBoxState_,
+    static_cast<float>(dragStartLayerPos_.x()),
+    static_cast<float>(dragStartLayerPos_.y()),
+    dragStartRotation_,
+    dragStartScaleX_,
+    dragStartScaleY_,
+    static_cast<float>(dragStartAnchor_.x()),
+    static_cast<float>(dragStartAnchor_.y()),
+    dragStartAnchorZ_,
+    dragStartTextBoxWidth_,
+    dragStartTextBoxHeight_
+   };
+   const TransformSnapshot after = captureTransformSnapshot(target, time);
+   const bool changed = before.hasPositionKey != after.hasPositionKey ||
+                        before.hasRotationKey != after.hasRotationKey ||
+                        before.hasScaleKey != after.hasScaleKey ||
+                        before.hasTextBoxState != after.hasTextBoxState ||
+                        std::abs(before.positionX - after.positionX) > 0.0001f ||
+                        std::abs(before.positionY - after.positionY) > 0.0001f ||
+                        std::abs(before.rotation - after.rotation) > 0.0001f ||
+                        std::abs(before.scaleX - after.scaleX) > 0.0001f ||
+                        std::abs(before.scaleY - after.scaleY) > 0.0001f ||
+                        std::abs(before.textBoxWidth - after.textBoxWidth) > 0.0001f ||
+                        std::abs(before.textBoxHeight - after.textBoxHeight) > 0.0001f;
+   if (!changed) {
+    continue;
    }
+   anyChanged = true;
+   undoEntries.push_back(MultiTransformEntry{target, before, after});
+  }
+
+  if (anyChanged && !undoEntries.empty()) {
+   if (auto *mgr = UndoManager::instance()) {
+    mgr->push(std::make_unique<MultiTransformUndoCommand>(dragStartFrame_, std::move(undoEntries)));
+   }
+  }
  }
-}
 isDragging_ = false;
  lastDragMutationNotify_ = {};
 activeHandle_ = HandleType::None;

@@ -158,6 +158,10 @@ public:
   void resetGizmoCameraMatrices();
   void set3DCameraMatrices(const QMatrix4x4 &view, const QMatrix4x4 &proj);
   void reset3DCameraMatrices();
+  void setStereoCameraMatrices(const QMatrix4x4 &leftView,
+                               const QMatrix4x4 &rightView,
+                               const QMatrix4x4 &proj);
+  void resetStereoCameraMatrices();
   QMatrix4x4 getViewMatrix() const;
   QMatrix4x4 getProjectionMatrix() const;
   void zoomAroundViewportPoint(Detail::float2 viewportPos, float newZoom);

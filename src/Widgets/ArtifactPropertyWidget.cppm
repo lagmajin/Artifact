@@ -70,6 +70,7 @@ module Artifact.Widgets.ArtifactPropertyWidget;
 
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Text;
+import Artifact.Layer.InitParams;
 import Artifact.Composition.Abstract;
 import Property;
 import Property.Abstract;
@@ -79,6 +80,7 @@ import Artifact.Effect.Abstract;
 import Artifact.Application.Manager;
 import Utils.String.UniString;
 import Widgets.Utils.CSS;
+import Artifact.Widgets.Timeline;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.ExpressionCopilotWidget;
 import Artifact.Widgets.PropertyEditor;
@@ -141,6 +143,24 @@ QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
                           a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
                           a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
                           a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
+}
+
+ArtifactTimelineWidget *activeTimelineWidget(QWidget *root) {
+  if (!root) {
+    return nullptr;
+  }
+  const auto widgets = root->window()->findChildren<ArtifactTimelineWidget *>();
+  for (auto *widget : widgets) {
+    if (widget && widget->hasFocus()) {
+      return widget;
+    }
+  }
+  for (auto *widget : widgets) {
+    if (widget && widget->isVisible()) {
+      return widget;
+    }
+  }
+  return widgets.isEmpty() ? nullptr : widgets.front();
 }
 
 std::shared_ptr<ArtifactCore::AbstractProperty>
@@ -240,6 +260,35 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
       filtered.push_back(property);
     }
     return filtered;
+  }
+
+  if (normalizedGroup.compare(QStringLiteral("Solid"), Qt::CaseInsensitive) == 0) {
+    const int fillType = groupInt(QStringLiteral("solid.fillType"),
+                                 static_cast<int>(ArtifactSolidFillType::Solid));
+    if (fillType != static_cast<int>(ArtifactSolidFillType::LinearGradient)) {
+      std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
+      filtered.reserve(properties.size());
+      for (const auto &property : properties) {
+        if (!property) {
+          continue;
+        }
+        const QString name = property->getName();
+        const bool isGradientOnly =
+            name == QStringLiteral("solid.gradientStartColor") ||
+            name == QStringLiteral("solid.gradientEndColor") ||
+            name == QStringLiteral("solid.gradientAngleDegrees") ||
+            name == QStringLiteral("solid.gradientReverse") ||
+            name == QStringLiteral("solid.gradientCenterX") ||
+            name == QStringLiteral("solid.gradientCenterY") ||
+            name == QStringLiteral("solid.gradientScale") ||
+            name == QStringLiteral("solid.gradientOffset");
+        if (isGradientOnly) {
+          continue;
+        }
+        filtered.push_back(property);
+      }
+      return filtered;
+    }
   }
 
   return properties;
@@ -532,6 +581,7 @@ public:
   QWidget *containerWidget = nullptr;
   QVBoxLayout *mainLayout = nullptr;
   ArtifactAbstractLayerPtr currentLayer;
+  std::vector<ArtifactAbstractEffectPtr> compositionEffects;
   QSet<ArtifactAbstractLayerPtr> targetLayers;
   QMetaObject::Connection currentLayerChangedConnection;
   QTimer *rebuildTimer = nullptr;
@@ -549,6 +599,7 @@ public:
   int localPropertyEditDepth = 0;
   QHash<QString, ArtifactPropertyEditorRowWidget *> propertyEditors;
   QString rebuildSignature;
+  QString pendingScrollGroupName;
   qint64 lastPropertyUpdateFramePosition = std::numeric_limits<qint64>::min();
   int64_t lastPropertyUpdateFps = -1;
   ArtifactCore::EventBus eventBus_ = ArtifactCore::globalEventBus();
@@ -579,6 +630,7 @@ public:
   QString computeRebuildSignature() const;
   void invalidatePropertyValueCache();
   void rebuildUI();
+  void scrollToGroupByName(const QString &groupName);
   void updatePropertyValues();
   void applyLockState();
   ArtifactPropertyEditorRowWidget* activeExpressionRow() const;
@@ -965,7 +1017,7 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   const auto applyPreviewValue =
       [handler = previewValue ? previewValue : commitValue, propertyPtr,
         playback, currentTimeProvider, keyframeChanged,
-        propertyName = property.getName(), row, rowValueChanged](const QVariant &value) {
+        propertyName = property.getName(), row, rowValueChanged, layer](const QVariant &value) {
          if (propertyPtr) {
            propertyPtr->setValue(value);
            if (row && row->isKeyframeModeEnabled() &&
@@ -990,9 +1042,14 @@ ArtifactPropertyEditorRowWidget *createPropertyRow(
   const auto applyCommitValue =
       [commitValue, propertyPtr, playback, currentTimeProvider,
        propertyName = property.getName(), row, rowValueChanged,
-       keyframeChanged](const QVariant &value) {
+       keyframeChanged, layer](const QVariant &value) {
         if (propertyPtr) {
           propertyPtr->setValue(value);
+          if (row && layer) {
+            if (auto *timeline = activeTimelineWidget(row)) {
+              timeline->applyValueToSelectedKeyframeArea(layer->id(), propertyName, value);
+            }
+          }
         }
         if (rowValueChanged) {
           rowValueChanged(row, propertyPtr, value);
@@ -1315,6 +1372,27 @@ QString ArtifactPropertyWidget::Impl::computeRebuildSignature() const {
   signature += focusedEffectId.trimmed();
   signature += QLatin1Char('\n');
 
+  signature += QStringLiteral("composition_effects:");
+  signature += QString::number(compositionEffects.size());
+  signature += QLatin1Char('\n');
+  for (const auto &effect : compositionEffects) {
+    if (!effect) {
+      continue;
+    }
+    signature += QStringLiteral("composition_effect:");
+    signature += effect->effectID().toQString();
+    signature += QLatin1Char('|');
+    signature += effect->displayName().toQString();
+    signature += QLatin1Char('|');
+    signature += QString::number(static_cast<int>(effect->pipelineStage()));
+    signature += QLatin1Char('\n');
+    for (const auto &property : effect->getProperties()) {
+      signature += QStringLiteral("composition_effect_property:");
+      signature += property.getName();
+      signature += QLatin1Char('\n');
+    }
+  }
+
   signature += QStringLiteral("valueColumnFirst:");
   signature += valueColumnFirst ? QStringLiteral("1") : QStringLiteral("0");
   signature += QLatin1Char('\n');
@@ -1499,7 +1577,8 @@ void ArtifactPropertyWidget::Impl::invalidatePropertyValueCache() {
 QSize ArtifactPropertyWidget::sizeHint() const { return QSize(300, 600); }
 
 void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
-  if (impl_->currentLayer == layer && impl_->targetLayers.size() <= 1) {
+  if (impl_->currentLayer == layer && impl_->targetLayers.size() <= 1 &&
+      impl_->compositionEffects.empty()) {
     // Same layer object can still need a full rebuild when visibility or groups change.
     impl_->invalidatePropertyValueCache();
     updateProperties();
@@ -1511,6 +1590,7 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
   }
 
   impl_->currentLayer = layer;
+  impl_->compositionEffects.clear();
   impl_->targetLayers.clear();
   if (layer) {
     impl_->targetLayers.insert(layer);
@@ -1533,6 +1613,20 @@ void ArtifactPropertyWidget::setLayer(ArtifactAbstractLayerPtr layer) {
   updateProperties();
 }
 
+void ArtifactPropertyWidget::setCompositionEffects(
+    const std::vector<std::shared_ptr<ArtifactAbstractEffect>>& effects) {
+  if (impl_->currentLayerChangedConnection) {
+    QObject::disconnect(impl_->currentLayerChangedConnection);
+    impl_->currentLayerChangedConnection = {};
+  }
+
+  impl_->currentLayer = nullptr;
+  impl_->targetLayers.clear();
+  impl_->compositionEffects = effects;
+  impl_->invalidatePropertyValueCache();
+  updateProperties();
+}
+
 void ArtifactPropertyWidget::setLayers(const QSet<ArtifactAbstractLayerPtr>& layers) {
   if (layers.isEmpty()) {
     clear();
@@ -1546,6 +1640,7 @@ void ArtifactPropertyWidget::setLayers(const QSet<ArtifactAbstractLayerPtr>& lay
   // Use first layer as the primary for display
   auto primary = *layers.begin();
   impl_->currentLayer = primary;
+  impl_->compositionEffects.clear();
   impl_->targetLayers = layers;
   impl_->invalidatePropertyValueCache();
 
@@ -1577,6 +1672,7 @@ void ArtifactPropertyWidget::setFocusedEffectId(const QString &effectId) {
 
 void ArtifactPropertyWidget::clear() {
   impl_->currentLayer = nullptr;
+  impl_->compositionEffects.clear();
   impl_->targetLayers.clear();
   impl_->focusedEffectId.clear();
   impl_->invalidatePropertyValueCache();
@@ -2106,6 +2202,10 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   if (nextSignature == rebuildSignature) {
     rebuilding = false;
     updatePropertyValues();
+    if (!pendingScrollGroupName.isEmpty()) {
+      QTimer::singleShot(0, owner, [this]() { scrollToGroupByName(pendingScrollGroupName); });
+      pendingScrollGroupName.clear();
+    }
     return;
   }
   rebuildSignature = nextSignature;
@@ -2123,8 +2223,8 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
   clearLayoutRecursive(mainLayout);
 
-  if (!currentLayer) {
-    QLabel *emptyLabel = new QLabel("Select a layer to edit properties");
+  if (!currentLayer && compositionEffects.empty()) {
+    QLabel *emptyLabel = new QLabel("Select a layer or composition effect to edit properties");
     emptyLabel->setObjectName(QStringLiteral("propertyEmptyLabel"));
     emptyLabel->setAlignment(Qt::AlignCenter);
     applyPropertySectionLabel(emptyLabel, true);
@@ -2196,6 +2296,121 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
         "background: #3C5B76; color: #E3E7EC; padding: 4px 8px; "
         "border-radius: 4px; font-weight: bold; font-size: 11px;"));
     mainLayout->addWidget(multiBadge);
+  }
+
+  if (!currentLayer) {
+    bool hasAnyCompositionEffectProperties = false;
+    const bool hasFocusedEffect = !focusedEffectId.trimmed().isEmpty();
+    const auto currentCompositionEffectTime = []() { return RationalTime(0, 1); };
+
+    if (hasFocusedEffect) {
+      auto *focusedLabel = new QLabel(
+          QStringLiteral("Focused Composition Effect ID: %1").arg(focusedEffectId));
+      focusedLabel->setObjectName(QStringLiteral("propertySectionLabel"));
+      applyPropertySectionLabel(focusedLabel, true);
+      applyThemeTextPalette(focusedLabel, 110);
+      mainLayout->addWidget(focusedLabel);
+    }
+
+    for (const auto &effect : compositionEffects) {
+      if (!effect) {
+        continue;
+      }
+      if (hasFocusedEffect && effect->effectID().toQString() != focusedEffectId) {
+        continue;
+      }
+
+      const auto presentation = describeEffectPresentation(effect);
+      QGroupBox *group = new QGroupBox(
+          QStringLiteral("Composition / %1").arg(presentation.headingText));
+      auto *groupLayout = new QVBoxLayout(group);
+      groupLayout->setContentsMargins(10, 8, 10, 8);
+      groupLayout->setSpacing(5);
+      applyPropertySectionBox(group);
+      applyThemeTextPalette(group, 120);
+
+      auto *stageLabel = new QLabel(presentation.stageNoteText, group);
+      stageLabel->setObjectName(QStringLiteral("propertySectionNote"));
+      stageLabel->setWordWrap(true);
+      applyPresentationToneLabel(stageLabel, presentation.badgeTone, false);
+      groupLayout->addWidget(stageLabel);
+
+      ArtifactCore::PropertyGroup propGroup(effect->displayName().toQString());
+      for (const auto &p : effect->getProperties()) {
+        propGroup.addProperty(
+            std::make_shared<ArtifactCore::AbstractProperty>(p));
+      }
+
+      auto sortedProps = propGroup.sortedProperties();
+      if (favoriteOnly) {
+        const auto favs = loadFavoriteProperties();
+        if (!favs.isEmpty()) {
+          std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> favFiltered;
+          favFiltered.reserve(sortedProps.size());
+          for (const auto &p : sortedProps) {
+            if (p && favs.contains(p->getName(), Qt::CaseInsensitive)) {
+              favFiltered.push_back(p);
+            }
+          }
+          sortedProps.swap(favFiltered);
+        } else {
+          sortedProps.clear();
+        }
+      }
+      if (sortedProps.empty()) {
+        delete group;
+        continue;
+      }
+
+      bool addedGroupProperties = false;
+      std::vector<ArtifactPropertyEditorRowWidget *> effectRows;
+      addRowsFromProperties(
+          group, groupLayout, sortedProps, filterText,
+          [this, effect](const QString &name, const QVariant &value) {
+            ScopedPropertyEditGuard guard(localPropertyEditDepth);
+            effect->setPropertyValue(name, value);
+            scheduleUpdateValues();
+          },
+          {},
+          currentCompositionEffectTime,
+          {},
+          ArtifactAbstractLayerPtr{},
+          &addedGroupProperties, &propertyEditors, &reusedKeys, &effectRows,
+          {});
+
+      if (addedGroupProperties) {
+        alignPropertyRowLabels(effectRows, 132, 176);
+        mainLayout->addWidget(group);
+        hasAnyCompositionEffectProperties = true;
+      } else {
+        delete group;
+      }
+    }
+
+    if (!hasAnyCompositionEffectProperties) {
+      QLabel *emptyProps = new QLabel("No editable composition effect properties");
+      emptyProps->setAlignment(Qt::AlignCenter);
+      applyPropertySectionLabel(emptyProps, true);
+      mainLayout->addWidget(emptyProps);
+    }
+
+    mainLayout->addStretch();
+
+    QStringList toRemove;
+    for (auto it = propertyEditors.begin(); it != propertyEditors.end(); ++it) {
+      if (!reusedKeys.contains(it.key())) {
+        if (it.value()) {
+          it.value()->deleteLater();
+        }
+        toRemove.append(it.key());
+      }
+    }
+    for (const auto &key : toRemove) {
+      propertyEditors.remove(key);
+    }
+
+    rebuilding = false;
+    return;
   }
 
   bool hasAnyProperties = false;
@@ -2274,7 +2489,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     }
 
     QGroupBox *group = new QGroupBox(
-        isSourceReframe ? QStringLiteral("Pan / Crop") : groupName);
+        isSourceReframe ? QStringLiteral("Crop / Pan") : groupName);
     auto *groupLayout = new QVBoxLayout(group);
     groupLayout->setContentsMargins(10, 8, 10, 8);
     groupLayout->setSpacing(5);
@@ -2371,7 +2586,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       }
 
       if (!sourceCropEnabled) {
-        auto *enableButton = new QPushButton(QStringLiteral("Show Pan / Crop"),
+        auto *enableButton = new QPushButton(QStringLiteral("Show Crop / Pan"),
                                              group);
         enableButton->setCursor(Qt::PointingHandCursor);
         contentLayout->addWidget(enableButton);
@@ -2387,7 +2602,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                          });
 
         auto *note = new QLabel(
-            QStringLiteral("Enable Pan / Crop to reveal source window and motion controls."),
+            QStringLiteral("Enable Crop / Pan to reveal source window and motion controls."),
             group);
         note->setObjectName(QStringLiteral("propertySectionNote"));
         note->setWordWrap(true);
@@ -2397,13 +2612,62 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
 
         addedGroupProperties = true;
       } else {
+      auto *headerRow = new QWidget(group);
+      auto *headerLayout = new QHBoxLayout(headerRow);
+      headerLayout->setContentsMargins(0, 0, 0, 0);
+      headerLayout->setSpacing(8);
       auto *note = new QLabel(
-          QStringLiteral("Source reframe behaves like Pan/Crop: the window looks into the source, then layer transform places it in comp."));
+          QStringLiteral("Crop / Pan views the source, and Layer Transform places it in comp."));
       note->setObjectName(QStringLiteral("propertySectionNote"));
       note->setWordWrap(true);
       applyPropertySectionLabel(note, false);
       applyThemeTextPalette(note, 120);
-      contentLayout->addWidget(note);
+      headerLayout->addWidget(note, 1);
+
+      auto *resetButton = new QPushButton(QStringLiteral("Reset Crop / Pan"), group);
+      resetButton->setCursor(Qt::PointingHandCursor);
+      resetButton->setToolTip(QStringLiteral("Restore crop, pan, zoom, rotation, and anchor to defaults."));
+      headerLayout->addWidget(resetButton, 0);
+
+      auto *disableButton = new QPushButton(QStringLiteral("Disable Crop / Pan"), group);
+      disableButton->setCursor(Qt::PointingHandCursor);
+      disableButton->setToolTip(QStringLiteral("Turn off Crop / Pan without changing the current values."));
+      headerLayout->addWidget(disableButton, 0);
+
+      contentLayout->addWidget(headerRow);
+
+      QObject::connect(resetButton, &QPushButton::clicked, group, [this, layer]() {
+        if (!layer) {
+          return;
+        }
+        ScopedPropertyEditGuard guard(localPropertyEditDepth);
+        const auto sourceSize = layer->sourceSize();
+        const bool hasSourceSize = sourceSize.width > 0 && sourceSize.height > 0;
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), true);
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.panX"), 0.0);
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.panY"), 0.0);
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.zoom"), 1.0);
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.rotation"), 0.0);
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.anchorX"), 0.5);
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.anchorY"), 0.5);
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.preserveAspect"), true);
+        if (hasSourceSize) {
+          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropX"), 0.0);
+          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropY"), 0.0);
+          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropWidth"), sourceSize.width);
+          layer->setLayerPropertyValue(QStringLiteral("sourceCrop.cropHeight"), sourceSize.height);
+        }
+        notifyLayerPropertyAnimationChanged(layer);
+      });
+
+      QObject::connect(disableButton, &QPushButton::clicked, group, [this, layer]() {
+        if (!layer) {
+          return;
+        }
+        ScopedPropertyEditGuard guard(localPropertyEditDepth);
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), false);
+        notifyLayerPropertyAnimationChanged(layer);
+      });
 
       auto collectProps = [](const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &src,
                              const auto &names) {
@@ -2435,7 +2699,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
               "sourceCrop.zoom", "sourceCrop.rotation"});
 
       if (!windowProps.empty()) {
-        auto *windowLabel = new QLabel(QStringLiteral("Window"), group);
+        auto *windowLabel = new QLabel(QStringLiteral("Crop"), group);
         windowLabel->setObjectName(QStringLiteral("propertySectionLabel"));
         applyPropertySectionLabel(windowLabel, true);
         contentLayout->addWidget(windowLabel);
@@ -2451,7 +2715,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       }
 
       if (!motionProps.empty()) {
-        auto *motionLabel = new QLabel(QStringLiteral("Motion"), group);
+        auto *motionLabel = new QLabel(QStringLiteral("Pan"), group);
         motionLabel->setObjectName(QStringLiteral("propertySectionLabel"));
         applyPropertySectionLabel(motionLabel, true);
         contentLayout->addWidget(motionLabel);
@@ -2468,12 +2732,46 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
       }
     } else {
       addRowsFromProperties(
-          group, groupLayout, sortedProps, filterText, commitLayerValue,
+          group, contentLayout, sortedProps, filterText, commitLayerValue,
           previewLayerValue, currentLayerTime, notifyLayerKeyframeChanged,
           layer, &addedGroupProperties, &propertyEditors, &reusedKeys,
           &groupRows,
           decorateLayerRow, updateLayerRowValue);
     }
+
+    const bool hasSourceCrop =
+        layer && layer->getProperty(QStringLiteral("sourceCrop.enabled")) &&
+        layer->getProperty(QStringLiteral("sourceCrop.cropX")) &&
+        layer->getProperty(QStringLiteral("sourceCrop.panX"));
+    if (groupName.compare(QStringLiteral("Transform"), Qt::CaseInsensitive) == 0 &&
+        hasSourceCrop) {
+      auto *buttonRow = new QWidget(group);
+      auto *buttonLayout = new QHBoxLayout(buttonRow);
+      buttonLayout->setContentsMargins(20, 0, 4, 0);
+      buttonLayout->setSpacing(0);
+      auto *enableButton = new QPushButton(
+          layer->getProperty(QStringLiteral("sourceCrop.enabled")) &&
+                  layer->getProperty(QStringLiteral("sourceCrop.enabled"))->getValue().toBool()
+              ? QStringLiteral("Edit Crop / Pan")
+              : QStringLiteral("Add Crop / Pan"),
+          buttonRow);
+      enableButton->setCursor(Qt::PointingHandCursor);
+      buttonLayout->addWidget(enableButton);
+      buttonLayout->addStretch();
+      contentLayout->addWidget(buttonRow);
+      QObject::connect(enableButton, &QPushButton::clicked, group, [this, layer]() {
+        if (!layer) {
+          return;
+        }
+        ScopedPropertyEditGuard guard(localPropertyEditDepth);
+        layer->setLayerPropertyValue(QStringLiteral("sourceCrop.enabled"), true);
+        notifyLayerPropertyAnimationChanged(layer);
+        pendingScrollGroupName = QStringLiteral("Crop / Pan");
+        scheduleRebuild(0);
+      });
+      addedGroupProperties = true;
+    }
+
     if (addedGroupProperties) {
       alignPropertyRowLabels(groupRows, 132, 184);
       mainLayout->addWidget(group);
@@ -2592,7 +2890,28 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     propertyEditors.remove(key);
   }
 
+  if (!pendingScrollGroupName.isEmpty()) {
+    QTimer::singleShot(0, owner, [this]() { scrollToGroupByName(pendingScrollGroupName); });
+    pendingScrollGroupName.clear();
+  }
+
   rebuilding = false;
+}
+
+void ArtifactPropertyWidget::Impl::scrollToGroupByName(const QString &groupName) {
+  if (groupName.isEmpty() || !owner) {
+    return;
+  }
+  const auto groups = owner->findChildren<QGroupBox *>();
+  for (auto *group : groups) {
+    if (!group) {
+      continue;
+    }
+    if (group->title().compare(groupName, Qt::CaseInsensitive) == 0) {
+      owner->ensureWidgetVisible(group, 16, 16);
+      return;
+    }
+  }
 }
 
 } // namespace Artifact

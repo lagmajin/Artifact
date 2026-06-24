@@ -917,9 +917,12 @@ public:
         const bool currentPending =
             playbackSvc->isRamPreviewFramePendingBuild(currentFrame);
         const QString currentNote = ramPreviewStatusNote(currentState);
-        const QString currentPriorityNote = ramPreviewPriorityNote(currentPriority);
+        const QString currentPriorityBand = summary.currentPriorityBand.trimmed().isEmpty()
+                                                ? QStringLiteral("unknown")
+                                                : summary.currentPriorityBand.trimmed();
+        const QString currentPriorityReason = summary.currentPriorityReason;
         return QStringLiteral(
-                   "ramPreview playable=%1/%2 requested=%3 pending=%4 failed=%5 inRam=%6 onDisk=%7 readyMissingImage=%8 queue=%9 next=%10 active=%11 rangeReady=%12 progress=%13 playFallback=%14 gen=%15 reason=%16 hit=%17%% range=%18-%19 current=%20 playable=%21 pendingBuild=%22 currentState={requested:%23 ready:%24 image:%25 playable:%26 inRam:%27 onDisk:%28 failed:%29} note=%30 priority=%31 priorityState={inComp:%32 inWork:%33 current:%34 next:%35 reverse:%36 dist:%37}")
+                   "ramPreview playable=%1/%2 requested=%3 pending=%4 failed=%5 inRam=%6 onDisk=%7 readyMissingImage=%8 queue=%9 next=%10 active=%11 rangeReady=%12 progress=%13 playFallback=%14 gen=%15 reason=%16 hit=%17%% range=%18-%19 current=%20 playable=%21 pendingBuild=%22 currentState={requested:%23 ready:%24 image:%25 playable:%26 inRam:%27 onDisk:%28 failed:%29} note=%30 band=%31 reasonText=%32 priorityState={inComp:%33 inWork:%34 current:%35 next:%36 reverse:%37 dist:%38}")
                 .arg(summary.playableFrames)
                 .arg(summary.rangeFrames)
                 .arg(summary.requestedFrames)
@@ -950,7 +953,8 @@ public:
                 .arg(currentState.onDisk ? 1 : 0)
                 .arg(currentState.failed ? 1 : 0)
                 .arg(currentNote)
-                .arg(currentPriorityNote)
+                .arg(currentPriorityBand)
+                .arg(currentPriorityReason)
                 .arg(currentPriority.inCompositionRange ? 1 : 0)
                 .arg(currentPriority.inWorkArea ? 1 : 0)
                 .arg(currentPriority.currentFrame ? 1 : 0)

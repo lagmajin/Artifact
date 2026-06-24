@@ -76,6 +76,11 @@ class ArtifactTimelineWidget :public QWidget {
   void reverseAllKeyframesInComposition();
   void copySelectedKeyframes();
   void pasteKeyframesAtPlayhead();
+  bool hasSelectedKeyframeArea() const;
+  QString selectedKeyframeAreaSummary() const;
+  bool applyValueToSelectedKeyframeArea(const LayerID& layerId,
+                                        const QString& propertyPath,
+                                        const QVariant& value);
   void showValueGraph();
   void showSpeedGraph();
   void showKeyPatternDialog();

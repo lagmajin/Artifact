@@ -154,6 +154,19 @@ private:
   Impl *impl_;
 };
 
+class AudioScrubSettingPage : public QWidget, public ISettingPage {
+private:
+  class Impl;
+  Impl *impl_;
+
+public:
+  explicit AudioScrubSettingPage(QWidget *parent = nullptr);
+  ~AudioScrubSettingPage();
+  void loadSettings() override;
+  void saveSettings() override;
+  QList<SettingItemInfo> searchableItems() const override;
+};
+
 class AISettingPage : public QWidget, public ISettingPage {
   W_OBJECT(AISettingPage)
 public:

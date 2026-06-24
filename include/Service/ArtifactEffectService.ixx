@@ -61,9 +61,15 @@ export namespace Artifact
   EffectServiceResult setEffectEnabled(const LayerID& layerId, const QString& effectId, bool enabled);
   EffectServiceResult moveEffect(const LayerID& layerId, const QString& effectId, int direction);
   EffectServiceResult duplicateEffect(const LayerID& layerId, const QString& effectId);
+  EffectServiceResult addEffectToCurrentComposition(const EffectID& effectId);
+  EffectServiceResult removeEffectFromCurrentComposition(const QString& effectId);
+  EffectServiceResult setCompositionEffectEnabled(const QString& effectId, bool enabled);
+  EffectServiceResult moveCompositionEffect(const QString& effectId, int direction);
 
   // Property operations
   EffectServiceResult setEffectProperty(const LayerID& layerId, const QString& effectId,
+   const QString& propertyName, const QVariant& value);
+  EffectServiceResult setCompositionEffectProperty(const QString& effectId,
    const QString& propertyName, const QVariant& value);
 
   // Preset operations

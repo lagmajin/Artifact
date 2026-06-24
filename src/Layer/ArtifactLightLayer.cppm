@@ -88,10 +88,10 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
   const auto lightColor = color();
   const float intensityScale = std::clamp(lightImpl_->intensity_ / 100.0f, 0.2f, 4.0f);
   const ArtifactCore::FloatColor tintColor{
-      lightColor.r() * std::min(1.0f, intensityScale),
-      lightColor.g() * std::min(1.0f, intensityScale),
-      lightColor.b() * std::min(1.0f, intensityScale),
-      std::min(1.0f, lightColor.a() * (0.35f + 0.65f * std::min(1.0f, intensityScale)))};
+      std::min(1.0f, lightColor.r() * 0.85f + 0.10f * intensityScale),
+      std::min(1.0f, lightColor.g() * 0.95f + 0.12f * intensityScale),
+      std::min(1.0f, lightColor.b() * 1.05f + 0.25f * intensityScale),
+      std::min(1.0f, lightColor.a() * (0.38f + 0.62f * std::min(1.0f, intensityScale)))};
   
   // Calculate gizmo size (scale inversely with zoom to keep constant screen size if desired, 
   // or just use a fixed 3D size). Here we use a fixed size that's easy to see.
@@ -115,14 +115,42 @@ void ArtifactLightLayer::draw(ArtifactIRenderer* renderer) {
                             1.0f);
   }
 
-  // Direction indicators for oriented lights
+  QMatrix4x4 m = getGlobalTransform4x4();
+  QVector3D forward = m.mapVector(QVector3D(0, 0, 100.0f / (zoom > 0.001f ? zoom : 1.0f)));
+  if (forward.lengthSquared() <= 0.000001f) {
+    forward = QVector3D(0, 0, 1);
+  } else {
+    forward.normalize();
+  }
+  const QVector3D tip = pos + forward * (baseSize * 2.4f);
+  const QVector3D side = m.mapVector(QVector3D(1, 0, 0)).normalized() * (baseSize * 0.7f);
+  const QVector3D up = m.mapVector(QVector3D(0, 1, 0)).normalized() * (baseSize * 0.7f);
+
+  // Direction indicators for oriented lights.
   if (type == LightType::Spot || type == LightType::Parallel) {
-    // Draw a small forward axis so the gizmo matches the scene-light direction.
-    QMatrix4x4 m = getGlobalTransform4x4();
-    QVector3D forward = m.mapVector(QVector3D(0, 0, 100.0f / (zoom > 0.001f ? zoom : 1.0f)));
-    QVector3D tip = pos + forward;
-    
     renderer->drawGizmoArrow(p, float3{tip.x(), tip.y(), tip.z()}, tintColor, baseSize);
+  }
+
+  if (type == LightType::Point) {
+    renderer->drawGizmoLine(float3{pos.x() - side.x(), pos.y() - side.y(), pos.z() - side.z()},
+                            float3{pos.x() + side.x(), pos.y() + side.y(), pos.z() + side.z()},
+                            tintColor, 1.0f);
+    renderer->drawGizmoLine(float3{pos.x() - up.x(), pos.y() - up.y(), pos.z() - up.z()},
+                            float3{pos.x() + up.x(), pos.y() + up.y(), pos.z() + up.z()},
+                            tintColor, 1.0f);
+  } else if (type == LightType::Ambient) {
+    renderer->drawGizmoRing(p, float3{0, 1, 0}, baseSize * 1.35f, tintColor, 1.0f);
+  } else if (type == LightType::Spot) {
+    renderer->drawGizmoLine(float3{pos.x(), pos.y(), pos.z()},
+                            float3{tip.x(), tip.y(), tip.z()}, tintColor, 1.0f);
+    renderer->drawGizmoRing(float3{tip.x(), tip.y(), tip.z()}, float3{0, 1, 0},
+                            baseSize * 0.75f, tintColor, 1.0f);
+  } else if (type == LightType::Parallel) {
+    renderer->drawGizmoLine(float3{pos.x(), pos.y(), pos.z()},
+                            float3{tip.x(), tip.y(), tip.z()}, tintColor, 1.0f);
+    renderer->drawGizmoLine(float3{tip.x() - side.x(), tip.y() - side.y(), tip.z() - side.z()},
+                            float3{tip.x() + side.x(), tip.y() + side.y(), tip.z() + side.z()},
+                            tintColor, 0.9f);
   }
 }
 
@@ -166,20 +194,20 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
 {
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
     
-    ArtifactCore::PropertyGroup lightOptions("Light Options");
+    ArtifactCore::PropertyGroup lightOptions("Light");
     
-    auto typeProp = persistentLayerProperty(QStringLiteral("Light Options/Light Type"),
+    auto typeProp = persistentLayerProperty(QStringLiteral("Light/Type"),
                                             ArtifactCore::PropertyType::Integer,
                                             static_cast<int>(lightImpl_->type_), -150);
     typeProp->setTooltip(QStringLiteral("0: Point, 1: Spot, 2: Parallel, 3: Ambient"));
     lightOptions.addProperty(typeProp);
 
-    auto colorProp = persistentLayerProperty(QStringLiteral("Light Options/Color"),
+    auto colorProp = persistentLayerProperty(QStringLiteral("Light/Color"),
                                              ArtifactCore::PropertyType::Color,
                                              toQColor(lightImpl_->color_), -145);
     lightOptions.addProperty(colorProp);
 
-    auto intensityProp = persistentLayerProperty(QStringLiteral("Light Options/Intensity"),
+    auto intensityProp = persistentLayerProperty(QStringLiteral("Light/Intensity"),
                                                  ArtifactCore::PropertyType::Float,
                                                  static_cast<double>(lightImpl_->intensity_), -140);
     intensityProp->setHardRange(0.0, 1000.0);
@@ -188,14 +216,14 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
     lightOptions.addProperty(intensityProp);
 
     auto shadowProp = persistentLayerProperty(
-        QStringLiteral("Light Options/Shadows"),
+        QStringLiteral("Light/Shadows"),
         ArtifactCore::PropertyType::Boolean,
         lightImpl_->castsShadows_, -130);
-    shadowProp->setTooltip(QStringLiteral("Show a softer outer ring to indicate shadow softness"));
+    shadowProp->setTooltip(QStringLiteral("Enable the light's shadow cue for 3D preview"));
     lightOptions.addProperty(shadowProp);
 
     auto radiusProp = persistentLayerProperty(
-        QStringLiteral("Light Options/Shadow Radius"),
+        QStringLiteral("Light/Shadow Radius"),
         ArtifactCore::PropertyType::Float,
         static_cast<double>(lightImpl_->shadowRadius_), -120);
     radiusProp->setHardRange(0.0, 500.0);
@@ -233,10 +261,10 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactLightLayer::getLayerPropertyGro
 
 bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
 {
-    if (propertyPath == "Light Options/Light Type") {
+    if (propertyPath == "Light/Type") {
         setLightType(static_cast<LightType>(value.toInt()));
         return true;
-    } else if (propertyPath == "Light Options/Color") {
+    } else if (propertyPath == "Light/Color") {
         const QColor qc = value.value<QColor>();
         setColor(ArtifactCore::FloatColor(
             static_cast<float>(qc.redF()),
@@ -245,13 +273,13 @@ bool ArtifactLightLayer::setLayerPropertyValue(const QString& propertyPath, cons
             static_cast<float>(qc.alphaF())
         ));
         return true;
-    } else if (propertyPath == "Light Options/Intensity") {
+    } else if (propertyPath == "Light/Intensity") {
         setIntensity(value.toFloat());
         return true;
-    } else if (propertyPath == "Light Options/Shadows") {
+    } else if (propertyPath == "Light/Shadows") {
         setCastsShadows(value.toBool());
         return true;
-    } else if (propertyPath == "Light Options/Shadow Radius") {
+    } else if (propertyPath == "Light/Shadow Radius") {
         setShadowRadius(value.toFloat());
         return true;
     } else if (propertyPath == "Light Linking/Link Mode") {

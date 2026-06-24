@@ -6,6 +6,7 @@ module;
 module Artifact.Engine.DAG.CompositionGraphBuilder;
 
 import Artifact.Composition.Abstract;
+import Artifact.Engine.DAG.Node;
 
 namespace Artifact {
 

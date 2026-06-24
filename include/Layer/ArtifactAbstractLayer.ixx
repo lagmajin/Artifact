@@ -426,11 +426,11 @@ public:
 
    /*Effects*/
 public:
-   void addEffect(std::shared_ptr<class ArtifactAbstractEffect> effect);
+   void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
    void removeEffect(const UniString &effectID);
    void clearEffects();
-   std::vector<std::shared_ptr<class ArtifactAbstractEffect>> getEffects() const;
-   std::shared_ptr<class ArtifactAbstractEffect>
+   std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
+   std::shared_ptr<ArtifactAbstractEffect>
    getEffect(const UniString &effectID) const;
    int effectCount() const;
    /*Effects*/

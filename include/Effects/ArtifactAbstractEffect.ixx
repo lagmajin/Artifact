@@ -40,6 +40,7 @@ import Utils.Id;
 import Utils.String.UniString;
 import Artifact.Effect.Context;
 import Image.ImageF32x4RGBAWithCache;
+import Image.ImageF32x4_RGBA;
 import Artifact.Effect.ImplBase;
 import Property.Abstract;
 import Artifact.Render.ROI;
@@ -92,6 +93,22 @@ public:
     ComputeMode computeMode() const;
     void setComputeMode(ComputeMode mode);
     virtual bool supportsGPU() const { return false; }
+
+    // Per-effect mask metadata.
+    // Runtime blending can hook into this later without changing the preset format.
+    bool hasMask() const;
+    void setMaskEnabled(bool enabled);
+    bool maskEnabled() const;
+    void setMaskImage(const std::shared_ptr<ImageF32x4_RGBA>& maskImage);
+    std::shared_ptr<ImageF32x4_RGBA> maskImage() const;
+    void setMaskLayerId(const QString& layerId);
+    QString maskLayerId() const;
+    void setMaskName(const QString& name);
+    QString maskName() const;
+    void setMaskInverted(bool inverted);
+    bool maskInverted() const;
+    void setMaskOpacity(float opacity);
+    float maskOpacity() const;
 
     // identification
     UniString effectID() const;

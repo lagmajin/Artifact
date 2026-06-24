@@ -4,6 +4,7 @@ module;
 #include <QMenu>
 #include <QAction>
 #include <QFileDialog>
+#include <QDialog>
 #include <QApplication>
 #include <QDebug>
 #include <QDesktopServices>
@@ -18,6 +19,7 @@ module;
 #include <QCoreApplication>
 #include <QTimer>
 #include <QProgressDialog>
+#include <QRegularExpression>
 #include <QPainter>
 #include <QImage>
 #include <QVector>
@@ -32,6 +34,7 @@ import Artifact.Project.Manager;
 import Artifact.Project.Packager;
 import Artifact.Composition.InitParams;
 import Artifact.Service.Project;
+import Artifact.Widgets.ImportAssetsDialog;
 import Application.AppSettings;
 import Utils.Path;
 import Artifact.Widgets.AppDialogs;
@@ -432,7 +435,13 @@ void ArtifactFileMenu::Impl::handleImportAssets()
         supportedAssetFilter()
     );
     if (files.isEmpty()) return;
-    const QStringList imported = svc->importAssetsFromPaths(files);
+    ArtifactImportAssetsDialog dialog(files, menu_);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const QStringList filtered = dialog.selectedPaths();
+    if (filtered.isEmpty()) {
+      return;
+    }
+    const QStringList imported = svc->importAssetsFromPaths(filtered);
     if (imported.isEmpty()) {
         QMessageBox::warning(menu_, QStringLiteral("アセットを読み込み"),
                              QStringLiteral("読み込めるアセットがありませんでした。"));

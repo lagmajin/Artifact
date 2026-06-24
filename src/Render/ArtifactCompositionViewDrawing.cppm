@@ -40,6 +40,7 @@ import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 import Layer.Matte;
 import Image.ImageF32x4_RGBA;
+import Core.Light;
 import CvUtils;
 import Color.Float;
 import FloatRGBA;
@@ -60,6 +61,9 @@ export struct LayerSurfaceCacheEntry
 export bool layerHasCpuRasterizerWork(ArtifactAbstractLayer* layer);
 export bool layerUsesSurfaceUploadForCompositionView(ArtifactAbstractLayer* layer);
 export bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer);
+export bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* composition,
+                                                QImage& image,
+                                                DetailLevel lod = DetailLevel::High);
 export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                         ArtifactIRenderer *renderer,
                                         float opacityOverride = -1.0f,
@@ -68,7 +72,8 @@ export void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                         GPUTextureCacheManager* gpuTextureCacheManager = nullptr,
                                         int64_t cacheFrameNumber = std::numeric_limits<int64_t>::min(),
                                         bool offlineRender = false,
-                                        DetailLevel lod = DetailLevel::High);
+                                        DetailLevel lod = DetailLevel::High,
+                                        const std::vector<ArtifactCore::Light>* sceneLights = nullptr);
 
 namespace {
 
@@ -518,6 +523,55 @@ bool layerUsesGpuTextureCacheForCompositionView(ArtifactAbstractLayer* layer)
          dynamic_cast<ArtifactSolidImageLayer*>(layer) != nullptr;
 }
 
+bool applyCompositionFinalEffectsToImage(ArtifactAbstractComposition* composition,
+                                         QImage& image,
+                                         DetailLevel lod)
+{
+  if (!composition || image.isNull()) {
+    return false;
+  }
+
+  const auto effects = composition->getEffects();
+  bool hasRasterizerEffect = false;
+  for (const auto& effect : effects) {
+    if (effect && effect->isEnabled() &&
+        effect->pipelineStage() == EffectPipelineStage::Rasterizer) {
+      hasRasterizerEffect = true;
+      break;
+    }
+  }
+  if (!hasRasterizerEffect) {
+    return false;
+  }
+
+  const QImage processedImage = downsampleForLOD(image, lod);
+  if (processedImage.isNull()) {
+    return false;
+  }
+
+  cv::Mat mat = ArtifactCore::CvUtils::qImageToCvMat(processedImage, true);
+  if (mat.type() != CV_32FC4) {
+    mat.convertTo(mat, CV_32FC4, 1.0 / 255.0);
+  }
+
+  ArtifactCore::ImageF32x4_RGBA cpuImage;
+  cpuImage.setFromCVMat(mat);
+  ArtifactCore::ImageF32x4RGBAWithCache current(cpuImage);
+
+  for (const auto& effect : effects) {
+    if (!effect || !effect->isEnabled() ||
+        effect->pipelineStage() != EffectPipelineStage::Rasterizer) {
+      continue;
+    }
+    ArtifactCore::ImageF32x4RGBAWithCache next;
+    effect->applyConfigured(current, next);
+    current = next;
+  }
+
+  image = current.image().toQImage();
+  return true;
+}
+
 void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                  ArtifactIRenderer *renderer,
                                  float opacityOverride,
@@ -526,7 +580,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
                                  GPUTextureCacheManager* gpuTextureCacheManager,
                                  int64_t cacheFrameNumber,
                                  bool offlineRender,
-                                 DetailLevel lod)
+                                 DetailLevel lod,
+                                 const std::vector<ArtifactCore::Light>* sceneLights)
 {
   if (!layer || !renderer) {
     return;
@@ -596,6 +651,27 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       }
     } else if (allowSurfaceCache) {
       applyRasterizerEffectsAndMasksToSurface(layer, surface, lod);
+    }
+
+    if (sceneLights && !sceneLights->empty() && !layer->is3D()) {
+      const float lift = std::min(0.18f, 0.03f * static_cast<float>(sceneLights->size()));
+      if (lift > 0.0f) {
+        QImage lit = surface.convertToFormat(QImage::Format_ARGB32_Premultiplied);
+        for (int y = 0; y < lit.height(); ++y) {
+          QRgb* row = reinterpret_cast<QRgb*>(lit.scanLine(y));
+          for (int x = 0; x < lit.width(); ++x) {
+            const int r = qRed(row[x]);
+            const int g = qGreen(row[x]);
+            const int b = qBlue(row[x]);
+            const int a = qAlpha(row[x]);
+            row[x] = qRgba(std::clamp(static_cast<int>(r + (255 - r) * lift), 0, 255),
+                           std::clamp(static_cast<int>(g + (255 - g) * lift), 0, 255),
+                           std::clamp(static_cast<int>(b + (255 - b) * lift), 0, 255),
+                           a);
+          }
+        }
+        surface = std::move(lit);
+      }
     }
 
     const float baseOpacity = (opacityOverride >= 0.0f ? opacityOverride : layer->opacity());

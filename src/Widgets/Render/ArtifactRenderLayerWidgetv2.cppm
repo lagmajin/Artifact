@@ -48,6 +48,7 @@ import Artifact.Event.Types;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Layer.Shape;
+import Shape.Operator;
 import Property.Abstract;
 
 import Artifact.Render.IRenderer;
@@ -93,6 +94,34 @@ QString displayModeLabel(DisplayMode mode)
   case DisplayMode::Color:
   default:
     return QStringLiteral("Color");
+  }
+}
+
+QString shapeOperatorTypeName(const ArtifactCore::ShapeOperatorType type)
+{
+  switch (type) {
+  case ArtifactCore::ShapeOperatorType::TrimPaths:
+    return QStringLiteral("Trim Paths");
+  case ArtifactCore::ShapeOperatorType::Repeater:
+    return QStringLiteral("Repeater");
+  case ArtifactCore::ShapeOperatorType::MergePaths:
+    return QStringLiteral("Merge Paths");
+  case ArtifactCore::ShapeOperatorType::OffsetPaths:
+    return QStringLiteral("Offset Paths");
+  case ArtifactCore::ShapeOperatorType::PuckerBloat:
+    return QStringLiteral("Pucker & Bloat");
+  case ArtifactCore::ShapeOperatorType::RoundedCorners:
+    return QStringLiteral("Rounded Corners");
+  case ArtifactCore::ShapeOperatorType::WigglePaths:
+    return QStringLiteral("Wiggle Paths");
+  case ArtifactCore::ShapeOperatorType::ZigZag:
+    return QStringLiteral("Zig Zag");
+  case ArtifactCore::ShapeOperatorType::Twist:
+    return QStringLiteral("Twist");
+  case ArtifactCore::ShapeOperatorType::HandDrawnWobble:
+    return QStringLiteral("Hand Drawn Wobble");
+  default:
+    return QStringLiteral("Unknown Operator");
   }
 }
 
@@ -1176,7 +1205,21 @@ void ArtifactLayerEditorWidgetV2::Impl::drawTransformOverlay(const ArtifactAbstr
  if (displayMode_ == DisplayMode::Mask || isMaskEditingMode(editMode_)) {
   return;
  }
- transformGizmo_->setLayer(layer);
+ std::vector<ArtifactAbstractLayerPtr> selectedTargets;
+ if (auto *app = ArtifactApplicationManager::instance()) {
+  if (auto *selection = app->layerSelectionManager()) {
+   for (const auto &candidate : selection->selectedLayers()) {
+    if (candidate) {
+     selectedTargets.push_back(candidate);
+    }
+   }
+  }
+ }
+ if (selectedTargets.size() > 1) {
+  transformGizmo_->setTargetLayers(std::move(selectedTargets));
+ } else {
+  transformGizmo_->setLayer(layer);
+ }
  transformGizmo_->setMode(TransformGizmo::Mode::All);
  transformGizmo_->draw(renderer_.get());
 }
@@ -1191,7 +1234,21 @@ void ArtifactLayerEditorWidgetV2::Impl::syncTransformGizmo(const ArtifactAbstrac
   transformGizmo_->setLayer(nullptr);
   return;
  }
- transformGizmo_->setLayer(layer);
+ std::vector<ArtifactAbstractLayerPtr> selectedTargets;
+ if (auto *app = ArtifactApplicationManager::instance()) {
+  if (auto *selection = app->layerSelectionManager()) {
+   for (const auto &candidate : selection->selectedLayers()) {
+    if (candidate) {
+     selectedTargets.push_back(candidate);
+    }
+   }
+  }
+ }
+ if (selectedTargets.size() > 1) {
+  transformGizmo_->setTargetLayers(std::move(selectedTargets));
+ } else {
+  transformGizmo_->setLayer(layer);
+ }
  transformGizmo_->setMode(TransformGizmo::Mode::All);
 }
 
@@ -2996,6 +3053,11 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* splitSegmentAct = nullptr;
  QAction* deletePointAct = nullptr;
  QAction* toggleClosedAct = nullptr;
+ QAction* convertToPathAct = nullptr;
+ QAction* convertToPolygonAct = nullptr;
+ QAction* pathDeletePointAct = nullptr;
+ QAction* pathToggleSmoothAct = nullptr;
+ QAction* pathToggleClosedAct = nullptr;
  std::shared_ptr<ArtifactShapeLayer> shapeLayer;
  if (impl_->editMode_ == EditMode::Paint && impl_->renderer_) {
   auto layer = impl_->targetLayer();
@@ -3013,7 +3075,26 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
    addTwistAct = shapeOpsMenu->addAction(QStringLiteral("Twist"));
    clearShapeOperatorsAct = menu.addAction(QStringLiteral("Clear Shape Operators"));
    clearShapeOperatorsAct->setEnabled(shapeLayer->shapeOperatorCount() > 0);
-   if (shapeLayer->hasCustomPolygon()) {
+   if (shapeLayer->shapeOperatorCount() > 0) {
+    QMenu* opManageMenu = menu.addMenu(QStringLiteral("Manage Operators"));
+    for (int oi = 0; oi < shapeLayer->shapeOperatorCount(); ++oi) {
+     const auto ot = shapeLayer->shapeOperatorTypeAt(oi);
+     const QString opName = QString::number(oi + 1) + QStringLiteral(". ") +
+                            shapeOperatorTypeName(ot);
+     QMenu* opItemMenu = opManageMenu->addMenu(opName);
+     QAction* removeOpAct = opItemMenu->addAction(QStringLiteral("Remove"));
+     removeOpAct->setData(oi);
+     if (oi > 0) {
+      QAction* moveUpAct = opItemMenu->addAction(QStringLiteral("Move Up"));
+      moveUpAct->setData(oi);
+     }
+     if (oi < shapeLayer->shapeOperatorCount() - 1) {
+      QAction* moveDownAct = opItemMenu->addAction(QStringLiteral("Move Down"));
+      moveDownAct->setData(oi);
+     }
+    }
+   }
+    if (shapeLayer->hasCustomPolygon()) {
     const Detail::float2 canvasPos = impl_->renderer_->viewportToCanvas(
         {(float)event->pos().x(), (float)event->pos().y()});
     const QPointF canvasPoint(static_cast<qreal>(canvasPos.x),
@@ -3031,6 +3112,25 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     splitSegmentAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
     deletePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
     toggleClosedAct->setEnabled(shapeLayer->customPolygonClosed() || shapeLayer->customPolygonPoints().size() >= 3);
+   }
+    convertToPathAct = menu.addAction(QStringLiteral("Convert to Bezier Path"));
+   }
+   if (shapeLayer->hasCustomPath()) {
+    convertToPolygonAct = menu.addAction(QStringLiteral("Convert to Polygon"));
+    pathDeletePointAct = menu.addAction(QStringLiteral("Delete Point"));
+    {
+     const auto verts = shapeLayer->customPathVertices();
+     const int vi = impl_->hoveredPathVertexIndex_;
+     const bool validHover = vi >= 0 && static_cast<size_t>(vi) < verts.size();
+     pathDeletePointAct->setEnabled(validHover);
+     pathToggleSmoothAct = menu.addAction(validHover && verts[static_cast<size_t>(vi)].smooth
+                                              ? QStringLiteral("Make Corner")
+                                              : QStringLiteral("Make Smooth"));
+     pathToggleSmoothAct->setEnabled(validHover);
+    }
+    pathToggleClosedAct = menu.addAction(shapeLayer->customPathClosed()
+                                             ? QStringLiteral("Open Path")
+                                             : QStringLiteral("Close Path"));
    }
    if (!menu.actions().isEmpty()) {
     QAction* shapeChosen = menu.exec(event->globalPos());
@@ -3069,6 +3169,24 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
      } else if (shapeChosen == addTwistAct) {
       shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::Twist);
       handled = true;
+     } else if (shapeChosen->text() == QStringLiteral("Remove")) {
+      const int oi = shapeChosen->data().toInt();
+      if (oi >= 0 && oi < shapeLayer->shapeOperatorCount()) {
+       shapeLayer->removeShapeOperatorAt(oi);
+       handled = true;
+      }
+     } else if (shapeChosen->text() == QStringLiteral("Move Up")) {
+      const int oi = shapeChosen->data().toInt();
+      if (oi > 0 && oi < shapeLayer->shapeOperatorCount()) {
+       shapeLayer->moveShapeOperator(oi, oi - 1);
+       handled = true;
+      }
+     } else if (shapeChosen->text() == QStringLiteral("Move Down")) {
+      const int oi = shapeChosen->data().toInt();
+      if (oi >= 0 && oi < shapeLayer->shapeOperatorCount() - 1) {
+       shapeLayer->moveShapeOperator(oi, oi + 1);
+       handled = true;
+      }
      } else if (shapeLayer->hasCustomPolygon()) {
       if (shapeChosen == deletePointAct) {
        impl_->beginShapeEditTransaction(layer);
@@ -3088,6 +3206,70 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
         impl_->markShapeEditDirty();
         handled = true;
        }
+      } else if (shapeChosen == convertToPathAct) {
+       impl_->beginPathEditTransaction(layer);
+       const auto pts = shapeLayer->customPolygonPoints();
+       std::vector<CustomPathVertex> verts;
+       verts.reserve(pts.size());
+       for (const auto &p : pts)
+        verts.push_back({p, QPointF(0, 0), QPointF(0, 0), false});
+       shapeLayer->clearCustomPolygonPoints();
+       shapeLayer->setCustomPathVertices(verts, shapeLayer->customPolygonClosed());
+       impl_->markPathEditDirty();
+       handled = true;
+      }
+      if (handled) {
+       impl_->commitPathEditTransaction();
+       impl_->requestRender();
+       event->accept();
+       return;
+      }
+      impl_->commitPathEditTransaction();
+     } else if (shapeLayer->hasCustomPath()) {
+      if (shapeChosen == pathDeletePointAct) {
+       impl_->beginPathEditTransaction(layer);
+       auto verts = shapeLayer->customPathVertices();
+       const int vi = impl_->hoveredPathVertexIndex_;
+       if (vi >= 0 && vi < static_cast<int>(verts.size())) {
+        verts.erase(verts.begin() + vi);
+        if (verts.size() >= 3) {
+         shapeLayer->setCustomPathVertices(verts, shapeLayer->customPathClosed());
+        } else {
+         shapeLayer->clearCustomPath();
+        }
+        impl_->markPathEditDirty();
+        handled = true;
+       }
+      } else if (shapeChosen == pathToggleSmoothAct) {
+       impl_->beginPathEditTransaction(layer);
+       auto verts = shapeLayer->customPathVertices();
+       const int vi = impl_->hoveredPathVertexIndex_;
+       if (vi >= 0 && vi < static_cast<int>(verts.size())) {
+        verts[static_cast<size_t>(vi)].smooth = !verts[static_cast<size_t>(vi)].smooth;
+        shapeLayer->setCustomPathVertices(verts, shapeLayer->customPathClosed());
+        impl_->markPathEditDirty();
+        handled = true;
+       }
+      } else if (shapeChosen == pathToggleClosedAct) {
+       impl_->beginPathEditTransaction(layer);
+       const bool closed = shapeLayer->customPathClosed();
+       const auto verts = shapeLayer->customPathVertices();
+       if (closed || verts.size() >= 3) {
+        shapeLayer->setCustomPathVertices(verts, !closed);
+        impl_->markPathEditDirty();
+        handled = true;
+       }
+      } else if (shapeChosen == convertToPolygonAct) {
+       impl_->beginShapeEditTransaction(layer);
+       const auto verts = shapeLayer->customPathVertices();
+       std::vector<QPointF> pts;
+       pts.reserve(verts.size());
+       for (const auto &v : verts)
+        pts.push_back(v.pos);
+       shapeLayer->clearCustomPath();
+       shapeLayer->setCustomPolygonPoints(pts, shapeLayer->customPathClosed());
+       impl_->markShapeEditDirty();
+       handled = true;
       }
       if (handled) {
        impl_->commitShapeEditTransaction();
@@ -3095,7 +3277,6 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        event->accept();
        return;
       }
-      impl_->commitShapeEditTransaction();
      }
      if (handled) {
       impl_->requestRender();
@@ -3105,9 +3286,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     }
    }
   }
- }
-
- QMenu bgMenu(this);
+  QMenu bgMenu(this);
  QAction* alphaAct = bgMenu.addAction(QStringLiteral("Alpha"));
  QAction* solidAct = bgMenu.addAction(QStringLiteral("Solid"));
  QAction* mayaAct = bgMenu.addAction(QStringLiteral("Maya Gradient"));

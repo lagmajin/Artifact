@@ -725,7 +725,7 @@ void DiligentImmediateSubmitter::submitBillboard(const BillboardPkt& p, IDeviceC
         return;
     }
     FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
-    m_primitiveRenderer3D_->drawBillboardQuad(p.center, p.size, p.pSRV, tint, p.opacity, p.rollDegrees);
+    m_primitiveRenderer3D_->drawBillboardQuadImmediate(p.center, p.size, p.pSRV, tint, p.opacity, p.rollDegrees);
 }
 
 void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
@@ -734,7 +734,7 @@ void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p
         return;
     }
     FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
-    m_primitiveRenderer3D_->drawBillboardQuad(p.center, p.size, p.image, tint, p.opacity, p.rollDegrees);
+    m_primitiveRenderer3D_->drawBillboardQuadImmediate(p.center, p.size, p.image, tint, p.opacity, p.rollDegrees);
 }
 
 void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceContext* ctx, ITextureView* pRTV)

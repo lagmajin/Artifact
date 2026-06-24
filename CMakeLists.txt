@@ -45,7 +45,7 @@ string(TIMESTAMP ARTIFACT_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
 # ---------------------------------------------------------------------------
 # ソース収集とモジュール分類
 # ---------------------------------------------------------------------------
-file(GLOB_RECURSE POTENTIAL_SOURCES CONFIGURE_DEPENDS 
+file(GLOB_RECURSE POTENTIAL_SOURCES 
     "src/*.cpp" "src/*.cppm" "src/*.ixx"
     "src/**/*.cpp" "src/**/*.cppm" "src/**/*.ixx"
     "include/*.ixx" "include/*.cppm"

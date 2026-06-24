@@ -167,6 +167,7 @@ export namespace Artifact
   void clipSelected(const QString& clipId, const LayerID& layerId) W_SIGNAL(clipSelected, clipId, layerId);
   void clipDeselected() W_SIGNAL(clipDeselected);
   void clipMoved(const QString& clipId, double startFrame) W_SIGNAL(clipMoved, clipId, startFrame);
+  void clipSlid(const QString& clipId, double startFrame) W_SIGNAL(clipSlid, clipId, startFrame);
   void clipResized(const QString& clipId, double startFrame, double durationFrame) W_SIGNAL(clipResized, clipId, startFrame, durationFrame);
   void keyframeMoveRequested(const LayerID& layerId, const QString& propertyPath, qint64 fromFrame, qint64 toFrame) W_SIGNAL(keyframeMoveRequested, layerId, propertyPath, fromFrame, toFrame);
   void keyframeSelectionChanged(int selectedCount) W_SIGNAL(keyframeSelectionChanged, selectedCount);

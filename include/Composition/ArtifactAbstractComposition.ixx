@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 #include <memory>
 #include <QObject>
@@ -30,6 +30,7 @@ import Artifact.Composition.Result;
 import Composition.Settings;
 import Audio.Segment;
 import Geometry.ResolutionRemap;
+import Artifact.Effect.Abstract;
 //import Artifact.Layer.Abstract;
 //import Artifact.Preview.Controller;
 
@@ -100,8 +101,16 @@ export namespace Artifact {
    void bringToFront(const LayerID& id);
    void sendToBack(const LayerID& id);
 
-   void setBackGroundColor(const FloatColor& color);
+  void setBackGroundColor(const FloatColor& color);
    FloatColor backgroundColor() const;
+
+  void addEffect(std::shared_ptr<ArtifactAbstractEffect> effect);
+  void removeEffect(const UniString& effectID);
+  void clearEffects();
+  std::vector<std::shared_ptr<ArtifactAbstractEffect>> getEffects() const;
+  std::shared_ptr<ArtifactAbstractEffect> getEffect(const UniString& effectID) const;
+  int effectCount() const;
+
   void changed();
   void compositionNoteChanged(const QString& note);
   FramePosition framePosition() const;

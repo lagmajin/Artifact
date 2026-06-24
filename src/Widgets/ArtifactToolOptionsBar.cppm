@@ -6,6 +6,7 @@ module;
 #include <QDebug>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPalette>
 #include <QSlider>
 #include <QSignalBlocker>
@@ -67,6 +68,10 @@ public:
   QCheckBox *shapeFillCheck = nullptr;
   QCheckBox *shapeStrokeCheck = nullptr;
   QSpinBox *shapeStrokeWidthSpin = nullptr;
+  QComboBox *strokeCapCombo = nullptr;
+  QComboBox *strokeJoinCombo = nullptr;
+  QComboBox *strokeAlignCombo = nullptr;
+  QLineEdit *dashEdit = nullptr;
   QLabel *shapePrimaryLabel = nullptr;
   QSpinBox *shapePrimarySpin = nullptr;
   QLabel *shapeSecondaryLabel = nullptr;
@@ -332,6 +337,41 @@ void ArtifactToolOptionsBar::Impl::createFrames(QHBoxLayout *parentLayout) {
     shapeStrokeWidthSpin = makeSpin(frame, 0, 512, "px");
     ly->addWidget(shapeStrokeWidthSpin);
 
+    strokeCapCombo = makeCombo(frame);
+    strokeCapCombo->addItem(QStringLiteral("Flat"),
+                            static_cast<int>(Artifact::StrokeCap::Flat));
+    strokeCapCombo->addItem(QStringLiteral("Round"),
+                            static_cast<int>(Artifact::StrokeCap::Round));
+    strokeCapCombo->addItem(QStringLiteral("Square"),
+                            static_cast<int>(Artifact::StrokeCap::Square));
+    strokeCapCombo->setToolTip(QStringLiteral("線端"));
+    ly->addWidget(strokeCapCombo);
+
+    strokeJoinCombo = makeCombo(frame);
+    strokeJoinCombo->addItem(QStringLiteral("Miter"),
+                             static_cast<int>(Artifact::StrokeJoin::Miter));
+    strokeJoinCombo->addItem(QStringLiteral("Round"),
+                             static_cast<int>(Artifact::StrokeJoin::Round));
+    strokeJoinCombo->addItem(QStringLiteral("Bevel"),
+                             static_cast<int>(Artifact::StrokeJoin::Bevel));
+    strokeJoinCombo->setToolTip(QStringLiteral("結合"));
+    ly->addWidget(strokeJoinCombo);
+
+    strokeAlignCombo = makeCombo(frame);
+    strokeAlignCombo->addItem(QStringLiteral("中央"),
+                              static_cast<int>(Artifact::StrokeAlign::Center));
+    strokeAlignCombo->addItem(QStringLiteral("内側"),
+                              static_cast<int>(Artifact::StrokeAlign::Inside));
+    strokeAlignCombo->addItem(QStringLiteral("外側"),
+                              static_cast<int>(Artifact::StrokeAlign::Outside));
+    strokeAlignCombo->setToolTip(QStringLiteral("線の位置"));
+    ly->addWidget(strokeAlignCombo);
+
+    dashEdit = new QLineEdit(frame);
+    dashEdit->setPlaceholderText(QStringLiteral("破線"));
+    dashEdit->setMaximumWidth(60);
+    ly->addWidget(dashEdit);
+
     ly->addStretch();
     optionFrames[ShapeTool] = frame;
     parentLayout->addWidget(frame);
@@ -479,6 +519,34 @@ void ArtifactToolOptionsBar::Impl::connectSignals() {
     connect(shapeStrokeWidthSpin, QOverload<int>::of(&QSpinBox::valueChanged),
             toolOptionsBar,
             [emitOpt](int v) { emitOpt("シェイプ", "strokeWidth", v); });
+
+  if (strokeCapCombo)
+    connect(strokeCapCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            toolOptionsBar, [this, emitOpt](int i) {
+              emitOpt("シェイプ", "strokeCap",
+                      strokeCapCombo->itemData(i).toInt());
+            });
+
+  if (strokeJoinCombo)
+    connect(strokeJoinCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            toolOptionsBar, [this, emitOpt](int i) {
+              emitOpt("シェイプ", "strokeJoin",
+                      strokeJoinCombo->itemData(i).toInt());
+            });
+
+  if (strokeAlignCombo)
+    connect(strokeAlignCombo,
+            QOverload<int>::of(&QComboBox::currentIndexChanged),
+            toolOptionsBar, [this, emitOpt](int i) {
+              emitOpt("シェイプ", "strokeAlign",
+                      strokeAlignCombo->itemData(i).toInt());
+            });
+
+  if (dashEdit)
+    connect(dashEdit, &QLineEdit::textChanged, toolOptionsBar,
+            [emitOpt](const QString &text) {
+              emitOpt("シェイプ", "dashPattern", text);
+            });
 
   if (fontCombo)
     connect(fontCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
@@ -714,14 +782,11 @@ void ArtifactToolOptionsBar::clearTextOptions() {
                  false);
 }
 
-void ArtifactToolOptionsBar::setShapeOptions(int shapeType, int width, int height,
-                                             bool fillEnabled,
-                                             bool strokeEnabled,
-                                             int strokeWidth,
-                                             int cornerRadius,
-                                             int starPoints,
-                                             int starInnerRadiusPercent,
-                                             int polygonSides, bool enabled) {
+void ArtifactToolOptionsBar::setShapeOptions(
+    int shapeType, int width, int height, bool fillEnabled, bool strokeEnabled,
+    int strokeWidth, int strokeCap, int strokeJoin, int strokeAlign,
+    const QString &dashPattern, int cornerRadius, int starPoints,
+    int starInnerRadiusPercent, int polygonSides, bool enabled) {
   if (!impl_) {
     return;
   }
@@ -763,6 +828,33 @@ void ArtifactToolOptionsBar::setShapeOptions(int shapeType, int width, int heigh
     QSignalBlocker blocker(*impl_->shapeStrokeWidthSpin);
     impl_->shapeStrokeWidthSpin->setValue(std::clamp(strokeWidth, 0, 512));
     impl_->shapeStrokeWidthSpin->setEnabled(enabled);
+  }
+
+  if (impl_->strokeCapCombo) {
+    QSignalBlocker blocker(*impl_->strokeCapCombo);
+    const int idx = impl_->strokeCapCombo->findData(strokeCap);
+    if (idx >= 0) impl_->strokeCapCombo->setCurrentIndex(idx);
+    impl_->strokeCapCombo->setEnabled(enabled);
+  }
+
+  if (impl_->strokeJoinCombo) {
+    QSignalBlocker blocker(*impl_->strokeJoinCombo);
+    const int idx = impl_->strokeJoinCombo->findData(strokeJoin);
+    if (idx >= 0) impl_->strokeJoinCombo->setCurrentIndex(idx);
+    impl_->strokeJoinCombo->setEnabled(enabled);
+  }
+
+  if (impl_->strokeAlignCombo) {
+    QSignalBlocker blocker(*impl_->strokeAlignCombo);
+    const int idx = impl_->strokeAlignCombo->findData(strokeAlign);
+    if (idx >= 0) impl_->strokeAlignCombo->setCurrentIndex(idx);
+    impl_->strokeAlignCombo->setEnabled(enabled);
+  }
+
+  if (impl_->dashEdit) {
+    QSignalBlocker blocker(*impl_->dashEdit);
+    impl_->dashEdit->setText(dashPattern);
+    impl_->dashEdit->setEnabled(enabled);
   }
 
   QString primaryLabel = QStringLiteral("値");
@@ -833,7 +925,11 @@ void ArtifactToolOptionsBar::setShapeOptions(int shapeType, int width, int heigh
 
 void ArtifactToolOptionsBar::clearShapeOptions() {
   setShapeOptions(static_cast<int>(Artifact::ShapeType::Rect), 200, 200, true,
-                  false, 0, 0, 5, 38, 6, false);
+                  false, 0,
+                  static_cast<int>(Artifact::StrokeCap::Flat),
+                  static_cast<int>(Artifact::StrokeJoin::Miter),
+                  static_cast<int>(Artifact::StrokeAlign::Center),
+                  QString(), 0, 5, 38, 6, false);
 }
 
 } // namespace Artifact

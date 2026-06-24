@@ -79,6 +79,7 @@ import Application.AppSettings;
 import Thread.PreciseTicker;
 import Artifact.Widgets.PlaybackControlWidget;
 import Artifact.Widgets.PlaybackControlTestWidget;
+import Artifact.Layer.Factory;
 import Transform;
 import Draw;
 import Glow;
@@ -2471,9 +2472,25 @@ int main(int argc, char *argv[]) {
                            FrameChangedEvent{compositionId, frame});
                      });
     QObject::connect(clipBufferWidget, &ArtifactClipBufferWidget::clipPasteRequested, mw, [](const QVariant &data) {
-        // Handle clip paste logic or delegate to global paste
-        if (auto *service = ArtifactProjectService::instance()) {
-            // Emulate or invoke paste
+        if (!data.isValid()) return;
+        const QJsonArray layersArray = data.toJsonArray();
+        if (layersArray.isEmpty()) return;
+        auto *svc = ArtifactProjectService::instance();
+        if (!svc) return;
+        auto comp = svc->currentComposition().lock();
+        if (!comp) return;
+        for (const auto &layerVal : layersArray) {
+            if (!layerVal.isObject()) continue;
+            const QJsonObject layerObj = layerVal.toObject();
+            auto layer = ArtifactLayerFactory::createFromJson(layerObj);
+            if (layer) {
+                comp->appendLayerTop(layer);
+                if (auto *app = ArtifactApplicationManager::instance()) {
+                  if (auto *selectionManager = app->layerSelectionManager()) {
+                    selectionManager->selectLayer(layer);
+                  }
+                }
+            }
         }
     });
     // Dynamically update shortcutHelperWidget's WorkspaceMode on focus/workspace updates if required

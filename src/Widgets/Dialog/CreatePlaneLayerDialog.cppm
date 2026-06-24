@@ -303,18 +303,35 @@ public:
     QComboBox*    pixelAspectCombo  = nullptr;
     QPushButton*  bgColorButton     = nullptr;
     QPushButton*  gradientStartColorButton = nullptr;
+    QWidget*      gradientStartRow  = nullptr;
     QPushButton*  gradientEndColorButton = nullptr;
     QWidget*      gradientEndRow    = nullptr;
     QPushButton*  matchCompButton   = nullptr;
     QLineEdit*    hexColorEdit      = nullptr;
     QComboBox*    fillModeCombo     = nullptr;
     QDoubleSpinBox* gradientAngleSpin = nullptr;
+    QWidget*      gradientAngleRow  = nullptr;
+    QCheckBox*    gradientReverseCheck = nullptr;
+    QWidget*      gradientReverseRow = nullptr;
+    QDoubleSpinBox* gradientCenterXSpin = nullptr;
+    QWidget*      gradientCenterXRow = nullptr;
+    QDoubleSpinBox* gradientCenterYSpin = nullptr;
+    QWidget*      gradientCenterYRow = nullptr;
+    QDoubleSpinBox* gradientScaleSpin = nullptr;
+    QWidget*      gradientScaleRow = nullptr;
+    QDoubleSpinBox* gradientOffsetSpin = nullptr;
+    QWidget*      gradientOffsetRow = nullptr;
     QCheckBox*    fitToCompCheck    = nullptr;
 
     QColor bgColor = QColor(255, 255, 255, 255);
     QColor gradientStartColor = QColor(255, 255, 255, 255);
     QColor gradientEndColor = QColor(51, 51, 51, 255);
     ArtifactSolidFillType fillType = ArtifactSolidFillType::Solid;
+    bool gradientReverse = false;
+    float gradientCenterX = 0.5f;
+    float gradientCenterY = 0.5f;
+    float gradientScale = 1.0f;
+    float gradientOffset = 0.0f;
 };
 
 PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
@@ -371,6 +388,32 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     impl_->gradientAngleSpin->setDecimals(1);
     impl_->gradientAngleSpin->setSingleStep(15.0);
     impl_->gradientAngleSpin->setValue(90.0);
+
+    impl_->gradientReverseCheck = new QCheckBox(u8"反転", this);
+
+    impl_->gradientCenterXSpin = new QDoubleSpinBox(this);
+    impl_->gradientCenterXSpin->setRange(0.0, 1.0);
+    impl_->gradientCenterXSpin->setDecimals(3);
+    impl_->gradientCenterXSpin->setSingleStep(0.05);
+    impl_->gradientCenterXSpin->setValue(0.5);
+
+    impl_->gradientCenterYSpin = new QDoubleSpinBox(this);
+    impl_->gradientCenterYSpin->setRange(0.0, 1.0);
+    impl_->gradientCenterYSpin->setDecimals(3);
+    impl_->gradientCenterYSpin->setSingleStep(0.05);
+    impl_->gradientCenterYSpin->setValue(0.5);
+
+    impl_->gradientScaleSpin = new QDoubleSpinBox(this);
+    impl_->gradientScaleSpin->setRange(0.01, 16.0);
+    impl_->gradientScaleSpin->setDecimals(3);
+    impl_->gradientScaleSpin->setSingleStep(0.1);
+    impl_->gradientScaleSpin->setValue(1.0);
+
+    impl_->gradientOffsetSpin = new QDoubleSpinBox(this);
+    impl_->gradientOffsetSpin->setRange(-1.0, 1.0);
+    impl_->gradientOffsetSpin->setDecimals(3);
+    impl_->gradientOffsetSpin->setSingleStep(0.05);
+    impl_->gradientOffsetSpin->setValue(0.0);
 
     impl_->matchCompButton = new QPushButton(u8"コンポジションサイズを使用", this);
 
@@ -449,7 +492,8 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         ctrlLay->setSpacing(6);
         ctrlLay->addWidget(impl_->gradientStartColorButton);
         ctrlLay->addStretch();
-        vbox->addWidget(makeRow(this, u8"開始色", 100, ctrl));
+        impl_->gradientStartRow = makeRow(this, u8"開始色", 100, ctrl);
+        vbox->addWidget(impl_->gradientStartRow);
     }
 
     {
@@ -470,7 +514,55 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         ctrlLay->setSpacing(4);
         ctrlLay->addWidget(impl_->gradientAngleSpin, 1);
         ctrlLay->addWidget(new QLabel(QStringLiteral("deg"), this));
-        vbox->addWidget(makeRow(this, u8"角度", 100, ctrl));
+        impl_->gradientAngleRow = makeRow(this, u8"角度", 100, ctrl);
+        vbox->addWidget(impl_->gradientAngleRow);
+    }
+
+    impl_->gradientReverseRow = makeRow(this, u8"反転", 100, impl_->gradientReverseCheck);
+    vbox->addWidget(impl_->gradientReverseRow);
+
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(4);
+        ctrlLay->addWidget(impl_->gradientCenterXSpin, 1);
+        ctrlLay->addWidget(new QLabel(QStringLiteral("X"), this));
+        impl_->gradientCenterXRow = makeRow(this, u8"中心X", 100, ctrl);
+        vbox->addWidget(impl_->gradientCenterXRow);
+    }
+
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(4);
+        ctrlLay->addWidget(impl_->gradientCenterYSpin, 1);
+        ctrlLay->addWidget(new QLabel(QStringLiteral("Y"), this));
+        impl_->gradientCenterYRow = makeRow(this, u8"中心Y", 100, ctrl);
+        vbox->addWidget(impl_->gradientCenterYRow);
+    }
+
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(4);
+        ctrlLay->addWidget(impl_->gradientScaleSpin, 1);
+        ctrlLay->addWidget(new QLabel(QStringLiteral("x"), this));
+        impl_->gradientScaleRow = makeRow(this, u8"拡大", 100, ctrl);
+        vbox->addWidget(impl_->gradientScaleRow);
+    }
+
+    {
+        auto* ctrl = new QWidget(this);
+        auto* ctrlLay = new QHBoxLayout(ctrl);
+        ctrlLay->setContentsMargins(0, 0, 0, 0);
+        ctrlLay->setSpacing(4);
+        ctrlLay->addWidget(impl_->gradientOffsetSpin, 1);
+        ctrlLay->addWidget(new QLabel(QStringLiteral("span"), this));
+        impl_->gradientOffsetRow = makeRow(this, u8"オフセット", 100, ctrl);
+        vbox->addWidget(impl_->gradientOffsetRow);
     }
 
     // fitToCompCheck row (indented to align with controls)
@@ -581,10 +673,14 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     auto syncGradientUi = [this]() {
         const bool gradientEnabled = impl_->fillModeCombo->currentData().toInt() ==
                                      static_cast<int>(ArtifactSolidFillType::LinearGradient);
-        impl_->gradientStartColorButton->setEnabled(gradientEnabled);
-        impl_->gradientEndColorButton->setEnabled(gradientEnabled);
-        impl_->gradientAngleSpin->setEnabled(gradientEnabled);
+        if (impl_->gradientStartRow) impl_->gradientStartRow->setVisible(gradientEnabled);
         if (impl_->gradientEndRow) impl_->gradientEndRow->setVisible(gradientEnabled);
+        if (impl_->gradientAngleRow) impl_->gradientAngleRow->setVisible(gradientEnabled);
+        if (impl_->gradientReverseRow) impl_->gradientReverseRow->setVisible(gradientEnabled);
+        if (impl_->gradientCenterXRow) impl_->gradientCenterXRow->setVisible(gradientEnabled);
+        if (impl_->gradientCenterYRow) impl_->gradientCenterYRow->setVisible(gradientEnabled);
+        if (impl_->gradientScaleRow) impl_->gradientScaleRow->setVisible(gradientEnabled);
+        if (impl_->gradientOffsetRow) impl_->gradientOffsetRow->setVisible(gradientEnabled);
     };
     QObject::connect(impl_->fillModeCombo, &QComboBox::currentIndexChanged, this,
                      [this, syncGradientUi](int) {
@@ -635,11 +731,21 @@ void PlaneLayerSettingPage::setInitialParams(int p_width, int p_height, const Fl
 void PlaneLayerSettingPage::setInitialGradientParams(const ArtifactSolidFillType fillType,
                                                      const FloatColor& startColor,
                                                      const FloatColor& endColor,
-                                                     const float angleDegrees)
+                                                     const float angleDegrees,
+                                                     const bool reverse,
+                                                     const float centerX,
+                                                     const float centerY,
+                                                     const float scale,
+                                                     const float offset)
 {
     impl_->fillType = fillType;
     impl_->gradientStartColor = QColor::fromRgbF(startColor.r(), startColor.g(), startColor.b(), startColor.a());
     impl_->gradientEndColor = QColor::fromRgbF(endColor.r(), endColor.g(), endColor.b(), endColor.a());
+    impl_->gradientReverse = reverse;
+    impl_->gradientCenterX = centerX;
+    impl_->gradientCenterY = centerY;
+    impl_->gradientScale = scale;
+    impl_->gradientOffset = offset;
     updateColorButtonPreview(impl_->gradientStartColorButton, impl_->gradientStartColor);
     updateColorButtonPreview(impl_->gradientEndColorButton, impl_->gradientEndColor);
     const int index = impl_->fillModeCombo->findData(static_cast<int>(fillType));
@@ -647,6 +753,11 @@ void PlaneLayerSettingPage::setInitialGradientParams(const ArtifactSolidFillType
         impl_->fillModeCombo->setCurrentIndex(index);
     }
     impl_->gradientAngleSpin->setValue(angleDegrees);
+    impl_->gradientReverseCheck->setChecked(reverse);
+    impl_->gradientCenterXSpin->setValue(centerX);
+    impl_->gradientCenterYSpin->setValue(centerY);
+    impl_->gradientScaleSpin->setValue(scale);
+    impl_->gradientOffsetSpin->setValue(offset);
 }
 
 ArtifactSolidLayerInitParams PlaneLayerSettingPage::getInitParams(const QString& name) const
@@ -666,6 +777,11 @@ ArtifactSolidLayerInitParams PlaneLayerSettingPage::getInitParams(const QString&
                                           impl_->gradientEndColor.blueF(),
                                           impl_->gradientEndColor.alphaF()));
     params.setGradientAngleDegrees(static_cast<float>(impl_->gradientAngleSpin->value()));
+    params.setGradientReverse(impl_->gradientReverseCheck->isChecked());
+    params.setGradientCenterX(static_cast<float>(impl_->gradientCenterXSpin->value()));
+    params.setGradientCenterY(static_cast<float>(impl_->gradientCenterYSpin->value()));
+    params.setGradientScale(static_cast<float>(impl_->gradientScaleSpin->value()));
+    params.setGradientOffset(static_cast<float>(impl_->gradientOffsetSpin->value()));
     return params;
 }
 
@@ -1007,6 +1123,11 @@ EditPlaneLayerSettingDialog::EditPlaneLayerSettingDialog(QWidget* parent)
             impl_->targetLayer->setGradientStartColor(params.gradientStartColor());
             impl_->targetLayer->setGradientEndColor(params.gradientEndColor());
             impl_->targetLayer->setGradientAngleDegrees(params.gradientAngleDegrees());
+            impl_->targetLayer->setGradientReverse(params.gradientReverse());
+            impl_->targetLayer->setGradientCenterX(params.gradientCenterX());
+            impl_->targetLayer->setGradientCenterY(params.gradientCenterY());
+            impl_->targetLayer->setGradientScale(params.gradientScale());
+            impl_->targetLayer->setGradientOffset(params.gradientOffset());
         }
         accept();
     });
@@ -1096,7 +1217,12 @@ void EditPlaneLayerSettingDialog::setupEdit(std::shared_ptr<ArtifactSolidImageLa
         impl_->settingPage->setInitialGradientParams(layer->fillType(),
                                                      layer->gradientStartColor(),
                                                      layer->gradientEndColor(),
-                                                     layer->gradientAngleDegrees());
+                                                     layer->gradientAngleDegrees(),
+                                                     layer->gradientReverse(),
+                                                     layer->gradientCenterX(),
+                                                     layer->gradientCenterY(),
+                                                     layer->gradientScale(),
+                                                     layer->gradientOffset());
     }
 }
 

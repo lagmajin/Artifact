@@ -372,6 +372,10 @@ namespace {
   bool particle3DCameraActive_ = false;
   QMatrix4x4 particleViewMatrix_;
   QMatrix4x4 particleProjMatrix_;
+  bool stereoCameraActive_ = false;
+  QMatrix4x4 stereoLeftViewMatrix_;
+  QMatrix4x4 stereoRightViewMatrix_;
+  QMatrix4x4 stereoProjectionMatrix_;
 
 
   void initFrameQueries();
@@ -627,6 +631,21 @@ namespace {
     particleViewMatrix_.setToIdentity();
     particleProjMatrix_.setToIdentity();
   }
+  void setStereoCameraMatrices(const QMatrix4x4& leftView,
+                               const QMatrix4x4& rightView,
+                               const QMatrix4x4& proj) {
+    stereoCameraActive_ = true;
+    stereoLeftViewMatrix_ = leftView;
+    stereoRightViewMatrix_ = rightView;
+    stereoProjectionMatrix_ = proj;
+    set3DCameraMatrices(leftView, proj);
+  }
+  void resetStereoCameraMatrices() {
+    stereoCameraActive_ = false;
+    stereoLeftViewMatrix_.setToIdentity();
+    stereoRightViewMatrix_.setToIdentity();
+    stereoProjectionMatrix_.setToIdentity();
+  }
   void zoomAroundViewportPoint(Detail::float2 pos, float newZoom)
   {
    primitiveRenderer_.zoomAroundViewportPoint(toDiligentFloat2(pos), newZoom);
@@ -850,8 +869,8 @@ namespace {
       return;
     }
 
-    // The particle VS uses mul(pos, Matrix) row-vector convention, so Qt matrices
-    // must be transposed before upload.
+    // Particle VS uses dot(localPos, ViewRow) element-wise, so Qt matrices
+    // are uploaded directly (no transpose needed).
     float panX = 0.0f;
     float panY = 0.0f;
     primitiveRenderer_.getPan(panX, panY);
@@ -926,8 +945,8 @@ namespace {
     cmdBuf_.targetRTV = pRTV;
     ParticlePkt pkt;
     pkt.data = data;
-    pkt.viewMatrix = view.transposed();
-    pkt.projMatrix = proj.transposed();
+    pkt.viewMatrix = view;
+    pkt.projMatrix = proj;
     cmdBuf_.append(std::move(pkt));
 
     if (qEnvironmentVariableIsSet("ARTIFACT_DEBUG_PARTICLE_BILLBOARD_TEST")) {
@@ -2213,10 +2232,16 @@ void ArtifactIRenderer::setGizmoCameraMatrices(const QMatrix4x4& view, const QMa
 { impl_->setGizmoCameraMatrices(view, proj); }
 void ArtifactIRenderer::resetGizmoCameraMatrices()
 { impl_->resetGizmoCameraMatrices(); }
- void ArtifactIRenderer::set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj)
+void ArtifactIRenderer::set3DCameraMatrices(const QMatrix4x4& view, const QMatrix4x4& proj)
  { impl_->set3DCameraMatrices(view, proj); }
 void ArtifactIRenderer::reset3DCameraMatrices()
 { impl_->reset3DCameraMatrices(); }
+void ArtifactIRenderer::setStereoCameraMatrices(const QMatrix4x4& leftView,
+                                               const QMatrix4x4& rightView,
+                                               const QMatrix4x4& proj)
+{ impl_->setStereoCameraMatrices(leftView, rightView, proj); }
+void ArtifactIRenderer::resetStereoCameraMatrices()
+{ impl_->resetStereoCameraMatrices(); }
 void ArtifactIRenderer::setSceneLights(const std::vector<ArtifactCore::Light>& lights)
 { impl_->m_sceneLights = lights; }
 const std::vector<ArtifactCore::Light>& ArtifactIRenderer::getSceneLights() const

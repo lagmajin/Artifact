@@ -959,7 +959,35 @@ ArtifactCore::ShapeOperatorType ArtifactShapeLayer::shapeOperatorTypeAt(int inde
  if (!impl_ || index < 0 || index >= static_cast<int>(impl_->shapeOperators_.size())) {
   return ArtifactCore::ShapeOperatorType::None;
  }
- return impl_->shapeOperators_[static_cast<size_t>(index)]->type();
+  return impl_->shapeOperators_[static_cast<size_t>(index)]->type();
+}
+
+bool ArtifactShapeLayer::removeShapeOperatorAt(int index)
+{
+ if (!impl_ || index < 0 || index >= static_cast<int>(impl_->shapeOperators_.size())) {
+  return false;
+ }
+ impl_->shapeOperators_.erase(impl_->shapeOperators_.begin() + index);
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+ return true;
+}
+
+bool ArtifactShapeLayer::moveShapeOperator(int fromIndex, int toIndex)
+{
+ if (!impl_ || fromIndex < 0 || toIndex < 0 ||
+     fromIndex >= static_cast<int>(impl_->shapeOperators_.size()) ||
+     toIndex >= static_cast<int>(impl_->shapeOperators_.size()) ||
+     fromIndex == toIndex) {
+  return false;
+ }
+ std::swap(impl_->shapeOperators_[static_cast<size_t>(fromIndex)],
+           impl_->shapeOperators_[static_cast<size_t>(toIndex)]);
+ impl_->markDirty();
+ impl_->shapeContentCacheDirty_ = true;
+ Q_EMIT changed();
+ return true;
 }
 
 // ============================================================

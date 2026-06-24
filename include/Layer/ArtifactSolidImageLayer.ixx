@@ -37,6 +37,16 @@ public:
   void setGradientEndColor(const FloatColor& color);
   float gradientAngleDegrees() const;
   void setGradientAngleDegrees(float degrees);
+  bool gradientReverse() const;
+  void setGradientReverse(bool reverse);
+  float gradientCenterX() const;
+  void setGradientCenterX(float value);
+  float gradientCenterY() const;
+  void setGradientCenterY(float value);
+  float gradientScale() const;
+  void setGradientScale(float value);
+  float gradientOffset() const;
+  void setGradientOffset(float value);
   void setSize(int width, int height);
   QJsonObject toJson() const override;
   void fromJsonProperties(const QJsonObject &obj) override;
