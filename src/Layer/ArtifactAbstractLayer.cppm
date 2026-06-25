@@ -6,6 +6,8 @@ module;
 #include <QPointF>
 #include <QRectF>
 #include <QSize>
+#include <QVector3D>
+#include <QVector4D>
 #include <QStringList>
 #include <wobjectcpp.h>
 #include <wobjectimpl.h>
@@ -40,6 +42,7 @@ import Layer.Matte;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
 import Artifact.Effect.ImplBase;
+import Artifact.Effect.Generator.Cloner;
 import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Image.ImageF32x4_RGBA;
@@ -78,6 +81,42 @@ void notifyLayerMutation(ArtifactAbstractLayer *layer, LayerDirtyFlag flag,
       layer->id().toString(),
       LayerChangedEvent::ChangeType::Modified});
   Q_EMIT layer->changed();
+}
+
+QRectF mapRectWithMatrix(const QMatrix4x4 &matrix, const QRectF &rect) {
+  if (!rect.isValid() || rect.width() <= 0.0 || rect.height() <= 0.0) {
+    return QRectF();
+  }
+
+  const QVector4D corners[] = {
+      QVector4D(static_cast<float>(rect.left()), static_cast<float>(rect.top()),
+                0.0f, 1.0f),
+      QVector4D(static_cast<float>(rect.right()), static_cast<float>(rect.top()),
+                0.0f, 1.0f),
+      QVector4D(static_cast<float>(rect.right()),
+                static_cast<float>(rect.bottom()), 0.0f, 1.0f),
+      QVector4D(static_cast<float>(rect.left()),
+                static_cast<float>(rect.bottom()), 0.0f, 1.0f)};
+
+  float minX = std::numeric_limits<float>::infinity();
+  float minY = std::numeric_limits<float>::infinity();
+  float maxX = -std::numeric_limits<float>::infinity();
+  float maxY = -std::numeric_limits<float>::infinity();
+
+  for (const auto &corner : corners) {
+    const QVector4D mapped = matrix * corner;
+    minX = std::min(minX, mapped.x());
+    minY = std::min(minY, mapped.y());
+    maxX = std::max(maxX, mapped.x());
+    maxY = std::max(maxY, mapped.y());
+  }
+
+  if (!std::isfinite(minX) || !std::isfinite(minY) || !std::isfinite(maxX) ||
+      !std::isfinite(maxY) || maxX <= minX || maxY <= minY) {
+    return QRectF();
+  }
+
+  return QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
 }
 
 QMatrix4x4 matrixFromTransform2D(const QTransform& transform) {
@@ -1552,6 +1591,99 @@ QRectF ArtifactAbstractLayer::localBounds() const {
                 static_cast<qreal>(size.height));
 }
 
+QRectF ArtifactAbstractLayer::visualLocalBounds() const {
+  const QRectF baseBounds = localBounds();
+  if (!baseBounds.isValid() || baseBounds.width() <= 0.0 ||
+      baseBounds.height() <= 0.0) {
+    return QRectF();
+  }
+  if (!impl_->clonerComponentEnabled_) {
+    return baseBounds;
+  }
+
+  QRectF visualBounds = baseBounds;
+  const auto uniteCloneBounds = [&](const QTransform &cloneTransform) {
+    const QRectF cloneBounds = cloneTransform.mapRect(baseBounds);
+    if (cloneBounds.isValid() && cloneBounds.width() > 0.0 &&
+        cloneBounds.height() > 0.0) {
+      visualBounds = visualBounds.united(cloneBounds);
+    }
+  };
+
+  const int mode = impl_->clonerMode_;
+  if (mode == 1) {
+    const int cols = std::max(1, impl_->clonerColumns_);
+    const int rows = std::max(1, impl_->clonerRows_);
+    const int depth = std::max(1, impl_->clonerDepth_);
+    const QVector3D startPos(
+        -((cols - 1) * impl_->clonerSpacingX_) * 0.5f,
+        -((rows - 1) * impl_->clonerSpacingY_) * 0.5f,
+        -((depth - 1) * impl_->clonerSpacingZ_) * 0.5f);
+    for (int z = 0; z < depth; ++z) {
+      for (int y = 0; y < rows; ++y) {
+        for (int x = 0; x < cols; ++x) {
+          QTransform cloneTransform;
+          cloneTransform.translate(startPos.x() + impl_->clonerSpacingX_ * x,
+                                   startPos.y() + impl_->clonerSpacingY_ * y);
+          uniteCloneBounds(cloneTransform);
+        }
+      }
+    }
+  } else if (mode == 2) {
+    const int count = std::max(1, impl_->clonerRadialCount_);
+    const float angleStep =
+        count > 1 ? (impl_->clonerEndAngle_ - impl_->clonerStartAngle_) /
+                        static_cast<float>(count - 1)
+                  : 0.0f;
+    constexpr float kPi = 3.14159265358979323846f;
+    for (int i = 0; i < count; ++i) {
+      const float angle =
+          impl_->clonerStartAngle_ + angleStep * static_cast<float>(i);
+      const float rad = angle * kPi / 180.0f;
+      QTransform cloneTransform;
+      cloneTransform.translate(std::cos(rad) * impl_->clonerRadius_,
+                               std::sin(rad) * impl_->clonerRadius_);
+      if (impl_->clonerRotationStep_ != 0.0f) {
+        cloneTransform.rotate(angle +
+                              impl_->clonerRotationStep_ *
+                                  static_cast<float>(i));
+      }
+      uniteCloneBounds(cloneTransform);
+    }
+  } else {
+    const int count = std::max(1, impl_->clonerCloneCount_);
+    for (int i = 0; i < count; ++i) {
+      QTransform cloneTransform;
+      cloneTransform.translate(impl_->clonerOffsetX_ * static_cast<float>(i),
+                               impl_->clonerOffsetY_ * static_cast<float>(i));
+      if (impl_->clonerRotationStep_ != 0.0f) {
+        cloneTransform.rotate(impl_->clonerRotationStep_ *
+                              static_cast<float>(i));
+      }
+      uniteCloneBounds(cloneTransform);
+    }
+  }
+
+  for (const auto &effect : getEffects()) {
+    const auto cloner = std::dynamic_pointer_cast<ClonerGenerator>(effect);
+    if (!cloner || !cloner->isEnabled()) {
+      continue;
+    }
+    for (const auto &clone : cloner->generateCloneData()) {
+      if (!clone.visible) {
+        continue;
+      }
+      const QRectF cloneBounds = mapRectWithMatrix(clone.transform, baseBounds);
+      if (cloneBounds.isValid() && cloneBounds.width() > 0.0 &&
+          cloneBounds.height() > 0.0) {
+        visualBounds = visualBounds.united(cloneBounds);
+      }
+    }
+  }
+
+  return visualBounds;
+}
+
 bool ArtifactAbstractLayer::getAudio(AudioSegment &outSegment,
                                      const FramePosition &start, int frameCount,
                                      int sampleRate) {
@@ -1579,7 +1711,7 @@ QRectF ArtifactAbstractLayer::transformedBoundingBox() const {
       localRect.height() <= 0.0) {
     impl_->cachedBoundingBox_ = QRectF();
   } else {
-    impl_->cachedBoundingBox_ = getGlobalTransform().mapRect(localRect);
+    impl_->cachedBoundingBox_ = getGlobalTransform().mapRect(visualLocalBounds());
   }
   impl_->cachedBoundingBoxRevision_ = impl_->geometryRevision_;
   impl_->cachedBoundingBoxParentRevision_ = parentRevision;
@@ -2742,64 +2874,84 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                static_cast<double>(impl_->clonerOffsetZ_), -59);
   clonerOffsetZProp->setDisplayLabel(QStringLiteral("Offset Z"));
   clonerGroup.addProperty(clonerOffsetZProp);
+  auto clonerJitterXProp =
+      makeProp(QStringLiteral("component.cloner.jitterX"), PropertyType::Float,
+               static_cast<double>(impl_->clonerJitterX_), -58);
+  clonerJitterXProp->setDisplayLabel(QStringLiteral("Jitter X"));
+  clonerGroup.addProperty(clonerJitterXProp);
+  auto clonerJitterYProp =
+      makeProp(QStringLiteral("component.cloner.jitterY"), PropertyType::Float,
+               static_cast<double>(impl_->clonerJitterY_), -57);
+  clonerJitterYProp->setDisplayLabel(QStringLiteral("Jitter Y"));
+  clonerGroup.addProperty(clonerJitterYProp);
+  auto clonerJitterZProp =
+      makeProp(QStringLiteral("component.cloner.jitterZ"), PropertyType::Float,
+               static_cast<double>(impl_->clonerJitterZ_), -56);
+  clonerJitterZProp->setDisplayLabel(QStringLiteral("Jitter Z"));
+  clonerGroup.addProperty(clonerJitterZProp);
+  auto clonerSeedProp =
+      makeProp(QStringLiteral("component.cloner.seed"), PropertyType::Integer,
+               impl_->clonerSeed_, -55);
+  clonerSeedProp->setDisplayLabel(QStringLiteral("Seed"));
+  clonerGroup.addProperty(clonerSeedProp);
   auto clonerColumnsProp =
       makeProp(QStringLiteral("component.cloner.columns"), PropertyType::Integer,
-               impl_->clonerColumns_, -58);
+               impl_->clonerColumns_, -54);
   clonerColumnsProp->setDisplayLabel(QStringLiteral("Columns"));
   clonerGroup.addProperty(clonerColumnsProp);
   auto clonerRowsProp =
       makeProp(QStringLiteral("component.cloner.rows"), PropertyType::Integer,
-               impl_->clonerRows_, -57);
+               impl_->clonerRows_, -53);
   clonerRowsProp->setDisplayLabel(QStringLiteral("Rows"));
   clonerGroup.addProperty(clonerRowsProp);
   auto clonerDepthProp =
       makeProp(QStringLiteral("component.cloner.depth"), PropertyType::Integer,
-               impl_->clonerDepth_, -56);
+               impl_->clonerDepth_, -52);
   clonerDepthProp->setDisplayLabel(QStringLiteral("Depth"));
   clonerGroup.addProperty(clonerDepthProp);
   auto clonerSpacingXProp =
       makeProp(QStringLiteral("component.cloner.spacingX"), PropertyType::Float,
-               static_cast<double>(impl_->clonerSpacingX_), -55);
+               static_cast<double>(impl_->clonerSpacingX_), -51);
   clonerSpacingXProp->setDisplayLabel(QStringLiteral("Spacing X"));
   clonerGroup.addProperty(clonerSpacingXProp);
   auto clonerSpacingYProp =
       makeProp(QStringLiteral("component.cloner.spacingY"), PropertyType::Float,
-               static_cast<double>(impl_->clonerSpacingY_), -54);
+               static_cast<double>(impl_->clonerSpacingY_), -50);
   clonerSpacingYProp->setDisplayLabel(QStringLiteral("Spacing Y"));
   clonerGroup.addProperty(clonerSpacingYProp);
   auto clonerSpacingZProp =
       makeProp(QStringLiteral("component.cloner.spacingZ"), PropertyType::Float,
-               static_cast<double>(impl_->clonerSpacingZ_), -53);
+               static_cast<double>(impl_->clonerSpacingZ_), -49);
   clonerSpacingZProp->setDisplayLabel(QStringLiteral("Spacing Z"));
   clonerGroup.addProperty(clonerSpacingZProp);
   auto clonerRadialCountProp =
       makeProp(QStringLiteral("component.cloner.radialCount"), PropertyType::Integer,
-               impl_->clonerRadialCount_, -52);
+               impl_->clonerRadialCount_, -48);
   clonerRadialCountProp->setDisplayLabel(QStringLiteral("Count"));
   clonerGroup.addProperty(clonerRadialCountProp);
   auto clonerRadiusProp =
       makeProp(QStringLiteral("component.cloner.radius"), PropertyType::Float,
-               static_cast<double>(impl_->clonerRadius_), -51);
+               static_cast<double>(impl_->clonerRadius_), -47);
   clonerRadiusProp->setDisplayLabel(QStringLiteral("Radius"));
   clonerGroup.addProperty(clonerRadiusProp);
   auto clonerStartAngleProp =
       makeProp(QStringLiteral("component.cloner.startAngle"), PropertyType::Float,
-               static_cast<double>(impl_->clonerStartAngle_), -50);
+               static_cast<double>(impl_->clonerStartAngle_), -46);
   clonerStartAngleProp->setDisplayLabel(QStringLiteral("Start Angle"));
   clonerGroup.addProperty(clonerStartAngleProp);
   auto clonerEndAngleProp =
       makeProp(QStringLiteral("component.cloner.endAngle"), PropertyType::Float,
-               static_cast<double>(impl_->clonerEndAngle_), -49);
+               static_cast<double>(impl_->clonerEndAngle_), -45);
   clonerEndAngleProp->setDisplayLabel(QStringLiteral("End Angle"));
   clonerGroup.addProperty(clonerEndAngleProp);
   auto clonerRotationStepProp =
       makeProp(QStringLiteral("component.cloner.rotationStep"), PropertyType::Float,
-               static_cast<double>(impl_->clonerRotationStep_), -48);
+               static_cast<double>(impl_->clonerRotationStep_), -44);
   clonerRotationStepProp->setDisplayLabel(QStringLiteral("Rotation Step"));
   clonerGroup.addProperty(clonerRotationStepProp);
   auto clonerOpacityDecayProp =
       makeProp(QStringLiteral("component.cloner.opacityDecay"), PropertyType::Float,
-               static_cast<double>(impl_->clonerOpacityDecay_), -47);
+               static_cast<double>(impl_->clonerOpacityDecay_), -43);
   clonerOpacityDecayProp->setDisplayLabel(QStringLiteral("Opacity Decay"));
   clonerGroup.addProperty(clonerOpacityDecayProp);
 
@@ -3194,92 +3346,134 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     if (propertyPath == QStringLiteral("component.cloner.enabled")) {
       impl_->clonerComponentEnabled_ = value.toBool();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.mode")) {
       impl_->clonerMode_ = value.toInt();
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.cloneCount")) {
       impl_->clonerCloneCount_ = std::max(1, value.toInt());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
   if (propertyPath == QStringLiteral("component.cloner.offsetX")) {
     impl_->clonerOffsetX_ = static_cast<float>(value.toDouble());
-    Q_EMIT changed();
+    notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                        LayerDirtyReason::PropertyChanged);
     return true;
   }
     if (propertyPath == QStringLiteral("component.cloner.offsetY")) {
       impl_->clonerOffsetY_ = static_cast<float>(value.toDouble());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.offsetZ")) {
       impl_->clonerOffsetZ_ = static_cast<float>(value.toDouble());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.jitterX")) {
+      impl_->clonerJitterX_ = static_cast<float>(value.toDouble());
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.jitterY")) {
+      impl_->clonerJitterY_ = static_cast<float>(value.toDouble());
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.jitterZ")) {
+      impl_->clonerJitterZ_ = static_cast<float>(value.toDouble());
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.seed")) {
+      impl_->clonerSeed_ = value.toInt();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.columns")) {
       impl_->clonerColumns_ = std::max(1, value.toInt());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.rows")) {
       impl_->clonerRows_ = std::max(1, value.toInt());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.depth")) {
       impl_->clonerDepth_ = std::max(1, value.toInt());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.spacingX")) {
       impl_->clonerSpacingX_ = static_cast<float>(value.toDouble());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.spacingY")) {
       impl_->clonerSpacingY_ = static_cast<float>(value.toDouble());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.spacingZ")) {
       impl_->clonerSpacingZ_ = static_cast<float>(value.toDouble());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.radialCount")) {
       impl_->clonerRadialCount_ = std::max(1, value.toInt());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.radius")) {
       impl_->clonerRadius_ = static_cast<float>(value.toDouble());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.startAngle")) {
       impl_->clonerStartAngle_ = static_cast<float>(value.toDouble());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.endAngle")) {
       impl_->clonerEndAngle_ = static_cast<float>(value.toDouble());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.rotationStep")) {
       impl_->clonerRotationStep_ = static_cast<float>(value.toDouble());
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
     if (propertyPath == QStringLiteral("component.cloner.opacityDecay")) {
       impl_->clonerOpacityDecay_ = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
-      Q_EMIT changed();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
       return true;
     }
 

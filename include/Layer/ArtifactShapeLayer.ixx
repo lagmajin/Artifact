@@ -8,6 +8,7 @@ module;
 export module Artifact.Layer.Shape;
 
 import Color.Float;
+import Artifact.Layer.InitParams;
 import Artifact.Layers.Abstract._2D;
 import Artifact.Render.IRenderer;
 import Shape.Operator;
@@ -54,6 +55,20 @@ public:
   // Style
   void setFillColor(const FloatColor &color);
   FloatColor fillColor() const;
+  void setFillType(ArtifactSolidFillType type);
+  ArtifactSolidFillType fillType() const;
+  void setFillGradientStartColor(const FloatColor &color);
+  FloatColor fillGradientStartColor() const;
+  void setFillGradientEndColor(const FloatColor &color);
+  FloatColor fillGradientEndColor() const;
+  void setFillGradientAngleDegrees(float degrees);
+  float fillGradientAngleDegrees() const;
+  void setFillGradientCenterX(float value);
+  float fillGradientCenterX() const;
+  void setFillGradientCenterY(float value);
+  float fillGradientCenterY() const;
+  void setFillGradientRadius(float value);
+  float fillGradientRadius() const;
   void setStrokeColor(const FloatColor &color);
   FloatColor strokeColor() const;
   void setStrokeWidth(float width);

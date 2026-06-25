@@ -46,17 +46,6 @@ export namespace Artifact
  using namespace ArtifactCore;
 
  using Creator = std::function<std::unique_ptr<ArtifactAbstractEffect>()>;
-struct EffectFactoryResult {
-  
-};
-
-
-
- struct EffectFactory {
-  EffectID id;
-  UniString displayName;
-   
- };
 
  class ArtifactGlobalEffectManager{
  private:

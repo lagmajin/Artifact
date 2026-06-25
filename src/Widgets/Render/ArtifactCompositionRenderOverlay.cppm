@@ -5,6 +5,7 @@ module;
 #include <QFont>
 #include <QFontMetrics>
 #include <QImage>
+#include <QMatrix4x4>
 #include <QPointF>
 #include <QRect>
 #include <QRectF>
@@ -15,6 +16,7 @@ module;
 #include <QString>
 #include <QStringList>
 #include <QTransform>
+#include <QVector3D>
 #include <algorithm>
 #include <cmath>
 #include <memory>
@@ -26,6 +28,7 @@ import Color.Float;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Video;
 import Artifact.Layer.Shape;
+import Artifact.Layer.CloneEffectSupport;
 import Layer.Blend;
 import Artifact.Widgets.PieMenu;
 import ArtifactCore.Utils.PerformanceProfiler;
@@ -628,6 +631,68 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
                      1.2f);
 }
 
+void drawTrackerPinOverlay(ArtifactIRenderer *renderer,
+                           float x,
+                           float y,
+                           float size,
+                           const FloatColor &fillColor,
+                           const FloatColor &accentColor,
+                           bool selected,
+                           const QString &label,
+                           float opacity)
+{
+  if (!renderer || size <= 0.0f) {
+    return;
+  }
+
+  const float pinSize = std::max(2.0f, size);
+  const float haloSize = pinSize * (selected ? 1.12f : 1.00f);
+  const float ringSize = pinSize * 0.72f;
+  const float coreSize = pinSize * 0.38f;
+  const float crossSize = pinSize * 0.92f;
+  const FloatColor shadowColor{0.0f, 0.0f, 0.0f,
+                               std::clamp((selected ? 0.50f : 0.34f) * opacity,
+                                          0.0f, 1.0f)};
+  const FloatColor ringColor{
+      accentColor.r(), accentColor.g(), accentColor.b(),
+      std::clamp((selected ? 1.0f : 0.82f) * accentColor.a() * opacity,
+                 0.0f, 1.0f)};
+  const FloatColor coreColor{
+      fillColor.r(), fillColor.g(), fillColor.b(),
+      std::clamp(fillColor.a() * opacity, 0.0f, 1.0f)};
+  const FloatColor crossColor{1.0f, 1.0f, 1.0f,
+                              std::clamp((selected ? 0.98f : 0.76f) * opacity,
+                                         0.0f, 1.0f)};
+
+  renderer->drawCircle(x, y, haloSize * 0.58f, shadowColor, 0.0f, true);
+  renderer->drawCircle(x, y, haloSize * 0.42f, ringColor, 1.6f, false);
+  renderer->drawCircle(x, y, ringSize * 0.42f, coreColor, 0.0f, true);
+  renderer->drawCrosshair(x, y, crossSize, crossColor);
+  renderer->drawCircle(x, y, coreSize * 0.38f,
+                       FloatColor{1.0f, 1.0f, 1.0f,
+                                  std::clamp(0.92f * opacity, 0.0f, 1.0f)},
+                       0.0f, true);
+
+  if (!label.trimmed().isEmpty()) {
+    QFont labelFont = QApplication::font();
+    labelFont.setPointSizeF(std::max(8.0, static_cast<double>(labelFont.pointSizeF())));
+    const QFontMetrics fm(labelFont);
+    const QRectF labelRect(
+        x + pinSize * 0.90f,
+        y - std::max(10.0f, static_cast<float>(fm.height()) * 0.55f),
+        std::max(48.0f, static_cast<float>(fm.horizontalAdvance(label)) + 10.0f),
+        std::max(16.0f, static_cast<float>(fm.height()) + 4.0f));
+    renderer->drawText(labelRect, label, labelFont,
+                       FloatColor{0.95f, 0.97f, 1.0f,
+                                  std::clamp(opacity, 0.0f, 1.0f)},
+                       Qt::AlignLeft | Qt::AlignVCenter,
+                       1.0f,
+                       FloatColor{0.0f, 0.0f, 0.0f,
+                                  std::clamp(0.86f * opacity, 0.0f, 1.0f)},
+                       1.0f);
+  }
+}
+
 void drawSelectionOverlay(ArtifactIRenderer *renderer,
                           const ArtifactAbstractLayerPtr &layer)
 {
@@ -732,6 +797,65 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
             outerColor, 1.0f);
       }
     }
+  }
+
+  const auto cloneInstances =
+      cloneRenderInstances(layer.get(), layer->getGlobalTransform4x4());
+  if (cloneInstances.size() <= 1) {
+    return;
+  }
+
+  const FloatColor cloneOuterColor{1.0f, 0.66f, 0.24f, 0.62f};
+  const FloatColor cloneInnerColor{0.10f, 0.05f, 0.02f, 0.38f};
+  const auto mapPoint = [](const QMatrix4x4 &matrix,
+                           const QPointF &point) -> QPointF {
+    const QVector3D mapped =
+        matrix.map(QVector3D(static_cast<float>(point.x()),
+                             static_cast<float>(point.y()), 0.0f));
+    return QPointF(static_cast<qreal>(mapped.x()),
+                   static_cast<qreal>(mapped.y()));
+  };
+  const auto closePoint = [](const QPointF &a, const QPointF &b) {
+    return std::abs(a.x() - b.x()) < 0.01 && std::abs(a.y() - b.y()) < 0.01;
+  };
+  const auto drawCloneFrame = [&](const QPointF &a, const QPointF &b,
+                                  const QPointF &c, const QPointF &d) {
+    renderer->drawSolidLine({static_cast<float>(a.x()), static_cast<float>(a.y())},
+                            {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                            cloneOuterColor, 1.35f);
+    renderer->drawSolidLine({static_cast<float>(b.x()), static_cast<float>(b.y())},
+                            {static_cast<float>(c.x()), static_cast<float>(c.y())},
+                            cloneOuterColor, 1.35f);
+    renderer->drawSolidLine({static_cast<float>(c.x()), static_cast<float>(c.y())},
+                            {static_cast<float>(d.x()), static_cast<float>(d.y())},
+                            cloneOuterColor, 1.35f);
+    renderer->drawSolidLine({static_cast<float>(d.x()), static_cast<float>(d.y())},
+                            {static_cast<float>(a.x()), static_cast<float>(a.y())},
+                            cloneOuterColor, 1.35f);
+    renderer->drawSolidLine({static_cast<float>(a.x()), static_cast<float>(a.y())},
+                            {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                            cloneInnerColor, 0.65f);
+    renderer->drawSolidLine({static_cast<float>(b.x()), static_cast<float>(b.y())},
+                            {static_cast<float>(c.x()), static_cast<float>(c.y())},
+                            cloneInnerColor, 0.65f);
+    renderer->drawSolidLine({static_cast<float>(c.x()), static_cast<float>(c.y())},
+                            {static_cast<float>(d.x()), static_cast<float>(d.y())},
+                            cloneInnerColor, 0.65f);
+    renderer->drawSolidLine({static_cast<float>(d.x()), static_cast<float>(d.y())},
+                            {static_cast<float>(a.x()), static_cast<float>(a.y())},
+                            cloneInnerColor, 0.65f);
+  };
+
+  for (const auto &instance : cloneInstances) {
+    const QPointF ctl = mapPoint(instance.transform, localBounds.topLeft());
+    const QPointF ctr = mapPoint(instance.transform, localBounds.topRight());
+    const QPointF cbr = mapPoint(instance.transform, localBounds.bottomRight());
+    const QPointF cbl = mapPoint(instance.transform, localBounds.bottomLeft());
+    if (closePoint(ctl, tl) && closePoint(ctr, tr) && closePoint(cbr, br) &&
+        closePoint(cbl, bl)) {
+      continue;
+    }
+    drawCloneFrame(ctl, ctr, cbr, cbl);
   }
 }
 

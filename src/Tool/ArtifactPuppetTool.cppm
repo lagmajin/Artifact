@@ -23,6 +23,7 @@ import Artifact.Layer.Image;
 import Artifact.Composition.Abstract;
 import Artifact.Layers.Selection.Manager;
 import Artifact.Render.IRenderer;
+import Artifact.Widgets.CompositionRenderOverlay;
 import Event.Bus;
 import ArtifactCore.ImageProcessing.OpenCV.PuppetEngine;
 
@@ -280,28 +281,12 @@ void ArtifactPuppetTool::renderOverlay(ArtifactIRenderer* renderer, const LayerI
         default: color = ArtifactCore::FloatColor{1.0f, 1.0f, 0.0f, 1.0f};
         }
 
-        const float size = selected ? 10.0f : 7.0f;
-        const float half = size * 0.5f;
-
-        // Outer glow for selected
-        if (selected) {
-            renderer->drawSolidRect(x - half - 2, y - half - 2, size + 4, size + 4,
-                                    ArtifactCore::FloatColor{1.0f, 1.0f, 1.0f, 0.3f}, 1.0f);
-        }
-
-        // Pin body (circle approximated as square for now)
-        renderer->drawSolidRect(x - half, y - half, size, size, color, 1.0f);
-
-        // Outline
-        renderer->drawRectOutline(x - half, y - half, size, size,
-                                  ArtifactCore::FloatColor{1.0f, 1.0f, 1.0f, 0.8f});
-
-        // Label
+        const float zoom = std::max(0.001f, renderer->getZoom());
+        const float pinSize = (selected ? 11.5f : 9.0f) / zoom;
         const QString label = QString::number(pin.type);
-        renderer->drawText(QRectF(x + half + 2, y - 6, 80, 14), label,
-                           QApplication::font(),
-                           ArtifactCore::FloatColor{1.0f, 1.0f, 1.0f, 0.7f},
-                           Qt::AlignLeft | Qt::AlignVCenter);
+        drawTrackerPinOverlay(renderer, x, y, pinSize, color,
+                              ArtifactCore::FloatColor{1.0f, 1.0f, 1.0f, 1.0f},
+                              selected, label);
     }
 }
 

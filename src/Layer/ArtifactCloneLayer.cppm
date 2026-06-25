@@ -42,6 +42,10 @@ QString cloneModeName(CloneMode mode)
         return QStringLiteral("Linear Jitter");
     case CloneMode::Curve:
         return QStringLiteral("Curve");
+    case CloneMode::Random:
+        return QStringLiteral("Random");
+    case CloneMode::Spline:
+        return QStringLiteral("Spline");
     case CloneMode::Grid:
         return QStringLiteral("Grid");
     case CloneMode::Radial:
@@ -133,44 +137,30 @@ void ArtifactCloneLayer::draw(ArtifactIRenderer* renderer) {
         return;
     }
 
+    auto clones = generateCloneData();
+    if (clones.empty()) return;
+
     const QRectF bounds = localBounds();
-    if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
-        return;
+    const float layerOpacity = opacity();
+
+    for (const auto& clone : clones) {
+        if (!clone.visible) continue;
+
+        const float cloneOpacity = layerOpacity * std::clamp(clone.weight, 0.0f, 1.0f);
+        if (cloneOpacity <= 0.0f) continue;
+
+        ArtifactCore::FloatColor color = {
+            clone.color.redF(),
+            clone.color.greenF(),
+            clone.color.blueF(),
+            clone.color.alphaF() * cloneOpacity
+        };
+
+        renderer->drawSolidRectTransformed(
+            static_cast<float>(bounds.x()), static_cast<float>(bounds.y()),
+            static_cast<float>(bounds.width()), static_cast<float>(bounds.height()),
+            clone.transform, color, cloneOpacity);
     }
-
-    const QTransform transform = getGlobalTransform();
-    const QPointF tl = transform.map(bounds.topLeft());
-    const QPointF tr = transform.map(bounds.topRight());
-    const QPointF br = transform.map(bounds.bottomRight());
-    const QPointF bl = transform.map(bounds.bottomLeft());
-
-    const ArtifactCore::FloatColor outerColor{0.32f, 0.74f, 0.98f, 0.92f};
-    const ArtifactCore::FloatColor innerColor{0.08f, 0.18f, 0.28f, 0.70f};
-
-    renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                            {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                            outerColor, 1.8f);
-    renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                            {static_cast<float>(br.x()), static_cast<float>(br.y())},
-                            outerColor, 1.8f);
-    renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
-                            {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                            outerColor, 1.8f);
-    renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                            {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                            outerColor, 1.8f);
-    renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                            {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                            innerColor, 0.8f);
-    renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                            {static_cast<float>(br.x()), static_cast<float>(br.y())},
-                            innerColor, 0.8f);
-    renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
-                            {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                            innerColor, 0.8f);
-    renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                            {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                            innerColor, 0.8f);
 }
 
 
@@ -181,6 +171,7 @@ bool ArtifactCloneLayer::isCloneLayer() const {
 QJsonObject ArtifactCloneLayer::toJson() const {
     QJsonObject obj = ArtifactAbstractLayer::toJson();
     obj["type"] = static_cast<int>(LayerType::Clone);
+    obj["clone.mode"] = static_cast<int>(impl_->settings_.mode);
     obj["clone.sourceLayerId"] = impl_->settings_.sourceLayerId.toString();
     obj["clone.sourceIndex"] = impl_->settings_.sourceIndex;
     return obj;
@@ -188,6 +179,9 @@ QJsonObject ArtifactCloneLayer::toJson() const {
 
 void ArtifactCloneLayer::fromJsonProperties(const QJsonObject& obj) {
     ArtifactAbstractLayer::fromJsonProperties(obj);
+    if (obj.contains("clone.mode")) {
+        impl_->settings_.mode = static_cast<CloneMode>(obj.value("clone.mode").toInt(0));
+    }
     if (obj.contains("clone.sourceLayerId")) {
         impl_->settings_.sourceLayerId = LayerID(obj.value("clone.sourceLayerId").toString());
     }
@@ -228,7 +222,8 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
             clone.visible = true;
             clones.push_back(clone);
         }
-    } else if (impl_->settings_.mode == CloneMode::Curve) {
+    } else if (impl_->settings_.mode == CloneMode::Curve ||
+               impl_->settings_.mode == CloneMode::Spline) {
         const int total = std::max(1, impl_->settings_.cloneCount);
         clones.reserve(static_cast<size_t>(total));
         const float start = impl_->settings_.curveStartAngle;
@@ -246,6 +241,54 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
             clone.transform.translate(x, y, 0.0f);
             if (impl_->settings_.rotationStep != 0.0f) {
                 clone.transform.rotate(angle + impl_->settings_.rotationStep * i, 0.0f, 0.0f, 1.0f);
+            }
+            clone.weight = std::clamp(1.0f - impl_->settings_.opacityDecay * static_cast<float>(i), 0.0f, 1.0f);
+            clone.visible = true;
+            clones.push_back(clone);
+        }
+    } else if (impl_->settings_.mode == CloneMode::Random) {
+        const int total = std::max(1, impl_->settings_.cloneCount);
+        clones.reserve(static_cast<size_t>(total));
+        std::mt19937 rng(static_cast<uint32_t>(impl_->settings_.seed));
+        std::uniform_real_distribution<float> unit(-1.0f, 1.0f);
+        std::uniform_real_distribution<float> zeroOne(0.0f, 1.0f);
+        std::uniform_real_distribution<float> rotDist(0.0f, 360.0f);
+        std::uniform_real_distribution<float> scaleDist(0.85f, 1.15f);
+        const QVector3D spread = impl_->settings_.jitter;
+        const float centerFalloff = 0.72f;
+
+        for (int i = 0; i < total; ++i) {
+            CloneData clone;
+            clone.index = i;
+            clone.sourceIndex = impl_->settings_.sourceIndex;
+            clone.transform.setToIdentity();
+
+            const float rx = unit(rng);
+            const float ry = unit(rng);
+            const float rz = unit(rng);
+            const float radialMix = std::pow(zeroOne(rng), 0.65f);
+            QVector3D offset = impl_->settings_.offset +
+                               QVector3D(rx * spread.x() * radialMix * centerFalloff,
+                                         ry * spread.y() * radialMix * centerFalloff,
+                                         rz * spread.z() * radialMix * centerFalloff);
+            clone.transform.translate(offset);
+
+            const float randomRotation = rotDist(rng);
+            if (impl_->settings_.rotationStep != 0.0f) {
+                clone.transform.rotate(randomRotation + impl_->settings_.rotationStep * static_cast<float>(i),
+                                       0.0f, 0.0f, 1.0f);
+            } else {
+                clone.transform.rotate(randomRotation * 0.15f, 0.0f, 0.0f, 1.0f);
+            }
+
+            const float scale = std::clamp(scaleDist(rng) * (1.0f - (1.0f - radialMix) * 0.10f), 0.5f, 1.5f);
+            clone.transform.scale(scale);
+
+            if (impl_->settings_.variation_ > 0.0f) {
+                const float variation = std::clamp(impl_->settings_.variation_, 0.0f, 1.0f);
+                const float randomTilt = (unit(rng) * 20.0f) * variation;
+                clone.transform.rotate(randomTilt, 1.0f, 0.0f, 0.0f);
+                clone.transform.rotate(unit(rng) * 20.0f * variation, 0.0f, 1.0f, 0.0f);
             }
             clone.weight = std::clamp(1.0f - impl_->settings_.opacityDecay * static_cast<float>(i), 0.0f, 1.0f);
             clone.visible = true;
@@ -281,6 +324,8 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
         const int total = std::max(1, impl_->settings_.radialCount);
         clones.reserve(static_cast<size_t>(total));
         float angleStep = (impl_->settings_.endAngle - impl_->settings_.startAngle) / total;
+        const QRectF bounds = localBounds();
+        const QPointF center = bounds.isValid() ? bounds.center() : QPointF(0.0, 0.0);
 
         for (int i = 0; i < total; ++i) {
             CloneData clone;
@@ -288,11 +333,11 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
             clone.sourceIndex = impl_->settings_.sourceIndex;
             float angle = impl_->settings_.startAngle + angleStep * i;
             float rad = angle * M_PI / 180.0f;
-            
+
             clone.transform.setToIdentity();
-            clone.transform.translate(std::cos(rad) * impl_->settings_.radius,
-                                    std::sin(rad) * impl_->settings_.radius,
-                                    0.0f);
+            clone.transform.translate(center.x() + std::cos(rad) * impl_->settings_.radius,
+                                      center.y() + std::sin(rad) * impl_->settings_.radius,
+                                      0.0f);
             clone.transform.rotate(angle, 0.0f, 0.0f, 1.0f);
             clone.weight = 1.0f;
             clone.visible = true;
@@ -392,7 +437,7 @@ std::vector<AbstractProperty> ArtifactCloneLayer::getProperties() const {
     modeProp.setName("Mode");
     modeProp.setType(PropertyType::Integer);  // Use Integer to represent the enum value
     modeProp.setValue(static_cast<int>(impl_->settings_.mode));
-    modeProp.setTooltip(QStringLiteral("0=Linear, 1=Linear Jitter, 2=Curve, 3=Grid, 4=Radial (current: %1)")
+    modeProp.setTooltip(QStringLiteral("0=Linear, 1=Linear Jitter, 2=Curve, 3=Grid, 4=Radial, 5=Random, 6=Spline (current: %1)")
                         .arg(cloneModeName(impl_->settings_.mode)));
     props.push_back(modeProp);
 
@@ -681,7 +726,61 @@ std::vector<AbstractProperty> ArtifactCloneLayer::getProperties() const {
         props.push_back(seedProp);
     }
 
-    if (includeCurve()) {
+    if (impl_->settings_.mode == CloneMode::Random) {
+        AbstractProperty countProp;
+        countProp.setName("Clone Count");
+        countProp.setType(PropertyType::Integer);
+        countProp.setValue(impl_->settings_.cloneCount);
+        props.push_back(countProp);
+
+        AbstractProperty offsetXProp;
+        offsetXProp.setName("Offset X");
+        offsetXProp.setType(PropertyType::Float);
+        offsetXProp.setValue(impl_->settings_.offset.x());
+        props.push_back(offsetXProp);
+
+        AbstractProperty offsetYProp;
+        offsetYProp.setName("Offset Y");
+        offsetYProp.setType(PropertyType::Float);
+        offsetYProp.setValue(impl_->settings_.offset.y());
+        props.push_back(offsetYProp);
+
+        AbstractProperty offsetZProp;
+        offsetZProp.setName("Offset Z");
+        offsetZProp.setType(PropertyType::Float);
+        offsetZProp.setValue(impl_->settings_.offset.z());
+        props.push_back(offsetZProp);
+
+        AbstractProperty jitterXProp;
+        jitterXProp.setName("Jitter X");
+        jitterXProp.setType(PropertyType::Float);
+        jitterXProp.setValue(impl_->settings_.jitter.x());
+        props.push_back(jitterXProp);
+
+        AbstractProperty jitterYProp;
+        jitterYProp.setName("Jitter Y");
+        jitterYProp.setType(PropertyType::Float);
+        jitterYProp.setValue(impl_->settings_.jitter.y());
+        props.push_back(jitterYProp);
+
+        AbstractProperty jitterZProp;
+        jitterZProp.setName("Jitter Z");
+        jitterZProp.setType(PropertyType::Float);
+        jitterZProp.setValue(impl_->settings_.jitter.z());
+        props.push_back(jitterZProp);
+
+        AbstractProperty seedProp;
+        seedProp.setName("Seed");
+        seedProp.setType(PropertyType::Integer);
+        seedProp.setValue(impl_->settings_.seed);
+        props.push_back(seedProp);
+    } else if (impl_->settings_.mode == CloneMode::Spline || includeCurve()) {
+        AbstractProperty countProp;
+        countProp.setName("Clone Count");
+        countProp.setType(PropertyType::Integer);
+        countProp.setValue(impl_->settings_.cloneCount);
+        props.push_back(countProp);
+
         AbstractProperty curveRadiusProp;
         curveRadiusProp.setName("Curve Radius");
         curveRadiusProp.setType(PropertyType::Float);
@@ -724,12 +823,6 @@ void ArtifactCloneLayer::setPropertyValue(const UniString& name, const QVariant&
         impl_->settings_.jitter.setZ(value.toFloat());
     } else if (key == QStringLiteral("Seed")) {
         impl_->settings_.seed = value.toInt();
-    } else if (key == QStringLiteral("Curve Radius")) {
-        impl_->settings_.curveRadius = std::max(0.0f, value.toFloat());
-    } else if (key == QStringLiteral("Curve Start Angle")) {
-        impl_->settings_.curveStartAngle = value.toFloat();
-    } else if (key == QStringLiteral("Curve End Angle")) {
-        impl_->settings_.curveEndAngle = value.toFloat();
     } else if (key == QStringLiteral("Columns")) {
         impl_->settings_.columns = std::max(1, value.toInt());
     } else if (key == QStringLiteral("Rows")) {
@@ -754,6 +847,12 @@ void ArtifactCloneLayer::setPropertyValue(const UniString& name, const QVariant&
         impl_->settings_.startAngle = value.toFloat();
     } else if (key == QStringLiteral("End Angle")) {
         impl_->settings_.endAngle = value.toFloat();
+    } else if (key == QStringLiteral("Curve Radius")) {
+        impl_->settings_.curveRadius = std::max(0.0f, value.toFloat());
+    } else if (key == QStringLiteral("Curve Start Angle")) {
+        impl_->settings_.curveStartAngle = value.toFloat();
+    } else if (key == QStringLiteral("Curve End Angle")) {
+        impl_->settings_.curveEndAngle = value.toFloat();
     } else if (key == QStringLiteral("Rotation Step")) {
         impl_->settings_.rotationStep = value.toFloat();
     } else if (key == QStringLiteral("Opacity Decay")) {

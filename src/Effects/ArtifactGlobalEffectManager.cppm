@@ -47,7 +47,6 @@ namespace Artifact
 
  class ArtifactGlobalEffectManager::Impl {
  private:
-  QHash<EffectID, EffectFactory> effectFactory_;
   ArtifactPluginLoader loader_;
  public:
   Impl();

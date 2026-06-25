@@ -11,6 +11,7 @@ module Artifact.Widgets.PointTrackerGizmo;
 
 import Artifact.Render.IRenderer;
 import Artifact.Layer.Abstract;
+import Artifact.Widgets.CompositionRenderOverlay;
 import Tracking.MotionTracker;
 import Color.Float;
 
@@ -96,7 +97,6 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
 
     // 太さを zoom 不変にする
     const float lineThickness = 1.5f * invZoom;
-    const float crossSize = 8.0f * invZoom;
     const float handleSize = 4.5f * invZoom;
 
     const auto& st = impl_->state;
@@ -130,10 +130,12 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
         renderer->drawPoint(ix + iw, iy + ih, handleSize, handleColor);        // BR
     }
 
-    // --- 中心点: 赤十字 ---
+    // --- 中心点: native pin ---
     {
-        const FloatColor crossColor{1.0f, 0.35f, 0.35f, 1.0f};
-        renderer->drawCrosshair(cx, cy, crossSize, crossColor);
+        const FloatColor fillColor{1.0f, 0.38f, 0.28f, 1.0f};
+        const FloatColor accentColor{1.0f, 0.72f, 0.36f, 1.0f};
+        drawTrackerPinOverlay(renderer, cx, cy, std::max(10.0f, 11.5f * invZoom),
+                              fillColor, accentColor, false);
     }
 
     // --- モーションパス軌跡 (tracker 参照がある場合) ---
@@ -150,11 +152,13 @@ void ArtifactPointTrackerGizmo::draw(ArtifactIRenderer* renderer) {
             const FloatColor pathColor{0.2f, 0.95f, 0.4f, 0.55f};
             renderer->drawPolyline(pts, pathColor, 1.5f * invZoom);
 
-            // 各パスポイントに小さなドット
-            const FloatColor dotColor{0.2f, 0.85f, 0.4f, 0.8f};
-            const float dotSize = 3.0f * invZoom;
+            // 各パスポイントを native pin で描く
+            const FloatColor dotFill{0.2f, 0.85f, 0.4f, 0.88f};
+            const FloatColor dotAccent{0.45f, 1.0f, 0.62f, 1.0f};
+            const float dotSize = 5.6f * invZoom;
             for (const auto& p : pts) {
-                renderer->drawPoint(p.x, p.y, dotSize, dotColor);
+                drawTrackerPinOverlay(renderer, p.x, p.y, dotSize, dotFill,
+                                      dotAccent, false);
             }
         }
     }

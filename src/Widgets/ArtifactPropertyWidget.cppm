@@ -291,10 +291,28 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
           name == QStringLiteral("component.cloner.radius") ||
           name == QStringLiteral("component.cloner.startAngle") ||
           name == QStringLiteral("component.cloner.endAngle");
+      const bool isRandomOnly =
+          name == QStringLiteral("component.cloner.cloneCount") ||
+          name == QStringLiteral("component.cloner.offsetX") ||
+          name == QStringLiteral("component.cloner.offsetY") ||
+          name == QStringLiteral("component.cloner.offsetZ") ||
+          name == QStringLiteral("component.cloner.jitterX") ||
+          name == QStringLiteral("component.cloner.jitterY") ||
+          name == QStringLiteral("component.cloner.jitterZ") ||
+          name == QStringLiteral("component.cloner.seed");
+      const bool isSplineOnly =
+          name == QStringLiteral("component.cloner.cloneCount") ||
+          name == QStringLiteral("component.cloner.radius") ||
+          name == QStringLiteral("component.cloner.startAngle") ||
+          name == QStringLiteral("component.cloner.endAngle");
 
-      if ((mode == 0 && (isGridOnly || isRadialOnly)) ||
-          (mode == 1 && (isLinearOnly || isRadialOnly)) ||
-          (mode == 2 && (isLinearOnly || isGridOnly))) {
+      if ((mode == 0 && (isGridOnly || isRadialOnly || isRandomOnly || isSplineOnly)) ||
+          (mode == 1 && (isGridOnly || isRadialOnly || isRandomOnly || isSplineOnly)) ||
+          (mode == 2 && (isGridOnly || isRadialOnly || isRandomOnly)) ||
+          (mode == 3 && (isLinearOnly || isRadialOnly || isRandomOnly || isSplineOnly)) ||
+          (mode == 4 && (isLinearOnly || isGridOnly || isRandomOnly || isSplineOnly)) ||
+          (mode == 5 && (isGridOnly || isRadialOnly || isSplineOnly)) ||
+          (mode == 6 && (isLinearOnly || isGridOnly || isRandomOnly))) {
         continue;
       }
       filtered.push_back(property);
@@ -305,7 +323,7 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
   if (normalizedGroup.compare(QStringLiteral("Solid"), Qt::CaseInsensitive) == 0) {
     const int fillType = groupInt(QStringLiteral("solid.fillType"),
                                  static_cast<int>(ArtifactSolidFillType::Solid));
-    if (fillType != static_cast<int>(ArtifactSolidFillType::LinearGradient)) {
+    if (fillType == static_cast<int>(ArtifactSolidFillType::Solid)) {
       std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
       filtered.reserve(properties.size());
       for (const auto &property : properties) {
@@ -322,6 +340,34 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
             name == QStringLiteral("solid.gradientCenterY") ||
             name == QStringLiteral("solid.gradientScale") ||
             name == QStringLiteral("solid.gradientOffset");
+        if (isGradientOnly) {
+          continue;
+        }
+        filtered.push_back(property);
+      }
+      return filtered;
+    }
+  }
+
+  // Shape Appearance group: hide gradient properties when fillType == Solid
+  if (normalizedGroup.compare(QStringLiteral("Appearance"), Qt::CaseInsensitive) == 0) {
+    const int fillType = groupInt(QStringLiteral("shape.fillType"),
+                                 static_cast<int>(ArtifactSolidFillType::Solid));
+    if (fillType == static_cast<int>(ArtifactSolidFillType::Solid)) {
+      std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
+      filtered.reserve(properties.size());
+      for (const auto &property : properties) {
+        if (!property) {
+          continue;
+        }
+        const QString name = property->getName();
+        const bool isGradientOnly =
+            name == QStringLiteral("shape.fillGradientStartColor") ||
+            name == QStringLiteral("shape.fillGradientEndColor") ||
+            name == QStringLiteral("shape.fillGradientAngle") ||
+            name == QStringLiteral("shape.fillGradientCenterX") ||
+            name == QStringLiteral("shape.fillGradientCenterY") ||
+            name == QStringLiteral("shape.fillGradientRadius");
         if (isGradientOnly) {
           continue;
         }

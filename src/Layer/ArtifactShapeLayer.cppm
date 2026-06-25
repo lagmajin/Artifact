@@ -6,6 +6,8 @@ module;
 #include <QColor>
 #include <QBrush>
 #include <QLinearGradient>
+#include <QRadialGradient>
+#include <QConicalGradient>
 #include <QImage>
 #include <QRectF>
 #include <QLineF>
@@ -584,8 +586,15 @@ public:
  Artifact::ShapeType shapeType_ = Artifact::ShapeType::Rect;
  int width_ = 200;
  int height_ = 200;
- FloatColor fillColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
- FloatColor strokeColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  FloatColor fillColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+  ArtifactSolidFillType fillType_ = ArtifactSolidFillType::Solid;
+  FloatColor fillGradientStartColor_ = FloatColor(1.0f, 1.0f, 1.0f, 1.0f);
+  FloatColor fillGradientEndColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
+  float fillGradientAngleDegrees_ = 0.0f;
+  float fillGradientCenterX_ = 0.5f;
+  float fillGradientCenterY_ = 0.5f;
+  float fillGradientRadius_ = 0.5f;
+  FloatColor strokeColor_ = FloatColor(0.0f, 0.0f, 0.0f, 1.0f);
  float strokeWidth_ = 0.0f;
  bool fillEnabled_ = true;
  bool strokeEnabled_ = false;
@@ -624,15 +633,16 @@ public:
  bool customPathClosed_ = true;
  std::vector<std::unique_ptr<ArtifactCore::ShapeOperator>> shapeOperators_;
 
- bool useCachePipeline() const {
-  return customPathVertices_.size() >= 3 ||
-         strokeCap_ != StrokeCap::Flat ||
-         strokeJoin_ != StrokeJoin::Miter ||
-         strokeAlign_ != StrokeAlign::Center ||
-         !dashPattern_.empty() ||
-         !shapeOperators_.empty() ||
-         hasCustomStrokeEffects();
- }
+  bool useCachePipeline() const {
+   return customPathVertices_.size() >= 3 ||
+          fillType_ != ArtifactSolidFillType::Solid ||
+          strokeCap_ != StrokeCap::Flat ||
+          strokeJoin_ != StrokeJoin::Miter ||
+          strokeAlign_ != StrokeAlign::Center ||
+          !dashPattern_.empty() ||
+          !shapeOperators_.empty() ||
+          hasCustomStrokeEffects();
+  }
 
     QImage cachedImage_;
     bool cacheDirty_ = true;
@@ -662,19 +672,48 @@ public:
                                                   shapeOperators_);
 
     if (!paths.empty()) {
-     QColor fc(static_cast<int>(fillColor_.r() * 255),
-               static_cast<int>(fillColor_.g() * 255),
-               static_cast<int>(fillColor_.b() * 255),
-               static_cast<int>(fillColor_.a() * 255));
+     const bool isGradient = fillType_ != ArtifactSolidFillType::Solid;
+     QBrush fillBrush;
+     if (isGradient) {
+      const int w = width_;
+      const int h = height_;
+      const float cx = static_cast<float>(w) * fillGradientCenterX_;
+      const float cy = static_cast<float>(h) * fillGradientCenterY_;
+      const float radius = static_cast<float>(std::max(w, h)) * fillGradientRadius_;
+      QGradient* grad = nullptr;
+      if (fillType_ == ArtifactSolidFillType::LinearGradient) {
+       const float rad = fillGradientAngleDegrees_ * static_cast<float>(M_PI) / 180.0f;
+       const float dx = std::cos(rad) * static_cast<float>(w) * 0.5f;
+       const float dy = std::sin(rad) * static_cast<float>(h) * 0.5f;
+       const QPointF start(static_cast<qreal>(cx - dx), static_cast<qreal>(cy - dy));
+       const QPointF end(static_cast<qreal>(cx + dx), static_cast<qreal>(cy + dy));
+       grad = new QLinearGradient(start, end);
+      } else if (fillType_ == ArtifactSolidFillType::RadialGradient) {
+       auto* rg = new QRadialGradient(QPointF(cx, cy), radius);
+       grad = rg;
+      } else {
+       auto* cg = new QConicalGradient(QPointF(cx, cy), fillGradientAngleDegrees_);
+       grad = cg;
+      }
+      grad->setColorAt(0.0, toQColor(fillGradientStartColor_));
+      grad->setColorAt(1.0, toQColor(fillGradientEndColor_));
+      fillBrush = QBrush(*grad);
+      delete grad;
+     } else {
+      fillBrush = QColor(static_cast<int>(fillColor_.r() * 255),
+                         static_cast<int>(fillColor_.g() * 255),
+                         static_cast<int>(fillColor_.b() * 255),
+                         static_cast<int>(fillColor_.a() * 255));
+     }
      const bool canUseCustomStroke =
          hasCustomStrokeEffects() &&
          strokeAlign_ == StrokeAlign::Center &&
          strokeJoin_ == StrokeJoin::Miter &&
          dashPattern_.empty();
-     for (const QPainterPath& path : paths) {
-      if (fillEnabled_) {
-       painter.fillPath(path, fc);
-      }
+      for (const QPainterPath& path : paths) {
+       if (fillEnabled_) {
+        painter.fillPath(path, fillBrush);
+       }
 
       if (strokeEnabled_ && strokeWidth_ > 0) {
        if (canUseCustomStroke) {
@@ -815,6 +854,20 @@ int ArtifactShapeLayer::shapeHeight() const { return impl_->height_; }
 
 void ArtifactShapeLayer::setFillColor(const FloatColor& c) { impl_->fillColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
 FloatColor ArtifactShapeLayer::fillColor() const { return impl_->fillColor_; }
+void ArtifactShapeLayer::setFillType(ArtifactSolidFillType t) { impl_->fillType_ = t; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+ArtifactSolidFillType ArtifactShapeLayer::fillType() const { return impl_->fillType_; }
+void ArtifactShapeLayer::setFillGradientStartColor(const FloatColor& c) { impl_->fillGradientStartColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+FloatColor ArtifactShapeLayer::fillGradientStartColor() const { return impl_->fillGradientStartColor_; }
+void ArtifactShapeLayer::setFillGradientEndColor(const FloatColor& c) { impl_->fillGradientEndColor_ = c; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+FloatColor ArtifactShapeLayer::fillGradientEndColor() const { return impl_->fillGradientEndColor_; }
+void ArtifactShapeLayer::setFillGradientAngleDegrees(float d) { impl_->fillGradientAngleDegrees_ = d; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+float ArtifactShapeLayer::fillGradientAngleDegrees() const { return impl_->fillGradientAngleDegrees_; }
+void ArtifactShapeLayer::setFillGradientCenterX(float v) { impl_->fillGradientCenterX_ = v; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+float ArtifactShapeLayer::fillGradientCenterX() const { return impl_->fillGradientCenterX_; }
+void ArtifactShapeLayer::setFillGradientCenterY(float v) { impl_->fillGradientCenterY_ = v; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+float ArtifactShapeLayer::fillGradientCenterY() const { return impl_->fillGradientCenterY_; }
+void ArtifactShapeLayer::setFillGradientRadius(float v) { impl_->fillGradientRadius_ = v; impl_->markDirty(); impl_->shapeContentCacheDirty_ = true; Q_EMIT changed(); }
+float ArtifactShapeLayer::fillGradientRadius() const { return impl_->fillGradientRadius_; }
 void ArtifactShapeLayer::setStrokeColor(const FloatColor& c) {
  impl_->strokeColor_ = c;
  if (!impl_->strokeGradientEnabled_) {
@@ -1209,11 +1262,66 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  fillColorProp->setDisplayLabel(QStringLiteral("Fill Color"));
   appearanceGroup.addProperty(fillColorProp);
 
- auto fillEnabledProp = makeProp(QStringLiteral("shape.fillEnabled"),
-                                 ArtifactCore::PropertyType::Boolean,
-                                 impl_->fillEnabled_, -209);
- fillEnabledProp->setDisplayLabel(QStringLiteral("Fill Enabled"));
-  appearanceGroup.addProperty(fillEnabledProp);
+  auto fillEnabledProp = makeProp(QStringLiteral("shape.fillEnabled"),
+                                  ArtifactCore::PropertyType::Boolean,
+                                  impl_->fillEnabled_, -209);
+  fillEnabledProp->setDisplayLabel(QStringLiteral("Fill Enabled"));
+   appearanceGroup.addProperty(fillEnabledProp);
+
+  auto fillTypeProp = makeProp(QStringLiteral("shape.fillType"),
+                               ArtifactCore::PropertyType::Integer,
+                               static_cast<int>(impl_->fillType_), -199);
+  fillTypeProp->setDisplayLabel(QStringLiteral("Fill Type"));
+  fillTypeProp->setTooltip(QStringLiteral("0=Solid, 1=Linear, 2=Radial, 3=Conical"));
+   appearanceGroup.addProperty(fillTypeProp);
+
+  auto fillGradStartProp = makeProp(QStringLiteral("shape.fillGradientStartColor"),
+                                    ArtifactCore::PropertyType::Color,
+                                    QColor(
+    static_cast<int>(impl_->fillGradientStartColor_.r() * 255),
+    static_cast<int>(impl_->fillGradientStartColor_.g() * 255),
+    static_cast<int>(impl_->fillGradientStartColor_.b() * 255),
+    static_cast<int>(impl_->fillGradientStartColor_.a() * 255)
+    ),
+    -198);
+  fillGradStartProp->setDisplayLabel(QStringLiteral("Gradient Start"));
+   appearanceGroup.addProperty(fillGradStartProp);
+
+  auto fillGradEndProp = makeProp(QStringLiteral("shape.fillGradientEndColor"),
+                                  ArtifactCore::PropertyType::Color,
+                                  QColor(
+    static_cast<int>(impl_->fillGradientEndColor_.r() * 255),
+    static_cast<int>(impl_->fillGradientEndColor_.g() * 255),
+    static_cast<int>(impl_->fillGradientEndColor_.b() * 255),
+    static_cast<int>(impl_->fillGradientEndColor_.a() * 255)
+    ),
+    -197);
+  fillGradEndProp->setDisplayLabel(QStringLiteral("Gradient End"));
+   appearanceGroup.addProperty(fillGradEndProp);
+
+  auto fillGradAngleProp = makeProp(QStringLiteral("shape.fillGradientAngle"),
+                                    ArtifactCore::PropertyType::Float,
+                                    impl_->fillGradientAngleDegrees_, -196);
+  fillGradAngleProp->setDisplayLabel(QStringLiteral("Gradient Angle"));
+   appearanceGroup.addProperty(fillGradAngleProp);
+
+  auto fillGradCenterXProp = makeProp(QStringLiteral("shape.fillGradientCenterX"),
+                                      ArtifactCore::PropertyType::Float,
+                                      impl_->fillGradientCenterX_, -195);
+  fillGradCenterXProp->setDisplayLabel(QStringLiteral("Gradient Center X"));
+   appearanceGroup.addProperty(fillGradCenterXProp);
+
+  auto fillGradCenterYProp = makeProp(QStringLiteral("shape.fillGradientCenterY"),
+                                      ArtifactCore::PropertyType::Float,
+                                      impl_->fillGradientCenterY_, -194);
+  fillGradCenterYProp->setDisplayLabel(QStringLiteral("Gradient Center Y"));
+   appearanceGroup.addProperty(fillGradCenterYProp);
+
+  auto fillGradRadiusProp = makeProp(QStringLiteral("shape.fillGradientRadius"),
+                                     ArtifactCore::PropertyType::Float,
+                                     impl_->fillGradientRadius_, -193);
+  fillGradRadiusProp->setDisplayLabel(QStringLiteral("Gradient Radius"));
+   appearanceGroup.addProperty(fillGradRadiusProp);
 
  auto strokeColorProp = makeProp(QStringLiteral("shape.strokeColor"),
                                  ArtifactCore::PropertyType::Color,
@@ -1464,9 +1572,39 @@ if (propertyPath == "shape.type") {
   return true;
  }
  if (propertyPath == "shape.fillEnabled") {
-  setFillEnabled(value.toBool());
-  return true;
- }
+   setFillEnabled(value.toBool());
+   return true;
+  }
+  if (propertyPath == "shape.fillType") {
+   setFillType(static_cast<ArtifactSolidFillType>(value.toInt()));
+   return true;
+  }
+  if (propertyPath == "shape.fillGradientStartColor") {
+   auto c = value.value<QColor>();
+   setFillGradientStartColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+   return true;
+  }
+  if (propertyPath == "shape.fillGradientEndColor") {
+   auto c = value.value<QColor>();
+   setFillGradientEndColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
+   return true;
+  }
+  if (propertyPath == "shape.fillGradientAngle") {
+   setFillGradientAngleDegrees(value.toFloat());
+   return true;
+  }
+  if (propertyPath == "shape.fillGradientCenterX") {
+   setFillGradientCenterX(value.toFloat());
+   return true;
+  }
+  if (propertyPath == "shape.fillGradientCenterY") {
+   setFillGradientCenterY(value.toFloat());
+   return true;
+  }
+  if (propertyPath == "shape.fillGradientRadius") {
+   setFillGradientRadius(value.toFloat());
+   return true;
+  }
  if (propertyPath == "shape.strokeColor") {
   auto c = value.value<QColor>();
   setStrokeColor(FloatColor(c.redF(), c.greenF(), c.blueF(), c.alphaF()));
@@ -1685,6 +1823,19 @@ QJsonObject ArtifactShapeLayer::toJson() const {
   obj["fillB"] = static_cast<double>(impl_->fillColor_.b());
   obj["fillA"] = static_cast<double>(impl_->fillColor_.a());
   obj["fillEnabled"] = impl_->fillEnabled_;
+  obj["fillType"] = static_cast<int>(impl_->fillType_);
+  obj["fillGradStartR"] = static_cast<double>(impl_->fillGradientStartColor_.r());
+  obj["fillGradStartG"] = static_cast<double>(impl_->fillGradientStartColor_.g());
+  obj["fillGradStartB"] = static_cast<double>(impl_->fillGradientStartColor_.b());
+  obj["fillGradStartA"] = static_cast<double>(impl_->fillGradientStartColor_.a());
+  obj["fillGradEndR"] = static_cast<double>(impl_->fillGradientEndColor_.r());
+  obj["fillGradEndG"] = static_cast<double>(impl_->fillGradientEndColor_.g());
+  obj["fillGradEndB"] = static_cast<double>(impl_->fillGradientEndColor_.b());
+  obj["fillGradEndA"] = static_cast<double>(impl_->fillGradientEndColor_.a());
+  obj["fillGradAngle"] = static_cast<double>(impl_->fillGradientAngleDegrees_);
+  obj["fillGradCenterX"] = static_cast<double>(impl_->fillGradientCenterX_);
+  obj["fillGradCenterY"] = static_cast<double>(impl_->fillGradientCenterY_);
+  obj["fillGradRadius"] = static_cast<double>(impl_->fillGradientRadius_);
   obj["strokeR"] = static_cast<double>(impl_->strokeColor_.r());
   obj["strokeG"] = static_cast<double>(impl_->strokeColor_.g());
   obj["strokeB"] = static_cast<double>(impl_->strokeColor_.b());
@@ -1752,6 +1903,21 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
       static_cast<float>(obj["fillB"].toDouble(1.0)),
       static_cast<float>(obj["fillA"].toDouble(1.0))));
   layer->setFillEnabled(obj["fillEnabled"].toBool(true));
+  layer->setFillType(static_cast<ArtifactSolidFillType>(obj["fillType"].toInt(0)));
+  layer->setFillGradientStartColor(FloatColor(
+      static_cast<float>(obj["fillGradStartR"].toDouble(1.0)),
+      static_cast<float>(obj["fillGradStartG"].toDouble(1.0)),
+      static_cast<float>(obj["fillGradStartB"].toDouble(1.0)),
+      static_cast<float>(obj["fillGradStartA"].toDouble(1.0))));
+  layer->setFillGradientEndColor(FloatColor(
+      static_cast<float>(obj["fillGradEndR"].toDouble(0.0)),
+      static_cast<float>(obj["fillGradEndG"].toDouble(0.0)),
+      static_cast<float>(obj["fillGradEndB"].toDouble(0.0)),
+      static_cast<float>(obj["fillGradEndA"].toDouble(1.0))));
+  layer->setFillGradientAngleDegrees(static_cast<float>(obj["fillGradAngle"].toDouble(0.0)));
+  layer->setFillGradientCenterX(static_cast<float>(obj["fillGradCenterX"].toDouble(0.5)));
+  layer->setFillGradientCenterY(static_cast<float>(obj["fillGradCenterY"].toDouble(0.5)));
+  layer->setFillGradientRadius(static_cast<float>(obj["fillGradRadius"].toDouble(0.5)));
   layer->setStrokeColor(FloatColor(
       static_cast<float>(obj["strokeR"].toDouble(0.0)),
       static_cast<float>(obj["strokeG"].toDouble(0.0)),

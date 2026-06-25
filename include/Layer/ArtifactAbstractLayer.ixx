@@ -293,6 +293,7 @@ public:
   QRectF contentBounds(LayerBoundsKind kind) const;
   QRectF sourceBounds() const;
   QRectF visibleBounds() const;
+  QRectF visualLocalBounds() const;
   QString contentBoundsSummary() const;
   QRectF effectBounds() const;
   QRectF maskBounds() const;

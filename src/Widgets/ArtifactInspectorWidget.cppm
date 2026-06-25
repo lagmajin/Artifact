@@ -763,7 +763,6 @@ public:
   void syncFocusedEffectFromRackSelection();
   void syncEffectPropertyWidget();
   void handleAddEffectClicked(int rackIndex);
-  void handleAddGeneratorEffect(int rackIndex);
   void handleRemoveEffectClicked(int rackIndex);
   void refreshRackButtons();
   void setEffectRackEnabled(bool enabled);
@@ -1575,8 +1574,17 @@ bool ArtifactInspectorWidget::Impl::removeEffectById(const QString &effectId) {
     return projectService->removeEffectFromCurrentComposition(effectId);
   }
 
-  return projectService->removeEffectFromLayerInCurrentComposition(
-      currentLayerId_, effectId);
+  std::shared_ptr<ArtifactAbstractEffect> capturedEffect;
+  if (auto layer = comp->layerById(currentLayerId_)) {
+    for (const auto &e : layer->getEffects()) {
+      if (e && e->effectID().toQString() == effectId) {
+        capturedEffect = e;
+        break;
+      }
+    }
+  }
+  return projectService->removeEffectFromLayerWithUndo(
+      currentLayerId_, effectId, capturedEffect);
 }
 
 bool ArtifactInspectorWidget::Impl::setEffectEnabledById(
@@ -1601,8 +1609,17 @@ bool ArtifactInspectorWidget::Impl::setEffectEnabledById(
                                                                 enabled);
   }
 
-  return projectService->setEffectEnabledInLayerInCurrentComposition(
-      currentLayerId_, effectId, enabled);
+  bool wasEnabled = false;
+  if (auto layer = comp->layerById(currentLayerId_)) {
+    for (const auto &e : layer->getEffects()) {
+      if (e && e->effectID().toQString() == effectId) {
+        wasEnabled = e->isEnabled();
+        break;
+      }
+    }
+  }
+  return projectService->setEffectEnabledWithUndo(
+      currentLayerId_, effectId, enabled, wasEnabled);
 }
 
 bool ArtifactInspectorWidget::Impl::moveEffectById(const QString &effectId,
@@ -1625,7 +1642,7 @@ bool ArtifactInspectorWidget::Impl::moveEffectById(const QString &effectId,
     return projectService->moveEffectInCurrentComposition(effectId, direction);
   }
 
-  return projectService->moveEffectInLayerInCurrentComposition(
+  return projectService->moveEffectWithUndo(
       currentLayerId_, effectId, direction);
 }
 
@@ -2411,9 +2428,8 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
       const bool added = editingCompositionEffects()
                              ? projectService->addEffectToCurrentComposition(
                                    newEffect)
-                             : projectService
-                                   ->addEffectToLayerInCurrentComposition(
-                                       currentLayerId_, newEffect);
+                             : projectService->addEffectToLayerWithUndo(
+                                   currentLayerId_, newEffect);
       if (added) {
         focusedEffectId_ = newEffect->effectID().toQString();
         updateEffectsList();
@@ -2646,9 +2662,6 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
   effectMenu.exec(QCursor::pos());
 }
 
-void ArtifactInspectorWidget::Impl::handleAddGeneratorEffect(int rackIndex) {
-  // Obsolete function. Kept temporarily to appease class signature.
-}
 
 void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex) {
   if (rackIndex < 0 || rackIndex >= kEffectRackCount)
@@ -2689,16 +2702,31 @@ void ArtifactInspectorWidget::Impl::handleRemoveEffectClicked(int rackIndex) {
   for (auto item : selectedItems) {
     UniString effectID(item->data(Qt::UserRole).toString().toStdString());
     if (effectID.length() > 0) {
+      const QString eid = effectID.toQString();
       const bool removed = editingCompositionEffects()
                                ? projectService
-                                     ->removeEffectFromCurrentComposition(
-                                         effectID.toQString())
-                               : projectService
-                                     ->removeEffectFromLayerInCurrentComposition(
-                                         currentLayerId_,
-                                         effectID.toQString());
+                                     ->removeEffectFromCurrentComposition(eid)
+                               : [&]() {
+                                   std::shared_ptr<ArtifactAbstractEffect>
+                                       capturedEffect;
+                                   if (auto layer =
+                                           comp->layerById(currentLayerId_)) {
+                                     for (const auto &e :
+                                          layer->getEffects()) {
+                                       if (e && e->effectID().toQString() ==
+                                                    eid) {
+                                         capturedEffect = e;
+                                         break;
+                                       }
+                                     }
+                                   }
+                                   return projectService
+                                       ->removeEffectFromLayerWithUndo(
+                                           currentLayerId_, eid,
+                                           capturedEffect);
+                                 }();
       if (removed) {
-        qDebug() << "[Inspector] Effect removed:" << effectID.toQString();
+        qDebug() << "[Inspector] Effect removed:" << eid;
         ++removedCount;
       }
     }
@@ -2758,38 +2786,6 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   // ================== Layer Info Tab ==================
   auto layerInfoWidget = new QWidget();
   auto layerInfoLayout = new QVBoxLayout();
-
-  impl_->compositionNoteGroup = new QGroupBox("Composition Note");
-  applyInspectorSectionBox(impl_->compositionNoteGroup);
-  auto compositionNoteLayout = new QVBoxLayout();
-  impl_->compositionNoteEdit = new QPlainTextEdit();
-  impl_->compositionNoteEdit->setPlaceholderText(
-      "Open a composition and add a note for context.");
-  impl_->compositionNoteEdit->setMinimumHeight(120);
-  applyInspectorTextEdit(impl_->compositionNoteEdit);
-  compositionNoteLayout->addWidget(impl_->compositionNoteEdit);
-  compositionNoteLayout->setContentsMargins(
-      kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,
-      kInspectorNoteMargin);
-  impl_->compositionNoteGroup->setLayout(compositionNoteLayout);
-  impl_->compositionNoteGroup->hide();
-  layerInfoLayout->addWidget(impl_->compositionNoteGroup);
-
-  impl_->layerNoteGroup = new QGroupBox("Layer Note");
-  applyInspectorSectionBox(impl_->layerNoteGroup);
-  auto layerNoteLayout = new QVBoxLayout();
-  impl_->layerNoteEdit = new QPlainTextEdit();
-  impl_->layerNoteEdit->setPlaceholderText(
-      "Select a layer, then add a note or reminder.");
-  impl_->layerNoteEdit->setMinimumHeight(110);
-  applyInspectorTextEdit(impl_->layerNoteEdit);
-  layerNoteLayout->addWidget(impl_->layerNoteEdit);
-  layerNoteLayout->setContentsMargins(
-      kInspectorNoteMargin, kInspectorNoteMargin, kInspectorNoteMargin,
-      kInspectorNoteMargin);
-  impl_->layerNoteGroup->setLayout(layerNoteLayout);
-  impl_->layerNoteGroup->hide();
-  layerInfoLayout->addWidget(impl_->layerNoteGroup);
 
   // ステータスラベル
   impl_->statusLabel = new QLabel("Status: Open a project to inspect layers");
@@ -2882,54 +2878,6 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
       kInspectorSectionMarginL, kInspectorSectionMarginT,
       kInspectorSectionMarginR, kInspectorSectionMarginB);
   layerInfoLayout->setSpacing(kInspectorSectionSpacing);
-
-  QObject::connect(
-      impl_->compositionNoteEdit, &QPlainTextEdit::textChanged, this, [this]() {
-        if (!impl_->compositionNoteEdit ||
-            impl_->currentCompositionId_.isNil()) {
-          return;
-        }
-        auto projectService = ArtifactProjectService::instance();
-        if (!projectService) {
-          return;
-        }
-        auto findResult =
-            projectService->findComposition(impl_->currentCompositionId_);
-        if (!findResult.success) {
-          return;
-        }
-        auto comp = findResult.ptr.lock();
-        if (!comp) {
-          return;
-        }
-        comp->setCompositionNote(impl_->compositionNoteEdit->toPlainText());
-      });
-
-  QObject::connect(
-      impl_->layerNoteEdit, &QPlainTextEdit::textChanged, this, [this]() {
-        if (!impl_->layerNoteEdit || impl_->currentCompositionId_.isNil() ||
-            impl_->currentLayerId_.isNil()) {
-          return;
-        }
-        auto projectService = ArtifactProjectService::instance();
-        if (!projectService) {
-          return;
-        }
-        auto findResult =
-            projectService->findComposition(impl_->currentCompositionId_);
-        if (!findResult.success) {
-          return;
-        }
-        auto comp = findResult.ptr.lock();
-        if (!comp) {
-          return;
-        }
-        auto layer = comp->layerById(impl_->currentLayerId_);
-        if (!layer) {
-          return;
-        }
-        layer->setLayerNote(impl_->layerNoteEdit->toPlainText());
-      });
 
   auto toggleComponent = [this](const QString &propertyPath,
                                 const QString &displayName) {
@@ -3279,6 +3227,16 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                   event.layerId,
                   LayerSelectionChangeReason::SelectionBridgeSync});
             }
+          }));
+  impl_->eventBusSubscriptions_.push_back(
+      impl_->eventBus_.subscribe<ShowEffectInspectorRequested>(
+          [this](const ShowEffectInspectorRequested &) {
+            if (!impl_) return;
+            if (impl_->tabWidget) {
+              impl_->tabWidget->setCurrentIndex(1); // Effects tab
+            }
+            impl_->containerWidget->show();
+            impl_->containerWidget->raise();
           }));
   impl_->refreshRackButtons();
 }

@@ -16,6 +16,7 @@ module;
 export module Artifact.Widgets.CompositionRenderOverlay;
 
 import Artifact.Render.IRenderer;
+import Color.Float;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
 import Artifact.Widgets.PieMenu;
@@ -30,6 +31,16 @@ void drawAnchorCenterOverlay(ArtifactIRenderer *renderer,
 
 void drawSelectionOverlay(ArtifactIRenderer *renderer,
                           const ArtifactAbstractLayerPtr &layer);
+
+void drawTrackerPinOverlay(ArtifactIRenderer *renderer,
+                          float x,
+                          float y,
+                          float size,
+                          const FloatColor &fillColor,
+                          const FloatColor &accentColor,
+                          bool selected = false,
+                          const QString &label = QString(),
+                          float opacity = 1.0f);
 
 void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
                                 const ArtifactAbstractLayerPtr &layer,

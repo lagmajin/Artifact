@@ -154,8 +154,22 @@ signals:
     void frameRendered(int64_t frame) W_SIGNAL(frameRendered, frame);
 };
 
+/**
+ * @brief Debug particle layer - renders the same particle system with stronger
+ * visibility so visibility issues can be inspected independently from the
+ * production particle layer.
+ */
+class ArtifactParticleDebugLayer : public ArtifactParticleLayer {
+public:
+    ArtifactParticleDebugLayer();
+    ~ArtifactParticleDebugLayer() override;
+
+    void draw(ArtifactIRenderer* renderer) override;
+};
+
 // Factory function for creating particle layers
 std::shared_ptr<ArtifactParticleLayer> createParticleLayer();
 std::shared_ptr<ArtifactParticleLayer> createParticleLayer(const QString& preset);
+std::shared_ptr<ArtifactParticleDebugLayer> createParticleDebugLayer();
 
 } // namespace Artifact

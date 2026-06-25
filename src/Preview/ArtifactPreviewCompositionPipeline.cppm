@@ -38,6 +38,7 @@ module;
 #include <QPainter>
 #include <QPointF>
 #include <QMatrix4x4>
+#include <QVector4D>
 #include <QSize>
 #include <QSizeF>
 #include <QRectF>
@@ -54,6 +55,7 @@ module Artifact.Preview.Pipeline;
 
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Clone;
 import Artifact.Effect.Abstract;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
@@ -86,6 +88,80 @@ namespace Artifact
     return 0.0f;
    }
    return layerPtr->opacity();
+  }
+
+  void drawCloneSelectionOverlay(ArtifactIRenderer* renderer,
+                                 const ArtifactAbstractLayerPtr& layer)
+  {
+   if (!renderer || !layer) {
+    return;
+   }
+
+   const auto cloneLayer = std::dynamic_pointer_cast<ArtifactCloneLayer>(layer);
+   if (!cloneLayer) {
+    return;
+   }
+
+   const QRectF localBounds = layer->localBounds();
+   if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+       localBounds.height() <= 0.0) {
+    return;
+   }
+
+   const auto clones = cloneLayer->generateCloneData();
+   if (clones.empty()) {
+    return;
+   }
+
+   const QTransform globalTransform = layer->getGlobalTransform();
+   const FloatColor outerColor(0.96f, 0.56f, 0.18f, 0.90f);
+   const FloatColor innerColor(0.18f, 0.10f, 0.04f, 0.64f);
+
+   const auto mapClonePoint = [&](const QMatrix4x4& cloneTransform,
+                                  const QPointF& point) -> QPointF {
+    const QVector4D mapped =
+        cloneTransform * QVector4D(static_cast<float>(point.x()),
+                                   static_cast<float>(point.y()),
+                                   0.0f, 1.0f);
+    return globalTransform.map(QPointF(static_cast<qreal>(mapped.x()),
+                                       static_cast<qreal>(mapped.y())));
+   };
+
+   for (const auto& clone : clones) {
+    if (!clone.visible) {
+     continue;
+    }
+
+    const QPointF tl = mapClonePoint(clone.transform, localBounds.topLeft());
+    const QPointF tr = mapClonePoint(clone.transform, localBounds.topRight());
+    const QPointF br = mapClonePoint(clone.transform, localBounds.bottomRight());
+    const QPointF bl = mapClonePoint(clone.transform, localBounds.bottomLeft());
+
+    renderer->drawThickLineLocal({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                                 {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                                 1.7f, outerColor);
+    renderer->drawThickLineLocal({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                                 {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                                 1.7f, outerColor);
+    renderer->drawThickLineLocal({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                                 {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                                 1.7f, outerColor);
+    renderer->drawThickLineLocal({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                                 {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                                 1.7f, outerColor);
+    renderer->drawThickLineLocal({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                                 {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                                 0.8f, innerColor);
+    renderer->drawThickLineLocal({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                                 {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                                 0.8f, innerColor);
+    renderer->drawThickLineLocal({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                                 {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                                 0.8f, innerColor);
+    renderer->drawThickLineLocal({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                                 {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                                 0.8f, innerColor);
+   }
   }
 
  void drawLayerForPreviewView(const ArtifactAbstractLayerPtr& layer,
@@ -172,30 +248,46 @@ namespace Artifact
     return;
    }
 
-   if (const auto solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layerPtr)) {
-    if (hasRasterizerEffects(layerPtr)) {
-     const QSize surfaceSize(
-         std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-         std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-     QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-     surface.fill(toQColor(solidImage->color()));
-     applyRasterizerEffects(layerPtr, surface);
-     const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
-     drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, surface, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = previewLayerOpacity(layerPtr);
-      renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+    if (const auto solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layerPtr)) {
+     const bool gradientEnabled = solidImage->isGradientEnabled();
+     if (hasRasterizerEffects(layerPtr)) {
+      QImage surface = gradientEnabled
+                           ? solidImage->toQImage()
+                           : QImage(std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+                                    std::max(1, static_cast<int>(std::ceil(localRect.height()))),
+                                    QImage::Format_ARGB32_Premultiplied);
+      if (!gradientEnabled) {
+       surface.fill(toQColor(solidImage->color()));
+      }
+      applyRasterizerEffects(layerPtr, surface);
+      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
+      drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, surface, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
+       const float opacity = previewLayerOpacity(layerPtr);
+       renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
                                       static_cast<float>(localRect.y()),
                                       static_cast<float>(localRect.width()),
                                       static_cast<float>(localRect.height()),
-                                      transform, surface,
-                                      opacity * weight);
-     });
-    } else {
-     const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
-     drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, solidImage, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
-      const float opacity = previewLayerOpacity(layerPtr);
-      renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
-                                         static_cast<float>(localRect.y()),
+                                       transform, surface,
+                                       opacity * weight);
+      });
+     } else if (gradientEnabled) {
+      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
+      const QImage surface = solidImage->toQImage();
+      drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, surface, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
+       const float opacity = previewLayerOpacity(layerPtr);
+       renderer->drawSpriteTransformed(static_cast<float>(localRect.x()),
+                                       static_cast<float>(localRect.y()),
+                                       static_cast<float>(localRect.width()),
+                                       static_cast<float>(localRect.height()),
+                                       transform, surface,
+                                       opacity * weight);
+      });
+     } else {
+      const QMatrix4x4 baseTransform = layerPtr->getGlobalTransform4x4();
+      drawWithClonerEffect(layerPtr, baseTransform, [renderer, localRect, solidImage, layerPtr, selectedLayerId](const QMatrix4x4& transform, float weight) {
+       const float opacity = previewLayerOpacity(layerPtr);
+       renderer->drawSolidRectTransformed(static_cast<float>(localRect.x()),
+                                          static_cast<float>(localRect.y()),
                                          static_cast<float>(localRect.width()),
                                          static_cast<float>(localRect.height()),
                                          transform,
@@ -377,53 +469,57 @@ namespace Artifact
                                 << "active=" << (layer ? layer->isActiveAt(currentFrame) : false);
     if (layer && layer->isActiveAt(currentFrame))
     {
-     auto global = layer->getGlobalTransform();
-     auto localBounds = layer->localBounds();
-     if (!localBounds.isValid() || localBounds.width() <= 0.0 || localBounds.height() <= 0.0) {
-      qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] skip draw: invalid local bounds"
-                                  << "id=" << layer->id().toString()
-                                  << "bounds=" << localBounds;
+     if (layer->isCloneLayer()) {
+      drawCloneSelectionOverlay(renderer, layer);
      } else {
-      qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] draw"
-                                  << "id=" << layer->id().toString()
-                                  << "bounds=" << localBounds
-                                  << "m11=" << global.m11()
-                                  << "m12=" << global.m12()
-                                  << "m21=" << global.m21()
-                                  << "m22=" << global.m22()
-                                  << "dx=" << global.dx()
-                                  << "dy=" << global.dy();
-      float w = (float)localBounds.width();
-      float h = (float)localBounds.height();
+      auto global = layer->getGlobalTransform();
+      auto localBounds = layer->localBounds();
+      if (!localBounds.isValid() || localBounds.width() <= 0.0 || localBounds.height() <= 0.0) {
+       qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] skip draw: invalid local bounds"
+                                   << "id=" << layer->id().toString()
+                                   << "bounds=" << localBounds;
+      } else {
+       qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] draw"
+                                   << "id=" << layer->id().toString()
+                                   << "bounds=" << localBounds
+                                   << "m11=" << global.m11()
+                                   << "m12=" << global.m12()
+                                   << "m21=" << global.m21()
+                                   << "m22=" << global.m22()
+                                   << "dx=" << global.dx()
+                                   << "dy=" << global.dy();
+       float w = (float)localBounds.width();
+       float h = (float)localBounds.height();
 
-      // Draw Bounding Box (transformed)
-      // Since IRenderer doesn't have a drawPolygon, we draw 4 lines
-      auto p0 = global.map(QPointF(localBounds.left(), localBounds.top()));
-      auto p1 = global.map(QPointF(localBounds.right(), localBounds.top()));
-      auto p2 = global.map(QPointF(localBounds.right(), localBounds.bottom()));
-      auto p3 = global.map(QPointF(localBounds.left(), localBounds.bottom()));
+       // Draw Bounding Box (transformed)
+       // Since IRenderer doesn't have a drawPolygon, we draw 4 lines
+       auto p0 = global.map(QPointF(localBounds.left(), localBounds.top()));
+       auto p1 = global.map(QPointF(localBounds.right(), localBounds.top()));
+       auto p2 = global.map(QPointF(localBounds.right(), localBounds.bottom()));
+       auto p3 = global.map(QPointF(localBounds.left(), localBounds.bottom()));
 
-      FloatColor cyan(0.0f, 0.7f, 1.0f, 1.0f);
-      renderer->drawThickLineLocal({(float)p0.x(), (float)p0.y()}, {(float)p1.x(), (float)p1.y()}, 1.0f, cyan);
-      renderer->drawThickLineLocal({(float)p1.x(), (float)p1.y()}, {(float)p2.x(), (float)p2.y()}, 1.0f, cyan);
-      renderer->drawThickLineLocal({(float)p2.x(), (float)p2.y()}, {(float)p3.x(), (float)p3.y()}, 1.0f, cyan);
-      renderer->drawThickLineLocal({(float)p3.x(), (float)p3.y()}, {(float)p0.x(), (float)p0.y()}, 1.0f, cyan);
+       FloatColor cyan(0.0f, 0.7f, 1.0f, 1.0f);
+       renderer->drawThickLineLocal({(float)p0.x(), (float)p0.y()}, {(float)p1.x(), (float)p1.y()}, 1.0f, cyan);
+       renderer->drawThickLineLocal({(float)p1.x(), (float)p1.y()}, {(float)p2.x(), (float)p2.y()}, 1.0f, cyan);
+       renderer->drawThickLineLocal({(float)p2.x(), (float)p2.y()}, {(float)p3.x(), (float)p3.y()}, 1.0f, cyan);
+       renderer->drawThickLineLocal({(float)p3.x(), (float)p3.y()}, {(float)p0.x(), (float)p0.y()}, 1.0f, cyan);
 
-      // Draw Anchor Point
-      auto& t3d = layer->transform3D();
-      auto pAnchor = global.map(QPointF(t3d.anchorX(), t3d.anchorY()));
-      FloatColor white(1.0f, 1.0f, 1.0f, 1.0f);
-      renderer->drawThickLineLocal({(float)pAnchor.x() - 5, (float)pAnchor.y()}, {(float)pAnchor.x() + 5, (float)pAnchor.y()}, 1.0f, white);
-      renderer->drawThickLineLocal({(float)pAnchor.x(), (float)pAnchor.y() - 5}, {(float)pAnchor.x(), (float)pAnchor.y() + 5}, 1.0f, white);
+       // Draw Anchor Point
+       auto& t3d = layer->transform3D();
+       auto pAnchor = global.map(QPointF(t3d.anchorX(), t3d.anchorY()));
+       FloatColor white(1.0f, 1.0f, 1.0f, 1.0f);
+       renderer->drawThickLineLocal({(float)pAnchor.x() - 5, (float)pAnchor.y()}, {(float)pAnchor.x() + 5, (float)pAnchor.y()}, 1.0f, white);
+       renderer->drawThickLineLocal({(float)pAnchor.x(), (float)pAnchor.y() - 5}, {(float)pAnchor.x(), (float)pAnchor.y() + 5}, 1.0f, white);
 
-      // Draw Corner Handles
-      QPointF corners[4] = { {0,0}, {w,0}, {w,h}, {0,h} };
-      for (auto& c : corners) {
-       auto pc = global.map(c);
-       renderer->drawSolidRect({(float)pc.x() - 3, (float)pc.y() - 3}, {6, 6}, white);
-       renderer->drawRectOutline({(float)pc.x() - 3, (float)pc.y() - 3}, {6, 6}, FloatColor(0,0,0,1));
+       // Draw Corner Handles
+       QPointF corners[4] = { {0,0}, {w,0}, {w,h}, {0,h} };
+       for (auto& c : corners) {
+        auto pc = global.map(c);
+        renderer->drawSolidRect({(float)pc.x() - 3, (float)pc.y() - 3}, {6, 6}, white);
+        renderer->drawRectOutline({(float)pc.x() - 3, (float)pc.y() - 3}, {6, 6}, FloatColor(0,0,0,1));
+       }
       }
-    }
+     }
     } else if (layer) {
      qCDebug(previewPipelineLog) << "[PreviewPipeline][Gizmo] skip draw: inactive frame"
                                  << "id=" << layer->id().toString()

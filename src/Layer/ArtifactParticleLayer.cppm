@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QObject>
 #include <QImage>
 #include <QDebug>
@@ -143,6 +143,17 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
     }
 
     return transformed;
+}
+
+void boostDebugParticleRenderData(ArtifactCore::ParticleRenderData& data)
+{
+    for (auto& particle : data.particles) {
+        particle.size = std::max(18.0f, particle.size * 4.0f);
+        particle.a = 1.0f;
+        particle.r = std::clamp(particle.r * 1.15f + 0.20f, 0.0f, 1.0f);
+        particle.g = std::clamp(particle.g * 1.15f + 0.20f, 0.0f, 1.0f);
+        particle.b = std::clamp(particle.b * 1.15f + 0.20f, 0.0f, 1.0f);
+    }
 }
 
 QVector3D defaultEmitterPositionForPreset(const QString& presetName,
@@ -998,7 +1009,11 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
 
     particleGroup.addProperty(makeProp(QStringLiteral("particle.playing"), ArtifactCore::PropertyType::Boolean, isPlaying(), -140));
     particleGroup.addProperty(makeProp(QStringLiteral("particle.timeScale"), ArtifactCore::PropertyType::Float, timeScale(), -130));
-    particleGroup.addProperty(makeProp(QStringLiteral("particle.emitterCount"), ArtifactCore::PropertyType::Integer, emitterCount(), -120));
+    // Keep both the editor and the property cache non-negative.
+    auto emitterCountProp = makeProp(QStringLiteral("particle.emitterCount"), ArtifactCore::PropertyType::Integer, emitterCount(), -120);
+    emitterCountProp->setMinValue(0);
+    emitterCountProp->setHardRange(0, QVariant());
+    particleGroup.addProperty(emitterCountProp);
     particleGroup.addProperty(makeProp(QStringLiteral("particle.previewWidth"), ArtifactCore::PropertyType::Integer, impl_->width, -110));
     particleGroup.addProperty(makeProp(QStringLiteral("particle.previewHeight"), ArtifactCore::PropertyType::Integer, impl_->height, -100));
 
@@ -1126,6 +1141,69 @@ std::shared_ptr<ArtifactParticleLayer> createParticleLayer(const QString& preset
     auto layer = std::make_shared<ArtifactParticleLayer>();
     layer->loadPreset(preset);
     return layer;
+}
+
+ArtifactParticleDebugLayer::ArtifactParticleDebugLayer() = default;
+ArtifactParticleDebugLayer::~ArtifactParticleDebugLayer() = default;
+
+void ArtifactParticleDebugLayer::draw(ArtifactIRenderer* renderer)
+{
+    if (!renderer || !particleSystem()) {
+        qWarning() << "[ParticleDebugLayer] draw() early exit: renderer="
+                   << (renderer ? "ok" : "null")
+                   << "particleSystem=" << (particleSystem() ? "ok" : "null");
+        return;
+    }
+
+    const int64_t frameNumber = currentFrame();
+    const bool rendererReady = renderer->isInitialized();
+    const int emitterCount = this->emitterCount();
+
+    qInfo() << "[ParticleDebugLayer] draw() frame=" << frameNumber
+            << "rendererInitialized=" << rendererReady
+            << "emitters=" << emitterCount;
+
+    float fps = 30.0f;
+    if (auto comp = static_cast<ArtifactAbstractComposition*>(composition())) {
+        fps = comp->frameRate().framerate();
+    }
+    particleSystem()->goToFrame(std::max<int64_t>(1, frameNumber), fps);
+
+    if (rendererReady) {
+        const auto sourceData = particleSystem()->captureRenderData();
+        qInfo() << "[ParticleDebugLayer] GPU path: particleCount=" << sourceData.particles.size();
+        if (!sourceData.particles.empty()) {
+            const QTransform globalTransform = getGlobalTransform();
+            ArtifactCore::ParticleRenderData renderData =
+                transformParticleRenderData(sourceData, globalTransform, opacity());
+            boostDebugParticleRenderData(renderData);
+            renderer->drawParticles(renderData);
+        } else {
+            qWarning() << "[ParticleDebugLayer] GPU path: NO PARTICLES - emitter may not generate";
+        }
+        return;
+    }
+
+    const QRectF bounds = localBounds();
+    const int fallbackWidth = std::max(1, static_cast<int>(std::ceil(bounds.width())));
+    const int fallbackHeight = std::max(1, static_cast<int>(std::ceil(bounds.height())));
+    QImage fallbackFrame =
+        renderFrame(fallbackWidth, fallbackHeight, static_cast<float>(frameNumber) / fps);
+    if (fallbackFrame.isNull()) {
+        qWarning() << "[ParticleDebugLayer] Fallback draw skipped: frame is null";
+        return;
+    }
+    renderer->drawSprite(0.0f,
+                         0.0f,
+                         static_cast<float>(fallbackFrame.width()),
+                         static_cast<float>(fallbackFrame.height()),
+                         fallbackFrame,
+                         opacity());
+}
+
+std::shared_ptr<ArtifactParticleDebugLayer> createParticleDebugLayer()
+{
+    return std::make_shared<ArtifactParticleDebugLayer>();
 }
 
 } // namespace Artifact

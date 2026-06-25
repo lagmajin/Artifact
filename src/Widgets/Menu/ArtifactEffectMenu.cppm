@@ -172,6 +172,10 @@ ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
   buildEffectCatalog();
   forceMenuIconsVisible(menu);
 
+  QObject::connect(inspectorAction_, &QAction::triggered, menu, [this]() {
+      ArtifactCore::globalEventBus().publish(ShowEffectInspectorRequested{});
+  });
+
   QObject::connect(removeAllAction_, &QAction::triggered, menu, [this]() {
       handleRemoveAllEffects();
   });

@@ -207,11 +207,11 @@ QJsonObject ArtifactMaterialContainerLayer::toJson() const {
     QJsonObject containerObj;
     containerObj["schemaVersion"] = 1;
     containerObj["exposedIndex"] = impl_->exposedIndex;
-    QJsonArray slots;
+    QJsonArray materialSlots;
     for (const auto& slot : impl_->materials) {
-        slots.append(slot.toJson());
+        materialSlots.append(slot.toJson());
     }
-    containerObj["slots"] = slots;
+    containerObj["slots"] = materialSlots;
     obj["materialContainer"] = containerObj;
     return obj;
 }

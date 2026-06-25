@@ -697,6 +697,188 @@ private:
   QVector<LayerID> movedLayerIds_;
   UniString childName_;
 };
+
+class AddEffectUndoCommand : public UndoCommand {
+public:
+  AddEffectUndoCommand(const LayerID &layerId,
+                       std::shared_ptr<ArtifactAbstractEffect> effect)
+      : layerId_(layerId), effect_(std::move(effect)) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc || !effect_) return;
+    if (effectId_.isEmpty()) {
+      if (!svc->addEffectToLayerInCurrentComposition(layerId_, effect_)) return;
+      effectId_ = effect_->effectID().toQString();
+    } else {
+      effect_->setEffectID(UniString::fromQString(effectId_));
+      auto comp = svc->currentComposition().lock();
+      if (!comp) return;
+      auto layer = comp->layerById(layerId_);
+      if (!layer) return;
+      layer->addEffect(effect_);
+      notifyLayerMutation(comp->id().toString(), layerId_);
+      if (auto project = svc->getCurrentProjectSharedPtr()) {
+        ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+            {QString(), QString()});
+      }
+    }
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void undo() override {
+    if (effectId_.isEmpty()) return;
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    svc->removeEffectFromLayerInCurrentComposition(layerId_, effectId_);
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Add Effect"); }
+
+private:
+  LayerID layerId_;
+  std::shared_ptr<ArtifactAbstractEffect> effect_;
+  QString effectId_;
+};
+
+class RemoveEffectUndoCommand : public UndoCommand {
+public:
+  RemoveEffectUndoCommand(const LayerID &layerId,
+                          std::shared_ptr<ArtifactAbstractEffect> effect)
+      : layerId_(layerId), effect_(std::move(effect)) {}
+
+  void redo() override {
+    if (!effect_) return;
+    const QString id = effect_->effectID().toQString();
+    if (id.isEmpty()) return;
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    auto comp = svc->currentComposition().lock();
+    if (!comp) return;
+    auto layer = comp->layerById(layerId_);
+    if (!layer) return;
+    const auto effects = layer->getEffects();
+    for (int i = 0; i < static_cast<int>(effects.size()); ++i) {
+      if (effects[i] && effects[i]->effectID().toQString() == id) {
+        effectIndex_ = i;
+        break;
+      }
+    }
+    svc->removeEffectFromLayerInCurrentComposition(layerId_, id);
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void undo() override {
+    if (!effect_) return;
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    auto comp = svc->currentComposition().lock();
+    if (!comp) return;
+    auto layer = comp->layerById(layerId_);
+    if (!layer) return;
+    if (effectIndex_ >= 0) {
+      auto effects = layer->getEffects();
+      effects.insert(effects.begin() + effectIndex_, effect_);
+      layer->clearEffects();
+      for (const auto &e : effects) {
+        if (e) layer->addEffect(e);
+      }
+    } else {
+      layer->addEffect(effect_);
+    }
+    notifyLayerMutation(comp->id().toString(), layerId_);
+    if (auto project = svc->getCurrentProjectSharedPtr()) {
+      ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
+          {QString(), QString()});
+    }
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Remove Effect"); }
+
+private:
+  LayerID layerId_;
+  std::shared_ptr<ArtifactAbstractEffect> effect_;
+  int effectIndex_ = -1;
+};
+
+class SetEffectEnabledUndoCommand : public UndoCommand {
+public:
+  SetEffectEnabledUndoCommand(const LayerID &layerId, const QString &effectId,
+                              bool wasEnabled, bool nowEnabled)
+      : layerId_(layerId), effectId_(effectId), wasEnabled_(wasEnabled),
+        nowEnabled_(nowEnabled) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    svc->setEffectEnabledInLayerInCurrentComposition(layerId_, effectId_,
+                                                     nowEnabled_);
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    svc->setEffectEnabledInLayerInCurrentComposition(layerId_, effectId_,
+                                                     wasEnabled_);
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Toggle Effect"); }
+
+private:
+  LayerID layerId_;
+  QString effectId_;
+  bool wasEnabled_;
+  bool nowEnabled_;
+};
+
+class MoveEffectUndoCommand : public UndoCommand {
+public:
+  MoveEffectUndoCommand(const LayerID &layerId, const QString &effectId,
+                        int direction)
+      : layerId_(layerId), effectId_(effectId), direction_(direction) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    svc->moveEffectInLayerInCurrentComposition(layerId_, effectId_, direction_);
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    svc->moveEffectInLayerInCurrentComposition(layerId_, effectId_,
+                                               -direction_);
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  QString label() const override { return QStringLiteral("Move Effect"); }
+
+private:
+  LayerID layerId_;
+  QString effectId_;
+  int direction_;
+};
 } // namespace
 
 std::vector<ArtifactCore::ProjectDiagnostic>
@@ -2522,6 +2704,54 @@ bool ArtifactProjectService::moveEffectInLayerInCurrentComposition(
       LayerChangedEvent::ChangeType::Modified});
   notifyLayerMutation(comp->id().toString(), layerId);
   notifyProjectMutation(impl_->projectManager());
+  return true;
+}
+
+bool ArtifactProjectService::addEffectToLayerWithUndo(
+    const LayerID &layerId,
+    std::shared_ptr<ArtifactAbstractEffect> effect) {
+  auto *mgr = UndoManager::instance();
+  if (!mgr) {
+    return addEffectToLayerInCurrentComposition(layerId, std::move(effect));
+  }
+  auto cmd = std::make_unique<AddEffectUndoCommand>(layerId, std::move(effect));
+  mgr->push(std::move(cmd));
+  return true;
+}
+
+bool ArtifactProjectService::removeEffectFromLayerWithUndo(
+    const LayerID &layerId, const QString &effectId,
+    std::shared_ptr<ArtifactAbstractEffect> effect) {
+  auto *mgr = UndoManager::instance();
+  if (!mgr) {
+    return removeEffectFromLayerInCurrentComposition(layerId, effectId);
+  }
+  auto cmd = std::make_unique<RemoveEffectUndoCommand>(layerId, std::move(effect));
+  mgr->push(std::move(cmd));
+  return true;
+}
+
+bool ArtifactProjectService::setEffectEnabledWithUndo(
+    const LayerID &layerId, const QString &effectId,
+    bool enabled, bool wasEnabled) {
+  auto *mgr = UndoManager::instance();
+  if (!mgr) {
+    return setEffectEnabledInLayerInCurrentComposition(layerId, effectId, enabled);
+  }
+  auto cmd = std::make_unique<SetEffectEnabledUndoCommand>(
+      layerId, effectId, wasEnabled, enabled);
+  mgr->push(std::move(cmd));
+  return true;
+}
+
+bool ArtifactProjectService::moveEffectWithUndo(
+    const LayerID &layerId, const QString &effectId, int direction) {
+  auto *mgr = UndoManager::instance();
+  if (!mgr) {
+    return moveEffectInLayerInCurrentComposition(layerId, effectId, direction);
+  }
+  auto cmd = std::make_unique<MoveEffectUndoCommand>(layerId, effectId, direction);
+  mgr->push(std::move(cmd));
   return true;
 }
 

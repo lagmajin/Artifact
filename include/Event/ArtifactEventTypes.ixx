@@ -231,4 +231,7 @@ struct ClipCutEvent {
     QVariant data;
 };
 
+struct ShowEffectInspectorRequested {
+};
+
 } // namespace Artifact

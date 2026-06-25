@@ -605,8 +605,12 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
   if (name == QStringLiteral("component.cloner.mode")) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Linear")},
-        {1, QStringLiteral("Grid")},
-        {2, QStringLiteral("Radial")}};
+        {1, QStringLiteral("Linear Jitter")},
+        {2, QStringLiteral("Curve")},
+        {3, QStringLiteral("Random")},
+        {4, QStringLiteral("Spline")},
+        {5, QStringLiteral("Grid")},
+        {6, QStringLiteral("Radial")}};
   }
   if (name == QStringLiteral("orientation")) {
     return ArtifactEnumPropertyEditor::OptionList{
@@ -638,10 +642,13 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
         {1, QStringLiteral("Inside")},
         {2, QStringLiteral("Outside")}};
   }
-  if (name == QStringLiteral("solid.fillType")) {
+  if (name == QStringLiteral("shape.fillType") ||
+      name == QStringLiteral("solid.fillType")) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Solid")},
-        {1, QStringLiteral("Linear Gradient")}};
+        {1, QStringLiteral("Linear Gradient")},
+        {2, QStringLiteral("Radial Gradient")},
+        {3, QStringLiteral("Conical Gradient")}};
   }
 
   return std::nullopt;

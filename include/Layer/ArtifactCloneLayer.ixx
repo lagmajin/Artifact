@@ -27,11 +27,13 @@ using namespace ArtifactCore;
 class MeshRenderer;  // forward declaration
 
 enum class CloneMode {
-    Linear,
-    LinearJitter,
-    Curve,
-    Grid,
-    Radial
+    Linear = 0,
+    LinearJitter = 1,
+    Curve = 2,
+    Grid = 3,
+    Radial = 4,
+    Random = 5,
+    Spline = 6
 };
 
 class ArtifactCloneLayerSettings {

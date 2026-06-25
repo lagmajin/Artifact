@@ -385,7 +385,7 @@ public:
 
     QImage renderParticleFixturePreview() const
     {
-        ArtifactParticleLayer particleLayer;
+        ArtifactParticleDebugLayer particleLayer;
         particleLayer.loadPreset(QStringLiteral("fire"));
         particleLayer.setTimeScale(1.0f);
 

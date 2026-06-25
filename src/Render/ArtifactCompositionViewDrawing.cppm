@@ -188,8 +188,19 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
 
   if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
     const QRectF bounds = solidImage->localBounds();
-    key += QStringLiteral("|solidImage|color=%1|bounds=%2x%3")
+    key += QStringLiteral("|solidImage|color=%1|fill=%2|g0=%3|g1=%4|ang=%5|rev=%6|cx=%7|cy=%8|scale=%9|off=%10|bounds=%11x%12")
                .arg(rgbaKey(solidImage->color().r(), solidImage->color().g(), solidImage->color().b(), solidImage->color().a()))
+               .arg(static_cast<int>(solidImage->fillType()))
+               .arg(rgbaKey(solidImage->gradientStartColor().r(), solidImage->gradientStartColor().g(),
+                            solidImage->gradientStartColor().b(), solidImage->gradientStartColor().a()))
+               .arg(rgbaKey(solidImage->gradientEndColor().r(), solidImage->gradientEndColor().g(),
+                            solidImage->gradientEndColor().b(), solidImage->gradientEndColor().a()))
+               .arg(solidImage->gradientAngleDegrees(), 0, 'f', 4)
+               .arg(solidImage->gradientReverse() ? 1 : 0)
+               .arg(solidImage->gradientCenterX(), 0, 'f', 4)
+               .arg(solidImage->gradientCenterY(), 0, 'f', 4)
+               .arg(solidImage->gradientScale(), 0, 'f', 4)
+               .arg(solidImage->gradientOffset(), 0, 'f', 4)
                .arg(bounds.width(), 0, 'f', 2)
                .arg(bounds.height(), 0, 'f', 2);
     return key;
@@ -743,12 +754,19 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
 
   if (auto* solidImage = dynamic_cast<ArtifactSolidImageLayer*>(layer)) {
     const auto color = solidImage->color();
+    const bool gradientEnabled = solidImage->isGradientEnabled();
     if (hasRasterizerEffectsOrMasks(layer)) {
-      const QSize surfaceSize(
-          std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-      surface.fill(toQColor(color));
+      QImage surface = gradientEnabled
+                           ? solidImage->toQImage()
+                           : QImage(std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+                                    std::max(1, static_cast<int>(std::ceil(localRect.height()))),
+                                    QImage::Format_ARGB32_Premultiplied);
+      if (!gradientEnabled) {
+        surface.fill(toQColor(color));
+      }
+      applySurfaceAndDraw(surface, localRect, true);
+    } else if (gradientEnabled) {
+      const QImage surface = solidImage->toQImage();
       applySurfaceAndDraw(surface, localRect, true);
     } else {
       const float baseOpacity =

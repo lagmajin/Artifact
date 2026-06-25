@@ -1,4 +1,4 @@
-﻿module;
+module;
 
 #include <QImage>
 #include <QMatrix4x4>
@@ -446,8 +446,11 @@ public:
     void setConstants(const QVector3D& center, const QVector2D& size,
                       const FloatColor& tint, float opacity, float rollDegrees)
     {
-        std::memcpy(constants_.viewMatrix, viewMatrix_.constData(), sizeof(float) * 16);
-        std::memcpy(constants_.projMatrix, projMatrix_.constData(), sizeof(float) * 16);
+        // HLSL uses mul(pos, M); upload Qt matrices as row-vector matrices.
+        const QMatrix4x4 viewRows = viewMatrix_.transposed();
+        const QMatrix4x4 projRows = projMatrix_.transposed();
+        std::memcpy(constants_.viewMatrix, viewRows.constData(), sizeof(float) * 16);
+        std::memcpy(constants_.projMatrix, projRows.constData(), sizeof(float) * 16);
 
         constants_.centerAndRoll[0] = center.x();
         constants_.centerAndRoll[1] = center.y();

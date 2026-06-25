@@ -4,6 +4,7 @@ module;
 #include <QDir>
 #include <QColor>
 #include <QJsonObject>
+#include <QRectF>
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
@@ -448,6 +449,20 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
 void Artifact3DLayer::drawLOD(ArtifactIRenderer *renderer, DetailLevel lod) {
   // For now, same as regular draw
   draw(renderer);
+}
+
+QRectF Artifact3DLayer::localBounds() const
+{
+  const auto size = sourceSize();
+  if (size.width <= 0 || size.height <= 0) {
+    return QRectF();
+  }
+
+  const qreal halfW = static_cast<qreal>(size.width) * 0.5;
+  const qreal halfH = static_cast<qreal>(size.height) * 0.5;
+  return QRectF(-halfW, -halfH,
+                static_cast<qreal>(size.width),
+                static_cast<qreal>(size.height));
 }
 
 std::vector<ArtifactCore::PropertyGroup>

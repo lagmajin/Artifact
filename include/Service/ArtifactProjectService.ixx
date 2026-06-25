@@ -181,6 +181,20 @@ export namespace Artifact {
                                 bool matchWorkspaceDuration,
                                 PrecomposeMode mode);
   bool unprecomposeLayerWithUndo(const LayerID& layerId, bool keepComposition);
+
+  // Undo-aware effect operations
+  bool addEffectToLayerWithUndo(const LayerID& layerId,
+                                std::shared_ptr<ArtifactAbstractEffect> effect);
+  bool removeEffectFromLayerWithUndo(const LayerID& layerId,
+                                     const QString& effectId,
+                                     std::shared_ptr<ArtifactAbstractEffect> effect);
+  bool setEffectEnabledWithUndo(const LayerID& layerId,
+                                const QString& effectId,
+                                bool enabled,
+                                bool wasEnabled);
+  bool moveEffectWithUndo(const LayerID& layerId,
+                          const QString& effectId,
+                          int direction);
    void splitLayerAtCurrentTime(const CompositionID& compositionId, const LayerID& layerId);
    std::shared_ptr<ArtifactProject> getCurrentProjectSharedPtr() const;
    // Relink functions

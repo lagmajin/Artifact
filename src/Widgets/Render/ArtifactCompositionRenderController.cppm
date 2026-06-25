@@ -476,7 +476,7 @@ void drawEffectHitboxOverlay(ArtifactIRenderer *renderer,
   const FloatColor matteFill{1.0f, 0.42f, 0.88f, 0.07f};
   const QTransform globalTransform = selectedLayer->getGlobalTransform();
 
-  const QRectF localBounds = selectedLayer->localBounds();
+  const QRectF localBounds = selectedLayer->visualLocalBounds();
   if (localBounds.isValid() && localBounds.width() > 0.0 &&
       localBounds.height() > 0.0) {
     const QPointF tl = globalTransform.map(localBounds.topLeft());
@@ -1826,12 +1826,29 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer *layer,
 
   if (auto *solidImage = dynamic_cast<ArtifactSolidImageLayer *>(layer)) {
     const QRectF bounds = solidImage->localBounds();
-    key += QStringLiteral("|solidImage|color=%1|bounds=%2x%3")
+    key += QStringLiteral("|solidImage|color=%1|fill=%2|g0=%3|g1=%4|ang=%5|rev=%6|cx=%7|cy=%8|scale=%9|off=%10|bounds=%11x%12")
                .arg(QStringLiteral("%1,%2,%3,%4")
                         .arg(solidImage->color().r(), 0, 'f', 4)
                         .arg(solidImage->color().g(), 0, 'f', 4)
                         .arg(solidImage->color().b(), 0, 'f', 4)
                         .arg(solidImage->color().a(), 0, 'f', 4))
+               .arg(static_cast<int>(solidImage->fillType()))
+               .arg(QStringLiteral("%1,%2,%3,%4")
+                        .arg(solidImage->gradientStartColor().r(), 0, 'f', 4)
+                        .arg(solidImage->gradientStartColor().g(), 0, 'f', 4)
+                        .arg(solidImage->gradientStartColor().b(), 0, 'f', 4)
+                        .arg(solidImage->gradientStartColor().a(), 0, 'f', 4))
+               .arg(QStringLiteral("%1,%2,%3,%4")
+                        .arg(solidImage->gradientEndColor().r(), 0, 'f', 4)
+                        .arg(solidImage->gradientEndColor().g(), 0, 'f', 4)
+                        .arg(solidImage->gradientEndColor().b(), 0, 'f', 4)
+                        .arg(solidImage->gradientEndColor().a(), 0, 'f', 4))
+               .arg(solidImage->gradientAngleDegrees(), 0, 'f', 4)
+               .arg(solidImage->gradientReverse() ? 1 : 0)
+               .arg(solidImage->gradientCenterX(), 0, 'f', 4)
+               .arg(solidImage->gradientCenterY(), 0, 'f', 4)
+               .arg(solidImage->gradientScale(), 0, 'f', 4)
+               .arg(solidImage->gradientOffset(), 0, 'f', 4)
                .arg(bounds.width(), 0, 'f', 2)
                .arg(bounds.height(), 0, 'f', 2);
     return key;
@@ -2829,12 +2846,19 @@ void drawLayerForCompositionView(
 
   if (auto *solidImage = dynamic_cast<ArtifactSolidImageLayer *>(layer)) {
     const auto color = solidImage->color();
+    const bool gradientEnabled = solidImage->isGradientEnabled();
     if (hasRasterizerEffectsOrMasks(layer)) {
-      const QSize surfaceSize(
-          std::max(1, static_cast<int>(std::ceil(localRect.width()))),
-          std::max(1, static_cast<int>(std::ceil(localRect.height()))));
-      QImage surface(surfaceSize, QImage::Format_ARGB32_Premultiplied);
-      surface.fill(toQColor(color));
+      QImage surface = gradientEnabled
+                           ? solidImage->toQImage()
+                           : QImage(std::max(1, static_cast<int>(std::ceil(localRect.width()))),
+                                    std::max(1, static_cast<int>(std::ceil(localRect.height()))),
+                                    QImage::Format_ARGB32_Premultiplied);
+      if (!gradientEnabled) {
+        surface.fill(toQColor(color));
+      }
+      applySurfaceAndDraw(surface, localRect, true);
+    } else if (gradientEnabled) {
+      const QImage surface = solidImage->toQImage();
       applySurfaceAndDraw(surface, localRect, true);
     } else {
       const float baseOpacity =
@@ -5334,6 +5358,14 @@ void CompositionRenderController::zoom100() {
 
 ArtifactIRenderer *CompositionRenderController::renderer() const {
   return impl_->renderer_.get();
+}
+
+QImage CompositionRenderController::selectedLayerPreviewImage() const {
+  return impl_->lastLayerRtPreview_;
+}
+
+QImage CompositionRenderController::accumulatedPreviewImage() const {
+  return impl_->lastAccumRtPreview_;
 }
 
 ArtifactCore::FrameDebugSnapshot
@@ -9434,7 +9466,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               pt.x = static_cast<float>(wPos.x());
               pt.y = static_cast<float>(wPos.y());
               pt.interpolation = interp;
-              const QRectF localBounds = layer->localBounds();
+              const QRectF localBounds = layer->visualLocalBounds();
               if (localBounds.isValid() && localBounds.width() > 0.0 &&
                   localBounds.height() > 0.0) {
                 const QPointF tl = gTrans.map(localBounds.topLeft());
@@ -9536,7 +9568,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               continue;
             }
 
-            const QRectF localBounds = layer->localBounds();
+            const QRectF localBounds = layer->visualLocalBounds();
             if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
                 localBounds.height() <= 0.0) {
               continue;
@@ -9736,11 +9768,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                  currentFrame);
       }
       if (selectedLayer) {
-        if (!showGizmoOverlay_) {
-          ::Artifact::drawSelectionOverlay(renderer_.get(), selectedLayer);
-        }
         if (selectedLayer->isCloneLayer()) {
           ::Artifact::drawClonerFrameOverlay(renderer_.get(), selectedLayer);
+        } else if (!showGizmoOverlay_) {
+          ::Artifact::drawSelectionOverlay(renderer_.get(), selectedLayer);
         }
         const bool selectedLayerIsActiveCamera =
             activeCamera && activeCamera->id() == selectedLayer->id();

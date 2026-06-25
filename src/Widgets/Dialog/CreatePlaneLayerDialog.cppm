@@ -302,6 +302,7 @@ public:
     QComboBox*    unitCombo         = nullptr;
     QComboBox*    pixelAspectCombo  = nullptr;
     QPushButton*  bgColorButton     = nullptr;
+    QWidget*      bgColorRow        = nullptr;
     QPushButton*  gradientStartColorButton = nullptr;
     QWidget*      gradientStartRow  = nullptr;
     QPushButton*  gradientEndColorButton = nullptr;
@@ -382,6 +383,8 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     impl_->fillModeCombo = new QComboBox(this);
     impl_->fillModeCombo->addItem(QStringLiteral("単色"), static_cast<int>(ArtifactSolidFillType::Solid));
     impl_->fillModeCombo->addItem(QStringLiteral("線形グラデーション"), static_cast<int>(ArtifactSolidFillType::LinearGradient));
+    impl_->fillModeCombo->addItem(QStringLiteral("放射状グラデーション"), static_cast<int>(ArtifactSolidFillType::RadialGradient));
+    impl_->fillModeCombo->addItem(QStringLiteral("円錐グラデーション"), static_cast<int>(ArtifactSolidFillType::ConicalGradient));
 
     impl_->gradientAngleSpin = new QDoubleSpinBox(this);
     impl_->gradientAngleSpin->setRange(-360.0, 360.0);
@@ -480,7 +483,8 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
         ctrlLay->addWidget(impl_->bgColorButton);
         ctrlLay->addWidget(impl_->hexColorEdit);
         ctrlLay->addStretch();
-        vbox->addWidget(makeRow(this, u8"カラー", 100, ctrl));
+        impl_->bgColorRow = makeRow(this, u8"カラー", 100, ctrl);
+        vbox->addWidget(impl_->bgColorRow);
     }
 
     vbox->addWidget(makeRow(this, u8"塗り", 100, impl_->fillModeCombo));
@@ -671,8 +675,9 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
                      this, &PlaneLayerSettingPage::resizeCompositionSize);
 
     auto syncGradientUi = [this]() {
-        const bool gradientEnabled = impl_->fillModeCombo->currentData().toInt() ==
-                                     static_cast<int>(ArtifactSolidFillType::LinearGradient);
+        const bool gradientEnabled = impl_->fillModeCombo->currentData().toInt() !=
+                                     static_cast<int>(ArtifactSolidFillType::Solid);
+        if (impl_->bgColorRow) impl_->bgColorRow->setVisible(!gradientEnabled);
         if (impl_->gradientStartRow) impl_->gradientStartRow->setVisible(gradientEnabled);
         if (impl_->gradientEndRow) impl_->gradientEndRow->setVisible(gradientEnabled);
         if (impl_->gradientAngleRow) impl_->gradientAngleRow->setVisible(gradientEnabled);

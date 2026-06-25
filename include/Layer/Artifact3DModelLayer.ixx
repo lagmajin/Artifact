@@ -4,6 +4,7 @@ module;
 #include <cmath>
 #include <QString>
 #include <QJsonObject>
+#include <QRectF>
 
 export module Artifact.Layers.Model3D;
 
@@ -48,6 +49,7 @@ export namespace Artifact {
     // ArtifactIRenderer interface
     void draw(ArtifactIRenderer* renderer) override;
     void drawLOD(ArtifactIRenderer* renderer, DetailLevel lod) override;
+    QRectF localBounds() const override;
     QJsonObject toJson() const override;
     void fromJsonProperties(const QJsonObject& obj) override;
     QString sourcePath() const;

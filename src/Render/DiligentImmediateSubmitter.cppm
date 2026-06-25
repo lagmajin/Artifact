@@ -727,6 +727,7 @@ void DiligentImmediateSubmitter::submitBillboard(const BillboardPkt& p, IDeviceC
     FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
     m_primitiveRenderer3D_->setOverrideRTV(pRTV);
     m_primitiveRenderer3D_->drawBillboardQuadImmediate(p.center, p.size, p.pSRV, tint, p.opacity, p.rollDegrees);
+    m_primitiveRenderer3D_->setOverrideRTV(nullptr);
 }
 
 void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
@@ -737,6 +738,7 @@ void DiligentImmediateSubmitter::submitBillboardImage(const BillboardImagePkt& p
     FloatRGBA tint{p.tint.x, p.tint.y, p.tint.z, p.tint.w};
     m_primitiveRenderer3D_->setOverrideRTV(pRTV);
     m_primitiveRenderer3D_->drawBillboardQuadImmediate(p.center, p.size, p.image, tint, p.opacity, p.rollDegrees);
+    m_primitiveRenderer3D_->setOverrideRTV(nullptr);
 }
 
 void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceContext* ctx, ITextureView* pRTV)
@@ -750,8 +752,10 @@ void DiligentImmediateSubmitter::submitParticles(const ParticlePkt& p, IDeviceCo
         return;
     }
     ctx->SetRenderTargets(1, &pRTV, nullptr, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-    m_particleRenderer_->setViewMatrix(p.viewMatrix.constData());
-    m_particleRenderer_->setProjectionMatrix(p.projMatrix.constData());
+    const QMatrix4x4 particleViewRows = p.viewMatrix.transposed();
+    const QMatrix4x4 particleProjRows = p.projMatrix.transposed();
+    m_particleRenderer_->setViewMatrix(particleViewRows.constData());
+    m_particleRenderer_->setProjectionMatrix(particleProjRows.constData());
     m_particleRenderer_->setFrameCostStats(m_frameCostStats_);
     m_particleRenderer_->updateBuffer(p.data);
     const size_t uploadedCount = m_particleRenderer_->lastUploadedParticleCount();

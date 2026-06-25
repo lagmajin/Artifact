@@ -1424,17 +1424,11 @@ TransformGizmo::~TransformGizmo() {}
 
 QRectF TransformGizmo::currentCanvasBoundingRect() const {
  if (!layer_) return QRectF();
-
  const QRectF localRect = layer_->localBounds();
  if (!localRect.isValid() || localRect.width() <= 0.0 || localRect.height() <= 0.0) {
   return QRectF();
  }
-
- const QRectF bbox = layer_->getGlobalTransform().mapRect(localRect);
- if (!bbox.isValid() || bbox.width() <= 0.0 || bbox.height() <= 0.0) {
-  return QRectF();
- }
- return bbox;
+ return layer_->getGlobalTransform().mapRect(localRect);
 }
 
 void TransformGizmo::setLayer(ArtifactAbstractLayerPtr layer) {
@@ -2220,7 +2214,7 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
   dragStartScaleAnimated_ = t3d.getScaleKeyFrameCount() > 0;
   dragStartHasTextBoxState_ = false;
   dragStartGlobalTransform_ = layer_->getGlobalTransform();
-  dragStartBoundingBox_ = layer_->transformedBoundingBox();
+  dragStartBoundingBox_ = currentCanvasBoundingRect();
   dragStartLocalBounds_ = layer_->localBounds();
   bool invertible = false;
   const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
@@ -2377,9 +2371,9 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
     const float alignedTop = static_cast<float>(currentBBox.top());
     if (snapDistanceLabelsEnabled_) {
      snapBoxBetweenGuides(currentBBox, cachedSpacingVLines_, SNAP_DIST, true,
-                          activeSnapLines_, activeSnapLabels_);
+                          activeSnapLines_, &activeSnapLabels_);
      snapBoxBetweenGuides(currentBBox, cachedSpacingHLines_, SNAP_DIST, false,
-                          activeSnapLines_, activeSnapLabels_);
+                          activeSnapLines_, &activeSnapLabels_);
     } else {
      snapBoxBetweenGuides(currentBBox, cachedSpacingVLines_, SNAP_DIST, true,
                           activeSnapLines_, nullptr);

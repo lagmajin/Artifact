@@ -531,7 +531,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   }
 
   auto effectPtr = std::shared_ptr<ArtifactAbstractEffect>(effect.release());
-  if (ps->addEffectToLayerInCurrentComposition(layerId, effectPtr)) {
+  if (ps->addEffectToLayerWithUndo(layerId, effectPtr)) {
    const QString actualEffectId = effectPtr ? effectPtr->effectID().toQString() : effectId.toString();
    Q_EMIT effectAdded(layerId, actualEffectId);
    return EffectServiceResult::ok(actualEffectId);
@@ -544,7 +544,18 @@ W_OBJECT_IMPL(ArtifactEffectService)
   auto* ps = ArtifactProjectService::instance();
   if (!ps) return EffectServiceResult::fail("Project service not available");
 
-  if (ps->removeEffectFromLayerInCurrentComposition(layerId, effectId)) {
+  std::shared_ptr<ArtifactAbstractEffect> capturedEffect;
+  if (auto comp = ps->currentComposition().lock()) {
+   if (auto layer = comp->layerById(layerId)) {
+    for (const auto& e : layer->getEffects()) {
+     if (e && e->effectID().toQString() == effectId) {
+      capturedEffect = e;
+      break;
+     }
+    }
+   }
+  }
+  if (ps->removeEffectFromLayerWithUndo(layerId, effectId, capturedEffect)) {
    Q_EMIT effectRemoved(layerId, effectId);
    return EffectServiceResult::ok(effectId);
   }
@@ -556,7 +567,18 @@ W_OBJECT_IMPL(ArtifactEffectService)
   auto* ps = ArtifactProjectService::instance();
   if (!ps) return EffectServiceResult::fail("Project service not available");
 
-  if (ps->setEffectEnabledInLayerInCurrentComposition(layerId, effectId, enabled)) {
+  bool wasEnabled = false;
+  if (auto comp = ps->currentComposition().lock()) {
+   if (auto layer = comp->layerById(layerId)) {
+    for (const auto& e : layer->getEffects()) {
+     if (e && e->effectID().toQString() == effectId) {
+      wasEnabled = e->isEnabled();
+      break;
+     }
+    }
+   }
+  }
+  if (ps->setEffectEnabledWithUndo(layerId, effectId, enabled, wasEnabled)) {
    Q_EMIT effectChanged(layerId, effectId);
    return EffectServiceResult::ok(effectId);
   }
@@ -568,7 +590,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   auto* ps = ArtifactProjectService::instance();
   if (!ps) return EffectServiceResult::fail("Project service not available");
 
-  if (ps->moveEffectInLayerInCurrentComposition(layerId, effectId, direction)) {
+  if (ps->moveEffectWithUndo(layerId, effectId, direction)) {
    Q_EMIT effectOrderChanged(layerId);
    return EffectServiceResult::ok(effectId);
   }

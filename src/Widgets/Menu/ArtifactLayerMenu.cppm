@@ -290,6 +290,7 @@ public:
 
     QAction* addDebugBlendLayersAction = nullptr;
     QAction* addDebugBillboardLayerAction = nullptr;
+    QAction* addDebugParticleLayerAction = nullptr;
 
     QAction* precomposeAction = nullptr;
     QAction* unprecomposeAction = nullptr;
@@ -559,6 +560,12 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         QStringLiteral("ビルボード描画の検証用に、見やすい粒子レイヤーを追加します"));
     debugMenu->addAction(addDebugBillboardLayerAction);
 
+    addDebugParticleLayerAction = new QAction("Debug Particle Layer...", debugMenu);
+    addDebugParticleLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    addDebugParticleLayerAction->setToolTip(
+        QStringLiteral("独立したデバッグ用パーティクルレイヤーを追加します"));
+    debugMenu->addAction(addDebugParticleLayerAction);
+
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
     precomposeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
     precomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_view_comfy.svg")));
@@ -752,8 +759,63 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
             QMessageBox::information(
                 menu_->window(), "Debug Layers",
                 QStringLiteral("Debug Billboard Particle を追加しました。\n\n"
-                               "sparkles プリセットを使うので、ビルボード描画の見え方を"
-                               "確認しやすいはずです。"));
+                "sparkles プリセットを使うので、ビルボード描画の見え方を"
+                "確認しやすいはずです。"));
+            return;
+        }
+        if (action == addDebugParticleLayerAction) {
+            auto* service = ArtifactProjectService::instance();
+            if (!service) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "ProjectService が利用できません。");
+                return;
+            }
+            if (!ensureCurrentComposition()) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "先にコンポジションを作成してください。");
+                return;
+            }
+
+            auto comp = service->currentComposition().lock();
+            if (!comp) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "現在のコンポジションを取得できません。");
+                return;
+            }
+
+            auto layer = createParticleDebugLayer();
+            if (!layer) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "デバッグ用パーティクルレイヤーの生成に失敗しました。");
+                return;
+            }
+
+            layer->setLayerName(uniqueLayerName(QStringLiteral("Debug Particle Layer")));
+            layer->loadPreset(QStringLiteral("sparkles"));
+            layer->setOpacity(1.0f);
+            if (placeAtCurrentFrameRequested() && !layer->isTimingLocked()) {
+                const qint64 activeFrame = comp->framePosition().framePosition();
+                const qint64 duration =
+                    std::max<qint64>(1, layer->outPoint().framePosition() -
+                                            layer->inPoint().framePosition());
+                layer->setInPoint(FramePosition(activeFrame));
+                layer->setOutPoint(FramePosition(activeFrame + duration));
+                layer->setStartTime(FramePosition(activeFrame));
+            }
+
+            auto appendResult = comp->appendLayerTop(layer);
+            if (!appendResult.success) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     QStringLiteral("レイヤーの追加に失敗しました: %1")
+                                         .arg(appendResult.message));
+                return;
+            }
+
+            service->selectLayer(layer->id());
+            QMessageBox::information(
+                menu_->window(), "Debug Layers",
+                QStringLiteral("Debug Particle Layer を追加しました。\n\n"
+                               "通常の ParticleLayer とは独立したデバッグ用レイヤーです。"));
             return;
         }
         if (action == precomposeAction) { handlePrecompose(); return; }
@@ -876,6 +938,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createSvgAction->setEnabled(hasProject);
     createModel3DAction->setEnabled(hasProject);
     createPlane3DAction->setEnabled(hasProject);
+    addDebugParticleLayerAction->setEnabled(hasProject);
     createShapeRectAction->setEnabled(hasProject);
     createShapeSquareAction->setEnabled(hasProject);
     createShapePolygonAction->setEnabled(hasProject);

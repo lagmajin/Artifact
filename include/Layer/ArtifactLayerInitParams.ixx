@@ -48,7 +48,9 @@ export namespace Artifact {
 
  enum class ArtifactSolidFillType {
   Solid = 0,
-  LinearGradient = 1
+  LinearGradient = 1,
+  RadialGradient = 2,
+  ConicalGradient = 3
  };
 
 

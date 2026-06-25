@@ -10,6 +10,7 @@ module;
 #include <QVector3D>
 #include <QVector>
 #include <QRectF>
+#include <QImage>
 #include <QString>
 #include <QStringList>
 
@@ -171,6 +172,8 @@ void zoomFill();
   TransformGizmo::Mode gizmoMode() const;
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;
   ArtifactIRenderer* renderer() const;
+  QImage selectedLayerPreviewImage() const;
+  QImage accumulatedPreviewImage() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
   double lastFrameTimeMs() const;
   double averageFrameTimeMs() const;
