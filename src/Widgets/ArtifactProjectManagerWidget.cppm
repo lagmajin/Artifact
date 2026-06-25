@@ -144,6 +144,7 @@ import Artifact.Event.Types;
 import Event.Bus;
 import Artifact.Layer.InitParams;
 import Clipboard.ClipboardManager;
+import Composition.ParametricComposition;
 import Artifact.Widgets.LayerPanelWidget;
 import Artifact.Widgets.CreatePlaneLayerDialog;
 import Artifact.Menu.Layer;
@@ -4230,6 +4231,60 @@ void ArtifactProjectView::contextMenuEvent(QContextMenuEvent* event) {
              }
          }
          dialog->deleteLater();
+    }, loadProjectViewIcon(QStringLiteral("Studio/composition.svg")));
+    addTrackedNewAction(newMenu, QStringLiteral("new_parametric_composition"), QStringLiteral("Parametric Composition"), [this, svc]() {
+        if (!svc) {
+            return;
+        }
+        auto project = svc->getCurrentProjectSharedPtr();
+        if (!project) {
+            QMessageBox::warning(this, QStringLiteral("Parametric Composition"),
+                                 QStringLiteral("プロジェクトが開かれていません。"));
+            return;
+        }
+
+        bool accepted = false;
+        QString name = QInputDialog::getText(this,
+            QStringLiteral("Parametric Composition"),
+            QStringLiteral("Name"),
+            QLineEdit::Normal,
+            QStringLiteral("Parametric Composition"),
+            &accepted).trimmed();
+        if (!accepted) {
+            return;
+        }
+        if (name.isEmpty()) {
+            name = QStringLiteral("Parametric Composition");
+        }
+
+        const CompositionID compositionId;
+        auto definition = makeDefaultParametricCompositionDefinition(
+            QStringLiteral("parametric.%1").arg(compositionId.toString()),
+            name,
+            QStringLiteral("input"),
+            QStringLiteral("output"));
+        QJsonObject compositionJson = definition.toJson();
+        compositionJson.insert(QStringLiteral("id"), compositionId.toString());
+        compositionJson.insert(QStringLiteral("name"), name);
+        compositionJson.insert(QStringLiteral("width"), 1920);
+        compositionJson.insert(QStringLiteral("height"), 1080);
+        compositionJson.insert(QStringLiteral("bundleKind"), QStringLiteral("parametric-composition"));
+        compositionJson.insert(QStringLiteral("parametricDefinition"), definition.toJson());
+
+        QJsonObject item;
+        item.insert(QStringLiteral("type"), QStringLiteral("composition"));
+        item.insert(QStringLiteral("name"), name);
+        item.insert(QStringLiteral("compositionId"), compositionId.toString());
+        item.insert(QStringLiteral("compositionJson"), compositionJson);
+
+        const bool ok = project->addProjectItemsFromJson(QJsonArray{item}, nullptr);
+        if (ok) {
+            project->setCurrentCompositionId(compositionId, false);
+            project->projectChanged();
+        } else {
+            QMessageBox::warning(this, QStringLiteral("Parametric Composition"),
+                                 QStringLiteral("パラメトリックコンポジションを作成できませんでした。"));
+        }
     }, loadProjectViewIcon(QStringLiteral("Studio/composition.svg")));
     addTrackedNewAction(newMenu, QStringLiteral("new_solid"), QStringLiteral("Solid..."), [this, svc]() {
         if (!svc) return;
