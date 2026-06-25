@@ -949,27 +949,25 @@ namespace {
     pkt.projMatrix = proj;
     cmdBuf_.append(std::move(pkt));
 
-    if (qEnvironmentVariableIsSet("ARTIFACT_DEBUG_PARTICLE_BILLBOARD_TEST")) {
-      QImage debugBillboard(128, 128, QImage::Format_ARGB32_Premultiplied);
-      debugBillboard.fill(QColor::fromRgbF(0.0f, 0.0f, 0.0f, 0.0f));
-      {
-        QPainter painter(&debugBillboard);
-        painter.setRenderHint(QPainter::Antialiasing, true);
-        painter.setPen(QPen(QColor::fromRgbF(1.0f, 0.34f, 0.12f, 1.0f), 10.0));
-        painter.setBrush(QColor::fromRgbF(0.98f, 0.76f, 0.18f, 0.95f));
-        painter.drawRoundedRect(QRectF(10.0, 10.0, 108.0, 108.0), 22.0, 22.0);
-        painter.setPen(QPen(QColor::fromRgbF(0.10f, 0.10f, 0.12f, 1.0f), 7.0));
-        painter.drawLine(QPointF(28.0, 64.0), QPointF(100.0, 64.0));
-        painter.drawLine(QPointF(64.0, 28.0), QPointF(64.0, 100.0));
-      }
-      primitiveRenderer3D_.drawBillboardQuad(
-          QVector3D(m_viewportWidth * 0.5f, m_viewportHeight * 0.5f, 0.0f),
-          QVector2D(320.0f, 320.0f), debugBillboard,
-          FloatColor{1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 0.0f);
-      qInfo() << "[ParticleRenderer] billboard-test drawn"
-              << "center=" << m_viewportWidth * 0.5f << m_viewportHeight * 0.5f
-              << "size=320x320";
+    QImage debugBillboard(128, 128, QImage::Format_ARGB32_Premultiplied);
+    debugBillboard.fill(QColor::fromRgbF(0.0f, 0.0f, 0.0f, 0.0f));
+    {
+      QPainter painter(&debugBillboard);
+      painter.setRenderHint(QPainter::Antialiasing, true);
+      painter.setPen(QPen(QColor::fromRgbF(1.0f, 0.34f, 0.12f, 1.0f), 10.0));
+      painter.setBrush(QColor::fromRgbF(0.98f, 0.76f, 0.18f, 0.95f));
+      painter.drawRoundedRect(QRectF(10.0, 10.0, 108.0, 108.0), 22.0, 22.0);
+      painter.setPen(QPen(QColor::fromRgbF(0.10f, 0.10f, 0.12f, 1.0f), 7.0));
+      painter.drawLine(QPointF(28.0, 64.0), QPointF(100.0, 64.0));
+      painter.drawLine(QPointF(64.0, 28.0), QPointF(64.0, 100.0));
     }
+    primitiveRenderer3D_.drawBillboardQuad(
+        QVector3D(m_viewportWidth * 0.5f, m_viewportHeight * 0.5f, 0.0f),
+        QVector2D(320.0f, 320.0f), debugBillboard,
+        FloatColor{1.0f, 1.0f, 1.0f, 1.0f}, 1.0f, 0.0f);
+    qInfo() << "[ParticleRenderer] billboard-test drawn"
+            << "center=" << m_viewportWidth * 0.5f << m_viewportHeight * 0.5f
+            << "size=320x320";
   }
  };
 

@@ -1258,6 +1258,11 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
         }
     }
     if (impl_->decoding_.load()) {
+        std::lock_guard<std::mutex> lock(impl_->frameStateMutex_);
+        if (impl_->hasCurrentFrameBuffer_) {
+            impl_->lastDecodeState_ = QStringLiteral("decode-pending-retain-frame");
+            return impl_->currentFrameBuffer_;
+        }
         impl_->lastDecodeState_ = QStringLiteral("decode-pending");
         return ArtifactCore::ImageF32x4_RGBA();
     }

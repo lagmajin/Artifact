@@ -35,6 +35,7 @@ public:
   bool showBaseline = true;
   bool renderAsDesign = false;
   bool includeInFinalRender = false;
+  GuideSet guideSet;
 
   FloatColor guideColor() const
   {
@@ -139,6 +140,10 @@ bool ArtifactConstructionLayer::hasVideo() const {
 
 QJsonObject ArtifactConstructionLayer::toJson() const {
   QJsonObject obj = ArtifactAbstract2DLayer::toJson();
+  GuideSet guideSet = impl_->guideSet;
+  if (guideSet.ownerId.trimmed().isEmpty()) {
+    guideSet.ownerId = id().toString();
+  }
   obj["type"] = static_cast<int>(LayerType::Construction);
   obj["isConstruction"] = true;
   obj["construction.width"] = impl_->width;
@@ -155,6 +160,7 @@ QJsonObject ArtifactConstructionLayer::toJson() const {
   obj["construction.showBaseline"] = impl_->showBaseline;
   obj["construction.renderAsDesign"] = impl_->renderAsDesign;
   obj["construction.includeInFinalRender"] = impl_->includeInFinalRender;
+  obj["construction.guideSet"] = guideSet.toJson();
   return obj;
 }
 
@@ -174,6 +180,10 @@ void ArtifactConstructionLayer::fromJsonProperties(const QJsonObject& obj) {
   impl_->showBaseline = obj.value(QStringLiteral("construction.showBaseline")).toBool(impl_->showBaseline);
   impl_->renderAsDesign = obj.value(QStringLiteral("construction.renderAsDesign")).toBool(impl_->renderAsDesign);
   impl_->includeInFinalRender = obj.value(QStringLiteral("construction.includeInFinalRender")).toBool(impl_->includeInFinalRender);
+  impl_->guideSet = GuideSet::fromJson(obj.value(QStringLiteral("construction.guideSet")).toObject());
+  if (impl_->guideSet.ownerId.trimmed().isEmpty()) {
+    impl_->guideSet.ownerId = id().toString();
+  }
   setSourceSize(Size_2D(static_cast<int>(std::round(impl_->width)),
                         static_cast<int>(std::round(impl_->height))));
 }
@@ -283,6 +293,32 @@ bool ArtifactConstructionLayer::setLayerPropertyValue(const QString& propertyPat
                           static_cast<int>(std::round(impl_->height))));
   }
   return true;
+}
+
+GuideSet ArtifactConstructionLayer::constructionGuideSet() const {
+  return impl_->guideSet;
+}
+
+void ArtifactConstructionLayer::setConstructionGuideSet(const GuideSet& guideSet) {
+  impl_->guideSet = guideSet;
+  if (impl_->guideSet.ownerId.trimmed().isEmpty()) {
+    impl_->guideSet.ownerId = id().toString();
+  }
+}
+
+void ArtifactConstructionLayer::addConstructionGuide(const GuideDefinition& guide) {
+  impl_->guideSet.guides.push_back(guide);
+  if (impl_->guideSet.ownerId.trimmed().isEmpty()) {
+    impl_->guideSet.ownerId = id().toString();
+  }
+}
+
+void ArtifactConstructionLayer::clearConstructionGuides() {
+  impl_->guideSet.guides.clear();
+  impl_->guideSet.bindings.clear();
+  if (impl_->guideSet.ownerId.trimmed().isEmpty()) {
+    impl_->guideSet.ownerId = id().toString();
+  }
 }
 
 } // namespace Artifact

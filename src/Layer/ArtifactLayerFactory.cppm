@@ -30,6 +30,7 @@ import Artifact.Layer.Construction;
 import Artifact.Layer.CompositionBackground;
 import Artifact.Layers.Model3D;
 import Artifact.Layer.Composition;
+import Artifact.Layer.MaterialContainer;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -157,8 +158,11 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
   case LayerType::Light:
    ptr = ArtifactAbstractLayerPtr(new ArtifactLightLayer());
    break;
-   case LayerType::Group:
+  case LayerType::Group:
     ptr = ArtifactAbstractLayerPtr(new ArtifactGroupLayer());
+    break;
+  case LayerType::MaterialContainer:
+    ptr = ArtifactAbstractLayerPtr(new ArtifactMaterialContainerLayer());
     break;
    case LayerType::Clone:
     ptr = ArtifactAbstractLayerPtr(new ArtifactCloneLayer());
@@ -234,6 +238,8 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
           type = LayerType::Construction;
       } else if (json.value("isCompositionBackground").toBool(false)) {
           type = LayerType::CompositionBackground;
+      } else if (json.value("type").toString() == QStringLiteral("MaterialContainer")) {
+          type = LayerType::MaterialContainer;
       }
       QString name = json.value("name").toString("Layer");
   ArtifactLayerFactory factory;

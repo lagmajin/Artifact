@@ -52,6 +52,7 @@ export namespace Artifact {
     // ─────────────────────────────────────────────────────────
     struct CloneData {
         int index = 0;                  // クローンの通し番号
+        int sourceIndex = 0;            // 素材コンテナー参照用の素材インデックス
         QMatrix4x4 transform;           // 位置・回転・スケール
         QColor color = Qt::white;       // ブレンドカラー
         float weight = 1.0f;            // エフェクターの影響度 (0.0 - 1.0)

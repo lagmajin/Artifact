@@ -63,6 +63,8 @@ export namespace Artifact {
   void setLayer(ArtifactAbstractLayerPtr layer);
   void setTargetLayers(std::vector<ArtifactAbstractLayerPtr> layers);
   const std::vector<ArtifactAbstractLayerPtr>& targetLayers() const;
+  void setSnapDistanceLabelsEnabled(bool enabled);
+  bool snapDistanceLabelsEnabled() const;
   void draw(ArtifactIRenderer* renderer);
   Qt::CursorShape cursorShapeForViewportPos(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
   HandleType handleAtViewportPos(const QPointF& viewportPos, ArtifactIRenderer* renderer) const;
@@ -88,6 +90,7 @@ export namespace Artifact {
   bool isDragging_ = false;
   std::vector<SnapLine> activeSnapLines_;
   std::vector<SnapLabel> activeSnapLabels_;
+  bool snapDistanceLabelsEnabled_ = true;
   // ドラッグ開始時に一度だけ計算するスナップラインキャッシュ
   std::vector<float> cachedSnapVLines_;
   std::vector<float> cachedSnapHLines_;

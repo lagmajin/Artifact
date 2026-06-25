@@ -64,6 +64,8 @@ import ChannelMixerEffect;
 import SelectiveColorEffect;
 import ColorWheelsEffect;
 import CurvesEffect;
+import Artifact.Effect.Distort.DisplacementMap;
+import Artifact.Effect.Generate.RadioWaves;
 
 namespace Artifact
 {
@@ -402,6 +404,20 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Linear Wipe"));
    return effect;
   }
+  if (effectId == QStringLiteral("displacement_map") ||
+      effectId == QStringLiteral("effect.distort.displacementmap")) {
+   auto effect = std::make_unique<DisplacementMapEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Displacement Map"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("radio_waves") ||
+      effectId == QStringLiteral("effect.generate.radiowaves")) {
+   auto effect = std::make_unique<RadioWavesEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Radio Waves"));
+   return effect;
+  }
   if (effectId.startsWith(QStringLiteral("ofx."))) {
    const QString pluginId = effectId.mid(QStringLiteral("ofx.").size());
    Artifact::Ofx::ArtifactOfxHost::instance().initialize();
@@ -474,6 +490,8 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("turbulent_displace"), "Turbulent Displace"});
   effects.push_back({EffectID("bevel"), "Bevel"});
   effects.push_back({EffectID("linear_wipe"), "Linear Wipe"});
+  effects.push_back({EffectID("displacement_map"), "Displacement Map"});
+  effects.push_back({EffectID("radio_waves"), "Radio Waves"});
 
   Artifact::Ofx::ArtifactOfxHost::instance().initialize();
   for (const auto& plugin : Artifact::Ofx::ArtifactOfxHost::instance().getLoadedPlugins()) {

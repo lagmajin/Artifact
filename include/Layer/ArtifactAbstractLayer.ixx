@@ -115,7 +115,8 @@ enum class LayerType {
   SDF = 17,        // SDFレイマーチングレイヤー
   Model3D = 18,    // 3Dモデルレイヤー
   Construction = 19, // 作業用の非レンダー設計レイヤー
-  CompositionBackground = 20 // コンポ背景を視覚化する特別レイヤー
+  CompositionBackground = 20, // コンポ背景を視覚化する特別レイヤー
+  MaterialContainer = 21      // 複数素材を保持する配列型レイヤー
 };
 
 enum class LayerDirtyFlag : uint32_t {

@@ -195,6 +195,7 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
         for (int i = 0; i < total; ++i) {
             CloneData clone;
             clone.index = i;
+            clone.sourceIndex = impl_->settings_.sourceIndex;
             clone.transform.setToIdentity();
             QVector3D offset = impl_->settings_.offset * static_cast<float>(i);
             if (impl_->settings_.mode == CloneMode::LinearJitter) {
@@ -219,6 +220,7 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
         for (int i = 0; i < total; ++i) {
             CloneData clone;
             clone.index = i;
+            clone.sourceIndex = impl_->settings_.sourceIndex;
             const float angle = start + step * static_cast<float>(i);
             const float rad = angle * static_cast<float>(M_PI) / 180.0f;
             const float x = std::cos(rad) * impl_->settings_.curveRadius;
@@ -246,6 +248,7 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
                 for (int x = 0; x < cols; ++x) {
                     CloneData clone;
                     clone.index = static_cast<int>(clones.size());
+                    clone.sourceIndex = impl_->settings_.sourceIndex;
                     clone.transform.setToIdentity();
                     QVector3D pos = startPos + QVector3D(x * impl_->settings_.gridSpacing.x(),
                                                        y * impl_->settings_.gridSpacing.y(),
@@ -265,6 +268,7 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
         for (int i = 0; i < total; ++i) {
             CloneData clone;
             clone.index = i;
+            clone.sourceIndex = impl_->settings_.sourceIndex;
             float angle = impl_->settings_.startAngle + angleStep * i;
             float rad = angle * M_PI / 180.0f;
             
@@ -614,6 +618,12 @@ std::vector<AbstractProperty> ArtifactCloneLayer::getProperties() const {
     sourceProp.setValue(impl_->settings_.sourceLayerId.toString());
     props.push_back(sourceProp);
 
+    AbstractProperty sourceIndexProp;
+    sourceIndexProp.setName("Source Index");
+    sourceIndexProp.setType(PropertyType::Integer);
+    sourceIndexProp.setValue(impl_->settings_.sourceIndex);
+    props.push_back(sourceIndexProp);
+
     if (includeLinear() || includeGrid() || includeRadial()) {
         AbstractProperty rotationProp;
         rotationProp.setName("Rotation Step");
@@ -717,6 +727,8 @@ void ArtifactCloneLayer::setPropertyValue(const UniString& name, const QVariant&
         impl_->settings_.gridSpacing.setZ(value.toFloat());
     } else if (key == QStringLiteral("Source Layer")) {
         impl_->settings_.sourceLayerId = LayerID(value.toString());
+    } else if (key == QStringLiteral("Source Index")) {
+        impl_->settings_.sourceIndex = std::max(0, value.toInt());
     } else if (key == QStringLiteral("Radial Count")) {
         impl_->settings_.radialCount = std::max(1, value.toInt());
     } else if (key == QStringLiteral("Radius")) {

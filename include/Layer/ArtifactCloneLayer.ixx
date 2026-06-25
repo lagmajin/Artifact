@@ -70,6 +70,7 @@ public:
     float rotationStep = 0.0f;
     float opacityDecay = 0.0f;
     bool useEffector = true;
+    int sourceIndex = 0;
 
     // Transform stages
     TransformStage transform1;

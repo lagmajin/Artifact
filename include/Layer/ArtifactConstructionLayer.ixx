@@ -30,6 +30,10 @@ public:
   bool shouldIncludeInFinalRender() const override;
   std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
   bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
+  GuideSet constructionGuideSet() const;
+  void setConstructionGuideSet(const GuideSet& guideSet);
+  void addConstructionGuide(const GuideDefinition& guide);
+  void clearConstructionGuides();
 };
 
 } // namespace Artifact
