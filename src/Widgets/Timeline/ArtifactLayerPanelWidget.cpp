@@ -1253,7 +1253,7 @@ QVector<LayerID> selectedLayerIdsSnapshot()
   return ids;
  }
 
- const auto selected = selectionManager->selectedLayers();
+ const auto selected = selectionManager->selectedLayersInOrder();
  ids.reserve(static_cast<int>(selected.size()));
  for (const auto& layer : selected) {
   if (layer) {

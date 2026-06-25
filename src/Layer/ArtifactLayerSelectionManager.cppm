@@ -1,5 +1,6 @@
 ﻿module;
 #include <QSet>
+#include <QVector>
 #include <wobjectimpl.h>
 #include <iostream>
 #include <vector>
@@ -47,6 +48,7 @@ namespace Artifact {
  class ArtifactLayerSelectionManager::Impl {
  public:
   QSet<ArtifactAbstractLayerPtr> selectedLayers_;
+  QVector<ArtifactAbstractLayerPtr> selectedLayerOrder_;
   ArtifactAbstractLayerPtr currentLayer_;
   ArtifactCompositionPtr activeComp_;
  };
@@ -75,8 +77,10 @@ namespace Artifact {
       impl_->selectedLayers_.size() == 1 && impl_->selectedLayers_.contains(layer);
   if (!sameSingleSelection) {
    impl_->selectedLayers_.clear();
+   impl_->selectedLayerOrder_.clear();
    if (layer) {
     impl_->selectedLayers_.insert(layer);
+    impl_->selectedLayerOrder_.push_back(layer);
    }
   }
   const bool currentChanged = impl_->currentLayer_ != layer;
@@ -96,6 +100,7 @@ namespace Artifact {
   bool changed = false;
   if (!impl_->selectedLayers_.contains(layer)) {
    impl_->selectedLayers_.insert(layer);
+   impl_->selectedLayerOrder_.push_back(layer);
    changed = true;
   }
   impl_->currentLayer_ = layer;
@@ -107,10 +112,14 @@ namespace Artifact {
  void ArtifactLayerSelectionManager::removeFromSelection(const ArtifactAbstractLayerPtr& layer) {
   if (!layer) return;
   if (impl_->selectedLayers_.remove(layer)) {
+   impl_->selectedLayerOrder_.erase(
+       std::remove(impl_->selectedLayerOrder_.begin(),
+                   impl_->selectedLayerOrder_.end(), layer),
+       impl_->selectedLayerOrder_.end());
    if (impl_->currentLayer_ == layer) {
-    impl_->currentLayer_ = impl_->selectedLayers_.isEmpty()
+    impl_->currentLayer_ = impl_->selectedLayerOrder_.isEmpty()
                                ? ArtifactAbstractLayerPtr{}
-                               : *impl_->selectedLayers_.begin();
+                               : impl_->selectedLayerOrder_.last();
    }
    selectionChanged();
   }
@@ -119,6 +128,7 @@ namespace Artifact {
  void ArtifactLayerSelectionManager::clearSelection() {
   if (!impl_->selectedLayers_.isEmpty()) {
    impl_->selectedLayers_.clear();
+   impl_->selectedLayerOrder_.clear();
    impl_->currentLayer_.reset();
    selectionChanged();
   }
@@ -132,11 +142,15 @@ namespace Artifact {
   return impl_->selectedLayers_;
  }
 
+ QVector<ArtifactAbstractLayerPtr> ArtifactLayerSelectionManager::selectedLayersInOrder() const {
+  return impl_->selectedLayerOrder_;
+ }
+
  ArtifactAbstractLayerPtr ArtifactLayerSelectionManager::currentLayer() const {
   return impl_->currentLayer_ ? impl_->currentLayer_
-                              : (impl_->selectedLayers_.isEmpty()
+                              : (impl_->selectedLayerOrder_.isEmpty()
                                      ? ArtifactAbstractLayerPtr{}
-                                     : *impl_->selectedLayers_.begin());
+                                     : impl_->selectedLayerOrder_.last());
  }
 
  void ArtifactLayerSelectionManager::setActiveComposition(const ArtifactCompositionPtr& comp) {

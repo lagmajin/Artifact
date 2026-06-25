@@ -30,6 +30,7 @@ module;
 #include <regex>
 #include <random>
 #include <QSet>
+#include <QVector>
 #include <QObject>
 #include <wobjectdefs.h>
 export module Artifact.Layers.Selection.Manager;
@@ -57,6 +58,7 @@ export namespace Artifact {
   void clearSelection();
   bool isSelected(const ArtifactAbstractLayerPtr& layer) const;
   QSet<ArtifactAbstractLayerPtr> selectedLayers() const;
+  QVector<ArtifactAbstractLayerPtr> selectedLayersInOrder() const;
   ArtifactAbstractLayerPtr currentLayer() const;
 
   // Composition Context
