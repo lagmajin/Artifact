@@ -6,6 +6,7 @@ module;
 #include <QVariant>
 #include <QVector3D>
 #include <QMatrix4x4>
+#include <QJsonObject>
 #include <Graphics/InstanceData.h>
 export module Artifact.Layer.Clone;
 
@@ -92,6 +93,8 @@ public:
     ~ArtifactCloneLayer();
 
     void draw(ArtifactIRenderer* renderer) override;
+    QJsonObject toJson() const override;
+    void fromJsonProperties(const QJsonObject& obj) override;
 
     bool isCloneLayer() const override;
 

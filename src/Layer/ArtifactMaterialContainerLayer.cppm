@@ -13,6 +13,8 @@ import Artifact.Layer.Abstract;
 import Artifact.Composition.Abstract;
 import Artifact.Render.IRenderer;
 import Color.Float;
+import Property.Abstract;
+import Property.Group;
 import Utils.Id;
 
 namespace Artifact {
@@ -53,7 +55,26 @@ ArtifactMaterialContainerLayer::ArtifactMaterialContainerLayer()
 ArtifactMaterialContainerLayer::~ArtifactMaterialContainerLayer() = default;
 
 bool ArtifactMaterialContainerLayer::isGroupLayer() const {
-    return true;
+    return false;
+}
+
+void ArtifactMaterialContainerLayer::setComposition(QObject* comp) {
+    ArtifactAbstractLayer::setComposition(comp);
+    for (auto& slot : impl_->materials) {
+        if (slot.layer) {
+            slot.layer->setComposition(comp);
+        }
+    }
+}
+
+void ArtifactMaterialContainerLayer::setComposition(void* comp) {
+    ArtifactAbstractLayer::setComposition(comp);
+    auto* composition = compositionObject();
+    for (auto& slot : impl_->materials) {
+        if (slot.layer) {
+            slot.layer->setComposition(composition);
+        }
+    }
 }
 
 void ArtifactMaterialContainerLayer::draw(ArtifactIRenderer* renderer) {
@@ -181,23 +202,38 @@ QRectF ArtifactMaterialContainerLayer::localBounds() const {
 QJsonObject ArtifactMaterialContainerLayer::toJson() const {
     QJsonObject obj = ArtifactAbstractLayer::toJson();
     obj["type"] = static_cast<int>(LayerType::MaterialContainer);
-    obj["exposedIndex"] = impl_->exposedIndex;
+    obj["layerType"] = QStringLiteral("MaterialContainer");
+
+    QJsonObject containerObj;
+    containerObj["schemaVersion"] = 1;
+    containerObj["exposedIndex"] = impl_->exposedIndex;
     QJsonArray slots;
     for (const auto& slot : impl_->materials) {
         slots.append(slot.toJson());
     }
-    obj["materials"] = slots;
+    containerObj["slots"] = slots;
+    obj["materialContainer"] = containerObj;
     return obj;
 }
 
 void ArtifactMaterialContainerLayer::fromJsonProperties(const QJsonObject& obj) {
     ArtifactAbstractLayer::fromJsonProperties(obj);
     clearMaterials();
-    impl_->exposedIndex = std::max(0, obj.value("exposedIndex").toInt(0));
-    if (obj.contains("materials") && obj.value("materials").isArray()) {
-        const QJsonArray arr = obj.value("materials").toArray();
+
+    const QJsonObject containerObj = obj.value("materialContainer").toObject();
+    impl_->exposedIndex = std::max(0, containerObj.value("exposedIndex").toInt(obj.value("exposedIndex").toInt(0)));
+    QJsonArray arr;
+    if (containerObj.contains("slots") && containerObj.value("slots").isArray()) {
+        arr = containerObj.value("slots").toArray();
+    } else if (obj.contains("materials") && obj.value("materials").isArray()) {
+        arr = obj.value("materials").toArray();
+    }
+    if (!arr.isEmpty()) {
         for (const auto& v : arr) {
-            const auto slot = MaterialContainerSlot::fromJson(v.toObject());
+            auto slot = MaterialContainerSlot::fromJson(v.toObject());
+            if (slot.layer) {
+                slot.layer->setComposition(compositionObject());
+            }
             impl_->materials.push_back(slot);
         }
     }
@@ -206,6 +242,34 @@ void ArtifactMaterialContainerLayer::fromJsonProperties(const QJsonObject& obj) 
     } else {
         impl_->exposedIndex = 0;
     }
+}
+
+std::vector<ArtifactCore::PropertyGroup> ArtifactMaterialContainerLayer::getLayerPropertyGroups() const {
+    auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
+    ArtifactCore::PropertyGroup materialGroup(QStringLiteral("Material Container"));
+
+    auto countProp = persistentLayerProperty(QStringLiteral("materialContainer.slotCount"),
+                                             ArtifactCore::PropertyType::Integer,
+                                             materialCount(), -110);
+    countProp->setDisplayLabel(QStringLiteral("Slot Count"));
+    materialGroup.addProperty(countProp);
+
+    auto exposedProp = persistentLayerProperty(QStringLiteral("materialContainer.exposedIndex"),
+                                               ArtifactCore::PropertyType::Integer,
+                                               exposedIndex(), -100);
+    exposedProp->setDisplayLabel(QStringLiteral("Exposed Index"));
+    materialGroup.addProperty(exposedProp);
+
+    groups.push_back(materialGroup);
+    return groups;
+}
+
+bool ArtifactMaterialContainerLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value) {
+    if (propertyPath == QStringLiteral("materialContainer.exposedIndex")) {
+        setExposedIndex(value.toInt());
+        return true;
+    }
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }
 
 } // namespace Artifact

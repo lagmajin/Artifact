@@ -16,6 +16,7 @@ module;
 #include <QIODevice>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QHBoxLayout>
 #include <QMenu>
 #include <QMetaObject>
 #include <QMouseEvent>
@@ -225,7 +226,46 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
     }
     return layerInt(name, fallback);
   };
+
+  if (normalizedGroup.compare(QStringLiteral("Physics"), Qt::CaseInsensitive) == 0 &&
+      !groupBool(QStringLiteral("physics.enabled"))) {
+    return {};
+  }
+
+  if (normalizedGroup.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
+    std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
+    filtered.reserve(properties.size());
+    for (const auto &property : properties) {
+      if (!property) {
+        continue;
+      }
+      const QString name = property->getName();
+      const bool isStateProperty =
+          name == QStringLiteral("layer.visible") ||
+          name == QStringLiteral("layer.locked") ||
+          name == QStringLiteral("layer.selectionLocked") ||
+          name == QStringLiteral("layer.transformLocked") ||
+          name == QStringLiteral("layer.timingLocked") ||
+          name == QStringLiteral("layer.guide") ||
+          name == QStringLiteral("layer.solo") ||
+          name == QStringLiteral("layer.shy");
+      if (isStateProperty) {
+        continue;
+      }
+      filtered.push_back(property);
+    }
+    return filtered;
+  }
+
+  if (normalizedGroup.compare(QStringLiteral("Layout"), Qt::CaseInsensitive) == 0 &&
+      !groupBool(QStringLiteral("component.layout.enabled"))) {
+    return {};
+  }
+
   if (normalizedGroup.compare(QStringLiteral("Cloner"), Qt::CaseInsensitive) == 0) {
+    if (!groupBool(QStringLiteral("component.cloner.enabled"))) {
+      return {};
+    }
     const int mode = groupInt(QStringLiteral("component.cloner.mode"), 0);
     std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
     filtered.reserve(properties.size());
@@ -2285,6 +2325,62 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
                       }
                     });
   mainLayout->addWidget(favRow);
+
+  if (currentLayer) {
+    auto *stateRow = new QWidget();
+    stateRow->setObjectName(QStringLiteral("layerStateToggleRow"));
+    auto *stateLayout = new QHBoxLayout(stateRow);
+    stateLayout->setContentsMargins(4, 2, 4, 2);
+    stateLayout->setSpacing(4);
+
+    struct StateToggleDef {
+      const char *propertyName;
+      const char *label;
+      const char *tooltip;
+    };
+
+    const std::array<StateToggleDef, 8> stateToggles = {{
+        {"layer.visible", "Visible", "Show or hide the layer"},
+        {"layer.locked", "Lock", "Prevent direct edits on the layer"},
+        {"layer.selectionLocked", "Sel", "Prevent selection in the layer panel"},
+        {"layer.transformLocked", "Xform", "Prevent transform edits"},
+        {"layer.timingLocked", "Time", "Prevent timing edits"},
+        {"layer.guide", "Guide", "Mark as guide layer"},
+        {"layer.solo", "Solo", "Solo this layer"},
+        {"layer.shy", "Shy", "Hide the layer from the panel"},
+    }};
+
+    for (const auto &toggleDef : stateToggles) {
+      const auto property = currentLayer->getProperty(QString::fromLatin1(toggleDef.propertyName));
+      auto *button = new QToolButton(stateRow);
+      button->setCheckable(true);
+      button->setAutoRaise(true);
+      button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+      button->setText(QString::fromLatin1(toggleDef.label));
+      button->setToolTip(QString::fromLatin1(toggleDef.tooltip));
+      button->setObjectName(QStringLiteral("layerStateToggleButton"));
+      button->setChecked(property ? property->getValue().toBool() : false);
+      button->setCursor(Qt::PointingHandCursor);
+      button->setMinimumWidth(56);
+      stateLayout->addWidget(button);
+      QObject::connect(button, &QToolButton::toggled, stateRow,
+                       [this, propertyName = QString::fromLatin1(toggleDef.propertyName)](bool checked) {
+                         if (!currentLayer) {
+                           return;
+                         }
+                         for (const auto &layer : targetLayers) {
+                           if (!layer) {
+                             continue;
+                           }
+                           layer->setLayerPropertyValue(propertyName, checked);
+                           notifyLayerPropertyAnimationChanged(layer);
+                         }
+                         scheduleRebuild(0);
+                       });
+    }
+    stateLayout->addStretch();
+    mainLayout->addWidget(stateRow);
+  }
 
   // Multi-selection badge
   if (targetLayers.size() > 1) {

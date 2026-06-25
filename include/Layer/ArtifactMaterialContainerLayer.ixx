@@ -1,7 +1,9 @@
 module;
 #include <memory>
 #include <vector>
+#include <QObject>
 #include <QString>
+#include <QVariant>
 #include <QJsonObject>
 #include <QRectF>
 
@@ -28,6 +30,8 @@ public:
     ~ArtifactMaterialContainerLayer() override;
 
     bool isGroupLayer() const override;
+    void setComposition(QObject* comp) override;
+    void setComposition(void* comp) override;
     void draw(ArtifactIRenderer* renderer) override;
 
     int materialCount() const;
@@ -44,6 +48,8 @@ public:
 
     QJsonObject toJson() const override;
     void fromJsonProperties(const QJsonObject& obj) override;
+    std::vector<ArtifactCore::PropertyGroup> getLayerPropertyGroups() const override;
+    bool setLayerPropertyValue(const QString& propertyPath, const QVariant& value) override;
     QRectF localBounds() const override;
 
 private:

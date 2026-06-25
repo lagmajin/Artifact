@@ -3,6 +3,7 @@ module;
 #include <QSize>
 #include <QRectF>
 #include <QImage>
+#include <QJsonObject>
 #include <QVariant>
 #include <QVector3D>
 #include <QMatrix4x4>
@@ -175,6 +176,22 @@ void ArtifactCloneLayer::draw(ArtifactIRenderer* renderer) {
 
 bool ArtifactCloneLayer::isCloneLayer() const {
     return true;
+}
+
+QJsonObject ArtifactCloneLayer::toJson() const {
+    QJsonObject obj = ArtifactAbstractLayer::toJson();
+    obj["type"] = static_cast<int>(LayerType::Clone);
+    obj["clone.sourceLayerId"] = impl_->settings_.sourceLayerId.toString();
+    obj["clone.sourceIndex"] = impl_->settings_.sourceIndex;
+    return obj;
+}
+
+void ArtifactCloneLayer::fromJsonProperties(const QJsonObject& obj) {
+    ArtifactAbstractLayer::fromJsonProperties(obj);
+    if (obj.contains("clone.sourceLayerId")) {
+        impl_->settings_.sourceLayerId = LayerID(obj.value("clone.sourceLayerId").toString());
+    }
+    impl_->settings_.sourceIndex = std::max(0, obj.value("clone.sourceIndex").toInt(0));
 }
 
 ArtifactCloneLayerSettings ArtifactCloneLayer::cloneSettings() const {

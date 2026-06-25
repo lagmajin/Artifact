@@ -238,7 +238,8 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
           type = LayerType::Construction;
       } else if (json.value("isCompositionBackground").toBool(false)) {
           type = LayerType::CompositionBackground;
-      } else if (json.value("type").toString() == QStringLiteral("MaterialContainer")) {
+      } else if (json.value("type").toString() == QStringLiteral("MaterialContainer") ||
+                 json.value("layerType").toString() == QStringLiteral("MaterialContainer")) {
           type = LayerType::MaterialContainer;
       }
       QString name = json.value("name").toString("Layer");

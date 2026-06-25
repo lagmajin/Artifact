@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.30)
 project(Artifact)
 
 if(MSVC)
@@ -133,6 +133,17 @@ endif()
 list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cppm" _offscreen_composition_module_idx)
 if(_offscreen_composition_module_idx EQUAL -1)
     list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/src/Render/ArtifactOffscreenCompositionRenderer.cppm")
+endif()
+
+# MaterialContainerLayer is a public layer module. Keep it explicitly registered
+# so new-file discovery does not depend on the recursive glob pass alone.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactMaterialContainerLayer.ixx" _material_container_module_idx)
+if(_material_container_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactMaterialContainerLayer.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMaterialContainerLayer.cppm" _material_container_impl_idx)
+if(_material_container_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMaterialContainerLayer.cppm")
 endif()
 
 # ---------------------------------------------------------------------------
