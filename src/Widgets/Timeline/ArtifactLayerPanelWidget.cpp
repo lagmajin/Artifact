@@ -1414,8 +1414,10 @@ bool applyAlignPreset(const ArtifactCompositionPtr& comp,
 
   std::vector<ArtifactCore::AlignmentObject> objects;
   objects.reserve(snapshots.size());
-  for (const auto& snapshot : snapshots) {
+  for (size_t i = 0; i < snapshots.size(); ++i) {
+    const auto& snapshot = snapshots[i];
     ArtifactCore::AlignmentObject obj;
+    obj.id = static_cast<int>(i);
     obj.bounds = snapshot.bounds;
     obj.currentPosition = snapshot.position;
     objects.push_back(obj);
@@ -1436,7 +1438,11 @@ bool applyAlignPreset(const ArtifactCompositionPtr& comp,
 
   const ArtifactCore::RationalTime time(0, 30000);
   for (size_t i = 0; i < snapshots.size() && i < objects.size(); ++i) {
-    auto layer = comp->layerById(snapshots[i].id);
+    const size_t sourceIndex = static_cast<size_t>(objects[i].id);
+    if (sourceIndex >= snapshots.size()) {
+      continue;
+    }
+    auto layer = comp->layerById(snapshots[sourceIndex].id);
     if (!layer) {
       continue;
     }
@@ -1461,8 +1467,10 @@ bool applyDistributePreset(const ArtifactCompositionPtr& comp,
 
   std::vector<ArtifactCore::AlignmentObject> objects;
   objects.reserve(snapshots.size());
-  for (const auto& snapshot : snapshots) {
+  for (size_t i = 0; i < snapshots.size(); ++i) {
+    const auto& snapshot = snapshots[i];
     ArtifactCore::AlignmentObject obj;
+    obj.id = static_cast<int>(i);
     obj.bounds = snapshot.bounds;
     obj.currentPosition = snapshot.position;
     objects.push_back(obj);
@@ -1481,7 +1489,11 @@ bool applyDistributePreset(const ArtifactCompositionPtr& comp,
 
   const ArtifactCore::RationalTime time(0, 30000);
   for (size_t i = 0; i < snapshots.size() && i < objects.size(); ++i) {
-    auto layer = comp->layerById(snapshots[i].id);
+    const size_t sourceIndex = static_cast<size_t>(objects[i].id);
+    if (sourceIndex >= snapshots.size()) {
+      continue;
+    }
+    auto layer = comp->layerById(snapshots[sourceIndex].id);
     if (!layer) {
       continue;
     }

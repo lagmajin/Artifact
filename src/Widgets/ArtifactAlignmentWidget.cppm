@@ -94,9 +94,10 @@ void AlignmentWidget::onAlignClicked(int type) {
 
     // 1. データを AlignmentObject に変換
     std::vector<ArtifactCore::AlignmentObject> objects;
-    for (auto& layer : selectedLayers) {
+    for (int i = 0; i < selectedLayers.size(); ++i) {
+        auto& layer = selectedLayers[static_cast<size_t>(i)];
         ArtifactCore::AlignmentObject obj;
-        obj.id = 0; // 簡易化のため
+        obj.id = i;
         obj.bounds = layer->transformedBoundingBox();
         obj.currentPosition = QPointF(layer->transform3D().positionX(), layer->transform3D().positionY());
         objects.push_back(obj);
@@ -108,9 +109,14 @@ void AlignmentWidget::onAlignClicked(int type) {
 
     // 3. 結果をレイヤーに書き戻す
     ArtifactCore::RationalTime time(0, 30000); // 簡易化のため0フレーム
-    for (int i = 0; i < selectedLayers.size(); ++i) {
-        selectedLayers[i]->transform3D().setPosition(time, objects[static_cast<size_t>(i)].currentPosition.x(), objects[static_cast<size_t>(i)].currentPosition.y());
-        selectedLayers[i]->changed();
+    for (size_t i = 0; i < objects.size(); ++i) {
+        const int sourceIndex = objects[i].id;
+        if (sourceIndex < 0 || sourceIndex >= selectedLayers.size()) {
+            continue;
+        }
+        selectedLayers[static_cast<size_t>(sourceIndex)]->transform3D().setPosition(
+            time, objects[i].currentPosition.x(), objects[i].currentPosition.y());
+        selectedLayers[static_cast<size_t>(sourceIndex)]->changed();
     }
 }
 
@@ -125,8 +131,10 @@ void AlignmentWidget::onDistributeClicked(int type) {
     if (selectedLayers.size() < 3) return;
 
     std::vector<ArtifactCore::AlignmentObject> objects;
-    for (auto& layer : selectedLayers) {
+    for (int i = 0; i < selectedLayers.size(); ++i) {
+        auto& layer = selectedLayers[static_cast<size_t>(i)];
         ArtifactCore::AlignmentObject obj;
+        obj.id = i;
         obj.bounds = layer->transformedBoundingBox();
         obj.currentPosition = QPointF(layer->transform3D().positionX(), layer->transform3D().positionY());
         objects.push_back(obj);
@@ -135,11 +143,14 @@ void AlignmentWidget::onDistributeClicked(int type) {
     ArtifactCore::LayerAlignment::distribute(objects, (ArtifactCore::DistributeType)type);
 
     ArtifactCore::RationalTime time(0, 30000);
-    for (int i = 0; i < selectedLayers.size(); ++i) {
-        // distribute は内部でソートされるため、ID等で紐付けが必要だが
-        // ここでは簡易実装として位置の差分を適用
-        selectedLayers[i]->transform3D().setPosition(time, objects[static_cast<size_t>(i)].currentPosition.x(), objects[static_cast<size_t>(i)].currentPosition.y());
-        selectedLayers[i]->changed();
+    for (size_t i = 0; i < objects.size(); ++i) {
+        const int sourceIndex = objects[i].id;
+        if (sourceIndex < 0 || sourceIndex >= selectedLayers.size()) {
+            continue;
+        }
+        selectedLayers[static_cast<size_t>(sourceIndex)]->transform3D().setPosition(
+            time, objects[i].currentPosition.x(), objects[i].currentPosition.y());
+        selectedLayers[static_cast<size_t>(sourceIndex)]->changed();
     }
 }
 
