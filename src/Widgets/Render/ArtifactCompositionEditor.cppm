@@ -524,6 +524,197 @@ private:
   CompositionRenderController *ctrl_;
 };
 
+class ArtifactTextEditorDialog final : public QDialog {
+public:
+  ArtifactTextEditorDialog(const ArtifactAbstractLayerPtr &layer,
+                           CompositionRenderController *controller,
+                           QWidget *parent = nullptr)
+      : QDialog(parent), layer_(layer), controller_(controller) {
+    setWindowTitle(QStringLiteral("Text Editor"));
+    setAttribute(Qt::WA_DeleteOnClose);
+    setModal(false);
+
+    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+    const auto theme = ArtifactCore::currentDCCTheme();
+
+    auto *root = new QVBoxLayout(this);
+    root->setContentsMargins(12, 12, 12, 12);
+    root->setSpacing(10);
+
+    auto *header = new QLabel(this);
+    header->setText(textLayer ? QStringLiteral("Text Layer Editor") : QStringLiteral("Text Editor"));
+    header->setFont(font());
+    root->addWidget(header);
+
+    auto *summary = new QLabel(this);
+    summary->setWordWrap(true);
+    summary->setText(editorSummaryText(textLayer));
+    root->addWidget(summary);
+
+    auto *preview = new QFrame(this);
+    preview->setFrameShape(QFrame::StyledPanel);
+    preview->setFrameShadow(QFrame::Plain);
+    preview->setMinimumHeight(180);
+    preview->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    preview->setAutoFillBackground(true);
+    QPalette previewPalette = preview->palette();
+    previewPalette.setColor(QPalette::Window,
+                            QColor(theme.secondaryBackgroundColor));
+    previewPalette.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+    previewPalette.setColor(QPalette::Text, QColor(theme.textColor));
+    preview->setPalette(previewPalette);
+    preview->installEventFilter(this);
+    preview_ = preview;
+    root->addWidget(preview, 1);
+
+    editor_ = new QPlainTextEdit(this);
+    editor_->setPlainText(textLayer ? textLayer->text().toQString() : QString());
+    editor_->setPlaceholderText(QStringLiteral("Enter text..."));
+    editor_->selectAll();
+    editor_->setMinimumHeight(160);
+    editor_->setTabChangesFocus(false);
+
+    QFont editorFont = editor_->font();
+    if (textLayer) {
+      editorFont.setFamily(textLayer->fontFamily().toQString());
+      editorFont.setPointSizeF(std::max(11.0f, textLayer->fontSize()));
+    } else {
+      editorFont.setPointSizeF(std::max(11.0, editorFont.pointSizeF()));
+    }
+    editor_->setFont(editorFont);
+
+    QPalette editorPalette = editor_->palette();
+    editorPalette.setColor(QPalette::Base, QColor(theme.backgroundColor));
+    editorPalette.setColor(QPalette::Text, QColor(theme.textColor));
+    editorPalette.setColor(QPalette::Window, QColor(theme.secondaryBackgroundColor));
+    editor_->setPalette(editorPalette);
+
+    editor_->installEventFilter(this);
+    root->addWidget(editor_);
+
+    setMinimumSize(680, 520);
+    resize(900, 680);
+  }
+
+protected:
+  bool eventFilter(QObject *obj, QEvent *event) override {
+    if (obj == editor_) {
+      if (event->type() == QEvent::KeyPress) {
+        auto *ke = static_cast<QKeyEvent *>(event);
+        if (ke->key() == Qt::Key_Escape) {
+          reject();
+          return true;
+        }
+        if ((ke->key() == Qt::Key_Return || ke->key() == Qt::Key_Enter) &&
+            (ke->modifiers() & Qt::ControlModifier)) {
+          accept();
+          return true;
+        }
+      } else if (event->type() == QEvent::FocusOut) {
+        accept();
+        return false;
+      }
+    } else if (obj == preview_ && event->type() == QEvent::Paint) {
+      paintPreview(static_cast<QWidget *>(obj));
+      return true;
+    }
+    return QDialog::eventFilter(obj, event);
+  }
+
+  void accept() override {
+    commit();
+    QDialog::accept();
+  }
+
+  void reject() override {
+    QDialog::reject();
+  }
+
+private:
+  static QString editorSummaryText(const std::shared_ptr<ArtifactTextLayer> &textLayer) {
+    if (!textLayer) {
+      return QStringLiteral("No text layer selected.");
+    }
+    const QRectF bbox = textLayer->transformedBoundingBox();
+    return QStringLiteral("%1 | layout=%2 | box=%3x%4 | mode=%5")
+        .arg(textLayer->fontFamily().toQString())
+        .arg(textLayer->layoutMode() == TextLayoutMode::Point
+                 ? QStringLiteral("Point")
+                 : textLayer->layoutMode() == TextLayoutMode::Box
+                       ? QStringLiteral("Box")
+                       : QStringLiteral("Path"))
+        .arg(bbox.width(), 0, 'f', 1)
+        .arg(bbox.height(), 0, 'f', 1)
+        .arg(textLayer->writingMode() == TextWritingMode::Vertical
+                 ? QStringLiteral("Vertical")
+                 : QStringLiteral("Horizontal"));
+  }
+
+  void paintPreview(QWidget *widget) {
+    if (!widget) {
+      return;
+    }
+    QPainter painter(widget);
+    painter.fillRect(widget->rect(), widget->palette().window());
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+    const QRectF inner = widget->rect().adjusted(20, 20, -20, -20);
+    painter.setPen(QPen(QColor(120, 160, 220, 220), 1.5));
+    painter.drawRoundedRect(inner, 8, 8);
+
+    painter.setPen(QPen(QColor(255, 255, 255, 180), 1.0, Qt::DashLine));
+    painter.drawLine(inner.left(), inner.center().y(), inner.right(), inner.center().y());
+
+    painter.setPen(QColor(240, 240, 245));
+    painter.setFont(font());
+    const QString title = textLayer ? QStringLiteral("Diligent text surface shell")
+                                    : QStringLiteral("Text editor shell");
+    painter.drawText(inner.adjusted(14, 10, -14, -10),
+                     Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, title);
+
+    if (textLayer) {
+      const QRectF bbox = textLayer->transformedBoundingBox();
+      const QString detail = QStringLiteral("bbox %1 x %2  |  text length %3")
+                                 .arg(bbox.width(), 0, 'f', 1)
+                                 .arg(bbox.height(), 0, 'f', 1)
+                                 .arg(textLayer->text().toQString().size());
+      painter.setPen(QColor(180, 200, 220));
+      painter.drawText(inner.adjusted(14, 44, -14, -10),
+                       Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, detail);
+    }
+  }
+
+  void commit() {
+    if (!editor_) {
+      return;
+    }
+
+    const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_);
+    if (!textLayer) {
+      return;
+    }
+
+    const QString nextText = editor_->toPlainText();
+    if (textLayer->text().toQString() != nextText) {
+      textLayer->setText(ArtifactCore::UniString::fromQString(nextText));
+      if (auto *comp = static_cast<ArtifactAbstractComposition *>(textLayer->composition())) {
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{comp->id().toString(), textLayer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+      }
+      if (controller_) {
+        controller_->markRenderDirty();
+      }
+    }
+  }
+
+  ArtifactAbstractLayerPtr layer_;
+  CompositionRenderController *controller_ = nullptr;
+  QPlainTextEdit *editor_ = nullptr;
+  QWidget *preview_ = nullptr;
+};
+
 bool editTextLayerInline(QWidget *parent, const ArtifactAbstractLayerPtr &layer,
                          CompositionRenderController *controller) {
   const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer);
@@ -531,58 +722,22 @@ bool editTextLayerInline(QWidget *parent, const ArtifactAbstractLayerPtr &layer,
     return false;
   }
 
-  // Get renderer from controller (assuming we add a getter)
-  auto *renderer = controller ? controller->renderer() : nullptr;
-  if (!renderer) {
-    return false;
-  }
-
-  // Get text layer bounding box in canvas coordinates
-  QRectF bbox = layer->transformedBoundingBox();
-  if (bbox.isEmpty()) {
-    bbox = QRectF(0, 0, 400, 100); // Fallback
-  }
-
-  // Convert to viewport coordinates
-  auto topLeft = renderer->canvasToViewport(
-      {static_cast<float>(bbox.left()), static_cast<float>(bbox.top())});
-  auto bottomRight = renderer->canvasToViewport(
-      {static_cast<float>(bbox.right()), static_cast<float>(bbox.bottom())});
-
-  int x = static_cast<int>(topLeft.x);
-  int y = static_cast<int>(topLeft.y);
-  int w = std::max(100, static_cast<int>(bottomRight.x - topLeft.x));
-  int h = std::max(30, static_cast<int>(bottomRight.y - topLeft.y));
-
   QWidget *host = parent->window() ? parent->window() : parent;
-  auto *editor = new QPlainTextEdit(host);
-  editor->setPlainText(textLayer->text().toQString());
-  editor->setPlaceholderText(QStringLiteral("Enter text..."));
-  editor->selectAll();
-
-  const float size = std::max(10.0f, textLayer->fontSize());
-  const float zoom = renderer ? renderer->getZoom() : 1.0f;
-  const int pointSize = static_cast<int>(size * 0.75f * zoom);
-  const auto theme = ArtifactCore::currentDCCTheme();
-  QFont editorFont = editor->font();
-  editorFont.setFamily(textLayer->fontFamily().toQString());
-  editorFont.setPointSize(pointSize);
-  editor->setFont(editorFont);
-  QPalette editorPalette = editor->palette();
-  editorPalette.setColor(QPalette::Base,
-                         QColor(theme.secondaryBackgroundColor));
-  editorPalette.setColor(QPalette::Text, QColor(theme.textColor));
-  editorPalette.setColor(QPalette::Window,
-                         QColor(theme.secondaryBackgroundColor));
-  editor->setPalette(editorPalette);
-
-  const QPoint hostPos = parent->mapTo(host, QPoint(x, y));
-  editor->setGeometry(hostPos.x(), hostPos.y(), w, h);
-
-  editor->installEventFilter(
-      new TextOverlayFilter(editor, textLayer, controller));
-  editor->show();
-  editor->setFocus();
+  static QPointer<ArtifactTextEditorDialog> activeDialog;
+  if (activeDialog) {
+    activeDialog->raise();
+    activeDialog->activateWindow();
+    return true;
+  }
+  auto *dialog = new ArtifactTextEditorDialog(layer, controller, host);
+  activeDialog = dialog;
+  const QPoint center = host->rect().center();
+  const QPoint globalCenter = host->mapToGlobal(center);
+  dialog->move(globalCenter.x() - dialog->width() / 2,
+               globalCenter.y() - dialog->height() / 2);
+  dialog->show();
+  dialog->raise();
+  dialog->activateWindow();
   return true;
 }
 
