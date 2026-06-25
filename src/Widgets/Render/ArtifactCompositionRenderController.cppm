@@ -1961,7 +1961,7 @@ QStringList selectedLayerIdList() {
     return ids;
   }
 
-  for (const auto &layer : selection->selectedLayers()) {
+  for (const auto &layer : selection->selectedLayersInOrder()) {
     if (layer) {
       ids.push_back(layer->id().toString());
     }
@@ -4052,7 +4052,13 @@ CompositionRenderController::CompositionRenderController(QObject *parent)
                   return;
                }
               }
-              setSelectedLayerId(incomingId);
+              if (impl_->selectedLayerId_ != incomingId) {
+                impl_->clearPendingMaskCreation();
+                impl_->selectedLayerId_ = incomingId;
+                impl_->invalidateOverlayComposite();
+              }
+              impl_->syncSelectedLayerOverlayState(comp);
+              markRenderDirty();
             }));
 
     impl_->eventBusSubscriptions_.push_back(
@@ -6015,6 +6021,16 @@ void CompositionRenderController::handleMousePress(QMouseEvent *event) {
   auto selectedLayer = (!impl_->selectedLayerId_.isNil() && comp)
                            ? comp->layerById(impl_->selectedLayerId_)
                            : ArtifactAbstractLayerPtr{};
+  auto syncPrimarySelectionLayer = [this, comp](const ArtifactAbstractLayerPtr &primaryLayer) {
+    const LayerID primaryId = primaryLayer ? primaryLayer->id() : LayerID::Nil();
+    if (impl_->selectedLayerId_ != primaryId) {
+      impl_->clearPendingMaskCreation();
+      impl_->selectedLayerId_ = primaryId;
+      impl_->invalidateOverlayComposite();
+    }
+    impl_->syncSelectedLayerOverlayState(comp);
+    markRenderDirty();
+  };
 
   
   // MotionSketch tool
@@ -6502,7 +6518,7 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
             primaryLayer = current;
           }
         }
-        setSelectedLayerId(primaryLayer ? primaryLayer->id() : LayerID::Nil());
+        syncPrimarySelectionLayer(primaryLayer);
         impl_->sync2DGizmosForLayer(primaryLayer);
         if (impl_->gizmo3D_ && primaryLayer) {
           impl_->syncGizmo3DFromLayer(primaryLayer);
@@ -6986,9 +7002,20 @@ void CompositionRenderController::handleMouseRelease() {
   }
 
   impl_->isDraggingLayer_ = false;
+  auto comp = impl_->previewPipeline_.composition();
+
+  auto syncPrimarySelectionLayer = [this, comp](const ArtifactAbstractLayerPtr &primaryLayer) {
+    const LayerID primaryId = primaryLayer ? primaryLayer->id() : LayerID::Nil();
+    if (impl_->selectedLayerId_ != primaryId) {
+      impl_->clearPendingMaskCreation();
+      impl_->selectedLayerId_ = primaryId;
+      impl_->invalidateOverlayComposite();
+    }
+    impl_->syncSelectedLayerOverlayState(comp);
+    markRenderDirty();
+  };
 
   if (impl_->isRubberBandSelecting_) {
-    auto comp = impl_->previewPipeline_.composition();
     auto *selection =
         ArtifactApplicationManager::instance()
             ? ArtifactApplicationManager::instance()->layerSelectionManager()
@@ -7031,7 +7058,7 @@ void CompositionRenderController::handleMouseRelease() {
       }
 
       const auto primaryLayer = selection->currentLayer();
-      setSelectedLayerId(primaryLayer ? primaryLayer->id() : LayerID::Nil());
+      syncPrimarySelectionLayer(primaryLayer);
       impl_->sync2DGizmosForLayer(primaryLayer);
       if (impl_->gizmo3D_ && primaryLayer) {
         impl_->syncGizmo3DFromLayer(primaryLayer);
