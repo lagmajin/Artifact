@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
@@ -7,6 +7,7 @@
 #include <QLinearGradient>
 #include <QPainter>
 #include <QRandomGenerator>
+#include <QRect>
 #include <QtMath>
 #include <cmath>
 #include <algorithm>
@@ -68,10 +69,84 @@ namespace Artifact {
 
 namespace {
 
+float evaluateTriStageLinear(float startValue,
+                             float midValue,
+                             float endValue,
+                             float midPosition,
+                             float t)
+{
+    const float clampedMid = std::clamp(midPosition, 0.001f, 0.999f);
+    const float clampedT = std::clamp(t, 0.0f, 1.0f);
+    if (clampedT <= clampedMid) {
+        const float localT = clampedT / clampedMid;
+        return startValue + (midValue - startValue) * localT;
+    }
+
+    const float localT = (clampedT - clampedMid) / (1.0f - clampedMid);
+    return midValue + (endValue - midValue) * localT;
+}
+
+QColor scaledAlphaColor(const QColor& color, float alphaScale)
+{
+    QColor out = color;
+    out.setAlphaF(std::clamp(color.alphaF() * alphaScale, 0.0f, 1.0f));
+    return out;
+}
+
+QColor evaluateTriStageColor(const QColor& startColor,
+                             const QColor& midColor,
+                             const QColor& endColor,
+                             float midPosition,
+                             float t)
+{
+    const auto lerpChannel = [&](int startValue, int midValue, int endValue) {
+        return static_cast<int>(std::round(evaluateTriStageLinear(
+            static_cast<float>(startValue),
+            static_cast<float>(midValue),
+            static_cast<float>(endValue),
+            midPosition,
+            t)));
+    };
+
+    return QColor(
+        std::clamp(lerpChannel(startColor.red(), midColor.red(), endColor.red()), 0, 255),
+        std::clamp(lerpChannel(startColor.green(), midColor.green(), endColor.green()), 0, 255),
+        std::clamp(lerpChannel(startColor.blue(), midColor.blue(), endColor.blue()), 0, 255),
+        std::clamp(lerpChannel(startColor.alpha(), midColor.alpha(), endColor.alpha()), 0, 255));
+}
+
 float particleStretchFactor(const QVector3D& velocity)
 {
     const float speed = velocity.length();
     return std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
+}
+
+int clampFlipbookFrame(int frame, int startFrame, int frameCount, int rows, int cols)
+{
+    const int atlasFrames = std::max(1, rows * cols);
+    const int safeStart = std::clamp(startFrame, 0, atlasFrames - 1);
+    const int available = std::max(1, std::min(frameCount, atlasFrames - safeStart));
+    return safeStart + std::clamp(frame, 0, available - 1);
+}
+
+int flipbookFrameCount(int startFrame, int frameCount, int rows, int cols)
+{
+    const int atlasFrames = std::max(1, rows * cols);
+    const int safeStart = std::clamp(startFrame, 0, atlasFrames - 1);
+    return std::max(1, std::min(frameCount, atlasFrames - safeStart));
+}
+
+QImage loadFlipbookAtlasImage(const QString& path)
+{
+    if (path.isEmpty()) {
+        return {};
+    }
+
+    QImage image(path);
+    if (image.isNull()) {
+        return {};
+    }
+    return image.convertToFormat(QImage::Format_ARGB32);
 }
 
 } // namespace
@@ -231,6 +306,10 @@ public:
     float fixedStepAccumulator = 0.0f;
     bool seeded = false;
     std::uint32_t currentSeed = 0;
+    bool hasEmitterTransform = false;
+    QVector3D lastEmitterPosition{0.0f, 0.0f, 0.0f};
+    QVector3D lastEmitterRotation{0.0f, 0.0f, 0.0f};
+    QVector3D inheritedVelocity{0.0f, 0.0f, 0.0f};
 };
 
 // ==================== ParticleEmitter ====================
@@ -265,9 +344,28 @@ void ParticleEmitter::clearEffectors()
     effectors_.clear();
 }
 
+namespace {
+
+QMatrix4x4 buildEulerRotationMatrix(const QVector3D& eulerDegrees)
+{
+    QMatrix4x4 matrix;
+    matrix.setToIdentity();
+    matrix.rotate(eulerDegrees.x(), 1.0f, 0.0f, 0.0f);
+    matrix.rotate(eulerDegrees.y(), 0.0f, 1.0f, 0.0f);
+    matrix.rotate(eulerDegrees.z(), 0.0f, 0.0f, 1.0f);
+    return matrix;
+}
+
+QVector3D rotateByEulerDegrees(const QVector3D& value, const QVector3D& eulerDegrees)
+{
+    return buildEulerRotationMatrix(eulerDegrees).map(value);
+}
+
+} // namespace
+
 QVector3D ParticleEmitter::getEmissionPosition() const
 {
-    QVector3D pos = params_.position;
+    QVector3D localOffset;
     
     switch (params_.shape) {
         case EmitterShape::Point:
@@ -279,7 +377,7 @@ QVector3D ParticleEmitter::getEmissionPosition() const
             float phi = impl_->rng.bounded(180.0f) * M_PI / 180.0f;
             float r = params_.radius * std::cbrt(impl_->rng.bounded(1.0f));  // Uniform distribution
             
-            pos += QVector3D(
+            localOffset = QVector3D(
                 r * std::sin(phi) * std::cos(theta),
                 r * std::sin(phi) * std::sin(theta),
                 r * std::cos(phi)
@@ -288,7 +386,7 @@ QVector3D ParticleEmitter::getEmissionPosition() const
         }
             
         case EmitterShape::Box: {
-            pos += QVector3D(
+            localOffset = QVector3D(
                 (impl_->rng.bounded(1.0f) - 0.5f) * params_.width,
                 (impl_->rng.bounded(1.0f) - 0.5f) * params_.height,
                 (impl_->rng.bounded(1.0f) - 0.5f) * params_.depth
@@ -300,7 +398,7 @@ QVector3D ParticleEmitter::getEmissionPosition() const
             float angle = impl_->rng.bounded(360.0f) * M_PI / 180.0f;
             float r = params_.radius * std::sqrt(impl_->rng.bounded(1.0f));
             
-            pos += QVector3D(
+            localOffset = QVector3D(
                 r * std::cos(angle),
                 r * std::sin(angle),
                 0
@@ -309,7 +407,7 @@ QVector3D ParticleEmitter::getEmissionPosition() const
         }
             
         case EmitterShape::Rectangle: {
-            pos += QVector3D(
+            localOffset = QVector3D(
                 (impl_->rng.bounded(1.0f) - 0.5f) * params_.width,
                 (impl_->rng.bounded(1.0f) - 0.5f) * params_.height,
                 0
@@ -318,7 +416,7 @@ QVector3D ParticleEmitter::getEmissionPosition() const
         }
             
         case EmitterShape::Line: {
-            pos += QVector3D(
+            localOffset = QVector3D(
                 (impl_->rng.bounded(1.0f) - 0.5f) * params_.lineLength,
                 0,
                 0
@@ -330,12 +428,12 @@ QVector3D ParticleEmitter::getEmissionPosition() const
             break;
     }
     
-    return pos;
+    return params_.position + rotateByEulerDegrees(localOffset, params_.rotation);
 }
 
 QVector3D ParticleEmitter::getEmissionDirection() const
 {
-    QVector3D dir = params_.direction.normalized();
+    QVector3D dir = rotateByEulerDegrees(params_.direction, params_.rotation).normalized();
     
     if (params_.directionSpread > 0.0f) {
         float spreadRad = params_.directionSpread * M_PI / 180.0f;
@@ -362,6 +460,52 @@ QVector3D ParticleEmitter::getEmissionDirection() const
     return dir;
 }
 
+void ParticleEmitter::applyEmitterLocalSpaceDelta()
+{
+    if (!impl_->hasEmitterTransform) {
+        impl_->lastEmitterPosition = params_.position;
+        impl_->lastEmitterRotation = params_.rotation;
+        impl_->hasEmitterTransform = true;
+        return;
+    }
+
+    const QVector3D oldPosition = impl_->lastEmitterPosition;
+    const QVector3D oldRotation = impl_->lastEmitterRotation;
+    const QVector3D newPosition = params_.position;
+    const QVector3D newRotation = params_.rotation;
+
+    if (oldPosition == newPosition && oldRotation == newRotation) {
+        impl_->inheritedVelocity = QVector3D(0.0f, 0.0f, 0.0f);
+        return;
+    }
+
+    QMatrix4x4 oldRotationMatrix = buildEulerRotationMatrix(oldRotation);
+    bool invertible = false;
+    QMatrix4x4 oldInverse = oldRotationMatrix.inverted(&invertible);
+    QMatrix4x4 newRotationMatrix = buildEulerRotationMatrix(newRotation);
+
+    for (auto& particle : particles_) {
+        if (!particle.alive) {
+            continue;
+        }
+
+        const QVector3D localPosition = invertible
+            ? oldInverse.map(particle.position - oldPosition)
+            : (particle.position - oldPosition);
+        const QVector3D localPrevPosition = invertible
+            ? oldInverse.map(particle.prevPosition - oldPosition)
+            : (particle.prevPosition - oldPosition);
+
+        particle.position = newPosition + newRotationMatrix.map(localPosition);
+        particle.prevPosition = newPosition + newRotationMatrix.map(localPrevPosition);
+        particle.velocity = newRotationMatrix.mapVector(
+            invertible ? oldInverse.mapVector(particle.velocity) : particle.velocity);
+    }
+
+    impl_->lastEmitterPosition = newPosition;
+    impl_->lastEmitterRotation = newRotation;
+}
+
 void ParticleEmitter::initializeParticle(Particle& p)
 {
     if (!impl_->seeded || impl_->currentSeed != params_.randomSeed) {
@@ -378,6 +522,13 @@ void ParticleEmitter::initializeParticle(Particle& p)
     float speed = params_.speedMin + impl_->rng.bounded(params_.speedMax - params_.speedMin);
     QVector3D dir = getEmissionDirection();
     p.velocity = dir * speed;
+    p.velocity += QVector3D(
+        (impl_->rng.bounded(1.0f) - 0.5f) * 2.0f * params_.velocityRandom.x(),
+        (impl_->rng.bounded(1.0f) - 0.5f) * 2.0f * params_.velocityRandom.y(),
+        (impl_->rng.bounded(1.0f) - 0.5f) * 2.0f * params_.velocityRandom.z());
+    if (params_.inheritVelocity) {
+        p.velocity += impl_->inheritedVelocity;
+    }
     p.acceleration = QVector3D(0, 0, 0);
     
     // Rotation
@@ -387,11 +538,13 @@ void ParticleEmitter::initializeParticle(Particle& p)
     
     // Scale
     p.scaleStart = params_.scaleMin + impl_->rng.bounded(params_.scaleMax - params_.scaleMin);
+    p.customData[0] = params_.scaleMidMin + impl_->rng.bounded(params_.scaleMidMax - params_.scaleMidMin);
     p.scaleEnd = params_.scaleEndMin + impl_->rng.bounded(params_.scaleEndMax - params_.scaleEndMin);
     p.scale = p.scaleStart;
     
     // Color
     p.colorStart = params_.colorStart;
+    p.colorMid = params_.colorMid;
     p.colorEnd = params_.colorEnd;
     
     // Apply color variation
@@ -404,12 +557,18 @@ void ParticleEmitter::initializeParticle(Particle& p)
         int g = std::clamp(p.colorStart.green() + static_cast<int>(variation() * 255.0f), 0, 255);
         int b = std::clamp(p.colorStart.blue() + static_cast<int>(variation() * 255.0f), 0, 255);
         p.colorStart = QColor(r, g, b, p.colorStart.alpha());
+        p.colorMid = QColor(
+            std::clamp(p.colorMid.red() + static_cast<int>(variation() * 255.0f), 0, 255),
+            std::clamp(p.colorMid.green() + static_cast<int>(variation() * 255.0f), 0, 255),
+            std::clamp(p.colorMid.blue() + static_cast<int>(variation() * 255.0f), 0, 255),
+            p.colorMid.alpha());
     }
     
     p.color = p.colorStart;
     
     // Opacity
     p.opacityStart = params_.opacityMin + impl_->rng.bounded(params_.opacityMax - params_.opacityMin);
+    p.customData[1] = params_.opacityMidMin + impl_->rng.bounded(params_.opacityMidMax - params_.opacityMidMin);
     p.opacityEnd = params_.opacityEndMin + impl_->rng.bounded(params_.opacityEndMax - params_.opacityEndMin);
     p.opacity = p.opacityStart;
     
@@ -417,11 +576,31 @@ void ParticleEmitter::initializeParticle(Particle& p)
     p.maxLife = params_.lifeMin + impl_->rng.bounded(params_.lifeMax - params_.lifeMin);
     p.life = 1.0f;
     p.age = 0.0f;
+
+    // Flipbook
+    p.spriteRows = std::max(1, params_.textureRows);
+    p.spriteCols = std::max(1, params_.textureCols);
+    const int availableFrames = flipbookFrameCount(
+        params_.startFrame,
+        params_.frameCount,
+        p.spriteRows,
+        p.spriteCols);
+    const int initialFrame = params_.randomFrame
+        ? impl_->rng.bounded(availableFrames)
+        : 0;
+    p.spriteFrame = clampFlipbookFrame(
+        initialFrame,
+        params_.startFrame,
+        params_.frameCount,
+        p.spriteRows,
+        p.spriteCols);
     
     // ID
     p.id = nextParticleId_++;
     p.alive = true;
     p.active = true;
+    p.customData[2] = std::max(0.001f, params_.auxInterval);
+    p.customData[3] = 0.0f;
 }
 
 void ParticleEmitter::emitParticles(int count)
@@ -433,8 +612,54 @@ void ParticleEmitter::emitParticles(int count)
         Particle p;
         initializeParticle(p);
         particles_.push_back(p);
+        if (params_.auxEnabled && params_.auxTrigger == AuxTriggerMode::Birth) {
+            emitAuxParticlesFromParticle(particles_.back(), std::max(0, params_.auxCount));
+        }
     }
     
+    if (toEmit > 0) {
+        Q_EMIT particleEmitted(toEmit);
+    }
+}
+
+void ParticleEmitter::emitAuxParticlesFromParticle(const Particle& source, int count)
+{
+    if (!params_.auxEnabled || count <= 0) {
+        return;
+    }
+
+    int available = params_.maxParticles - static_cast<int>(particles_.size());
+    int toEmit = std::min(count, available);
+    for (int i = 0; i < toEmit; ++i) {
+        Particle p;
+        initializeParticle(p);
+        p.position = source.position;
+        p.prevPosition = source.prevPosition;
+        p.velocity = source.velocity * std::max(0.0f, params_.auxVelocityScale);
+        p.acceleration = QVector3D(0, 0, 0);
+        const float auxSizeScale = std::max(0.0f, params_.auxSizeScale);
+        const float auxOpacityScale = std::max(0.0f, params_.auxOpacityScale);
+        const float auxLifeScale = std::max(0.01f, params_.auxLifeScale);
+        p.scaleStart = std::max(0.01f, source.scale * auxSizeScale);
+        p.scale = p.scaleStart;
+        p.customData[0] = std::max(0.0f, p.scaleStart * 0.8f);
+        p.scaleEnd = std::max(0.0f, source.scale * 0.1f);
+        p.opacityStart = std::clamp(source.opacity * auxOpacityScale, 0.0f, 1.0f);
+        p.opacity = p.opacityStart;
+        p.customData[1] = std::clamp(p.opacityStart * 0.45f, 0.0f, 1.0f);
+        p.opacityEnd = 0.0f;
+        p.colorStart = scaledAlphaColor(source.color, auxOpacityScale);
+        p.colorMid = scaledAlphaColor(source.colorMid, auxOpacityScale * 0.8f);
+        p.color = p.colorStart;
+        p.colorEnd = scaledAlphaColor(source.colorEnd, 0.0f);
+        p.maxLife = std::max(0.03f, source.maxLife * auxLifeScale);
+        p.age = 0.0f;
+        p.life = 1.0f;
+        p.customData[2] = std::max(0.001f, params_.auxInterval);
+        p.customData[3] = 1.0f;
+        particles_.push_back(p);
+    }
+
     if (toEmit > 0) {
         Q_EMIT particleEmitted(toEmit);
     }
@@ -455,11 +680,35 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
     p.life = 1.0f - (p.age / p.maxLife);
     
     if (p.life <= 0.0f) {
+        if (params_.auxEnabled &&
+            params_.auxTrigger == AuxTriggerMode::Death &&
+            p.customData[3] < 0.5f) {
+            emitAuxParticlesFromParticle(p, std::max(0, params_.auxCount));
+        }
         p.alive = false;
+        Q_EMIT particleDied(p.id);
         return;
     }
     
+    // Apply emitter-level physics with simple mass scaling.
+    const float inverseMass = 1.0f / std::max(0.01f, params_.mass);
+
     // Apply physics
+    p.velocity += params_.gravity * deltaTime * inverseMass;
+    if (params_.windStrength != 0.0f && !params_.windDirection.isNull()) {
+        QVector3D wind = params_.windDirection.normalized() * params_.windStrength * deltaTime * inverseMass;
+        p.velocity += wind;
+    }
+    if (params_.turbulenceAmplitude != 0.0f && params_.turbulenceFrequency != 0.0f) {
+        const float frequency = params_.turbulenceFrequency;
+        const float evolution = params_.turbulenceEvolution;
+        const float noiseX = std::sin(p.position.x() * frequency + evolution) *
+                             std::cos(p.position.y() * frequency * 0.7f);
+        const float noiseY = std::cos(p.position.x() * frequency * 0.8f + evolution * 1.3f) *
+                             std::sin(p.position.y() * frequency * 0.9f);
+        const float noiseZ = std::sin(p.position.z() * frequency * 0.5f + evolution * 0.7f);
+        p.velocity += QVector3D(noiseX, noiseY, noiseZ) * params_.turbulenceAmplitude * deltaTime * inverseMass;
+    }
     p.velocity += p.acceleration * deltaTime;
     
     // Apply drag
@@ -467,6 +716,7 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
         p.velocity *= (1.0f - params_.drag * deltaTime);
     }
     
+    p.prevPosition = p.position;
     p.position += p.velocity * deltaTime;
     p.acceleration = QVector3D(0, 0, 0);
     
@@ -477,18 +727,54 @@ void ParticleEmitter::updateParticle(Particle& p, float deltaTime)
     float t = 1.0f - p.life;  // 0 = just born, 1 = about to die
     
     // Scale interpolation
-    p.scale = p.scaleStart + (p.scaleEnd - p.scaleStart) * t;
+    p.scale = evaluateTriStageLinear(
+        p.scaleStart,
+        p.customData[0],
+        p.scaleEnd,
+        params_.scaleMidPosition,
+        t);
     
     // Color interpolation
-    p.color = QColor(
-        p.colorStart.red() + static_cast<int>((p.colorEnd.red() - p.colorStart.red()) * t),
-        p.colorStart.green() + static_cast<int>((p.colorEnd.green() - p.colorStart.green()) * t),
-        p.colorStart.blue() + static_cast<int>((p.colorEnd.blue() - p.colorStart.blue()) * t),
-        p.colorStart.alpha() + static_cast<int>((p.colorEnd.alpha() - p.colorStart.alpha()) * t)
-    );
+    p.color = evaluateTriStageColor(
+        p.colorStart,
+        p.colorMid,
+        p.colorEnd,
+        params_.colorMidPosition,
+        t);
     
     // Opacity interpolation
-    p.opacity = p.opacityStart + (p.opacityEnd - p.opacityStart) * t;
+    p.opacity = evaluateTriStageLinear(
+        p.opacityStart,
+        p.customData[1],
+        p.opacityEnd,
+        params_.opacityMidPosition,
+        t);
+
+    if (!params_.randomFrame && params_.frameRate > 0.0f) {
+        const int availableFrames = flipbookFrameCount(
+            params_.startFrame,
+            params_.frameCount,
+            p.spriteRows,
+            p.spriteCols);
+        const int frameOffset =
+            static_cast<int>(std::floor(p.age * params_.frameRate)) % availableFrames;
+        p.spriteFrame = clampFlipbookFrame(
+            frameOffset,
+            params_.startFrame,
+            params_.frameCount,
+            p.spriteRows,
+            p.spriteCols);
+    }
+
+    if (params_.auxEnabled &&
+        params_.auxTrigger == AuxTriggerMode::Trails &&
+        p.customData[3] < 0.5f) {
+        const float interval = std::max(0.001f, params_.auxInterval);
+        if (p.age >= p.customData[2]) {
+            emitAuxParticlesFromParticle(p, std::max(0, params_.auxCount));
+            p.customData[2] += interval;
+        }
+    }
 }
 
 void ParticleEmitter::applyEffectors(Particle& p, float deltaTime)
@@ -661,6 +947,27 @@ void ParticleEmitter::update(float deltaTime)
 {
     if (!active_) return;
 
+    if (!impl_->hasEmitterTransform) {
+        impl_->lastEmitterPosition = params_.position;
+        impl_->lastEmitterRotation = params_.rotation;
+        impl_->hasEmitterTransform = true;
+    }
+
+    if (deltaTime > 0.0f) {
+        impl_->inheritedVelocity =
+            (params_.position - impl_->lastEmitterPosition) / deltaTime;
+    } else {
+        impl_->inheritedVelocity = QVector3D(0.0f, 0.0f, 0.0f);
+    }
+
+    if (!params_.worldSpace) {
+        applyEmitterLocalSpaceDelta();
+    } else if (impl_->lastEmitterPosition != params_.position ||
+               impl_->lastEmitterRotation != params_.rotation) {
+        impl_->lastEmitterPosition = params_.position;
+        impl_->lastEmitterRotation = params_.rotation;
+    }
+
     time_ += deltaTime;
 
     if (params_.deterministic && params_.fixedTimeStep > 0.0f) {
@@ -697,6 +1004,10 @@ void ParticleEmitter::clear()
     impl_->rng.seed(params_.randomSeed);
     impl_->seeded = true;
     impl_->currentSeed = params_.randomSeed;
+    impl_->hasEmitterTransform = false;
+    impl_->lastEmitterPosition = params_.position;
+    impl_->lastEmitterRotation = params_.rotation;
+    impl_->inheritedVelocity = QVector3D(0.0f, 0.0f, 0.0f);
 }
 
 void ParticleEmitter::preWarm(float duration, float stepSize)
@@ -715,6 +1026,7 @@ void ParticleEmitter::preWarm(float duration, float stepSize)
 class ParticleSystem::Impl {
 public:
     QVector3D cameraPosition;
+    std::map<QString, QImage> flipbookAtlases;
 };
 
 // ==================== ParticleSystem ====================
@@ -868,10 +1180,16 @@ ParticleRenderData ParticleSystem::captureRenderData() const
                 v.b  = p.color.blueF();
                 v.a  = p.color.alphaF() * p.opacity;
                 v.size = p.scale;
-                v.stretch = particleStretchFactor(p.velocity);
+                const float velocityStretch = particleStretchFactor(p.velocity);
+                v.stretch = renderSettings_.stretchEnabled
+                    ? std::max(1.0f, velocityStretch * std::max(0.0f, renderSettings_.stretchFactor))
+                    : 1.0f;
                 v.rotation = p.rotation;
                 v.age = p.age;
                 v.lifetime = p.maxLife;
+                v.spriteFrame = p.spriteFrame;
+                v.spriteRows = p.spriteRows;
+                v.spriteCols = p.spriteCols;
                 data.particles.push_back(v);
             }
         }
@@ -891,19 +1209,24 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
     QImage target(width, height, QImage::Format_ARGB32_Premultiplied);
     target.fill(qPremultiply(clearColor.rgba()));
 
-    std::vector<const Particle*> allParticles;
+    struct SoftwareParticle {
+        const Particle* particle = nullptr;
+        const EmitterParams* emitterParams = nullptr;
+    };
+
+    std::vector<SoftwareParticle> allParticles;
     for (const auto& emitter : emitters_) {
         for (const auto& p : emitter->particles()) {
             if (p.alive) {
-                allParticles.push_back(&p);
+                allParticles.push_back({&p, &emitter->params()});
             }
         }
     }
 
     std::sort(allParticles.begin(), allParticles.end(),
-        [this](const Particle* a, const Particle* b) {
-            const float distA = (a->position - impl_->cameraPosition).lengthSquared();
-            const float distB = (b->position - impl_->cameraPosition).lengthSquared();
+        [this](const SoftwareParticle& a, const SoftwareParticle& b) {
+            const float distA = (a.particle->position - impl_->cameraPosition).lengthSquared();
+            const float distB = (b.particle->position - impl_->cameraPosition).lengthSquared();
             return distA > distB; // far to near
         });
 
@@ -949,7 +1272,10 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
     auto* scan = reinterpret_cast<QRgb*>(target.bits());
     const int stride = target.bytesPerLine() / static_cast<int>(sizeof(QRgb));
 
-    for (const Particle* p : allParticles) {
+    for (const SoftwareParticle& item : allParticles) {
+        const Particle* p = item.particle;
+        const EmitterParams* emitterParams = item.emitterParams;
+        const QColor particleColor = p->color;
         const QVector3D view = p->position - impl_->cameraPosition;
         const float depth = view.z();
         if (depth <= nearPlane) {
@@ -963,7 +1289,9 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
         const int py = static_cast<int>(std::round(sy));
 
         const float projectedRadius = std::max(1.0f, p->scale * 12.0f * focal * invDepth);
-        const float stretch = particleStretchFactor(p->velocity);
+        const float stretch = renderSettings_.stretchEnabled
+            ? std::max(1.0f, particleStretchFactor(p->velocity) * std::max(0.0f, renderSettings_.stretchFactor))
+            : 1.0f;
         const float radiusX = std::max(1.0f, projectedRadius * 0.20f);
         const float radiusY = std::max(radiusX, projectedRadius * stretch);
         const int radius = static_cast<int>(std::ceil(std::max(radiusX, radiusY)));
@@ -977,15 +1305,40 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
             continue;
         }
 
-        const float alpha = std::clamp(p->color.alphaF() * p->opacity, 0.0f, 1.0f);
+        const float alpha = std::clamp(particleColor.alphaF() * p->opacity, 0.0f, 1.0f);
         const int baseA = static_cast<int>(alpha * 255.0f);
         if (baseA <= 0) continue;
 
-        const int baseR = p->color.red();
-        const int baseG = p->color.green();
-        const int baseB = p->color.blue();
+        const int baseR = particleColor.red();
+        const int baseG = particleColor.green();
+        const int baseB = particleColor.blue();
         const float radiusX2 = radiusX * radiusX;
         const float radiusY2 = radiusY * radiusY;
+
+        const QImage* atlas = nullptr;
+        QRect atlasFrame;
+        if (emitterParams && !emitterParams->texturePath.isEmpty()) {
+            auto [it, inserted] = impl_->flipbookAtlases.try_emplace(emitterParams->texturePath);
+            if (inserted) {
+                it->second = loadFlipbookAtlasImage(emitterParams->texturePath);
+            }
+
+            if (!it->second.isNull()) {
+                const int rows = std::max(1, p->spriteRows);
+                const int cols = std::max(1, p->spriteCols);
+                const int frameWidth = it->second.width() / cols;
+                const int frameHeight = it->second.height() / rows;
+                if (frameWidth > 0 && frameHeight > 0) {
+                    const int frame = std::clamp(p->spriteFrame, 0, rows * cols - 1);
+                    atlasFrame = QRect(
+                        (frame % cols) * frameWidth,
+                        (frame / cols) * frameHeight,
+                        frameWidth,
+                        frameHeight);
+                    atlas = &it->second;
+                }
+            }
+        }
 
         for (int y = minY; y <= maxY; ++y) {
             const int dy = y - py;
@@ -998,14 +1351,78 @@ QImage ParticleSystem::updateAndRenderSoftwareFrame(float deltaTime, int width, 
                     continue;
                 }
 
-                const float falloff = 1.0f - dist2;
-                const int a = static_cast<int>(baseA * falloff);
+                int sourceR = 255;
+                int sourceG = 255;
+                int sourceB = 255;
+                int sourceA = 255;
+                float falloff = 1.0f - dist2;
+                if (renderSettings_.softParticles) {
+                    const float softness = std::clamp(
+                        renderSettings_.softParticleDistance / std::max(1, radius),
+                        0.01f,
+                        0.95f);
+                    const float edge = 1.0f - softness;
+                    const float t = std::clamp((dist2 - edge) / std::max(0.0001f, 1.0f - edge), 0.0f, 1.0f);
+                    falloff = 1.0f - (t * t * (3.0f - 2.0f * t));
+                }
+                if (atlas) {
+                    const float u = std::clamp(
+                        (static_cast<float>(dx) / radiusX + 1.0f) * 0.5f,
+                        0.0f,
+                        1.0f);
+                    const float v = std::clamp(
+                        (static_cast<float>(dy) / radiusY + 1.0f) * 0.5f,
+                        0.0f,
+                        1.0f);
+                    const int sourceX = atlasFrame.left() + std::min(
+                        atlasFrame.width() - 1,
+                        static_cast<int>(u * static_cast<float>(atlasFrame.width())));
+                    const int sourceY = atlasFrame.top() + std::min(
+                        atlasFrame.height() - 1,
+                        static_cast<int>(v * static_cast<float>(atlasFrame.height())));
+                    const QRgb source = atlas->pixel(sourceX, sourceY);
+                    sourceR = qRed(source);
+                    sourceG = qGreen(source);
+                    sourceB = qBlue(source);
+                    sourceA = qAlpha(source);
+                    falloff = 1.0f;
+                }
+
+                const int a = static_cast<int>(baseA * falloff * (sourceA / 255.0f));
                 if (a <= 0) continue;
 
-                const int srcR = (baseR * a + 127) / 255;
-                const int srcG = (baseG * a + 127) / 255;
-                const int srcB = (baseB * a + 127) / 255;
+                const int tintedR = (baseR * sourceR + 127) / 255;
+                const int tintedG = (baseG * sourceG + 127) / 255;
+                const int tintedB = (baseB * sourceB + 127) / 255;
+                const int srcR = (tintedR * a + 127) / 255;
+                const int srcG = (tintedG * a + 127) / 255;
+                const int srcB = (tintedB * a + 127) / 255;
                 blendPixel(row[x], srcR, srcG, srcB, a);
+            }
+        }
+
+        if (renderSettings_.trailEnabled) {
+            const QVector3D prevView = p->prevPosition - impl_->cameraPosition;
+            const float prevDepth = prevView.z();
+            if (prevDepth > nearPlane) {
+                const float prevInvDepth = 1.0f / prevDepth;
+                const QPoint prevPoint(
+                    static_cast<int>(std::round(halfW + prevView.x() * focal * prevInvDepth)),
+                    static_cast<int>(std::round(halfH - prevView.y() * focal * prevInvDepth)));
+                const QPoint currPoint(px, py);
+                const float trailAlpha = std::clamp(renderSettings_.trailFade, 0.0f, 1.0f) * alpha;
+                if (trailAlpha > 0.0f) {
+                    QPainter trailPainter(&target);
+                    QPen pen(particleColor);
+                    pen.setWidthF(std::max(0.5f, renderSettings_.trailWidth));
+                    pen.setCapStyle(Qt::RoundCap);
+                    pen.setJoinStyle(Qt::RoundJoin);
+                    QColor trailColor = particleColor;
+                    trailColor.setAlphaF(trailAlpha);
+                    pen.setColor(trailColor);
+                    trailPainter.setPen(pen);
+                    trailPainter.drawLine(prevPoint, currPoint);
+                }
             }
         }
     }
@@ -1094,10 +1511,28 @@ void ParticleSystem::render(QPainter& painter, const QTransform& transform)
     for (const Particle* p : allParticles) {
         QColor color = p->color;
         color.setAlphaF(color.alphaF() * p->opacity);
+
+        if (renderSettings_.trailEnabled) {
+            const float trailFade = std::clamp(renderSettings_.trailFade, 0.0f, 1.0f);
+            const float trailWidth = std::max(0.1f, renderSettings_.trailWidth);
+            const QPointF prevPos(p->prevPosition.x(), p->prevPosition.y());
+            const QPointF currPos(p->position.x(), p->position.y());
+            QPen trailPen(color);
+            trailPen.setCapStyle(Qt::RoundCap);
+            trailPen.setJoinStyle(Qt::RoundJoin);
+            trailPen.setWidthF(trailWidth);
+            QColor trailColor = color;
+            trailColor.setAlphaF(std::clamp(color.alphaF() * trailFade, 0.0f, 1.0f));
+            trailPen.setColor(trailColor);
+            painter.setPen(trailPen);
+            painter.drawLine(prevPos, currPos);
+        }
         
         QPointF pos(p->position.x(), p->position.y());
         float size = p->scale * 10.0f;  // Base size
-        const float stretch = particleStretchFactor(p->velocity);
+        const float stretch = renderSettings_.stretchEnabled
+            ? std::max(1.0f, particleStretchFactor(p->velocity) * std::max(0.0f, renderSettings_.stretchFactor))
+            : 1.0f;
         
         painter.save();
         painter.translate(pos);
@@ -1151,9 +1586,12 @@ void ParticleSystem::renderGPU(float* vertexBuffer, int maxVertices, int& vertex
             // Each particle needs 4 vertices (quad)
             int idx = vertexCount * 8;  // 8 floats per vertex (pos + uv + color)
             
-            float halfSize = p.scale * 5.0f;
-            float cosR = std::cos(p.rotation * M_PI / 180.0f);
-            float sinR = std::sin(p.rotation * M_PI / 180.0f);
+        float halfSize = p.scale * 5.0f;
+        const float stretch = renderSettings_.stretchEnabled
+            ? std::max(1.0f, particleStretchFactor(p.velocity) * std::max(0.0f, renderSettings_.stretchFactor))
+            : 1.0f;
+        float cosR = std::cos(p.rotation * M_PI / 180.0f);
+        float sinR = std::sin(p.rotation * M_PI / 180.0f);
             
             // Four corners
             float corners[4][2] = {
@@ -1164,8 +1602,8 @@ void ParticleSystem::renderGPU(float* vertexBuffer, int maxVertices, int& vertex
             };
             
             for (int i = 0; i < 4; i++) {
-                float x = corners[i][0] * cosR - corners[i][1] * sinR + p.position.x();
-                float y = corners[i][0] * sinR + corners[i][1] * cosR + p.position.y();
+                float x = corners[i][0] * cosR - (corners[i][1] * stretch) * sinR + p.position.x();
+                float y = corners[i][0] * sinR + (corners[i][1] * stretch) * cosR + p.position.y();
                 
                 vertexBuffer[idx + i * 8 + 0] = x;
                 vertexBuffer[idx + i * 8 + 1] = y;

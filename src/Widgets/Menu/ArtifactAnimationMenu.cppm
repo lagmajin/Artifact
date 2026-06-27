@@ -24,6 +24,7 @@ import Artifact.Widgets.Timeline.EasingLab;
 import Utils.Id;
 import Utils.Path;
 import Math.Interpolate;
+import UI.ShortcutBindings;
 
 W_OBJECT_IMPL(Artifact::ArtifactAnimationMenu)
 
@@ -336,14 +337,17 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   impl_->addKeyframeAction = addAction("キーフレームを追加");
   impl_->addKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_add_circle.svg")));
-  impl_->addKeyframeAction->setShortcut(QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_K));
+  impl_->addKeyframeAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationAddKeyframe));
   impl_->removeKeyframeAction = addAction("キーフレームを削除");
   impl_->removeKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_remove_circle.svg")));
-  impl_->removeKeyframeAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_K));
+  impl_->removeKeyframeAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationRemoveKeyframe));
 
   impl_->selectAllKeyframesAction = addAction("すべてのキーフレームを選択");
   impl_->selectAllKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_select_all.svg")));
-  impl_->selectAllKeyframesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_A));
+  impl_->selectAllKeyframesAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationSelectAllKeyframes));
 
   auto* reverseMenu = addMenu("キーフレーム反転(&R)");
   reverseMenu->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_swap_horiz.svg")));
@@ -358,11 +362,13 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   impl_->copyKeyframesAction = addAction("キーフレームをコピー");
   impl_->copyKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_content_copy.svg")));
-  impl_->copyKeyframesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_C));
+  impl_->copyKeyframesAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationCopyKeyframes));
 
   impl_->pasteKeyframesAction = addAction("キーフレームをペースト");
   impl_->pasteKeyframesAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_content_paste.svg")));
-  impl_->pasteKeyframesAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_V));
+  impl_->pasteKeyframesAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationPasteKeyframes));
 
   addSeparator();
 
@@ -371,22 +377,28 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   impl_->linearInterpolationAction = impl_->interpolationMenu->addAction("リニア");
   impl_->linearInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_straighten.svg")));
-  impl_->linearInterpolationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_1));
+  impl_->linearInterpolationAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationLinearInterpolation));
   impl_->easeInAction = impl_->interpolationMenu->addAction("イージーイーズイン");
   impl_->easeInAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_trending_up.svg")));
-  impl_->easeInAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_2));
+  impl_->easeInAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationEaseIn));
   impl_->easeOutAction = impl_->interpolationMenu->addAction("イージーイーズアウト");
   impl_->easeOutAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_trending_down.svg")));
-  impl_->easeOutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_3));
+  impl_->easeOutAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationEaseOut));
   impl_->easeInOutAction = impl_->interpolationMenu->addAction("イージーイーズ");
   impl_->easeInOutAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_show_chart.svg")));
-  impl_->easeInOutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_4));
+  impl_->easeInOutAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationEaseInOut));
   impl_->holdInterpolationAction = impl_->interpolationMenu->addAction("停止");
   impl_->holdInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_pause.svg")));
-  impl_->holdInterpolationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_5));
+  impl_->holdInterpolationAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationHoldInterpolation));
   impl_->bezierInterpolationAction = impl_->interpolationMenu->addAction("ベジェ");
   impl_->bezierInterpolationAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_edit.svg")));
-  impl_->bezierInterpolationAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_6));
+  impl_->bezierInterpolationAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationBezierInterpolation));
 
   impl_->linearInterpolationAction->setCheckable(true);
   impl_->bezierInterpolationAction->setCheckable(true);
@@ -399,18 +411,21 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   impl_->showGraphEditorAction = impl_->graphEditorMenu->addAction("カーブエディタを表示");
   impl_->showGraphEditorAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_query_stats.svg")));
-  impl_->showGraphEditorAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F3));
+  impl_->showGraphEditorAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationShowGraphEditor));
   impl_->graphEditorMenu->addSeparator();
   impl_->graphModeGroup = new QActionGroup(impl_->menu_);
   impl_->graphModeGroup->setExclusive(true);
   impl_->toggleValueGraphAction = impl_->graphEditorMenu->addAction("値グラフを表示");
   impl_->toggleValueGraphAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_show_chart.svg")));
-  impl_->toggleValueGraphAction->setShortcut(QKeySequence(Qt::ALT | Qt::Key_G));
+  impl_->toggleValueGraphAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationToggleValueGraph));
   impl_->toggleValueGraphAction->setCheckable(true);
   impl_->graphModeGroup->addAction(impl_->toggleValueGraphAction);
   impl_->toggleVelocityGraphAction = impl_->graphEditorMenu->addAction("速度グラフを表示");
   impl_->toggleVelocityGraphAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_speed.svg")));
-  impl_->toggleVelocityGraphAction->setShortcut(QKeySequence(Qt::ALT | Qt::SHIFT | Qt::Key_G));
+  impl_->toggleVelocityGraphAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationToggleVelocityGraph));
   impl_->toggleVelocityGraphAction->setCheckable(true);
   impl_->graphModeGroup->addAction(impl_->toggleVelocityGraphAction);
   impl_->easingLabAction = impl_->graphEditorMenu->addAction("EasingLab を開く");
@@ -423,19 +438,23 @@ bool hasActiveExpressionTarget(QWidget* root)
 
   impl_->goToNextKeyframeAction = impl_->navigationMenu->addAction("次のキーフレームに移動");
   impl_->goToNextKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_skip_next.svg")));
-  impl_->goToNextKeyframeAction->setShortcut(QKeySequence(Qt::Key_K));
+  impl_->goToNextKeyframeAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationGoToNextKeyframe));
   impl_->goToPreviousKeyframeAction = impl_->navigationMenu->addAction("前のキーフレームに移動");
   impl_->goToPreviousKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_skip_previous.svg")));
-  impl_->goToPreviousKeyframeAction->setShortcut(QKeySequence(Qt::Key_J));
+  impl_->goToPreviousKeyframeAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationGoToPreviousKeyframe));
 
   impl_->navigationMenu->addSeparator();
 
   impl_->goToFirstKeyframeAction = impl_->navigationMenu->addAction("最初のキーフレームに移動");
   impl_->goToFirstKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_fast_rewind.svg")));
-  impl_->goToFirstKeyframeAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_J));
+  impl_->goToFirstKeyframeAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationGoToFirstKeyframe));
   impl_->goToLastKeyframeAction = impl_->navigationMenu->addAction("最後のキーフレームに移動");
   impl_->goToLastKeyframeAction->setIcon(menuIcon(QStringLiteral("Studio/animationmenu_fast_forward.svg")));
-  impl_->goToLastKeyframeAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_K));
+  impl_->goToLastKeyframeAction->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::AnimationGoToLastKeyframe));
 
   addSeparator();
 

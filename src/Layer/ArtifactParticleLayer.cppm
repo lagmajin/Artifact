@@ -121,11 +121,14 @@ ArtifactCore::ParticleRenderData transformParticleRenderData(
         v.rotation = src.rotation;
         v.age = src.age;
         v.lifetime = src.lifetime;
+        v.spriteFrame = src.spriteFrame;
+        v.spriteRows = src.spriteRows;
+        v.spriteCols = src.spriteCols;
         const QPointF mapped = transform.map(QPointF(src.px, src.py));
         v.px = static_cast<float>(mapped.x());
         v.py = static_cast<float>(mapped.y());
         v.a = std::clamp(v.a * opacity, 0.0f, 1.0f);
-        v.size = std::max(2.0f, src.size * scale);
+        v.size = std::max(4.0f, src.size * scale);
         if (v.stretch <= 0.0f) {
             const float speed = std::hypot(src.vx, src.vy);
             v.stretch = std::clamp(1.0f + speed * 0.004f, 1.0f, 6.0f);
@@ -225,6 +228,39 @@ public:
             emitter->setParams(params);
         }
         rebuildSavedEmitterParamsFromSystem();
+    }
+
+    ParticleEmitter* primaryEmitter()
+    {
+        return firstEmitterOrCreate(particleSystem.get());
+    }
+
+    std::optional<EmitterParams> primaryEmitterParams() const
+    {
+        if (!savedEmitterParams.empty()) {
+            return savedEmitterParams.front();
+        }
+        if (!particleSystem) {
+            return std::nullopt;
+        }
+        const auto& emitters = particleSystem->emitters();
+        if (emitters.empty() || !emitters.front()) {
+            return std::nullopt;
+        }
+        return emitters.front()->params();
+    }
+
+    bool applyPrimaryEmitterParams(const std::function<void(EmitterParams&)>& mutator)
+    {
+        auto* emitter = primaryEmitter();
+        if (!emitter) {
+            return false;
+        }
+        auto params = emitter->params();
+        mutator(params);
+        emitter->setParams(params);
+        rebuildSavedEmitterParamsFromSystem();
+        return true;
     }
 };
 
@@ -368,11 +404,16 @@ QJsonObject ArtifactParticleLayer::toJson() const
     renderJson["sortMode"] = static_cast<int>(rs.sortMode);
     renderJson["depthTest"] = rs.depthTest;
     renderJson["depthWrite"] = rs.depthWrite;
+    renderJson["softParticles"] = rs.softParticles;
+    renderJson["softParticleDistance"] = rs.softParticleDistance;
+    renderJson["stretchEnabled"] = rs.stretchEnabled;
+    renderJson["stretchFactor"] = rs.stretchFactor;
     json["renderSettings"] = renderJson;
     
     // Save emitters
     QJsonArray emittersArray;
-    for (const auto& params : impl_->savedEmitterParams) {
+    for (size_t emitterIndex = 0; emitterIndex < impl_->savedEmitterParams.size(); ++emitterIndex) {
+        const auto& params = impl_->savedEmitterParams[emitterIndex];
         QJsonObject emitterJson;
         emitterJson["shape"] = static_cast<int>(params.shape);
         emitterJson["mode"] = static_cast<int>(params.mode);
@@ -385,10 +426,18 @@ QJsonObject ArtifactParticleLayer::toJson() const
         emitterJson["speedMin"] = params.speedMin;
         emitterJson["speedMax"] = params.speedMax;
         emitterJson["directionSpread"] = params.directionSpread;
+        emitterJson["velocityRandomX"] = params.velocityRandom.x();
+        emitterJson["velocityRandomY"] = params.velocityRandom.y();
+        emitterJson["velocityRandomZ"] = params.velocityRandom.z();
         
         emitterJson["positionX"] = params.position.x();
         emitterJson["positionY"] = params.position.y();
         emitterJson["positionZ"] = params.position.z();
+        emitterJson["rotationX"] = params.rotation.x();
+        emitterJson["rotationY"] = params.rotation.y();
+        emitterJson["rotationZ"] = params.rotation.z();
+        emitterJson["rotationSpeedMin"] = params.rotationSpeedMin;
+        emitterJson["rotationSpeedMax"] = params.rotationSpeedMax;
         
         emitterJson["directionX"] = params.direction.x();
         emitterJson["directionY"] = params.direction.y();
@@ -398,23 +447,121 @@ QJsonObject ArtifactParticleLayer::toJson() const
         emitterJson["width"] = params.width;
         emitterJson["height"] = params.height;
         emitterJson["depth"] = params.depth;
+        emitterJson["lineLength"] = params.lineLength;
         
         emitterJson["scaleMin"] = params.scaleMin;
         emitterJson["scaleMax"] = params.scaleMax;
+        emitterJson["scaleMidMin"] = params.scaleMidMin;
+        emitterJson["scaleMidMax"] = params.scaleMidMax;
+        emitterJson["scaleMidPosition"] = params.scaleMidPosition;
         emitterJson["scaleEndMin"] = params.scaleEndMin;
         emitterJson["scaleEndMax"] = params.scaleEndMax;
         
         emitterJson["colorStart"] = params.colorStart.name(QColor::HexArgb);
+        emitterJson["colorMid"] = params.colorMid.name(QColor::HexArgb);
         emitterJson["colorEnd"] = params.colorEnd.name(QColor::HexArgb);
+        emitterJson["colorMidPosition"] = params.colorMidPosition;
         emitterJson["colorVariation"] = params.colorVariation;
         
         emitterJson["opacityMin"] = params.opacityMin;
         emitterJson["opacityMax"] = params.opacityMax;
+        emitterJson["opacityMidMin"] = params.opacityMidMin;
+        emitterJson["opacityMidMax"] = params.opacityMidMax;
+        emitterJson["opacityMidPosition"] = params.opacityMidPosition;
         emitterJson["opacityEndMin"] = params.opacityEndMin;
         emitterJson["opacityEndMax"] = params.opacityEndMax;
         
         emitterJson["drag"] = params.drag;
+        emitterJson["gravityX"] = params.gravity.x();
+        emitterJson["gravityY"] = params.gravity.y();
+        emitterJson["gravityZ"] = params.gravity.z();
+        emitterJson["windDirectionX"] = params.windDirection.x();
+        emitterJson["windDirectionY"] = params.windDirection.y();
+        emitterJson["windDirectionZ"] = params.windDirection.z();
+        emitterJson["windStrength"] = params.windStrength;
+        emitterJson["turbulenceFrequency"] = params.turbulenceFrequency;
+        emitterJson["turbulenceAmplitude"] = params.turbulenceAmplitude;
+        emitterJson["turbulenceEvolution"] = params.turbulenceEvolution;
+        emitterJson["texturePath"] = params.texturePath;
+        emitterJson["textureRows"] = params.textureRows;
+        emitterJson["textureCols"] = params.textureCols;
+        emitterJson["randomFrame"] = params.randomFrame;
+        emitterJson["startFrame"] = params.startFrame;
+        emitterJson["frameCount"] = params.frameCount;
+        emitterJson["frameRate"] = params.frameRate;
+        emitterJson["mass"] = params.mass;
+        emitterJson["inheritVelocity"] = params.inheritVelocity;
+        emitterJson["worldSpace"] = params.worldSpace;
+        emitterJson["preWarm"] = params.preWarm;
         emitterJson["maxParticles"] = params.maxParticles;
+        emitterJson["auxEnabled"] = params.auxEnabled;
+        emitterJson["auxTrigger"] = static_cast<int>(params.auxTrigger);
+        emitterJson["auxCount"] = params.auxCount;
+        emitterJson["auxInterval"] = params.auxInterval;
+        emitterJson["auxLifeScale"] = params.auxLifeScale;
+        emitterJson["auxSizeScale"] = params.auxSizeScale;
+        emitterJson["auxOpacityScale"] = params.auxOpacityScale;
+        emitterJson["auxVelocityScale"] = params.auxVelocityScale;
+        QJsonArray effectorsArray;
+        if (emitterIndex < impl_->particleSystem->emitters().size()) {
+            const auto& emitter = impl_->particleSystem->emitters()[emitterIndex];
+            if (emitter) {
+                for (const auto& effector : emitter->effectors()) {
+                    if (!effector) {
+                        continue;
+                    }
+                    QJsonObject effectorJson;
+                    effectorJson["type"] = static_cast<int>(effector->type);
+                    effectorJson["enabled"] = effector->enabled;
+                    effectorJson["strength"] = effector->strength;
+                    effectorJson["positionX"] = effector->position.x();
+                    effectorJson["positionY"] = effector->position.y();
+                    effectorJson["positionZ"] = effector->position.z();
+                    effectorJson["directionX"] = effector->direction.x();
+                    effectorJson["directionY"] = effector->direction.y();
+                    effectorJson["directionZ"] = effector->direction.z();
+                    if (const auto* typed = dynamic_cast<const ForceEffector*>(effector.get())) {
+                        effectorJson["forceX"] = typed->force.x();
+                        effectorJson["forceY"] = typed->force.y();
+                        effectorJson["forceZ"] = typed->force.z();
+                    } else if (const auto* typed = dynamic_cast<const VortexEffector*>(effector.get())) {
+                        effectorJson["radius"] = typed->radius;
+                        effectorJson["angularVelocity"] = typed->angularVelocity;
+                        effectorJson["tightness"] = typed->tightness;
+                    } else if (const auto* typed = dynamic_cast<const TurbulenceEffector*>(effector.get())) {
+                        effectorJson["frequency"] = typed->frequency;
+                        effectorJson["amplitude"] = typed->amplitude;
+                        effectorJson["octaves"] = typed->octaves;
+                        effectorJson["evolution"] = typed->evolution;
+                        effectorJson["seed"] = typed->seed;
+                    } else if (const auto* typed = dynamic_cast<const AttractorEffector*>(effector.get())) {
+                        effectorJson["radius"] = typed->radius;
+                        effectorJson["falloff"] = typed->falloff;
+                        effectorJson["killOnReach"] = typed->killOnReach;
+                        effectorJson["killRadius"] = typed->killRadius;
+                    } else if (const auto* typed = dynamic_cast<const RepellerEffector*>(effector.get())) {
+                        effectorJson["radius"] = typed->radius;
+                        effectorJson["falloff"] = typed->falloff;
+                    } else if (const auto* typed = dynamic_cast<const WindEffector*>(effector.get())) {
+                        effectorJson["windDirectionX"] = typed->windDirection.x();
+                        effectorJson["windDirectionY"] = typed->windDirection.y();
+                        effectorJson["windDirectionZ"] = typed->windDirection.z();
+                        effectorJson["windStrength"] = typed->windStrength;
+                        effectorJson["turbulence"] = typed->turbulence;
+                        effectorJson["turbulenceFrequency"] = typed->turbulenceFrequency;
+                        effectorJson["evolution"] = typed->evolution;
+                    } else if (const auto* typed = dynamic_cast<const KillZoneEffector*>(effector.get())) {
+                        effectorJson["zoneType"] = static_cast<int>(typed->zoneType);
+                        effectorJson["sizeX"] = typed->size.x();
+                        effectorJson["sizeY"] = typed->size.y();
+                        effectorJson["sizeZ"] = typed->size.z();
+                        effectorJson["invert"] = typed->invert;
+                    }
+                    effectorsArray.append(effectorJson);
+                }
+            }
+        }
+        emitterJson["effectors"] = effectorsArray;
         
         emittersArray.append(emitterJson);
     }
@@ -462,6 +609,18 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
         if (renderJson.contains("depthWrite")) {
             rs.depthWrite = renderJson["depthWrite"].toBool();
         }
+        if (renderJson.contains("softParticles")) {
+            rs.softParticles = renderJson["softParticles"].toBool();
+        }
+        if (renderJson.contains("softParticleDistance")) {
+            rs.softParticleDistance = renderJson["softParticleDistance"].toDouble();
+        }
+        if (renderJson.contains("stretchEnabled")) {
+            rs.stretchEnabled = renderJson["stretchEnabled"].toBool();
+        }
+        if (renderJson.contains("stretchFactor")) {
+            rs.stretchFactor = renderJson["stretchFactor"].toDouble();
+        }
     }
     
     // Load emitters
@@ -504,6 +663,15 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             if (emitterJson.contains("directionSpread")) {
                 params.directionSpread = emitterJson["directionSpread"].toDouble();
             }
+            if (emitterJson.contains("velocityRandomX")) {
+                params.velocityRandom.setX(emitterJson["velocityRandomX"].toDouble());
+            }
+            if (emitterJson.contains("velocityRandomY")) {
+                params.velocityRandom.setY(emitterJson["velocityRandomY"].toDouble());
+            }
+            if (emitterJson.contains("velocityRandomZ")) {
+                params.velocityRandom.setZ(emitterJson["velocityRandomZ"].toDouble());
+            }
             
             if (emitterJson.contains("positionX")) {
                 params.position.setX(emitterJson["positionX"].toDouble());
@@ -513,6 +681,21 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             }
             if (emitterJson.contains("positionZ")) {
                 params.position.setZ(emitterJson["positionZ"].toDouble());
+            }
+            if (emitterJson.contains("rotationX")) {
+                params.rotation.setX(emitterJson["rotationX"].toDouble());
+            }
+            if (emitterJson.contains("rotationY")) {
+                params.rotation.setY(emitterJson["rotationY"].toDouble());
+            }
+            if (emitterJson.contains("rotationZ")) {
+                params.rotation.setZ(emitterJson["rotationZ"].toDouble());
+            }
+            if (emitterJson.contains("rotationSpeedMin")) {
+                params.rotationSpeedMin = emitterJson["rotationSpeedMin"].toDouble();
+            }
+            if (emitterJson.contains("rotationSpeedMax")) {
+                params.rotationSpeedMax = emitterJson["rotationSpeedMax"].toDouble();
             }
             
             if (emitterJson.contains("directionX")) {
@@ -537,6 +720,9 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             if (emitterJson.contains("depth")) {
                 params.depth = emitterJson["depth"].toDouble();
             }
+            if (emitterJson.contains("lineLength")) {
+                params.lineLength = emitterJson["lineLength"].toDouble();
+            }
             
             if (emitterJson.contains("scaleMin")) {
                 params.scaleMin = emitterJson["scaleMin"].toDouble();
@@ -550,12 +736,27 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             if (emitterJson.contains("scaleEndMax")) {
                 params.scaleEndMax = emitterJson["scaleEndMax"].toDouble();
             }
+            if (emitterJson.contains("scaleMidMin")) {
+                params.scaleMidMin = emitterJson["scaleMidMin"].toDouble();
+            }
+            if (emitterJson.contains("scaleMidMax")) {
+                params.scaleMidMax = emitterJson["scaleMidMax"].toDouble();
+            }
+            if (emitterJson.contains("scaleMidPosition")) {
+                params.scaleMidPosition = emitterJson["scaleMidPosition"].toDouble();
+            }
             
             if (emitterJson.contains("colorStart")) {
                 params.colorStart = QColor(emitterJson["colorStart"].toString());
             }
+            if (emitterJson.contains("colorMid")) {
+                params.colorMid = QColor(emitterJson["colorMid"].toString());
+            }
             if (emitterJson.contains("colorEnd")) {
                 params.colorEnd = QColor(emitterJson["colorEnd"].toString());
+            }
+            if (emitterJson.contains("colorMidPosition")) {
+                params.colorMidPosition = emitterJson["colorMidPosition"].toDouble();
             }
             if (emitterJson.contains("colorVariation")) {
                 params.colorVariation = emitterJson["colorVariation"].toDouble();
@@ -573,15 +774,202 @@ void ArtifactParticleLayer::applyPropertiesFromJson(const QJsonObject& obj)
             if (emitterJson.contains("opacityEndMax")) {
                 params.opacityEndMax = emitterJson["opacityEndMax"].toDouble();
             }
+            if (emitterJson.contains("opacityMidMin")) {
+                params.opacityMidMin = emitterJson["opacityMidMin"].toDouble();
+            }
+            if (emitterJson.contains("opacityMidMax")) {
+                params.opacityMidMax = emitterJson["opacityMidMax"].toDouble();
+            }
+            if (emitterJson.contains("opacityMidPosition")) {
+                params.opacityMidPosition = emitterJson["opacityMidPosition"].toDouble();
+            }
             
             if (emitterJson.contains("drag")) {
                 params.drag = emitterJson["drag"].toDouble();
             }
+            if (emitterJson.contains("gravityX")) {
+                params.gravity.setX(emitterJson["gravityX"].toDouble());
+            }
+            if (emitterJson.contains("gravityY")) {
+                params.gravity.setY(emitterJson["gravityY"].toDouble());
+            }
+            if (emitterJson.contains("gravityZ")) {
+                params.gravity.setZ(emitterJson["gravityZ"].toDouble());
+            }
+            if (emitterJson.contains("windDirectionX")) {
+                params.windDirection.setX(emitterJson["windDirectionX"].toDouble());
+            }
+            if (emitterJson.contains("windDirectionY")) {
+                params.windDirection.setY(emitterJson["windDirectionY"].toDouble());
+            }
+            if (emitterJson.contains("windDirectionZ")) {
+                params.windDirection.setZ(emitterJson["windDirectionZ"].toDouble());
+            }
+            if (emitterJson.contains("windStrength")) {
+                params.windStrength = emitterJson["windStrength"].toDouble();
+            }
+            if (emitterJson.contains("turbulenceFrequency")) {
+                params.turbulenceFrequency = emitterJson["turbulenceFrequency"].toDouble();
+            }
+            if (emitterJson.contains("turbulenceAmplitude")) {
+                params.turbulenceAmplitude = emitterJson["turbulenceAmplitude"].toDouble();
+            }
+            if (emitterJson.contains("turbulenceEvolution")) {
+                params.turbulenceEvolution = emitterJson["turbulenceEvolution"].toDouble();
+            }
+            if (emitterJson.contains("texturePath")) {
+                params.texturePath = emitterJson["texturePath"].toString();
+            }
+            if (emitterJson.contains("textureRows")) {
+                params.textureRows = emitterJson["textureRows"].toInt();
+            }
+            if (emitterJson.contains("textureCols")) {
+                params.textureCols = emitterJson["textureCols"].toInt();
+            }
+            if (emitterJson.contains("randomFrame")) {
+                params.randomFrame = emitterJson["randomFrame"].toBool();
+            }
+            if (emitterJson.contains("startFrame")) {
+                params.startFrame = emitterJson["startFrame"].toInt();
+            }
+            if (emitterJson.contains("frameCount")) {
+                params.frameCount = emitterJson["frameCount"].toInt();
+            }
+            if (emitterJson.contains("frameRate")) {
+                params.frameRate = emitterJson["frameRate"].toDouble();
+            }
+            if (emitterJson.contains("mass")) {
+                params.mass = emitterJson["mass"].toDouble();
+            }
+            if (emitterJson.contains("inheritVelocity")) {
+                params.inheritVelocity = emitterJson["inheritVelocity"].toBool();
+            }
+            if (emitterJson.contains("worldSpace")) {
+                params.worldSpace = emitterJson["worldSpace"].toBool();
+            }
+            if (emitterJson.contains("preWarm")) {
+                params.preWarm = emitterJson["preWarm"].toBool();
+            }
             if (emitterJson.contains("maxParticles")) {
                 params.maxParticles = emitterJson["maxParticles"].toInt();
             }
+            if (emitterJson.contains("auxEnabled")) {
+                params.auxEnabled = emitterJson["auxEnabled"].toBool();
+            }
+            if (emitterJson.contains("auxTrigger")) {
+                params.auxTrigger = static_cast<AuxTriggerMode>(emitterJson["auxTrigger"].toInt());
+            }
+            if (emitterJson.contains("auxCount")) {
+                params.auxCount = emitterJson["auxCount"].toInt();
+            }
+            if (emitterJson.contains("auxInterval")) {
+                params.auxInterval = emitterJson["auxInterval"].toDouble();
+            }
+            if (emitterJson.contains("auxLifeScale")) {
+                params.auxLifeScale = emitterJson["auxLifeScale"].toDouble();
+            }
+            if (emitterJson.contains("auxSizeScale")) {
+                params.auxSizeScale = emitterJson["auxSizeScale"].toDouble();
+            }
+            if (emitterJson.contains("auxOpacityScale")) {
+                params.auxOpacityScale = emitterJson["auxOpacityScale"].toDouble();
+            }
+            if (emitterJson.contains("auxVelocityScale")) {
+                params.auxVelocityScale = emitterJson["auxVelocityScale"].toDouble();
+            }
             
-            addEmitter(params);
+            ParticleEmitter* emitter = addEmitter(params);
+            if (emitter && emitterJson.contains("effectors")) {
+                const QJsonArray effectorsArray = emitterJson["effectors"].toArray();
+                for (const auto& effectorVal : effectorsArray) {
+                    const QJsonObject effectorJson = effectorVal.toObject();
+                    const auto type = static_cast<EffectorType>(effectorJson["type"].toInt());
+                    std::unique_ptr<ParticleEffector> effector;
+                    switch (type) {
+                        case EffectorType::Force: effector = std::make_unique<ForceEffector>(); break;
+                        case EffectorType::Vortex: effector = std::make_unique<VortexEffector>(); break;
+                        case EffectorType::Turbulence: effector = std::make_unique<TurbulenceEffector>(); break;
+                        case EffectorType::Attractor: effector = std::make_unique<AttractorEffector>(); break;
+                        case EffectorType::Repeller: effector = std::make_unique<RepellerEffector>(); break;
+                        case EffectorType::Wind: effector = std::make_unique<WindEffector>(); break;
+                        case EffectorType::Kill: effector = std::make_unique<KillZoneEffector>(); break;
+                    }
+                    if (!effector) {
+                        continue;
+                    }
+
+                    effector->enabled = effectorJson["enabled"].toBool(true);
+                    effector->strength = static_cast<float>(effectorJson["strength"].toDouble(1.0));
+                    effector->position.setX(static_cast<float>(effectorJson["positionX"].toDouble()));
+                    effector->position.setY(static_cast<float>(effectorJson["positionY"].toDouble()));
+                    effector->position.setZ(static_cast<float>(effectorJson["positionZ"].toDouble()));
+                    effector->direction.setX(static_cast<float>(effectorJson["directionX"].toDouble()));
+                    effector->direction.setY(static_cast<float>(effectorJson["directionY"].toDouble()));
+                    effector->direction.setZ(static_cast<float>(effectorJson["directionZ"].toDouble()));
+
+                    switch (type) {
+                        case EffectorType::Force: {
+                            auto* typed = static_cast<ForceEffector*>(effector.get());
+                            typed->force.setX(static_cast<float>(effectorJson["forceX"].toDouble()));
+                            typed->force.setY(static_cast<float>(effectorJson["forceY"].toDouble()));
+                            typed->force.setZ(static_cast<float>(effectorJson["forceZ"].toDouble()));
+                            break;
+                        }
+                        case EffectorType::Vortex: {
+                            auto* typed = static_cast<VortexEffector*>(effector.get());
+                            typed->radius = static_cast<float>(effectorJson["radius"].toDouble());
+                            typed->angularVelocity = static_cast<float>(effectorJson["angularVelocity"].toDouble());
+                            typed->tightness = static_cast<float>(effectorJson["tightness"].toDouble(1.0));
+                            break;
+                        }
+                        case EffectorType::Turbulence: {
+                            auto* typed = static_cast<TurbulenceEffector*>(effector.get());
+                            typed->frequency = static_cast<float>(effectorJson["frequency"].toDouble());
+                            typed->amplitude = static_cast<float>(effectorJson["amplitude"].toDouble());
+                            typed->octaves = effectorJson["octaves"].toInt(3);
+                            typed->evolution = static_cast<float>(effectorJson["evolution"].toDouble());
+                            typed->seed = effectorJson["seed"].toInt(0);
+                            break;
+                        }
+                        case EffectorType::Attractor: {
+                            auto* typed = static_cast<AttractorEffector*>(effector.get());
+                            typed->radius = static_cast<float>(effectorJson["radius"].toDouble());
+                            typed->falloff = static_cast<float>(effectorJson["falloff"].toDouble(1.0));
+                            typed->killOnReach = effectorJson["killOnReach"].toBool(false);
+                            typed->killRadius = static_cast<float>(effectorJson["killRadius"].toDouble(10.0));
+                            break;
+                        }
+                        case EffectorType::Repeller: {
+                            auto* typed = static_cast<RepellerEffector*>(effector.get());
+                            typed->radius = static_cast<float>(effectorJson["radius"].toDouble());
+                            typed->falloff = static_cast<float>(effectorJson["falloff"].toDouble(1.0));
+                            break;
+                        }
+                        case EffectorType::Wind: {
+                            auto* typed = static_cast<WindEffector*>(effector.get());
+                            typed->windDirection.setX(static_cast<float>(effectorJson["windDirectionX"].toDouble()));
+                            typed->windDirection.setY(static_cast<float>(effectorJson["windDirectionY"].toDouble()));
+                            typed->windDirection.setZ(static_cast<float>(effectorJson["windDirectionZ"].toDouble()));
+                            typed->windStrength = static_cast<float>(effectorJson["windStrength"].toDouble());
+                            typed->turbulence = static_cast<float>(effectorJson["turbulence"].toDouble());
+                            typed->turbulenceFrequency = static_cast<float>(effectorJson["turbulenceFrequency"].toDouble());
+                            typed->evolution = static_cast<float>(effectorJson["evolution"].toDouble());
+                            break;
+                        }
+                        case EffectorType::Kill: {
+                            auto* typed = static_cast<KillZoneEffector*>(effector.get());
+                            typed->zoneType = static_cast<KillZoneEffector::ZoneType>(effectorJson["zoneType"].toInt(0));
+                            typed->size.setX(static_cast<float>(effectorJson["sizeX"].toDouble()));
+                            typed->size.setY(static_cast<float>(effectorJson["sizeY"].toDouble()));
+                            typed->size.setZ(static_cast<float>(effectorJson["sizeZ"].toDouble()));
+                            typed->invert = effectorJson["invert"].toBool(false);
+                            break;
+                        }
+                    }
+
+                    emitter->addEffector(std::move(effector));
+                }
+            }
         }
         impl_->rebuildSavedEmitterParamsFromSystem();
     }
@@ -1001,7 +1389,7 @@ QStringList ArtifactParticleLayer::availablePresets() const
 std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerPropertyGroups() const
 {
     auto groups = ArtifactAbstractLayer::getLayerPropertyGroups();
-    ArtifactCore::PropertyGroup particleGroup(QStringLiteral("Particle"));
+    ArtifactCore::PropertyGroup particleGroup(QStringLiteral("Particle System"));
 
     auto makeProp = [this](const QString& name, ArtifactCore::PropertyType type, const QVariant& value, int priority = 0) {
         return persistentLayerProperty(name, type, value, priority);
@@ -1029,13 +1417,503 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactParticleLayer::getLayerProperty
     particleGroup.addProperty(sortModeProp);
     particleGroup.addProperty(makeProp(QStringLiteral("particle.render.depthTest"), ArtifactCore::PropertyType::Boolean, rs.depthTest, -60));
     particleGroup.addProperty(makeProp(QStringLiteral("particle.render.depthWrite"), ArtifactCore::PropertyType::Boolean, rs.depthWrite, -50));
+    auto softParticlesProp = makeProp(QStringLiteral("particle.render.softParticles"), ArtifactCore::PropertyType::Boolean, rs.softParticles, -40);
+    softParticlesProp->setDisplayLabel(QStringLiteral("Soft Particles"));
+    particleGroup.addProperty(softParticlesProp);
+
+    auto softParticleDistanceProp = makeProp(QStringLiteral("particle.render.softParticleDistance"), ArtifactCore::PropertyType::Float, rs.softParticleDistance, -39);
+    softParticleDistanceProp->setDisplayLabel(QStringLiteral("Soft Particle Distance"));
+    softParticleDistanceProp->setUnit(QStringLiteral("px"));
+    softParticleDistanceProp->setSoftRange(0.0, 200.0);
+    softParticleDistanceProp->setStep(0.1);
+    particleGroup.addProperty(softParticleDistanceProp);
+
+    auto stretchEnabledProp = makeProp(QStringLiteral("particle.render.stretchEnabled"), ArtifactCore::PropertyType::Boolean, rs.stretchEnabled, -38);
+    stretchEnabledProp->setDisplayLabel(QStringLiteral("Velocity Stretch"));
+    particleGroup.addProperty(stretchEnabledProp);
+
+    auto stretchFactorProp = makeProp(QStringLiteral("particle.render.stretchFactor"), ArtifactCore::PropertyType::Float, rs.stretchFactor, -37);
+    stretchFactorProp->setDisplayLabel(QStringLiteral("Stretch Factor"));
+    stretchFactorProp->setSoftRange(0.0, 20.0);
+    stretchFactorProp->setStep(0.1);
+    particleGroup.addProperty(stretchFactorProp);
 
     groups.push_back(particleGroup);
+
+    ArtifactCore::PropertyGroup emitterGroup(QStringLiteral("Emitter"));
+    const EmitterParams emitter = impl_->primaryEmitterParams().value_or(EmitterParams{});
+
+    auto emitterShapeProp = makeProp(QStringLiteral("particle.emitter.shape"), ArtifactCore::PropertyType::Integer, static_cast<int>(emitter.shape), -240);
+    emitterShapeProp->setDisplayLabel(QStringLiteral("Shape"));
+    emitterShapeProp->setTooltip(QStringLiteral("0=Point, 1=Sphere, 2=Box, 3=Circle, 4=Rectangle, 5=Line, 6=Mesh, 7=Surface"));
+    emitterGroup.addProperty(emitterShapeProp);
+
+    auto emitterModeProp = makeProp(QStringLiteral("particle.emitter.mode"), ArtifactCore::PropertyType::Integer, static_cast<int>(emitter.mode), -239);
+    emitterModeProp->setDisplayLabel(QStringLiteral("Emission Mode"));
+    emitterModeProp->setTooltip(QStringLiteral("0=Continuous, 1=Burst, 2=Triggered"));
+    emitterGroup.addProperty(emitterModeProp);
+
+    auto positionXProp = makeProp(QStringLiteral("particle.emitter.positionX"), ArtifactCore::PropertyType::Float, emitter.position.x(), -238);
+    positionXProp->setDisplayLabel(QStringLiteral("Position X"));
+    positionXProp->setUnit(QStringLiteral("px"));
+    positionXProp->setSoftRange(-20000.0, 20000.0);
+    emitterGroup.addProperty(positionXProp);
+
+    auto positionYProp = makeProp(QStringLiteral("particle.emitter.positionY"), ArtifactCore::PropertyType::Float, emitter.position.y(), -237);
+    positionYProp->setDisplayLabel(QStringLiteral("Position Y"));
+    positionYProp->setUnit(QStringLiteral("px"));
+    positionYProp->setSoftRange(-20000.0, 20000.0);
+    emitterGroup.addProperty(positionYProp);
+
+    auto rotationXProp = makeProp(QStringLiteral("particle.emitter.rotationX"), ArtifactCore::PropertyType::Float, emitter.rotation.x(), -236);
+    rotationXProp->setDisplayLabel(QStringLiteral("Rotation X"));
+    rotationXProp->setUnit(QStringLiteral("deg"));
+    rotationXProp->setSoftRange(-360.0, 360.0);
+    emitterGroup.addProperty(rotationXProp);
+
+    auto rotationYProp = makeProp(QStringLiteral("particle.emitter.rotationY"), ArtifactCore::PropertyType::Float, emitter.rotation.y(), -235);
+    rotationYProp->setDisplayLabel(QStringLiteral("Rotation Y"));
+    rotationYProp->setUnit(QStringLiteral("deg"));
+    rotationYProp->setSoftRange(-360.0, 360.0);
+    emitterGroup.addProperty(rotationYProp);
+
+    auto rotationZProp = makeProp(QStringLiteral("particle.emitter.rotationZ"), ArtifactCore::PropertyType::Float, emitter.rotation.z(), -234);
+    rotationZProp->setDisplayLabel(QStringLiteral("Rotation Z"));
+    rotationZProp->setUnit(QStringLiteral("deg"));
+    rotationZProp->setSoftRange(-360.0, 360.0);
+    emitterGroup.addProperty(rotationZProp);
+
+    auto rotationSpeedMinProp = makeProp(QStringLiteral("particle.emitter.rotationSpeedMin"), ArtifactCore::PropertyType::Float, emitter.rotationSpeedMin, -233);
+    rotationSpeedMinProp->setDisplayLabel(QStringLiteral("Spin Min"));
+    rotationSpeedMinProp->setUnit(QStringLiteral("deg/s"));
+    rotationSpeedMinProp->setSoftRange(-720.0, 720.0);
+    rotationSpeedMinProp->setStep(1.0);
+    emitterGroup.addProperty(rotationSpeedMinProp);
+
+    auto rotationSpeedMaxProp = makeProp(QStringLiteral("particle.emitter.rotationSpeedMax"), ArtifactCore::PropertyType::Float, emitter.rotationSpeedMax, -232);
+    rotationSpeedMaxProp->setDisplayLabel(QStringLiteral("Spin Max"));
+    rotationSpeedMaxProp->setUnit(QStringLiteral("deg/s"));
+    rotationSpeedMaxProp->setSoftRange(-720.0, 720.0);
+    rotationSpeedMaxProp->setStep(1.0);
+    emitterGroup.addProperty(rotationSpeedMaxProp);
+
+    auto directionXProp = makeProp(QStringLiteral("particle.emitter.directionX"), ArtifactCore::PropertyType::Float, emitter.direction.x(), -233);
+    directionXProp->setDisplayLabel(QStringLiteral("Direction X"));
+    directionXProp->setSoftRange(-1.0, 1.0);
+    directionXProp->setStep(0.01);
+    emitterGroup.addProperty(directionXProp);
+
+    auto directionYProp = makeProp(QStringLiteral("particle.emitter.directionY"), ArtifactCore::PropertyType::Float, emitter.direction.y(), -232);
+    directionYProp->setDisplayLabel(QStringLiteral("Direction Y"));
+    directionYProp->setSoftRange(-1.0, 1.0);
+    directionYProp->setStep(0.01);
+    emitterGroup.addProperty(directionYProp);
+
+    auto directionZProp = makeProp(QStringLiteral("particle.emitter.directionZ"), ArtifactCore::PropertyType::Float, emitter.direction.z(), -231);
+    directionZProp->setDisplayLabel(QStringLiteral("Direction Z"));
+    directionZProp->setSoftRange(-1.0, 1.0);
+    directionZProp->setStep(0.01);
+    emitterGroup.addProperty(directionZProp);
+
+    auto radiusProp = makeProp(QStringLiteral("particle.emitter.radius"), ArtifactCore::PropertyType::Float, emitter.radius, -230);
+    radiusProp->setDisplayLabel(QStringLiteral("Radius"));
+    radiusProp->setUnit(QStringLiteral("px"));
+    radiusProp->setSoftRange(0.0, 5000.0);
+    emitterGroup.addProperty(radiusProp);
+
+    auto widthProp = makeProp(QStringLiteral("particle.emitter.width"), ArtifactCore::PropertyType::Float, emitter.width, -229);
+    widthProp->setDisplayLabel(QStringLiteral("Width"));
+    widthProp->setUnit(QStringLiteral("px"));
+    widthProp->setSoftRange(0.0, 10000.0);
+    emitterGroup.addProperty(widthProp);
+
+    auto heightProp = makeProp(QStringLiteral("particle.emitter.height"), ArtifactCore::PropertyType::Float, emitter.height, -228);
+    heightProp->setDisplayLabel(QStringLiteral("Height"));
+    heightProp->setUnit(QStringLiteral("px"));
+    heightProp->setSoftRange(0.0, 10000.0);
+    emitterGroup.addProperty(heightProp);
+
+    auto depthProp = makeProp(QStringLiteral("particle.emitter.depth"), ArtifactCore::PropertyType::Float, emitter.depth, -227);
+    depthProp->setDisplayLabel(QStringLiteral("Depth"));
+    depthProp->setUnit(QStringLiteral("px"));
+    depthProp->setSoftRange(0.0, 10000.0);
+    emitterGroup.addProperty(depthProp);
+
+    auto lineLengthProp = makeProp(QStringLiteral("particle.emitter.lineLength"), ArtifactCore::PropertyType::Float, emitter.lineLength, -226);
+    lineLengthProp->setDisplayLabel(QStringLiteral("Line Length"));
+    lineLengthProp->setUnit(QStringLiteral("px"));
+    lineLengthProp->setSoftRange(0.0, 10000.0);
+    emitterGroup.addProperty(lineLengthProp);
+
+    auto directionSpreadProp = makeProp(QStringLiteral("particle.emitter.directionSpread"), ArtifactCore::PropertyType::Float, emitter.directionSpread, -225);
+    directionSpreadProp->setDisplayLabel(QStringLiteral("Direction Spread"));
+    directionSpreadProp->setUnit(QStringLiteral("deg"));
+    directionSpreadProp->setSoftRange(0.0, 360.0);
+    emitterGroup.addProperty(directionSpreadProp);
+
+    auto rateProp = makeProp(QStringLiteral("particle.emitter.rate"), ArtifactCore::PropertyType::Float, emitter.rate, -224);
+    rateProp->setDisplayLabel(QStringLiteral("Rate"));
+    rateProp->setUnit(QStringLiteral("/s"));
+    rateProp->setSoftRange(0.0, 2000.0);
+    emitterGroup.addProperty(rateProp);
+
+    auto burstCountProp = makeProp(QStringLiteral("particle.emitter.burstCount"), ArtifactCore::PropertyType::Integer, emitter.burstCount, -223);
+    burstCountProp->setDisplayLabel(QStringLiteral("Burst Count"));
+    burstCountProp->setHardRange(1, 100000);
+    burstCountProp->setSoftRange(1, 5000);
+    emitterGroup.addProperty(burstCountProp);
+
+    auto burstIntervalProp = makeProp(QStringLiteral("particle.emitter.burstInterval"), ArtifactCore::PropertyType::Float, emitter.burstInterval, -222);
+    burstIntervalProp->setDisplayLabel(QStringLiteral("Burst Interval"));
+    burstIntervalProp->setUnit(QStringLiteral("s"));
+    burstIntervalProp->setSoftRange(0.0, 10.0);
+    burstIntervalProp->setStep(0.01);
+    emitterGroup.addProperty(burstIntervalProp);
+
+    auto maxParticlesProp = makeProp(QStringLiteral("particle.emitter.maxParticles"), ArtifactCore::PropertyType::Integer, emitter.maxParticles, -221);
+    maxParticlesProp->setDisplayLabel(QStringLiteral("Max Particles"));
+    maxParticlesProp->setHardRange(1, 100000);
+    maxParticlesProp->setSoftRange(1, 20000);
+    emitterGroup.addProperty(maxParticlesProp);
+
+    auto texturePathProp = makeProp(QStringLiteral("particle.emitter.texturePath"), ArtifactCore::PropertyType::String, emitter.texturePath, -220);
+    texturePathProp->setDisplayLabel(QStringLiteral("Texture Path"));
+    emitterGroup.addProperty(texturePathProp);
+
+    auto textureRowsProp = makeProp(QStringLiteral("particle.emitter.textureRows"), ArtifactCore::PropertyType::Integer, emitter.textureRows, -219);
+    textureRowsProp->setDisplayLabel(QStringLiteral("Texture Rows"));
+    textureRowsProp->setHardRange(1, 128);
+    textureRowsProp->setSoftRange(1, 16);
+    emitterGroup.addProperty(textureRowsProp);
+
+    auto textureColsProp = makeProp(QStringLiteral("particle.emitter.textureCols"), ArtifactCore::PropertyType::Integer, emitter.textureCols, -218);
+    textureColsProp->setDisplayLabel(QStringLiteral("Texture Cols"));
+    textureColsProp->setHardRange(1, 128);
+    textureColsProp->setSoftRange(1, 16);
+    emitterGroup.addProperty(textureColsProp);
+
+    auto randomFrameProp = makeProp(QStringLiteral("particle.emitter.randomFrame"), ArtifactCore::PropertyType::Boolean, emitter.randomFrame, -217);
+    randomFrameProp->setDisplayLabel(QStringLiteral("Random Frame"));
+    emitterGroup.addProperty(randomFrameProp);
+
+    auto startFrameProp = makeProp(QStringLiteral("particle.emitter.startFrame"), ArtifactCore::PropertyType::Integer, emitter.startFrame, -216);
+    startFrameProp->setDisplayLabel(QStringLiteral("Start Frame"));
+    startFrameProp->setHardRange(0, 4096);
+    startFrameProp->setSoftRange(0, 256);
+    emitterGroup.addProperty(startFrameProp);
+
+    auto frameCountProp = makeProp(QStringLiteral("particle.emitter.frameCount"), ArtifactCore::PropertyType::Integer, emitter.frameCount, -215);
+    frameCountProp->setDisplayLabel(QStringLiteral("Frame Count"));
+    frameCountProp->setHardRange(1, 4096);
+    frameCountProp->setSoftRange(1, 256);
+    emitterGroup.addProperty(frameCountProp);
+
+    auto frameRateProp = makeProp(QStringLiteral("particle.emitter.frameRate"), ArtifactCore::PropertyType::Float, emitter.frameRate, -214);
+    frameRateProp->setDisplayLabel(QStringLiteral("Frame Rate"));
+    frameRateProp->setUnit(QStringLiteral("fps"));
+    frameRateProp->setSoftRange(0.0, 240.0);
+    frameRateProp->setStep(0.1);
+    emitterGroup.addProperty(frameRateProp);
+
+    auto massProp = makeProp(QStringLiteral("particle.emitter.mass"), ArtifactCore::PropertyType::Float, emitter.mass, -213);
+    massProp->setDisplayLabel(QStringLiteral("Mass"));
+    massProp->setSoftRange(0.01, 100.0);
+    massProp->setStep(0.01);
+    emitterGroup.addProperty(massProp);
+
+    auto inheritVelocityProp = makeProp(QStringLiteral("particle.emitter.inheritVelocity"), ArtifactCore::PropertyType::Boolean, emitter.inheritVelocity, -212);
+    inheritVelocityProp->setDisplayLabel(QStringLiteral("Inherit Velocity"));
+    emitterGroup.addProperty(inheritVelocityProp);
+
+    auto worldSpaceProp = makeProp(QStringLiteral("particle.emitter.worldSpace"), ArtifactCore::PropertyType::Boolean, emitter.worldSpace, -211);
+    worldSpaceProp->setDisplayLabel(QStringLiteral("World Space"));
+    emitterGroup.addProperty(worldSpaceProp);
+
+    auto preWarmProp = makeProp(QStringLiteral("particle.emitter.preWarm"), ArtifactCore::PropertyType::Boolean, emitter.preWarm, -210);
+    preWarmProp->setDisplayLabel(QStringLiteral("Pre Warm"));
+    emitterGroup.addProperty(preWarmProp);
+
+    groups.push_back(emitterGroup);
+
+    ArtifactCore::PropertyGroup particleLookGroup(QStringLiteral("Particle"));
+
+    auto lifeMinProp = makeProp(QStringLiteral("particle.particle.lifeMin"), ArtifactCore::PropertyType::Float, emitter.lifeMin, -232);
+    lifeMinProp->setDisplayLabel(QStringLiteral("Life Min"));
+    lifeMinProp->setUnit(QStringLiteral("s"));
+    lifeMinProp->setSoftRange(0.01, 60.0);
+    particleLookGroup.addProperty(lifeMinProp);
+
+    auto lifeMaxProp = makeProp(QStringLiteral("particle.particle.lifeMax"), ArtifactCore::PropertyType::Float, emitter.lifeMax, -231);
+    lifeMaxProp->setDisplayLabel(QStringLiteral("Life Max"));
+    lifeMaxProp->setUnit(QStringLiteral("s"));
+    lifeMaxProp->setSoftRange(0.01, 60.0);
+    particleLookGroup.addProperty(lifeMaxProp);
+
+    auto speedMinProp = makeProp(QStringLiteral("particle.particle.speedMin"), ArtifactCore::PropertyType::Float, emitter.speedMin, -230);
+    speedMinProp->setDisplayLabel(QStringLiteral("Speed Min"));
+    speedMinProp->setUnit(QStringLiteral("px/s"));
+    speedMinProp->setSoftRange(0.0, 5000.0);
+    particleLookGroup.addProperty(speedMinProp);
+
+    auto speedMaxProp = makeProp(QStringLiteral("particle.particle.speedMax"), ArtifactCore::PropertyType::Float, emitter.speedMax, -229);
+    speedMaxProp->setDisplayLabel(QStringLiteral("Speed Max"));
+    speedMaxProp->setUnit(QStringLiteral("px/s"));
+    speedMaxProp->setSoftRange(0.0, 5000.0);
+    particleLookGroup.addProperty(speedMaxProp);
+
+    auto velocityRandomXProp = makeProp(QStringLiteral("particle.particle.velocityRandomX"), ArtifactCore::PropertyType::Float, emitter.velocityRandom.x(), -228);
+    velocityRandomXProp->setDisplayLabel(QStringLiteral("Velocity Random X"));
+    velocityRandomXProp->setUnit(QStringLiteral("px/s"));
+    velocityRandomXProp->setSoftRange(0.0, 5000.0);
+    particleLookGroup.addProperty(velocityRandomXProp);
+
+    auto velocityRandomYProp = makeProp(QStringLiteral("particle.particle.velocityRandomY"), ArtifactCore::PropertyType::Float, emitter.velocityRandom.y(), -227);
+    velocityRandomYProp->setDisplayLabel(QStringLiteral("Velocity Random Y"));
+    velocityRandomYProp->setUnit(QStringLiteral("px/s"));
+    velocityRandomYProp->setSoftRange(0.0, 5000.0);
+    particleLookGroup.addProperty(velocityRandomYProp);
+
+    auto velocityRandomZProp = makeProp(QStringLiteral("particle.particle.velocityRandomZ"), ArtifactCore::PropertyType::Float, emitter.velocityRandom.z(), -226);
+    velocityRandomZProp->setDisplayLabel(QStringLiteral("Velocity Random Z"));
+    velocityRandomZProp->setUnit(QStringLiteral("px/s"));
+    velocityRandomZProp->setSoftRange(0.0, 5000.0);
+    particleLookGroup.addProperty(velocityRandomZProp);
+
+    auto scaleMinProp = makeProp(QStringLiteral("particle.particle.scaleMin"), ArtifactCore::PropertyType::Float, emitter.scaleMin, -225);
+    scaleMinProp->setDisplayLabel(QStringLiteral("Size Min"));
+    scaleMinProp->setUnit(QStringLiteral("px"));
+    scaleMinProp->setSoftRange(0.1, 512.0);
+    particleLookGroup.addProperty(scaleMinProp);
+
+    auto scaleMaxProp = makeProp(QStringLiteral("particle.particle.scaleMax"), ArtifactCore::PropertyType::Float, emitter.scaleMax, -227);
+    scaleMaxProp->setDisplayLabel(QStringLiteral("Size Max"));
+    scaleMaxProp->setUnit(QStringLiteral("px"));
+    scaleMaxProp->setSoftRange(0.1, 512.0);
+    particleLookGroup.addProperty(scaleMaxProp);
+
+    auto scaleMidMinProp = makeProp(QStringLiteral("particle.particle.scaleMidMin"), ArtifactCore::PropertyType::Float, emitter.scaleMidMin, -226);
+    scaleMidMinProp->setDisplayLabel(QStringLiteral("Size Mid Min"));
+    scaleMidMinProp->setUnit(QStringLiteral("px"));
+    scaleMidMinProp->setSoftRange(0.0, 512.0);
+    particleLookGroup.addProperty(scaleMidMinProp);
+
+    auto scaleMidMaxProp = makeProp(QStringLiteral("particle.particle.scaleMidMax"), ArtifactCore::PropertyType::Float, emitter.scaleMidMax, -225);
+    scaleMidMaxProp->setDisplayLabel(QStringLiteral("Size Mid Max"));
+    scaleMidMaxProp->setUnit(QStringLiteral("px"));
+    scaleMidMaxProp->setSoftRange(0.0, 512.0);
+    particleLookGroup.addProperty(scaleMidMaxProp);
+
+    auto scaleMidPosProp = makeProp(QStringLiteral("particle.particle.scaleMidPosition"), ArtifactCore::PropertyType::Float, emitter.scaleMidPosition, -224);
+    scaleMidPosProp->setDisplayLabel(QStringLiteral("Size Mid Pos"));
+    scaleMidPosProp->setSoftRange(0.0, 1.0);
+    scaleMidPosProp->setStep(0.01);
+    particleLookGroup.addProperty(scaleMidPosProp);
+
+    auto scaleEndMinProp = makeProp(QStringLiteral("particle.particle.scaleEndMin"), ArtifactCore::PropertyType::Float, emitter.scaleEndMin, -223);
+    scaleEndMinProp->setDisplayLabel(QStringLiteral("End Size Min"));
+    scaleEndMinProp->setUnit(QStringLiteral("px"));
+    scaleEndMinProp->setSoftRange(0.0, 512.0);
+    particleLookGroup.addProperty(scaleEndMinProp);
+
+    auto scaleEndMaxProp = makeProp(QStringLiteral("particle.particle.scaleEndMax"), ArtifactCore::PropertyType::Float, emitter.scaleEndMax, -222);
+    scaleEndMaxProp->setDisplayLabel(QStringLiteral("End Size Max"));
+    scaleEndMaxProp->setUnit(QStringLiteral("px"));
+    scaleEndMaxProp->setSoftRange(0.0, 512.0);
+    particleLookGroup.addProperty(scaleEndMaxProp);
+
+    auto opacityMinProp = makeProp(QStringLiteral("particle.particle.opacityMin"), ArtifactCore::PropertyType::Float, emitter.opacityMin, -221);
+    opacityMinProp->setDisplayLabel(QStringLiteral("Opacity Min"));
+    opacityMinProp->setSoftRange(0.0, 1.0);
+    opacityMinProp->setStep(0.01);
+    particleLookGroup.addProperty(opacityMinProp);
+
+    auto opacityMaxProp = makeProp(QStringLiteral("particle.particle.opacityMax"), ArtifactCore::PropertyType::Float, emitter.opacityMax, -220);
+    opacityMaxProp->setDisplayLabel(QStringLiteral("Opacity Max"));
+    opacityMaxProp->setSoftRange(0.0, 1.0);
+    opacityMaxProp->setStep(0.01);
+    particleLookGroup.addProperty(opacityMaxProp);
+
+    auto opacityMidMinProp = makeProp(QStringLiteral("particle.particle.opacityMidMin"), ArtifactCore::PropertyType::Float, emitter.opacityMidMin, -219);
+    opacityMidMinProp->setDisplayLabel(QStringLiteral("Opacity Mid Min"));
+    opacityMidMinProp->setSoftRange(0.0, 1.0);
+    opacityMidMinProp->setStep(0.01);
+    particleLookGroup.addProperty(opacityMidMinProp);
+
+    auto opacityMidMaxProp = makeProp(QStringLiteral("particle.particle.opacityMidMax"), ArtifactCore::PropertyType::Float, emitter.opacityMidMax, -218);
+    opacityMidMaxProp->setDisplayLabel(QStringLiteral("Opacity Mid Max"));
+    opacityMidMaxProp->setSoftRange(0.0, 1.0);
+    opacityMidMaxProp->setStep(0.01);
+    particleLookGroup.addProperty(opacityMidMaxProp);
+
+    auto opacityMidPosProp = makeProp(QStringLiteral("particle.particle.opacityMidPosition"), ArtifactCore::PropertyType::Float, emitter.opacityMidPosition, -217);
+    opacityMidPosProp->setDisplayLabel(QStringLiteral("Opacity Mid Pos"));
+    opacityMidPosProp->setSoftRange(0.0, 1.0);
+    opacityMidPosProp->setStep(0.01);
+    particleLookGroup.addProperty(opacityMidPosProp);
+
+    auto opacityEndMinProp = makeProp(QStringLiteral("particle.particle.opacityEndMin"), ArtifactCore::PropertyType::Float, emitter.opacityEndMin, -216);
+    opacityEndMinProp->setDisplayLabel(QStringLiteral("Opacity End Min"));
+    opacityEndMinProp->setSoftRange(0.0, 1.0);
+    opacityEndMinProp->setStep(0.01);
+    particleLookGroup.addProperty(opacityEndMinProp);
+
+    auto opacityEndMaxProp = makeProp(QStringLiteral("particle.particle.opacityEndMax"), ArtifactCore::PropertyType::Float, emitter.opacityEndMax, -215);
+    opacityEndMaxProp->setDisplayLabel(QStringLiteral("Opacity End Max"));
+    opacityEndMaxProp->setSoftRange(0.0, 1.0);
+    opacityEndMaxProp->setStep(0.01);
+    particleLookGroup.addProperty(opacityEndMaxProp);
+
+    auto colorStartProp = makeProp(QStringLiteral("particle.particle.colorStart"), ArtifactCore::PropertyType::Color, emitter.colorStart, -214);
+    colorStartProp->setDisplayLabel(QStringLiteral("Color Start"));
+    particleLookGroup.addProperty(colorStartProp);
+
+    auto colorMidProp = makeProp(QStringLiteral("particle.particle.colorMid"), ArtifactCore::PropertyType::Color, emitter.colorMid, -213);
+    colorMidProp->setDisplayLabel(QStringLiteral("Color Mid"));
+    particleLookGroup.addProperty(colorMidProp);
+
+    auto colorMidPosProp = makeProp(QStringLiteral("particle.particle.colorMidPosition"), ArtifactCore::PropertyType::Float, emitter.colorMidPosition, -212);
+    colorMidPosProp->setDisplayLabel(QStringLiteral("Color Mid Pos"));
+    colorMidPosProp->setSoftRange(0.0, 1.0);
+    colorMidPosProp->setStep(0.01);
+    particleLookGroup.addProperty(colorMidPosProp);
+
+    auto colorEndProp = makeProp(QStringLiteral("particle.particle.colorEnd"), ArtifactCore::PropertyType::Color, emitter.colorEnd, -211);
+    colorEndProp->setDisplayLabel(QStringLiteral("Color End"));
+    particleLookGroup.addProperty(colorEndProp);
+
+    groups.push_back(particleLookGroup);
+
+    ArtifactCore::PropertyGroup physicsGroup(QStringLiteral("Physics"));
+    auto dragProp = makeProp(QStringLiteral("particle.physics.drag"), ArtifactCore::PropertyType::Float, emitter.drag, -212);
+    dragProp->setDisplayLabel(QStringLiteral("Air"));
+    dragProp->setSoftRange(0.0, 10.0);
+    dragProp->setStep(0.01);
+    physicsGroup.addProperty(dragProp);
+
+    auto gravityXProp = makeProp(QStringLiteral("particle.physics.gravityX"), ArtifactCore::PropertyType::Float, emitter.gravity.x(), -211);
+    gravityXProp->setDisplayLabel(QStringLiteral("Gravity X"));
+    gravityXProp->setUnit(QStringLiteral("px/s2"));
+    gravityXProp->setSoftRange(-5000.0, 5000.0);
+    physicsGroup.addProperty(gravityXProp);
+
+    auto gravityYProp = makeProp(QStringLiteral("particle.physics.gravityY"), ArtifactCore::PropertyType::Float, emitter.gravity.y(), -210);
+    gravityYProp->setDisplayLabel(QStringLiteral("Gravity Y"));
+    gravityYProp->setUnit(QStringLiteral("px/s2"));
+    gravityYProp->setSoftRange(-5000.0, 5000.0);
+    physicsGroup.addProperty(gravityYProp);
+
+    auto gravityZProp = makeProp(QStringLiteral("particle.physics.gravityZ"), ArtifactCore::PropertyType::Float, emitter.gravity.z(), -209);
+    gravityZProp->setDisplayLabel(QStringLiteral("Gravity Z"));
+    gravityZProp->setUnit(QStringLiteral("px/s2"));
+    gravityZProp->setSoftRange(-5000.0, 5000.0);
+    physicsGroup.addProperty(gravityZProp);
+
+    auto windDirectionXProp = makeProp(QStringLiteral("particle.physics.windDirectionX"), ArtifactCore::PropertyType::Float, emitter.windDirection.x(), -208);
+    windDirectionXProp->setDisplayLabel(QStringLiteral("Wind Dir X"));
+    windDirectionXProp->setSoftRange(-1.0, 1.0);
+    windDirectionXProp->setStep(0.01);
+    physicsGroup.addProperty(windDirectionXProp);
+
+    auto windDirectionYProp = makeProp(QStringLiteral("particle.physics.windDirectionY"), ArtifactCore::PropertyType::Float, emitter.windDirection.y(), -207);
+    windDirectionYProp->setDisplayLabel(QStringLiteral("Wind Dir Y"));
+    windDirectionYProp->setSoftRange(-1.0, 1.0);
+    windDirectionYProp->setStep(0.01);
+    physicsGroup.addProperty(windDirectionYProp);
+
+    auto windDirectionZProp = makeProp(QStringLiteral("particle.physics.windDirectionZ"), ArtifactCore::PropertyType::Float, emitter.windDirection.z(), -206);
+    windDirectionZProp->setDisplayLabel(QStringLiteral("Wind Dir Z"));
+    windDirectionZProp->setSoftRange(-1.0, 1.0);
+    windDirectionZProp->setStep(0.01);
+    physicsGroup.addProperty(windDirectionZProp);
+
+    auto windStrengthProp = makeProp(QStringLiteral("particle.physics.windStrength"), ArtifactCore::PropertyType::Float, emitter.windStrength, -205);
+    windStrengthProp->setDisplayLabel(QStringLiteral("Wind Strength"));
+    windStrengthProp->setUnit(QStringLiteral("px/s2"));
+    windStrengthProp->setSoftRange(0.0, 5000.0);
+    physicsGroup.addProperty(windStrengthProp);
+
+    auto turbulenceFrequencyProp = makeProp(QStringLiteral("particle.physics.turbulenceFrequency"), ArtifactCore::PropertyType::Float, emitter.turbulenceFrequency, -204);
+    turbulenceFrequencyProp->setDisplayLabel(QStringLiteral("Turbulence Freq"));
+    turbulenceFrequencyProp->setSoftRange(0.0, 1.0);
+    turbulenceFrequencyProp->setStep(0.001);
+    physicsGroup.addProperty(turbulenceFrequencyProp);
+
+    auto turbulenceAmplitudeProp = makeProp(QStringLiteral("particle.physics.turbulenceAmplitude"), ArtifactCore::PropertyType::Float, emitter.turbulenceAmplitude, -203);
+    turbulenceAmplitudeProp->setDisplayLabel(QStringLiteral("Turbulence Amp"));
+    turbulenceAmplitudeProp->setUnit(QStringLiteral("px/s2"));
+    turbulenceAmplitudeProp->setSoftRange(0.0, 5000.0);
+    turbulenceAmplitudeProp->setStep(0.1);
+    physicsGroup.addProperty(turbulenceAmplitudeProp);
+
+    auto turbulenceEvolutionProp = makeProp(QStringLiteral("particle.physics.turbulenceEvolution"), ArtifactCore::PropertyType::Float, emitter.turbulenceEvolution, -202);
+    turbulenceEvolutionProp->setDisplayLabel(QStringLiteral("Turbulence Evol"));
+    turbulenceEvolutionProp->setSoftRange(-1000.0, 1000.0);
+    turbulenceEvolutionProp->setStep(0.1);
+    physicsGroup.addProperty(turbulenceEvolutionProp);
+    groups.push_back(physicsGroup);
+
+    ArtifactCore::PropertyGroup auxGroup(QStringLiteral("Aux"));
+    auto auxEnabledProp = makeProp(QStringLiteral("particle.aux.enabled"), ArtifactCore::PropertyType::Boolean, emitter.auxEnabled, -211);
+    auxEnabledProp->setDisplayLabel(QStringLiteral("Enable Aux"));
+    auxGroup.addProperty(auxEnabledProp);
+
+    auto auxTriggerProp = makeProp(QStringLiteral("particle.aux.trigger"), ArtifactCore::PropertyType::Integer, static_cast<int>(emitter.auxTrigger), -210);
+    auxTriggerProp->setDisplayLabel(QStringLiteral("Trigger"));
+    auxTriggerProp->setTooltip(QStringLiteral("0=Trails, 1=Birth, 2=Death"));
+    auxGroup.addProperty(auxTriggerProp);
+
+    auto auxCountProp = makeProp(QStringLiteral("particle.aux.count"), ArtifactCore::PropertyType::Integer, emitter.auxCount, -209);
+    auxCountProp->setDisplayLabel(QStringLiteral("Count"));
+    auxCountProp->setHardRange(0, 256);
+    auxCountProp->setSoftRange(0, 32);
+    auxGroup.addProperty(auxCountProp);
+
+    auto auxIntervalProp = makeProp(QStringLiteral("particle.aux.interval"), ArtifactCore::PropertyType::Float, emitter.auxInterval, -208);
+    auxIntervalProp->setDisplayLabel(QStringLiteral("Interval"));
+    auxIntervalProp->setUnit(QStringLiteral("s"));
+    auxIntervalProp->setSoftRange(0.01, 2.0);
+    auxIntervalProp->setStep(0.01);
+    auxGroup.addProperty(auxIntervalProp);
+
+    auto auxLifeScaleProp = makeProp(QStringLiteral("particle.aux.lifeScale"), ArtifactCore::PropertyType::Float, emitter.auxLifeScale, -207);
+    auxLifeScaleProp->setDisplayLabel(QStringLiteral("Life Scale"));
+    auxLifeScaleProp->setSoftRange(0.05, 4.0);
+    auxLifeScaleProp->setStep(0.01);
+    auxGroup.addProperty(auxLifeScaleProp);
+
+    auto auxSizeScaleProp = makeProp(QStringLiteral("particle.aux.sizeScale"), ArtifactCore::PropertyType::Float, emitter.auxSizeScale, -206);
+    auxSizeScaleProp->setDisplayLabel(QStringLiteral("Size Scale"));
+    auxSizeScaleProp->setSoftRange(0.05, 4.0);
+    auxSizeScaleProp->setStep(0.01);
+    auxGroup.addProperty(auxSizeScaleProp);
+
+    auto auxOpacityScaleProp = makeProp(QStringLiteral("particle.aux.opacityScale"), ArtifactCore::PropertyType::Float, emitter.auxOpacityScale, -205);
+    auxOpacityScaleProp->setDisplayLabel(QStringLiteral("Opacity Scale"));
+    auxOpacityScaleProp->setSoftRange(0.0, 2.0);
+    auxOpacityScaleProp->setStep(0.01);
+    auxGroup.addProperty(auxOpacityScaleProp);
+
+    auto auxVelocityScaleProp = makeProp(QStringLiteral("particle.aux.velocityScale"), ArtifactCore::PropertyType::Float, emitter.auxVelocityScale, -204);
+    auxVelocityScaleProp->setDisplayLabel(QStringLiteral("Velocity Scale"));
+    auxVelocityScaleProp->setSoftRange(0.0, 4.0);
+    auxVelocityScaleProp->setStep(0.01);
+    auxGroup.addProperty(auxVelocityScaleProp);
+    groups.push_back(auxGroup);
     return groups;
 }
 
 bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, const QVariant& value)
 {
+    auto applyPrimaryEmitterValue = [this](const std::function<void(EmitterParams&)>& mutator) {
+        if (!impl_->applyPrimaryEmitterParams(mutator)) {
+            return false;
+        }
+        clearFrameCache();
+        Q_EMIT particleSystemChanged();
+        Q_EMIT changed();
+        return true;
+    };
+
     if (propertyPath == QStringLiteral("particle.playing")) {
         value.toBool() ? play() : pause();
         Q_EMIT changed();
@@ -1125,6 +2003,432 @@ bool ArtifactParticleLayer::setLayerPropertyValue(const QString& propertyPath, c
         setRenderSettings(rs);
         Q_EMIT changed();
         return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.softParticles")) {
+        auto rs = renderSettings();
+        rs.softParticles = value.toBool();
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.softParticleDistance")) {
+        auto rs = renderSettings();
+        rs.softParticleDistance = std::max(0.0f, static_cast<float>(value.toDouble()));
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.stretchEnabled")) {
+        auto rs = renderSettings();
+        rs.stretchEnabled = value.toBool();
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.render.stretchFactor")) {
+        auto rs = renderSettings();
+        rs.stretchFactor = std::max(0.0f, static_cast<float>(value.toDouble()));
+        setRenderSettings(rs);
+        Q_EMIT changed();
+        return true;
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.shape")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.shape = static_cast<EmitterShape>(value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.mode")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.mode = static_cast<EmissionMode>(value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.positionX")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.position.setX(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.positionY")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.position.setY(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.rotationX")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.rotation.setX(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.rotationY")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.rotation.setY(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.rotationZ")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.rotation.setZ(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.rotationSpeedMin")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.rotationSpeedMin = static_cast<float>(value.toDouble());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.rotationSpeedMax")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.rotationSpeedMax = static_cast<float>(value.toDouble());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.directionX")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.direction.setX(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.directionY")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.direction.setY(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.directionZ")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.direction.setZ(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.radius")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.radius = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.width")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.width = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.height")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.height = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.depth")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.depth = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.lineLength")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.lineLength = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.rate")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.rate = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.burstCount")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.burstCount = std::max(1, value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.burstInterval")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.burstInterval = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.texturePath")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.texturePath = value.toString();
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.textureRows")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.textureRows = std::max(1, value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.textureCols")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.textureCols = std::max(1, value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.randomFrame")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.randomFrame = value.toBool();
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.startFrame")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.startFrame = std::max(0, value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.frameCount")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.frameCount = std::max(1, value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.frameRate")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.frameRate = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.mass")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.mass = std::max(0.01f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.inheritVelocity")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.inheritVelocity = value.toBool();
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.worldSpace")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.worldSpace = value.toBool();
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.preWarm")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.preWarm = value.toBool();
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.lifeMin") ||
+        propertyPath == QStringLiteral("particle.particle.lifeMin")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.lifeMin = std::max(0.01f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.lifeMax") ||
+        propertyPath == QStringLiteral("particle.particle.lifeMax")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.lifeMax = std::max(0.01f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.speedMin") ||
+        propertyPath == QStringLiteral("particle.particle.speedMin")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.speedMin = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.speedMax") ||
+        propertyPath == QStringLiteral("particle.particle.speedMax")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.speedMax = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.velocityRandomX")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.velocityRandom.setX(std::max(0.0f, static_cast<float>(value.toDouble())));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.velocityRandomY")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.velocityRandom.setY(std::max(0.0f, static_cast<float>(value.toDouble())));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.velocityRandomZ")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.velocityRandom.setZ(std::max(0.0f, static_cast<float>(value.toDouble())));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.directionSpread")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.directionSpread = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 360.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.scaleMin") ||
+        propertyPath == QStringLiteral("particle.particle.scaleMin")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.scaleMin = std::max(0.01f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.scaleMax") ||
+        propertyPath == QStringLiteral("particle.particle.scaleMax")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.scaleMax = std::max(0.01f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.scaleMidMin")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.scaleMidMin = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.scaleMidMax")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.scaleMidMax = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.scaleMidPosition")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.scaleMidPosition = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.scaleEndMin") ||
+        propertyPath == QStringLiteral("particle.particle.scaleEndMin")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.scaleEndMin = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.scaleEndMax") ||
+        propertyPath == QStringLiteral("particle.particle.scaleEndMax")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.scaleEndMax = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.opacityMin") ||
+        propertyPath == QStringLiteral("particle.particle.opacityMin")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.opacityMin = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.opacityMax") ||
+        propertyPath == QStringLiteral("particle.particle.opacityMax")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.opacityMax = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.opacityMidMin")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.opacityMidMin = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.opacityMidMax")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.opacityMidMax = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.opacityMidPosition")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.opacityMidPosition = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.opacityEndMin")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.opacityEndMin = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.opacityEndMax")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.opacityEndMax = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.drag") ||
+        propertyPath == QStringLiteral("particle.physics.drag")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.drag = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.gravityX")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.gravity.setX(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.gravityY")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.gravity.setY(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.gravityZ")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.gravity.setZ(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.windDirectionX")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.windDirection.setX(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.windDirectionY")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.windDirection.setY(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.windDirectionZ")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.windDirection.setZ(static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.windStrength")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.windStrength = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.turbulenceFrequency")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.turbulenceFrequency = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.turbulenceAmplitude")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.turbulenceAmplitude = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.physics.turbulenceEvolution")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.turbulenceEvolution = static_cast<float>(value.toDouble());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.maxParticles")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.maxParticles = std::max(1, value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.aux.enabled")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.auxEnabled = value.toBool();
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.aux.trigger")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.auxTrigger = static_cast<AuxTriggerMode>(value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.aux.count")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.auxCount = std::max(0, value.toInt());
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.aux.interval")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.auxInterval = std::max(0.001f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.aux.lifeScale")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.auxLifeScale = std::max(0.01f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.aux.sizeScale")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.auxSizeScale = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.aux.opacityScale")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.auxOpacityScale = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.aux.velocityScale")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.auxVelocityScale = std::max(0.0f, static_cast<float>(value.toDouble()));
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.colorStart") ||
+        propertyPath == QStringLiteral("particle.particle.colorStart")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.colorStart = value.value<QColor>();
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.colorMid")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.colorMid = value.value<QColor>();
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.particle.colorMidPosition")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.colorMidPosition = std::clamp(static_cast<float>(value.toDouble()), 0.0f, 1.0f);
+        });
+    }
+    if (propertyPath == QStringLiteral("particle.emitter.colorEnd") ||
+        propertyPath == QStringLiteral("particle.particle.colorEnd")) {
+        return applyPrimaryEmitterValue([&](EmitterParams& params) {
+            params.colorEnd = value.value<QColor>();
+        });
     }
     return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
 }

@@ -40,46 +40,46 @@ W_OBJECT_IMPL(ColorSwatchDialog)
 
 struct SwatchEntry {
     QString name;
-    QColor  color;
+    FloatColor  color;
     bool    isChecker    = false;
     int     checkerDensity = 1;
 };
 
 static const std::vector<SwatchEntry> kBasicColors = {
-    { "ホワイト",     QColor("#FFFFFF") },
-    { "ライトグレー1",QColor("#DDDDDD") },
-    { "ライトグレー2",QColor("#AAAAAA") },
-    { "グレー",       QColor("#777777") },
-    { "ダークグレー", QColor("#444444") },
-    { "ブラック",     QColor("#000000") },
-    { "レッド",       QColor("#FF0000") },
-    { "グリーン",     QColor("#00FF00") },
-    { "ブルー",       QColor("#0000FF") },
-    { "シアン",       QColor("#00FFFF") },
-    { "マゼンタ",     QColor("#FF00FF") },
-    { "イエロー",     QColor("#FFFF00") },
+    { "ホワイト",     FloatColor(1.0f, 1.0f, 1.0f, 1.0f) },
+    { "ライトグレー1",FloatColor(0.866f, 0.866f, 0.866f, 1.0f) },
+    { "ライトグレー2",FloatColor(0.667f, 0.667f, 0.667f, 1.0f) },
+    { "グレー",       FloatColor(0.467f, 0.467f, 0.467f, 1.0f) },
+    { "ダークグレー", FloatColor(0.267f, 0.267f, 0.267f, 1.0f) },
+    { "ブラック",     FloatColor(0.0f, 0.0f, 0.0f, 1.0f) },
+    { "レッド",       FloatColor(1.0f, 0.0f, 0.0f, 1.0f) },
+    { "グリーン",     FloatColor(0.0f, 1.0f, 0.0f, 1.0f) },
+    { "ブルー",       FloatColor(0.0f, 0.0f, 1.0f, 1.0f) },
+    { "シアン",       FloatColor(0.0f, 1.0f, 1.0f, 1.0f) },
+    { "マゼンタ",     FloatColor(1.0f, 0.0f, 1.0f, 1.0f) },
+    { "イエロー",     FloatColor(1.0f, 1.0f, 0.0f, 1.0f) },
 };
 
 static const std::vector<SwatchEntry> kVideoColors = {
-    { "ホワイト",       QColor("#FFFFFF") },
-    { "ブラック",       QColor("#000000") },
-    { "レッド",         QColor("#FF0000") },
-    { "ブルー",         QColor("#0000FF") },
-    { "スキン",         QColor("#FFCC99") },
-    { "ブラウン",       QColor("#996633") },
-    { "ライトブルー",   QColor("#66AAFF") },
-    { "グリーン",       QColor("#009900") },
-    { "オレンジ",       QColor("#FF8800") },
-    { "シアン",         QColor("#00CCFF") },
+    { "ホワイト",       FloatColor(1.0f, 1.0f, 1.0f, 1.0f) },
+    { "ブラック",       FloatColor(0.0f, 0.0f, 0.0f, 1.0f) },
+    { "レッド",         FloatColor(1.0f, 0.0f, 0.0f, 1.0f) },
+    { "ブルー",         FloatColor(0.0f, 0.0f, 1.0f, 1.0f) },
+    { "スキン",         FloatColor(1.0f, 0.8f, 0.6f, 1.0f) },
+    { "ブラウン",       FloatColor(0.6f, 0.4f, 0.2f, 1.0f) },
+    { "ライトブルー",   FloatColor(0.4f, 0.67f, 1.0f, 1.0f) },
+    { "グリーン",       FloatColor(0.0f, 0.6f, 0.0f, 1.0f) },
+    { "オレンジ",       FloatColor(1.0f, 0.53f, 0.0f, 1.0f) },
+    { "シアン",         FloatColor(0.0f, 0.8f, 1.0f, 1.0f) },
 };
 
 static const std::vector<SwatchEntry> kTransparentColors = {
-    { "透明1", QColor(255,255,255,0),   true, 1 },
-    { "透明2", QColor(255,255,255,64),  true, 2 },
-    { "透明3", QColor(200,230,255,128), true, 3 },
-    { "透明4", QColor(255,220,180,96),  true, 4 },
-    { "透明5", QColor(180,255,180,64),  true, 5 },
-    { "透明6", QColor(255,255,255,32),  true, 6 },
+    { "透明1", FloatColor(1.0f, 1.0f, 1.0f, 0.0f),   true, 1 },
+    { "透明2", FloatColor(1.0f, 1.0f, 1.0f, 0.25f),  true, 2 },
+    { "透明3", FloatColor(0.78f, 0.90f, 1.0f, 0.50f), true, 3 },
+    { "透明4", FloatColor(1.0f, 0.86f, 0.71f, 0.38f),  true, 4 },
+    { "透明5", FloatColor(0.71f, 1.0f, 0.71f, 0.25f),  true, 5 },
+    { "透明6", FloatColor(1.0f, 1.0f, 1.0f, 0.13f),  true, 6 },
 };
 
 // ---------------------------------------------------------------------------
@@ -120,9 +120,9 @@ protected:
                 }
             }
             // Color overlay
-            p.fillRect(r, entry.color);
+            p.fillRect(r, QColor::fromRgbF(entry.color.r(), entry.color.g(), entry.color.b(), entry.color.a()));
         } else {
-            p.fillRect(r, entry.color);
+            p.fillRect(r, QColor::fromRgbF(entry.color.r(), entry.color.g(), entry.color.b(), entry.color.a()));
         }
 
         // Border
@@ -178,7 +178,7 @@ public:
 
     void updateInfoPanel(const SwatchEntry& e)
     {
-        QColor c = e.color;
+        QColor c = QColor::fromRgbF(e.color.r(), e.color.g(), e.color.b(), e.color.a());
         QString hex = c.name().toUpper();
         float a = c.alphaF();
         float r = c.redF();

@@ -55,6 +55,13 @@ export namespace Artifact {
   Unknown
  };
 
+ enum class CompositionCompareMode {
+  Off,
+  A,
+  B,
+  Diff
+ };
+
  class CompositionRenderController : public QObject
  {
   W_OBJECT(CompositionRenderController)
@@ -111,6 +118,12 @@ void setShowEffectHitboxOverlay(bool show);
 bool isShowEffectHitboxOverlay() const;
 void setShowDensityHeatmapOverlay(bool show);
 bool isShowDensityHeatmapOverlay() const;
+void setCompareMode(CompositionCompareMode mode);
+CompositionCompareMode compareMode() const;
+void setReferenceFrame(int frame);
+int referenceFrame() const;
+void setReferencePinned(bool pinned);
+bool isReferencePinned() const;
 bool setSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool removeSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool setSelectedLayerMotionPathInterpolationAtCurrentFrame(int interpolationType);

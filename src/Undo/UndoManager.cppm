@@ -51,6 +51,7 @@ import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
 import Animation.Transform3D;
 import Time.Rational;
+import Artifact.Layers.Selection.Manager;
 
 namespace Artifact {
 
@@ -266,6 +267,189 @@ QString ChangeLayerMatteReferencesCommand::label() const {
     return QStringLiteral("Edit Track Mattes");
 }
 
+// --- AlignLayersUndoCommand ---
+AlignLayersUndoCommand::AlignLayersUndoCommand(const std::vector<AlignLayerSnapshot>& snapshots, const QString& label)
+    : snapshots_(snapshots), label_(label) {}
+
+void AlignLayersUndoCommand::undo() {
+    for (const auto& s : snapshots_) {
+        auto* sel = ArtifactLayerSelectionManager::instance();
+        if (!sel) continue;
+        auto comp = sel->activeComposition();
+        if (!comp) continue;
+        auto layer = comp->layerById(LayerID(s.layerId));
+        if (!layer) continue;
+        layer->transform3D().setPosition(RationalTime(0, 30000), s.beforeX, s.beforeY);
+        layer->changed();
+    }
+    if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+}
+
+void AlignLayersUndoCommand::redo() {
+    for (const auto& s : snapshots_) {
+        auto* sel = ArtifactLayerSelectionManager::instance();
+        if (!sel) continue;
+        auto comp = sel->activeComposition();
+        if (!comp) continue;
+        auto layer = comp->layerById(LayerID(s.layerId));
+        if (!layer) continue;
+        layer->transform3D().setPosition(RationalTime(0, 30000), s.afterX, s.afterY);
+        layer->changed();
+    }
+    if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+}
+
+QString AlignLayersUndoCommand::label() const { return label_; }
+
+// --- SetLayerVisibilityCommand ---
+SetLayerVisibilityCommand::SetLayerVisibilityCommand(ArtifactAbstractLayerPtr layer, bool visible)
+    : layer_(layer), oldVisible_(layer ? layer->isVisible() : true), newVisible_(visible) {}
+
+void SetLayerVisibilityCommand::undo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setVisible(oldVisible_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+void SetLayerVisibilityCommand::redo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setVisible(newVisible_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+QString SetLayerVisibilityCommand::label() const {
+    return newVisible_ ? QStringLiteral("Show Layer") : QStringLiteral("Hide Layer");
+}
+
+// --- SetLayerLockCommand ---
+SetLayerLockCommand::SetLayerLockCommand(ArtifactAbstractLayerPtr layer, bool locked)
+    : layer_(layer), oldLocked_(layer ? layer->isLocked() : false), newLocked_(locked) {}
+
+void SetLayerLockCommand::undo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setLocked(oldLocked_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+void SetLayerLockCommand::redo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setLocked(newLocked_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+QString SetLayerLockCommand::label() const {
+    return newLocked_ ? QStringLiteral("Lock Layer") : QStringLiteral("Unlock Layer");
+}
+
+// --- SetLayerSoloCommand ---
+SetLayerSoloCommand::SetLayerSoloCommand(ArtifactAbstractLayerPtr layer, bool solo)
+    : layer_(layer), oldSolo_(layer ? layer->isSolo() : false), newSolo_(solo) {}
+
+void SetLayerSoloCommand::undo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setSolo(oldSolo_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+void SetLayerSoloCommand::redo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setSolo(newSolo_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+QString SetLayerSoloCommand::label() const {
+    return newSolo_ ? QStringLiteral("Solo Layer") : QStringLiteral("Unsolo Layer");
+}
+
+// --- SetLayerShyCommand ---
+SetLayerShyCommand::SetLayerShyCommand(ArtifactAbstractLayerPtr layer, bool shy)
+    : layer_(layer), oldShy_(layer ? layer->isShy() : false), newShy_(shy) {}
+
+void SetLayerShyCommand::undo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setShy(oldShy_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+void SetLayerShyCommand::redo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setShy(newShy_);
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+QString SetLayerShyCommand::label() const {
+    return newShy_ ? QStringLiteral("Shy Layer") : QStringLiteral("Unshy Layer");
+}
+
+// --- ChangeLayerBlendModeCommand ---
+ChangeLayerBlendModeCommand::ChangeLayerBlendModeCommand(ArtifactAbstractLayerPtr layer, LAYER_BLEND_TYPE newMode)
+    : layer_(layer), oldMode_(layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL), newMode_(newMode) {}
+
+void ChangeLayerBlendModeCommand::undo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setBlendMode(oldMode_);
+        layer->changed();
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+void ChangeLayerBlendModeCommand::redo() {
+    auto layer = layer_.lock();
+    if (layer) {
+        layer->setBlendMode(newMode_);
+        layer->changed();
+        if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+    }
+}
+
+QString ChangeLayerBlendModeCommand::label() const {
+    return QStringLiteral("Change Blend Mode");
+}
+
+// --- MacroUndoCommand ---
+MacroUndoCommand::MacroUndoCommand(const QString& label)
+    : label_(label) {}
+
+void MacroUndoCommand::addChild(std::unique_ptr<UndoCommand> child) {
+    if (child) {
+        children_.push_back(std::move(child));
+    }
+}
+
+void MacroUndoCommand::undo() {
+    for (auto it = children_.rbegin(); it != children_.rend(); ++it) {
+        if (*it) (*it)->undo();
+    }
+    if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+}
+
+void MacroUndoCommand::redo() {
+    for (auto& child : children_) {
+        if (child) child->redo();
+    }
+    if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+}
+
+QString MacroUndoCommand::label() const {
+    return label_;
+}
 
 // --- UndoManager ---
 UndoManager::UndoManager(): impl_(new Impl()) {}

@@ -15,6 +15,8 @@ import Artifact.Layer.Null;
 import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Particle;
+import Artifact.Layer.FormParticle;
+import Artifact.Layer.Procedural3D;
 import Artifact.Layer.Shape;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.AdjustableLayer;
@@ -125,6 +127,12 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
   }
   case LayerType::Particle:
    ptr = createParticleLayer(QStringLiteral("fire"));
+   break;
+  case LayerType::FormParticle:
+   ptr = createFormParticleLayer(QStringLiteral("dotGrid"));
+   break;
+  case LayerType::Procedural3D:
+   ptr = createTerrainLayer();
    break;
   case LayerType::Audio: {
    auto* audioLayer = new ArtifactAudioLayer();
@@ -241,6 +249,16 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
       } else if (json.value("type").toString() == QStringLiteral("MaterialContainer") ||
                  json.value("layerType").toString() == QStringLiteral("MaterialContainer")) {
           type = LayerType::MaterialContainer;
+      } else if (json.value("type").toString() == QStringLiteral("FormParticleLayer") ||
+                 json.value("layerType").toString() == QStringLiteral("FormParticleLayer") ||
+                 json.value("layerType").toString() == QStringLiteral("FormParticle") ||
+                 json.contains("formParticle")) {
+          type = LayerType::FormParticle;
+      } else if (json.value("type").toString() == QStringLiteral("Procedural3DLayer") ||
+                 json.value("layerType").toString() == QStringLiteral("Procedural3DLayer") ||
+                 json.value("isProcedural3DLayer").toBool(false) ||
+                 json.contains("procedural3D")) {
+          type = LayerType::Procedural3D;
       }
       QString name = json.value("name").toString("Layer");
   ArtifactLayerFactory factory;

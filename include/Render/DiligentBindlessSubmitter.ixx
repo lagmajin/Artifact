@@ -6,7 +6,6 @@ module;
 #include <PipelineState.h>
 #include <RenderDevice.h>
 #include <RefCntAutoPtr.hpp>
-#include <Sampler.h>
 #include <ShaderResourceBinding.h>
 #include <ShaderResourceVariable.h>
 #include <QString>
@@ -62,6 +61,7 @@ private:
     bool ensureTextureIndex(ITextureView* srv, Uint32& index);
     void flushSpriteBatch(IDeviceContext* ctx, ITextureView* rtv);
     bool submitSprite(const SpritePkt& pkt, IDeviceContext* ctx, ITextureView* rtv);
+    bool submitSpriteXform(const SpriteXformPkt& pkt, IDeviceContext* ctx, ITextureView* rtv);
 
     DiligentImmediateSubmitter fallback_;
     RefCntAutoPtr<IRenderDevice> device_;
@@ -69,7 +69,6 @@ private:
     RefCntAutoPtr<IShaderResourceBinding> spriteSrb_;
     RefCntAutoPtr<IBuffer> spriteVertexBuffer_;
     RefCntAutoPtr<IBuffer> spriteTransformBuffer_;
-    RefCntAutoPtr<ISampler> spriteSampler_;
     IShaderResourceVariable* spriteTexturesVar_ = nullptr;
 
     std::vector<BindlessSpriteVertex> spriteVertices_;
@@ -77,6 +76,7 @@ private:
     std::unordered_map<ITextureView*, Uint32> textureIndices_;
     ArtifactCore::RenderCostStats* frameCostStats_ = nullptr;
     float2 spriteBatchScreenSize_ = {0.0f, 0.0f};
+    bool spriteBatchUsesNdc_ = false;
     bool supported_ = false;
 };
 

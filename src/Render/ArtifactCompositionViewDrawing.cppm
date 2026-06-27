@@ -33,6 +33,7 @@ import Artifact.Layer.Text;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Particle;
+import Artifact.Layer.FormParticle;
 import Artifact.Layer.Composition;
 import Artifact.Layer.AdjustableLayer;
 import Artifact.Effect.Abstract;
@@ -266,7 +267,8 @@ QString buildLayerSurfaceCacheKey(ArtifactAbstractLayer* layer,
     return key;
   }
 
-  if (dynamic_cast<ArtifactParticleLayer*>(layer)) {
+  if (dynamic_cast<ArtifactParticleLayer*>(layer) ||
+      dynamic_cast<ArtifactFormParticleLayer*>(layer)) {
     // Particle layers are time-dependent and can change every frame even when
     // their size stays the same, so we avoid the generic surface cache.
     return QString();
@@ -602,6 +604,8 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     return;
   }
 
+  const bool layerCacheEnabled = layer->usesLayerCache();
+
   const QRectF localRect = layer->localBounds();
   if (!localRect.isValid() || localRect.width() <= 0.0 ||
       localRect.height() <= 0.0) {
@@ -638,7 +642,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
           ArtifactCore::ImageF32x4_RGBA processed;
           if (buildRasterizedSurfaceBuffer(layer, surface, &processed)) {
             processedBuffer = std::make_shared<ArtifactCore::ImageF32x4_RGBA>(processed);
-            if (!gpuTextureCacheManager || !layerUsesGpuTextureCacheForCompositionView(layer)) {
+            if (!layerCacheEnabled || !gpuTextureCacheManager || !layerUsesGpuTextureCacheForCompositionView(layer)) {
               surface = processed.toQImage();
             }
           }
@@ -650,7 +654,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
         entry.processedBuffer = processedBuffer;
         entry.processedSurface = surface;
         entry.frameNumber = cacheFrameNumber;
-        if (gpuTextureCacheManager && layerUsesGpuTextureCacheForCompositionView(layer)) {
+        if (layerCacheEnabled && gpuTextureCacheManager && layerUsesGpuTextureCacheForCompositionView(layer)) {
           if (entry.processedBuffer) {
             entry.gpuTextureHandle = gpuTextureCacheManager->acquireOrCreate(ownerId, cacheSignature, *entry.processedBuffer);
           } else {
@@ -690,7 +694,7 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       [&](const QMatrix4x4& instanceTransform, float instanceWeight) {
         const float finalOpacity = baseOpacity * instanceWeight;
 
-        if (gpuTextureCacheManager && cacheEntry && layerUsesGpuTextureCacheForCompositionView(layer)) {
+        if (layerCacheEnabled && gpuTextureCacheManager && cacheEntry && layerUsesGpuTextureCacheForCompositionView(layer)) {
           if (!gpuTextureCacheManager->isValid(cacheEntry->gpuTextureHandle)) {
             const QImage& uploadSurface =
                 cacheEntry->processedSurface.isNull() ? surface : cacheEntry->processedSurface;
@@ -930,14 +934,14 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
     }
     if (loaded) {
       frameBuffer = offlineRender
-          ? videoLayer->decodeFrameToImageBuffer(targetFrame)
+          ? videoLayer->decodeFrameToImageBuffer(static_cast<double>(targetFrame))
           : videoLayer->cachedFrameImageBuffer(targetFrame);
       usedBufferFallback = !frameBuffer.isEmpty();
     } else {
       reason = QStringLiteral("notLoaded");
     }
     if (frameBuffer.isEmpty() && loaded) {
-      frameBuffer = videoLayer->decodeFrameToImageBuffer(targetFrame);
+      frameBuffer = videoLayer->decodeFrameToImageBuffer(static_cast<double>(targetFrame));
       usedSyncFallback = !frameBuffer.isEmpty();
     }
     if (!frameBuffer.isEmpty()) {
@@ -1075,6 +1079,13 @@ void drawLayerForCompositionView(ArtifactAbstractLayer* layer,
       applySurfaceAndDraw(particleSurface, localRect, true);
       return;
     }
+  }
+
+  if (auto* formParticleLayer = dynamic_cast<ArtifactFormParticleLayer*>(layer)) {
+    if (renderer && renderer->isInitialized()) {
+      formParticleLayer->draw(renderer);
+    }
+    return;
   }
 
   if (layer->isAdjustmentLayer()) {

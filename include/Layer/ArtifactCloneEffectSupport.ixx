@@ -1,4 +1,5 @@
 module;
+#include <array>
 #include <utility>
 #include <algorithm>
 #include <cmath>
@@ -8,8 +9,11 @@ module;
 #include <vector>
 #include <Graphics/InstanceData.h>
 #include <QMatrix4x4>
+#include <QPointF>
+#include <QRectF>
 #include <QString>
 #include <QVariant>
+#include <QVector3D>
 
 export module Artifact.Layer.CloneEffectSupport;
 
@@ -24,7 +28,48 @@ class ArtifactAbstractLayer;
 struct CloneRenderInstance {
     QMatrix4x4 transform;
     float weight = 1.0f;
+    std::array<QPointF, 4> canvasCorners{};
+    QRectF canvasBounds;
 };
+
+inline void populateCloneInstanceGeometry(
+    const ArtifactAbstractLayer* layer,
+    std::vector<CloneRenderInstance>& instances)
+{
+    if (!layer) {
+        return;
+    }
+    const QRectF localBounds = layer->visualLocalBounds();
+    if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+        localBounds.height() <= 0.0) {
+        return;
+    }
+    const std::array<QPointF, 4> localCorners{
+        localBounds.topLeft(), localBounds.topRight(),
+        localBounds.bottomRight(), localBounds.bottomLeft()};
+    for (auto& instance : instances) {
+        for (std::size_t i = 0; i < localCorners.size(); ++i) {
+            const QPointF& point = localCorners[i];
+            const QVector3D mapped = instance.transform.map(
+                QVector3D(static_cast<float>(point.x()),
+                          static_cast<float>(point.y()), 0.0f));
+            instance.canvasCorners[i] =
+                QPointF(static_cast<qreal>(mapped.x()),
+                        static_cast<qreal>(mapped.y()));
+        }
+        qreal minX = instance.canvasCorners[0].x();
+        qreal maxX = minX;
+        qreal minY = instance.canvasCorners[0].y();
+        qreal maxY = minY;
+        for (std::size_t i = 1; i < instance.canvasCorners.size(); ++i) {
+            minX = std::min(minX, instance.canvasCorners[i].x());
+            maxX = std::max(maxX, instance.canvasCorners[i].x());
+            minY = std::min(minY, instance.canvasCorners[i].y());
+            maxY = std::max(maxY, instance.canvasCorners[i].y());
+        }
+        instance.canvasBounds = QRectF(minX, minY, maxX - minX, maxY - minY);
+    }
+}
 
 bool cloneComponentBoolProperty(const ArtifactAbstractLayer* layer,
                                 const QString& propertyPath);
@@ -34,6 +79,62 @@ int cloneComponentIntProperty(const ArtifactAbstractLayer* layer,
 float cloneComponentFloatProperty(const ArtifactAbstractLayer* layer,
                                     const QString& propertyPath,
                                     float fallback);
+
+inline void applyClonerComponentTransform(const ArtifactAbstractLayer* layer,
+                                          QMatrix4x4& cloneTransform)
+{
+    if (!layer) {
+        return;
+    }
+    for (int index = 0;; ++index) {
+        const QString prefix =
+            QStringLiteral("component.cloner.transforms.%1.").arg(index);
+        const auto enabledProperty = layer->getProperty(prefix + QStringLiteral("enabled"));
+        const auto nameProperty = layer->getProperty(prefix + QStringLiteral("name"));
+        const auto positionXProperty = layer->getProperty(prefix + QStringLiteral("positionX"));
+        if (!enabledProperty && !nameProperty && !positionXProperty) {
+            break;
+        }
+        const bool enabled = enabledProperty ? enabledProperty->getValue().toBool() : true;
+        if (!enabled) {
+            continue;
+        }
+        const float positionX = cloneComponentFloatProperty(
+            layer, prefix + QStringLiteral("positionX"), 0.0f);
+        const float positionY = cloneComponentFloatProperty(
+            layer, prefix + QStringLiteral("positionY"), 0.0f);
+        const float positionZ = cloneComponentFloatProperty(
+            layer, prefix + QStringLiteral("positionZ"), 0.0f);
+        const float rotationX = cloneComponentFloatProperty(
+            layer, prefix + QStringLiteral("rotationX"), 0.0f);
+        const float rotationY = cloneComponentFloatProperty(
+            layer, prefix + QStringLiteral("rotationY"), 0.0f);
+        const float rotationZ = cloneComponentFloatProperty(
+            layer, prefix + QStringLiteral("rotationZ"), 0.0f);
+        const float scaleX = cloneComponentFloatProperty(
+            layer, prefix + QStringLiteral("scaleX"), 1.0f);
+        const float scaleY = cloneComponentFloatProperty(
+            layer, prefix + QStringLiteral("scaleY"), 1.0f);
+        const float scaleZ = cloneComponentFloatProperty(
+            layer, prefix + QStringLiteral("scaleZ"), 1.0f);
+
+        if (positionX != 0.0f || positionY != 0.0f || positionZ != 0.0f) {
+            cloneTransform.translate(positionX, positionY, positionZ);
+        }
+        if (rotationX != 0.0f) {
+            cloneTransform.rotate(rotationX, 1.0f, 0.0f, 0.0f);
+        }
+        if (rotationY != 0.0f) {
+            cloneTransform.rotate(rotationY, 0.0f, 1.0f, 0.0f);
+        }
+        if (rotationZ != 0.0f) {
+            cloneTransform.rotate(rotationZ, 0.0f, 0.0f, 1.0f);
+        }
+        if (scaleX != 1.0f || scaleY != 1.0f || scaleZ != 1.0f) {
+            cloneTransform.scale(scaleX, scaleY, scaleZ);
+        }
+    }
+}
 int cloneComponentMode(const ArtifactAbstractLayer* layer);
 std::vector<CloneRenderInstance> clonerComponentInstances(
       const ArtifactAbstractLayer* layer,
@@ -50,6 +151,7 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
     }
 
     bool hasEnabledCloner = false;
+    std::vector<CloneRenderInstance> clonerInstances;
     for (const auto& effect : layer->getEffects()) {
         const auto cloner = std::dynamic_pointer_cast<ClonerGenerator>(effect);
         if (!cloner || !cloner->isEnabled()) {
@@ -58,32 +160,35 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
         hasEnabledCloner = true;
 
         const auto clones = cloner->generateCloneData();
-        instances.reserve(instances.size() + clones.size());
+        clonerInstances.reserve(clonerInstances.size() + clones.size());
         for (const auto& clone : clones) {
-            if (!clone.visible) {
+            if (!clone.visible || clone.transform.isIdentity()) {
                 continue;
             }
 
             CloneRenderInstance instance;
             instance.transform = baseTransform * clone.transform;
             instance.weight = std::clamp(clone.weight, 0.0f, 1.0f);
-            instances.push_back(instance);
+            clonerInstances.push_back(instance);
         }
     }
 
     if (hasEnabledCloner) {
-        if (instances.empty()) {
-            instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
-        }
+        instances.reserve(clonerInstances.size() + 1U);
+        instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
+        instances.insert(instances.end(), clonerInstances.begin(), clonerInstances.end());
+        populateCloneInstanceGeometry(layer, instances);
         return instances;
     }
 
     instances = clonerComponentInstances(layer, baseTransform);
     if (!instances.empty()) {
+        populateCloneInstanceGeometry(layer, instances);
         return instances;
     }
 
     instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
+    populateCloneInstanceGeometry(layer, instances);
     return instances;
 }
 
@@ -213,6 +318,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
               cloneTransform.translate(startPos.x() + spacingX * x,
                                        startPos.y() + spacingY * y,
                                        startPos.z() + spacingZ * z);
+              applyClonerComponentTransform(layer, cloneTransform);
               appendCloneInstance(cloneTransform, 1.0f);
             }
           }
@@ -233,6 +339,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
           cloneTransform.setToIdentity();
           cloneTransform.translate(std::cos(rad) * radius, std::sin(rad) * radius, 0.0f);
           cloneTransform.rotate(angle + rotationStep * static_cast<float>(i), 0.0f, 0.0f, 1.0f);
+          applyClonerComponentTransform(layer, cloneTransform);
           appendCloneInstance(cloneTransform,
                               1.0f - opacityDecay * static_cast<float>(i));
         }
@@ -269,6 +376,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
                 offsetZ * static_cast<float>(i) + unit(rng) * jitterZ * mix);
             cloneTransform.rotate(rotationStep * static_cast<float>(i) + unit(rng) * 30.0f * mix,
                                   0.0f, 0.0f, 1.0f);
+            applyClonerComponentTransform(layer, cloneTransform);
             appendCloneInstance(cloneTransform,
                                 1.0f - opacityDecay * static_cast<float>(i));
         }
@@ -286,7 +394,8 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
         const float opacityDecay = cloneComponentFloatProperty(
             layer, QStringLiteral("component.cloner.opacityDecay"), 0.0f);
         instances.reserve(static_cast<size_t>(count) + 1U);
-        for (int i = 0; i < count; ++i) {
+        for (int i = 1; i <= count; ++i) {
+            const int cloneIndex = i - 1;
             QMatrix4x4 cloneTransform;
             cloneTransform.setToIdentity();
             cloneTransform.translate(offsetX * static_cast<float>(i),
@@ -295,8 +404,9 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
             if (rotationStep != 0.0f) {
               cloneTransform.rotate(rotationStep * static_cast<float>(i), 0.0f, 0.0f, 1.0f);
             }
+            applyClonerComponentTransform(layer, cloneTransform);
             appendCloneInstance(cloneTransform,
-                                1.0f - opacityDecay * static_cast<float>(i));
+                                1.0f - opacityDecay * static_cast<float>(cloneIndex));
         }
     }
     return instances;

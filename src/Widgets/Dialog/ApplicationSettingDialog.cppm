@@ -118,6 +118,7 @@ public:
   QSpinBox *autoSaveIntervalSpinBox_;
   QCheckBox *showStartupDialogCheckBox_;
   QCheckBox *showPropertyResetButtonsCheckBox_;
+  QCheckBox *layerCacheEnabledCheckBox_;
   QSpinBox *menuBarFontScaleSpinBox_;
   QSpinBox *dockTabFontSizeSpinBox_;
   QComboBox *themeCombo_;
@@ -167,6 +168,12 @@ GeneralSettingPage::GeneralSettingPage(QWidget *parent)
       new QCheckBox("Show reset buttons in property panels", this);
   uiLayout->addWidget(impl_->showPropertyResetButtonsCheckBox_);
 
+  impl_->layerCacheEnabledCheckBox_ =
+      new QCheckBox("Enable layer cache", this);
+  impl_->layerCacheEnabledCheckBox_->setToolTip(
+      QStringLiteral("Turn this off to bypass all layer surface and texture caches."));
+  uiLayout->addWidget(impl_->layerCacheEnabledCheckBox_);
+
   auto *menuFontLayout = new QHBoxLayout();
   menuFontLayout->addWidget(new QLabel("Menu bar font scale:", this));
   impl_->menuBarFontScaleSpinBox_ = new QSpinBox(this);
@@ -208,6 +215,8 @@ void GeneralSettingPage::loadSettings() {
       settings->loadLastProjectOnStartup());
   impl_->showPropertyResetButtonsCheckBox_->setChecked(
       Artifact::artifactShouldShowPropertyResetButtons());
+  impl_->layerCacheEnabledCheckBox_->setChecked(
+      settings->layerCacheEnabled());
   impl_->menuBarFontScaleSpinBox_->setValue(
       settings->menuBarFontScalePercent());
   impl_->dockTabFontSizeSpinBox_->setValue(settings->dockTabFontPointSize());
@@ -231,6 +240,7 @@ void GeneralSettingPage::saveSettings() {
       impl_->showStartupDialogCheckBox_->isChecked());
   Artifact::artifactSetShowPropertyResetButtons(
       impl_->showPropertyResetButtonsCheckBox_->isChecked());
+  settings->setLayerCacheEnabled(impl_->layerCacheEnabledCheckBox_->isChecked());
   settings->setMenuBarFontScalePercent(
       impl_->menuBarFontScaleSpinBox_->value());
   settings->setDockTabFontPointSize(

@@ -286,11 +286,13 @@ QColor ArtifactColorSciencePanel::Impl::nearestPaletteColor(const QColor &input)
     return input;
   }
 
-  auto distanceSq = [](const QColor &a, const QColor &b) {
-    const double dr = a.redF() - b.redF();
-    const double dg = a.greenF() - b.greenF();
-    const double db = a.blueF() - b.blueF();
-    const double da = a.alphaF() - b.alphaF();
+  const ArtifactCore::FloatColor inputColor(input.redF(), input.greenF(), input.blueF(), input.alphaF());
+
+  auto distanceSq = [](const ArtifactCore::FloatColor &a, const ArtifactCore::FloatColor &b) {
+    const double dr = static_cast<double>(a.red()) - static_cast<double>(b.red());
+    const double dg = static_cast<double>(a.green()) - static_cast<double>(b.green());
+    const double db = static_cast<double>(a.blue()) - static_cast<double>(b.blue());
+    const double da = static_cast<double>(a.alpha()) - static_cast<double>(b.alpha());
     return dr * dr + dg * dg + db * db + 0.5 * da * da;
   };
 
@@ -302,10 +304,10 @@ QColor ArtifactColorSciencePanel::Impl::nearestPaletteColor(const QColor &input)
       continue;
     }
     for (const auto &entry : palette->colors) {
-      const double d = distanceSq(input, entry.color);
+      const double d = distanceSq(inputColor, entry.color);
       if (d < bestDistance) {
         bestDistance = d;
-        best = entry.color;
+        best = QColor::fromRgbF(entry.color.r(), entry.color.g(), entry.color.b(), entry.color.a());
       }
     }
   }
@@ -320,11 +322,14 @@ static void seedDefaultConstraintPalette(const std::shared_ptr<ArtifactCore::Col
 
   ArtifactCore::Color::ColorPalette palette;
   palette.name = QStringLiteral("Constraint Defaults");
-  palette.colors.push_back({QStringLiteral("Main"), QColor(QStringLiteral("#ff4e5d6c"))});
-  palette.colors.push_back({QStringLiteral("Accent"), QColor(QStringLiteral("#ff6c4e5d"))});
-  palette.colors.push_back({QStringLiteral("Background"), QColor(QStringLiteral("#ff20242a"))});
-  palette.colors.push_back({QStringLiteral("Surface"), QColor(QStringLiteral("#ff2b3038"))});
-  palette.colors.push_back({QStringLiteral("Text"), QColor(QStringLiteral("#ffe3e7ec"))});
+  const auto toFloatColor = [](const QColor &color) {
+    return ArtifactCore::FloatColor(color.redF(), color.greenF(), color.blueF(), color.alphaF());
+  };
+  palette.colors.push_back({QStringLiteral("Main"), toFloatColor(QColor(QStringLiteral("#ff4e5d6c")))});
+  palette.colors.push_back({QStringLiteral("Accent"), toFloatColor(QColor(QStringLiteral("#ff6c4e5d")))});
+  palette.colors.push_back({QStringLiteral("Background"), toFloatColor(QColor(QStringLiteral("#ff20242a")))});
+  palette.colors.push_back({QStringLiteral("Surface"), toFloatColor(QColor(QStringLiteral("#ff2b3038")))});
+  palette.colors.push_back({QStringLiteral("Text"), toFloatColor(QColor(QStringLiteral("#ffe3e7ec")))});
   manager->addPalette(palette);
 }
 

@@ -47,6 +47,7 @@ import Artifact.Application.Manager;
 import Artifact.Composition.Abstract;
 import Artifact.Event.Types;
 import Artifact.Layers.Selection.Manager;
+import Artifact.Layer.Abstract;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Text;
 import Event.Bus;
@@ -1196,6 +1197,7 @@ void ArtifactMainWindow::applyApplicationSettings() {
   }
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     setStatusPreviewResolution(settings->previewResolutionPercent());
+    ArtifactAbstractLayer::setGlobalLayerCacheEnabled(settings->layerCacheEnabled());
   }
   if (impl_->toolOptionsHost) {
     impl_->toolOptionsHost->updateGeometry();

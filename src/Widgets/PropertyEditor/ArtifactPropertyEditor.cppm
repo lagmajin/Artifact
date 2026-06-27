@@ -23,6 +23,7 @@ module;
 #include <QLineEdit>
 #include <QHash>
 #include <QLocale>
+#include <QLinearGradient>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPaintEvent>
@@ -602,6 +603,12 @@ enumOptionsForProperty(const ArtifactCore::AbstractProperty &property) {
         {6, QStringLiteral("Wiggly Position")},
         {7, QStringLiteral("Blur Reveal")}};
   }
+  if (name == QStringLiteral("layer.cachePolicy")) {
+    return ArtifactEnumPropertyEditor::OptionList{
+        {0, QStringLiteral("Default")},
+        {1, QStringLiteral("Enabled")},
+        {2, QStringLiteral("Disabled")}};
+  }
   if (name == QStringLiteral("component.cloner.mode")) {
     return ArtifactEnumPropertyEditor::OptionList{
         {0, QStringLiteral("Linear")},
@@ -884,6 +891,185 @@ protected:
   }
 };
 
+class PropertyNumericKnobWidget final : public QWidget {
+public:
+  using ValueHandler = std::function<void(double)>;
+
+  explicit PropertyNumericKnobWidget(QWidget *parent = nullptr)
+      : QWidget(parent) {
+    setFocusPolicy(Qt::StrongFocus);
+    setCursor(Qt::OpenHandCursor);
+    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    setToolTip(QStringLiteral("Drag vertically to adjust. Shift = fine, Ctrl = coarse."));
+  }
+
+  QSize sizeHint() const override { return {34, 34}; }
+  QSize minimumSizeHint() const override { return {30, 30}; }
+
+  void setRange(const double minValue, const double maxValue) {
+    min_ = minValue;
+    max_ = maxValue > minValue ? maxValue : minValue + 1.0;
+    setValue(value_);
+  }
+
+  void setValue(const double value) {
+    const double nextValue = std::clamp(value, min_, max_);
+    if (std::abs(value_ - nextValue) < 0.0001) {
+      return;
+    }
+    value_ = nextValue;
+    update();
+  }
+
+  void setPreviewHandler(ValueHandler handler) {
+    previewHandler_ = std::move(handler);
+  }
+
+  void setCommitHandler(ValueHandler handler) {
+    commitHandler_ = std::move(handler);
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    if (event->button() != Qt::LeftButton) {
+      QWidget::mousePressEvent(event);
+      return;
+    }
+    dragging_ = true;
+    dragStartY_ = event->position().y();
+    dragStartValue_ = value_;
+    grabMouse();
+    setFocus(Qt::MouseFocusReason);
+    setCursor(Qt::ClosedHandCursor);
+    event->accept();
+  }
+
+  void mouseMoveEvent(QMouseEvent *event) override {
+    if (!dragging_) {
+      QWidget::mouseMoveEvent(event);
+      return;
+    }
+    const double range = std::max(1.0, max_ - min_);
+    double sensitivity = range / 160.0;
+    if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+      sensitivity *= 0.15;
+    }
+    if (event->modifiers().testFlag(Qt::ControlModifier)) {
+      sensitivity *= 4.0;
+    }
+    setValue(dragStartValue_ + (dragStartY_ - event->position().y()) * sensitivity);
+    if (previewHandler_) {
+      previewHandler_(value_);
+    }
+    event->accept();
+  }
+
+  void mouseReleaseEvent(QMouseEvent *event) override {
+    if (!dragging_ || event->button() != Qt::LeftButton) {
+      QWidget::mouseReleaseEvent(event);
+      return;
+    }
+    dragging_ = false;
+    releaseMouse();
+    setCursor(Qt::OpenHandCursor);
+    if (commitHandler_) {
+      commitHandler_(value_);
+    }
+    event->accept();
+  }
+
+  void wheelEvent(QWheelEvent *event) override {
+    const double range = std::max(1.0, max_ - min_);
+    double step = range / 120.0;
+    if (event->modifiers().testFlag(Qt::ShiftModifier)) {
+      step *= 0.15;
+    }
+    if (event->modifiers().testFlag(Qt::ControlModifier)) {
+      step *= 4.0;
+    }
+    setValue(value_ + (event->angleDelta().y() >= 0 ? step : -step));
+    if (previewHandler_) {
+      previewHandler_(value_);
+    }
+    if (commitHandler_) {
+      commitHandler_(value_);
+    }
+    event->accept();
+  }
+
+  void paintEvent(QPaintEvent *) override {
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+
+    const QColor window = palette().color(QPalette::Window);
+    const QColor text = palette().color(QPalette::Text);
+    const QColor border = palette().color(QPalette::Mid);
+    const QColor shadow = palette().color(QPalette::Shadow);
+    const QColor highlight = palette().color(QPalette::Highlight);
+    const QColor light = palette().color(QPalette::Light);
+
+    const QRectF knobRect = rect().adjusted(3, 3, -3, -3);
+    const QPointF center = knobRect.center();
+    const qreal radius = std::min(knobRect.width(), knobRect.height()) * 0.5;
+
+    QColor outer = blendColor(window, text, 0.05);
+    QColor inner = blendColor(window, shadow, 0.18);
+    if (!isEnabled()) {
+      outer = outer.darker(125);
+      inner = inner.darker(125);
+    }
+
+    painter.setPen(QPen(blendColor(border, shadow, 0.25), 1.0));
+    painter.setBrush(outer);
+    painter.drawEllipse(knobRect);
+
+    const QRectF innerRect = knobRect.adjusted(5, 5, -5, -5);
+    painter.setPen(QPen(blendColor(border, text, 0.18), 1.0));
+    painter.setBrush(inner);
+    painter.drawEllipse(innerRect);
+
+    const QRectF arcRect = knobRect.adjusted(2.5, 2.5, -2.5, -2.5);
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(blendColor(border, window, 0.25), 2.2, Qt::SolidLine,
+                        Qt::RoundCap));
+    painter.drawArc(arcRect, 225 * 16, -270 * 16);
+
+    const double normalized =
+        max_ <= min_ ? 0.0 : std::clamp((value_ - min_) / (max_ - min_), 0.0, 1.0);
+    QColor accent = blendColor(highlight, light, 0.22);
+    if (!isEnabled()) {
+      accent = accent.darker(140);
+    }
+    painter.setPen(QPen(accent, 2.4, Qt::SolidLine, Qt::RoundCap));
+    painter.drawArc(arcRect, 225 * 16,
+                    static_cast<int>(-270.0 * normalized * 16.0));
+
+    const double indicatorDegrees = 225.0 - 270.0 * normalized;
+    const double radians = indicatorDegrees * std::numbers::pi / 180.0;
+    const QPointF indicator(center.x() + std::cos(radians) * radius * 0.58,
+                            center.y() - std::sin(radians) * radius * 0.58);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(accent);
+    painter.drawEllipse(indicator, 2.2, 2.2);
+
+    if (hasFocus()) {
+      painter.setPen(QPen(accent.lighter(125), 1.0, Qt::DashLine));
+      painter.setBrush(Qt::NoBrush);
+      painter.drawEllipse(knobRect.adjusted(1, 1, -1, -1));
+    }
+  }
+
+private:
+  double min_ = 0.0;
+  double max_ = 1.0;
+  double value_ = 0.0;
+  double dragStartY_ = 0.0;
+  double dragStartValue_ = 0.0;
+  bool dragging_ = false;
+  ValueHandler previewHandler_;
+  ValueHandler commitHandler_;
+};
+
 class PropertyRotationKnobWidget final : public QWidget {
 public:
   using ValueHandler = std::function<void(double)>;
@@ -1043,6 +1229,8 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   if (showSlider) {
     slider_ = new PropertySliderWidget(this);
     applyPropertyFieldPalette(slider_);
+    knob_ = new PropertyNumericKnobWidget(this);
+    applyPropertyFieldPalette(knob_, true);
   }
   QPushButton *resetButton = nullptr;
   if (::Artifact::artifactShouldShowPropertyResetButtons()) {
@@ -1075,6 +1263,10 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                                    3));
                          }
                        }
+                       if (auto *propertyKnob =
+                               static_cast<PropertyNumericKnobWidget *>(knob_)) {
+                         propertyKnob->setValue(defaultNumericValue);
+                       }
                        commitCurrentValue();
                      });
   }
@@ -1089,8 +1281,14 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
     if (g_numericEditorLayoutMode ==
         ArtifactNumericEditorLayoutMode::SliderThenValue) {
       layout->addWidget(slider_, 3);
+      if (knob_) {
+        layout->addWidget(knob_, 0);
+      }
       layout->addWidget(spinBox_, 1);
     } else {
+      if (knob_) {
+        layout->addWidget(knob_, 0);
+      }
       layout->addWidget(spinBox_, 1);
       layout->addWidget(slider_, 3);
     }
@@ -1109,6 +1307,24 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
   if (softMax_ <= softMin_) {
     softMin_ = hardMin;
     softMax_ = hardMax;
+  }
+  if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
+    propertyKnob->setRange(softMin_, softMax_);
+    propertyKnob->setValue(property.getValue().toDouble());
+    propertyKnob->setPreviewHandler([this](const double nextValue) {
+      if (!spinBox_) {
+        return;
+      }
+      spinBox_->setValue(nextValue);
+      previewValue(spinBox_->value());
+    });
+    propertyKnob->setCommitHandler([this](const double nextValue) {
+      if (!spinBox_) {
+        return;
+      }
+      spinBox_->setValue(nextValue);
+      commitValue(spinBox_->value());
+    });
   }
 
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toDouble() : -1e6,
@@ -1157,6 +1373,10 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
                              formatNumericSliderText(nextValue, sliderUnit, 3));
                        }
                      }
+                     if (auto *propertyKnob =
+                             static_cast<PropertyNumericKnobWidget *>(knob_)) {
+                       propertyKnob->setValue(nextValue);
+                     }
                      if (spinBox_->hasFocus() && !sliderInteracting_) {
                        previewValue(nextValue);
                      }
@@ -1175,6 +1395,9 @@ ArtifactFloatPropertyEditor::ArtifactFloatPropertyEditor(
               this->sliderPositionToFloat(sliderValue, softMin_, softMax_);
           const QSignalBlocker blocker(spinBox_);
           spinBox_->setValue(nextValue);
+          if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
+            propertyKnob->setValue(nextValue);
+          }
           if (auto *propertySlider = static_cast<PropertySliderWidget *>(slider_)) {
             propertySlider->setDisplayText(
                 formatNumericSliderText(nextValue, sliderUnit, 3));
@@ -1295,6 +1518,9 @@ void ArtifactFloatPropertyEditor::setValueFromVariant(const QVariant &value) {
           formatNumericSliderText(nextValue, spinBox_->suffix().trimmed(), 3));
     }
   }
+  if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
+    propertyKnob->setValue(nextValue);
+  }
 }
 
 bool ArtifactFloatPropertyEditor::supportsScrub() const { return true; }
@@ -1342,6 +1568,8 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   if (showSlider) {
     slider_ = new PropertySliderWidget(this);
     applyPropertyFieldPalette(slider_);
+    knob_ = new PropertyNumericKnobWidget(this);
+    applyPropertyFieldPalette(knob_, true);
   }
   QPushButton *resetButton = nullptr;
   if (::Artifact::artifactShouldShowPropertyResetButtons()) {
@@ -1362,8 +1590,14 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
     if (g_numericEditorLayoutMode ==
         ArtifactNumericEditorLayoutMode::SliderThenValue) {
       layout->addWidget(slider_, 3);
+      if (knob_) {
+        layout->addWidget(knob_, 0);
+      }
       layout->addWidget(spinBox_, 1);
     } else {
+      if (knob_) {
+        layout->addWidget(knob_, 0);
+      }
       layout->addWidget(spinBox_, 1);
       layout->addWidget(slider_, 3);
     }
@@ -1386,6 +1620,25 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
   if (softMax_ <= softMin_) {
     softMin_ = hardMin;
     softMax_ = hardMax;
+  }
+  if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
+    propertyKnob->setRange(static_cast<double>(softMin_),
+                           static_cast<double>(softMax_));
+    propertyKnob->setValue(static_cast<double>(property.getValue().toInt()));
+    propertyKnob->setPreviewHandler([this](const double nextValue) {
+      if (!spinBox_) {
+        return;
+      }
+      spinBox_->setValue(static_cast<int>(std::llround(nextValue)));
+      previewValue(spinBox_->value());
+    });
+    propertyKnob->setCommitHandler([this](const double nextValue) {
+      if (!spinBox_) {
+        return;
+      }
+      spinBox_->setValue(static_cast<int>(std::llround(nextValue)));
+      commitValue(spinBox_->value());
+    });
   }
 
   spinBox_->setRange(meta.hardMin.isValid() ? meta.hardMin.toInt() : -1000000,
@@ -1433,6 +1686,9 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
                 formatNumericSliderText(nextValue, sliderUnit, 0));
           }
         }
+        if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
+          propertyKnob->setValue(static_cast<double>(nextValue));
+        }
         if (spinBox_->hasFocus() && !sliderInteracting_) {
           previewValue(nextValue);
         }
@@ -1450,6 +1706,10 @@ ArtifactIntPropertyEditor::ArtifactIntPropertyEditor(
                            sliderPositionToInt(sliderValue, softMin_, softMax_);
                        const QSignalBlocker blocker(spinBox_);
                        spinBox_->setValue(nextValue);
+                       if (auto *propertyKnob =
+                               static_cast<PropertyNumericKnobWidget *>(knob_)) {
+                         propertyKnob->setValue(static_cast<double>(nextValue));
+                       }
                        if (auto *propertySlider =
                                static_cast<PropertySliderWidget *>(slider_)) {
                          propertySlider->setDisplayText(
@@ -1490,6 +1750,9 @@ void ArtifactIntPropertyEditor::setValueFromVariant(const QVariant &value) {
       propertySlider->setDisplayText(
           formatNumericSliderText(nextValue, spinBox_->suffix().trimmed(), 0));
     }
+  }
+  if (auto *propertyKnob = static_cast<PropertyNumericKnobWidget *>(knob_)) {
+    propertyKnob->setValue(static_cast<double>(nextValue));
   }
 }
 
@@ -2784,7 +3047,23 @@ void ArtifactPropertyEditorRowWidget::paintEvent(QPaintEvent *event) {
   if (focused) {
     fill = blendColor(fill, selection, 0.24);
   }
-  painter.fillPath(path, fill);
+  QLinearGradient baseGrad(frame.topLeft(), frame.bottomRight());
+  baseGrad.setColorAt(0.0, blendColor(fill, QColor(QStringLiteral("#F2F4F1")),
+                                      hovered ? 0.10 : 0.055));
+  baseGrad.setColorAt(0.44, fill);
+  baseGrad.setColorAt(1.0, blendColor(fill, QColor(QStringLiteral("#050708")),
+                                      focused ? 0.12 : 0.07));
+  painter.fillPath(path, baseGrad);
+
+  QLinearGradient veilGrad(frame.topLeft(), frame.topRight());
+  QColor leftVeil = blendColor(accent, QColor(QStringLiteral("#F4F6F2")),
+                               focused ? 0.52 : 0.38);
+  leftVeil.setAlpha(hovered || focused ? 30 : 18);
+  QColor rightVeil = leftVeil;
+  rightVeil.setAlpha(0);
+  veilGrad.setColorAt(0.0, leftVeil);
+  veilGrad.setColorAt(0.62, rightVeil);
+  painter.fillPath(path, veilGrad);
 
   QColor line = border.lighter(118);
   if (hovered) {

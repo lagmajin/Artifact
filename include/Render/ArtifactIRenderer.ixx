@@ -312,7 +312,8 @@ public:
                   Detail::float3 v3, const FloatColor &color);
   void drawMesh(const QString &cacheKey, const ArtifactCore::Mesh &mesh,
                 const ArtifactCore::Material &material,
-                const QMatrix4x4 &modelMatrix, float opacity = 1.0f);
+                const QMatrix4x4 &modelMatrix, float opacity = 1.0f,
+                int shadingMode = 3);
 
   void drawCheckerboard(float x, float y, float w, float h, float tileSize,
                         const FloatColor &c1, const FloatColor &c2);

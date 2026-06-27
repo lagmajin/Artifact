@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <memory>
 #include <vector>
 #include <cstdint>
@@ -75,6 +75,7 @@ struct Particle {
     // Color
     QColor color;
     QColor colorStart;
+    QColor colorMid;
     QColor colorEnd;
     
     // Opacity
@@ -93,6 +94,9 @@ struct Particle {
     
     // Custom data
     float customData[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    int spriteFrame = 0;
+    int spriteRows = 1;
+    int spriteCols = 1;
     
     // State
     bool alive = true;
@@ -112,6 +116,9 @@ struct ParticleRenderData {
         float rotation = 0.0f;
         float age = 0.0f;
         float lifetime = 1.0f;
+        int spriteFrame = 0;
+        int spriteRows = 1;
+        int spriteCols = 1;
     };
     std::vector<Vertex> particles;
     int64_t frameNumber = 0;
@@ -147,6 +154,12 @@ enum class EmissionMode {
     Continuous,     // 連続放出
     Burst,          // 一斉放出
     Triggered       // トリガー放出
+};
+
+enum class AuxTriggerMode {
+    Trails,
+    Birth,
+    Death
 };
 
 /**
@@ -191,6 +204,7 @@ public:
     float speedMax = 100.0f;
     float directionSpread = 360.0f; // Direction random spread (degrees)
     QVector3D direction = QVector3D(0, -1, 0);  // Base direction
+    QVector3D velocityRandom = QVector3D(0, 0, 0);
     
     // Rotation
     float rotationMin = 0.0f;
@@ -203,10 +217,15 @@ public:
     float scaleMax = 1.0f;
     float scaleEndMin = 0.0f;
     float scaleEndMax = 0.0f;
+    float scaleMidMin = 1.0f;
+    float scaleMidMax = 1.0f;
+    float scaleMidPosition = 0.5f;
     
     // Color
     QColor colorStart = QColor(255, 255, 255, 255);
+    QColor colorMid = QColor(255, 255, 255, 255);
     QColor colorEnd = QColor(255, 255, 255, 0);
+    float colorMidPosition = 0.5f;
     float colorVariation = 0.0f;
     
     // Opacity
@@ -214,10 +233,19 @@ public:
     float opacityMax = 1.0f;
     float opacityEndMin = 0.0f;
     float opacityEndMax = 0.0f;
+    float opacityMidMin = 1.0f;
+    float opacityMidMax = 1.0f;
+    float opacityMidPosition = 0.5f;
     
     // Physics
     float mass = 1.0f;
     float drag = 0.0f;
+    QVector3D gravity = QVector3D(0, 0, 0);
+    QVector3D windDirection = QVector3D(1, 0, 0);
+    float windStrength = 0.0f;
+    float turbulenceFrequency = 0.0f;
+    float turbulenceAmplitude = 0.0f;
+    float turbulenceEvolution = 0.0f;
     
     // Advanced
     bool inheritVelocity = false;
@@ -244,6 +272,16 @@ public:
     int startFrame = 0;
     int frameCount = 1;
     float frameRate = 30.0f;
+
+    // Aux System
+    bool auxEnabled = false;
+    AuxTriggerMode auxTrigger = AuxTriggerMode::Trails;
+    int auxCount = 1;
+    float auxInterval = 0.1f;
+    float auxLifeScale = 0.3f;
+    float auxSizeScale = 0.65f;
+    float auxOpacityScale = 0.85f;
+    float auxVelocityScale = 0.35f;
 };
 
 /**
@@ -438,6 +476,8 @@ signals:
     
 private:
     void initializeParticle(Particle& p);
+    void applyEmitterLocalSpaceDelta();
+    void emitAuxParticlesFromParticle(const Particle& source, int count);
     QVector3D getEmissionPosition() const;
     QVector3D getEmissionDirection() const;
     void updateParticle(Particle& p, float deltaTime);

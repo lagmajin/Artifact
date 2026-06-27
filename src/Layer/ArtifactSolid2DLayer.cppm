@@ -11,6 +11,7 @@ module;
 #include <QRadialGradient>
 #include <QVariant>
 #include <Layer/ArtifactCloneEffectSupport.hpp>
+#include <Layer/ArtifactSolidGradientUtil.hpp>
 #include <algorithm>
 #include <cmath>
 
@@ -23,85 +24,8 @@ import Property.Group;
 
 namespace Artifact
 {
- namespace {
- QColor toQColor(const FloatColor& color, const float alphaScale = 1.0f)
- {
-  return QColor::fromRgbF(std::clamp(color.r(), 0.0f, 1.0f),
-                          std::clamp(color.g(), 0.0f, 1.0f),
-                          std::clamp(color.b(), 0.0f, 1.0f),
-                          std::clamp(color.a() * alphaScale, 0.0f, 1.0f));
- }
-
-QPointF gradientPointForAngle(const float angleDegrees, const QSize& size, const bool startPoint,
-                              const bool reverse, const float centerX, const float centerY,
-                              const float scale, const float offset)
-{
-  const float radians = angleDegrees * 3.14159265358979323846f / 180.0f;
-  const QPointF center(static_cast<qreal>(size.width()) * std::clamp(centerX, 0.0f, 1.0f),
-                       static_cast<qreal>(size.height()) * std::clamp(centerY, 0.0f, 1.0f));
-  const qreal dx = std::cos(radians);
-  const qreal dy = -std::sin(radians);
-  const qreal halfSpan = std::max(1.0, std::hypot(static_cast<double>(size.width()),
-                                                  static_cast<double>(size.height()))) * 0.5 *
-                         std::max(0.01f, scale);
-  const qreal direction = reverse ? -1.0 : 1.0;
-  const qreal sign = startPoint ? -1.0 : 1.0;
-  return QPointF(center.x() + dx * halfSpan * direction * sign + dx * halfSpan * offset,
-                 center.y() + dy * halfSpan * direction * sign + dy * halfSpan * offset);
-}
-
-QPointF gradientCenterPoint(const QSize& size, const float centerX, const float centerY)
-{
-  return QPointF(static_cast<qreal>(size.width()) * std::clamp(centerX, 0.0f, 1.0f),
-                 static_cast<qreal>(size.height()) * std::clamp(centerY, 0.0f, 1.0f));
-}
-
- QImage makeSolidGradientImage(const QSize& size,
-                               const FloatColor& startColor,
-                               const FloatColor& endColor,
-                               const ArtifactSolidFillType fillType,
-                               const float angleDegrees,
-                               const bool reverse,
-                               const float centerX,
-                               const float centerY,
-                               const float scale,
-                               const float offset)
- {
-  QImage image(size, QImage::Format_ARGB32_Premultiplied);
-  image.fill(Qt::transparent);
-  QPainter painter(&image);
-  const QPointF center = gradientCenterPoint(size, centerX, centerY);
-  if (fillType == ArtifactSolidFillType::RadialGradient) {
-    const qreal radius = std::max<qreal>(1.0,
-        std::hypot(static_cast<double>(size.width()), static_cast<double>(size.height())) *
-        0.5 * std::max(0.01f, scale));
-    QRadialGradient gradient(center, radius);
-    gradient.setColorAt(0.0, reverse ? toQColor(endColor) : toQColor(startColor));
-    gradient.setColorAt(1.0, reverse ? toQColor(startColor) : toQColor(endColor));
-    painter.fillRect(image.rect(), gradient);
-    return image;
-  }
-  if (fillType == ArtifactSolidFillType::ConicalGradient) {
-    QConicalGradient gradient(center, reverse ? -angleDegrees : angleDegrees);
-    gradient.setColorAt(0.0, toQColor(startColor));
-    gradient.setColorAt(0.5, toQColor(endColor));
-    gradient.setColorAt(1.0, toQColor(startColor));
-    painter.fillRect(image.rect(), gradient);
-    return image;
-  }
-  QLinearGradient gradient(gradientPointForAngle(angleDegrees, size, true,
-                                                 reverse, centerX, centerY, scale, offset),
-                           gradientPointForAngle(angleDegrees, size, false,
-                                                 reverse, centerX, centerY, scale, offset));
-  gradient.setColorAt(0.0, toQColor(startColor));
-  gradient.setColorAt(1.0, toQColor(endColor));
-  painter.fillRect(image.rect(), gradient);
-  return image;
- }
- }
-
-
- class ArtifactSolid2DLayer::Impl
+ 
+  class ArtifactSolid2DLayer::Impl
  {
  private:
   FloatColor color_;
@@ -517,15 +441,15 @@ void ArtifactSolid2DLayer::draw(ArtifactIRenderer* renderer)
  const QMatrix4x4 baseTransform = getGlobalTransform4x4();
  drawWithClonerEffect(this, baseTransform, [renderer, size, this](const QMatrix4x4& transform, float weight) {
   if (impl_->fillType() != ArtifactSolidFillType::Solid) {
-   const QImage gradientImage = makeSolidGradientImage(
+   const QImage gradientImage = ArtifactSolidGradientUtil::makeSolidGradientImage(
        QSize(size.width, size.height),
-       FloatColor(impl_->gradientStartColor().r(), impl_->gradientStartColor().g(),
+       QColor::fromRgbF(impl_->gradientStartColor().r(), impl_->gradientStartColor().g(),
                   impl_->gradientStartColor().b(),
                   impl_->gradientStartColor().a() * this->opacity() * weight),
-       FloatColor(impl_->gradientEndColor().r(), impl_->gradientEndColor().g(),
+       QColor::fromRgbF(impl_->gradientEndColor().r(), impl_->gradientEndColor().g(),
                   impl_->gradientEndColor().b(),
                   impl_->gradientEndColor().a() * this->opacity() * weight),
-       impl_->fillType(),
+       static_cast<int>(impl_->fillType()),
        impl_->gradientAngleDegrees(),
        impl_->gradientReverse(),
        impl_->gradientCenterX(),

@@ -879,6 +879,232 @@ private:
   QString effectId_;
   int direction_;
 };
+
+// --- GroupLayersUndoCommand ---
+class GroupLayersUndoCommand : public UndoCommand {
+public:
+  GroupLayersUndoCommand(QVector<LayerID> layerIds, UniString groupName)
+      : layerIds_(std::move(layerIds)), groupName_(std::move(groupName)) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    auto *sel = ArtifactLayerSelectionManager::instance();
+    if (!sel) return;
+    auto comp = svc->currentComposition().lock();
+    if (!comp) return;
+    // Re-select original layers before calling service
+    sel->clearSelection();
+    for (const auto &id : layerIds_) {
+      if (auto l = comp->layerById(id)) sel->addToSelection(l);
+    }
+    if (!svc->groupSelectedLayersInCurrentComposition(groupName_)) return;
+    auto current = sel->currentLayer();
+    if (current) groupLayerId_ = current->id();
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc || groupLayerId_.isNil()) return;
+    auto comp = svc->currentComposition().lock();
+    if (!comp) return;
+    auto groupLayer = comp->layerById(groupLayerId_);
+    if (!groupLayer) return;
+    // Capture children if first undo
+    if (childIds_.isEmpty()) {
+      if (auto g = std::dynamic_pointer_cast<ArtifactGroupLayer>(groupLayer)) {
+        for (const auto &child : g->children()) {
+          if (child) childIds_.push_back(child->id());
+        }
+      }
+      auto allLayers = comp->allLayer();
+      for (int i = 0; i < allLayers.size(); ++i) {
+        if (allLayers[i]->id() == groupLayerId_) {
+          groupIndex_ = i; break;
+        }
+      }
+    }
+    // Move children out of group
+    for (int i = childIds_.size() - 1; i >= 0; --i) {
+      if (auto child = comp->layerById(childIds_[i])) {
+        child->clearParent();
+        comp->insertLayerAt(child, groupIndex_);
+      }
+    }
+    // Remove group layer
+    comp->removeLayer(groupLayerId_);
+    groupLayerId_ = LayerID();
+    // Restore selection to children
+    if (auto *sel = ArtifactLayerSelectionManager::instance()) {
+      sel->clearSelection();
+      for (const auto &cid : childIds_) {
+        if (auto child = comp->layerById(cid)) sel->addToSelection(child);
+      }
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString label() const override {
+    return QStringLiteral("Group Layers");
+  }
+
+private:
+  QVector<LayerID> layerIds_;
+  UniString groupName_;
+  LayerID groupLayerId_;
+  int groupIndex_ = -1;
+  QVector<LayerID> childIds_;
+};
+
+// --- UngroupLayersUndoCommand ---
+class UngroupLayersUndoCommand : public UndoCommand {
+public:
+  UngroupLayersUndoCommand(LayerID groupLayerId, UniString groupName)
+      : groupLayerId_(groupLayerId), groupName_(std::move(groupName)) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc || groupLayerId_.isNil()) return;
+    auto comp = svc->currentComposition().lock();
+    if (!comp) return;
+    auto groupLayer = comp->layerById(groupLayerId_);
+    auto g = std::dynamic_pointer_cast<ArtifactGroupLayer>(groupLayer);
+    if (!g) return;
+    // Capture children and group index
+    if (childIds_.isEmpty()) {
+      auto children = g->children();
+      for (const auto &child : children) {
+        if (child) childIds_.push_back(child->id());
+      }
+      auto allLayers = comp->allLayer();
+      for (int i = 0; i < allLayers.size(); ++i) {
+        if (allLayers[i]->id() == groupLayerId_) {
+          groupIndex_ = i; break;
+        }
+      }
+    }
+    // Move children out of group
+    for (int i = childIds_.size() - 1; i >= 0; --i) {
+      if (auto child = comp->layerById(childIds_[i])) {
+        child->clearParent();
+        comp->insertLayerAt(child, groupIndex_);
+      }
+    }
+    // Remove group layer
+    comp->removeLayer(groupLayerId_);
+    groupLayerId_ = LayerID();
+    if (auto *sel = ArtifactLayerSelectionManager::instance()) {
+      sel->clearSelection();
+      for (const auto &cid : childIds_) {
+        if (auto child = comp->layerById(cid)) sel->addToSelection(child);
+      }
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  void undo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc || childIds_.isEmpty()) return;
+    auto *sel = ArtifactLayerSelectionManager::instance();
+    if (!sel) return;
+    sel->clearSelection();
+    // Re-select children and call group
+    auto comp = svc->currentComposition().lock();
+    if (!comp) return;
+    for (const auto &cid : childIds_) {
+      if (auto child = comp->layerById(cid)) sel->addToSelection(child);
+    }
+    if (!svc->groupSelectedLayersInCurrentComposition(groupName_)) return;
+    auto current = sel->currentLayer();
+    if (current) groupLayerId_ = current->id();
+    childIds_.clear();
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString label() const override {
+    return QStringLiteral("Ungroup Layers");
+  }
+
+private:
+  LayerID groupLayerId_;
+  UniString groupName_;
+  QVector<LayerID> childIds_;
+  int groupIndex_ = -1;
+};
+
+// --- SplitLayerUndoCommand ---
+class SplitLayerUndoCommand : public UndoCommand {
+public:
+  SplitLayerUndoCommand(CompositionID compId, LayerID layerId)
+      : compId_(compId), layerId_(layerId) {}
+
+  void redo() override {
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    // Try current composition first, then project lookup
+    auto comp = svc->currentComposition().lock();
+    if (!comp || comp->id() != compId_) {
+      auto project = svc->getCurrentProjectSharedPtr();
+      if (!project) return;
+      comp = project->compositionById(compId_);
+      if (!comp) return;
+    }
+    auto layer = comp->layerById(layerId_);
+    if (!layer) return;
+    auto now = comp->framePosition();
+    if (now.framePosition() <= layer->inPoint().framePosition() ||
+        now.framePosition() >= layer->outPoint().framePosition()) return;
+    // Store pre-split state for undo
+    oldOutFrame_ = layer->outPoint().framePosition();
+    splitFrame_ = now.framePosition();
+    // Truncate original
+    layer->setOutPoint(FramePosition(splitFrame_));
+    // Duplicate for second half
+    auto project = svc->getCurrentProjectSharedPtr();
+    if (!project) return;
+    auto result = project->duplicateLayerInComposition(comp->id(), layerId_);
+    if (result.success && result.layer) {
+      newLayer_ = result.layer;
+      newLayer_->setInPoint(FramePosition(splitFrame_));
+      newLayer_->setOutPoint(FramePosition(oldOutFrame_));
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  void undo() override {
+    if (!newLayer_) return;
+    auto *svc = ArtifactProjectService::instance();
+    if (!svc) return;
+    auto comp = svc->currentComposition().lock();
+    if (!comp || comp->id() != compId_) {
+      auto project = svc->getCurrentProjectSharedPtr();
+      if (!project) return;
+      comp = project->compositionById(compId_);
+      if (!comp) return;
+    }
+    // Remove the cloned layer
+    comp->removeLayer(newLayer_->id());
+    newLayer_.reset();
+    // Restore original layer's out point
+    if (auto layer = comp->layerById(layerId_)) {
+      layer->setOutPoint(FramePosition(oldOutFrame_));
+    }
+    if (auto *mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
+  }
+
+  QString label() const override {
+    return QStringLiteral("Split Layer");
+  }
+
+private:
+  CompositionID compId_;
+  LayerID layerId_;
+  ArtifactAbstractLayerPtr newLayer_;
+  int64_t oldOutFrame_ = 0;
+  int64_t splitFrame_ = 0;
+};
+
 } // namespace
 
 std::vector<ArtifactCore::ProjectDiagnostic>
@@ -2472,6 +2698,54 @@ bool ArtifactProjectService::unprecomposeLayerWithUndo(
   // After redo, the precomp layer is gone; success is implied by a non-empty
   // moved-layer record.
   return !lastUnprecomposeMovedLayerIds().isEmpty();
+}
+
+bool ArtifactProjectService::groupSelectedLayersWithUndo(
+    const UniString &groupName) {
+  auto *mgr = UndoManager::instance();
+  if (!mgr) {
+    return groupSelectedLayersInCurrentComposition(groupName);
+  }
+  auto *sel = ArtifactLayerSelectionManager::instance();
+  if (!sel) return false;
+  const auto selected = sel->selectedLayers();
+  QVector<LayerID> ids;
+  ids.reserve(selected.size());
+  for (const auto &l : selected) {
+    if (l) ids.push_back(l->id());
+  }
+  if (ids.isEmpty()) return false;
+  auto cmd = std::make_unique<GroupLayersUndoCommand>(ids, groupName);
+  mgr->push(std::move(cmd));
+  return !ids.isEmpty();
+}
+
+bool ArtifactProjectService::ungroupSelectedGroupWithUndo() {
+  auto *mgr = UndoManager::instance();
+  if (!mgr) {
+    return ungroupSelectedGroupInCurrentComposition();
+  }
+  auto *sel = ArtifactLayerSelectionManager::instance();
+  if (!sel) return false;
+  auto current = sel->currentLayer();
+  if (!current || !current->isGroupLayer()) return false;
+  auto cmd = std::make_unique<UngroupLayersUndoCommand>(
+      current->id(), UniString(current->layerName()));
+  mgr->push(std::move(cmd));
+  return true;
+}
+
+bool ArtifactProjectService::splitLayerWithUndo(
+    const CompositionID &compositionId, const LayerID &layerId) {
+  auto *mgr = UndoManager::instance();
+  if (!mgr) {
+    // No undo — fall back to direct mutation
+    splitLayerAtCurrentTime(compositionId, layerId);
+    return true;
+  }
+  auto cmd = std::make_unique<SplitLayerUndoCommand>(compositionId, layerId);
+  mgr->push(std::move(cmd));
+  return true;
 }
 
 void ArtifactProjectService::splitLayerAtCurrentTime(

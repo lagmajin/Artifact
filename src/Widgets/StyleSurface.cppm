@@ -39,6 +39,15 @@ QColor resolveToneColor(ArtifactTextTone tone)
     return QColor(theme.textColor);
   }
 }
+
+QColor mixColor(const QColor& a, const QColor& b, const qreal t)
+{
+  const qreal clamped = std::clamp(t, 0.0, 1.0);
+  return QColor::fromRgbF(a.redF() + (b.redF() - a.redF()) * clamped,
+                          a.greenF() + (b.greenF() - a.greenF()) * clamped,
+                          a.blueF() + (b.blueF() - a.blueF()) * clamped,
+                          a.alphaF() + (b.alphaF() - a.alphaF()) * clamped);
+}
 } // namespace
 
 QStringList artifactPreferredDisplayFontFamilies()
@@ -142,8 +151,11 @@ void drawArtifactSoftGradientBackground(QPainter& painter, const QRectF& rect,
   painter.setRenderHint(QPainter::Antialiasing, false);
 
   QLinearGradient base(rect.topLeft(), rect.bottomRight());
+  base.setInterpolationMode(QGradient::ComponentInterpolation);
   base.setColorAt(0.0, background.topLeft);
+  base.setColorAt(0.28, mixColor(background.topLeft, background.center, 0.58));
   base.setColorAt(0.52, background.center);
+  base.setColorAt(0.78, mixColor(background.center, background.bottomRight, 0.60));
   base.setColorAt(1.0, background.bottomRight);
   painter.fillRect(rect, base);
 
@@ -152,25 +164,36 @@ void drawArtifactSoftGradientBackground(QPainter& painter, const QRectF& rect,
       QPointF(rect.left() + rect.width() * background.highlightX,
               rect.top() + rect.height() * background.highlightY),
       longestEdge * background.highlightRadius);
+  highlight.setInterpolationMode(QGradient::ComponentInterpolation);
   highlight.setColorAt(0.0, background.highlight);
-  highlight.setColorAt(0.64, QColor(background.highlight.red(), background.highlight.green(),
-                                    background.highlight.blue(), background.highlight.alpha() / 3));
+  highlight.setColorAt(0.42, QColor(background.highlight.red(), background.highlight.green(),
+                                    background.highlight.blue(),
+                                    static_cast<int>(background.highlight.alpha() * 0.58)));
+  highlight.setColorAt(0.72, QColor(background.highlight.red(), background.highlight.green(),
+                                    background.highlight.blue(),
+                                    static_cast<int>(background.highlight.alpha() * 0.30)));
   highlight.setColorAt(1.0, QColor(background.highlight.red(), background.highlight.green(),
                                    background.highlight.blue(), 0));
   painter.fillRect(rect, highlight);
 
   QLinearGradient lowerShade(rect.left(), rect.top() + rect.height() * 0.45,
                              rect.left(), rect.bottom());
+  lowerShade.setInterpolationMode(QGradient::ComponentInterpolation);
   lowerShade.setColorAt(0.0, QColor(background.lowerShade.red(), background.lowerShade.green(),
                                     background.lowerShade.blue(), 0));
+  lowerShade.setColorAt(0.48, QColor(background.lowerShade.red(), background.lowerShade.green(),
+                                     background.lowerShade.blue(),
+                                     static_cast<int>(background.lowerShade.alpha() * 0.55)));
   lowerShade.setColorAt(1.0, background.lowerShade);
   painter.fillRect(rect, lowerShade);
 
   QLinearGradient sideShade(rect.left(), rect.top(), rect.right(), rect.top());
+  sideShade.setInterpolationMode(QGradient::ComponentInterpolation);
   sideShade.setColorAt(0.0, QColor(background.sideShade.red(), background.sideShade.green(),
                                    background.sideShade.blue(), 0));
-  sideShade.setColorAt(0.72, QColor(background.sideShade.red(), background.sideShade.green(),
-                                    background.sideShade.blue(), background.sideShade.alpha() / 2));
+  sideShade.setColorAt(0.68, QColor(background.sideShade.red(), background.sideShade.green(),
+                                    background.sideShade.blue(),
+                                    static_cast<int>(background.sideShade.alpha() * 0.52)));
   sideShade.setColorAt(1.0, background.sideShade);
   painter.fillRect(rect, sideShade);
 

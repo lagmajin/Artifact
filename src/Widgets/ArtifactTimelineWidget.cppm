@@ -82,6 +82,7 @@ import Artifact.Layer.Camera;
 import Artifact.Layer.Image;
 import Artifact.Layer.Light;
 import Artifact.Layer.Particle;
+import Artifact.Layer.FormParticle;
 import Artifact.Layer.Shape;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Svg;
@@ -270,6 +271,9 @@ QColor layerTimelineColor(const ArtifactAbstractLayerPtr& layer)
     return QColor(255, 221, 102);
   }
   if (dynamic_cast<const ArtifactParticleLayer*>(raw)) {
+    return QColor(255, 110, 180);
+  }
+  if (dynamic_cast<const ArtifactFormParticleLayer*>(raw)) {
     return QColor(255, 110, 180);
   }
   return QColor(94, 124, 189);
@@ -4716,25 +4720,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                      }
                      jumpToKeyframeHit(-1);
                    });
-  auto *toggleCurveEditorShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_G), this);
-  QObject::connect(toggleCurveEditorShortcut, &QShortcut::activated, this, [this, globalSwitches]() {
-    if (!impl_ || !globalSwitches) {
-      return;
-    }
-    toggleGraphEditorMode(!impl_->graphEditorVisible_, Qt::ShortcutFocusReason);
-  });
-  auto *toggleGraphModeShortcut =
-      new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_G), this);
-  QObject::connect(toggleGraphModeShortcut, &QShortcut::activated, this, [this]() {
-    if (!impl_) {
-      return;
-    }
-    if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed) {
-      showValueGraph();
-    } else {
-      showSpeedGraph();
-    }
-  });
   auto *tabCurveEditorShortcut = new QShortcut(QKeySequence(Qt::Key_Tab), this);
   tabCurveEditorShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(tabCurveEditorShortcut, &QShortcut::activated, this, [this]() {
@@ -4771,12 +4756,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
                          });
       };
   const auto& shortcutBindings = ArtifactCore::ShortcutBindings::instance();
-  applyInterpolationShortcut(QKeySequence(Qt::Key_F9),
-                             ArtifactCore::InterpolationType::EaseInOut);
-  applyInterpolationShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F9),
-                             ArtifactCore::InterpolationType::EaseIn);
-  applyInterpolationShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F9),
-                              ArtifactCore::InterpolationType::EaseOut);
   applyInterpolationShortcut(shortcutBindings.shortcut(ArtifactCore::ShortcutId::TimelineEaseIn),
                              ArtifactCore::InterpolationType::EaseIn);
   applyInterpolationShortcut(shortcutBindings.shortcut(ArtifactCore::ShortcutId::TimelineEaseOut),
@@ -4784,18 +4763,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   applyInterpolationShortcut(
       shortcutBindings.shortcut(ArtifactCore::ShortcutId::TimelineEaseInOut),
       ArtifactCore::InterpolationType::EaseInOut);
-  auto *undoShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Z), this);
-  QObject::connect(undoShortcut, &QShortcut::activated, this, []() {
-    if (auto *mgr = UndoManager::instance()) {
-      mgr->undo();
-    }
-  });
-  auto *redoShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y), this);
-  QObject::connect(redoShortcut, &QShortcut::activated, this, []() {
-    if (auto *mgr = UndoManager::instance()) {
-      mgr->redo();
-    }
-  });
   auto setToolShortcut = [this](QKeySequence seq, ToolType type) {
     auto *shortcut = new QShortcut(seq, this);
     shortcut->setContext(Qt::WidgetWithChildrenShortcut);
@@ -4810,24 +4777,6 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
   setToolShortcut(QKeySequence(Qt::Key_Z), ToolType::Zoom);
   setToolShortcut(QKeySequence(Qt::Key_R), ToolType::Rotation);
   setToolShortcut(QKeySequence(Qt::Key_S), ToolType::Slide);
-  auto *markerShortcut = new QShortcut(QKeySequence(Qt::Key_M), this);
-  QObject::connect(markerShortcut, &QShortcut::activated, this, []() {
-    if (auto *svc = ArtifactPlaybackService::instance()) {
-      svc->addMarkerAtCurrentFrame();
-    }
-  });
-  auto *nextMarkerShortcut = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_M), this);
-  QObject::connect(nextMarkerShortcut, &QShortcut::activated, this, []() {
-    if (auto *svc = ArtifactPlaybackService::instance()) {
-      svc->goToNextMarker();
-    }
-  });
-  auto *prevMarkerShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_M), this);
-  QObject::connect(prevMarkerShortcut, &QShortcut::activated, this, []() {
-    if (auto *svc = ArtifactPlaybackService::instance()) {
-      svc->goToPreviousMarker();
-    }
-  });
   searchModeCombo->addItem(QStringLiteral("All Visible"), static_cast<int>(SearchMatchMode::AllVisible));
   searchModeCombo->addItem(QStringLiteral("Highlight Only"), static_cast<int>(SearchMatchMode::HighlightOnly));
   searchModeCombo->addItem(QStringLiteral("Filter Only"), static_cast<int>(SearchMatchMode::FilterOnly));
@@ -6884,6 +6833,117 @@ void ArtifactTimelineWidget::keyPressEvent(QKeyEvent *event) {
         std::max<double>(0.001, static_cast<double>(impl_->painterTrackView_->pixelsPerFrame()));
     return zoomTimelineBy(2.0 / currentPpf);
   };
+  const auto toggleCurveEditor = [this]() {
+    if (!impl_) {
+      return false;
+    }
+    toggleGraphEditorMode(!impl_->graphEditorVisible_, Qt::ShortcutFocusReason);
+    return true;
+  };
+  const auto toggleGraphMode = [this]() {
+    if (!impl_) {
+      return false;
+    }
+    if (impl_->curveEditorGraphMode_ == CurveEditorGraphMode::Speed) {
+      showValueGraph();
+    } else {
+      showSpeedGraph();
+    }
+    return true;
+  };
+  const auto applyInterpolation = [this](const ArtifactCore::InterpolationType interpolation) {
+    if (!impl_) {
+      return false;
+    }
+    applyInterpolationToSelectedKeyframes(interpolation);
+    return true;
+  };
+  if (shortcuts.matches(event, ArtifactCore::ShortcutId::Undo)) {
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->undo();
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::Redo)) {
+    if (auto *mgr = UndoManager::instance()) {
+      mgr->redo();
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineToggleCurveEditor)) {
+    if (toggleCurveEditor()) {
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineToggleGraphMode)) {
+    if (toggleGraphMode()) {
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineEaseIn)) {
+    if (applyInterpolation(ArtifactCore::InterpolationType::EaseIn)) {
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineEaseOut)) {
+    if (applyInterpolation(ArtifactCore::InterpolationType::EaseOut)) {
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineEaseInOut)) {
+    if (applyInterpolation(ArtifactCore::InterpolationType::EaseInOut)) {
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineSelectionTool)) {
+    if (auto *app = ArtifactApplicationManager::instance()) {
+      app->toolManager()->setActiveTool(ToolType::Selection);
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineHandTool)) {
+    if (auto *app = ArtifactApplicationManager::instance()) {
+      app->toolManager()->setActiveTool(ToolType::Hand);
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineZoomTool)) {
+    if (auto *app = ArtifactApplicationManager::instance()) {
+      app->toolManager()->setActiveTool(ToolType::Zoom);
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineRotateTool)) {
+    if (auto *app = ArtifactApplicationManager::instance()) {
+      app->toolManager()->setActiveTool(ToolType::Rotation);
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineSlideTool)) {
+    if (auto *app = ArtifactApplicationManager::instance()) {
+      app->toolManager()->setActiveTool(ToolType::Slide);
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineAddMarker)) {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->addMarkerAtCurrentFrame();
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineNextMarker)) {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->goToNextMarker();
+      event->accept();
+      return;
+    }
+  } else if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelinePreviousMarker)) {
+    if (auto *svc = ArtifactPlaybackService::instance()) {
+      svc->goToPreviousMarker();
+      event->accept();
+      return;
+    }
+  }
   if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineZoomIn)) {
     if (zoomTimelineBy(1.12)) {
       event->accept();

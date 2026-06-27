@@ -37,8 +37,11 @@ module;
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QStringList>
 #include <wobjectimpl.h>
 export module Artifact.Color.Palette;
+
+import Color.Float;
 
 
 
@@ -48,11 +51,12 @@ export namespace ArtifactCore::Color {
 
 struct NamedColor {
     QString name;
-    QColor color;
+    ArtifactCore::FloatColor color;
 };
 
 class ColorPalette {
 public:
+    int schemaVersion = 1;
     QString name;
     QList<NamedColor> colors;
 
@@ -75,6 +79,7 @@ public:
     bool saveToFile(const QString& filePath) const;
 
     QString lastError() const { return lastError_; }
+    void setLastError(const QString& error) { lastError_ = error; }
 };
 
 } // namespace ArtifactCore::Color

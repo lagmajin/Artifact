@@ -66,6 +66,7 @@ import ColorWheelsEffect;
 import CurvesEffect;
 import Artifact.Effect.Distort.DisplacementMap;
 import Artifact.Effect.Generate.RadioWaves;
+import Artifact.Effect.Liquify;
 
 namespace Artifact
 {
@@ -418,6 +419,13 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Radio Waves"));
    return effect;
   }
+  if (effectId == QStringLiteral("liquify") ||
+      effectId == QStringLiteral("effect.distort.liquify")) {
+   auto effect = std::make_unique<LiquifyEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Liquify"));
+   return effect;
+  }
   if (effectId.startsWith(QStringLiteral("ofx."))) {
    const QString pluginId = effectId.mid(QStringLiteral("ofx.").size());
    Artifact::Ofx::ArtifactOfxHost::instance().initialize();
@@ -491,6 +499,7 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("bevel"), "Bevel"});
   effects.push_back({EffectID("linear_wipe"), "Linear Wipe"});
   effects.push_back({EffectID("displacement_map"), "Displacement Map"});
+  effects.push_back({EffectID("liquify"), "Liquify"});
   effects.push_back({EffectID("radio_waves"), "Radio Waves"});
 
   Artifact::Ofx::ArtifactOfxHost::instance().initialize();

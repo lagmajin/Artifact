@@ -75,11 +75,11 @@ struct PSInput
 };
 
 Texture2D g_textures[128] : register(t0);
-SamplerState g_sampler : register(s0);
+SamplerState g_textures_sampler : register(s0);
 
 float4 main(PSInput input) : SV_TARGET
 {
-    float4 sampled = g_textures[input.textureIndex].Sample(g_sampler, input.uv);
+    float4 sampled = g_textures[NonUniformResourceIndex(input.textureIndex)].Sample(g_textures_sampler, input.uv);
     float dx = min(input.uv.x, 1.0 - input.uv.x);
     float dy = min(input.uv.y, 1.0 - input.uv.y);
     float d = min(dx, dy);
@@ -134,10 +134,10 @@ void DiligentBindlessSubmitter::destroy()
     spriteSrb_ = nullptr;
     spriteVertexBuffer_ = nullptr;
     spriteTransformBuffer_ = nullptr;
-    spriteSampler_ = nullptr;
     spriteTexturesVar_ = nullptr;
     spriteVertices_.clear();
     spriteBatchScreenSize_ = {0.0f, 0.0f};
+    spriteBatchUsesNdc_ = false;
     resetTextureTable();
     device_ = nullptr;
     supported_ = false;
@@ -172,7 +172,7 @@ bool DiligentBindlessSubmitter::isSupported() const
 QString DiligentBindlessSubmitter::debugState() const
 {
     return supported_
-               ? QStringLiteral("mode=bindless state=sprite-only fallback=legacy")
+               ? QStringLiteral("mode=bindless state=sprite+xform fallback=legacy")
                : QStringLiteral("mode=bindless state=unsupported fallback=legacy");
 }
 
@@ -186,7 +186,8 @@ void DiligentBindlessSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext*
     auto* rtv = buf.targetRTV;
     const bool spriteOnly = std::all_of(
         buf.packets().begin(), buf.packets().end(), [](const DrawPacket& packet) {
-            return std::holds_alternative<SpritePkt>(packet);
+            return std::holds_alternative<SpritePkt>(packet) ||
+                   std::holds_alternative<SpriteXformPkt>(packet);
         });
     if (!spriteOnly) {
         fallback_.submit(buf, ctx);
@@ -195,7 +196,9 @@ void DiligentBindlessSubmitter::submit(RenderCommandBuffer& buf, IDeviceContext*
 
     for (const auto& packet : buf.packets()) {
         const auto* sprite = std::get_if<SpritePkt>(&packet);
-        if (!sprite || !submitSprite(*sprite, ctx, rtv)) {
+        const auto* spriteXform = std::get_if<SpriteXformPkt>(&packet);
+        if (!((sprite && submitSprite(*sprite, ctx, rtv)) ||
+              (spriteXform && submitSpriteXform(*spriteXform, ctx, rtv)))) {
             flushSpriteBatch(ctx, rtv);
             fallback_.submit(buf, ctx);
             return;
@@ -245,8 +248,18 @@ void DiligentBindlessSubmitter::createSpriteResources(TEXTURE_FORMAT rtvFormat)
     };
     static const ShaderResourceVariableDesc vars[] = {
         {SHADER_TYPE_VERTEX, "TransformCB", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
-        {SHADER_TYPE_PIXEL, "g_textures", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC},
-        {SHADER_TYPE_PIXEL, "g_sampler", SHADER_RESOURCE_VARIABLE_TYPE_DYNAMIC}
+        {SHADER_TYPE_PIXEL, "g_textures", SHADER_RESOURCE_VARIABLE_TYPE_MUTABLE}
+    };
+    static const SamplerDesc spriteSamplerDesc{
+        FILTER_TYPE_LINEAR,
+        FILTER_TYPE_LINEAR,
+        FILTER_TYPE_LINEAR,
+        TEXTURE_ADDRESS_CLAMP,
+        TEXTURE_ADDRESS_CLAMP,
+        TEXTURE_ADDRESS_CLAMP
+    };
+    static const ImmutableSamplerDesc immutableSamplers[] = {
+        {SHADER_TYPE_PIXEL, "g_textures", spriteSamplerDesc}
     };
 
     GraphicsPipelineStateCreateInfo psoInfo;
@@ -273,6 +286,8 @@ void DiligentBindlessSubmitter::createSpriteResources(TEXTURE_FORMAT rtvFormat)
     gp.InputLayout.NumElements = _countof(layout);
     psoInfo.PSODesc.ResourceLayout.Variables = vars;
     psoInfo.PSODesc.ResourceLayout.NumVariables = _countof(vars);
+    psoInfo.PSODesc.ResourceLayout.ImmutableSamplers = immutableSamplers;
+    psoInfo.PSODesc.ResourceLayout.NumImmutableSamplers = _countof(immutableSamplers);
 
     device_->CreateGraphicsPipelineState(psoInfo, &spritePso_);
     if (!spritePso_) {
@@ -301,20 +316,8 @@ void DiligentBindlessSubmitter::createSpriteResources(TEXTURE_FORMAT rtvFormat)
     cbDesc.Size = sizeof(RenderSolidTransform2D);
     device_->CreateBuffer(cbDesc, nullptr, &spriteTransformBuffer_);
 
-    SamplerDesc samplerDesc;
-    samplerDesc.MinFilter = FILTER_TYPE_LINEAR;
-    samplerDesc.MagFilter = FILTER_TYPE_LINEAR;
-    samplerDesc.MipFilter = FILTER_TYPE_LINEAR;
-    samplerDesc.AddressU = TEXTURE_ADDRESS_CLAMP;
-    samplerDesc.AddressV = TEXTURE_ADDRESS_CLAMP;
-    samplerDesc.AddressW = TEXTURE_ADDRESS_CLAMP;
-    device_->CreateSampler(samplerDesc, &spriteSampler_);
-
     if (auto* var = spriteSrb_->GetVariableByName(SHADER_TYPE_VERTEX, "TransformCB")) {
         var->Set(spriteTransformBuffer_);
-    }
-    if (auto* var = spriteSrb_->GetVariableByName(SHADER_TYPE_PIXEL, "g_sampler")) {
-        var->Set(spriteSampler_);
     }
     spriteTexturesVar_ = spriteSrb_->GetVariableByName(SHADER_TYPE_PIXEL, "g_textures");
     spriteVertices_.reserve(kMaxSpriteBatch * 6);
@@ -352,6 +355,9 @@ bool DiligentBindlessSubmitter::submitSprite(const SpritePkt& pkt, IDeviceContex
     if (!ctx || !rtv || !pkt.pSRV || !spriteVertexBuffer_ || !spriteTransformBuffer_) {
         return false;
     }
+    if (!spriteVertices_.empty() && spriteBatchUsesNdc_) {
+        flushSpriteBatch(ctx, rtv);
+    }
     if (!spriteVertices_.empty() &&
         (spriteBatchScreenSize_.x != pkt.xform.screenSize.x ||
          spriteBatchScreenSize_.y != pkt.xform.screenSize.y)) {
@@ -372,6 +378,7 @@ bool DiligentBindlessSubmitter::submitSprite(const SpritePkt& pkt, IDeviceContex
 
     if (spriteVertices_.empty()) {
         spriteBatchScreenSize_ = pkt.xform.screenSize;
+        spriteBatchUsesNdc_ = false;
     }
 
     const float4 color{1.0f, 1.0f, 1.0f, pkt.opacity};
@@ -403,11 +410,74 @@ bool DiligentBindlessSubmitter::submitSprite(const SpritePkt& pkt, IDeviceContex
     return true;
 }
 
+bool DiligentBindlessSubmitter::submitSpriteXform(const SpriteXformPkt& pkt, IDeviceContext* ctx, ITextureView* rtv)
+{
+    if (!ctx || !rtv || !pkt.pSRV || !spriteVertexBuffer_ || !spriteTransformBuffer_) {
+        return false;
+    }
+    if (!spriteVertices_.empty() &&
+        (!spriteBatchUsesNdc_ || spriteBatchScreenSize_.x != 2.0f ||
+         spriteBatchScreenSize_.y != 2.0f)) {
+        flushSpriteBatch(ctx, rtv);
+    }
+    if (spriteVertices_.size() + 6 > kMaxSpriteBatch * 6) {
+        flushSpriteBatch(ctx, rtv);
+    }
+
+    Uint32 textureIndex = 0;
+    if (!ensureTextureIndex(pkt.pSRV, textureIndex)) {
+        flushSpriteBatch(ctx, rtv);
+        resetTextureTable();
+        if (!ensureTextureIndex(pkt.pSRV, textureIndex)) {
+            return false;
+        }
+    }
+
+    if (spriteVertices_.empty()) {
+        spriteBatchScreenSize_ = {2.0f, 2.0f};
+        spriteBatchUsesNdc_ = true;
+    }
+
+    auto transformToBatchPos = [&pkt](const float x, const float y) {
+        const float4 pos{x, y, 0.0f, 1.0f};
+        const float ndcX = pos.x * pkt.mat.row0.x + pos.y * pkt.mat.row0.y +
+                           pos.z * pkt.mat.row0.z + pos.w * pkt.mat.row0.w;
+        const float ndcY = pos.x * pkt.mat.row1.x + pos.y * pkt.mat.row1.y +
+                           pos.z * pkt.mat.row1.z + pos.w * pkt.mat.row1.w;
+        return float2{ndcX + 1.0f, 1.0f - ndcY};
+    };
+
+    const float4 color{1.0f, 1.0f, 1.0f, pkt.opacity};
+    const BindlessSpriteVertex v0{transformToBatchPos(0.0f, 0.0f), {0.0f, 0.0f}, color, textureIndex};
+    const BindlessSpriteVertex v1{transformToBatchPos(1.0f, 0.0f), {1.0f, 0.0f}, color, textureIndex};
+    const BindlessSpriteVertex v2{transformToBatchPos(0.0f, 1.0f), {0.0f, 1.0f}, color, textureIndex};
+    const BindlessSpriteVertex v3{transformToBatchPos(1.0f, 1.0f), {1.0f, 1.0f}, color, textureIndex};
+    spriteVertices_.push_back(v0);
+    spriteVertices_.push_back(v1);
+    spriteVertices_.push_back(v2);
+    spriteVertices_.push_back(v2);
+    spriteVertices_.push_back(v1);
+    spriteVertices_.push_back(v3);
+
+    if (spriteVertices_.size() == 6) {
+        RenderSolidTransform2D batchXform;
+        batchXform.offset = {0.0f, 0.0f};
+        batchXform.scale = {1.0f, 1.0f};
+        batchXform.screenSize = spriteBatchScreenSize_;
+        mapWriteDiscard(ctx, spriteTransformBuffer_, &batchXform, sizeof(batchXform));
+        if (frameCostStats_) {
+            ++frameCostStats_->bufferUpdates;
+        }
+    }
+    return true;
+}
+
 void DiligentBindlessSubmitter::flushSpriteBatch(IDeviceContext* ctx, ITextureView* rtv)
 {
     if (spriteVertices_.empty() || !ctx || !rtv || !spriteTexturesVar_ || !spriteSrb_ || !spritePso_) {
         spriteVertices_.clear();
         spriteBatchScreenSize_ = {0.0f, 0.0f};
+        spriteBatchUsesNdc_ = false;
         resetTextureTable();
         return;
     }
@@ -437,6 +507,7 @@ void DiligentBindlessSubmitter::flushSpriteBatch(IDeviceContext* ctx, ITextureVi
     ctx->Draw(draw);
     spriteVertices_.clear();
     spriteBatchScreenSize_ = {0.0f, 0.0f};
+    spriteBatchUsesNdc_ = false;
     resetTextureTable();
 }
 

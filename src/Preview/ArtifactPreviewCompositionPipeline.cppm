@@ -63,6 +63,7 @@ import Artifact.Layer.Solid2D;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
 import Artifact.Layer.Particle;
+import Artifact.Layer.FormParticle;
 import Image.ImageF32x4_RGBA;
 import Artifact.Layers.SolidImage;
 import Artifact.Render.IRenderer;
@@ -377,6 +378,10 @@ namespace Artifact
 
    if (const auto particleLayer = dynamic_cast<ArtifactParticleLayer*>(layerPtr)) {
     particleLayer->draw(renderer);
+    return;
+   }
+   if (const auto formParticleLayer = dynamic_cast<ArtifactFormParticleLayer*>(layerPtr)) {
+    formParticleLayer->draw(renderer);
     return;
    }
 

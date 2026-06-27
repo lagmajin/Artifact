@@ -773,28 +773,39 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
       }
     } else if (!shape->customPathVertices().empty()) {
       const auto vertices = shape->customPathVertices();
-      QPointF prev;
-      bool hasPrev = false;
-      for (const auto &vertex : vertices) {
-        const QPointF canvasPt = globalTransform.map(vertex.pos);
-        renderer->drawPoint(static_cast<float>(canvasPt.x()),
-                            static_cast<float>(canvasPt.y()), nodeSize,
-                            nodeColor);
-        if (hasPrev) {
+      const int nv = static_cast<int>(vertices.size());
+      auto drawBezierOrLine = [&](const CustomPathVertex& va, const CustomPathVertex& vb) {
+        const QPointF p0 = globalTransform.map(va.pos);
+        if (va.outTangent != QPointF(0, 0) || vb.inTangent != QPointF(0, 0)) {
+          const QPointF p1 = globalTransform.map(va.pos + va.outTangent);
+          const QPointF p2 = globalTransform.map(vb.pos + vb.inTangent);
+          const QPointF p3 = globalTransform.map(vb.pos);
+          constexpr int steps = 18;
+          Detail::float2 prev = {static_cast<float>(p0.x()), static_cast<float>(p0.y())};
+          for (int k = 1; k <= steps; ++k) {
+            const double t = static_cast<double>(k) / steps;
+            const double u = 1.0 - t;
+            const QPointF pt = p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t);
+            const Detail::float2 cur = {static_cast<float>(pt.x()), static_cast<float>(pt.y())};
+            renderer->drawSolidLine(prev, cur, outerColor, 1.0f);
+            prev = cur;
+          }
+        } else {
+          const QPointF p1 = globalTransform.map(vb.pos);
           renderer->drawSolidLine(
-              {static_cast<float>(prev.x()), static_cast<float>(prev.y())},
-              {static_cast<float>(canvasPt.x()), static_cast<float>(canvasPt.y())},
+              {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+              {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
               outerColor, 1.0f);
         }
-        prev = canvasPt;
-        hasPrev = true;
+      };
+      for (int i = 0; i < nv; ++i) {
+        renderer->drawPoint(static_cast<float>(globalTransform.map(vertices[i].pos).x()),
+                            static_cast<float>(globalTransform.map(vertices[i].pos).y()),
+                            nodeSize, nodeColor);
+        if (i > 0) drawBezierOrLine(vertices[i - 1], vertices[i]);
       }
-      if (shape->customPathClosed() && vertices.size() > 1) {
-        const QPointF first = globalTransform.map(vertices.front().pos);
-        renderer->drawSolidLine(
-            {static_cast<float>(prev.x()), static_cast<float>(prev.y())},
-            {static_cast<float>(first.x()), static_cast<float>(first.y())},
-            outerColor, 1.0f);
+      if (shape->customPathClosed() && nv > 1) {
+        drawBezierOrLine(vertices.back(), vertices.front());
       }
     }
   }
@@ -807,14 +818,6 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
 
   const FloatColor cloneOuterColor{1.0f, 0.66f, 0.24f, 0.62f};
   const FloatColor cloneInnerColor{0.10f, 0.05f, 0.02f, 0.38f};
-  const auto mapPoint = [](const QMatrix4x4 &matrix,
-                           const QPointF &point) -> QPointF {
-    const QVector3D mapped =
-        matrix.map(QVector3D(static_cast<float>(point.x()),
-                             static_cast<float>(point.y()), 0.0f));
-    return QPointF(static_cast<qreal>(mapped.x()),
-                   static_cast<qreal>(mapped.y()));
-  };
   const auto closePoint = [](const QPointF &a, const QPointF &b) {
     return std::abs(a.x() - b.x()) < 0.01 && std::abs(a.y() - b.y()) < 0.01;
   };
@@ -847,10 +850,10 @@ void drawSelectionOverlay(ArtifactIRenderer *renderer,
   };
 
   for (const auto &instance : cloneInstances) {
-    const QPointF ctl = mapPoint(instance.transform, localBounds.topLeft());
-    const QPointF ctr = mapPoint(instance.transform, localBounds.topRight());
-    const QPointF cbr = mapPoint(instance.transform, localBounds.bottomRight());
-    const QPointF cbl = mapPoint(instance.transform, localBounds.bottomLeft());
+    const QPointF &ctl = instance.canvasCorners[0];
+    const QPointF &ctr = instance.canvasCorners[1];
+    const QPointF &cbr = instance.canvasCorners[2];
+    const QPointF &cbl = instance.canvasCorners[3];
     if (closePoint(ctl, tl) && closePoint(ctr, tr) && closePoint(cbr, br) &&
         closePoint(cbl, bl)) {
       continue;

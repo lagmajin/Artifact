@@ -182,6 +182,13 @@ export namespace Artifact {
                                 PrecomposeMode mode);
   bool unprecomposeLayerWithUndo(const LayerID& layerId, bool keepComposition);
 
+  // Undo-aware group / ungroup
+  bool groupSelectedLayersWithUndo(const UniString& groupName = UniString(QStringLiteral("Group 1")));
+  bool ungroupSelectedGroupWithUndo();
+
+  // Undo-aware split
+  bool splitLayerWithUndo(const CompositionID& compositionId, const LayerID& layerId);
+
   // Undo-aware effect operations
   bool addEffectToLayerWithUndo(const LayerID& layerId,
                                 std::shared_ptr<ArtifactAbstractEffect> effect);

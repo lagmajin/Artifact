@@ -30,6 +30,7 @@ module;
 #include <QHash>
 #include <QPalette>
 #include <QSize>
+#include <Layer/ArtifactSolidGradientUtil.hpp>
 module Artifact.Widgets.CreatePlaneLayerDialog;
 
 import std;
@@ -275,6 +276,70 @@ QString suggestedPlaneLayerName(const QColor& color)
     return makeUniqueSequentialName(base, currentLayerNames());
 }
 
+struct GradientPreset {
+    QString name;
+    Artifact::ArtifactSolidFillType fillType;
+    ArtifactCore::FloatColor startColor;
+    ArtifactCore::FloatColor endColor;
+    float angleDegrees;
+    bool reverse;
+    float centerX;
+    float centerY;
+    float scale;
+    float offset;
+};
+
+std::vector<GradientPreset> defaultGradientPresets()
+{
+    return {
+        {u8"ホワイト", Artifact::ArtifactSolidFillType::Solid,
+         ArtifactCore::FloatColor(1.0f, 1.0f, 1.0f, 1.0f), ArtifactCore::FloatColor(1.0f, 1.0f, 1.0f, 1.0f),
+         0, false, 0.5f, 0.5f, 1.0f, 0.0f},
+        {u8"ブラック", Artifact::ArtifactSolidFillType::Solid,
+         ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 1.0f), ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 1.0f),
+         0, false, 0.5f, 0.5f, 1.0f, 0.0f},
+        {u8"サンセット", Artifact::ArtifactSolidFillType::LinearGradient,
+         ArtifactCore::FloatColor(1.0f, 0.4f, 0.0f, 1.0f), ArtifactCore::FloatColor(1.0f, 0.8f, 0.2f, 1.0f),
+         -90, false, 0.5f, 0.0f, 1.0f, 0.0f},
+        {u8"オーシャン", Artifact::ArtifactSolidFillType::LinearGradient,
+         ArtifactCore::FloatColor(0.0f, 0.3f, 0.8f, 1.0f), ArtifactCore::FloatColor(0.0f, 0.7f, 0.4f, 1.0f),
+         90, false, 0.5f, 0.5f, 1.0f, 0.0f},
+        {u8"フォレスト", Artifact::ArtifactSolidFillType::LinearGradient,
+         ArtifactCore::FloatColor(0.1f, 0.5f, 0.1f, 1.0f), ArtifactCore::FloatColor(0.4f, 0.8f, 0.2f, 1.0f),
+         135, false, 0.5f, 0.5f, 1.0f, 0.0f},
+        {u8"ファイア", Artifact::ArtifactSolidFillType::LinearGradient,
+         ArtifactCore::FloatColor(1.0f, 0.0f, 0.0f, 1.0f), ArtifactCore::FloatColor(1.0f, 0.6f, 0.0f, 1.0f),
+         90, false, 0.5f, 0.5f, 1.0f, 0.0f},
+        {u8"スポット", Artifact::ArtifactSolidFillType::RadialGradient,
+         ArtifactCore::FloatColor(1.0f, 1.0f, 1.0f, 1.0f), ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 1.0f),
+         0, false, 0.5f, 0.5f, 0.5f, 0.0f},
+        {u8"グロー", Artifact::ArtifactSolidFillType::RadialGradient,
+         ArtifactCore::FloatColor(1.0f, 0.9f, 0.5f, 1.0f), ArtifactCore::FloatColor(1.0f, 0.3f, 0.0f, 1.0f),
+         0, false, 0.5f, 0.5f, 1.0f, 0.0f},
+        {u8"レインボー", Artifact::ArtifactSolidFillType::ConicalGradient,
+         ArtifactCore::FloatColor(1.0f, 0.0f, 0.0f, 1.0f), ArtifactCore::FloatColor(0.0f, 0.0f, 1.0f, 1.0f),
+         0, false, 0.5f, 0.5f, 1.0f, 0.0f},
+    };
+}
+
+QPixmap renderGradientPreview(const GradientPreset& preset)
+{
+    const QImage img = ArtifactSolidGradientUtil::makeSolidGradientImage(
+        QSize(40, 24),
+        QColor::fromRgbF(preset.startColor.r(), preset.startColor.g(),
+                         preset.startColor.b(), preset.startColor.a()),
+        QColor::fromRgbF(preset.endColor.r(), preset.endColor.g(),
+                         preset.endColor.b(), preset.endColor.a()),
+        static_cast<int>(preset.fillType),
+        preset.angleDegrees,
+        preset.reverse,
+        preset.centerX,
+        preset.centerY,
+        preset.scale,
+        preset.offset);
+    return QPixmap::fromImage(img);
+}
+
 } // namespace
 
 namespace Artifact {
@@ -323,6 +388,7 @@ public:
     QDoubleSpinBox* gradientOffsetSpin = nullptr;
     QWidget*      gradientOffsetRow = nullptr;
     QCheckBox*    fitToCompCheck    = nullptr;
+    QWidget*      presetBar         = nullptr;
 
     QColor bgColor = QColor(255, 255, 255, 255);
     QColor gradientStartColor = QColor(255, 255, 255, 255);
@@ -488,6 +554,33 @@ PlaneLayerSettingPage::PlaneLayerSettingPage(QWidget* parent)
     }
 
     vbox->addWidget(makeRow(this, u8"塗り", 100, impl_->fillModeCombo));
+
+    // ── グラデーション プリセット ────────────────────────────────────────────
+    {
+        impl_->presetBar = new QWidget(this);
+        auto* lay = new QHBoxLayout(impl_->presetBar);
+        lay->setContentsMargins(20, 4, 4, 4);
+        lay->setSpacing(3);
+        lay->addSpacing(104);
+        const auto presets = defaultGradientPresets();
+        for (const auto& preset : presets) {
+            auto* btn = new QPushButton(impl_->presetBar);
+            btn->setFixedSize(40, 24);
+            btn->setIcon(QIcon(renderGradientPreview(preset)));
+            btn->setIconSize(QSize(40, 24));
+            btn->setToolTip(preset.name);
+            QObject::connect(btn, &QPushButton::clicked, this, [this, preset]() {
+                setInitialGradientParams(preset.fillType, preset.startColor,
+                                         preset.endColor, preset.angleDegrees,
+                                         preset.reverse, preset.centerX,
+                                         preset.centerY, preset.scale,
+                                         preset.offset);
+            });
+            lay->addWidget(btn);
+        }
+        lay->addStretch();
+        vbox->addWidget(impl_->presetBar);
+    }
 
     {
         auto* ctrl = new QWidget(this);

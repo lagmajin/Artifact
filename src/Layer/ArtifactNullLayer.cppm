@@ -4,7 +4,7 @@ module;
 
 module Artifact.Layer.Null;
 import std;
-import Artifact.Layers.Abstract._2D;
+import Artifact.Layer.Abstract;
 
 
 namespace Artifact {
@@ -44,12 +44,12 @@ namespace Artifact {
 
   std::vector<ArtifactCore::PropertyGroup> ArtifactNullLayer::getLayerPropertyGroups() const
   {
-    return ArtifactAbstract2DLayer::getLayerPropertyGroups();
+    return ArtifactAbstractLayer::getLayerPropertyGroups();
   }
 
   bool ArtifactNullLayer::setLayerPropertyValue(const QString &propertyPath, const QVariant &value)
   {
-    return ArtifactAbstract2DLayer::setLayerPropertyValue(propertyPath, value);
+    return ArtifactAbstractLayer::setLayerPropertyValue(propertyPath, value);
   }
 
   QImage ArtifactNullLayer::toQImage() const
@@ -59,7 +59,7 @@ namespace Artifact {
 
   QJsonObject ArtifactNullLayer::toJson() const
   {
-    return ArtifactAbstract2DLayer::toJson();
+    return ArtifactAbstractLayer::toJson();
   }
 
   std::shared_ptr<ArtifactNullLayer> ArtifactNullLayer::fromJson(const QJsonObject& obj)

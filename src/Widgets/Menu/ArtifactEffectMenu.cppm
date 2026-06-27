@@ -21,6 +21,7 @@ import Artifact.Layers.Selection.Manager;
 import Artifact.Layer.Abstract;
 import Utils.Id;
 import Utils.Path;
+import UI.ShortcutBindings;
 
 namespace Artifact
 {
@@ -71,10 +72,12 @@ EffectMenuCategory categoryForEffect(const EffectInfo& info)
       id.contains(QStringLiteral("wave")) ||
       id.contains(QStringLiteral("spherize")) ||
       id.contains(QStringLiteral("optics")) ||
+      id.contains(QStringLiteral("liquify")) ||
       name.contains(QStringLiteral("distort")) ||
       name.contains(QStringLiteral("wave")) ||
       name.contains(QStringLiteral("twist")) ||
-      name.contains(QStringLiteral("bend"))) {
+      name.contains(QStringLiteral("bend")) ||
+      name.contains(QStringLiteral("liquify"))) {
     return {QStringLiteral("ディストート"), QStringLiteral("Studio/effect_ops_distort.svg")};
   }
   if (id.contains(QStringLiteral("key")) ||
@@ -158,7 +161,8 @@ class ArtifactEffectMenu::Impl
 ArtifactEffectMenu::Impl::Impl(ArtifactEffectMenu* menu) : menu_(menu)
 {
   inspectorAction_ = new QAction(QStringLiteral("エフェクトコントロール"), menu);
-  inspectorAction_->setShortcut(QKeySequence(Qt::Key_F3));
+  inspectorAction_->setShortcut(
+      ShortcutBindings::instance().shortcut(ShortcutId::EffectShowInspector));
   inspectorAction_->setIcon(menuIcon(QStringLiteral("Studio/effect_ops_control.svg")));
 
   removeAllAction_ = new QAction(QStringLiteral("選択レイヤーのエフェクトをすべて削除"), menu);

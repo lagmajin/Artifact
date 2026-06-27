@@ -4,6 +4,8 @@ module;
 #include <cmath>
 #include <memory>
 #include <vector>
+#include <QJsonArray>
+#include <QJsonObject>
 
 export module Artifact.Layer.Shape;
 
@@ -132,6 +134,7 @@ public:
   void clearShapeOperators();
   int shapeOperatorCount() const;
   ArtifactCore::ShapeOperatorType shapeOperatorTypeAt(int index) const;
+  void restoreOperatorsFromJson(const QJsonArray& operators);
 
   // Layer interface
   QRectF localBounds() const override;

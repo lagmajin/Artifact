@@ -154,6 +154,7 @@ import Geometry.ResolutionRemap;
 import Artifact.Widgets.ResolutionRemapDialog;
 import Utils.Path;
 import Undo.UndoManager;
+import UI.ShortcutBindings;
 
 namespace Artifact {
 
@@ -1607,6 +1608,10 @@ public:
         invalidateFilter();
     }
 
+    int visibleRowCount() const {
+        return countAcceptedRows(QModelIndex());
+    }
+
 protected:
     bool filterAcceptsRow(int sourceRow, const QModelIndex& sourceParent) const override {
         const QModelIndex rowIdx0 = sourceModel()->index(sourceRow, 0, sourceParent);
@@ -1640,6 +1645,37 @@ protected:
     }
 
 private:
+    int countAcceptedRows(const QModelIndex& sourceParent) const {
+        if (!sourceModel()) {
+            return 0;
+        }
+
+        int count = 0;
+        const int rowCount = sourceModel()->rowCount(sourceParent);
+        for (int row = 0; row < rowCount; ++row) {
+            const QModelIndex rowIdx0 = sourceModel()->index(row, 0, sourceParent);
+            if (!rowIdx0.isValid()) {
+                continue;
+            }
+
+            const QVariant typeVar = sourceModel()->data(
+                rowIdx0, Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemType));
+            const eProjectItemType itemType = typeVar.isValid()
+                ? static_cast<eProjectItemType>(typeVar.toInt())
+                : eProjectItemType::Unknown;
+
+            const QVariant ptrVar = sourceModel()->data(
+                rowIdx0, Qt::UserRole + static_cast<int>(Artifact::ProjectItemDataRole::ProjectItemPtr));
+            ProjectItem* item = ptrVar.isValid() ? reinterpret_cast<ProjectItem*>(ptrVar.value<quintptr>()) : nullptr;
+
+            if (matchesAdvanced(rowIdx0, itemType, item) && matchesLegacyQuery(row, sourceParent)) {
+                ++count;
+            }
+            count += countAcceptedRows(rowIdx0);
+        }
+        return count;
+    }
+
     bool matchesLegacyQuery(const int sourceRow, const QModelIndex& sourceParent) const {
         if (query_.isSearchTextEmpty()) {
             return true;
@@ -5526,9 +5562,12 @@ public:
             projectHealthLabel->setText(projectHealthText());
         }
         if (selectionSummaryLabel) {
-            selectionSummaryLabel->setText(selectionSummaryText());
+            const int resultCount = proxyModel_ ? proxyModel_->visibleRowCount() : 0;
+            selectionSummaryLabel->setText(QStringLiteral("%1 | Results: %2")
+                                               .arg(selectionSummaryText())
+                                               .arg(resultCount));
             selectionSummaryLabel->setToolTip(
-                QStringLiteral("Current selection count, active filter, and search text."));
+                QStringLiteral("Current selection count, active filter, search text, and filtered result count."));
         }
         refreshCompositionEditor();
         ProjectItem* item = currentSelectedItem();
@@ -6430,7 +6469,7 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
     chromeLayout->addWidget(impl_->compositionEditorPanel);
 
     impl_->searchBar = new QLineEdit(chromePanel);
-    impl_->searchBar->setPlaceholderText(QString());
+    impl_->searchBar->setPlaceholderText(QStringLiteral("Search assets, tags, type:footage, unused:true"));
     impl_->searchBar->setClearButtonEnabled(true);
     {
         QFont f = impl_->searchBar->font();
@@ -6580,13 +6619,19 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
             }
         }
     });
-    auto* expandAllShortcut = new QShortcut(QKeySequence(Qt::Key_Asterisk), this);
+    auto* expandAllShortcut = new QShortcut(
+        ArtifactCore::ShortcutBindings::instance().shortcut(
+            ArtifactCore::ShortcutId::ProjectExpandAll),
+        this);
     connect(expandAllShortcut, &QShortcut::activated, this, [this]() {
         if (impl_->projectView_) {
             impl_->projectView_->expandAll();
         }
     });
-    auto* collapseAllShortcut = new QShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Asterisk), this);
+    auto* collapseAllShortcut = new QShortcut(
+        ArtifactCore::ShortcutBindings::instance().shortcut(
+            ArtifactCore::ShortcutId::ProjectCollapseAll),
+        this);
     connect(collapseAllShortcut, &QShortcut::activated, this, [this]() {
         if (impl_->projectView_) {
             impl_->projectView_->collapseAll();
@@ -6710,7 +6755,10 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
 
     impl_->refreshSelectionChrome();
 
-    auto* focusSearchShortcut = new QShortcut(QKeySequence::Find, this);
+    auto* focusSearchShortcut = new QShortcut(
+        ArtifactCore::ShortcutBindings::instance().shortcut(
+            ArtifactCore::ShortcutId::ProjectFocusSearch),
+        this);
     connect(focusSearchShortcut, &QShortcut::activated, this, [this]() {
         if (impl_->searchBar) {
             impl_->searchBar->setFocus();
@@ -6725,14 +6773,20 @@ ArtifactProjectManagerWidget::ArtifactProjectManagerWidget(QWidget* parent)
         }
     });
 
-    auto* renameShortcut = new QShortcut(QKeySequence(Qt::Key_F2), this);
+    auto* renameShortcut = new QShortcut(
+        ArtifactCore::ShortcutBindings::instance().shortcut(
+            ArtifactCore::ShortcutId::ProjectRenameSelected),
+        this);
     connect(renameShortcut, &QShortcut::activated, this, [this]() {
         if (!impl_->renameSelectedItem(this)) {
             return;
         }
     });
 
-    auto* deleteShortcut = new QShortcut(QKeySequence::Delete, this);
+    auto* deleteShortcut = new QShortcut(
+        ArtifactCore::ShortcutBindings::instance().shortcut(
+            ArtifactCore::ShortcutId::ProjectDeleteSelected),
+        this);
     connect(deleteShortcut, &QShortcut::activated, this, [this]() {
         if (!impl_->deleteSelectedItem(this)) {
             return;

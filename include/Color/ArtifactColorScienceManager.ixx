@@ -107,6 +107,9 @@ public:
   std::vector<std::string> getAvailableLUTs() const;
   std::vector<ArtifactCore::ColorSpace> getSupportedColorSpaces() const;
 
+  // Access the current LUT for GPU upload
+  const ArtifactCore::ColorLUT* currentLUT() const;
+
   // Signals
   void settingsChanged() W_SIGNAL(settingsChanged);
   void lutChanged() W_SIGNAL(lutChanged);

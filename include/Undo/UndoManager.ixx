@@ -165,6 +165,23 @@ private:
     QString newName_;
 };
 
+// 新規コマンド：レイヤー整列・分布
+struct AlignLayerSnapshot {
+    QString layerId;
+    float beforeX, beforeY;
+    float afterX, afterY;
+};
+class AlignLayersUndoCommand : public UndoCommand {
+public:
+    AlignLayersUndoCommand(const std::vector<AlignLayerSnapshot>& snapshots, const QString& label);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    std::vector<AlignLayerSnapshot> snapshots_;
+    QString label_;
+};
+
 // 新規コマンド：レイヤー不透明度変更
 class ChangeLayerOpacityCommand : public UndoCommand {
 public:
@@ -238,6 +255,82 @@ private:
     QSize newSize_;
     ArtifactCore::RemapPolicy policy_;
     std::vector<LayerSnapshot> beforeSnapshots_;
+};
+
+// === Undo commands for layer state toggles ===
+
+class SetLayerVisibilityCommand : public UndoCommand {
+public:
+    SetLayerVisibilityCommand(ArtifactAbstractLayerPtr layer, bool visible);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    bool oldVisible_;
+    bool newVisible_;
+};
+
+class SetLayerLockCommand : public UndoCommand {
+public:
+    SetLayerLockCommand(ArtifactAbstractLayerPtr layer, bool locked);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    bool oldLocked_;
+    bool newLocked_;
+};
+
+class SetLayerSoloCommand : public UndoCommand {
+public:
+    SetLayerSoloCommand(ArtifactAbstractLayerPtr layer, bool solo);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    bool oldSolo_;
+    bool newSolo_;
+};
+
+class SetLayerShyCommand : public UndoCommand {
+public:
+    SetLayerShyCommand(ArtifactAbstractLayerPtr layer, bool shy);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    bool oldShy_;
+    bool newShy_;
+};
+
+class ChangeLayerBlendModeCommand : public UndoCommand {
+public:
+    ChangeLayerBlendModeCommand(ArtifactAbstractLayerPtr layer, LAYER_BLEND_TYPE newMode);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    ArtifactAbstractLayerWeak layer_;
+    LAYER_BLEND_TYPE oldMode_;
+    LAYER_BLEND_TYPE newMode_;
+};
+
+// === Macro command for batching multiple undo commands ===
+
+class MacroUndoCommand : public UndoCommand {
+public:
+    explicit MacroUndoCommand(const QString& label);
+    void addChild(std::unique_ptr<UndoCommand> child);
+    void undo() override;
+    void redo() override;
+    QString label() const override;
+private:
+    std::vector<std::unique_ptr<UndoCommand>> children_;
+    QString label_;
 };
 
 class UndoManager : public QObject {

@@ -187,15 +187,18 @@ public:
             const int total = std::max(1, count_);
             clones.reserve(static_cast<size_t>(total));
 
-            for (int i = 0; i < total; ++i) {
+            for (int i = 1; i <= total; ++i) {
                 CloneData clone;
-                clone.index = i;
+                const int cloneIndex = i - 1;
+                clone.index = cloneIndex;
                 clone.transform.setToIdentity();
-                clone.transform.translate(offset_.x() * i, offset_.y() * i, offset_.z() * i);
+                clone.transform.translate(offset_.x() * static_cast<float>(i),
+                                          offset_.y() * static_cast<float>(i),
+                                          offset_.z() * static_cast<float>(i));
                 if (rotationStep_ != 0.0f) {
-                    clone.transform.rotate(rotationStep_ * i, 0.0f, 0.0f, 1.0f);
+                    clone.transform.rotate(rotationStep_ * static_cast<float>(i), 0.0f, 0.0f, 1.0f);
                 }
-                clone.weight = std::clamp(1.0f - opacityDecay_ * static_cast<float>(i), 0.0f, 1.0f);
+                clone.weight = std::clamp(1.0f - opacityDecay_ * static_cast<float>(cloneIndex), 0.0f, 1.0f);
                 clone.visible = true;
                 clones.push_back(clone);
             }

@@ -20,6 +20,9 @@ module;
 #include <QMutex>
 #include <QPainter>
 #include <QPointer>
+#include <QPainterPath>
+#include <QPolygonF>
+#include <QLineF>
 #include <QRectF>
 #include <QSizeF>
 #include <QSet>
@@ -66,6 +69,8 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Clone;
 import Artifact.Layer.CloneEffectSupport;
 import Artifact.Layer.Camera;
+import Artifact.Layer.Null;
+import Artifact.Layer.SDF;
 import Artifact.Layer.Light;
 import Core.Light;
 import Artifact.Effect.Abstract;
@@ -74,6 +79,8 @@ import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
 import Video.VideoFrame;
 import Artifact.Layer.Particle;
+import Artifact.Layer.FormParticle;
+import Artifact.Layer.Procedural3D;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
@@ -170,6 +177,31 @@ QImage makePreviewDiffImage(const QImage& before, const QImage& after) {
     }
   }
   return diff;
+}
+
+QImage makePreviewWipeImage(const QImage& left, const QImage& right,
+                            float splitRatio = 0.5f) {
+  if (left.isNull() || right.isNull() || left.size() != right.size()) {
+    return {};
+  }
+  const QImage lhs = ensurePreviewImage(left);
+  const QImage rhs = ensurePreviewImage(right);
+  if (lhs.isNull() || rhs.isNull() || lhs.size() != rhs.size()) {
+    return {};
+  }
+
+  const int splitX = std::clamp(
+      static_cast<int>(std::lround(lhs.width() * splitRatio)), 0, lhs.width());
+  QImage wipe(lhs.size(), QImage::Format_RGBA8888);
+  for (int y = 0; y < lhs.height(); ++y) {
+    const QRgb* lhsRow = reinterpret_cast<const QRgb*>(lhs.constScanLine(y));
+    const QRgb* rhsRow = reinterpret_cast<const QRgb*>(rhs.constScanLine(y));
+    QRgb* outRow = reinterpret_cast<QRgb*>(wipe.scanLine(y));
+    for (int x = 0; x < lhs.width(); ++x) {
+      outRow[x] = x < splitX ? lhsRow[x] : rhsRow[x];
+    }
+  }
+  return wipe;
 }
 
 void addSnapshotPreview(ArtifactCore::FrameDebugSnapshot& snapshot,
@@ -656,7 +688,8 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
     if (dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
       ++videoLayerCount;
     }
-    if (dynamic_cast<ArtifactParticleLayer *>(layer.get())) {
+    if (dynamic_cast<ArtifactParticleLayer *>(layer.get()) ||
+        dynamic_cast<ArtifactFormParticleLayer *>(layer.get())) {
       ++particleLayerCount;
     }
 
@@ -1065,7 +1098,8 @@ QImage makeMayaGradientSprite(const FloatColor &baseColor) {
   return image;
 }
 
-enum class SelectionMode { Replace, Add, Toggle };
+enum class SelectionMode { Replace, Add, Subtract };
+enum class SelectionGestureMode { Rectangle, Lasso };
 
 enum class LayerDragMode { None, Move, ScaleTL, ScaleTR, ScaleBL, ScaleBR };
 
@@ -1081,6 +1115,69 @@ QRectF dragRectFromPoints(const QPointF &start, const QPointF &end)
 bool isMeaningfulDragRect(const QRectF &rect)
 {
   return rect.width() >= 1.0 && rect.height() >= 1.0;
+}
+
+bool polygonIntersectsLayerBounds(const QPolygonF &polygon,
+                                 const QTransform &globalTransform,
+                                 const QRectF &localBounds)
+{
+  if (polygon.size() < 3 || !localBounds.isValid()) {
+    return false;
+  }
+
+  const QPointF tl = globalTransform.map(localBounds.topLeft());
+  const QPointF tr = globalTransform.map(localBounds.topRight());
+  const QPointF br = globalTransform.map(localBounds.bottomRight());
+  const QPointF bl = globalTransform.map(localBounds.bottomLeft());
+  QPolygonF layerPoly;
+  layerPoly << tl << tr << br << bl;
+
+  QPainterPath lassoPath;
+  lassoPath.addPolygon(polygon);
+  QPainterPath layerPath;
+  layerPath.addPolygon(layerPoly);
+  if (lassoPath.intersects(layerPath)) {
+    return true;
+  }
+
+  for (const auto &corner : layerPoly) {
+    if (lassoPath.contains(corner)) {
+      return true;
+    }
+  }
+
+  bool invertible = false;
+  const QTransform inv = globalTransform.inverted(&invertible);
+  if (!invertible) {
+    return false;
+  }
+  for (const auto &lassoPt : polygon) {
+    if (localBounds.contains(inv.map(lassoPt))) {
+      return true;
+    }
+  }
+
+  const QPointF tl = globalTransform.map(localBounds.topLeft());
+  const QPointF tr = globalTransform.map(localBounds.topRight());
+  const QPointF br = globalTransform.map(localBounds.bottomRight());
+  const QPointF bl = globalTransform.map(localBounds.bottomLeft());
+  const std::array<QPointF, 4> corners{tl, tr, br, bl};
+  for (size_t i = 0; i < corners.size(); ++i) {
+    const QPointF a = corners[i];
+    const QPointF b = corners[(i + 1) % corners.size()];
+    const QPointF mid = QPointF((a.x() + b.x()) * 0.5, (a.y() + b.y()) * 0.5);
+    if (lassoPath.contains(mid)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+QRectF comparePanelRect(float overlayWf, float overlayHf)
+{
+  const float w = std::min(240.0f, overlayWf * 0.26f);
+  const float h = std::min(160.0f, overlayHf * 0.26f);
+  return QRectF(overlayWf - w - 18.0f, 18.0f, w, h);
 }
 
 std::array<QPointF, 4> rectCorners(const QRectF &rect)
@@ -1635,6 +1732,7 @@ bool layerNeedsFrameSyncForCompositionView(ArtifactAbstractLayer *layer) {
   // Animated playback-critical layers still need their frame propagated.
   if (dynamic_cast<ArtifactVideoLayer *>(layer) ||
       dynamic_cast<ArtifactParticleLayer *>(layer) ||
+      dynamic_cast<ArtifactFormParticleLayer *>(layer) ||
       dynamic_cast<ArtifactCompositionLayer *>(layer)) {
     return true;
   }
@@ -1961,13 +2059,33 @@ DetailLevel detailLevelFromZoom(float zoom) {
 }
 
 SelectionMode selectionModeFromModifiers(Qt::KeyboardModifiers modifiers) {
-  if (modifiers.testFlag(Qt::ControlModifier)) {
-    return SelectionMode::Toggle;
-  }
   if (modifiers.testFlag(Qt::ShiftModifier)) {
     return SelectionMode::Add;
   }
+  if (modifiers.testFlag(Qt::AltModifier)) {
+    return SelectionMode::Subtract;
+  }
   return SelectionMode::Replace;
+}
+
+SelectionGestureMode selectionGestureModeFromModifiers(
+    Qt::KeyboardModifiers modifiers) {
+  return modifiers.testFlag(Qt::ControlModifier) ? SelectionGestureMode::Lasso
+                                                  : SelectionGestureMode::Rectangle;
+}
+
+QString compareModeToString(CompositionCompareMode mode) {
+  switch (mode) {
+  case CompositionCompareMode::Off:
+    return QStringLiteral("Off");
+  case CompositionCompareMode::A:
+    return QStringLiteral("A");
+  case CompositionCompareMode::B:
+    return QStringLiteral("B");
+  case CompositionCompareMode::Diff:
+    return QStringLiteral("Diff");
+  }
+  return QStringLiteral("Off");
 }
 
 QStringList selectedLayerIdList() {
@@ -2663,8 +2781,12 @@ void drawLayerForCompositionView(
     }
     if (cameraView && cameraProj) {
       renderer->set3DCameraMatrices(*cameraView, *cameraProj);
+      renderer->setViewMatrix(*cameraView);
+      renderer->setProjectionMatrix(*cameraProj);
+      renderer->setUseExternalMatrices(true);
     }
-    layer->draw(renderer);
+    layer->drawLOD(renderer, lod);
+    renderer->setUseExternalMatrices(false);
     if (cameraView && cameraProj) {
       renderer->reset3DCameraMatrices();
     }
@@ -3036,7 +3158,7 @@ void drawLayerForCompositionView(
       reason = QStringLiteral("notLoaded");
     }
     if (frameBuffer.isEmpty() && loaded) {
-      frameBuffer = videoLayer->decodeFrameToImageBuffer(layer->currentFrame());
+      frameBuffer = videoLayer->decodeFrameToImageBuffer(static_cast<double>(layer->currentFrame()));
       usedSyncFallback = !frameBuffer.isEmpty();
     }
     if (videoDebugOut) {
@@ -3146,7 +3268,8 @@ void drawLayerForCompositionView(
     return;
   }
 
-  if (dynamic_cast<ArtifactParticleLayer *>(layer)) {
+  if (dynamic_cast<ArtifactParticleLayer *>(layer) ||
+      dynamic_cast<ArtifactFormParticleLayer *>(layer)) {
     layer->draw(renderer);
     return;
   }
@@ -3602,10 +3725,17 @@ public:
   std::vector<ArtifactCore::EventBus::Subscription> eventBusSubscriptions_;
   QSize pendingResizeSize_;
   bool isRubberBandSelecting_ = false;
+  bool isLassoSelecting_ = false;
   bool dragGroupMove_ = false;
   QPointF rubberBandStartViewportPos_;
   QPointF rubberBandCurrentViewportPos_;
+  QVector<QPointF> lassoViewportPoints_;
   SelectionMode selectionMode_ = SelectionMode::Replace;
+  CompositionCompareMode compareMode_ = CompositionCompareMode::Off;
+  float compareSplitRatio_ = 0.5f;
+  bool compareSplitDragging_ = false;
+  int referenceFrame_ = -1;
+  bool referencePinned_ = false;
   QVector<ArtifactAbstractLayerPtr> dragGroupLayers_;
   QHash<QString, QPointF> dragGroupStartPositions_;
 
@@ -3930,9 +4060,11 @@ public:
   void clearSelectionGestureState() {
     isDraggingLayer_ = false;
     isRubberBandSelecting_ = false;
+    isLassoSelecting_ = false;
     dragGroupMove_ = false;
     dragGroupLayers_.clear();
     dragGroupStartPositions_.clear();
+    lassoViewportPoints_.clear();
   }
 
   void applyCompositionState(const ArtifactCompositionPtr &composition) {
@@ -4849,6 +4981,45 @@ void CompositionRenderController::setShowDensityHeatmapOverlay(bool show) {
 
 bool CompositionRenderController::isShowDensityHeatmapOverlay() const {
   return impl_ ? impl_->showDensityHeatmapOverlay_ : false;
+}
+
+void CompositionRenderController::setCompareMode(CompositionCompareMode mode) {
+  if (!impl_ || impl_->compareMode_ == mode) {
+    return;
+  }
+  impl_->compareMode_ = mode;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+CompositionCompareMode CompositionRenderController::compareMode() const {
+  return impl_ ? impl_->compareMode_ : CompositionCompareMode::Off;
+}
+
+void CompositionRenderController::setReferenceFrame(int frame) {
+  if (!impl_ || impl_->referenceFrame_ == frame) {
+    return;
+  }
+  impl_->referenceFrame_ = frame;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+int CompositionRenderController::referenceFrame() const {
+  return impl_ ? impl_->referenceFrame_ : -1;
+}
+
+void CompositionRenderController::setReferencePinned(bool pinned) {
+  if (!impl_ || impl_->referencePinned_ == pinned) {
+    return;
+  }
+  impl_->referencePinned_ = pinned;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isReferencePinned() const {
+  return impl_ ? impl_->referencePinned_ : false;
 }
 
 bool CompositionRenderController::setSelectedLayerMotionPathKeyframeAtCurrentFrame() {
@@ -5832,6 +6003,12 @@ CompositionRenderController::frameDebugSnapshot() const {
         } else if (auto *particleLayer = dynamic_cast<ArtifactParticleLayer *>(layer)) {
           selectedResource.type = QStringLiteral("particle");
           selectedResource.note = particleLayer->debugState();
+        } else if (auto *formParticleLayer = dynamic_cast<ArtifactFormParticleLayer *>(layer)) {
+          selectedResource.type = QStringLiteral("particle");
+          selectedResource.note = formParticleLayer->debugState();
+        } else if (auto *proceduralLayer = dynamic_cast<ArtifactProcedural3DLayer *>(layer)) {
+          selectedResource.type = QStringLiteral("procedural3d");
+          selectedResource.note = proceduralLayer->debugState();
         } else if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
           selectedResource.type = QStringLiteral("text");
           selectedResource.note = textLayer->debugState();
@@ -6370,8 +6547,12 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
     }
   }
 
-  // 3D Gizmo hit test (GIZ-2) — only for 3D layers
-  if (selectedLayer && impl_->gizmo3D_ && selectedLayer->is3D() &&
+  // 3D Gizmo hit test (GIZ-2) — only for editable 3D layers
+  const bool canUse3DGizmo =
+      selectedLayer && selectedLayer->is3D() &&
+      !selectedLayer->isTransformLocked() &&
+      (!impl_->viewportInteracting_ || impl_->gizmoDragActive_);
+  if (selectedLayer && impl_->gizmo3D_ && canUse3DGizmo &&
       activeTool != ToolType::Pen) {
     impl_->gizmo3D_->setDepthEnabled(selectedLayer->is3D());
     Ray ray = createPickingRay(viewportPos);
@@ -6607,9 +6788,18 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
           impl_->clearSelectionGestureState();
           impl_->isDraggingLayer_ = false;
           impl_->dragMode_ = LayerDragMode::None;
-          impl_->isRubberBandSelecting_ = true;
+          const auto gestureMode =
+              selectionGestureModeFromModifiers(event->modifiers());
+          impl_->isRubberBandSelecting_ =
+              gestureMode == SelectionGestureMode::Rectangle;
+          impl_->isLassoSelecting_ =
+              gestureMode == SelectionGestureMode::Lasso;
           impl_->rubberBandStartViewportPos_ = viewportPos;
           impl_->rubberBandCurrentViewportPos_ = viewportPos;
+          impl_->lassoViewportPoints_.clear();
+          if (impl_->isLassoSelecting_) {
+            impl_->lassoViewportPoints_.push_back(viewportPos);
+          }
           impl_->selectionMode_ =
               selectionModeFromModifiers(event->modifiers());
         } else {
@@ -6638,6 +6828,20 @@ void CompositionRenderController::handleMouseMove(
   // Convert logical pixels (from Qt event) to physical pixels for the rendering
   // pipeline
   const QPointF viewportPos = viewportPosLogical * impl_->devicePixelRatio_;
+  const float overlayWf = impl_->hostWidth_ > 0.0f ? impl_->hostWidth_ : impl_->lastCanvasWidth_;
+  const float overlayHf = impl_->hostHeight_ > 0.0f ? impl_->hostHeight_ : impl_->lastCanvasHeight_;
+  if (impl_->compareMode_ != CompositionCompareMode::Off &&
+      event->button() == Qt::LeftButton) {
+    const QRectF panel = comparePanelRect(overlayWf, overlayHf);
+    const QRectF splitHit(panel.left() + panel.width() * 0.45f, panel.top(),
+                          panel.width() * 0.10f, panel.height());
+    if (splitHit.contains(viewportPos)) {
+      impl_->compareSplitDragging_ = true;
+      event->accept();
+      markRenderDirty();
+      return;
+    }
+  }
   auto toolManager = ArtifactApplicationManager::instance()->toolManager();
   auto activeTool =
       toolManager ? toolManager->activeTool() : ToolType::Selection;
@@ -6648,15 +6852,31 @@ void CompositionRenderController::handleMouseMove(
     markRenderDirty();
     return;
   }
-
-  // Finish MotionSketch on mouse release
-  {
-    auto* app = ArtifactApplicationManager::instance();
-    if (app && app->motionSketchTool() && app->motionSketchTool()->isSketching()) {
-      app->motionSketchTool()->finishSketch();
+  if (impl_->isLassoSelecting_) {
+    if (impl_->lassoViewportPoints_.isEmpty() ||
+        (QLineF(impl_->lassoViewportPoints_.last(), viewportPos).length() >= 4.0)) {
+      impl_->lassoViewportPoints_.push_back(viewportPos);
       markRenderDirty();
     }
+    impl_->rubberBandCurrentViewportPos_ = viewportPos;
+    return;
   }
+
+  if (impl_->compareSplitDragging_ &&
+      impl_->compareMode_ != CompositionCompareMode::Off) {
+    const float overlayWf = impl_->hostWidth_ > 0.0f ? impl_->hostWidth_ : impl_->lastCanvasWidth_;
+    const QRectF panel = comparePanelRect(overlayWf, impl_->hostHeight_ > 0.0f ? impl_->hostHeight_ : impl_->lastCanvasHeight_);
+    const float localX = static_cast<float>(viewportPos.x()) - static_cast<float>(panel.left());
+    const float split = panel.width() > 1.0f ? localX / panel.width() : 0.5f;
+    const float clamped = std::clamp(split, 0.05f, 0.95f);
+    if (std::abs(clamped - impl_->compareSplitRatio_) > 0.001f) {
+      impl_->compareSplitRatio_ = clamped;
+      impl_->invalidateOverlayComposite();
+      markRenderDirty();
+    }
+    return;
+  }
+
   if (impl_->isDraggingMotionPathKeyframe_) {
     auto comp = impl_->previewPipeline_.composition();
     if (comp && impl_->renderer_) {
@@ -6914,7 +7134,11 @@ if (activeTool == ToolType::Pen && impl_->isDraggingVertex_) {
     auto sel3DLayer = (!impl_->selectedLayerId_.isNil() && comp3D)
                           ? comp3D->layerById(impl_->selectedLayerId_)
                           : ArtifactAbstractLayerPtr{};
-    if (sel3DLayer && sel3DLayer->is3D()) {
+    const bool canUse3DGizmo =
+        sel3DLayer && sel3DLayer->is3D() &&
+        !sel3DLayer->isTransformLocked() &&
+        (!impl_->viewportInteracting_ || impl_->gizmoDragActive_);
+    if (canUse3DGizmo) {
       Ray ray = createPickingRay(viewportPos);
       if (impl_->gizmo3D_->isDragging()) {
         notifyViewportInteractionActivity();
@@ -7033,6 +7257,11 @@ void CompositionRenderController::handleMouseRelease() {
     markRenderDirty();
   }
 
+  if (impl_->compareSplitDragging_) {
+    impl_->compareSplitDragging_ = false;
+    markRenderDirty();
+  }
+
   impl_->isDraggingLayer_ = false;
   auto comp = impl_->previewPipeline_.composition();
 
@@ -7047,22 +7276,47 @@ void CompositionRenderController::handleMouseRelease() {
     markRenderDirty();
   };
 
-  if (impl_->isRubberBandSelecting_) {
+  if (impl_->isRubberBandSelecting_ || impl_->isLassoSelecting_) {
     auto *selection =
         ArtifactApplicationManager::instance()
             ? ArtifactApplicationManager::instance()->layerSelectionManager()
             : nullptr;
     if (comp && selection && impl_->renderer_) {
-      const QRectF rect = impl_->rubberBandCanvasRect().normalized();
       const auto currentFrame = currentFrameForComposition(comp);
       const auto &layers = comp->allLayerRef();
       QVector<ArtifactAbstractLayerPtr> hits;
       hits.reserve(layers.size());
-      for (const auto &layer : layers) {
-        if (!layerIntersectsCanvasRect(layer, rect, currentFrame)) {
-          continue;
+      if (impl_->isRubberBandSelecting_) {
+        const QRectF rect = impl_->rubberBandCanvasRect().normalized();
+        for (const auto &layer : layers) {
+          if (!layerIntersectsCanvasRect(layer, rect, currentFrame)) {
+            continue;
+          }
+          hits.push_back(layer);
         }
-        hits.push_back(layer);
+      } else {
+        QPolygonF polygon;
+        polygon.reserve(impl_->lassoViewportPoints_.size());
+        for (const auto &pt : impl_->lassoViewportPoints_) {
+          polygon.push_back(QPointF(pt.x(), pt.y()));
+        }
+        if (polygon.size() >= 3) {
+          for (const auto &layer : layers) {
+            if (!layer) {
+              continue;
+            }
+            const QRectF localBounds = layer->visualLocalBounds();
+            if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
+                localBounds.height() <= 0.0) {
+              continue;
+            }
+            if (polygonIntersectsLayerBounds(polygon,
+                                             layer->getGlobalTransform(),
+                                             localBounds)) {
+              hits.push_back(layer);
+            }
+          }
+        }
       }
 
       if (impl_->selectionMode_ == SelectionMode::Replace) {
@@ -7074,11 +7328,9 @@ void CompositionRenderController::handleMouseRelease() {
           continue;
         }
         const std::shared_ptr<ArtifactAbstractLayer> layerRef = layer;
-        if (impl_->selectionMode_ == SelectionMode::Toggle) {
+        if (impl_->selectionMode_ == SelectionMode::Subtract) {
           if (selection->isSelected(layerRef)) {
             selection->removeFromSelection(layerRef);
-          } else {
-            selection->addToSelection(layerRef);
           }
         } else {
           selection->addToSelection(layerRef);
@@ -7963,6 +8215,23 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               if (auto *svgLayer = dynamic_cast<ArtifactSvgLayer *>(l.get())) {
                   return svgLayer->toQImage();
               }
+              if (auto *solidLayer = dynamic_cast<ArtifactSolidImageLayer *>(l.get())) {
+                  return solidLayer->toQImage();
+              }
+              if (auto *shapeLayer = dynamic_cast<ArtifactShapeLayer *>(l.get())) {
+                  return shapeLayer->toQImage();
+              }
+              if (auto *nullLayer = dynamic_cast<ArtifactNullLayer *>(l.get())) {
+                  return nullLayer->toQImage();
+              }
+              if (auto *cloneLayer = dynamic_cast<ArtifactCloneLayer *>(l.get())) {
+                  return cloneLayer->toQImage();
+              }
+              if (auto *sdfLayer = dynamic_cast<ArtifactSDFLayer *>(l.get())) {
+                  return sdfLayer->toQImage();
+              }
+              // Fallback: render a thumbnail for any unhandled type (precomp, particle, etc.)
+              return l->getThumbnail();
           }
       }
       return {};
@@ -9004,6 +9273,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       auto selectedLayer = (!selectedLayerId_.isNil() && comp)
                                ? comp->layerById(selectedLayerId_)
                                : ArtifactAbstractLayerPtr{};
+      const bool canUse3DGizmo =
+          selectedLayer && selectedLayer->is3D() &&
+          !selectedLayer->isTransformLocked() &&
+          (!viewportInteracting_ || gizmoDragActive_);
       if (selectedLayer && isLayerEffectivelyVisible(selectedLayer)) {
         gizmo_->setMode(gizmoMode_);
         if (!selectedLayer->is3D()) {
@@ -9034,7 +9307,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           sync2DGizmosForLayer(nullptr);
         }
 
-        if (gizmo3D_ && selectedLayer->is3D()) {
+        if (gizmo3D_ && canUse3DGizmo) {
           ArtifactCore::ProfileScope _profG3D(
               "Gizmo3D", ArtifactCore::ProfileCategory::Render);
           syncGizmo3DFromLayer(selectedLayer);
@@ -9614,6 +9887,79 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                               showSelectionRect);
       }
     }
+    if (renderer_ && isLassoSelecting_ && lassoViewportPoints_.size() >= 2) {
+      QPolygonF polygon;
+      polygon.reserve(lassoViewportPoints_.size());
+      for (const auto &pt : lassoViewportPoints_) {
+        polygon.push_back(pt);
+      }
+      const bool showSelectionRect =
+          owner->isLineDebugKindVisible(LineDebugKind::SelectionRect);
+      const FloatColor fillColor{0.25f, 0.70f, 1.0f, 0.12f};
+      const FloatColor lineColor{0.25f, 0.70f, 1.0f, 0.95f};
+      for (int i = 1; i < polygon.size(); ++i) {
+        const QPointF a = polygon[static_cast<size_t>(i - 1)];
+        const QPointF b = polygon[static_cast<size_t>(i)];
+        renderer_->drawSolidLine({static_cast<float>(a.x()), static_cast<float>(a.y())},
+                                 {static_cast<float>(b.x()), static_cast<float>(b.y())},
+                                 lineColor, 1.7f);
+      }
+      if (polygon.size() >= 3) {
+        renderer_->drawSolidRect(static_cast<float>(polygon.boundingRect().left()),
+                                 static_cast<float>(polygon.boundingRect().top()),
+                                 static_cast<float>(polygon.boundingRect().width()),
+                                 static_cast<float>(polygon.boundingRect().height()),
+                                 fillColor, 1.0f);
+      }
+      drawTaggedRectOutline(renderer_.get(), polygon.boundingRect(),
+                            lineColor, showSelectionRect);
+    }
+
+    if (renderer_ && compareMode_ != CompositionCompareMode::Off) {
+      const QImage primary =
+          compareMode_ == CompositionCompareMode::A ? lastLayerRtPreview_
+                                                    : lastAccumRtPreview_;
+      const QImage secondary =
+          compareMode_ == CompositionCompareMode::A ? lastAccumRtPreview_
+                                                    : lastLayerRtPreview_;
+      const QImage diff = makePreviewDiffImage(primary, secondary);
+      const QImage wipe =
+          compareMode_ == CompositionCompareMode::Diff
+              ? diff
+              : makePreviewWipeImage(primary, secondary, compareSplitRatio_);
+      if (!primary.isNull() || !secondary.isNull() || !wipe.isNull()) {
+        const float w = std::min(240.0f, overlayWf * 0.26f);
+        const float h = std::min(160.0f, overlayHf * 0.26f);
+        const float x = overlayWf - w - 18.0f;
+        const float y = 18.0f;
+        renderer_->drawSolidRect(x - 5.0f, y - 20.0f, w + 10.0f, h + 42.0f,
+                                 {0.08f, 0.08f, 0.10f, 0.82f}, 1.0f);
+        renderer_->drawText(QRectF(x, y - 18.0f, w, 14.0f),
+                            QStringLiteral("Compare: %1").arg(compareModeToString(compareMode_)),
+                            QFont(), {1.0f, 1.0f, 1.0f, 0.92f},
+                            Qt::AlignLeft | Qt::AlignVCenter);
+        if (!wipe.isNull()) {
+          renderer_->drawSprite(x, y, w, h, wipe, 1.0f);
+        }
+        const float splitX = x + w * compareSplitRatio_;
+        renderer_->drawSolidRect(splitX - 2.5f, y + 2.0f, 5.0f, h - 4.0f,
+                                 {1.0f, 1.0f, 1.0f, 0.18f}, 1.0f);
+        renderer_->drawSolidRect(splitX - 1.5f, y + 2.0f, 3.0f, h - 4.0f,
+                                 {1.0f, 1.0f, 1.0f, 0.82f}, 1.0f);
+        renderer_->drawSolidRect(splitX - 9.0f, y + h * 0.5f - 8.0f, 18.0f, 16.0f,
+                                 {0.0f, 0.0f, 0.0f, 0.72f}, 1.0f);
+        renderer_->drawSolidRect(splitX - 5.5f, y + h * 0.5f - 4.5f, 11.0f, 9.0f,
+                                 {1.0f, 1.0f, 1.0f, 0.92f}, 1.0f);
+        renderer_->drawText(QRectF(splitX - 14.0f, y + h * 0.5f - 6.0f, 28.0f, 12.0f),
+                            QStringLiteral("W"),
+                            QFont(), {0.08f, 0.08f, 0.10f, 1.0f},
+                            Qt::AlignCenter);
+        renderer_->drawText(QRectF(x, y + h + 4.0f, w, 14.0f),
+                            QStringLiteral("A left / B right"),
+                            QFont(), {1.0f, 1.0f, 1.0f, 0.80f},
+                            Qt::AlignLeft | Qt::AlignVCenter);
+      }
+    }
 
     if (renderer_ && rectangleToolDragging_) {
       const QRectF rect =
@@ -9788,6 +10134,25 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       if (showAnchorCenterOverlay_ && selectedLayer && anchorOverlayToolActive) {
         ::Artifact::drawAnchorCenterOverlay(renderer_.get(), selectedLayer);
       }
+
+      auto* app = ArtifactApplicationManager::instance();
+      if (app && app->motionSketchTool() && app->motionSketchTool()->isSketching()) {
+        const auto& pts = app->motionSketchTool()->sampledPoints();
+        if (pts.size() >= 2 && renderer_) {
+          std::vector<Detail::float2> poly;
+          poly.reserve(pts.size());
+          for (const auto& p : pts) {
+            poly.push_back({static_cast<float>(p.x()),
+                            static_cast<float>(p.y())});
+          }
+          renderer_->drawPolyline(poly, {1.0f, 0.9f, 0.2f, 0.85f}, 2.5f);
+          renderer_->drawPoint(poly.front().x, poly.front().y, 5.0f,
+                               {1.0f, 0.35f, 0.3f, 1.0f});
+          renderer_->drawPoint(poly.back().x, poly.back().y, 6.0f,
+                               {0.3f, 1.0f, 0.5f, 1.0f});
+        }
+      }
+
       drawViewportGhostOverlay(owner, comp, selectedLayer, currentFrame);
       drawViewportUiOverlay();
     }
@@ -10312,6 +10677,11 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
       if (selectedCount > 0) {
         statusParts << QStringLiteral("%1 selected").arg(selectedCount);
       }
+    }
+    statusParts << QStringLiteral("cmp:%1")
+                       .arg(compareModeToString(impl_->compareMode_));
+    if (impl_->referencePinned_) {
+      statusParts << QStringLiteral("ref:%1").arg(impl_->referenceFrame_);
     }
     const QString statusText = statusParts.join(QStringLiteral("  •  "));
     ::Artifact::drawViewportStatusChipOverlay(renderer_.get(), overlayW,

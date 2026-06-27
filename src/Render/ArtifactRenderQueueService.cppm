@@ -104,6 +104,8 @@ import Artifact.Layer.Video;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Shape;
+import Artifact.Layer.FormParticle;
+import Artifact.Layer.Procedural3D;
 import Layer.Blend;
 import Color.Float;
 import Composition.TemplateLock;
@@ -3780,9 +3782,20 @@ namespace Artifact
                 }
 
                 const auto requestedBackend = impl_->effectiveRenderBackendForJob(job);
+                const bool requiresGeneratorGpu =
+                    (*compositionForRender) &&
+                    std::any_of(
+                        (*compositionForRender)->allLayerRef().begin(),
+                        (*compositionForRender)->allLayerRef().end(),
+                        [](const ArtifactAbstractLayerPtr& layer) {
+                            return layer &&
+                                (dynamic_cast<ArtifactProcedural3DLayer*>(layer.get()) != nullptr ||
+                                 dynamic_cast<ArtifactFormParticleLayer*>(layer.get()) != nullptr);
+                        });
                 bool useGpuBackend = false;
                 if (success.load(std::memory_order_relaxed)) {
-                    if (requestedBackend == Impl::RenderBackend::GPU) {
+                    if (requestedBackend == Impl::RenderBackend::GPU ||
+                        requiresGeneratorGpu) {
                         const int rw = std::max(16, job.resolutionWidth);
                         const int rh = std::max(16, job.resolutionHeight);
                         const char* requestedLabel = "gpu";
@@ -3790,10 +3803,17 @@ namespace Artifact
                         if (impl_->ensureGpuRendererInitialized(rw, rh, &gpuFailureReason)) {
                             useGpuBackend = true;
                         } else {
-                            qWarning() << "[RenderQueue] GPU backend unavailable, falling back to CPU"
-                                       << "job=" << i
-                                       << "requested=" << requestedLabel
-                                       << "reason=" << gpuFailureReason;
+                            if (requiresGeneratorGpu) {
+                                success.store(false, std::memory_order_relaxed);
+                                failureReason = QStringLiteral(
+                                    "Procedural 3D and Form layers require the GPU render path: %1")
+                                                    .arg(gpuFailureReason);
+                            } else {
+                                qWarning() << "[RenderQueue] GPU backend unavailable, falling back to CPU"
+                                           << "job=" << i
+                                           << "requested=" << requestedLabel
+                                           << "reason=" << gpuFailureReason;
+                            }
                         }
                     } else if (requestedBackend == Impl::RenderBackend::Auto) {
                         const int rw = std::max(16, job.resolutionWidth);

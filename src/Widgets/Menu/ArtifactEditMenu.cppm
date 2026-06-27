@@ -428,10 +428,16 @@ private:
   }
   rebuildMenu();
  }
- void ArtifactEditMenu::Impl::handleSplit() { 
-  if (auto* ctx = getActiveContext()) {
-   ctx->splitLayerAtCurrentTime();
-  }
+ void ArtifactEditMenu::Impl::handleSplit() {
+  auto* svc = ArtifactProjectService::instance();
+  if (!svc) return;
+  auto comp = svc->currentComposition().lock();
+  if (!comp) return;
+  auto* sel = ArtifactLayerSelectionManager::instance();
+  if (!sel) return;
+  auto layer = sel->currentLayer();
+  if (!layer) return;
+  svc->splitLayerWithUndo(comp->id(), layer->id());
  }
  void ArtifactEditMenu::Impl::handleTrimIn() { 
   if (auto* ctx = getActiveContext()) {

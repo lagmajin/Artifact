@@ -30,6 +30,7 @@ import Layer.Blend;
 import Layer.State;
 import Animation.Transform2D;
 import Animation.Transform3D;
+import Time.TimeRemap;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
@@ -116,7 +117,9 @@ enum class LayerType {
   Model3D = 18,    // 3Dモデルレイヤー
   Construction = 19, // 作業用の非レンダー設計レイヤー
   CompositionBackground = 20, // コンポ背景を視覚化する特別レイヤー
-  MaterialContainer = 21      // 複数素材を保持する配列型レイヤー
+  MaterialContainer = 21,     // 複数素材を保持する配列型レイヤー
+  FormParticle = 22,          // 独立した Form 風グリッド粒子レイヤー
+  Procedural3D = 23           // Terrain / Path Tube procedural source
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -140,6 +143,12 @@ enum class LayerDirtyReason : uint64_t {
   VisibilityChanged = 1ull << 5,
   PlaybackChanged = 1ull << 6,
   UserEdit = 1ull << 7
+};
+
+enum class LayerCachePolicy : std::uint8_t {
+  Default = 0,
+  Enabled,
+  Disabled
 };
 
 enum class LayerBoundsKind {
@@ -322,6 +331,8 @@ public:
   void setTimeRemapEnabled(bool);
   void clearTimeRemap();
   void setTimeRemapKey(int64_t compFrame, double sourceFrame);
+  void setTimeRemapKey(int64_t compFrame, double sourceFrame,
+                       ArtifactCore::TimeRemapKeyframe::Interpolation interpolation);
 
   // Get source frame index for a given composition frame (applies time remap)
   double getSourceFrameAtCompFrame(int64_t compFrame) const;
@@ -390,6 +401,11 @@ public:
   void setSolo(bool solo);
   bool isLocked() const;
   void setLocked(bool locked);
+  LayerCachePolicy layerCachePolicy() const;
+  void setLayerCachePolicy(LayerCachePolicy policy);
+  bool usesLayerCache() const;
+  static bool isGlobalLayerCacheEnabled();
+  static void setGlobalLayerCacheEnabled(bool enabled);
   bool isSelectionLocked() const;
   void setSelectionLocked(bool locked);
   bool isTransformLocked() const;

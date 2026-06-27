@@ -1992,11 +1992,34 @@ std::shared_ptr<ArtifactShapeLayer> ArtifactShapeLayer::fromJson(const QJsonObje
     auto op = createShapeOperator(type);
     if (op) {
       op->fromJson(opObj);
-      layer->impl_->shapeOperators_.push_back(std::move(op));
+       layer->impl_->shapeOperators_.push_back(std::move(op));
     }
   }
   layer->impl_->markDirty();
   return layer;
+}
+
+void ArtifactShapeLayer::restoreOperatorsFromJson(const QJsonArray& operators)
+{
+  if (!impl_) {
+    return;
+  }
+  impl_->shapeOperators_.clear();
+  impl_->shapeOperators_.reserve(operators.size());
+  for (const auto& val : operators) {
+    const QJsonObject opObj = val.toObject();
+    const auto type = static_cast<ArtifactCore::ShapeOperatorType>(
+        opObj.value(QStringLiteral("type")).toInt(0));
+    auto op = createShapeOperator(type);
+    if (op) {
+      op->fromJson(opObj);
+      impl_->shapeOperators_.push_back(std::move(op));
+    }
+  }
+  impl_->markDirty();
+  impl_->localBoundsCacheDirty_ = true;
+  impl_->shapeContentCacheDirty_ = true;
+  Q_EMIT changed();
 }
 
 };

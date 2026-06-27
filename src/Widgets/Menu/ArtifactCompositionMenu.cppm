@@ -44,6 +44,7 @@ import Widgets.Utils.CSS;
 import Geometry.ResolutionRemap;
 import Artifact.Widgets.ResolutionRemapDialog;
 import Undo.UndoManager;
+import UI.ShortcutBindings;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -178,7 +179,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  : menu_(menu), mainWindow_(mainWindow)
 {
  createAction = new QAction("新規コンポジション(&N)...");
- createAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_N));
+ createAction->setShortcut(ShortcutBindings::instance().shortcut(ShortcutId::CompositionCreate));
  createAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_new.svg")));
 
  presetMenu = new QMenu("プリセットから作成(&P)", menu);
@@ -201,7 +202,7 @@ ArtifactCompositionMenu::Impl::Impl(ArtifactCompositionMenu* menu, QWidget* main
  settingsAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_settings.svg")));
 
  colorAction = new QAction("背景色(&B)...");
- colorAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_B));
+ colorAction->setShortcut(ShortcutBindings::instance().shortcut(ShortcutId::CompositionColor));
  colorAction->setIcon(QIcon(resolveIconPath("Studio/compositionmenu_background.svg")));
 
  sendAction = new QAction("メインプロジェクトへ送信(&T)...", menu);

@@ -99,6 +99,7 @@ import Artifact.Widgets.ModelViewer;
 import Utils.Path;
 import Utils.String.UniString;
 import ArtifactCore.Utils.PerformanceProfiler;
+import UI.ShortcutBindings;
 
 namespace Artifact
 {
@@ -1001,7 +1002,10 @@ namespace Artifact
     updateHeader();
     updateSurfaceMeta();
    });
-   auto* resetShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+0")), owner_);
+   auto* resetShortcut = new QShortcut(
+       ArtifactCore::ShortcutBindings::instance().shortcut(
+           ArtifactCore::ShortcutId::ContentsViewerReset),
+       owner_);
    resetShortcut->setContext(Qt::WidgetWithChildrenShortcut);
    QObject::connect(resetShortcut, &QShortcut::activated, owner_, [this]() {
     if (currentFileType == ArtifactCore::FileType::Model3D && modelViewer) {
@@ -2192,7 +2196,10 @@ namespace Artifact
      QObject::connect(fitButton, &QToolButton::clicked, parent, [this]() {
        fitImageToWindow();
      });
-     auto *fitShortcut = new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_0), parent);
+     auto *fitShortcut = new QShortcut(
+         ArtifactCore::ShortcutBindings::instance().shortcut(
+             ArtifactCore::ShortcutId::ContentsViewerFit),
+         parent);
      QObject::connect(fitShortcut, &QShortcut::activated, parent, [this]() {
        fitImageToWindow();
      });
@@ -2365,7 +2372,10 @@ namespace Artifact
     assignCompareSource(false);
    });
 
-   auto* compareSwapShortcut = new QShortcut(QKeySequence(Qt::Key_Tab), parent);
+   auto* compareSwapShortcut = new QShortcut(
+       ArtifactCore::ShortcutBindings::instance().shortcut(
+           ArtifactCore::ShortcutId::ContentsViewerCompareSwap),
+       parent);
    compareSwapShortcut->setContext(Qt::WidgetWithChildrenShortcut);
    compareSwapShortcut->setAutoRepeat(false);
    QObject::connect(compareSwapShortcut, &QShortcut::activated, parent, [this]() {
@@ -2375,7 +2385,13 @@ namespace Artifact
    });
 
    auto installViewerAssignmentShortcut = [parent, this](int slot) {
-    auto* shortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+%1").arg(slot)), parent);
+    ArtifactCore::ShortcutId shortcutId = ArtifactCore::ShortcutId::ContentsViewerViewer1;
+    if (slot == 2) shortcutId = ArtifactCore::ShortcutId::ContentsViewerViewer2;
+    else if (slot == 3) shortcutId = ArtifactCore::ShortcutId::ContentsViewerViewer3;
+    else if (slot == 4) shortcutId = ArtifactCore::ShortcutId::ContentsViewerViewer4;
+    auto* shortcut = new QShortcut(
+        ArtifactCore::ShortcutBindings::instance().shortcut(shortcutId),
+        parent);
     shortcut->setContext(Qt::WidgetWithChildrenShortcut);
     shortcut->setAutoRepeat(false);
     QObject::connect(shortcut, &QShortcut::activated, parent, [this, slot]() {
@@ -2391,7 +2407,10 @@ namespace Artifact
    installViewerAssignmentShortcut(3);
    installViewerAssignmentShortcut(4);
 
-   auto* assignCompareAShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+A")), parent);
+   auto* assignCompareAShortcut = new QShortcut(
+       ArtifactCore::ShortcutBindings::instance().shortcut(
+           ArtifactCore::ShortcutId::ContentsViewerAssignCompareA),
+       parent);
    assignCompareAShortcut->setContext(Qt::WidgetWithChildrenShortcut);
    assignCompareAShortcut->setAutoRepeat(false);
    QObject::connect(assignCompareAShortcut, &QShortcut::activated, parent, [this]() {
@@ -2400,7 +2419,10 @@ namespace Artifact
     }
    });
 
-   auto* assignCompareBShortcut = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+B")), parent);
+   auto* assignCompareBShortcut = new QShortcut(
+       ArtifactCore::ShortcutBindings::instance().shortcut(
+           ArtifactCore::ShortcutId::ContentsViewerAssignCompareB),
+       parent);
    assignCompareBShortcut->setContext(Qt::WidgetWithChildrenShortcut);
    assignCompareBShortcut->setAutoRepeat(false);
    QObject::connect(assignCompareBShortcut, &QShortcut::activated, parent, [this]() {

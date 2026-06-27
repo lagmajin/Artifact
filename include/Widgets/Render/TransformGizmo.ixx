@@ -19,9 +19,20 @@ import Color.Float;
 
 export namespace Artifact {
 
+ enum class GuideType {
+  LayerEdge,
+  LayerCenter,
+  CompEdge,
+  CompCenter,
+  Spacing,
+  CustomGuide,
+  SafeArea
+ };
+
  struct SnapLine {
   bool isVertical = false;
   float position = 0.0f;
+  GuideType type = GuideType::LayerEdge;
  };
 
  struct SnapLabel {
@@ -91,6 +102,9 @@ export namespace Artifact {
   std::vector<SnapLine> activeSnapLines_;
   std::vector<SnapLabel> activeSnapLabels_;
   bool snapDistanceLabelsEnabled_ = true;
+  bool moveBadgeVisible_ = false;
+  std::vector<QString> moveBadgeLines_;
+  QRectF moveBadgeBox_;
   // ドラッグ開始時に一度だけ計算するスナップラインキャッシュ
   std::vector<float> cachedSnapVLines_;
   std::vector<float> cachedSnapHLines_;

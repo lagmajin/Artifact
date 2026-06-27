@@ -64,6 +64,14 @@ namespace Artifact {
 using namespace ArtifactCore;
 W_OBJECT_IMPL(ArtifactColorPaletteWidget)
 
+static QColor toQColor(const ArtifactCore::FloatColor& color)
+{
+    return QColor::fromRgbF(std::clamp(color.r(), 0.0f, 1.0f),
+                            std::clamp(color.g(), 0.0f, 1.0f),
+                            std::clamp(color.b(), 0.0f, 1.0f),
+                            std::clamp(color.a(), 0.0f, 1.0f));
+}
+
 // Custom delegate to draw colored palettes in the list
 class PaletteItemDelegate : public QStyledItemDelegate {
 public:
@@ -91,7 +99,7 @@ public:
 
         for (int i = 0; i < p->colors.size(); ++i) {
             QRect boxRect(startX + i * colorBoxWidth, startY, colorBoxWidth, colorBoxHeight);
-            painter->fillRect(boxRect, p->colors[i].color);
+            painter->fillRect(boxRect, toQColor(p->colors[i].color));
             painter->setPen(Qt::black);
             painter->drawRect(boxRect);
         }
@@ -247,7 +255,7 @@ void ArtifactColorPaletteWidget::onGenerateHarmonicPalette() {
         for (int i = 0; i < harmonyColors.size(); ++i) {
             ArtifactCore::Color::NamedColor nc;
             nc.name = QString("Color %1").arg(i + 1);
-            nc.color = QColor::fromRgbF(harmonyColors[i].r(), harmonyColors[i].g(), harmonyColors[i].b(), harmonyColors[i].a());
+            nc.color = harmonyColors[i];
             palette.colors.append(nc);
         }
 
@@ -281,7 +289,7 @@ void ArtifactColorPaletteWidget::onSmartExtractPalette() {
         for (size_t i = 0; i < floatPalette.size(); ++i) {
             ArtifactCore::Color::NamedColor nc;
             nc.name = QString("Dominant %1").arg(i + 1);
-            nc.color = QColor::fromRgbF(floatPalette[i].r(), floatPalette[i].g(), floatPalette[i].b(), floatPalette[i].a());
+            nc.color = floatPalette[i];
             palette.colors.append(nc);
         }
 

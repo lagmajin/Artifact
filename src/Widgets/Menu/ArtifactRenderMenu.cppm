@@ -22,6 +22,7 @@ import Artifact.Widgets.RenderCenterWindow;
 import Artifact.Widget.Dialog.RenderOutputSetting;
 import Utils.Path;
 import Artifact.Widgets.Test.ScrollPoC;
+import UI.ShortcutBindings;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -115,23 +116,28 @@ ArtifactRenderMenu::Impl::Impl(ArtifactRenderMenu* menu, QWidget* mainWindow)
  : menu_(menu), mainWindow_(mainWindow)
 {
  addCurrentToQueueAction = new QAction("現在のコンポジションをレンダーキューに追加(&A)");
- addCurrentToQueueAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_M));
+ addCurrentToQueueAction->setShortcut(
+     ShortcutBindings::instance().shortcut(ShortcutId::RenderAddCurrentToQueue));
  addCurrentToQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_add_current.svg")));
 
- showQueueAction = new QAction("レンダーキューを表示(&Q)...");
- showQueueAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_R));
+showQueueAction = new QAction("レンダーキューを表示(&Q)...");
+ showQueueAction->setShortcut(
+     ShortcutBindings::instance().shortcut(ShortcutId::RenderShowQueue));
  showQueueAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_queue.svg")));
 
- showRenderManagerAction = new QAction("レンダーマネージャーを表示(&M)...");
- showRenderManagerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_R));
+showRenderManagerAction = new QAction("レンダーマネージャーを表示(&M)...");
+ showRenderManagerAction->setShortcut(
+     ShortcutBindings::instance().shortcut(ShortcutId::RenderShowManager));
  showRenderManagerAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_manager.svg")));
 
- renderSettingsAction = new QAction("レンダー出力設定(&S)...");
- renderSettingsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_K));
+renderSettingsAction = new QAction("レンダー出力設定(&S)...");
+ renderSettingsAction->setShortcut(
+     ShortcutBindings::instance().shortcut(ShortcutId::RenderSettings));
  renderSettingsAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_settings.svg")));
 
- startRenderAction = new QAction("レンダリングを開始(&S)");
- startRenderAction->setShortcut(QKeySequence(Qt::Key_F12));
+startRenderAction = new QAction("レンダリングを開始(&S)");
+ startRenderAction->setShortcut(
+     ShortcutBindings::instance().shortcut(ShortcutId::RenderStart));
  startRenderAction->setIcon(QIcon(resolveIconPath("Studio/rendermenu_start.svg")));
 
  clearAllAction = new QAction("すべてのジョブをクリア(&C)");

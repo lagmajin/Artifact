@@ -45,6 +45,7 @@ import Utils.Path;
 import Event.Bus;
 import Artifact.Event.Types;
 import Image.ImageF32x4_RGBA;
+import UI.ShortcutBindings;
 
 namespace Artifact {
  using namespace ArtifactCore;
@@ -615,20 +616,21 @@ namespace Artifact {
   ArtifactViewMenu::Impl::Impl(ArtifactViewMenu* menu)
   {
    menu_ = menu;
+   auto& shortcuts = ShortcutBindings::instance();
    zoomInAction = new QAction("ズームイン(&I)");
-   zoomInAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Equal));
+   zoomInAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewZoomIn));
    zoomInAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_zoom_in.svg")));
    
    zoomOutAction = new QAction("ズームアウト(&O)");
-   zoomOutAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Minus));
+   zoomOutAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewZoomOut));
    zoomOutAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_zoom_out.svg")));
 
    defaultZoomAction = new QAction("100% ズーム");
-   defaultZoomAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Slash));
+   defaultZoomAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewDefaultZoom));
    defaultZoomAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_aspect_ratio.svg")));
 
    fitToScreenAction = new QAction("画面に合わせる(&F)");
-   fitToScreenAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_Slash));
+   fitToScreenAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewFitToScreen));
    fitToScreenAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_fit_screen.svg")));
 
    viewportBookmarkMenu = new QMenu("Viewport ブックマーク(&B)");
@@ -659,27 +661,27 @@ namespace Artifact {
    resolutionGroup->addAction(resQuarterAction);
 
    showGridAction = new QAction("グリッドを表示(&G)");
-   showGridAction->setShortcut(QKeySequence("Ctrl+'"));
+   showGridAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowGrid));
    showGridAction->setCheckable(true);
    showGridAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
 
    snapToGridAction = new QAction("グリッドにスナップ(&S)");
-   snapToGridAction->setShortcut(QKeySequence("Ctrl+Shift+'"));
+   snapToGridAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSnapToGrid));
    snapToGridAction->setCheckable(true);
    snapToGridAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_grid_on.svg")));
 
    showGuidesAction = new QAction("ガイドを表示");
-   showGuidesAction->setShortcut(QKeySequence("Ctrl+;"));
+   showGuidesAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowGuides));
    showGuidesAction->setCheckable(true);
    showGuidesAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
 
    snapToGuidesAction = new QAction("ガイドにスナップ");
-   snapToGuidesAction->setShortcut(QKeySequence("Ctrl+Shift+;"));
+   snapToGuidesAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSnapToGuides));
    snapToGuidesAction->setCheckable(true);
    snapToGuidesAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_linear_scale.svg")));
 
    showRulersAction = new QAction("定規を表示(&R)");
-   showRulersAction->setShortcut(QKeySequence("Ctrl+R"));
+   showRulersAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewShowRulers));
    showRulersAction->setCheckable(true);
    showRulersAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_straighten.svg")));
 
@@ -992,7 +994,7 @@ namespace Artifact {
 
      menu->addSeparator();
      secondaryPreviewAction = menu->addAction("セカンドモニタープレビュー(&S)");
-     secondaryPreviewAction->setShortcut(QKeySequence(Qt::Key_F12));
+     secondaryPreviewAction->setShortcut(shortcuts.shortcut(ShortcutId::ViewSecondaryPreview));
      secondaryPreviewAction->setIcon(QIcon(resolveIconPath("Studio/viewmenu_secondary_preview.svg")));
      QObject::connect(secondaryPreviewAction, &QAction::triggered, menu, [this]() {
       showSecondaryPreview();

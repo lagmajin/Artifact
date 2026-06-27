@@ -151,6 +151,7 @@ public:
     ArtifactCore::ImageF32x4_RGBA currentFrameImageBuffer() const;
     ArtifactCore::ImageF32x4_RGBA cachedFrameImageBuffer(int64_t frameNumber) const;
     ArtifactCore::ImageF32x4_RGBA decodeFrameToImageBuffer(int64_t frameNumber) const;
+    ArtifactCore::ImageF32x4_RGBA decodeFrameToImageBuffer(double frameNumber) const;
     ArtifactCore::GpuVideoFrame decodeFrameToGpuFrame(int64_t frameNumber) const;
 
     // === Frame Decoding ===

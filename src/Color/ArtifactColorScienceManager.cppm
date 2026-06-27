@@ -122,6 +122,10 @@ float ArtifactColorScienceManager::getLUTIntensity() const {
   return impl_->globalSettings_.lutIntensity;
 }
 
+const ArtifactCore::ColorLUT* ArtifactColorScienceManager::currentLUT() const {
+  return impl_->currentLUT_.get();
+}
+
 void ArtifactColorScienceManager::clearLUT() {
   impl_->currentLUT_.reset();
   impl_->lutLoaded_ = false;

@@ -94,15 +94,24 @@ int64_t timelineFrameToSourceFrame(const ArtifactVideoLayer* layer, int64_t time
         return timelineFrame;
     }
 
-    // Apply time remap if enabled
     if (layer->isTimeRemapEnabled()) {
-        // Get composition frame from timeline frame
-        const int64_t compFrame = timelineFrame;
-        const double sourceFrameDouble = layer->getSourceFrameAtCompFrame(compFrame);
-        return static_cast<int64_t>(sourceFrameDouble);
+        return static_cast<int64_t>(layer->getSourceFrameAtCompFrame(timelineFrame));
     }
 
     return timelineFrame - layer->inPoint() + layer->startTime().framePosition();
+}
+
+double timelineFrameToSourceFrameDouble(const ArtifactVideoLayer* layer, int64_t timelineFrame)
+{
+    if (!layer) {
+        return static_cast<double>(timelineFrame);
+    }
+
+    if (layer->isTimeRemapEnabled()) {
+        return layer->getSourceFrameAtCompFrame(timelineFrame);
+    }
+
+    return static_cast<double>(timelineFrame - layer->inPoint() + layer->startTime().framePosition());
 }
 
 int64_t sourceFrameToTimelineFrame(const ArtifactVideoLayer* layer, int64_t sourceFrame)
@@ -1283,6 +1292,38 @@ ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(int64
                    << threadDiagnosticsTag();
     }
     return decoded;
+}
+
+ArtifactCore::ImageF32x4_RGBA ArtifactVideoLayer::decodeFrameToImageBuffer(double frameNumber) const
+{
+    if (!impl_->isLoaded_ || impl_->opening_.load()) {
+        impl_->lastDecodeState_ = QStringLiteral("not-loaded");
+        return {};
+    }
+    if (!impl_->playbackController_ || !impl_->playbackController_->isMediaOpen()) {
+        return {};
+    }
+
+    const double sourceFrameDouble = timelineFrameToSourceFrameDouble(this, frameNumber);
+    const double fractional = sourceFrameDouble - std::floor(sourceFrameDouble);
+
+    if (fractional < 0.001f || !isTimeRemapEnabled()) {
+        const int64_t sourceFrame = static_cast<int64_t>(std::round(sourceFrameDouble));
+        return decodeFrameToImageBuffer(sourceFrame);
+    }
+
+    const int64_t frameA = static_cast<int64_t>(std::floor(sourceFrameDouble));
+    const int64_t frameB = static_cast<int64_t>(std::ceil(sourceFrameDouble));
+    const float weight = static_cast<float>(fractional);
+
+    ArtifactCore::ImageF32x4_RGBA bufferA = decodeFrameToImageBuffer(frameA);
+    ArtifactCore::ImageF32x4_RGBA bufferB = decodeFrameToImageBuffer(frameB);
+
+    if (bufferA.isEmpty()) return bufferB;
+    if (bufferB.isEmpty()) return bufferA;
+
+    impl_->lastDecodeState_ = QStringLiteral("blended");
+    return bufferA.blend(bufferB, weight);
 }
 
 ArtifactCore::GpuVideoFrame ArtifactVideoLayer::decodeFrameToGpuFrame(int64_t frameNumber) const

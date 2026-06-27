@@ -68,7 +68,11 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
     titleFont.setBold(true);
     impl_->titleLabel->setFont(titleFont);
     impl_->titleLabel->setAlignment(Qt::AlignCenter);
-    impl_->titleLabel->setStyleSheet(QStringLiteral("color: %1;").arg(theme.accentColor));
+    {
+      QPalette pal = impl_->titleLabel->palette();
+      pal.setColor(QPalette::WindowText, QColor(theme.accentColor));
+      impl_->titleLabel->setPalette(pal);
+    }
     center->addWidget(impl_->titleLabel);
 
     impl_->subtitleLabel = new QLabel(QStringLiteral("Start a new project or open an existing one."), centerWidget);
@@ -76,7 +80,11 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
     subFont.setPointSize(11);
     impl_->subtitleLabel->setFont(subFont);
     impl_->subtitleLabel->setAlignment(Qt::AlignCenter);
-    impl_->subtitleLabel->setStyleSheet(QStringLiteral("color: %1;").arg(QColor(theme.textColor).darker(120).name()));
+    {
+      QPalette pal = impl_->subtitleLabel->palette();
+      pal.setColor(QPalette::WindowText, QColor(theme.textColor).darker(120));
+      impl_->subtitleLabel->setPalette(pal);
+    }
     center->addWidget(impl_->subtitleLabel);
 
     center->addSpacing(8);
@@ -86,23 +94,25 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
     recentFont.setPointSize(10);
     recentFont.setBold(true);
     recentLabel->setFont(recentFont);
-    recentLabel->setStyleSheet(QStringLiteral("color: %1;").arg(QColor(theme.textColor).lighter(130).name()));
+    {
+      QPalette pal = recentLabel->palette();
+      pal.setColor(QPalette::WindowText, QColor(theme.textColor).lighter(130));
+      recentLabel->setPalette(pal);
+    }
     center->addWidget(recentLabel);
 
     impl_->recentList = new QListWidget(centerWidget);
     impl_->recentList->setMinimumHeight(120);
     impl_->recentList->setMaximumHeight(200);
     impl_->recentList->setObjectName(QStringLiteral("welcomeRecentList"));
-    impl_->recentList->setStyleSheet(QStringLiteral(
-        "QListWidget { background: %1; border: 1px solid %2; border-radius: 4px; padding: 4px; }"
-        "QListWidget::item { padding: 6px 8px; border-radius: 3px; }"
-        "QListWidget::item:hover { background: %3; }"
-        "QListWidget::item:selected { background: %4; color: %5; }")
-        .arg(theme.secondaryBackgroundColor)
-        .arg(theme.borderColor)
-        .arg(QColor(theme.selectionColor).lighter(150).name())
-        .arg(theme.selectionColor)
-        .arg(theme.textColor));
+    {
+      QPalette pal = impl_->recentList->palette();
+      pal.setColor(QPalette::Base, QColor(theme.secondaryBackgroundColor));
+      pal.setColor(QPalette::Text, QColor(theme.textColor));
+      pal.setColor(QPalette::Highlight, QColor(theme.selectionColor));
+      pal.setColor(QPalette::HighlightedText, QColor(theme.textColor));
+      impl_->recentList->setPalette(pal);
+    }
     QObject::connect(impl_->recentList, &QListWidget::itemActivated, this, [this](QListWidgetItem* item) {
         const QString path = item->data(Qt::UserRole).toString();
         if (!path.isEmpty()) {
@@ -113,7 +123,11 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
 
     impl_->emptyRecentLabel = new QLabel(QStringLiteral("No recent projects"), centerWidget);
     impl_->emptyRecentLabel->setAlignment(Qt::AlignCenter);
-    impl_->emptyRecentLabel->setStyleSheet(QStringLiteral("color: %1;").arg(QColor(theme.textColor).darker(140).name()));
+    {
+      QPalette pal = impl_->emptyRecentLabel->palette();
+      pal.setColor(QPalette::WindowText, QColor(theme.textColor).darker(140));
+      impl_->emptyRecentLabel->setPalette(pal);
+    }
     impl_->emptyRecentLabel->setMinimumHeight(80);
     impl_->emptyRecentLabel->hide();
     center->addWidget(impl_->emptyRecentLabel);
@@ -127,15 +141,13 @@ ArtifactWelcomeWidget::ArtifactWelcomeWidget(QWidget* parent)
         auto* btn = new QPushButton(text, centerWidget);
         btn->setMinimumHeight(36);
         btn->setCursor(Qt::PointingHandCursor);
-        btn->setStyleSheet(QStringLiteral(
-            "QPushButton { background: %1; color: %2; border: 1px solid %3; border-radius: 4px; padding: 8px 16px; font-size: 12px; }"
-            "QPushButton:hover { background: %4; }"
-            "QPushButton:pressed { background: %5; }")
-        .arg(theme.secondaryBackgroundColor)
-        .arg(theme.textColor)
-        .arg(theme.borderColor)
-        .arg(theme.selectionColor)
-        .arg(QColor(theme.selectionColor).darker(120).name()));
+        {
+          QPalette pal = btn->palette();
+          pal.setColor(QPalette::Button, QColor(theme.secondaryBackgroundColor));
+          pal.setColor(QPalette::ButtonText, QColor(theme.textColor));
+          btn->setPalette(pal);
+          btn->setAutoFillBackground(true);
+        }
         return btn;
     };
 

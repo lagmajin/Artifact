@@ -941,6 +941,24 @@ void drawAxisLabel(ArtifactIRenderer* renderer,
  }
 }
 
+void drawCanvasRectOutline(ArtifactIRenderer* renderer,
+                           const QRectF& rect,
+                           const FloatColor& color,
+                           const float thickness = 1.0f)
+{
+ if (!renderer || !rect.isValid() || rect.width() <= 0.0 || rect.height() <= 0.0) {
+  return;
+ }
+ const Detail::float2 tl{static_cast<float>(rect.left()), static_cast<float>(rect.top())};
+ const Detail::float2 tr{static_cast<float>(rect.right()), static_cast<float>(rect.top())};
+ const Detail::float2 br{static_cast<float>(rect.right()), static_cast<float>(rect.bottom())};
+ const Detail::float2 bl{static_cast<float>(rect.left()), static_cast<float>(rect.bottom())};
+ renderer->drawSolidLine(tl, tr, color, thickness);
+ renderer->drawSolidLine(tr, br, color, thickness);
+ renderer->drawSolidLine(br, bl, color, thickness);
+ renderer->drawSolidLine(bl, tl, color, thickness);
+}
+
 void drawBoxHandle(ArtifactIRenderer* renderer,
                    const QPointF& center,
                    float size,
@@ -1058,16 +1076,15 @@ void drawBoxHandle(ArtifactIRenderer* renderer,
                          std::max(1.0f, size - coreInset * 2.0f),
                          std::max(1.0f, size - coreInset * 2.0f),
                          brighten(fill, active ? 0.92f : 0.98f), 1.0f);
- renderer->drawRectOutline(static_cast<float>(center.x() - half),
-                           static_cast<float>(center.y() - half),
-                           size, size,
-                           active ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
-                                  : outline);
- renderer->drawRectOutline(static_cast<float>(center.x() - half + innerInset),
-                           static_cast<float>(center.y() - half + innerInset),
-                           std::max(1.0f, size - innerInset * 2.0f),
-                           std::max(1.0f, size - innerInset * 2.0f),
-                           FloatColor{1.0f, 1.0f, 1.0f, active ? 0.82f : 0.56f});
+ drawCanvasRectOutline(
+     renderer, QRectF(center.x() - half, center.y() - half, size, size),
+     active ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f} : outline);
+ drawCanvasRectOutline(
+     renderer,
+     QRectF(center.x() - half + innerInset, center.y() - half + innerInset,
+            std::max(1.0f, size - innerInset * 2.0f),
+            std::max(1.0f, size - innerInset * 2.0f)),
+     FloatColor{1.0f, 1.0f, 1.0f, active ? 0.82f : 0.56f});
 }
 
 QPointF offsetPointAwayFromCenter(const QPointF& center, const QPointF& point, float amount)
@@ -1376,7 +1393,7 @@ private:
 void drawEmphasizedLine(ArtifactIRenderer* renderer,
                         const Detail::float2& a,
                         const Detail::float2& b,
-const FloatColor& color,
+                        const FloatColor& color,
                         const float thickness,
                         const float invZoom,
                         const bool active)
@@ -1412,10 +1429,9 @@ void drawEmphasizedRect(ArtifactIRenderer* renderer,
  renderer->drawSolidRect((float)innerRect.left(), (float)innerRect.top(),
                          (float)innerRect.width(), (float)innerRect.height(),
                          brighten(fill, active ? 1.12f : 1.02f), 1.0f);
- renderer->drawRectOutline((float)rect.left(), (float)rect.top(),
-                           (float)rect.width(), (float)rect.height(),
-                           active ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
-                                  : FloatColor{0.10f, 0.10f, 0.10f, 1.0f});
+ drawCanvasRectOutline(renderer, rect,
+                       active ? FloatColor{1.0f, 1.0f, 1.0f, 1.0f}
+                              : FloatColor{0.10f, 0.10f, 0.10f, 1.0f});
 }
 } // namespace
 
@@ -1992,17 +2008,60 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
   }
  }
 
- if (isDragging_ && resizeBadgeVisible_ &&
-     (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_Center)) {
-  ArtifactCore::ProfileScope _profResizeBadge(
-      "TransformGizmoResizeBadge", ArtifactCore::ProfileCategory::Render);
-  drawResizeBadge(renderer,
-                  resizeBadgeBox_.isValid() ? resizeBadgeBox_ : currentCanvasBoundingRect(),
-                  resizeBadgeAnchor_,
-                  resizeBadgeLines_,
-                  themeAccent,
-                  invZoom);
- }
+  if (isDragging_ && resizeBadgeVisible_ &&
+      (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_Center)) {
+   ArtifactCore::ProfileScope _profResizeBadge(
+       "TransformGizmoResizeBadge", ArtifactCore::ProfileCategory::Render);
+   drawResizeBadge(renderer,
+                   resizeBadgeBox_.isValid() ? resizeBadgeBox_ : currentCanvasBoundingRect(),
+                   resizeBadgeAnchor_,
+                   resizeBadgeLines_,
+                   themeAccent,
+                   invZoom);
+  }
+
+  if (isDragging_ && moveBadgeVisible_ && activeHandle_ == HandleType::Move) {
+   ArtifactCore::ProfileScope _profMoveBadge(
+       "TransformGizmoMoveBadge", ArtifactCore::ProfileCategory::Render);
+   QFont badgeFont = QApplication::font();
+   badgeFont.setPointSizeF(std::max(13.0, static_cast<double>(badgeFont.pointSizeF()) + 3.0));
+   badgeFont.setBold(true);
+   const QFontMetrics fm(badgeFont);
+   float textW = 0.0f;
+   for (const auto& line : moveBadgeLines_) {
+    textW = std::max(textW, static_cast<float>(fm.horizontalAdvance(line.trimmed())));
+   }
+   textW += 34.0f;
+   const float lineH = static_cast<float>(fm.height());
+   const float lineGap = 5.0f;
+   const float textH = static_cast<float>(moveBadgeLines_.size()) * lineH +
+                       std::max(0.0f, static_cast<float>(moveBadgeLines_.size() - 1) * lineGap) + 18.0f;
+   const float margin = std::max(10.0f, 12.0f * invZoom);
+   const QRectF box = moveBadgeBox_.isValid() ? moveBadgeBox_ : currentCanvasBoundingRect();
+   QPointF pos(box.right() + 4.0f, box.bottom() + 4.0f);
+   auto comp = ArtifactProjectService::instance()->currentComposition().lock();
+   if (comp) {
+    const auto size = comp->settings().compositionSize();
+    const float compW = static_cast<float>(size.width() > 0 ? size.width() : 1920);
+    const float compH = static_cast<float>(size.height() > 0 ? size.height() : 1080);
+    pos.setX(std::clamp(static_cast<float>(pos.x()), margin, compW - margin - textW));
+    pos.setY(std::clamp(static_cast<float>(pos.y()), margin, compH - margin - textH));
+   }
+   const QRectF textRect(pos.x(), pos.y(), textW, textH);
+   renderer->drawOverlayPanel(static_cast<float>(textRect.left()),
+                               static_cast<float>(textRect.top()),
+                               static_cast<float>(textRect.width()),
+                               static_cast<float>(textRect.height()),
+                               FloatColor{0.04f, 0.05f, 0.07f, 0.86f},
+                               FloatColor{themeAccent.redF(), themeAccent.greenF(), themeAccent.blueF(), 0.92f});
+   for (size_t i = 0; i < moveBadgeLines_.size(); ++i) {
+    const QRectF lineRect(textRect.left() + 8.0f,
+                          textRect.top() + 6.0f + static_cast<float>(i) * (lineH + lineGap),
+                          textW - 16.0f, lineH);
+    renderer->drawText(lineRect, moveBadgeLines_[i], badgeFont,
+                       FloatColor{0.94f, 0.97f, 0.99f, 1.0f}, Qt::AlignLeft | Qt::AlignVCenter);
+   }
+  }
 }
 
 TransformGizmo::HandleType TransformGizmo::hitTest(const QPointF& viewportPos, ArtifactIRenderer* renderer) const {
@@ -2232,7 +2291,10 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
   resizeBadgeVisible_ = false;
   resizeBadgeLines_.clear();
   resizeBadgeBox_ = QRectF();
- if (activeHandle_ == HandleType::Rotate) {
+  moveBadgeVisible_ = false;
+  moveBadgeLines_.clear();
+  moveBadgeBox_ = QRectF();
+  if (activeHandle_ == HandleType::Rotate) {
    const QPointF pivotWorld = dragStartGlobalTransform_.map(dragStartLocalBounds_.center());
    dragStartPointerAngle_ = angleDegreesAround(pivotWorld, dragStartCanvasPos_);
   }
@@ -2255,6 +2317,17 @@ bool TransformGizmo::handleMousePress(const QPointF& viewportPos, ArtifactIRende
     const auto spacingGuides = buildSpacingGuides(comp, layer_);
     cachedSpacingVLines_ = spacingGuides.vertical;
     cachedSpacingHLines_ = spacingGuides.horizontal;
+   }
+   if (activeHandle_ == HandleType::Move) {
+    moveBadgeVisible_ = true;
+    moveBadgeBox_ = dragStartBoundingBox_;
+    moveBadgeLines_.clear();
+    const int x = static_cast<int>(std::lround(dragStartLayerPos_.x()));
+    const int y = static_cast<int>(std::lround(dragStartLayerPos_.y()));
+    const int w = static_cast<int>(std::lround(dragStartBoundingBox_.width()));
+    const int h = static_cast<int>(std::lround(dragStartBoundingBox_.height()));
+    moveBadgeLines_.push_back(QStringLiteral("X: %1  Y: %2").arg(x).arg(y));
+    moveBadgeLines_.push_back(QStringLiteral("W: %1  H: %2").arg(w).arg(h));
    }
   }
   return true;
@@ -2396,7 +2469,16 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
        }
        target->setDirty(LayerDirtyFlag::Transform);
       }
-      publishDragMutation();
+       publishDragMutation();
+       moveBadgeVisible_ = true;
+       moveBadgeBox_ = currentCanvasBoundingRect();
+       moveBadgeLines_.clear();
+       const int mx = static_cast<int>(std::lround(newX));
+       const int my = static_cast<int>(std::lround(newY));
+       const int mw = static_cast<int>(std::lround(moveBadgeBox_.width()));
+       const int mh = static_cast<int>(std::lround(moveBadgeBox_.height()));
+       moveBadgeLines_.push_back(QStringLiteral("X: %1  Y: %2").arg(mx).arg(my));
+       moveBadgeLines_.push_back(QStringLiteral("W: %1  H: %2").arg(mw).arg(mh));
   } else if (activeHandle_ == HandleType::Anchor) {
    bool invertible = false;
    const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
@@ -2736,10 +2818,13 @@ isDragging_ = false;
  lastDragMutationNotify_ = {};
 activeHandle_ = HandleType::None;
 dragAccumulatedRotationDelta_ = 0.0f;
- resizeBadgeVisible_ = false;
- resizeBadgeLines_.clear();
- resizeBadgeBox_ = QRectF();
- activeSnapLines_.clear();
+  resizeBadgeVisible_ = false;
+  resizeBadgeLines_.clear();
+  resizeBadgeBox_ = QRectF();
+  moveBadgeVisible_ = false;
+  moveBadgeLines_.clear();
+  moveBadgeBox_ = QRectF();
+  activeSnapLines_.clear();
  activeSnapLabels_.clear();
 }
 

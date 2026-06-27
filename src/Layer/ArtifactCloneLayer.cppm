@@ -12,6 +12,7 @@ module;
 #include <vector>
 #include <memory>
 #include <algorithm>
+#include <random>
 
 module Artifact.Layer.Clone;
 
@@ -283,13 +284,6 @@ std::vector<CloneData> ArtifactCloneLayer::generateCloneData() const {
 
             const float scale = std::clamp(scaleDist(rng) * (1.0f - (1.0f - radialMix) * 0.10f), 0.5f, 1.5f);
             clone.transform.scale(scale);
-
-            if (impl_->settings_.variation_ > 0.0f) {
-                const float variation = std::clamp(impl_->settings_.variation_, 0.0f, 1.0f);
-                const float randomTilt = (unit(rng) * 20.0f) * variation;
-                clone.transform.rotate(randomTilt, 1.0f, 0.0f, 0.0f);
-                clone.transform.rotate(unit(rng) * 20.0f * variation, 0.0f, 1.0f, 0.0f);
-            }
             clone.weight = std::clamp(1.0f - impl_->settings_.opacityDecay * static_cast<float>(i), 0.0f, 1.0f);
             clone.visible = true;
             clones.push_back(clone);

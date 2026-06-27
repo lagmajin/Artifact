@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <vector>
+#include <map>
 #include <cmath>
 #include <QPointF>
 #include <QElapsedTimer>
@@ -15,10 +16,52 @@ import Artifact.Event.Types;
 import Artifact.Layers.Selection.Manager;
 import Event.Bus;
 import Time.Rational;
+import Undo.UndoManager;
 
 namespace Artifact {
 
 W_OBJECT_IMPL(ArtifactMotionSketchTool)
+
+class MotionSketchUndoCommand final : public UndoCommand {
+ public:
+  using Snapshot = std::map<int64_t, std::pair<float, float>>;
+
+  MotionSketchUndoCommand(ArtifactAbstractLayerPtr layer, Snapshot before,
+                          Snapshot after)
+      : layer_(layer), before_(std::move(before)), after_(std::move(after)) {}
+
+  void undo() override { apply(before_); }
+  void redo() override { apply(after_); }
+  QString label() const override { return QStringLiteral("Motion Sketch"); }
+
+ private:
+  void apply(const Snapshot& snap) {
+    auto layer = layer_.lock();
+    if (!layer) return;
+    auto& t3d = layer->transform3D();
+    t3d.clearPositionKeyFrames();
+    if (snap.empty()) return;
+    for (const auto& [frame, xy] : snap) {
+      ArtifactCore::RationalTime rt(frame, 24);
+      t3d.setPosition(rt, xy.first, xy.second);
+    }
+    layer->setDirty(LayerDirtyFlag::Transform);
+    layer->changed();
+    if (auto* comp =
+            static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+      ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+          LayerChangedEvent{comp->id().toString(), layer->id().toString(),
+                            LayerChangedEvent::ChangeType::Modified});
+    }
+    if (auto* mgr = UndoManager::instance()) {
+      mgr->notifyAnythingChanged();
+    }
+  }
+
+  ArtifactAbstractLayerWeak layer_;
+  Snapshot before_;
+  Snapshot after_;
+};
 
 class ArtifactMotionSketchTool::Impl {
 public:
@@ -39,10 +82,8 @@ public:
     ArtifactAbstractLayerPtr targetLayer;
 
     // Undo snapshot
-    struct PositionSnapshot {
-        float x, y;
-    };
-    std::vector<PositionSnapshot> beforePositions;
+    using PositionSnapshot = MotionSketchUndoCommand::Snapshot;
+    PositionSnapshot beforePositions;
 };
 
 ArtifactMotionSketchTool::ArtifactMotionSketchTool(QObject* parent)
@@ -87,6 +128,14 @@ bool ArtifactMotionSketchTool::beginSketch(const QPointF& canvasPos, ArtifactAbs
     impl_->sampledPoints.push_back(canvasPos);
     impl_->sampledTimes.push_back(0.0);
     impl_->sketchTimer.start();
+
+    impl_->beforePositions.clear();
+    auto& t3d = layer->transform3D();
+    for (const auto& kt : t3d.getPositionKeyFrameTimes()) {
+        const int64_t frame = kt.rescaledTo(24);
+        impl_->beforePositions[frame] = {t3d.positionXAt(kt), t3d.positionYAt(kt)};
+    }
+
     return true;
 }
 
@@ -159,6 +208,18 @@ bool ArtifactMotionSketchTool::finishSketch()
         const float y = static_cast<float>(smoothPoints[i].y());
         RationalTime rt(frameNum, static_cast<int64_t>(fps));
         t3d.setPosition(rt, x, y);
+    }
+
+    // Capture after-state for undo
+    MotionSketchUndoCommand::Snapshot afterPositions;
+    for (const auto& kt : t3d.getPositionKeyFrameTimes()) {
+        const int64_t frame = kt.rescaledTo(24);
+        afterPositions[frame] = {t3d.positionXAt(kt), t3d.positionYAt(kt)};
+    }
+
+    if (auto* mgr = UndoManager::instance()) {
+        mgr->push(std::make_unique<MotionSketchUndoCommand>(
+            layer, impl_->beforePositions, std::move(afterPositions)));
     }
 
     // Notify

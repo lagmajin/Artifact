@@ -21,6 +21,8 @@ module;
 #include <QtSVG/QSvgRenderer>
 #include <QTimer>
 #include <QSet>
+#include <QPointF>
+#include <QRectF>
 #include <QVariant>
 #include <wobjectimpl.h>
 
@@ -44,6 +46,8 @@ import Artifact.Layer.Shape;
 import Artifact.Layer.Video;
 import Artifact.Layer.Camera;
 import Artifact.Layer.Particle;
+import Artifact.Layer.FormParticle;
+import Artifact.Layer.Procedural3D;
 import Layer.Blend;
 import Color.Float;
 import Artifact.Project.Manager;
@@ -57,6 +61,9 @@ import Artifact.Widgets.CreateCameraLayerDialog;
 import Artifact.Widgets.AppDialogs;
 import Artifact.Tool.CameraTracker;
 import Tracking.MotionTracker;
+import Geometry.LayerAlignment;
+import Undo.UndoManager;
+import UI.ShortcutBindings;
 
 namespace Artifact {
 using namespace ArtifactCore;
@@ -212,6 +219,29 @@ ArtifactAbstractLayerPtr addDebugSolidBlendLayer(
     return result.layer;
 }
 
+ArtifactAbstractLayerPtr addDebugBindlessPlaneLayer(
+    const CompositionID& compositionId, const QString& name, const QSize& size,
+    const FloatColor& startColor, const FloatColor& endColor,
+    const float opacity)
+{
+    auto& manager = ArtifactProjectManager::getInstance();
+    ArtifactSolidLayerInitParams params(name);
+    params.setWidth(std::max(1, size.width()));
+    params.setHeight(std::max(1, size.height()));
+    params.setFillType(ArtifactSolidFillType::LinearGradient);
+    params.setGradientStartColor(startColor);
+    params.setGradientEndColor(endColor);
+    params.setGradientAngleDegrees(35.0f);
+    auto result = manager.addLayerToComposition(
+        compositionId, static_cast<ArtifactLayerInitParams&>(params));
+    if (!result.success || !result.layer) {
+        return {};
+    }
+    result.layer->setLayerName(name);
+    result.layer->setOpacity(std::clamp(opacity, 0.0f, 1.0f));
+    return result.layer;
+}
+
 } // namespace
 
 W_OBJECT_IMPL(ArtifactLayerMenu)
@@ -241,6 +271,9 @@ public:
     QAction* createAdjustAction = nullptr;
     QAction* createTextAction = nullptr;
     QAction* createParticleAction = nullptr;
+    QAction* createFormParticleAction = nullptr;
+    QAction* createTerrainAction = nullptr;
+    QAction* createPathTubeAction = nullptr;
     QAction* createCameraAction = nullptr;
     QAction* createLightAction = nullptr;
     QAction* createAudioAction = nullptr;
@@ -271,6 +304,10 @@ public:
     QAction* toggleSoloAction = nullptr;
     QAction* toggleShyAction = nullptr;
     QAction* soloOnlyAction = nullptr;
+    QMenu* cacheMenu = nullptr;
+    QAction* cacheDefaultAction = nullptr;
+    QAction* cacheEnabledAction = nullptr;
+    QAction* cacheDisabledAction = nullptr;
     QAction* proxyNoneAction = nullptr;
     QAction* proxyQuarterAction = nullptr;
     QAction* proxyHalfAction = nullptr;
@@ -289,6 +326,7 @@ public:
     QAction* openPropertiesAction = nullptr;
 
     QAction* addDebugBlendLayersAction = nullptr;
+    QAction* addDebugBindlessPlanesAction = nullptr;
     QAction* addDebugBillboardLayerAction = nullptr;
     QAction* addDebugParticleLayerAction = nullptr;
 
@@ -298,12 +336,31 @@ public:
     QAction* ungroupAction = nullptr;
     QAction* splitAction = nullptr;
 
+    QMenu* arrangeMenu = nullptr;
+    QAction* bringToFrontAction = nullptr;
+    QAction* bringForwardAction = nullptr;
+    QAction* sendBackwardAction = nullptr;
+    QAction* sendToBackAction = nullptr;
+    QMenu* alignMenu = nullptr;
+    QAction* alignLeftAction = nullptr;
+    QAction* alignHCenterAction = nullptr;
+    QAction* alignRightAction = nullptr;
+    QAction* alignTopAction = nullptr;
+    QAction* alignVCenterAction = nullptr;
+    QAction* alignBottomAction = nullptr;
+    QMenu* distributeMenu = nullptr;
+    QAction* distributeHCenterAction = nullptr;
+    QAction* distributeVCenterAction = nullptr;
+    QAction* distributeSpacingAction = nullptr;
+
     void handleCreateSolid();
     void handleCreateNull();
     void handleCreateConstruction();
     void handleCreateAdjust();
     void handleCreateText();
     void handleCreateParticle();
+    void handleCreateFormParticle();
+    void handleCreateProcedural3D(Procedural3DLayerKind kind);
     void handleCreateCamera();
     void handleCreateLight();
     void handleCreateAudio();
@@ -323,6 +380,7 @@ public:
     void handleToggleLock();
     void handleToggleSolo();
     void handleToggleShy();
+    void handleSetLayerCachePolicy(int policy);
     void handleSoloOnlySelected();
     void handleSetProxyQuality(ProxyQuality quality);
     void handleGenerateProxy();
@@ -345,6 +403,14 @@ public:
     void handleSplitLayer();
     void handleTrackCamera();
 
+    void handleBringToFront();
+    void handleBringForward();
+    void handleSendBackward();
+    void handleSendToBack();
+    void handleAlign(ArtifactCore::AlignType type);
+    void handleDistribute(ArtifactCore::DistributeType type);
+    void handleDistributeSpacing();
+
     bool hasCurrentComposition() const;
     bool ensureCurrentComposition();
     bool hasSelectedLayer() const;
@@ -357,11 +423,13 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu = new QMenu("新規(&N)", menu);
     createMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_add.svg")));
     createSolidAction = new QAction("平面(&Y)...", createMenu);
-    createSolidAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Y));
+    createSolidAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateSolid));
     createSolidAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_palette.svg")));
 
     createNullAction = new QAction("ヌルオブジェクト(&N)", createMenu);
-    createNullAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_Y));
+    createNullAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateNull));
     createNullAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_aspect_ratio.svg")));
 
     createConstructionAction = new QAction("Construction Layer", createMenu);
@@ -369,15 +437,26 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createConstructionAction->setToolTip(QStringLiteral("Create a construction layer (editor-only by default)"));
 
     createAdjustAction = new QAction("調整レイヤー(&A)", createMenu);
-    createAdjustAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_Y));
+    createAdjustAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateAdjust));
     createAdjustAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_blur_on.svg")));
 
     createTextAction = new QAction("テキスト(&T)", createMenu);
-    createTextAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_T));
+    createTextAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateText));
     createTextAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_title.svg")));
 
     createParticleAction = new QAction("パーティクル(&P)", createMenu);
     createParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    createFormParticleAction = new QAction("Form Particle(&F)", createMenu);
+    createFormParticleAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
+    createFormParticleAction->setToolTip(QStringLiteral("Grid / point-cloud particle layer inspired by Trapcode Form"));
+    createTerrainAction = new QAction("Terrain (Mir)", createMenu);
+    createTerrainAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createTerrainAction->setToolTip(QStringLiteral("Animated procedural height-field surface"));
+    createPathTubeAction = new QAction("Path Tube (Tao)", createMenu);
+    createPathTubeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_model3d.svg")));
+    createPathTubeAction->setToolTip(QStringLiteral("Procedural tube or ribbon along an animated path"));
 
     createCameraAction = new QAction("カメラ(&C)", createMenu);
     createCameraAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_videocam.svg")));
@@ -413,19 +492,23 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createPlacementMenu->addAction(placementAtPlayheadAction);
     cycleLayerForwardAction = new QAction("レイヤーを次々作成", createMenu);
     cycleLayerForwardAction->setToolTip(QStringLiteral("Cycle common layer creation presets"));
-    cycleLayerForwardAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_N));
+    cycleLayerForwardAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateLayerCycleForward));
     cycleLayerReverseAction = new QAction("レイヤーを逆順で次々作成", createMenu);
     cycleLayerReverseAction->setToolTip(QStringLiteral("Cycle common layer creation presets in reverse"));
-    cycleLayerReverseAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_N));
+    cycleLayerReverseAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateLayerCycleReverse));
 
     createShapeMenu = new QMenu("シェイプ(&S)", createMenu);
     createShapeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
     cycleShapeForwardAction = new QAction("シェイプを次々作成", createShapeMenu);
     cycleShapeForwardAction->setToolTip(QStringLiteral("Cycle shape presets"));
-    cycleShapeForwardAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_S));
+    cycleShapeForwardAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateShapeCycleForward));
     cycleShapeReverseAction = new QAction("シェイプを逆順で次々作成", createShapeMenu);
     cycleShapeReverseAction->setToolTip(QStringLiteral("Cycle shape presets in reverse"));
-    cycleShapeReverseAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::SHIFT | Qt::Key_S));
+    cycleShapeReverseAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerCreateShapeCycleReverse));
     createShapeRectAction = new QAction("四角形", createShapeMenu);
     createShapeRectAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_shape_rect.svg")));
     createShapeSquareAction = new QAction("正方形", createShapeMenu);
@@ -458,6 +541,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addAction(createAdjustAction);
     createMenu->addAction(createTextAction);
     createMenu->addAction(createParticleAction);
+    createMenu->addAction(createFormParticleAction);
+    createMenu->addAction(createTerrainAction);
+    createMenu->addAction(createPathTubeAction);
     createMenu->addAction(createCameraAction);
     createMenu->addAction(createLightAction);
     createMenu->addAction(createAudioAction);
@@ -470,13 +556,16 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     createMenu->addMenu(createShapeMenu);
 
     duplicateLayerAction = new QAction("レイヤーを複製(&D)", menu);
-    duplicateLayerAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    duplicateLayerAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerDuplicate));
     duplicateLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_content_copy.svg")));
     renameLayerAction = new QAction("レイヤー名を変更(&R)...", menu);
-    renameLayerAction->setShortcut(QKeySequence(Qt::Key_F2));
+    renameLayerAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerRename));
     renameLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_rename.svg")));
     deleteLayerAction = new QAction("削除(&X)", menu);
-    deleteLayerAction->setShortcut(QKeySequence(Qt::Key_Delete));
+    deleteLayerAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerDelete));
     deleteLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_delete.svg")));
 
     switchMenu = new QMenu("スイッチ(&S)", menu);
@@ -492,10 +581,21 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     soloOnlyAction = new QAction("Smart Solo", switchMenu);
     soloOnlyAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_solo_only.svg")));
     soloOnlyAction->setToolTip(QStringLiteral("選択レイヤーと必要な Parent / Matte をまとめてソロ表示します"));
+    cacheMenu = new QMenu("Cache Policy", switchMenu);
+    cacheMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    cacheDefaultAction = new QAction("Default", cacheMenu);
+    cacheEnabledAction = new QAction("Enabled", cacheMenu);
+    cacheDisabledAction = new QAction("Disabled", cacheMenu);
+    for (auto *action : {cacheDefaultAction, cacheEnabledAction, cacheDisabledAction}) {
+        action->setCheckable(true);
+        cacheMenu->addAction(action);
+    }
     switchMenu->addAction(toggleVisibleAction);
     switchMenu->addAction(toggleLockAction);
     switchMenu->addAction(toggleSoloAction);
     switchMenu->addAction(toggleShyAction);
+    switchMenu->addSeparator();
+    switchMenu->addMenu(cacheMenu);
     switchMenu->addSeparator();
     switchMenu->addAction(soloOnlyAction);
 
@@ -543,6 +643,76 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         proxyQualityGroup->addAction(action);
     }
 
+    arrangeMenu = new QMenu("配置(&A)", menu);
+    arrangeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_arrange.svg")));
+    bringToFrontAction = new QAction("最前面へ(&F)", arrangeMenu);
+    bringToFrontAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerBringToFront));
+    bringToFrontAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_bring_to_front.svg")));
+    bringForwardAction = new QAction("1つ前面へ(&W)", arrangeMenu);
+    bringForwardAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerBringForward));
+    sendBackwardAction = new QAction("1つ背面へ(&B)", arrangeMenu);
+    sendBackwardAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerSendBackward));
+    sendToBackAction = new QAction("最背面へ(&K)", arrangeMenu);
+    sendToBackAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerSendToBack));
+    sendToBackAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_send_to_back.svg")));
+    arrangeMenu->addAction(bringToFrontAction);
+    arrangeMenu->addAction(bringForwardAction);
+    arrangeMenu->addAction(sendBackwardAction);
+    arrangeMenu->addAction(sendToBackAction);
+
+    alignMenu = new QMenu("整列(&L)", menu);
+    alignMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_align.svg")));
+    alignLeftAction = new QAction("左端を揃える", alignMenu);
+    alignLeftAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignLeft));
+    alignLeftAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_left.svg")));
+    alignHCenterAction = new QAction("水平中央を揃える", alignMenu);
+    alignHCenterAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignHCenter));
+    alignHCenterAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_hcenter.svg")));
+    alignRightAction = new QAction("右端を揃える", alignMenu);
+    alignRightAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignRight));
+    alignRightAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_right.svg")));
+    alignMenu->addSeparator();
+    alignTopAction = new QAction("上端を揃える", alignMenu);
+    alignTopAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignTop));
+    alignTopAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_top.svg")));
+    alignVCenterAction = new QAction("垂直中央を揃える", alignMenu);
+    alignVCenterAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignVCenter));
+    alignVCenterAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_vcenter.svg")));
+    alignBottomAction = new QAction("下端を揃える", alignMenu);
+    alignBottomAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerAlignBottom));
+    alignBottomAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_align_bottom.svg")));
+    alignMenu->addAction(alignLeftAction);
+    alignMenu->addAction(alignHCenterAction);
+    alignMenu->addAction(alignRightAction);
+    alignMenu->addAction(alignTopAction);
+    alignMenu->addAction(alignVCenterAction);
+    alignMenu->addAction(alignBottomAction);
+
+    distributeMenu = new QMenu("分布(&D)", menu);
+    distributeMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_distribute.svg")));
+    distributeHCenterAction = new QAction("水平中央を分布", distributeMenu);
+    distributeHCenterAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerDistributeHCenter));
+    distributeVCenterAction = new QAction("垂直中央を分布", distributeMenu);
+    distributeVCenterAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerDistributeVCenter));
+    distributeSpacingAction = new QAction("等間隔に配置", distributeMenu);
+    distributeSpacingAction->setShortcut(
+        ShortcutBindings::instance().shortcut(ShortcutId::LayerDistributeSpacing));
+    distributeMenu->addAction(distributeHCenterAction);
+    distributeMenu->addAction(distributeVCenterAction);
+    distributeMenu->addAction(distributeSpacingAction);
+
     openInspectorAction = new QAction("Inspector を開く", menu);
     openInspectorAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_inspector.svg")));
     openPropertiesAction = new QAction("Properties を開く", menu);
@@ -553,6 +723,12 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     addDebugBlendLayersAction->setToolTip(
         QStringLiteral("Debug 用の合成テストレイヤーをまとめて追加します"));
     debugMenu->addAction(addDebugBlendLayersAction);
+
+    addDebugBindlessPlanesAction = new QAction("Debug Bindless Sprite Planes...", debugMenu);
+    addDebugBindlessPlanesAction->setIcon(QIcon(resolveIconPath("Studio/testmenu_layer_composite.svg")));
+    addDebugBindlessPlanesAction->setToolTip(
+        QStringLiteral("Bindless sprite batch の検証用にテクスチャ平面だけを追加します"));
+    debugMenu->addAction(addDebugBindlessPlanesAction);
 
     addDebugBillboardLayerAction = new QAction("Debug Billboard Layer...", debugMenu);
     addDebugBillboardLayerAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_particle.svg")));
@@ -567,7 +743,6 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     debugMenu->addAction(addDebugParticleLayerAction);
 
     precomposeAction = new QAction("プリコンポーズ(&P)...", menu);
-    precomposeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_C));
     precomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_view_comfy.svg")));
     unprecomposeAction = new QAction("プリコンポーズを解除", menu);
     unprecomposeAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_ungroup.svg")));
@@ -576,7 +751,6 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     ungroupAction = new QAction("グループ解除(&U)", menu);
     ungroupAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_ungroup.svg")));
     splitAction = new QAction("レイヤー分割(&L)", menu);
-    splitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
     splitAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_content_cut.svg")));
 
     menu->addMenu(createMenu);
@@ -591,6 +765,10 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
     menu->addMenu(selectMenu);
     menu->addMenu(proxyMenu);
     menu->addMenu(debugMenu);
+    menu->addSeparator();
+    menu->addMenu(arrangeMenu);
+    menu->addMenu(alignMenu);
+    menu->addMenu(distributeMenu);
     menu->addSeparator();
     menu->addAction(openInspectorAction);
     menu->addAction(openPropertiesAction);
@@ -611,6 +789,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == createAdjustAction) { handleCreateAdjust(); return; }
         if (action == createTextAction) { handleCreateText(); return; }
         if (action == createParticleAction) { handleCreateParticle(); return; }
+        if (action == createFormParticleAction) { handleCreateFormParticle(); return; }
+        if (action == createTerrainAction) { handleCreateProcedural3D(Procedural3DLayerKind::Terrain); return; }
+        if (action == createPathTubeAction) { handleCreateProcedural3D(Procedural3DLayerKind::PathTube); return; }
         if (action == createCameraAction) { handleCreateCamera(); return; }
         if (action == createLightAction) { handleCreateLight(); return; }
         if (action == createAudioAction) { handleCreateAudio(); return; }
@@ -646,6 +827,9 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == toggleLockAction) { handleToggleLock(); return; }
         if (action == toggleSoloAction) { handleToggleSolo(); return; }
         if (action == toggleShyAction) { handleToggleShy(); return; }
+        if (action == cacheDefaultAction) { handleSetLayerCachePolicy(0); return; }
+        if (action == cacheEnabledAction) { handleSetLayerCachePolicy(1); return; }
+        if (action == cacheDisabledAction) { handleSetLayerCachePolicy(2); return; }
         if (action == soloOnlyAction) { handleSoloOnlySelected(); return; }
         if (action == selectParentAction) { handleSelectParent(); return; }
         if (action == clearParentAction) { handleClearParent(); return; }
@@ -720,6 +904,66 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
                                "- Debug Multiply Plate\n"
                                "- Debug Screen Plate\n\n"
                                "タイムライン上で並び替えたり、不透明度を変えて合成検証できます。"));
+            return;
+        }
+        if (action == addDebugBindlessPlanesAction) {
+            auto* projectService = ArtifactProjectService::instance();
+            if (!projectService) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "ProjectService が利用できません。");
+                return;
+            }
+            auto comp = projectService->currentComposition().lock();
+            if (!comp) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "先にコンポジションを開いてください。");
+                return;
+            }
+
+            const QSize compSize = comp->effectiveCompositionSize().isValid()
+                                       ? comp->effectiveCompositionSize()
+                                       : QSize(1920, 1080);
+            const QSize planeSize(std::max(64, compSize.width() / 2),
+                                  std::max(64, compSize.height() / 2));
+            const CompositionID compositionId = comp->id();
+
+            ArtifactAbstractLayerPtr lastCreatedLayer;
+            lastCreatedLayer = addDebugBindlessPlaneLayer(
+                compositionId, uniqueLayerName(QStringLiteral("Debug Bindless Plane A")),
+                planeSize, FloatColor(0.95f, 0.18f, 0.34f, 1.0f),
+                FloatColor(0.12f, 0.18f, 0.70f, 1.0f), 0.88f);
+            if (!lastCreatedLayer) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "Bindless テスト平面 A の追加に失敗しました。");
+                return;
+            }
+
+            lastCreatedLayer = addDebugBindlessPlaneLayer(
+                compositionId, uniqueLayerName(QStringLiteral("Debug Bindless Plane B")),
+                planeSize, FloatColor(0.10f, 0.75f, 0.60f, 1.0f),
+                FloatColor(0.92f, 0.74f, 0.18f, 1.0f), 0.72f);
+            if (!lastCreatedLayer) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "Bindless テスト平面 B の追加に失敗しました。");
+                return;
+            }
+
+            lastCreatedLayer = addDebugBindlessPlaneLayer(
+                compositionId, uniqueLayerName(QStringLiteral("Debug Bindless Plane C")),
+                planeSize, FloatColor(0.72f, 0.28f, 0.92f, 1.0f),
+                FloatColor(0.16f, 0.64f, 0.95f, 1.0f), 0.58f);
+            if (!lastCreatedLayer) {
+                QMessageBox::warning(menu_->window(), "Debug Layers",
+                                     "Bindless テスト平面 C の追加に失敗しました。");
+                return;
+            }
+
+            projectService->selectLayer(lastCreatedLayer->id());
+            QMessageBox::information(
+                menu_->window(), "Debug Layers",
+                QStringLiteral("Debug Bindless Sprite Planes を追加しました。\n\n"
+                               "gradient solid planes だけで構成されるため、"
+                               "composition 描画では SpriteXform packet の bindless batch を検証できます。"));
             return;
         }
         if (action == addDebugBillboardLayerAction) {
@@ -823,6 +1067,19 @@ ArtifactLayerMenu::Impl::Impl(ArtifactLayerMenu* menu) : menu_(menu)
         if (action == groupSelectionAction) { handleGroupSelection(); return; }
         if (action == ungroupAction) { handleUngroup(); return; }
         if (action == splitAction) { handleSplitLayer(); return; }
+        if (action == bringToFrontAction) { handleBringToFront(); return; }
+        if (action == bringForwardAction) { handleBringForward(); return; }
+        if (action == sendBackwardAction) { handleSendBackward(); return; }
+        if (action == sendToBackAction) { handleSendToBack(); return; }
+        if (action == alignLeftAction) { handleAlign(ArtifactCore::AlignType::Left); return; }
+        if (action == alignHCenterAction) { handleAlign(ArtifactCore::AlignType::CenterHorizontal); return; }
+        if (action == alignRightAction) { handleAlign(ArtifactCore::AlignType::Right); return; }
+        if (action == alignTopAction) { handleAlign(ArtifactCore::AlignType::Top); return; }
+        if (action == alignVCenterAction) { handleAlign(ArtifactCore::AlignType::CenterVertical); return; }
+        if (action == alignBottomAction) { handleAlign(ArtifactCore::AlignType::Bottom); return; }
+        if (action == distributeHCenterAction) { handleDistribute(ArtifactCore::DistributeType::CenterHorizontal); return; }
+        if (action == distributeVCenterAction) { handleDistribute(ArtifactCore::DistributeType::CenterVertical); return; }
+        if (action == distributeSpacingAction) { handleDistributeSpacing(); return; }
         if (action == trackCameraAction) { handleTrackCamera(); return; }
         if (action == createMotionTrackerAction) { handleCreateMotionTracker(); return; }
     };
@@ -938,6 +1195,7 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
     createSvgAction->setEnabled(hasProject);
     createModel3DAction->setEnabled(hasProject);
     createPlane3DAction->setEnabled(hasProject);
+    addDebugBindlessPlanesAction->setEnabled(hasProject);
     addDebugParticleLayerAction->setEnabled(hasProject);
     createShapeRectAction->setEnabled(hasProject);
     createShapeSquareAction->setEnabled(hasProject);
@@ -954,20 +1212,39 @@ void ArtifactLayerMenu::Impl::refreshEnabledState()
         const bool locked = service && service->isLayerLockedInCurrentComposition(selectedLayerId_);
         const bool solo = service && service->isLayerSoloInCurrentComposition(selectedLayerId_);
         const bool shy = service && service->isLayerShyInCurrentComposition(selectedLayerId_);
+        int cachePolicy = 0;
+        if (service) {
+            if (auto comp = service->currentComposition().lock()) {
+                if (auto layer = comp->layerById(selectedLayerId_)) {
+                    if (auto prop = layer->getProperty(QStringLiteral("layer.cachePolicy"))) {
+                        cachePolicy = prop->getValue().toInt();
+                    }
+                }
+            }
+        }
         toggleVisibleAction->setText(visible ? QStringLiteral("非表示にする") : QStringLiteral("表示する"));
         toggleLockAction->setText(locked ? QStringLiteral("ロックを解除") : QStringLiteral("ロックする"));
         toggleSoloAction->setText(solo ? QStringLiteral("ソロを解除") : QStringLiteral("ソロにする"));
         toggleShyAction->setText(shy ? QStringLiteral("シャイを解除") : QStringLiteral("シャイにする"));
+        cacheDefaultAction->setChecked(cachePolicy == 0);
+        cacheEnabledAction->setChecked(cachePolicy == 1);
+        cacheDisabledAction->setChecked(cachePolicy == 2);
     } else {
         toggleVisibleAction->setText(QStringLiteral("表示/非表示を切替"));
         toggleLockAction->setText(QStringLiteral("ロックを切替"));
         toggleSoloAction->setText(QStringLiteral("ソロを切替"));
         toggleShyAction->setText(QStringLiteral("シャイを切替"));
+        cacheDefaultAction->setChecked(true);
+        cacheEnabledAction->setChecked(false);
+        cacheDisabledAction->setChecked(false);
     }
     toggleVisibleAction->setEnabled(hasLayer);
     toggleLockAction->setEnabled(hasLayer);
     toggleSoloAction->setEnabled(hasLayer);
     toggleShyAction->setEnabled(hasLayer);
+    cacheDefaultAction->setEnabled(hasLayer);
+    cacheEnabledAction->setEnabled(hasLayer);
+    cacheDisabledAction->setEnabled(hasLayer);
     soloOnlyAction->setEnabled(hasLayer && hasComp);
     if (hasLayer && hasParent) {
         const auto parentId = service->layerParentIdInCurrentComposition(selectedLayerId_);
@@ -1168,6 +1445,56 @@ void ArtifactLayerMenu::Impl::handleCreateParticle()
     }
     ArtifactLayerInitParams params(uniqueLayerName(u8"Particle 1"), LayerType::Particle);
     ArtifactProjectService::instance()->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+}
+
+void ArtifactLayerMenu::Impl::handleCreateFormParticle()
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+
+    ArtifactLayerInitParams params(uniqueLayerName(QStringLiteral("Form Particle 1")),
+                                   LayerType::FormParticle);
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+
+    const auto created = ArtifactLayerSelectionManager::instance()
+        ? ArtifactLayerSelectionManager::instance()->currentLayer()
+        : ArtifactAbstractLayerPtr{};
+    if (const auto formLayer = std::dynamic_pointer_cast<ArtifactFormParticleLayer>(created)) {
+        formLayer->loadPreset(QStringLiteral("dotGrid"));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleCreateProcedural3D(Procedural3DLayerKind kind)
+{
+    if (!ensureCurrentComposition()) {
+        QMessageBox::warning(menu_ ? menu_->window() : nullptr, "Layer", "コンポジションが選択されていません。");
+        return;
+    }
+
+    const QString baseName = kind == Procedural3DLayerKind::Terrain
+        ? QStringLiteral("Terrain 1")
+        : QStringLiteral("Path Tube 1");
+    ArtifactLayerInitParams params(uniqueLayerName(baseName), LayerType::Procedural3D);
+    auto* service = ArtifactProjectService::instance();
+    if (!service) {
+        return;
+    }
+    service->addLayerToCurrentComposition(params, true, placeAtCurrentFrameRequested());
+
+    const auto created = ArtifactLayerSelectionManager::instance()
+        ? ArtifactLayerSelectionManager::instance()->currentLayer()
+        : ArtifactAbstractLayerPtr{};
+    if (const auto layer = std::dynamic_pointer_cast<ArtifactProcedural3DLayer>(created)) {
+        layer->loadPreset(kind == Procedural3DLayerKind::Terrain
+                              ? QStringLiteral("lowPolyTerrain")
+                              : QStringLiteral("neonPathTube"));
+    }
 }
 
 void ArtifactLayerMenu::Impl::handleCreateCamera()
@@ -1517,32 +1844,65 @@ void ArtifactLayerMenu::Impl::handleToggleVisible()
 {
     auto* service = ArtifactProjectService::instance();
     if (!service || selectedLayerId_.isNil()) return;
-    const bool current = service->isLayerVisibleInCurrentComposition(selectedLayerId_);
-    service->setLayerVisibleInCurrentComposition(selectedLayerId_, !current);
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+    auto layer = comp->layerById(selectedLayerId_);
+    if (!layer) return;
+    UndoManager::instance()->push(
+        std::make_unique<SetLayerVisibilityCommand>(layer, !layer->isVisible()));
 }
 
 void ArtifactLayerMenu::Impl::handleToggleLock()
 {
     auto* service = ArtifactProjectService::instance();
     if (!service || selectedLayerId_.isNil()) return;
-    const bool current = service->isLayerLockedInCurrentComposition(selectedLayerId_);
-    service->setLayerLockedInCurrentComposition(selectedLayerId_, !current);
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+    auto layer = comp->layerById(selectedLayerId_);
+    if (!layer) return;
+    UndoManager::instance()->push(
+        std::make_unique<SetLayerLockCommand>(layer, !layer->isLocked()));
 }
 
 void ArtifactLayerMenu::Impl::handleToggleSolo()
 {
     auto* service = ArtifactProjectService::instance();
     if (!service || selectedLayerId_.isNil()) return;
-    const bool current = service->isLayerSoloInCurrentComposition(selectedLayerId_);
-    service->setLayerSoloInCurrentComposition(selectedLayerId_, !current);
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+    auto layer = comp->layerById(selectedLayerId_);
+    if (!layer) return;
+    UndoManager::instance()->push(
+        std::make_unique<SetLayerSoloCommand>(layer, !layer->isSolo()));
 }
 
 void ArtifactLayerMenu::Impl::handleToggleShy()
 {
     auto* service = ArtifactProjectService::instance();
     if (!service || selectedLayerId_.isNil()) return;
-    const bool current = service->isLayerShyInCurrentComposition(selectedLayerId_);
-    service->setLayerShyInCurrentComposition(selectedLayerId_, !current);
+    auto comp = service->currentComposition().lock();
+    if (!comp) return;
+    auto layer = comp->layerById(selectedLayerId_);
+    if (!layer) return;
+    UndoManager::instance()->push(
+        std::make_unique<SetLayerShyCommand>(layer, !layer->isShy()));
+}
+
+void ArtifactLayerMenu::Impl::handleSetLayerCachePolicy(int policy)
+{
+    auto* service = ArtifactProjectService::instance();
+    if (!service || selectedLayerId_.isNil()) {
+        return;
+    }
+    auto comp = service->currentComposition().lock();
+    if (!comp) {
+        return;
+    }
+    auto layer = comp->layerById(selectedLayerId_);
+    if (!layer) {
+        return;
+    }
+    layer->setLayerPropertyValue(QStringLiteral("layer.cachePolicy"), policy);
 }
 
 void ArtifactLayerMenu::Impl::handleSoloOnlySelected()
@@ -2028,7 +2388,7 @@ void ArtifactLayerMenu::Impl::handleGroupSelection()
         return;
     }
 
-    if (!service->groupSelectedLayersInCurrentComposition(UniString(groupName))) {
+    if (!service->groupSelectedLayersWithUndo(UniString(groupName))) {
         QMessageBox::warning(menu_->window(), "グループ化", "選択レイヤーをグループ化できませんでした。");
     }
 }
@@ -2040,7 +2400,7 @@ void ArtifactLayerMenu::Impl::handleUngroup()
         return;
     }
 
-    if (!service->ungroupSelectedGroupInCurrentComposition()) {
+    if (!service->ungroupSelectedGroupWithUndo()) {
         QMessageBox::warning(menu_->window(), "グループ解除", "グループを解除できませんでした。グループを選択してください。");
     }
 }
@@ -2052,15 +2412,16 @@ void ArtifactLayerMenu::Impl::handleSplitLayer()
                              QStringLiteral("分割するレイヤーが選択されていません。"));
         return;
     }
-    if (auto* ctx = ArtifactApplicationManager::instance()
-                        ? ArtifactApplicationManager::instance()->activeContextService()
-                        : nullptr) {
-        ctx->splitLayerAtCurrentTime();
-        refreshEnabledState();
+    auto* svc = ArtifactProjectService::instance();
+    if (!svc) {
+        QMessageBox::warning(menu_->window(), QStringLiteral("Layer"),
+                             QStringLiteral("アクティブコンテキストが利用できません。"));
         return;
     }
-    QMessageBox::warning(menu_->window(), QStringLiteral("Layer"),
-                         QStringLiteral("アクティブコンテキストが利用できません。"));
+    auto comp = svc->currentComposition().lock();
+    if (!comp) return;
+    svc->splitLayerWithUndo(comp->id(), selectedLayerId_);
+    refreshEnabledState();
 }
 
 void ArtifactLayerMenu::Impl::handleTrackCamera()
@@ -2153,6 +2514,215 @@ void ArtifactLayerMenu::Impl::handleCreateMotionTracker()
     QMessageBox::information(menu_->window(), "Motion Tracker",
                              QStringLiteral("トラッカー #%1 を作成してレイヤーに紐づけました。")
                                  .arg(tracker->id()));
+}
+
+void ArtifactLayerMenu::Impl::handleBringToFront()
+{
+    auto* sel = ArtifactLayerSelectionManager::instance();
+    if (!sel) return;
+    auto comp = sel->activeComposition();
+    if (!comp) return;
+    const auto layers = sel->selectedLayersInOrder();
+    if (layers.isEmpty()) return;
+    const auto allLayers = comp->allLayerRef();
+    // Move from topmost selected first to preserve relative order
+    for (int i = layers.size() - 1; i >= 0; --i) {
+        auto layer = layers[i];
+        if (!layer) continue;
+        const int idx = allLayers.indexOf(layer);
+        if (idx < 0 || idx >= allLayers.size() - 1) continue;
+        UndoManager::instance()->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, idx, allLayers.size() - 1));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleBringForward()
+{
+    auto* sel = ArtifactLayerSelectionManager::instance();
+    if (!sel) return;
+    auto comp = sel->activeComposition();
+    if (!comp) return;
+    const auto layers = sel->selectedLayersInOrder();
+    if (layers.isEmpty()) return;
+    const auto allLayers = comp->allLayerRef();
+    // Move from topmost selected first
+    for (int i = layers.size() - 1; i >= 0; --i) {
+        auto layer = layers[i];
+        if (!layer) continue;
+        const int idx = allLayers.indexOf(layer);
+        if (idx < 0 || idx >= allLayers.size() - 1) continue;
+        UndoManager::instance()->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, idx, idx + 1));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleSendBackward()
+{
+    auto* sel = ArtifactLayerSelectionManager::instance();
+    if (!sel) return;
+    auto comp = sel->activeComposition();
+    if (!comp) return;
+    const auto layers = sel->selectedLayersInOrder();
+    if (layers.isEmpty()) return;
+    const auto allLayers = comp->allLayerRef();
+    // Move from bottommost selected first
+    for (int i = 0; i < layers.size(); ++i) {
+        auto layer = layers[i];
+        if (!layer) continue;
+        const int idx = allLayers.indexOf(layer);
+        if (idx <= 0) continue;
+        UndoManager::instance()->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, idx, idx - 1));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleSendToBack()
+{
+    auto* sel = ArtifactLayerSelectionManager::instance();
+    if (!sel) return;
+    auto comp = sel->activeComposition();
+    if (!comp) return;
+    const auto layers = sel->selectedLayersInOrder();
+    if (layers.isEmpty()) return;
+    const auto allLayers = comp->allLayerRef();
+    // Move from bottommost selected first to preserve relative order
+    for (int i = 0; i < layers.size(); ++i) {
+        auto layer = layers[i];
+        if (!layer) continue;
+        const int idx = allLayers.indexOf(layer);
+        if (idx <= 0) continue;
+        UndoManager::instance()->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, idx, 0));
+    }
+}
+
+void ArtifactLayerMenu::Impl::handleAlign(ArtifactCore::AlignType type)
+{
+    auto* sel = ArtifactLayerSelectionManager::instance();
+    if (!sel) return;
+    auto comp = sel->activeComposition();
+    if (!comp) return;
+    const auto layers = sel->selectedLayersInOrder();
+    if (layers.size() < 2) return;
+
+    // Capture before state
+    std::vector<AlignLayerSnapshot> snapshots;
+    std::vector<ArtifactCore::AlignmentObject> objects;
+    for (int i = 0; i < layers.size(); ++i) {
+        auto layer = layers[i];
+        if (!layer) continue;
+        const float px = layer->transform3D().positionX();
+        const float py = layer->transform3D().positionY();
+        snapshots.push_back({layer->id().toString(), px, py, px, py});
+        ArtifactCore::AlignmentObject obj;
+        obj.id = i;
+        obj.bounds = layer->transformedBoundingBox();
+        obj.currentPosition = QPointF(px, py);
+        objects.push_back(obj);
+    }
+    if (objects.size() < 2) return;
+
+    // Run alignment
+    QRectF containerBounds;
+    ArtifactCore::LayerAlignment::align(objects, type, ArtifactCore::AlignmentTarget::Selection, containerBounds);
+
+    // Write back and capture after state
+    for (size_t i = 0; i < objects.size(); ++i) {
+        const auto& obj = objects[i];
+        auto layer = comp->layerById(ArtifactCore::LayerID(snapshots[i].layerId));
+        if (!layer) continue;
+        layer->transform3D().setPosition(ArtifactCore::RationalTime(0, 30000),
+            static_cast<float>(obj.currentPosition.x()), static_cast<float>(obj.currentPosition.y()));
+        layer->changed();
+        snapshots[i].afterX = static_cast<float>(obj.currentPosition.x());
+        snapshots[i].afterY = static_cast<float>(obj.currentPosition.y());
+    }
+
+    UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(snapshots, QStringLiteral("Align Layers")));
+}
+
+void ArtifactLayerMenu::Impl::handleDistribute(ArtifactCore::DistributeType type)
+{
+    auto* sel = ArtifactLayerSelectionManager::instance();
+    if (!sel) return;
+    auto comp = sel->activeComposition();
+    if (!comp) return;
+    const auto layers = sel->selectedLayersInOrder();
+    if (layers.size() < 3) return;
+
+    std::vector<AlignLayerSnapshot> snapshots;
+    std::vector<ArtifactCore::AlignmentObject> objects;
+    for (int i = 0; i < layers.size(); ++i) {
+        auto layer = layers[i];
+        if (!layer) continue;
+        const float px = layer->transform3D().positionX();
+        const float py = layer->transform3D().positionY();
+        snapshots.push_back({layer->id().toString(), px, py, px, py});
+        ArtifactCore::AlignmentObject obj;
+        obj.id = i;
+        obj.bounds = layer->transformedBoundingBox();
+        obj.currentPosition = QPointF(px, py);
+        objects.push_back(obj);
+    }
+    if (objects.size() < 3) return;
+
+    ArtifactCore::LayerAlignment::distribute(objects, type);
+
+    for (size_t i = 0; i < objects.size(); ++i) {
+        const auto& obj = objects[i];
+        auto layer = comp->layerById(ArtifactCore::LayerID(snapshots[i].layerId));
+        if (!layer) continue;
+        layer->transform3D().setPosition(ArtifactCore::RationalTime(0, 30000),
+            static_cast<float>(obj.currentPosition.x()), static_cast<float>(obj.currentPosition.y()));
+        layer->changed();
+        snapshots[i].afterX = static_cast<float>(obj.currentPosition.x());
+        snapshots[i].afterY = static_cast<float>(obj.currentPosition.y());
+    }
+
+    UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(snapshots, QStringLiteral("Distribute Layers")));
+}
+
+void ArtifactLayerMenu::Impl::handleDistributeSpacing()
+{
+    auto* sel = ArtifactLayerSelectionManager::instance();
+    if (!sel) return;
+    auto comp = sel->activeComposition();
+    if (!comp) return;
+    const auto layers = sel->selectedLayersInOrder();
+    if (layers.size() < 3) return;
+
+    std::vector<AlignLayerSnapshot> snapshots;
+    std::vector<ArtifactCore::AlignmentObject> objects;
+    for (int i = 0; i < layers.size(); ++i) {
+        auto layer = layers[i];
+        if (!layer) continue;
+        const float px = layer->transform3D().positionX();
+        const float py = layer->transform3D().positionY();
+        snapshots.push_back({layer->id().toString(), px, py, px, py});
+        ArtifactCore::AlignmentObject obj;
+        obj.id = i;
+        obj.bounds = layer->transformedBoundingBox();
+        obj.currentPosition = QPointF(px, py);
+        objects.push_back(obj);
+    }
+    if (objects.size() < 3) return;
+
+    QRectF compBounds;
+    if (comp->effectiveCompositionSize().isValid()) {
+        const auto s = comp->effectiveCompositionSize();
+        compBounds = QRectF(0, 0, s.width(), s.height());
+    }
+    ArtifactCore::LayerAlignment::distributeSpacing(objects, ArtifactCore::DistributeType::CenterHorizontal,
+        ArtifactCore::AlignmentTarget::Selection, compBounds);
+
+    for (size_t i = 0; i < objects.size(); ++i) {
+        const auto& obj = objects[i];
+        auto layer = comp->layerById(ArtifactCore::LayerID(snapshots[i].layerId));
+        if (!layer) continue;
+        layer->transform3D().setPosition(ArtifactCore::RationalTime(0, 30000),
+            static_cast<float>(obj.currentPosition.x()), static_cast<float>(obj.currentPosition.y()));
+        layer->changed();
+        snapshots[i].afterX = static_cast<float>(obj.currentPosition.x());
+        snapshots[i].afterY = static_cast<float>(obj.currentPosition.y());
+    }
+
+    UndoManager::instance()->push(std::make_unique<AlignLayersUndoCommand>(snapshots, QStringLiteral("Distribute Spacing")));
 }
 
 ArtifactLayerMenu::ArtifactLayerMenu(QWidget* mainWindow, QWidget* parent)

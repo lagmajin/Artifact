@@ -59,6 +59,14 @@ using namespace ArtifactCore;
 W_OBJECT_IMPL(ArtifactAbstractLayer)
 
 namespace {
+struct ClonerTransformOperation {
+  QString name = QStringLiteral("Transform");
+  bool enabled = true;
+  QVector3D position{0.0f, 0.0f, 0.0f};
+  QVector3D rotation{0.0f, 0.0f, 0.0f};
+  QVector3D scale{1.0f, 1.0f, 1.0f};
+};
+
 template <typename T> bool assignIfChanged(T &current, const T &next) {
   if (current == next) {
     return false;
@@ -388,7 +396,32 @@ void applyMaskPropertyState(const ArtifactAbstractLayer *layer,
     mask.setMaskPath(pathIndex, path);
   }
 }
+
+struct ClonerTransformPropertyAddress {
+  int index = -1;
+  QString field;
+};
+
+std::optional<ClonerTransformPropertyAddress>
+parseClonerTransformPropertyPath(const QString &propertyPath) {
+  const QString prefix = QStringLiteral("component.cloner.transforms.");
+  if (!propertyPath.startsWith(prefix, Qt::CaseInsensitive)) {
+    return std::nullopt;
+  }
+  const QString tail = propertyPath.mid(prefix.size());
+  const QStringList parts = tail.split(QLatin1Char('.'), Qt::SkipEmptyParts);
+  if (parts.size() != 2) {
+    return std::nullopt;
+  }
+  bool ok = false;
+  const int index = parts[0].toInt(&ok);
+  if (!ok || index < 0) {
+    return std::nullopt;
+  }
+  return ClonerTransformPropertyAddress{index, parts[1]};
+}
 } // namespace
+
 
 class ArtifactAbstractLayer::Impl {
 public:
@@ -418,6 +451,7 @@ public:
   bool isSolo_ = false;
   bool isShy_ = false;
   bool isAdjustmentLayer_ = false;
+  LayerCachePolicy layerCachePolicy_ = LayerCachePolicy::Default;
   int labelColorIndex_ = 0;
   float opacity_ = 1.0f; // Opacity (0.0 - 1.0)
 
@@ -442,6 +476,10 @@ public:
     float clonerOffsetX_ = 160.0f;
     float clonerOffsetY_ = 48.0f;
     float clonerOffsetZ_ = 0.0f;
+    float clonerJitterX_ = 0.0f;
+    float clonerJitterY_ = 0.0f;
+    float clonerJitterZ_ = 0.0f;
+    int clonerSeed_ = 0;
     int clonerColumns_ = 3;
     int clonerRows_ = 3;
     int clonerDepth_ = 1;
@@ -454,6 +492,7 @@ public:
     float clonerEndAngle_ = 360.0f;
     float clonerRotationStep_ = 0.0f;
     float clonerOpacityDecay_ = 0.0f;
+    std::vector<ClonerTransformOperation> clonerTransforms_;
     QJsonObject scriptBinding_;
 
   // Matte components (Asset-based track mattes)
@@ -533,6 +572,10 @@ public:
   int maskCount() const;
   void clearMasks();
 };
+
+namespace {
+bool g_globalLayerCacheEnabled = true;
+}
 
 ArtifactAbstractLayer::Impl::Impl() {
   // Avoid undefined draw bounds when a layer is queried before explicit size
@@ -768,6 +811,30 @@ void ArtifactAbstractLayer::setLocked(bool locked) {
   }
   notifyLayerMutation(this, LayerDirtyFlag::Visibility,
                       LayerDirtyReason::PropertyChanged);
+}
+LayerCachePolicy ArtifactAbstractLayer::layerCachePolicy() const {
+  return impl_->layerCachePolicy_;
+}
+
+void ArtifactAbstractLayer::setLayerCachePolicy(LayerCachePolicy policy) {
+  if (!assignIfChanged(impl_->layerCachePolicy_, policy)) {
+    return;
+  }
+  notifyLayerMutation(this, LayerDirtyFlag::Property,
+                      LayerDirtyReason::PropertyChanged);
+}
+
+bool ArtifactAbstractLayer::usesLayerCache() const {
+  return isGlobalLayerCacheEnabled() &&
+         impl_->layerCachePolicy_ != LayerCachePolicy::Disabled;
+}
+
+bool ArtifactAbstractLayer::isGlobalLayerCacheEnabled() {
+  return g_globalLayerCacheEnabled;
+}
+
+void ArtifactAbstractLayer::setGlobalLayerCacheEnabled(bool enabled) {
+  g_globalLayerCacheEnabled = enabled;
 }
 bool ArtifactAbstractLayer::isSelectionLocked() const { return impl_->isSelectionLocked_; }
 void ArtifactAbstractLayer::setSelectionLocked(bool locked) {
@@ -1273,7 +1340,11 @@ bool ArtifactAbstractLayer::isGroupLayer() const {
 bool ArtifactAbstractLayer::is3D() const { return impl_->is3D_; }
 
 void ArtifactAbstractLayer::setIs3D(bool value) {
-    impl_->is3D_ = value;
+    if (!assignIfChanged(impl_->is3D_, value)) {
+      return;
+    }
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::PropertyChanged);
 }
 
 void ArtifactAbstractLayer::setTimeRemapEnabled(bool enabled) {
@@ -1297,6 +1368,14 @@ void ArtifactAbstractLayer::clearTimeRemap() {
 
 void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
                                             double sourceFrame) {
+    setTimeRemapKey(compFrame, sourceFrame,
+                    ArtifactCore::TimeRemapKeyframe::Interpolation::Linear);
+}
+
+void ArtifactAbstractLayer::setTimeRemapKey(
+    int64_t compFrame,
+    double sourceFrame,
+    ArtifactCore::TimeRemapKeyframe::Interpolation interpolation) {
     if (!impl_->timeRemapEffect_) {
         impl_->timeRemapEffect_ = std::make_unique<ArtifactCore::TimeRemapEffect>();
     }
@@ -1316,7 +1395,7 @@ void ArtifactAbstractLayer::setTimeRemapKey(int64_t compFrame,
     ArtifactCore::TimeRemapKeyframe kf;
     kf.outputTime = outputTime;
     kf.sourceTime = sourceTime;
-    kf.interpolation = ArtifactCore::TimeRemapKeyframe::Interpolation::Linear;
+    kf.interpolation = interpolation;
 
     impl_->timeRemapEffect_->remap().addKeyframe(kf);
     impl_->timeRemapEffect_->remap().setFrameRate(ArtifactCore::FrameRate(fps));
@@ -1609,6 +1688,22 @@ QRectF ArtifactAbstractLayer::visualLocalBounds() const {
       visualBounds = visualBounds.united(cloneBounds);
     }
   };
+  const auto applyClonerComponentTransform2D = [this](QTransform &cloneTransform) {
+    for (const auto &op : impl_->clonerTransforms_) {
+      if (!op.enabled) {
+        continue;
+      }
+      if (op.position.x() != 0.0f || op.position.y() != 0.0f) {
+        cloneTransform.translate(op.position.x(), op.position.y());
+      }
+      if (op.rotation.z() != 0.0f) {
+        cloneTransform.rotate(op.rotation.z());
+      }
+      if (op.scale.x() != 1.0f || op.scale.y() != 1.0f) {
+        cloneTransform.scale(op.scale.x(), op.scale.y());
+      }
+    }
+  };
 
   const int mode = impl_->clonerMode_;
   if (mode == 1) {
@@ -1625,6 +1720,7 @@ QRectF ArtifactAbstractLayer::visualLocalBounds() const {
           QTransform cloneTransform;
           cloneTransform.translate(startPos.x() + impl_->clonerSpacingX_ * x,
                                    startPos.y() + impl_->clonerSpacingY_ * y);
+          applyClonerComponentTransform2D(cloneTransform);
           uniteCloneBounds(cloneTransform);
         }
       }
@@ -1648,6 +1744,7 @@ QRectF ArtifactAbstractLayer::visualLocalBounds() const {
                               impl_->clonerRotationStep_ *
                                   static_cast<float>(i));
       }
+      applyClonerComponentTransform2D(cloneTransform);
       uniteCloneBounds(cloneTransform);
     }
   } else {
@@ -1660,6 +1757,7 @@ QRectF ArtifactAbstractLayer::visualLocalBounds() const {
         cloneTransform.rotate(impl_->clonerRotationStep_ *
                               static_cast<float>(i));
       }
+      applyClonerComponentTransform2D(cloneTransform);
       uniteCloneBounds(cloneTransform);
     }
   }
@@ -1799,6 +1897,7 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["isTimingLocked"] = impl_->isTimingLocked_;
   obj["isGuide"] = impl_->isGuide_;
   obj["isSolo"] = impl_->isSolo_;
+  obj["layerCachePolicy"] = static_cast<int>(impl_->layerCachePolicy_);
   obj["isShy"] = impl_->isShy_;
   obj["labelColorIndex"] = impl_->labelColorIndex_;
   obj["opacity"] = static_cast<double>(impl_->opacity_);
@@ -1898,6 +1997,10 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["clonerOffsetX"] = static_cast<double>(impl_->clonerOffsetX_);
   componentsObj["clonerOffsetY"] = static_cast<double>(impl_->clonerOffsetY_);
   componentsObj["clonerOffsetZ"] = static_cast<double>(impl_->clonerOffsetZ_);
+  componentsObj["clonerJitterX"] = static_cast<double>(impl_->clonerJitterX_);
+  componentsObj["clonerJitterY"] = static_cast<double>(impl_->clonerJitterY_);
+  componentsObj["clonerJitterZ"] = static_cast<double>(impl_->clonerJitterZ_);
+  componentsObj["clonerSeed"] = impl_->clonerSeed_;
   componentsObj["clonerColumns"] = impl_->clonerColumns_;
   componentsObj["clonerRows"] = impl_->clonerRows_;
   componentsObj["clonerDepth"] = impl_->clonerDepth_;
@@ -1910,6 +2013,23 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   componentsObj["clonerEndAngle"] = static_cast<double>(impl_->clonerEndAngle_);
   componentsObj["clonerRotationStep"] = static_cast<double>(impl_->clonerRotationStep_);
   componentsObj["clonerOpacityDecay"] = static_cast<double>(impl_->clonerOpacityDecay_);
+  QJsonArray clonerTransformsArr;
+  for (const auto &op : impl_->clonerTransforms_) {
+    QJsonObject transformObj;
+    transformObj["name"] = op.name;
+    transformObj["enabled"] = op.enabled;
+    transformObj["positionX"] = static_cast<double>(op.position.x());
+    transformObj["positionY"] = static_cast<double>(op.position.y());
+    transformObj["positionZ"] = static_cast<double>(op.position.z());
+    transformObj["rotationX"] = static_cast<double>(op.rotation.x());
+    transformObj["rotationY"] = static_cast<double>(op.rotation.y());
+    transformObj["rotationZ"] = static_cast<double>(op.rotation.z());
+    transformObj["scaleX"] = static_cast<double>(op.scale.x());
+    transformObj["scaleY"] = static_cast<double>(op.scale.y());
+    transformObj["scaleZ"] = static_cast<double>(op.scale.z());
+    clonerTransformsArr.append(transformObj);
+  }
+  componentsObj["clonerTransforms"] = clonerTransformsArr;
   if (!impl_->scriptBinding_.isEmpty()) {
     componentsObj["scriptBinding"] = impl_->scriptBinding_;
   }
@@ -2110,6 +2230,8 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     setStartTime(FramePosition(obj["startTime"].toVariant().toLongLong()));
   if (obj.contains("isVisible"))
     setVisible(obj["isVisible"].toBool());
+  if (obj.contains("is3D"))
+    setIs3D(obj["is3D"].toBool());
   if (obj.contains("isLocked"))
     setLocked(obj["isLocked"].toBool());
   if (obj.contains("isSelectionLocked"))
@@ -2122,6 +2244,9 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
     setGuide(obj["isGuide"].toBool());
   if (obj.contains("isSolo"))
     setSolo(obj["isSolo"].toBool());
+  if (obj.contains("layerCachePolicy"))
+    setLayerCachePolicy(static_cast<LayerCachePolicy>(
+        obj["layerCachePolicy"].toInt(static_cast<int>(LayerCachePolicy::Default))));
   if (obj.contains("isShy"))
     setShy(obj["isShy"].toBool());
   if (obj.contains("labelColorIndex"))
@@ -2231,6 +2356,14 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("clonerOffsetY")).toDouble(48.0));
         impl_->clonerOffsetZ_ = static_cast<float>(
             componentsObj.value(QStringLiteral("clonerOffsetZ")).toDouble(0.0));
+        impl_->clonerJitterX_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerJitterX")).toDouble(0.0));
+        impl_->clonerJitterY_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerJitterY")).toDouble(0.0));
+        impl_->clonerJitterZ_ = static_cast<float>(
+            componentsObj.value(QStringLiteral("clonerJitterZ")).toDouble(0.0));
+        impl_->clonerSeed_ =
+            componentsObj.value(QStringLiteral("clonerSeed")).toInt(0);
         impl_->clonerColumns_ = std::max(
             1, componentsObj.value(QStringLiteral("clonerColumns")).toInt(3));
         impl_->clonerRows_ = std::max(
@@ -2255,6 +2388,77 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("clonerRotationStep")).toDouble(0.0));
         impl_->clonerOpacityDecay_ = static_cast<float>(
             componentsObj.value(QStringLiteral("clonerOpacityDecay")).toDouble(0.0));
+        impl_->clonerTransforms_.clear();
+        if (componentsObj.contains(QStringLiteral("clonerTransforms")) &&
+            componentsObj.value(QStringLiteral("clonerTransforms")).isArray()) {
+          const QJsonArray transformArr =
+              componentsObj.value(QStringLiteral("clonerTransforms")).toArray();
+          impl_->clonerTransforms_.reserve(static_cast<size_t>(transformArr.size()));
+          for (const auto &entry : transformArr) {
+            if (!entry.isObject()) {
+              continue;
+            }
+            const QJsonObject transformObj = entry.toObject();
+            ClonerTransformOperation op;
+            op.name = transformObj.value(QStringLiteral("name"))
+                          .toString(QStringLiteral("Transform"));
+            op.enabled =
+                transformObj.value(QStringLiteral("enabled")).toBool(true);
+            op.position.setX(static_cast<float>(
+                transformObj.value(QStringLiteral("positionX")).toDouble(0.0)));
+            op.position.setY(static_cast<float>(
+                transformObj.value(QStringLiteral("positionY")).toDouble(0.0)));
+            op.position.setZ(static_cast<float>(
+                transformObj.value(QStringLiteral("positionZ")).toDouble(0.0)));
+            op.rotation.setX(static_cast<float>(
+                transformObj.value(QStringLiteral("rotationX")).toDouble(0.0)));
+            op.rotation.setY(static_cast<float>(
+                transformObj.value(QStringLiteral("rotationY")).toDouble(0.0)));
+            op.rotation.setZ(static_cast<float>(
+                transformObj.value(QStringLiteral("rotationZ")).toDouble(0.0)));
+            op.scale.setX(static_cast<float>(
+                transformObj.value(QStringLiteral("scaleX")).toDouble(1.0)));
+            op.scale.setY(static_cast<float>(
+                transformObj.value(QStringLiteral("scaleY")).toDouble(1.0)));
+            op.scale.setZ(static_cast<float>(
+                transformObj.value(QStringLiteral("scaleZ")).toDouble(1.0)));
+            impl_->clonerTransforms_.push_back(op);
+          }
+        } else {
+          const bool hasLegacyTransform =
+              componentsObj.contains(QStringLiteral("clonerTransformPositionX")) ||
+              componentsObj.contains(QStringLiteral("clonerTransformPositionY")) ||
+              componentsObj.contains(QStringLiteral("clonerTransformPositionZ")) ||
+              componentsObj.contains(QStringLiteral("clonerTransformRotationX")) ||
+              componentsObj.contains(QStringLiteral("clonerTransformRotationY")) ||
+              componentsObj.contains(QStringLiteral("clonerTransformRotationZ")) ||
+              componentsObj.contains(QStringLiteral("clonerTransformScaleX")) ||
+              componentsObj.contains(QStringLiteral("clonerTransformScaleY")) ||
+              componentsObj.contains(QStringLiteral("clonerTransformScaleZ"));
+          if (hasLegacyTransform) {
+            ClonerTransformOperation op;
+            op.name = QStringLiteral("Transform 1");
+            op.position.setX(static_cast<float>(
+                componentsObj.value(QStringLiteral("clonerTransformPositionX")).toDouble(0.0)));
+            op.position.setY(static_cast<float>(
+                componentsObj.value(QStringLiteral("clonerTransformPositionY")).toDouble(0.0)));
+            op.position.setZ(static_cast<float>(
+                componentsObj.value(QStringLiteral("clonerTransformPositionZ")).toDouble(0.0)));
+            op.rotation.setX(static_cast<float>(
+                componentsObj.value(QStringLiteral("clonerTransformRotationX")).toDouble(0.0)));
+            op.rotation.setY(static_cast<float>(
+                componentsObj.value(QStringLiteral("clonerTransformRotationY")).toDouble(0.0)));
+            op.rotation.setZ(static_cast<float>(
+                componentsObj.value(QStringLiteral("clonerTransformRotationZ")).toDouble(0.0)));
+            op.scale.setX(static_cast<float>(
+                componentsObj.value(QStringLiteral("clonerTransformScaleX")).toDouble(1.0)));
+            op.scale.setY(static_cast<float>(
+                componentsObj.value(QStringLiteral("clonerTransformScaleY")).toDouble(1.0)));
+            op.scale.setZ(static_cast<float>(
+                componentsObj.value(QStringLiteral("clonerTransformScaleZ")).toDouble(1.0)));
+            impl_->clonerTransforms_.push_back(op);
+          }
+        }
         impl_->scriptBinding_ = componentsObj.value(QStringLiteral("scriptBinding")).toObject();
     }
 
@@ -2601,11 +2805,19 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                                   PropertyType::Boolean, isGuide(), -170));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.solo"),
                                   PropertyType::Boolean, isSolo(), -160));
+  auto cachePolicyProp = makeProp(QStringLiteral("layer.cachePolicy"),
+                                  PropertyType::Integer,
+                                  static_cast<int>(layerCachePolicy()),
+                                  -159);
+  cachePolicyProp->setDisplayLabel(QStringLiteral("Cache Policy"));
+  layerGroup.addProperty(cachePolicyProp);
   layerGroup.addProperty(makeProp(QStringLiteral("layer.shy"),
                                   PropertyType::Boolean, isShy(), -150));
   layerGroup.addProperty(makeProp(QStringLiteral("layer.labelColorIndex"),
                                   PropertyType::Integer, labelColorIndex(),
                                   -145));
+  layerGroup.addProperty(makeProp(QStringLiteral("layer.is3D"),
+                                  PropertyType::Boolean, is3D(), -144));
 
   auto opacityProp =
       makeProp(QStringLiteral("layer.opacity"), PropertyType::Float,
@@ -2689,6 +2901,14 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   rotationProp->setUnit(QStringLiteral("deg"));
   rotationProp->setAnimatable(true);
   transformGroup.addProperty(rotationProp);
+
+  auto autoOrientProp =
+      makeProp(QStringLiteral("transform.autoOrient"), PropertyType::Boolean,
+               t3.isAutoOrient(), -295);
+  autoOrientProp->setDisplayLabel(QStringLiteral("Auto-Orient"));
+  autoOrientProp->setTooltip(QStringLiteral(
+      "Automatically orient the layer along its motion path."));
+  transformGroup.addProperty(autoOrientProp);
 
   auto anchorXProp = makeProp(QStringLiteral("transform.anchor.x"),
                               PropertyType::Float, t3.anchorX(), -295);
@@ -2954,6 +3174,79 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                static_cast<double>(impl_->clonerOpacityDecay_), -43);
   clonerOpacityDecayProp->setDisplayLabel(QStringLiteral("Opacity Decay"));
   clonerGroup.addProperty(clonerOpacityDecayProp);
+  for (int transformIndex = 0;
+       transformIndex < static_cast<int>(impl_->clonerTransforms_.size());
+       ++transformIndex) {
+    const auto &op = impl_->clonerTransforms_[static_cast<size_t>(transformIndex)];
+    const QString prefix =
+        QStringLiteral("component.cloner.transforms.%1.").arg(transformIndex);
+    const QString title = op.name.trimmed().isEmpty()
+                              ? QStringLiteral("Transform %1").arg(transformIndex + 1)
+                              : op.name.trimmed();
+    auto nameProp = makeProp(prefix + QStringLiteral("name"),
+                             PropertyType::String, title, -42 - transformIndex * 10);
+    nameProp->setDisplayLabel(QStringLiteral("Name"));
+    clonerGroup.addProperty(nameProp);
+    auto enabledProp = makeProp(prefix + QStringLiteral("enabled"),
+                                PropertyType::Boolean, op.enabled,
+                                -41 - transformIndex * 10);
+    enabledProp->setDisplayLabel(QStringLiteral("Enabled"));
+    clonerGroup.addProperty(enabledProp);
+    auto posXProp = makeProp(prefix + QStringLiteral("positionX"),
+                             PropertyType::Float,
+                             static_cast<double>(op.position.x()),
+                             -40 - transformIndex * 10);
+    posXProp->setDisplayLabel(QStringLiteral("Position X"));
+    clonerGroup.addProperty(posXProp);
+    auto posYProp = makeProp(prefix + QStringLiteral("positionY"),
+                             PropertyType::Float,
+                             static_cast<double>(op.position.y()),
+                             -39 - transformIndex * 10);
+    posYProp->setDisplayLabel(QStringLiteral("Position Y"));
+    clonerGroup.addProperty(posYProp);
+    auto posZProp = makeProp(prefix + QStringLiteral("positionZ"),
+                             PropertyType::Float,
+                             static_cast<double>(op.position.z()),
+                             -38 - transformIndex * 10);
+    posZProp->setDisplayLabel(QStringLiteral("Position Z"));
+    clonerGroup.addProperty(posZProp);
+    auto rotXProp = makeProp(prefix + QStringLiteral("rotationX"),
+                             PropertyType::Float,
+                             static_cast<double>(op.rotation.x()),
+                             -37 - transformIndex * 10);
+    rotXProp->setDisplayLabel(QStringLiteral("Rotation X"));
+    clonerGroup.addProperty(rotXProp);
+    auto rotYProp = makeProp(prefix + QStringLiteral("rotationY"),
+                             PropertyType::Float,
+                             static_cast<double>(op.rotation.y()),
+                             -36 - transformIndex * 10);
+    rotYProp->setDisplayLabel(QStringLiteral("Rotation Y"));
+    clonerGroup.addProperty(rotYProp);
+    auto rotZProp = makeProp(prefix + QStringLiteral("rotationZ"),
+                             PropertyType::Float,
+                             static_cast<double>(op.rotation.z()),
+                             -35 - transformIndex * 10);
+    rotZProp->setDisplayLabel(QStringLiteral("Rotation Z"));
+    clonerGroup.addProperty(rotZProp);
+    auto scaleXProp = makeProp(prefix + QStringLiteral("scaleX"),
+                               PropertyType::Float,
+                               static_cast<double>(op.scale.x()),
+                               -34 - transformIndex * 10);
+    scaleXProp->setDisplayLabel(QStringLiteral("Scale X"));
+    clonerGroup.addProperty(scaleXProp);
+    auto scaleYProp = makeProp(prefix + QStringLiteral("scaleY"),
+                               PropertyType::Float,
+                               static_cast<double>(op.scale.y()),
+                               -33 - transformIndex * 10);
+    scaleYProp->setDisplayLabel(QStringLiteral("Scale Y"));
+    clonerGroup.addProperty(scaleYProp);
+    auto scaleZProp = makeProp(prefix + QStringLiteral("scaleZ"),
+                               PropertyType::Float,
+                               static_cast<double>(op.scale.z()),
+                               -32 - transformIndex * 10);
+    scaleZProp->setDisplayLabel(QStringLiteral("Scale Z"));
+    clonerGroup.addProperty(scaleZProp);
+  }
 
   auto isAdjustmentProp =
       makeProp(QStringLiteral("layer.isAdjustment"), PropertyType::Boolean,
@@ -3168,12 +3461,20 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     setSolo(value.toBool());
     return true;
   }
+  if (propertyPath == QStringLiteral("layer.cachePolicy")) {
+    setLayerCachePolicy(static_cast<LayerCachePolicy>(value.toInt()));
+    return true;
+  }
   if (propertyPath == QStringLiteral("layer.shy")) {
     setShy(value.toBool());
     return true;
   }
   if (propertyPath == QStringLiteral("layer.labelColorIndex")) {
     setLabelColorIndex(value.toInt());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("layer.is3D")) {
+    setIs3D(value.toBool());
     return true;
   }
   if (propertyPath == QStringLiteral("layer.isAdjustment")) {
@@ -3284,6 +3585,103 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     Q_EMIT changed();
     return true;
   }
+    if (propertyPath == QStringLiteral("component.cloner.transforms.add")) {
+      ClonerTransformOperation op;
+      op.name = QStringLiteral("Transform %1")
+                    .arg(static_cast<int>(impl_->clonerTransforms_.size()) + 1);
+      impl_->clonerTransforms_.push_back(op);
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.transforms.remove")) {
+      const int index = value.toInt();
+      if (index >= 0 &&
+          index < static_cast<int>(impl_->clonerTransforms_.size())) {
+        impl_->clonerTransforms_.erase(
+            impl_->clonerTransforms_.begin() + index);
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+      }
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.transforms.duplicate")) {
+      const int index = value.toInt();
+      if (index >= 0 &&
+          index < static_cast<int>(impl_->clonerTransforms_.size())) {
+        auto copy = impl_->clonerTransforms_[static_cast<size_t>(index)];
+        copy.name = copy.name.trimmed().isEmpty()
+                        ? QStringLiteral("Transform %1")
+                              .arg(static_cast<int>(impl_->clonerTransforms_.size()) + 1)
+                        : copy.name + QStringLiteral(" Copy");
+        impl_->clonerTransforms_.insert(
+            impl_->clonerTransforms_.begin() + index + 1, copy);
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+      }
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.transforms.moveUp")) {
+      const int index = value.toInt();
+      if (index > 0 &&
+          index < static_cast<int>(impl_->clonerTransforms_.size())) {
+        std::swap(impl_->clonerTransforms_[static_cast<size_t>(index)],
+                  impl_->clonerTransforms_[static_cast<size_t>(index - 1)]);
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+      }
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.cloner.transforms.moveDown")) {
+      const int index = value.toInt();
+      if (index >= 0 &&
+          index + 1 < static_cast<int>(impl_->clonerTransforms_.size())) {
+        std::swap(impl_->clonerTransforms_[static_cast<size_t>(index)],
+                  impl_->clonerTransforms_[static_cast<size_t>(index + 1)]);
+        notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                            LayerDirtyReason::PropertyChanged);
+      }
+      return true;
+    }
+    if (const auto clonerTransformAddress =
+            parseClonerTransformPropertyPath(propertyPath)) {
+      if (clonerTransformAddress->index < 0 ||
+          clonerTransformAddress->index >=
+              static_cast<int>(impl_->clonerTransforms_.size())) {
+        return false;
+      }
+      auto &op = impl_->clonerTransforms_[static_cast<size_t>(
+          clonerTransformAddress->index)];
+      const QString field = clonerTransformAddress->field;
+      if (field == QStringLiteral("name")) {
+        op.name = value.toString();
+      } else if (field == QStringLiteral("enabled")) {
+        op.enabled = value.toBool();
+      } else if (field == QStringLiteral("positionX")) {
+        op.position.setX(static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("positionY")) {
+        op.position.setY(static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("positionZ")) {
+        op.position.setZ(static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("rotationX")) {
+        op.rotation.setX(static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("rotationY")) {
+        op.rotation.setY(static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("rotationZ")) {
+        op.rotation.setZ(static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("scaleX")) {
+        op.scale.setX(static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("scaleY")) {
+        op.scale.setY(static_cast<float>(value.toDouble()));
+      } else if (field == QStringLiteral("scaleZ")) {
+        op.scale.setZ(static_cast<float>(value.toDouble()));
+      } else {
+        return false;
+      }
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
     if (propertyPath == QStringLiteral("component.layout.enabled")) {
       impl_->layoutComponentEnabled_ = value.toBool();
       Q_EMIT changed();
@@ -3476,7 +3874,6 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
-
   auto &t3 = transform3D();
   const RationalTime currentTime = currentTimelineTime(this);
 
@@ -3523,7 +3920,16 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     return true;
   }
   if (propertyPath == QStringLiteral("transform.rotation")) {
+    if (t3.isAutoOrient()) {
+      t3.setAutoOrient(false);
+    }
     t3.setRotation(currentTime, value.toDouble());
+    notifyLayerMutation(this, LayerDirtyFlag::Transform,
+                        LayerDirtyReason::TransformChanged);
+    return true;
+  }
+  if (propertyPath == QStringLiteral("transform.autoOrient")) {
+    t3.setAutoOrient(value.toBool());
     notifyLayerMutation(this, LayerDirtyFlag::Transform,
                         LayerDirtyReason::TransformChanged);
     return true;

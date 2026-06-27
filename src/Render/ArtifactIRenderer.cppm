@@ -1,4 +1,4 @@
-﻿module;
+module;
 #include <utility>
 // ArtifactIRenderer maintenance rule:
 // Do not rewrite the existing D3D12-specific path by guesswork.
@@ -412,7 +412,8 @@ namespace {
 
   void drawMesh(const QString& cacheKey, const ArtifactCore::Mesh& mesh,
                 const ArtifactCore::Material& material,
-                const QMatrix4x4& modelMatrix, float opacity)
+                const QMatrix4x4& modelMatrix, float opacity,
+                int shadingMode)
   {
     auto* renderer = meshRendererFor(cacheKey);
     if (!renderer) {
@@ -500,7 +501,7 @@ namespace {
     instance.color[2] = color.blueF();
     instance.color[3] = alpha;
     instance.weight = 1.0f;
-    instance.timeOffset = 0.0f;
+    instance.timeOffset = static_cast<float>(std::clamp(shadingMode, 1, 3));
     renderer->updateInstanceData(&instance, 1);
 
     auto ctx = deviceManager_.immediateContext();
@@ -2504,8 +2505,9 @@ void ArtifactIRenderer::draw3DQuad(Detail::float3 v0, Detail::float3 v1, Detail:
 { impl_->primitiveRenderer3D_.draw3DQuad({v0.x, v0.y, v0.z}, {v1.x, v1.y, v1.z}, {v2.x, v2.y, v2.z}, {v3.x, v3.y, v3.z}, color); }
 void ArtifactIRenderer::drawMesh(const QString& cacheKey, const ArtifactCore::Mesh& mesh,
                                  const ArtifactCore::Material& material,
-                                 const QMatrix4x4& modelMatrix, float opacity)
-{ impl_->drawMesh(cacheKey, mesh, material, modelMatrix, opacity); }
+                                 const QMatrix4x4& modelMatrix, float opacity,
+                                 int shadingMode)
+{ impl_->drawMesh(cacheKey, mesh, material, modelMatrix, opacity, shadingMode); }
  void ArtifactIRenderer::setUpscaleConfig(bool enable, float sharpness)
  {
   impl_->m_upscaleEnabled = enable;
