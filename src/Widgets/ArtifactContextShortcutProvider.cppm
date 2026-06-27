@@ -38,6 +38,7 @@ QList<ArtifactShortcutHelpEntry> ArtifactContextShortcutProvider::getShortcutsFo
         addEntry(ArtifactCore::ShortcutId::TimelineSelectAllKeyframes, QStringLiteral("Timeline"), QStringLiteral("Select all keyframes"));
         addEntry(ArtifactCore::ShortcutId::TimelineAddKeyframeAtPlayhead, QStringLiteral("Timeline"), QStringLiteral("Add keyframe at playhead"));
         addEntry(ArtifactCore::ShortcutId::TimelineRemoveKeyframeAtPlayhead, QStringLiteral("Timeline"), QStringLiteral("Remove keyframe at playhead"));
+        addEntry(ArtifactCore::ShortcutId::TimelineSplitLayerAtPlayhead, QStringLiteral("Timeline"), QStringLiteral("Split selected layer at playhead"));
         addEntry(ArtifactCore::ShortcutId::TimelineCleanKeyframes, QStringLiteral("Timeline"), QStringLiteral("Clean duplicate keyframes"));
         addEntry(ArtifactCore::ShortcutId::TimelineEaseIn, QStringLiteral("Timeline"), QStringLiteral("Apply ease in to selected keyframes"));
         addEntry(ArtifactCore::ShortcutId::TimelineEaseOut, QStringLiteral("Timeline"), QStringLiteral("Apply ease out to selected keyframes"));

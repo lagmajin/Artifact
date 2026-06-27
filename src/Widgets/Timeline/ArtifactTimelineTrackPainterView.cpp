@@ -59,6 +59,7 @@ import Artifact.Timeline.KeyframeModel;
 import Artifact.Timeline.KeyBinding;
 import Artifact.Service.Project;
 import Artifact.Service.Playback;
+import Artifact.Service.ActiveContext;
 import Event.Bus;
 import Artifact.Event.Types;
 import Translation.Manager;
@@ -8061,7 +8062,7 @@ void ArtifactTimelineTrackPainterView::contextMenuEvent(
     const auto layer = composition->layerById(clip.layerId);
     if (chosen == splitClipAct) {
       if (auto *svc = ArtifactProjectService::instance()) {
-        svc->splitLayerAtCurrentTime(composition->id(), clip.layerId);
+        svc->splitLayerWithUndo(composition->id(), clip.layerId);
       }
       event->accept();
       return;
@@ -8329,6 +8330,14 @@ void ArtifactTimelineTrackPainterView::keyPressEvent(QKeyEvent *event) {
     const auto selectedLayers = selection ? selection->selectedLayers()
                                           : QSet<ArtifactAbstractLayerPtr>{};
     if (!selectedLayers.isEmpty() && deleteSelectedLayersFromTimeline(this)) {
+      event->accept();
+      return;
+    }
+  }
+
+  if (shortcuts.matches(event, ArtifactCore::ShortcutId::TimelineSplitLayerAtPlayhead)) {
+    if (auto *activeContext = ArtifactActiveContextService::instance()) {
+      activeContext->splitLayerAtCurrentTime();
       event->accept();
       return;
     }
