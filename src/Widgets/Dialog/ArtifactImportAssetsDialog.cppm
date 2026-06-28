@@ -2,6 +2,7 @@ module;
 #include <QAbstractItemView>
 #include <QDialogButtonBox>
 #include <QFileInfo>
+#include <QLabel>
 #include <QPushButton>
 #include <QTreeWidget>
 #include <QVBoxLayout>
@@ -32,7 +33,7 @@ bool isSequenceName(const QString& path)
 ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files, QWidget* parent)
     : QDialog(parent)
 {
-  setWindowTitle(QStringLiteral("Import Assets"));
+  setWindowTitle(QStringLiteral("Project/Assets に取り込み"));
   resize(560, 360);
 
   ArtifactCore::FileTypeDetector detector;
@@ -61,6 +62,12 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   }
 
   auto* layout = new QVBoxLayout(this);
+  auto* description = new QLabel(
+      QStringLiteral("選択したアセットは現在のプロジェクトの Assets フォルダへコピーしてから取り込みます。"),
+      this);
+  description->setWordWrap(true);
+  layout->addWidget(description);
+
   auto* tree = new QTreeWidget(this);
   tree->setHeaderLabels({QStringLiteral("Group"), QStringLiteral("Items")});
   tree->setRootIsDecorated(false);
@@ -85,8 +92,8 @@ ArtifactImportAssetsDialog::ArtifactImportAssetsDialog(const QStringList& files,
   addGroup(otherFiles);
 
   auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
-  buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Import"));
-  buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("Cancel"));
+  buttons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Project/Assets にコピーして取り込む"));
+  buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("キャンセル"));
   layout->addWidget(buttons);
   QObject::connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
   QObject::connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);

@@ -59,6 +59,7 @@ import Artifact.Widgets.Welcome;
 import Artifact.Project.Manager;
 import Artifact.Service.Project;
 import Artifact.Composition.InitParams;
+import Artifact.Widgets.ImportAssetsDialog;
 import Menu.MenuBar;
 import Artifact.Menu.View;
 import Widgets.ToolBar;
@@ -1121,7 +1122,13 @@ ArtifactMainWindow::ArtifactMainWindow(QWidget *parent)
               const QStringList files = QFileDialog::getOpenFileNames(
                   this, QStringLiteral("Import Assets"));
               if (!files.isEmpty()) {
-                  svc->importAssetsFromPaths(files);
+                  ArtifactImportAssetsDialog dialog(files, this);
+                  if (dialog.exec() == QDialog::Accepted) {
+                      const QStringList filtered = dialog.selectedPaths();
+                      if (!filtered.isEmpty()) {
+                          svc->importAssetsFromPaths(filtered);
+                      }
+                  }
               }
           }
       });
