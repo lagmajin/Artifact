@@ -457,8 +457,8 @@ public:
             QStringLiteral("MaterialVS/colored/E3E3E3/play_arrow.svg")
         }, "再生/一時停止 (Space)", Qt::Key_Space);
         playButton_->setProperty("artifactPlayButton", true);
-        playButton_->setFixedSize(53, 53); // about 15% smaller than before
-        playButton_->setIconSize(QSize(32, 32));
+        playButton_->setFixedSize(40, 40);
+        playButton_->setIconSize(QSize(22, 22));
 
         stopButton_ = createToolButton(QStringList{
             QStringLiteral("MaterialVS/colored/E3E3E3/stop.svg"),
@@ -716,10 +716,10 @@ public:
     {
         auto* button = new ArtifactFramedToolButton();
         button->setIcon(loadIconWithFallback(iconNames));
-        button->setIconSize(QSize(20, 20));
+        button->setIconSize(QSize(22, 22));
         button->setToolTip(tooltip);
-        button->setMinimumSize(32, 32);
-        button->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Minimum);
+        button->setFixedSize(40, 40);
+        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         applyThemeTextPalette(button, QColor(ArtifactCore::currentDCCTheme().textColor));
         
         if (shortcut != 0) {
@@ -744,8 +744,8 @@ public:
         auto* button = createToolButton(QStringList{}, tooltip, 0);
         button->setText(text);
         button->setCheckable(checkable);
-        button->setMinimumSize(48, 28);
-        button->setSizePolicy(QSizePolicy::MinimumExpanding, QSizePolicy::Minimum);
+        button->setFixedSize(56, 32);
+        button->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
         button->setIcon(QIcon());
         button->setToolButtonStyle(Qt::ToolButtonTextOnly);
         QFont font = button->font();

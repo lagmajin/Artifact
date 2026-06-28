@@ -1600,6 +1600,10 @@ public:
         invalidateFilter();
     }
 
+    const QSet<QString>& unusedAssetPaths() const {
+        return unusedAssetPaths_;
+    }
+
     void setAdvancedFilter(const QString& expression, const QString& typeFilter, const bool unusedOnly) {
         rawExpression_ = expression.trimmed();
         typeFilter_ = typeFilter.trimmed().toLower();
@@ -4997,92 +5001,135 @@ public:
             return false;
         }
         const QVector<CompositionItem*> items = selectedCompositionItems();
-        if (items.size() != 1) {
+        if (items.isEmpty()) {
             return false;
         }
 
-        auto* compItem = items.first();
-        if (!compItem) {
-            return false;
-        }
-        const auto found = svc->findComposition(compItem->compositionId);
-        auto comp = found.ptr.lock();
-        if (!found.success || !comp) {
-            return false;
+        if (items.size() == 1) {
+            auto* compItem = items.first();
+            if (!compItem) {
+                return false;
+            }
+            const auto found = svc->findComposition(compItem->compositionId);
+            auto comp = found.ptr.lock();
+            if (!found.success || !comp) {
+                return false;
+            }
+
+            const QString trimmedName = compositionNameEdit->text().trimmed();
+            if (trimmedName.isEmpty()) {
+                return false;
+            }
+            const int startFrame = compositionStartFrameSpin->value();
+            const int endFrame = compositionEndFrameSpin->value();
+            if (startFrame > endFrame) {
+                return false;
+            }
+
+            comp->setCompositionName(UniString::fromQString(trimmedName));
+            {
+                const QSize newSize(compositionWidthSpin->value(), compositionHeightSpin->value());
+                const QSize oldSize = comp->settings().compositionSize();
+                if (oldSize != newSize) {
+                    bool hasMasks = false;
+                    bool hasAnchors = false;
+                    int maskVerts = 0;
+                    int layerCount = 0;
+                    for (const auto& layer : comp->allLayerRef()) {
+                        if (!layer) continue;
+                        ++layerCount;
+                        if (layer->hasMasks()) {
+                            hasMasks = true;
+                            for (int mi = 0; mi < layer->maskCount(); ++mi) {
+                                const auto lm = layer->mask(mi);
+                                for (int pi = 0; pi < lm.maskPathCount(); ++pi) {
+                                    maskVerts += lm.maskPath(pi).vertexCount();
+                                }
+                            }
+                        }
+                    }
+                    hasAnchors = layerCount > 0;
+                    auto impact = ArtifactCore::ResolutionRemap::calculateImpact(
+                        oldSize, newSize, hasMasks, maskVerts > 0, hasAnchors);
+                    impact.maskVertexCount = maskVerts;
+
+                    Artifact::ArtifactResolutionRemapDialog dialog(oldSize, newSize, impact);
+                    if (dialog.exec() == QDialog::Accepted && dialog.remapRequested()) {
+                        if (auto* mgr = UndoManager::instance()) {
+                            mgr->push(std::make_unique<ChangeCompositionResolutionCommand>(
+                                comp, oldSize, newSize, dialog.selectedPolicy()));
+                        } else {
+                            comp->applyResolutionRemap(newSize, dialog.selectedPolicy());
+                        }
+                    } else {
+                        comp->setCompositionSize(newSize);
+                    }
+                } else {
+                    comp->setCompositionSize(newSize);
+                }
+            }
+            comp->setFrameRate(FrameRate(static_cast<float>(std::max(1.0, compositionFrameRateSpin->value()))));
+            comp->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
+            const QColor bg = compositionBackgroundButton->selectedColor();
+            comp->setBackGroundColor(FloatColor(bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF()));
+
+            if (!svc->renameComposition(compItem->compositionId, UniString::fromQString(trimmedName))) {
+                return false;
+            }
+
+            if (auto project = svc->getCurrentProjectSharedPtr()) {
+                project->projectChanged();
+            }
+            if (auto current = svc->currentComposition().lock(); current && current->id() == comp->id()) {
+                if (auto* playback = ArtifactPlaybackService::instance()) {
+                    playback->setFrameRange(comp->frameRange());
+                    playback->setFrameRate(comp->frameRate());
+                }
+            }
+            return true;
         }
 
-        const QString trimmedName = compositionNameEdit->text().trimmed();
-        if (trimmedName.isEmpty()) {
-            return false;
-        }
         const int startFrame = compositionStartFrameSpin->value();
         const int endFrame = compositionEndFrameSpin->value();
         if (startFrame > endFrame) {
             return false;
         }
-
-        comp->setCompositionName(UniString::fromQString(trimmedName));
-        {
-            const QSize newSize(compositionWidthSpin->value(), compositionHeightSpin->value());
-            const QSize oldSize = comp->settings().compositionSize();
-            if (oldSize != newSize) {
-                bool hasMasks = false;
-                bool hasAnchors = false;
-                int maskVerts = 0;
-                int layerCount = 0;
-                for (const auto& layer : comp->allLayerRef()) {
-                    if (!layer) continue;
-                    ++layerCount;
-                    if (layer->hasMasks()) {
-                        hasMasks = true;
-                        for (int mi = 0; mi < layer->maskCount(); ++mi) {
-                            const auto lm = layer->mask(mi);
-                            for (int pi = 0; pi < lm.maskPathCount(); ++pi) {
-                                maskVerts += lm.maskPath(pi).vertexCount();
-                            }
-                        }
-                    }
-                }
-                hasAnchors = layerCount > 0;
-                auto impact = ArtifactCore::ResolutionRemap::calculateImpact(
-                    oldSize, newSize, hasMasks, maskVerts > 0, hasAnchors);
-                impact.maskVertexCount = maskVerts;
-
-                Artifact::ArtifactResolutionRemapDialog dialog(oldSize, newSize, impact);
-                if (dialog.exec() == QDialog::Accepted && dialog.remapRequested()) {
-                    // remap は Undo 可能なコマンド経由で実行する。
-                    if (auto* mgr = UndoManager::instance()) {
-                        mgr->push(std::make_unique<ChangeCompositionResolutionCommand>(
-                            comp, oldSize, newSize, dialog.selectedPolicy()));
-                    } else {
-                        comp->applyResolutionRemap(newSize, dialog.selectedPolicy());
-                    }
-                } else {
-                    comp->setCompositionSize(newSize);
-                }
-            } else {
-                comp->setCompositionSize(newSize);
-            }
-        }
-        comp->setFrameRate(FrameRate(static_cast<float>(std::max(1.0, compositionFrameRateSpin->value()))));
-        comp->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
+        const QSize newSize(compositionWidthSpin->value(), compositionHeightSpin->value());
+        const float frameRate = static_cast<float>(std::max(1.0, compositionFrameRateSpin->value()));
         const QColor bg = compositionBackgroundButton->selectedColor();
-        comp->setBackGroundColor(FloatColor(bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF()));
+        const FloatColor floatBg(bg.redF(), bg.greenF(), bg.blueF(), bg.alphaF());
 
-        if (!svc->renameComposition(compItem->compositionId, UniString::fromQString(trimmedName))) {
-            return false;
-        }
+        bool applied = false;
+        for (auto* compItem : items) {
+            if (!compItem) {
+                continue;
+            }
+            const auto found = svc->findComposition(compItem->compositionId);
+            auto comp = found.ptr.lock();
+            if (!found.success || !comp) {
+                continue;
+            }
 
-        if (auto project = svc->getCurrentProjectSharedPtr()) {
-            project->projectChanged();
-        }
-        if (auto current = svc->currentComposition().lock(); current && current->id() == comp->id()) {
-            if (auto* playback = ArtifactPlaybackService::instance()) {
-                playback->setFrameRange(comp->frameRange());
-                playback->setFrameRate(comp->frameRate());
+            comp->setCompositionSize(newSize);
+            comp->setFrameRate(FrameRate(frameRate));
+            comp->setFrameRange(FrameRange(FramePosition(startFrame), FramePosition(endFrame)));
+            comp->setBackGroundColor(floatBg);
+            applied = true;
+
+            if (auto current = svc->currentComposition().lock(); current && current->id() == comp->id()) {
+                if (auto* playback = ArtifactPlaybackService::instance()) {
+                    playback->setFrameRange(comp->frameRange());
+                    playback->setFrameRate(comp->frameRate());
+                }
             }
         }
-        return true;
+
+        if (applied) {
+            if (auto project = svc->getCurrentProjectSharedPtr()) {
+                project->projectChanged();
+            }
+        }
+        return applied;
     }
 
     void refreshCompositionEditor() {
@@ -5150,12 +5197,12 @@ public:
 
         const bool editableSingle = hasSingleComposition;
         if (compositionNameEdit) compositionNameEdit->setEnabled(editableSingle);
-        if (compositionWidthSpin) compositionWidthSpin->setEnabled(editableSingle);
-        if (compositionHeightSpin) compositionHeightSpin->setEnabled(editableSingle);
-        if (compositionStartFrameSpin) compositionStartFrameSpin->setEnabled(editableSingle);
-        if (compositionEndFrameSpin) compositionEndFrameSpin->setEnabled(editableSingle);
-        if (compositionBackgroundButton) compositionBackgroundButton->setEnabled(editableSingle);
-        if (compositionApplyButton) compositionApplyButton->setEnabled(editableSingle);
+        if (compositionWidthSpin) compositionWidthSpin->setEnabled(hasAnyComposition);
+        if (compositionHeightSpin) compositionHeightSpin->setEnabled(hasAnyComposition);
+        if (compositionStartFrameSpin) compositionStartFrameSpin->setEnabled(hasAnyComposition);
+        if (compositionEndFrameSpin) compositionEndFrameSpin->setEnabled(hasAnyComposition);
+        if (compositionBackgroundButton) compositionBackgroundButton->setEnabled(hasAnyComposition);
+        if (compositionApplyButton) compositionApplyButton->setEnabled(hasAnyComposition);
         if (compositionFrameRateSpin) compositionFrameRateSpin->setEnabled(hasAnyComposition);
         if (compositionApplyFrameRateButton) compositionApplyFrameRateButton->setEnabled(hasAnyComposition);
     }

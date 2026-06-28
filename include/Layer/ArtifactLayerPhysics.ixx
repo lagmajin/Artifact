@@ -1,6 +1,7 @@
 module;
 #include <cstdint>
 #include <cmath>
+#include <algorithm>
 #include <utility>
 #include <QJsonObject>
 export module Artifact.Layer.Physics;
@@ -15,6 +16,9 @@ export namespace Artifact {
         float followThroughGain = 0.5f;
         float gravityY = 980.0f; // px/s^2, positive Y falls downward in composition space.
         float linearDamping = 0.0f;
+        bool collisionEnabled = false;
+        float floorY = 1080.0f;
+        float restitution = 0.25f;
         
         // Wiggle (Self-driven motion)
         float wiggleFreq = 0.0f; // Hz
@@ -28,6 +32,9 @@ export namespace Artifact {
             obj["followThroughGain"] = static_cast<double>(followThroughGain);
             obj["gravityY"] = static_cast<double>(gravityY);
             obj["linearDamping"] = static_cast<double>(linearDamping);
+            obj["collisionEnabled"] = collisionEnabled;
+            obj["floorY"] = static_cast<double>(floorY);
+            obj["restitution"] = static_cast<double>(restitution);
             obj["wiggleFreq"] = static_cast<double>(wiggleFreq);
             obj["wiggleAmp"] = static_cast<double>(wiggleAmp);
             return obj;
@@ -40,6 +47,10 @@ export namespace Artifact {
             followThroughGain = static_cast<float>(obj["followThroughGain"].toDouble(0.5));
             gravityY = static_cast<float>(obj["gravityY"].toDouble(980.0));
             linearDamping = static_cast<float>(obj["linearDamping"].toDouble(0.0));
+            collisionEnabled = obj["collisionEnabled"].toBool(false);
+            floorY = static_cast<float>(obj["floorY"].toDouble(1080.0));
+            restitution = static_cast<float>(
+                obj["restitution"].toDouble(0.25));
             wiggleFreq = static_cast<float>(obj["wiggleFreq"].toDouble(0.0));
             wiggleAmp = static_cast<float>(obj["wiggleAmp"].toDouble(0.0));
         }
@@ -61,6 +72,8 @@ export namespace Artifact {
         double positionX = 0.0;
         double positionY = 0.0;
         double rotation = 0.0;
+        bool collided = false;
+        float collisionSpeed = 0.0f;
     };
 
     class PhysicsLayerComponent {
@@ -103,6 +116,7 @@ export namespace Artifact {
                 output.positionX += springX_.currentValue;
                 output.positionY += springY_.currentValue + dynamicOffsetY_;
                 output.rotation += springRot_.currentValue;
+                resolveFloorCollision(input, output);
                 return output;
             } else {
                 const float velocityX = static_cast<float>(input.positionX - input.previousPositionX) / dt;
@@ -124,6 +138,7 @@ export namespace Artifact {
             output.positionX += springX_.currentValue;
             output.positionY += springY_.currentValue + dynamicOffsetY_;
             output.rotation += springRot_.currentValue;
+            resolveFloorCollision(input, output);
             return output;
         }
 
@@ -152,6 +167,23 @@ export namespace Artifact {
                 dynamicVelocityY_ *= dampingFactor;
             }
             dynamicOffsetY_ += dynamicVelocityY_ * dt;
+        }
+
+        void resolveFloorCollision(const LayerPhysicsFrameInput& input,
+                                   LayerPhysicsFrameOutput& output) const {
+            if (!settings_.collisionEnabled ||
+                output.positionY <= settings_.floorY) {
+                return;
+            }
+            output.positionY = settings_.floorY;
+            output.collided = true;
+            output.collisionSpeed = std::abs(dynamicVelocityY_);
+            dynamicOffsetY_ = static_cast<float>(
+                settings_.floorY - input.positionY -
+                springY_.currentValue);
+            dynamicVelocityY_ =
+                -dynamicVelocityY_ *
+                std::clamp(settings_.restitution, 0.0f, 1.0f);
         }
 
         void updateChannel(ArtifactCore::SpringState& state,

@@ -16,6 +16,7 @@ module;
 #include <QObject>
 #include <QPointer>
 #include <QRectF>
+#include <QSizeF>
 #include <QString>
 #include <QTransform>
 #include <QMatrix4x4>
@@ -34,6 +35,9 @@ import Time.TimeRemap;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
+import Artifact.Layer.Component.System;
+import Physics.SoftBody;
+import Geometry.Fracture;
 import Layer.Matte;
 import Frame.Position;
 import Audio.Segment;
@@ -248,6 +252,13 @@ enum class DetailLevel {
   High    // 高詳細な描画（ズーム 75-100%）
 };
 
+bool isTimelineHiddenLayerPropertyGroup(const QString &groupName);
+bool isTimelineExpandedByDefaultLayerPropertyGroup(const QString &groupName);
+bool isInspectorHiddenLayerPropertyGroup(const QString &groupName);
+bool isInspectorExpandedByDefaultLayerPropertyGroup(const QString &groupName);
+bool isClonerLayerPropertyGroup(const QString &groupName);
+bool isSourceReframeLayerPropertyGroup(const QString &groupName);
+
 class ArtifactAbstractLayer : public QObject {
   W_OBJECT(ArtifactAbstractLayer)
 private:
@@ -287,6 +298,7 @@ public:
   virtual void setComposition(void *comp);
   void *composition() const;
   QObject *compositionObject() const;
+  QSizeF compositionSizeHint() const;
 
   LAYER_BLEND_TYPE layerBlendType() const;
   void setBlendMode(LAYER_BLEND_TYPE type);
@@ -326,6 +338,17 @@ public:
   QTransform getLocalTransformAt(int64_t frameNumber) const;
   QMatrix4x4 getGlobalTransform4x4() const;
   QMatrix4x4 getLocalTransform4x4() const;
+  bool hasSoftBodyPhysics() const;
+  void enableSoftBodyPhysics();
+  void enableSoftBodyPhysicsGrid(int columns = 6, int rows = 6, float stiffness = 1.0f);
+  void disableSoftBodyPhysics();
+  void syncSoftBodyPhysicsColliderToBounds();
+  const ArtifactCore::FractureState& fractureState() const;
+  const std::vector<ArtifactCore::FractureShardMotion>& fractureShardMotions() const;
+  void resetFractureState();
+  void applyFractureImpact(const ArtifactCore::FractureImpact& impact);
+  void drawFractureOverlay(ArtifactIRenderer* renderer, const QMatrix4x4& baseTransform,
+                           const QSizeF& sourceSize, float opacityScale = 1.0f);
   std::shared_ptr<ArtifactAbstractLayer> parentLayer() const;
   bool isTimeRemapEnabled() const;
   void setTimeRemapEnabled(bool);
@@ -463,6 +486,14 @@ public:
    int modifierCount() const;
    bool hasModifiers() const;
    /*Modifiers*/
+
+  /*Components*/
+  std::vector<LayerComponentDescriptor> layerComponents() const;
+  std::vector<LayerComponentDescriptor>
+  enabledLayerComponents(LayerComponentPhase phase) const;
+  std::vector<LayerComponentValidationIssue>
+  validateLayerComponents() const;
+  /*Components*/
 
   /*Script*/
   QJsonObject scriptBinding() const;

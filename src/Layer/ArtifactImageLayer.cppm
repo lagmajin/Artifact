@@ -587,6 +587,8 @@ void ArtifactImageLayer::draw(ArtifactIRenderer* renderer)
                                         transform, img,
                                         this->opacity() * weight);
     });
+
+    drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
 }
 
 QImage ArtifactImageLayer::toQImage() const

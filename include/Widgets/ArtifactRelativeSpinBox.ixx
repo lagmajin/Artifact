@@ -26,11 +26,7 @@ public:
 
 protected:
   void wheelEvent(QWheelEvent *event) override {
-    if (!hasFocus()) {
-      event->ignore();
-      return;
-    }
-    QDoubleSpinBox::wheelEvent(event);
+    event->ignore();
   }
 
   QValidator::State validate(QString &input, int &pos) const override {
@@ -77,11 +73,7 @@ public:
 
 protected:
   void wheelEvent(QWheelEvent *event) override {
-    if (!hasFocus()) {
-      event->ignore();
-      return;
-    }
-    QSpinBox::wheelEvent(event);
+    event->ignore();
   }
 
   QValidator::State validate(QString &input, int &pos) const override {

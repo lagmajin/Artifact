@@ -4,7 +4,6 @@ module;
 #include <DeviceContext.h>
 #include <RefCntAutoPtr.hpp>
 #include <wobjectimpl.h>
-#include <QTimer>
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QLoggingCategory>
@@ -21,6 +20,7 @@ module;
 #include <QHash>
 #include <QPixmap>
 #include <QStandardPaths>
+#include <QTimer>
 #include <QTransform>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -710,9 +710,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   //bool isPanning_ = false;
   bool isPlay_ = false;
   std::atomic_bool running_{ false };
-  QTimer* renderTimer_ = nullptr;
   std::mutex resizeMutex_;
-  quint64 renderTickCount_ = 0;
   quint64 renderExecutedCount_ = 0;
   std::atomic_bool renderRequestPending_{ false };
   bool renderRequestScheduled_ = false;
@@ -2174,18 +2172,12 @@ void ArtifactLayerEditorWidgetV2::Impl::startRenderLoop()
  if (running_)
   return;
  running_ = true;
- if (renderTimer_ && !renderTimer_->isActive()) {
-  renderTimer_->start();
- }
  requestRender();
 }
 
  void ArtifactLayerEditorWidgetV2::Impl::stopRenderLoop()
  {
   running_ = false;        // ループを抜ける
-  if (renderTimer_) {
-   renderTimer_->stop();
-  }
 
  if (renderer_) {
   renderer_->flushAndWait();
@@ -2388,50 +2380,6 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   setAttribute(Qt::WA_NoSystemBackground);
 
   setWindowTitle("ArtifactLayerEditor");
-
-  impl_->renderTimer_ = new QTimer(this);
-  impl_->renderTimer_->setInterval(16);
-  QObject::connect(impl_->renderTimer_, &QTimer::timeout, this, [this]() {
-   ++impl_->renderTickCount_;
-   if ((impl_->renderTickCount_ % 120ull) == 1ull) {
-    qCDebug(layerViewPerfLog) << "[LayerView][Timer]"
-                              << "ticks=" << impl_->renderTickCount_
-                              << "executed=" << impl_->renderExecutedCount_
-                              << "visible=" << isVisible()
-                              << "hidden=" << isHidden()
-                              << "windowVisible=" << (window() ? window()->isVisible() : false)
-                              << "size=" << size()
-                              << "running=" << impl_->running_.load(std::memory_order_acquire);
-   }
-  if (!impl_ || !impl_->initialized_ || !impl_->renderer_ || !impl_->running_.load(std::memory_order_acquire)) {
-   return;
-  }
-  if (!isVisible() || width() <= 0 || height() <= 0) {
-   return;
-  }
-  if (impl_->renderInProgress_) {
-   return;
-  }
-  std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
-  if (impl_->renderInProgress_) {
-   return;
-  }
-  impl_->renderInProgress_ = true;
-  QElapsedTimer frameTimer;
-  frameTimer.start();
-  impl_->renderOneFrame();
-  impl_->renderInProgress_ = false;
-  ++impl_->renderExecutedCount_;
-  const qint64 elapsedMs = frameTimer.elapsed();
-  if (elapsedMs >= 8 || (impl_->renderExecutedCount_ % 120ull) == 1ull) {
-   qCDebug(layerViewPerfLog) << "[LayerView][Frame]"
-                             << "ms=" << elapsedMs
-                             << "executed=" << impl_->renderExecutedCount_
-                             << "targetLayerNil=" << impl_->targetLayerId_.isNil()
-                             << "visible=" << isVisible()
-                             << "size=" << size();
-  }
- });
 
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(

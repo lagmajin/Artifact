@@ -48,6 +48,7 @@ import UI.ShortcutBindings;
 import Time.Rational;
 import Utils.Id;
 import Utils.Point.Like;
+import Settings.Accessibility;
 import InputEvent;
 import Input.Operator;
 
@@ -82,7 +83,7 @@ LayerDragMode hitTestLayerDragMode(const QRectF& bbox,
    return LayerDragMode::None;
   }
 
-  constexpr float kHandleHitSize = 16.0f;
+  const float kHandleHitSize = static_cast<float>(Accessibility::scaledSize(16));
   const auto containsHandle = [&](float x, float y) {
    const auto p = renderer->canvasToViewport({x, y});
    const QRectF rect(p.x - kHandleHitSize * 0.5f, p.y - kHandleHitSize * 0.5f,

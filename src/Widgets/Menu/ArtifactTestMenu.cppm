@@ -16,7 +16,6 @@ import Artifact.Widgets.SoftwareRenderTest;
 import Artifact.Widgets.SoftwareRenderInspectors;
 import Artifact.Widgets.LayerCompositeTest;
 import Artifact.Widgets.TimelineLayerTest;
-import Artifact.Widgets.PlaybackControlTestWidget;
 import Artifact.Widgets.Test.ScrollPoC;
 import Menu.Test2;
 import Artifact.Service.Project;
@@ -127,10 +126,6 @@ ArtifactMediaTestMenu::ArtifactMediaTestMenu(QWidget* parent /*= nullptr*/)
 {
  setTitle("Media Test");
  setIcon(QIcon(resolveIconPath("Studio/testmenu_play_arrow.svg")));
-
- addOpenWidgetAction(this, "Playback Control Test...", "Studio/testmenu_replay.svg", []() {
-  openTestWidget<ArtifactPlaybackControlTestWidget>(1100, 760);
- });
 }
 
 ArtifactMediaTestMenu::~ArtifactMediaTestMenu()

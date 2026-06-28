@@ -28,6 +28,7 @@ import Artifact.Menu.Effect;
 import Menu.Animation;
 import Artifact.Menu.Script;
 import Menu.Render;
+import Settings.Accessibility;
 import Menu.Time;
 import Artifact.Menu.View;
 import Menu.Option;
@@ -189,6 +190,11 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
  }
 #endif
  menuBar->addMenu(static_cast<QMenu*>(helpMenu));
+
+ // left-handed: align menus to the right side
+ if (Accessibility::isLeftHanded()) {
+  menuBar->setLayoutDirection(Qt::RightToLeft);
+ }
 
  connect(animationMenu, &ArtifactAnimationMenu::addKeyframeRequested, menuBar, [this]() {
   if (auto* timeline = activeTimelineWidget(mainWindow_)) {

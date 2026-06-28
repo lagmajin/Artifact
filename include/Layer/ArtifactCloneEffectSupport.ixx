@@ -11,9 +11,11 @@ module;
 #include <QMatrix4x4>
 #include <QPointF>
 #include <QRectF>
+#include <QSizeF>
 #include <QString>
 #include <QVariant>
 #include <QVector3D>
+#include <QVector4D>
 
 export module Artifact.Layer.CloneEffectSupport;
 
@@ -39,7 +41,7 @@ inline void populateCloneInstanceGeometry(
     if (!layer) {
         return;
     }
-    const QRectF localBounds = layer->visualLocalBounds();
+    const QRectF localBounds = layer->localBounds();
     if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
         localBounds.height() <= 0.0) {
         return;
@@ -79,6 +81,228 @@ int cloneComponentIntProperty(const ArtifactAbstractLayer* layer,
 float cloneComponentFloatProperty(const ArtifactAbstractLayer* layer,
                                     const QString& propertyPath,
                                     float fallback);
+
+inline void applyLayoutComponent(
+    const ArtifactAbstractLayer* layer,
+    std::vector<CloneRenderInstance>& instances)
+{
+    if (!layer || instances.size() < 2 ||
+        !cloneComponentBoolProperty(
+            layer, QStringLiteral("component.layout.enabled"))) {
+        return;
+    }
+
+    const QRectF bounds = layer->layoutBounds();
+    const float itemWidth = static_cast<float>(
+        std::max<qreal>(1.0, bounds.width()));
+    const float itemHeight = static_cast<float>(
+        std::max<qreal>(1.0, bounds.height()));
+    const float gap = cloneComponentFloatProperty(
+        layer, QStringLiteral("component.layout.gap"), 24.0f);
+    const int stackDirection = cloneComponentIntProperty(
+        layer, QStringLiteral("component.layout.stackDirection"), 0);
+    const int configuredMaxPerRow = cloneComponentIntProperty(
+        layer, QStringLiteral("component.layout.maxPerRow"), 0);
+    const int maxPerRow = configuredMaxPerRow > 0
+                              ? configuredMaxPerRow
+                              : static_cast<int>(instances.size());
+    const QVector3D origin =
+        instances.front().transform.column(3).toVector3D();
+
+    for (std::size_t index = 0; index < instances.size(); ++index) {
+        const int logicalIndex = static_cast<int>(index);
+        int column = logicalIndex % std::max(1, maxPerRow);
+        int row = logicalIndex / std::max(1, maxPerRow);
+        if (stackDirection == 1) {
+            std::swap(column, row);
+        }
+        const QVector3D target(
+            origin.x() + static_cast<float>(column) * (itemWidth + gap),
+            origin.y() + static_cast<float>(row) * (itemHeight + gap),
+            origin.z());
+        instances[index].transform.setColumn(
+            3, QVector4D(target, 1.0f));
+    }
+}
+
+inline void applyCrowdComponent(
+    const ArtifactAbstractLayer* layer,
+    std::vector<CloneRenderInstance>& instances)
+{
+    if (!layer || instances.size() < 2 ||
+        !cloneComponentBoolProperty(
+            layer, QStringLiteral("component.crowd.enabled"))) {
+        return;
+    }
+
+    QVector3D centroid(0.0f, 0.0f, 0.0f);
+    for (const auto& instance : instances) {
+        centroid += instance.transform.column(3).toVector3D();
+    }
+    centroid /= static_cast<float>(instances.size());
+
+    const float cohesion = cloneComponentFloatProperty(
+        layer, QStringLiteral("component.crowd.cohesion"), 0.5f);
+    const float separation = cloneComponentFloatProperty(
+        layer, QStringLiteral("component.crowd.separation"), 0.5f);
+    const float alignment = cloneComponentFloatProperty(
+        layer, QStringLiteral("component.crowd.alignment"), 0.5f);
+    const float maxSpeed = std::max(
+        0.0f, cloneComponentFloatProperty(
+                  layer, QStringLiteral("component.crowd.maxSpeed"), 120.0f));
+    const float jitter = cloneComponentFloatProperty(
+        layer, QStringLiteral("component.crowd.jitter"), 0.1f);
+    const float timeSeconds =
+        static_cast<float>(layer->currentFrame()) / 30.0f;
+    const float maxFrameStep = maxSpeed / 30.0f;
+
+    for (std::size_t index = 0; index < instances.size(); ++index) {
+        auto& instance = instances[index];
+        const QVector3D position =
+            instance.transform.column(3).toVector3D();
+        QVector3D towardCenter = centroid - position;
+        QVector3D awayFromCenter = position - centroid;
+        if (!towardCenter.isNull())
+            towardCenter.normalize();
+        if (!awayFromCenter.isNull())
+            awayFromCenter.normalize();
+
+        const float phase =
+            static_cast<float>(index) * 1.61803398875f;
+        QVector3D sharedHeading(
+            std::cos(timeSeconds * 0.7f),
+            std::sin(timeSeconds * 0.7f), 0.0f);
+        QVector3D jitterHeading(
+            std::sin(timeSeconds * 2.1f + phase),
+            std::cos(timeSeconds * 1.7f + phase * 0.5f), 0.0f);
+
+        QVector3D desired =
+            towardCenter * cohesion +
+            awayFromCenter * separation +
+            sharedHeading * alignment +
+            jitterHeading * jitter;
+        if (!desired.isNull()) {
+            desired.normalize();
+            desired *= maxFrameStep;
+        }
+
+        QMatrix4x4 crowdDelta;
+        crowdDelta.translate(desired);
+        instance.transform = crowdDelta * instance.transform;
+        if (desired.lengthSquared() > 0.0001f) {
+            const float angle = std::atan2(desired.y(), desired.x()) *
+                                180.0f / 3.1415926535f;
+            instance.transform.rotate(angle, 0.0f, 0.0f, 1.0f);
+        }
+    }
+}
+
+inline void applyInstanceCollisionComponent(
+    const ArtifactAbstractLayer* layer,
+    std::vector<CloneRenderInstance>& instances)
+{
+    if (!layer || instances.empty() ||
+        !cloneComponentBoolProperty(
+            layer, QStringLiteral("component.collision.enabled"))) {
+        return;
+    }
+    const QSizeF compositionSize = layer->compositionSizeHint();
+    const QRectF localBounds = layer->localBounds();
+    if (!compositionSize.isValid() || compositionSize.height() <= 0.0 ||
+        !localBounds.isValid()) {
+        return;
+    }
+
+    const auto boundsForInstance = [&localBounds](const CloneRenderInstance& instance) {
+        const QVector3D topLeft = instance.transform.map(
+            QVector3D(static_cast<float>(localBounds.left()),
+                      static_cast<float>(localBounds.top()), 0.0f));
+        const QVector3D topRight = instance.transform.map(
+            QVector3D(static_cast<float>(localBounds.right()),
+                      static_cast<float>(localBounds.top()), 0.0f));
+        const QVector3D bottomLeft = instance.transform.map(
+            QVector3D(static_cast<float>(localBounds.left()),
+                      static_cast<float>(localBounds.bottom()), 0.0f));
+        const QVector3D bottomRight = instance.transform.map(
+            QVector3D(static_cast<float>(localBounds.right()),
+                      static_cast<float>(localBounds.bottom()), 0.0f));
+        const qreal minX = std::min(
+            std::min(static_cast<qreal>(topLeft.x()), static_cast<qreal>(topRight.x())),
+            std::min(static_cast<qreal>(bottomLeft.x()), static_cast<qreal>(bottomRight.x())));
+        const qreal maxX = std::max(
+            std::max(static_cast<qreal>(topLeft.x()), static_cast<qreal>(topRight.x())),
+            std::max(static_cast<qreal>(bottomLeft.x()), static_cast<qreal>(bottomRight.x())));
+        const qreal minY = std::min(
+            std::min(static_cast<qreal>(topLeft.y()), static_cast<qreal>(topRight.y())),
+            std::min(static_cast<qreal>(bottomLeft.y()), static_cast<qreal>(bottomRight.y())));
+        const qreal maxY = std::max(
+            std::max(static_cast<qreal>(topLeft.y()), static_cast<qreal>(topRight.y())),
+            std::max(static_cast<qreal>(bottomLeft.y()), static_cast<qreal>(bottomRight.y())));
+        return QRectF(minX, minY, maxX - minX, maxY - minY);
+    };
+
+    const float floorY = static_cast<float>(compositionSize.height());
+    for (auto& instance : instances) {
+        const QRectF bounds = boundsForInstance(instance);
+        const float bottomY = static_cast<float>(bounds.bottom());
+        if (bottomY <= floorY) {
+            continue;
+        }
+        QMatrix4x4 correction;
+        correction.translate(0.0f, floorY - bottomY, 0.0f);
+        instance.transform = correction * instance.transform;
+    }
+
+    for (int pass = 0; pass < 2; ++pass) {
+        bool resolvedAny = false;
+        for (std::size_t i = 0; i < instances.size(); ++i) {
+            const QRectF a = boundsForInstance(instances[i]);
+            if (!a.isValid()) {
+                continue;
+            }
+            for (std::size_t j = i + 1; j < instances.size(); ++j) {
+                const QRectF b = boundsForInstance(instances[j]);
+                if (!b.isValid() || !a.intersects(b)) {
+                    continue;
+                }
+
+                const qreal overlapLeft = a.right() - b.left();
+                const qreal overlapRight = b.right() - a.left();
+                const qreal overlapX = std::min(overlapLeft, overlapRight);
+                const qreal overlapTop = a.bottom() - b.top();
+                const qreal overlapBottom = b.bottom() - a.top();
+                const qreal overlapY = std::min(overlapTop, overlapBottom);
+
+                QMatrix4x4 correction;
+                if (overlapX <= overlapY) {
+                    const qreal direction = a.center().x() <= b.center().x() ? 1.0 : -1.0;
+                    correction.translate(
+                        static_cast<float>(direction * (overlapX + 0.5)), 0.0f, 0.0f);
+                } else {
+                    const qreal direction = a.center().y() <= b.center().y() ? 1.0 : -1.0;
+                    correction.translate(
+                        0.0f, static_cast<float>(direction * (overlapY + 0.5)), 0.0f);
+                }
+                instances[j].transform = correction * instances[j].transform;
+                resolvedAny = true;
+            }
+        }
+        if (!resolvedAny) {
+            break;
+        }
+    }
+
+    for (auto& instance : instances) {
+        const QRectF bounds = boundsForInstance(instance);
+        const float bottomY = static_cast<float>(bounds.bottom());
+        if (bottomY <= floorY) {
+            continue;
+        }
+        QMatrix4x4 correction;
+        correction.translate(0.0f, floorY - bottomY, 0.0f);
+        instance.transform = correction * instance.transform;
+    }
+}
 
 inline void applyClonerComponentTransform(const ArtifactAbstractLayer* layer,
                                           QMatrix4x4& cloneTransform)
@@ -177,17 +401,26 @@ export std::vector<CloneRenderInstance> cloneRenderInstances(const ArtifactAbstr
         instances.reserve(clonerInstances.size() + 1U);
         instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
         instances.insert(instances.end(), clonerInstances.begin(), clonerInstances.end());
+        applyLayoutComponent(layer, instances);
+        applyCrowdComponent(layer, instances);
+        applyInstanceCollisionComponent(layer, instances);
         populateCloneInstanceGeometry(layer, instances);
         return instances;
     }
 
     instances = clonerComponentInstances(layer, baseTransform);
     if (!instances.empty()) {
+        applyLayoutComponent(layer, instances);
+        applyCrowdComponent(layer, instances);
+        applyInstanceCollisionComponent(layer, instances);
         populateCloneInstanceGeometry(layer, instances);
         return instances;
     }
 
     instances.push_back(CloneRenderInstance{baseTransform, 1.0f});
+    applyLayoutComponent(layer, instances);
+    applyCrowdComponent(layer, instances);
+    applyInstanceCollisionComponent(layer, instances);
     populateCloneInstanceGeometry(layer, instances);
     return instances;
 }
@@ -297,7 +530,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
     };
 
     const int mode = cloneComponentMode(layer);
-    if (mode == 3) {
+    if (mode == 5) {
         const int cols = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.columns"), 3));
         const int rows = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.rows"), 3));
         const int depth = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.depth"), 1));
@@ -323,7 +556,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
             }
           }
         }
-    } else if (mode == 4 || mode == 6) {
+    } else if (mode == 6) {
         const int count = std::max(1, cloneComponentIntProperty(layer, QStringLiteral("component.cloner.radialCount"), 8));
         const float radius = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.radius"), 160.0f);
         const float startAngle = cloneComponentFloatProperty(layer, QStringLiteral("component.cloner.startAngle"), 0.0f);
@@ -343,7 +576,7 @@ std::vector<CloneRenderInstance> clonerComponentInstances(
           appendCloneInstance(cloneTransform,
                               1.0f - opacityDecay * static_cast<float>(i));
         }
-    } else if (mode == 5) {
+    } else if (mode == 3) {
         const int count = std::max(1, cloneComponentIntProperty(
                layer, QStringLiteral("component.cloner.cloneCount"), 3));
         const float offsetX = cloneComponentFloatProperty(

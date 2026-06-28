@@ -5,6 +5,7 @@ module;
 #include <QColor>
 #include <QJsonObject>
 #include <QRectF>
+#include <QSizeF>
 #include <QObject>
 #include <QVector2D>
 #include <QVector3D>
@@ -401,6 +402,7 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
   }
 
   const auto &t3 = transform3D();
+  const auto size = sourceSize();
   const RationalTime frameTime(currentFrame(), 30); // Assume 30fps for now
   const auto snapshot = t3.snapshotAt(frameTime);
   QMatrix4x4 modelMatrix;
@@ -444,6 +446,9 @@ void Artifact3DLayer::draw(ArtifactIRenderer *renderer) {
       }
     }
   }
+
+  drawFractureOverlay(renderer, modelMatrix,
+                      QSizeF(size.width, size.height), opacity());
 }
 
 void Artifact3DLayer::drawLOD(ArtifactIRenderer *renderer, DetailLevel lod) {

@@ -38,6 +38,8 @@ import Artifact.Effect.Glow;
 import Artifact.Effect.Glow.EdgeBloom;
 import Artifact.Effect.Glow.ChromaticGlow;
 import Artifact.Effect.Glow.ReactiveGlow;
+import Artifact.Effect.Glow.LiquidGlow;
+import Artifact.Effect.Glow.ResidualGlow;
 import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.Keying.ChromaKey;
 import Artifact.Effect.LensDistortion;
@@ -279,6 +281,20 @@ W_OBJECT_IMPL(ArtifactEffectService)
    effect->setDisplayName(QStringLiteral("Reactive Glow"));
    return effect;
   }
+  if (effectId == QStringLiteral("liquid_glow") ||
+      effectId == QStringLiteral("effect.glow.liquid")) {
+   auto effect = std::make_unique<LiquidGlowEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Liquid Glow"));
+   return effect;
+  }
+  if (effectId == QStringLiteral("residual_glow") ||
+      effectId == QStringLiteral("effect.glow.residual")) {
+   auto effect = std::make_unique<ResidualGlowEffect>();
+   effect->setEffectID(UniString::fromQString(effectId));
+   effect->setDisplayName(QStringLiteral("Residual Glow"));
+   return effect;
+  }
   if (effectId == QStringLiteral("blur")) {
    auto effect = std::make_unique<BlurEffect>();
    effect->setEffectID(UniString::fromQString(effectId));
@@ -478,6 +494,8 @@ W_OBJECT_IMPL(ArtifactEffectService)
   effects.push_back({EffectID("edge_bloom"), "Edge Bloom"});
   effects.push_back({EffectID("chromatic_glow"), "Chromatic Glow"});
   effects.push_back({EffectID("reactive_glow"), "Reactive Glow"});
+  effects.push_back({EffectID("liquid_glow"), "Liquid Glow"});
+  effects.push_back({EffectID("residual_glow"), "Residual Glow"});
   effects.push_back({EffectID("effect.blur.gaussian"), "Gaussian Blur"});
   effects.push_back({EffectID("blur"), "Blur"});
   effects.push_back({EffectID("lift_gamma_gain"), "Lift / Gamma / Gain"});

@@ -142,6 +142,16 @@ bool ArtifactTimelineKeyframeModel::isTransformPropertyPath(
   return transformPropertyPaths().contains(propertyPath);
 }
 
+bool ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+    const QString& groupName) {
+  return isTimelineHiddenLayerPropertyGroup(groupName);
+}
+
+bool ArtifactTimelineKeyframeModel::isTimelinePropertyGroupExpandedByDefault(
+    const QString& groupName) {
+  return isTimelineExpandedByDefaultLayerPropertyGroup(groupName);
+}
+
 QString ArtifactTimelineKeyframeModel::displayLabelForPropertyPath(
     QString propertyPath) {
   if (propertyPath.isNull() || propertyPath.isEmpty()) {

@@ -4,6 +4,7 @@ module;
 #include <QDebug>
 #include <QPainter>
 #include <QRectF>
+#include <QSizeF>
 #include <QFileInfo>
 #include <QMatrix4x4>
 #include <QSvgRenderer>
@@ -317,6 +318,7 @@ void ArtifactSvgLayer::draw(ArtifactIRenderer* renderer)
                                         static_cast<float>(size.height),
                                         transform, img, this->opacity() * weight);
     });
+    drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
 }
 
 QRectF ArtifactSvgLayer::localBounds() const

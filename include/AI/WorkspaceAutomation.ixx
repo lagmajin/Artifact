@@ -31,6 +31,7 @@ export module Artifact.AI.WorkspaceAutomation;
 
 import std;
 import Core.AI.Describable;
+import Core.AI.CommandIR;
 import Artifact.Application.Manager;
 import Artifact.Service.ActiveContext;
 import Artifact.Project;
@@ -47,6 +48,8 @@ import Artifact.Render.Queue.Service;
 import Artifact.Service.Project;
 import Artifact.Service.Effect;
 import Artifact.Service.Playback;
+import Undo.UndoManager;
+import Property.Abstract;
 import Artifact.Composition.InOutPoints;
 import Artifact.Timeline.KeyframeModel;
 import Math.Interpolate;
@@ -110,6 +113,9 @@ public:
         return {
             {"workspaceSnapshot", IDescribable::loc("Return a combined project, composition, selection, and render queue snapshot.", "Return a combined project, composition, selection, and render queue snapshot.", {}), "QVariantMap"},
             {"workspaceDiagnostics", IDescribable::loc("Return a compact workspace diagnostics summary.", "Return a compact workspace diagnostics summary.", {}), "QVariantMap"},
+            {"commandVocabulary", IDescribable::loc("List the supported command IR vocabulary and required fields.", "List the supported command IR vocabulary and required fields.", {}), "QVariantList"},
+            {"validateCommand", IDescribable::loc("Validate a command IR request without executing it.", "Validate a command IR request without executing it.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
+            {"executeCommand", IDescribable::loc("Execute a validated command IR request through the automation facade.", "Execute a validated command IR request through the automation facade.", {}), "QVariantMap", {QStringLiteral("QVariantMap")}, {QStringLiteral("command")}},
             {"projectSnapshot", IDescribable::loc("Return the current project JSON snapshot.", "Return the current project JSON snapshot.", {}), "QVariantMap"},
             {"currentCompositionSnapshot", IDescribable::loc("Return the active composition snapshot.", "Return the active composition snapshot.", {}), "QVariantMap"},
             {"currentCompositionThumbnailAtFrame", IDescribable::loc("Return a PNG thumbnail for the active composition at a frame.", "Return a PNG thumbnail for the active composition at a frame.", {}), "QVariantMap", {QStringLiteral("int"), QStringLiteral("int"), QStringLiteral("int")}, {QStringLiteral("frameNumber"), QStringLiteral("width"), QStringLiteral("height")}},
@@ -282,6 +288,15 @@ public:
         }
         if (name == QStringLiteral("workspaceDiagnostics")) {
             return workspaceDiagnostics();
+        }
+        if (name == QStringLiteral("commandVocabulary")) {
+            return commandVocabulary();
+        }
+        if (name == QStringLiteral("validateCommand")) {
+            return validateCommand(args.value(0).toMap());
+        }
+        if (name == QStringLiteral("executeCommand")) {
+            return executeCommand(args.value(0).toMap());
         }
         if (name == QStringLiteral("projectSnapshot")) {
             return projectSnapshot();
@@ -1187,6 +1202,464 @@ private:
             ? QStringLiteral("Workspace looks ready.")
             : QStringLiteral("Workspace needs attention."));
         return diag;
+    }
+
+    static QVariantList commandVocabulary()
+    {
+        return ArtifactCore::CommandIR::supportedCommands();
+    }
+
+    static QVariantMap validateCommand(const QVariantMap& command)
+    {
+        const ArtifactCore::CommandRequest request = ArtifactCore::CommandIR::fromVariantMap(command);
+        const ArtifactCore::CommandResult validation = ArtifactCore::CommandIR::validate(request);
+        return validation.toVariantMap();
+    }
+
+    static QVariantMap executeCommand(const QVariantMap& command)
+    {
+        return commandExecutor().execute(ArtifactCore::CommandIR::fromVariantMap(command)).toVariantMap();
+    }
+
+    static ArtifactCore::AbstractPropertyPtr findLayerProperty(const ArtifactAbstractLayerPtr& layer, const QString& propertyPath)
+    {
+        if (!layer) {
+            return {};
+        }
+        for (const auto& group : layer->getLayerPropertyGroups()) {
+            auto prop = group.findProperty(propertyPath);
+            if (prop) {
+                return prop;
+            }
+        }
+        return {};
+    }
+
+    static QVariantList propertyKeyframesToVariantList(const ArtifactCore::AbstractPropertyPtr& prop)
+    {
+        QVariantList frames;
+        if (!prop) {
+            return frames;
+        }
+        for (const auto& kf : prop->getKeyFrames()) {
+            QVariantMap item;
+            item.insert(QStringLiteral("timeValue"), static_cast<qint64>(kf.time.value()));
+            item.insert(QStringLiteral("timeScale"), static_cast<qint64>(kf.time.scale()));
+            item.insert(QStringLiteral("frameNumber"), static_cast<int>(kf.time.rescaledTo(1)));
+            item.insert(QStringLiteral("value"), kf.value);
+            item.insert(QStringLiteral("interpolation"), static_cast<int>(kf.interpolation));
+            item.insert(QStringLiteral("cp1_x"), kf.cp1_x);
+            item.insert(QStringLiteral("cp1_y"), kf.cp1_y);
+            item.insert(QStringLiteral("cp2_x"), kf.cp2_x);
+            item.insert(QStringLiteral("cp2_y"), kf.cp2_y);
+            item.insert(QStringLiteral("roving"), kf.roving);
+            frames.append(item);
+        }
+        return frames;
+    }
+
+    static void applyKeyframeSnapshot(const ArtifactAbstractLayerPtr& layer, const QString& propertyPath, const QVariantList& snapshot)
+    {
+        auto prop = findLayerProperty(layer, propertyPath);
+        if (!prop) {
+            return;
+        }
+        prop->clearKeyFrames();
+        prop->setAnimatable(!snapshot.isEmpty());
+        for (const QVariant& entryValue : snapshot) {
+            const QVariantMap entry = entryValue.toMap();
+            const qint64 timeValue = entry.contains(QStringLiteral("timeValue"))
+                ? entry.value(QStringLiteral("timeValue")).toLongLong()
+                : entry.value(QStringLiteral("frameNumber")).toLongLong();
+            const qint64 timeScale = entry.contains(QStringLiteral("timeScale"))
+                ? entry.value(QStringLiteral("timeScale")).toLongLong()
+                : 30;
+            const QVariant value = entry.value(QStringLiteral("value"));
+            const auto interpolation = static_cast<InterpolationType>(entry.value(QStringLiteral("interpolation")).toInt(static_cast<int>(InterpolationType::Linear)));
+            const float cp1_x = static_cast<float>(entry.value(QStringLiteral("cp1_x")).toDouble(0.42));
+            const float cp1_y = static_cast<float>(entry.value(QStringLiteral("cp1_y")).toDouble(0.0));
+            const float cp2_x = static_cast<float>(entry.value(QStringLiteral("cp2_x")).toDouble(0.58));
+            const float cp2_y = static_cast<float>(entry.value(QStringLiteral("cp2_y")).toDouble(1.0));
+            const bool roving = entry.value(QStringLiteral("roving")).toBool();
+            prop->addKeyFrame(RationalTime(timeValue, timeScale), value, interpolation, cp1_x, cp1_y, cp2_x, cp2_y, roving);
+        }
+    }
+
+    class KeyframeSnapshotUndoCommand final : public UndoCommand {
+    public:
+        KeyframeSnapshotUndoCommand(ArtifactAbstractLayerPtr layer, QString propertyPath,
+                                    QVariantList beforeSnapshot, QVariantList afterSnapshot,
+                                    QString label)
+            : layer_(std::move(layer)),
+              propertyPath_(std::move(propertyPath)),
+              beforeSnapshot_(std::move(beforeSnapshot)),
+              afterSnapshot_(std::move(afterSnapshot)),
+              label_(std::move(label)) {}
+
+        void undo() override { applyKeyframeSnapshot(layer_.lock(), propertyPath_, beforeSnapshot_); }
+        void redo() override { applyKeyframeSnapshot(layer_.lock(), propertyPath_, afterSnapshot_); }
+        QString label() const override { return label_; }
+
+    private:
+        ArtifactAbstractLayerWeak layer_;
+        QString propertyPath_;
+        QVariantList beforeSnapshot_;
+        QVariantList afterSnapshot_;
+        QString label_;
+    };
+
+    class CommandExecutorImpl final : public ArtifactCore::CommandExecutor {
+    public:
+        ArtifactCore::CommandResult validate(const ArtifactCore::CommandRequest& request) const override
+        {
+            return ArtifactCore::CommandIR::validate(request);
+        }
+
+        ArtifactCore::CommandResult execute(const ArtifactCore::CommandRequest& request) const override
+        {
+            const ArtifactCore::CommandResult validation = validate(request);
+            if (!validation.valid) {
+                return validation;
+            }
+            const QString type = request.type;
+            const QVariantMap target = request.target;
+            const QString layerId = target.value(QStringLiteral("layerId")).toString().trimmed();
+            const QString propertyPath = target.value(QStringLiteral("propertyPath")).toString().trimmed();
+
+            if (type == QStringLiteral("set_property")) {
+                QVariantMap map = WorkspaceAutomation::setGenericLayerProperty(layerId, propertyPath, request.arguments.value(QStringLiteral("value")));
+                map.insert(QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type));
+                map.insert(QStringLiteral("type"), type);
+                return ArtifactCore::commandResultFromVariantMap(map);
+            }
+            if (type == QStringLiteral("set_keyframes")) {
+                auto *undo = UndoManager::instance();
+                const auto comp = currentComposition();
+                const auto layer = comp ? comp->layerById(ArtifactCore::LayerID(layerId)) : ArtifactAbstractLayerPtr{};
+                const auto prop = findLayerProperty(layer, propertyPath);
+                if (!undo || !comp || !layer || !prop) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Undo manager, composition, layer, or property unavailable")}
+                    });
+                }
+                const QVariantList before = propertyKeyframesToVariantList(prop);
+                QVariantList after;
+                const QVariantList keys = request.arguments.value(QStringLiteral("keys")).toList();
+                for (const QVariant& keyValue : keys) {
+                    const QVariantMap key = keyValue.toMap();
+                    const qint64 timeValue = key.contains(QStringLiteral("timeValue"))
+                        ? key.value(QStringLiteral("timeValue")).toLongLong()
+                        : key.value(QStringLiteral("time")).toLongLong();
+                    const qint64 timeScale = key.contains(QStringLiteral("timeScale"))
+                        ? key.value(QStringLiteral("timeScale")).toLongLong()
+                        : 30;
+                    QVariantMap item;
+                    item.insert(QStringLiteral("timeValue"), timeValue);
+                    item.insert(QStringLiteral("timeScale"), timeScale);
+                    item.insert(QStringLiteral("frameNumber"), static_cast<int>(RationalTime(timeValue, timeScale).rescaledTo(1)));
+                    item.insert(QStringLiteral("value"), key.value(QStringLiteral("value")));
+                    item.insert(QStringLiteral("interpolation"), static_cast<int>(InterpolationType::Linear));
+                    item.insert(QStringLiteral("cp1_x"), 0.42);
+                    item.insert(QStringLiteral("cp1_y"), 0.0);
+                    item.insert(QStringLiteral("cp2_x"), 0.58);
+                    item.insert(QStringLiteral("cp2_y"), 1.0);
+                    item.insert(QStringLiteral("roving"), false);
+                    after.append(item);
+                }
+                undo->push(std::make_unique<KeyframeSnapshotUndoCommand>(layer, propertyPath, before, after, ArtifactCore::CommandIR::undoLabelForType(type)));
+                return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                    {QStringLiteral("success"), true},
+                    {QStringLiteral("valid"), true},
+                    {QStringLiteral("executed"), true},
+                    {QStringLiteral("type"), type},
+                    {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)}
+                });
+            }
+            if (type == QStringLiteral("batch_set_keyframes")) {
+                auto *undo = UndoManager::instance();
+                const auto comp = currentComposition();
+                const auto layer = comp ? comp->layerById(ArtifactCore::LayerID(layerId)) : ArtifactAbstractLayerPtr{};
+                if (!undo || !comp || !layer) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Undo manager, composition, or layer unavailable")}
+                    });
+                }
+                auto macro = std::make_unique<MacroUndoCommand>(ArtifactCore::CommandIR::undoLabelForType(type));
+                const QVariantList batches = request.arguments.value(QStringLiteral("batches")).toList();
+                for (const QVariant& batchValue : batches) {
+                    const QVariantMap batch = batchValue.toMap();
+                    const QString batchPropertyPath = batch.value(QStringLiteral("propertyPath")).toString().trimmed();
+                    const auto prop = findLayerProperty(layer, batchPropertyPath);
+                    if (!prop) {
+                        continue;
+                    }
+                    const QVariantList before = propertyKeyframesToVariantList(prop);
+                    QVariantList after;
+                    const QVariantList keys = batch.value(QStringLiteral("keys")).toList();
+                    for (const QVariant& keyValue : keys) {
+                        const QVariantMap key = keyValue.toMap();
+                        const qint64 timeValue = key.contains(QStringLiteral("timeValue"))
+                            ? key.value(QStringLiteral("timeValue")).toLongLong()
+                            : key.value(QStringLiteral("time")).toLongLong();
+                        const qint64 timeScale = key.contains(QStringLiteral("timeScale"))
+                            ? key.value(QStringLiteral("timeScale")).toLongLong()
+                            : 30;
+                        QVariantMap item;
+                        item.insert(QStringLiteral("timeValue"), timeValue);
+                        item.insert(QStringLiteral("timeScale"), timeScale);
+                        item.insert(QStringLiteral("frameNumber"), static_cast<int>(RationalTime(timeValue, timeScale).rescaledTo(1)));
+                        item.insert(QStringLiteral("value"), key.value(QStringLiteral("value")));
+                        item.insert(QStringLiteral("interpolation"), static_cast<int>(InterpolationType::Linear));
+                        item.insert(QStringLiteral("cp1_x"), 0.42);
+                        item.insert(QStringLiteral("cp1_y"), 0.0);
+                        item.insert(QStringLiteral("cp2_x"), 0.58);
+                        item.insert(QStringLiteral("cp2_y"), 1.0);
+                        item.insert(QStringLiteral("roving"), false);
+                        after.append(item);
+                    }
+                    macro->addChild(std::make_unique<KeyframeSnapshotUndoCommand>(
+                        layer, batchPropertyPath, before, after, ArtifactCore::CommandIR::undoLabelForType(type)));
+                }
+                undo->push(std::move(macro));
+                return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                    {QStringLiteral("success"), true},
+                    {QStringLiteral("valid"), true},
+                    {QStringLiteral("executed"), true},
+                    {QStringLiteral("type"), type},
+                    {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)}
+                });
+            }
+            if (type == QStringLiteral("move_layer")) {
+                auto *undo = UndoManager::instance();
+                const auto comp = currentComposition();
+                const auto layer = comp ? comp->layerById(ArtifactCore::LayerID(layerId)) : ArtifactAbstractLayerPtr{};
+                if (!undo || !comp || !layer) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Undo manager, composition, or layer unavailable")}
+                    });
+                }
+                int oldIndex = -1;
+                const auto layers = comp->allLayer();
+                for (int i = 0; i < layers.size(); ++i) {
+                    if (layers[i] && layers[i]->id() == layer->id()) {
+                        oldIndex = i;
+                        break;
+                    }
+                }
+                const int newIndex = request.arguments.value(QStringLiteral("newIndex")).toInt();
+                undo->push(std::make_unique<MoveLayerIndexCommand>(comp, layer, oldIndex, newIndex));
+                return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                    {QStringLiteral("success"), true},
+                    {QStringLiteral("valid"), true},
+                    {QStringLiteral("executed"), true},
+                    {QStringLiteral("type"), type},
+                    {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)}
+                });
+            }
+            if (type == QStringLiteral("rename_layer")) {
+                auto *undo = UndoManager::instance();
+                const auto comp = currentComposition();
+                const auto layer = comp ? comp->layerById(ArtifactCore::LayerID(layerId)) : ArtifactAbstractLayerPtr{};
+                if (!undo || !comp || !layer) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Undo manager, composition, or layer unavailable")}
+                    });
+                }
+                const QString oldName = layer->layerName().toQString();
+                const QString newName = request.arguments.value(QStringLiteral("newName")).toString().trimmed();
+                undo->push(std::make_unique<RenameLayerCommand>(layer, oldName, newName));
+                return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                    {QStringLiteral("success"), true},
+                    {QStringLiteral("valid"), true},
+                    {QStringLiteral("executed"), true},
+                    {QStringLiteral("type"), type},
+                    {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)}
+                });
+            }
+            if (type == QStringLiteral("add_effect")) {
+                auto *effectService = ArtifactEffectService::instance();
+                if (!effectService) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Effect service unavailable")}
+                    });
+                }
+                const QString effectType = request.arguments.value(QStringLiteral("effectType")).toString().trimmed();
+                auto effect = effectService->createEffect(ArtifactCore::EffectID(effectType));
+                if (!effect) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Unknown effect type")}
+                    });
+                }
+                auto *projectService = ArtifactProjectService::instance();
+                if (!projectService) {
+                    return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                        {QStringLiteral("success"), false},
+                        {QStringLiteral("valid"), true},
+                        {QStringLiteral("executed"), false},
+                        {QStringLiteral("type"), type},
+                        {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)},
+                        {QStringLiteral("error"), QStringLiteral("Project service unavailable")}
+                    });
+                }
+                const bool success = projectService->addEffectToLayerWithUndo(ArtifactCore::LayerID(layerId), std::move(effect));
+                return ArtifactCore::commandResultFromVariantMap(QVariantMap{
+                    {QStringLiteral("success"), success},
+                    {QStringLiteral("valid"), true},
+                    {QStringLiteral("executed"), success},
+                    {QStringLiteral("type"), type},
+                    {QStringLiteral("undoLabel"), ArtifactCore::CommandIR::undoLabelForType(type)}
+                });
+            }
+            ArtifactCore::CommandResult result = validation;
+            result.success = false;
+            result.executed = false;
+            result.error = QStringLiteral("Unsupported command type");
+            return result;
+        }
+    };
+
+    static ArtifactCore::CommandExecutor& commandExecutor()
+    {
+        static CommandExecutorImpl executor;
+        return executor;
+    }
+
+    static QVariantMap setGenericLayerProperty(const QString& layerId, const QString& propertyPath, const QVariant& value)
+    {
+        if (propertyPath == QStringLiteral("transform.position") || propertyPath == QStringLiteral("position")) {
+            const QVariantMap point = value.toMap();
+            return QVariantMap{
+                {QStringLiteral("success"), setLayerPosition(layerId, point.value(QStringLiteral("x")).toDouble(), point.value(QStringLiteral("y")).toDouble()).toBool()},
+                {QStringLiteral("valid"), true},
+                {QStringLiteral("executed"), true},
+                {QStringLiteral("type"), QStringLiteral("set_property")},
+                {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
+                {QStringLiteral("propertyPath"), propertyPath}
+            };
+        }
+        if (propertyPath == QStringLiteral("transform.scale") || propertyPath == QStringLiteral("scale")) {
+            const QVariantMap point = value.toMap();
+            return QVariantMap{
+                {QStringLiteral("success"), setLayerScale(layerId, point.value(QStringLiteral("x")).toDouble(), point.value(QStringLiteral("y")).toDouble()).toBool()},
+                {QStringLiteral("valid"), true},
+                {QStringLiteral("executed"), true},
+                {QStringLiteral("type"), QStringLiteral("set_property")},
+                {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
+                {QStringLiteral("propertyPath"), propertyPath}
+            };
+        }
+        if (propertyPath == QStringLiteral("transform.rotation") || propertyPath == QStringLiteral("rotation")) {
+            return QVariantMap{
+                {QStringLiteral("success"), setLayerRotation(layerId, value.toDouble()).toBool()},
+                {QStringLiteral("valid"), true},
+                {QStringLiteral("executed"), true},
+                {QStringLiteral("type"), QStringLiteral("set_property")},
+                {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
+                {QStringLiteral("propertyPath"), propertyPath}
+            };
+        }
+        if (propertyPath == QStringLiteral("opacity")) {
+            return QVariantMap{
+                {QStringLiteral("success"), setLayerOpacity(layerId, value.toDouble()).toBool()},
+                {QStringLiteral("valid"), true},
+                {QStringLiteral("executed"), true},
+                {QStringLiteral("type"), QStringLiteral("set_property")},
+                {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
+                {QStringLiteral("propertyPath"), propertyPath}
+            };
+        }
+
+        return QVariantMap{
+            {QStringLiteral("success"), false},
+            {QStringLiteral("valid"), true},
+            {QStringLiteral("executed"), false},
+            {QStringLiteral("type"), QStringLiteral("set_property")},
+            {QStringLiteral("undoLabel"), QStringLiteral("Set Property")},
+            {QStringLiteral("error"), QStringLiteral("Unsupported propertyPath")}
+        };
+    }
+
+    static QVariantMap setGenericKeyframes(const QString& layerId, const QString& propertyPath, const QVariantList& keys)
+    {
+        QVariantList normalized;
+        for (const QVariant& keyValue : keys) {
+            const QVariantMap key = keyValue.toMap();
+            normalized.append(QVariantMap{
+                {QStringLiteral("propertyPath"), propertyPath},
+                {QStringLiteral("frameNumber"), key.value(QStringLiteral("time")).toInt()},
+                {QStringLiteral("value"), key.value(QStringLiteral("value"))}
+            });
+        }
+        const QVariantMap result = batchSetKeyframes(layerId, normalized).toMap();
+        return QVariantMap{
+            {QStringLiteral("success"), result.value(QStringLiteral("success")).toBool()},
+            {QStringLiteral("valid"), true},
+            {QStringLiteral("executed"), true},
+            {QStringLiteral("type"), QStringLiteral("set_keyframes")},
+            {QStringLiteral("undoLabel"), QStringLiteral("Set Keyframes")},
+            {QStringLiteral("addedCount"), result.value(QStringLiteral("addedCount"))},
+            {QStringLiteral("skippedCount"), result.value(QStringLiteral("skippedCount"))},
+            {QStringLiteral("details"), result.value(QStringLiteral("details"))}
+        };
+    }
+
+    static QVariantMap batchSetGenericKeyframes(const QString& layerId, const QVariantList& batches)
+    {
+        QVariantList normalized;
+        for (const QVariant& batchValue : batches) {
+            const QVariantMap batch = batchValue.toMap();
+            const QString propertyPath = batch.value(QStringLiteral("propertyPath")).toString().trimmed();
+            const QVariantList keys = batch.value(QStringLiteral("keys")).toList();
+            for (const QVariant& keyValue : keys) {
+                const QVariantMap key = keyValue.toMap();
+                normalized.append(QVariantMap{
+                    {QStringLiteral("propertyPath"), propertyPath},
+                    {QStringLiteral("frameNumber"), key.value(QStringLiteral("time")).toInt()},
+                    {QStringLiteral("value"), key.value(QStringLiteral("value"))}
+                });
+            }
+        }
+        const QVariantMap result = batchSetKeyframes(layerId, normalized).toMap();
+        return QVariantMap{
+            {QStringLiteral("success"), result.value(QStringLiteral("success")).toBool()},
+            {QStringLiteral("valid"), true},
+            {QStringLiteral("executed"), true},
+            {QStringLiteral("type"), QStringLiteral("batch_set_keyframes")},
+            {QStringLiteral("undoLabel"), QStringLiteral("Batch Set Keyframes")},
+            {QStringLiteral("addedCount"), result.value(QStringLiteral("addedCount"))},
+            {QStringLiteral("skippedCount"), result.value(QStringLiteral("skippedCount"))},
+            {QStringLiteral("details"), result.value(QStringLiteral("details"))}
+        };
     }
 
     static QVariantList listCompositions()

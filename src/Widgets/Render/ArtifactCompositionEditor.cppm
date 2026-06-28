@@ -1124,6 +1124,9 @@ public:
   void setResizeCallback(std::function<void()> callback) {
     resizeCallback_ = std::move(callback);
   }
+  void setActivatedCallback(std::function<void()> callback) {
+    activatedCallback_ = std::move(callback);
+  }
   void setOverlayVisible(bool visible) {
     if (overlayWidget_) {
       overlayWidget_->setVisible(visible);
@@ -2313,12 +2316,30 @@ protected:
     return handled;
   }
 
+  void enterEvent(QEnterEvent *event) override {
+    if (activatedCallback_) {
+      activatedCallback_();
+    }
+    QWidget::enterEvent(event);
+  }
+
+  void focusInEvent(QFocusEvent *event) override {
+    if (activatedCallback_) {
+      activatedCallback_();
+    }
+    QWidget::focusInEvent(event);
+  }
+
   void wheelEvent(QWheelEvent *event) override {
     if (controller_ && controller_->isPieMenuOverlayVisible())
       return; // Block while menu open
 
     if (!controller_) {
       return;
+    }
+
+    if (activatedCallback_) {
+      activatedCallback_();
     }
 
     controller_->notifyViewportInteractionActivity();
@@ -2380,6 +2401,10 @@ protected:
   }
 
   void mousePressEvent(QMouseEvent *event) override {
+    if (activatedCallback_) {
+      activatedCallback_();
+    }
+
     if (controller_ && controller_->isPieMenuOverlayVisible()) {
       if (event->button() == Qt::LeftButton) {
         controller_->confirmPieMenuOverlaySelection();
@@ -3458,6 +3483,7 @@ protected:
   std::deque<PendingDroppedAsset> pendingDroppedAssets_;
   bool processingDroppedAssets_ = false;
   QWidget *overlayWidget_ = nullptr;
+  std::function<void()> activatedCallback_;
   QVector<std::function<void()>> viewportOverlayActions_;
   QVector<bool> viewportOverlayEnabledStates_;
   // 動画ファイルのキャンバスサイズキャッシュ（非同期取得）
@@ -4062,21 +4088,32 @@ public:
 
   static constexpr int kViewportPaneCount = 4;
 
+  struct PaneState {
+    int paneId = 0;
+    QRect rect;
+    CompositionViewport *view = nullptr;
+    CompositionRenderController *controller = nullptr;
+    bool visible = false;
+  };
+
   CompositionViewport *compositionView_ = nullptr;
   QWidget *viewportHost_ = nullptr;
   QSplitter *viewportRowsSplitter_ = nullptr;
   QSplitter *viewportTopSplitter_ = nullptr;
   QSplitter *viewportBottomSplitter_ = nullptr;
-  std::array<CompositionViewport *, kViewportPaneCount> compositionViews_{
-      nullptr, nullptr, nullptr, nullptr};
+  std::array<PaneState, kViewportPaneCount> panes_{{
+      {0, QRect(), nullptr, nullptr, false},
+      {1, QRect(), nullptr, nullptr, false},
+      {2, QRect(), nullptr, nullptr, false},
+      {3, QRect(), nullptr, nullptr, false},
+  }};
   CompositionOverlayWidget *overlayView_ = nullptr;
   EmptyCompositionOverlayWidget *emptyStateOverlay_ = nullptr;
   ViewOrientationWidget *viewOrientationWidget_ = nullptr;
   CompositionRenderController *renderController_ = nullptr;
-  std::array<CompositionRenderController *, kViewportPaneCount>
-      renderControllers_{nullptr, nullptr, nullptr, nullptr};
   ViewportLayoutButton *viewportLayoutButton_ = nullptr;
   ViewportLayoutMode viewportLayoutMode_ = ViewportLayoutMode::Single;
+  int activePaneId_ = 0;
   // Top Toolbar (Zoom/View controls)
   QToolBar *topToolbar_ = nullptr;
   QFrame *chromeStrip_ = nullptr;
@@ -4101,6 +4138,53 @@ public:
   QToolButton *pivotModeButton_ = nullptr;
   QAction *immersiveAction_ = nullptr;
   bool immersiveMode_ = false;
+
+  PaneState *pane(int paneId) {
+    if (paneId < 0 || paneId >= kViewportPaneCount) {
+      return nullptr;
+    }
+    return &panes_[paneId];
+  }
+
+  const PaneState *pane(int paneId) const {
+    if (paneId < 0 || paneId >= kViewportPaneCount) {
+      return nullptr;
+    }
+    return &panes_[paneId];
+  }
+
+  PaneState *activePane() { return pane(activePaneId_); }
+
+  const PaneState *activePane() const { return pane(activePaneId_); }
+
+  CompositionViewport *activeViewport() const {
+    if (const auto *paneState = activePane()) {
+      if (paneState->view) {
+        return paneState->view;
+      }
+    }
+    return compositionView_;
+  }
+
+  CompositionRenderController *activeRenderController() const {
+    if (const auto *paneState = activePane()) {
+      if (paneState->controller) {
+        return paneState->controller;
+      }
+    }
+    return renderController_;
+  }
+
+  void setActivePane(ArtifactCompositionEditor *owner, int paneId) {
+    const int paneCount = activeViewportPaneCount();
+    const int clampedPaneId =
+        std::clamp(paneId, 0, std::max(0, paneCount - 1));
+    if (activePaneId_ == clampedPaneId) {
+      return;
+    }
+    activePaneId_ = clampedPaneId;
+    syncOverlayGeometry(owner);
+  }
 
   int activeViewportPaneCount() const {
     switch (viewportLayoutMode_) {
@@ -4139,9 +4223,9 @@ public:
   }
 
   void forEachRenderController(const std::function<void(CompositionRenderController *)> &fn) {
-    for (auto *controller : renderControllers_) {
-      if (controller) {
-        fn(controller);
+    for (const auto &paneState : panes_) {
+      if (paneState.controller) {
+        fn(paneState.controller);
       }
     }
   }
@@ -4149,8 +4233,8 @@ public:
   void forEachActiveSecondaryController(
       const std::function<void(CompositionRenderController *)> &fn) {
     for (int i = 1; i < activeViewportPaneCount(); ++i) {
-      if (auto *controller = renderControllers_[i]) {
-        fn(controller);
+      if (const auto *paneState = pane(i); paneState && paneState->controller) {
+        fn(paneState->controller);
       }
     }
   }
@@ -4158,8 +4242,8 @@ public:
   void forEachSecondaryController(
       const std::function<void(CompositionRenderController *)> &fn) {
     for (int i = 1; i < kViewportPaneCount; ++i) {
-      if (auto *controller = renderControllers_[i]) {
-        fn(controller);
+      if (const auto *paneState = pane(i); paneState && paneState->controller) {
+        fn(paneState->controller);
       }
     }
   }
@@ -4167,19 +4251,65 @@ public:
   void forEachActiveViewport(const std::function<void(CompositionViewport *, int)> &fn) {
     const int paneCount = activeViewportPaneCount();
     for (int i = 0; i < paneCount; ++i) {
-      if (auto *view = compositionViews_[i]) {
-        fn(view, i);
+      if (const auto *paneState = pane(i); paneState && paneState->view) {
+        fn(paneState->view, i);
       }
     }
+  }
+
+  std::array<QRect, kViewportPaneCount> computePaneRects(const QRect &hostRect) const {
+    std::array<QRect, kViewportPaneCount> rects{};
+    if (!hostRect.isValid()) {
+      return rects;
+    }
+
+    switch (viewportLayoutMode_) {
+    case ViewportLayoutMode::Single:
+      rects[0] = hostRect;
+      break;
+    case ViewportLayoutMode::TwoUp: {
+      const int leftWidth = hostRect.width() / 2;
+      rects[0] = QRect(hostRect.left(), hostRect.top(), leftWidth, hostRect.height());
+      rects[1] = QRect(hostRect.left() + leftWidth, hostRect.top(),
+                       hostRect.width() - leftWidth, hostRect.height());
+      break;
+    }
+    case ViewportLayoutMode::FourUp: {
+      const int topHeight = hostRect.height() / 2;
+      const int leftWidth = hostRect.width() / 2;
+      rects[0] = QRect(hostRect.left(), hostRect.top(), leftWidth, topHeight);
+      rects[1] = QRect(hostRect.left() + leftWidth, hostRect.top(),
+                       hostRect.width() - leftWidth, topHeight);
+      rects[2] = QRect(hostRect.left(), hostRect.top() + topHeight,
+                       leftWidth, hostRect.height() - topHeight);
+      rects[3] = QRect(hostRect.left() + leftWidth, hostRect.top() + topHeight,
+                       hostRect.width() - leftWidth, hostRect.height() - topHeight);
+      break;
+    }
+    }
+
+    return rects;
   }
 
   void applyViewportLayout() {
     const int paneCount = activeViewportPaneCount();
     for (int i = 0; i < kViewportPaneCount; ++i) {
-      if (auto *view = compositionViews_[i]) {
-        view->setVisible(i < paneCount);
+      if (auto *paneState = pane(i)) {
+        paneState->visible = i < paneCount;
+        if (paneState->view) {
+          paneState->view->setVisible(paneState->visible);
+        }
       }
     }
+    if (viewportHost_) {
+      const auto rects = computePaneRects(viewportHost_->rect());
+      for (int i = 0; i < kViewportPaneCount; ++i) {
+        if (auto *paneState = pane(i)) {
+          paneState->rect = rects[i];
+        }
+      }
+    }
+    activePaneId_ = std::clamp(activePaneId_, 0, std::max(0, paneCount - 1));
     if (viewportLayoutButton_) {
       viewportLayoutButton_->setText(viewportLayoutLabel());
     }
@@ -4686,9 +4816,17 @@ public:
                           : ArtifactCompositionPtr{};
     const bool hasComposition = static_cast<bool>(comp);
     const bool hasLayers = comp && !comp->allLayerRef().isEmpty();
-    const QPoint viewportTopLeft =
-        compositionView_->mapTo(owner, QPoint(0, 0));
-    const QRect viewportGeometry(viewportTopLeft, compositionView_->size());
+    CompositionViewport *overlayViewport = activeViewport();
+    if (!overlayViewport) {
+      overlayViewport = compositionView_;
+    }
+    QRect viewportGeometry;
+    if (const auto *paneState = activePane(); paneState && !paneState->rect.isEmpty()) {
+      viewportGeometry = paneState->rect;
+    } else {
+      const QPoint viewportTopLeft = overlayViewport->mapTo(owner, QPoint(0, 0));
+      viewportGeometry = QRect(viewportTopLeft, overlayViewport->size());
+    }
 
     if (overlayView_) {
       overlayView_->setGeometry(viewportGeometry);
@@ -4698,7 +4836,7 @@ public:
     }
 
     if (emptyStateOverlay_) {
-      emptyStateOverlay_->setGeometry(compositionView_->rect());
+      emptyStateOverlay_->setGeometry(viewportGeometry);
       emptyStateOverlay_->setCompositionAvailable(hasComposition);
       emptyStateOverlay_->setVisible(!hasComposition || !hasLayers);
       if (emptyStateOverlay_->isVisible()) {
@@ -4707,7 +4845,7 @@ public:
     }
     if (viewOrientationWidget_) {
       const QSize sz = viewOrientationWidget_->sizeHint();
-      const int x = std::max(12, compositionView_->width() - sz.width() - 12);
+      const int x = std::max(12, overlayViewport->width() - sz.width() - 12);
       const int y = 12;
       viewOrientationWidget_->setGeometry(x, y, sz.width(), sz.height());
       const bool showNavigator = hasComposition;
@@ -4843,9 +4981,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   mainLayout->setSpacing(0);
 
   impl_->renderController_ = new CompositionRenderController(this);
-  impl_->renderControllers_[0] = impl_->renderController_;
+  impl_->panes_[0].controller = impl_->renderController_;
   for (int i = 1; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
-    impl_->renderControllers_[i] = new CompositionRenderController(this);
+    impl_->panes_[i].controller = new CompositionRenderController(this);
   }
   {
     const QColor clear(28, 40, 56);
@@ -4920,11 +5058,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->compositionView_ =
       new CompositionViewport(impl_->renderController_, this);
-  impl_->compositionViews_[0] = impl_->compositionView_;
+  impl_->panes_[0].view = impl_->compositionView_;
   for (int i = 1; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
-    impl_->compositionViews_[i] =
-        new CompositionViewport(impl_->renderControllers_[i], this);
-    impl_->compositionViews_[i]->hide();
+    impl_->panes_[i].view =
+        new CompositionViewport(impl_->panes_[i].controller, this);
+    impl_->panes_[i].view->hide();
   }
   impl_->viewportHost_ = new QWidget(this);
   auto *viewportHostLayout = new QVBoxLayout(impl_->viewportHost_);
@@ -4937,10 +5075,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->viewportBottomSplitter_ =
       new QSplitter(Qt::Horizontal, impl_->viewportRowsSplitter_);
   impl_->viewportBottomSplitter_->setChildrenCollapsible(false);
-  impl_->viewportTopSplitter_->addWidget(impl_->compositionViews_[0]);
-  impl_->viewportTopSplitter_->addWidget(impl_->compositionViews_[1]);
-  impl_->viewportBottomSplitter_->addWidget(impl_->compositionViews_[2]);
-  impl_->viewportBottomSplitter_->addWidget(impl_->compositionViews_[3]);
+  impl_->viewportTopSplitter_->addWidget(impl_->panes_[0].view);
+  impl_->viewportTopSplitter_->addWidget(impl_->panes_[1].view);
+  impl_->viewportBottomSplitter_->addWidget(impl_->panes_[2].view);
+  impl_->viewportBottomSplitter_->addWidget(impl_->panes_[3].view);
   viewportHostLayout->addWidget(impl_->viewportRowsSplitter_);
   impl_->viewportBottomSplitter_->hide();
   impl_->compositionView_->setResizeCallback([this]() {
@@ -4949,7 +5087,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     }
   });
   for (int i = 1; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
-    if (auto *view = impl_->compositionViews_[i]) {
+    if (auto *view = impl_->panes_[i].view) {
       view->setResizeCallback([this]() {
         if (impl_) {
           impl_->syncOverlayGeometry(this);
@@ -4959,10 +5097,14 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   }
   impl_->overlayView_ =
       new CompositionOverlayWidget(impl_->compositionView_, this);
-  impl_->compositionView_->setOverlayWidget(impl_->overlayView_);
+  for (int i = 0; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
+    if (auto *view = impl_->panes_[i].view) {
+      view->setOverlayWidget(impl_->overlayView_);
+    }
+  }
   impl_->overlayView_->hide();
   impl_->emptyStateOverlay_ = new EmptyCompositionOverlayWidget(
-      impl_->compositionView_, [this]() {
+      this, [this]() {
         if (impl_) {
           impl_->openCreateCompositionDialog(this);
         }
@@ -4972,11 +5114,22 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       new ViewOrientationWidget(impl_->overlayView_);
   impl_->viewOrientationWidget_->setActivatedCallback(
       [this](ArtifactCore::ViewOrientationHotspot hotspot) {
-        if (impl_->renderController_) {
-          impl_->renderController_->setViewportOrientation(hotspot);
+        if (impl_) {
+          if (auto *controller = impl_->activeRenderController()) {
+            controller->setViewportOrientation(hotspot);
+          }
         }
       });
   impl_->viewOrientationWidget_->show();
+  for (int i = 0; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
+    if (auto *view = impl_->panes_[i].view) {
+      view->setActivatedCallback([this, i]() {
+        if (impl_) {
+          impl_->setActivePane(this, i);
+        }
+      });
+    }
+  }
 
   // Top Toolbar
   impl_->topToolbar_ = new QToolBar(this);
@@ -5676,10 +5829,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     if (!layer || !std::dynamic_pointer_cast<ArtifactTextLayer>(layer)) {
       return;
     }
-    if (editTextLayerInline(impl_->compositionView_, layer,
-                            impl_->renderController_) &&
-        impl_->renderController_) {
-      impl_->renderController_->markRenderDirty();
+    auto *view = impl_ ? impl_->activeViewport() : nullptr;
+    auto *controller = impl_ ? impl_->activeRenderController() : nullptr;
+    if (view && controller && editTextLayerInline(view, layer, controller)) {
+      controller->markRenderDirty();
     }
   });
   QObject::connect(impl_->compareAction_, &QAction::triggered, this, [this]() {
@@ -5687,19 +5840,33 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   });
   QObject::connect(
       impl_->motionPathAction_, &QAction::toggled, this, [this](bool checked) {
-        if (impl_->renderController_) {
-          impl_->renderController_->setShowMotionPathOverlay(checked);
-          if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
-            settings->setCompositionShowMotionPathOverlay(checked);
-          }
+        if (!impl_) {
+          return;
         }
+        if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
+          settings->setCompositionShowMotionPathOverlay(checked);
+        }
+        if (auto *controller = impl_->renderController_) {
+          controller->setShowMotionPathOverlay(checked);
+        }
+        impl_->forEachActiveSecondaryController(
+            [checked](CompositionRenderController *controller) {
+              controller->setShowMotionPathOverlay(checked);
+            });
       });
   QObject::connect(
       impl_->effectHitboxAction_, &QAction::toggled, this,
       [this](bool checked) {
-        if (impl_->renderController_) {
-          impl_->renderController_->setShowEffectHitboxOverlay(checked);
+        if (!impl_) {
+          return;
         }
+        if (auto *controller = impl_->renderController_) {
+          controller->setShowEffectHitboxOverlay(checked);
+        }
+        impl_->forEachActiveSecondaryController(
+            [checked](CompositionRenderController *controller) {
+              controller->setShowEffectHitboxOverlay(checked);
+            });
       });
   auto *toggleMotionPathShortcut =
       new QShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_M), this);
@@ -5724,8 +5891,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   focusSelectedLayerShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(focusSelectedLayerShortcut, &QShortcut::activated, this,
                    [this]() {
-                     if (impl_ && impl_->renderController_) {
-                       impl_->renderController_->focusSelectedLayer();
+                     if (impl_) {
+                       if (auto *controller = impl_->activeRenderController()) {
+                         controller->focusSelectedLayer();
+                       }
                      }
                    });
   auto *compareSurfaceShortcut =
@@ -5738,9 +5907,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   compareModeAShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(compareModeAShortcut, &QShortcut::activated, this,
                    [this]() {
-                     if (impl_ && impl_->renderController_) {
-                       impl_->renderController_->setCompareMode(
+                     if (impl_) {
+                       if (auto *controller = impl_->activeRenderController()) {
+                         controller->setCompareMode(
                            CompositionCompareMode::A);
+                       }
                      }
                    });
   auto *compareModeBShortcut =
@@ -5748,9 +5919,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   compareModeBShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(compareModeBShortcut, &QShortcut::activated, this,
                    [this]() {
-                     if (impl_ && impl_->renderController_) {
-                       impl_->renderController_->setCompareMode(
+                     if (impl_) {
+                       if (auto *controller = impl_->activeRenderController()) {
+                         controller->setCompareMode(
                            CompositionCompareMode::B);
+                       }
                      }
                    });
   auto *compareModeOffShortcut =
@@ -5758,9 +5931,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   compareModeOffShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(compareModeOffShortcut, &QShortcut::activated, this,
                    [this]() {
-                     if (impl_ && impl_->renderController_) {
-                       impl_->renderController_->setCompareMode(
+                     if (impl_) {
+                       if (auto *controller = impl_->activeRenderController()) {
+                         controller->setCompareMode(
                            CompositionCompareMode::Off);
+                       }
                      }
                    });
   auto *compareReferenceShortcut =
@@ -5768,13 +5943,16 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   compareReferenceShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(compareReferenceShortcut, &QShortcut::activated, this,
                    [this]() {
-                     if (impl_ && impl_->renderController_) {
-                       const bool pinned =
-                           !impl_->renderController_->isReferencePinned();
-                       impl_->renderController_->setReferencePinned(pinned);
+                     if (impl_) {
+                       auto *controller = impl_->activeRenderController();
+                       if (!controller) {
+                         return;
+                       }
+                       const bool pinned = !controller->isReferencePinned();
+                       controller->setReferencePinned(pinned);
                        if (pinned) {
                         if (auto *playback = ArtifactPlaybackService::instance()) {
-                          impl_->renderController_->setReferenceFrame(
+                          controller->setReferenceFrame(
                               static_cast<int>(
                                   playback->currentFrame().framePosition()));
                         }
@@ -5786,9 +5964,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   compareDiffShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(compareDiffShortcut, &QShortcut::activated, this,
                    [this]() {
-                     if (impl_ && impl_->renderController_) {
-                       impl_->renderController_->setCompareMode(
+                     if (impl_) {
+                       if (auto *controller = impl_->activeRenderController()) {
+                         controller->setCompareMode(
                            CompositionCompareMode::Diff);
+                       }
                      }
                    });
   auto *toggleViewportLayoutShortcut =
@@ -6133,42 +6313,44 @@ void ArtifactCompositionEditor::stop() {
 }
 
 void ArtifactCompositionEditor::resetView() {
-  if (impl_->renderController_) {
-    impl_->renderController_->resetView();
+  if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+    controller->resetView();
   }
 }
 
 void ArtifactCompositionEditor::zoomIn() {
-  if (impl_->renderController_ && impl_->compositionView_) {
-    impl_->renderController_->zoomInAt(
-        QPointF(impl_->compositionView_->width() * 0.5,
-                impl_->compositionView_->height() * 0.5));
+  auto *controller = impl_ ? impl_->activeRenderController() : nullptr;
+  auto *view = impl_ ? impl_->activeViewport() : nullptr;
+  if (controller && view) {
+    controller->zoomInAt(
+        QPointF(view->width() * 0.5, view->height() * 0.5));
   }
 }
 
 void ArtifactCompositionEditor::zoomOut() {
-  if (impl_->renderController_ && impl_->compositionView_) {
-    impl_->renderController_->zoomOutAt(
-        QPointF(impl_->compositionView_->width() * 0.5,
-                impl_->compositionView_->height() * 0.5));
+  auto *controller = impl_ ? impl_->activeRenderController() : nullptr;
+  auto *view = impl_ ? impl_->activeViewport() : nullptr;
+  if (controller && view) {
+    controller->zoomOutAt(
+        QPointF(view->width() * 0.5, view->height() * 0.5));
   }
 }
 
 void ArtifactCompositionEditor::zoomFit() {
-  if (impl_->renderController_) {
-    impl_->renderController_->zoomFit();
+  if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+    controller->zoomFit();
   }
 }
 
 void ArtifactCompositionEditor::zoomFill() {
-  if (impl_->renderController_) {
-    impl_->renderController_->zoomFill();
+  if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+    controller->zoomFill();
   }
 }
 
 void ArtifactCompositionEditor::zoom100() {
-  if (impl_->renderController_) {
-    impl_->renderController_->zoom100();
+  if (auto *controller = impl_ ? impl_->activeRenderController() : nullptr) {
+    controller->zoom100();
   }
 }
 

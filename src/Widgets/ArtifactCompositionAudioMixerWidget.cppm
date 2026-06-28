@@ -1046,6 +1046,8 @@ private:
         effectId == QStringLiteral("edge_bloom") ||
         effectId == QStringLiteral("chromatic_glow") ||
         effectId == QStringLiteral("reactive_glow") ||
+        effectId == QStringLiteral("liquid_glow") ||
+        effectId == QStringLiteral("residual_glow") ||
         effectId == QStringLiteral("effect.blur.gaussian") ||
         effectId == QStringLiteral("blur") ||
         effectId == QStringLiteral("directional_glow")) {
@@ -1085,6 +1087,12 @@ private:
     }
     if (effectId == QStringLiteral("reactive_glow")) {
       return QStringLiteral("R");
+    }
+    if (effectId == QStringLiteral("liquid_glow")) {
+      return QStringLiteral("L");
+    }
+    if (effectId == QStringLiteral("residual_glow")) {
+      return QStringLiteral("A");
     }
     if (effectId.startsWith(QStringLiteral("ofx."))) {
       return QStringLiteral("O");

@@ -1709,6 +1709,7 @@ void ArtifactVideoLayer::draw(ArtifactIRenderer* renderer)
                                         transform, renderBuffer,
                                         this->opacity() * weight);
     });
+    drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
 }
 
 QRectF ArtifactVideoLayer::localBounds() const

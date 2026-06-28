@@ -13,6 +13,7 @@ module;
 #include <QPainterPath>
 #include <QRect>
 #include <QSize>
+#include <QSizeF>
 #include <QString>
 #include <QTextBlock>
 #include <QTextBlockFormat>
@@ -2140,6 +2141,7 @@ void ArtifactTextLayer::draw(ArtifactIRenderer *renderer) {
             static_cast<float>(size.height), transform, impl_->renderedImage_,
             this->opacity() * weight);
       });
+  drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
 }
 
 std::vector<ArtifactCore::PropertyGroup>

@@ -1,11 +1,14 @@
 module;
 #include <compare>
+#include <cmath>
+#include <random>
 #include <utility>
 #include <QDebug>
 #include <QImage>
 #include <QPointF>
 #include <QRectF>
 #include <QSize>
+#include <QSizeF>
 #include <QVector3D>
 #include <QVector4D>
 #include <QStringList>
@@ -18,6 +21,7 @@ module;
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QVariant>
+#include <limits>
 
 module Artifact.Layer.Abstract;
 
@@ -26,6 +30,7 @@ import std;
 import Utils;
 import Layer.State;
 import Animation.Transform2D;
+import Animation.Dynamics;
 import Frame.Position;
 import Time.Rational;
 import Frame.Rate;
@@ -36,8 +41,11 @@ import Time.TimeRemap;
 
 import Artifact.Layer.Settings;
 import Artifact.Layer.Physics;
+import Artifact.Layer.Component.System;
 import Artifact.Layer.Modifier;
 import Artifact.Layer.Matte;
+import Geometry.Fracture;
+import Physics.System;
 import Layer.Matte;
 import Artifact.Composition.Abstract;
 import Artifact.Effect.Abstract;
@@ -47,6 +55,7 @@ import Artifact.Mask.LayerMask;
 import Artifact.Mask.Path;
 import Image.ImageF32x4_RGBA;
 import Image.ImageF32x4RGBAWithCache;
+import Graphics.ParticleData;
 import Property.Abstract;
 import Property.Group;
 import Artifact.Event.Types;
@@ -57,6 +66,55 @@ namespace Artifact {
 using namespace ArtifactCore;
 
 W_OBJECT_IMPL(ArtifactAbstractLayer)
+
+bool isTimelineHiddenLayerPropertyGroup(const QString &groupName) {
+  const QString normalized = groupName.trimmed();
+  return normalized.compare(QStringLiteral("Parent"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Blend"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("BlendMode"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Initial"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Rig"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Rig Controls"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Physics"), Qt::CaseInsensitive) == 0;
+}
+
+bool isTimelineExpandedByDefaultLayerPropertyGroup(const QString &groupName) {
+  const QString normalized = groupName.trimmed();
+  if (normalized.compare(QStringLiteral("Transform"), Qt::CaseInsensitive) == 0) {
+    return true;
+  }
+  if (normalized.compare(QStringLiteral("Components"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Layout"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Cloner"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Motion"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Fracture"), Qt::CaseInsensitive) == 0 ||
+      normalized.compare(QStringLiteral("Source Reframe"), Qt::CaseInsensitive) == 0) {
+    return false;
+  }
+  return true;
+}
+
+bool isInspectorHiddenLayerPropertyGroup(const QString &groupName) {
+  const QString normalized = groupName.trimmed();
+  return normalized.compare(QStringLiteral("Rig"), Qt::CaseInsensitive) == 0 ||
+         normalized.compare(QStringLiteral("Rig Controls"), Qt::CaseInsensitive) == 0;
+}
+
+bool isInspectorExpandedByDefaultLayerPropertyGroup(const QString &groupName) {
+  return groupName.trimmed().compare(QStringLiteral("Initial"),
+                                     Qt::CaseInsensitive) == 0;
+}
+
+bool isClonerLayerPropertyGroup(const QString &groupName) {
+  return groupName.trimmed().compare(QStringLiteral("Cloner"),
+                                     Qt::CaseInsensitive) == 0;
+}
+
+bool isSourceReframeLayerPropertyGroup(const QString &groupName) {
+  return groupName.trimmed().compare(QStringLiteral("Source Reframe"),
+                                     Qt::CaseInsensitive) == 0;
+}
 
 namespace {
 struct ClonerTransformOperation {
@@ -457,9 +515,51 @@ public:
 
     // Physics component
     PhysicsLayerComponent physicsComponent_;
+    bool motionDynamicsEnabled_ = false;
+    int motionDynamicsMode_ = 0;
+    float motionDynamicsStiffness_ = 80.0f;
+    float motionDynamicsDamping_ = 16.0f;
+    float motionDynamicsMass_ = 1.0f;
+    float motionDynamicsLagTau_ = 0.1f;
+    bool motionDynamicsClampOvershoot_ = false;
+    float motionDynamicsOvershootLimit_ = 0.3f;
+    bool fractureEnabled_ = false;
+    int fracturePreset_ = static_cast<int>(FracturePreset::Glass);
+    float fractureCrackThreshold_ = 1.0f;
+    float fractureShatterThreshold_ = 2.5f;
+    int fractureShardCount_ = 16;
+    float fractureShardDamping_ = 0.92f;
+    float fractureShardGravity_ = 0.0f;
+    float fractureImpactSensitivity_ = 1.0f;
+    FractureState fractureState_;
+    mutable int64_t fractureMotionLastFrame_ = std::numeric_limits<int64_t>::min();
+    mutable DynamicsChannel1D motionX_;
+    mutable DynamicsChannel1D motionY_;
+    mutable DynamicsChannel1D motionRotation_;
+    mutable DynamicsChannel1D motionScaleX_;
+    mutable DynamicsChannel1D motionScaleY_;
+    mutable int64_t motionLastFrame_ = std::numeric_limits<int64_t>::min();
     bool scriptComponentEnabled_ = false;
     bool clonerComponentEnabled_ = false;
     bool layoutComponentEnabled_ = false;
+    bool collisionComponentEnabled_ = false;
+    bool collisionOwnsPhysicsEnable_ = false;
+    bool crowdComponentEnabled_ = false;
+    float crowdCohesion_ = 0.5f;
+    float crowdSeparation_ = 0.5f;
+    float crowdAlignment_ = 0.5f;
+    float crowdMaxSpeed_ = 120.0f;
+    float crowdJitter_ = 0.1f;
+    bool particleEmitterComponentEnabled_ = false;
+    int particleEmitterCount_ = 16;
+    float particleEmitterSpeed_ = 120.0f;
+    float particleEmitterLifetime_ = 1.0f;
+    std::vector<ArtifactCore::ParticleVertex> componentParticles_;
+    mutable int64_t componentParticlesLastFrame_ =
+        std::numeric_limits<int64_t>::min();
+    mutable int64_t lastCollisionImpactFrame_ =
+        std::numeric_limits<int64_t>::min();
+    LayerComponentHost componentHost_;
     int layoutMode_ = 0;
     int layoutAnchorMode_ = 0;
     int layoutHorizontalPin_ = 0;
@@ -535,6 +635,7 @@ public:
 public:
   Impl();
   ~Impl();
+  void syncBuiltinComponentDescriptors();
   std::type_index type_index_ = typeid(void);
   void goToStartFrame();
   void goToEndFrame();
@@ -581,9 +682,79 @@ ArtifactAbstractLayer::Impl::Impl() {
   // Avoid undefined draw bounds when a layer is queried before explicit size
   // assignment.
   sourceSize_ = Size_2D(1920, 1080);
+  syncBuiltinComponentDescriptors();
 }
 
 ArtifactAbstractLayer::Impl::~Impl() {}
+
+void ArtifactAbstractLayer::Impl::syncBuiltinComponentDescriptors() {
+  physicsComponent_.settings().collisionEnabled =
+      collisionComponentEnabled_;
+  if (collisionComponentEnabled_ && !physicsComponent_.enabled()) {
+    physicsComponent_.setEnabled(true);
+    collisionOwnsPhysicsEnable_ = true;
+  } else if (!collisionComponentEnabled_ &&
+             collisionOwnsPhysicsEnable_) {
+    physicsComponent_.setEnabled(false);
+    collisionOwnsPhysicsEnable_ = false;
+  }
+
+  auto cloner = makeClonerComponentDescriptor(clonerComponentEnabled_);
+  cloner.settings[QStringLiteral("mode")] = clonerMode_;
+  cloner.settings[QStringLiteral("count")] = clonerCloneCount_;
+  cloner.settings[QStringLiteral("seed")] = clonerSeed_;
+  componentHost_.upsert(std::move(cloner));
+
+  auto layout = makeLayoutComponentDescriptor(layoutComponentEnabled_);
+  layout.settings[QStringLiteral("mode")] = layoutMode_;
+  layout.settings[QStringLiteral("gap")] = static_cast<double>(layoutGap_);
+  layout.settings[QStringLiteral("maxPerRow")] = layoutMaxPerRow_;
+  componentHost_.upsert(std::move(layout));
+
+  auto crowd = makeCrowdComponentDescriptor(crowdComponentEnabled_);
+  crowd.settings[QStringLiteral("cohesion")] =
+      static_cast<double>(crowdCohesion_);
+  crowd.settings[QStringLiteral("separation")] =
+      static_cast<double>(crowdSeparation_);
+  crowd.settings[QStringLiteral("alignment")] =
+      static_cast<double>(crowdAlignment_);
+  crowd.settings[QStringLiteral("maxSpeed")] =
+      static_cast<double>(crowdMaxSpeed_);
+  crowd.settings[QStringLiteral("jitter")] =
+      static_cast<double>(crowdJitter_);
+  componentHost_.upsert(std::move(crowd));
+
+  auto motion =
+      makeMotionDynamicsComponentDescriptor(
+          physicsComponent_.enabled() || motionDynamicsEnabled_);
+  motion.settings[QStringLiteral("layerSpringEnabled")] =
+      physicsComponent_.enabled();
+  motion.settings[QStringLiteral("followThroughEnabled")] =
+      motionDynamicsEnabled_;
+  componentHost_.upsert(std::move(motion));
+
+  auto collision =
+      makeCollisionComponentDescriptor(collisionComponentEnabled_);
+  componentHost_.upsert(std::move(collision));
+
+  auto fracture = makeFractureComponentDescriptor(fractureEnabled_);
+  fracture.settings[QStringLiteral("preset")] = fracturePreset_;
+  fracture.settings[QStringLiteral("shardCount")] = fractureShardCount_;
+  fracture.settings[QStringLiteral("crackThreshold")] =
+      static_cast<double>(fractureCrackThreshold_);
+  fracture.settings[QStringLiteral("shatterThreshold")] =
+      static_cast<double>(fractureShatterThreshold_);
+  componentHost_.upsert(std::move(fracture));
+
+  auto emitter = makeParticleEmitterComponentDescriptor(
+      particleEmitterComponentEnabled_);
+  emitter.settings[QStringLiteral("count")] = particleEmitterCount_;
+  emitter.settings[QStringLiteral("speed")] =
+      static_cast<double>(particleEmitterSpeed_);
+  emitter.settings[QStringLiteral("lifetime")] =
+      static_cast<double>(particleEmitterLifetime_);
+  componentHost_.upsert(std::move(emitter));
+}
 
 void ArtifactAbstractLayer::Impl::goToStartFrame() {}
 
@@ -1024,6 +1195,16 @@ QObject *ArtifactAbstractLayer::compositionObject() const {
   return impl_->composition_.data();
 }
 
+QSizeF ArtifactAbstractLayer::compositionSizeHint() const {
+  auto* composition =
+      dynamic_cast<ArtifactAbstractComposition*>(compositionObject());
+  if (!composition) {
+    return {};
+  }
+  const auto size = composition->settings().compositionSize();
+  return QSizeF(size.width(), size.height());
+}
+
 ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
   auto *composition = dynamic_cast<ArtifactAbstractComposition *>(compositionObject());
   if (!composition || impl_->parentLayerId_.isNil())
@@ -1034,6 +1215,8 @@ ArtifactAbstractLayerPtr ArtifactAbstractLayer::parentLayer() const {
 QTransform ArtifactAbstractLayer::getLocalTransform() const {
   const auto &t = transform3D();
   const RationalTime time = currentTimelineTime(this);
+  const int64_t frame = impl_->currentFrame_;
+  const double fps = effectiveLayerFrameRate(this);
   const auto* var = getActiveVariant();
   bool hasTransVar = var && HasFlag(var->overrideFlags_, VariantOverrideFlags::Transform) && var->transform3DOverride.has_value();
 
@@ -1058,12 +1241,80 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
       evaluateDouble(QStringLiteral("transform.position.y"), t.positionY());
   double rotation =
       evaluateDouble(QStringLiteral("transform.rotation"), t.rotation());
+  double scaleX =
+      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
+  double scaleY =
+      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleY());
+  double anchorX =
+      evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorX());
+  double anchorY =
+      evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
 
-  // 物理演算オフセットの適用
+  if (impl_->motionDynamicsEnabled_) {
+    const bool needsReset = impl_->motionLastFrame_ == std::numeric_limits<int64_t>::min() ||
+                            frame != impl_->motionLastFrame_ + 1;
+    if (needsReset) {
+      impl_->motionX_.reset(static_cast<float>(positionX));
+      impl_->motionY_.reset(static_cast<float>(positionY));
+      impl_->motionRotation_.reset(static_cast<float>(rotation));
+      impl_->motionScaleX_.reset(static_cast<float>(scaleX));
+      impl_->motionScaleY_.reset(static_cast<float>(scaleY));
+    }
+
+    DynamicsPreset preset{impl_->motionDynamicsStiffness_,
+                          impl_->motionDynamicsDamping_,
+                          impl_->motionDynamicsMass_};
+    const float dt = static_cast<float>(1.0 / std::max(fps, 1.0));
+    impl_->motionX_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionY_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionRotation_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionScaleX_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionScaleY_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionX_.preset = preset;
+    impl_->motionY_.preset = preset;
+    impl_->motionRotation_.preset = preset;
+    impl_->motionScaleX_.preset = preset;
+    impl_->motionScaleY_.preset = preset;
+    impl_->motionX_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionY_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionRotation_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionScaleX_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionScaleY_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionX_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionY_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionRotation_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionScaleX_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionScaleY_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionX_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionY_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionRotation_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionScaleX_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionScaleY_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+
+    positionX = impl_->motionX_.update(static_cast<float>(positionX), dt);
+    positionY = impl_->motionY_.update(static_cast<float>(positionY), dt);
+    rotation = impl_->motionRotation_.update(static_cast<float>(rotation), dt);
+    scaleX = impl_->motionScaleX_.update(static_cast<float>(scaleX), dt);
+    scaleY = impl_->motionScaleY_.update(static_cast<float>(scaleY), dt);
+    impl_->motionLastFrame_ = frame;
+  }
+
   if (impl_->physicsComponent_.enabled()) {
-    const double fps = effectiveLayerFrameRate(this);
+    if (impl_->collisionComponentEnabled_) {
+      if (auto* composition =
+              dynamic_cast<ArtifactAbstractComposition*>(
+                  impl_->composition_.data())) {
+        const auto compositionSize =
+            composition->settings().compositionSize();
+        impl_->physicsComponent_.settings().floorY =
+            static_cast<float>(compositionSize.height()) -
+            static_cast<float>(std::max<qreal>(
+                0.0, localBounds().height()));
+      }
+    }
+    const double fps2 = effectiveLayerFrameRate(this);
     const int64_t curFrame = currentTimelineFrame(this);
-    const RationalTime prevTime(curFrame - 1, fps);
+    const RationalTime prevTime(curFrame - 1, fps2);
     auto evalAt = [this, &prevTime, &t](const QString &path, double fallback) {
       const auto it = impl_->propertyCache_.constFind(path);
       if (it == impl_->propertyCache_.constEnd() || !it.value()) {
@@ -1082,22 +1333,23 @@ QTransform ArtifactAbstractLayer::getLocalTransform() const {
             evalAt(QStringLiteral("transform.position.y"), t.positionY()),
             evalAt(QStringLiteral("transform.rotation"), t.rotation()),
             time.toDouble(),
-            fps,
+            fps2,
             curFrame});
 
     positionX = physicsOutput.positionX;
     positionY = physicsOutput.positionY;
     rotation = physicsOutput.rotation;
+    if (physicsOutput.collided &&
+        impl_->lastCollisionImpactFrame_ != curFrame) {
+      impl_->lastCollisionImpactFrame_ = curFrame;
+      FractureImpact impact;
+      impact.impulse = std::max(
+          0.0f, physicsOutput.collisionSpeed / 100.0f);
+      impact.speed = physicsOutput.collisionSpeed;
+      impact.stress = impact.impulse;
+      const_cast<ArtifactAbstractLayer*>(this)->applyFractureImpact(impact);
+    }
   }
-
-  const double scaleX =
-      evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleX());
-  const double scaleY =
-      evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleY());
-  const double anchorX =
-      evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorX());
-  const double anchorY =
-      evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorY());
 
   QTransform transform = makeLayerTransform2D(positionX, positionY, rotation, scaleX, scaleY,
                                               anchorX, anchorY);
@@ -1147,13 +1399,62 @@ QTransform ArtifactAbstractLayer::getLocalTransformAt(int64_t frameNumber) const
     return animatedValue.isValid() ? animatedValue.toDouble() : fallback;
   };
 
-  const double positionX = evaluateDouble(QStringLiteral("transform.position.x"), t.positionXAt(time));
-  const double positionY = evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
-  const double rotation = evaluateDouble(QStringLiteral("transform.rotation"), t.rotationAt(time));
+  double positionX = evaluateDouble(QStringLiteral("transform.position.x"), t.positionXAt(time));
+  double positionY = evaluateDouble(QStringLiteral("transform.position.y"), t.positionYAt(time));
+  double rotation = evaluateDouble(QStringLiteral("transform.rotation"), t.rotationAt(time));
   const double scaleX = evaluateDouble(QStringLiteral("transform.scale.x"), t.scaleXAt(time));
   const double scaleY = evaluateDouble(QStringLiteral("transform.scale.y"), t.scaleYAt(time));
   const double anchorX = evaluateDouble(QStringLiteral("transform.anchor.x"), t.anchorXAt(time));
   const double anchorY = evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorYAt(time));
+
+  const int64_t frame = currentTimelineFrame(this);
+  const double fps = effectiveLayerFrameRate(this);
+  if (impl_->motionDynamicsEnabled_) {
+    const bool needsReset = impl_->motionLastFrame_ == std::numeric_limits<int64_t>::min() ||
+                            frame != impl_->motionLastFrame_ + 1;
+    if (needsReset) {
+      impl_->motionX_.reset(static_cast<float>(positionX));
+      impl_->motionY_.reset(static_cast<float>(positionY));
+      impl_->motionRotation_.reset(static_cast<float>(rotation));
+      impl_->motionScaleX_.reset(static_cast<float>(scaleX));
+      impl_->motionScaleY_.reset(static_cast<float>(scaleY));
+    }
+
+    DynamicsPreset preset{impl_->motionDynamicsStiffness_,
+                          impl_->motionDynamicsDamping_,
+                          impl_->motionDynamicsMass_};
+    const float dt = static_cast<float>(1.0 / std::max(fps, 1.0));
+    impl_->motionX_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionY_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionRotation_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionScaleX_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionScaleY_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionX_.preset = preset;
+    impl_->motionY_.preset = preset;
+    impl_->motionRotation_.preset = preset;
+    impl_->motionScaleX_.preset = preset;
+    impl_->motionScaleY_.preset = preset;
+    impl_->motionX_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionY_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionRotation_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionScaleX_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionScaleY_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionX_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionY_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionRotation_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionScaleX_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionScaleY_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionX_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionY_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionRotation_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionScaleX_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionScaleY_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+
+    positionX = impl_->motionX_.update(static_cast<float>(positionX), dt);
+    positionY = impl_->motionY_.update(static_cast<float>(positionY), dt);
+    rotation = impl_->motionRotation_.update(static_cast<float>(rotation), dt);
+    impl_->motionLastFrame_ = frame;
+  }
 
   // Skip physics for random access evaluating (e.g. motion path rendering) to maintain determinism.
 
@@ -1175,6 +1476,8 @@ QTransform ArtifactAbstractLayer::getGlobalTransformAt(int64_t frameNumber) cons
 QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
   const auto &t = transform3D();
   const RationalTime time = currentTimelineTime(this);
+  const int64_t frame = impl_->currentFrame_;
+  const double fps = effectiveLayerFrameRate(this);
   auto evaluateDouble = [this, &time](const QString &propertyPath,
                                       double fallback) {
     const auto it = impl_->propertyCache_.constFind(propertyPath);
@@ -1205,7 +1508,66 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
       evaluateDouble(QStringLiteral("transform.anchor.y"), t.anchorYAt(time));
   const double anchorZ = t.anchorZAt(time);
 
+  if (impl_->motionDynamicsEnabled_) {
+    const bool needsReset = impl_->motionLastFrame_ == std::numeric_limits<int64_t>::min() ||
+                            frame != impl_->motionLastFrame_ + 1;
+    if (needsReset) {
+      impl_->motionX_.reset(static_cast<float>(positionX));
+      impl_->motionY_.reset(static_cast<float>(positionY));
+      impl_->motionRotation_.reset(static_cast<float>(rotation));
+      impl_->motionScaleX_.reset(static_cast<float>(scaleX));
+      impl_->motionScaleY_.reset(static_cast<float>(scaleY));
+    }
+
+    DynamicsPreset preset{impl_->motionDynamicsStiffness_,
+                          impl_->motionDynamicsDamping_,
+                          impl_->motionDynamicsMass_};
+    const float dt = static_cast<float>(1.0 / std::max(fps, 1.0));
+    impl_->motionX_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionY_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionRotation_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionScaleX_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionScaleY_.mode = impl_->motionDynamicsMode_ == 2 ? DynamicsMode::LagFollow : DynamicsMode::Spring;
+    impl_->motionX_.preset = preset;
+    impl_->motionY_.preset = preset;
+    impl_->motionRotation_.preset = preset;
+    impl_->motionScaleX_.preset = preset;
+    impl_->motionScaleY_.preset = preset;
+    impl_->motionX_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionY_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionRotation_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionScaleX_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionScaleY_.lagTau = impl_->motionDynamicsLagTau_;
+    impl_->motionX_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionY_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionRotation_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionScaleX_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionScaleY_.clampOvershootEnabled = impl_->motionDynamicsClampOvershoot_;
+    impl_->motionX_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionY_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionRotation_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionScaleX_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+    impl_->motionScaleY_.overshootLimit = impl_->motionDynamicsOvershootLimit_;
+
+    positionX = impl_->motionX_.update(static_cast<float>(positionX), dt);
+    positionY = impl_->motionY_.update(static_cast<float>(positionY), dt);
+    rotation = impl_->motionRotation_.update(static_cast<float>(rotation), dt);
+    impl_->motionLastFrame_ = frame;
+  }
+
   if (impl_->physicsComponent_.enabled()) {
+    if (impl_->collisionComponentEnabled_) {
+      if (auto* composition =
+              dynamic_cast<ArtifactAbstractComposition*>(
+                  impl_->composition_.data())) {
+        const auto compositionSize =
+            composition->settings().compositionSize();
+        impl_->physicsComponent_.settings().floorY =
+            static_cast<float>(compositionSize.height()) -
+            static_cast<float>(std::max<qreal>(
+                0.0, localBounds().height()));
+      }
+    }
     const double fps = effectiveLayerFrameRate(this);
     const int64_t curFrame = currentTimelineFrame(this);
     const RationalTime prevTime(curFrame - 1, fps);
@@ -1233,6 +1595,16 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     positionX = physicsOutput.positionX;
     positionY = physicsOutput.positionY;
     rotation = physicsOutput.rotation;
+    if (physicsOutput.collided &&
+        impl_->lastCollisionImpactFrame_ != curFrame) {
+      impl_->lastCollisionImpactFrame_ = curFrame;
+      FractureImpact impact;
+      impact.impulse = std::max(
+          0.0f, physicsOutput.collisionSpeed / 100.0f);
+      impact.speed = physicsOutput.collisionSpeed;
+      impact.stress = impact.impulse;
+      const_cast<ArtifactAbstractLayer*>(this)->applyFractureImpact(impact);
+    }
   }
 
   const QTransform local2D = impl_->modifiers_.apply(
@@ -1246,6 +1618,299 @@ QMatrix4x4 ArtifactAbstractLayer::getLocalTransform4x4() const {
     result.translate(0.0f, 0.0f, static_cast<float>(positionZ));
   }
   return result;
+}
+
+bool ArtifactAbstractLayer::hasSoftBodyPhysics() const {
+  return static_cast<bool>(ArtifactCore::PhysicsSystem::instance().getSoftBody(id()));
+}
+
+const FractureState& ArtifactAbstractLayer::fractureState() const {
+  return impl_->fractureState_;
+}
+
+const std::vector<FractureShardMotion>& ArtifactAbstractLayer::fractureShardMotions() const {
+  return impl_->fractureState_.shards;
+}
+
+void ArtifactAbstractLayer::drawFractureOverlay(ArtifactIRenderer* renderer,
+                                                const QMatrix4x4& baseTransform,
+                                                const QSizeF& sourceSize,
+                                                float opacityScale) {
+  if (!renderer) {
+    return;
+  }
+  Q_UNUSED(sourceSize);
+
+  const int64_t frame = currentTimelineFrame(this);
+  if (impl_->particleEmitterComponentEnabled_ &&
+      !impl_->componentParticles_.empty()) {
+    const double fps = std::max(1.0, effectiveLayerFrameRate(this));
+    if (impl_->componentParticlesLastFrame_ ==
+        std::numeric_limits<int64_t>::min()) {
+      impl_->componentParticlesLastFrame_ = frame;
+    } else if (frame < impl_->componentParticlesLastFrame_ ||
+               frame - impl_->componentParticlesLastFrame_ > 10) {
+      impl_->componentParticles_.clear();
+      impl_->componentParticlesLastFrame_ = frame;
+    } else if (frame > impl_->componentParticlesLastFrame_) {
+      const float dt = static_cast<float>(
+          frame - impl_->componentParticlesLastFrame_) /
+                       static_cast<float>(fps);
+      for (auto& particle : impl_->componentParticles_) {
+        particle.age += dt;
+        particle.px += particle.vx * dt;
+        particle.py += particle.vy * dt;
+        particle.pz += particle.vz * dt;
+        particle.vy += impl_->physicsComponent_.settings().gravityY * dt;
+      }
+      impl_->componentParticlesLastFrame_ = frame;
+      impl_->componentParticles_.erase(
+          std::remove_if(
+              impl_->componentParticles_.begin(),
+              impl_->componentParticles_.end(),
+              [](const ArtifactCore::ParticleVertex& particle) {
+                return particle.age >= particle.lifetime;
+              }),
+          impl_->componentParticles_.end());
+    }
+
+    ArtifactCore::ParticleRenderData renderData;
+    renderData.frameNumber = frame;
+    renderData.options.blend =
+        ArtifactCore::ParticleBlendPolicy::Additive;
+    renderData.options.billboard =
+        ArtifactCore::ParticleBillboardPolicy::VelocityAligned;
+    renderData.particles.reserve(impl_->componentParticles_.size());
+    for (const auto& sourceParticle : impl_->componentParticles_) {
+      auto particle = sourceParticle;
+      const QVector3D mapped = baseTransform.map(
+          QVector3D(particle.px, particle.py, particle.pz));
+      particle.px = mapped.x();
+      particle.py = mapped.y();
+      particle.pz = mapped.z();
+      particle.a *= std::clamp(opacityScale, 0.0f, 1.0f);
+      renderData.particles.push_back(particle);
+    }
+    if (!renderData.particles.empty()) {
+      renderer->drawParticles(renderData);
+    }
+  }
+
+  if (!impl_->fractureEnabled_ || impl_->fractureState_.shards.empty()) {
+    return;
+  }
+
+  const bool needsReset = impl_->fractureMotionLastFrame_ == std::numeric_limits<int64_t>::min() ||
+                          frame != impl_->fractureMotionLastFrame_ + 1;
+  if (needsReset) {
+    impl_->fractureMotionLastFrame_ = frame;
+  }
+
+  FractureSettings settings;
+  settings.gravity = impl_->fractureShardGravity_;
+  settings.damping = impl_->fractureShardDamping_;
+  settings.impulseStrength = impl_->fractureImpactSensitivity_ * 120.0f;
+  settings.angularStrength = 8.0f;
+  settings.lifetimeMin = 0.8f;
+  settings.lifetimeMax = 2.5f;
+  settings.edgeJitter = 0.12f;
+  settings.shardCount = std::max(1, static_cast<int>(impl_->fractureState_.shards.size()));
+  const float dt = needsReset ? 0.0f : (1.0f / std::max(1.0, effectiveLayerFrameRate(this)));
+  for (auto& shard : impl_->fractureState_.shards) {
+    ArtifactCore::stepFractureShardMotion(shard, dt, settings);
+  }
+  impl_->fractureMotionLastFrame_ = frame;
+
+  for (const auto& shard : impl_->fractureState_.shards) {
+    if (!shard.active || shard.opacity <= 0.0f) {
+      continue;
+    }
+
+    const float alpha = std::clamp(shard.opacity * opacityScale, 0.0f, 1.0f);
+    const float shardScale = std::max(4.0f, 10.0f * std::max(0.05f, shard.scale));
+    const float angle = static_cast<float>(std::fmod(shard.rotation, 360.0f) * (3.14159265358979323846f / 180.0f));
+    const float cs = std::cos(angle);
+    const float sn = std::sin(angle);
+    auto rotateOffset = [&](float x, float y) {
+      return QPointF(x * cs - y * sn, x * sn + y * cs);
+    };
+
+    const QPointF center(shard.position.x(), shard.position.y());
+    const float wobble = std::sin((shard.position.x() + shard.position.y() + shard.rotation) * 0.013f);
+    const float skew = std::sin(shard.rotation * 0.0174532925f) * 0.22f + wobble * 0.12f;
+    const float pinch = 0.16f + wobble * 0.07f;
+    const QPointF topLeft = center + rotateOffset(-shardScale * (0.45f + skew), -shardScale * (1.00f + pinch * 0.25f));
+    const QPointF topRight = center + rotateOffset(shardScale * (0.35f - skew * 0.8f), -shardScale * (0.92f + pinch * 0.15f));
+    const QPointF bottomRight = center + rotateOffset(shardScale * (0.58f + skew * 1.1f), shardScale * (0.95f - pinch * 0.05f));
+    const QPointF bottomLeft = center + rotateOffset(-shardScale * (0.62f - skew * 0.9f), shardScale * (0.82f + pinch * 0.2f));
+    const QPointF notch = center + rotateOffset(shardScale * (0.05f + skew * 0.15f + wobble * 0.05f), shardScale * (0.08f - skew * 0.1f + pinch * 0.08f));
+
+    const QVector4D tlV = baseTransform * QVector4D(static_cast<float>(topLeft.x()), static_cast<float>(topLeft.y()), shard.position.z(), 1.0f);
+    const QVector4D trV = baseTransform * QVector4D(static_cast<float>(topRight.x()), static_cast<float>(topRight.y()), shard.position.z(), 1.0f);
+    const QVector4D brV = baseTransform * QVector4D(static_cast<float>(bottomRight.x()), static_cast<float>(bottomRight.y()), shard.position.z(), 1.0f);
+    const QVector4D blV = baseTransform * QVector4D(static_cast<float>(bottomLeft.x()), static_cast<float>(bottomLeft.y()), shard.position.z(), 1.0f);
+    const QVector4D nV = baseTransform * QVector4D(static_cast<float>(notch.x()), static_cast<float>(notch.y()), shard.position.z(), 1.0f);
+
+    std::vector<Detail::float2> shardPoly;
+    shardPoly.push_back({tlV.x(), tlV.y()});
+    shardPoly.push_back({trV.x(), trV.y()});
+    shardPoly.push_back({nV.x(), nV.y()});
+    shardPoly.push_back({brV.x(), brV.y()});
+    shardPoly.push_back({blV.x(), blV.y()});
+    renderer->drawSolidPolygonLocal(shardPoly, FloatColor(0.92f, 0.96f, 1.0f, alpha * 0.42f));
+  }
+}
+
+void ArtifactAbstractLayer::resetFractureState() {
+  ArtifactCore::resetFractureState(impl_->fractureState_);
+  impl_->fractureMotionLastFrame_ = std::numeric_limits<int64_t>::min();
+}
+
+void ArtifactAbstractLayer::applyFractureImpact(const FractureImpact& impact) {
+  if (!impl_->fractureEnabled_ &&
+      !impl_->particleEmitterComponentEnabled_) {
+    return;
+  }
+
+  const auto emitImpactParticles = [this, &impact]() {
+    if (!impl_->particleEmitterComponentEnabled_ ||
+        impl_->particleEmitterCount_ <= 0) {
+      return;
+    }
+    const QRectF bounds = localBounds();
+    const QPointF center = bounds.isValid() ? bounds.center() : QPointF();
+    const std::uint32_t seed =
+        static_cast<std::uint32_t>(
+            qHash(id().toString()) ^
+            static_cast<uint>(currentTimelineFrame(this)));
+    std::mt19937 rng(seed);
+    std::uniform_real_distribution<float> angleDistribution(
+        0.0f, 2.0f * 3.1415926535f);
+    std::uniform_real_distribution<float> speedDistribution(0.35f, 1.0f);
+    std::uniform_real_distribution<float> sizeDistribution(2.0f, 7.0f);
+    const float impactScale =
+        std::max(0.25f, std::min(4.0f, impact.impulse));
+    impl_->componentParticles_.reserve(
+        impl_->componentParticles_.size() +
+        static_cast<std::size_t>(impl_->particleEmitterCount_));
+    for (int index = 0; index < impl_->particleEmitterCount_; ++index) {
+      const float angle = angleDistribution(rng);
+      const float speed = impl_->particleEmitterSpeed_ *
+                          speedDistribution(rng) * impactScale;
+      ArtifactCore::ParticleVertex particle{};
+      particle.px = static_cast<float>(center.x());
+      particle.py = static_cast<float>(center.y());
+      particle.pz = 0.0f;
+      particle.vx = std::cos(angle) * speed;
+      particle.vy = std::sin(angle) * speed;
+      particle.vz = 0.0f;
+      particle.r = 1.0f;
+      particle.g = 0.72f;
+      particle.b = 0.28f;
+      particle.a = 1.0f;
+      particle.size = sizeDistribution(rng);
+      particle.stretch = 1.0f;
+      particle.rotation = angle;
+      particle.age = 0.0f;
+      particle.lifetime = impl_->particleEmitterLifetime_;
+      impl_->componentParticles_.push_back(particle);
+    }
+    impl_->componentParticlesLastFrame_ = currentTimelineFrame(this);
+  };
+
+  if (!impl_->fractureEnabled_) {
+    emitImpactParticles();
+    return;
+  }
+
+  FractureSettings settings;
+  settings = makeFracturePreset(static_cast<FracturePreset>(
+      std::clamp(impl_->fracturePreset_, 0, static_cast<int>(FracturePreset::Dust))));
+  settings.shardCount = std::max(1, impl_->fractureShardCount_);
+  settings.debrisCount = 48;
+  settings.impulseStrength = impl_->fractureImpactSensitivity_ * 120.0f;
+  settings.angularStrength = 8.0f;
+  settings.gravity = 0.0f;
+  settings.damping = impl_->fractureShardDamping_;
+  settings.lifetimeMin = 0.8f;
+  settings.lifetimeMax = 2.5f;
+  settings.debrisLifetimeMin = 0.25f;
+  settings.debrisLifetimeMax = 1.2f;
+  settings.impactRadius = 96.0f;
+  settings.edgeJitter = 0.12f;
+  settings.cellJitter = 0.18f;
+  settings.debrisRatio = 0.35f;
+  settings.protectedCenterRadius = 0.0f;
+  settings.seed = 0;
+  settings.preserveSourceFill = true;
+  settings.gravity = impl_->fractureShardGravity_;
+  settings.shardCount = std::max(1, settings.shardCount);
+  settings.debrisCount = std::max(0, settings.debrisCount);
+  settings.lifetimeMin = std::max(0.01f, settings.lifetimeMin);
+  settings.lifetimeMax = std::max(settings.lifetimeMin, settings.lifetimeMax);
+  ArtifactCore::applyFractureImpact(impl_->fractureState_, settings, impact);
+  ArtifactCore::primeFractureShardMotion(impl_->fractureState_, settings, impact, localBounds());
+  emitImpactParticles();
+}
+
+void ArtifactAbstractLayer::enableSoftBodyPhysics() {
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  if (!physics.getSoftBody(id())) {
+    physics.createSoftBody(id());
+  }
+  syncSoftBodyPhysicsColliderToBounds();
+}
+
+void ArtifactAbstractLayer::enableSoftBodyPhysicsGrid(int columns, int rows, float stiffness) {
+  const QRectF bounds = localBounds();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    enableSoftBodyPhysics();
+    return;
+  }
+
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  physics.createSoftBodyGrid(
+      id(),
+      static_cast<float>(bounds.left()),
+      static_cast<float>(bounds.top()),
+      static_cast<float>(bounds.width()),
+      static_cast<float>(bounds.height()),
+      columns,
+      rows,
+      1.0f,
+      stiffness,
+      true);
+  syncSoftBodyPhysicsColliderToBounds();
+}
+
+void ArtifactAbstractLayer::disableSoftBodyPhysics() {
+  ArtifactCore::PhysicsSystem::instance().unregisterSoftBody(id());
+}
+
+void ArtifactAbstractLayer::syncSoftBodyPhysicsColliderToBounds() {
+  auto& physics = ArtifactCore::PhysicsSystem::instance();
+  auto solver = physics.getSoftBody(id());
+  if (!solver) {
+    solver = physics.createSoftBody(id());
+  }
+
+  const QRectF bounds = localBounds();
+  if (!bounds.isValid() || bounds.width() <= 0.0 || bounds.height() <= 0.0) {
+    physics.clearSoftBodyColliders(id());
+    return;
+  }
+
+  physics.clearSoftBodyColliders(id());
+  ArtifactCore::SoftBodyCollider collider;
+  collider.type = ArtifactCore::SoftBodyCollider::Type::Box;
+  collider.x = static_cast<float>(bounds.center().x());
+  collider.y = static_cast<float>(bounds.center().y());
+  collider.width = static_cast<float>(bounds.width());
+  collider.height = static_cast<float>(bounds.height());
+  collider.restitution = 0.25f;
+  collider.friction = 0.15f;
+  physics.registerSoftBodyCollider(id(), collider);
+  Q_UNUSED(solver);
 }
 
 QMatrix4x4 ArtifactAbstractLayer::getGlobalTransform4x4() const {
@@ -1676,10 +2341,6 @@ QRectF ArtifactAbstractLayer::visualLocalBounds() const {
       baseBounds.height() <= 0.0) {
     return QRectF();
   }
-  if (!impl_->clonerComponentEnabled_) {
-    return baseBounds;
-  }
-
   QRectF visualBounds = baseBounds;
   const auto uniteCloneBounds = [&](const QTransform &cloneTransform) {
     const QRectF cloneBounds = cloneTransform.mapRect(baseBounds);
@@ -1705,60 +2366,79 @@ QRectF ArtifactAbstractLayer::visualLocalBounds() const {
     }
   };
 
-  const int mode = impl_->clonerMode_;
-  if (mode == 1) {
-    const int cols = std::max(1, impl_->clonerColumns_);
-    const int rows = std::max(1, impl_->clonerRows_);
-    const int depth = std::max(1, impl_->clonerDepth_);
-    const QVector3D startPos(
-        -((cols - 1) * impl_->clonerSpacingX_) * 0.5f,
-        -((rows - 1) * impl_->clonerSpacingY_) * 0.5f,
-        -((depth - 1) * impl_->clonerSpacingZ_) * 0.5f);
-    for (int z = 0; z < depth; ++z) {
-      for (int y = 0; y < rows; ++y) {
-        for (int x = 0; x < cols; ++x) {
-          QTransform cloneTransform;
-          cloneTransform.translate(startPos.x() + impl_->clonerSpacingX_ * x,
-                                   startPos.y() + impl_->clonerSpacingY_ * y);
-          applyClonerComponentTransform2D(cloneTransform);
-          uniteCloneBounds(cloneTransform);
+  if (impl_->clonerComponentEnabled_) {
+    const int mode = impl_->clonerMode_;
+    if (mode == 5) {
+      const int cols = std::max(1, impl_->clonerColumns_);
+      const int rows = std::max(1, impl_->clonerRows_);
+      const int depth = std::max(1, impl_->clonerDepth_);
+      const QVector3D startPos(
+          -((cols - 1) * impl_->clonerSpacingX_) * 0.5f,
+          -((rows - 1) * impl_->clonerSpacingY_) * 0.5f,
+          -((depth - 1) * impl_->clonerSpacingZ_) * 0.5f);
+      for (int z = 0; z < depth; ++z) {
+        for (int y = 0; y < rows; ++y) {
+          for (int x = 0; x < cols; ++x) {
+            QTransform cloneTransform;
+            cloneTransform.translate(startPos.x() + impl_->clonerSpacingX_ * x,
+                                     startPos.y() + impl_->clonerSpacingY_ * y);
+            applyClonerComponentTransform2D(cloneTransform);
+            uniteCloneBounds(cloneTransform);
+          }
         }
       }
-    }
-  } else if (mode == 2) {
-    const int count = std::max(1, impl_->clonerRadialCount_);
-    const float angleStep =
-        count > 1 ? (impl_->clonerEndAngle_ - impl_->clonerStartAngle_) /
-                        static_cast<float>(count - 1)
-                  : 0.0f;
-    constexpr float kPi = 3.14159265358979323846f;
-    for (int i = 0; i < count; ++i) {
-      const float angle =
-          impl_->clonerStartAngle_ + angleStep * static_cast<float>(i);
-      const float rad = angle * kPi / 180.0f;
-      QTransform cloneTransform;
-      cloneTransform.translate(std::cos(rad) * impl_->clonerRadius_,
-                               std::sin(rad) * impl_->clonerRadius_);
-      if (impl_->clonerRotationStep_ != 0.0f) {
-        cloneTransform.rotate(angle +
-                              impl_->clonerRotationStep_ *
-                                  static_cast<float>(i));
+    } else if (mode == 6) {
+      const int count = std::max(1, impl_->clonerRadialCount_);
+      const float angleStep =
+          count > 1 ? (impl_->clonerEndAngle_ - impl_->clonerStartAngle_) /
+                          static_cast<float>(count - 1)
+                    : 0.0f;
+      constexpr float kPi = 3.14159265358979323846f;
+      for (int i = 0; i < count; ++i) {
+        const float angle =
+            impl_->clonerStartAngle_ + angleStep * static_cast<float>(i);
+        const float rad = angle * kPi / 180.0f;
+        QTransform cloneTransform;
+        cloneTransform.translate(std::cos(rad) * impl_->clonerRadius_,
+                                 std::sin(rad) * impl_->clonerRadius_);
+        if (impl_->clonerRotationStep_ != 0.0f) {
+          cloneTransform.rotate(angle +
+                                impl_->clonerRotationStep_ *
+                                    static_cast<float>(i));
+        }
+        applyClonerComponentTransform2D(cloneTransform);
+        uniteCloneBounds(cloneTransform);
       }
-      applyClonerComponentTransform2D(cloneTransform);
-      uniteCloneBounds(cloneTransform);
-    }
-  } else {
-    const int count = std::max(1, impl_->clonerCloneCount_);
-    for (int i = 0; i < count; ++i) {
-      QTransform cloneTransform;
-      cloneTransform.translate(impl_->clonerOffsetX_ * static_cast<float>(i),
-                               impl_->clonerOffsetY_ * static_cast<float>(i));
-      if (impl_->clonerRotationStep_ != 0.0f) {
-        cloneTransform.rotate(impl_->clonerRotationStep_ *
-                              static_cast<float>(i));
+    } else if (mode == 3) {
+      const int count = std::max(1, impl_->clonerCloneCount_);
+      for (int i = 0; i < count; ++i) {
+        const float cloneIndex = static_cast<float>(i);
+        QTransform cloneTransform;
+        cloneTransform.translate(
+            impl_->clonerOffsetX_ * cloneIndex,
+            impl_->clonerOffsetY_ * cloneIndex);
+        applyClonerComponentTransform2D(cloneTransform);
+        const QRectF jitterBounds = cloneTransform.mapRect(baseBounds).adjusted(
+            -std::abs(impl_->clonerJitterX_), -std::abs(impl_->clonerJitterY_),
+            std::abs(impl_->clonerJitterX_), std::abs(impl_->clonerJitterY_));
+        if (jitterBounds.isValid() && jitterBounds.width() > 0.0 &&
+            jitterBounds.height() > 0.0) {
+          visualBounds = visualBounds.united(jitterBounds);
+        }
       }
-      applyClonerComponentTransform2D(cloneTransform);
-      uniteCloneBounds(cloneTransform);
+    } else {
+      const int count = std::max(1, impl_->clonerCloneCount_);
+      for (int i = 0; i < count; ++i) {
+        QTransform cloneTransform;
+        cloneTransform.translate(impl_->clonerOffsetX_ * static_cast<float>(i),
+                                 impl_->clonerOffsetY_ * static_cast<float>(i));
+        if (impl_->clonerRotationStep_ != 0.0f) {
+          cloneTransform.rotate(impl_->clonerRotationStep_ *
+                                static_cast<float>(i));
+        }
+        applyClonerComponentTransform2D(cloneTransform);
+        uniteCloneBounds(cloneTransform);
+      }
     }
   }
 
@@ -1977,10 +2657,53 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
   obj["effects"] = effectsArr;
   obj["isAdjustment"] = impl_->isAdjustmentLayer_;
   obj["physics"] = impl_->physicsComponent_.settings().toJson();
+  QJsonObject motionObj;
+  motionObj["enabled"] = impl_->motionDynamicsEnabled_;
+  motionObj["mode"] = impl_->motionDynamicsMode_;
+  motionObj["stiffness"] = static_cast<double>(impl_->motionDynamicsStiffness_);
+  motionObj["damping"] = static_cast<double>(impl_->motionDynamicsDamping_);
+  motionObj["mass"] = static_cast<double>(impl_->motionDynamicsMass_);
+  motionObj["lagTau"] = static_cast<double>(impl_->motionDynamicsLagTau_);
+  motionObj["clampOvershoot"] = impl_->motionDynamicsClampOvershoot_;
+  motionObj["overshootLimit"] = static_cast<double>(impl_->motionDynamicsOvershootLimit_);
+  obj["motion"] = motionObj;
+  QJsonObject fractureObj;
+  fractureObj["enabled"] = impl_->fractureEnabled_;
+  fractureObj["preset"] = impl_->fracturePreset_;
+  fractureObj["crackThreshold"] = static_cast<double>(impl_->fractureCrackThreshold_);
+  fractureObj["shatterThreshold"] = static_cast<double>(impl_->fractureShatterThreshold_);
+  fractureObj["shardCount"] = impl_->fractureShardCount_;
+  fractureObj["shardDamping"] = static_cast<double>(impl_->fractureShardDamping_);
+  fractureObj["shardGravity"] = static_cast<double>(impl_->fractureShardGravity_);
+  fractureObj["impactSensitivity"] = static_cast<double>(impl_->fractureImpactSensitivity_);
+  fractureObj["stateKind"] = static_cast<int>(impl_->fractureState_.kind);
+  fractureObj["stateDamage"] = static_cast<double>(impl_->fractureState_.damage);
+  fractureObj["stateLastImpact"] = static_cast<double>(impl_->fractureState_.lastImpact);
+  fractureObj["stateCrackProgress"] = static_cast<double>(impl_->fractureState_.crackProgress);
+  obj["fracture"] = fractureObj;
   QJsonObject componentsObj;
   componentsObj["scriptEnabled"] = impl_->scriptComponentEnabled_;
   componentsObj["clonerEnabled"] = impl_->clonerComponentEnabled_;
   componentsObj["layoutEnabled"] = impl_->layoutComponentEnabled_;
+  componentsObj["collisionEnabled"] = impl_->collisionComponentEnabled_;
+  componentsObj["crowdEnabled"] = impl_->crowdComponentEnabled_;
+  componentsObj["crowdCohesion"] =
+      static_cast<double>(impl_->crowdCohesion_);
+  componentsObj["crowdSeparation"] =
+      static_cast<double>(impl_->crowdSeparation_);
+  componentsObj["crowdAlignment"] =
+      static_cast<double>(impl_->crowdAlignment_);
+  componentsObj["crowdMaxSpeed"] =
+      static_cast<double>(impl_->crowdMaxSpeed_);
+  componentsObj["crowdJitter"] =
+      static_cast<double>(impl_->crowdJitter_);
+  componentsObj["particleEmitterEnabled"] =
+      impl_->particleEmitterComponentEnabled_;
+  componentsObj["particleEmitterCount"] = impl_->particleEmitterCount_;
+  componentsObj["particleEmitterSpeed"] =
+      static_cast<double>(impl_->particleEmitterSpeed_);
+  componentsObj["particleEmitterLifetime"] =
+      static_cast<double>(impl_->particleEmitterLifetime_);
   componentsObj["layoutMode"] = impl_->layoutMode_;
   componentsObj["layoutAnchorMode"] = impl_->layoutAnchorMode_;
   componentsObj["layoutHorizontalPin"] = impl_->layoutHorizontalPin_;
@@ -2034,6 +2757,8 @@ QJsonObject ArtifactAbstractLayer::toJson() const {
     componentsObj["scriptBinding"] = impl_->scriptBinding_;
   }
   obj["components"] = componentsObj;
+  impl_->syncBuiltinComponentDescriptors();
+  obj["componentGraph"] = impl_->componentHost_.toJson();
 
   QJsonArray variantsArr;
   for (const auto& varPtr : impl_->variants_) {
@@ -2316,6 +3041,48 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
       impl_->physicsComponent_.settings().fromJson(obj["physics"].toObject());
       impl_->physicsComponent_.reset();
   }
+  if (obj.contains("motion") && obj["motion"].isObject()) {
+      const QJsonObject motionObj = obj["motion"].toObject();
+      impl_->motionDynamicsEnabled_ = motionObj.value(QStringLiteral("enabled")).toBool(false);
+      impl_->motionDynamicsMode_ = motionObj.value(QStringLiteral("mode")).toInt(0);
+      impl_->motionDynamicsStiffness_ = static_cast<float>(
+          std::clamp(motionObj.value(QStringLiteral("stiffness")).toDouble(80.0), 0.0, 1000.0));
+      impl_->motionDynamicsDamping_ = static_cast<float>(
+          std::clamp(motionObj.value(QStringLiteral("damping")).toDouble(16.0), 0.0, 100.0));
+      impl_->motionDynamicsMass_ = static_cast<float>(
+          std::clamp(motionObj.value(QStringLiteral("mass")).toDouble(1.0), 0.1, 100.0));
+      impl_->motionDynamicsLagTau_ = static_cast<float>(
+          std::clamp(motionObj.value(QStringLiteral("lagTau")).toDouble(0.1), 0.001, 10.0));
+      impl_->motionDynamicsClampOvershoot_ =
+          motionObj.value(QStringLiteral("clampOvershoot")).toBool(false);
+      impl_->motionDynamicsOvershootLimit_ = static_cast<float>(
+          std::clamp(motionObj.value(QStringLiteral("overshootLimit")).toDouble(0.3), 0.0, 2.0));
+      impl_->motionLastFrame_ = std::numeric_limits<int64_t>::min();
+  }
+  if (obj.contains("fracture") && obj["fracture"].isObject()) {
+      const QJsonObject fractureObj = obj["fracture"].toObject();
+      impl_->fractureEnabled_ = fractureObj.value(QStringLiteral("enabled")).toBool(false);
+      impl_->fracturePreset_ = std::clamp(fractureObj.value(QStringLiteral("preset")).toInt(static_cast<int>(FracturePreset::Glass)), 0, static_cast<int>(FracturePreset::Dust));
+      impl_->fractureCrackThreshold_ = static_cast<float>(
+          std::clamp(fractureObj.value(QStringLiteral("crackThreshold")).toDouble(1.0), 0.0, 1000.0));
+      impl_->fractureShatterThreshold_ = static_cast<float>(
+          std::clamp(fractureObj.value(QStringLiteral("shatterThreshold")).toDouble(2.5), 0.0, 1000.0));
+      impl_->fractureShardCount_ = std::max(1, fractureObj.value(QStringLiteral("shardCount")).toInt(16));
+      impl_->fractureShardDamping_ = static_cast<float>(
+          std::clamp(fractureObj.value(QStringLiteral("shardDamping")).toDouble(0.92), 0.0, 1.0));
+      impl_->fractureShardGravity_ = static_cast<float>(
+          std::clamp(fractureObj.value(QStringLiteral("shardGravity")).toDouble(0.0), -5000.0, 5000.0));
+      impl_->fractureImpactSensitivity_ = static_cast<float>(
+          std::clamp(fractureObj.value(QStringLiteral("impactSensitivity")).toDouble(1.0), 0.0, 10.0));
+      impl_->fractureState_.kind = static_cast<FractureStateKind>(
+          fractureObj.value(QStringLiteral("stateKind")).toInt(static_cast<int>(FractureStateKind::Intact)));
+      impl_->fractureState_.damage = static_cast<float>(
+          fractureObj.value(QStringLiteral("stateDamage")).toDouble(0.0));
+      impl_->fractureState_.lastImpact = static_cast<float>(
+          fractureObj.value(QStringLiteral("stateLastImpact")).toDouble(0.0));
+      impl_->fractureState_.crackProgress = static_cast<float>(
+          fractureObj.value(QStringLiteral("stateCrackProgress")).toDouble(0.0));
+  }
   if (obj.contains("components") && obj["components"].isObject()) {
       const QJsonObject componentsObj = obj["components"].toObject();
         impl_->scriptComponentEnabled_ =
@@ -2324,6 +3091,39 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
             componentsObj.value(QStringLiteral("clonerEnabled")).toBool(false);
         impl_->layoutComponentEnabled_ =
             componentsObj.value(QStringLiteral("layoutEnabled")).toBool(false);
+        impl_->collisionComponentEnabled_ =
+            componentsObj.value(QStringLiteral("collisionEnabled")).toBool(false);
+        impl_->crowdComponentEnabled_ =
+            componentsObj.value(QStringLiteral("crowdEnabled")).toBool(false);
+        impl_->crowdCohesion_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("crowdCohesion")).toDouble(0.5),
+            0.0, 10.0));
+        impl_->crowdSeparation_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("crowdSeparation")).toDouble(0.5),
+            0.0, 10.0));
+        impl_->crowdAlignment_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("crowdAlignment")).toDouble(0.5),
+            0.0, 10.0));
+        impl_->crowdMaxSpeed_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("crowdMaxSpeed")).toDouble(120.0),
+            0.0, 10000.0));
+        impl_->crowdJitter_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("crowdJitter")).toDouble(0.1),
+            0.0, 10.0));
+        impl_->particleEmitterComponentEnabled_ =
+            componentsObj.value(QStringLiteral("particleEmitterEnabled"))
+                .toBool(false);
+        impl_->particleEmitterCount_ = std::clamp(
+            componentsObj.value(QStringLiteral("particleEmitterCount")).toInt(16),
+            0, 100000);
+        impl_->particleEmitterSpeed_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("particleEmitterSpeed"))
+                .toDouble(120.0),
+            0.0, 100000.0));
+        impl_->particleEmitterLifetime_ = static_cast<float>(std::clamp(
+            componentsObj.value(QStringLiteral("particleEmitterLifetime"))
+                .toDouble(1.0),
+            0.01, 3600.0));
         impl_->layoutMode_ =
             componentsObj.value(QStringLiteral("layoutMode")).toInt(0);
         impl_->layoutAnchorMode_ =
@@ -2461,6 +3261,12 @@ void ArtifactAbstractLayer::fromJsonProperties(const QJsonObject &obj) {
         }
         impl_->scriptBinding_ = componentsObj.value(QStringLiteral("scriptBinding")).toObject();
     }
+  if (obj.contains(QStringLiteral("componentGraph")) &&
+      obj.value(QStringLiteral("componentGraph")).isArray()) {
+    impl_->componentHost_.fromJson(
+        obj.value(QStringLiteral("componentGraph")).toArray());
+  }
+  impl_->syncBuiltinComponentDescriptors();
 
   if (obj.contains("variants") && obj["variants"].isArray()) {
       impl_->variants_.clear();
@@ -2756,6 +3562,25 @@ int ArtifactAbstractLayer::modifierCount() const { return impl_->modifierCount()
 
 bool ArtifactAbstractLayer::hasModifiers() const { return impl_->hasModifiers(); }
 
+std::vector<LayerComponentDescriptor>
+ArtifactAbstractLayer::layerComponents() const {
+  impl_->syncBuiltinComponentDescriptors();
+  return impl_->componentHost_.components();
+}
+
+std::vector<LayerComponentDescriptor>
+ArtifactAbstractLayer::enabledLayerComponents(
+    const LayerComponentPhase phase) const {
+  impl_->syncBuiltinComponentDescriptors();
+  return impl_->componentHost_.enabledForPhase(phase);
+}
+
+std::vector<LayerComponentValidationIssue>
+ArtifactAbstractLayer::validateLayerComponents() const {
+  impl_->syncBuiltinComponentDescriptors();
+  return impl_->componentHost_.validate();
+}
+
 QJsonObject ArtifactAbstractLayer::scriptBinding() const {
   return impl_->scriptBinding_;
 }
@@ -2995,9 +3820,20 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   linearDampingProp->setStep(0.1);
   physicsGroup.addProperty(linearDampingProp);
 
+  auto restitutionProp =
+      makeProp(QStringLiteral("physics.restitution"), PropertyType::Float,
+               static_cast<double>(
+                   impl_->physicsComponent_.settings().restitution),
+               -94);
+  restitutionProp->setDisplayLabel(QStringLiteral("Collision Bounce"));
+  restitutionProp->setHardRange(0.0, 1.0);
+  restitutionProp->setSoftRange(0.0, 1.0);
+  restitutionProp->setStep(0.01);
+  physicsGroup.addProperty(restitutionProp);
+
   auto wiggleFreqProp =
       makeProp(QStringLiteral("physics.wiggleFreq"), PropertyType::Float,
-               static_cast<double>(impl_->physicsComponent_.settings().wiggleFreq), -94);
+               static_cast<double>(impl_->physicsComponent_.settings().wiggleFreq), -93);
   wiggleFreqProp->setUnit(QStringLiteral("Hz"));
   wiggleFreqProp->setSoftRange(0.0, 10.0);
   physicsGroup.addProperty(wiggleFreqProp);
@@ -3007,6 +3843,161 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                static_cast<double>(impl_->physicsComponent_.settings().wiggleAmp), -93);
   wiggleAmpProp->setSoftRange(0.0, 100.0);
   physicsGroup.addProperty(wiggleAmpProp);
+
+  PropertyGroup motionGroup(QStringLiteral("Motion"));
+  auto motionEnabledProp =
+      makeProp(QStringLiteral("motion.enabled"), PropertyType::Boolean,
+               impl_->motionDynamicsEnabled_, -92);
+  motionEnabledProp->setDisplayLabel(QStringLiteral("Enable"));
+  motionEnabledProp->setTooltip(
+      QStringLiteral("Use animation dynamics for transform follow-through."));
+  motionGroup.addProperty(motionEnabledProp);
+
+  auto motionModeProp =
+      makeProp(QStringLiteral("motion.mode"), PropertyType::Integer,
+               impl_->motionDynamicsMode_, -91);
+  motionModeProp->setDisplayLabel(QStringLiteral("Mode"));
+  motionModeProp->setTooltip(
+      QStringLiteral("0=Off, 1=Spring, 2=LagFollow. Choose the follow-through model."));
+  motionGroup.addProperty(motionModeProp);
+
+  auto motionStiffnessProp =
+      makeProp(QStringLiteral("motion.stiffness"), PropertyType::Float,
+               static_cast<double>(impl_->motionDynamicsStiffness_), -90);
+  motionStiffnessProp->setHardRange(0.0, 1000.0);
+  motionStiffnessProp->setSoftRange(0.0, 500.0);
+  motionStiffnessProp->setDisplayLabel(QStringLiteral("Stiffness"));
+  motionStiffnessProp->setTooltip(
+      QStringLiteral("Spring strength used by the follow-through solver."));
+  motionGroup.addProperty(motionStiffnessProp);
+
+  auto motionDampingProp =
+      makeProp(QStringLiteral("motion.damping"), PropertyType::Float,
+               static_cast<double>(impl_->motionDynamicsDamping_), -89);
+  motionDampingProp->setHardRange(0.0, 100.0);
+  motionDampingProp->setSoftRange(0.0, 50.0);
+  motionDampingProp->setDisplayLabel(QStringLiteral("Damping"));
+  motionDampingProp->setTooltip(
+      QStringLiteral("Energy loss per step. Higher values settle faster."));
+  motionGroup.addProperty(motionDampingProp);
+
+  auto motionMassProp =
+      makeProp(QStringLiteral("motion.mass"), PropertyType::Float,
+               static_cast<double>(impl_->motionDynamicsMass_), -88);
+  motionMassProp->setHardRange(0.1, 100.0);
+  motionMassProp->setSoftRange(0.1, 10.0);
+  motionMassProp->setDisplayLabel(QStringLiteral("Mass"));
+  motionMassProp->setTooltip(
+      QStringLiteral("Mass used by the follow-through response."));
+  motionGroup.addProperty(motionMassProp);
+
+  auto motionLagTauProp =
+      makeProp(QStringLiteral("motion.lagTau"), PropertyType::Float,
+               static_cast<double>(impl_->motionDynamicsLagTau_), -87);
+  motionLagTauProp->setHardRange(0.001, 10.0);
+  motionLagTauProp->setSoftRange(0.01, 1.0);
+  motionLagTauProp->setDisplayLabel(QStringLiteral("Lag Tau"));
+  motionLagTauProp->setTooltip(
+      QStringLiteral("Time constant used by the lag-follow mode."));
+  motionGroup.addProperty(motionLagTauProp);
+
+  auto motionClampOvershootProp =
+      makeProp(QStringLiteral("motion.clampOvershoot"), PropertyType::Boolean,
+               impl_->motionDynamicsClampOvershoot_, -86);
+  motionClampOvershootProp->setDisplayLabel(QStringLiteral("Clamp Overshoot"));
+  motionClampOvershootProp->setTooltip(
+      QStringLiteral("Keep the solver from overshooting too far."));
+  motionGroup.addProperty(motionClampOvershootProp);
+
+  auto motionOvershootLimitProp =
+      makeProp(QStringLiteral("motion.overshootLimit"), PropertyType::Float,
+               static_cast<double>(impl_->motionDynamicsOvershootLimit_), -85);
+  motionOvershootLimitProp->setHardRange(0.0, 2.0);
+  motionOvershootLimitProp->setSoftRange(0.0, 1.0);
+  motionOvershootLimitProp->setDisplayLabel(QStringLiteral("Overshoot Limit"));
+  motionOvershootLimitProp->setTooltip(
+      QStringLiteral("Maximum overshoot ratio when clamping is enabled."));
+  motionGroup.addProperty(motionOvershootLimitProp);
+
+  PropertyGroup fractureGroup(QStringLiteral("Fracture"));
+  auto fractureEnabledProp =
+      makeProp(QStringLiteral("fracture.enabled"), PropertyType::Boolean,
+               impl_->fractureEnabled_, -84);
+  fractureEnabledProp->setDisplayLabel(QStringLiteral("Enable"));
+  fractureEnabledProp->setTooltip(
+      QStringLiteral("Enable fracture overlay, shard motion, and crack state."));
+  fractureGroup.addProperty(fractureEnabledProp);
+
+  auto fracturePresetProp =
+      makeProp(QStringLiteral("fracture.preset"), PropertyType::Integer,
+               impl_->fracturePreset_, -83);
+  fracturePresetProp->setDisplayLabel(QStringLiteral("Profile"));
+  fracturePresetProp->setTooltip(
+      QStringLiteral("Base fracture profile. 0=Glass, 1=Concrete, 2=Stone, 3=Metal, 4=Wood, 5=Dust. Fine-tune the threshold and shard controls below."));
+  fracturePresetProp->setHardRange(0.0, 5.0);
+  fracturePresetProp->setSoftRange(0.0, 5.0);
+  fractureGroup.addProperty(fracturePresetProp);
+
+  auto fractureCrackThresholdProp =
+      makeProp(QStringLiteral("fracture.crackThreshold"), PropertyType::Float,
+               static_cast<double>(impl_->fractureCrackThreshold_), -82);
+  fractureCrackThresholdProp->setHardRange(0.0, 1000.0);
+  fractureCrackThresholdProp->setSoftRange(0.0, 100.0);
+  fractureCrackThresholdProp->setDisplayLabel(QStringLiteral("Crack Threshold"));
+  fractureCrackThresholdProp->setTooltip(
+      QStringLiteral("Damage required before the layer enters a cracked state."));
+  fractureGroup.addProperty(fractureCrackThresholdProp);
+
+  auto fractureShatterThresholdProp =
+      makeProp(QStringLiteral("fracture.shatterThreshold"), PropertyType::Float,
+               static_cast<double>(impl_->fractureShatterThreshold_), -81);
+  fractureShatterThresholdProp->setHardRange(0.0, 1000.0);
+  fractureShatterThresholdProp->setSoftRange(0.0, 200.0);
+  fractureShatterThresholdProp->setDisplayLabel(QStringLiteral("Shatter Threshold"));
+  fractureShatterThresholdProp->setTooltip(
+      QStringLiteral("Damage required before the layer spawns fracture shards."));
+  fractureGroup.addProperty(fractureShatterThresholdProp);
+
+  auto fractureShardCountProp =
+      makeProp(QStringLiteral("fracture.shardCount"), PropertyType::Integer,
+               impl_->fractureShardCount_, -80);
+  fractureShardCountProp->setHardRange(1.0, 256.0);
+  fractureShardCountProp->setSoftRange(4.0, 64.0);
+  fractureShardCountProp->setDisplayLabel(QStringLiteral("Shard Count"));
+  fractureShardCountProp->setTooltip(
+      QStringLiteral("Number of shards spawned when the layer fractures."));
+  fractureGroup.addProperty(fractureShardCountProp);
+
+  auto fractureShardDampingProp =
+      makeProp(QStringLiteral("fracture.shardDamping"), PropertyType::Float,
+               static_cast<double>(impl_->fractureShardDamping_), -79);
+  fractureShardDampingProp->setHardRange(0.0, 1.0);
+  fractureShardDampingProp->setSoftRange(0.0, 1.0);
+  fractureShardDampingProp->setDisplayLabel(QStringLiteral("Shard Damping"));
+  fractureShardDampingProp->setTooltip(
+      QStringLiteral("How quickly the spawned shards lose momentum."));
+  fractureGroup.addProperty(fractureShardDampingProp);
+
+  auto fractureShardGravityProp =
+      makeProp(QStringLiteral("fracture.shardGravity"), PropertyType::Float,
+               static_cast<double>(impl_->fractureShardGravity_), -78);
+  fractureShardGravityProp->setUnit(QStringLiteral("px/s^2"));
+  fractureShardGravityProp->setHardRange(-5000.0, 5000.0);
+  fractureShardGravityProp->setSoftRange(-2000.0, 2000.0);
+  fractureShardGravityProp->setDisplayLabel(QStringLiteral("Shard Gravity"));
+  fractureShardGravityProp->setTooltip(
+      QStringLiteral("Vertical gravity applied to fracture shards."));
+  fractureGroup.addProperty(fractureShardGravityProp);
+
+  auto fractureImpactSensitivityProp =
+      makeProp(QStringLiteral("fracture.impactSensitivity"), PropertyType::Float,
+               static_cast<double>(impl_->fractureImpactSensitivity_), -77);
+  fractureImpactSensitivityProp->setHardRange(0.0, 10.0);
+  fractureImpactSensitivityProp->setSoftRange(0.0, 2.0);
+  fractureImpactSensitivityProp->setDisplayLabel(QStringLiteral("Impact Sensitivity"));
+  fractureImpactSensitivityProp->setTooltip(
+      QStringLiteral("How strongly incoming impacts contribute to fracture damage."));
+  fractureGroup.addProperty(fractureImpactSensitivityProp);
 
   PropertyGroup componentGroup(QStringLiteral("Components"));
   auto scriptComponentEnabledProp =
@@ -3020,8 +4011,76 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
                PropertyType::Boolean, impl_->clonerComponentEnabled_, -90);
   clonerComponentEnabledProp->setDisplayLabel(QStringLiteral("Cloner Enabled"));
   componentGroup.addProperty(clonerComponentEnabledProp);
+  auto collisionComponentEnabledProp =
+      makeProp(QStringLiteral("component.collision.enabled"),
+               PropertyType::Boolean, impl_->collisionComponentEnabled_, -89);
+  collisionComponentEnabledProp->setDisplayLabel(
+      QStringLiteral("Collision Enabled"));
+  componentGroup.addProperty(collisionComponentEnabledProp);
+  auto crowdComponentEnabledProp =
+      makeProp(QStringLiteral("component.crowd.enabled"),
+               PropertyType::Boolean, impl_->crowdComponentEnabled_, -88);
+  crowdComponentEnabledProp->setDisplayLabel(QStringLiteral("Crowd Enabled"));
+  componentGroup.addProperty(crowdComponentEnabledProp);
+  auto particleEmitterComponentEnabledProp =
+      makeProp(QStringLiteral("component.particleEmitter.enabled"),
+               PropertyType::Boolean,
+               impl_->particleEmitterComponentEnabled_, -87);
+  particleEmitterComponentEnabledProp->setDisplayLabel(
+      QStringLiteral("Particle Emitter Enabled"));
+  componentGroup.addProperty(particleEmitterComponentEnabledProp);
   PropertyGroup layoutGroup(QStringLiteral("Layout"));
   PropertyGroup clonerGroup(QStringLiteral("Cloner"));
+  PropertyGroup crowdGroup(QStringLiteral("Crowd"));
+  PropertyGroup particleEmitterGroup(QStringLiteral("Particle Emitter"));
+
+  auto addCrowdFloat = [&](const QString& name, const QString& label,
+                           float value, double hardMax, int order) {
+    auto prop = makeProp(name, PropertyType::Float,
+                         static_cast<double>(value), order);
+    prop->setDisplayLabel(label);
+    prop->setHardRange(0.0, hardMax);
+    prop->setSoftRange(0.0, std::min(10.0, hardMax));
+    crowdGroup.addProperty(prop);
+  };
+  addCrowdFloat(QStringLiteral("component.crowd.cohesion"),
+                QStringLiteral("Cohesion"), impl_->crowdCohesion_, 10.0, -86);
+  addCrowdFloat(QStringLiteral("component.crowd.separation"),
+                QStringLiteral("Separation"), impl_->crowdSeparation_, 10.0,
+                -85);
+  addCrowdFloat(QStringLiteral("component.crowd.alignment"),
+                QStringLiteral("Alignment"), impl_->crowdAlignment_, 10.0,
+                -84);
+  addCrowdFloat(QStringLiteral("component.crowd.maxSpeed"),
+                QStringLiteral("Max Speed"), impl_->crowdMaxSpeed_, 10000.0,
+                -83);
+  addCrowdFloat(QStringLiteral("component.crowd.jitter"),
+                QStringLiteral("Jitter"), impl_->crowdJitter_, 10.0, -82);
+
+  auto particleCountProp =
+      makeProp(QStringLiteral("component.particleEmitter.count"),
+               PropertyType::Integer, impl_->particleEmitterCount_, -81);
+  particleCountProp->setDisplayLabel(QStringLiteral("Burst Count"));
+  particleCountProp->setHardRange(0.0, 100000.0);
+  particleCountProp->setSoftRange(0.0, 1024.0);
+  particleEmitterGroup.addProperty(particleCountProp);
+  auto particleSpeedProp =
+      makeProp(QStringLiteral("component.particleEmitter.speed"),
+               PropertyType::Float,
+               static_cast<double>(impl_->particleEmitterSpeed_), -80);
+  particleSpeedProp->setDisplayLabel(QStringLiteral("Initial Speed"));
+  particleSpeedProp->setHardRange(0.0, 100000.0);
+  particleSpeedProp->setSoftRange(0.0, 2000.0);
+  particleEmitterGroup.addProperty(particleSpeedProp);
+  auto particleLifetimeProp =
+      makeProp(QStringLiteral("component.particleEmitter.lifetime"),
+               PropertyType::Float,
+               static_cast<double>(impl_->particleEmitterLifetime_), -79);
+  particleLifetimeProp->setDisplayLabel(QStringLiteral("Lifetime"));
+  particleLifetimeProp->setUnit(QStringLiteral("s"));
+  particleLifetimeProp->setHardRange(0.01, 3600.0);
+  particleLifetimeProp->setSoftRange(0.1, 30.0);
+  particleEmitterGroup.addProperty(particleLifetimeProp);
   auto layoutComponentEnabledProp =
       makeProp(QStringLiteral("component.layout.enabled"),
                PropertyType::Boolean, impl_->layoutComponentEnabled_, -89);
@@ -3376,13 +4435,17 @@ ArtifactAbstractLayer::getLayerPropertyGroups() const {
   }
 
   std::vector<PropertyGroup> groups;
-  groups.reserve(7 + maskGroups.size());
+  groups.reserve(9 + maskGroups.size());
   groups.push_back(std::move(initialGroup));
   groups.push_back(std::move(transformGroup));
   groups.push_back(std::move(physicsGroup));
+  groups.push_back(std::move(motionGroup));
+  groups.push_back(std::move(fractureGroup));
   groups.push_back(std::move(componentGroup));
   groups.push_back(std::move(layoutGroup));
   groups.push_back(std::move(clonerGroup));
+  groups.push_back(std::move(crowdGroup));
+  groups.push_back(std::move(particleEmitterGroup));
   groups.push_back(std::move(layerGroup));
   for (auto &group : maskGroups) {
     groups.push_back(std::move(group));
@@ -3545,7 +4608,12 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
 
   // Physics properties
   if (propertyPath == QStringLiteral("physics.enabled")) {
-    impl_->physicsComponent_.setEnabled(value.toBool());
+    const bool enabled = value.toBool();
+    impl_->physicsComponent_.setEnabled(enabled);
+    if (enabled) {
+      impl_->collisionOwnsPhysicsEnable_ = false;
+    }
+    impl_->syncBuiltinComponentDescriptors();
     Q_EMIT changed();
     return true;
   }
@@ -3571,12 +4639,85 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     impl_->physicsComponent_.reset();
     return true;
   }
+  if (propertyPath == QStringLiteral("physics.restitution")) {
+    impl_->physicsComponent_.settings().restitution =
+        static_cast<float>(
+            std::clamp(value.toDouble(), 0.0, 1.0));
+    return true;
+  }
   if (propertyPath == QStringLiteral("physics.wiggleFreq")) {
     impl_->physicsComponent_.settings().wiggleFreq = static_cast<float>(value.toDouble());
     return true;
   }
   if (propertyPath == QStringLiteral("physics.wiggleAmp")) {
     impl_->physicsComponent_.settings().wiggleAmp = static_cast<float>(value.toDouble());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("motion.enabled")) {
+    impl_->motionDynamicsEnabled_ = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("motion.mode")) {
+    impl_->motionDynamicsMode_ = std::clamp(value.toInt(), 0, 2);
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("motion.stiffness")) {
+    impl_->motionDynamicsStiffness_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 1000.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("motion.damping")) {
+    impl_->motionDynamicsDamping_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 100.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("motion.mass")) {
+    impl_->motionDynamicsMass_ = static_cast<float>(std::clamp(value.toDouble(), 0.1, 100.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("motion.lagTau")) {
+    impl_->motionDynamicsLagTau_ = static_cast<float>(std::clamp(value.toDouble(), 0.001, 10.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("motion.clampOvershoot")) {
+    impl_->motionDynamicsClampOvershoot_ = value.toBool();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("motion.overshootLimit")) {
+    impl_->motionDynamicsOvershootLimit_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 2.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.enabled")) {
+    impl_->fractureEnabled_ = value.toBool();
+    Q_EMIT changed();
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.preset")) {
+    impl_->fracturePreset_ = std::clamp(value.toInt(), 0, static_cast<int>(FracturePreset::Dust));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.crackThreshold")) {
+    impl_->fractureCrackThreshold_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 1000.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.shatterThreshold")) {
+    impl_->fractureShatterThreshold_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 1000.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.shardCount")) {
+    impl_->fractureShardCount_ = std::max(1, value.toInt());
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.shardDamping")) {
+    impl_->fractureShardDamping_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 1.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.shardGravity")) {
+    impl_->fractureShardGravity_ = static_cast<float>(std::clamp(value.toDouble(), -5000.0, 5000.0));
+    return true;
+  }
+  if (propertyPath == QStringLiteral("fracture.impactSensitivity")) {
+    impl_->fractureImpactSensitivity_ = static_cast<float>(std::clamp(value.toDouble(), 0.0, 10.0));
     return true;
   }
 
@@ -3682,8 +4823,102 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
                           LayerDirtyReason::PropertyChanged);
       return true;
     }
+    if (propertyPath == QStringLiteral("component.collision.enabled")) {
+      impl_->collisionComponentEnabled_ = value.toBool();
+      impl_->lastCollisionImpactFrame_ =
+          std::numeric_limits<int64_t>::min();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.crowd.enabled")) {
+      impl_->crowdComponentEnabled_ = value.toBool();
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.crowd.cohesion")) {
+      impl_->crowdCohesion_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.0, 10.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.crowd.separation")) {
+      impl_->crowdSeparation_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.0, 10.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.crowd.alignment")) {
+      impl_->crowdAlignment_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.0, 10.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.crowd.maxSpeed")) {
+      impl_->crowdMaxSpeed_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.0, 10000.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.crowd.jitter")) {
+      impl_->crowdJitter_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.0, 10.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.particleEmitter.enabled")) {
+      impl_->particleEmitterComponentEnabled_ = value.toBool();
+      if (!impl_->particleEmitterComponentEnabled_) {
+        impl_->componentParticles_.clear();
+        impl_->componentParticlesLastFrame_ =
+            std::numeric_limits<int64_t>::min();
+      }
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.particleEmitter.count")) {
+      impl_->particleEmitterCount_ = std::clamp(value.toInt(), 0, 100000);
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath == QStringLiteral("component.particleEmitter.speed")) {
+      impl_->particleEmitterSpeed_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.0, 100000.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
+    if (propertyPath ==
+        QStringLiteral("component.particleEmitter.lifetime")) {
+      impl_->particleEmitterLifetime_ =
+          static_cast<float>(std::clamp(value.toDouble(), 0.01, 3600.0));
+      impl_->syncBuiltinComponentDescriptors();
+      notifyLayerMutation(this, LayerDirtyFlag::Effect,
+                          LayerDirtyReason::PropertyChanged);
+      return true;
+    }
     if (propertyPath == QStringLiteral("component.layout.enabled")) {
       impl_->layoutComponentEnabled_ = value.toBool();
+      impl_->syncBuiltinComponentDescriptors();
       Q_EMIT changed();
       return true;
     }
@@ -3744,6 +4979,7 @@ bool ArtifactAbstractLayer::setLayerPropertyValue(const QString &propertyPath,
     }
     if (propertyPath == QStringLiteral("component.cloner.enabled")) {
       impl_->clonerComponentEnabled_ = value.toBool();
+      impl_->syncBuiltinComponentDescriptors();
       notifyLayerMutation(this, LayerDirtyFlag::Effect,
                           LayerDirtyReason::PropertyChanged);
       return true;

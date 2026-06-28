@@ -122,6 +122,21 @@ struct LayerPlacementSnapshot {
   QPointF position;
 };
 
+template <typename Handler>
+QAction* addIconAction(QMenu* menu, const QString& text, const QString& iconPath, Handler&& handler)
+{
+  QAction* action = menu->addAction(text, std::forward<Handler>(handler));
+  action->setIcon(QIcon(resolveIconPath(iconPath)));
+  return action;
+}
+
+inline QMenu* addIconMenu(QMenu* menu, const QString& text, const QString& iconPath)
+{
+  QMenu* subMenu = menu->addMenu(text);
+  subMenu->setIcon(QIcon(resolveIconPath(iconPath)));
+  return subMenu;
+}
+
 QDockWidget* findDockByTitle(QMainWindow* window, const QString& title)
 {
   if (!window) {
@@ -381,6 +396,64 @@ TimelineLayerIconKind layerIconKindForLayer(const ArtifactAbstractLayerPtr& laye
     });
 
     menu.exec(globalPos);
+  }
+
+  void buildSelectedLayerMenu(
+      QMenu* menu,
+      const ArtifactAbstractLayerPtr& layer,
+      const std::function<void()>& openInspector,
+      const std::function<void()>& openProperties,
+      const std::function<void(bool)>& toggleVisibility,
+      const std::function<void(bool)>& toggleLock,
+      const std::function<void(bool)>& toggleSolo,
+      const std::function<void(bool)>& toggleShy,
+      const std::function<void()>& selectParent,
+      const std::function<void()>& clearParent,
+      const std::function<void()>& renameLayer,
+      const std::function<void()>& duplicateLayer,
+      const std::function<void()>& deleteLayer,
+      const std::function<void()>& precomposeSelectedLayers)
+  {
+    if (!menu || !layer) {
+      return;
+    }
+
+    auto* inspectorAction = menu->addAction(QStringLiteral("インスペクターを開く"), [openInspector]() { openInspector(); });
+    inspectorAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    auto* propertiesAction = menu->addAction(QStringLiteral("プロパティを開く"), [openProperties]() { openProperties(); });
+    propertiesAction->setIcon(QIcon(resolveIconPath("Studio/layermenu_settings.svg")));
+    menu->addSeparator();
+    QMenu* switchMenu = addIconMenu(menu, QStringLiteral("切替"), QStringLiteral("Studio/layermenu_settings.svg"));
+    auto* visibilityAction = addIconAction(switchMenu, QStringLiteral("表示/非表示を切替"), QStringLiteral("Studio/layermenu_visibility.svg"),
+                                          [toggleVisibility, layer]() { toggleVisibility(!layer->isVisible()); });
+    visibilityAction->setCheckable(true);
+    visibilityAction->setChecked(layer->isVisible());
+    auto* lockAction = addIconAction(switchMenu, QStringLiteral("ロックを切替"), QStringLiteral("Studio/layermenu_lock.svg"),
+                                     [toggleLock, layer]() { toggleLock(!layer->isLocked()); });
+    lockAction->setCheckable(true);
+    lockAction->setChecked(layer->isLocked());
+    auto* soloAction = addIconAction(switchMenu, QStringLiteral("ソロを切替"), QStringLiteral("Studio/layermenu_solo_only.svg"),
+                                     [toggleSolo, layer]() { toggleSolo(!layer->isSolo()); });
+    soloAction->setCheckable(true);
+    soloAction->setChecked(layer->isSolo());
+    auto* shyAction = addIconAction(switchMenu, QStringLiteral("シャイを切替"), QStringLiteral("Studio/layermenu_shy.svg"),
+                                    [toggleShy, layer]() { toggleShy(!layer->isShy()); });
+    shyAction->setCheckable(true);
+    shyAction->setChecked(layer->isShy());
+    menu->addSeparator();
+    QMenu* organizeMenu = addIconMenu(menu, QStringLiteral("整理"), QStringLiteral("Studio/layermenu_group.svg"));
+    addIconAction(organizeMenu, QStringLiteral("親を選択"), QStringLiteral("Studio/layermenu_parent_select.svg"),
+                  [selectParent]() { selectParent(); });
+    addIconAction(organizeMenu, QStringLiteral("親を解除"), QStringLiteral("Studio/layermenu_parent_clear.svg"),
+                  [clearParent]() { clearParent(); });
+    addIconAction(organizeMenu, QStringLiteral("レイヤー名を変更..."), QStringLiteral("Studio/layermenu_rename.svg"),
+                  [renameLayer]() { renameLayer(); });
+    addIconAction(organizeMenu, QStringLiteral("レイヤーを複製"), QStringLiteral("Studio/layermenu_content_copy.svg"),
+                  [duplicateLayer]() { duplicateLayer(); });
+    addIconAction(organizeMenu, QStringLiteral("レイヤーを削除"), QStringLiteral("Studio/layermenu_delete.svg"),
+                  [deleteLayer]() { deleteLayer(); });
+    addIconAction(organizeMenu, QStringLiteral("選択レイヤーをプリコンポーズ"), QStringLiteral("Studio/layermenu_group.svg"),
+                  [precomposeSelectedLayers]() { precomposeSelectedLayers(); });
   }
 
   void applyLayerPanelButtonPalette(QPushButton* button, bool accent = false)
@@ -723,7 +796,7 @@ namespace {
           items.emplace_back(blendModeDisplayName(mode), toLegacyBlendType(mode));
         }
       }
-      items.emplace_back(QString(), LAYER_BLEND_TYPE::LAYER_BLEND_NORMAL);
+      items.emplace_back(QString(), LAYER_BLEND_TYPE::BLEND_NORMAL);
     }
     for (std::size_t i = 0; i < blendModeCount; ++i) {
       const auto mode = static_cast<BlendMode>(i);
@@ -796,6 +869,10 @@ namespace {
    QSet<QString> seenPropertyNames;
 
    for (const auto& group : layer->getLayerPropertyGroups()) {
+    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+            group.name())) {
+     continue;
+    }
     for (const auto& property : group.sortedProperties()) {
      if (!property || !property->isAnimatable()) {
       continue;
@@ -825,12 +902,8 @@ namespace {
    std::vector<ArtifactCore::PropertyGroup> result;
    result.reserve(groups.size());
    for (const auto& group : groups) {
-    const QString groupName = group.name().trimmed();
-    if (groupName.compare(QStringLiteral("Parent"), Qt::CaseInsensitive) == 0 ||
-        groupName.compare(QStringLiteral("Blend"), Qt::CaseInsensitive) == 0 ||
-        groupName.compare(QStringLiteral("BlendMode"), Qt::CaseInsensitive) == 0 ||
-        groupName.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0 ||
-        groupName.compare(QStringLiteral("Physics"), Qt::CaseInsensitive) == 0) {
+    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+            group.name())) {
      continue;
     }
     if (group.propertyCount() == 0) {
@@ -839,6 +912,12 @@ namespace {
     result.push_back(group);
    }
    return result;
+  }
+
+  bool timelineGroupExpandedByDefault(const QString& groupName)
+  {
+   return ArtifactTimelineKeyframeModel::isTimelinePropertyGroupExpandedByDefault(
+       groupName);
   }
 
   QString compactPropertyRowLabel(const QString& propertyPath)
@@ -938,6 +1017,7 @@ QString tt(const char* key, const char* fallback)
   QPushButton* soloButton = nullptr;
   QPushButton* audioButton = nullptr;
   QPushButton* layerNameButton = nullptr;
+  QPushButton* selectionMenuButton = nullptr;
   QPushButton* shyButton = nullptr;
   QPushButton* parentHeaderButton = nullptr;
   QPushButton* blendHeaderButton = nullptr;
@@ -1008,6 +1088,13 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   layerNameButton->setFocusPolicy(Qt::NoFocus);
   layerNameButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(layerNameButton);
+
+  auto selectionMenuButton = impl_->selectionMenuButton = new QPushButton(QStringLiteral("選択レイヤー▼"));
+  selectionMenuButton->setFocusPolicy(Qt::NoFocus);
+  selectionMenuButton->setFlat(true);
+  selectionMenuButton->setIcon(QIcon(resolveIconPath("Studio/layermenu_select_all.svg")));
+  selectionMenuButton->setToolTip(QStringLiteral("選択中レイヤーの操作メニュー"));
+  applyLayerPanelButtonPalette(selectionMenuButton);
   
   auto parentHeader = impl_->parentHeaderButton = new QPushButton("Parent");
   parentHeader->setFixedWidth(kInlineParentWidth);
@@ -1032,6 +1119,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   layout->addWidget(audioButton);
   layout->addWidget(shyButton);
   layout->addWidget(layerNameButton, 1);
+  layout->addWidget(selectionMenuButton);
   
   // These should match the spacing in paintEvent (kInlineComboGap = 6)
   layout->addWidget(parentHeader);
@@ -1061,6 +1149,7 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
 
 int ArtifactLayerPanelHeaderWidget::buttonSize() const { return kLayerHeaderButtonSize; }
 int ArtifactLayerPanelHeaderWidget::iconSize() const { return 14; }
+QPushButton* ArtifactLayerPanelHeaderWidget::selectionMenuButton() const { return impl_ ? impl_->selectionMenuButton : nullptr; }
 int ArtifactLayerPanelHeaderWidget::totalHeaderHeight() const
 {
  return minimumHeight() > 0 ? minimumHeight() : sizeHint().height();
@@ -2229,6 +2318,10 @@ public:
        if (searchInProperties_ && !nameMatch) {
          const auto groups = l->getLayerPropertyGroups();
          for (const auto& group : groups) {
+           if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+                   group.name())) {
+            continue;
+           }
            if (group.name().contains(needle, Qt::CaseInsensitive)) {
              propMatch = true;
              break;
@@ -2244,22 +2337,6 @@ public:
     return;
    }
 
-   QHash<QString, ArtifactAbstractLayerPtr> byId;
-   for (const auto& l : layers) {
-    byId.insert(l->id().toString(), l);
-   }
-
-   QHash<QString, QVector<ArtifactAbstractLayerPtr>> children;
-   QVector<ArtifactAbstractLayerPtr> roots;
-   for (const auto& l : layers) {
-    const QString parentId = l->parentLayerId().toString();
-    if (parentId.isEmpty() || !byId.contains(parentId)) {
-      roots.push_back(l);
-    } else {
-      children[parentId].push_back(l);
-    }
-   }
-
    QSet<QString> emitted;
    std::function<void(const ArtifactAbstractLayerPtr&, int, QSet<QString>&)> appendNode =
     [&](const ArtifactAbstractLayerPtr& node, int depth, QSet<QString>& stack) {
@@ -2268,12 +2345,11 @@ public:
      if (stack.contains(nodeId)) return; // cycle guard
      if (emitted.contains(nodeId)) return;
 
-   const auto nodeChildren = children.value(nodeId);
    const auto panelGroups = layerPanelPropertyGroups(node);
    const auto matteRefs = node->matteReferences();
    const bool hasMaskStack = node->hasMasks();
    const bool hasMatteStack = !matteRefs.empty();
-   const bool hasChildren = !nodeChildren.isEmpty() || !panelGroups.empty() || hasMaskStack || hasMatteStack;
+   const bool hasChildren = !panelGroups.empty() || hasMaskStack || hasMatteStack;
    const bool expanded = expandedByLayerId.value(nodeId, true);
    if (!layerMatchesDisplayMode(node, displayMode, selectedLayerId)) {
     return;
@@ -2303,7 +2379,8 @@ public:
                                    ? QStringLiteral("Layer")
                                    : groupDef.name().trimmed();
      const QString groupKey = nodeId + QStringLiteral("::") + groupName.toLower();
-     const bool groupExpanded = expandedByGroupKey.value(groupKey, true);
+     const bool groupExpanded =
+         expandedByGroupKey.value(groupKey, timelineGroupExpandedByDefault(groupName));
       const bool hasVisibleProperties = groupHasVisibleProperties(groupDef, displayMode);
       if (!hasVisibleProperties) {
        continue;
@@ -2347,7 +2424,7 @@ public:
 
     if (hasMaskStack) {
       const QString maskGroupKey = nodeId + QStringLiteral("::masks");
-      const bool maskExpanded = expandedByGroupKey.value(maskGroupKey, true);
+      const bool maskExpanded = expandedByGroupKey.value(maskGroupKey, false);
       visibleRows.push_back(VisibleRow{
        node,
        depth + 1,
@@ -2381,7 +2458,7 @@ public:
 
     if (hasMatteStack) {
       const QString matteGroupKey = nodeId + QStringLiteral("::mattes");
-      const bool matteExpanded = expandedByGroupKey.value(matteGroupKey, true);
+      const bool matteExpanded = expandedByGroupKey.value(matteGroupKey, false);
       visibleRows.push_back(VisibleRow{
        node,
        depth + 1,
@@ -2413,25 +2490,14 @@ public:
       }
     }
 
-     stack.insert(nodeId);
-     for (const auto& child : nodeChildren) {
-      appendNode(child, depth + 1, stack);
-     }
-     stack.remove(nodeId);
    };
 
-   for (const auto& root : roots) {
+   // The composition vector renders bottom-to-top. `layers` is its reverse,
+   // so preserve this exact top-to-bottom order in the timeline. Parenting is
+   // transform metadata and must not regroup the compositing stack.
+   for (const auto& layer : layers) {
     QSet<QString> stack;
-    appendNode(root, 0, stack);
-   }
-
-   // fallback: if malformed hierarchy exists, ensure all nodes are still shown once.
-   for (const auto& l : layers) {
-    const QString id = l->id().toString();
-    if (!emitted.contains(id)) {
-      QSet<QString> stack;
-      appendNode(l, 0, stack);
-    }
+    appendNode(layer, 0, stack);
    }
   }
  };
@@ -2708,8 +2774,8 @@ void ArtifactLayerPanelWidget::performUpdateLayout()
 
   if (!impl_->selectedMaskLayerId.isNil() &&
       impl_->selectedMaskLayerId == impl_->selectedLayerId) {
-    auto comp = safeCompositionLookup(impl_->compositionId);
-    auto layer = comp ? comp->layerById(impl_->selectedMaskLayerId)
+    auto currentComp = safeCompositionLookup(impl_->compositionId);
+    auto layer = currentComp ? currentComp->layerById(impl_->selectedMaskLayerId)
                       : ArtifactAbstractLayerPtr{};
     if (!layer || layer->maskCount() <= 0) {
       if (impl_->selectedMaskIndex >= 0 ||
@@ -3388,6 +3454,7 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
 
     const QVector<LayerID> selectedIds = selectedLayerIdsSnapshot();
     const QVector<LayerID> selectedVisibleIds = selectedLayerIdsInVisibleOrder(impl_->visibleRows);
+    auto currentComp = safeCompositionLookup(impl_->compositionId);
     auto triggerDeleteSelectedLayers = [this, selectedIds]() {
       if (selectedIds.size() <= 1) {
         return;
@@ -3521,14 +3588,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     };
 
-    auto triggerSelectedVisibility = [this, comp, selectedVisibleIds](bool visible) {
-      if (selectedVisibleIds.isEmpty() || !comp) {
+    auto triggerSelectedVisibility = [this, currentComp, selectedVisibleIds](bool visible) {
+      if (selectedVisibleIds.isEmpty() || !currentComp) {
         return;
       }
       auto macro = std::make_unique<MacroUndoCommand>(
           visible ? QStringLiteral("Show Layers") : QStringLiteral("Hide Layers"));
       for (const auto& layerId : selectedVisibleIds) {
-        if (auto layer = comp->layerById(layerId)) {
+        if (auto layer = currentComp->layerById(layerId)) {
           macro->addChild(std::make_unique<SetLayerVisibilityCommand>(layer, visible));
         }
       }
@@ -3536,14 +3603,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       updateLayout();
     };
 
-    auto triggerSelectedLock = [this, comp, selectedVisibleIds](bool locked) {
-      if (selectedVisibleIds.isEmpty() || !comp) {
+    auto triggerSelectedLock = [this, currentComp, selectedVisibleIds](bool locked) {
+      if (selectedVisibleIds.isEmpty() || !currentComp) {
         return;
       }
       auto macro = std::make_unique<MacroUndoCommand>(
           locked ? QStringLiteral("Lock Layers") : QStringLiteral("Unlock Layers"));
       for (const auto& layerId : selectedVisibleIds) {
-        if (auto layer = comp->layerById(layerId)) {
+        if (auto layer = currentComp->layerById(layerId)) {
           macro->addChild(std::make_unique<SetLayerLockCommand>(layer, locked));
         }
       }
@@ -3551,14 +3618,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       updateLayout();
     };
 
-    auto triggerSelectedSolo = [this, comp, selectedVisibleIds](bool solo) {
-      if (selectedVisibleIds.isEmpty() || !comp) {
+    auto triggerSelectedSolo = [this, currentComp, selectedVisibleIds](bool solo) {
+      if (selectedVisibleIds.isEmpty() || !currentComp) {
         return;
       }
       auto macro = std::make_unique<MacroUndoCommand>(
           solo ? QStringLiteral("Solo Layers") : QStringLiteral("Unsolo Layers"));
       for (const auto& layerId : selectedVisibleIds) {
-        if (auto layer = comp->layerById(layerId)) {
+        if (auto layer = currentComp->layerById(layerId)) {
           macro->addChild(std::make_unique<SetLayerSoloCommand>(layer, solo));
         }
       }
@@ -3566,14 +3633,14 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       updateLayout();
     };
 
-    auto triggerSelectedShy = [this, comp, selectedVisibleIds](bool shy) {
-      if (selectedVisibleIds.isEmpty() || !comp) {
+    auto triggerSelectedShy = [this, currentComp, selectedVisibleIds](bool shy) {
+      if (selectedVisibleIds.isEmpty() || !currentComp) {
         return;
       }
       auto macro = std::make_unique<MacroUndoCommand>(
           shy ? QStringLiteral("Shy Layers") : QStringLiteral("Unshy Layers"));
       for (const auto& layerId : selectedVisibleIds) {
-        if (auto layer = comp->layerById(layerId)) {
+        if (auto layer = currentComp->layerById(layerId)) {
           macro->addChild(std::make_unique<SetLayerShyCommand>(layer, shy));
         }
       }
@@ -4305,10 +4372,12 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
     }
 
     // H: マスクありのみ表示トグル
-    allMenu->addAction(QStringLiteral("マスクありのみ表示"), [this]() {
+    auto* maskFilterAction = allMenu->addAction(QStringLiteral("マスクありのみ表示"), [this]() {
       impl_->maskFilterEnabled_ = !impl_->maskFilterEnabled_;
       updateLayout();
-    })->setCheckable(true)->setChecked(impl_->maskFilterEnabled_);
+    });
+    maskFilterAction->setCheckable(true);
+    maskFilterAction->setChecked(impl_->maskFilterEnabled_);
 
     // O: プロパティをクリップボードにコピー
     if (layer) {
@@ -4456,54 +4525,109 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
     }
 
-    QMenu* utilityMenu = allMenu->addMenu(QStringLiteral("レイヤー操作"));
-    utilityMenu->addAction(QStringLiteral("インスペクターを開く"), [triggerOpenInspector]() {
-      triggerOpenInspector();
+    QMenu* selectedLayerMenu = allMenu->addMenu(QStringLiteral("選択レイヤー"));
+    selectedLayerMenu->setIcon(QIcon(resolveIconPath("Studio/layermenu_select_all.svg")));
+    buildSelectedLayerMenu(selectedLayerMenu, layer, triggerOpenInspector, triggerOpenProperties,
+                           triggerSelectedVisibility, triggerSelectedLock, triggerSelectedSolo,
+                           triggerSelectedShy, triggerSelectParent, triggerClearParent,
+                           triggerRenameLayer, triggerDuplicateLayer, triggerDeleteLayer,
+                           triggerPrecomposeSelectedLayers);
+
+    if (selectedIds.size() > 1) {
+      QMenu* selectedBatchMenu = addIconMenu(selectedLayerMenu, QStringLiteral("一括操作"), QStringLiteral("Studio/layermenu_group.svg"));
+      addIconAction(selectedBatchMenu, QStringLiteral("複製"), QStringLiteral("Studio/layermenu_content_copy.svg"), [triggerDuplicateSelectedLayers]() {
+        triggerDuplicateSelectedLayers();
+      });
+      addIconAction(selectedBatchMenu, QStringLiteral("グループ化..."), QStringLiteral("Studio/layermenu_group.svg"), [triggerGroupSelectedLayers]() {
+        triggerGroupSelectedLayers();
+      });
+      selectedBatchMenu->addSeparator();
+      addIconAction(selectedBatchMenu, QStringLiteral("表示"), QStringLiteral("Studio/layermenu_visibility.svg"), [triggerSelectedVisibility]() {
+        triggerSelectedVisibility(true);
+      });
+      addIconAction(selectedBatchMenu, QStringLiteral("非表示"), QStringLiteral("Studio/visibility_off.svg"), [triggerSelectedVisibility]() {
+        triggerSelectedVisibility(false);
+      });
+      addIconAction(selectedBatchMenu, QStringLiteral("ロック"), QStringLiteral("Studio/layermenu_lock.svg"), [triggerSelectedLock]() {
+        triggerSelectedLock(true);
+      });
+      addIconAction(selectedBatchMenu, QStringLiteral("ロック解除"), QStringLiteral("Studio/lock_open.svg"), [triggerSelectedLock]() {
+        triggerSelectedLock(false);
+      });
+      addIconAction(selectedBatchMenu, QStringLiteral("ソロ"), QStringLiteral("Studio/layermenu_solo_only.svg"), [triggerSelectedSolo]() {
+        triggerSelectedSolo(true);
+      });
+      addIconAction(selectedBatchMenu, QStringLiteral("ソロ解除"), QStringLiteral("Studio/layermenu_solo_only.svg"), [triggerSelectedSolo]() {
+        triggerSelectedSolo(false);
+      });
+      addIconAction(selectedBatchMenu, QStringLiteral("シャイ"), QStringLiteral("Studio/layermenu_shy.svg"), [triggerSelectedShy]() {
+        triggerSelectedShy(true);
+      });
+      addIconAction(selectedBatchMenu, QStringLiteral("シャイ解除"), QStringLiteral("Studio/timeline_switch_shy.svg"), [triggerSelectedShy]() {
+        triggerSelectedShy(false);
+      });
+    }
+
+    QMenu* selectionStateMenu = addIconMenu(selectedLayerMenu, QStringLiteral("選択状態"), QStringLiteral("Studio/editmenu_select_all.svg"));
+    addIconAction(selectionStateMenu, QStringLiteral("全選択"), QStringLiteral("Studio/editmenu_select_all.svg"), [this]() {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      if (!comp) {
+        return;
+      }
+      QVector<LayerID> allIds;
+      allIds.reserve(comp->allLayer().size());
+      for (const auto& l : comp->allLayer()) {
+        if (l) {
+          allIds.push_back(l->id());
+        }
+      }
+      replaceSelectionWithIds(comp, allIds);
     });
-    utilityMenu->addAction(QStringLiteral("プロパティを開く"), [triggerOpenProperties]() {
-      triggerOpenProperties();
+    addIconAction(selectionStateMenu, QStringLiteral("選択反転"), QStringLiteral("Studio/editmenu_select_invert.svg"), [this, selectedIds]() {
+      auto comp = safeCompositionLookup(impl_->compositionId);
+      if (!comp) {
+        return;
+      }
+      QSet<LayerID> selectedSet;
+      for (const auto& id : selectedIds) {
+        selectedSet.insert(id);
+      }
+      QVector<LayerID> inverted;
+      for (const auto& l : comp->allLayer()) {
+        if (l && !selectedSet.contains(l->id())) {
+          inverted.push_back(l->id());
+        }
+      }
+      replaceSelectionWithIds(comp, inverted);
     });
-    utilityMenu->addSeparator();
-    utilityMenu->addAction(QStringLiteral("親を選択"), [triggerSelectParent]() {
-      triggerSelectParent();
+    addIconAction(selectionStateMenu, QStringLiteral("選択を解除"), QStringLiteral("Studio/editmenu_select_none.svg"), [this]() {
+      replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId), {});
     });
-    utilityMenu->addAction(QStringLiteral("親を解除"), [triggerClearParent]() {
-      triggerClearParent();
-    });
-    utilityMenu->addSeparator();
-    utilityMenu->addAction(QStringLiteral("レイヤー名を変更..."), [triggerRenameLayer]() {
-      triggerRenameLayer();
-    });
-    utilityMenu->addAction(QStringLiteral("レイヤーを複製"), [triggerDuplicateLayer]() {
-      triggerDuplicateLayer();
-    });
-    utilityMenu->addAction(QStringLiteral("レイヤーを削除"), [triggerDeleteLayer]() {
-      triggerDeleteLayer();
-    });
-    QMenu* selectPatternMenu = utilityMenu->addMenu(QStringLiteral("選択補助"));
-    selectPatternMenu->addAction(QStringLiteral("2個おき"), [this, selectedVisibleIds]() {
+    selectedLayerMenu->addSeparator();
+    QMenu* selectPatternMenu = addIconMenu(selectedLayerMenu, QStringLiteral("選択補助"), QStringLiteral("Studio/timemenu_step_forward.svg"));
+    addIconAction(selectPatternMenu, QStringLiteral("2個おき"), QStringLiteral("Studio/timemenu_step_forward.svg"), [this, selectedVisibleIds]() {
       replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
                               layerIdsWithStride(selectedVisibleIds, 2, 0));
     });
-    selectPatternMenu->addAction(QStringLiteral("3個おき"), [this, selectedVisibleIds]() {
+    addIconAction(selectPatternMenu, QStringLiteral("3個おき"), QStringLiteral("Studio/timemenu_step_backward.svg"), [this, selectedVisibleIds]() {
       replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
                               layerIdsWithStride(selectedVisibleIds, 3, 0));
     });
     selectPatternMenu->addSeparator();
-    selectPatternMenu->addAction(QStringLiteral("偶数"), [this, selectedVisibleIds]() {
+    addIconAction(selectPatternMenu, QStringLiteral("偶数"), QStringLiteral("Studio/viewmenu_grid_on.svg"), [this, selectedVisibleIds]() {
       replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
                               layerIdsWithStride(selectedVisibleIds, 2, 1));
     });
-    selectPatternMenu->addAction(QStringLiteral("奇数"), [this, selectedVisibleIds]() {
+    addIconAction(selectPatternMenu, QStringLiteral("奇数"), QStringLiteral("Studio/viewmenu_grid_view.svg"), [this, selectedVisibleIds]() {
       replaceSelectionWithIds(safeCompositionLookup(impl_->compositionId),
                               layerIdsWithStride(selectedVisibleIds, 2, 0));
     });
     selectPatternMenu->addSeparator();
-    selectPatternMenu->addAction(QStringLiteral("同名だけ"), [this, selectedIds]() {
+    addIconAction(selectPatternMenu, QStringLiteral("同名だけ"), QStringLiteral("Studio/layermenu_content_copy.svg"), [this, selectedIds]() {
       auto comp = safeCompositionLookup(impl_->compositionId);
       replaceSelectionWithIds(comp, layerIdsWithSameName(comp, selectedIds));
     });
-    selectPatternMenu->addAction(QStringLiteral("同種だけ"), [this, selectedVisibleIds]() {
+    addIconAction(selectPatternMenu, QStringLiteral("同種だけ"), QStringLiteral("Studio/select_same_type.svg"), [this, selectedVisibleIds]() {
       auto comp = safeCompositionLookup(impl_->compositionId);
       if (!comp || selectedVisibleIds.isEmpty()) return;
       const auto kind = layerIconKindForLayer(comp->layerById(selectedVisibleIds.first()));
@@ -4515,51 +4639,6 @@ void ArtifactLayerPanelWidget::mousePressEvent(QMouseEvent* event)
       }
       replaceSelectionWithIds(comp, matching);
     });
-    utilityMenu->addSeparator();
-    // Precompose is valid for any non-empty selection (single layer included),
-    // so it lives outside the multi-selection-only block to match the AE flow.
-    if (!selectedIds.isEmpty()) {
-      allMenu->addAction(QStringLiteral("選択レイヤーをプリコンポーズ"), [triggerPrecomposeSelectedLayers]() {
-        triggerPrecomposeSelectedLayers();
-      });
-    }
-    if (selectedIds.size() > 1) {
-      allMenu->addAction(QStringLiteral("選択レイヤーを複製"), [triggerDuplicateSelectedLayers]() {
-        triggerDuplicateSelectedLayers();
-      });
-      QAction* groupSelectedAct = allMenu->addAction(QStringLiteral("グループ化..."), [triggerGroupSelectedLayers]() {
-        triggerGroupSelectedLayers();
-      });
-      groupSelectedAct->setIcon(QIcon(resolveIconPath("Studio/layermenu_group.svg")));
-      QMenu* batchStateMenu = allMenu->addMenu(QStringLiteral("一括状態"));
-      batchStateMenu->addAction(QStringLiteral("表示"), [triggerSelectedVisibility]() {
-        triggerSelectedVisibility(true);
-      });
-      batchStateMenu->addAction(QStringLiteral("非表示"), [triggerSelectedVisibility]() {
-        triggerSelectedVisibility(false);
-      });
-      batchStateMenu->addAction(QStringLiteral("ロック"), [triggerSelectedLock]() {
-        triggerSelectedLock(true);
-      });
-      batchStateMenu->addAction(QStringLiteral("ロック解除"), [triggerSelectedLock]() {
-        triggerSelectedLock(false);
-      });
-      batchStateMenu->addAction(QStringLiteral("ソロ"), [triggerSelectedSolo]() {
-        triggerSelectedSolo(true);
-      });
-      batchStateMenu->addAction(QStringLiteral("ソロ解除"), [triggerSelectedSolo]() {
-        triggerSelectedSolo(false);
-      });
-      batchStateMenu->addAction(QStringLiteral("シャイ"), [triggerSelectedShy]() {
-        triggerSelectedShy(true);
-      });
-      batchStateMenu->addAction(QStringLiteral("シャイ解除"), [triggerSelectedShy]() {
-        triggerSelectedShy(false);
-      });
-      allMenu->addAction(QStringLiteral("選択レイヤーを削除"), [triggerDeleteSelectedLayers]() {
-        triggerDeleteSelectedLayers();
-      });
-    }
     QAction *chosenAction = menu.exec(event->globalPos());
     if (chosenAction) {
       const QVariantMap data = chosenAction->data().toMap();
@@ -5065,13 +5144,54 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     }
   }
 
+  auto moveSelectedLayerBy = [this](int delta) -> bool {
+    if (impl_->selectedLayerId.isNil()) {
+      return false;
+    }
+
+    auto* service = ArtifactProjectService::instance();
+    auto comp = service ? service->currentComposition().lock() : nullptr;
+    if (!service || !comp) {
+      return false;
+    }
+
+    const auto layers = comp->allLayer();
+    int currentLayerIndex = -1;
+    for (int i = 0; i < layers.size(); ++i) {
+      if (layers[i] && layers[i]->id() == impl_->selectedLayerId) {
+        currentLayerIndex = i;
+        break;
+      }
+    }
+    if (currentLayerIndex < 0) {
+      return false;
+    }
+
+    const int newIndex = std::clamp(currentLayerIndex + delta, 0, static_cast<int>(layers.size()) - 1);
+    if (newIndex == currentLayerIndex) {
+      return true;
+    }
+
+    if (!service->moveLayerInCurrentComposition(impl_->selectedLayerId, newIndex)) {
+      return false;
+    }
+
+    updateLayout();
+    if (auto* svc = ArtifactProjectService::instance()) {
+      svc->selectLayer(impl_->selectedLayerId);
+    }
+    return true;
+  };
+
   // W: Ctrl+Shift+↑↓ 複製＋移動
   if ((event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier)) == (Qt::ControlModifier | Qt::ShiftModifier) &&
       !(event->modifiers() & (Qt::AltModifier | Qt::MetaModifier))) {
     if ((event->key() == Qt::Key_Up || event->key() == Qt::Key_Down) && !impl_->selectedLayerId.isNil()) {
       if (auto* svc = ArtifactProjectService::instance()) {
         if (svc->duplicateLayerInCurrentComposition(impl_->selectedLayerId)) {
-          const int dir = (event->key() == Qt::Key_Down) ? +1 : -1;
+          // Composition indices grow toward the front, while timeline rows
+          // are displayed top-to-bottom in reverse composition order.
+          const int dir = (event->key() == Qt::Key_Up) ? +1 : -1;
           moveSelectedLayerBy(dir);
           updateLayout();
           event->accept();
@@ -5241,45 +5361,6 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
     }
   }
 
-  auto moveSelectedLayerBy = [this](int delta) -> bool {
-    if (impl_->selectedLayerId.isNil()) {
-      return false;
-    }
-
-    auto* service = ArtifactProjectService::instance();
-    auto comp = service ? service->currentComposition().lock() : nullptr;
-    if (!service || !comp) {
-      return false;
-    }
-
-    const auto layers = comp->allLayer();
-    int currentLayerIndex = -1;
-    for (int i = 0; i < layers.size(); ++i) {
-      if (layers[i] && layers[i]->id() == impl_->selectedLayerId) {
-        currentLayerIndex = i;
-        break;
-      }
-    }
-    if (currentLayerIndex < 0) {
-      return false;
-    }
-
-    const int newIndex = std::clamp(currentLayerIndex + delta, 0, static_cast<int>(layers.size()) - 1);
-    if (newIndex == currentLayerIndex) {
-      return true;
-    }
-
-    if (!service->moveLayerInCurrentComposition(impl_->selectedLayerId, newIndex)) {
-      return false;
-    }
-
-    updateLayout();
-    if (auto* svc = ArtifactProjectService::instance()) {
-      svc->selectLayer(impl_->selectedLayerId);
-    }
-    return true;
-  };
-
   const QVector<LayerID> selectedIds = selectedLayerIdsSnapshot();
   auto* service = ArtifactProjectService::instance();
   auto comp = service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
@@ -5327,12 +5408,12 @@ void ArtifactLayerPanelWidget::keyPressEvent(QKeyEvent* event)
   if ((event->modifiers() & Qt::AltModifier) &&
       !(event->modifiers() & (Qt::ControlModifier | Qt::ShiftModifier | Qt::MetaModifier))) {
     if (event->key() == Qt::Key_Up) {
-      if (moveSelectedLayerBy(-1)) {
+      if (moveSelectedLayerBy(+1)) {
         event->accept();
         return;
       }
     } else if (event->key() == Qt::Key_Down) {
-      if (moveSelectedLayerBy(+1)) {
+      if (moveSelectedLayerBy(-1)) {
         event->accept();
         return;
       }
@@ -6486,13 +6567,119 @@ public:
                    });
   QObject::connect(impl_->panel, &ArtifactLayerPanelWidget::verticalOffsetChanged,
                    this, [this](double offset) {
-                      this->verticalOffsetChanged(offset);
-                    });
+                       this->verticalOffsetChanged(offset);
+                     });
   QObject::connect(
       impl_->panel, &ArtifactLayerPanelWidget::propertyFocusChanged, this,
       [this](const LayerID& layerId, const QString& propertyPath) {
         this->propertyFocusChanged(layerId, propertyPath);
       });
+
+  if (auto* selectionButton = impl_->header->selectionMenuButton()) {
+    QObject::connect(selectionButton, &QPushButton::clicked, this, [this, selectionButton]() {
+      auto* svc = ArtifactProjectService::instance();
+      auto comp = svc ? svc->currentComposition().lock() : ArtifactCompositionPtr{};
+      if (!svc || !comp) {
+        return;
+      }
+
+      const LayerID selectedId = impl_->panel->selectedLayerId();
+      auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
+      if (!layer) {
+        return;
+      }
+
+      QMenu menu(impl_->panel);
+      buildSelectedLayerMenu(
+          &menu, layer,
+          [this]() { impl_->panel->setFocus(Qt::OtherFocusReason); },
+          [this]() { impl_->panel->setFocus(Qt::OtherFocusReason); },
+          [this](bool visible) {
+            if (auto* service = ArtifactProjectService::instance()) {
+              auto comp = service->currentComposition().lock();
+              if (comp) {
+                if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
+                  l->setVisible(visible);
+                  impl_->panel->updateLayout();
+                }
+              }
+            }
+          },
+          [this](bool locked) {
+            if (auto* service = ArtifactProjectService::instance()) {
+              auto comp = service->currentComposition().lock();
+              if (comp) {
+                if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
+                  l->setLocked(locked);
+                  impl_->panel->updateLayout();
+                }
+              }
+            }
+          },
+          [this](bool solo) {
+            if (auto* service = ArtifactProjectService::instance()) {
+              auto comp = service->currentComposition().lock();
+              if (comp) {
+                if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
+                  l->setSolo(solo);
+                  impl_->panel->updateLayout();
+                }
+              }
+            }
+          },
+          [this](bool shy) {
+            if (auto* service = ArtifactProjectService::instance()) {
+              auto comp = service->currentComposition().lock();
+              if (comp) {
+                if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
+                  l->setShy(shy);
+                  impl_->panel->updateLayout();
+                }
+              }
+            }
+          },
+          [this]() { /* parent selection handled from layer menu */ },
+          [this]() { /* parent clear handled from layer menu */ },
+          [this, selectionButton]() {
+            if (auto* service = ArtifactProjectService::instance()) {
+              if (auto comp = service->currentComposition().lock()) {
+                if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
+                  impl_->panel->editLayerName(l->id());
+                }
+              }
+            }
+          },
+          [this]() {
+            if (auto* service = ArtifactProjectService::instance()) {
+              if (auto comp = service->currentComposition().lock()) {
+                if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
+                  service->duplicateLayerInCurrentComposition(l->id());
+                }
+              }
+            }
+          },
+          [this]() {
+            if (auto* service = ArtifactProjectService::instance()) {
+              if (auto comp = service->currentComposition().lock()) {
+                if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
+                  service->removeLayerFromComposition(comp->id(), l->id());
+                }
+              }
+            }
+          },
+          [this]() {
+            if (auto* service = ArtifactProjectService::instance()) {
+              if (auto comp = service->currentComposition().lock()) {
+                if (auto l = comp->layerById(impl_->panel->selectedLayerId())) {
+                  impl_->panel->setComposition(comp->id());
+                  impl_->panel->scrollToLayer(l->id());
+                }
+              }
+            }
+          });
+      menu.exec(selectionButton->mapToGlobal(QPoint(0, selectionButton->height())));
+    });
+  }
 }
 
 void ArtifactLayerTimelinePanelWrapper::dragEnterEvent(QDragEnterEvent* event)

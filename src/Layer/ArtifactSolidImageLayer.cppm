@@ -477,6 +477,7 @@ void ArtifactSolidImageLayer::draw(ArtifactIRenderer *renderer) {
             0.0f, 0.0f, static_cast<float>(size.width),
             static_cast<float>(size.height), transform, cloneColor, 1.0f);
       });
+  drawFractureOverlay(renderer, baseTransform, QSizeF(size.width, size.height), opacity());
 }
 
 QImage ArtifactSolidImageLayer::toQImage() const {

@@ -130,6 +130,7 @@ import Event.Bus;
 import Artifact.Event.Types;
 import Undo.UndoManager;
 import Frame.Position;
+import Color.BlendMode;
 import Color.Float;
 import Image;
 import CvUtils;
@@ -227,70 +228,121 @@ void drawClonerFrameOverlay(ArtifactIRenderer* renderer,
     return;
   }
 
-  const auto cloneLayer = std::dynamic_pointer_cast<ArtifactCloneLayer>(layer);
-  if (!cloneLayer) {
-    return;
-  }
+  const auto quadFromCorners = [](const std::array<QPointF, 4>& corners) {
+    QPolygonF quad;
+    quad.reserve(4);
+    for (const auto& corner : corners) {
+      quad.push_back(corner);
+    }
+    return quad;
+  };
+  const auto polygonArea = [](const QPolygonF& polygon) {
+    if (polygon.size() < 3) {
+      return 0.0;
+    }
+    double twiceArea = 0.0;
+    for (int i = 0; i < polygon.size(); ++i) {
+      const QPointF& a = polygon[i];
+      const QPointF& b = polygon[(i + 1) % polygon.size()];
+      twiceArea += a.x() * b.y() - b.x() * a.y();
+    }
+    return std::abs(twiceArea) * 0.5;
+  };
+  const auto quadOverlapRatio = [&](const std::array<QPointF, 4>& a,
+                                    const std::array<QPointF, 4>& b) {
+    QPainterPath pathA;
+    pathA.addPolygon(quadFromCorners(a));
+    QPainterPath pathB;
+    pathB.addPolygon(quadFromCorners(b));
+    const QPainterPath intersection = pathA.intersected(pathB);
+    const double baseArea = std::max(1.0, polygonArea(quadFromCorners(a)));
+    return intersection.isEmpty()
+               ? 0.0
+               : polygonArea(intersection.toFillPolygon()) / baseArea;
+  };
+  const auto drawQuadOutline = [renderer](const std::array<QPointF, 4>& corners,
+                                          const FloatColor& outerColor,
+                                          const FloatColor& innerColor) {
+    const QPointF tl = corners[0];
+    const QPointF tr = corners[1];
+    const QPointF br = corners[2];
+    const QPointF bl = corners[3];
 
-  const QRectF localBounds = layer->localBounds();
-  if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
-      localBounds.height() <= 0.0) {
-    return;
-  }
+    renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            outerColor, 2.1f);
+    renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            outerColor, 2.1f);
+    renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            outerColor, 2.1f);
+    renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            outerColor, 2.1f);
+    renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            innerColor, 0.9f);
+    renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
+                            {static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            innerColor, 0.9f);
+    renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
+                            {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            innerColor, 0.9f);
+    renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
+                            {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
+                            innerColor, 0.9f);
+  };
+  const auto drawQuadCornerBrackets = [renderer](const std::array<QPointF, 4>& corners,
+                                                 const FloatColor& color) {
+    const auto drawCorner = [renderer, &color](const QPointF& corner,
+                                               const QPointF& prev,
+                                               const QPointF& next) {
+      const QLineF toPrev(corner, prev);
+      const QLineF toNext(corner, next);
+      const qreal prevLen = toPrev.length();
+      const qreal nextLen = toNext.length();
+      if (prevLen <= 0.0 || nextLen <= 0.0) {
+        return;
+      }
 
-  const auto clones = cloneLayer->generateCloneData();
-  if (clones.empty()) {
-    return;
-  }
+      const qreal prevArm = std::clamp(prevLen * 0.22, 8.0, 18.0);
+      const qreal nextArm = std::clamp(nextLen * 0.22, 8.0, 18.0);
+      const QPointF prevPoint = corner + (prev - corner) * (prevArm / prevLen);
+      const QPointF nextPoint = corner + (next - corner) * (nextArm / nextLen);
 
-  const QTransform globalTransform = layer->getGlobalTransform();
-  const FloatColor outerColor{0.96f, 0.56f, 0.18f, 0.90f};
-  const FloatColor innerColor{0.18f, 0.10f, 0.04f, 0.64f};
+      renderer->drawSolidLine({static_cast<float>(corner.x()), static_cast<float>(corner.y())},
+                              {static_cast<float>(prevPoint.x()), static_cast<float>(prevPoint.y())},
+                              color, 2.4f);
+      renderer->drawSolidLine({static_cast<float>(corner.x()), static_cast<float>(corner.y())},
+                              {static_cast<float>(nextPoint.x()), static_cast<float>(nextPoint.y())},
+                              color, 2.4f);
+    };
 
-  const auto mapClonePoint = [&](const QMatrix4x4& cloneTransform,
-                                 const QPointF& point) -> QPointF {
-    const QVector4D mapped =
-        cloneTransform * QVector4D(static_cast<float>(point.x()),
-                                   static_cast<float>(point.y()), 0.0f, 1.0f);
-    return globalTransform.map(
-        QPointF(static_cast<qreal>(mapped.x()), static_cast<qreal>(mapped.y())));
+    drawCorner(corners[0], corners[3], corners[1]);
+    drawCorner(corners[1], corners[0], corners[2]);
+    drawCorner(corners[2], corners[1], corners[3]);
+    drawCorner(corners[3], corners[2], corners[0]);
   };
 
-  for (const auto& clone : clones) {
-    if (!clone.visible) {
+  const auto instances = cloneRenderInstances(layer.get(),
+                                              layer->getGlobalTransform4x4());
+  if (instances.size() <= 1) {
+    return;
+  }
+  const auto& sourceCorners = instances.front().canvasCorners;
+  const FloatColor outerColor{0.44f, 0.96f, 1.0f, 0.96f};
+  const FloatColor innerColor{1.0f, 1.0f, 1.0f, 0.42f};
+  const FloatColor bracketColor{0.58f, 0.98f, 1.0f, 0.98f};
+  for (std::size_t i = 1; i < instances.size(); ++i) {
+    const auto& instance = instances[i];
+    const double overlapRatio =
+        quadOverlapRatio(instance.canvasCorners, sourceCorners);
+    if (overlapRatio >= 0.14) {
+      drawQuadCornerBrackets(instance.canvasCorners, bracketColor);
       continue;
     }
-
-    const QPointF tl = mapClonePoint(clone.transform, localBounds.topLeft());
-    const QPointF tr = mapClonePoint(clone.transform, localBounds.topRight());
-    const QPointF br =
-        mapClonePoint(clone.transform, localBounds.bottomRight());
-    const QPointF bl = mapClonePoint(clone.transform, localBounds.bottomLeft());
-
-    renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                            {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                            outerColor, 1.7f);
-    renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                            {static_cast<float>(br.x()), static_cast<float>(br.y())},
-                            outerColor, 1.7f);
-    renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
-                            {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                            outerColor, 1.7f);
-    renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                            {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                            outerColor, 1.7f);
-    renderer->drawSolidLine({static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                            {static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                            innerColor, 0.8f);
-    renderer->drawSolidLine({static_cast<float>(tr.x()), static_cast<float>(tr.y())},
-                            {static_cast<float>(br.x()), static_cast<float>(br.y())},
-                            innerColor, 0.8f);
-    renderer->drawSolidLine({static_cast<float>(br.x()), static_cast<float>(br.y())},
-                            {static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                            innerColor, 0.8f);
-    renderer->drawSolidLine({static_cast<float>(bl.x()), static_cast<float>(bl.y())},
-                            {static_cast<float>(tl.x()), static_cast<float>(tl.y())},
-                            innerColor, 0.8f);
+    drawQuadOutline(instance.canvasCorners, outerColor, innerColor);
   }
 }
 
@@ -1157,10 +1209,6 @@ bool polygonIntersectsLayerBounds(const QPolygonF &polygon,
     }
   }
 
-  const QPointF tl = globalTransform.map(localBounds.topLeft());
-  const QPointF tr = globalTransform.map(localBounds.topRight());
-  const QPointF br = globalTransform.map(localBounds.bottomRight());
-  const QPointF bl = globalTransform.map(localBounds.bottomLeft());
   const std::array<QPointF, 4> corners{tl, tr, br, bl};
   for (size_t i = 0; i < corners.size(); ++i) {
     const QPointF a = corners[i];
@@ -1243,6 +1291,58 @@ QString uniqueLayerNameForCurrentComposition(const QString &baseName)
 
 QColor toQColor(const FloatColor &color) {
   return QColor::fromRgbF(color.r(), color.g(), color.b(), color.a());
+}
+
+ArtifactCore::ImageF32x4_RGBA cpuCompositeFallbackImage(
+    const QImage &baseImage, const QImage &blendImage,
+    ArtifactCore::BlendMode blendMode, float opacity) {
+  ArtifactCore::ImageF32x4_RGBA base;
+  ArtifactCore::ImageF32x4_RGBA blend;
+  if (!baseImage.isNull()) {
+    const QImage baseRgba = baseImage.convertToFormat(QImage::Format_RGBA8888);
+    base.setFromRGBA8(baseRgba.constBits(), baseRgba.width(), baseRgba.height());
+  }
+  if (!blendImage.isNull()) {
+    const QImage blendRgba = blendImage.convertToFormat(QImage::Format_RGBA8888);
+    blend.setFromRGBA8(blendRgba.constBits(), blendRgba.width(),
+                       blendRgba.height());
+  }
+
+  if (base.isEmpty()) {
+    return blend;
+  }
+  if (blend.isEmpty()) {
+    return base;
+  }
+
+  const float clampedOpacity = std::clamp(opacity, 0.0f, 1.0f);
+  if (clampedOpacity <= 0.0f || base.width() != blend.width() ||
+      base.height() != blend.height()) {
+    return base;
+  }
+
+  ArtifactCore::ImageF32x4_RGBA result = base.DeepCopy();
+  for (int y = 0; y < result.height(); ++y) {
+    for (int x = 0; x < result.width(); ++x) {
+      const FloatColor dst = result.getPixel(x, y);
+      const FloatColor src = blend.getPixel(x, y);
+      const float srcCoverage = std::clamp(src.a() * clampedOpacity, 0.0f, 1.0f);
+      if (srcCoverage <= 0.0f) {
+        continue;
+      }
+
+      const FloatColor blended = ArtifactCore::ColorBlendMode::blend(
+          dst, src, blendMode, srcCoverage);
+      const float outAlpha = srcCoverage + dst.a() * (1.0f - srcCoverage);
+      result.setPixel(
+          x, y,
+          FloatColor{std::clamp(blended.r(), 0.0f, 1.0f),
+                     std::clamp(blended.g(), 0.0f, 1.0f),
+                     std::clamp(blended.b(), 0.0f, 1.0f),
+                     std::clamp(outAlpha, 0.0f, 1.0f)});
+    }
+  }
+  return result;
 }
 
 int compositionPreviewIntervalMs(const ArtifactCompositionPtr &comp) {
@@ -6623,7 +6723,11 @@ if (event->button() == Qt::LeftButton && activeTool == ToolType::Rectangle) {
       ArtifactAbstractLayerPtr hitLayer = nullptr;
       QVector<ArtifactAbstractLayerPtr> hitLayers;
       const bool ignoreLocked = event->modifiers().testFlag(Qt::AltModifier);
-      const bool backPick = event->modifiers().testFlag(Qt::ControlModifier);
+      // Ctrl toggles the topmost hit in the multi-selection. Combining Alt
+      // explicitly requests the layer behind it.
+      const bool backPick =
+          event->modifiers().testFlag(Qt::ControlModifier) &&
+          event->modifiers().testFlag(Qt::AltModifier);
 
       // Collect all layers at this position
       for (int i = (int)layers.size() - 1; i >= 0; --i) {
@@ -6830,14 +6934,12 @@ void CompositionRenderController::handleMouseMove(
   const QPointF viewportPos = viewportPosLogical * impl_->devicePixelRatio_;
   const float overlayWf = impl_->hostWidth_ > 0.0f ? impl_->hostWidth_ : impl_->lastCanvasWidth_;
   const float overlayHf = impl_->hostHeight_ > 0.0f ? impl_->hostHeight_ : impl_->lastCanvasHeight_;
-  if (impl_->compareMode_ != CompositionCompareMode::Off &&
-      event->button() == Qt::LeftButton) {
+  if (impl_->compareMode_ != CompositionCompareMode::Off) {
     const QRectF panel = comparePanelRect(overlayWf, overlayHf);
     const QRectF splitHit(panel.left() + panel.width() * 0.45f, panel.top(),
                           panel.width() * 0.10f, panel.height());
     if (splitHit.contains(viewportPos)) {
       impl_->compareSplitDragging_ = true;
-      event->accept();
       markRenderDirty();
       return;
     }
@@ -8427,19 +8529,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                         return false;
                       }
                       return layer->layerBlendType() !=
-                                 ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL &&
-                             !layerHasCpuRasterizerWork(layer.get());
-                    });
-    const bool hasGpuBlendBlocker =
-        std::any_of(layers.begin(), layers.end(),
-                    [&](const ArtifactAbstractLayerPtr &layer) {
-                      return layer && isLayerEffectivelyVisible(layer) &&
-                             layer->isActiveAt(currentFrame) &&
-                             layerHasCpuRasterizerWork(layer.get());
+                             ArtifactCore::LAYER_BLEND_TYPE::BLEND_NORMAL;
                     });
     const bool gpuBlendRequested = gpuBlendEnabled_ && blendPipelineReady_;
     const bool gpuBlendPathRequested =
-        gpuBlendRequested && hasGpuBlendJustification && !hasGpuBlendBlocker;
+        gpuBlendRequested && hasGpuBlendJustification;
 
     // Avoid paying render-pipeline setup cost when GPU blending is disabled.
     if (gpuBlendPathRequested) {
@@ -8989,6 +9083,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       float prevPanX = 0.0f;
       float prevPanY = 0.0f;
       renderer_->getPan(prevPanX, prevPanY);
+      auto accumSRV = renderPipeline_.accumSRV();
+      auto accumRTV = renderPipeline_.accumRTV();
+      auto layerRTV = renderPipeline_.layerRTV();
       renderer_->setUseExternalMatrices(false);
       renderer_->resetGizmoCameraMatrices();
       renderer_->reset3DCameraMatrices();
@@ -9027,6 +9124,14 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setCanvasSize(cw, ch);
       renderer_->setZoom(prevZoom);
       renderer_->setPan(prevPanX, prevPanY);
+      renderer_->setOverrideRTV(accumRTV);
+      renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+      renderer_->clear();
+      drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
+                                      backgroundMode, checkerboardTileSize_,
+                                      cachedMayaGradientSprite_);
+      renderer_->flush();
+      renderer_->setOverrideRTV(nullptr);
       const bool showGridDebug =
           owner->isLineDebugKindVisible(LineDebugKind::Grid);
       if (showGrid_ && showGridDebug) {
@@ -9183,12 +9288,45 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               QLoggingCategory::defaultCategory()->isDebugEnabled()
                   ? &lastVideoDebug_
                   : nullptr;
+          const float drawOpacity =
+              blendMode == ArtifactCore::BlendMode::Normal ? opacity : 1.0f;
+          renderer_->setOverrideRTV(blendMode == ArtifactCore::BlendMode::Normal
+                                        ? accumRTV
+                                        : layerRTV);
+          if (blendMode != ArtifactCore::BlendMode::Normal) {
+            renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+            renderer_->clear();
+          }
           drawLayerForCompositionView(
-              layer.get(), renderer_.get(), opacity, dbgOut, &surfaceCache_,
+              layer.get(), renderer_.get(), drawOpacity, dbgOut, &surfaceCache_,
               gpuTextureCacheManager_.get(), currentFrame.framePosition(),
               false, lod, has3DCamera ? &cameraViewMatrix : nullptr,
               has3DCamera ? &cameraProjMatrix : nullptr, &matteResolver,
               &sceneLights);
+          renderer_->flush();
+          renderer_->setOverrideRTV(nullptr);
+
+          if (blendMode != ArtifactCore::BlendMode::Normal) {
+            renderer_->setOverrideRTV(layerRTV);
+            const QImage layerImage = renderer_->readbackToImage();
+
+            renderer_->setOverrideRTV(accumRTV);
+            const QImage accumImage = renderer_->readbackToImage();
+            renderer_->setOverrideRTV(nullptr);
+
+            const ArtifactCore::ImageF32x4_RGBA compositedImage =
+                cpuCompositeFallbackImage(accumImage, layerImage, blendMode,
+                                          opacity);
+            if (!compositedImage.isEmpty()) {
+              renderer_->setOverrideRTV(accumRTV);
+              renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
+              renderer_->clear();
+              renderer_->drawSpriteTransformed(
+                  0.0f, 0.0f, cw, ch, QMatrix4x4(), compositedImage, 1.0f);
+              renderer_->flush();
+              renderer_->setOverrideRTV(nullptr);
+            }
+          }
 
           // === 段階 7: ROI デバッグ表示 ===
           if (debugMode_) {
@@ -9201,6 +9339,13 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           }
         }
       }
+      renderer_->setCanvasSize(viewportW, viewportH);
+      renderer_->setZoom(1.0f);
+      renderer_->setPan(0.0f, 0.0f);
+      renderer_->drawSprite(0.0f, 0.0f, rcw, rch, accumSRV, 1.0f);
+      renderer_->setCanvasSize(cw, ch);
+      renderer_->setZoom(prevZoom);
+      renderer_->setPan(prevPanX, prevPanY);
       layerPassMs = markPhaseMs();
     }
 
@@ -9739,7 +9884,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               pt.x = static_cast<float>(wPos.x());
               pt.y = static_cast<float>(wPos.y());
               pt.interpolation = interp;
-              const QRectF localBounds = layer->visualLocalBounds();
+              const QRectF localBounds = layer->localBounds();
               if (localBounds.isValid() && localBounds.width() > 0.0 &&
                   localBounds.height() > 0.0) {
                 const QPointF tl = gTrans.map(localBounds.topLeft());
@@ -9841,7 +9986,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
               continue;
             }
 
-            const QRectF localBounds = layer->visualLocalBounds();
+            const QRectF localBounds = layer->localBounds();
             if (!localBounds.isValid() || localBounds.width() <= 0.0 ||
                 localBounds.height() <= 0.0) {
               continue;
@@ -9927,7 +10072,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           compareMode_ == CompositionCompareMode::Diff
               ? diff
               : makePreviewWipeImage(primary, secondary, compareSplitRatio_);
-      if (!primary.isNull() || !secondary.isNull() || !wipe.isNull()) {
+    if (!primary.isNull() || !secondary.isNull() || !wipe.isNull()) {
+        const float overlayWf = hostWidth_ > 0.0f ? hostWidth_ : lastCanvasWidth_;
+        const float overlayHf = hostHeight_ > 0.0f ? hostHeight_ : lastCanvasHeight_;
         const float w = std::min(240.0f, overlayWf * 0.26f);
         const float h = std::min(160.0f, overlayHf * 0.26f);
         const float x = overlayWf - w - 18.0f;
@@ -10114,11 +10261,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                                  currentFrame);
       }
       if (selectedLayer) {
-        if (selectedLayer->isCloneLayer()) {
-          ::Artifact::drawClonerFrameOverlay(renderer_.get(), selectedLayer);
-        } else if (!showGizmoOverlay_) {
+        if (!showGizmoOverlay_) {
           ::Artifact::drawSelectionOverlay(renderer_.get(), selectedLayer);
         }
+        ::Artifact::drawClonerFrameOverlay(renderer_.get(), selectedLayer);
         const bool selectedLayerIsActiveCamera =
             activeCamera && activeCamera->id() == selectedLayer->id();
         ::Artifact::drawCameraSelectionOverlay(
@@ -10313,7 +10459,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             "phase=composition-visibility-v1 state=%1 path=%2 layersTotal=%3 "
             "drawn=%4 composited=%5 skippedInvisible=%6 skippedSolo=%7 "
             "skippedInactive=%8 skippedRoi=%9 skippedLod=%10 opacityZero=%11 "
-            "frameOutOfRange=%12 gpuBlendBlocker=%13 "
+            "frameOutOfRange=%12 gpuBlendBlockerRemoved=%13 "
             "forceContinuousRedraw=%14 viewportInteracting=%15 "
             "firstLayerSeed=%16 notes=%17")
             .arg(visibilityState,
@@ -10329,13 +10475,11 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(skipLodCount)
             .arg(opacityZeroCount)
             .arg(frameOutOfRange ? 1 : 0)
-            .arg(hasGpuBlendBlocker ? 1 : 0)
+            .arg(1)
             .arg(forceContinuousRedraw ? 1 : 0)
             .arg(viewportInteracting_ ? 1 : 0)
             .arg(layerToFloatConvertCount)
-            .arg(hasGpuBlendBlocker
-                     ? QStringLiteral("gpuBlendBlockedByCpuRasterizerWork")
-                     : QStringLiteral("none"));
+            .arg(QStringLiteral("none"));
     lastBlendMaskSummary_ =
         QStringLiteral(
             "phase=blend-mask-smoke-v1 path=%1 blendContract=straight-src_over-premul-accum "
@@ -10679,9 +10823,9 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
       }
     }
     statusParts << QStringLiteral("cmp:%1")
-                       .arg(compareModeToString(impl_->compareMode_));
-    if (impl_->referencePinned_) {
-      statusParts << QStringLiteral("ref:%1").arg(impl_->referenceFrame_);
+                       .arg(compareModeToString(compareMode_));
+    if (referencePinned_) {
+      statusParts << QStringLiteral("ref:%1").arg(referenceFrame_);
     }
     const QString statusText = statusParts.join(QStringLiteral("  •  "));
     ::Artifact::drawViewportStatusChipOverlay(renderer_.get(), overlayW,

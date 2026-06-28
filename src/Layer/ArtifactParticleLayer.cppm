@@ -7,6 +7,7 @@ module;
 #include <QJsonArray>
 #include <QPainter>
 #include <QTransform>
+#include <QSizeF>
 #include <QVariant>
 #include <wobjectimpl.h>
 
@@ -316,6 +317,8 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         } else {
             qWarning() << "[ParticleLayer] GPU path: NO PARTICLES - emitter may not generate";
         }
+        const auto size = sourceSize();
+        drawFractureOverlay(renderer, getGlobalTransform4x4(), QSizeF(size.width, size.height), opacity());
         return;
     }
 
@@ -353,6 +356,9 @@ void ArtifactParticleLayer::draw(ArtifactIRenderer* renderer)
         static_cast<float>(impl_->cachedFrame.height()),
         impl_->cachedFrame,
         opacity());
+
+    const auto size = sourceSize();
+    drawFractureOverlay(renderer, getGlobalTransform4x4(), QSizeF(size.width, size.height), opacity());
 }
 
 QRectF ArtifactParticleLayer::localBounds() const

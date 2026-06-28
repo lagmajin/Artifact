@@ -266,6 +266,32 @@ Return a compact summary of keyframed properties for a layer.
 #### `batchSetKeyframes(layerId: string, keyframes: QVariantList) → QVariantMap`
 Set multiple keyframes from a JSON-style array of `{ propertyPath, frameNumber, value }` objects.
 
+### Command IR / Automation Facade
+
+The `WorkspaceAutomation` tool now also exposes a command-oriented facade for AI, MCP, and DSL layers.
+
+#### `commandVocabulary() → QVariantList`
+Return the supported command IR vocabulary and the required fields for each command.
+
+#### `validateCommand(command: QVariantMap) → QVariantMap`
+Validate a command IR request without mutating workspace state.
+
+#### `executeCommand(command: QVariantMap) → QVariantMap`
+Execute a validated command IR request through the automation facade.
+
+Supported initial command types:
+
+- `set_property`
+- `set_keyframes`
+- `batch_set_keyframes`
+- `move_layer`
+- `rename_layer`
+- `add_effect`
+
+For keyframe commands, the facade accepts compact `time` inputs for DSL/MCP convenience, but the underlying snapshot path preserves `timeValue` / `timeScale` so undo and round-tripping do not collapse the original time base.
+
+Future optional helpers such as `preview` / `explain` can sit on top of the same command IR, but they are not required for the initial contract.
+
 **TODO**:
 - Access timeline/keyframe storage
 - Define property path syntax

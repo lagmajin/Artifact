@@ -7,6 +7,22 @@
 
 The Cloud AI widget now supports reading and writing composition and layer notes through the WorkspaceAutomation API. This enables AI agents to annotate projects and layers with metadata, comments, and procedural notes.
 
+The same `WorkspaceAutomation` host also exposes a command-oriented facade for AI/MCP/DSL layers:
+
+- `commandVocabulary()`
+- `validateCommand(command)`
+- `executeCommand(command)`
+
+This is the preferred path for higher-level automation. It keeps low-level API calls out of the external AI surface and gives us a single validation and execution path.
+
+Command results are structured maps with `success`, `valid`, `executed`, `type`, `error`, and `undoLabel`, so callers can distinguish validation failures from runtime failures without guessing.
+
+Suggested call order for agents:
+
+1. `commandVocabulary()`
+2. `validateCommand(command)`
+3. `executeCommand(command)`
+
 ---
 
 ## New Methods

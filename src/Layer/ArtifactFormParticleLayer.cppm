@@ -102,9 +102,9 @@ static QString presetNameNormalized(const QString& preset)
 
 FormParticleSettings::FormParticleSettings()
 {
-    renderSettings.blendMode = ParticleBlendMode::Normal;
-    renderSettings.billboardMode = ParticleRenderSettings::BillboardMode::ScreenAligned;
-    renderSettings.sortMode = ParticleRenderSettings::SortMode::None;
+    renderSettings.blendMode = FormParticleBlendMode::Alpha;
+    renderSettings.billboardMode = FormParticleBillboardMode::ScreenAligned;
+    renderSettings.sortMode = FormParticleSortMode::None;
     renderSettings.depthTest = false;
     renderSettings.depthWrite = false;
 }
@@ -239,15 +239,15 @@ void FormParticleSettings::fromJson(const QJsonObject& obj)
     if (obj.contains("renderSettings") && obj.value("renderSettings").isObject()) {
         const QJsonObject render = obj.value("renderSettings").toObject();
         if (render.contains("blendMode")) {
-            renderSettings.blendMode = static_cast<ParticleBlendMode>(
+            renderSettings.blendMode = static_cast<FormParticleBlendMode>(
                 clampValue(render.value("blendMode").toInt(static_cast<int>(renderSettings.blendMode)), 0, 4));
         }
         if (render.contains("billboardMode")) {
-            renderSettings.billboardMode = static_cast<ParticleRenderSettings::BillboardMode>(
+            renderSettings.billboardMode = static_cast<FormParticleBillboardMode>(
                 clampValue(render.value("billboardMode").toInt(static_cast<int>(renderSettings.billboardMode)), 0, 3));
         }
         if (render.contains("sortMode")) {
-            renderSettings.sortMode = static_cast<ParticleRenderSettings::SortMode>(
+            renderSettings.sortMode = static_cast<FormParticleSortMode>(
                 clampValue(render.value("sortMode").toInt(static_cast<int>(renderSettings.sortMode)), 0, 3));
         }
         if (render.contains("depthTest")) {
@@ -601,7 +601,7 @@ static ArtifactCore::ParticleRenderData buildRenderData(const FormParticleSettin
                 data.particles.push_back(vertex);
     }
 
-    if (settings.renderSettings.sortMode == ParticleRenderSettings::SortMode::Distance) {
+    if (settings.renderSettings.sortMode == FormParticleSortMode::Distance) {
         std::stable_sort(
             data.particles.begin(),
             data.particles.end(),
@@ -609,7 +609,7 @@ static ArtifactCore::ParticleRenderData buildRenderData(const FormParticleSettin
                const ArtifactCore::ParticleVertex& b) {
                 return a.pz > b.pz;
             });
-    } else if (settings.renderSettings.sortMode == ParticleRenderSettings::SortMode::OldestFirst) {
+    } else if (settings.renderSettings.sortMode == FormParticleSortMode::OldestFirst) {
         std::stable_sort(
             data.particles.begin(),
             data.particles.end(),
@@ -617,7 +617,7 @@ static ArtifactCore::ParticleRenderData buildRenderData(const FormParticleSettin
                const ArtifactCore::ParticleVertex& b) {
                 return a.age < b.age;
             });
-    } else if (settings.renderSettings.sortMode == ParticleRenderSettings::SortMode::YoungestFirst) {
+    } else if (settings.renderSettings.sortMode == FormParticleSortMode::YoungestFirst) {
         std::stable_sort(
             data.particles.begin(),
             data.particles.end(),
@@ -731,7 +731,7 @@ void ArtifactFormParticleLayer::loadPreset(const QString& presetName)
         impl_->settings.noiseScale = 0.012f;
         impl_->settings.noiseSpeed = 0.8f;
         impl_->settings.twistAmount = 2.2f;
-        impl_->settings.renderSettings.blendMode = ParticleBlendMode::Additive;
+        impl_->settings.renderSettings.blendMode = FormParticleBlendMode::Additive;
         impl_->settings.renderSettings.depthTest = true;
     } else if (preset == QStringLiteral("digitalsand") || preset == QStringLiteral("sand")) {
         impl_->settings.generatorMode = FormParticleSettings::GeneratorMode::Grid2D;
@@ -747,7 +747,7 @@ void ArtifactFormParticleLayer::loadPreset(const QString& presetName)
         impl_->settings.noiseScale = 0.03f;
         impl_->settings.noiseSpeed = 1.2f;
         impl_->settings.twistAmount = 0.75f;
-        impl_->settings.renderSettings.blendMode = ParticleBlendMode::Normal;
+        impl_->settings.renderSettings.blendMode = FormParticleBlendMode::Alpha;
     } else if (preset == QStringLiteral("wavematrix") || preset == QStringLiteral("wave")) {
         impl_->settings.generatorMode = FormParticleSettings::GeneratorMode::Grid2D;
         impl_->settings.columns = 72;
@@ -762,7 +762,7 @@ void ArtifactFormParticleLayer::loadPreset(const QString& presetName)
         impl_->settings.noiseScale = 0.02f;
         impl_->settings.noiseSpeed = 1.0f;
         impl_->settings.twistAmount = 1.8f;
-        impl_->settings.renderSettings.blendMode = ParticleBlendMode::Screen;
+        impl_->settings.renderSettings.blendMode = FormParticleBlendMode::Screen;
     } else if (preset == QStringLiteral("sourcepixels") || preset == QStringLiteral("source")) {
         impl_->settings = FormParticleSettings{};
         impl_->settings.generatorMode = FormParticleSettings::GeneratorMode::LayerMap;
@@ -774,7 +774,7 @@ void ArtifactFormParticleLayer::loadPreset(const QString& presetName)
         impl_->settings.colorMode = FormParticleSettings::ColorMode::SourceColor;
         impl_->settings.sourceAlphaThreshold = 0.05f;
         impl_->settings.sourceLumaThreshold = 0.05f;
-        impl_->settings.renderSettings.blendMode = ParticleBlendMode::Normal;
+        impl_->settings.renderSettings.blendMode = FormParticleBlendMode::Alpha;
     } else {
         impl_->settings = FormParticleSettings{};
     }
@@ -1027,17 +1027,17 @@ bool ArtifactFormParticleLayer::setLayerPropertyValue(const QString& propertyPat
     }
     if (propertyPath == QStringLiteral("render.blendMode")) {
         impl_->settings.renderSettings.blendMode =
-            static_cast<ParticleBlendMode>(clampValue(value.toInt(), 0, 4));
+            static_cast<FormParticleBlendMode>(clampValue(value.toInt(), 0, 4));
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("render.billboardMode")) {
         impl_->settings.renderSettings.billboardMode =
-            static_cast<ParticleRenderSettings::BillboardMode>(clampValue(value.toInt(), 0, 3));
+            static_cast<FormParticleBillboardMode>(clampValue(value.toInt(), 0, 3));
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("render.sortMode")) {
         impl_->settings.renderSettings.sortMode =
-            static_cast<ParticleRenderSettings::SortMode>(clampValue(value.toInt(), 0, 3));
+            static_cast<FormParticleSortMode>(clampValue(value.toInt(), 0, 3));
         return changedAnything();
     }
     if (propertyPath == QStringLiteral("render.depthTest")) {

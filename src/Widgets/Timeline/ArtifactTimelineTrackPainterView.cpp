@@ -41,6 +41,7 @@ module Artifact.Timeline.TrackPainterView;
 
 import std;
 import Application.AppSettings;
+import Settings.Accessibility;
 import Clipboard.ClipboardManager;
 import ArtifactCore.Utils.PerformanceProfiler;
 import Widgets.Utils.CSS;
@@ -79,8 +80,6 @@ QString tt(const char* key, const char* fallback)
 {
   return Artifact::TranslationManager::instance().tr(QString::fromUtf8(key), QString::fromUtf8(fallback));
 }
-
-bool shouldHideTimelinePropertyGroup(const QString &groupName);
 
 QMessageBox::StandardButton centeredQuestion(QWidget* parent,
                                              const QString& title,
@@ -396,6 +395,10 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
                                  bool preserveExistingDuration);
 
 constexpr int kEdgeHitZone = 6;
+
+static int edgeHitZone() {
+    return Artifact::Accessibility::scaledSize(kEdgeHitZone);
+}
 
 enum class DragMode { None, MoveBody, ResizeLeft, ResizeRight, SlideBody };
 
@@ -720,7 +723,8 @@ QVector<KeyframePropertyRef> collectAnimatablePropertyRefs(
 
   QSet<QString> seen;
   for (const auto &group : layer->getLayerPropertyGroups()) {
-    if (shouldHideTimelinePropertyGroup(group.name())) {
+    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+            group.name())) {
       continue;
     }
     for (const auto &property : group.sortedProperties()) {
@@ -916,6 +920,10 @@ void shiftAnimatableLayerKeyframes(const ArtifactCompositionPtr &composition,
   const int64_t scale = static_cast<int64_t>(std::llround(fps));
 
   for (const auto &group : layer->getLayerPropertyGroups()) {
+    if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+            group.name())) {
+      continue;
+    }
     for (const auto &property : group.sortedProperties()) {
       if (!property || !property->isAnimatable()) {
         continue;
@@ -1508,13 +1516,6 @@ bool sameKeyframeMarkerVisual(
          lhs.anchor == rhs.anchor &&
          lhs.color == rhs.color && lhs.label == rhs.label &&
          lhs.value == rhs.value;
-}
-
-bool shouldHideTimelinePropertyGroup(const QString &groupName) {
-  const QString normalized = groupName.trimmed();
-  return normalized.compare(QStringLiteral("Initial"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Rig"), Qt::CaseInsensitive) == 0 ||
-         normalized.compare(QStringLiteral("Rig Controls"), Qt::CaseInsensitive) == 0;
 }
 
 std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
@@ -3070,10 +3071,10 @@ HitResult hitTestClips(
       continue;
     const double clipX = clip.startFrame * ppf - xOffset;
     const double clipW = std::max(2.0, clip.durationFrame * ppf);
-    if (mouseX >= clipX - kEdgeHitZone && mouseX <= clipX + kEdgeHitZone)
+    if (mouseX >= clipX - edgeHitZone() && mouseX <= clipX + edgeHitZone())
       return {DragMode::ResizeLeft, i};
-    if (mouseX >= clipX + clipW - kEdgeHitZone &&
-        mouseX <= clipX + clipW + kEdgeHitZone)
+    if (mouseX >= clipX + clipW - edgeHitZone() &&
+        mouseX <= clipX + clipW + edgeHitZone())
       return {DragMode::ResizeRight, i};
     if (mouseX > clipX && mouseX < clipX + clipW)
       return {bodyMode, i};
@@ -3107,7 +3108,9 @@ QRectF markerHitRectFor(
   if (center.isNull()) {
     return {};
   }
-  const qreal size = marker.laneCount > 1 ? 10.0 : 11.0;
+  const qreal size = marker.laneCount > 1
+      ? static_cast<qreal>(Artifact::Accessibility::scaledSize(10))
+      : static_cast<qreal>(Artifact::Accessibility::scaledSize(11));
   return QRectF(center.x() - size, center.y() - size, size * 2.0, size * 2.0);
 }
 
@@ -3844,7 +3847,8 @@ bool applyTimelineLayerRangeEdit(const ArtifactAbstractLayerPtr &layer,
                            : 30.0;
     const int64_t frameScale = static_cast<int64_t>(std::llround(fps));
     for (const auto &group : layer->getLayerPropertyGroups()) {
-      if (shouldHideTimelinePropertyGroup(group.name())) {
+      if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+              group.name())) {
         continue;
       }
       for (const auto &property : group.sortedProperties()) {
@@ -4345,6 +4349,10 @@ collectAllKeyframeMarkersForLayers(
       continue;
     }
     for (const auto &group : layer->getLayerPropertyGroups()) {
+      if (ArtifactTimelineKeyframeModel::shouldHideTimelinePropertyGroup(
+              group.name())) {
+        continue;
+      }
       for (const auto &property : group.sortedProperties()) {
         if (!property || !property->isAnimatable()) {
           continue;

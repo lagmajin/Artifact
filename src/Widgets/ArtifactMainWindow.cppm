@@ -70,6 +70,7 @@ import Artifact.Widgets.AppDialogs;
 import Artifact.Widgets.AI.ArtifactAICloudWidget;
 import Artifact.Workspace.Modes;
 import Application.AppSettings;
+import Settings.Accessibility;
 #ifdef ARTIFACT_FEATURE_COMMAND_PALETTE
 import Command.Palette;
 #endif
@@ -1199,8 +1200,12 @@ void ArtifactMainWindow::applyApplicationSettings() {
     return;
   }
   applyUiFontSettings();
+
+  // —— accessibility ——
   if (impl_->toolBar) {
     impl_->toolBar->refreshFromSettings();
+    const int sz = Accessibility::scaledSize(24);
+    impl_->toolBar->setIconSize(QSize(sz, sz));
   }
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     setStatusPreviewResolution(settings->previewResolutionPercent());

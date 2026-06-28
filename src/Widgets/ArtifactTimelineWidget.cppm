@@ -58,6 +58,7 @@ import Input.Operator;
 import Artifact.Timeline.KeyframeModel;
 import Artifact.Widgets.Timeline.Label;
 import Artifact.Timeline.NavigatorWidget;
+import Settings.Accessibility;
 import Artifact.Timeline.TrackPainterView;
 import Artifact.Timeline.TimeCodeWidget;
 import Artifact.Widgets.Timeline.EasingLab;
@@ -125,6 +126,9 @@ std::shared_ptr<ArtifactCore::AbstractProperty> findLayerPropertyByPath(
     const ArtifactAbstractLayerPtr& layer, const QString& propertyPath);
 
 constexpr double kTimelineRowHeight = 28.0;
+static double timelineRowHeight() {
+    return static_cast<double>(Accessibility::scaledSize(static_cast<int>(kTimelineRowHeight)));
+}
 constexpr int kTimelineTopRowHeight = 16; // aligns with right ruler row
 constexpr int kTimelineHeaderRowHeight =
     50; // keeps the two-line timecode readout from being compressed
@@ -733,6 +737,42 @@ QVector<KeyframePropertyRef> collectAnimatablePropertyRefs(
     }
   }
   return refs;
+}
+
+QVector<KeyframePropertyRef> collectContextualKeyframePropertyRefs(
+    const QVector<ArtifactAbstractLayerPtr>& layers,
+    const QString& focusedPropertyPath)
+{
+  const QString trimmedPath = focusedPropertyPath.trimmed();
+  if (trimmedPath.isEmpty()) {
+    return collectAnimatablePropertyRefs(layers);
+  }
+
+  QVector<KeyframePropertyRef> refs;
+  QSet<QString> seen;
+  for (const auto& layer : layers) {
+    if (!layer) {
+      continue;
+    }
+    const auto groups = layer->getLayerPropertyGroups();
+    for (const auto& group : groups) {
+      for (const auto& property : group.sortedProperties()) {
+        if (!property || !property->isAnimatable() ||
+            property->getName() != trimmedPath) {
+          continue;
+        }
+        const QString key =
+            QStringLiteral("%1|%2").arg(layer->id().toString(), trimmedPath);
+        if (seen.contains(key)) {
+          continue;
+        }
+        seen.insert(key);
+        refs.push_back({layer->id(), trimmedPath});
+      }
+    }
+  }
+
+  return refs.isEmpty() ? collectAnimatablePropertyRefs(layers) : refs;
 }
 
 QVector<KeyframePropertyRef> collectPropertyRefsFromMarkers(
@@ -2197,6 +2237,45 @@ bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
         changed = true;
       }
     }
+  }
+
+  if (changed) {
+    layer->changed();
+    ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+        LayerChangedEvent{composition->id().toString(), layer->id().toString(),
+                          LayerChangedEvent::ChangeType::Modified});
+  }
+  return changed;
+}
+
+bool applyKeyframeEditAtFrame(const ArtifactCompositionPtr& composition,
+                              const ArtifactAbstractLayerPtr& layer,
+                              const QString& propertyPath,
+                              const qint64 frame,
+                              const bool removeKeyframes)
+{
+  if (!composition || !layer || propertyPath.trimmed().isEmpty()) {
+    return false;
+  }
+
+  const double fps =
+      std::max(1.0, static_cast<double>(composition->frameRate().framerate()));
+  const RationalTime nowTime(frame, static_cast<int64_t>(std::llround(fps)));
+  const auto property = findLayerPropertyByPath(layer, propertyPath);
+  if (!property || !property->isAnimatable()) {
+    return false;
+  }
+
+  bool changed = false;
+  if (removeKeyframes) {
+    if (property->hasKeyFrameAt(nowTime)) {
+      property->removeKeyFrame(nowTime);
+      changed = true;
+    }
+  } else {
+    const QVariant value = property->interpolateValue(nowTime);
+    property->addKeyFrame(nowTime, value.isValid() ? value : property->getValue());
+    changed = true;
   }
 
   if (changed) {
@@ -6549,7 +6628,7 @@ void ArtifactTimelineWidget::refreshTracks() {
   const int trackCount = std::max(1, static_cast<int>(visibleRows.size()));
   trackHeights.reserve(trackCount);
   for (int i = 0; i < trackCount; ++i) {
-    trackHeights.push_back(impl_->layerTimelinePanel_ ? impl_->layerTimelinePanel_->rowHeight() : static_cast<int>(kTimelineRowHeight));
+    trackHeights.push_back(impl_->layerTimelinePanel_ ? impl_->layerTimelinePanel_->rowHeight() : static_cast<int>(timelineRowHeight()));
   }
   QVector<ArtifactTimelineTrackPainterView::TrackClipVisual> painterClips;
   painterClips.reserve(visibleRows.size());
@@ -8099,11 +8178,30 @@ void ArtifactTimelineWidget::addKeyframeAtPlayhead()
   }
 
   const qint64 frame = static_cast<qint64>(std::llround(currentFrame()));
-  const auto refs = collectAnimatablePropertyRefs(layers);
+  const auto selectedMarkers =
+      impl_->painterTrackView_
+          ? impl_->painterTrackView_->selectedKeyframeMarkers()
+          : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
+  const auto allMarkers =
+      impl_->painterTrackView_
+          ? impl_->painterTrackView_->keyframeMarkers()
+          : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
+  const QString focusedPropertyPath = selectedPropertyPathForKeyPattern(
+      impl_->layerTimelinePanel_, allMarkers, selectedMarkers);
+  const auto refs =
+      collectContextualKeyframePropertyRefs(layers, focusedPropertyPath);
   const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
   bool changed = false;
-  for (const auto& layer : layers) {
-    changed |= applyKeyframeEditAtFrame(composition, layer, frame, false);
+  if (!focusedPropertyPath.trimmed().isEmpty()) {
+    for (const auto& ref : refs) {
+      const auto layer = composition->layerById(ref.layerId);
+      changed |= applyKeyframeEditAtFrame(composition, layer, ref.propertyPath,
+                                          frame, false);
+    }
+  } else {
+    for (const auto& layer : layers) {
+      changed |= applyKeyframeEditAtFrame(composition, layer, frame, false);
+    }
   }
   if (changed) {
     const auto afterSnapshots = captureKeyframePropertySnapshots(composition, refs);
@@ -8166,11 +8264,30 @@ void ArtifactTimelineWidget::removeKeyframeAtPlayhead()
   }
 
   const qint64 frame = static_cast<qint64>(std::llround(std::max(0.0, impl_->currentFrame_)));
-  const auto refs = collectAnimatablePropertyRefs(layers);
+  const auto selectedMarkers =
+      impl_->painterTrackView_
+          ? impl_->painterTrackView_->selectedKeyframeMarkers()
+          : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
+  const auto allMarkers =
+      impl_->painterTrackView_
+          ? impl_->painterTrackView_->keyframeMarkers()
+          : QVector<ArtifactTimelineTrackPainterView::KeyframeMarkerVisual>{};
+  const QString focusedPropertyPath = selectedPropertyPathForKeyPattern(
+      impl_->layerTimelinePanel_, allMarkers, selectedMarkers);
+  const auto refs =
+      collectContextualKeyframePropertyRefs(layers, focusedPropertyPath);
   const auto beforeSnapshots = captureKeyframePropertySnapshots(composition, refs);
   bool changed = false;
-  for (const auto& layer : layers) {
-    changed |= applyKeyframeEditAtFrame(composition, layer, frame, true);
+  if (!focusedPropertyPath.trimmed().isEmpty()) {
+    for (const auto& ref : refs) {
+      const auto layer = composition->layerById(ref.layerId);
+      changed |= applyKeyframeEditAtFrame(composition, layer, ref.propertyPath,
+                                          frame, true);
+    }
+  } else {
+    for (const auto& layer : layers) {
+      changed |= applyKeyframeEditAtFrame(composition, layer, frame, true);
+    }
   }
   if (changed) {
     const auto afterSnapshots = captureKeyframePropertySnapshots(composition, refs);

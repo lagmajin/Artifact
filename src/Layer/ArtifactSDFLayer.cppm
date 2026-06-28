@@ -352,6 +352,7 @@ void ArtifactSDFLayer::draw(ArtifactIRenderer* renderer)
     transform.scale(
         static_cast<float>(t3.scaleXAt(frameTime)) / 100.0f,
         static_cast<float>(t3.scaleYAt(frameTime)) / 100.0f);
+    const QMatrix4x4 baseTransform = getGlobalTransform4x4();
 
     renderer->drawSpriteTransformed(
         -sdfImpl_->renderW * 0.5f,
@@ -361,6 +362,8 @@ void ArtifactSDFLayer::draw(ArtifactIRenderer* renderer)
         transform,
         img,
         opacity());
+
+    drawFractureOverlay(renderer, baseTransform, QSizeF(sdfImpl_->renderW, sdfImpl_->renderH), opacity());
 }
 
 // ---------------------------------------------------------------------------

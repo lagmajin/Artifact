@@ -27,7 +27,11 @@ private:
     enum class Mode {
         Linear = 0,
         Grid = 1,
-        Radial = 2
+        Radial = 2,
+        Object = 3,
+        Hexagonal = 4,
+        Spiral = 5,
+        Spline = 6
     };
 
     Mode mode_ = Mode::Linear;
@@ -41,6 +45,27 @@ private:
     float radius_ = 240.0f;
     float startAngle_ = 0.0f;
     float endAngle_ = 360.0f;
+
+    // Object mode
+    std::vector<QVector3D> objectVertices_;
+    float objectScale_ = 1.0f;
+
+    // Hexagonal mode
+    int hexColumns_ = 5;
+    int hexRows_ = 5;
+    float hexRadius_ = 60.0f;
+
+    // Spiral mode
+    int spiralCount_ = 50;
+    float spiralTurns_ = 3.0f;
+    float spiralRadiusStart_ = 0.0f;
+    float spiralRadiusEnd_ = 240.0f;
+    float spiralHeight_ = 0.0f;
+
+    // Spline mode
+    std::vector<QVector3D> splinePoints_;
+    int splineCount_ = 20;
+
     bool useTransformEffector_ = false;
     QVector3D effectorPositionOffset_ = QVector3D(0.0f, 0.0f, 0.0f);
     QVector3D effectorRotationOffset_ = QVector3D(0.0f, 0.0f, 0.0f);
@@ -121,6 +146,39 @@ public:
     float randomScaleVariance() const { return randomScaleVariance_; }
     void setRandomScaleVariance(float variance) { randomScaleVariance_ = variance; }
 
+    // Object mode
+    const std::vector<QVector3D>& objectVertices() const { return objectVertices_; }
+    void setObjectVertices(const std::vector<QVector3D>& verts) { objectVertices_ = verts; }
+    float objectScale() const { return objectScale_; }
+    void setObjectScale(float s) { objectScale_ = s; }
+
+    // Hexagonal mode
+    int hexColumns() const { return hexColumns_; }
+    void setHexColumns(int cols) { hexColumns_ = std::max(1, cols); }
+    int hexRows() const { return hexRows_; }
+    void setHexRows(int rows) { hexRows_ = std::max(1, rows); }
+    float hexRadius() const { return hexRadius_; }
+    void setHexRadius(float r) { hexRadius_ = std::max(1.0f, r); }
+
+    // Spiral mode
+    int spiralCount() const { return spiralCount_; }
+    void setSpiralCount(int c) { spiralCount_ = std::max(1, c); }
+    float spiralTurns() const { return spiralTurns_; }
+    void setSpiralTurns(float t) { spiralTurns_ = std::max(0.1f, t); }
+    float spiralRadiusStart() const { return spiralRadiusStart_; }
+    void setSpiralRadiusStart(float r) { spiralRadiusStart_ = r; }
+    float spiralRadiusEnd() const { return spiralRadiusEnd_; }
+    void setSpiralRadiusEnd(float r) { spiralRadiusEnd_ = r; }
+    float spiralHeight() const { return spiralHeight_; }
+    void setSpiralHeight(float h) { spiralHeight_ = h; }
+
+    // Spline mode
+    const std::vector<QVector3D>& splinePoints() const { return splinePoints_; }
+    void setSplinePoints(const std::vector<QVector3D>& pts) { splinePoints_ = pts; }
+    void addSplinePoint(const QVector3D& pt) { splinePoints_.push_back(pt); }
+    int splineCount() const { return splineCount_; }
+    void setSplineCount(int c) { splineCount_ = std::max(1, c); }
+
     float rotationStep() const { return rotationStep_; }
     void setRotationStep(float step) { rotationStep_ = step; }
 
@@ -183,6 +241,131 @@ public:
                 clone.visible = true;
                 clones.push_back(clone);
             }
+        } else if (mode_ == Mode::Object) {
+            if (objectVertices_.empty()) {
+                // Fallback: 8 corners of unit cube scaled by radius
+                float r = radius_ * 0.5f;
+                for (int i = 0; i < 8; ++i) {
+                    CloneData clone;
+                    clone.index = i;
+                    clone.transform.setToIdentity();
+                    clone.transform.translate(
+                        (i & 1 ? r : -r) * objectScale_,
+                        (i & 2 ? r : -r) * objectScale_,
+                        (i & 4 ? r : -r) * objectScale_);
+                    clone.weight = 1.0f;
+                    clone.visible = true;
+                    clones.push_back(clone);
+                }
+            } else {
+                size_t total = objectVertices_.size();
+                clones.reserve(total);
+                for (size_t i = 0; i < total; ++i) {
+                    CloneData clone;
+                    clone.index = static_cast<int>(i);
+                    clone.transform.setToIdentity();
+                    clone.transform.translate(objectVertices_[i] * objectScale_);
+                    clone.weight = 1.0f;
+                    clone.visible = true;
+                    clones.push_back(clone);
+                }
+            }
+        } else if (mode_ == Mode::Hexagonal) {
+            const int cols = std::max(1, hexColumns_);
+            const int rows = std::max(1, hexRows_);
+            const float hSpacing = hexRadius_ * 2.0f;
+            const float vSpacing = hexRadius_ * 1.73205f; // sqrt(3)
+            clones.reserve(static_cast<size_t>(cols) * rows);
+            for (int r = 0; r < rows; ++r) {
+                float xOff = (r % 2 == 0) ? 0.0f : hexRadius_;
+                for (int c = 0; c < cols; ++c) {
+                    CloneData clone;
+                    clone.index = static_cast<int>(clones.size());
+                    clone.transform.setToIdentity();
+                    clone.transform.translate(
+                        (c - (cols - 1) * 0.5f) * hSpacing + xOff,
+                        (r - (rows - 1) * 0.5f) * vSpacing,
+                        0.0f);
+                    if (rotationStep_ != 0.0f) {
+                        clone.transform.rotate(rotationStep_ * clone.index, 0.0f, 0.0f, 1.0f);
+                    }
+                    clone.weight = std::clamp(1.0f - opacityDecay_ * static_cast<float>(clone.index), 0.0f, 1.0f);
+                    clone.visible = true;
+                    clones.push_back(clone);
+                }
+            }
+        } else if (mode_ == Mode::Spiral) {
+            const int total = std::max(1, spiralCount_);
+            clones.reserve(static_cast<size_t>(total));
+            for (int i = 0; i < total; ++i) {
+                CloneData clone;
+                clone.index = i;
+                float t = static_cast<float>(i) / static_cast<float>(total);
+                float angle = t * spiralTurns_ * 2.0f * static_cast<float>(M_PI);
+                float r = spiralRadiusStart_ + (spiralRadiusEnd_ - spiralRadiusStart_) * t;
+                float h = spiralHeight_ * t;
+                clone.transform.setToIdentity();
+                clone.transform.translate(std::cos(angle) * r, std::sin(angle) * r, h);
+                if (rotationStep_ != 0.0f) {
+                    clone.transform.rotate(rotationStep_ * static_cast<float>(i), 0.0f, 0.0f, 1.0f);
+                }
+                clone.weight = std::clamp(1.0f - opacityDecay_ * static_cast<float>(i), 0.0f, 1.0f);
+                clone.visible = true;
+                clones.push_back(clone);
+            }
+        } else if (mode_ == Mode::Spline) {
+            auto catmullPos = [](const std::vector<QVector3D>& pts, float t) -> QVector3D {
+                int n = static_cast<int>(pts.size());
+                if (n == 0) return {};
+                if (n == 1) return pts[0];
+                t = std::clamp(t, 0.0f, 1.0f);
+                int segCount = n - 1;
+                float segT = t * segCount;
+                int i = static_cast<int>(segT);
+                if (i >= segCount) i = segCount - 1;
+                float lt = segT - i;
+                auto& p0 = (i > 0) ? pts[i - 1] : pts[i];
+                auto& p1 = pts[i];
+                auto& p2 = (i + 1 < n) ? pts[i + 1] : pts[i];
+                auto& p3 = (i + 2 < n) ? pts[i + 2] : pts[i + 1];
+                float t2 = lt * lt, t3 = t2 * lt;
+                QVector3D t1 = (p2 - p0) * 0.5f;
+                QVector3D t2_ = (p3 - p1) * 0.5f;
+                return p1 * (2.0f*t3 - 3.0f*t2 + 1.0f)
+                     + p2 * (-2.0f*t3 + 3.0f*t2)
+                     + t1 * (t3 - 2.0f*t2 + lt)
+                     + t2_ * (t3 - t2);
+            };
+            const int total = std::max(1, splineCount_);
+            clones.reserve(static_cast<size_t>(total));
+            if (splinePoints_.size() >= 2) {
+                for (int i = 0; i < total; ++i) {
+                    CloneData clone;
+                    clone.index = i;
+                    float t = static_cast<float>(i) / static_cast<float>(total - 1);
+                    QVector3D pos = catmullPos(splinePoints_, t);
+                    clone.transform.setToIdentity();
+                    clone.transform.translate(pos);
+                    if (rotationStep_ != 0.0f) {
+                        clone.transform.rotate(rotationStep_ * static_cast<float>(i), 0.0f, 0.0f, 1.0f);
+                    }
+                    clone.weight = std::clamp(1.0f - opacityDecay_ * static_cast<float>(i), 0.0f, 1.0f);
+                    clone.visible = true;
+                    clones.push_back(clone);
+                }
+            } else {
+                // Fallback: linear along X
+                for (int i = 0; i < total; ++i) {
+                    CloneData clone;
+                    clone.index = i;
+                    float x = (static_cast<float>(i) / static_cast<float>(total - 1) - 0.5f) * 400.0f;
+                    clone.transform.setToIdentity();
+                    clone.transform.translate(x, 0, 0);
+                    clone.weight = std::clamp(1.0f - opacityDecay_ * static_cast<float>(i), 0.0f, 1.0f);
+                    clone.visible = true;
+                    clones.push_back(clone);
+                }
+            }
         } else {
             const int total = std::max(1, count_);
             clones.reserve(static_cast<size_t>(total));
@@ -205,20 +388,28 @@ public:
         }
 
         if (useTransformEffector_) {
+            auto base = clones;
             TransformCloneEffector effector;
             effector.positionOffset = effectorPositionOffset_;
             effector.rotationOffset = effectorRotationOffset_;
             effector.scaleOffset = effectorScaleOffset_;
             effector.applyToClones(clones);
+            for (size_t i = 0; i < clones.size() && i < base.size(); ++i)
+                blendCloneData(base[i], clones[i], effector.blendMode, effector.strength);
+            clones = std::move(base);
         }
 
         if (useRandomEffector_) {
+            auto base = clones;
             RandomCloneEffector effector;
             effector.seed = randomEffectorSeed_;
             effector.positionVariance = randomPositionVariance_;
             effector.rotationVariance = randomRotationVariance_;
             effector.scaleVariance = randomScaleVariance_;
             effector.applyToClones(clones);
+            for (size_t i = 0; i < clones.size() && i < base.size(); ++i)
+                blendCloneData(base[i], clones[i], effector.blendMode, effector.strength);
+            clones = std::move(base);
         }
 
         return clones;
@@ -232,7 +423,7 @@ public:
         modeProp.setName("Clone Mode");
         modeProp.setType(PropertyType::Integer);
         modeProp.setValue(static_cast<int>(mode_));
-        modeProp.setTooltip(QStringLiteral("0=Linear,1=Grid,2=Radial"));
+        modeProp.setTooltip(QStringLiteral("0=Linear,1=Grid,2=Radial,3=Object,4=Hexagonal,5=Spiral,6=Spline"));
         props.push_back(modeProp);
 
         if (mode_ == Mode::Grid) {
@@ -303,6 +494,77 @@ public:
             endAngleProp.setType(PropertyType::Float);
             endAngleProp.setValue(endAngle_);
             props.push_back(endAngleProp);
+        } else if (mode_ == Mode::Object) {
+            AbstractProperty objectScaleProp;
+            objectScaleProp.setName("Object Scale");
+            objectScaleProp.setType(PropertyType::Float);
+            objectScaleProp.setValue(objectScale_);
+            objectScaleProp.setHardRange(0.01f, 100.0f);
+            props.push_back(objectScaleProp);
+        } else if (mode_ == Mode::Hexagonal) {
+            AbstractProperty hexColsProp;
+            hexColsProp.setName("Hex Columns");
+            hexColsProp.setType(PropertyType::Integer);
+            hexColsProp.setValue(hexColumns_);
+            hexColsProp.setHardRange(1, 128);
+            hexColsProp.setSoftRange(1, 16);
+            props.push_back(hexColsProp);
+
+            AbstractProperty hexRowsProp;
+            hexRowsProp.setName("Hex Rows");
+            hexRowsProp.setType(PropertyType::Integer);
+            hexRowsProp.setValue(hexRows_);
+            hexRowsProp.setHardRange(1, 128);
+            hexRowsProp.setSoftRange(1, 16);
+            props.push_back(hexRowsProp);
+
+            AbstractProperty hexRadiusProp;
+            hexRadiusProp.setName("Hex Radius");
+            hexRadiusProp.setType(PropertyType::Float);
+            hexRadiusProp.setValue(hexRadius_);
+            hexRadiusProp.setHardRange(1.0f, 1000.0f);
+            props.push_back(hexRadiusProp);
+        } else if (mode_ == Mode::Spiral) {
+            AbstractProperty spiralCountProp;
+            spiralCountProp.setName("Spiral Count");
+            spiralCountProp.setType(PropertyType::Integer);
+            spiralCountProp.setValue(spiralCount_);
+            spiralCountProp.setHardRange(1, 2048);
+            spiralCountProp.setSoftRange(1, 100);
+            props.push_back(spiralCountProp);
+
+            AbstractProperty spiralTurnsProp;
+            spiralTurnsProp.setName("Spiral Turns");
+            spiralTurnsProp.setType(PropertyType::Float);
+            spiralTurnsProp.setValue(spiralTurns_);
+            spiralTurnsProp.setHardRange(0.1f, 100.0f);
+            props.push_back(spiralTurnsProp);
+
+            AbstractProperty spiralRadiusStartProp;
+            spiralRadiusStartProp.setName("Spiral Radius Start");
+            spiralRadiusStartProp.setType(PropertyType::Float);
+            spiralRadiusStartProp.setValue(spiralRadiusStart_);
+            props.push_back(spiralRadiusStartProp);
+
+            AbstractProperty spiralRadiusEndProp;
+            spiralRadiusEndProp.setName("Spiral Radius End");
+            spiralRadiusEndProp.setType(PropertyType::Float);
+            spiralRadiusEndProp.setValue(spiralRadiusEnd_);
+            props.push_back(spiralRadiusEndProp);
+
+            AbstractProperty spiralHeightProp;
+            spiralHeightProp.setName("Spiral Height");
+            spiralHeightProp.setType(PropertyType::Float);
+            spiralHeightProp.setValue(spiralHeight_);
+            props.push_back(spiralHeightProp);
+        } else if (mode_ == Mode::Spline) {
+            AbstractProperty splineCountProp;
+            splineCountProp.setName("Spline Clone Count");
+            splineCountProp.setType(PropertyType::Integer);
+            splineCountProp.setValue(splineCount_);
+            splineCountProp.setHardRange(1, 2048);
+            splineCountProp.setSoftRange(1, 100);
+            props.push_back(splineCountProp);
         } else {
             AbstractProperty countProp;
             countProp.setName("Clone Count");
@@ -468,7 +730,7 @@ public:
     {
         const QString key = name.toQString();
         if (key == QStringLiteral("Clone Mode")) {
-            setMode(static_cast<Mode>(std::clamp(value.toInt(), 0, 2)));
+            setMode(static_cast<Mode>(std::clamp(value.toInt(), 0, 6)));
         } else if (key == QStringLiteral("Clone Count")) {
             if (mode_ == Mode::Radial) {
                 setRadialCount(value.toInt());
@@ -541,6 +803,26 @@ public:
             randomRotationVariance_.setZ(value.toFloat());
         } else if (key == QStringLiteral("Random Scale")) {
             setRandomScaleVariance(value.toFloat());
+        } else if (key == QStringLiteral("Object Scale")) {
+            setObjectScale(value.toFloat());
+        } else if (key == QStringLiteral("Hex Columns")) {
+            setHexColumns(value.toInt());
+        } else if (key == QStringLiteral("Hex Rows")) {
+            setHexRows(value.toInt());
+        } else if (key == QStringLiteral("Hex Radius")) {
+            setHexRadius(value.toFloat());
+        } else if (key == QStringLiteral("Spiral Count")) {
+            setSpiralCount(value.toInt());
+        } else if (key == QStringLiteral("Spiral Turns")) {
+            setSpiralTurns(value.toFloat());
+        } else if (key == QStringLiteral("Spiral Radius Start")) {
+            setSpiralRadiusStart(value.toFloat());
+        } else if (key == QStringLiteral("Spiral Radius End")) {
+            setSpiralRadiusEnd(value.toFloat());
+        } else if (key == QStringLiteral("Spiral Height")) {
+            setSpiralHeight(value.toFloat());
+        } else if (key == QStringLiteral("Spline Clone Count")) {
+            setSplineCount(value.toInt());
         }
     }
 };

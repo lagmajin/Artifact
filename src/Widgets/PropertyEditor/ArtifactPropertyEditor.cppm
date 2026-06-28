@@ -109,6 +109,10 @@ public:
   }
 
 protected:
+  void wheelEvent(QWheelEvent *event) override {
+    event->ignore();
+  }
+
   void paintEvent(QPaintEvent *event) override {
     Q_UNUSED(event);
     QPainter painter(this);
@@ -192,6 +196,16 @@ protected:
 
 private:
   QString displayText_;
+};
+
+class PropertyComboBox final : public QComboBox {
+public:
+  explicit PropertyComboBox(QWidget *parent = nullptr) : QComboBox(parent) {}
+
+protected:
+  void wheelEvent(QWheelEvent *event) override {
+    event->ignore();
+  }
 };
 
 class PropertyCallbackButton final : public QPushButton {
@@ -854,11 +868,11 @@ protected:
     const QColor text =
         themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
 
-    QColor trackColor = isChecked() ? blendColor(selection, accent, 0.44)
+    QColor trackColor = isChecked() ? blendColor(propertySurfaceColor(true), accent, 0.24)
                                     : propertySurfaceColor(false);
     QColor borderColor =
-        isChecked() ? blendColor(border, accent, 0.52) : border;
-    QColor knobColor = text;
+        isChecked() ? blendColor(border, accent, 0.36) : border;
+    QColor knobColor = isChecked() ? accent.lighter(175) : text;
     if (!isEnabled()) {
       trackColor = trackColor.darker(135);
       borderColor = borderColor.darker(135);
@@ -882,8 +896,7 @@ protected:
     painter.drawEllipse(knobRect);
 
     if (hasFocus()) {
-      QPen focusPen(selection.lighter(130), 1.0);
-      focusPen.setStyle(Qt::DashLine);
+      QPen focusPen(accent.lighter(125), 1.0);
       painter.setPen(focusPen);
       painter.setBrush(Qt::NoBrush);
       painter.drawRoundedRect(trackRect.adjusted(1, 1, -1, -1), radius, radius);
@@ -899,7 +912,7 @@ public:
       : QWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
     setCursor(Qt::OpenHandCursor);
-    setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    setFixedSize(34, 34);
     setToolTip(QStringLiteral("Drag vertically to adjust. Shift = fine, Ctrl = coarse."));
   }
 
@@ -2002,7 +2015,7 @@ ArtifactDashPatternPropertyEditor::ArtifactDashPatternPropertyEditor(
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setSpacing(4);
 
-  presetCombo_ = new QComboBox(this);
+  presetCombo_ = new PropertyComboBox(this);
   presetCombo_->addItem(QStringLiteral("Solid"), QString());
   presetCombo_->addItem(QStringLiteral("Dotted"), QStringLiteral("2,4"));
   presetCombo_->addItem(QStringLiteral("Dashed"), QStringLiteral("6,3"));
@@ -2379,7 +2392,7 @@ ArtifactEnumPropertyEditor::ArtifactEnumPropertyEditor(
     QWidget *parent)
     : ArtifactAbstractPropertyEditor(parent), options_(std::move(options)) {
   setObjectName(QStringLiteral("propertyEnumEditor"));
-  comboBox_ = new QComboBox(this);
+  comboBox_ = new PropertyComboBox(this);
   comboBox_->setMinimumHeight(26);
   comboBox_->setFrame(false);
   applyPropertyFieldPalette(comboBox_);

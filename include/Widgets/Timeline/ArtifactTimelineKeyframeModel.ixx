@@ -34,6 +34,9 @@ public:
   static QStringList transformPropertyPaths();
   static QString displayLabelForPropertyPath(QString propertyPath);
   static bool isTransformPropertyPath(const QString& propertyPath);
+  static bool shouldHideTimelinePropertyGroup(const QString& groupName);
+  static bool isTimelinePropertyGroupExpandedByDefault(
+      const QString& groupName);
 
   std::vector<KeyFrame> getKeyframesFor(const CompositionID& compId,
                                         const LayerID& layerId,

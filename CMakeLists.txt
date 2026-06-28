@@ -167,6 +167,27 @@ if(_procedural_3d_layer_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactProcedural3DLayer.cppm")
 endif()
 
+# Layer component contracts are imported by the layer implementation and by
+# renderer-side evaluators. Pin the public module explicitly instead of relying
+# on recursive glob discovery.
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactLayerComponentSystem.ixx" _layer_component_system_module_idx)
+if(_layer_component_system_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactLayerComponentSystem.ixx")
+endif()
+
+# Glow Variants Pack modules are explicit so adding the files does not rely on
+# recursive glob discovery.
+foreach(glow_variant IN ITEMS LiquidGlow ResidualGlow)
+    list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/${glow_variant}Effect.ixx" _glow_variant_module_idx)
+    if(_glow_variant_module_idx EQUAL -1)
+        list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Effects/Glow/${glow_variant}Effect.ixx")
+    endif()
+    list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/${glow_variant}Effect.cppm" _glow_variant_impl_idx)
+    if(_glow_variant_impl_idx EQUAL -1)
+        list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Effects/Glow/${glow_variant}Effect.cppm")
+    endif()
+endforeach()
+
 # ---------------------------------------------------------------------------
 # ターゲット定義
 # ---------------------------------------------------------------------------

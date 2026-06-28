@@ -1138,6 +1138,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
        transform, impl->cachedImage_,
        layerOpacity * weight);
   });
+  drawFractureOverlay(renderer, baseTransform, QSizeF(impl->width_, impl->height_), layerOpacity);
   return;
  }
   drawWithClonerEffect(this, baseTransform,
@@ -1197,6 +1198,7 @@ void ArtifactShapeLayer::draw(ArtifactIRenderer* renderer) {
      }
     }
   });
+ drawFractureOverlay(renderer, baseTransform, QSizeF(impl_->width_, impl_->height_), opacity());
 }
 
 // ============================================================
@@ -1222,7 +1224,8 @@ std::vector<ArtifactCore::PropertyGroup> ArtifactShapeLayer::getLayerPropertyGro
  auto shapeTypeProp = makeProp(QStringLiteral("shape.type"),
                                ArtifactCore::PropertyType::Integer,
                                static_cast<int>(impl_->shapeType_),
-                               -220);
+                               -220,
+                               false);
  shapeTypeProp->setDisplayLabel(QStringLiteral("Type"));
  QString shapeTypeTooltip = QStringLiteral(
      "0=Rect, 1=Ellipse, 2=Star, 3=Polygon, 4=Line, 5=Triangle, 6=Square");

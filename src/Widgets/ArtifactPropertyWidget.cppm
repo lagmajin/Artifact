@@ -93,6 +93,7 @@ import Artifact.Event.Types;
 import Time.Rational;
 import Script.Expression.Evaluator;
 import Property.SerializationBridge;
+import Settings.Accessibility;
 
 namespace Artifact {
 
@@ -146,6 +147,8 @@ QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
                           a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
                           a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
 }
+
+bool shouldHideInspectorPropertyGroup(const QString &groupName);
 
 ArtifactTimelineWidget *activeTimelineWidget(QWidget *root) {
   if (!root) {
@@ -233,6 +236,10 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
     return {};
   }
 
+  if (shouldHideInspectorPropertyGroup(normalizedGroup)) {
+    return {};
+  }
+
   if (normalizedGroup.compare(QStringLiteral("Layer"), Qt::CaseInsensitive) == 0) {
     std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
     filtered.reserve(properties.size());
@@ -260,6 +267,17 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
 
   if (normalizedGroup.compare(QStringLiteral("Layout"), Qt::CaseInsensitive) == 0 &&
       !groupBool(QStringLiteral("component.layout.enabled"))) {
+    return {};
+  }
+
+  if (normalizedGroup.compare(QStringLiteral("Crowd"), Qt::CaseInsensitive) == 0 &&
+      !groupBool(QStringLiteral("component.crowd.enabled"))) {
+    return {};
+  }
+
+  if (normalizedGroup.compare(QStringLiteral("Particle Emitter"),
+                              Qt::CaseInsensitive) == 0 &&
+      !groupBool(QStringLiteral("component.particleEmitter.enabled"))) {
     return {};
   }
 
@@ -308,12 +326,12 @@ std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filteredGroupProper
           name == QStringLiteral("component.cloner.endAngle");
 
       if ((mode == 0 && (isGridOnly || isRadialOnly || isRandomOnly || isSplineOnly)) ||
-          (mode == 1 && (isGridOnly || isRadialOnly || isRandomOnly || isSplineOnly)) ||
+          (mode == 1 && (isGridOnly || isRadialOnly || isSplineOnly)) ||
           (mode == 2 && (isGridOnly || isRadialOnly || isRandomOnly)) ||
-          (mode == 3 && (isLinearOnly || isRadialOnly || isRandomOnly || isSplineOnly)) ||
-          (mode == 4 && (isLinearOnly || isGridOnly || isRandomOnly || isSplineOnly)) ||
-          (mode == 5 && (isGridOnly || isRadialOnly || isSplineOnly)) ||
-          (mode == 6 && (isLinearOnly || isGridOnly || isRandomOnly))) {
+          (mode == 3 && (isLinearOnly || isGridOnly || isRadialOnly || isSplineOnly)) ||
+          (mode == 4 && (isLinearOnly || isGridOnly || isRadialOnly || isRandomOnly)) ||
+          (mode == 5 && (isLinearOnly || isRadialOnly || isRandomOnly || isSplineOnly)) ||
+          (mode == 6 && (isLinearOnly || isGridOnly || isRandomOnly || isSplineOnly))) {
         continue;
       }
       filtered.push_back(property);
@@ -591,6 +609,66 @@ struct EffectPresentationDescriptor {
   QString stageNoteText;
   LayerPresentationBadgeTone badgeTone = LayerPresentationBadgeTone::Neutral;
 };
+
+struct LayerStateToggleDef {
+  const char *propertyName;
+  const char *label;
+  const char *tooltip;
+};
+
+constexpr std::array<LayerStateToggleDef, 8> kLayerStateToggleDefs = {{
+    {"layer.visible", "Visible", "Show or hide the layer"},
+    {"layer.locked", "Lock", "Prevent direct edits on the layer"},
+    {"layer.selectionLocked", "Sel", "Prevent selection in the layer panel"},
+    {"layer.transformLocked", "Xform", "Prevent transform edits"},
+    {"layer.timingLocked", "Time", "Prevent timing edits"},
+    {"layer.guide", "Guide", "Mark as guide layer"},
+    {"layer.solo", "Solo", "Solo this layer"},
+    {"layer.shy", "Shy", "Hide the layer from the panel"},
+}};
+
+bool isExpandedInspectorSection(const QString &groupName) {
+  return isInspectorExpandedByDefaultLayerPropertyGroup(groupName);
+}
+
+bool shouldHideInspectorPropertyGroup(const QString &groupName);
+
+bool shouldHideInspectorPropertyGroup(const QString &groupName) {
+  return isInspectorHiddenLayerPropertyGroup(groupName);
+}
+
+bool isClonerSection(const QString &groupName) {
+  return isClonerLayerPropertyGroup(groupName);
+}
+
+bool isSourceReframeSection(const QString &groupName) {
+  return isSourceReframeLayerPropertyGroup(groupName);
+}
+
+std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>>
+applyFavoriteFilter(
+    const std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> &properties,
+    const bool favoriteOnly) {
+  if (!favoriteOnly) {
+    return properties;
+  }
+
+  QSettings settings(QStringLiteral("Artifact"),
+                     QStringLiteral("PropertyFavorites"));
+  const auto favs = settings.value(QStringLiteral("favorites")).toStringList();
+  if (favs.isEmpty()) {
+    return {};
+  }
+
+  std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> filtered;
+  filtered.reserve(properties.size());
+  for (const auto &property : properties) {
+    if (property && favs.contains(property->getName(), Qt::CaseInsensitive)) {
+      filtered.push_back(property);
+    }
+  }
+  return filtered;
+}
 
 template <typename EffectPtr>
 EffectPresentationDescriptor describeEffectPresentation(const EffectPtr &effect) {
@@ -968,8 +1046,6 @@ inspectorProperties(
   return filtered;
 }
 
-// --- Favorites ---
-namespace {
 QStringList loadFavoriteProperties() {
   QSettings settings(QStringLiteral("Artifact"),
                      QStringLiteral("PropertyFavorites"));
@@ -997,7 +1073,6 @@ void toggleFavorite(const QString &propertyPath) {
   }
   saveFavoriteProperties(favs);
 }
-} // anonymous namespace
 
 void notifyLayerPropertyAnimationChanged(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
@@ -1339,14 +1414,17 @@ void alignPropertyRowLabels(
     const std::vector<ArtifactPropertyEditorRowWidget *> &rows,
     const int minimumLabelWidth = kPropertyLabelMinWidth,
     const int maximumLabelWidth = kPropertyLabelMaxWidth) {
-  int labelWidth = minimumLabelWidth;
+  const float accelScale = Accessibility::targetScale();
+  const int minW = static_cast<int>(static_cast<float>(minimumLabelWidth) * accelScale + 0.5f);
+  const int maxW = static_cast<int>(static_cast<float>(maximumLabelWidth) * accelScale + 0.5f);
+  int labelWidth = minW;
   for (auto *row : rows) {
     if (!row || !row->label()) {
       continue;
     }
     labelWidth = std::max(labelWidth, row->label()->sizeHint().width());
   }
-  labelWidth = std::clamp(labelWidth, minimumLabelWidth, maximumLabelWidth);
+  labelWidth = std::clamp(labelWidth, minW, maxW);
 
   for (auto *row : rows) {
     if (!row || !row->label()) {
@@ -1440,6 +1518,8 @@ prioritizedSummaryProperties(
   return preferred;
 }
 
+} // namespace
+
 std::shared_ptr<ArtifactCore::AbstractProperty>
 ArtifactPropertyWidget::Impl::resolveRowProperty(
     const ArtifactPropertyEditorRowWidget *row) const {
@@ -1480,8 +1560,6 @@ ArtifactPropertyWidget::Impl::resolveRowProperty(
 
   return {};
 }
-
-} // namespace
 
 QString ArtifactPropertyWidget::Impl::computeRebuildSignature() const {
   QString signature;
@@ -1881,6 +1959,7 @@ bool ArtifactPropertyWidget::openActiveExpressionCopilot() {
   }
 
   const QString propertyName = row->propertyName();
+  const QString propertyScope = row->property("propertyScope").toString();
   auto propertyPtr = impl_->resolveRowProperty(row);
   if (!propertyPtr) {
     return false;
@@ -1908,6 +1987,7 @@ bool ArtifactPropertyWidget::clearActiveExpression() {
   }
 
   const QString propertyName = row->propertyName();
+  const QString propertyScope = row->property("propertyScope").toString();
   auto propertyPtr = impl_->resolveRowProperty(row);
   if (!propertyPtr) {
     return false;
@@ -1933,6 +2013,7 @@ bool ArtifactPropertyWidget::convertActiveExpressionToKeyframes() {
   }
 
   const QString propertyName = row->propertyName();
+  const QString propertyScope = row->property("propertyScope").toString();
   auto propertyPtr = impl_->resolveRowProperty(row);
   if (!propertyPtr || !propertyPtr->hasExpression()) {
     return false;
@@ -1988,6 +2069,7 @@ bool ArtifactPropertyWidget::saveActiveExpressionPreset() {
   }
 
   const QString propertyName = row->propertyName();
+  const QString propertyScope = row->property("propertyScope").toString();
   auto propertyPtr = impl_->resolveRowProperty(row);
   if (!propertyPtr) {
     return false;
@@ -2310,24 +2392,7 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     stateLayout->setContentsMargins(4, 2, 4, 2);
     stateLayout->setSpacing(4);
 
-    struct StateToggleDef {
-      const char *propertyName;
-      const char *label;
-      const char *tooltip;
-    };
-
-    const std::array<StateToggleDef, 8> stateToggles = {{
-        {"layer.visible", "Visible", "Show or hide the layer"},
-        {"layer.locked", "Lock", "Prevent direct edits on the layer"},
-        {"layer.selectionLocked", "Sel", "Prevent selection in the layer panel"},
-        {"layer.transformLocked", "Xform", "Prevent transform edits"},
-        {"layer.timingLocked", "Time", "Prevent timing edits"},
-        {"layer.guide", "Guide", "Mark as guide layer"},
-        {"layer.solo", "Solo", "Solo this layer"},
-        {"layer.shy", "Shy", "Hide the layer from the panel"},
-    }};
-
-    for (const auto &toggleDef : stateToggles) {
+    for (const auto &toggleDef : kLayerStateToggleDefs) {
       const auto property = currentLayer->getProperty(QString::fromLatin1(toggleDef.propertyName));
       if (!property ||
           property->getType() != ArtifactCore::PropertyType::Boolean) {
@@ -2531,29 +2596,15 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
   for (const auto &groupDef : layerGroups) {
     const QString groupName =
         groupDef.name().isEmpty() ? QStringLiteral("Layer") : groupDef.name();
-    const bool isSourceReframe = groupName.compare(QStringLiteral("Source Reframe"),
-                                                   Qt::CaseInsensitive) == 0;
-    const bool isClonerGroup =
-        groupName.compare(QStringLiteral("Cloner"), Qt::CaseInsensitive) == 0;
-    auto sortedProps =
-        filteredGroupProperties(layer, groupName,
-                                inspectorProperties(groupDef.sortedProperties()));
-    // Apply favorites filter when in favorite-only mode
-    if (favoriteOnly) {
-      const auto favs = loadFavoriteProperties();
-      if (!favs.isEmpty()) {
-        std::vector<std::shared_ptr<ArtifactCore::AbstractProperty>> favFiltered;
-        favFiltered.reserve(sortedProps.size());
-        for (const auto &p : sortedProps) {
-          if (p && favs.contains(p->getName(), Qt::CaseInsensitive)) {
-            favFiltered.push_back(p);
-          }
-        }
-        sortedProps.swap(favFiltered);
-      } else {
-        sortedProps.clear();
-      }
+    if (shouldHideInspectorPropertyGroup(groupName)) {
+      continue;
     }
+    const bool isSourceReframe = isSourceReframeSection(groupName);
+    const bool isClonerGroup = isClonerSection(groupName);
+    auto sortedProps =
+        applyFavoriteFilter(filteredGroupProperties(
+            layer, groupName, inspectorProperties(groupDef.sortedProperties())),
+            favoriteOnly);
     if (sortedProps.empty()) {
       continue;
     }
@@ -2565,11 +2616,42 @@ void ArtifactPropertyWidget::Impl::rebuildUI() {
     groupLayout->setSpacing(5);
     applyPropertySectionBox(group);
     applyThemeTextPalette(group, 120);
+
+    if (groupName.compare(QStringLiteral("Components"), Qt::CaseInsensitive) == 0) {
+      const auto validationIssues = layer->validateLayerComponents();
+      if (!validationIssues.empty()) {
+        QStringList issueLines;
+        issueLines.reserve(static_cast<int>(std::min<std::size_t>(
+            validationIssues.size(), static_cast<std::size_t>(4))));
+        for (const auto &issue : validationIssues) {
+          if (issueLines.size() >= 4) {
+            break;
+          }
+          const QString componentLabel = issue.componentId.trimmed().isEmpty()
+              ? QStringLiteral("(unnamed component)")
+              : issue.componentId;
+          issueLines.push_back(QStringLiteral("%1: %2")
+                                   .arg(componentLabel, issue.message));
+        }
+        auto *validationNote = new QLabel(group);
+        validationNote->setObjectName(QStringLiteral("propertySectionNote"));
+        validationNote->setWordWrap(true);
+        validationNote->setText(
+            QStringLiteral("Validation issues: %1")
+                .arg(static_cast<int>(validationIssues.size())));
+        if (!issueLines.isEmpty()) {
+          validationNote->setToolTip(issueLines.join(QStringLiteral("\n")));
+          validationNote->setText(validationNote->text() + QStringLiteral("\n") +
+                                  issueLines.join(QStringLiteral("\n")));
+        }
+        applyPropertySectionLabel(validationNote, false);
+        applyThemeTextPalette(validationNote, 110);
+        groupLayout->addWidget(validationNote);
+      }
+    }
     QWidget *sectionBody = group;
     CollapsibleSectionButton *collapseButton = nullptr;
-    if (groupName.compare(QStringLiteral("Initial"), Qt::CaseInsensitive) == 0 ||
-        groupName.compare(QStringLiteral("Rig"), Qt::CaseInsensitive) == 0 ||
-        groupName.compare(QStringLiteral("Rig Controls"), Qt::CaseInsensitive) == 0) {
+    if (isExpandedInspectorSection(groupName)) {
       collapseButton = new CollapsibleSectionButton(group);
       collapseButton->setText(groupName);
       collapseButton->setChecked(false);

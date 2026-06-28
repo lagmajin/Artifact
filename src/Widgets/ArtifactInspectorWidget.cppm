@@ -120,6 +120,8 @@ import Artifact.Effect.Glow;
 import Artifact.Effect.Glow.EdgeBloom;
 import Artifact.Effect.Glow.ChromaticGlow;
 import Artifact.Effect.Glow.ReactiveGlow;
+import Artifact.Effect.Glow.LiquidGlow;
+import Artifact.Effect.Glow.ResidualGlow;
 import Artifact.Effect.GauusianBlur;
 import Artifact.Effect.LiftGammaGain;
 import Artifact.Effect.LensDistortion;
@@ -1053,13 +1055,18 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
   if (!layer) {
     return QStringLiteral(
         "physics.enabled|component.script.enabled|"
-        "component.layout.enabled|component.cloner.enabled");
+        "component.layout.enabled|component.cloner.enabled|"
+        "component.collision.enabled|component.crowd.enabled|"
+        "component.particleEmitter.enabled");
   }
   QStringList filters = {
       QStringLiteral("physics.enabled"),
       QStringLiteral("component.script.enabled"),
       QStringLiteral("component.layout.enabled"),
       QStringLiteral("component.cloner.enabled"),
+      QStringLiteral("component.collision.enabled"),
+      QStringLiteral("component.crowd.enabled"),
+      QStringLiteral("component.particleEmitter.enabled"),
   };
 
   if (layerBooleanProperty(layer, QStringLiteral("physics.enabled"))) {
@@ -1073,6 +1080,16 @@ QString defaultComponentInspectorFilter(const ArtifactAbstractLayerPtr &layer) {
   }
   if (layerBooleanProperty(layer, QStringLiteral("component.cloner.enabled"))) {
     filters.push_back(QStringLiteral("component.cloner."));
+  }
+  if (layerBooleanProperty(layer, QStringLiteral("component.collision.enabled"))) {
+    filters.push_back(QStringLiteral("component.collision."));
+  }
+  if (layerBooleanProperty(layer, QStringLiteral("component.crowd.enabled"))) {
+    filters.push_back(QStringLiteral("component.crowd."));
+  }
+  if (layerBooleanProperty(
+          layer, QStringLiteral("component.particleEmitter.enabled"))) {
+    filters.push_back(QStringLiteral("component.particleEmitter."));
   }
 
   filters.removeDuplicates();
@@ -1139,6 +1156,17 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   const bool cloneEnabled =
       hasLayer && layerBooleanProperty(
                       layer, QStringLiteral("component.cloner.enabled"));
+  const bool collisionEnabled =
+      hasLayer && layerBooleanProperty(
+                      layer, QStringLiteral("component.collision.enabled"));
+  const bool crowdEnabled =
+      hasLayer && layerBooleanProperty(
+                      layer, QStringLiteral("component.crowd.enabled"));
+  const bool particleEmitterEnabled =
+      hasLayer && layerBooleanProperty(
+                      layer, QStringLiteral("component.particleEmitter.enabled"));
+  const auto validationIssues = hasLayer ? layer->validateLayerComponents()
+                                         : std::vector<LayerComponentValidationIssue>{};
 
   if (componentsGroup) {
     componentsGroup->setEnabled(canEditComponents);
@@ -1189,13 +1217,46 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     if (cloneEnabled) {
       active.push_back(QStringLiteral("Cloner"));
     }
-    componentsSummaryLabel->setText(
+    if (collisionEnabled) {
+      active.push_back(QStringLiteral("Collision"));
+    }
+    if (crowdEnabled) {
+      active.push_back(QStringLiteral("Crowd"));
+    }
+    if (particleEmitterEnabled) {
+      active.push_back(QStringLiteral("Particle Emitter"));
+    }
+
+    QString summaryText =
         hasLayer ? (active.isEmpty()
                         ? QStringLiteral("Components: none")
                         : QStringLiteral("Components: %1")
                               .arg(active.join(QStringLiteral(", "))))
-                 : QStringLiteral("Components: select a layer in a composition to add components"));
+                 : QStringLiteral("Components: select a layer in a composition to add components");
+    if (hasLayer && !validationIssues.empty()) {
+      summaryText += QStringLiteral(" | issues: %1")
+                         .arg(static_cast<int>(validationIssues.size()));
+    }
+    componentsSummaryLabel->setText(summaryText);
     applyInspectorLabelPalette(componentsSummaryLabel, active.isEmpty());
+    if (hasLayer && !validationIssues.empty()) {
+      QStringList issueLines;
+      issueLines.reserve(static_cast<int>(std::min<std::size_t>(
+          validationIssues.size(), static_cast<std::size_t>(4))));
+      for (const auto &issue : validationIssues) {
+        if (issueLines.size() >= 4) {
+          break;
+        }
+        const QString componentLabel = issue.componentId.trimmed().isEmpty()
+            ? QStringLiteral("(unnamed component)")
+            : issue.componentId;
+        issueLines.push_back(QStringLiteral("%1: %2")
+                                 .arg(componentLabel, issue.message));
+      }
+      componentsSummaryLabel->setToolTip(issueLines.join(QStringLiteral("\n")));
+    } else {
+      componentsSummaryLabel->setToolTip({});
+    }
   }
 
   if (componentPropertyWidget) {
@@ -2526,6 +2587,18 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
       auto effect = std::make_shared<ReactiveGlowEffect>();
       effect->setEffectID(ArtifactCore::UniString("reactive_glow"));
       effect->setDisplayName(ArtifactCore::UniString("Reactive Glow"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addAction("Liquid Glow", [addAndRefresh]() {
+      auto effect = std::make_shared<LiquidGlowEffect>();
+      effect->setEffectID(ArtifactCore::UniString("liquid_glow"));
+      effect->setDisplayName(ArtifactCore::UniString("Liquid Glow"));
+      addAndRefresh(effect);
+    });
+    effectMenu.addAction("Residual Glow", [addAndRefresh]() {
+      auto effect = std::make_shared<ResidualGlowEffect>();
+      effect->setEffectID(ArtifactCore::UniString("residual_glow"));
+      effect->setDisplayName(ArtifactCore::UniString("Residual Glow"));
       addAndRefresh(effect);
     });
     effectMenu.addSeparator();

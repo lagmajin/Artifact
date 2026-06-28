@@ -72,31 +72,103 @@ export namespace Artifact {
     };
 
     // ─────────────────────────────────────────────────────────
+    // EffectorBlendMode
+    // エフェクター同士の合成方法
+    // ─────────────────────────────────────────────────────────
+    export enum class EffectorBlendMode {
+        Add = 0,
+        Subtract,
+        Multiply,
+        Max,
+        Min,
+        Average,
+        Normal
+    };
+
+    // ─────────────────────────────────────────────────────────
+    // ブレンドユーティリティ関数
+    // ─────────────────────────────────────────────────────────
+    export inline void blendCloneData(
+        CloneData& base,
+        const CloneData& effector,
+        EffectorBlendMode mode,
+        float strength)
+    {
+        if (strength <= 0.001f) return;
+        float s = std::clamp(strength, 0.0f, 1.0f);
+
+        QVector3D basePos = base.transform.column(3).toVector3D();
+        QVector3D effPos = effector.transform.column(3).toVector3D();
+
+        switch (mode) {
+        case EffectorBlendMode::Add:
+            basePos += (effPos - basePos) * s;
+            break;
+        case EffectorBlendMode::Subtract:
+            basePos -= (effPos - basePos) * s;
+            break;
+        case EffectorBlendMode::Multiply:
+            basePos = basePos * (1.0f + (effPos / (basePos.length() > 0.001f ? basePos.length() : 1.0f) - 1.0f) * s);
+            break;
+        case EffectorBlendMode::Max:
+            basePos.setX(std::max(basePos.x(), effPos.x() * s));
+            basePos.setY(std::max(basePos.y(), effPos.y() * s));
+            basePos.setZ(std::max(basePos.z(), effPos.z() * s));
+            break;
+        case EffectorBlendMode::Min:
+            basePos.setX(std::min(basePos.x(), effPos.x() * (s + 0.001f)));
+            basePos.setY(std::min(basePos.y(), effPos.y() * (s + 0.001f)));
+            basePos.setZ(std::min(basePos.z(), effPos.z() * (s + 0.001f)));
+            break;
+        case EffectorBlendMode::Average:
+            basePos = (basePos + effPos * s) * 0.5f;
+            break;
+        case EffectorBlendMode::Normal:
+            basePos = basePos * (1.0f - s) + effPos * s;
+            break;
+        }
+        base.transform.setColumn(3, QVector4D(basePos, 1.0f));
+
+        if (effector.color != Qt::white) {
+            float r, g, b, a;
+            base.color.getRgbF(&r, &g, &b, &a);
+            float er, eg, eb, ea;
+            effector.color.getRgbF(&er, &eg, &eb, &ea);
+            base.color.setRgbF(
+                std::clamp(r + (er - r) * s, 0.0f, 1.0f),
+                std::clamp(g + (eg - g) * s, 0.0f, 1.0f),
+                std::clamp(b + (eb - b) * s, 0.0f, 1.0f),
+                std::clamp(a + (ea - a) * s, 0.0f, 1.0f));
+        }
+
+        base.weight = base.weight * (1.0f - s) + effector.weight * s;
+        if (!effector.visible) base.visible = false;
+    }
+
+    // ─────────────────────────────────────────────────────────
     // AbstractCloneEffector
-    // クローン配列全体を受け取り、非破壊で操作(変形・色変え)を行う基底クラス
+    // クローン配列全体を受け取り、操作(変形・色変え)を行う基底クラス
     // ─────────────────────────────────────────────────────────
     class AbstractCloneEffector : public ArtifactAbstractEffect {
     public:
         AbstractCloneEffector() {
-            setPipelineStage(EffectPipelineStage::PreProcess); // Transform計算後、描画前
+            setPipelineStage(EffectPipelineStage::PreProcess);
         }
         virtual ~AbstractCloneEffector() = default;
 
-        // エフェクターの影響範囲を決めるフィールドを追加
+        EffectorBlendMode blendMode = EffectorBlendMode::Add;
+        float strength = 1.0f;
+
         void addField(std::shared_ptr<AbstractCloneField> field) {
             fields_.push_back(field);
         }
 
-        // 評価: 前のジェネレーター/エフェクターから来たクローン配列を操作して返す
         virtual void applyToClones(std::vector<CloneData>& clones) const = 0;
 
     protected:
-        // フィールドを合成して、指定位置での最終的な影響ウェイトを計算する
         float calculateFieldWeight(const QVector3D& position) const {
-            if (fields_.empty()) return 1.0f; // フィールドがない場合は全体に100%影響
-            
+            if (fields_.empty()) return 1.0f;
             float totalWeight = 0.0f;
-            // 簡易的に加算ブレンド (本来はMax, Min, Add等ブレンドモードがあるべき)
             for (const auto& f : fields_) {
                 totalWeight += f->sample(position);
             }

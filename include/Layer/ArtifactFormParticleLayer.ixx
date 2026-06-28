@@ -15,10 +15,41 @@ module;
 export module Artifact.Layer.FormParticle;
 
 import Artifact.Layer.Abstract;
-import Artifact.Generator.Particle;
 import Size;
 
 export namespace Artifact {
+
+enum class FormParticleBlendMode {
+    Additive = 0,
+    Subtractive = 1,
+    Alpha = 2,
+    Screen = 3,
+    Multiply = 4
+};
+
+enum class FormParticleBillboardMode {
+    None = 0,
+    ScreenAligned = 1,
+    ViewPlane = 2,
+    VelocityAligned = 3
+};
+
+enum class FormParticleSortMode {
+    None = 0,
+    Distance = 1,
+    OldestFirst = 2,
+    YoungestFirst = 3
+};
+
+struct FormParticleRenderSettings {
+    FormParticleBlendMode blendMode = FormParticleBlendMode::Alpha;
+    FormParticleBillboardMode billboardMode =
+        FormParticleBillboardMode::ScreenAligned;
+    FormParticleSortMode sortMode = FormParticleSortMode::None;
+    bool depthTest = false;
+    bool depthWrite = false;
+    bool softParticles = false;
+};
 
 struct FormParticleSettings {
     FormParticleSettings();
@@ -73,7 +104,7 @@ struct FormParticleSettings {
     QColor gradientStartColor = QColor(74, 196, 255);
     QColor gradientEndColor = QColor(255, 118, 202);
 
-    ParticleRenderSettings renderSettings;
+    FormParticleRenderSettings renderSettings;
 
     QJsonObject toJson() const;
     void fromJson(const QJsonObject& obj);

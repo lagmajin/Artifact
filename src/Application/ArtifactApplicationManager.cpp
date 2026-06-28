@@ -66,7 +66,6 @@ namespace Artifact
   ArtifactMotionSketchTool motionSketchTool_;
   ArtifactPuppetTool puppetTool_;
   EnvironmentVariableManager manager_;
-  ArtifactLayerSelectionManager selectionManager_;
   ArtifactCompositionManager compositionManager_;
 
   entt::registry registry_;
@@ -118,9 +117,9 @@ ArtifactProjectManager* ArtifactApplicationManager::Impl::projectManager() const
   return &manager;
  }
 
- ArtifactLayerSelectionManager* ArtifactApplicationManager::Impl::layerSelectionManager()
+ArtifactLayerSelectionManager* ArtifactApplicationManager::Impl::layerSelectionManager()
  {
-  return &selectionManager_;
+  return ArtifactLayerSelectionManager::instance();
  }
 
  ArtifactToolManager* ArtifactApplicationManager::Impl::toolManager()

@@ -71,6 +71,7 @@ import Artifact.Render.Context;
 import Color.Float;
 import Frame.Position;
 import CvUtils;
+import ArtifactCore.Crowd.Boids;
 
 namespace Artifact
 {
@@ -422,10 +423,77 @@ namespace Artifact
   Artifact::ArtifactCompositionPtr composition_;
   ArtifactCore::LayerID selectedLayerId_ = ArtifactCore::LayerID::Nil();
   int64_t currentFrame_ = 0;
-  
+
+  // Crowd / Boids
+  ArtifactCore::CrowdSettings crowdSettings_;
+  std::unique_ptr<ArtifactCore::BoidsSwarmSystem> boidsSystem_;
+  int64_t prevBoidsFrame_ = -1;
+
+  void ensureBoidsSystem()
+  {
+   if (boidsSystem_) return;
+   boidsSystem_ = std::make_unique<ArtifactCore::BoidsSwarmSystem>();
+   // 160 normal boids + 20 predators (red) + 40 prey (green)
+   boidsSystem_->initializeWithTypes(220, float3{800, 600, 400}, 20, 40);
+   // Add some obstacles
+   boidsSystem_->addObstacle(float3{200, 0, 0}, 60.0f);
+   boidsSystem_->addObstacle(float3{-200, 150, 0}, 45.0f);
+   boidsSystem_->addObstacle(float3{0, -200, 50}, 50.0f);
+  }
+
+  void updateBoids()
+  {
+   if (!crowdSettings_.enabled) return;
+   ensureBoidsSystem();
+   if (currentFrame_ == prevBoidsFrame_) return;
+   float dt = std::max(0.001f, static_cast<float>(currentFrame_ - prevBoidsFrame_) / 60.0f);
+   prevBoidsFrame_ = currentFrame_;
+
+   boidsSystem_->separationWeight = crowdSettings_.separation * 3.0f;
+   boidsSystem_->alignmentWeight = crowdSettings_.alignment * 2.0f;
+   boidsSystem_->cohesionWeight = crowdSettings_.cohesion * 2.0f;
+   // Target at center when no target set, with slight wander
+   if (!boidsSystem_->hasTarget) {
+    boidsSystem_->wanderWeight = crowdSettings_.jitter * 5.0f;
+   }
+   boidsSystem_->update(dt);
+  }
+
+  void renderBoids(Artifact::ArtifactIRenderer* renderer)
+  {
+   if (!crowdSettings_.enabled || !boidsSystem_) return;
+   auto renderData = boidsSystem_->captureRenderData(currentFrame_);
+   if (!renderData.particles.empty()) {
+    renderer->drawParticles(renderData);
+   }
+   // Render obstacles as cyan circles
+   for (const auto& obs : boidsSystem_->getObstacles()) {
+    FloatColor cyan(0.0f, 0.8f, 1.0f, 0.4f);
+    renderer->drawSolidRect(
+     {obs.center.x - obs.radius, obs.center.y - obs.radius},
+     {obs.radius * 2, obs.radius * 2},
+     cyan);
+    renderer->drawRectOutline(
+     {obs.center.x - obs.radius, obs.center.y - obs.radius},
+     {obs.radius * 2, obs.radius * 2},
+     FloatColor(0.0f, 1.0f, 1.0f, 0.8f));
+   }
+   // Render target if set
+   if (boidsSystem_->hasTarget) {
+    FloatColor yellow(1.0f, 1.0f, 0.0f, 0.8f);
+    auto& t = boidsSystem_->targetPosition;
+    renderer->drawThickLineLocal({t.x - 10, t.y}, {t.x + 10, t.y}, 2.0f, yellow);
+    renderer->drawThickLineLocal({t.x, t.y - 10}, {t.x, t.y + 10}, 2.0f, yellow);
+   }
+  }
+
  public:
   Impl() = default;
   ~Impl() = default;
+
+  void setCrowdSettings(const ArtifactCore::CrowdSettings& s) { crowdSettings_ = s; }
+  const ArtifactCore::CrowdSettings& crowdSettings() const { return crowdSettings_; }
+  ArtifactCore::CrowdSettings& crowdSettings() { return crowdSettings_; }
 
   void render(Artifact::ArtifactIRenderer* renderer)
   {
@@ -532,7 +600,11 @@ namespace Artifact
     }
    }
 
-   // 4. Grid
+   // 4. Crowd / Boids
+   updateBoids();
+   renderBoids(renderer);
+
+   // 5. Grid
    renderer->drawGrid(0, 0, compW, compH, 100.0f, 1.0f, FloatColor(1.0f, 1.0f, 1.0f, 0.1f));
    
    renderer->flush();
@@ -551,5 +623,10 @@ namespace Artifact
  Artifact::ArtifactCompositionPtr ArtifactPreviewCompositionPipeline::composition() const { return impl_ ? impl_->composition() : Artifact::ArtifactCompositionPtr(); }
  void ArtifactPreviewCompositionPipeline::setSelectedLayerId(const ArtifactCore::LayerID& id) { if (impl_) impl_->setSelectedLayerId(id); }
  void ArtifactPreviewCompositionPipeline::setCurrentFrame(int64_t frame) { if (impl_) impl_->setCurrentFrame(frame); }
+ void ArtifactPreviewCompositionPipeline::setCrowdSettings(const ArtifactCore::CrowdSettings& s) { if (impl_) impl_->setCrowdSettings(s); }
+ const ArtifactCore::CrowdSettings& ArtifactPreviewCompositionPipeline::crowdSettings() const { static const ArtifactCore::CrowdSettings defaultSettings; return impl_ ? impl_->crowdSettings() : defaultSettings; }
+ ArtifactCore::CrowdSettings& ArtifactPreviewCompositionPipeline::crowdSettings() { static ArtifactCore::CrowdSettings defaultSettings; return impl_ ? impl_->crowdSettings() : defaultSettings; }
+ void ArtifactPreviewCompositionPipeline::setBoidsTarget(const ArtifactCore::float3& pos) { if (impl_ && impl_->boidsSystem_) impl_->boidsSystem_->setTarget(pos); }
+ void ArtifactPreviewCompositionPipeline::clearBoidsTarget() { if (impl_ && impl_->boidsSystem_) impl_->boidsSystem_->clearTarget(); }
 
 }

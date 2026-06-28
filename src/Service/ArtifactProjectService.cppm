@@ -718,10 +718,6 @@ public:
       if (!layer) return;
       layer->addEffect(effect_);
       notifyLayerMutation(comp->id().toString(), layerId_);
-      if (auto project = svc->getCurrentProjectSharedPtr()) {
-        ArtifactCore::globalEventBus().publish<ProjectChangedEvent>(
-            {QString(), QString()});
-      }
     }
     if (auto *mgr = UndoManager::instance()) {
       mgr->notifyAnythingChanged();
@@ -1047,7 +1043,7 @@ public:
     if (!comp || comp->id() != compId_) {
       auto project = svc->getCurrentProjectSharedPtr();
       if (!project) return;
-      comp = project->compositionById(compId_);
+      comp = project->findComposition(compId_).ptr.lock();
       if (!comp) return;
     }
     auto layer = comp->layerById(layerId_);
@@ -1080,7 +1076,7 @@ public:
     if (!comp || comp->id() != compId_) {
       auto project = svc->getCurrentProjectSharedPtr();
       if (!project) return;
-      comp = project->compositionById(compId_);
+      comp = project->findComposition(compId_).ptr.lock();
       if (!comp) return;
     }
     // Remove the cloned layer
@@ -2854,11 +2850,10 @@ bool ArtifactProjectService::addEffectToLayerInCurrentComposition(
       effect->effectID().toQString());
   effect->setEffectID(UniString::fromQString(uniqueId));
   layer->addEffect(effect);
-  ArtifactCore::globalEventBus().publish(LayerChangedEvent{
-      comp->id().toString(), layerId.toString(),
-      LayerChangedEvent::ChangeType::Modified});
+  // A layer-scoped queued notification is sufficient here. Publishing the
+  // same LayerChangedEvent synchronously and then posting it again forced
+  // rasterizer surface invalidation twice while the add action was active.
   notifyLayerMutation(comp->id().toString(), layerId);
-  notifyProjectMutation(impl_->projectManager());
   return true;
 }
 

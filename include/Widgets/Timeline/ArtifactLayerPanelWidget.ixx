@@ -1,5 +1,4 @@
 module;
-#include <utility>
 #include <wobjectdefs.h>
 #include <QDragEnterEvent>
 #include <QDragMoveEvent>
@@ -8,6 +7,7 @@ module;
 #include <QVector>
 #include <QFocusEvent>
 #include <QWheelEvent>
+#include <QPushButton>
 
 export module Artifact.Widgets.LayerPanelWidget;
 
@@ -101,6 +101,7 @@ export namespace Artifact
 
     void setPropertyColumnWidth(int width);
     int propertyColumnWidth() const;
+    QPushButton* selectionMenuButton() const;
 
     // Get button dimensions for layout synchronization
     int buttonSize() const;  // Returns fixed button size (e.g., 28)
