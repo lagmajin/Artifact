@@ -4712,6 +4712,8 @@ public:
       const QString activeToolLabel =
           toolManager && toolManager->activeTool() == ToolType::Pen
               ? QStringLiteral("Mask editing")
+              : toolManager && toolManager->activeTool() == ToolType::Shape
+                    ? QStringLiteral("Shape modeling")
               : QStringLiteral("Transform/Select");
       const auto compareMode = renderController_->compareMode();
       const QString compareLabel =
@@ -4777,6 +4779,9 @@ public:
       break;
     case ToolType::Pen:
       toolModeButton_->setText(QStringLiteral("Mask"));
+      break;
+    case ToolType::Shape:
+      toolModeButton_->setText(QStringLiteral("Shape"));
       break;
     case ToolType::AnchorPoint:
       toolModeButton_->setText(QStringLiteral("Anchor"));
@@ -5236,6 +5241,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     action->setChecked(checked);
     if (toolType == ToolType::Pen) {
       action->setToolTip(QStringLiteral("Enter Mask editing; Roto fields appear in property panels where supported."));
+    } else if (toolType == ToolType::Shape) {
+      action->setToolTip(QStringLiteral("Enter Shape modeling; edit vertices and paths directly in the viewport."));
     } else if (toolType == ToolType::AnchorPoint) {
       action->setToolTip(QStringLiteral("Enter Anchor editing; drag the anchor point directly in the viewport."));
     }
@@ -5260,6 +5267,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                 false);
   addToolAction(QStringLiteral("Mask"),
                 QStringLiteral("MaterialVS/neutral/draw.svg"), ToolType::Pen,
+                false);
+  addToolAction(QStringLiteral("Shape"),
+                QStringLiteral("MaterialVS/neutral/select.svg"), ToolType::Shape,
                 false);
   addToolAction(QStringLiteral("Anchor"),
                 QStringLiteral("MaterialVS/neutral/transform.svg"),

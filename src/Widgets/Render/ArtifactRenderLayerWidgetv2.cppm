@@ -81,6 +81,8 @@ QString editModeLabel(EditMode mode)
   switch (mode) {
   case EditMode::Mask:
     return QStringLiteral("Mask");
+  case EditMode::Shape:
+    return QStringLiteral("Shape");
   case EditMode::Paint:
     return QStringLiteral("Paint");
   case EditMode::View:
@@ -190,7 +192,7 @@ const QCursor& hudCursorForTransformHandle(TransformGizmo::HandleType handle,
 
 bool isMaskEditingMode(EditMode mode)
 {
-  return mode == EditMode::Mask || mode == EditMode::Paint;
+  return mode == EditMode::Mask || mode == EditMode::Shape || mode == EditMode::Paint;
 }
 
 void publishModeReadout(QWidget *widget, EditMode editMode, DisplayMode displayMode)
