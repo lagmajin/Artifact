@@ -1321,6 +1321,14 @@ ArtifactCore::ImageF32x4_RGBA cpuCompositeFallbackImage(
     return base;
   }
 
+  const auto deterministicNoise = [](const int x, const int y,
+                                     const uint32_t seed) {
+    uint32_t v = static_cast<uint32_t>(x) * 1664525u +
+                 static_cast<uint32_t>(y) * 1013904223u + seed;
+    v = v * 747796405u + 2891336453u;
+    return static_cast<float>(v) / 4294967296.0f;
+  };
+
   ArtifactCore::ImageF32x4_RGBA result = base.DeepCopy();
   for (int y = 0; y < result.height(); ++y) {
     for (int x = 0; x < result.width(); ++x) {
@@ -1331,15 +1339,25 @@ ArtifactCore::ImageF32x4_RGBA cpuCompositeFallbackImage(
         continue;
       }
 
+      if (blendMode == ArtifactCore::BlendMode::Dissolve ||
+          blendMode == ArtifactCore::BlendMode::DancingDissolve) {
+        const uint32_t seed =
+            blendMode == ArtifactCore::BlendMode::DancingDissolve
+                ? static_cast<uint32_t>(std::lround(clampedOpacity * 1000.0f))
+                : 0u;
+        const bool takeSrc = deterministicNoise(x, y, seed) < srcCoverage;
+        result.setPixel(x, y, takeSrc ? src : dst);
+        continue;
+      }
+
       const FloatColor blended = ArtifactCore::ColorBlendMode::blend(
           dst, src, blendMode, srcCoverage);
-      const float outAlpha = srcCoverage + dst.a() * (1.0f - srcCoverage);
       result.setPixel(
           x, y,
           FloatColor{std::clamp(blended.r(), 0.0f, 1.0f),
                      std::clamp(blended.g(), 0.0f, 1.0f),
                      std::clamp(blended.b(), 0.0f, 1.0f),
-                     std::clamp(outAlpha, 0.0f, 1.0f)});
+                     std::clamp(blended.a(), 0.0f, 1.0f)});
     }
   }
   return result;
@@ -8549,11 +8567,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           << "frameOutOfRange=" << frameOutOfRange;
     }
 
-    const bool transparentCompositionBackgroundRequested =
-        currentBgColor.a() < 0.999f;
     const bool pipelineEnabled =
-        gpuBlendPathRequested && renderPipeline_.ready() &&
-        !transparentCompositionBackgroundRequested;
+        gpuBlendPathRequested && renderPipeline_.ready();
     const int pipelineStateMask = (gpuBlendEnabled_ ? 0x1 : 0x0) |
                                   (renderPipeline_.ready() ? 0x2 : 0x0) |
                                   (blendPipelineReady_ ? 0x4 : 0x0);
@@ -8564,12 +8579,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                          .arg(blendPipelineReady_ ? 1 : 0)
                          .arg(renderPipeline_.ready() ? 1 : 0)
                          .arg(layers.size()));
-    if (transparentCompositionBackgroundRequested && gpuBlendPathRequested &&
-        renderPipeline_.ready()) {
-      qCDebug(compositionViewLog)
-          << "[CompositionView] transparent composition background forces fallback path"
-          << "alpha=" << currentBgColor.a();
-    }
     if (pipelineStateMask != lastPipelineStateMask_) {
       lastPipelineStateMask_ = pipelineStateMask;
       if (!pipelineEnabled) {

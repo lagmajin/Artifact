@@ -11,6 +11,7 @@ module;
 module Artifact.Render.SoftwareCompositor;
 
 import Layer.Blend;
+import Color.BlendMode;
 
 namespace Artifact::SoftwareRender {
 
@@ -142,8 +143,24 @@ float blendChannel(const float dst, const float src, const ArtifactCore::BlendMo
  }
  case ArtifactCore::BlendMode::Difference:
   return std::abs(d - s);
- case ArtifactCore::BlendMode::Exclusion:
+  case ArtifactCore::BlendMode::Exclusion:
   return d + s - 2.0f * d * s;
+  case ArtifactCore::BlendMode::LinearBurn:
+   return std::clamp(d + s - 1.0f, 0.0f, 1.0f);
+  case ArtifactCore::BlendMode::Divide:
+   return std::clamp(d / std::max(s, 1e-6f), 0.0f, 1.0f);
+  case ArtifactCore::BlendMode::PinLight:
+   return s < 0.5f ? std::min(d, 2.0f * s) : std::max(d, 2.0f * (s - 0.5f));
+  case ArtifactCore::BlendMode::VividLight:
+   return s < 0.5f
+              ? (s <= 0.0f ? 0.0f
+                           : std::clamp(1.0f - ((1.0f - d) / (2.0f * s)), 0.0f, 1.0f))
+              : (s >= 1.0f ? 1.0f
+                           : std::clamp(d / (2.0f * (1.0f - s)), 0.0f, 1.0f));
+  case ArtifactCore::BlendMode::LinearLight:
+   return std::clamp(d + 2.0f * s - 1.0f, 0.0f, 1.0f);
+  case ArtifactCore::BlendMode::HardMix:
+   return d + s >= 1.0f ? 1.0f : 0.0f;
   case ArtifactCore::BlendMode::Hue:
   case ArtifactCore::BlendMode::Saturation:
   case ArtifactCore::BlendMode::Color:
@@ -169,20 +186,43 @@ float blendChannel(const float dst, const float src, const ArtifactCore::BlendMo
 bool shouldUseQPainterFallback(const ArtifactCore::BlendMode mode)
 {
  switch (mode) {
-  case ArtifactCore::BlendMode::Hue:
-  case ArtifactCore::BlendMode::Saturation:
-  case ArtifactCore::BlendMode::Color:
-  case ArtifactCore::BlendMode::Luminosity:
-  case ArtifactCore::BlendMode::Dissolve:
-  case ArtifactCore::BlendMode::DancingDissolve:
-  case ArtifactCore::BlendMode::StencilAlpha:
-  case ArtifactCore::BlendMode::StencilLuma:
-  case ArtifactCore::BlendMode::SilhouetteAlpha:
-  case ArtifactCore::BlendMode::SilhouetteLuma:
-   return true;
-  default:
+  case ArtifactCore::BlendMode::Normal:
+  case ArtifactCore::BlendMode::Add:
+  case ArtifactCore::BlendMode::Subtract:
+  case ArtifactCore::BlendMode::Multiply:
+  case ArtifactCore::BlendMode::Screen:
+  case ArtifactCore::BlendMode::Overlay:
+  case ArtifactCore::BlendMode::Darken:
+  case ArtifactCore::BlendMode::Lighten:
+  case ArtifactCore::BlendMode::ColorDodge:
+  case ArtifactCore::BlendMode::ColorBurn:
+  case ArtifactCore::BlendMode::HardLight:
+  case ArtifactCore::BlendMode::SoftLight:
+  case ArtifactCore::BlendMode::Difference:
+  case ArtifactCore::BlendMode::Exclusion:
+  case ArtifactCore::BlendMode::LinearBurn:
+  case ArtifactCore::BlendMode::Divide:
+  case ArtifactCore::BlendMode::PinLight:
+  case ArtifactCore::BlendMode::VividLight:
+  case ArtifactCore::BlendMode::LinearLight:
+  case ArtifactCore::BlendMode::HardMix:
+  case ArtifactCore::BlendMode::ClassicColorBurn:
+  case ArtifactCore::BlendMode::LinearDodge:
+  case ArtifactCore::BlendMode::ClassicColorDodge:
+  case ArtifactCore::BlendMode::ClassicDifference:
    return false;
+  default:
+   return true;
  }
+}
+
+float deterministicNoise(const int x, const int y, const int seed)
+{
+ const uint32_t ux = static_cast<uint32_t>(x);
+ const uint32_t uy = static_cast<uint32_t>(y);
+ uint32_t v = ux * 1664525u + uy * 1013904223u + static_cast<uint32_t>(seed);
+ v = v * 747796405u + 2891336453u;
+ return static_cast<float>(v) / 4294967296.0f;
 }
 
 void blendBgrWithQPainter(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity, const ArtifactCore::BlendMode mode)
@@ -233,6 +273,21 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
   const cv::Vec3f* srcRow = srcF.ptr<cv::Vec3f>(y);
   cv::Vec3f* outRow = blended.ptr<cv::Vec3f>(y);
   for (int x = 0; x < dstF.cols; ++x) {
+   if (mode == ArtifactCore::BlendMode::Dissolve ||
+       mode == ArtifactCore::BlendMode::DancingDissolve) {
+    const int seed = mode == ArtifactCore::BlendMode::DancingDissolve
+                         ? static_cast<int>(std::round(a * 1000.0f))
+                         : 0;
+    outRow[x] = deterministicNoise(x, y, seed) < a ? srcRow[x] : dstRow[x];
+    continue;
+   }
+   if (shouldUseQPainterFallback(mode)) {
+    const ArtifactCore::FloatColor base(dstRow[x][2], dstRow[x][1], dstRow[x][0], 1.0f);
+    const ArtifactCore::FloatColor src(srcRow[x][2], srcRow[x][1], srcRow[x][0], 1.0f);
+    const ArtifactCore::FloatColor out = ArtifactCore::ColorBlendMode::blend(base, src, mode, a);
+    outRow[x] = cv::Vec3f(out.b(), out.g(), out.r());
+    continue;
+   }
    cv::Vec3f pixel;
    for (int c = 0; c < 3; ++c) {
     pixel[c] = blendChannel(dstRow[x][c], srcRow[x][c], mode);
