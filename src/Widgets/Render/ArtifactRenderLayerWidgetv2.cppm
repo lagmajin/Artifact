@@ -195,6 +195,11 @@ bool isMaskEditingMode(EditMode mode)
   return mode == EditMode::Mask || mode == EditMode::Shape || mode == EditMode::Paint;
 }
 
+bool isShapeEditingMode(EditMode mode)
+{
+ return mode == EditMode::Shape || mode == EditMode::Paint;
+}
+
 void publishModeReadout(QWidget *widget, EditMode editMode, DisplayMode displayMode)
 {
   if (!widget) {
@@ -2307,7 +2312,7 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
        layer->draw(renderer_.get());
        if (displayMode_ == DisplayMode::Mask || editMode_ == EditMode::Mask) {
         drawMaskOverlay(layer);
-       } else if (editMode_ == EditMode::Paint) {
+       } else if (isShapeEditingMode(editMode_)) {
         drawShapeOverlay(layer);
         } else {
          drawTransformOverlay(layer);
@@ -2536,7 +2541,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     impl_->commitMaskEditTransaction();
    }
   }
-  if (impl_->editMode_ == EditMode::Paint && impl_->renderer_ && event) {
+ if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_ && event) {
    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
     auto layer = impl_->targetLayer();
     if (layer) {
@@ -2580,7 +2585,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
   if (impl_->transformGizmo_ && impl_->renderer_ &&
       impl_->editMode_ != EditMode::Mask &&
-      impl_->editMode_ != EditMode::Paint &&
+      !isShapeEditingMode(impl_->editMode_) &&
       event->button() == Qt::LeftButton) {
    // Phase 1: parametric shape handle hit test (takes priority over gizmo)
    auto layer = impl_->targetLayer();
@@ -2636,7 +2641,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
    }
   }
 
- if (impl_->editMode_ == EditMode::Paint && event->button() == Qt::LeftButton && impl_->renderer_) {
+ if (isShapeEditingMode(impl_->editMode_) && event->button() == Qt::LeftButton && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
    if (shape && shape->shapeType() != ShapeType::Line) {
@@ -2901,7 +2906,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     event->accept();
     return;
    }
-   if (impl_->editMode_ == EditMode::Paint && event->button() == Qt::LeftButton) {
+   if (isShapeEditingMode(impl_->editMode_) && event->button() == Qt::LeftButton) {
    // Phase 5: path vertex/tangent release
    if (impl_->isDraggingPathVertex_ || impl_->isDraggingPathTangent_) {
     impl_->isDraggingPathVertex_ = false;
@@ -3039,7 +3044,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
    }
 
    // Phase 1: hover update in View mode
-  if (impl_->editMode_ != EditMode::Mask && impl_->editMode_ != EditMode::Paint && impl_->renderer_) {
+   if (impl_->editMode_ != EditMode::Mask && !isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    if (layer) {
      const Detail::float2 cp = impl_->renderer_->viewportToCanvas(
@@ -3060,7 +3065,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
 
   if (impl_->transformGizmo_ && impl_->renderer_ &&
       impl_->editMode_ != EditMode::Mask &&
-      impl_->editMode_ != EditMode::Paint) {
+      !isShapeEditingMode(impl_->editMode_)) {
    auto layer = impl_->targetLayer();
    if (layer) {
     if (impl_->transformGizmo_->isDragging()) {
@@ -3150,7 +3155,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     }
    }
   }
-  if (impl_->editMode_ == EditMode::Paint && impl_->renderer_) {
+  if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
    if (shape) {
@@ -3327,7 +3332,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* pathToggleSmoothAct = nullptr;
  QAction* pathToggleClosedAct = nullptr;
  std::shared_ptr<ArtifactShapeLayer> shapeLayer;
- if (impl_->editMode_ == EditMode::Paint && impl_->renderer_) {
+  if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
   auto layer = impl_->targetLayer();
   shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
   if (shapeLayer) {
@@ -3706,7 +3711,7 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
       // レイヤーサイズは使用しない（コンポジションサイズを優先）
       // impl_->renderer_->setCanvasSize(static_cast<float>(source.width), static_cast<float>(source.height));
      }
-     if (impl_->editMode_ == EditMode::Paint) {
+     if (isShapeEditingMode(impl_->editMode_)) {
       if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
        if (!shape->hasCustomPolygon() && !shape->hasCustomPath()) {
          if (shape->shapeType() == ShapeType::Ellipse) {
@@ -3810,7 +3815,7 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
     impl_->syncTransformGizmo(impl_->targetLayer());
    }
   }
-  if (mode == EditMode::Paint && !impl_->targetLayerId_.isNil()) {
+  if (isShapeEditingMode(mode) && !impl_->targetLayerId_.isNil()) {
    if (auto* service = ArtifactProjectService::instance()) {
     if (auto composition = service->currentComposition().lock()) {
      if (auto layer = composition->layerById(impl_->targetLayerId_)) {
