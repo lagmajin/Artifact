@@ -992,6 +992,8 @@ void drawCameraSelectionOverlay(ArtifactIRenderer *renderer,
 
 void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
                                  const ArtifactAbstractLayerPtr &layer,
+                                 int selectedCount,
+                                 const QStringList &selectedNames,
                                  int overlayW,
                                  int overlayH)
 {
@@ -1002,17 +1004,45 @@ void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
   QFont font = QApplication::font();
   font.setPointSizeF(std::max(9.0, static_cast<double>(font.pointSizeF())));
   const QFontMetrics fm(font);
-  const QString title =
+  const QString layerName =
       layer->layerName().trimmed().isEmpty() ? QStringLiteral("Selection")
                                              : layer->layerName().trimmed();
-  const QString detail = layerOverlayDetailText(layer);
+  QStringList lines;
+  if (selectedCount > 1) {
+    const QString title =
+        QStringLiteral("%1 layers selected").arg(selectedCount);
+    lines << title;
+
+    QStringList compactNames = selectedNames;
+    compactNames.removeAll(QString());
+    if (compactNames.isEmpty()) {
+      compactNames << layerName;
+    }
+    const QString namesLine =
+        QStringLiteral("Current: %1").arg(compactNames.join(QStringLiteral(", ")));
+    lines << namesLine;
+    lines << QStringLiteral("Duplicate and transform will affect the whole selection");
+  } else {
+    lines << layerName;
+    const QString detail = layerOverlayDetailText(layer);
+    if (!detail.isEmpty()) {
+      lines << detail;
+    }
+  }
+
   const int lineHeight = fm.height();
-  const int contentWidth =
-      std::max(fm.horizontalAdvance(title),
-               detail.isEmpty() ? 0 : fm.horizontalAdvance(detail));
-  QRect labelRect(12, 12, contentWidth + 24, lineHeight * 2 + 12);
-  if (labelRect.bottom() > overlayH - 8) {
-    labelRect.moveBottom(overlayH - 8);
+  int contentWidth = 0;
+  for (const QString &line : lines) {
+    contentWidth = std::max(contentWidth, fm.horizontalAdvance(line));
+  }
+  const int lineCount = std::max(1, lines.size());
+  QRect labelRect(12, overlayH - (lineHeight * lineCount + 24), contentWidth + 24,
+                  lineHeight * lineCount + 12);
+  if (labelRect.bottom() > overlayH - 12) {
+    labelRect.moveBottom(overlayH - 12);
+  }
+  if (labelRect.top() < 12) {
+    labelRect.moveTop(12);
   }
   if (labelRect.right() > overlayW - 8) {
     labelRect.moveRight(overlayW - 8);
@@ -1023,15 +1053,19 @@ void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
                              static_cast<float>(labelRect.width()),
                              static_cast<float>(labelRect.height()),
                              FloatColor{0.05f, 0.07f, 0.10f, 0.88f},
-                             FloatColor{0.20f, 0.72f, 0.92f, 0.90f});
-  renderer->drawText(labelRect.adjusted(10, 6, -10, -6), title, font,
-                     FloatColor{0.92f, 0.96f, 1.0f, 1.0f},
-                     Qt::AlignLeft | Qt::AlignTop);
-  if (!detail.isEmpty()) {
-    renderer->drawText(labelRect.adjusted(10, 6 + lineHeight, -10, -6),
-                       detail, font,
-                       FloatColor{0.72f, 0.79f, 0.86f, 1.0f},
-                       Qt::AlignLeft | Qt::AlignTop);
+                             selectedCount > 1
+                                 ? FloatColor{0.96f, 0.62f, 0.20f, 0.92f}
+                                 : FloatColor{0.20f, 0.72f, 0.92f, 0.90f});
+  for (int i = 0; i < lines.size(); ++i) {
+    const QRect lineRect = labelRect.adjusted(10, 6 + lineHeight * i, -10, -6);
+    const FloatColor textColor =
+        i == 0 ? FloatColor{0.92f, 0.96f, 1.0f, 1.0f}
+               : (i == lines.size() - 1 && selectedCount > 1)
+                     ? FloatColor{1.0f, 0.86f, 0.68f, 1.0f}
+                     : FloatColor{0.72f, 0.79f, 0.86f, 1.0f};
+    renderer->drawText(lineRect,
+                       fm.elidedText(lines[i], Qt::ElideRight, lineRect.width()),
+                       font, textColor, Qt::AlignLeft | Qt::AlignTop);
   }
 }
 

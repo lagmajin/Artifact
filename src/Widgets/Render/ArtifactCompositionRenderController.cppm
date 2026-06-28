@@ -10690,8 +10690,31 @@ void CompositionRenderController::Impl::drawViewportGhostOverlay(
   }
 
   if (selectedLayer && !infoActive) {
-    ::Artifact::drawSelectionSummaryOverlay(renderer_.get(), selectedLayer,
-                                            overlayW, overlayH);
+    QStringList selectedLayerNames;
+    auto *appManager = ArtifactApplicationManager::instance();
+    auto *selectionManager =
+        appManager != nullptr ? appManager->layerSelectionManager() : nullptr;
+    if (selectionManager != nullptr) {
+      for (const auto &selected : selectionManager->selectedLayersInOrder()) {
+        if (!selected) {
+          continue;
+        }
+        const QString name = selected->layerName().trimmed();
+        selectedLayerNames << (name.isEmpty() ? selected->id().toString() : name);
+        if (selectedLayerNames.size() >= 4) {
+          const int remaining =
+              static_cast<int>(selectionManager->selectedLayers().size()) -
+              selectedLayerNames.size();
+          if (remaining > 0) {
+            selectedLayerNames << QStringLiteral("+%1 more").arg(remaining);
+          }
+          break;
+        }
+      }
+    }
+    ::Artifact::drawSelectionSummaryOverlay(
+        renderer_.get(), selectedLayer, selectedIds.size(), selectedLayerNames,
+        overlayW, overlayH);
   }
 
   if (snapHintActive) {

@@ -978,7 +978,7 @@ void drawScaleCenterHandle(ArtifactIRenderer* renderer,
   return;
  }
 
- const float shaftLen = std::max(14.0f, 16.0f * invZoom);
+   const float shaftLen = std::max(14.0f, 32.0f * invZoom);
  const float handleSize = std::clamp(8.0f + 5.0f * invZoom, 8.0f, 15.0f);
  const FloatColor xColor = active ? FloatColor{1.0f, 0.38f, 0.15f, 1.0f}
                                   : FloatColor{0.98f, 0.18f, 0.06f, 1.0f};
@@ -2010,13 +2010,26 @@ void TransformGizmo::draw(ArtifactIRenderer* renderer) {
 
   if (isDragging_ && resizeBadgeVisible_ &&
       (activeHandle_ >= HandleType::Scale_TL && activeHandle_ <= HandleType::Scale_Center)) {
-   ArtifactCore::ProfileScope _profResizeBadge(
-       "TransformGizmoResizeBadge", ArtifactCore::ProfileCategory::Render);
-   drawResizeBadge(renderer,
-                   resizeBadgeBox_.isValid() ? resizeBadgeBox_ : currentCanvasBoundingRect(),
-                   resizeBadgeAnchor_,
-                   resizeBadgeLines_,
-                   themeAccent,
+    ArtifactCore::ProfileScope _profResizeBadge(
+        "TransformGizmoResizeBadge", ArtifactCore::ProfileCategory::Render);
+    if (dragStartLocalBounds_.isValid() && dragStartLocalBounds_.width() > 0.0 &&
+        dragStartLocalBounds_.height() > 0.0) {
+     const FloatColor startRectColor{0.42f, 0.86f, 1.0f, 0.66f};
+     const float startDash = std::max(5.0f, 7.0f * invZoom);
+     const float startGap = std::max(3.0f, 5.0f * invZoom);
+     drawTransformedDashedRect(renderer,
+                               dragStartGlobalTransform_,
+                               dragStartLocalBounds_,
+                               startRectColor,
+                               std::max(1.0f, lineThickness * 0.9f),
+                               startDash,
+                               startGap);
+    }
+    drawResizeBadge(renderer,
+                    resizeBadgeBox_.isValid() ? resizeBadgeBox_ : currentCanvasBoundingRect(),
+                    resizeBadgeAnchor_,
+                    resizeBadgeLines_,
+                    themeAccent,
                    invZoom);
   }
 
@@ -2646,22 +2659,36 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
   }
   const QRectF startBox = dragStartBoundingBox_;
   const QRectF localBounds = dragStartLocalBounds_;
-  if (startBox.isValid() && startBox.width() > 0.0 && startBox.height() > 0.0 &&
-      localBounds.isValid() && localBounds.width() > 0.0 && localBounds.height() > 0.0) {
-   const QPointF snappedDelta = snappedCanvasPos - dragStartCanvasPos_;
-   const QRectF targetBox = adjustedResizeBox(startBox, snappedDelta, activeHandle_);
-   double textMargin = 0.0;
-   resizeBadgeVisible_ = true;
-   resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(targetBox, activeHandle_);
-   resizeBadgeBox_ = targetBox;
-   resizeBadgeLines_.clear();
-   resizeBadgeLines_.push_back(QStringLiteral("%1 x %2 px")
-                                  .arg(QString::number(static_cast<int>(std::lround(targetBox.width()))))
-                                  .arg(QString::number(static_cast<int>(std::lround(targetBox.height())))));
-   bool invertible = false;
-   const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
-   if (invertible) {
-    if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_)) {
+    if (startBox.isValid() && startBox.width() > 0.0 && startBox.height() > 0.0 &&
+        localBounds.isValid() && localBounds.width() > 0.0 && localBounds.height() > 0.0) {
+     const QPointF snappedDelta = snappedCanvasPos - dragStartCanvasPos_;
+     const QRectF targetBox = adjustedResizeBox(startBox, snappedDelta, activeHandle_);
+     double textMargin = 0.0;
+     resizeBadgeVisible_ = true;
+     resizeBadgeAnchor_ = resizeBadgeAnchorForHandle(targetBox, activeHandle_);
+     resizeBadgeBox_ = targetBox;
+     resizeBadgeLines_.clear();
+     resizeBadgeLines_.push_back(QStringLiteral("%1 x %2 px")
+                                    .arg(QString::number(static_cast<int>(std::lround(targetBox.width()))))
+                                    .arg(QString::number(static_cast<int>(std::lround(targetBox.height())))));
+     const bool editInitialSize = QGuiApplication::keyboardModifiers().testFlag(Qt::ShiftModifier);
+     if (editInitialSize) {
+      const int newWidth = std::max(1, static_cast<int>(std::lround(targetBox.width())));
+      const int newHeight = std::max(1, static_cast<int>(std::lround(targetBox.height())));
+      for (const auto& target : targets) {
+       if (!target) continue;
+       target->setSourceSize(Size_2D(newWidth, newHeight));
+       target->setDirty(LayerDirtyFlag::Source);
+       target->setDirty(LayerDirtyFlag::Transform);
+      }
+      publishDragMutation();
+      lastCanvasMousePos_ = currentCanvasPos;
+      return true;
+     }
+     bool invertible = false;
+     const QTransform inv = dragStartGlobalTransform_.inverted(&invertible);
+     if (invertible) {
+      if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(layer_)) {
      textMargin = std::max(0.0f, textEffectMargin(*textLayer));
      if (textLayer->isBoxText()) {
       const int boxWidth = static_cast<int>(std::lround(std::max(1.0, targetBox.width() - textMargin * 2.0)));
