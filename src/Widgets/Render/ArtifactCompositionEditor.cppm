@@ -421,6 +421,9 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
     if (pointCount > 0) {
       detail += QStringLiteral(" - %1 points").arg(pointCount);
     }
+  } else if (shape->hasCustomPath()) {
+    detail += QStringLiteral(" - editable path (%1 verts)")
+                  .arg(static_cast<int>(shape->customPathVertices().size()));
   } else if (type == ShapeType::Star) {
     detail += QStringLiteral(" - %1 spikes").arg(shape->starPoints());
   } else if (type == ShapeType::Rect || type == ShapeType::Square) {
@@ -428,6 +431,10 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
     if (radius > 0.0f) {
       detail += QStringLiteral(" - r%1").arg(radius, 0, 'f', 1);
     }
+  }
+
+  if (shape->shapeOperatorCount() > 0) {
+    detail += QStringLiteral(" - %1 ops").arg(shape->shapeOperatorCount());
   }
 
   detail += QStringLiteral(" - Vertex edit ready");
