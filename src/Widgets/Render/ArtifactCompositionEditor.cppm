@@ -4054,16 +4054,29 @@ public:
     bool committed = false;
   };
 
+  enum class ViewportLayoutMode {
+    Single = 1,
+    TwoUp = 2,
+    FourUp = 4,
+  };
+
+  static constexpr int kViewportPaneCount = 4;
+
   CompositionViewport *compositionView_ = nullptr;
-  QSplitter *viewportSplitter_ = nullptr;
-  CompositionViewport *secondaryCompositionView_ = nullptr;
+  QWidget *viewportHost_ = nullptr;
+  QSplitter *viewportRowsSplitter_ = nullptr;
+  QSplitter *viewportTopSplitter_ = nullptr;
+  QSplitter *viewportBottomSplitter_ = nullptr;
+  std::array<CompositionViewport *, kViewportPaneCount> compositionViews_{
+      nullptr, nullptr, nullptr, nullptr};
   CompositionOverlayWidget *overlayView_ = nullptr;
   EmptyCompositionOverlayWidget *emptyStateOverlay_ = nullptr;
   ViewOrientationWidget *viewOrientationWidget_ = nullptr;
   CompositionRenderController *renderController_ = nullptr;
-  CompositionRenderController *secondaryRenderController_ = nullptr;
+  std::array<CompositionRenderController *, kViewportPaneCount>
+      renderControllers_{nullptr, nullptr, nullptr, nullptr};
   ViewportLayoutButton *viewportLayoutButton_ = nullptr;
-  bool horizontalSplitEnabled_ = false;
+  ViewportLayoutMode viewportLayoutMode_ = ViewportLayoutMode::Single;
   // Top Toolbar (Zoom/View controls)
   QToolBar *topToolbar_ = nullptr;
   QFrame *chromeStrip_ = nullptr;
@@ -4088,6 +4101,113 @@ public:
   QToolButton *pivotModeButton_ = nullptr;
   QAction *immersiveAction_ = nullptr;
   bool immersiveMode_ = false;
+
+  int activeViewportPaneCount() const {
+    switch (viewportLayoutMode_) {
+    case ViewportLayoutMode::Single:
+      return 1;
+    case ViewportLayoutMode::TwoUp:
+      return 2;
+    case ViewportLayoutMode::FourUp:
+      return 4;
+    }
+    return 1;
+  }
+
+  QString viewportLayoutLabel() const {
+    switch (viewportLayoutMode_) {
+    case ViewportLayoutMode::Single:
+      return QStringLiteral("1 View");
+    case ViewportLayoutMode::TwoUp:
+      return QStringLiteral("2-Up");
+    case ViewportLayoutMode::FourUp:
+      return QStringLiteral("4-Up");
+    }
+    return QStringLiteral("1 View");
+  }
+
+  ViewportLayoutMode nextViewportLayoutMode() const {
+    switch (viewportLayoutMode_) {
+    case ViewportLayoutMode::Single:
+      return ViewportLayoutMode::TwoUp;
+    case ViewportLayoutMode::TwoUp:
+      return ViewportLayoutMode::FourUp;
+    case ViewportLayoutMode::FourUp:
+      return ViewportLayoutMode::Single;
+    }
+    return ViewportLayoutMode::Single;
+  }
+
+  void forEachRenderController(const std::function<void(CompositionRenderController *)> &fn) {
+    for (auto *controller : renderControllers_) {
+      if (controller) {
+        fn(controller);
+      }
+    }
+  }
+
+  void forEachActiveSecondaryController(
+      const std::function<void(CompositionRenderController *)> &fn) {
+    for (int i = 1; i < activeViewportPaneCount(); ++i) {
+      if (auto *controller = renderControllers_[i]) {
+        fn(controller);
+      }
+    }
+  }
+
+  void forEachSecondaryController(
+      const std::function<void(CompositionRenderController *)> &fn) {
+    for (int i = 1; i < kViewportPaneCount; ++i) {
+      if (auto *controller = renderControllers_[i]) {
+        fn(controller);
+      }
+    }
+  }
+
+  void forEachActiveViewport(const std::function<void(CompositionViewport *, int)> &fn) {
+    const int paneCount = activeViewportPaneCount();
+    for (int i = 0; i < paneCount; ++i) {
+      if (auto *view = compositionViews_[i]) {
+        fn(view, i);
+      }
+    }
+  }
+
+  void applyViewportLayout() {
+    const int paneCount = activeViewportPaneCount();
+    for (int i = 0; i < kViewportPaneCount; ++i) {
+      if (auto *view = compositionViews_[i]) {
+        view->setVisible(i < paneCount);
+      }
+    }
+    if (viewportLayoutButton_) {
+      viewportLayoutButton_->setText(viewportLayoutLabel());
+    }
+    if (viewportTopSplitter_) {
+      if (paneCount <= 1) {
+        viewportTopSplitter_->setSizes({1, 0});
+      } else {
+        const int paneWidth = std::max(1, viewportTopSplitter_->width() / 2);
+        viewportTopSplitter_->setSizes({paneWidth, paneWidth});
+      }
+    }
+    if (viewportBottomSplitter_) {
+      const bool showBottomRow = paneCount >= 4;
+      viewportBottomSplitter_->setVisible(showBottomRow);
+      if (showBottomRow) {
+        const int paneWidth = std::max(1, viewportBottomSplitter_->width() / 2);
+        viewportBottomSplitter_->setSizes({paneWidth, paneWidth});
+      }
+    }
+    if (viewportRowsSplitter_) {
+      if (paneCount >= 4) {
+        const int paneHeight = std::max(1, viewportRowsSplitter_->height() / 2);
+        viewportRowsSplitter_->setSizes({paneHeight, paneHeight});
+      } else {
+        viewportRowsSplitter_->setSizes({1, 0});
+      }
+    }
+  }
 
   // Bottom Viewer Controls
   QWidget *bottomBar_ = nullptr;
@@ -4723,13 +4843,16 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   mainLayout->setSpacing(0);
 
   impl_->renderController_ = new CompositionRenderController(this);
-  impl_->secondaryRenderController_ = new CompositionRenderController(this);
+  impl_->renderControllers_[0] = impl_->renderController_;
+  for (int i = 1; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
+    impl_->renderControllers_[i] = new CompositionRenderController(this);
+  }
   {
     const QColor clear(28, 40, 56);
-    impl_->renderController_->setClearColor(
-        {clear.redF(), clear.greenF(), clear.blueF(), 1.0f});
-    impl_->secondaryRenderController_->setClearColor(
-        {clear.redF(), clear.greenF(), clear.blueF(), 1.0f});
+    impl_->forEachRenderController([&clear](CompositionRenderController *controller) {
+      controller->setClearColor(
+          {clear.redF(), clear.greenF(), clear.blueF(), 1.0f});
+    });
   }
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     const auto applySettings = [settings](CompositionRenderController *controller) {
@@ -4754,8 +4877,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       controller->setShowDensityHeatmapOverlay(
           settings->compositionShowDensityHeatmapOverlay());
     };
-    applySettings(impl_->renderController_);
-    applySettings(impl_->secondaryRenderController_);
+    impl_->forEachRenderController(applySettings);
   }
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     QObject::connect(settings, &ArtifactCore::ArtifactAppSettings::settingsChanged,
@@ -4766,10 +4888,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                        if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
                          impl_->renderController_->setShowMotionPathOverlay(
                              settings->compositionShowMotionPathOverlay());
-                         if (impl_->secondaryRenderController_) {
-                           impl_->secondaryRenderController_->setShowMotionPathOverlay(
-                               settings->compositionShowMotionPathOverlay());
-                         }
+                         impl_->forEachActiveSecondaryController(
+                             [settings](CompositionRenderController *controller) {
+                               controller->setShowMotionPathOverlay(
+                                   settings->compositionShowMotionPathOverlay());
+                             });
                          if (impl_->motionPathAction_) {
                            const QSignalBlocker blocker(impl_->motionPathAction_);
                            impl_->motionPathAction_->setChecked(
@@ -4777,10 +4900,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                          }
                          impl_->renderController_->setShowDensityHeatmapOverlay(
                              settings->compositionShowDensityHeatmapOverlay());
-                         if (impl_->secondaryRenderController_) {
-                           impl_->secondaryRenderController_->setShowDensityHeatmapOverlay(
-                               settings->compositionShowDensityHeatmapOverlay());
-                         }
+                         impl_->forEachActiveSecondaryController(
+                             [settings](CompositionRenderController *controller) {
+                               controller->setShowDensityHeatmapOverlay(
+                                   settings->compositionShowDensityHeatmapOverlay());
+                             });
                          if (impl_->densityHeatmapAction_) {
                            const QSignalBlocker blocker(impl_->densityHeatmapAction_);
                            impl_->densityHeatmapAction_->setChecked(
@@ -4796,18 +4920,43 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->compositionView_ =
       new CompositionViewport(impl_->renderController_, this);
-  impl_->secondaryCompositionView_ =
-      new CompositionViewport(impl_->secondaryRenderController_, this);
-  impl_->secondaryCompositionView_->hide();
-  impl_->viewportSplitter_ = new QSplitter(Qt::Horizontal, this);
-  impl_->viewportSplitter_->setChildrenCollapsible(false);
-  impl_->viewportSplitter_->addWidget(impl_->compositionView_);
-  impl_->viewportSplitter_->addWidget(impl_->secondaryCompositionView_);
+  impl_->compositionViews_[0] = impl_->compositionView_;
+  for (int i = 1; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
+    impl_->compositionViews_[i] =
+        new CompositionViewport(impl_->renderControllers_[i], this);
+    impl_->compositionViews_[i]->hide();
+  }
+  impl_->viewportHost_ = new QWidget(this);
+  auto *viewportHostLayout = new QVBoxLayout(impl_->viewportHost_);
+  viewportHostLayout->setContentsMargins(0, 0, 0, 0);
+  viewportHostLayout->setSpacing(0);
+  impl_->viewportRowsSplitter_ = new QSplitter(Qt::Vertical, impl_->viewportHost_);
+  impl_->viewportRowsSplitter_->setChildrenCollapsible(false);
+  impl_->viewportTopSplitter_ = new QSplitter(Qt::Horizontal, impl_->viewportRowsSplitter_);
+  impl_->viewportTopSplitter_->setChildrenCollapsible(false);
+  impl_->viewportBottomSplitter_ =
+      new QSplitter(Qt::Horizontal, impl_->viewportRowsSplitter_);
+  impl_->viewportBottomSplitter_->setChildrenCollapsible(false);
+  impl_->viewportTopSplitter_->addWidget(impl_->compositionViews_[0]);
+  impl_->viewportTopSplitter_->addWidget(impl_->compositionViews_[1]);
+  impl_->viewportBottomSplitter_->addWidget(impl_->compositionViews_[2]);
+  impl_->viewportBottomSplitter_->addWidget(impl_->compositionViews_[3]);
+  viewportHostLayout->addWidget(impl_->viewportRowsSplitter_);
+  impl_->viewportBottomSplitter_->hide();
   impl_->compositionView_->setResizeCallback([this]() {
     if (impl_) {
       impl_->syncOverlayGeometry(this);
     }
   });
+  for (int i = 1; i < ArtifactCompositionEditor::Impl::kViewportPaneCount; ++i) {
+    if (auto *view = impl_->compositionViews_[i]) {
+      view->setResizeCallback([this]() {
+        if (impl_) {
+          impl_->syncOverlayGeometry(this);
+        }
+      });
+    }
+  }
   impl_->overlayView_ =
       new CompositionOverlayWidget(impl_->compositionView_, this);
   impl_->compositionView_->setOverlayWidget(impl_->overlayView_);
@@ -4843,41 +4992,41 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   }
 
   impl_->viewportLayoutButton_ = new ViewportLayoutButton(impl_->topToolbar_);
-  impl_->viewportLayoutButton_->setText(QStringLiteral("1 View"));
+  impl_->viewportLayoutButton_->setText(impl_->viewportLayoutLabel());
   impl_->viewportLayoutButton_->setMinimumWidth(72);
   impl_->viewportLayoutButton_->setToolTip(
-      QStringLiteral("Toggle a horizontal two-viewport layout"));
+      QStringLiteral("Cycle the viewport layout between 1, 2, and 4 views"));
   impl_->topToolbar_->addWidget(impl_->viewportLayoutButton_);
-  auto toggleViewportLayout = [this](bool split) {
-    if (!impl_ || !impl_->secondaryCompositionView_ ||
-        !impl_->secondaryRenderController_) {
-      return;
-    }
-    impl_->horizontalSplitEnabled_ = split;
-    impl_->secondaryCompositionView_->setVisible(split);
-    impl_->viewportLayoutButton_->setText(split ? QStringLiteral("2-Up")
-                                                : QStringLiteral("1 View"));
-    if (split) {
-      const auto composition = impl_->renderController_
-                                   ? impl_->renderController_->composition()
-                                   : ArtifactCompositionPtr{};
-      impl_->secondaryRenderController_->setComposition(composition);
-      if (composition) {
-        impl_->secondaryRenderController_->start();
-      }
-      impl_->secondaryCompositionView_->requestInitialFit();
-      const int paneWidth = std::max(1, impl_->viewportSplitter_->width() / 2);
-      impl_->viewportSplitter_->setSizes({paneWidth, paneWidth});
-    } else {
-      impl_->secondaryRenderController_->stop();
-    }
-    impl_->syncOverlayGeometry(this);
-  };
-  impl_->viewportLayoutButton_->setActivatedCallback([this, toggleViewportLayout]() {
+  auto setViewportLayout = [this](ArtifactCompositionEditor::Impl::ViewportLayoutMode mode) {
     if (!impl_) {
       return;
     }
-    toggleViewportLayout(!impl_->horizontalSplitEnabled_);
+    impl_->viewportLayoutMode_ = mode;
+    const auto composition = impl_->renderController_
+                                 ? impl_->renderController_->composition()
+                                 : ArtifactCompositionPtr{};
+    impl_->forEachSecondaryController(
+        [&composition](CompositionRenderController *controller) {
+          controller->stop();
+          controller->setComposition(composition);
+        });
+    impl_->applyViewportLayout();
+    if (composition) {
+      impl_->forEachActiveSecondaryController(
+          [](CompositionRenderController *controller) { controller->start(); });
+      impl_->forEachActiveViewport([](CompositionViewport *view, int index) {
+        if (index > 0) {
+          view->requestInitialFit();
+        }
+      });
+    }
+    impl_->syncOverlayGeometry(this);
+  };
+  impl_->viewportLayoutButton_->setActivatedCallback([this, setViewportLayout]() {
+    if (!impl_) {
+      return;
+    }
+    setViewportLayout(impl_->nextViewportLayoutMode());
   });
 
   impl_->resetAction_ = impl_->topToolbar_->addAction("Reset");
@@ -5268,9 +5417,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     QObject::connect(sizeAct, &QAction::triggered, this, [this, size]() {
       if (impl_->renderController_) {
         impl_->renderController_->setCheckerboardSize(size);
-        if (impl_->secondaryRenderController_) {
-          impl_->secondaryRenderController_->setCheckerboardSize(size);
-        }
+        impl_->forEachActiveSecondaryController(
+            [size](CompositionRenderController *controller) {
+              controller->setCheckerboardSize(size);
+            });
         if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
           settings->setCompositionCheckerboardSize(size);
         }
@@ -5284,10 +5434,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     if (impl_->renderController_) {
       impl_->renderController_->setCompositionBackgroundMode(
           static_cast<int>(CompositionBackgroundMode::Solid));
-      if (impl_->secondaryRenderController_) {
-        impl_->secondaryRenderController_->setCompositionBackgroundMode(
-            static_cast<int>(CompositionBackgroundMode::Solid));
-      }
+      impl_->forEachActiveSecondaryController(
+          [](CompositionRenderController *controller) {
+            controller->setCompositionBackgroundMode(
+                static_cast<int>(CompositionBackgroundMode::Solid));
+          });
       if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
         settings->setCompositionBackgroundMode(
             static_cast<int>(CompositionBackgroundMode::Solid));
@@ -5307,11 +5458,12 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       impl_->renderController_->setClearColor(chosen);
       impl_->renderController_->setCompositionBackgroundMode(
           static_cast<int>(CompositionBackgroundMode::Solid));
-      if (impl_->secondaryRenderController_) {
-        impl_->secondaryRenderController_->setClearColor(chosen);
-        impl_->secondaryRenderController_->setCompositionBackgroundMode(
-            static_cast<int>(CompositionBackgroundMode::Solid));
-      }
+      impl_->forEachActiveSecondaryController(
+          [&chosen](CompositionRenderController *controller) {
+            controller->setClearColor(chosen);
+            controller->setCompositionBackgroundMode(
+                static_cast<int>(CompositionBackgroundMode::Solid));
+          });
       if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
         settings->setCompositionBackgroundMode(
             static_cast<int>(CompositionBackgroundMode::Solid));
@@ -5322,10 +5474,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     if (impl_->renderController_) {
       impl_->renderController_->setCompositionBackgroundMode(
           static_cast<int>(CompositionBackgroundMode::Checkerboard));
-      if (impl_->secondaryRenderController_) {
-        impl_->secondaryRenderController_->setCompositionBackgroundMode(
-            static_cast<int>(CompositionBackgroundMode::Checkerboard));
-      }
+      impl_->forEachActiveSecondaryController(
+          [](CompositionRenderController *controller) {
+            controller->setCompositionBackgroundMode(
+                static_cast<int>(CompositionBackgroundMode::Checkerboard));
+          });
       if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
         settings->setCompositionBackgroundMode(
             static_cast<int>(CompositionBackgroundMode::Checkerboard));
@@ -5336,10 +5489,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
     if (impl_->renderController_) {
       impl_->renderController_->setCompositionBackgroundMode(
           static_cast<int>(CompositionBackgroundMode::MayaGradient));
-      if (impl_->secondaryRenderController_) {
-        impl_->secondaryRenderController_->setCompositionBackgroundMode(
-            static_cast<int>(CompositionBackgroundMode::MayaGradient));
-      }
+      impl_->forEachActiveSecondaryController(
+          [](CompositionRenderController *controller) {
+            controller->setCompositionBackgroundMode(
+                static_cast<int>(CompositionBackgroundMode::MayaGradient));
+          });
       if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
         settings->setCompositionBackgroundMode(
             static_cast<int>(CompositionBackgroundMode::MayaGradient));
@@ -5349,9 +5503,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QObject::connect(gridAct, &QAction::toggled, this, [this](bool checked) {
     if (impl_->renderController_) {
       impl_->renderController_->setShowGrid(checked);
-      if (impl_->secondaryRenderController_) {
-        impl_->secondaryRenderController_->setShowGrid(checked);
-      }
+      impl_->forEachActiveSecondaryController(
+          [checked](CompositionRenderController *controller) {
+            controller->setShowGrid(checked);
+          });
       if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
         settings->setCompositionShowGrid(checked);
       }
@@ -5360,9 +5515,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QObject::connect(guidesAct, &QAction::toggled, this, [this](bool checked) {
     if (impl_->renderController_) {
       impl_->renderController_->setShowGuides(checked);
-      if (impl_->secondaryRenderController_) {
-        impl_->secondaryRenderController_->setShowGuides(checked);
-      }
+      impl_->forEachActiveSecondaryController(
+          [checked](CompositionRenderController *controller) {
+            controller->setShowGuides(checked);
+          });
       if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
         settings->setCompositionShowGuides(checked);
       }
@@ -5372,10 +5528,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    [this](bool checked) {
                      if (impl_->renderController_) {
                        impl_->renderController_->setShowSafeMargins(checked);
-                       if (impl_->secondaryRenderController_) {
-                         impl_->secondaryRenderController_->setShowSafeMargins(
-                             checked);
-                       }
+                       impl_->forEachActiveSecondaryController(
+                           [checked](CompositionRenderController *controller) {
+                             controller->setShowSafeMargins(checked);
+                           });
                        if (auto *settings =
                                ArtifactCore::ArtifactAppSettings::instance()) {
                          settings->setCompositionShowSafeMargins(checked);
@@ -5386,10 +5542,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    [this](bool checked) {
                      if (impl_->renderController_) {
                        impl_->renderController_->setShowAnchorCenterOverlay(checked);
-                       if (impl_->secondaryRenderController_) {
-                         impl_->secondaryRenderController_
-                             ->setShowAnchorCenterOverlay(checked);
-                       }
+                       impl_->forEachActiveSecondaryController(
+                           [checked](CompositionRenderController *controller) {
+                             controller->setShowAnchorCenterOverlay(checked);
+                           });
                        if (auto *settings =
                                ArtifactCore::ArtifactAppSettings::instance()) {
                          settings->setCompositionShowAnchorCenterOverlay(
@@ -5401,10 +5557,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                    [this](bool checked) {
                      if (impl_->renderController_) {
                        impl_->renderController_->setShowCameraFrustumOverlay(checked);
-                       if (impl_->secondaryRenderController_) {
-                         impl_->secondaryRenderController_
-                             ->setShowCameraFrustumOverlay(checked);
-                       }
+                       impl_->forEachActiveSecondaryController(
+                           [checked](CompositionRenderController *controller) {
+                             controller->setShowCameraFrustumOverlay(checked);
+                           });
                        if (auto *settings =
                                ArtifactCore::ArtifactAppSettings::instance()) {
                          settings->setCompositionShowCameraFrustumOverlay(
@@ -5417,10 +5573,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                      if (impl_->renderController_) {
                        impl_->renderController_->setShowDensityHeatmapOverlay(
                            checked);
-                       if (impl_->secondaryRenderController_) {
-                         impl_->secondaryRenderController_
-                             ->setShowDensityHeatmapOverlay(checked);
-                       }
+                       impl_->forEachActiveSecondaryController(
+                           [checked](CompositionRenderController *controller) {
+                             controller->setShowDensityHeatmapOverlay(checked);
+                           });
                        if (auto *settings =
                                ArtifactCore::ArtifactAppSettings::instance()) {
                          settings->setCompositionShowDensityHeatmapOverlay(
@@ -5431,9 +5587,10 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   QObject::connect(gpuBlendAct, &QAction::toggled, this, [this](bool checked) {
     if (impl_->renderController_) {
       impl_->renderController_->setGpuBlendEnabled(checked);
-      if (impl_->secondaryRenderController_) {
-        impl_->secondaryRenderController_->setGpuBlendEnabled(checked);
-      }
+      impl_->forEachActiveSecondaryController(
+          [checked](CompositionRenderController *controller) {
+            controller->setGpuBlendEnabled(checked);
+          });
     }
   });
 
@@ -5478,7 +5635,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   // Assembly
   mainLayout->addWidget(impl_->topToolbar_);
   mainLayout->addWidget(impl_->chromeStrip_);
-  mainLayout->addWidget(impl_->viewportSplitter_, 1);
+  mainLayout->addWidget(impl_->viewportHost_, 1);
   mainLayout->addWidget(impl_->bottomBar_);
   impl_->topToolbar_->setAutoFillBackground(true);
   QPalette topPalette = impl_->topToolbar_->palette();
@@ -5493,6 +5650,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   bottomPalette.setColor(QPalette::WindowText, QColor(theme.textColor));
   impl_->bottomBar_->setPalette(bottomPalette);
   impl_->syncChromeSummary(this);
+  impl_->applyViewportLayout();
   impl_->syncOverlayGeometry(this);
   QTimer::singleShot(0, this, [this]() {
     if (impl_) {
@@ -5637,11 +5795,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
       new QShortcut(QKeySequence(Qt::Key_F9), this);
   toggleViewportLayoutShortcut->setContext(Qt::WidgetWithChildrenShortcut);
   QObject::connect(toggleViewportLayoutShortcut, &QShortcut::activated, this,
-                   [this, toggleViewportLayout]() {
+                   [this, setViewportLayout]() {
                      if (!impl_) {
                        return;
                      }
-                     toggleViewportLayout(!impl_->horizontalSplitEnabled_);
+                     setViewportLayout(impl_->nextViewportLayoutMode());
                    });
   auto *immersiveExitShortcut =
       new QShortcut(QKeySequence(Qt::Key_Escape), this);
@@ -5913,21 +6071,23 @@ void ArtifactCompositionEditor::setComposition(
       impl_->renderController_->start();
     }
   }
-  if (impl_->secondaryRenderController_) {
-    impl_->secondaryRenderController_->setComposition(composition);
-    if (composition && impl_->horizontalSplitEnabled_) {
-      impl_->secondaryRenderController_->start();
-    }
+  impl_->forEachSecondaryController(
+      [&composition](CompositionRenderController *controller) {
+        controller->setComposition(composition);
+        controller->stop();
+      });
+  if (composition) {
+    impl_->forEachActiveSecondaryController(
+        [](CompositionRenderController *controller) { controller->start(); });
   }
   if (auto *playback = ArtifactPlaybackService::instance()) {
     playback->setCurrentComposition(composition);
   }
   ArtifactAudioScrubController::instance().setComposition(composition);
   if (impl_->compositionView_ && !sameCompositionPointer && !sameCompositionId) {
-    impl_->compositionView_->requestInitialFit();
-    if (impl_->secondaryCompositionView_ && impl_->horizontalSplitEnabled_) {
-      impl_->secondaryCompositionView_->requestInitialFit();
-    }
+    impl_->forEachActiveViewport([](CompositionViewport *view, int) {
+      view->requestInitialFit();
+    });
   }
   if (impl_) {
     impl_->queueSelectionSync(this);
@@ -5940,9 +6100,10 @@ void ArtifactCompositionEditor::setClearColor(const FloatColor &color) {
   if (impl_->renderController_) {
     impl_->renderController_->setClearColor(color);
   }
-  if (impl_->secondaryRenderController_) {
-    impl_->secondaryRenderController_->setClearColor(color);
-  }
+  impl_->forEachSecondaryController(
+      [&color](CompositionRenderController *controller) {
+        controller->setClearColor(color);
+      });
 }
 
 CompositionRenderController* ArtifactCompositionEditor::renderController() const {
@@ -5956,9 +6117,8 @@ void ArtifactCompositionEditor::play() {
   if (impl_->renderController_) {
     impl_->renderController_->start();
   }
-  if (impl_->secondaryRenderController_ && impl_->horizontalSplitEnabled_) {
-    impl_->secondaryRenderController_->start();
-  }
+  impl_->forEachActiveSecondaryController(
+      [](CompositionRenderController *controller) { controller->start(); });
 }
 
 void ArtifactCompositionEditor::stop() {
@@ -5968,9 +6128,8 @@ void ArtifactCompositionEditor::stop() {
   if (impl_->renderController_) {
     impl_->renderController_->stop();
   }
-  if (impl_->secondaryRenderController_) {
-    impl_->secondaryRenderController_->stop();
-  }
+  impl_->forEachSecondaryController(
+      [](CompositionRenderController *controller) { controller->stop(); });
 }
 
 void ArtifactCompositionEditor::resetView() {
