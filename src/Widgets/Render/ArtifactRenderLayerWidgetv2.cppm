@@ -3450,6 +3450,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* addTwistAct = nullptr;
  QAction* insertPointAct = nullptr;
  QAction* splitSegmentAct = nullptr;
+ QAction* duplicatePointAct = nullptr;
  QAction* deletePointAct = nullptr;
  QAction* toggleClosedAct = nullptr;
  QAction* convertToPathAct = nullptr;
@@ -3518,6 +3519,9 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     insertPointAct = menu.addAction(shapeLayer->hasCustomPath()
                                         ? QStringLiteral("Insert Path Vertex")
                                         : QStringLiteral("Insert Polygon Vertex"));
+    duplicatePointAct = menu.addAction(shapeLayer->hasCustomPath()
+                                           ? QStringLiteral("Duplicate Path Vertex")
+                                           : QStringLiteral("Duplicate Polygon Vertex"));
     splitSegmentAct = menu.addAction(shapeLayer->hasCustomPath()
                                          ? QStringLiteral("Split Path Segment")
                                          : QStringLiteral("Split Polygon Segment"));
@@ -3528,6 +3532,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
                                          ? QStringLiteral("Open Polygon")
                                          : QStringLiteral("Close Polygon"));
     insertPointAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
+    duplicatePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
     splitSegmentAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
     deletePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
     toggleClosedAct->setEnabled(shapeLayer->customPolygonClosed() || shapeLayer->customPolygonPoints().size() >= 3);
@@ -3617,12 +3622,23 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        handled = true;
       }
      } else if (shapeLayer->hasCustomPolygon()) {
-      if (shapeChosen == deletePointAct) {
+     if (shapeChosen == deletePointAct) {
        impl_->beginShapeEditTransaction(layer);
        handled = impl_->deleteHoveredShapeVertex(layer);
       } else if (shapeChosen == insertPointAct) {
        impl_->beginShapeEditTransaction(layer);
        handled = impl_->insertPointOnHoveredShapeSegment(layer, impl_->shapeContextMenuCanvasPos_);
+      } else if (shapeChosen == duplicatePointAct) {
+       impl_->beginShapeEditTransaction(layer);
+       auto points = shapeLayer->customPolygonPoints();
+       const int vi = impl_->hoveredShapeVertexIndex_;
+       if (vi >= 0 && vi < static_cast<int>(points.size())) {
+        const int insertIndex = std::clamp(vi + 1, 0, static_cast<int>(points.size()));
+        points.insert(points.begin() + insertIndex, points[static_cast<size_t>(vi)]);
+        shapeLayer->setCustomPolygonPoints(points, shapeLayer->customPolygonClosed());
+        impl_->markShapeEditDirty();
+        handled = true;
+       }
       } else if (shapeChosen == splitSegmentAct) {
        impl_->beginShapeEditTransaction(layer);
        handled = impl_->splitHoveredShapeSegment(layer);
