@@ -420,6 +420,9 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
     const int pointCount = static_cast<int>(shape->customPolygonPoints().size());
     if (pointCount > 0) {
       detail += QStringLiteral(" - polygon (%1 pts)").arg(pointCount);
+      detail += shape->customPolygonClosed()
+                    ? QStringLiteral(", closed")
+                    : QStringLiteral(", open");
     }
   } else if (shape->hasCustomPath()) {
     const auto verts = shape->customPathVertices();
@@ -437,6 +440,9 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
                   .arg(static_cast<int>(verts.size()))
                   .arg(smoothCount)
                   .arg(tangentCount);
+    detail += shape->customPathClosed()
+                  ? QStringLiteral(", closed")
+                  : QStringLiteral(", open");
   } else if (type == ShapeType::Star) {
     detail += QStringLiteral(" - %1 spikes").arg(shape->starPoints());
   } else if (type == ShapeType::Rect || type == ShapeType::Square) {
@@ -5576,6 +5582,8 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->densityHeatmapAction_ = densityHeatmapAct;
   const std::array<float, 8> checkerboardSizes{
       8.0f, 12.0f, 16.0f, 24.0f, 32.0f, 48.0f, 64.0f, 96.0f};
+  auto *checkerboardSizeGroup = new QActionGroup(displayMenu);
+  checkerboardSizeGroup->setExclusive(true);
   checkerboardAct->setCheckable(true);
   gridAct->setCheckable(true);
   guidesAct->setCheckable(true);
@@ -5597,6 +5605,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
         QStringLiteral("%1 px").arg(QString::number(size, 'f', 0)));
     sizeAct->setCheckable(true);
     sizeAct->setData(size);
+    checkerboardSizeGroup->addAction(sizeAct);
     QObject::connect(sizeAct, &QAction::triggered, this, [this, size]() {
       if (impl_->renderController_) {
         impl_->renderController_->setCheckerboardSize(size);
