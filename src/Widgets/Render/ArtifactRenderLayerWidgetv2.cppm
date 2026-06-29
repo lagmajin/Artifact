@@ -1286,7 +1286,10 @@ QString shapeHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, i
  return QString{};
 }
 
-QString pathHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, int tangentIndex)
+QString pathHoverHint(const ArtifactAbstractLayerPtr& layer,
+                      int vertexIndex,
+                      int segmentIndex,
+                      int tangentIndex)
 {
  const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
  if (!shape || !shape->hasCustomPath()) {
@@ -1294,6 +1297,9 @@ QString pathHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, in
  }
  const auto verts = shape->customPathVertices();
  const bool validVertex = vertexIndex >= 0 && vertexIndex < static_cast<int>(verts.size());
+ if (segmentIndex >= 0) {
+  return QStringLiteral("Path segment");
+ }
  if (tangentIndex >= 0) {
   return tangentIndex == 0
              ? QStringLiteral("Path tangent (in)")
@@ -3329,6 +3335,7 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      }
      const QString hint = pathHoverHint(layer,
                                         impl_->hoveredPathVertexIndex_,
+                                        impl_->hoveredPathSegmentIndex_,
                                         impl_->hoveredPathTangentIndex_);
      if (!hint.isEmpty()) {
       setToolTip(hint);
@@ -3497,6 +3504,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     const QString hoverSummary = shapeLayer->hasCustomPath()
                                      ? pathHoverHint(layer,
                                                      impl_->hoveredPathVertexIndex_,
+                                                     impl_->hoveredPathSegmentIndex_,
                                                      impl_->hoveredPathTangentIndex_)
                                      : shapeHoverHint(layer,
                                                       impl_->hoveredShapeVertexIndex_,
