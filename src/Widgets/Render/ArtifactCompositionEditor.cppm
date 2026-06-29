@@ -419,7 +419,7 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
   if (type == ShapeType::Polygon) {
     const int pointCount = static_cast<int>(shape->customPolygonPoints().size());
     if (pointCount > 0) {
-      detail += QStringLiteral(" - %1 points").arg(pointCount);
+      detail += QStringLiteral(" - polygon (%1 pts)").arg(pointCount);
     }
   } else if (shape->hasCustomPath()) {
     detail += QStringLiteral(" - editable path (%1 verts)")
@@ -437,7 +437,7 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
     detail += QStringLiteral(" - %1 ops").arg(shape->shapeOperatorCount());
   }
 
-  detail += QStringLiteral(" - Vertex edit ready");
+  detail += QStringLiteral(" - vertex/segment edit ready");
   return detail;
 }
 
