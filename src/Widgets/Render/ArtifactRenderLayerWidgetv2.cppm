@@ -1291,7 +1291,9 @@ QString pathHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, in
   return {};
  }
  if (tangentIndex >= 0) {
-  return QStringLiteral("Path tangent");
+  return tangentIndex == 0
+             ? QStringLiteral("Path tangent (in)")
+             : QStringLiteral("Path tangent (out)");
  }
  if (vertexIndex >= 0) {
   return QStringLiteral("Path vertex");
@@ -3272,8 +3274,10 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
                                         impl_->hoveredPathTangentIndex_);
      if (!hint.isEmpty()) {
       setToolTip(hint);
+      setCursor(Qt::CrossCursor);
      } else {
       setToolTip(QString());
+      unsetCursor();
      }
      return;
     }
