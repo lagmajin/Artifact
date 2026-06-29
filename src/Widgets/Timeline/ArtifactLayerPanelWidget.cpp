@@ -1050,7 +1050,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   visButton->setIcon(impl_->visibilityIcon);
   visButton->setIconSize(QSize(15, 15));
   visButton->setFocusPolicy(Qt::NoFocus);
-  visButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(visButton);
 
   auto lockButton = impl_->lockButton = new QPushButton();
@@ -1058,7 +1057,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   if (!impl_->lockIcon.isNull()) lockButton->setIcon(impl_->lockIcon);
   lockButton->setIconSize(QSize(15, 15));
   lockButton->setFocusPolicy(Qt::NoFocus);
-  lockButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(lockButton);
 
   auto soloButton = impl_->soloButton = new QPushButton();
@@ -1066,7 +1064,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   if (!impl_->soloIcon.isNull()) soloButton->setIcon(impl_->soloIcon);
   soloButton->setIconSize(QSize(15, 15));
   soloButton->setFocusPolicy(Qt::NoFocus);
-  soloButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(soloButton);
 
   auto audioButton = impl_->audioButton = new QPushButton();
@@ -1074,7 +1071,6 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
   if (!impl_->audioIcon.isNull()) audioButton->setIcon(impl_->audioIcon);
   audioButton->setIconSize(QSize(15, 15));
   audioButton->setFocusPolicy(Qt::NoFocus);
-  audioButton->setAttribute(Qt::WA_TransparentForMouseEvents, true);
   applyLayerPanelButtonPalette(audioButton);
 
   auto shyButton = impl_->shyButton = new QPushButton;
@@ -1129,6 +1125,69 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
 
   QObject::connect(shyButton, &QPushButton::toggled, this, [this](bool checked) {
     Q_EMIT shyToggled(checked);
+  });
+  QObject::connect(visButton, &QPushButton::clicked, this, [this]() {
+    auto* service = ArtifactProjectService::instance();
+    auto comp = service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
+    if (!service || !comp) {
+      return;
+    }
+    const LayerID selectedId = impl_->panel ? impl_->panel->selectedLayerId() : LayerID{};
+    auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
+    if (!layer) {
+      return;
+    }
+    layer->setVisible(!layer->isVisible());
+    impl_->panel->updateLayout();
+  });
+  QObject::connect(lockButton, &QPushButton::clicked, this, [this]() {
+    auto* service = ArtifactProjectService::instance();
+    auto comp = service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
+    if (!service || !comp) {
+      return;
+    }
+    const LayerID selectedId = impl_->panel ? impl_->panel->selectedLayerId() : LayerID{};
+    auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
+    if (!layer) {
+      return;
+    }
+    layer->setLocked(!layer->isLocked());
+    impl_->panel->updateLayout();
+  });
+  QObject::connect(soloButton, &QPushButton::clicked, this, [this]() {
+    auto* service = ArtifactProjectService::instance();
+    auto comp = service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
+    if (!service || !comp) {
+      return;
+    }
+    const LayerID selectedId = impl_->panel ? impl_->panel->selectedLayerId() : LayerID{};
+    auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
+    if (!layer) {
+      return;
+    }
+    layer->setSolo(!layer->isSolo());
+    impl_->panel->updateLayout();
+  });
+  QObject::connect(audioButton, &QPushButton::clicked, this, [this]() {
+    auto* service = ArtifactProjectService::instance();
+    auto comp = service ? service->currentComposition().lock() : ArtifactCompositionPtr{};
+    if (!service || !comp) {
+      return;
+    }
+    const LayerID selectedId = impl_->panel ? impl_->panel->selectedLayerId() : LayerID{};
+    auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
+    if (!layer) {
+      return;
+    }
+    if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
+      videoLayer->setAudioMuted(!videoLayer->isAudioMuted());
+      impl_->panel->updateLayout();
+      return;
+    }
+    if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
+      audioLayer->mute();
+      impl_->panel->updateLayout();
+    }
   });
 
   setAutoFillBackground(true);
