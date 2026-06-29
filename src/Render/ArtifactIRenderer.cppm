@@ -271,6 +271,62 @@ namespace {
   }
  }
 
+  bool resolveReadbackSourceTexture(
+      ITextureView* sourceView,
+      ITexture* layerTexture,
+      int offlineWidth,
+      int offlineHeight,
+      ISwapChain* swapChain,
+      ITexture*& outTexture,
+      Uint32& outWidth,
+      Uint32& outHeight)
+  {
+    outTexture = nullptr;
+    outWidth = 0;
+    outHeight = 0;
+
+    if (sourceView) {
+      outTexture = sourceView->GetTexture();
+      if (!outTexture) {
+        return false;
+      }
+      const auto& desc = outTexture->GetDesc();
+      outWidth = desc.Width;
+      outHeight = desc.Height;
+      return outWidth > 0 && outHeight > 0;
+    }
+
+    if (layerTexture && offlineWidth > 0 && offlineHeight > 0) {
+      outTexture = layerTexture;
+      outWidth = static_cast<Uint32>(offlineWidth);
+      outHeight = static_cast<Uint32>(offlineHeight);
+      return true;
+    }
+
+    if (layerTexture) {
+      outTexture = layerTexture;
+      const auto& desc = outTexture->GetDesc();
+      outWidth = desc.Width;
+      outHeight = desc.Height;
+      return outWidth > 0 && outHeight > 0;
+    }
+
+    if (swapChain) {
+      if (auto* rtv = swapChain->GetCurrentBackBufferRTV()) {
+        outTexture = rtv->GetTexture();
+        if (!outTexture) {
+          return false;
+        }
+        const auto& desc = outTexture->GetDesc();
+        outWidth = desc.Width;
+        outHeight = desc.Height;
+        return outWidth > 0 && outHeight > 0;
+      }
+    }
+
+    return false;
+  }
+
  // ---------------------------------------------------------------------------
  // Impl
  // ---------------------------------------------------------------------------
@@ -295,6 +351,8 @@ namespace {
 
   RefCntAutoPtr<ITexture> m_layerRT;
   RefCntAutoPtr<ITexture> m_layerDepthTex;
+  ITextureView* m_overrideColorRTV = nullptr;
+  ITextureView* m_overrideDepthDSV = nullptr;
   Uint32 m_layerRTWidth = 0;
   Uint32 m_layerRTHeight = 0;
   bool m_upscaleEnabled = false;
@@ -380,6 +438,7 @@ namespace {
 
   void initFrameQueries();
   void createLayerRT(QWidget* window);
+  ITextureView* activeColorView() const;
   ITextureView* activeDepthView() const;
   float upscaleRenderScale() const { return m_upscaleEnabled ? m_upscaleScale : 1.0f; }
   void submitQueuedDraws(IDeviceContext* ctx) const
@@ -523,6 +582,7 @@ namespace {
   QImage readbackToImage() const;
   QImage readbackDepthToImage() const;
   QImage readbackChannelToImage(ArtifactIRenderer::ChannelType channel) const;
+  QImage readbackTextureViewToImage(ITextureView* textureView) const;
   void createSwapChain(QWidget* widget);
   void recreateSwapChain(QWidget* widget);
   void beginFrameGpuProfiling();
@@ -539,6 +599,9 @@ namespace {
   std::vector<ArtifactCore::FrameDebugPassRecord> frameDebugPasses() const;
    bool isInitialized() const { return m_initialized; }
   void readbackToImageAsync(ArtifactIRenderer::ReadbackCallback callback) const;
+  void readbackTextureViewToImageAsync(
+      ITextureView* textureView,
+      ArtifactIRenderer::ReadbackCallback callback) const;
 
    void clear();
   void setClearColor(const FloatColor& color);
@@ -1162,42 +1225,27 @@ namespace {
 
  QImage ArtifactIRenderer::Impl::readbackToImage() const
  {
+  return readbackTextureViewToImage(nullptr);
+ }
+
+ QImage ArtifactIRenderer::Impl::readbackTextureViewToImage(
+     ITextureView* textureView) const
+ {
   std::lock_guard<std::mutex> guard(m_readbackMutex);
 
   auto ctx    = deviceManager_.immediateContext();
   auto device = deviceManager_.device();
   if (!ctx || !device) return {};
 
-  // Resolve source texture and its dimensions.
-  // Priority: headless offline RT > online layerRT > swap chain back buffer.
   ITexture* srcTex  = nullptr;
   Uint32 srcWidth   = 0;
   Uint32 srcHeight  = 0;
-
-  if (m_layerRT && m_offlineWidth > 0 && m_offlineHeight > 0) {
-   // Headless/offline mode: explicit dimensions stored on initializeHeadless().
-   srcTex    = m_layerRT;
-   srcWidth  = static_cast<Uint32>(m_offlineWidth);
-   srcHeight = static_cast<Uint32>(m_offlineHeight);
-  } else if (m_layerRT) {
-   // Online mode: layerRT was sized from the widget via createLayerRT().
-   const auto& desc = m_layerRT->GetDesc();
-   srcTex    = m_layerRT;
-   srcWidth  = desc.Width;
-   srcHeight = desc.Height;
-  } else if (auto sc = deviceManager_.swapChain()) {
-   // Fallback: read directly from the swap chain back buffer.
-   if (auto* rtv = sc->GetCurrentBackBufferRTV()) {
-    srcTex = rtv->GetTexture();
-    if (srcTex) {
-     const auto& desc = srcTex->GetDesc();
-     srcWidth  = desc.Width;
-     srcHeight = desc.Height;
-    }
-   }
+  if (!resolveReadbackSourceTexture(textureView, m_layerRT,
+                                    m_offlineWidth, m_offlineHeight,
+                                    deviceManager_.swapChain(),
+                                    srcTex, srcWidth, srcHeight)) {
+    return {};
   }
-
-  if (!srcTex || srcWidth == 0 || srcHeight == 0) return {};
 
   const TEXTURE_FORMAT srcFormat = srcTex->GetDesc().Format;
   const bool useFloatReadback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
@@ -1330,7 +1378,12 @@ namespace {
   Uint32 srcWidth = 0;
   Uint32 srcHeight = 0;
 
-  if (m_layerDepthTex && m_offlineWidth > 0 && m_offlineHeight > 0) {
+  if (m_overrideDepthDSV && m_overrideDepthDSV->GetTexture()) {
+   srcTex = m_overrideDepthDSV->GetTexture();
+   const auto& desc = srcTex->GetDesc();
+   srcWidth = desc.Width;
+   srcHeight = desc.Height;
+  } else if (m_layerDepthTex && m_offlineWidth > 0 && m_offlineHeight > 0) {
    srcTex = m_layerDepthTex;
    srcWidth = static_cast<Uint32>(m_offlineWidth);
    srcHeight = static_cast<Uint32>(m_offlineHeight);
@@ -1456,6 +1509,13 @@ namespace {
 
  void ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
  {
+  readbackTextureViewToImageAsync(nullptr, std::move(callback));
+ }
+
+ void ArtifactIRenderer::Impl::readbackTextureViewToImageAsync(
+     ITextureView* textureView,
+     ReadbackCallback callback) const
+ {
   if (!deviceManager_.device() || !deviceManager_.immediateContext()) {
     if (callback) callback(QImage());
     return;
@@ -1464,34 +1524,12 @@ namespace {
   auto ctx = deviceManager_.immediateContext();
   auto device = deviceManager_.device();
 
-  // Resolve source texture with the same priority as sync readbackToImage():
-  // 1. Headless offline RT (m_layerRT with m_offlineWidth/Height set)
-  // 2. Online layerRT
-  // 3. Swap chain back buffer (fallback)
   ITexture* srcTexPtr = nullptr;
   Uint32 srcWidth = 0, srcHeight = 0;
-
-  if (m_layerRT && m_offlineWidth > 0 && m_offlineHeight > 0) {
-   srcTexPtr = m_layerRT;
-   srcWidth  = static_cast<Uint32>(m_offlineWidth);
-   srcHeight = static_cast<Uint32>(m_offlineHeight);
-  } else if (m_layerRT) {
-   const auto& desc = m_layerRT->GetDesc();
-   srcTexPtr = m_layerRT;
-   srcWidth  = desc.Width;
-   srcHeight = desc.Height;
-  } else if (auto sc = deviceManager_.swapChain()) {
-   if (auto* rtv = sc->GetCurrentBackBufferRTV()) {
-    srcTexPtr = rtv->GetTexture();
-    if (srcTexPtr) {
-     const auto& desc = srcTexPtr->GetDesc();
-     srcWidth  = desc.Width;
-     srcHeight = desc.Height;
-    }
-   }
-  }
-
-  if (!srcTexPtr || srcWidth == 0 || srcHeight == 0) {
+  if (!resolveReadbackSourceTexture(textureView, m_layerRT,
+                                    m_offlineWidth, m_offlineHeight,
+                                    deviceManager_.swapChain(),
+                                    srcTexPtr, srcWidth, srcHeight)) {
     if (callback) callback(QImage());
     return;
   }
@@ -1739,13 +1777,30 @@ namespace {
   m_layerRTHeight = targetHeight;
  }
 
- Diligent::ITextureView* ArtifactIRenderer::Impl::activeDepthView() const
- {
+Diligent::ITextureView* ArtifactIRenderer::Impl::activeDepthView() const
+{
+  if (m_overrideDepthDSV) {
+   return m_overrideDepthDSV;
+  }
   if (m_layerDepthTex) {
    return m_layerDepthTex->GetDefaultView(Diligent::TEXTURE_VIEW_DEPTH_STENCIL);
   }
   if (auto sc = deviceManager_.swapChain()) {
    return sc->GetDepthBufferDSV();
+  }
+  return nullptr;
+}
+
+ Diligent::ITextureView* ArtifactIRenderer::Impl::activeColorView() const
+ {
+  if (m_overrideColorRTV) {
+   return m_overrideColorRTV;
+  }
+  if (m_layerRT) {
+   return m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+  }
+  if (auto sc = deviceManager_.swapChain()) {
+   return sc->GetCurrentBackBufferRTV();
   }
   return nullptr;
  }
@@ -2102,7 +2157,18 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
  double ArtifactIRenderer::lastFrameGpuTimeMs() const { return impl_->lastFrameGpuTimeMs(); }
 
  QImage ArtifactIRenderer::readbackToImage() const { return impl_->readbackToImage(); }
+ QImage ArtifactIRenderer::readbackTextureViewToImage(
+     Diligent::ITextureView* textureView) const
+ {
+  return impl_->readbackTextureViewToImage(textureView);
+ }
  QImage ArtifactIRenderer::readbackDepthToImage() const { return impl_->readbackDepthToImage(); }
+ void ArtifactIRenderer::readbackTextureViewToImageAsync(
+     Diligent::ITextureView* textureView,
+     ReadbackCallback callback) const
+ {
+  impl_->readbackTextureViewToImageAsync(textureView, std::move(callback));
+ }
  QImage ArtifactIRenderer::readbackChannelToImage(ChannelType channel) const
  {
   return impl_->readbackChannelToImage(channel);
@@ -2593,8 +2659,18 @@ bool ArtifactIRenderer::convertLayerToFloat(
   if (auto ctx = impl_->deviceManager_.immediateContext()) {
    impl_->submitQueuedDraws(ctx);
   }
+  impl_->m_overrideColorRTV = rtv;
   impl_->primitiveRenderer_.setOverrideRTV(rtv);
   impl_->primitiveRenderer3D_.setOverrideRTV(rtv);
+ }
+
+ void ArtifactIRenderer::setOverrideDSV(Diligent::ITextureView* dsv)
+ {
+  if (auto ctx = impl_->deviceManager_.immediateContext()) {
+   impl_->submitQueuedDraws(ctx);
+  }
+  impl_->m_overrideDepthDSV = dsv;
+  impl_->primitiveRenderer3D_.setOverrideDSV(dsv);
  }
 
  // Offscreen rendering for group layers
@@ -2617,6 +2693,30 @@ bool ArtifactIRenderer::convertLayerToFloat(
   if (!texture) return nullptr;
 
   auto* view = texture->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+  view->AddRef();
+  return static_cast<void*>(view);
+ }
+
+ void* ArtifactIRenderer::createOffscreenDepthTexture(int width, int height)
+ {
+  if (!impl_->deviceManager_.device()) return nullptr;
+
+  Diligent::RefCntAutoPtr<Diligent::ITexture> texture;
+  Diligent::TextureDesc desc;
+  desc.Name = "GroupOffscreenDepthTexture";
+  desc.Type = Diligent::RESOURCE_DIM_TEX_2D;
+  desc.Width = static_cast<Diligent::Uint32>(width);
+  desc.Height = static_cast<Diligent::Uint32>(height);
+  desc.MipLevels = 1;
+  desc.Format = Diligent::TEX_FORMAT_D32_FLOAT;
+  desc.Usage = Diligent::USAGE_DEFAULT;
+  desc.BindFlags = Diligent::BIND_DEPTH_STENCIL;
+
+  impl_->deviceManager_.device()->CreateTexture(desc, nullptr, &texture);
+  if (!texture) return nullptr;
+
+  auto* view = texture->GetDefaultView(Diligent::TEXTURE_VIEW_DEPTH_STENCIL);
+  if (!view) return nullptr;
   view->AddRef();
   return static_cast<void*>(view);
  }
@@ -2652,8 +2752,7 @@ bool ArtifactIRenderer::convertLayerToFloat(
  {
   auto ctx = impl_->deviceManager_.immediateContext();
   if (!ctx) return;
-  if (!impl_->m_layerRT) return;
-  auto* rtv = impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
+  auto* rtv = impl_->activeColorView();
   if (!rtv) return;
   const float clearColor[] = { color.r(), color.g(), color.b(), color.a() };
   ctx->SetRenderTargets(1, &rtv, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);

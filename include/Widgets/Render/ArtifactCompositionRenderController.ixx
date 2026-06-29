@@ -4,6 +4,7 @@ module;
 #include <wobjectdefs.h>
 #include <QObject>
 #include <QCursor>
+#include <QImage>
 #include <QMouseEvent>
 #include <QPointF>
 #include <QMatrix4x4>
@@ -171,6 +172,7 @@ void zoomFill();
   TransformGizmo::Mode gizmoMode() const;
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;
   ArtifactIRenderer* renderer() const;
+  QImage captureCurrentFrameImage() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
   double lastFrameTimeMs() const;
   double averageFrameTimeMs() const;

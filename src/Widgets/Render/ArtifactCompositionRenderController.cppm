@@ -3300,7 +3300,16 @@ public:
   ArtifactCore::MotionTracker* trackerMotionTracker_ = nullptr;
   std::unique_ptr<Artifact::OffscreenCompositionRenderer> trackerOffscreenRenderer_;
   std::unique_ptr<ArtifactCore::LayerBlendPipeline> blendPipeline_;
-  RenderPipeline renderPipeline_;
+  static constexpr int kPreviewRenderPipelineSlotCount = 2;
+  struct PreviewRenderPipelineSlot {
+    RenderPipeline pipeline;
+    void* depthTargetView = nullptr;
+    QSize depthTargetSize;
+    quint64 lastSubmittedFrame = 0;
+  };
+  std::array<PreviewRenderPipelineSlot, kPreviewRenderPipelineSlotCount>
+      previewRenderPipelineSlots_;
+  int activePreviewRenderPipelineSlot_ = 0;
   bool initialized_ = false;
   bool running_ = false;
   float devicePixelRatio_ = 1.0f;
@@ -3429,6 +3438,40 @@ public:
   int lastPipelineStateMask_ = -1;
   QSize lastDispatchWarningSize_;
 
+  PreviewRenderPipelineSlot &acquirePreviewRenderPipelineSlot() {
+    activePreviewRenderPipelineSlot_ =
+        (activePreviewRenderPipelineSlot_ + 1) %
+        kPreviewRenderPipelineSlotCount;
+    auto &slot = previewRenderPipelineSlots_[activePreviewRenderPipelineSlot_];
+    slot.lastSubmittedFrame = renderFrameCounter_;
+    return slot;
+  }
+
+  bool ensurePreviewRenderPipelineDepthSlot(
+      PreviewRenderPipelineSlot &slot,
+      const int width,
+      const int height) {
+    if (!renderer_ || width <= 0 || height <= 0) {
+      return false;
+    }
+    const QSize targetSize(width, height);
+    if (slot.depthTargetView && slot.depthTargetSize == targetSize) {
+      return true;
+    }
+    if (slot.depthTargetView) {
+      renderer_->destroyOffscreenTexture(slot.depthTargetView);
+      slot.depthTargetView = nullptr;
+      slot.depthTargetSize = QSize();
+    }
+    slot.depthTargetView =
+        renderer_->createOffscreenDepthTexture(width, height);
+    if (!slot.depthTargetView) {
+      return false;
+    }
+    slot.depthTargetSize = targetSize;
+    return true;
+  }
+
   // Packed render key state for fast change detection.
   // Replaces the per-frame QByteArray string concatenation.
   struct RenderKeyState {
@@ -3546,6 +3589,7 @@ public:
   FloatColor viewportClearColor_;
   QImage lastLayerRtPreview_;
   QImage lastAccumRtPreview_;
+  Diligent::ITextureView* lastPresentedReadbackSRV_ = nullptr;
   FloatColor lastBgColorCache_ = {-1.f, -1.f, -1.f, -1.f};
   CompositionID lastBackgroundCompositionId_;
   QHash<QString, LayerSurfaceCacheEntry> surfaceCache_;
@@ -3935,11 +3979,12 @@ public:
       renderer_->setCanvasSize(cw, ch);
     }
 
-    // NOTE: renderPipeline_ は renderOneFrameImpl() でビューポートの実サイズ
-    // (rcw, rch) を使って初期化される。ここでコンポジションサイズ (cw, ch) で
-    // 初期化すると、サイズが異なる場合に未初期化の D3D12 テクスチャが生成され、
-    // 次フレームで再び不一致が起き、ゴミデータが画面に出ることがある。
-    // パイプラインのサイズ管理は renderOneFrameImpl() に一元化する。
+    // NOTE: previewRenderPipelineSlots_ は renderOneFrameImpl() で
+    // ビューポートの実サイズ (rcw, rch) を使って初期化される。ここで
+    // コンポジションサイズ (cw, ch) で初期化すると、サイズが異なる場合に
+    // 未初期化の D3D12 テクスチャが生成され、次フレームで再び不一致が起き、
+    // ゴミデータが画面に出ることがある。サイズ管理は renderOneFrameImpl() に
+    // 一元化する。
   }
 
   void bindCompositionChanged(CompositionRenderController *owner,
@@ -4353,6 +4398,15 @@ void CompositionRenderController::destroy() {
     impl_->renderTickDriver_->stop();
   }
   stop();
+  if (impl_->renderer_) {
+    for (auto &slot : impl_->previewRenderPipelineSlots_) {
+      if (slot.depthTargetView) {
+        impl_->renderer_->destroyOffscreenTexture(slot.depthTargetView);
+        slot.depthTargetView = nullptr;
+        slot.depthTargetSize = QSize();
+      }
+    }
+  }
   impl_->compositionRenderer_.reset();
   impl_->surfaceCache_.clear();
   if (impl_->gpuTextureCacheManager_) {
@@ -4362,6 +4416,7 @@ void CompositionRenderController::destroy() {
   impl_->blendPipeline_.reset();
   impl_->blendPipelineReady_ = false;
   impl_->blendPipelineInitAttempted_ = false;
+  impl_->lastPresentedReadbackSRV_ = nullptr;
   if (impl_->renderer_) {
     impl_->renderer_->destroy();
     impl_->renderer_.reset();
@@ -5334,6 +5389,30 @@ void CompositionRenderController::zoom100() {
 
 ArtifactIRenderer *CompositionRenderController::renderer() const {
   return impl_->renderer_.get();
+}
+
+QImage CompositionRenderController::captureCurrentFrameImage() const {
+  if (impl_->renderer_ && impl_->lastPresentedReadbackSRV_) {
+    const QImage frame =
+        impl_->renderer_->readbackTextureViewToImage(
+            impl_->lastPresentedReadbackSRV_);
+    if (!frame.isNull()) {
+      return frame;
+    }
+  }
+
+  if (auto *host = impl_->hostWidget_.data()) {
+    const QImage grabbed = host->grab().toImage();
+    if (!grabbed.isNull()) {
+      return grabbed;
+    }
+  }
+
+  if (impl_->renderer_) {
+    return impl_->renderer_->readbackToImage();
+  }
+
+  return QImage();
 }
 
 ArtifactCore::FrameDebugSnapshot
@@ -8140,12 +8219,25 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const bool gpuBlendPathRequested =
         gpuBlendRequested && hasGpuBlendJustification && !hasGpuBlendBlocker;
 
+    auto &previewRenderSlot = acquirePreviewRenderPipelineSlot();
+    auto &renderPipeline = previewRenderSlot.pipeline;
+
     // Avoid paying render-pipeline setup cost when GPU blending is disabled.
     if (gpuBlendPathRequested) {
       if (auto device = renderer_->device()) {
-        renderPipeline_.initialize(device, static_cast<Uint32>(rcw),
-                                   static_cast<Uint32>(rch),
-                                   RenderConfig::LinearColorFormat);
+        renderPipeline.initialize(device, static_cast<Uint32>(rcw),
+                                  static_cast<Uint32>(rch),
+                                  RenderConfig::LinearColorFormat);
+        if (!ensurePreviewRenderPipelineDepthSlot(
+                previewRenderSlot,
+                static_cast<int>(std::ceil(rcw)),
+                static_cast<int>(std::ceil(rch)))) {
+          qWarning() << "[CompositionView] failed to allocate preview depth slot"
+                     << "slot=" << activePreviewRenderPipelineSlot_
+                     << "size="
+                     << QSize(static_cast<int>(std::ceil(rcw)),
+                              static_cast<int>(std::ceil(rch)));
+        }
       }
     } else if (gpuBlendRequested && lastPipelineStateMask_ != -1) {
       qCDebug(compositionViewLog)
@@ -8157,20 +8249,21 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     const bool transparentCompositionBackgroundRequested =
         currentBgColor.a() < 0.999f;
     const bool pipelineEnabled =
-        gpuBlendPathRequested && renderPipeline_.ready() &&
+        gpuBlendPathRequested && renderPipeline.ready() &&
+        previewRenderSlot.depthTargetView != nullptr &&
         !transparentCompositionBackgroundRequested;
     const int pipelineStateMask = (gpuBlendEnabled_ ? 0x1 : 0x0) |
-                                  (renderPipeline_.ready() ? 0x2 : 0x0) |
+                                  (renderPipeline.ready() ? 0x2 : 0x0) |
                                   (blendPipelineReady_ ? 0x4 : 0x0);
     renderCrashTrace("render-pipeline-state", renderFrameCounter_,
                      QStringLiteral("enabled=%1 requested=%2 blendReady=%3 renderReady=%4 layers=%5")
                          .arg(pipelineEnabled ? 1 : 0)
                          .arg(gpuBlendPathRequested ? 1 : 0)
                          .arg(blendPipelineReady_ ? 1 : 0)
-                         .arg(renderPipeline_.ready() ? 1 : 0)
+                         .arg(renderPipeline.ready() ? 1 : 0)
                          .arg(layers.size()));
     if (transparentCompositionBackgroundRequested && gpuBlendPathRequested &&
-        renderPipeline_.ready()) {
+        renderPipeline.ready()) {
       qCDebug(compositionViewLog)
           << "[CompositionView] transparent composition background forces fallback path"
           << "alpha=" << currentBgColor.a();
@@ -8181,13 +8274,15 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         renderCrashTrace("render-gpu-blend-disabled-log-begin", renderFrameCounter_);
         qWarning() << "[CompositionView] GPU blend path disabled"
                    << "gpuBlendEnabled=" << gpuBlendEnabled_
-                   << "renderPipelineReady=" << renderPipeline_.ready()
+                   << "renderPipelineReady=" << renderPipeline.ready()
+                   << "slot=" << activePreviewRenderPipelineSlot_
                    << "blendPipelineReady=" << blendPipelineReady_ << "size="
                    << QSize(static_cast<int>(cw), static_cast<int>(ch));
         renderCrashTrace("render-gpu-blend-disabled-log-end", renderFrameCounter_);
       } else {
         renderCrashTrace("render-gpu-blend-enabled-log-begin", renderFrameCounter_);
         qDebug() << "[CompositionView] GPU blend path enabled"
+                 << "slot=" << activePreviewRenderPipelineSlot_
                  << "size="
                  << QSize(static_cast<int>(cw), static_cast<int>(ch));
         renderCrashTrace("render-gpu-blend-enabled-log-end", renderFrameCounter_);
@@ -8195,8 +8290,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     }
     renderCrashTrace("render-after-pipeline-state-log", renderFrameCounter_);
     if (pipelineEnabled) {
-      const QSize pipelineSize(static_cast<int>(renderPipeline_.width()),
-                               static_cast<int>(renderPipeline_.height()));
+      const QSize pipelineSize(static_cast<int>(renderPipeline.width()),
+                               static_cast<int>(renderPipeline.height()));
       // Compute shaders now have explicit bounds guards.
       if (((pipelineSize.width() & 7) != 0 ||
            (pipelineSize.height() & 7) != 0) &&
@@ -8297,6 +8392,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     renderer_->clearRenderTarget(viewportClearColor_);
     renderCrashTrace("render-clear-end", renderFrameCounter_);
 
+    Diligent::ITextureView* ramPreviewReadbackSRV = nullptr;
+    lastPresentedReadbackSRV_ = nullptr;
     if (useRamPreviewFallback) {
       renderCrashTrace("render-branch-ram-preview", renderFrameCounter_);
       if (backgroundMode == CompositionBackgroundMode::MayaGradient) {
@@ -8328,12 +8425,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
     // ============================================================
       ArtifactCore::ProfileScope _profBase(
           "BasePass", ArtifactCore::ProfileCategory::Composite);
-      auto accumSRV = renderPipeline_.accumSRV();
-      auto tempUAV = renderPipeline_.tempUAV();
-      auto layerRTV = renderPipeline_.layerRTV();
-      auto layerSRV = renderPipeline_.layerSRV();
-      auto layerFloatSRV = renderPipeline_.layerFloatSRV();
-      auto layerFloatUAV = renderPipeline_.layerFloatUAV();
+      auto accumSRV = renderPipeline.accumSRV();
+      auto tempUAV = renderPipeline.tempUAV();
+      auto layerRTV = renderPipeline.layerRTV();
+      auto layerSRV = renderPipeline.layerSRV();
+      auto layerFloatSRV = renderPipeline.layerFloatSRV();
+      auto layerFloatUAV = renderPipeline.layerFloatUAV();
 
       // ==== オフスクリーン描画前の状態保存 ====
       const float origZoom = renderer_->getZoom();
@@ -8342,6 +8439,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->getPan(origPanX, origPanY);
       const float origViewW = hostWidth_;
       const float origViewH = hostHeight_;
+      auto* previewDepthDSV = static_cast<Diligent::ITextureView*>(
+          previewRenderSlot.depthTargetView);
+      renderer_->setOverrideDSV(previewDepthDSV);
 
       // -- 1: 背景を offscreen 座標系で準備 --
       // 背景矩形は一度 layerRTV に rasterize してから compute blend で
@@ -8368,7 +8468,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             << "bgMode=" << static_cast<int>(backgroundMode)
             << "compositionSpaceApplied=" << true;
       }
-      renderer_->setOverrideRTV(renderPipeline_.accumRTV());
+      renderer_->setOverrideRTV(renderPipeline.accumRTV());
         renderer_->setClearColor(FloatColor{0.0f, 0.0f, 0.0f, 0.0f});
         renderer_->clear();
         renderer_->setClearColor(viewportClearColor_);
@@ -8396,8 +8496,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         ++layerToFloatConvertCount;
         const bool convertedBackgroundToFloat = renderer_->convertLayerToFloat(
             blendPipeline_.get(), layerSRV, layerFloatUAV,
-            static_cast<Diligent::Uint32>(renderPipeline_.width()),
-            static_cast<Diligent::Uint32>(renderPipeline_.height()));
+            static_cast<Diligent::Uint32>(renderPipeline.width()),
+            static_cast<Diligent::Uint32>(renderPipeline.height()));
         Diligent::ITextureView *backgroundBlendSrc =
             convertedBackgroundToFloat ? layerFloatSRV : layerSRV;
         if (!convertedBackgroundToFloat) {
@@ -8408,9 +8508,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         if (renderer_->blendLayers(blendPipeline_.get(), backgroundBlendSrc,
                                    accumSRV, tempUAV,
                                    ArtifactCore::BlendMode::Normal, 1.0f)) {
-          renderPipeline_.swapAccumAndTemp();
-          accumSRV = renderPipeline_.accumSRV();
-          tempUAV = renderPipeline_.tempUAV();
+          renderPipeline.swapAccumAndTemp();
+          accumSRV = renderPipeline.accumSRV();
+          tempUAV = renderPipeline.tempUAV();
         } else {
           ++blendFailureCount;
           qWarning() << "[CompositionView] background seed blend failed";
@@ -8550,8 +8650,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
           ++blendDispatchCount;
           bool convertedLayerToFloat = renderer_->convertLayerToFloat(
               blendPipeline_.get(), layerSRV, layerFloatUAV,
-              static_cast<Diligent::Uint32>(renderPipeline_.width()),
-              static_cast<Diligent::Uint32>(renderPipeline_.height()));
+              static_cast<Diligent::Uint32>(renderPipeline.width()),
+              static_cast<Diligent::Uint32>(renderPipeline.height()));
           Diligent::ITextureView *blendSrcSRV =
               convertedLayerToFloat ? layerFloatSRV : layerSRV;
           if (convertedLayerToFloat) {
@@ -8587,7 +8687,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                        << "layerName=" << layer->layerName()
                        << "mode=" << static_cast<int>(blendMode)
                        << "opacity=" << opacity;
-            renderer_->setOverrideRTV(renderPipeline_.accumRTV());
+            renderer_->setOverrideRTV(renderPipeline.accumRTV());
             renderer_->drawSprite(0.0f, 0.0f, cw, ch, layerSRV, opacity);
             renderer_->flush();
             renderer_->setOverrideRTV(nullptr);
@@ -8603,16 +8703,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
                             QString::number(opacity, 'f', 3))
                        .arg(layerMaskCount);
           }
-          renderPipeline_.swapAccumAndTemp();
-          accumSRV = renderPipeline_.accumSRV();
-          tempUAV = renderPipeline_.tempUAV();
+          renderPipeline.swapAccumAndTemp();
+          accumSRV = renderPipeline.accumSRV();
+          tempUAV = renderPipeline.tempUAV();
         }
       }
 
       if (renderer_) {
         renderer_->setOverrideRTV(layerRTV);
         lastLayerRtPreview_ = renderer_->readbackToImage();
-        renderer_->setOverrideRTV(renderPipeline_.accumRTV());
+        renderer_->setOverrideRTV(renderPipeline.accumRTV());
         lastAccumRtPreview_ = renderer_->readbackToImage();
         renderer_->setOverrideRTV(nullptr);
       }
@@ -8654,14 +8754,16 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       ++layerToFloatConvertCount;
       const bool convertedAccumToStraight = renderer_->convertLayerToFloat(
           blendPipeline_.get(), accumSRV, layerFloatUAV,
-          static_cast<Diligent::Uint32>(renderPipeline_.width()),
-          static_cast<Diligent::Uint32>(renderPipeline_.height()));
+          static_cast<Diligent::Uint32>(renderPipeline.width()),
+          static_cast<Diligent::Uint32>(renderPipeline.height()));
       if (convertedAccumToStraight) {
         finalPresentSRV = layerFloatSRV;
       } else {
         qWarning() << "[CompositionView] accum-to-straight conversion failed; "
                       "presenting premultiplied accum directly";
       }
+      ramPreviewReadbackSRV = finalPresentSRV;
+      lastPresentedReadbackSRV_ = finalPresentSRV;
       renderer_->setCanvasSize(origViewW, origViewH);
       renderer_->setZoom(1.0f);
       renderer_->setPan(0.0f, 0.0f);
@@ -8679,6 +8781,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setPan(origPanX, origPanY);
       renderer_->setClearColor(
           origClearColor); // Bug A fix: GPUパス前に保存したクリアカラーを復元
+      renderer_->setOverrideDSV(nullptr);
       layerPassMs = markPhaseMs();
     } else {
       // === Fallback path (GPU パイプラインなし) ===
@@ -8720,6 +8823,7 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       drawCompositionBackgroundDirect(renderer_.get(), cw, ch, layerBgColor,
                                       backgroundMode, checkerboardTileSize_,
                                       cachedMayaGradientSprite_);
+      lastPresentedReadbackSRV_ = nullptr;
       renderer_->setUseExternalMatrices(false);
       renderer_->resetGizmoCameraMatrices();
       renderer_->reset3DCameraMatrices();
@@ -9804,19 +9908,90 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         const int capturedEffectiveDownsample = effectivePreviewDownsample;
         const bool capturedPipelineEnabled = pipelineEnabled;
         const QString capturedPriorityReason = previewSummary.currentPriorityReason;
-        renderer_->readbackToImageAsync(
-            [weakPlayback, capturedFramePos, capturedCompId,
-             capturedPreviewDownsample, capturedEffectiveDownsample,
-             capturedPipelineEnabled, capturedPriorityReason](const QImage& capturedFrame) {
+        const quint64 capturedBuildGeneration =
+            previewSummary.buildQueueGeneration;
+        if (capturedPipelineEnabled && ramPreviewReadbackSRV) {
+          renderer_->readbackTextureViewToImageAsync(
+              ramPreviewReadbackSRV,
+              [weakPlayback, capturedFramePos, capturedCompId,
+               capturedPreviewDownsample, capturedEffectiveDownsample,
+               capturedPipelineEnabled, capturedPriorityReason,
+               capturedBuildGeneration](const QImage& capturedFrame) {
+                if (!weakPlayback || capturedFrame.isNull()) return;
+                const QImage frameForPublish = capturedFrame;
+                QMetaObject::invokeMethod(
+                    weakPlayback.data(),
+                    [weakPlayback, capturedFramePos, capturedCompId,
+                     capturedPreviewDownsample, capturedEffectiveDownsample,
+                     capturedPipelineEnabled, capturedPriorityReason,
+                     capturedBuildGeneration, frameForPublish]() {
+                      if (!weakPlayback) return;
+                      const auto currentComposition =
+                          weakPlayback->currentComposition();
+                      if (!currentComposition ||
+                          currentComposition->id().toString() != capturedCompId) {
+                        return;
+                      }
+                      const auto currentSummary =
+                          weakPlayback->ramPreviewSummary();
+                      if (currentSummary.buildQueueGeneration !=
+                              capturedBuildGeneration ||
+                          !weakPlayback->isRamPreviewFramePendingBuild(
+                              capturedFramePos)) {
+                        return;
+                      }
+                      const QString renderPath = capturedPipelineEnabled
+                          ? QStringLiteral("gpu-blend")
+                          : QStringLiteral("fallback");
+                      weakPlayback->storeCompositionPreviewFrameImage(
+                          capturedFramePos, frameForPublish, capturedCompId,
+                          capturedPreviewDownsample,
+                          capturedEffectiveDownsample, renderPath,
+                          capturedPriorityReason, true);
+                    },
+                    Qt::QueuedConnection);
+              });
+        } else {
+          renderer_->readbackToImageAsync(
+              [weakPlayback, capturedFramePos, capturedCompId,
+               capturedPreviewDownsample, capturedEffectiveDownsample,
+               capturedPipelineEnabled, capturedPriorityReason,
+               capturedBuildGeneration](const QImage& capturedFrame) {
               if (!weakPlayback || capturedFrame.isNull()) return;
-              const QString renderPath = capturedPipelineEnabled
-                  ? QStringLiteral("gpu-blend")
-                  : QStringLiteral("fallback");
-              weakPlayback->storeCompositionPreviewFrameImage(
-                  capturedFramePos, capturedFrame, capturedCompId,
-                  capturedPreviewDownsample, capturedEffectiveDownsample,
-                  renderPath, capturedPriorityReason, true);
-            });
+              const QImage frameForPublish = capturedFrame;
+              QMetaObject::invokeMethod(
+                  weakPlayback.data(),
+                  [weakPlayback, capturedFramePos, capturedCompId,
+                   capturedPreviewDownsample, capturedEffectiveDownsample,
+                   capturedPipelineEnabled, capturedPriorityReason,
+                   capturedBuildGeneration, frameForPublish]() {
+                    if (!weakPlayback) return;
+                    const auto currentComposition =
+                        weakPlayback->currentComposition();
+                    if (!currentComposition ||
+                        currentComposition->id().toString() != capturedCompId) {
+                      return;
+                    }
+                    const auto currentSummary =
+                        weakPlayback->ramPreviewSummary();
+                    if (currentSummary.buildQueueGeneration !=
+                            capturedBuildGeneration ||
+                        !weakPlayback->isRamPreviewFramePendingBuild(
+                            capturedFramePos)) {
+                      return;
+                    }
+                    const QString renderPath = capturedPipelineEnabled
+                        ? QStringLiteral("gpu-blend")
+                        : QStringLiteral("fallback");
+                    weakPlayback->storeCompositionPreviewFrameImage(
+                        capturedFramePos, frameForPublish, capturedCompId,
+                        capturedPreviewDownsample,
+                        capturedEffectiveDownsample, renderPath,
+                        capturedPriorityReason, true);
+                  },
+                  Qt::QueuedConnection);
+              });
+        }
         renderCrashTrace("render-async-readback-end", renderFrameCounter_);
       }
     }
