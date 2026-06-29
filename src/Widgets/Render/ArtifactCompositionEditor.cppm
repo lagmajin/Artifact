@@ -441,8 +441,8 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
                   .arg(smoothCount)
                   .arg(tangentCount);
     detail += shape->customPathClosed()
-                  ? QStringLiteral(", closed")
-                  : QStringLiteral(", open");
+                  ? QStringLiteral(" - closed")
+                  : QStringLiteral(" - open");
   } else if (type == ShapeType::Star) {
     detail += QStringLiteral(" - %1 spikes").arg(shape->starPoints());
   } else if (type == ShapeType::Rect || type == ShapeType::Square) {
