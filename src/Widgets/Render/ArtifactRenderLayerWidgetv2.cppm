@@ -1284,6 +1284,21 @@ QString shapeHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, i
  return QString{};
 }
 
+QString pathHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, int tangentIndex)
+{
+ const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ if (!shape || !shape->hasCustomPath()) {
+  return {};
+ }
+ if (tangentIndex >= 0) {
+  return QStringLiteral("Path tangent");
+ }
+ if (vertexIndex >= 0) {
+  return QStringLiteral("Path vertex");
+ }
+ return QStringLiteral("Editable path");
+}
+
 void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractLayerPtr& layer)
 {
  if (!renderer_ || !layer) {
@@ -3251,6 +3266,14 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      }
      if (prevVi != impl_->hoveredPathVertexIndex_ || prevTi != impl_->hoveredPathTangentIndex_) {
       impl_->requestRender();
+     }
+     const QString hint = pathHoverHint(layer,
+                                        impl_->hoveredPathVertexIndex_,
+                                        impl_->hoveredPathTangentIndex_);
+     if (!hint.isEmpty()) {
+      setToolTip(hint);
+     } else {
+      setToolTip(QString());
      }
      return;
     }
