@@ -422,8 +422,21 @@ QString shapeSelectionDetail(const std::shared_ptr<ArtifactShapeLayer> &shape) {
       detail += QStringLiteral(" - polygon (%1 pts)").arg(pointCount);
     }
   } else if (shape->hasCustomPath()) {
-    detail += QStringLiteral(" - editable path (%1 verts)")
-                  .arg(static_cast<int>(shape->customPathVertices().size()));
+    const auto verts = shape->customPathVertices();
+    int smoothCount = 0;
+    int tangentCount = 0;
+    for (const auto& v : verts) {
+      if (v.smooth) {
+        ++smoothCount;
+      }
+      if (v.inTangent != QPointF(0, 0) || v.outTangent != QPointF(0, 0)) {
+        ++tangentCount;
+      }
+    }
+    detail += QStringLiteral(" - editable path (%1 verts, %2 smooth, %3 tangents)")
+                  .arg(static_cast<int>(verts.size()))
+                  .arg(smoothCount)
+                  .arg(tangentCount);
   } else if (type == ShapeType::Star) {
     detail += QStringLiteral(" - %1 spikes").arg(shape->starPoints());
   } else if (type == ShapeType::Rect || type == ShapeType::Square) {
