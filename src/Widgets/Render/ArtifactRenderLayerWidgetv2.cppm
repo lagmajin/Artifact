@@ -3455,6 +3455,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* toggleClosedAct = nullptr;
  QAction* convertToPathAct = nullptr;
  QAction* convertToPolygonAct = nullptr;
+ QAction* polygonStateAct = nullptr;
  QAction* pathStateAct = nullptr;
  QAction* pathInsertPointAct = nullptr;
  QAction* pathDuplicatePointAct = nullptr;
@@ -3529,14 +3530,21 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     deletePointAct = menu.addAction(shapeLayer->hasCustomPath()
                                         ? QStringLiteral("Delete Path Vertex")
                                         : QStringLiteral("Delete Polygon Vertex"));
-    toggleClosedAct = menu.addAction(shapeLayer->customPolygonClosed()
+   toggleClosedAct = menu.addAction(shapeLayer->customPolygonClosed()
                                          ? QStringLiteral("Open Polygon")
                                          : QStringLiteral("Close Polygon"));
+    polygonStateAct = menu.addAction(QStringLiteral("Polygon State"));
+    polygonStateAct->setEnabled(false);
     insertPointAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
     duplicatePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
     splitSegmentAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
     deletePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
     toggleClosedAct->setEnabled(shapeLayer->customPolygonClosed() || shapeLayer->customPolygonPoints().size() >= 3);
+    polygonStateAct->setText(QStringLiteral("Polygon State: %1 pts, %2")
+                                  .arg(static_cast<int>(shapeLayer->customPolygonPoints().size()))
+                                  .arg(shapeLayer->customPolygonClosed()
+                                           ? QStringLiteral("closed")
+                                           : QStringLiteral("open")));
    }
     convertToPathAct = menu.addAction(QStringLiteral("Convert to Editable Path"));
    }
