@@ -3590,13 +3590,17 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
                                             : impl_->hoveredShapeSegmentIndex_ >= 0
                                                   ? QStringLiteral("segment %1").arg(impl_->hoveredShapeSegmentIndex_ + 1)
                                                   : QStringLiteral("none");
-    polygonStateAct->setText(QStringLiteral("Polygon Editing: %1 pts, %2 segs, %3, hover %4")
+    const QString polygonSelectionSummary = impl_->selectedShapeVertexIndex_ >= 0
+                                                ? QStringLiteral("selected vertex %1").arg(impl_->selectedShapeVertexIndex_ + 1)
+                                                : QStringLiteral("no selection");
+    polygonStateAct->setText(QStringLiteral("Polygon Editing: %1 pts, %2 segs, %3, hover %4, %5")
                                   .arg(polygonPointCount)
                                   .arg(polygonSegmentCount)
                                   .arg(shapeLayer->customPolygonClosed()
                                            ? QStringLiteral("closed")
                                            : QStringLiteral("open"))
-                                  .arg(polygonHoverSummary));
+                                  .arg(polygonHoverSummary)
+                                  .arg(polygonSelectionSummary));
    }
     convertToPathAct = menu.addAction(QStringLiteral("Convert to Editable Path"));
    }
@@ -3617,20 +3621,24 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        ++tangentCount;
       }
      }
-     const QString pathHoverSummary = impl_->hoveredPathVertexIndex_ >= 0
-                                          ? QStringLiteral("vertex %1").arg(impl_->hoveredPathVertexIndex_ + 1)
-                                          : impl_->hoveredPathSegmentIndex_ >= 0
-                                                ? QStringLiteral("segment %1").arg(impl_->hoveredPathSegmentIndex_ + 1)
-                                                : impl_->hoveredPathTangentIndex_ >= 0
-                                                      ? QStringLiteral("tangent %1").arg(impl_->hoveredPathTangentIndex_ + 1)
-                                                      : QStringLiteral("none");
-     pathStateAct->setText(QStringLiteral("Path Editing: %1 verts, %2 tangents, %3, hover %4")
+    const QString pathHoverSummary = impl_->hoveredPathVertexIndex_ >= 0
+                                         ? QStringLiteral("vertex %1").arg(impl_->hoveredPathVertexIndex_ + 1)
+                                         : impl_->hoveredPathSegmentIndex_ >= 0
+                                               ? QStringLiteral("segment %1").arg(impl_->hoveredPathSegmentIndex_ + 1)
+                                               : impl_->hoveredPathTangentIndex_ >= 0
+                                                     ? QStringLiteral("tangent %1").arg(impl_->hoveredPathTangentIndex_ + 1)
+                                                     : QStringLiteral("none");
+     const QString pathSelectionSummary = impl_->selectedPathVertexIndex_ >= 0
+                                              ? QStringLiteral("selected vertex %1").arg(impl_->selectedPathVertexIndex_ + 1)
+                                              : QStringLiteral("no selection");
+     pathStateAct->setText(QStringLiteral("Path Editing: %1 verts, %2 tangents, %3, hover %4, %5")
                                .arg(static_cast<int>(verts.size()))
                                .arg(tangentCount)
                                .arg(shapeLayer->customPathClosed()
                                         ? QStringLiteral("closed")
                                         : QStringLiteral("open"))
-                               .arg(pathHoverSummary));
+                               .arg(pathHoverSummary)
+                               .arg(pathSelectionSummary));
     pathInsertPointAct->setEnabled((validHover || impl_->hoveredPathSegmentIndex_ >= 0) && verts.size() >= 2);
      pathDuplicatePointAct->setEnabled(validHover);
      pathDeletePointAct->setEnabled(validHover);
