@@ -1257,6 +1257,33 @@ void ArtifactLayerEditorWidgetV2::Impl::updateShapeHover(const ArtifactAbstractL
  }
 }
 
+QString shapeHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, int segmentIndex)
+{
+ const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ if (!shape) {
+  return {};
+ }
+ if (shape->hasCustomPath()) {
+  if (vertexIndex >= 0) {
+   return QStringLiteral("Path vertex");
+  }
+  if (segmentIndex >= 0) {
+   return QStringLiteral("Path segment");
+  }
+  return QStringLiteral("Editable path");
+ }
+ if (shape->hasCustomPolygon()) {
+  if (vertexIndex >= 0) {
+   return QStringLiteral("Polygon vertex");
+  }
+  if (segmentIndex >= 0) {
+   return QStringLiteral("Polygon segment");
+  }
+  return QStringLiteral("Editable polygon");
+ }
+ return QString{};
+}
+
 void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractLayerPtr& layer)
 {
  if (!renderer_ || !layer) {
@@ -3257,8 +3284,15 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      }
      if (impl_->hoveredShapeVertexIndex_ >= 0 ||
          impl_->hoveredShapeSegmentIndex_ >= 0) {
+      const QString hint = shapeHoverHint(layer,
+                                          impl_->hoveredShapeVertexIndex_,
+                                          impl_->hoveredShapeSegmentIndex_);
+      if (!hint.isEmpty()) {
+       setToolTip(hint);
+      }
       setCursor(Qt::CrossCursor);
      } else {
+      setToolTip(QString());
       unsetCursor();
      }
     }
@@ -3375,9 +3409,15 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     impl_->shapeContextMenuCanvasPos_ = canvasPoint;
     impl_->updateShapeHover(layer, canvasPoint);
 
-    insertPointAct = menu.addAction(QStringLiteral("Insert Point"));
-    splitSegmentAct = menu.addAction(QStringLiteral("Split Segment"));
-    deletePointAct = menu.addAction(QStringLiteral("Delete Point"));
+    insertPointAct = menu.addAction(shapeLayer->hasCustomPath()
+                                        ? QStringLiteral("Insert Path Vertex")
+                                        : QStringLiteral("Insert Point"));
+    splitSegmentAct = menu.addAction(shapeLayer->hasCustomPath()
+                                         ? QStringLiteral("Split Path Segment")
+                                         : QStringLiteral("Split Segment"));
+    deletePointAct = menu.addAction(shapeLayer->hasCustomPath()
+                                        ? QStringLiteral("Delete Path Vertex")
+                                        : QStringLiteral("Delete Point"));
     toggleClosedAct = menu.addAction(shapeLayer->customPolygonClosed()
                                          ? QStringLiteral("Open Polygon")
                                          : QStringLiteral("Close Polygon"));
@@ -3386,11 +3426,11 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     deletePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
     toggleClosedAct->setEnabled(shapeLayer->customPolygonClosed() || shapeLayer->customPolygonPoints().size() >= 3);
    }
-    convertToPathAct = menu.addAction(QStringLiteral("Convert to Bezier Path"));
+    convertToPathAct = menu.addAction(QStringLiteral("Convert to Editable Path"));
    }
    if (shapeLayer->hasCustomPath()) {
     convertToPolygonAct = menu.addAction(QStringLiteral("Convert to Polygon"));
-    pathDeletePointAct = menu.addAction(QStringLiteral("Delete Point"));
+    pathDeletePointAct = menu.addAction(QStringLiteral("Delete Path Vertex"));
     {
      const auto verts = shapeLayer->customPathVertices();
      const int vi = impl_->hoveredPathVertexIndex_;
