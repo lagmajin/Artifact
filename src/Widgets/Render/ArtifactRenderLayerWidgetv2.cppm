@@ -3439,6 +3439,13 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
                               static_cast<qreal>(canvasPos.y));
     impl_->shapeContextMenuCanvasPos_ = canvasPoint;
     impl_->updateShapeHover(layer, canvasPoint);
+    const QString hoverSummary = pathHoverHint(layer,
+                                               impl_->hoveredPathVertexIndex_,
+                                               impl_->hoveredPathTangentIndex_);
+    if (!hoverSummary.isEmpty()) {
+     QAction* hoverAct = menu.addAction(QStringLiteral("Current Hover: %1").arg(hoverSummary));
+     hoverAct->setEnabled(false);
+    }
 
     insertPointAct = menu.addAction(shapeLayer->hasCustomPath()
                                         ? QStringLiteral("Insert Path Vertex")
