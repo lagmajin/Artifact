@@ -3544,12 +3544,18 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     const int polygonSegmentCount = shapeLayer->customPolygonClosed()
                                         ? polygonPointCount
                                         : std::max(0, polygonPointCount - 1);
-    polygonStateAct->setText(QStringLiteral("Polygon State: %1 pts, %2 segs, %3")
+    const QString polygonHoverSummary = impl_->hoveredShapeVertexIndex_ >= 0
+                                            ? QStringLiteral("vertex %1").arg(impl_->hoveredShapeVertexIndex_ + 1)
+                                            : impl_->hoveredShapeSegmentIndex_ >= 0
+                                                  ? QStringLiteral("segment %1").arg(impl_->hoveredShapeSegmentIndex_ + 1)
+                                                  : QStringLiteral("none");
+    polygonStateAct->setText(QStringLiteral("Polygon State: %1 pts, %2 segs, %3, hover %4")
                                   .arg(polygonPointCount)
                                   .arg(polygonSegmentCount)
                                   .arg(shapeLayer->customPolygonClosed()
                                            ? QStringLiteral("closed")
-                                           : QStringLiteral("open")));
+                                           : QStringLiteral("open"))
+                                  .arg(polygonHoverSummary));
    }
     convertToPathAct = menu.addAction(QStringLiteral("Convert to Editable Path"));
    }
@@ -3570,12 +3576,20 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        ++tangentCount;
       }
      }
-    pathStateAct->setText(QStringLiteral("Path Summary: %1 verts, %2 tangents, %3")
+    const QString pathHoverSummary = impl_->hoveredPathVertexIndex_ >= 0
+                                         ? QStringLiteral("vertex %1").arg(impl_->hoveredPathVertexIndex_ + 1)
+                                         : impl_->hoveredPathSegmentIndex_ >= 0
+                                               ? QStringLiteral("segment %1").arg(impl_->hoveredPathSegmentIndex_ + 1)
+                                               : impl_->hoveredPathTangentIndex_ >= 0
+                                                     ? QStringLiteral("tangent %1").arg(impl_->hoveredPathTangentIndex_ + 1)
+                                                     : QStringLiteral("none");
+    pathStateAct->setText(QStringLiteral("Path Summary: %1 verts, %2 tangents, %3, hover %4")
                                .arg(static_cast<int>(verts.size()))
                                .arg(tangentCount)
                                .arg(shapeLayer->customPathClosed()
                                         ? QStringLiteral("closed")
-                                        : QStringLiteral("open")));
+                                        : QStringLiteral("open"))
+                               .arg(pathHoverSummary));
      pathInsertPointAct->setEnabled((validHover || impl_->hoveredPathSegmentIndex_ >= 0) && verts.size() >= 2);
      pathDuplicatePointAct->setEnabled(validHover);
      pathDeletePointAct->setEnabled(validHover);
