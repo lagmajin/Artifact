@@ -3307,6 +3307,16 @@ public:
     QSize depthTargetSize;
     quint64 lastSubmittedFrame = 0;
   };
+  struct PreviewFrameRequest {
+    qint64 framePos = 0;
+    qint64 buildTargetFrame = -1;
+    QString compositionId;
+    int previewDownsample = 1;
+    int effectiveDownsample = 1;
+    bool pipelineEnabled = false;
+    QString priorityReason;
+    quint64 buildGeneration = 0;
+  };
   std::array<PreviewRenderPipelineSlot, kPreviewRenderPipelineSlotCount>
       previewRenderPipelineSlots_;
   int activePreviewRenderPipelineSlot_ = 0;
@@ -3470,6 +3480,43 @@ public:
     }
     slot.depthTargetSize = targetSize;
     return true;
+  }
+
+  static void publishPreviewFrameRequestResult(
+      const QPointer<ArtifactPlaybackService>& weakPlayback,
+      const PreviewFrameRequest& request,
+      const QImage& capturedFrame) {
+    if (!weakPlayback || capturedFrame.isNull()) {
+      return;
+    }
+    const QImage frameForPublish = capturedFrame;
+    QMetaObject::invokeMethod(
+        weakPlayback.data(),
+        [weakPlayback, request, frameForPublish]() {
+          if (!weakPlayback) {
+            return;
+          }
+          const auto currentComposition = weakPlayback->currentComposition();
+          if (!currentComposition ||
+              currentComposition->id().toString() != request.compositionId) {
+            return;
+          }
+          const auto currentSummary = weakPlayback->ramPreviewSummary();
+          if (currentSummary.buildQueueGeneration != request.buildGeneration ||
+              currentSummary.buildQueueNextFrame != request.buildTargetFrame ||
+              request.buildTargetFrame != request.framePos ||
+              !weakPlayback->isRamPreviewFramePendingBuild(request.framePos)) {
+            return;
+          }
+          const QString renderPath = request.pipelineEnabled
+              ? QStringLiteral("gpu-blend")
+              : QStringLiteral("fallback");
+          weakPlayback->storeCompositionPreviewFrameImage(
+              request.framePos, frameForPublish, request.compositionId,
+              request.previewDownsample, request.effectiveDownsample,
+              renderPath, request.priorityReason, true);
+        },
+        Qt::QueuedConnection);
   }
 
   // Packed render key state for fast change detection.
@@ -5815,7 +5862,7 @@ CompositionRenderController::frameDebugSnapshot() const {
     }
 
     if (impl_->renderer_) {
-      QImage viewportAfter = impl_->renderer_->readbackToImage();
+      QImage viewportAfter = captureCurrentFrameImage();
       if (comp) {
         applyCompositionFinalEffectsToImage(comp.get(), viewportAfter);
       }
@@ -5923,7 +5970,7 @@ CompositionRenderController::frameDebugSnapshot() const {
         selectedResource.note = impl_->lastVideoDebug_;
       }
       if (impl_->renderer_) {
-        QImage viewportAfter = impl_->renderer_->readbackToImage();
+        QImage viewportAfter = captureCurrentFrameImage();
         if (comp) {
           applyCompositionFinalEffectsToImage(comp.get(), viewportAfter);
         }
@@ -8710,11 +8757,9 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       }
 
       if (renderer_) {
-        renderer_->setOverrideRTV(layerRTV);
-        lastLayerRtPreview_ = renderer_->readbackToImage();
-        renderer_->setOverrideRTV(renderPipeline.accumRTV());
-        lastAccumRtPreview_ = renderer_->readbackToImage();
-        renderer_->setOverrideRTV(nullptr);
+        lastLayerRtPreview_ = renderer_->readbackTextureViewToImage(layerRTV);
+        lastAccumRtPreview_ =
+            renderer_->readbackTextureViewToImage(renderPipeline.accumRTV());
       }
 
       // ==== オフスクリーン描画後: ホスト viewport に戻す ====
@@ -9902,94 +9947,32 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         // Asynchronous readback: GPU copy + fence wait runs on a worker thread,
         // avoiding a full GPU pipeline stall on the render thread.
         const auto weakPlayback = QPointer<ArtifactPlaybackService>(playback);
-        const qint64 capturedFramePos = framePos;
-        const QString capturedCompId = comp->id().toString();
-        const int capturedPreviewDownsample = previewDownsample_;
-        const int capturedEffectiveDownsample = effectivePreviewDownsample;
-        const bool capturedPipelineEnabled = pipelineEnabled;
-        const QString capturedPriorityReason = previewSummary.currentPriorityReason;
-        const quint64 capturedBuildGeneration =
-            previewSummary.buildQueueGeneration;
-        if (capturedPipelineEnabled && ramPreviewReadbackSRV) {
+        const PreviewFrameRequest previewRequest{
+            framePos,
+            previewSummary.buildQueueNextFrame,
+            comp->id().toString(),
+            previewDownsample_,
+            effectivePreviewDownsample,
+            pipelineEnabled,
+            previewSummary.currentPriorityReason,
+            previewSummary.buildQueueGeneration};
+        const bool previewRequestMatchesRenderedFrame =
+            previewRequest.buildTargetFrame == previewRequest.framePos;
+        if (!previewRequestMatchesRenderedFrame) {
+          renderCrashTrace("render-async-readback-skip-frame-mismatch",
+                           renderFrameCounter_);
+        } else if (previewRequest.pipelineEnabled && ramPreviewReadbackSRV) {
           renderer_->readbackTextureViewToImageAsync(
               ramPreviewReadbackSRV,
-              [weakPlayback, capturedFramePos, capturedCompId,
-               capturedPreviewDownsample, capturedEffectiveDownsample,
-               capturedPipelineEnabled, capturedPriorityReason,
-               capturedBuildGeneration](const QImage& capturedFrame) {
-                if (!weakPlayback || capturedFrame.isNull()) return;
-                const QImage frameForPublish = capturedFrame;
-                QMetaObject::invokeMethod(
-                    weakPlayback.data(),
-                    [weakPlayback, capturedFramePos, capturedCompId,
-                     capturedPreviewDownsample, capturedEffectiveDownsample,
-                     capturedPipelineEnabled, capturedPriorityReason,
-                     capturedBuildGeneration, frameForPublish]() {
-                      if (!weakPlayback) return;
-                      const auto currentComposition =
-                          weakPlayback->currentComposition();
-                      if (!currentComposition ||
-                          currentComposition->id().toString() != capturedCompId) {
-                        return;
-                      }
-                      const auto currentSummary =
-                          weakPlayback->ramPreviewSummary();
-                      if (currentSummary.buildQueueGeneration !=
-                              capturedBuildGeneration ||
-                          !weakPlayback->isRamPreviewFramePendingBuild(
-                              capturedFramePos)) {
-                        return;
-                      }
-                      const QString renderPath = capturedPipelineEnabled
-                          ? QStringLiteral("gpu-blend")
-                          : QStringLiteral("fallback");
-                      weakPlayback->storeCompositionPreviewFrameImage(
-                          capturedFramePos, frameForPublish, capturedCompId,
-                          capturedPreviewDownsample,
-                          capturedEffectiveDownsample, renderPath,
-                          capturedPriorityReason, true);
-                    },
-                    Qt::QueuedConnection);
+              [weakPlayback, previewRequest](const QImage& capturedFrame) {
+                publishPreviewFrameRequestResult(weakPlayback, previewRequest,
+                                                 capturedFrame);
               });
         } else {
           renderer_->readbackToImageAsync(
-              [weakPlayback, capturedFramePos, capturedCompId,
-               capturedPreviewDownsample, capturedEffectiveDownsample,
-               capturedPipelineEnabled, capturedPriorityReason,
-               capturedBuildGeneration](const QImage& capturedFrame) {
-              if (!weakPlayback || capturedFrame.isNull()) return;
-              const QImage frameForPublish = capturedFrame;
-              QMetaObject::invokeMethod(
-                  weakPlayback.data(),
-                  [weakPlayback, capturedFramePos, capturedCompId,
-                   capturedPreviewDownsample, capturedEffectiveDownsample,
-                   capturedPipelineEnabled, capturedPriorityReason,
-                   capturedBuildGeneration, frameForPublish]() {
-                    if (!weakPlayback) return;
-                    const auto currentComposition =
-                        weakPlayback->currentComposition();
-                    if (!currentComposition ||
-                        currentComposition->id().toString() != capturedCompId) {
-                      return;
-                    }
-                    const auto currentSummary =
-                        weakPlayback->ramPreviewSummary();
-                    if (currentSummary.buildQueueGeneration !=
-                            capturedBuildGeneration ||
-                        !weakPlayback->isRamPreviewFramePendingBuild(
-                            capturedFramePos)) {
-                      return;
-                    }
-                    const QString renderPath = capturedPipelineEnabled
-                        ? QStringLiteral("gpu-blend")
-                        : QStringLiteral("fallback");
-                    weakPlayback->storeCompositionPreviewFrameImage(
-                        capturedFramePos, frameForPublish, capturedCompId,
-                        capturedPreviewDownsample,
-                        capturedEffectiveDownsample, renderPath,
-                        capturedPriorityReason, true);
-                  },
-                  Qt::QueuedConnection);
+              [weakPlayback, previewRequest](const QImage& capturedFrame) {
+                publishPreviewFrameRequestResult(weakPlayback, previewRequest,
+                                                 capturedFrame);
               });
         }
         renderCrashTrace("render-async-readback-end", renderFrameCounter_);
