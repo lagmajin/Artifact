@@ -3455,6 +3455,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* toggleClosedAct = nullptr;
  QAction* convertToPathAct = nullptr;
  QAction* convertToPolygonAct = nullptr;
+ QAction* pathStateAct = nullptr;
  QAction* pathInsertPointAct = nullptr;
  QAction* pathDuplicatePointAct = nullptr;
  QAction* pathDeletePointAct = nullptr;
@@ -3540,7 +3541,9 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     convertToPathAct = menu.addAction(QStringLiteral("Convert to Editable Path"));
    }
    if (shapeLayer->hasCustomPath()) {
-    pathInsertPointAct = menu.addAction(QStringLiteral("Insert Path Vertex"));
+   pathInsertPointAct = menu.addAction(QStringLiteral("Insert Path Vertex"));
+    pathStateAct = menu.addAction(QStringLiteral("Path State"));
+    pathStateAct->setEnabled(false);
     pathDuplicatePointAct = menu.addAction(QStringLiteral("Duplicate Path Vertex"));
     convertToPolygonAct = menu.addAction(QStringLiteral("Convert to Polygon"));
     pathDeletePointAct = menu.addAction(QStringLiteral("Delete Path Vertex"));
@@ -3548,6 +3551,11 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
      const auto verts = shapeLayer->customPathVertices();
      const int vi = impl_->hoveredPathVertexIndex_;
      const bool validHover = vi >= 0 && static_cast<size_t>(vi) < verts.size();
+     pathStateAct->setText(QStringLiteral("Path State: %1 verts, %2")
+                               .arg(static_cast<int>(verts.size()))
+                               .arg(shapeLayer->customPathClosed()
+                                        ? QStringLiteral("closed")
+                                        : QStringLiteral("open")));
      pathInsertPointAct->setEnabled((validHover || impl_->hoveredPathSegmentIndex_ >= 0) && verts.size() >= 2);
      pathDuplicatePointAct->setEnabled(validHover);
      pathDeletePointAct->setEnabled(validHover);
