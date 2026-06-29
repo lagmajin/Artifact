@@ -4,13 +4,13 @@ module;
 #include <wobjectdefs.h>
 #include <QObject>
 #include <QCursor>
+#include <QImage>
 #include <QMouseEvent>
 #include <QPointF>
 #include <QMatrix4x4>
 #include <QVector3D>
 #include <QVector>
 #include <QRectF>
-#include <QImage>
 #include <QString>
 #include <QStringList>
 
@@ -53,13 +53,6 @@ export namespace Artifact {
   MotionPath,
   DebugProbe,
   Unknown
- };
-
- enum class CompositionCompareMode {
-  Off,
-  A,
-  B,
-  Diff
  };
 
  class CompositionRenderController : public QObject
@@ -118,12 +111,6 @@ void setShowEffectHitboxOverlay(bool show);
 bool isShowEffectHitboxOverlay() const;
 void setShowDensityHeatmapOverlay(bool show);
 bool isShowDensityHeatmapOverlay() const;
-void setCompareMode(CompositionCompareMode mode);
-CompositionCompareMode compareMode() const;
-void setReferenceFrame(int frame);
-int referenceFrame() const;
-void setReferencePinned(bool pinned);
-bool isReferencePinned() const;
 bool setSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool removeSelectedLayerMotionPathKeyframeAtCurrentFrame();
 bool setSelectedLayerMotionPathInterpolationAtCurrentFrame(int interpolationType);
@@ -185,8 +172,7 @@ void zoomFill();
   TransformGizmo::Mode gizmoMode() const;
   LayerID layerAtViewportPos(const QPointF& viewportPos) const;
   ArtifactIRenderer* renderer() const;
-  QImage selectedLayerPreviewImage() const;
-  QImage accumulatedPreviewImage() const;
+  QImage captureCurrentFrameImage() const;
   ArtifactCore::FrameDebugSnapshot frameDebugSnapshot() const;
   double lastFrameTimeMs() const;
   double averageFrameTimeMs() const;

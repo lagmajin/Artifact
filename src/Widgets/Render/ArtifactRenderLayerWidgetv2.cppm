@@ -4,6 +4,7 @@ module;
 #include <DeviceContext.h>
 #include <RefCntAutoPtr.hpp>
 #include <wobjectimpl.h>
+#include <QTimer>
 #include <QDebug>
 #include <QElapsedTimer>
 #include <QLoggingCategory>
@@ -12,6 +13,7 @@ module;
 #include <QDir>
 #include <QFileDialog>
 #include <QAction>
+#include <QApplication>
 #include <QImage>
 #include <QLinearGradient>
 #include <QMenu>
@@ -20,10 +22,7 @@ module;
 #include <QHash>
 #include <QPixmap>
 #include <QStandardPaths>
-#include <QTimer>
 #include <QTransform>
-#include <QJsonArray>
-#include <QJsonObject>
 #include <memory>
 #include <vector>
 #include <algorithm>
@@ -57,7 +56,6 @@ import Artifact.Render.IRenderer;
 import Artifact.Render.CompositionRenderer;
 import Artifact.Preview.Pipeline;
 import Artifact.Layer.Image;
-import Artifact.Layers.SolidImage;
 import Artifact.Widgets.TransformGizmo;
 import Utils.Path;
 
@@ -81,10 +79,10 @@ QString editModeLabel(EditMode mode)
   switch (mode) {
   case EditMode::Mask:
     return QStringLiteral("Mask");
-  case EditMode::Shape:
-    return QStringLiteral("Shape");
   case EditMode::Paint:
     return QStringLiteral("Paint");
+  case EditMode::Shape:
+    return QStringLiteral("Shape");
   case EditMode::View:
   default:
     return QStringLiteral("View");
@@ -192,12 +190,12 @@ const QCursor& hudCursorForTransformHandle(TransformGizmo::HandleType handle,
 
 bool isMaskEditingMode(EditMode mode)
 {
-  return mode == EditMode::Mask || mode == EditMode::Shape || mode == EditMode::Paint;
+  return mode == EditMode::Mask || mode == EditMode::Paint;
 }
 
 bool isShapeEditingMode(EditMode mode)
 {
- return mode == EditMode::Shape || mode == EditMode::Paint;
+  return mode == EditMode::Paint || mode == EditMode::Shape;
 }
 
 void publishModeReadout(QWidget *widget, EditMode editMode, DisplayMode displayMode)
@@ -274,7 +272,7 @@ class ShapeEditCommand final : public Artifact::UndoCommand {public:
  }
 
  QString label() const override {
-  return QStringLiteral("Edit Shape");
+  return QStringLiteral("Edit Polygon");
  }
 
 private:
@@ -336,30 +334,11 @@ private:
    shape->setStarInnerRadius(r);
   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
  }
-  Artifact::ArtifactAbstractLayerWeak layer_;
-  float before_, after_;
- };
+ Artifact::ArtifactAbstractLayerWeak layer_;
+ float before_, after_;
+};
 
- class GradientAngleEditCommand final : public Artifact::UndoCommand {
- public:
-  GradientAngleEditCommand(Artifact::ArtifactAbstractLayerPtr layer, float before, float after)
-      : layer_(std::move(layer)), before_(before), after_(after) {}
-  void undo() override { apply(before_); }
-  void redo() override { apply(after_); }
-  QString label() const override { return QStringLiteral("Edit Gradient Angle"); }
- private:
-  void apply(float angle) {
-   auto layer = layer_.lock();
-   if (!layer) return;
-   if (auto solid = std::dynamic_pointer_cast<Artifact::ArtifactSolidImageLayer>(layer))
-    solid->setGradientAngleDegrees(angle);
-   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
-  }
-  Artifact::ArtifactAbstractLayerWeak layer_;
-  float before_, after_;
- };
-
- class PathVertexEditCommand final : public Artifact::UndoCommand {
+class PathVertexEditCommand final : public Artifact::UndoCommand {
 public:
  PathVertexEditCommand(Artifact::ArtifactAbstractLayerPtr layer,
                        std::vector<Artifact::CustomPathVertex> before,
@@ -370,7 +349,7 @@ public:
        beforeClosed_(beforeClosed), afterClosed_(afterClosed) {}
  void undo() override { apply(before_, beforeClosed_); }
  void redo() override { apply(after_, afterClosed_); }
- QString label() const override { return QStringLiteral("Edit Bezier Path"); }
+ QString label() const override { return QStringLiteral("Edit Path Vertices"); }
 private:
  void apply(const std::vector<Artifact::CustomPathVertex>& verts, bool closed) {
   auto layer = layer_.lock();
@@ -384,45 +363,70 @@ private:
   if (auto* mgr = Artifact::UndoManager::instance()) mgr->notifyAnythingChanged();
  }
  Artifact::ArtifactAbstractLayerWeak layer_;
-  std::vector<Artifact::CustomPathVertex> before_, after_;
-  bool beforeClosed_, afterClosed_;
+ std::vector<Artifact::CustomPathVertex> before_, after_;
+ bool beforeClosed_, afterClosed_;
 };
 
-class ShapeOperatorListUndoCommand final : public Artifact::UndoCommand {
+class ShapeConversionCommand final : public Artifact::UndoCommand {
 public:
-  ShapeOperatorListUndoCommand(Artifact::ArtifactAbstractLayerPtr layer,
-                               QJsonArray beforeOperators,
-                               QJsonArray afterOperators)
-      : layer_(std::move(layer)),
-        beforeOperators_(std::move(beforeOperators)),
-        afterOperators_(std::move(afterOperators)) {}
+ ShapeConversionCommand(Artifact::ArtifactAbstractLayerPtr layer,
+                        std::vector<QPointF> beforePolygon,
+                        bool beforePolygonClosed,
+                        std::vector<Artifact::CustomPathVertex> beforePath,
+                        bool beforePathClosed,
+                        std::vector<QPointF> afterPolygon,
+                        bool afterPolygonClosed,
+                        std::vector<Artifact::CustomPathVertex> afterPath,
+                        bool afterPathClosed)
+     : layer_(std::move(layer)),
+       beforePolygon_(std::move(beforePolygon)),
+       beforePolygonClosed_(beforePolygonClosed),
+       beforePath_(std::move(beforePath)),
+       beforePathClosed_(beforePathClosed),
+       afterPolygon_(std::move(afterPolygon)),
+       afterPolygonClosed_(afterPolygonClosed),
+       afterPath_(std::move(afterPath)),
+       afterPathClosed_(afterPathClosed) {}
 
-  void undo() override { apply(beforeOperators_); }
-  void redo() override { apply(afterOperators_); }
-
-  QString label() const override {
-    return QStringLiteral("Modify Shape Operators");
-  }
+ void undo() override { apply(beforePolygon_, beforePolygonClosed_, beforePath_, beforePathClosed_); }
+ void redo() override { apply(afterPolygon_, afterPolygonClosed_, afterPath_, afterPathClosed_); }
+ QString label() const override { return QStringLiteral("Convert Shape Structure"); }
 
 private:
-  void apply(const QJsonArray& operators) {
-    auto layer = layer_.lock();
-    if (!layer) {
-      return;
-    }
-    auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
-    if (!shape) {
-      return;
-    }
-    shape->restoreOperatorsFromJson(operators);
-    if (auto* mgr = Artifact::UndoManager::instance()) {
-      mgr->notifyAnythingChanged();
-    }
+ void apply(const std::vector<QPointF>& polygon, bool polygonClosed,
+            const std::vector<Artifact::CustomPathVertex>& path, bool pathClosed) {
+  auto layer = layer_.lock();
+  if (!layer) {
+   return;
   }
+  auto shape = std::dynamic_pointer_cast<Artifact::ArtifactShapeLayer>(layer);
+  if (!shape) {
+   return;
+  }
+  if (path.size() >= 3) {
+   shape->setCustomPathVertices(path, pathClosed);
+  } else {
+   shape->clearCustomPath();
+  }
+  if (polygon.size() >= 3) {
+   shape->setCustomPolygonPoints(polygon, polygonClosed);
+  } else {
+   shape->clearCustomPolygonPoints();
+  }
+  if (auto* mgr = Artifact::UndoManager::instance()) {
+   mgr->notifyAnythingChanged();
+  }
+ }
 
-  Artifact::ArtifactAbstractLayerWeak layer_;
-  QJsonArray beforeOperators_;
-  QJsonArray afterOperators_;
+ Artifact::ArtifactAbstractLayerWeak layer_;
+ std::vector<QPointF> beforePolygon_;
+ bool beforePolygonClosed_;
+ std::vector<Artifact::CustomPathVertex> beforePath_;
+ bool beforePathClosed_;
+ std::vector<QPointF> afterPolygon_;
+ bool afterPolygonClosed_;
+ std::vector<Artifact::CustomPathVertex> afterPath_;
+ bool afterPathClosed_;
 };
 
 enum class MaskHandleType { None, InTangent, OutTangent };
@@ -499,75 +503,6 @@ std::vector<QPointF> buildShapeEditSeedPoints(const ArtifactShapeLayer& shape)
                             cy + r * std::sin(angle)));
   }
   return points;
- }
- case ShapeType::Line:
-  break;
- }
- return {};
-}
-
-std::vector<CustomPathVertex> buildShapeEditSeedPath(const ArtifactShapeLayer& shape)
-{
- const float w = static_cast<float>(std::max(1, shape.shapeWidth()));
- const float h = static_cast<float>(std::max(1, shape.shapeHeight()));
- const float cx = w * 0.5f;
- const float cy = h * 0.5f;
- const auto makeCorner = [](float x, float y) {
-  return CustomPathVertex{{x, y}, {0, 0}, {0, 0}, false};
- };
- switch (shape.shapeType()) {
- case ShapeType::Rect:
-  return {makeCorner(0, 0), makeCorner(w, 0), makeCorner(w, h), makeCorner(0, h)};
- case ShapeType::Square: {
-  const float side = std::min(w, h);
-  const float left = (w - side) * 0.5f;
-  const float top = (h - side) * 0.5f;
-  return {makeCorner(left, top), makeCorner(left + side, top),
-          makeCorner(left + side, top + side), makeCorner(left, top + side)};
- }
- case ShapeType::Triangle:
-  return {makeCorner(cx, 0), makeCorner(w, h), makeCorner(0, h)};
- case ShapeType::Ellipse: {
-  const int segs = 16;
-  const float k = 0.552f;
-  std::vector<CustomPathVertex> verts;
-  verts.reserve(static_cast<size_t>(segs));
-  for (int i = 0; i < segs; ++i) {
-   const float a = static_cast<float>(i) * 2.0f * static_cast<float>(M_PI) / static_cast<float>(segs);
-   const float nextA = static_cast<float>(i + 1) * 2.0f * static_cast<float>(M_PI) / static_cast<float>(segs);
-   const float px = cx + std::cos(a) * cx;
-   const float py = cy + std::sin(a) * cy;
-   const float tx = -std::sin(a) * cx * k;
-   const float ty = std::cos(a) * cy * k;
-   const float nextTx = -std::sin(nextA) * cx * k;
-   const float nextTy = std::cos(nextA) * cy * k;
-   verts.push_back({{px, py}, {tx, ty}, {nextTx, nextTy}, true});
-  }
-  return verts;
- }
- case ShapeType::Star: {
-  const int pts = std::max(3, shape.starPoints());
-  const float outerR = std::min(cx, cy);
-  const float innerR = outerR * std::clamp(shape.starInnerRadius(), 0.0f, 1.0f);
-  std::vector<CustomPathVertex> verts;
-  verts.reserve(static_cast<size_t>(pts * 2));
-  for (int i = 0; i < pts * 2; ++i) {
-   const float a = static_cast<float>(i) * static_cast<float>(M_PI) / static_cast<float>(pts) - static_cast<float>(M_PI) * 0.5f;
-   const float r = (i % 2 == 0) ? outerR : innerR;
-   verts.push_back({{cx + r * std::cos(a), cy + r * std::sin(a)}, {0, 0}, {0, 0}, false});
-  }
-  return verts;
- }
- case ShapeType::Polygon: {
-  const int sides = std::max(3, shape.polygonSides());
-  const float r = std::min(cx, cy);
-  std::vector<CustomPathVertex> verts;
-  verts.reserve(static_cast<size_t>(sides));
-  for (int i = 0; i < sides; ++i) {
-   const float a = static_cast<float>(i) * 2.0f * static_cast<float>(M_PI) / static_cast<float>(sides) - static_cast<float>(M_PI) * 0.5f;
-   verts.push_back({{cx + r * std::cos(a), cy + r * std::sin(a)}, {0, 0}, {0, 0}, false});
-  }
-  return verts;
  }
  case ShapeType::Line:
   break;
@@ -717,7 +652,9 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   //bool isPanning_ = false;
   bool isPlay_ = false;
   std::atomic_bool running_{ false };
+  QTimer* renderTimer_ = nullptr;
   std::mutex resizeMutex_;
+  quint64 renderTickCount_ = 0;
   quint64 renderExecutedCount_ = 0;
   std::atomic_bool renderRequestPending_{ false };
   bool renderRequestScheduled_ = false;
@@ -759,7 +696,6 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   int draggingShapeVertexIndex_ = -1;
   int hoveredShapeVertexIndex_ = -1;
   int hoveredShapeSegmentIndex_ = -1;
-  int selectedShapeVertexIndex_ = -1;
   QPointF shapeContextMenuCanvasPos_;
   bool shapeEditPending_ = false;
   bool shapeEditDirty_ = false;
@@ -802,11 +738,6 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   bool deleteHoveredShapeVertex(const ArtifactAbstractLayerPtr& layer);
   bool splitHoveredShapeSegment(const ArtifactAbstractLayerPtr& layer);
   void syncTransformGizmo(const ArtifactAbstractLayerPtr& layer);
-  void drawGradientOverlay(const ArtifactAbstractLayerPtr& layer);
-  bool hitTestGradientAngleHandle(const ArtifactAbstractLayerPtr& layer,
-                                  const QPointF& canvasPos) const;
-  void updateGradientHover(const ArtifactAbstractLayerPtr& layer,
-                           const QPointF& canvasPos);
 
   // Phase 1: Parametric shape handles
   bool isDraggingCornerRadius_ = false;
@@ -823,22 +754,13 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   float cornerRadiusBefore_ = 0.0f;
   float starInnerRadiusBefore_ = 0.0f;
 
-  // Gradient param handles
-  bool hoveredGradientAngle_ = false;
-  bool isDraggingGradientAngle_ = false;
-  ArtifactAbstractLayerWeak gradientEditLayer_;
-  float gradientAngleBefore_ = 0.0f;
-  QPointF gradientDragStartCanvas_;
-
   // Phase 5: Bezier path editing
   bool isDraggingPathVertex_ = false;
   bool isDraggingPathTangent_ = false;
   int draggingPathVertexIndex_ = -1;
   int draggingPathTangentType_ = 0; // 0=in, 1=out
   int hoveredPathVertexIndex_ = -1;
-  int hoveredPathSegmentIndex_ = -1;
   int hoveredPathTangentIndex_ = -1;
-  int selectedPathVertexIndex_ = -1;
   int hoveredPathTangentType_ = 0;
   bool pathEditPending_ = false;
   bool pathEditDirty_ = false;
@@ -857,7 +779,6 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   void markPathEditDirty();
   void commitPathEditTransaction();
   bool hitTestCustomPathVertex(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& vertexIndex) const;
-  bool hitTestCustomPathSegment(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& segmentIndex) const;
   bool hitTestCustomPathTangent(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& vertexIndex, int& tangentType) const;
   
   void startRenderLoop();
@@ -1171,6 +1092,7 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestShapeVertex(const ArtifactAbstrac
   return false;
  }
  const QTransform globalTransform = layer->getGlobalTransform();
+ const float zoom = std::max(0.1f, renderer_->getZoom());
  bool invertible = false;
  const QTransform invTransform = globalTransform.inverted(&invertible);
  if (!invertible) {
@@ -1261,60 +1183,6 @@ void ArtifactLayerEditorWidgetV2::Impl::updateShapeHover(const ArtifactAbstractL
  }
 }
 
-QString shapeHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, int segmentIndex)
-{
- const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape) {
-  return {};
- }
- if (shape->hasCustomPath()) {
-  if (vertexIndex >= 0) {
-   return QStringLiteral("Path vertex %1").arg(vertexIndex + 1);
-  }
-  if (segmentIndex >= 0) {
-   return QStringLiteral("Path segment %1").arg(segmentIndex + 1);
-  }
-  return QStringLiteral("Editable path");
- }
- if (shape->hasCustomPolygon()) {
-  if (vertexIndex >= 0) {
-   return QStringLiteral("Polygon vertex %1").arg(vertexIndex + 1);
-  }
-  if (segmentIndex >= 0) {
-   return QStringLiteral("Polygon segment %1").arg(segmentIndex + 1);
-  }
-  return QStringLiteral("Editable polygon");
- }
- return QString{};
-}
-
-QString pathHoverHint(const ArtifactAbstractLayerPtr& layer,
-                      int vertexIndex,
-                      int segmentIndex,
-                      int tangentIndex)
-{
- const auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape || !shape->hasCustomPath()) {
-  return {};
- }
- const auto verts = shape->customPathVertices();
- const bool validVertex = vertexIndex >= 0 && vertexIndex < static_cast<int>(verts.size());
- if (segmentIndex >= 0) {
-  return QStringLiteral("Path segment %1").arg(segmentIndex + 1);
- }
- if (tangentIndex >= 0) {
-  return tangentIndex == 0
-             ? QStringLiteral("Path tangent (in)")
-             : QStringLiteral("Path tangent (out)");
- }
- if (validVertex) {
-  return verts[static_cast<size_t>(vertexIndex)].smooth
-             ? QStringLiteral("Path vertex (smooth)")
-             : QStringLiteral("Path vertex (corner)");
- }
- return QStringLiteral("Editable path");
-}
-
 void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractLayerPtr& layer)
 {
  if (!renderer_ || !layer) {
@@ -1385,9 +1253,6 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
   if (isDraggingShapeVertex_ && draggingShapeVertexIndex_ == i) {
    currentColor = dragColor;
    currentRadius = 20.0f;
-  } else if (selectedShapeVertexIndex_ == i) {
-   currentColor = FloatColor{0.26f, 0.92f, 0.62f, 1.0f};
-   currentRadius = 20.0f;
   } else if (hoveredShapeVertexIndex_ == i) {
    currentColor = hoverColor;
    currentRadius = 18.0f;
@@ -1400,6 +1265,31 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
                         static_cast<float>(canvasPos.y()),
                         currentRadius,
                         currentColor, 1.0f, true);
+ }
+
+ if (hoveredShapeVertexIndex_ >= 0 || hoveredShapeSegmentIndex_ >= 0) {
+  const bool hoverVertex = hoveredShapeVertexIndex_ >= 0;
+  const bool draggingVertex = isDraggingShapeVertex_;
+  QFont hudFont = QApplication::font();
+  hudFont.setPointSizeF(std::max(9.0, static_cast<double>(hudFont.pointSizeF())));
+  const QString headline = hoverVertex
+                               ? QStringLiteral("vertex %1%2")
+                                     .arg(hoveredShapeVertexIndex_ + 1)
+                                     .arg(draggingVertex ? QStringLiteral(" selected") : QString())
+                               : QStringLiteral("segment %1").arg(hoveredShapeSegmentIndex_ + 1);
+  const QString detail = hoverVertex
+                             ? (draggingVertex ? QStringLiteral("dragging / delete / convert")
+                                               : QStringLiteral("drag / delete / convert"))
+                             : QStringLiteral("insert / split / convert");
+  const QPointF hudAnchor = globalTransform.map(points.front()) + QPointF(14.0, -30.0);
+  const QRectF hudRect(hudAnchor, QSizeF(176.0 / zoom, 36.0 / zoom));
+  renderer_->drawOverlayPanel(hudRect.x(), hudRect.y(), hudRect.width(), hudRect.height(),
+                              FloatColor{0.06f, 0.09f, 0.13f, 0.88f},
+                              FloatColor{0.42f, 0.72f, 0.98f, 0.90f});
+  renderer_->drawText(hudRect.adjusted(8.0, 5.0, -8.0, -4.0),
+                      QStringLiteral("Shape %1\n%2").arg(headline, detail),
+                      hudFont, FloatColor{0.95f, 0.97f, 1.0f, 1.0f},
+                      Qt::AlignLeft | Qt::AlignVCenter);
  }
 }
 
@@ -1581,113 +1471,13 @@ void ArtifactLayerEditorWidgetV2::Impl::drawTransformHUD(const ArtifactAbstractL
  renderer_->drawRectLocal(hudX, hudY, 120.0f, 50.0f, FloatColor{0,0,0,0.55f}, 1.0f);
  QFont hudFont;
  hudFont.setPixelSize(12);
-  renderer_->drawText(QRectF(hudX + 4, hudY + 4, 112, 42), text, hudFont,
-                      FloatColor{1,1,1,1}, Qt::AlignLeft | Qt::AlignVCenter, 1.0f);
- }
+ renderer_->drawText(QRectF(hudX + 4, hudY + 4, 112, 42), text, hudFont,
+                     FloatColor{1,1,1,1}, Qt::AlignLeft | Qt::AlignVCenter, 1.0f);
+}
 
- // ============================================================
- // Gradient angle / center overlay for solid image layers
- // ============================================================
-
- static QPointF gradientAngleHandleWorldPos(const ArtifactAbstractLayerPtr& layer,
-                                            float angleDegrees)
- {
-  auto solid = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer);
-  if (!solid || solid->fillType() != ArtifactSolidFillType::LinearGradient)
-   return QPointF();
-  const float rad = angleDegrees * 3.14159265358979323846f / 180.0f;
-  const QSize size(static_cast<int>(solid->sourceSize().width),
-                   static_cast<int>(solid->sourceSize().height));
-  const double halfDiag = std::hypot(static_cast<double>(size.width()),
-                                     static_cast<double>(size.height())) * 0.5;
-  const QPointF center(
-      size.width() * 0.5 + std::cos(rad) * halfDiag,
-      size.height() * 0.5 - std::sin(rad) * halfDiag);
-  return layer->getGlobalTransform().map(center);
- }
-
- static QPointF gradientCenterHandleWorldPos(const ArtifactAbstractLayerPtr& layer)
- {
-  auto solid = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer);
-  if (!solid) return QPointF();
-  const QSize size(static_cast<int>(solid->sourceSize().width),
-                   static_cast<int>(solid->sourceSize().height));
-  return layer->getGlobalTransform().map(
-      QPointF(size.width() * solid->gradientCenterX(),
-              size.height() * solid->gradientCenterY()));
- }
-
- void ArtifactLayerEditorWidgetV2::Impl::drawGradientOverlay(const ArtifactAbstractLayerPtr& layer)
- {
-  if (!renderer_ || !layer) return;
-  auto solid = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer);
-  if (!solid || solid->fillType() != ArtifactSolidFillType::LinearGradient) return;
-
-  const float zoom = renderer_->getZoom();
-  const float handleR = 5.0f / (zoom > 0.001f ? zoom : 1.0f);
-
-  // Dashed line from center to outer angle handle
-  {
-   const QPointF worldCenter = gradientCenterHandleWorldPos(layer);
-   const QPointF worldAngle  = gradientAngleHandleWorldPos(layer, solid->gradientAngleDegrees());
-   const FloatColor lineCol = isDraggingGradientAngle_
-       ? FloatColor{1.0f, 0.6f, 0.0f, 1.0f}
-       : (hoveredGradientAngle_ ? FloatColor{1.0f, 0.85f, 0.4f, 1.0f} : FloatColor{0.3f, 0.7f, 1.0f, 0.85f});
-   renderer_->drawThickLineLocal(
-       {static_cast<float>(worldCenter.x()), static_cast<float>(worldCenter.y())},
-       {static_cast<float>(worldAngle.x()), static_cast<float>(worldAngle.y())},
-       1.5f / zoom, lineCol);
-  }
-
-  // Center handle
-  {
-   const QPointF wc = gradientCenterHandleWorldPos(layer);
-   renderer_->drawCircle(static_cast<float>(wc.x()), static_cast<float>(wc.y()),
-                         handleR, FloatColor{1,1,1,0.9f}, 1.0f, true);
-   renderer_->drawCircle(static_cast<float>(wc.x()), static_cast<float>(wc.y()),
-                         handleR, FloatColor{0,0.7f,1,1}, 1.0f, false);
-  }
-
-  // Angle handle at layer edge
-  {
-   const QPointF wa = gradientAngleHandleWorldPos(layer, solid->gradientAngleDegrees());
-   const FloatColor col = isDraggingGradientAngle_
-       ? FloatColor{1.0f, 0.6f, 0.0f, 1.0f}
-       : (hoveredGradientAngle_ ? FloatColor{1.0f, 0.85f, 0.4f, 1.0f} : FloatColor{0,0.7f,1,1});
-   renderer_->drawCircle(static_cast<float>(wa.x()), static_cast<float>(wa.y()),
-                         handleR, col, 1.0f, true);
-   renderer_->drawCircle(static_cast<float>(wa.x()), static_cast<float>(wa.y()),
-                         handleR, FloatColor{1,1,1,0.7f}, 1.0f, false);
-  }
- }
-
- bool ArtifactLayerEditorWidgetV2::Impl::hitTestGradientAngleHandle(
-     const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos) const
- {
-  if (!renderer_ || !layer) return false;
-  auto solid = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer);
-  if (!solid || solid->fillType() != ArtifactSolidFillType::LinearGradient) return false;
-  const QPointF worldAngle = gradientAngleHandleWorldPos(layer, solid->gradientAngleDegrees());
-  const Detail::float2 vp = renderer_->canvasToViewport(
-      {static_cast<float>(worldAngle.x()), static_cast<float>(worldAngle.y())});
-  const Detail::float2 vpMouse = renderer_->canvasToViewport(
-      {static_cast<float>(canvasPos.x()), static_cast<float>(canvasPos.y())});
-  const float dx = vp.x - vpMouse.x;
-  const float dy = vp.y - vpMouse.y;
-  const float zoom = renderer_->getZoom();
-  const float threshold = (14.0f / (zoom > 0.001f ? zoom : 1.0f));
-  return std::sqrt(dx * dx + dy * dy) <= threshold;
- }
-
- void ArtifactLayerEditorWidgetV2::Impl::updateGradientHover(const ArtifactAbstractLayerPtr& layer,
-                                                             const QPointF& canvasPos)
- {
-  hoveredGradientAngle_ = layer && hitTestGradientAngleHandle(layer, canvasPos);
- }
-
- // ============================================================
- // Phase 5: Bezier path overlay + transactions
- // ============================================================
+// ============================================================
+// Phase 5: Bezier path overlay + transactions
+// ============================================================
 
 void ArtifactLayerEditorWidgetV2::Impl::beginPathEditTransaction(const ArtifactAbstractLayerPtr& layer)
 {
@@ -1746,48 +1536,6 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestCustomPathVertex(
  return false;
 }
 
-bool ArtifactLayerEditorWidgetV2::Impl::hitTestCustomPathSegment(
-    const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& segmentIndex) const
-{
- if (!layer || !renderer_) return false;
- auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
- if (!shape || !shape->hasCustomPath()) return false;
- const auto verts = shape->customPathVertices();
- const int n = static_cast<int>(verts.size());
- if (n < 2) return false;
- const QTransform gt = layer->getGlobalTransform();
- const float zoom = renderer_->getZoom();
- const float threshold = 8.0f / (zoom > 0.001f ? zoom : 1.0f);
- auto distToSegment = [](const QPointF& p, const QPointF& a, const QPointF& b) {
-  const QPointF ab = b - a;
-  const QPointF ap = p - a;
-  const double len2 = ab.x() * ab.x() + ab.y() * ab.y();
-  if (len2 <= 1e-9) return std::hypot(ap.x(), ap.y());
-  const double t = std::clamp((ap.x() * ab.x() + ap.y() * ab.y()) / len2, 0.0, 1.0);
-  const QPointF proj = a + ab * t;
-  return std::hypot(p.x() - proj.x(), p.y() - proj.y());
- };
- for (int i = 0; i < n; ++i) {
-  const int j = i + 1;
-  if (j >= n) {
-   if (!shape->customPathClosed()) {
-    break;
-   }
-  }
-  const int next = j % n;
-  const QPointF a = gt.map(verts[static_cast<size_t>(i)].pos);
-  const QPointF b = gt.map(verts[static_cast<size_t>(next)].pos);
-  if (distToSegment(canvasPos, a, b) <= threshold) {
-   segmentIndex = i;
-   return true;
-  }
-  if (!shape->customPathClosed() && next == 0) {
-   break;
-  }
- }
- return false;
-}
-
 bool ArtifactLayerEditorWidgetV2::Impl::hitTestCustomPathTangent(
     const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& vertexIndex, int& tangentType) const
 {
@@ -1833,36 +1581,17 @@ void ArtifactLayerEditorWidgetV2::Impl::drawCustomPathOverlay(const ArtifactAbst
  const auto verts = shape->customPathVertices();
  const bool closed = shape->customPathClosed();
  const int n = static_cast<int>(verts.size());
-  // Draw path segments (cubic bezier where tangents exist)
-  for (int i = 0; i < n; ++i) {
-   const int j = (i + 1) % n;
-   if (!closed && j == 0) break;
-   const auto& v0 = verts[i];
-   const auto& v1 = verts[j];
-   if (v0.outTangent != QPointF(0, 0) || v1.inTangent != QPointF(0, 0)) {
-    const QPointF p0 = gt.map(v0.pos);
-    const QPointF p1 = gt.map(v0.pos + v0.outTangent);
-    const QPointF p2 = gt.map(v1.pos + v1.inTangent);
-    const QPointF p3 = gt.map(v1.pos);
-    constexpr int steps = 18;
-    Detail::float2 prev = {static_cast<float>(p0.x()), static_cast<float>(p0.y())};
-    for (int k = 1; k <= steps; ++k) {
-     const double t = static_cast<double>(k) / steps;
-     const double u = 1.0 - t;
-     const QPointF pt = p0 * (u * u * u) + p1 * (3.0 * u * u * t) + p2 * (3.0 * u * t * t) + p3 * (t * t * t);
-     const Detail::float2 cur = {static_cast<float>(pt.x()), static_cast<float>(pt.y())};
-     renderer_->drawThickLineLocal(prev, cur, 2.0f, FloatColor{0.4f,0.7f,1,0.5f});
-     prev = cur;
-    }
-   } else {
-    const QPointF p0 = gt.map(v0.pos);
-    const QPointF p1 = gt.map(v1.pos);
-    renderer_->drawThickLineLocal(
-        {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
-        {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
-        2.0f, FloatColor{0.4f,0.7f,1,0.5f});
-   }
-  }
+ // Draw path segments
+ for (int i = 0; i < n; ++i) {
+  const int j = (i + 1) % n;
+  if (!closed && j == 0) break;
+  const QPointF p0 = gt.map(verts[i].pos);
+  const QPointF p1 = gt.map(verts[j].pos);
+  renderer_->drawThickLineLocal(
+      {static_cast<float>(p0.x()), static_cast<float>(p0.y())},
+      {static_cast<float>(p1.x()), static_cast<float>(p1.y())},
+      2.0f, FloatColor{0.4f,0.7f,1,0.5f});
+ }
  // Draw tangent lines and handles
  for (int i = 0; i < n; ++i) {
   const QPointF vp = gt.map(verts[i].pos);
@@ -1890,15 +1619,40 @@ void ArtifactLayerEditorWidgetV2::Impl::drawCustomPathOverlay(const ArtifactAbst
   }
   // Vertex handle
   const bool hov = hoveredPathVertexIndex_ == i;
-  const bool sel = selectedPathVertexIndex_ == i;
   renderer_->drawCircle(
       static_cast<float>(vp.x()), static_cast<float>(vp.y()),
-      vR, sel ? FloatColor{0.26f, 0.92f, 0.62f, 1.0f}
-              : hov ? FloatColor{1,0.5f,0,1}
-                    : FloatColor{0.2f,0.8f,1,1}, 1.0f, true);
+      vR, hov ? FloatColor{1,0.5f,0,1} : FloatColor{0.2f,0.8f,1,1}, 1.0f, true);
   renderer_->drawCircle(
       static_cast<float>(vp.x()), static_cast<float>(vp.y()),
       vR, FloatColor{1,1,1,0.8f}, 1.0f, false);
+ }
+
+ if (hoveredPathVertexIndex_ >= 0 || hoveredPathTangentIndex_ >= 0) {
+  QFont hudFont = QApplication::font();
+  hudFont.setPointSizeF(std::max(9.0, static_cast<double>(hudFont.pointSizeF())));
+  const bool hoverTangent = hoveredPathTangentIndex_ >= 0;
+  const bool draggingVertex = isDraggingPathVertex_;
+  const bool draggingTangent = isDraggingPathTangent_;
+  const QString headline = hoverTangent
+                               ? QStringLiteral("tangent %1%2")
+                                     .arg(hoveredPathTangentIndex_ + 1)
+                                     .arg(draggingTangent ? QStringLiteral(" selected") : QString())
+                               : QStringLiteral("vertex %1%2")
+                                     .arg(hoveredPathVertexIndex_ + 1)
+                                     .arg(draggingVertex ? QStringLiteral(" selected") : QString());
+  const QString detail = hoverTangent
+                             ? (draggingTangent ? QStringLiteral("dragging / rebalance / smooth")
+                                                : QStringLiteral("drag / rebalance / smooth"))
+                             : QStringLiteral("drag / delete / toggle smooth");
+  const QPointF hudAnchor = gt.map(verts.front().pos) + QPointF(14.0, -30.0);
+  const QRectF hudRect(hudAnchor, QSizeF(184.0 / zoom, 36.0 / zoom));
+  renderer_->drawOverlayPanel(hudRect.x(), hudRect.y(), hudRect.width(), hudRect.height(),
+                              FloatColor{0.06f, 0.09f, 0.13f, 0.88f},
+                              FloatColor{0.42f, 0.72f, 0.98f, 0.90f});
+  renderer_->drawText(hudRect.adjusted(8.0, 5.0, -8.0, -4.0),
+                      QStringLiteral("Path %1\n%2").arg(headline, detail),
+                      hudFont, FloatColor{0.95f, 0.97f, 1.0f, 1.0f},
+                      Qt::AlignLeft | Qt::AlignVCenter);
  }
 }
 
@@ -2285,12 +2039,18 @@ void ArtifactLayerEditorWidgetV2::Impl::startRenderLoop()
  if (running_)
   return;
  running_ = true;
+ if (renderTimer_ && !renderTimer_->isActive()) {
+  renderTimer_->start();
+ }
  requestRender();
 }
 
  void ArtifactLayerEditorWidgetV2::Impl::stopRenderLoop()
  {
   running_ = false;        // ループを抜ける
+  if (renderTimer_) {
+   renderTimer_->stop();
+  }
 
  if (renderer_) {
   renderer_->flushAndWait();
@@ -2420,12 +2180,11 @@ void ArtifactLayerEditorWidgetV2::Impl::renderOneFrame()
         drawMaskOverlay(layer);
        } else if (isShapeEditingMode(editMode_)) {
         drawShapeOverlay(layer);
-        } else {
-         drawTransformOverlay(layer);
-         drawShapeParamHandles(layer);
-         drawGradientOverlay(layer);
-         drawTransformHUD(layer);
-        }
+       } else {
+        drawTransformOverlay(layer);
+        drawShapeParamHandles(layer);
+        drawTransformHUD(layer);
+       }
       }
      }
     }
@@ -2493,6 +2252,50 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   setAttribute(Qt::WA_NoSystemBackground);
 
   setWindowTitle("ArtifactLayerEditor");
+
+  impl_->renderTimer_ = new QTimer(this);
+  impl_->renderTimer_->setInterval(16);
+  QObject::connect(impl_->renderTimer_, &QTimer::timeout, this, [this]() {
+   ++impl_->renderTickCount_;
+   if ((impl_->renderTickCount_ % 120ull) == 1ull) {
+    qCDebug(layerViewPerfLog) << "[LayerView][Timer]"
+                              << "ticks=" << impl_->renderTickCount_
+                              << "executed=" << impl_->renderExecutedCount_
+                              << "visible=" << isVisible()
+                              << "hidden=" << isHidden()
+                              << "windowVisible=" << (window() ? window()->isVisible() : false)
+                              << "size=" << size()
+                              << "running=" << impl_->running_.load(std::memory_order_acquire);
+   }
+  if (!impl_ || !impl_->initialized_ || !impl_->renderer_ || !impl_->running_.load(std::memory_order_acquire)) {
+   return;
+  }
+  if (!isVisible() || width() <= 0 || height() <= 0) {
+   return;
+  }
+  if (impl_->renderInProgress_) {
+   return;
+  }
+  std::lock_guard<std::mutex> lock(impl_->resizeMutex_);
+  if (impl_->renderInProgress_) {
+   return;
+  }
+  impl_->renderInProgress_ = true;
+  QElapsedTimer frameTimer;
+  frameTimer.start();
+  impl_->renderOneFrame();
+  impl_->renderInProgress_ = false;
+  ++impl_->renderExecutedCount_;
+  const qint64 elapsedMs = frameTimer.elapsed();
+  if (elapsedMs >= 8 || (impl_->renderExecutedCount_ % 120ull) == 1ull) {
+   qCDebug(layerViewPerfLog) << "[LayerView][Frame]"
+                             << "ms=" << elapsedMs
+                             << "executed=" << impl_->renderExecutedCount_
+                             << "targetLayerNil=" << impl_->targetLayerId_.isNil()
+                             << "visible=" << isVisible()
+                             << "size=" << size();
+  }
+ });
 
   impl_->eventBusSubscriptions_.push_back(
       impl_->eventBus_.subscribe<LayerSelectionChangedEvent>(
@@ -2605,9 +2408,6 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
   impl_->isDraggingStarInnerRadius_ = false;
   impl_->hoveredCornerRadius_ = false;
   impl_->hoveredStarInnerRadius_ = false;
-  impl_->isDraggingGradientAngle_ = false;
-  impl_->hoveredGradientAngle_ = false;
-  impl_->gradientEditLayer_ = {};
   impl_->isDraggingPathVertex_ = false;
   impl_->isDraggingPathTangent_ = false;
   impl_->draggingPathVertexIndex_ = -1;
@@ -2647,7 +2447,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     impl_->commitMaskEditTransaction();
    }
   }
- if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_ && event) {
+  if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_ && event) {
    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
     auto layer = impl_->targetLayer();
     if (layer) {
@@ -2723,20 +2523,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      event->accept();
      return;
     }
-    if (impl_->hitTestGradientAngleHandle(layer, canvasPoint)) {
-     auto solid = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer);
-     if (solid) {
-      impl_->isDraggingGradientAngle_ = true;
-      impl_->gradientEditLayer_ = layer;
-      impl_->gradientAngleBefore_ = solid->gradientAngleDegrees();
-      impl_->gradientDragStartCanvas_ = canvasPoint;
-      setCursor(Qt::ClosedHandCursor);
-      event->accept();
-      return;
-     }
-    }
    }
-    if (layer && impl_->transformGizmo_->handleMousePress(
+   if (layer && impl_->transformGizmo_->handleMousePress(
                       {event->position().x(), event->position().y()},
                       impl_->renderer_.get())) {
     setCursor(hudCursorForTransformHandle(impl_->transformGizmo_->activeHandle(),
@@ -2770,22 +2558,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       return;
      }
      if (impl_->hitTestCustomPathVertex(layer, canvasPoint, vi)) {
-      const bool toggleSelection = event->modifiers().testFlag(Qt::ShiftModifier) &&
-                                   !(event->modifiers().testFlag(Qt::ControlModifier) ||
-                                     event->modifiers().testFlag(Qt::AltModifier) ||
-                                     event->modifiers().testFlag(Qt::MetaModifier));
-      const bool additiveSelection = event->modifiers().testFlag(Qt::ControlModifier) &&
-                                     !(event->modifiers().testFlag(Qt::ShiftModifier) ||
-                                       event->modifiers().testFlag(Qt::AltModifier) ||
-                                       event->modifiers().testFlag(Qt::MetaModifier));
       impl_->beginPathEditTransaction(layer);
-      if (toggleSelection && impl_->selectedPathVertexIndex_ == vi) {
-       impl_->selectedPathVertexIndex_ = -1;
-      } else if (additiveSelection && impl_->selectedPathVertexIndex_ != vi) {
-       impl_->selectedPathVertexIndex_ = vi;
-      } else {
-       impl_->selectedPathVertexIndex_ = vi;
-      }
       impl_->isDraggingPathVertex_ = true;
       impl_->draggingPathVertexIndex_ = vi;
       setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
@@ -2806,7 +2579,6 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       shape->setCustomPathVertices(verts, shape->customPathClosed());
       impl_->markPathEditDirty();
       impl_->hoveredPathVertexIndex_ = static_cast<int>(verts.size()) - 1;
-      impl_->selectedPathVertexIndex_ = impl_->hoveredPathVertexIndex_;
       impl_->requestRender();
       event->accept();
       return;
@@ -2815,22 +2587,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
     int vertexIndex = -1;
     if (impl_->hitTestShapeVertex(layer, canvasPoint, vertexIndex)) {
-     const bool toggleSelection = event->modifiers().testFlag(Qt::ShiftModifier) &&
-                                  !(event->modifiers().testFlag(Qt::ControlModifier) ||
-                                    event->modifiers().testFlag(Qt::AltModifier) ||
-                                    event->modifiers().testFlag(Qt::MetaModifier));
-     const bool additiveSelection = event->modifiers().testFlag(Qt::ControlModifier) &&
-                                    !(event->modifiers().testFlag(Qt::ShiftModifier) ||
-                                      event->modifiers().testFlag(Qt::AltModifier) ||
-                                      event->modifiers().testFlag(Qt::MetaModifier));
      impl_->beginShapeEditTransaction(layer);
-     if (toggleSelection && impl_->selectedShapeVertexIndex_ == vertexIndex) {
-      impl_->selectedShapeVertexIndex_ = -1;
-     } else if (additiveSelection && impl_->selectedShapeVertexIndex_ != vertexIndex) {
-      impl_->selectedShapeVertexIndex_ = vertexIndex;
-     } else {
-      impl_->selectedShapeVertexIndex_ = vertexIndex;
-     }
      impl_->isDraggingShapeVertex_ = true;
      impl_->draggingShapeVertexIndex_ = vertexIndex;
      setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
@@ -2842,8 +2599,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     int insertIndex = -1;
     if (impl_->hitTestShapeSegment(layer, canvasPoint, insertIndex)) {
       impl_->hoveredShapeSegmentIndex_ = std::max(0, insertIndex - 1);
-     if (impl_->insertPointOnHoveredShapeSegment(layer, canvasPoint)) {
-       impl_->selectedShapeVertexIndex_ = impl_->draggingShapeVertexIndex_;
+      if (impl_->insertPointOnHoveredShapeSegment(layer, canvasPoint)) {
        setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                            Qt::ClosedHandCursor));
        impl_->requestRender();
@@ -2880,7 +2636,6 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      impl_->markShapeEditDirty();
      impl_->hoveredShapeVertexIndex_ = static_cast<int>(points.size()) - 1;
      impl_->hoveredShapeSegmentIndex_ = static_cast<int>(points.size()) - 2;
-     impl_->selectedShapeVertexIndex_ = impl_->hoveredShapeVertexIndex_;
      impl_->requestRender();
      event->accept();
      return;
@@ -3026,26 +2781,9 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
     impl_->paramHandleEditLayer_.reset();
     event->accept();
     return;
-    }
    }
-   // Gradient angle release
-   if (impl_->isDraggingGradientAngle_ && event->button() == Qt::LeftButton) {
-    impl_->isDraggingGradientAngle_ = false;
-    unsetCursor();
-    if (auto layer = impl_->gradientEditLayer_.lock()) {
-     auto solid = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer);
-     if (solid) {
-      if (auto* undo = UndoManager::instance()) {
-       undo->push(std::make_unique<GradientAngleEditCommand>(
-           layer, impl_->gradientAngleBefore_, solid->gradientAngleDegrees()));
-      }
-     }
-    }
-    impl_->gradientEditLayer_.reset();
-    event->accept();
-    return;
-   }
-   if (isShapeEditingMode(impl_->editMode_) && event->button() == Qt::LeftButton) {
+  }
+  if (isShapeEditingMode(impl_->editMode_) && event->button() == Qt::LeftButton) {
    // Phase 5: path vertex/tangent release
    if (impl_->isDraggingPathVertex_ || impl_->isDraggingPathTangent_) {
     impl_->isDraggingPathVertex_ = false;
@@ -3155,50 +2893,24 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      }
      impl_->requestRender();
      event->accept();
-      return;
-     }
+     return;
     }
    }
-   // Gradient angle drag
-   if (impl_->isDraggingGradientAngle_ && impl_->renderer_) {
-    if (auto layer = impl_->gradientEditLayer_.lock()) {
-     auto solid = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(layer);
-     if (solid) {
-      const Detail::float2 cp = impl_->renderer_->viewportToCanvas(
-          {(float)event->position().x(), (float)event->position().y()});
-      const QPointF canvasPoint(cp.x, cp.y);
-      const QPointF worldCenter = gradientCenterHandleWorldPos(layer);
-      const double dx = canvasPoint.x() - worldCenter.x();
-      const double dy = canvasPoint.y() - worldCenter.y();
-      float angle = std::atan2(-dy, dx) * 180.0 / 3.14159265358979323846;
-      if (angle < 0) angle += 360.0;
-      solid->setGradientAngleDegrees(angle);
-      impl_->requestRender();
-      setCursor(Qt::ClosedHandCursor);
-      event->accept();
-      return;
-     }
-    }
-    impl_->isDraggingGradientAngle_ = false;
-   }
-
-   // Phase 1: hover update in View mode
-   if (impl_->editMode_ != EditMode::Mask && !isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
+  }
+  // Phase 1: hover update in View mode
+  if (impl_->editMode_ != EditMode::Mask && !isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
    auto layer = impl_->targetLayer();
    if (layer) {
-     const Detail::float2 cp = impl_->renderer_->viewportToCanvas(
-         {(float)event->position().x(), (float)event->position().y()});
-     const QPointF canvasPoint(cp.x, cp.y);
-     const bool prevCr = impl_->hoveredCornerRadius_;
-     const bool prevStar = impl_->hoveredStarInnerRadius_;
-     const bool prevGrad = impl_->hoveredGradientAngle_;
-     impl_->hoveredCornerRadius_ = impl_->hitTestCornerRadiusHandle(layer, canvasPoint);
-     impl_->hoveredStarInnerRadius_ = impl_->hitTestStarInnerRadiusHandle(layer, canvasPoint);
-     impl_->updateGradientHover(layer, canvasPoint);
-     if (prevCr != impl_->hoveredCornerRadius_ || prevStar != impl_->hoveredStarInnerRadius_ ||
-         prevGrad != impl_->hoveredGradientAngle_) {
-      impl_->requestRender();
-     }
+    const Detail::float2 cp = impl_->renderer_->viewportToCanvas(
+        {(float)event->position().x(), (float)event->position().y()});
+    const QPointF canvasPoint(cp.x, cp.y);
+    const bool prevCr = impl_->hoveredCornerRadius_;
+    const bool prevStar = impl_->hoveredStarInnerRadius_;
+    impl_->hoveredCornerRadius_ = impl_->hitTestCornerRadiusHandle(layer, canvasPoint);
+    impl_->hoveredStarInnerRadius_ = impl_->hitTestStarInnerRadiusHandle(layer, canvasPoint);
+    if (prevCr != impl_->hoveredCornerRadius_ || prevStar != impl_->hoveredStarInnerRadius_) {
+     impl_->requestRender();
+    }
    }
   }
 
@@ -3331,12 +3043,17 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
        if (idx < static_cast<int>(verts.size())) {
         const QPointF localPos = inv.map(canvasPoint);
         const QPointF delta = localPos - verts[idx].pos;
+        const bool independentTangent = (event->modifiers() & Qt::AltModifier) != 0;
         if (impl_->draggingPathTangentType_ == 1) {
          verts[idx].outTangent = delta;
-         if (verts[idx].smooth) verts[idx].inTangent = -delta;
+         if (verts[idx].smooth && !independentTangent) {
+          verts[idx].inTangent = -delta;
+         }
         } else {
          verts[idx].inTangent = delta;
-         if (verts[idx].smooth) verts[idx].outTangent = -delta;
+         if (verts[idx].smooth && !independentTangent) {
+          verts[idx].outTangent = -delta;
+         }
         }
         shape->setCustomPathVertices(verts, shape->customPathClosed());
         impl_->markPathEditDirty();
@@ -3348,42 +3065,21 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      }
      // Hover update for path vertices/tangents
      const int prevVi = impl_->hoveredPathVertexIndex_;
-     const int prevSi = impl_->hoveredPathSegmentIndex_;
      const int prevTi = impl_->hoveredPathTangentIndex_;
      int vi = -1, ti = -1, tt = 0;
      if (impl_->hitTestCustomPathTangent(layer, canvasPoint, ti, tt)) {
       impl_->hoveredPathVertexIndex_ = -1;
-      impl_->hoveredPathSegmentIndex_ = -1;
       impl_->hoveredPathTangentIndex_ = ti;
       impl_->hoveredPathTangentType_ = tt;
      } else if (impl_->hitTestCustomPathVertex(layer, canvasPoint, vi)) {
       impl_->hoveredPathVertexIndex_ = vi;
-      impl_->hoveredPathSegmentIndex_ = -1;
-      impl_->hoveredPathTangentIndex_ = -1;
-     } else if (impl_->hitTestCustomPathSegment(layer, canvasPoint, vi)) {
-      impl_->hoveredPathVertexIndex_ = -1;
-      impl_->hoveredPathSegmentIndex_ = vi;
       impl_->hoveredPathTangentIndex_ = -1;
      } else {
       impl_->hoveredPathVertexIndex_ = -1;
-      impl_->hoveredPathSegmentIndex_ = -1;
       impl_->hoveredPathTangentIndex_ = -1;
      }
-     if (prevVi != impl_->hoveredPathVertexIndex_ ||
-         prevSi != impl_->hoveredPathSegmentIndex_ ||
-         prevTi != impl_->hoveredPathTangentIndex_) {
+     if (prevVi != impl_->hoveredPathVertexIndex_ || prevTi != impl_->hoveredPathTangentIndex_) {
       impl_->requestRender();
-     }
-     const QString hint = pathHoverHint(layer,
-                                        impl_->hoveredPathVertexIndex_,
-                                        impl_->hoveredPathSegmentIndex_,
-                                        impl_->hoveredPathTangentIndex_);
-     if (!hint.isEmpty()) {
-      setToolTip(hint);
-      setCursor(Qt::CrossCursor);
-     } else {
-      setToolTip(QString());
-      unsetCursor();
      }
      return;
     }
@@ -3417,15 +3113,8 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      }
      if (impl_->hoveredShapeVertexIndex_ >= 0 ||
          impl_->hoveredShapeSegmentIndex_ >= 0) {
-      const QString hint = shapeHoverHint(layer,
-                                          impl_->hoveredShapeVertexIndex_,
-                                          impl_->hoveredShapeSegmentIndex_);
-      if (!hint.isEmpty()) {
-       setToolTip(hint);
-      }
       setCursor(Qt::CrossCursor);
      } else {
-      setToolTip(QString());
       unsetCursor();
      }
     }
@@ -3491,20 +3180,15 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* addTwistAct = nullptr;
  QAction* insertPointAct = nullptr;
  QAction* splitSegmentAct = nullptr;
- QAction* duplicatePointAct = nullptr;
  QAction* deletePointAct = nullptr;
  QAction* toggleClosedAct = nullptr;
  QAction* convertToPathAct = nullptr;
  QAction* convertToPolygonAct = nullptr;
- QAction* polygonStateAct = nullptr;
- QAction* pathStateAct = nullptr;
- QAction* pathInsertPointAct = nullptr;
- QAction* pathDuplicatePointAct = nullptr;
  QAction* pathDeletePointAct = nullptr;
  QAction* pathToggleSmoothAct = nullptr;
  QAction* pathToggleClosedAct = nullptr;
  std::shared_ptr<ArtifactShapeLayer> shapeLayer;
-  if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
+ if (isShapeEditingMode(impl_->editMode_) && impl_->renderer_) {
   auto layer = impl_->targetLayer();
   shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
   if (shapeLayer) {
@@ -3546,127 +3230,47 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
                               static_cast<qreal>(canvasPos.y));
     impl_->shapeContextMenuCanvasPos_ = canvasPoint;
     impl_->updateShapeHover(layer, canvasPoint);
-    const QString hoverSummary = shapeLayer->hasCustomPath()
-                                     ? pathHoverHint(layer,
-                                                     impl_->hoveredPathVertexIndex_,
-                                                     impl_->hoveredPathSegmentIndex_,
-                                                     impl_->hoveredPathTangentIndex_)
-                                     : shapeHoverHint(layer,
-                                                      impl_->hoveredShapeVertexIndex_,
-                                                      impl_->hoveredShapeSegmentIndex_);
-    if (!hoverSummary.isEmpty()) {
-     QAction* hoverAct = menu.addAction(QStringLiteral("Current Hover: %1").arg(hoverSummary));
-     hoverAct->setEnabled(false);
-    }
 
-    insertPointAct = menu.addAction(shapeLayer->hasCustomPath()
-                                        ? QStringLiteral("Insert Path Vertex")
-                                        : QStringLiteral("Insert Polygon Vertex"));
-    duplicatePointAct = menu.addAction(shapeLayer->hasCustomPath()
-                                           ? QStringLiteral("Duplicate Path Vertex")
-                                           : QStringLiteral("Duplicate Polygon Vertex"));
-    splitSegmentAct = menu.addAction(shapeLayer->hasCustomPath()
-                                         ? QStringLiteral("Split Path Segment")
-                                         : QStringLiteral("Split Polygon Segment"));
-    deletePointAct = menu.addAction(shapeLayer->hasCustomPath()
-                                        ? QStringLiteral("Delete Path Vertex")
-                                        : QStringLiteral("Delete Polygon Vertex"));
-   toggleClosedAct = menu.addAction(shapeLayer->customPolygonClosed()
+    insertPointAct = menu.addAction(QStringLiteral("Insert Point"));
+    splitSegmentAct = menu.addAction(QStringLiteral("Split Segment"));
+    deletePointAct = menu.addAction(QStringLiteral("Delete Point"));
+    toggleClosedAct = menu.addAction(shapeLayer->customPolygonClosed()
                                          ? QStringLiteral("Open Polygon")
                                          : QStringLiteral("Close Polygon"));
-    polygonStateAct = menu.addAction(QStringLiteral("Polygon State"));
-    polygonStateAct->setEnabled(false);
     insertPointAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
-    duplicatePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
     splitSegmentAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
     deletePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
     toggleClosedAct->setEnabled(shapeLayer->customPolygonClosed() || shapeLayer->customPolygonPoints().size() >= 3);
-    const auto polygonPointCount = static_cast<int>(shapeLayer->customPolygonPoints().size());
-    const int polygonSegmentCount = shapeLayer->customPolygonClosed()
-                                        ? polygonPointCount
-                                        : std::max(0, polygonPointCount - 1);
-    const QString polygonHoverSummary = impl_->hoveredShapeVertexIndex_ >= 0
-                                            ? QStringLiteral("vertex %1").arg(impl_->hoveredShapeVertexIndex_ + 1)
-                                            : impl_->hoveredShapeSegmentIndex_ >= 0
-                                                  ? QStringLiteral("segment %1").arg(impl_->hoveredShapeSegmentIndex_ + 1)
-                                                  : QStringLiteral("none");
-    const QString polygonSelectionSummary = impl_->selectedShapeVertexIndex_ >= 0
-                                                ? QStringLiteral("selected vertex %1").arg(impl_->selectedShapeVertexIndex_ + 1)
-                                                : QStringLiteral("no selection");
-    polygonStateAct->setText(QStringLiteral("Polygon Editing: %1 pts, %2 segs, %3, hover %4, %5")
-                                  .arg(polygonPointCount)
-                                  .arg(polygonSegmentCount)
-                                  .arg(shapeLayer->customPolygonClosed()
-                                           ? QStringLiteral("closed")
-                                           : QStringLiteral("open"))
-                                  .arg(polygonHoverSummary)
-                                  .arg(polygonSelectionSummary));
    }
     convertToPathAct = menu.addAction(QStringLiteral("Convert to Editable Path"));
    }
    if (shapeLayer->hasCustomPath()) {
-    pathInsertPointAct = menu.addAction(QStringLiteral("Insert Path Vertex"));
-    pathStateAct = menu.addAction(QStringLiteral("Path State"));
-    pathStateAct->setEnabled(false);
-    pathDuplicatePointAct = menu.addAction(QStringLiteral("Duplicate Path Vertex"));
     convertToPolygonAct = menu.addAction(QStringLiteral("Convert to Polygon"));
-    pathDeletePointAct = menu.addAction(QStringLiteral("Delete Path Vertex"));
+    pathDeletePointAct = menu.addAction(QStringLiteral("Delete Point"));
     {
      const auto verts = shapeLayer->customPathVertices();
      const int vi = impl_->hoveredPathVertexIndex_;
      const bool validHover = vi >= 0 && static_cast<size_t>(vi) < verts.size();
-     int tangentCount = 0;
-     for (const auto& v : verts) {
-      if (v.inTangent != QPointF(0, 0) || v.outTangent != QPointF(0, 0)) {
-       ++tangentCount;
-      }
-     }
-    const QString pathHoverSummary = impl_->hoveredPathVertexIndex_ >= 0
-                                         ? QStringLiteral("vertex %1").arg(impl_->hoveredPathVertexIndex_ + 1)
-                                         : impl_->hoveredPathSegmentIndex_ >= 0
-                                               ? QStringLiteral("segment %1").arg(impl_->hoveredPathSegmentIndex_ + 1)
-                                               : impl_->hoveredPathTangentIndex_ >= 0
-                                                     ? QStringLiteral("tangent %1").arg(impl_->hoveredPathTangentIndex_ + 1)
-                                                     : QStringLiteral("none");
-     const QString pathSelectionSummary = impl_->selectedPathVertexIndex_ >= 0
-                                              ? QStringLiteral("selected vertex %1").arg(impl_->selectedPathVertexIndex_ + 1)
-                                              : QStringLiteral("no selection");
-     pathStateAct->setText(QStringLiteral("Path Editing: %1 verts, %2 tangents, %3, hover %4, %5")
-                               .arg(static_cast<int>(verts.size()))
-                               .arg(tangentCount)
-                               .arg(shapeLayer->customPathClosed()
-                                        ? QStringLiteral("closed")
-                                        : QStringLiteral("open"))
-                               .arg(pathHoverSummary)
-                               .arg(pathSelectionSummary));
-    pathInsertPointAct->setEnabled((validHover || impl_->hoveredPathSegmentIndex_ >= 0) && verts.size() >= 2);
-     pathDuplicatePointAct->setEnabled(validHover);
      pathDeletePointAct->setEnabled(validHover);
      pathToggleSmoothAct = menu.addAction(validHover && verts[static_cast<size_t>(vi)].smooth
-                                              ? QStringLiteral("Make Corner (break tangents)")
-                                              : QStringLiteral("Make Smooth (mirror tangents)"));
+                                              ? QStringLiteral("Make Corner")
+                                              : QStringLiteral("Make Smooth"));
      pathToggleSmoothAct->setEnabled(validHover);
     }
     pathToggleClosedAct = menu.addAction(shapeLayer->customPathClosed()
                                              ? QStringLiteral("Open Path")
                                              : QStringLiteral("Close Path"));
    }
-    if (!menu.actions().isEmpty()) {
-     QAction* shapeChosen = menu.exec(event->globalPos());
-     if (shapeChosen) {
-      const QJsonArray beforeOperators = shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
-      bool handled = false;
-      if (shapeChosen == clearShapeOperatorsAct) {
-       const QJsonArray before = shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
-       shapeLayer->clearShapeOperators();
-       const QJsonArray after = shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
-       if (auto* mgr = Artifact::UndoManager::instance()) {
-        mgr->push(std::make_unique<ShapeOperatorListUndoCommand>(layer, before, after));
-       }
-       impl_->requestRender();
-       event->accept();
-       return;
-      }
+   if (!menu.actions().isEmpty()) {
+    QAction* shapeChosen = menu.exec(event->globalPos());
+    if (shapeChosen) {
+     bool handled = false;
+     if (shapeChosen == clearShapeOperatorsAct) {
+      shapeLayer->clearShapeOperators();
+      impl_->requestRender();
+      event->accept();
+      return;
+     }
      if (shapeChosen == addTrimPathsAct) {
       shapeLayer->addShapeOperator(ArtifactCore::ShapeOperatorType::TrimPaths);
       handled = true;
@@ -3713,23 +3317,12 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        handled = true;
       }
      } else if (shapeLayer->hasCustomPolygon()) {
-     if (shapeChosen == deletePointAct) {
+      if (shapeChosen == deletePointAct) {
        impl_->beginShapeEditTransaction(layer);
        handled = impl_->deleteHoveredShapeVertex(layer);
       } else if (shapeChosen == insertPointAct) {
        impl_->beginShapeEditTransaction(layer);
        handled = impl_->insertPointOnHoveredShapeSegment(layer, impl_->shapeContextMenuCanvasPos_);
-      } else if (shapeChosen == duplicatePointAct) {
-       impl_->beginShapeEditTransaction(layer);
-       auto points = shapeLayer->customPolygonPoints();
-       const int vi = impl_->hoveredShapeVertexIndex_;
-       if (vi >= 0 && vi < static_cast<int>(points.size())) {
-        const int insertIndex = std::clamp(vi + 1, 0, static_cast<int>(points.size()));
-        points.insert(points.begin() + insertIndex, points[static_cast<size_t>(vi)]);
-        shapeLayer->setCustomPolygonPoints(points, shapeLayer->customPolygonClosed());
-        impl_->markShapeEditDirty();
-        handled = true;
-       }
       } else if (shapeChosen == splitSegmentAct) {
        impl_->beginShapeEditTransaction(layer);
        handled = impl_->splitHoveredShapeSegment(layer);
@@ -3743,15 +3336,28 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
         handled = true;
        }
       } else if (shapeChosen == convertToPathAct) {
-       impl_->beginPathEditTransaction(layer);
        const auto pts = shapeLayer->customPolygonPoints();
+       const bool closed = shapeLayer->customPolygonClosed();
+       const auto beforePath = shapeLayer->customPathVertices();
+       const bool beforePathClosed = shapeLayer->customPathClosed();
        std::vector<CustomPathVertex> verts;
        verts.reserve(pts.size());
        for (const auto &p : pts)
         verts.push_back({p, QPointF(0, 0), QPointF(0, 0), false});
+       const auto afterPath = verts;
+       shapeLayer->setCustomPathVertices(verts, closed);
        shapeLayer->clearCustomPolygonPoints();
-       shapeLayer->setCustomPathVertices(verts, shapeLayer->customPolygonClosed());
-       impl_->markPathEditDirty();
+       impl_->hoveredPathVertexIndex_ = verts.empty() ? -1 : 0;
+       impl_->hoveredPathTangentIndex_ = -1;
+       impl_->hoveredPathTangentType_ = 0;
+       if (auto* undo = UndoManager::instance()) {
+        undo->push(std::make_unique<ShapeConversionCommand>(
+            layer,
+            pts, closed,
+            beforePath, beforePathClosed,
+            std::vector<QPointF>{}, false,
+            afterPath, closed));
+       }
        handled = true;
       }
       if (handled) {
@@ -3762,42 +3368,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
       }
       impl_->commitPathEditTransaction();
      } else if (shapeLayer->hasCustomPath()) {
-      if (shapeChosen == pathInsertPointAct) {
-       impl_->beginPathEditTransaction(layer);
-       auto verts = shapeLayer->customPathVertices();
-       const int segIndex = impl_->hoveredPathSegmentIndex_ >= 0
-                                 ? impl_->hoveredPathSegmentIndex_
-                                 : impl_->hoveredPathVertexIndex_;
-       if (segIndex >= 0 && segIndex < static_cast<int>(verts.size()) && verts.size() >= 2) {
-        const int nextIndex = shapeLayer->customPathClosed()
-                                  ? (segIndex + 1) % static_cast<int>(verts.size())
-                                  : segIndex + 1;
-        if (nextIndex >= 0 && nextIndex < static_cast<int>(verts.size())) {
-         const CustomPathVertex& a = verts[static_cast<size_t>(segIndex)];
-         const CustomPathVertex& b = verts[static_cast<size_t>(nextIndex)];
-         CustomPathVertex inserted;
-         inserted.pos = (a.pos + b.pos) * 0.5;
-         inserted.inTangent = QPointF(0, 0);
-         inserted.outTangent = QPointF(0, 0);
-         inserted.smooth = false;
-         verts.insert(verts.begin() + nextIndex, inserted);
-         shapeLayer->setCustomPathVertices(verts, shapeLayer->customPathClosed());
-         impl_->markPathEditDirty();
-         handled = true;
-         }
-       }
-      } else if (shapeChosen == pathDuplicatePointAct) {
-       impl_->beginPathEditTransaction(layer);
-       auto verts = shapeLayer->customPathVertices();
-       const int vi = impl_->hoveredPathVertexIndex_;
-       if (vi >= 0 && vi < static_cast<int>(verts.size())) {
-        const int insertIndex = std::clamp(vi + 1, 0, static_cast<int>(verts.size()));
-        verts.insert(verts.begin() + insertIndex, verts[static_cast<size_t>(vi)]);
-        shapeLayer->setCustomPathVertices(verts, shapeLayer->customPathClosed());
-        impl_->markPathEditDirty();
-        handled = true;
-       }
-      } else if (shapeChosen == pathDeletePointAct) {
+      if (shapeChosen == pathDeletePointAct) {
        impl_->beginPathEditTransaction(layer);
        auto verts = shapeLayer->customPathVertices();
        const int vi = impl_->hoveredPathVertexIndex_;
@@ -3831,54 +3402,62 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
         handled = true;
        }
       } else if (shapeChosen == convertToPolygonAct) {
-       impl_->beginShapeEditTransaction(layer);
        const auto verts = shapeLayer->customPathVertices();
+       const bool closed = shapeLayer->customPathClosed();
+       const auto beforePolygon = shapeLayer->customPolygonPoints();
+       const bool beforePolygonClosed = shapeLayer->customPolygonClosed();
        std::vector<QPointF> pts;
        pts.reserve(verts.size());
        for (const auto &v : verts)
         pts.push_back(v.pos);
+       const auto afterPolygon = pts;
+       shapeLayer->setCustomPolygonPoints(pts, closed);
        shapeLayer->clearCustomPath();
-       shapeLayer->setCustomPolygonPoints(pts, shapeLayer->customPathClosed());
-       impl_->markShapeEditDirty();
+       impl_->hoveredShapeVertexIndex_ = pts.empty() ? -1 : 0;
+       impl_->hoveredShapeSegmentIndex_ = pts.size() >= 2 ? 0 : -1;
+       if (auto* undo = UndoManager::instance()) {
+        undo->push(std::make_unique<ShapeConversionCommand>(
+            layer,
+            beforePolygon, beforePolygonClosed,
+            verts, closed,
+            afterPolygon, closed,
+            std::vector<Artifact::CustomPathVertex>{}, false));
+       }
        handled = true;
       }
-       if (handled) {
-        impl_->commitShapeEditTransaction();
-        impl_->requestRender();
-        event->accept();
-        return;
-       }
-      }
       if (handled) {
-       const QJsonArray afterOperators = shapeLayer->toJson().value(QStringLiteral("shapeOperators")).toArray();
-       if (auto* mgr = Artifact::UndoManager::instance()) {
-        mgr->push(std::make_unique<ShapeOperatorListUndoCommand>(layer, beforeOperators, afterOperators));
-       }
+       impl_->commitShapeEditTransaction();
        impl_->requestRender();
        event->accept();
        return;
       }
      }
+     if (handled) {
+      impl_->requestRender();
+      event->accept();
+      return;
+     }
     }
    }
-  QMenu bgMenu(this);
-  QAction* alphaAct = bgMenu.addAction(QStringLiteral("Alpha"));
-  QAction* solidAct = bgMenu.addAction(QStringLiteral("Solid"));
-  QAction* mayaAct = bgMenu.addAction(QStringLiteral("Maya Gradient"));
-  alphaAct->setCheckable(true);
-  solidAct->setCheckable(true);
-  mayaAct->setCheckable(true);
-  switch (impl_->backgroundMode_) {
-   case LayerBackgroundMode::Alpha:
-    alphaAct->setChecked(true);
-    break;
-   case LayerBackgroundMode::Solid:
-    solidAct->setChecked(true);
-    break;
-   case LayerBackgroundMode::MayaGradient:
-    mayaAct->setChecked(true);
-    break;
   }
+  QMenu bgMenu(this);
+ QAction* alphaAct = bgMenu.addAction(QStringLiteral("Alpha"));
+ QAction* solidAct = bgMenu.addAction(QStringLiteral("Solid"));
+ QAction* mayaAct = bgMenu.addAction(QStringLiteral("Maya Gradient"));
+ alphaAct->setCheckable(true);
+ solidAct->setCheckable(true);
+ mayaAct->setCheckable(true);
+ switch (impl_->backgroundMode_) {
+  case LayerBackgroundMode::Alpha:
+   alphaAct->setChecked(true);
+   break;
+  case LayerBackgroundMode::Solid:
+   solidAct->setChecked(true);
+   break;
+  case LayerBackgroundMode::MayaGradient:
+   mayaAct->setChecked(true);
+   break;
+ }
 
  QAction* chosen = bgMenu.exec(event->globalPos());
  if (!chosen) {
@@ -4005,30 +3584,23 @@ void ArtifactLayerEditorWidgetV2::setTargetLayer(const LayerID& id)
      }
      if (isShapeEditingMode(impl_->editMode_)) {
       if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
-       if (!shape->hasCustomPolygon() && !shape->hasCustomPath()) {
-         if (shape->shapeType() == ShapeType::Ellipse) {
-          const auto verts = buildShapeEditSeedPath(*shape);
-          if (verts.size() >= 3) {
-           shape->setCustomPathVertices(verts, true);
-          }
-         } else {
-          const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
-          if (points.size() >= 3) {
-           shape->setCustomPolygonPoints(points, true);
-          }
-         }
-         }
+       if (!shape->hasCustomPolygon()) {
+        const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
+        if (points.size() >= 3) {
+         shape->setCustomPolygonPoints(points, true);
+        }
         }
        }
-       impl_->syncTransformGizmo(layer);
-       impl_->renderer_->fitToViewport();
-       impl_->zoomLevel_ = impl_->renderer_->getZoom();
-       impl_->requestRender();
-       return;
       }
-    }
+      impl_->syncTransformGizmo(layer);
+      impl_->renderer_->fitToViewport();
+      impl_->zoomLevel_ = impl_->renderer_->getZoom();
+      impl_->requestRender();
+      return;
+     }
    }
-   if (impl_->transformGizmo_) {
+  }
+  if (impl_->transformGizmo_) {
    impl_->transformGizmo_->setLayer(nullptr);
   }
   impl_->renderer_->resetView();
@@ -4112,25 +3684,18 @@ void ArtifactLayerEditorWidgetV2::zoomAroundPoint(const QPointF& viewportPos, fl
     if (auto composition = service->currentComposition().lock()) {
      if (auto layer = composition->layerById(impl_->targetLayerId_)) {
       if (auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer)) {
-       if (!shape->hasCustomPolygon() && !shape->hasCustomPath()) {
-         if (shape->shapeType() == ShapeType::Ellipse) {
-          const auto verts = buildShapeEditSeedPath(*shape);
-          if (verts.size() >= 3) {
-           shape->setCustomPathVertices(verts, true);
-          }
-         } else {
-          const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
-          if (points.size() >= 3) {
-           shape->setCustomPolygonPoints(points, true);
-          }
-         }
+       if (!shape->hasCustomPolygon()) {
+        const std::vector<QPointF> points = buildShapeEditSeedPoints(*shape);
+        if (points.size() >= 3) {
+         shape->setCustomPolygonPoints(points, true);
         }
        }
       }
      }
     }
    }
-   publishModeReadout(impl_->widget_, impl_->editMode_, impl_->displayMode_);
+  }
+  publishModeReadout(impl_->widget_, impl_->editMode_, impl_->displayMode_);
   if (impl_->initialized_ && impl_->renderer_) {
    impl_->requestRender();
   }

@@ -39,6 +39,7 @@ export namespace Artifact {
   // Composite queries
   bool isViewOnly() const;
   bool isPaintMode() const;
+  bool isShapeMode() const;
   bool isAlphaView() const;
 
   // Bind a ToolManager instance for tool-type coordination

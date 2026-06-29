@@ -340,8 +340,8 @@ QString ensureScreenshotSuffix(QString path, const QString& selectedFilter)
 
 QImage captureCompositionScreenshot(CompositionRenderController* controller, QWidget* fallbackWidget)
 {
-  if (controller && controller->renderer()) {
-    const QImage frame = controller->renderer()->readbackToImage();
+  if (controller) {
+    const QImage frame = controller->captureCurrentFrameImage();
     if (!frame.isNull()) {
       return frame;
     }

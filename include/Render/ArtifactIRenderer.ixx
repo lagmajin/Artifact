@@ -104,12 +104,15 @@ public:
   QString rayTracingDebugState() const;
 
   QImage readbackToImage() const;
+  QImage readbackTextureViewToImage(Diligent::ITextureView *textureView) const;
   QImage readbackDepthToImage() const;
   ArtifactCore::MultiChannelImage readbackToMultiChannelImage() const;
 
   // Async readback: returns immediately, calls callback when ready
   using ReadbackCallback = std::function<void(const QImage &)>;
   void readbackToImageAsync(ReadbackCallback callback) const;
+  void readbackTextureViewToImageAsync(Diligent::ITextureView *textureView,
+                                       ReadbackCallback callback) const;
 
   void setClearColor(const FloatColor &color);
   FloatColor getClearColor() const;
@@ -320,6 +323,7 @@ public:
 
   // Offscreen rendering for group layers
   void *createOffscreenTexture(int width, int height);
+  void *createOffscreenDepthTexture(int width, int height);
   void destroyOffscreenTexture(void *textureView);
   void pushRenderTarget(void *textureView);
   void popRenderTarget();
@@ -348,6 +352,7 @@ public:
   Diligent::ITextureView *rayTracingOutputTextureView() const;
   ArtifactCore::IRayTracingManager *rayTracingManager() const;
   void setOverrideRTV(Diligent::ITextureView *rtv);
+  void setOverrideDSV(Diligent::ITextureView *dsv);
 
   void setSceneLights(const std::vector<ArtifactCore::Light> &lights);
   const std::vector<ArtifactCore::Light> &getSceneLights() const;

@@ -176,6 +176,7 @@ public:
     int64_t frame = -1;
     QString filePath;
     ArtifactCore::ImageF32x4_RGBA image;
+    QString compositionId;
   };
   std::mutex previewDiskWriteMutex_;
   std::condition_variable previewDiskWriteCv_;
@@ -231,7 +232,15 @@ public:
         const bool savedToDisk =
             persistPreviewFrameToDisk(task.filePath, task.image);
         QMetaObject::invokeMethod(
-            owner_, [this, frame = task.frame, savedToDisk]() {
+            owner_, [this, frame = task.frame,
+                     compositionId = task.compositionId, savedToDisk]() {
+              const QString currentCompositionId =
+                  currentComposition_ ? currentComposition_->id().toString()
+                                      : QString();
+              if (compositionId.isEmpty() ||
+                  currentCompositionId != compositionId) {
+                return;
+              }
               markFrameOnDisk(frame, savedToDisk);
             },
             Qt::QueuedConnection);
@@ -284,6 +293,13 @@ public:
           const auto publishFrame = [this, position, compositionId, frameNumber,
                                      frameBuffer, hasConcreteFrame,
                                      diskCacheFramePath]() {
+            const QString currentCompositionId =
+                currentComposition_ ? currentComposition_->id().toString()
+                                    : QString();
+            if (compositionId.isEmpty() ||
+                currentCompositionId != compositionId) {
+              return;
+            }
             if (hasConcreteFrame) {
               FrameSkipTracker::instance()->commitFrame(frameNumber);
               storeFrameImageInRam(frameNumber, frameBuffer,
@@ -292,7 +308,7 @@ public:
                 std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
                 previewDiskWriteQueue_.push_back(
                     PreviewDiskWriteTask{frameNumber, diskCacheFramePath,
-                                         frameBuffer});
+                                         frameBuffer, compositionId});
               }
               previewDiskWriteCv_.notify_one();
               markFrameOnDisk(frameNumber, false);
@@ -973,7 +989,10 @@ public:
       {
         std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
         previewDiskWriteQueue_.push_back(
-            PreviewDiskWriteTask{frame, filePath, imageToCpuPreviewFrame(image)});
+            PreviewDiskWriteTask{
+                frame, filePath, imageToCpuPreviewFrame(image),
+                currentComposition_ ? currentComposition_->id().toString()
+                                    : QString()});
       }
       previewDiskWriteCv_.notify_one();
       markFrameOnDisk(frame, false);
@@ -995,8 +1014,16 @@ public:
     storeFrameImageInRam(frame, image, reason);
     if (persistToDisk) {
       const QString filePath = previewDiskCacheFramePath(frame);
-      const bool savedToDisk = persistPreviewFrameToDisk(filePath, image);
-      markFrameOnDisk(frame, savedToDisk);
+      {
+        std::lock_guard<std::mutex> lock(previewDiskWriteMutex_);
+        previewDiskWriteQueue_.push_back(
+            PreviewDiskWriteTask{
+                frame, filePath, image,
+                currentComposition_ ? currentComposition_->id().toString()
+                                    : QString()});
+      }
+      previewDiskWriteCv_.notify_one();
+      markFrameOnDisk(frame, false);
     } else {
       markFrameOnDisk(frame, false);
     }
@@ -2368,6 +2395,14 @@ bool ArtifactPlaybackService::storeCompositionPreviewFrameImage(
   if (!impl_) {
     return false;
   }
+  const QString currentCompositionId =
+      impl_->currentComposition_
+          ? impl_->currentComposition_->id().toString()
+          : QString();
+  if (compositionId.trimmed().isEmpty() ||
+      currentCompositionId != compositionId.trimmed()) {
+    return false;
+  }
 
   const auto summary = impl_->ramPreviewSummary();
   const QString detailReason =
@@ -2402,6 +2437,14 @@ bool ArtifactPlaybackService::storeCompositionPreviewFrameImage(
     const int effectiveDownsample, const QString &renderPath,
     const QString &reason, const bool persistToDisk) {
   if (!impl_) {
+    return false;
+  }
+  const QString currentCompositionId =
+      impl_->currentComposition_
+          ? impl_->currentComposition_->id().toString()
+          : QString();
+  if (compositionId.trimmed().isEmpty() ||
+      currentCompositionId != compositionId.trimmed()) {
     return false;
   }
 
