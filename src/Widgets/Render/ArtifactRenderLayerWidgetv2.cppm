@@ -3540,8 +3540,13 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     splitSegmentAct->setEnabled(impl_->hoveredShapeSegmentIndex_ >= 0);
     deletePointAct->setEnabled(impl_->hoveredShapeVertexIndex_ >= 0);
     toggleClosedAct->setEnabled(shapeLayer->customPolygonClosed() || shapeLayer->customPolygonPoints().size() >= 3);
-    polygonStateAct->setText(QStringLiteral("Polygon State: %1 pts, %2")
-                                  .arg(static_cast<int>(shapeLayer->customPolygonPoints().size()))
+    const auto polygonPointCount = static_cast<int>(shapeLayer->customPolygonPoints().size());
+    const int polygonSegmentCount = shapeLayer->customPolygonClosed()
+                                        ? polygonPointCount
+                                        : std::max(0, polygonPointCount - 1);
+    polygonStateAct->setText(QStringLiteral("Polygon State: %1 pts, %2 segs, %3")
+                                  .arg(polygonPointCount)
+                                  .arg(polygonSegmentCount)
                                   .arg(shapeLayer->customPolygonClosed()
                                            ? QStringLiteral("closed")
                                            : QStringLiteral("open")));
