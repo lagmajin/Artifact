@@ -3393,6 +3393,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* toggleClosedAct = nullptr;
  QAction* convertToPathAct = nullptr;
  QAction* convertToPolygonAct = nullptr;
+ QAction* pathInsertPointAct = nullptr;
  QAction* pathDeletePointAct = nullptr;
  QAction* pathToggleSmoothAct = nullptr;
  QAction* pathToggleClosedAct = nullptr;
@@ -3471,12 +3472,14 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     convertToPathAct = menu.addAction(QStringLiteral("Convert to Editable Path"));
    }
    if (shapeLayer->hasCustomPath()) {
+    pathInsertPointAct = menu.addAction(QStringLiteral("Insert Path Vertex"));
     convertToPolygonAct = menu.addAction(QStringLiteral("Convert to Polygon"));
     pathDeletePointAct = menu.addAction(QStringLiteral("Delete Path Vertex"));
     {
      const auto verts = shapeLayer->customPathVertices();
      const int vi = impl_->hoveredPathVertexIndex_;
      const bool validHover = vi >= 0 && static_cast<size_t>(vi) < verts.size();
+     pathInsertPointAct->setEnabled(validHover && verts.size() >= 2);
      pathDeletePointAct->setEnabled(validHover);
      pathToggleSmoothAct = menu.addAction(validHover && verts[static_cast<size_t>(vi)].smooth
                                               ? QStringLiteral("Make Corner (break tangents)")
@@ -3587,7 +3590,29 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
       }
       impl_->commitPathEditTransaction();
      } else if (shapeLayer->hasCustomPath()) {
-      if (shapeChosen == pathDeletePointAct) {
+      if (shapeChosen == pathInsertPointAct) {
+       impl_->beginPathEditTransaction(layer);
+       auto verts = shapeLayer->customPathVertices();
+       const int vi = impl_->hoveredPathVertexIndex_;
+       if (vi >= 0 && vi < static_cast<int>(verts.size()) && verts.size() >= 2) {
+        const int nextIndex = shapeLayer->customPathClosed()
+                                  ? (vi + 1) % static_cast<int>(verts.size())
+                                  : vi + 1;
+        if (nextIndex >= 0 && nextIndex < static_cast<int>(verts.size())) {
+         const CustomPathVertex& a = verts[static_cast<size_t>(vi)];
+         const CustomPathVertex& b = verts[static_cast<size_t>(nextIndex)];
+         CustomPathVertex inserted;
+         inserted.pos = (a.pos + b.pos) * 0.5;
+         inserted.inTangent = QPointF(0, 0);
+         inserted.outTangent = QPointF(0, 0);
+         inserted.smooth = false;
+         verts.insert(verts.begin() + nextIndex, inserted);
+         shapeLayer->setCustomPathVertices(verts, shapeLayer->customPathClosed());
+         impl_->markPathEditDirty();
+         handled = true;
+        }
+       }
+      } else if (shapeChosen == pathDeletePointAct) {
        impl_->beginPathEditTransaction(layer);
        auto verts = shapeLayer->customPathVertices();
        const int vi = impl_->hoveredPathVertexIndex_;
