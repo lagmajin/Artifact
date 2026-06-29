@@ -2774,9 +2774,15 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
                                    !(event->modifiers().testFlag(Qt::ControlModifier) ||
                                      event->modifiers().testFlag(Qt::AltModifier) ||
                                      event->modifiers().testFlag(Qt::MetaModifier));
+      const bool additiveSelection = event->modifiers().testFlag(Qt::ControlModifier) &&
+                                     !(event->modifiers().testFlag(Qt::ShiftModifier) ||
+                                       event->modifiers().testFlag(Qt::AltModifier) ||
+                                       event->modifiers().testFlag(Qt::MetaModifier));
       impl_->beginPathEditTransaction(layer);
       if (toggleSelection && impl_->selectedPathVertexIndex_ == vi) {
        impl_->selectedPathVertexIndex_ = -1;
+      } else if (additiveSelection && impl_->selectedPathVertexIndex_ != vi) {
+       impl_->selectedPathVertexIndex_ = vi;
       } else {
        impl_->selectedPathVertexIndex_ = vi;
       }
@@ -2813,9 +2819,15 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
                                   !(event->modifiers().testFlag(Qt::ControlModifier) ||
                                     event->modifiers().testFlag(Qt::AltModifier) ||
                                     event->modifiers().testFlag(Qt::MetaModifier));
+     const bool additiveSelection = event->modifiers().testFlag(Qt::ControlModifier) &&
+                                    !(event->modifiers().testFlag(Qt::ShiftModifier) ||
+                                      event->modifiers().testFlag(Qt::AltModifier) ||
+                                      event->modifiers().testFlag(Qt::MetaModifier));
      impl_->beginShapeEditTransaction(layer);
      if (toggleSelection && impl_->selectedShapeVertexIndex_ == vertexIndex) {
       impl_->selectedShapeVertexIndex_ = -1;
+     } else if (additiveSelection && impl_->selectedShapeVertexIndex_ != vertexIndex) {
+      impl_->selectedShapeVertexIndex_ = vertexIndex;
      } else {
       impl_->selectedShapeVertexIndex_ = vertexIndex;
      }
