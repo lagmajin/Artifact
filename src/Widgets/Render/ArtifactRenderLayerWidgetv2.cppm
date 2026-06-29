@@ -3439,9 +3439,13 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
                               static_cast<qreal>(canvasPos.y));
     impl_->shapeContextMenuCanvasPos_ = canvasPoint;
     impl_->updateShapeHover(layer, canvasPoint);
-    const QString hoverSummary = pathHoverHint(layer,
-                                               impl_->hoveredPathVertexIndex_,
-                                               impl_->hoveredPathTangentIndex_);
+    const QString hoverSummary = shapeLayer->hasCustomPath()
+                                     ? pathHoverHint(layer,
+                                                     impl_->hoveredPathVertexIndex_,
+                                                     impl_->hoveredPathTangentIndex_)
+                                     : shapeHoverHint(layer,
+                                                      impl_->hoveredShapeVertexIndex_,
+                                                      impl_->hoveredShapeSegmentIndex_);
     if (!hoverSummary.isEmpty()) {
      QAction* hoverAct = menu.addAction(QStringLiteral("Current Hover: %1").arg(hoverSummary));
      hoverAct->setEnabled(false);
@@ -3449,13 +3453,13 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
 
     insertPointAct = menu.addAction(shapeLayer->hasCustomPath()
                                         ? QStringLiteral("Insert Path Vertex")
-                                        : QStringLiteral("Insert Point"));
+                                        : QStringLiteral("Insert Polygon Vertex"));
     splitSegmentAct = menu.addAction(shapeLayer->hasCustomPath()
                                          ? QStringLiteral("Split Path Segment")
-                                         : QStringLiteral("Split Segment"));
+                                         : QStringLiteral("Split Polygon Segment"));
     deletePointAct = menu.addAction(shapeLayer->hasCustomPath()
                                         ? QStringLiteral("Delete Path Vertex")
-                                        : QStringLiteral("Delete Point"));
+                                        : QStringLiteral("Delete Polygon Vertex"));
     toggleClosedAct = menu.addAction(shapeLayer->customPolygonClosed()
                                          ? QStringLiteral("Open Polygon")
                                          : QStringLiteral("Close Polygon"));
