@@ -1207,6 +1207,14 @@ void ArtifactMainWindow::applyApplicationSettings() {
     const int sz = Accessibility::scaledSize(24);
     impl_->toolBar->setIconSize(QSize(sz, sz));
   }
+
+  // font scale
+  const float fs = Accessibility::fontScale();
+  if (qAbs(fs - 1.0f) > 0.01f) {
+    QFont appFont = QApplication::font();
+    appFont.setPointSizeF(appFont.pointSizeF() * fs);
+    QApplication::setFont(appFont);
+  }
   if (auto *settings = ArtifactCore::ArtifactAppSettings::instance()) {
     setStatusPreviewResolution(settings->previewResolutionPercent());
     ArtifactAbstractLayer::setGlobalLayerCacheEnabled(settings->layerCacheEnabled());

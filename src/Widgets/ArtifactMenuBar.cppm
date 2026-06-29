@@ -196,6 +196,14 @@ ArtifactMenuBar::Impl::Impl(QWidget* mainWindow, ArtifactMenuBar* menuBar)
   menuBar->setLayoutDirection(Qt::RightToLeft);
  }
 
+ // font scale
+ const float fs = Accessibility::fontScale();
+ if (qAbs(fs - 1.0f) > 0.01f) {
+  QFont menuFont = menuBar->font();
+  menuFont.setPointSizeF(menuFont.pointSizeF() * fs);
+  menuBar->setFont(menuFont);
+ }
+
  connect(animationMenu, &ArtifactAnimationMenu::addKeyframeRequested, menuBar, [this]() {
   if (auto* timeline = activeTimelineWidget(mainWindow_)) {
    timeline->addKeyframeAtPlayhead();
