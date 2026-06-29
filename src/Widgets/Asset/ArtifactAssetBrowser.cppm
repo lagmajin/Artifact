@@ -47,10 +47,7 @@ module;
 #include <QMessageBox>
 #include <QInputDialog>
 #include <QFileSystemWatcher>
-#include <QBuffer>
-#include <QIODevice>
 #include <QTimer>
-#include <QToolTip>
 #include <OpenImageIO/imagebuf.h>
 #include <OpenImageIO/imagebufalgo.h>
 #include <OpenImageIO/imageio.h>
@@ -64,6 +61,7 @@ module;
 #include <QAbstractItemView>
 #include <QComboBox>
 #include <QMouseEvent>
+#include <QCursor>
 #include <cstdint>
 #include <atomic>
 #include <algorithm>
@@ -177,8 +175,54 @@ class RecentFolderButton final : public QToolButton {
 
  private:
   QString text_;
-  QString path_;
+ QString path_;
   std::function<void(const QString&)> activate_;
+};
+
+class HoverPreviewPopup final : public QFrame {
+ public:
+  explicit HoverPreviewPopup(QWidget* parent = nullptr) : QFrame(parent) {
+    setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
+    setFrameShape(QFrame::StyledPanel);
+    setFrameShadow(QFrame::Plain);
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(6);
+    title_ = new QLabel(this);
+    title_->setWordWrap(true);
+    preview_ = new QLabel(this);
+    preview_->setAlignment(Qt::AlignCenter);
+    preview_->setMinimumSize(320, 180);
+    preview_->setScaledContents(false);
+    details_ = new QLabel(this);
+    details_->setWordWrap(true);
+    layout->addWidget(title_);
+    layout->addWidget(preview_);
+    layout->addWidget(details_);
+  }
+
+  void showFile(const QString& filePath, const QPoint& globalPos, const QIcon& icon, const QFileInfo& info) {
+    const QSize targetSize(480, 270);
+    QPixmap pixmap = icon.isNull() ? QPixmap() : icon.pixmap(targetSize);
+    if (pixmap.isNull()) {
+      pixmap = QPixmap(targetSize);
+      pixmap.fill(Qt::transparent);
+    }
+    preview_->setPixmap(pixmap.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    title_->setText(info.fileName().isEmpty() ? filePath : info.fileName());
+    details_->setText(QStringLiteral("%1\n%2")
+                          .arg(info.exists() ? info.absoluteFilePath() : QStringLiteral("Missing"))
+                          .arg(info.isDir() ? QStringLiteral("Folder") : info.suffix().toUpper()));
+    adjustSize();
+    move(globalPos + QPoint(18, 18));
+    show();
+    raise();
+  }
+
+ private:
+  QLabel* title_ = nullptr;
+  QLabel* preview_ = nullptr;
+  QLabel* details_ = nullptr;
 };
 
 #ifdef _WIN32
@@ -858,6 +902,10 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   };
   QHash<QString, PendingWaveJob> pendingWaveJobs_;
   QSet<QString> failedWavePaths_;  // Don't retry failed loads
+  HoverPreviewPopup* hoverPreviewPopup_ = nullptr;
+  QTimer* hoverPreviewTimer_ = nullptr;
+  QString hoverPreviewPath_;
+  QPoint hoverPreviewGlobalPos_;
 
   // Optimized: partial audio loading for thumbnails
   // Only load first N seconds for waveform thumbnail
@@ -883,10 +931,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
    QLabel* leftHubSelectionLabel_ = nullptr;
    QVector<RecentFolderButton*> recentFolderButtons_;
    QLabel* fileInfoLabel_ = nullptr;  // File details display
-  QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
-   QTimer* hoverPreviewTimer_ = nullptr;
-   QString hoverPreviewPath_;
-   QPoint hoverPreviewGlobalPos_;
+   QSlider* thumbnailSizeSlider_ = nullptr;  // Thumbnail size adjustment
     QString currentDirectoryPath_;
     QString currentFileTypeFilter_ = "all";
     QString currentStatusFilter_ = "all";
@@ -907,6 +952,9 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   QIcon getFileIcon(const QString& fileName, const QString& filePath);
   void clearThumbnailCache();
   void startAsyncPreviewThumbnailGeneration(const QString& filePath);
+  void showHoverPreview(const QString& filePath, const QPoint& globalPos);
+  void hideHoverPreview();
+  void scheduleHoverPreview(const QString& filePath, const QPoint& globalPos);
    bool isImageFile(const QString& fileName) const;
    bool isVideoFile(const QString& fileName) const;
    bool isAudioFile(const QString& fileName) const;
@@ -926,8 +974,6 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   void refreshUnusedAssetCache();
   void refreshLeftHubSummary();
   QString syncStateText() const;
-   void scheduleHoverPreview(const QString& filePath, const QPoint& globalPos);
-   void hideHoverPreview();
    int thumbnailSizePx() const;
    void setThumbnailSizePx(int value);
    QFileSystemWatcher* fsWatcher_ = nullptr;
@@ -964,11 +1010,16 @@ ArtifactAssetBrowser::Impl::Impl()
    }
    defaultFontIcon_ = style->standardIcon(QStyle::SP_FileDialogDetailedView);
   }
- }
+  hoverPreviewTimer_ = new QTimer();
+  hoverPreviewTimer_->setSingleShot(true);
+  hoverPreviewPopup_ = new HoverPreviewPopup();
+}
 
 ArtifactAssetBrowser::Impl::~Impl()
 {
   thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
+  delete hoverPreviewTimer_;
+  delete hoverPreviewPopup_;
 
   for (auto it = pendingPreviewJobs_.begin(); it != pendingPreviewJobs_.end(); ++it) {
     if (auto* watcher = it.value().watcher) {
@@ -1198,66 +1249,6 @@ QString ArtifactAssetBrowser::Impl::syncStateText() const
   return svc ? QStringLiteral("Status: Project linked") : QStringLiteral("Status: Open a folder to browse assets");
 }
 
-void ArtifactAssetBrowser::Impl::hideHoverPreview()
-{
-  hoverPreviewPath_.clear();
-  QToolTip::hideText();
-}
-
-void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, const QPoint& globalPos)
-{
-  if (filePath.isEmpty()) {
-    hideHoverPreview();
-    return;
-  }
-
-  hoverPreviewPath_ = filePath;
-  hoverPreviewGlobalPos_ = globalPos;
-  if (!hoverPreviewTimer_) {
-    hoverPreviewTimer_ = new QTimer(owner_);
-    hoverPreviewTimer_->setSingleShot(true);
-    QObject::connect(hoverPreviewTimer_, &QTimer::timeout, owner_, [this]() {
-      if (hoverPreviewPath_.isEmpty()) {
-        return;
-      }
-      const QFileInfo info(hoverPreviewPath_);
-      if (!info.exists()) {
-        return;
-      }
-      QImage previewImage;
-      if (isImageFile(info.fileName())) {
-        QImageReader reader(hoverPreviewPath_);
-        reader.setAutoTransform(true);
-        previewImage = reader.read();
-      } else if (isVideoFile(info.fileName())) {
-        previewImage = generateThumbnail(hoverPreviewPath_).pixmap(thumbnailSize_).toImage();
-      } else if (isAudioFile(info.fileName())) {
-        previewImage = generateThumbnail(hoverPreviewPath_).pixmap(thumbnailSize_).toImage();
-      }
-
-      QString html = QStringLiteral("<div style='background:#20242a;color:#f0f0f0;padding:8px;'>");
-      html += QStringLiteral("<div style='font-weight:600;margin-bottom:6px;'>%1</div>")
-                  .arg(info.fileName().toHtmlEscaped());
-      html += QStringLiteral("<div style='margin-bottom:6px;'>%1</div>").arg(info.absoluteFilePath().toHtmlEscaped());
-      if (previewImage.isNull()) {
-        html += QStringLiteral("<div style='opacity:0.8;'>No preview available</div>");
-      } else {
-        const QImage scaled = previewImage.scaled(QSize(320, 240), Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        QByteArray bytes;
-        QBuffer buffer(&bytes);
-        buffer.open(QIODevice::WriteOnly);
-        scaled.save(&buffer, "PNG");
-        const QString encoded = QString::fromLatin1(bytes.toBase64());
-        html += QStringLiteral("<img style='max-width:320px;max-height:240px;border:1px solid #444;' src='data:image/png;base64,%1'/>")
-                    .arg(encoded);
-      }
-      html += QStringLiteral("</div>");
-      QToolTip::showText(hoverPreviewGlobalPos_, html, owner_);
-    });
-  }
-  hoverPreviewTimer_->start(300);
-}
-
 QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
 {
  const QString suffix = QFileInfo(fileName).suffix().toLower();
@@ -1435,8 +1426,8 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
   return generateThumbnail(filePath);
  }
 
- void ArtifactAssetBrowser::Impl::clearThumbnailCache()
- {
+void ArtifactAssetBrowser::Impl::clearThumbnailCache()
+{
   thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
   thumbnailCache_.clear();
   failedPreviewPaths_.clear();
@@ -1623,6 +1614,42 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    unusedAssetPaths_.insert(QDir::cleanPath(path));
    unusedAssetPaths_.insert(QDir::cleanPath(canonicalPath));
   }
+}
+
+void ArtifactAssetBrowser::Impl::hideHoverPreview()
+{
+  if (hoverPreviewTimer_) {
+    hoverPreviewTimer_->stop();
+  }
+  if (hoverPreviewPopup_) {
+    hoverPreviewPopup_->hide();
+  }
+  hoverPreviewPath_.clear();
+}
+
+void ArtifactAssetBrowser::Impl::showHoverPreview(const QString& filePath, const QPoint& globalPos)
+{
+  if (!hoverPreviewPopup_ || filePath.isEmpty()) {
+    return;
+  }
+  const QFileInfo info(filePath);
+  const QIcon icon = generateThumbnail(filePath);
+  hoverPreviewPopup_->showFile(filePath, globalPos, icon, info);
+}
+
+void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, const QPoint& globalPos)
+{
+  if (!hoverPreviewTimer_) {
+    return;
+  }
+  hoverPreviewPath_ = filePath;
+  hoverPreviewGlobalPos_ = globalPos;
+  hoverPreviewTimer_->stop();
+  QObject::disconnect(hoverPreviewTimer_, nullptr, nullptr, nullptr);
+  QObject::connect(hoverPreviewTimer_, &QTimer::timeout, [this]() {
+    showHoverPreview(hoverPreviewPath_, hoverPreviewGlobalPos_);
+  });
+  hoverPreviewTimer_->start(300);
 }
 
   void ArtifactAssetBrowser::Impl::syncDirectorySelection()
@@ -1956,52 +1983,26 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
     if (a.isFolder && !b.isFolder) return true;
     if (!a.isFolder && b.isFolder) return false;
 
-    auto compareNames = [](const QString& lhs, const QString& rhs) {
-      return QString::localeAwareCompare(lhs, rhs);
-    };
-    auto compareDates = [](const QString& lhsPath, const QString& rhsPath) {
-      const QFileInfo infoA(lhsPath);
-      const QFileInfo infoB(rhsPath);
-      const QDateTime dateA = infoA.lastModified();
-      const QDateTime dateB = infoB.lastModified();
-      return dateA < dateB ? -1 : (dateA > dateB ? 1 : 0);
-    };
-    auto compareSizes = [](const QString& lhsPath, const QString& rhsPath) {
-      const qint64 sizeA = QFileInfo(lhsPath).size();
-      const qint64 sizeB = QFileInfo(rhsPath).size();
-      return sizeA < sizeB ? -1 : (sizeA > sizeB ? 1 : 0);
-    };
-
-    const QString aName = a.name.toQString();
-    const QString bName = b.name.toQString();
-    const QString aType = a.type.toQString();
-    const QString bType = b.type.toQString();
-    const QString aPath = a.path.toQString();
-    const QString bPath = b.path.toQString();
-
-    auto fallback = [&]() {
-      int result = compareNames(aName, bName);
-      if (result != 0) return result < 0;
-      return compareNames(aPath, bPath) < 0;
-    };
-
     if (currentSortBy_ == "name") {
-     int result = compareNames(aName, bName);
+     int result = a.name.toQString().compare(b.name.toQString(), Qt::CaseInsensitive);
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "date") {
-     int result = compareDates(aPath, bPath);
+     QFileInfo infoA(a.path.toQString());
+     QFileInfo infoB(b.path.toQString());
+     QDateTime dateA = infoA.lastModified();
+     QDateTime dateB = infoB.lastModified();
+     int result = dateA < dateB ? -1 : (dateA > dateB ? 1 : 0);
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "size") {
-     int result = compareSizes(aPath, bPath);
+     qint64 sizeA = QFileInfo(a.path.toQString()).size();
+     qint64 sizeB = QFileInfo(b.path.toQString()).size();
+     int result = sizeA < sizeB ? -1 : (sizeA > sizeB ? 1 : 0);
      return sortAscending_ ? result < 0 : result > 0;
     } else if (currentSortBy_ == "type") {
-     int result = compareNames(aType, bType);
-     if (result == 0) {
-      result = compareNames(aName, bName);
-     }
+     int result = a.type.toQString().compare(b.type.toQString(), Qt::CaseInsensitive);
      return sortAscending_ ? result < 0 : result > 0;
     }
-    return fallback();
+    return a.name.toQString().compare(b.name.toQString(), Qt::CaseInsensitive) < 0;
    });
 
    assetModel_->setItems(items);
@@ -2253,12 +2254,10 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   fileView->setDragDropMode(QAbstractItemView::DragDrop);
   fileView->setDefaultDropAction(Qt::CopyAction);
   fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
-  fileView->setMouseTracking(true);
-  if (fileView->viewport()) {
-    fileView->viewport()->setMouseTracking(true);
-    fileView->viewport()->installEventFilter(this);
-  }
   fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu
+  fileView->setMouseTracking(true);
+  fileView->viewport()->setMouseTracking(true);
+  fileView->viewport()->installEventFilter(this);
   applyAssetBrowserViewMode(fileView, QListView::IconMode,
                             impl_->thumbnailSizePx());
 
@@ -2614,32 +2613,34 @@ bool ArtifactAssetBrowser::eventFilter(QObject* watched, QEvent* event)
    if (keyEvent->key() == Qt::Key_Escape && impl_->searchEdit_ && !impl_->searchEdit_->text().isEmpty()) {
     impl_->searchEdit_->clear();
     return true;
-   }
+    }
   }
 
   if (impl_ && impl_->fileView_ && watched == impl_->fileView_->viewport() && event) {
     switch (event->type()) {
-    case QEvent::MouseMove: {
-      auto* mouseEvent = static_cast<QMouseEvent*>(event);
-      const QModelIndex index = impl_->fileView_->indexAt(mouseEvent->pos());
-      if (!index.isValid()) {
+      case QEvent::Leave:
         impl_->hideHoverPreview();
         break;
-      }
-      const AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
-      const QString filePath = item.path.toQString();
-      if (filePath.isEmpty() || item.isFolder) {
-        impl_->hideHoverPreview();
+      case QEvent::MouseMove: {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (!mouseEvent) {
+          break;
+        }
+        const QModelIndex index = impl_->fileView_->indexAt(mouseEvent->pos());
+        if (!index.isValid()) {
+          impl_->hideHoverPreview();
+          break;
+        }
+        const AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
+        const QString filePath = item.path.toQString();
+        if (filePath.isEmpty() || filePath == impl_->hoverPreviewPath_) {
+          break;
+        }
+        impl_->scheduleHoverPreview(filePath, mouseEvent->globalPosition().toPoint());
         break;
       }
-      impl_->scheduleHoverPreview(filePath, mouseEvent->globalPosition().toPoint());
-      break;
-    }
-    case QEvent::Leave:
-      impl_->hideHoverPreview();
-      break;
-    default:
-      break;
+      default:
+        break;
     }
   }
 
@@ -2964,7 +2965,7 @@ if (item.isFolder) {
     });
    }
 
-  // Relink action for footage items
+// Relink action for footage items
 if (!item.isFolder) {
   addAction(allMenu, QStringLiteral("Relink Selected Footage..."), [this, filePath]() {
     if (filePath.isEmpty()) return;
@@ -2980,62 +2981,6 @@ if (!item.isFolder) {
     }
   });
 }
-
-  if (!item.isFolder) {
-    addAction(frequentMenu, QStringLiteral("Find References"), [this, filePath]() {
-      auto* svc = ArtifactProjectService::instance();
-      if (!svc) {
-        QMessageBox::information(this, QStringLiteral("Find References"),
-                                 QStringLiteral("ProjectService is not available."));
-        return;
-      }
-
-      const auto project = svc->getCurrentProjectSharedPtr();
-      if (!project) {
-        QMessageBox::information(this, QStringLiteral("Find References"),
-                                 QStringLiteral("No active project."));
-        return;
-      }
-
-      const QString canonicalTarget = QFileInfo(filePath).canonicalFilePath().isEmpty()
-          ? QFileInfo(filePath).absoluteFilePath()
-          : QFileInfo(filePath).canonicalFilePath();
-      QStringList refs;
-      std::function<void(ProjectItem*)> walk = [&](ProjectItem* node) {
-        if (!node) {
-          return;
-        }
-        if (node->type() == eProjectItemType::Footage) {
-          auto* footage = static_cast<FootageItem*>(node);
-          const QString candidate = QFileInfo(footage->filePath).canonicalFilePath().isEmpty()
-              ? QFileInfo(footage->filePath).absoluteFilePath()
-              : QFileInfo(footage->filePath).canonicalFilePath();
-          if (QDir::cleanPath(candidate) == QDir::cleanPath(canonicalTarget)) {
-            refs << QStringLiteral("%1").arg(footage->name.toQString());
-          }
-        }
-        for (auto* child : node->children) {
-          walk(child);
-        }
-      };
-      for (auto* root : project->projectItems()) {
-        walk(root);
-      }
-
-      if (refs.isEmpty()) {
-        QMessageBox::information(this, QStringLiteral("Find References"),
-                                 QStringLiteral("No project references found."));
-        return;
-      }
-      QMessageBox::information(this, QStringLiteral("Find References"),
-                               QStringLiteral("Referenced by:\n%1").arg(refs.join(QStringLiteral("\n"))));
-    });
-
-    addAction(frequentMenu, QStringLiteral("Select Unused"), [this]() {
-      impl_->currentStatusFilter_ = "unused";
-      impl_->applyFilters();
-    });
-  }
 
   // Interpret Footage action for media files
   if (!item.isFolder && (impl_->isVideoFile(filePath) || impl_->isImageFile(filePath))) {
