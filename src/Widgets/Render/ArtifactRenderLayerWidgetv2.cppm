@@ -3549,7 +3549,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
                                             : impl_->hoveredShapeSegmentIndex_ >= 0
                                                   ? QStringLiteral("segment %1").arg(impl_->hoveredShapeSegmentIndex_ + 1)
                                                   : QStringLiteral("none");
-    polygonStateAct->setText(QStringLiteral("Polygon State: %1 pts, %2 segs, %3, hover %4")
+    polygonStateAct->setText(QStringLiteral("Polygon Editing: %1 pts, %2 segs, %3, hover %4")
                                   .arg(polygonPointCount)
                                   .arg(polygonSegmentCount)
                                   .arg(shapeLayer->customPolygonClosed()
@@ -3575,7 +3575,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
       if (v.inTangent != QPointF(0, 0) || v.outTangent != QPointF(0, 0)) {
        ++tangentCount;
       }
-     }
+    }
     const QString pathHoverSummary = impl_->hoveredPathVertexIndex_ >= 0
                                          ? QStringLiteral("vertex %1").arg(impl_->hoveredPathVertexIndex_ + 1)
                                          : impl_->hoveredPathSegmentIndex_ >= 0
@@ -3583,7 +3583,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
                                                : impl_->hoveredPathTangentIndex_ >= 0
                                                      ? QStringLiteral("tangent %1").arg(impl_->hoveredPathTangentIndex_ + 1)
                                                      : QStringLiteral("none");
-    pathStateAct->setText(QStringLiteral("Path Summary: %1 verts, %2 tangents, %3, hover %4")
+    pathStateAct->setText(QStringLiteral("Path Editing: %1 verts, %2 tangents, %3, hover %4")
                                .arg(static_cast<int>(verts.size()))
                                .arg(tangentCount)
                                .arg(shapeLayer->customPathClosed()
