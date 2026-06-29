@@ -835,6 +835,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   int draggingPathVertexIndex_ = -1;
   int draggingPathTangentType_ = 0; // 0=in, 1=out
   int hoveredPathVertexIndex_ = -1;
+  int hoveredPathSegmentIndex_ = -1;
   int hoveredPathTangentIndex_ = -1;
   int hoveredPathTangentType_ = 0;
   bool pathEditPending_ = false;
@@ -854,6 +855,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   void markPathEditDirty();
   void commitPathEditTransaction();
   bool hitTestCustomPathVertex(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& vertexIndex) const;
+  bool hitTestCustomPathSegment(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& segmentIndex) const;
   bool hitTestCustomPathTangent(const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& vertexIndex, int& tangentType) const;
   
   void startRenderLoop();
@@ -1728,6 +1730,48 @@ bool ArtifactLayerEditorWidgetV2::Impl::hitTestCustomPathVertex(
   if (std::sqrt(dx * dx + dy * dy) <= snapR) {
    vertexIndex = i;
    return true;
+  }
+ }
+ return false;
+}
+
+bool ArtifactLayerEditorWidgetV2::Impl::hitTestCustomPathSegment(
+    const ArtifactAbstractLayerPtr& layer, const QPointF& canvasPos, int& segmentIndex) const
+{
+ if (!layer || !renderer_) return false;
+ auto shape = std::dynamic_pointer_cast<ArtifactShapeLayer>(layer);
+ if (!shape || !shape->hasCustomPath()) return false;
+ const auto verts = shape->customPathVertices();
+ const int n = static_cast<int>(verts.size());
+ if (n < 2) return false;
+ const QTransform gt = layer->getGlobalTransform();
+ const float zoom = renderer_->getZoom();
+ const float threshold = 8.0f / (zoom > 0.001f ? zoom : 1.0f);
+ auto distToSegment = [](const QPointF& p, const QPointF& a, const QPointF& b) {
+  const QPointF ab = b - a;
+  const QPointF ap = p - a;
+  const double len2 = ab.x() * ab.x() + ab.y() * ab.y();
+  if (len2 <= 1e-9) return std::hypot(ap.x(), ap.y());
+  const double t = std::clamp((ap.x() * ab.x() + ap.y() * ab.y()) / len2, 0.0, 1.0);
+  const QPointF proj = a + ab * t;
+  return std::hypot(p.x() - proj.x(), p.y() - proj.y());
+ };
+ for (int i = 0; i < n; ++i) {
+  const int j = i + 1;
+  if (j >= n) {
+   if (!shape->customPathClosed()) {
+    break;
+   }
+  }
+  const int next = j % n;
+  const QPointF a = gt.map(verts[static_cast<size_t>(i)].pos);
+  const QPointF b = gt.map(verts[static_cast<size_t>(next)].pos);
+  if (distToSegment(canvasPos, a, b) <= threshold) {
+   segmentIndex = i;
+   return true;
+  }
+  if (!shape->customPathClosed() && next == 0) {
+   break;
   }
  }
  return false;
@@ -3257,20 +3301,30 @@ void ArtifactLayerEditorWidgetV2::mouseReleaseEvent(QMouseEvent* event)
      }
      // Hover update for path vertices/tangents
      const int prevVi = impl_->hoveredPathVertexIndex_;
+     const int prevSi = impl_->hoveredPathSegmentIndex_;
      const int prevTi = impl_->hoveredPathTangentIndex_;
      int vi = -1, ti = -1, tt = 0;
      if (impl_->hitTestCustomPathTangent(layer, canvasPoint, ti, tt)) {
       impl_->hoveredPathVertexIndex_ = -1;
+      impl_->hoveredPathSegmentIndex_ = -1;
       impl_->hoveredPathTangentIndex_ = ti;
       impl_->hoveredPathTangentType_ = tt;
      } else if (impl_->hitTestCustomPathVertex(layer, canvasPoint, vi)) {
       impl_->hoveredPathVertexIndex_ = vi;
+      impl_->hoveredPathSegmentIndex_ = -1;
+      impl_->hoveredPathTangentIndex_ = -1;
+     } else if (impl_->hitTestCustomPathSegment(layer, canvasPoint, vi)) {
+      impl_->hoveredPathVertexIndex_ = -1;
+      impl_->hoveredPathSegmentIndex_ = vi;
       impl_->hoveredPathTangentIndex_ = -1;
      } else {
       impl_->hoveredPathVertexIndex_ = -1;
+      impl_->hoveredPathSegmentIndex_ = -1;
       impl_->hoveredPathTangentIndex_ = -1;
      }
-     if (prevVi != impl_->hoveredPathVertexIndex_ || prevTi != impl_->hoveredPathTangentIndex_) {
+     if (prevVi != impl_->hoveredPathVertexIndex_ ||
+         prevSi != impl_->hoveredPathSegmentIndex_ ||
+         prevTi != impl_->hoveredPathTangentIndex_) {
       impl_->requestRender();
      }
      const QString hint = pathHoverHint(layer,
@@ -3479,7 +3533,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
      const auto verts = shapeLayer->customPathVertices();
      const int vi = impl_->hoveredPathVertexIndex_;
      const bool validHover = vi >= 0 && static_cast<size_t>(vi) < verts.size();
-     pathInsertPointAct->setEnabled(validHover && verts.size() >= 2);
+     pathInsertPointAct->setEnabled((validHover || impl_->hoveredPathSegmentIndex_ >= 0) && verts.size() >= 2);
      pathDeletePointAct->setEnabled(validHover);
      pathToggleSmoothAct = menu.addAction(validHover && verts[static_cast<size_t>(vi)].smooth
                                               ? QStringLiteral("Make Corner (break tangents)")
@@ -3593,13 +3647,15 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
       if (shapeChosen == pathInsertPointAct) {
        impl_->beginPathEditTransaction(layer);
        auto verts = shapeLayer->customPathVertices();
-       const int vi = impl_->hoveredPathVertexIndex_;
-       if (vi >= 0 && vi < static_cast<int>(verts.size()) && verts.size() >= 2) {
+       const int segIndex = impl_->hoveredPathSegmentIndex_ >= 0
+                                 ? impl_->hoveredPathSegmentIndex_
+                                 : impl_->hoveredPathVertexIndex_;
+       if (segIndex >= 0 && segIndex < static_cast<int>(verts.size()) && verts.size() >= 2) {
         const int nextIndex = shapeLayer->customPathClosed()
-                                  ? (vi + 1) % static_cast<int>(verts.size())
-                                  : vi + 1;
+                                  ? (segIndex + 1) % static_cast<int>(verts.size())
+                                  : segIndex + 1;
         if (nextIndex >= 0 && nextIndex < static_cast<int>(verts.size())) {
-         const CustomPathVertex& a = verts[static_cast<size_t>(vi)];
+         const CustomPathVertex& a = verts[static_cast<size_t>(segIndex)];
          const CustomPathVertex& b = verts[static_cast<size_t>(nextIndex)];
          CustomPathVertex inserted;
          inserted.pos = (a.pos + b.pos) * 0.5;
