@@ -1298,7 +1298,7 @@ QString pathHoverHint(const ArtifactAbstractLayerPtr& layer,
  const auto verts = shape->customPathVertices();
  const bool validVertex = vertexIndex >= 0 && vertexIndex < static_cast<int>(verts.size());
  if (segmentIndex >= 0) {
-  return QStringLiteral("Path segment");
+  return QStringLiteral("Path segment %1").arg(segmentIndex + 1);
  }
  if (tangentIndex >= 0) {
   return tangentIndex == 0
