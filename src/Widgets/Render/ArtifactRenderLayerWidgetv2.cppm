@@ -759,6 +759,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   int draggingShapeVertexIndex_ = -1;
   int hoveredShapeVertexIndex_ = -1;
   int hoveredShapeSegmentIndex_ = -1;
+  int selectedShapeVertexIndex_ = -1;
   QPointF shapeContextMenuCanvasPos_;
   bool shapeEditPending_ = false;
   bool shapeEditDirty_ = false;
@@ -837,6 +838,7 @@ void drawMaskSolidHandle(ArtifactIRenderer* renderer,
   int hoveredPathVertexIndex_ = -1;
   int hoveredPathSegmentIndex_ = -1;
   int hoveredPathTangentIndex_ = -1;
+  int selectedPathVertexIndex_ = -1;
   int hoveredPathTangentType_ = 0;
   bool pathEditPending_ = false;
   bool pathEditDirty_ = false;
@@ -1376,12 +1378,15 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
    }
   }
 
-  for (int i = 0; i < static_cast<int>(points.size()); ++i) {
+ for (int i = 0; i < static_cast<int>(points.size()); ++i) {
    const QPointF canvasPos = globalTransform.map(points[static_cast<size_t>(i)]);
   FloatColor currentColor = pointColor;
   float currentRadius = 16.0f;
   if (isDraggingShapeVertex_ && draggingShapeVertexIndex_ == i) {
    currentColor = dragColor;
+   currentRadius = 20.0f;
+  } else if (selectedShapeVertexIndex_ == i) {
+   currentColor = FloatColor{0.26f, 0.92f, 0.62f, 1.0f};
    currentRadius = 20.0f;
   } else if (hoveredShapeVertexIndex_ == i) {
    currentColor = hoverColor;
@@ -1885,9 +1890,12 @@ void ArtifactLayerEditorWidgetV2::Impl::drawCustomPathOverlay(const ArtifactAbst
   }
   // Vertex handle
   const bool hov = hoveredPathVertexIndex_ == i;
+  const bool sel = selectedPathVertexIndex_ == i;
   renderer_->drawCircle(
       static_cast<float>(vp.x()), static_cast<float>(vp.y()),
-      vR, hov ? FloatColor{1,0.5f,0,1} : FloatColor{0.2f,0.8f,1,1}, 1.0f, true);
+      vR, sel ? FloatColor{0.26f, 0.92f, 0.62f, 1.0f}
+              : hov ? FloatColor{1,0.5f,0,1}
+                    : FloatColor{0.2f,0.8f,1,1}, 1.0f, true);
   renderer_->drawCircle(
       static_cast<float>(vp.x()), static_cast<float>(vp.y()),
       vR, FloatColor{1,1,1,0.8f}, 1.0f, false);
@@ -2765,6 +2773,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       impl_->beginPathEditTransaction(layer);
       impl_->isDraggingPathVertex_ = true;
       impl_->draggingPathVertexIndex_ = vi;
+      impl_->selectedPathVertexIndex_ = vi;
       setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                           Qt::ClosedHandCursor));
       event->accept();
@@ -2783,6 +2792,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       shape->setCustomPathVertices(verts, shape->customPathClosed());
       impl_->markPathEditDirty();
       impl_->hoveredPathVertexIndex_ = static_cast<int>(verts.size()) - 1;
+      impl_->selectedPathVertexIndex_ = impl_->hoveredPathVertexIndex_;
       impl_->requestRender();
       event->accept();
       return;
@@ -2794,6 +2804,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      impl_->beginShapeEditTransaction(layer);
      impl_->isDraggingShapeVertex_ = true;
      impl_->draggingShapeVertexIndex_ = vertexIndex;
+     impl_->selectedShapeVertexIndex_ = vertexIndex;
      setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                          Qt::ClosedHandCursor));
      event->accept();
@@ -2803,7 +2814,8 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
     int insertIndex = -1;
     if (impl_->hitTestShapeSegment(layer, canvasPoint, insertIndex)) {
       impl_->hoveredShapeSegmentIndex_ = std::max(0, insertIndex - 1);
-      if (impl_->insertPointOnHoveredShapeSegment(layer, canvasPoint)) {
+     if (impl_->insertPointOnHoveredShapeSegment(layer, canvasPoint)) {
+       impl_->selectedShapeVertexIndex_ = impl_->draggingShapeVertexIndex_;
        setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                            Qt::ClosedHandCursor));
        impl_->requestRender();
@@ -2840,6 +2852,7 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
      impl_->markShapeEditDirty();
      impl_->hoveredShapeVertexIndex_ = static_cast<int>(points.size()) - 1;
      impl_->hoveredShapeSegmentIndex_ = static_cast<int>(points.size()) - 2;
+     impl_->selectedShapeVertexIndex_ = impl_->hoveredShapeVertexIndex_;
      impl_->requestRender();
      event->accept();
      return;
