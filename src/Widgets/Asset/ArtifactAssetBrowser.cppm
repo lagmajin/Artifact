@@ -61,6 +61,7 @@ module;
 #include <QAbstractItemView>
 #include <QComboBox>
 #include <QMouseEvent>
+#include <QCursor>
 #include <cstdint>
 #include <atomic>
 #include <algorithm>
@@ -174,8 +175,54 @@ class RecentFolderButton final : public QToolButton {
 
  private:
   QString text_;
-  QString path_;
+ QString path_;
   std::function<void(const QString&)> activate_;
+};
+
+class HoverPreviewPopup final : public QFrame {
+ public:
+  explicit HoverPreviewPopup(QWidget* parent = nullptr) : QFrame(parent) {
+    setWindowFlags(Qt::ToolTip | Qt::FramelessWindowHint);
+    setFrameShape(QFrame::StyledPanel);
+    setFrameShadow(QFrame::Plain);
+    auto* layout = new QVBoxLayout(this);
+    layout->setContentsMargins(8, 8, 8, 8);
+    layout->setSpacing(6);
+    title_ = new QLabel(this);
+    title_->setWordWrap(true);
+    preview_ = new QLabel(this);
+    preview_->setAlignment(Qt::AlignCenter);
+    preview_->setMinimumSize(320, 180);
+    preview_->setScaledContents(false);
+    details_ = new QLabel(this);
+    details_->setWordWrap(true);
+    layout->addWidget(title_);
+    layout->addWidget(preview_);
+    layout->addWidget(details_);
+  }
+
+  void showFile(const QString& filePath, const QPoint& globalPos, const QIcon& icon, const QFileInfo& info) {
+    const QSize targetSize(480, 270);
+    QPixmap pixmap = icon.isNull() ? QPixmap() : icon.pixmap(targetSize);
+    if (pixmap.isNull()) {
+      pixmap = QPixmap(targetSize);
+      pixmap.fill(Qt::transparent);
+    }
+    preview_->setPixmap(pixmap.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    title_->setText(info.fileName().isEmpty() ? filePath : info.fileName());
+    details_->setText(QStringLiteral("%1\n%2")
+                          .arg(info.exists() ? info.absoluteFilePath() : QStringLiteral("Missing"))
+                          .arg(info.isDir() ? QStringLiteral("Folder") : info.suffix().toUpper()));
+    adjustSize();
+    move(globalPos + QPoint(18, 18));
+    show();
+    raise();
+  }
+
+ private:
+  QLabel* title_ = nullptr;
+  QLabel* preview_ = nullptr;
+  QLabel* details_ = nullptr;
 };
 
 #ifdef _WIN32
@@ -855,6 +902,10 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   };
   QHash<QString, PendingWaveJob> pendingWaveJobs_;
   QSet<QString> failedWavePaths_;  // Don't retry failed loads
+  HoverPreviewPopup* hoverPreviewPopup_ = nullptr;
+  QTimer* hoverPreviewTimer_ = nullptr;
+  QString hoverPreviewPath_;
+  QPoint hoverPreviewGlobalPos_;
 
   // Optimized: partial audio loading for thumbnails
   // Only load first N seconds for waveform thumbnail
@@ -901,6 +952,9 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   QIcon getFileIcon(const QString& fileName, const QString& filePath);
   void clearThumbnailCache();
   void startAsyncPreviewThumbnailGeneration(const QString& filePath);
+  void showHoverPreview(const QString& filePath, const QPoint& globalPos);
+  void hideHoverPreview();
+  void scheduleHoverPreview(const QString& filePath, const QPoint& globalPos);
    bool isImageFile(const QString& fileName) const;
    bool isVideoFile(const QString& fileName) const;
    bool isAudioFile(const QString& fileName) const;
@@ -936,8 +990,8 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
    bool confirmDelete(const QStringList& paths) const;
    };
 
- ArtifactAssetBrowser::Impl::Impl()
- {
+ArtifactAssetBrowser::Impl::Impl()
+{
   // Initialize default icons using Qt standard icons
   QStyle* style = QApplication::style();
   if (style) {
@@ -956,11 +1010,16 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
    }
    defaultFontIcon_ = style->standardIcon(QStyle::SP_FileDialogDetailedView);
   }
- }
+  hoverPreviewTimer_ = new QTimer();
+  hoverPreviewTimer_->setSingleShot(true);
+  hoverPreviewPopup_ = new HoverPreviewPopup();
+}
 
 ArtifactAssetBrowser::Impl::~Impl()
 {
   thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
+  delete hoverPreviewTimer_;
+  delete hoverPreviewPopup_;
 
   for (auto it = pendingPreviewJobs_.begin(); it != pendingPreviewJobs_.end(); ++it) {
     if (auto* watcher = it.value().watcher) {
@@ -1367,8 +1426,8 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
   return generateThumbnail(filePath);
  }
 
- void ArtifactAssetBrowser::Impl::clearThumbnailCache()
- {
+void ArtifactAssetBrowser::Impl::clearThumbnailCache()
+{
   thumbnailGeneration_.fetch_add(1, std::memory_order_relaxed);
   thumbnailCache_.clear();
   failedPreviewPaths_.clear();
@@ -1555,6 +1614,42 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
    unusedAssetPaths_.insert(QDir::cleanPath(path));
    unusedAssetPaths_.insert(QDir::cleanPath(canonicalPath));
   }
+}
+
+void ArtifactAssetBrowser::Impl::hideHoverPreview()
+{
+  if (hoverPreviewTimer_) {
+    hoverPreviewTimer_->stop();
+  }
+  if (hoverPreviewPopup_) {
+    hoverPreviewPopup_->hide();
+  }
+  hoverPreviewPath_.clear();
+}
+
+void ArtifactAssetBrowser::Impl::showHoverPreview(const QString& filePath, const QPoint& globalPos)
+{
+  if (!hoverPreviewPopup_ || filePath.isEmpty()) {
+    return;
+  }
+  const QFileInfo info(filePath);
+  const QIcon icon = generateThumbnail(filePath);
+  hoverPreviewPopup_->showFile(filePath, globalPos, icon, info);
+}
+
+void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, const QPoint& globalPos)
+{
+  if (!hoverPreviewTimer_) {
+    return;
+  }
+  hoverPreviewPath_ = filePath;
+  hoverPreviewGlobalPos_ = globalPos;
+  hoverPreviewTimer_->stop();
+  QObject::disconnect(hoverPreviewTimer_, nullptr, nullptr, nullptr);
+  QObject::connect(hoverPreviewTimer_, &QTimer::timeout, [this]() {
+    showHoverPreview(hoverPreviewPath_, hoverPreviewGlobalPos_);
+  });
+  hoverPreviewTimer_->start(300);
 }
 
   void ArtifactAssetBrowser::Impl::syncDirectorySelection()
@@ -2160,6 +2255,9 @@ void ArtifactAssetBrowser::Impl::refreshUnusedAssetCache()
   fileView->setDefaultDropAction(Qt::CopyAction);
   fileView->setSelectionMode(QAbstractItemView::ExtendedSelection);
   fileView->setContextMenuPolicy(Qt::CustomContextMenu);  // Enable custom context menu
+  fileView->setMouseTracking(true);
+  fileView->viewport()->setMouseTracking(true);
+  fileView->viewport()->installEventFilter(this);
   applyAssetBrowserViewMode(fileView, QListView::IconMode,
                             impl_->thumbnailSizePx());
 
@@ -2515,7 +2613,35 @@ bool ArtifactAssetBrowser::eventFilter(QObject* watched, QEvent* event)
    if (keyEvent->key() == Qt::Key_Escape && impl_->searchEdit_ && !impl_->searchEdit_->text().isEmpty()) {
     impl_->searchEdit_->clear();
     return true;
-   }
+    }
+  }
+
+  if (impl_ && impl_->fileView_ && watched == impl_->fileView_->viewport() && event) {
+    switch (event->type()) {
+      case QEvent::Leave:
+        impl_->hideHoverPreview();
+        break;
+      case QEvent::MouseMove: {
+        auto* mouseEvent = static_cast<QMouseEvent*>(event);
+        if (!mouseEvent) {
+          break;
+        }
+        const QModelIndex index = impl_->fileView_->indexAt(mouseEvent->pos());
+        if (!index.isValid()) {
+          impl_->hideHoverPreview();
+          break;
+        }
+        const AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
+        const QString filePath = item.path.toQString();
+        if (filePath.isEmpty() || filePath == impl_->hoverPreviewPath_) {
+          break;
+        }
+        impl_->scheduleHoverPreview(filePath, mouseEvent->globalPosition().toPoint());
+        break;
+      }
+      default:
+        break;
+    }
   }
 
   return QWidget::eventFilter(watched, event);

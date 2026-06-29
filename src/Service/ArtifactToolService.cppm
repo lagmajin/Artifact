@@ -76,6 +76,9 @@ void ArtifactToolService::setEditMode(EditMode mode)
   case EditMode::Paint:
    setActiveTool(ToolType::Shape);
    break;
+  case EditMode::Shape:
+   setActiveTool(ToolType::Shape);
+   break;
  }
 
  editModeChanged(mode);
@@ -106,6 +109,11 @@ bool ArtifactToolService::isViewOnly() const
 bool ArtifactToolService::isPaintMode() const
 {
  return impl_->editMode_ == EditMode::Paint;
+}
+
+bool ArtifactToolService::isShapeMode() const
+{
+ return impl_->editMode_ == EditMode::Shape;
 }
 
 bool ArtifactToolService::isAlphaView() const

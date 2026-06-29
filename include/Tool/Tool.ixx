@@ -11,7 +11,8 @@ export namespace Artifact {
   View,           // View-only mode (zoom and pan)
   Transform,      // Transform editing
   Mask,           // Mask editing
-  Paint           // Paint mode
+  Paint,          // Paint mode
+  Shape           // Shape modeling mode
  };
 
  enum class DisplayMode
