@@ -1267,19 +1267,19 @@ QString shapeHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, i
  }
  if (shape->hasCustomPath()) {
   if (vertexIndex >= 0) {
-   return QStringLiteral("Path vertex");
+   return QStringLiteral("Path vertex %1").arg(vertexIndex + 1);
   }
   if (segmentIndex >= 0) {
-   return QStringLiteral("Path segment");
+   return QStringLiteral("Path segment %1").arg(segmentIndex + 1);
   }
   return QStringLiteral("Editable path");
  }
  if (shape->hasCustomPolygon()) {
   if (vertexIndex >= 0) {
-   return QStringLiteral("Polygon vertex");
+   return QStringLiteral("Polygon vertex %1").arg(vertexIndex + 1);
   }
   if (segmentIndex >= 0) {
-   return QStringLiteral("Polygon segment");
+   return QStringLiteral("Polygon segment %1").arg(segmentIndex + 1);
   }
   return QStringLiteral("Editable polygon");
  }
