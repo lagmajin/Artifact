@@ -3560,7 +3560,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
     convertToPathAct = menu.addAction(QStringLiteral("Convert to Editable Path"));
    }
    if (shapeLayer->hasCustomPath()) {
-   pathInsertPointAct = menu.addAction(QStringLiteral("Insert Path Vertex"));
+    pathInsertPointAct = menu.addAction(QStringLiteral("Insert Path Vertex"));
     pathStateAct = menu.addAction(QStringLiteral("Path State"));
     pathStateAct->setEnabled(false);
     pathDuplicatePointAct = menu.addAction(QStringLiteral("Duplicate Path Vertex"));
@@ -3575,22 +3575,22 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
       if (v.inTangent != QPointF(0, 0) || v.outTangent != QPointF(0, 0)) {
        ++tangentCount;
       }
-    }
-    const QString pathHoverSummary = impl_->hoveredPathVertexIndex_ >= 0
-                                         ? QStringLiteral("vertex %1").arg(impl_->hoveredPathVertexIndex_ + 1)
-                                         : impl_->hoveredPathSegmentIndex_ >= 0
-                                               ? QStringLiteral("segment %1").arg(impl_->hoveredPathSegmentIndex_ + 1)
-                                               : impl_->hoveredPathTangentIndex_ >= 0
-                                                     ? QStringLiteral("tangent %1").arg(impl_->hoveredPathTangentIndex_ + 1)
-                                                     : QStringLiteral("none");
-    pathStateAct->setText(QStringLiteral("Path Editing: %1 verts, %2 tangents, %3, hover %4")
+     }
+     const QString pathHoverSummary = impl_->hoveredPathVertexIndex_ >= 0
+                                          ? QStringLiteral("vertex %1").arg(impl_->hoveredPathVertexIndex_ + 1)
+                                          : impl_->hoveredPathSegmentIndex_ >= 0
+                                                ? QStringLiteral("segment %1").arg(impl_->hoveredPathSegmentIndex_ + 1)
+                                                : impl_->hoveredPathTangentIndex_ >= 0
+                                                      ? QStringLiteral("tangent %1").arg(impl_->hoveredPathTangentIndex_ + 1)
+                                                      : QStringLiteral("none");
+     pathStateAct->setText(QStringLiteral("Path Editing: %1 verts, %2 tangents, %3, hover %4")
                                .arg(static_cast<int>(verts.size()))
                                .arg(tangentCount)
                                .arg(shapeLayer->customPathClosed()
                                         ? QStringLiteral("closed")
                                         : QStringLiteral("open"))
                                .arg(pathHoverSummary));
-     pathInsertPointAct->setEnabled((validHover || impl_->hoveredPathSegmentIndex_ >= 0) && verts.size() >= 2);
+    pathInsertPointAct->setEnabled((validHover || impl_->hoveredPathSegmentIndex_ >= 0) && verts.size() >= 2);
      pathDuplicatePointAct->setEnabled(validHover);
      pathDeletePointAct->setEnabled(validHover);
      pathToggleSmoothAct = menu.addAction(validHover && verts[static_cast<size_t>(vi)].smooth
