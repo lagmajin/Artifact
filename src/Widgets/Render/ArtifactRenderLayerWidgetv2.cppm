@@ -3455,6 +3455,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
  QAction* convertToPathAct = nullptr;
  QAction* convertToPolygonAct = nullptr;
  QAction* pathInsertPointAct = nullptr;
+ QAction* pathDuplicatePointAct = nullptr;
  QAction* pathDeletePointAct = nullptr;
  QAction* pathToggleSmoothAct = nullptr;
  QAction* pathToggleClosedAct = nullptr;
@@ -3535,6 +3536,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
    }
    if (shapeLayer->hasCustomPath()) {
     pathInsertPointAct = menu.addAction(QStringLiteral("Insert Path Vertex"));
+    pathDuplicatePointAct = menu.addAction(QStringLiteral("Duplicate Path Vertex"));
     convertToPolygonAct = menu.addAction(QStringLiteral("Convert to Polygon"));
     pathDeletePointAct = menu.addAction(QStringLiteral("Delete Path Vertex"));
     {
@@ -3542,6 +3544,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
      const int vi = impl_->hoveredPathVertexIndex_;
      const bool validHover = vi >= 0 && static_cast<size_t>(vi) < verts.size();
      pathInsertPointAct->setEnabled((validHover || impl_->hoveredPathSegmentIndex_ >= 0) && verts.size() >= 2);
+     pathDuplicatePointAct->setEnabled(validHover);
      pathDeletePointAct->setEnabled(validHover);
      pathToggleSmoothAct = menu.addAction(validHover && verts[static_cast<size_t>(vi)].smooth
                                               ? QStringLiteral("Make Corner (break tangents)")
@@ -3674,7 +3677,18 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
          shapeLayer->setCustomPathVertices(verts, shapeLayer->customPathClosed());
          impl_->markPathEditDirty();
          handled = true;
-        }
+         }
+       }
+      } else if (shapeChosen == pathDuplicatePointAct) {
+       impl_->beginPathEditTransaction(layer);
+       auto verts = shapeLayer->customPathVertices();
+       const int vi = impl_->hoveredPathVertexIndex_;
+       if (vi >= 0 && vi < static_cast<int>(verts.size())) {
+        const int insertIndex = std::clamp(vi + 1, 0, static_cast<int>(verts.size()));
+        verts.insert(verts.begin() + insertIndex, verts[static_cast<size_t>(vi)]);
+        shapeLayer->setCustomPathVertices(verts, shapeLayer->customPathClosed());
+        impl_->markPathEditDirty();
+        handled = true;
        }
       } else if (shapeChosen == pathDeletePointAct) {
        impl_->beginPathEditTransaction(layer);
