@@ -2770,10 +2770,18 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
       return;
      }
      if (impl_->hitTestCustomPathVertex(layer, canvasPoint, vi)) {
+      const bool toggleSelection = event->modifiers().testFlag(Qt::ShiftModifier) &&
+                                   !(event->modifiers().testFlag(Qt::ControlModifier) ||
+                                     event->modifiers().testFlag(Qt::AltModifier) ||
+                                     event->modifiers().testFlag(Qt::MetaModifier));
       impl_->beginPathEditTransaction(layer);
+      if (toggleSelection && impl_->selectedPathVertexIndex_ == vi) {
+       impl_->selectedPathVertexIndex_ = -1;
+      } else {
+       impl_->selectedPathVertexIndex_ = vi;
+      }
       impl_->isDraggingPathVertex_ = true;
       impl_->draggingPathVertexIndex_ = vi;
-      impl_->selectedPathVertexIndex_ = vi;
       setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                           Qt::ClosedHandCursor));
       event->accept();
@@ -2801,10 +2809,18 @@ ArtifactLayerEditorWidgetV2::ArtifactLayerEditorWidgetV2(QWidget* parent /*= nul
 
     int vertexIndex = -1;
     if (impl_->hitTestShapeVertex(layer, canvasPoint, vertexIndex)) {
+     const bool toggleSelection = event->modifiers().testFlag(Qt::ShiftModifier) &&
+                                  !(event->modifiers().testFlag(Qt::ControlModifier) ||
+                                    event->modifiers().testFlag(Qt::AltModifier) ||
+                                    event->modifiers().testFlag(Qt::MetaModifier));
      impl_->beginShapeEditTransaction(layer);
+     if (toggleSelection && impl_->selectedShapeVertexIndex_ == vertexIndex) {
+      impl_->selectedShapeVertexIndex_ = -1;
+     } else {
+      impl_->selectedShapeVertexIndex_ = vertexIndex;
+     }
      impl_->isDraggingShapeVertex_ = true;
      impl_->draggingShapeVertexIndex_ = vertexIndex;
-     impl_->selectedShapeVertexIndex_ = vertexIndex;
      setCursor(hudCursor(QStringLiteral("hud_cursor_move.svg"),
                          Qt::ClosedHandCursor));
      event->accept();
