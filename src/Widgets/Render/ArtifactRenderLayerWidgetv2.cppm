@@ -1290,13 +1290,17 @@ QString pathHoverHint(const ArtifactAbstractLayerPtr& layer, int vertexIndex, in
  if (!shape || !shape->hasCustomPath()) {
   return {};
  }
+ const auto verts = shape->customPathVertices();
+ const bool validVertex = vertexIndex >= 0 && vertexIndex < static_cast<int>(verts.size());
  if (tangentIndex >= 0) {
   return tangentIndex == 0
              ? QStringLiteral("Path tangent (in)")
              : QStringLiteral("Path tangent (out)");
  }
- if (vertexIndex >= 0) {
-  return QStringLiteral("Path vertex");
+ if (validVertex) {
+  return verts[static_cast<size_t>(vertexIndex)].smooth
+             ? QStringLiteral("Path vertex (smooth)")
+             : QStringLiteral("Path vertex (corner)");
  }
  return QStringLiteral("Editable path");
 }
@@ -3464,8 +3468,8 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
      const bool validHover = vi >= 0 && static_cast<size_t>(vi) < verts.size();
      pathDeletePointAct->setEnabled(validHover);
      pathToggleSmoothAct = menu.addAction(validHover && verts[static_cast<size_t>(vi)].smooth
-                                              ? QStringLiteral("Make Corner")
-                                              : QStringLiteral("Make Smooth"));
+                                              ? QStringLiteral("Make Corner (break tangents)")
+                                              : QStringLiteral("Make Smooth (mirror tangents)"));
      pathToggleSmoothAct->setEnabled(validHover);
     }
     pathToggleClosedAct = menu.addAction(shapeLayer->customPathClosed()
