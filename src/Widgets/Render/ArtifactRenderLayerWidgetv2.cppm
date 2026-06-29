@@ -3565,7 +3565,7 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
        ++tangentCount;
       }
      }
-     pathStateAct->setText(QStringLiteral("Path State: %1 verts, %2 tangents, %3")
+    pathStateAct->setText(QStringLiteral("Path Summary: %1 verts, %2 tangents, %3")
                                .arg(static_cast<int>(verts.size()))
                                .arg(tangentCount)
                                .arg(shapeLayer->customPathClosed()
