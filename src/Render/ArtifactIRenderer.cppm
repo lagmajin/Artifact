@@ -353,6 +353,7 @@ namespace {
   RefCntAutoPtr<ITexture> m_layerDepthTex;
   ITextureView* m_overrideColorRTV = nullptr;
   ITextureView* m_overrideDepthDSV = nullptr;
+  std::vector<ITextureView*> m_renderTargetStack;
   Uint32 m_layerRTWidth = 0;
   Uint32 m_layerRTHeight = 0;
   bool m_upscaleEnabled = false;
@@ -1225,7 +1226,7 @@ namespace {
 
  QImage ArtifactIRenderer::Impl::readbackToImage() const
  {
-  return readbackTextureViewToImage(nullptr);
+  return readbackTextureViewToImage(activeColorView());
  }
 
  QImage ArtifactIRenderer::Impl::readbackTextureViewToImage(
@@ -1509,7 +1510,7 @@ namespace {
 
  void ArtifactIRenderer::Impl::readbackToImageAsync(ReadbackCallback callback) const
  {
-  readbackTextureViewToImageAsync(nullptr, std::move(callback));
+  readbackTextureViewToImageAsync(activeColorView(), std::move(callback));
  }
 
  void ArtifactIRenderer::Impl::readbackTextureViewToImageAsync(
@@ -2055,6 +2056,7 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
   m_depthReadbackWidth      = 0;
   m_depthReadbackHeight     = 0;
   m_depthReadbackFenceValue = 0;
+  m_renderTargetStack.clear();
   m_layerRT = nullptr;
   m_layerDepthTex = nullptr;
   for (auto& query : m_frameQueries) query = nullptr;
@@ -2647,9 +2649,16 @@ bool ArtifactIRenderer::convertLayerToFloat(
  Diligent::RefCntAutoPtr<Diligent::IDeviceContext> ArtifactIRenderer::immediateContext() const
  { return impl_->deviceManager_.immediateContext(); }
  Diligent::ITextureView* ArtifactIRenderer::layerTextureView() const
- { return impl_->m_layerRT ? impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE) : nullptr; }
+ {
+  if (auto* rtv = impl_->activeColorView()) {
+   if (auto* tex = rtv->GetTexture()) {
+    return tex->GetDefaultView(Diligent::TEXTURE_VIEW_SHADER_RESOURCE);
+   }
+  }
+  return nullptr;
+ }
  Diligent::ITextureView* ArtifactIRenderer::layerRenderTargetView() const
- { return impl_->m_layerRT ? impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET) : nullptr; }
+ { return impl_->activeColorView(); }
  Diligent::ITextureView* ArtifactIRenderer::rayTracingOutputTextureView() const
  { return impl_->rayTracingManager_ ? impl_->rayTracingManager_->traceOutputSRV() : nullptr; }
  ArtifactCore::IRayTracingManager* ArtifactIRenderer::rayTracingManager() const
@@ -2733,19 +2742,19 @@ bool ArtifactIRenderer::convertLayerToFloat(
  {
   if (!textureView) return;
   auto* view = static_cast<Diligent::ITextureView*>(textureView);
-   auto ctx = impl_->deviceManager_.immediateContext();
-   if (ctx) {
-    ctx->SetRenderTargets(1, &view, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
-   }
+  impl_->m_renderTargetStack.push_back(impl_->m_overrideColorRTV);
+  setOverrideRTV(view);
  }
 
  void ArtifactIRenderer::popRenderTarget()
  {
-   auto ctx = impl_->deviceManager_.immediateContext();
-   if (ctx && impl_->m_layerRT) {
-    auto* rtv = impl_->m_layerRT->GetDefaultView(Diligent::TEXTURE_VIEW_RENDER_TARGET);
-    ctx->SetRenderTargets(1, &rtv, nullptr, Diligent::RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
+  if (impl_->m_renderTargetStack.empty()) {
+   setOverrideRTV(nullptr);
+   return;
   }
+  auto* previousRTV = impl_->m_renderTargetStack.back();
+  impl_->m_renderTargetStack.pop_back();
+  setOverrideRTV(previousRTV);
  }
 
  void ArtifactIRenderer::clearRenderTarget(const FloatColor& color)
