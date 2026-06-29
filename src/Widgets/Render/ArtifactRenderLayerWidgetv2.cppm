@@ -3559,8 +3559,15 @@ void ArtifactLayerEditorWidgetV2::contextMenuEvent(QContextMenuEvent* event)
      const auto verts = shapeLayer->customPathVertices();
      const int vi = impl_->hoveredPathVertexIndex_;
      const bool validHover = vi >= 0 && static_cast<size_t>(vi) < verts.size();
-     pathStateAct->setText(QStringLiteral("Path State: %1 verts, %2")
+     int tangentCount = 0;
+     for (const auto& v : verts) {
+      if (v.inTangent != QPointF(0, 0) || v.outTangent != QPointF(0, 0)) {
+       ++tangentCount;
+      }
+     }
+     pathStateAct->setText(QStringLiteral("Path State: %1 verts, %2 tangents, %3")
                                .arg(static_cast<int>(verts.size()))
+                               .arg(tangentCount)
                                .arg(shapeLayer->customPathClosed()
                                         ? QStringLiteral("closed")
                                         : QStringLiteral("open")));
