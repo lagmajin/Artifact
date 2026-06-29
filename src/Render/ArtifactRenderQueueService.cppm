@@ -2096,6 +2096,10 @@ namespace Artifact
         // M-RD-13 Phase 2: Multi-Frame Scheduler
         int maxInFlightFrames_ = 4;
 
+        // M-RD-13 Phase 3: Cache and Memory Boundaries
+        int maxOutputBufferFrames_ = 8;
+        size_t maxOutputBufferMemoryBytes_ = 512 * 1024 * 1024; // 512 MB
+
         // Session Ledger (1-4 Recovery / Diagnostics)
         ArtifactCore::SessionLedger sessionLedger_;
 
@@ -3919,7 +3923,9 @@ namespace Artifact
                     std::atomic<int> framesRendered{0};
                     std::mutex outputBufferMutex;
                     std::condition_variable outputBufferCv;
-                    std::map<int, QImage> outputBuffer; // frame → rendered image
+                    std::condition_variable bufferSpaceCv;
+                    std::map<int, QImage> outputBuffer;
+                    std::atomic<size_t> outputBufferMemory{0};
                     std::atomic<int> nextFrameToRender{startF};
                     std::atomic<bool> anyWorkerFailed{false};
                     QStringList workerFailureReasons;
@@ -3934,6 +3940,17 @@ namespace Artifact
                                 break;
                             }
 
+                            // Phase 3 backpressure: wait if buffer exceeds limits
+                            {
+                                std::unique_lock<std::mutex> lock(outputBufferMutex);
+                                bufferSpaceCv.wait(lock, [&]() {
+                                    return anyWorkerFailed.load(std::memory_order_relaxed) ||
+                                        (static_cast<int>(outputBuffer.size()) < impl_->maxOutputBufferFrames_ &&
+                                         outputBufferMemory.load(std::memory_order_relaxed) < impl_->maxOutputBufferMemoryBytes_);
+                                });
+                                if (anyWorkerFailed.load(std::memory_order_relaxed)) break;
+                            }
+
                             FrameRenderSnapshot snap = baseSnap;
                             snap.frameNumber = f;
                             QImage frameImage;
@@ -3941,6 +3958,11 @@ namespace Artifact
                             const bool ok = impl_->renderSingleFrame(snap, frameImage, frameError);
                             {
                                 std::lock_guard<std::mutex> lock(outputBufferMutex);
+                                if (ok) {
+                                    const size_t frameBytes = static_cast<size_t>(frameImage.width()) *
+                                        static_cast<size_t>(frameImage.height()) * 4;
+                                    outputBufferMemory.fetch_add(frameBytes, std::memory_order_relaxed);
+                                }
                                 outputBuffer[f] = ok ? std::move(frameImage) : QImage();
                                 if (!ok) {
                                     anyWorkerFailed.store(true, std::memory_order_relaxed);
@@ -3985,6 +4007,15 @@ namespace Artifact
                             }
                             qimg = std::move(it->second);
                             outputBuffer.erase(it);
+                            const size_t frameBytes = static_cast<size_t>(qimg.width()) *
+                                static_cast<size_t>(qimg.height()) * 4;
+                            outputBufferMemory.fetch_sub(frameBytes, std::memory_order_relaxed);
+                        }
+                        bufferSpaceCv.notify_all();
+
+                        // Phase 3: Early release GPU resources between frames
+                        if (useGpuBackend) {
+                            gpuSurfaceCache.clear();
                         }
 
                         if (qimg.isNull()) {
