@@ -851,7 +851,8 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   impl_->listViewButton->setText(QStringLiteral("List"));
   impl_->listViewButton->setToolTip(QStringLiteral("Show assets in list view"));
   impl_->listViewButton->setCheckable(true);
-  impl_->searchWidget->setPlaceholderText(QStringLiteral("Search files..."));
+  impl_->searchWidget->setPlaceholderText(QStringLiteral("Search current folder..."));
+  impl_->searchWidget->setToolTip(QStringLiteral("Search assets in the current folder"));
   impl_->searchWidget->setClearButtonEnabled(true);
   impl_->searchWidget->setMinimumWidth(220);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -861,8 +862,8 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   layout->addWidget(impl_->gridViewButton);
   layout->addWidget(impl_->listViewButton);
   layout->addSpacing(10);
-  layout->addStretch(1);
   layout->addWidget(impl_->searchWidget);
+  layout->addStretch(1);
   setLayout(layout);
  }
 
@@ -2327,24 +2328,21 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
     }
    });
 
-  // Connect file double-click to add to project or navigate into folder
+  // Connect file double-click to preview or navigate into a folder.
   connect(fileView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
    if (!index.isValid()) return;
-   AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
-   QString filePath = item.path.toQString();
-   if (filePath.isEmpty()) return;
-   itemDoubleClicked(filePath);
+    AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
+    QString filePath = item.path.toQString();
+    if (filePath.isEmpty()) return;
 
-   // If it's a folder, navigate into it
-   if (item.isFolder) {
-    navigateToFolder(filePath);
-    return;
-   }
+    // If it's a folder, navigate into it
+    if (item.isFolder) {
+     navigateToFolder(filePath);
+     return;
+    }
 
-   // Otherwise, add file to project
-   auto* svc = ArtifactProjectService::instance();
-   if (!svc) return;
-   svc->importAssetsFromPaths(QStringList() << filePath);
+    // Otherwise, preview the file without importing it.
+    itemDoubleClicked(filePath);
   });
 
   // Connect right-click context menu
@@ -2564,12 +2562,12 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    return;
   }
 
-  // Delete — 選択ファイルをプロジェクトから削除 + 物理ファイル削除
+  // Shift+Delete — 選択ファイルを物理ディスクから削除
   if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
-   if (!(event->modifiers() & Qt::ControlModifier) && !(event->modifiers() & Qt::ShiftModifier)) {
-    impl_->deleteSelected();
-    event->accept();
-    return;
+   if (!(event->modifiers() & Qt::ControlModifier) && (event->modifiers() & Qt::ShiftModifier)) {
+     impl_->deleteSelected();
+     event->accept();
+     return;
    }
   }
 
@@ -3100,10 +3098,10 @@ if (!item.isFolder) {
    }
   });
 
-  // Delete action (Del)
+  // Delete action (Shift+Del)
   const QString deleteLabel = selectedAssetPaths.size() > 1
-   ? QStringLiteral("Delete %1 Items (Del)").arg(selectedAssetPaths.size())
-   : QStringLiteral("Delete (Del)");
+   ? QStringLiteral("Delete %1 Items from Disk (Shift+Del)").arg(selectedAssetPaths.size())
+   : QStringLiteral("Delete from Disk (Shift+Del)");
   addAction(allMenu, deleteLabel, [this]() {
    if (impl_) {
     impl_->deleteSelected();
