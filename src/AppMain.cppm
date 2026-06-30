@@ -2932,6 +2932,9 @@ int main(int argc, char *argv[]) {
                       panel->resize(1200, 350);
                       panel->setComposition(compId);
                       panel->setWindowTitle(dockTitle);
+                      // TODO(layout): Raise the default timeline dock height.
+                      // Review follow-up: give the track area more vertical room
+                      // before adding any extra chrome or auxiliary panels.
                       qInfo() << "[AppMain][CompositionCreated] timeline setComposition ms="
                               << timelineTimer.elapsed();
 

@@ -5255,6 +5255,9 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
     applyInterpolationToSelectedKeyframes(ArtifactCore::InterpolationType::EaseInOut);
   });
 
+  // TODO(layout): Rebalance the header stack.
+  // Review follow-up: keep the frequently used search/time controls visible
+  // but move secondary mode controls out of the fixed-height header row.
   auto leftTopSpacer = new QWidget();
   leftTopSpacer->setFixedHeight(kTimelineTopRowHeight);
   leftTopSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
@@ -6254,6 +6257,8 @@ ArtifactTimelineWidget::ArtifactTimelineWidget(QWidget *parent /*=nullptr*/)
 
   mainSplitter->setStretchFactor(0, 3);
   mainSplitter->setStretchFactor(1, 5);
+  // TODO(layout): Give the track surface more initial width.
+  // Review follow-up: bias the default split toward the right timeline area.
   mainSplitter->setSizes({520, 700});
 
   auto label = new ArtifactTimelineBottomLabel();
