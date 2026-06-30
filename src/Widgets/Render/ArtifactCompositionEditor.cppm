@@ -5177,7 +5177,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->viewportLayoutButton_ = new ViewportLayoutButton(impl_->topToolbar_);
   impl_->viewportLayoutButton_->setText(impl_->viewportLayoutLabel());
-  impl_->viewportLayoutButton_->setMinimumWidth(72);
+  impl_->viewportLayoutButton_->setMinimumWidth(58);
   impl_->viewportLayoutButton_->setToolTip(
       QStringLiteral("Cycle the viewport layout between 1, 2, and 4 views"));
   impl_->topToolbar_->addWidget(impl_->viewportLayoutButton_);
@@ -5215,11 +5215,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->resetAction_ = impl_->topToolbar_->addAction("Reset");
   impl_->topToolbar_->addSeparator();
-  impl_->zoomInAction_ = impl_->topToolbar_->addAction("Zoom+");
-  impl_->zoomOutAction_ = impl_->topToolbar_->addAction("Zoom-");
-  impl_->zoomFitAction_ = impl_->topToolbar_->addAction("Fill");
+  impl_->zoomInAction_ = impl_->topToolbar_->addAction("+");
+  impl_->zoomOutAction_ = impl_->topToolbar_->addAction("-");
+  impl_->zoomFitAction_ = impl_->topToolbar_->addAction("Fit");
   impl_->zoom100Action_ = impl_->topToolbar_->addAction("100%");
-  impl_->editTextAction_ = impl_->topToolbar_->addAction("Edit Text");
+  impl_->editTextAction_ = impl_->topToolbar_->addAction("Text");
+  impl_->zoomInAction_->setToolTip(QStringLiteral("Zoom in"));
+  impl_->zoomOutAction_->setToolTip(QStringLiteral("Zoom out"));
+  impl_->zoomFitAction_->setToolTip(QStringLiteral("Fit the composition to the viewport"));
+  impl_->zoom100Action_->setToolTip(QStringLiteral("Show the composition at 100% zoom"));
   impl_->editTextAction_->setToolTip(QStringLiteral("Edit current text layer"));
   impl_->editTextAction_->setShortcut(QKeySequence(Qt::Key_F2));
 
@@ -5232,9 +5236,11 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->advancedScreenshotAction_->setToolTip(
       QStringLiteral("Open the custom screenshot dialog"));
   impl_->screenshotButton_ = new QToolButton(this);
-  impl_->screenshotButton_->setText(QStringLiteral("Screenshot"));
+  impl_->screenshotButton_->setText(QStringLiteral("Shot"));
   impl_->screenshotButton_->setMenu(screenshotMenu);
   impl_->screenshotButton_->setPopupMode(QToolButton::InstantPopup);
+  impl_->screenshotButton_->setToolTip(
+      QStringLiteral("Capture the current composition view"));
   impl_->topToolbar_->addWidget(impl_->screenshotButton_);
 
   impl_->compareAction_ = impl_->topToolbar_->addAction("A/B");
@@ -5243,7 +5249,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->compareAction_->setShortcut(
       QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_B));
 
-  impl_->motionPathAction_ = impl_->topToolbar_->addAction("Motion Path");
+  impl_->motionPathAction_ = impl_->topToolbar_->addAction("Path");
   impl_->motionPathAction_->setCheckable(true);
   impl_->motionPathAction_->setToolTip(
       QStringLiteral("Show motion path overlay for the selected layer"));
@@ -5339,7 +5345,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
                  QStringLiteral("MaterialVS/neutral/crop.svg"),
                  TransformGizmo::Mode::Scale, false);
   impl_->gizmoModeButton_ = new QToolButton(this);
-  impl_->gizmoModeButton_->setText(QStringLiteral("Gizmo W/R/S"));
+  impl_->gizmoModeButton_->setText(QStringLiteral("Gizmo"));
   impl_->gizmoModeButton_->setMenu(gizmoMenu);
   impl_->gizmoModeButton_->setIcon(
       loadEditorMenuIcon(QStringLiteral("MaterialVS/neutral/transform.svg")));
@@ -5447,7 +5453,7 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   impl_->topToolbar_->addWidget(impl_->pivotModeButton_);
 
   impl_->immersiveAction_ =
-      impl_->topToolbar_->addAction(QStringLiteral("Immersive"));
+      impl_->topToolbar_->addAction(QStringLiteral("Imm"));
   impl_->immersiveAction_->setCheckable(true);
   impl_->immersiveAction_->setShortcut(QKeySequence(Qt::Key_F11));
   impl_->immersiveAction_->setToolTip(
@@ -5824,6 +5830,9 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
   bottomLayout->addWidget(impl_->displayOptionsBtn_);
   bottomLayout->addStretch();
 
+  // TODO(layout): Collapse the always-visible chrome further.
+  // Review follow-up: merge or shrink chromeStrip_/bottomBar_ so the viewport
+  // keeps more vertical space at common dock heights.
   // Assembly
   mainLayout->addWidget(impl_->topToolbar_);
   mainLayout->addWidget(impl_->chromeStrip_);

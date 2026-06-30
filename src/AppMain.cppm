@@ -2240,7 +2240,7 @@ int main(int argc, char *argv[]) {
         QStringLiteral("Layer View (Software)"), ads::CenterDockWidgetArea,
         softwareLayerView, QStringLiteral("Layer View (Diligent)"));
     auto *projectManagerWidget = new ArtifactProjectManagerWidget(mw);
-    projectManagerWidget->setMinimumWidth(240);
+    projectManagerWidget->setMinimumWidth(200);
     mw->addDockedWidget(QStringLiteral("Project"), ads::LeftDockWidgetArea,
                         projectManagerWidget);
     auto *assetBrowser = new ArtifactAssetBrowser(mw);
@@ -2260,6 +2260,9 @@ int main(int argc, char *argv[]) {
                               ads::LeftDockWidgetArea, shortcutHelperWidget,
                               QStringLiteral("Project"));
     auto *contentsViewer = new ArtifactContentsViewer(mw);
+    // TODO(layout): Revisit the default Contents Viewer placement.
+    // Review follow-up: compare/inspect works better as a sidecar than as a
+    // center tab that replaces the main composition viewport.
     mw->addDockedWidgetTabbed(QStringLiteral("Contents Viewer"),
                               ads::CenterDockWidgetArea, contentsViewer,
                               QStringLiteral("Composition Viewer"));
@@ -2564,7 +2567,7 @@ int main(int argc, char *argv[]) {
           });
     }
     auto *inspectorWidget = new ArtifactInspectorWidget(mw);
-    inspectorWidget->setMinimumWidth(240);
+    inspectorWidget->setMinimumWidth(200);
     mw->addDockedWidget(QStringLiteral("Inspector"), ads::RightDockWidgetArea,
                         inspectorWidget);
     auto *compositionNoteWidget = new ArtifactMarkdownNoteEditorWidget(
