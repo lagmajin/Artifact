@@ -73,7 +73,6 @@ void ArtifactToolService::setEditMode(EditMode mode)
   case EditMode::Mask:
    setActiveTool(ToolType::Pen);
    break;
-  case EditMode::Shape:
   case EditMode::Paint:
    setActiveTool(ToolType::Shape);
    break;

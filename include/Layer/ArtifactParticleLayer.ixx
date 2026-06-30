@@ -70,6 +70,7 @@ public:
     // Layer interface
     void draw(ArtifactIRenderer* renderer) override;
     QRectF localBounds() const override;
+    bool isParticleLayer() const override { return true; }
     QString debugState() const;
     QJsonObject toJson() const;
     static ArtifactAbstractLayerPtr fromJson(const QJsonObject& obj);

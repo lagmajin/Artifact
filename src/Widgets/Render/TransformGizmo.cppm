@@ -20,6 +20,9 @@ module Artifact.Widgets.TransformGizmo;
 import Artifact.Render.IRenderer;
 import Artifact.Composition.Abstract;
 import Artifact.Layer.Abstract;
+import Artifact.Layer.Shape;
+import Artifact.Layer.Solid2D;
+import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
 import Undo.UndoManager;
 import Event.Bus;
@@ -2677,7 +2680,16 @@ bool TransformGizmo::handleMouseMove(const QPointF& viewportPos, ArtifactIRender
       const int newHeight = std::max(1, static_cast<int>(std::lround(targetBox.height())));
       for (const auto& target : targets) {
        if (!target) continue;
-       target->setSourceSize(Size_2D(newWidth, newHeight));
+       if (const auto shapeLayer = std::dynamic_pointer_cast<ArtifactShapeLayer>(target)) {
+        shapeLayer->setSize(newWidth, newHeight);
+       } else if (const auto solidImageLayer = std::dynamic_pointer_cast<ArtifactSolidImageLayer>(target)) {
+        solidImageLayer->setSize(newWidth, newHeight);
+       } else if (const auto solidLayer = std::dynamic_pointer_cast<ArtifactSolid2DLayer>(target)) {
+        solidLayer->setSize(newWidth, newHeight);
+       } else if (const auto textLayer = std::dynamic_pointer_cast<ArtifactTextLayer>(target)) {
+        textLayer->setMaxWidth(static_cast<float>(newWidth));
+        textLayer->setBoxHeight(static_cast<float>(newHeight));
+       }
        target->setDirty(LayerDirtyFlag::Source);
        target->setDirty(LayerDirtyFlag::Transform);
       }

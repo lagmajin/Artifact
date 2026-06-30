@@ -955,6 +955,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
   void showHoverPreview(const QString& filePath, const QPoint& globalPos);
   void hideHoverPreview();
   void scheduleHoverPreview(const QString& filePath, const QPoint& globalPos);
+  bool isHoverPreviewPath(const QString& filePath) const { return filePath == hoverPreviewPath_; }
    bool isImageFile(const QString& fileName) const;
    bool isVideoFile(const QString& fileName) const;
    bool isAudioFile(const QString& fileName) const;
@@ -2633,7 +2634,7 @@ bool ArtifactAssetBrowser::eventFilter(QObject* watched, QEvent* event)
         }
         const AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
         const QString filePath = item.path.toQString();
-        if (filePath.isEmpty() || filePath == impl_->hoverPreviewPath_) {
+        if (filePath.isEmpty() || impl_->isHoverPreviewPath(filePath)) {
           break;
         }
         impl_->scheduleHoverPreview(filePath, mouseEvent->globalPosition().toPoint());

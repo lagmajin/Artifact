@@ -37,6 +37,13 @@ import UI.View.Orientation.Navigator;
 export namespace Artifact {
  using namespace ArtifactCore;
 
+ enum class CompositionCompareMode {
+  Off,
+  A,
+  B,
+  Diff
+ };
+
  enum class CompositionBackgroundMode {
   Solid,
   Checkerboard,
@@ -82,8 +89,14 @@ void finishViewportInteraction();
 
   void setComposition(ArtifactCompositionPtr composition);
   ArtifactCompositionPtr composition() const;
-  void setSelectedLayerId(const LayerID& id);
+void setSelectedLayerId(const LayerID& id);
 LayerID selectedLayerId() const;
+void setCompareMode(CompositionCompareMode mode);
+CompositionCompareMode compareMode() const;
+void setReferencePinned(bool pinned);
+bool isReferencePinned() const;
+void setReferenceFrame(int frame);
+int referenceFrame() const;
 void setClearColor(const FloatColor& color);
 FloatColor clearColor() const;
 void setCompositionBackgroundMode(int mode);

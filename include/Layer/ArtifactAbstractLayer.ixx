@@ -123,7 +123,8 @@ enum class LayerType {
   CompositionBackground = 20, // コンポ背景を視覚化する特別レイヤー
   MaterialContainer = 21,     // 複数素材を保持する配列型レイヤー
   FormParticle = 22,          // 独立した Form 風グリッド粒子レイヤー
-  Procedural3D = 23           // Terrain / Path Tube procedural source
+  Procedural3D = 23,          // Terrain / Path Tube procedural source
+  SandSim2D = 24              // 2D falling-sand cellular automaton
 };
 
 enum class LayerDirtyFlag : uint32_t {
@@ -390,6 +391,7 @@ public:
   virtual bool isGroupLayer() const;
   virtual bool isNullLayer() const;
   virtual bool isCloneLayer() const;
+  virtual bool isParticleLayer() const { return false; }
   virtual QRectF localBounds() const;
 
   virtual bool isAdjustmentLayer() const;

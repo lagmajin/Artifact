@@ -1,6 +1,7 @@
 module;
 #include <utility>
 #include <cstdint>
+#include <QVector3D>
 
 export module Artifact.Preview.Pipeline;
 import Artifact.Composition.Abstract;
@@ -29,7 +30,7 @@ export namespace Artifact
   const ArtifactCore::CrowdSettings& crowdSettings() const;
   ArtifactCore::CrowdSettings& crowdSettings();
 
-  void setBoidsTarget(const ArtifactCore::float3& pos);
+  void setBoidsTarget(const QVector3D& pos);
   void clearBoidsTarget();
 
  };

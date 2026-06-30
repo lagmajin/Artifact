@@ -146,6 +146,16 @@ if(_material_container_impl_idx EQUAL -1)
     list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactMaterialContainerLayer.cppm")
 endif()
 
+# SandSim2DLayer - 2D falling-sand cellular automaton layer
+list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactSandSim2DLayer.ixx" _sand_sim_2d_layer_module_idx)
+if(_sand_sim_2d_layer_module_idx EQUAL -1)
+    list(APPEND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactSandSim2DLayer.ixx")
+endif()
+list(FIND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSandSim2DLayer.cppm" _sand_sim_2d_layer_impl_idx)
+if(_sand_sim_2d_layer_impl_idx EQUAL -1)
+    list(APPEND APP_IMPL "${CMAKE_CURRENT_SOURCE_DIR}/src/Layer/ArtifactSandSim2DLayer.cppm")
+endif()
+
 # FormParticleLayer is imported from multiple modules and should also be pinned
 # explicitly so module BMI generation does not depend on the recursive glob scan.
 list(FIND APP_MODULES "${CMAKE_CURRENT_SOURCE_DIR}/include/Layer/ArtifactFormParticleLayer.ixx" _form_particle_module_idx)

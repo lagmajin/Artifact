@@ -2094,6 +2094,27 @@ namespace Artifact
         };
 
         bool renderSingleFrame(const FrameRenderSnapshot& snap, QImage& outImage, QString& failureReason);
+        void processFramesForJob(
+            ArtifactRenderQueueService* service,
+            int jobIndex,
+            const ArtifactRenderJob& job,
+            const ArtifactCompositionPtr& compositionForRender,
+            bool useGpuBackend,
+            bool isVideo,
+            bool isHtmlPlayer,
+            const QString& videoRenderPath,
+            const QDir& outDir,
+            const QFileInfo& outInfo,
+            IVideoEncodeBackend* videoBackend,
+            QHash<QString, LayerSurfaceCacheEntry>& gpuSurfaceCache,
+            GPUTextureCacheManager* gpuTextureCacheManager,
+            QStringList& htmlFrameFiles,
+            int startF,
+            int endF,
+            int totalFrames,
+            const QString& ext,
+            std::atomic<bool>& success,
+            QString& failureReason);
 
         // M-RD-13 Phase 2: Multi-Frame Scheduler
         int maxInFlightFrames_ = 4;
@@ -3719,6 +3740,246 @@ namespace Artifact
         return true;
     }
 
+    void ArtifactRenderQueueService::Impl::processFramesForJob(
+        ArtifactRenderQueueService* service,
+        int jobIndex,
+        const ArtifactRenderJob& job,
+        const ArtifactCompositionPtr& compositionForRender,
+        bool useGpuBackend,
+        bool isVideo,
+        bool isHtmlPlayer,
+        const QString& videoRenderPath,
+        const QDir& outDir,
+        const QFileInfo& outInfo,
+        IVideoEncodeBackend* videoBackend,
+        QHash<QString, LayerSurfaceCacheEntry>& gpuSurfaceCache,
+        GPUTextureCacheManager* gpuTextureCacheManager,
+        QStringList& htmlFrameFiles,
+        int startF,
+        int endF,
+        int totalFrames,
+        const QString& ext,
+        std::atomic<bool>& success,
+        QString& failureReason) {
+        const bool useMfr = !useGpuBackend && totalFrames > 1;
+        const int numWorkers = useMfr ? std::min(maxInFlightFrames_, totalFrames) : 1;
+
+        FrameRenderSnapshot baseSnap;
+        baseSnap.jobIndex = jobIndex;
+        baseSnap.composition = compositionForRender;
+        baseSnap.job = job;
+        baseSnap.useGpuBackend = useGpuBackend;
+        baseSnap.isVideo = isVideo;
+        baseSnap.isHtmlPlayer = isHtmlPlayer;
+        baseSnap.outputPath = videoRenderPath;
+        baseSnap.outputDir = outDir;
+        baseSnap.outputInfo = outInfo;
+        baseSnap.videoBackend = videoBackend;
+        baseSnap.gpuSurfaceCache = &gpuSurfaceCache;
+        baseSnap.gpuTextureCacheManager = gpuTextureCacheManager;
+        baseSnap.htmlFrameFiles = &htmlFrameFiles;
+
+        std::atomic<int> framesRendered{0};
+        std::mutex outputBufferMutex;
+        std::condition_variable outputBufferCv;
+        std::condition_variable bufferSpaceCv;
+        std::map<int, QImage> outputBuffer;
+        std::atomic<size_t> outputBufferMemory{0};
+        std::atomic<int> nextFrameToRender{startF};
+        std::atomic<bool> anyWorkerFailed{false};
+        QStringList workerFailureReasons;
+
+        auto renderWorker = [&]() {
+            while (!anyWorkerFailed.load(std::memory_order_relaxed)) {
+                const int f = nextFrameToRender.fetch_add(1, std::memory_order_relaxed);
+                if (f >= endF) {
+                    break;
+                }
+                if (shutdownRequested_.load(std::memory_order_acquire)) {
+                    anyWorkerFailed.store(true, std::memory_order_relaxed);
+                    break;
+                }
+
+                {
+                    std::unique_lock<std::mutex> lock(outputBufferMutex);
+                    bufferSpaceCv.wait(lock, [&]() {
+                        return anyWorkerFailed.load(std::memory_order_relaxed) ||
+                            (static_cast<int>(outputBuffer.size()) < maxOutputBufferFrames_ &&
+                             outputBufferMemory.load(std::memory_order_relaxed) < maxOutputBufferMemoryBytes_);
+                    });
+                    if (anyWorkerFailed.load(std::memory_order_relaxed)) {
+                        break;
+                    }
+                }
+
+                FrameRenderSnapshot snap = baseSnap;
+                snap.frameNumber = f;
+                QImage frameImage;
+                QString frameError;
+                const bool ok = renderSingleFrame(snap, frameImage, frameError);
+
+                {
+                    std::lock_guard<std::mutex> lock(outputBufferMutex);
+                    if (ok) {
+                        const size_t frameBytes = static_cast<size_t>(frameImage.width()) *
+                            static_cast<size_t>(frameImage.height()) * 4;
+                        outputBufferMemory.fetch_add(frameBytes, std::memory_order_relaxed);
+                    }
+                    outputBuffer[f] = ok ? std::move(frameImage) : QImage();
+                    if (!ok) {
+                        anyWorkerFailed.store(true, std::memory_order_relaxed);
+                        workerFailureReasons.push_back(
+                            QStringLiteral("Frame %1: %2").arg(f).arg(frameError));
+                    }
+                }
+
+                outputBufferCv.notify_one();
+            }
+        };
+
+        std::vector<std::thread> renderWorkers;
+        for (int w = 0; w < numWorkers; ++w) {
+            renderWorkers.emplace_back(renderWorker);
+        }
+
+        for (int f = startF; f < endF; ++f) {
+            QImage qimg;
+            {
+                std::unique_lock<std::mutex> lock(outputBufferMutex);
+                outputBufferCv.wait(lock, [&]() {
+                    return outputBuffer.count(f) > 0 || anyWorkerFailed.load();
+                });
+                if (!success.load(std::memory_order_relaxed)) {
+                    break;
+                }
+                if (shutdownRequested_.load(std::memory_order_acquire)) {
+                    success.store(false, std::memory_order_relaxed);
+                    failureReason = QStringLiteral("Rendering cancelled (shutdown)");
+                    break;
+                }
+                const auto currentJobStatus = queueManager.getJob(jobIndex).status;
+                if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
+                    success.store(false, std::memory_order_relaxed);
+                    break;
+                }
+                auto it = outputBuffer.find(f);
+                if (it == outputBuffer.end()) {
+                    success.store(false, std::memory_order_relaxed);
+                    failureReason = QStringLiteral("Frame %1: missing output").arg(f);
+                    break;
+                }
+                qimg = std::move(it->second);
+                outputBuffer.erase(it);
+                const size_t frameBytes = static_cast<size_t>(qimg.width()) *
+                    static_cast<size_t>(qimg.height()) * 4;
+                outputBufferMemory.fetch_sub(frameBytes, std::memory_order_relaxed);
+            }
+            bufferSpaceCv.notify_all();
+
+            if (useGpuBackend) {
+                gpuSurfaceCache.clear();
+            }
+
+            if (qimg.isNull()) {
+                success.store(false, std::memory_order_relaxed);
+                failureReason = QStringLiteral("Rendered frame is null (frame %1)").arg(f);
+                break;
+            }
+
+            {
+                ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
+                std::lock_guard<std::mutex> lock(previewMutex_);
+                lastPreviewFrame_ = qimg.scaled(320, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                lastPreviewFrameNumber_ = f;
+                lastPreviewJobIndex_ = jobIndex;
+            }
+
+            QMetaObject::invokeMethod(service, [service, jobIndex, f]() {
+                Q_EMIT service->previewFrameReady(jobIndex, f);
+            }, Qt::QueuedConnection);
+
+            if (isVideo) {
+                if (!videoBackend->addFrame(qimg, f, &failureReason)) {
+                    success.store(false, std::memory_order_relaxed);
+                    break;
+                }
+            } else if (isHtmlPlayer) {
+                const QString frameExt = QStringLiteral("png");
+                QString baseName = outInfo.completeBaseName();
+                if (baseName.isEmpty()) {
+                    baseName = QStringLiteral("render");
+                }
+                const QString framePath = outDir.filePath(
+                    QStringLiteral("%1_%2.%3").arg(baseName).arg(f, 4, 10, QChar('0')).arg(frameExt));
+                ArtifactCore::ImageExporter exporter;
+                ArtifactCore::ImageExportOptions imgOpts;
+                imgOpts.format = frameExt;
+                const auto result = exporter.write(qimg, framePath, imgOpts);
+                if (!result.success) {
+                    success.store(false, std::memory_order_relaxed);
+                    failureReason = QStringLiteral("Failed to save HTML export frame: %1").arg(result.errorMessage);
+                    break;
+                }
+                htmlFrameFiles.push_back(QFileInfo(framePath).fileName());
+            } else if (ext == QStringLiteral("svg")) {
+                QString bn = outInfo.completeBaseName();
+                if (bn.isEmpty()) {
+                    bn = QStringLiteral("render");
+                }
+                const QString fp = outDir.filePath(
+                    QStringLiteral("%1_%2.svg").arg(bn).arg(f, 4, 10, QLatin1Char('0')));
+                QFile sf(fp);
+                if (sf.open(QIODevice::WriteOnly | QIODevice::Text)) {
+                    QTextStream so(&sf);
+                    so << QStringLiteral("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%1\" height=\"%2\">\n")
+                          .arg(job.resolutionWidth)
+                          .arg(job.resolutionHeight);
+                    so << QStringLiteral("<rect width=\"100%\" height=\"100%\" fill=\"black\" />\n");
+                    so << QStringLiteral("<text x=\"50%\" y=\"50%\" fill=\"white\" text-anchor=\"middle\" dy=\"0.35em\">Fr %1</text>\n")
+                          .arg(f);
+                    so << QStringLiteral("</svg>\n");
+                    sf.close();
+                }
+            } else {
+                const QString frameExt = sequenceExtension(job.outputFormat, job.codec);
+                QString baseName = outInfo.completeBaseName();
+                if (baseName.isEmpty()) {
+                    baseName = QStringLiteral("render");
+                }
+                const QString framePath = outDir.filePath(
+                    QStringLiteral("%1_%2.%3").arg(baseName).arg(f, 4, 10, QChar('0')).arg(frameExt));
+                ArtifactCore::ImageExporter exporter;
+                ArtifactCore::ImageExportOptions imgOpts;
+                imgOpts.format = frameExt;
+                const auto result = exporter.write(qimg, framePath, imgOpts);
+                if (!result.success) {
+                    success.store(false, std::memory_order_relaxed);
+                    failureReason = QStringLiteral("Failed to save image sequence frame: %1").arg(result.errorMessage);
+                    break;
+                }
+            }
+
+            const int rendered = ++framesRendered;
+            const int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
+            QMetaObject::invokeMethod(service, [this, jobIndex, progress]() {
+                queueManager.setJobProgress(jobIndex, progress);
+            }, Qt::QueuedConnection);
+        }
+
+        for (auto& worker : renderWorkers) {
+            if (worker.joinable()) {
+                worker.join();
+            }
+        }
+
+        if (anyWorkerFailed.load(std::memory_order_relaxed) && success.load()) {
+            success.store(false, std::memory_order_relaxed);
+            failureReason = workerFailureReasons.isEmpty()
+                ? QStringLiteral("Render worker failed")
+                : workerFailureReasons.first();
+        }
+    }
+
     void ArtifactRenderQueueService::startAllJobs() {
         if (impl_->isRendering_.exchange(true, std::memory_order_acq_rel)) return;
         impl_->shutdownRequested_.store(false, std::memory_order_release);
@@ -3731,9 +3992,9 @@ namespace Artifact
         // UI スレッドをブロックしないよう、ワーカースレッドで実行
         impl_->workerThread_ = std::thread([this]() {
             try {
-            const int count = impl_->queueManager.jobCount();
-            auto anyFailure = std::make_shared<std::atomic_bool>(false);
-            for (int i = 0; i < count; ++i) {
+                const int count = impl_->queueManager.jobCount();
+                auto anyFailure = std::make_shared<std::atomic_bool>(false);
+                for (int i = 0; i < count; ++i) {
                 if (impl_->shutdownRequested_.load(std::memory_order_acquire)) break;
 
                 const auto job = impl_->queueManager.getJob(i);
@@ -3916,221 +4177,27 @@ namespace Artifact
                     audioSourcePathForMux = job.audioSourcePath.trimmed();
                 }
 
-                {
-                    // M-RD-13 Phase 2: Multi-Frame Scheduling
-                    // GPU mode: sequential (context not thread-safe); CPU mode: parallel dispatch
-                    const bool useMfr = !useGpuBackend && totalFrames > 1;
-                    const int numWorkers = useMfr
-                        ? std::min(impl_->maxInFlightFrames_, totalFrames)
-                        : 1;
-
-                    // Build base snapshot (job-level state shared by all frames)
-                    FrameRenderSnapshot baseSnap;
-                    baseSnap.jobIndex = i;
-                    baseSnap.composition = *compositionForRender;
-                    baseSnap.job = job;
-                    baseSnap.useGpuBackend = useGpuBackend;
-                    baseSnap.isVideo = isVideo;
-                    baseSnap.isHtmlPlayer = isHtmlPlayer;
-                    baseSnap.outputPath = videoRenderPath;
-                    baseSnap.outputDir = outDir;
-                    baseSnap.outputInfo = outInfo;
-                    baseSnap.videoBackend = videoBackend.get();
-                    baseSnap.gpuSurfaceCache = &gpuSurfaceCache;
-                    baseSnap.gpuTextureCacheManager = gpuTextureCacheManager.get();
-                    baseSnap.htmlFrameFiles = &htmlFrameFiles;
-
-                    std::atomic<int> framesRendered{0};
-                    std::mutex outputBufferMutex;
-                    std::condition_variable outputBufferCv;
-                    std::condition_variable bufferSpaceCv;
-                    std::map<int, QImage> outputBuffer;
-                    std::atomic<size_t> outputBufferMemory{0};
-                    std::atomic<int> nextFrameToRender{startF};
-                    std::atomic<bool> anyWorkerFailed{false};
-                    QStringList workerFailureReasons;
-
-                    // Shared render worker lambda
-                    auto renderWorker = [&]() {
-                        while (!anyWorkerFailed.load(std::memory_order_relaxed)) {
-                            const int f = nextFrameToRender.fetch_add(1, std::memory_order_relaxed);
-                            if (f >= endF) break;
-                            if (impl_->shutdownRequested_.load(std::memory_order_acquire)) {
-                                anyWorkerFailed.store(true, std::memory_order_relaxed);
-                                break;
-                            }
-
-                            // Phase 3 backpressure: wait if buffer exceeds limits
-                            {
-                                std::unique_lock<std::mutex> lock(outputBufferMutex);
-                                bufferSpaceCv.wait(lock, [&]() {
-                                    return anyWorkerFailed.load(std::memory_order_relaxed) ||
-                                        (static_cast<int>(outputBuffer.size()) < impl_->maxOutputBufferFrames_ &&
-                                         outputBufferMemory.load(std::memory_order_relaxed) < impl_->maxOutputBufferMemoryBytes_);
-                                });
-                                if (anyWorkerFailed.load(std::memory_order_relaxed)) break;
-                            }
-
-                            FrameRenderSnapshot snap = baseSnap;
-                            snap.frameNumber = f;
-                            QImage frameImage;
-                            QString frameError;
-                            const bool ok = impl_->renderSingleFrame(snap, frameImage, frameError);
-                            {
-                                std::lock_guard<std::mutex> lock(outputBufferMutex);
-                                if (ok) {
-                                    const size_t frameBytes = static_cast<size_t>(frameImage.width()) *
-                                        static_cast<size_t>(frameImage.height()) * 4;
-                                    outputBufferMemory.fetch_add(frameBytes, std::memory_order_relaxed);
-                                }
-                                outputBuffer[f] = ok ? std::move(frameImage) : QImage();
-                                if (!ok) {
-                                    anyWorkerFailed.store(true, std::memory_order_relaxed);
-                                    workerFailureReasons.push_back(
-                                        QStringLiteral("Frame %1: %2").arg(f).arg(frameError));
-                                }
-                            }
-                            outputBufferCv.notify_one();
-                        }
-                    };
-
-                    // Launch render workers
-                    std::vector<std::thread> renderWorkers;
-                    for (int w = 0; w < numWorkers; ++w) {
-                        renderWorkers.emplace_back(renderWorker);
-                    }
-
-                    // Ordered output processing (sequential, frame-order guaranteed)
-                    for (int f = startF; f < endF; ++f) {
-                        QImage qimg;
-                        {
-                            std::unique_lock<std::mutex> lock(outputBufferMutex);
-                            outputBufferCv.wait(lock, [&]() {
-                                return outputBuffer.count(f) > 0 || anyWorkerFailed.load();
-                            });
-                            if (!success.load(std::memory_order_relaxed)) break;
-                            if (impl_->shutdownRequested_.load(std::memory_order_acquire)) {
-                                success.store(false, std::memory_order_relaxed);
-                                failureReason = QStringLiteral("Rendering cancelled (shutdown)");
-                                break;
-                            }
-                            const auto currentJobStatus = impl_->queueManager.getJob(i).status;
-                            if (currentJobStatus != ArtifactRenderJob::Status::Rendering) {
-                                success.store(false, std::memory_order_relaxed);
-                                break;
-                            }
-                            auto it = outputBuffer.find(f);
-                            if (it == outputBuffer.end()) {
-                                success.store(false, std::memory_order_relaxed);
-                                failureReason = QStringLiteral("Frame %1: missing output").arg(f);
-                                break;
-                            }
-                            qimg = std::move(it->second);
-                            outputBuffer.erase(it);
-                            const size_t frameBytes = static_cast<size_t>(qimg.width()) *
-                                static_cast<size_t>(qimg.height()) * 4;
-                            outputBufferMemory.fetch_sub(frameBytes, std::memory_order_relaxed);
-                        }
-                        bufferSpaceCv.notify_all();
-
-                        // Phase 3: Early release GPU resources between frames
-                        if (useGpuBackend) {
-                            gpuSurfaceCache.clear();
-                        }
-
-                        if (qimg.isNull()) {
-                            success.store(false, std::memory_order_relaxed);
-                            failureReason = QStringLiteral("Rendered frame is null (frame %1)").arg(f);
-                            break;
-                        }
-
-                        // Live preview update
-                        {
-                            ArtifactCore::TraceLockScope traceLock(QStringLiteral("ArtifactRenderQueueService::previewMutex_"));
-                            std::lock_guard<std::mutex> lock(impl_->previewMutex_);
-                            impl_->lastPreviewFrame_ = qimg.scaled(320, 180, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                            impl_->lastPreviewFrameNumber_ = f;
-                            impl_->lastPreviewJobIndex_ = i;
-                        }
-                        QMetaObject::invokeMethod(this, [this, i, f]() {
-                            Q_EMIT previewFrameReady(i, f);
-                        }, Qt::QueuedConnection);
-
-                        if (isVideo) {
-                            if (!videoBackend->addFrame(qimg, f, &failureReason)) {
-                                success.store(false, std::memory_order_relaxed);
-                                break;
-                            }
-                        } else if (isHtmlPlayer) {
-                            const QString frameExt = QStringLiteral("png");
-                            QString baseName = outInfo.completeBaseName();
-                            if (baseName.isEmpty()) baseName = QStringLiteral("render");
-                            const QString framePath = outDir.filePath(
-                                QStringLiteral("%1_%2.%3")
-                                    .arg(baseName)
-                                    .arg(f, 4, 10, QChar('0'))
-                                    .arg(frameExt));
-                            ArtifactCore::ImageExporter exporter;
-                            ArtifactCore::ImageExportOptions imgOpts;
-                            imgOpts.format = frameExt;
-                            const auto result = exporter.write(qimg, framePath, imgOpts);
-                            if (!result.success) {
-                                success.store(false, std::memory_order_relaxed);
-                                failureReason = QStringLiteral("Failed to save HTML export frame: %1").arg(result.errorMessage);
-                                break;
-                            }
-                            htmlFrameFiles.push_back(QFileInfo(framePath).fileName());
-                        } else if (ext == QStringLiteral("svg")) {
-                            QString bn = outInfo.completeBaseName();
-                            if (bn.isEmpty()) bn = "render";
-                            QString fp = outDir.filePath(QStringLiteral("%1_%2.svg").arg(bn).arg(f, 4, 10, QLatin1Char('0')));
-                            QFile sf(fp);
-                            if (sf.open(QIODevice::WriteOnly | QIODevice::Text)) {
-                                QTextStream so(&sf);
-                                so << QStringLiteral("<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"%1\" height=\"%2\">\n")
-                                      .arg(job.resolutionWidth)
-                                      .arg(job.resolutionHeight);
-                                so << QStringLiteral("<rect width=\"100%\" height=\"100%\" fill=\"black\" />\n");
-                                so << QStringLiteral("<text x=\"50%\" y=\"50%\" fill=\"white\" text-anchor=\"middle\" dy=\"0.35em\">Fr %1</text>\n")
-                                      .arg(f);
-                                so << QStringLiteral("</svg>\n");
-                                sf.close();
-                            }
-                        } else {
-                            const QString ext = sequenceExtension(job.outputFormat, job.codec);
-                            QString baseName = outInfo.completeBaseName();
-                            if (baseName.isEmpty()) baseName = "render";
-                            QString framePath = outDir.filePath(QString("%1_%2.%3").arg(baseName).arg(f, 4, 10, QChar('0')).arg(ext));
-                            ArtifactCore::ImageExporter exporter;
-                            ArtifactCore::ImageExportOptions imgOpts;
-                            imgOpts.format = ext;
-                            auto result = exporter.write(qimg, framePath, imgOpts);
-                            if (!result.success) {
-                                success.store(false, std::memory_order_relaxed);
-                                failureReason = QStringLiteral("Failed to save image sequence frame: %1").arg(result.errorMessage);
-                                break;
-                            }
-                        }
-
-                        int rendered = ++framesRendered;
-                        int progress = static_cast<int>((static_cast<float>(rendered) / totalFrames) * 100);
-                        QMetaObject::invokeMethod(this, [this, i, progress]() {
-                            impl_->queueManager.setJobProgress(i, progress);
-                        }, Qt::QueuedConnection);
-                    }
-
-                    // Join all render workers
-                    for (auto& w : renderWorkers) {
-                        if (w.joinable()) w.join();
-                    }
-
-                    if (anyWorkerFailed.load(std::memory_order_relaxed) && success.load()) {
-                        success.store(false, std::memory_order_relaxed);
-                        failureReason = workerFailureReasons.isEmpty()
-                            ? QStringLiteral("Render worker failed")
-                            : workerFailureReasons.first();
-                    }
-                }
+                impl_->processFramesForJob(
+                    this,
+                    i,
+                    job,
+                    *compositionForRender,
+                    useGpuBackend,
+                    isVideo,
+                    isHtmlPlayer,
+                    videoRenderPath,
+                    outDir,
+                    outInfo,
+                    videoBackend.get(),
+                    gpuSurfaceCache,
+                    gpuTextureCacheManager.get(),
+                    htmlFrameFiles,
+                    startF,
+                    endF,
+                    totalFrames,
+                    ext,
+                    success,
+                    failureReason);
 
                 // 終了処理
                 if (videoBackend) {

@@ -12,8 +12,6 @@ module Artifact.Widgets.CrowdSettings;
 
 W_OBJECT_IMPL(CrowdSettingsWidget)
 
-namespace Artifact {
-
 CrowdSettingsWidget::CrowdSettingsWidget(QWidget* parent)
     : QWidget(parent)
 {
@@ -100,5 +98,3 @@ void CrowdSettingsWidget::emitChanged()
 {
     Q_EMIT settingsChanged();
 }
-
-} // namespace Artifact

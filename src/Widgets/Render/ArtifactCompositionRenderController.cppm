@@ -73,7 +73,6 @@ import Artifact.Layer.Image;
 import Artifact.Layer.Svg;
 import Artifact.Layer.Video;
 import Video.VideoFrame;
-import Artifact.Layer.Particle;
 import Artifact.Layer.Solid2D;
 import Artifact.Layers.SolidImage;
 import Artifact.Layer.Text;
@@ -656,7 +655,7 @@ void drawVisualDensityOverlay(ArtifactIRenderer *renderer,
     if (dynamic_cast<ArtifactVideoLayer *>(layer.get())) {
       ++videoLayerCount;
     }
-    if (dynamic_cast<ArtifactParticleLayer *>(layer.get())) {
+    if (layer->isParticleLayer()) {
       ++particleLayerCount;
     }
 
@@ -1634,7 +1633,7 @@ bool layerNeedsFrameSyncForCompositionView(ArtifactAbstractLayer *layer) {
 
   // Animated playback-critical layers still need their frame propagated.
   if (dynamic_cast<ArtifactVideoLayer *>(layer) ||
-      dynamic_cast<ArtifactParticleLayer *>(layer) ||
+      layer->isParticleLayer() ||
       dynamic_cast<ArtifactCompositionLayer *>(layer)) {
     return true;
   }
@@ -3122,7 +3121,7 @@ void drawLayerForCompositionView(
     return;
   }
 
-  if (dynamic_cast<ArtifactParticleLayer *>(layer)) {
+  if (layer->isParticleLayer()) {
     layer->draw(renderer);
     return;
   }
@@ -3324,6 +3323,9 @@ public:
   bool running_ = false;
   float devicePixelRatio_ = 1.0f;
   bool renderScheduled_ = false;
+  CompositionCompareMode compareMode_ = CompositionCompareMode::Off;
+  bool referencePinned_ = false;
+  int referenceFrame_ = 0;
 
   // Fixed-rate render tick (Phase 1: infrastructure only)
   std::unique_ptr<ArtifactCore::PreciseTicker> renderTickDriver_;
@@ -4719,6 +4721,36 @@ LayerID CompositionRenderController::selectedLayerId() const {
   return impl_->selectedLayerId_;
 }
 
+void CompositionRenderController::setCompareMode(CompositionCompareMode mode) {
+  impl_->compareMode_ = mode;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+CompositionCompareMode CompositionRenderController::compareMode() const {
+  return impl_->compareMode_;
+}
+
+void CompositionRenderController::setReferencePinned(bool pinned) {
+  impl_->referencePinned_ = pinned;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+bool CompositionRenderController::isReferencePinned() const {
+  return impl_->referencePinned_;
+}
+
+void CompositionRenderController::setReferenceFrame(int frame) {
+  impl_->referenceFrame_ = frame;
+  impl_->invalidateOverlayComposite();
+  markRenderDirty();
+}
+
+int CompositionRenderController::referenceFrame() const {
+  return impl_->referenceFrame_;
+}
+
 void CompositionRenderController::setSelectedLayerId(const LayerID &id) {
   if (impl_->selectedLayerId_ == id) {
     return;
@@ -5923,9 +5955,9 @@ CompositionRenderController::frameDebugSnapshot() const {
         if (auto *videoLayer = dynamic_cast<ArtifactVideoLayer *>(layer)) {
           selectedResource.type = QStringLiteral("video");
           selectedResource.note = videoLayer->decodeState();
-        } else if (auto *particleLayer = dynamic_cast<ArtifactParticleLayer *>(layer)) {
+        } else if (layer->isParticleLayer()) {
           selectedResource.type = QStringLiteral("particle");
-          selectedResource.note = particleLayer->debugState();
+          selectedResource.note = QStringLiteral("particle layer");
         } else if (auto *textLayer = dynamic_cast<ArtifactTextLayer *>(layer)) {
           selectedResource.type = QStringLiteral("text");
           selectedResource.note = textLayer->debugState();

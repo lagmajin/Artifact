@@ -40,7 +40,7 @@ module;
 #include <numeric>
 #include <regex>
 #include <random>
-export module Generator.Clone;
+module Generator.Clone;
 
 
 

@@ -108,7 +108,13 @@ export namespace Artifact {
             basePos -= (effPos - basePos) * s;
             break;
         case EffectorBlendMode::Multiply:
-            basePos = basePos * (1.0f + (effPos / (basePos.length() > 0.001f ? basePos.length() : 1.0f) - 1.0f) * s);
+            {
+                const float baseLength = basePos.length() > 0.001f ? basePos.length() : 1.0f;
+                const QVector3D normalizedEffPos = effPos / baseLength;
+                basePos.setX(basePos.x() * (1.0f + (normalizedEffPos.x() - 1.0f) * s));
+                basePos.setY(basePos.y() * (1.0f + (normalizedEffPos.y() - 1.0f) * s));
+                basePos.setZ(basePos.z() * (1.0f + (normalizedEffPos.z() - 1.0f) * s));
+            }
             break;
         case EffectorBlendMode::Max:
             basePos.setX(std::max(basePos.x(), effPos.x() * s));

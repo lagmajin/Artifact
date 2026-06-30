@@ -1275,11 +1275,16 @@ private:
                 ? entry.value(QStringLiteral("timeScale")).toLongLong()
                 : 30;
             const QVariant value = entry.value(QStringLiteral("value"));
-            const auto interpolation = static_cast<InterpolationType>(entry.value(QStringLiteral("interpolation")).toInt(static_cast<int>(InterpolationType::Linear)));
-            const float cp1_x = static_cast<float>(entry.value(QStringLiteral("cp1_x")).toDouble(0.42));
-            const float cp1_y = static_cast<float>(entry.value(QStringLiteral("cp1_y")).toDouble(0.0));
-            const float cp2_x = static_cast<float>(entry.value(QStringLiteral("cp2_x")).toDouble(0.58));
-            const float cp2_y = static_cast<float>(entry.value(QStringLiteral("cp2_y")).toDouble(1.0));
+            bool ok = false;
+            int interpolationValue = entry.value(QStringLiteral("interpolation")).toInt(&ok);
+            if (!ok) {
+                interpolationValue = static_cast<int>(InterpolationType::Linear);
+            }
+            const auto interpolation = static_cast<InterpolationType>(interpolationValue);
+            const float cp1_x = static_cast<float>(entry.value(QStringLiteral("cp1_x")).toDouble(&ok));
+            const float cp1_y = static_cast<float>(entry.value(QStringLiteral("cp1_y")).toDouble(&ok));
+            const float cp2_x = static_cast<float>(entry.value(QStringLiteral("cp2_x")).toDouble(&ok));
+            const float cp2_y = static_cast<float>(entry.value(QStringLiteral("cp2_y")).toDouble(&ok));
             const bool roving = entry.value(QStringLiteral("roving")).toBool();
             prop->addKeyFrame(RationalTime(timeValue, timeScale), value, interpolation, cp1_x, cp1_y, cp2_x, cp2_y, roving);
         }
@@ -1485,7 +1490,7 @@ private:
                         {QStringLiteral("error"), QStringLiteral("Undo manager, composition, or layer unavailable")}
                     });
                 }
-                const QString oldName = layer->layerName().toQString();
+                const QString oldName = layer->layerName();
                 const QString newName = request.arguments.value(QStringLiteral("newName")).toString().trimmed();
                 undo->push(std::make_unique<RenameLayerCommand>(layer, oldName, newName));
                 return ArtifactCore::commandResultFromVariantMap(QVariantMap{
@@ -1509,7 +1514,7 @@ private:
                     });
                 }
                 const QString effectType = request.arguments.value(QStringLiteral("effectType")).toString().trimmed();
-                auto effect = effectService->createEffect(ArtifactCore::EffectID(effectType));
+                auto effect = effectService->createEffect(Artifact::EffectID(effectType));
                 if (!effect) {
                     return ArtifactCore::commandResultFromVariantMap(QVariantMap{
                         {QStringLiteral("success"), false},

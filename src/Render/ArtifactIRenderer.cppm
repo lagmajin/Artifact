@@ -1241,9 +1241,8 @@ namespace {
       (m_readbackStagingFormat != stagingFormat);
   if (ringNeedsRealloc) {
     for (auto& slot : m_readbackRing) {
-      TextureDesc stagDesc;
+      TextureDesc stagDesc = srcTex->GetDesc();
       stagDesc.Name           = "ReadbackStagingTexture";
-      stagDesc.Type           = RESOURCE_DIM_TEX_2D;
       stagDesc.Width          = srcWidth;
       stagDesc.Height         = srcHeight;
       stagDesc.MipLevels      = 1;
@@ -1251,6 +1250,8 @@ namespace {
       stagDesc.Usage          = USAGE_STAGING;
       stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
       stagDesc.BindFlags      = BIND_NONE;
+      stagDesc.SampleCount    = 1;
+      stagDesc.ClearValue.Format = TEX_FORMAT_UNKNOWN;
       device->CreateTexture(stagDesc, nullptr, &slot.staging);
       if (!slot.staging) return {};
 

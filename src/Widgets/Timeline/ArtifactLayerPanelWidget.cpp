@@ -1132,13 +1132,14 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
     if (!service || !comp) {
       return;
     }
-    const LayerID selectedId = impl_->panel ? impl_->panel->selectedLayerId() : LayerID{};
+    auto* panel = qobject_cast<ArtifactLayerPanelWidget*>(parentWidget());
+    const LayerID selectedId = panel ? panel->selectedLayerId() : LayerID{};
     auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
     if (!layer) {
       return;
     }
     layer->setVisible(!layer->isVisible());
-    impl_->panel->updateLayout();
+    if (panel) panel->updateLayout();
   });
   QObject::connect(lockButton, &QPushButton::clicked, this, [this]() {
     auto* service = ArtifactProjectService::instance();
@@ -1146,13 +1147,14 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
     if (!service || !comp) {
       return;
     }
-    const LayerID selectedId = impl_->panel ? impl_->panel->selectedLayerId() : LayerID{};
+    auto* panel = qobject_cast<ArtifactLayerPanelWidget*>(parentWidget());
+    const LayerID selectedId = panel ? panel->selectedLayerId() : LayerID{};
     auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
     if (!layer) {
       return;
     }
     layer->setLocked(!layer->isLocked());
-    impl_->panel->updateLayout();
+    if (panel) panel->updateLayout();
   });
   QObject::connect(soloButton, &QPushButton::clicked, this, [this]() {
     auto* service = ArtifactProjectService::instance();
@@ -1160,13 +1162,14 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
     if (!service || !comp) {
       return;
     }
-    const LayerID selectedId = impl_->panel ? impl_->panel->selectedLayerId() : LayerID{};
+    auto* panel = qobject_cast<ArtifactLayerPanelWidget*>(parentWidget());
+    const LayerID selectedId = panel ? panel->selectedLayerId() : LayerID{};
     auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
     if (!layer) {
       return;
     }
     layer->setSolo(!layer->isSolo());
-    impl_->panel->updateLayout();
+    if (panel) panel->updateLayout();
   });
   QObject::connect(audioButton, &QPushButton::clicked, this, [this]() {
     auto* service = ArtifactProjectService::instance();
@@ -1174,19 +1177,20 @@ ArtifactLayerPanelHeaderWidget::ArtifactLayerPanelHeaderWidget(QWidget* parent)
     if (!service || !comp) {
       return;
     }
-    const LayerID selectedId = impl_->panel ? impl_->panel->selectedLayerId() : LayerID{};
+    auto* panel = qobject_cast<ArtifactLayerPanelWidget*>(parentWidget());
+    const LayerID selectedId = panel ? panel->selectedLayerId() : LayerID{};
     auto layer = selectedId.isNil() ? ArtifactAbstractLayerPtr{} : comp->layerById(selectedId);
     if (!layer) {
       return;
     }
     if (auto videoLayer = std::dynamic_pointer_cast<ArtifactVideoLayer>(layer)) {
       videoLayer->setAudioMuted(!videoLayer->isAudioMuted());
-      impl_->panel->updateLayout();
+      if (panel) panel->updateLayout();
       return;
     }
     if (auto audioLayer = std::dynamic_pointer_cast<ArtifactAudioLayer>(layer)) {
       audioLayer->mute();
-      impl_->panel->updateLayout();
+      if (panel) panel->updateLayout();
     }
   });
 

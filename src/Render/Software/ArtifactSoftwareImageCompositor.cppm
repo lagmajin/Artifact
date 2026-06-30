@@ -11,11 +11,179 @@ module;
 module Artifact.Render.SoftwareCompositor;
 
 import Layer.Blend;
-import Color.BlendMode;
+import Color.Float;
+import Color.Conversion;
+import Color.Luminance;
 
 namespace Artifact::SoftwareRender {
 
 namespace {
+
+inline float clamp01(const float value) {
+ return std::clamp(value, 0.0f, 1.0f);
+}
+
+inline float outAlpha(const float srcAlpha, const float dstAlpha) {
+ return srcAlpha + dstAlpha * (1.0f - srcAlpha);
+}
+
+inline ArtifactCore::FloatColor composeBlendResult(const ArtifactCore::FloatColor& base,
+                                                   const ArtifactCore::FloatColor& blendColor,
+                                                   const float srcAlpha,
+                                                   const ArtifactCore::FloatColor& blendedStraight) {
+ const float dstAlpha = clamp01(base.a());
+ const float outA = outAlpha(srcAlpha, dstAlpha);
+ const float premulR =
+  base.r() * dstAlpha * (1.0f - srcAlpha) +
+  (blendedStraight.r() * dstAlpha + blendColor.r() * (1.0f - dstAlpha)) * srcAlpha;
+ const float premulG =
+  base.g() * dstAlpha * (1.0f - srcAlpha) +
+  (blendedStraight.g() * dstAlpha + blendColor.g() * (1.0f - dstAlpha)) * srcAlpha;
+ const float premulB =
+  base.b() * dstAlpha * (1.0f - srcAlpha) +
+  (blendedStraight.b() * dstAlpha + blendColor.b() * (1.0f - dstAlpha)) * srcAlpha;
+ if (outA <= 1e-6f) {
+  return ArtifactCore::FloatColor(0.0f, 0.0f, 0.0f, 0.0f);
+ }
+ return ArtifactCore::FloatColor(clamp01(premulR / outA),
+                                 clamp01(premulG / outA),
+                                 clamp01(premulB / outA),
+                                 outA);
+}
+
+inline ArtifactCore::FloatColor applyStencilLikeBlend(const ArtifactCore::FloatColor& base,
+                                                      const float factor) {
+ const float clampedFactor = clamp01(factor);
+ return ArtifactCore::FloatColor(base.r(), base.g(), base.b(), clamp01(base.a() * clampedFactor));
+}
+
+inline ArtifactCore::FloatColor applySilhouetteLikeBlend(const ArtifactCore::FloatColor& base,
+                                                         const float factor) {
+ const float clampedFactor = clamp01(1.0f - factor);
+ return ArtifactCore::FloatColor(base.r(), base.g(), base.b(), clamp01(base.a() * clampedFactor));
+}
+
+inline float blendAdd(const float b, const float f) { return std::min(b + f, 1.0f); }
+inline float blendSubtract(const float b, const float f) { return std::max(b - f, 0.0f); }
+inline float blendMultiply(const float b, const float f) { return b * f; }
+inline float blendScreen(const float b, const float f) { return 1.0f - (1.0f - b) * (1.0f - f); }
+inline float blendOverlay(const float b, const float f) {
+ return (b < 0.5f) ? (2.0f * b * f) : (1.0f - 2.0f * (1.0f - b) * (1.0f - f));
+}
+inline float blendDarken(const float b, const float f) { return std::min(b, f); }
+inline float blendLighten(const float b, const float f) { return std::max(b, f); }
+inline float blendColorDodge(const float b, const float f) {
+ if (f == 1.0f) return 1.0f;
+ return std::min(1.0f, b / (1.0f - f));
+}
+inline float blendColorBurn(const float b, const float f) {
+ if (f == 0.0f) return 0.0f;
+ return std::max(0.0f, 1.0f - (1.0f - b) / f);
+}
+inline float blendHardLight(const float b, const float f) { return blendOverlay(f, b); }
+inline float blendSoftLight(const float b, const float f) {
+ if (f < 0.5f) {
+  return b - (1.0f - 2.0f * f) * b * (1.0f - b);
+ }
+ const float d = (b <= 0.25f) ? ((16.0f * b - 12.0f) * b + 4.0f) * b : std::sqrt(b);
+ return b + (2.0f * f - 1.0f) * (d - b);
+}
+inline float blendDifference(const float b, const float f) { return std::abs(b - f); }
+inline float blendExclusion(const float b, const float f) { return b + f - 2.0f * b * f; }
+inline float blendLinearBurn(const float b, const float f) { return std::max(b + f - 1.0f, 0.0f); }
+inline float blendDivide(const float b, const float f) { return std::min(b / std::max(f, 1e-6f), 1.0f); }
+inline float blendPinLight(const float b, const float f) {
+ return (f < 0.5f) ? std::min(b, 2.0f * f) : std::max(b, 2.0f * (f - 0.5f));
+}
+inline float blendVividLight(const float b, const float f) {
+ return (f < 0.5f)
+  ? (f == 0.0f ? 0.0f : std::max(1.0f - (1.0f - b) / (2.0f * f), 0.0f))
+  : (f == 1.0f ? 1.0f : std::min(b / (2.0f * (1.0f - f)), 1.0f));
+}
+inline float blendLinearLight(const float b, const float f) { return std::clamp(b + 2.0f * f - 1.0f, 0.0f, 1.0f); }
+inline float blendHardMix(const float b, const float f) { return (b + f >= 1.0f) ? 1.0f : 0.0f; }
+
+inline ArtifactCore::FloatColor blendColor(const ArtifactCore::FloatColor& base,
+                                           const ArtifactCore::FloatColor& blendColor,
+                                           const ArtifactCore::BlendMode mode,
+                                           const float opacity) {
+ const float srcAlpha = clamp01(opacity);
+ if (srcAlpha <= 0.0f) {
+  return base;
+ }
+
+ const auto applyBlend = [&](float (*blendFunc)(float, float)) -> ArtifactCore::FloatColor {
+  const ArtifactCore::FloatColor blendedStraight(
+   clamp01(blendFunc(base.r(), blendColor.r())),
+   clamp01(blendFunc(base.g(), blendColor.g())),
+   clamp01(blendFunc(base.b(), blendColor.b())),
+   1.0f);
+  return composeBlendResult(base, blendColor, srcAlpha, blendedStraight);
+ };
+
+ switch (mode) {
+ case ArtifactCore::BlendMode::Normal: return applyBlend([](float, float f) { return f; });
+ case ArtifactCore::BlendMode::Add: return applyBlend(blendAdd);
+ case ArtifactCore::BlendMode::Subtract: return applyBlend(blendSubtract);
+ case ArtifactCore::BlendMode::Multiply: return applyBlend(blendMultiply);
+ case ArtifactCore::BlendMode::Screen: return applyBlend(blendScreen);
+ case ArtifactCore::BlendMode::Overlay: return applyBlend(blendOverlay);
+ case ArtifactCore::BlendMode::Darken: return applyBlend(blendDarken);
+ case ArtifactCore::BlendMode::Lighten: return applyBlend(blendLighten);
+ case ArtifactCore::BlendMode::ColorDodge: return applyBlend(blendColorDodge);
+ case ArtifactCore::BlendMode::ColorBurn: return applyBlend(blendColorBurn);
+ case ArtifactCore::BlendMode::HardLight: return applyBlend(blendHardLight);
+ case ArtifactCore::BlendMode::SoftLight: return applyBlend(blendSoftLight);
+ case ArtifactCore::BlendMode::Difference: return applyBlend(blendDifference);
+ case ArtifactCore::BlendMode::Exclusion: return applyBlend(blendExclusion);
+ case ArtifactCore::BlendMode::LinearBurn: return applyBlend(blendLinearBurn);
+ case ArtifactCore::BlendMode::Divide: return applyBlend(blendDivide);
+ case ArtifactCore::BlendMode::PinLight: return applyBlend(blendPinLight);
+ case ArtifactCore::BlendMode::VividLight: return applyBlend(blendVividLight);
+ case ArtifactCore::BlendMode::LinearLight: return applyBlend(blendLinearLight);
+ case ArtifactCore::BlendMode::HardMix: return applyBlend(blendHardMix);
+ case ArtifactCore::BlendMode::ClassicColorBurn: return applyBlend(blendColorBurn);
+ case ArtifactCore::BlendMode::LinearDodge: return applyBlend(blendAdd);
+ case ArtifactCore::BlendMode::ClassicColorDodge: return applyBlend(blendColorDodge);
+ case ArtifactCore::BlendMode::ClassicDifference: return applyBlend(blendDifference);
+ case ArtifactCore::BlendMode::Hue:
+ case ArtifactCore::BlendMode::Saturation:
+ case ArtifactCore::BlendMode::Color:
+ case ArtifactCore::BlendMode::Luminosity: {
+  const ArtifactCore::HSLColor baseHsl = ArtifactCore::ColorConversion::RGBToHSL(base.r(), base.g(), base.b());
+  const ArtifactCore::HSLColor blendHsl = ArtifactCore::ColorConversion::RGBToHSL(blendColor.r(), blendColor.g(), blendColor.b());
+  ArtifactCore::HSLColor resultHsl = baseHsl;
+  if (mode == ArtifactCore::BlendMode::Hue || mode == ArtifactCore::BlendMode::Color) {
+   resultHsl.h = blendHsl.h;
+  }
+  if (mode == ArtifactCore::BlendMode::Saturation || mode == ArtifactCore::BlendMode::Color) {
+   resultHsl.s = blendHsl.s;
+  }
+  if (mode == ArtifactCore::BlendMode::Luminosity) {
+   resultHsl.l = blendHsl.l;
+  }
+  const auto rgb = ArtifactCore::ColorConversion::HSLToRGB(resultHsl);
+  return composeBlendResult(
+   base, blendColor, srcAlpha,
+   ArtifactCore::FloatColor(clamp01(rgb[0]), clamp01(rgb[1]), clamp01(rgb[2]), 1.0f));
+ }
+ case ArtifactCore::BlendMode::Dissolve:
+ case ArtifactCore::BlendMode::DancingDissolve:
+  return composeBlendResult(base, blendColor, srcAlpha, blendColor);
+ case ArtifactCore::BlendMode::StencilAlpha:
+  return applyStencilLikeBlend(base, srcAlpha);
+ case ArtifactCore::BlendMode::StencilLuma:
+  return applyStencilLikeBlend(
+   base, clamp01(ArtifactCore::ColorLuminance::calculate(blendColor.r(), blendColor.g(), blendColor.b()) * srcAlpha));
+ case ArtifactCore::BlendMode::SilhouetteAlpha:
+  return applySilhouetteLikeBlend(base, srcAlpha);
+ case ArtifactCore::BlendMode::SilhouetteLuma:
+  return applySilhouetteLikeBlend(
+   base, clamp01(ArtifactCore::ColorLuminance::calculate(blendColor.r(), blendColor.g(), blendColor.b()) * srcAlpha));
+ default:
+  return base;
+ }
+}
 
 QPainter::CompositionMode toCompositionMode(const ArtifactCore::BlendMode mode)
 {
@@ -284,7 +452,7 @@ void blendBgrInPlace(cv::Mat& dstBgr, const cv::Mat& srcBgr, const float opacity
    if (shouldUseQPainterFallback(mode)) {
     const ArtifactCore::FloatColor base(dstRow[x][2], dstRow[x][1], dstRow[x][0], 1.0f);
     const ArtifactCore::FloatColor src(srcRow[x][2], srcRow[x][1], srcRow[x][0], 1.0f);
-    const ArtifactCore::FloatColor out = ArtifactCore::ColorBlendMode::blend(base, src, mode, a);
+    const ArtifactCore::FloatColor out = blendColor(base, src, mode, a);
     outRow[x] = cv::Vec3f(out.b(), out.g(), out.r());
     continue;
    }

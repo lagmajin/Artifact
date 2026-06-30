@@ -62,7 +62,6 @@ import Artifact.Layer.Svg;
 import Artifact.Layer.Solid2D;
 import Artifact.Layer.Text;
 import Artifact.Layer.Video;
-import Artifact.Layer.Particle;
 import Artifact.Layer.FormParticle;
 import Image.ImageF32x4_RGBA;
 import Artifact.Layers.SolidImage;
@@ -377,8 +376,8 @@ namespace Artifact
     }
    }
 
-   if (const auto particleLayer = dynamic_cast<ArtifactParticleLayer*>(layerPtr)) {
-    particleLayer->draw(renderer);
+   if (layerPtr->isParticleLayer()) {
+    layerPtr->draw(renderer);
     return;
    }
    if (const auto formParticleLayer = dynamic_cast<ArtifactFormParticleLayer*>(layerPtr)) {
@@ -488,6 +487,19 @@ namespace Artifact
   }
 
  public:
+  void setBoidsTarget(const QVector3D& pos)
+  {
+   ensureBoidsSystem();
+   boidsSystem_->setTarget(ArtifactCore::float3{pos.x(), pos.y(), pos.z()});
+  }
+
+  void clearBoidsTarget()
+  {
+   if (boidsSystem_) {
+    boidsSystem_->clearTarget();
+   }
+  }
+
   Impl() = default;
   ~Impl() = default;
 
@@ -626,7 +638,7 @@ namespace Artifact
  void ArtifactPreviewCompositionPipeline::setCrowdSettings(const ArtifactCore::CrowdSettings& s) { if (impl_) impl_->setCrowdSettings(s); }
  const ArtifactCore::CrowdSettings& ArtifactPreviewCompositionPipeline::crowdSettings() const { static const ArtifactCore::CrowdSettings defaultSettings; return impl_ ? impl_->crowdSettings() : defaultSettings; }
  ArtifactCore::CrowdSettings& ArtifactPreviewCompositionPipeline::crowdSettings() { static ArtifactCore::CrowdSettings defaultSettings; return impl_ ? impl_->crowdSettings() : defaultSettings; }
- void ArtifactPreviewCompositionPipeline::setBoidsTarget(const ArtifactCore::float3& pos) { if (impl_ && impl_->boidsSystem_) impl_->boidsSystem_->setTarget(pos); }
- void ArtifactPreviewCompositionPipeline::clearBoidsTarget() { if (impl_ && impl_->boidsSystem_) impl_->boidsSystem_->clearTarget(); }
+ void ArtifactPreviewCompositionPipeline::setBoidsTarget(const QVector3D& pos) { if (impl_) impl_->setBoidsTarget(pos); }
+ void ArtifactPreviewCompositionPipeline::clearBoidsTarget() { if (impl_) impl_->clearBoidsTarget(); }
 
 }

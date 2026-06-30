@@ -995,6 +995,22 @@ void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
                                  int selectedCount,
                                  const QStringList &selectedNames,
                                  int overlayW,
+                                 int overlayH);
+
+void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
+                                 const ArtifactAbstractLayerPtr &layer,
+                                 int overlayW,
+                                 int overlayH)
+{
+  drawSelectionSummaryOverlay(renderer, layer, 1, QStringList{}, overlayW,
+                              overlayH);
+}
+
+void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
+                                 const ArtifactAbstractLayerPtr &layer,
+                                 int selectedCount,
+                                 const QStringList &selectedNames,
+                                 int overlayW,
                                  int overlayH)
 {
   if (!renderer || !layer) {
@@ -1035,7 +1051,7 @@ void drawSelectionSummaryOverlay(ArtifactIRenderer *renderer,
   for (const QString &line : lines) {
     contentWidth = std::max(contentWidth, fm.horizontalAdvance(line));
   }
-  const int lineCount = std::max(1, lines.size());
+  const int lineCount = std::max(1, static_cast<int>(lines.size()));
   QRect labelRect(12, overlayH - (lineHeight * lineCount + 24), contentWidth + 24,
                   lineHeight * lineCount + 12);
   if (labelRect.bottom() > overlayH - 12) {

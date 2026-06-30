@@ -1282,7 +1282,8 @@ void ArtifactLayerEditorWidgetV2::Impl::drawShapeOverlay(const ArtifactAbstractL
                                                : QStringLiteral("drag / delete / convert"))
                              : QStringLiteral("insert / split / convert");
   const QPointF hudAnchor = globalTransform.map(points.front()) + QPointF(14.0, -30.0);
-  const QRectF hudRect(hudAnchor, QSizeF(176.0 / zoom, 36.0 / zoom));
+  const float zoom = std::max(0.1f, renderer_->getZoom());
+  const QRectF hudRect(hudAnchor, QSizeF(176.0f / zoom, 36.0f / zoom));
   renderer_->drawOverlayPanel(hudRect.x(), hudRect.y(), hudRect.width(), hudRect.height(),
                               FloatColor{0.06f, 0.09f, 0.13f, 0.88f},
                               FloatColor{0.42f, 0.72f, 0.98f, 0.90f});

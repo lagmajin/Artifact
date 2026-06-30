@@ -25,7 +25,7 @@ module;
 
 #include "Input.Operator";
 
-export module Command.Palette;
+module Command.Palette;
 
 namespace Artifact
 {

@@ -33,6 +33,7 @@ import Artifact.Layer.CompositionBackground;
 import Artifact.Layers.Model3D;
 import Artifact.Layer.Composition;
 import Artifact.Layer.MaterialContainer;
+import Artifact.Layer.SandSim2D;
 //import Artifact.Layer.Video;
 
 namespace Artifact {
@@ -199,8 +200,11 @@ ArtifactAbstractLayerPtr ArtifactLayerFactory::Impl::createNewLayer(ArtifactLaye
    ptr = ArtifactAbstractLayerPtr(modelLayer);
    break;
   }
-   default:
+  case LayerType::SandSim2D:
+    ptr = ArtifactAbstractLayerPtr(new ArtifactSandSim2DLayer());
     break;
+   default:
+     break;
   }
 
   result.layer = ptr;
