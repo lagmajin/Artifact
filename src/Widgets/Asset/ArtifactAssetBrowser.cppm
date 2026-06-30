@@ -944,6 +944,7 @@ ArtifactAssetBrowserToolBar::Impl::Impl()
 
   void handleDirectryChanged();
   void handleDoubleClicked();
+  void handleDoubleClicked(const QModelIndex& index);
   void defaultHandleMousePressEvent(QMouseEvent* event);
   void applyFilters();
   bool matchesFileTypeFilter(const QString& fileName) const;
@@ -1054,9 +1055,45 @@ ArtifactAssetBrowser::Impl::~Impl()
   thumbnailSize_ = QSize(clamped, clamped);
  }
 
- void ArtifactAssetBrowser::Impl::handleDoubleClicked()
- {
- }
+void ArtifactAssetBrowser::Impl::handleDoubleClicked()
+{
+  if (!fileView_) {
+   return;
+  }
+  handleDoubleClicked(fileView_->currentIndex());
+}
+
+void ArtifactAssetBrowser::Impl::handleDoubleClicked(const QModelIndex& index)
+{
+  if (!index.isValid() || !assetModel_) {
+   return;
+  }
+
+  const AssetMenuItem item = assetModel_->itemAt(index.row());
+  const QString filePath = item.path.toQString();
+  if (filePath.isEmpty()) {
+   return;
+  }
+
+  if (item.isFolder) {
+   if (owner_) {
+    owner_->navigateToFolder(filePath);
+   }
+   return;
+  }
+
+  if (syncStateLabel_) {
+   QString previewName = QFileInfo(filePath).fileName();
+   if (previewName.isEmpty()) {
+    previewName = filePath;
+   }
+   syncStateLabel_->setText(QStringLiteral("Preview: %1").arg(previewName));
+   syncStateLabel_->setToolTip(filePath);
+  }
+  if (owner_) {
+   owner_->itemDoubleClicked(filePath);
+  }
+}
 
  void ArtifactAssetBrowser::Impl::defaultHandleMousePressEvent(QMouseEvent* event)
  {
@@ -2331,18 +2368,7 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
   // Connect file double-click to preview or navigate into a folder.
   connect(fileView, &QListView::doubleClicked, this, [this](const QModelIndex& index) {
    if (!index.isValid()) return;
-    AssetMenuItem item = impl_->assetModel_->itemAt(index.row());
-    QString filePath = item.path.toQString();
-    if (filePath.isEmpty()) return;
-
-    // If it's a folder, navigate into it
-    if (item.isFolder) {
-     navigateToFolder(filePath);
-     return;
-    }
-
-    // Otherwise, preview the file without importing it.
-    itemDoubleClicked(filePath);
+   impl_->handleDoubleClicked(index);
   });
 
   // Connect right-click context menu
@@ -2369,6 +2395,9 @@ void ArtifactAssetBrowser::Impl::scheduleHoverPreview(const QString& filePath, c
    }
    selectionChanged(selectedFiles);
    impl_->refreshLeftHubSummary();
+   if (impl_->syncStateLabel_) {
+    impl_->syncStateLabel_->setText(impl_->syncStateText());
+   }
   });
 
   // Create thumbnail size adjustment
@@ -2712,6 +2741,9 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
    emit selectionChanged(normalizedPaths);
   }
   impl_->refreshLeftHubSummary();
+  if (impl_->syncStateLabel_) {
+   impl_->syncStateLabel_->setText(impl_->syncStateText());
+  }
 }
 
  void ArtifactAssetBrowser::dropEvent(QDropEvent* event)
@@ -2792,6 +2824,9 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
   impl_->applyFilters();
   impl_->syncDirectorySelection();
   impl_->refreshLeftHubSummary();
+  if (impl_->syncStateLabel_) {
+   impl_->syncStateLabel_->setText(impl_->syncStateText());
+  }
   folderChanged(folderPath);
  }
 
@@ -2955,11 +2990,7 @@ void ArtifactAssetBrowser::selectAssetPaths(const QStringList& filePaths)
 if (item.isFolder) {
     addAction(frequentMenu, QStringLiteral("Open Folder"), [this, filePath]() {
      if (filePath.isEmpty()) return;
-     impl_->currentDirectoryPath_ = filePath;
-     impl_->clearThumbnailCache();
-     impl_->applyFilters();
-     impl_->syncDirectorySelection();
-     folderChanged(filePath);
+     navigateToFolder(filePath);
     });
    }
 
@@ -3418,15 +3449,6 @@ void ArtifactAssetBrowser::Impl::deleteSelected()
   }
 
   if (deletedCount > 0) {
-    auto* svc = ArtifactProjectService::instance();
-    if (svc) {
-      svc->removeAllAssets();
-      for (const QString& path : paths) {
-        if (QFileInfo::exists(path)) {
-          svc->importAssetsFromPaths(QStringList() << path);
-        }
-      }
-    }
     clearThumbnailCache();
     applyFilters();
   }
