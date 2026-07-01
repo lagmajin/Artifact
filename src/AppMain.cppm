@@ -1777,6 +1777,7 @@ int main(int argc, char *argv[]) {
     }
   }
 
+  QApplication::setAttribute(Qt::AA_DontShowIconsInMenus, false);
   QApplication a(argc, argv);
   configureQtPaths();
   Artifact::WorkspaceAutomation::ensureRegistered();
@@ -2172,6 +2173,13 @@ int main(int argc, char *argv[]) {
       if (!compositionEditor) {
         return;
       }
+      const bool debugSurfaceVisible =
+          (debugConsoleWidget && debugConsoleWidget->isVisible()) ||
+          (frameDebugWidget && frameDebugWidget->isVisible()) ||
+          (debugHarnessWidget && debugHarnessWidget->isVisible());
+      if (!debugSurfaceVisible) {
+        return;
+      }
       auto* controller = compositionEditor->renderController();
       if (!controller) {
         return;
@@ -2188,7 +2196,7 @@ int main(int argc, char *argv[]) {
       }
     };
     auto frameDebugTimer = std::make_shared<ArtifactCore::PreciseTicker>();
-    frameDebugTimer->setInterval(std::chrono::milliseconds(250));
+    frameDebugTimer->setInterval(std::chrono::milliseconds(750));
     frameDebugTimer->setCallback([mw, refreshFrameDebugWidgets]() {
       QMetaObject::invokeMethod(
           mw,

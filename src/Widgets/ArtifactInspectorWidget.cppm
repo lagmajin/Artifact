@@ -6,9 +6,12 @@ module;
 #include <QCursor>
 #include <QFocusEvent>
 #include <QDesktopServices>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFont>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QInputDialog>
@@ -31,6 +34,7 @@ module;
 #include <QScopeGuard>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStringList>
 #include <QTabWidget>
 #include <QTimer>
@@ -83,8 +87,10 @@ import Utils.String.UniString;
 import Widgets.Utils.CSS;
 
 import Artifact.Service.Project;
+import Artifact.Service.Effect;
 import Artifact.Project.PresetManager;
 import Artifact.Composition.Abstract;
+import Artifact.Layer.Component.System;
 import Artifact.Effect.Abstract;
 import Artifact.Mask.LayerMask;
 import Artifact.Layer.Matte;
@@ -163,12 +169,322 @@ QColor themeColor(const QString &value, const QColor &fallback) {
   return color.isValid() ? color : fallback;
 }
 
+struct LayerTabComponentState {
+  bool hasLayer = false;
+  bool canEditComponents = false;
+  bool physicsEnabled = false;
+  bool scriptEnabled = false;
+  bool layoutEnabled = false;
+  bool cloneEnabled = false;
+  bool collisionEnabled = false;
+  bool crowdEnabled = false;
+  bool particleEmitterEnabled = false;
+  bool fluidEnabled = false;
+  int generatorCount = 0;
+  int fieldCount = 0;
+  int cloneModifierCount = 0;
+  int extraCloneModifierCount = 0;
+  std::vector<LayerComponentValidationIssue> validationIssues;
+};
+
+bool layerBooleanProperty(const ArtifactAbstractLayerPtr &layer,
+                          const QString &propertyPath);
+
+LayerTabComponentState collectLayerTabComponentState(
+    const ArtifactAbstractLayerPtr &layer) {
+  LayerTabComponentState state;
+  state.hasLayer = static_cast<bool>(layer);
+  state.canEditComponents = state.hasLayer;
+  state.physicsEnabled =
+      state.hasLayer && layerBooleanProperty(layer, QStringLiteral("physics.enabled"));
+  state.scriptEnabled = state.hasLayer &&
+      layerBooleanProperty(layer, QStringLiteral("component.script.enabled"));
+  state.layoutEnabled = state.hasLayer &&
+      layerBooleanProperty(layer, QStringLiteral("component.layout.enabled"));
+  state.cloneEnabled = state.hasLayer &&
+      layerBooleanProperty(layer, QStringLiteral("component.cloner.enabled"));
+  state.collisionEnabled = state.hasLayer &&
+      layerBooleanProperty(layer, QStringLiteral("component.collision.enabled"));
+  state.crowdEnabled = state.hasLayer &&
+      layerBooleanProperty(layer, QStringLiteral("component.crowd.enabled"));
+  state.particleEmitterEnabled = state.hasLayer &&
+      layerBooleanProperty(layer, QStringLiteral("component.particleEmitter.enabled"));
+  state.fluidEnabled = state.hasLayer &&
+      layerBooleanProperty(layer, QStringLiteral("component.fluid.enabled"));
+  state.generatorCount =
+      state.hasLayer ? static_cast<int>(layer->layerGenerators().size()) : 0;
+  state.fieldCount = state.hasLayer ? static_cast<int>(layer->layerFields().size()) : 0;
+  state.cloneModifierCount =
+      state.hasLayer ? static_cast<int>(layer->layerCloneModifiers().size()) : 0;
+  state.extraCloneModifierCount = std::max(0, state.cloneModifierCount - 2);
+  state.validationIssues =
+      state.hasLayer ? layer->validateLayerComponents()
+                     : std::vector<LayerComponentValidationIssue>{};
+  return state;
+}
+
+QString layerComponentSummaryText(const LayerTabComponentState &state) {
+  if (!state.hasLayer) {
+    return QStringLiteral("Components: unavailable until a layer is selected");
+  }
+
+  QStringList active;
+  if (state.physicsEnabled) {
+    active.push_back(QStringLiteral("Physics"));
+  }
+  if (state.scriptEnabled) {
+    active.push_back(QStringLiteral("Script"));
+  }
+  if (state.layoutEnabled) {
+    active.push_back(QStringLiteral("Layout"));
+  }
+  if (state.cloneEnabled) {
+    active.push_back(QStringLiteral("Cloner"));
+  }
+  if (state.collisionEnabled) {
+    active.push_back(QStringLiteral("Collision"));
+  }
+  if (state.crowdEnabled) {
+    active.push_back(QStringLiteral("Crowd"));
+  }
+  if (state.particleEmitterEnabled) {
+    active.push_back(QStringLiteral("Particle Emitter"));
+  }
+  if (state.fluidEnabled) {
+    active.push_back(QStringLiteral("Fluid"));
+  }
+  return active.isEmpty() ? QStringLiteral("Components: none")
+                          : QStringLiteral("Components: %1")
+                                .arg(active.join(QStringLiteral(", ")));
+}
+
 QColor blendColor(const QColor &a, const QColor &b, const qreal t) {
   const qreal clamped = std::clamp(t, 0.0, 1.0);
   return QColor::fromRgbF(a.redF() * (1.0 - clamped) + b.redF() * clamped,
                           a.greenF() * (1.0 - clamped) + b.greenF() * clamped,
                           a.blueF() * (1.0 - clamped) + b.blueF() * clamped,
                           a.alphaF() * (1.0 - clamped) + b.alphaF() * clamped);
+}
+
+bool layerBooleanProperty(const ArtifactAbstractLayerPtr &layer,
+                          const QString &propertyPath);
+
+struct EffectCatalogEntry {
+  EffectPipelineStage stage = EffectPipelineStage::Rasterizer;
+  QString effectId;
+  QString displayName;
+  QString category;
+  QString description;
+  QString keywords;
+};
+
+QString stageDisplayName(EffectPipelineStage stage) {
+  switch (stage) {
+  case EffectPipelineStage::Generator:
+    return QStringLiteral("Generator");
+  case EffectPipelineStage::GeometryTransform:
+    return QStringLiteral("Geo Transform");
+  case EffectPipelineStage::MaterialRender:
+    return QStringLiteral("Material");
+  case EffectPipelineStage::Rasterizer:
+    return QStringLiteral("Rasterizer");
+  case EffectPipelineStage::LayerTransform:
+    return QStringLiteral("Layer Transform");
+  }
+  return QStringLiteral("Effects");
+}
+
+std::vector<EffectCatalogEntry> buildEffectCatalogEntries() {
+  return {
+      {EffectPipelineStage::Generator, QStringLiteral("cloner"),
+       QStringLiteral("Cloner"), QStringLiteral("Generator"),
+       QStringLiteral("Clone and distribute instances."), QStringLiteral("clone mograph instances layout")},
+      {EffectPipelineStage::Generator, QStringLiteral("fractal_noise"),
+       QStringLiteral("Fractal Noise"), QStringLiteral("Generator"),
+       QStringLiteral("Procedural texture and noise source."), QStringLiteral("noise texture procedural")},
+      {EffectPipelineStage::Generator,
+       QStringLiteral("procedural_texture"),
+       QStringLiteral("Procedural Texture"), QStringLiteral("Generator"),
+       QStringLiteral("Pattern-based texture generator."),
+       QStringLiteral("texture procedural pattern")},
+      {EffectPipelineStage::GeometryTransform, QStringLiteral("twist"),
+       QStringLiteral("Twist"), QStringLiteral("Geometry"),
+       QStringLiteral("Twist geometry around an axis."),
+       QStringLiteral("deform rotate geometry")},
+      {EffectPipelineStage::GeometryTransform, QStringLiteral("bend"),
+       QStringLiteral("Bend"), QStringLiteral("Geometry"),
+       QStringLiteral("Bend geometry across a domain."),
+       QStringLiteral("deform curve geometry")},
+      {EffectPipelineStage::MaterialRender, QStringLiteral("pbr_material"),
+       QStringLiteral("PBR Material"), QStringLiteral("Material"),
+       QStringLiteral("Assign physically-based material controls."),
+       QStringLiteral("material metal roughness shader")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("blur"),
+       QStringLiteral("Blur"), QStringLiteral("Blur"),
+       QStringLiteral("Simple raster blur."), QStringLiteral("soften blur")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.blur.gaussian"),
+       QStringLiteral("Gaussian Blur"), QStringLiteral("Blur"),
+       QStringLiteral("Classic gaussian image blur."),
+       QStringLiteral("soft blur gaussian")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("glow"),
+       QStringLiteral("Glow"), QStringLiteral("Glow"),
+       QStringLiteral("Bloom around bright areas."),
+       QStringLiteral("bloom light glow")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("drop_shadow"),
+       QStringLiteral("Drop Shadow"), QStringLiteral("Light"),
+       QStringLiteral("Shadow cast behind the layer."),
+       QStringLiteral("shadow depth offset")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("directional_glow"),
+       QStringLiteral("Directional Glow / Streaks"),
+       QStringLiteral("Glow"),
+       QStringLiteral("Stretch glow into directional streaks."),
+       QStringLiteral("streaks anamorphic directional glow")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("edge_bloom"),
+       QStringLiteral("Edge Bloom"), QStringLiteral("Glow"),
+       QStringLiteral("Bloom driven by edge contrast."),
+       QStringLiteral("edges bloom")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("chromatic_glow"),
+       QStringLiteral("Chromatic Glow"), QStringLiteral("Glow"),
+       QStringLiteral("Color-split glow bloom."),
+       QStringLiteral("rgb chromatic aberration glow")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("reactive_glow"),
+       QStringLiteral("Reactive Glow"), QStringLiteral("Glow"),
+       QStringLiteral("Animated glow response with temporal flavor."),
+       QStringLiteral("reactive animated glow")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("liquid_glow"),
+       QStringLiteral("Liquid Glow"), QStringLiteral("Glow"),
+       QStringLiteral("Fluid-style glow diffusion."),
+       QStringLiteral("liquid glow fluid")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("residual_glow"),
+       QStringLiteral("Residual Glow"), QStringLiteral("Glow"),
+       QStringLiteral("Afterimage-like lingering bloom."),
+       QStringLiteral("residual afterimage glow")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.brightness"),
+       QStringLiteral("Brightness / Contrast"),
+       QStringLiteral("Color"), QStringLiteral("Basic tonal correction."),
+       QStringLiteral("brightness contrast tone")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.exposure"),
+       QStringLiteral("Exposure"), QStringLiteral("Color"),
+       QStringLiteral("Exposure and intensity correction."),
+       QStringLiteral("exposure tone")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.tint"),
+       QStringLiteral("Tint"), QStringLiteral("Color"),
+       QStringLiteral("Shift temperature and tint."),
+       QStringLiteral("tint white balance temperature")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.photofilter"),
+       QStringLiteral("Photo Filter"), QStringLiteral("Color"),
+       QStringLiteral("Camera-style photo filter wash."),
+       QStringLiteral("photo filter color")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.gradientramp"),
+       QStringLiteral("Gradient Ramp"), QStringLiteral("Color"),
+       QStringLiteral("Map tones through a gradient."),
+       QStringLiteral("gradient ramp remap")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.fill"),
+       QStringLiteral("Fill"), QStringLiteral("Color"),
+       QStringLiteral("Solid recolor fill."),
+       QStringLiteral("fill solid recolor")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.hsl"),
+       QStringLiteral("Hue / Saturation"), QStringLiteral("Color"),
+       QStringLiteral("Hue and saturation correction."),
+       QStringLiteral("hue saturation color")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.colorwheels"),
+       QStringLiteral("Color Wheels"), QStringLiteral("Color"),
+       QStringLiteral("Lift/gamma/gain style wheel controls."),
+       QStringLiteral("color wheels grade")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.curves"),
+       QStringLiteral("Curves"), QStringLiteral("Color"),
+       QStringLiteral("Curve-based tonal shaping."),
+       QStringLiteral("curves rgb luma")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.tritone"),
+       QStringLiteral("Tritone"), QStringLiteral("Color"),
+       QStringLiteral("Three-color remap treatment."),
+       QStringLiteral("tritone duotone color")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.colorama"),
+       QStringLiteral("Colorama"), QStringLiteral("Color"),
+       QStringLiteral("Stylized palette remapping."),
+       QStringLiteral("palette psychedelic colorama")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.colorbalance"),
+       QStringLiteral("Color Balance"), QStringLiteral("Color"),
+       QStringLiteral("Balance color channels."),
+       QStringLiteral("balance channel color")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.levels"),
+       QStringLiteral("Levels"), QStringLiteral("Color"),
+       QStringLiteral("Input/output black and white levels."),
+       QStringLiteral("levels histogram")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.channelmixer"),
+       QStringLiteral("Channel Mixer"), QStringLiteral("Color"),
+       QStringLiteral("Mix and rebalance channels."),
+       QStringLiteral("channel mixer rgb")},
+      {EffectPipelineStage::Rasterizer,
+       QStringLiteral("effect.colorcorrection.selectivecolor"),
+       QStringLiteral("Selective Color"), QStringLiteral("Color"),
+       QStringLiteral("Selective hue-based correction."),
+       QStringLiteral("selective color cmyk")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("lift_gamma_gain"),
+       QStringLiteral("Lift / Gamma / Gain"), QStringLiteral("Color"),
+       QStringLiteral("Three-way color grading controls."),
+       QStringLiteral("lift gamma gain grade")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("lens_distortion"),
+       QStringLiteral("Lens Distortion"), QStringLiteral("Distort"),
+       QStringLiteral("Warp image using lens characteristics."),
+       QStringLiteral("distortion lens optics")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("displacement_map"),
+       QStringLiteral("Displacement Map"), QStringLiteral("Distort"),
+       QStringLiteral("Warp using displacement textures."),
+       QStringLiteral("displacement map distort")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("time_displacement"),
+       QStringLiteral("Time Displacement"), QStringLiteral("Time"),
+       QStringLiteral("Offset sampling in time."),
+       QStringLiteral("time temporal displacement")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("chroma_key"),
+       QStringLiteral("Chroma Key"), QStringLiteral("Keying"),
+       QStringLiteral("Key out a color range."),
+       QStringLiteral("green screen keying")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("wave"),
+       QStringLiteral("Wave"), QStringLiteral("Distort"),
+       QStringLiteral("Wave deformation effect."),
+       QStringLiteral("wave distort ripple")},
+      {EffectPipelineStage::Rasterizer, QStringLiteral("spherize"),
+       QStringLiteral("Spherize"), QStringLiteral("Distort"),
+       QStringLiteral("Project image across a sphere."),
+       QStringLiteral("spherize fisheye bulge")},
+      {EffectPipelineStage::LayerTransform,
+       QStringLiteral("transform_2d"),
+       QStringLiteral("Transform 2D"), QStringLiteral("Layer Transform"),
+       QStringLiteral("Per-layer transform effect stack control."),
+       QStringLiteral("transform position scale rotation layer")},
+  };
+}
+
+bool effectCatalogEntryMatches(const EffectCatalogEntry &entry,
+                               const QString &query) {
+  const QString trimmed = query.trimmed();
+  if (trimmed.isEmpty()) {
+    return true;
+  }
+  return entry.displayName.contains(trimmed, Qt::CaseInsensitive) ||
+         entry.category.contains(trimmed, Qt::CaseInsensitive) ||
+         entry.description.contains(trimmed, Qt::CaseInsensitive) ||
+         entry.keywords.contains(trimmed, Qt::CaseInsensitive) ||
+         entry.effectId.contains(trimmed, Qt::CaseInsensitive);
 }
 
 void applyInspectorPalette(QWidget *widget, const bool elevated = false) {
@@ -188,6 +504,8 @@ void applyInspectorPalette(QWidget *widget, const bool elevated = false) {
       themeColor(theme.borderColor, QColor(QStringLiteral("#404754")));
   const QColor accent =
       themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+  const QColor mutedText = blendColor(text, background, 0.52);
+  const QColor disabledSurface = blendColor(surface, background, 0.58);
 
   widget->setAttribute(Qt::WA_StyledBackground, true);
   widget->setAutoFillBackground(true);
@@ -205,6 +523,15 @@ void applyInspectorPalette(QWidget *widget, const bool elevated = false) {
   pal.setColor(QPalette::HighlightedText, background);
   pal.setColor(QPalette::Mid, border);
   pal.setColor(QPalette::Light, accent.lighter(120));
+  pal.setColor(QPalette::Disabled, QPalette::Window, background);
+  pal.setColor(QPalette::Disabled, QPalette::WindowText, mutedText);
+  pal.setColor(QPalette::Disabled, QPalette::Base, disabledSurface);
+  pal.setColor(QPalette::Disabled, QPalette::AlternateBase, disabledSurface);
+  pal.setColor(QPalette::Disabled, QPalette::Text, mutedText);
+  pal.setColor(QPalette::Disabled, QPalette::Button, disabledSurface);
+  pal.setColor(QPalette::Disabled, QPalette::ButtonText, mutedText);
+  pal.setColor(QPalette::Disabled, QPalette::Highlight, border);
+  pal.setColor(QPalette::Disabled, QPalette::HighlightedText, mutedText);
   widget->setPalette(pal);
 }
 
@@ -217,8 +544,9 @@ void applyInspectorLabelPalette(QLabel *label, const bool prominent = false) {
       themeColor(theme.textColor, QColor(QStringLiteral("#E3E7EC")));
   const QColor accent =
       themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")));
+  const QColor heading = blendColor(text, QColor(Qt::white), 0.12);
   QPalette pal = label->palette();
-  pal.setColor(QPalette::WindowText, prominent ? accent : text);
+  pal.setColor(QPalette::WindowText, prominent ? heading : text);
   label->setPalette(pal);
 }
 
@@ -267,7 +595,10 @@ void applyInspectorButton(QPushButton *button, const bool accent = false) {
   const QColor fill =
       accent ? themeColor(theme.accentColor, QColor(QStringLiteral("#5E94C7")))
              : surface;
-  const QColor contrast = accent ? background : text;
+  const QColor contrast = accent ? QColor(Qt::white) : text;
+  const QColor disabledText = blendColor(text, background, 0.58);
+  const QColor disabledButton = blendColor(surface, background, 0.62);
+  const QColor disabledWindow = background;
 
   button->setAttribute(Qt::WA_StyledBackground, true);
   button->setAutoFillBackground(true);
@@ -279,20 +610,192 @@ void applyInspectorButton(QPushButton *button, const bool accent = false) {
   pal.setColor(QPalette::Highlight, selection);
   pal.setColor(QPalette::HighlightedText, background);
   pal.setColor(QPalette::Mid, border);
+  pal.setColor(QPalette::Disabled, QPalette::Button, disabledButton);
+  pal.setColor(QPalette::Disabled, QPalette::ButtonText, disabledText);
+  pal.setColor(QPalette::Disabled, QPalette::Window, disabledWindow);
+  pal.setColor(QPalette::Disabled, QPalette::WindowText, disabledText);
+  pal.setColor(QPalette::Disabled, QPalette::Text, disabledText);
+  pal.setColor(QPalette::Disabled, QPalette::Mid, border.darker(120));
   button->setPalette(pal);
 }
+
+class EffectPickerDialog final : public QDialog {
+public:
+  EffectPickerDialog(const std::vector<EffectCatalogEntry> &entries,
+                     const EffectPipelineStage stageFilter,
+                     const QString &targetLabel, QWidget *parent = nullptr)
+      : QDialog(parent), entries_(entries), stageFilter_(stageFilter) {
+    setWindowTitle(QStringLiteral("Add Effect"));
+    setModal(true);
+    resize(760, 540);
+
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(14, 14, 14, 14);
+    layout->setSpacing(10);
+
+    auto *header = new QLabel(
+        QStringLiteral("Add to %1  |  Stage: %2")
+            .arg(targetLabel, stageDisplayName(stageFilter_)),
+        this);
+    applyInspectorLabelPalette(header, true);
+    layout->addWidget(header);
+
+    auto *subHeader = new QLabel(
+        QStringLiteral("Search by name, category, or keyword. Double click or press Add to insert and focus the effect."),
+        this);
+    subHeader->setWordWrap(true);
+    applyInspectorLabelPalette(subHeader, false);
+    layout->addWidget(subHeader);
+
+    searchEdit_ = new QLineEdit(this);
+    searchEdit_->setPlaceholderText(
+        QStringLiteral("Search effects for this stage"));
+    applyInspectorPalette(searchEdit_, true);
+    layout->addWidget(searchEdit_);
+
+    auto *contentFrame = new QFrame(this);
+    applyInspectorPalette(contentFrame, true);
+    auto *contentLayout = new QVBoxLayout(contentFrame);
+    contentLayout->setContentsMargins(8, 8, 8, 8);
+    contentLayout->setSpacing(8);
+
+    resultSummaryLabel_ = new QLabel(contentFrame);
+    resultSummaryLabel_->setWordWrap(true);
+    applyInspectorLabelPalette(resultSummaryLabel_, false);
+    contentLayout->addWidget(resultSummaryLabel_);
+
+    listWidget_ = new QListWidget(contentFrame);
+    listWidget_->setUniformItemSizes(false);
+    listWidget_->setSelectionMode(QAbstractItemView::SingleSelection);
+    applyInspectorList(listWidget_);
+    contentLayout->addWidget(listWidget_, 1);
+
+    layout->addWidget(contentFrame, 1);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok |
+                                             QDialogButtonBox::Cancel,
+                                         Qt::Horizontal, this);
+    addButton_ = buttons->button(QDialogButtonBox::Ok);
+    if (addButton_) {
+      addButton_->setText(QStringLiteral("Add Effect"));
+      applyInspectorButton(addButton_, true);
+    }
+    if (auto *cancelButton = buttons->button(QDialogButtonBox::Cancel)) {
+      cancelButton->setText(QStringLiteral("Cancel"));
+      applyInspectorButton(cancelButton, false);
+    }
+    layout->addWidget(buttons);
+
+    QObject::connect(searchEdit_, &QLineEdit::textChanged, this,
+                     [this](const QString &) { rebuildList(); });
+    QObject::connect(listWidget_, &QListWidget::currentItemChanged, this,
+                     [this](QListWidgetItem *, QListWidgetItem *) {
+                       syncButtonState();
+                     });
+    QObject::connect(listWidget_, &QListWidget::itemDoubleClicked, this,
+                     [this](QListWidgetItem *item) {
+                       if (!item || item->data(Qt::UserRole).toString().trimmed().isEmpty()) {
+                         return;
+                       }
+                       accept();
+                     });
+    QObject::connect(buttons, &QDialogButtonBox::accepted, this,
+                     &QDialog::accept);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, this,
+                     &QDialog::reject);
+
+    rebuildList();
+  }
+
+  QString selectedEffectId() const {
+    if (!listWidget_ || !listWidget_->currentItem()) {
+      return {};
+    }
+    return listWidget_->currentItem()->data(Qt::UserRole).toString().trimmed();
+  }
+
+  QString selectedDisplayName() const {
+    if (!listWidget_ || !listWidget_->currentItem()) {
+      return {};
+    }
+    return listWidget_->currentItem()
+        ->data(Qt::UserRole + 1)
+        .toString()
+        .trimmed();
+  }
+
+private:
+  void rebuildList() {
+    if (!listWidget_) {
+      return;
+    }
+
+    const QString query = searchEdit_ ? searchEdit_->text() : QString();
+    const QSignalBlocker blocker(listWidget_);
+    listWidget_->clear();
+
+    int matchCount = 0;
+    for (const auto &entry : entries_) {
+      if (entry.stage != stageFilter_ || !effectCatalogEntryMatches(entry, query)) {
+        continue;
+      }
+      ++matchCount;
+      auto *item = new QListWidgetItem(
+          QStringLiteral("%1  |  %2").arg(entry.displayName, entry.category),
+          listWidget_);
+      item->setData(Qt::UserRole, entry.effectId);
+      item->setData(Qt::UserRole + 1, entry.displayName);
+      item->setToolTip(entry.description);
+    }
+
+    if (matchCount == 0) {
+      auto *item =
+          new QListWidgetItem(QStringLiteral("No effects match this search."),
+                              listWidget_);
+      item->setFlags(item->flags() & ~Qt::ItemIsSelectable);
+    } else {
+      listWidget_->setCurrentRow(0);
+    }
+
+    if (resultSummaryLabel_) {
+      resultSummaryLabel_->setText(
+          matchCount > 0
+              ? QStringLiteral("%1 effect(s) available in %2.")
+                    .arg(matchCount)
+                    .arg(stageDisplayName(stageFilter_))
+              : QStringLiteral("No matching effects in %1.")
+                    .arg(stageDisplayName(stageFilter_)));
+    }
+    syncButtonState();
+  }
+
+  void syncButtonState() {
+    if (!addButton_) {
+      return;
+    }
+    const bool hasSelection = !selectedEffectId().isEmpty();
+    addButton_->setEnabled(hasSelection);
+  }
+
+  std::vector<EffectCatalogEntry> entries_;
+  EffectPipelineStage stageFilter_;
+  QLineEdit *searchEdit_ = nullptr;
+  QListWidget *listWidget_ = nullptr;
+  QLabel *resultSummaryLabel_ = nullptr;
+  QPushButton *addButton_ = nullptr;
+};
 
 QColor toneColor(LayerPresentationBadgeTone tone, const QColor &base,
                  const QColor &accent) {
   switch (tone) {
   case LayerPresentationBadgeTone::Container:
-    return accent;
+    return blendColor(base, accent, 0.18);
   case LayerPresentationBadgeTone::Media:
-    return blendColor(base, accent, 0.22);
+    return blendColor(base, accent, 0.10);
   case LayerPresentationBadgeTone::Motion:
-    return accent.lighter(112);
+    return blendColor(base, accent.lighter(108), 0.16);
   case LayerPresentationBadgeTone::Special:
-    return accent.darker(112);
+    return blendColor(base, accent.darker(108), 0.14);
   case LayerPresentationBadgeTone::Neutral:
   default:
     return base;
@@ -791,8 +1294,11 @@ public:
   QScrollArea *effectsScrollArea = nullptr;
   QWidget *effectsTabWidget = nullptr;
   QLabel *effectsStateLabel = nullptr;
+  QLabel *effectsTargetLabel = nullptr;
+  QLabel *effectsStackSummaryLabel = nullptr;
   QLabel *effectParametersHintLabel = nullptr;
   ArtifactPropertyWidget *effectPropertyWidget = nullptr;
+  QPushButton *effectsQuickAddButton = nullptr;
   QString focusedEffectId_;
   ArtifactAbstractLayerPtr lastSyncedLayer_;
   QString lastSyncedFocusedEffectId_;
@@ -860,6 +1366,7 @@ public:
   void focusComponentProperties(const ArtifactAbstractLayerPtr &layer,
                                 const QString &filterText);
   void updateEffectsList();
+  void addSelectedEffectToCurrentTarget(const QString &effectId);
   void updateEffectRackItemEnabled(const QString &effectId, bool enabled);
   void updatePropertiesForEffect(const QString &effectId);
   QString currentSelectedEffectIdFromRacks() const;
@@ -1288,80 +1795,49 @@ QString resolveScriptBindingPath(const ArtifactAbstractLayerPtr &layer) {
 
 void ArtifactInspectorWidget::Impl::updateComponentControls(
     const ArtifactAbstractLayerPtr &layer) {
-  const bool hasLayer = static_cast<bool>(layer);
-  const bool canEditComponents = hasLayer;
-  const bool physicsEnabled =
-      hasLayer && layerBooleanProperty(layer, QStringLiteral("physics.enabled"));
-  const bool scriptEnabled =
-      hasLayer && layerBooleanProperty(
-                      layer, QStringLiteral("component.script.enabled"));
-  const bool layoutEnabled =
-      hasLayer && layerBooleanProperty(
-                      layer, QStringLiteral("component.layout.enabled"));
-  const bool cloneEnabled =
-      hasLayer && layerBooleanProperty(
-                      layer, QStringLiteral("component.cloner.enabled"));
-  const bool collisionEnabled =
-      hasLayer && layerBooleanProperty(
-                      layer, QStringLiteral("component.collision.enabled"));
-  const bool crowdEnabled =
-      hasLayer && layerBooleanProperty(
-                      layer, QStringLiteral("component.crowd.enabled"));
-  const bool particleEmitterEnabled =
-      hasLayer && layerBooleanProperty(
-                      layer, QStringLiteral("component.particleEmitter.enabled"));
-  const bool fluidEnabled =
-      hasLayer && layerBooleanProperty(
-                      layer, QStringLiteral("component.fluid.enabled"));
-  const int generatorCount =
-      hasLayer ? static_cast<int>(layer->layerGenerators().size()) : 0;
-  const int fieldCount =
-      hasLayer ? static_cast<int>(layer->layerFields().size()) : 0;
-  const int cloneModifierCount =
-      hasLayer ? static_cast<int>(layer->layerCloneModifiers().size()) : 0;
-  const int extraCloneModifierCount = std::max(0, cloneModifierCount - 2);
-  const auto validationIssues = hasLayer ? layer->validateLayerComponents()
-                                         : std::vector<LayerComponentValidationIssue>{};
+  const LayerTabComponentState state = collectLayerTabComponentState(layer);
+  const bool hasLayer = state.hasLayer;
+  const bool canEditComponents = state.canEditComponents;
 
   if (componentsGroup) {
     componentsGroup->setEnabled(canEditComponents);
   }
   if (physicsComponentButton) {
     physicsComponentButton->setEnabled(canEditComponents);
-    physicsComponentButton->setText(physicsEnabled ? QStringLiteral("Physics On")
-                                                   : QStringLiteral("+ Physics"));
+    physicsComponentButton->setText(state.physicsEnabled ? QStringLiteral("Physics On")
+                                                         : QStringLiteral("+ Physics"));
     physicsComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Toggle the layer physics component.")
                           : QStringLiteral("Select a layer inside a composition to add Physics."));
   }
   if (scriptComponentButton) {
     scriptComponentButton->setEnabled(canEditComponents);
-    scriptComponentButton->setText(scriptEnabled ? QStringLiteral("Script On")
-                                                 : QStringLiteral("+ Script"));
+    scriptComponentButton->setText(state.scriptEnabled ? QStringLiteral("Script On")
+                                                      : QStringLiteral("+ Script"));
     scriptComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Toggle the layer script component.")
                           : QStringLiteral("Select a layer inside a composition to add Script."));
   }
   if (layoutComponentButton) {
     layoutComponentButton->setEnabled(canEditComponents);
-    layoutComponentButton->setText(layoutEnabled ? QStringLiteral("Layout On")
-                                                 : QStringLiteral("+ Layout"));
+    layoutComponentButton->setText(state.layoutEnabled ? QStringLiteral("Layout On")
+                                                       : QStringLiteral("+ Layout"));
     layoutComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Toggle the layer Layout component.")
                           : QStringLiteral("Select a layer inside a composition to add Layout."));
   }
   if (cloneComponentButton) {
     cloneComponentButton->setEnabled(canEditComponents);
-    cloneComponentButton->setText(cloneEnabled ? QStringLiteral("Cloner On")
-                                               : QStringLiteral("+ Cloner"));
+    cloneComponentButton->setText(state.cloneEnabled ? QStringLiteral("Cloner On")
+                                                     : QStringLiteral("+ Cloner"));
     cloneComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Toggle the layer Cloner component.")
                           : QStringLiteral("Select a layer inside a composition to add Cloner."));
   }
   if (fluidComponentButton) {
     fluidComponentButton->setEnabled(canEditComponents);
-    fluidComponentButton->setText(fluidEnabled ? QStringLiteral("Fluid On")
-                                               : QStringLiteral("+ Fluid"));
+    fluidComponentButton->setText(state.fluidEnabled ? QStringLiteral("Fluid On")
+                                                     : QStringLiteral("+ Fluid"));
     fluidComponentButton->setToolTip(
         canEditComponents ? QStringLiteral("Toggle the layer Fluid component.")
                           : QStringLiteral("Select a layer inside a composition to add Fluid."));
@@ -1369,8 +1845,8 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   if (generatorComponentButton) {
     generatorComponentButton->setEnabled(canEditComponents);
     generatorComponentButton->setText(
-        generatorCount > 1 ? QStringLiteral("+ Generator (%1)").arg(generatorCount)
-                           : QStringLiteral("+ Generator"));
+        state.generatorCount > 1 ? QStringLiteral("+ Generator (%1)").arg(state.generatorCount)
+                            : QStringLiteral("+ Generator"));
     generatorComponentButton->setToolTip(
         canEditComponents
             ? QStringLiteral("Add an extra generator to this layer.")
@@ -1379,8 +1855,8 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   if (fieldComponentButton) {
     fieldComponentButton->setEnabled(canEditComponents);
     fieldComponentButton->setText(
-        fieldCount > 0 ? QStringLiteral("+ Field (%1)").arg(fieldCount)
-                       : QStringLiteral("+ Field"));
+        state.fieldCount > 0 ? QStringLiteral("+ Field (%1)").arg(state.fieldCount)
+                        : QStringLiteral("+ Field"));
     fieldComponentButton->setToolTip(
         canEditComponents
             ? QStringLiteral("Add a field to this layer.")
@@ -1389,8 +1865,8 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
   if (cloneModifierButton) {
     cloneModifierButton->setEnabled(canEditComponents);
     cloneModifierButton->setText(
-        extraCloneModifierCount > 0
-            ? QStringLiteral("+ Clone Mod (%1)").arg(extraCloneModifierCount)
+        state.extraCloneModifierCount > 0
+            ? QStringLiteral("+ Clone Mod (%1)").arg(state.extraCloneModifierCount)
             : QStringLiteral("+ Clone Mod"));
     cloneModifierButton->setToolTip(
         canEditComponents
@@ -1398,7 +1874,7 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
             : QStringLiteral("Select a layer inside a composition to add Clone Modifiers."));
   }
   if (removeGeneratorComponentButton) {
-    const bool hasExtraGenerators = generatorCount > 1;
+    const bool hasExtraGenerators = state.generatorCount > 1;
     removeGeneratorComponentButton->setEnabled(
         canEditComponents && hasExtraGenerators);
     removeGeneratorComponentButton->setToolTip(
@@ -1626,48 +2102,19 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
     }
   }
   if (componentsSummaryLabel) {
-    QStringList active;
-    if (physicsEnabled) {
-      active.push_back(QStringLiteral("Physics"));
-    }
-    if (scriptEnabled) {
-      active.push_back(QStringLiteral("Script"));
-    }
-    if (layoutEnabled) {
-      active.push_back(QStringLiteral("Layout"));
-    }
-    if (cloneEnabled) {
-      active.push_back(QStringLiteral("Cloner"));
-    }
-    if (collisionEnabled) {
-      active.push_back(QStringLiteral("Collision"));
-    }
-    if (crowdEnabled) {
-      active.push_back(QStringLiteral("Crowd"));
-    }
-    if (particleEmitterEnabled) {
-      active.push_back(QStringLiteral("Particle Emitter"));
-    }
-    if (fluidEnabled) {
-      active.push_back(QStringLiteral("Fluid"));
-    }
-    QString summaryText =
-        hasLayer ? (active.isEmpty()
-                        ? QStringLiteral("Components: none")
-                        : QStringLiteral("Components: %1")
-                              .arg(active.join(QStringLiteral(", "))))
-                 : QStringLiteral("Components: select a layer in a composition to add components");
-    if (hasLayer && !validationIssues.empty()) {
+    QString summaryText = layerComponentSummaryText(state);
+    if (hasLayer && !state.validationIssues.empty()) {
       summaryText += QStringLiteral(" | issues: %1")
-                         .arg(static_cast<int>(validationIssues.size()));
+                         .arg(static_cast<int>(state.validationIssues.size()));
     }
     componentsSummaryLabel->setText(summaryText);
-    applyInspectorLabelPalette(componentsSummaryLabel, active.isEmpty());
-    if (hasLayer && !validationIssues.empty()) {
+    const bool mutedSummary = !hasLayer || (summaryText == QStringLiteral("Components: none"));
+    applyInspectorLabelPalette(componentsSummaryLabel, !mutedSummary);
+    if (hasLayer && !state.validationIssues.empty()) {
       QStringList issueLines;
       issueLines.reserve(static_cast<int>(std::min<std::size_t>(
-          validationIssues.size(), static_cast<std::size_t>(4))));
-      for (const auto &issue : validationIssues) {
+          state.validationIssues.size(), static_cast<std::size_t>(4))));
+      for (const auto &issue : state.validationIssues) {
         if (issueLines.size() >= 4) {
           break;
         }
@@ -1679,7 +2126,7 @@ void ArtifactInspectorWidget::Impl::updateComponentControls(
       }
       componentsSummaryLabel->setToolTip(issueLines.join(QStringLiteral("\n")));
     } else if (hasLayer &&
-               (generatorCount > 0 || fieldCount > 0 || cloneModifierCount > 0)) {
+               (state.generatorCount > 0 || state.fieldCount > 0 || state.cloneModifierCount > 0)) {
       QStringList generatorLines;
       const auto generators = layer->layerGenerators();
       for (const auto& generator : generators) {
@@ -1977,11 +2424,6 @@ void ArtifactInspectorWidget::Impl::showContextMenu(const QPoint &globalPos) {
 void ArtifactInspectorWidget::Impl::showRackContextMenu(
     int rackIndex, QListWidgetItem *item, const QPoint &globalPos) {
   QMenu menu;
-
-  if (rackIndex >= 0 && rackIndex < kEffectRackCount) {
-    menu.addAction("Add Effect...",
-                   [this, rackIndex]() { handleAddEffectClicked(rackIndex); });
-  }
 
   if (!item) {
     menu.addSeparator();
@@ -2601,11 +3043,18 @@ void ArtifactInspectorWidget::Impl::setNoProjectState() {
   }
   if (effectParametersHintLabel) {
     effectParametersHintLabel->setText(
-        QStringLiteral("Open a project, then select a composition, layer, and effect to edit color controls."));
+        QStringLiteral("Open a project, then select a composition, layer, and effect to edit parameters here."));
     effectParametersHintLabel->setVisible(true);
   }
+  if (effectsTargetLabel) {
+    effectsTargetLabel->setText(QStringLiteral("Target: No project open"));
+  }
+  if (effectsStackSummaryLabel) {
+    effectsStackSummaryLabel->setText(
+        QStringLiteral("The effect stack appears here once a valid target is selected."));
+  }
   setEffectRackEnabled(false);
-  setEffectsStateText("Open a project to manage color controls.", true);
+  setEffectsStateText("Open a project to manage effects.", true);
 }
 
 void ArtifactInspectorWidget::Impl::setNoLayerState() {
@@ -2659,12 +3108,12 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
   }
   if (effectParametersHintLabel) {
     effectParametersHintLabel->setText(
-        QStringLiteral("Select an effect row above to edit color controls."));
+        QStringLiteral("Select an effect on the left to edit parameters here."));
     effectParametersHintLabel->setVisible(true);
   }
   if (currentCompositionId_.isNil()) {
     setEffectRackEnabled(false);
-    setEffectsStateText("Open a composition to manage color controls.", true);
+    setEffectsStateText("Open a composition to manage effects.", true);
     refreshRackButtons();
   } else {
     updateEffectsList();
@@ -2672,6 +3121,9 @@ void ArtifactInspectorWidget::Impl::setNoLayerState() {
 }
 
 void ArtifactInspectorWidget::Impl::setEffectRackEnabled(bool enabled) {
+  if (effectsQuickAddButton) {
+    effectsQuickAddButton->setEnabled(enabled);
+  }
   for (auto &rack : racks) {
     if (rack.listWidget) {
       rack.listWidget->setEnabled(enabled);
@@ -2693,6 +3145,9 @@ void ArtifactInspectorWidget::Impl::setEffectRackEnabled(bool enabled) {
 
 void ArtifactInspectorWidget::Impl::refreshRackButtons() {
   const bool canEdit = !currentCompositionId_.isNil();
+  if (effectsQuickAddButton) {
+    effectsQuickAddButton->setEnabled(canEdit);
+  }
   for (auto &rack : racks) {
     if (rack.addButton) {
       rack.addButton->setEnabled(canEdit);
@@ -2719,6 +3174,13 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   if (!projectService) {
     setEffectRackEnabled(false);
     setEffectsStateText("Open a project to manage effects.", true);
+    if (effectsTargetLabel) {
+      effectsTargetLabel->setText(QStringLiteral("Target: No project open"));
+    }
+    if (effectsStackSummaryLabel) {
+      effectsStackSummaryLabel->setText(
+          QStringLiteral("Choose a project and composition to browse the effect stack."));
+    }
     refreshRackButtons();
     return;
   }
@@ -2726,6 +3188,14 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   if (currentCompositionId_.isNil()) {
     setEffectRackEnabled(false);
     setEffectsStateText("Open a composition to manage effects.", true);
+    if (effectsTargetLabel) {
+      effectsTargetLabel->setText(
+          QStringLiteral("Target: No composition selected"));
+    }
+    if (effectsStackSummaryLabel) {
+      effectsStackSummaryLabel->setText(
+          QStringLiteral("The stack appears once a composition is active."));
+    }
     refreshRackButtons();
     return;
   }
@@ -2734,6 +3204,10 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   if (!findResult.success) {
     setEffectRackEnabled(false);
     setEffectsStateText("Open a composition to manage effects.", true);
+    if (effectsTargetLabel) {
+      effectsTargetLabel->setText(
+          QStringLiteral("Target: Composition unavailable"));
+    }
     refreshRackButtons();
     return;
   }
@@ -2742,6 +3216,10 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   if (!comp) {
     setEffectRackEnabled(false);
     setEffectsStateText("Open a composition to manage effects.", true);
+    if (effectsTargetLabel) {
+      effectsTargetLabel->setText(
+          QStringLiteral("Target: Composition unavailable"));
+    }
     refreshRackButtons();
     return;
   }
@@ -2749,8 +3227,30 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   if (!editingCompositionEffects() && currentLayerId_.isNil()) {
     setEffectRackEnabled(false);
     setEffectsStateText("Select a layer to manage effects.", true);
+    if (effectsTargetLabel) {
+      effectsTargetLabel->setText(
+          QStringLiteral("Target: Select a layer or switch to composition effects"));
+    }
+    if (effectsStackSummaryLabel) {
+      effectsStackSummaryLabel->setText(
+          QStringLiteral("Effects are organized by stage once a target is selected."));
+    }
     refreshRackButtons();
     return;
+  }
+
+  if (effectsTargetLabel) {
+    if (editingCompositionEffects()) {
+      effectsTargetLabel->setText(
+          QStringLiteral("Target: Composition \"%1\"")
+              .arg(comp->settings().compositionName().toQString()));
+    } else if (auto layer = comp->layerById(currentLayerId_)) {
+      effectsTargetLabel->setText(
+          QStringLiteral("Target: Layer \"%1\"")
+              .arg(layer->layerName()));
+    } else {
+      effectsTargetLabel->setText(QStringLiteral("Target: Layer unavailable"));
+    }
   }
 
   auto effects = currentEffectStack();
@@ -2772,12 +3272,24 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
   for (int i = 0; i < kEffectRackCount; ++i) {
     const QString rackSignature = computeRackSignature(i, rackEffects[i]);
     if (rackSignature == lastRackSignatures_[i]) {
+      if (racks[i].groupBox) {
+        racks[i].groupBox->setTitle(
+            QStringLiteral("%1 (%2)")
+                .arg(stageDisplayName(stageFromRackIndex(i)))
+                .arg(static_cast<int>(rackEffects[i].size())));
+      }
       continue;
     }
     lastRackSignatures_[i] = rackSignature;
 
     if (!racks[i].listWidget) {
       continue;
+    }
+    if (racks[i].groupBox) {
+      racks[i].groupBox->setTitle(
+          QStringLiteral("%1 (%2)")
+              .arg(stageDisplayName(stageFromRackIndex(i)))
+              .arg(static_cast<int>(rackEffects[i].size())));
     }
     const QSignalBlocker blocker(racks[i].listWidget);
     racks[i].listWidget->clear();
@@ -2794,6 +3306,9 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     const QColor accentColor = QColor(theme.accentColor.isEmpty()
                                           ? QStringLiteral("#5E94C7")
                                           : theme.accentColor);
+    const QColor backgroundColor = QColor(
+        theme.backgroundColor.isEmpty() ? QStringLiteral("#20242A")
+                                        : theme.backgroundColor);
     const auto rackTone = toneFromRackIndex(i);
     const QColor rackColor = toneColor(rackTone, textColor, accentColor);
     for (const auto &effect : rackEffects[i]) {
@@ -2812,7 +3327,9 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
               .arg(effectName,
                    editingCompositionEffects() ? QStringLiteral("composition")
                                                : QStringLiteral("layer")));
-      item->setForeground(effect->isEnabled() ? rackColor : rackColor.darker(140));
+      item->setForeground(
+          effect->isEnabled() ? rackColor
+                              : blendColor(rackColor, backgroundColor, 0.58));
       racks[i].listWidget->addItem(item);
     }
   }
@@ -2823,6 +3340,14 @@ void ArtifactInspectorWidget::Impl::updateEffectsList() {
     setEffectsStateText("Select an effect to edit its parameters below.", true);
   } else {
     setEffectsStateText(QString(), false);
+  }
+  if (effectsStackSummaryLabel) {
+    effectsStackSummaryLabel->setText(
+        effectCount > 0
+            ? QStringLiteral("%1 effect(s) across %2 pipeline stages. Add into the rack that matches where the effect should run.")
+                  .arg(effectCount)
+                  .arg(kEffectRackCount)
+            : QStringLiteral("The stack is empty. Start by adding an effect into the stage where it belongs."));
   }
   refreshRackButtons();
 
@@ -2865,6 +3390,9 @@ void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
   const QColor accentColor = QColor(theme.accentColor.isEmpty()
                                         ? QStringLiteral("#5E94C7")
                                         : theme.accentColor);
+  const QColor backgroundColor = QColor(
+      theme.backgroundColor.isEmpty() ? QStringLiteral("#20242A")
+                                      : theme.backgroundColor);
   const QString enabledPrefix = QStringLiteral("Enabled ");
   const QString disabledPrefix = QStringLiteral("Disabled ");
 
@@ -2894,7 +3422,9 @@ void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
                                      : QStringLiteral("Disabled"),
                              effectName));
       item->setData(Qt::UserRole + 1, enabled);
-      item->setForeground(enabled ? rackColor : rackColor.darker(140));
+      item->setForeground(
+          enabled ? rackColor
+                  : blendColor(rackColor, backgroundColor, 0.58));
       item->setToolTip(
           QStringLiteral("%1 on this %2. Single click to focus. Double click toggles enable/disable. Right click for effect actions.")
               .arg(effectName,
@@ -2906,11 +3436,206 @@ void ArtifactInspectorWidget::Impl::updateEffectRackItemEnabled(
   }
 }
 
+struct EffectTabState {
+  bool hasProject = false;
+  bool hasComposition = false;
+  bool hasResolvedComposition = false;
+  bool editingCompositionEffects = false;
+  bool hasLayerTarget = false;
+  bool hasLayerEffects = false;
+  int effectCount = 0;
+  QString targetText;
+  QString stateText;
+  QString stackSummaryText;
+};
+
+EffectTabState collectEffectTabState(
+    ArtifactProjectService *projectService,
+    const CompositionID &currentCompositionId,
+    const LayerID &currentLayerId,
+    const bool editingCompositionEffects,
+    const QString &focusedEffectId) {
+  EffectTabState state;
+  state.hasProject = static_cast<bool>(projectService);
+  state.hasComposition = !currentCompositionId.isNil();
+  state.editingCompositionEffects = editingCompositionEffects;
+
+  if (!projectService) {
+    state.stateText = QStringLiteral("Open a project to manage effects.");
+    state.targetText = QStringLiteral("Target: No project open");
+    state.stackSummaryText =
+        QStringLiteral("Choose a project and composition to browse the effect stack.");
+    return state;
+  }
+
+  if (currentCompositionId.isNil()) {
+    state.stateText = QStringLiteral("Open a composition to manage effects.");
+    state.targetText = QStringLiteral("Target: No composition selected");
+    state.stackSummaryText =
+        QStringLiteral("The stack appears once a composition is active.");
+    return state;
+  }
+
+  auto findResult = projectService->findComposition(currentCompositionId);
+  if (!findResult.success) {
+    state.stateText = QStringLiteral("Open a composition to manage effects.");
+    state.targetText = QStringLiteral("Target: Composition unavailable");
+    return state;
+  }
+
+  auto comp = findResult.ptr.lock();
+  if (!comp) {
+    state.stateText = QStringLiteral("Open a composition to manage effects.");
+    state.targetText = QStringLiteral("Target: Composition unavailable");
+    return state;
+  }
+
+  state.hasResolvedComposition = true;
+  if (editingCompositionEffects) {
+    state.hasLayerTarget = true;
+    const auto effects = comp->getEffects();
+    state.effectCount = static_cast<int>(effects.size());
+    state.targetText = QStringLiteral("Target: Composition \"%1\"")
+                          .arg(comp->settings().compositionName().toQString());
+    state.stackSummaryText =
+        state.effectCount > 0
+            ? QStringLiteral("%1 effect(s) across %2 pipeline stages. Add into the rack that matches where the effect should run.")
+                  .arg(state.effectCount)
+                  .arg(kEffectRackCount)
+            : QStringLiteral("The stack is empty. Start by adding an effect into the stage where it belongs.");
+    state.stateText = focusedEffectId.trimmed().isEmpty()
+        ? QStringLiteral("Select a composition effect to edit its parameters below.")
+        : QString();
+    return state;
+  }
+
+  if (currentLayerId.isNil()) {
+    state.stateText = QStringLiteral("Select a layer to manage effects.");
+    state.targetText =
+        QStringLiteral("Target: Select a layer or switch to composition effects");
+    state.stackSummaryText =
+        QStringLiteral("Effects are organized by stage once a target is selected.");
+    return state;
+  }
+
+  auto layer = comp->layerById(currentLayerId);
+  if (!layer) {
+    state.stateText = QStringLiteral("Select a layer to manage effects.");
+    state.targetText = QStringLiteral("Target: Layer unavailable");
+    return state;
+  }
+
+  state.hasLayerTarget = true;
+  const auto effects = layer->getEffects();
+  state.hasLayerEffects = !effects.empty();
+  state.effectCount = static_cast<int>(effects.size());
+  state.targetText = QStringLiteral("Target: Layer \"%1\"").arg(layer->layerName());
+  state.stackSummaryText =
+      state.effectCount > 0
+          ? QStringLiteral("%1 effect(s) across %2 pipeline stages. Add into the rack that matches where the effect should run.")
+                .arg(state.effectCount)
+                .arg(kEffectRackCount)
+          : QStringLiteral("The stack is empty. Start by adding an effect into the stage where it belongs.");
+  state.stateText = focusedEffectId.trimmed().isEmpty()
+      ? QStringLiteral("Select an effect to edit its parameters below.")
+      : QString();
+  return state;
+}
+
+void ArtifactInspectorWidget::Impl::addSelectedEffectToCurrentTarget(
+    const QString &effectId) {
+  const QString normalizedId = effectId.trimmed();
+  if (normalizedId.isEmpty() || currentCompositionId_.isNil()) {
+    return;
+  }
+
+  auto *projectService = ArtifactProjectService::instance();
+  auto *effectService = ArtifactEffectService::instance();
+  if (!projectService || !effectService) {
+    return;
+  }
+
+  auto findResult = projectService->findComposition(currentCompositionId_);
+  if (!findResult.success) {
+    return;
+  }
+
+  auto comp = findResult.ptr.lock();
+  if (!comp) {
+    return;
+  }
+  if (!editingCompositionEffects() && !comp->layerById(currentLayerId_)) {
+    return;
+  }
+
+  std::shared_ptr<ArtifactAbstractEffect> newEffect;
+  if (normalizedId == QStringLiteral("cloner")) {
+    newEffect = std::make_shared<ClonerGenerator>();
+  } else if (normalizedId == QStringLiteral("fractal_noise")) {
+    newEffect = std::make_shared<FractalNoiseGenerator>();
+  } else if (normalizedId == QStringLiteral("procedural_texture")) {
+    newEffect = std::make_shared<ProceduralTextureGeneratorEffect>();
+  } else if (normalizedId == QStringLiteral("transform_2d")) {
+    newEffect = std::make_shared<LayerTransform2D>();
+  } else {
+    auto effect = effectService->createEffect(EffectID(normalizedId));
+    if (effect) {
+      newEffect = std::shared_ptr<ArtifactAbstractEffect>(std::move(effect));
+    }
+  }
+
+  if (!newEffect) {
+    if (statusLabel) {
+      statusLabel->setText(
+          QStringLiteral("Status: Failed to create effect for %1")
+              .arg(normalizedId));
+    }
+    return;
+  }
+
+  const auto catalogEntries = buildEffectCatalogEntries();
+  const auto catalogEntry =
+      std::find_if(catalogEntries.begin(), catalogEntries.end(),
+                   [&normalizedId](const EffectCatalogEntry &entry) {
+                     return entry.effectId == normalizedId;
+                   });
+  if (catalogEntry != catalogEntries.end()) {
+    newEffect->setPipelineStage(catalogEntry->stage);
+  }
+
+  const bool added = editingCompositionEffects()
+                         ? projectService->addEffectToCurrentComposition(
+                               newEffect)
+                         : projectService->addEffectToLayerWithUndo(
+                               currentLayerId_, newEffect);
+  if (!added) {
+    if (statusLabel) {
+      statusLabel->setText(
+          QStringLiteral("Status: Failed to add %1")
+              .arg(newEffect->displayName().toQString()));
+    }
+    return;
+  }
+
+  focusedEffectId_ = newEffect->effectID().toQString();
+  updateEffectsList();
+  if (statusLabel) {
+    statusLabel->setText(
+        QStringLiteral("Status: %1 effect added - %2.")
+            .arg(editingCompositionEffects() ? QStringLiteral("Composition")
+                                             : QStringLiteral("Layer"),
+                 newEffect->displayName().toQString()));
+  }
+  if (tabWidget) {
+    tabWidget->setCurrentIndex(1);
+  }
+}
+
 void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
   if (currentCompositionId_.isNil())
     return;
 
-  auto projectService = ArtifactProjectService::instance();
+  auto *projectService = ArtifactProjectService::instance();
   if (!projectService)
     return;
 
@@ -2926,270 +3651,31 @@ void ArtifactInspectorWidget::Impl::handleAddEffectClicked(int rackIndex) {
     return;
   }
 
-  QMenu effectMenu;
-
-  auto addAndRefresh = [this, projectService](
-                           std::shared_ptr<ArtifactAbstractEffect> newEffect) {
-    if (newEffect) {
-      const bool added = editingCompositionEffects()
-                             ? projectService->addEffectToCurrentComposition(
-                                   newEffect)
-                             : projectService->addEffectToLayerWithUndo(
-                                   currentLayerId_, newEffect);
-      if (added) {
-        focusedEffectId_ = newEffect->effectID().toQString();
-        updateEffectsList();
-        if (statusLabel) {
-          statusLabel->setText(
-              QStringLiteral("Status: %1 effect added - %2.")
-                  .arg(editingCompositionEffects()
-                           ? QStringLiteral("Composition")
-                           : QStringLiteral("Layer"),
-                       newEffect->displayName().toQString()));
-        }
-        if (tabWidget) {
-          tabWidget->setCurrentIndex(1); // Effects
-        }
-      }
-    }
-  };
-
-  switch (stageFromRackIndex(rackIndex)) {
-  case EffectPipelineStage::Generator:
-    effectMenu.addAction("Cloner", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<ClonerGenerator>());
-    });
-    effectMenu.addAction("Fractal Noise", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<FractalNoiseGenerator>());
-    });
-    effectMenu.addAction("Procedural Texture", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<ProceduralTextureGeneratorEffect>());
-    });
-    break;
-  case EffectPipelineStage::GeometryTransform:
-    effectMenu.addAction("Twist", [addAndRefresh]() {
-      auto effect = std::make_shared<TwistTransform>();
-      effect->setEffectID(ArtifactCore::UniString("twist"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Bend", [addAndRefresh]() {
-      auto effect = std::make_shared<BendTransform>();
-      effect->setEffectID(ArtifactCore::UniString("bend"));
-      addAndRefresh(effect);
-    });
-    break;
-  case EffectPipelineStage::MaterialRender:
-    effectMenu.addAction("PBR Material", [addAndRefresh]() {
-      auto effect = std::make_shared<PBRMaterialEffect>();
-      effect->setEffectID(ArtifactCore::UniString("pbr_material"));
-      addAndRefresh(effect);
-    });
-    break;
-  case EffectPipelineStage::Rasterizer:
-    effectMenu.addAction("Blur", [addAndRefresh]() {
-      auto effect = std::make_shared<BlurEffect>();
-      effect->setEffectID(ArtifactCore::UniString("blur"));
-      effect->setDisplayName(ArtifactCore::UniString("Blur"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Gaussian Blur", [addAndRefresh]() {
-      auto effect = std::make_shared<GaussianBlur>();
-      effect->setEffectID(ArtifactCore::UniString("effect.blur.gaussian"));
-      effect->setDisplayName(ArtifactCore::UniString("Gaussian Blur"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Glow", [addAndRefresh]() {
-      auto effect = std::make_shared<GlowEffect>();
-      effect->setEffectID(ArtifactCore::UniString("glow"));
-      effect->setDisplayName(ArtifactCore::UniString("Glow"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Drop Shadow", [addAndRefresh]() {
-      auto effect = std::make_shared<DropShadowEffect>();
-      effect->setEffectID(ArtifactCore::UniString("drop_shadow"));
-      effect->setDisplayName(ArtifactCore::UniString("Drop Shadow"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Directional Glow / Streaks", [addAndRefresh]() {
-      auto effect = std::make_shared<DirectionalGlowEffect>();
-      effect->setEffectID(ArtifactCore::UniString("directional_glow"));
-      effect->setDisplayName(ArtifactCore::UniString("Directional Glow / Streaks"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Edge Bloom", [addAndRefresh]() {
-      auto effect = std::make_shared<EdgeBloomEffect>();
-      effect->setEffectID(ArtifactCore::UniString("edge_bloom"));
-      effect->setDisplayName(ArtifactCore::UniString("Edge Bloom"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Chromatic Glow", [addAndRefresh]() {
-      auto effect = std::make_shared<ChromaticGlowEffect>();
-      effect->setEffectID(ArtifactCore::UniString("chromatic_glow"));
-      effect->setDisplayName(ArtifactCore::UniString("Chromatic Glow"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Reactive Glow", [addAndRefresh]() {
-      auto effect = std::make_shared<ReactiveGlowEffect>();
-      effect->setEffectID(ArtifactCore::UniString("reactive_glow"));
-      effect->setDisplayName(ArtifactCore::UniString("Reactive Glow"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Liquid Glow", [addAndRefresh]() {
-      auto effect = std::make_shared<LiquidGlowEffect>();
-      effect->setEffectID(ArtifactCore::UniString("liquid_glow"));
-      effect->setDisplayName(ArtifactCore::UniString("Liquid Glow"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Residual Glow", [addAndRefresh]() {
-      auto effect = std::make_shared<ResidualGlowEffect>();
-      effect->setEffectID(ArtifactCore::UniString("residual_glow"));
-      effect->setDisplayName(ArtifactCore::UniString("Residual Glow"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addSeparator();
-    effectMenu.addAction("Brightness / Contrast", [addAndRefresh]() {
-      auto effect = std::make_shared<BrightnessEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.brightness"));
-      effect->setDisplayName(ArtifactCore::UniString("Brightness / Contrast"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Exposure", [addAndRefresh]() {
-      auto effect = std::make_shared<ExposureEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.exposure"));
-      effect->setDisplayName(ArtifactCore::UniString("Exposure"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Tint", [addAndRefresh]() {
-      auto effect = std::make_shared<WhiteBalanceEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.tint"));
-      effect->setDisplayName(ArtifactCore::UniString("Tint"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Photo Filter", [addAndRefresh]() {
-      auto effect = std::make_shared<PhotoFilterEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.photofilter"));
-      effect->setDisplayName(ArtifactCore::UniString("Photo Filter"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Gradient Ramp", [addAndRefresh]() {
-      auto effect = std::make_shared<GradientRampEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.gradientramp"));
-      effect->setDisplayName(ArtifactCore::UniString("Gradient Ramp"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Fill", [addAndRefresh]() {
-      auto effect = std::make_shared<FillEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.fill"));
-      effect->setDisplayName(ArtifactCore::UniString("Fill"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Hue / Saturation", [addAndRefresh]() {
-      auto effect = std::make_shared<HueAndSaturation>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.hsl"));
-      effect->setDisplayName(ArtifactCore::UniString("Hue / Saturation"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Color Wheels", [addAndRefresh]() {
-      auto effect = std::make_shared<ColorWheelsEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.colorwheels"));
-      effect->setDisplayName(ArtifactCore::UniString("Color Wheels"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Curves", [addAndRefresh]() {
-      auto effect = std::make_shared<CurvesEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.curves"));
-      effect->setDisplayName(ArtifactCore::UniString("Curves"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Tritone", [addAndRefresh]() {
-      auto effect = std::make_shared<TritoneEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.tritone"));
-      effect->setDisplayName(ArtifactCore::UniString("Tritone"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Colorama", [addAndRefresh]() {
-      auto effect = std::make_shared<ColoramaEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.colorama"));
-      effect->setDisplayName(ArtifactCore::UniString("Colorama"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Color Balance", [addAndRefresh]() {
-      auto effect = std::make_shared<ColorBalanceEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.colorbalance"));
-      effect->setDisplayName(ArtifactCore::UniString("Color Balance"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Levels", [addAndRefresh]() {
-      auto effect = std::make_shared<LevelsEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.levels"));
-      effect->setDisplayName(ArtifactCore::UniString("Levels"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Channel Mixer", [addAndRefresh]() {
-      auto effect = std::make_shared<ChannelMixerEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.channelmixer"));
-      effect->setDisplayName(ArtifactCore::UniString("Channel Mixer"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Selective Color", [addAndRefresh]() {
-      auto effect = std::make_shared<SelectiveColorEffect>();
-      effect->setEffectID(ArtifactCore::UniString("effect.colorcorrection.selectivecolor"));
-      effect->setDisplayName(ArtifactCore::UniString("Selective Color"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addSeparator();
-    effectMenu.addAction("Lift / Gamma / Gain", [addAndRefresh]() {
-      auto effect = std::make_shared<LiftGammaGainEffect>();
-      effect->setEffectID(ArtifactCore::UniString("lift_gamma_gain"));
-      effect->setDisplayName(ArtifactCore::UniString("Lift / Gamma / Gain"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Lens Distortion", [addAndRefresh]() {
-      auto effect = std::make_shared<LensDistortionEffect>();
-      effect->setEffectID(ArtifactCore::UniString("lens_distortion"));
-      effect->setDisplayName(ArtifactCore::UniString("Lens Distortion"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Displacement Map", [addAndRefresh]() {
-      auto effect = std::make_shared<DisplacementMapEffect>();
-      effect->setEffectID(ArtifactCore::UniString("displacement_map"));
-      effect->setDisplayName(ArtifactCore::UniString("Displacement Map"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Time Displacement", [addAndRefresh]() {
-      auto effect = std::make_shared<TimeDisplacementEffect>();
-      effect->setEffectID(ArtifactCore::UniString("time_displacement"));
-      effect->setDisplayName(ArtifactCore::UniString("Time Displacement"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addSeparator();
-    effectMenu.addAction("Chroma Key", [addAndRefresh]() {
-      auto effect = std::make_shared<ChromaKeyEffect>();
-      effect->setEffectID(ArtifactCore::UniString("chroma_key"));
-      effect->setDisplayName(ArtifactCore::UniString("Chroma Key"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Wave", [addAndRefresh]() {
-      auto effect = std::make_shared<WaveEffect>();
-      effect->setEffectID(ArtifactCore::UniString("wave"));
-      effect->setDisplayName(ArtifactCore::UniString("Wave"));
-      addAndRefresh(effect);
-    });
-    effectMenu.addAction("Spherize", [addAndRefresh]() {
-      auto effect = std::make_shared<SpherizeEffect>();
-      effect->setEffectID(ArtifactCore::UniString("spherize"));
-      effect->setDisplayName(ArtifactCore::UniString("Spherize"));
-      addAndRefresh(effect);
-    });
-    break;
-  case EffectPipelineStage::LayerTransform:
-    effectMenu.addAction("Transform 2D", [addAndRefresh]() {
-      addAndRefresh(std::make_shared<LayerTransform2D>());
-    });
-    break;
+  if (rackIndex < 0 || rackIndex >= kEffectRackCount) {
+    // Default to the rasterizer stage when invoked from the single header button.
+    rackIndex = 3;
   }
 
-  effectMenu.exec(QCursor::pos());
+  QString targetLabel = editingCompositionEffects()
+                            ? QStringLiteral("Composition")
+                            : QStringLiteral("Layer");
+  if (!editingCompositionEffects()) {
+    if (auto layer = comp->layerById(currentLayerId_)) {
+      targetLabel = QStringLiteral("Layer \"%1\"")
+                        .arg(layer->layerName());
+    }
+  } else {
+    targetLabel = QStringLiteral("Composition \"%1\"")
+                      .arg(comp->settings().compositionName().toQString());
+  }
+
+  EffectPickerDialog dialog(buildEffectCatalogEntries(),
+                            stageFromRackIndex(rackIndex), targetLabel,
+                            containerWidget ? containerWidget : tabWidget);
+  if (dialog.exec() != QDialog::Accepted) {
+    return;
+  }
+  addSelectedEffectToCurrentTarget(dialog.selectedEffectId());
 }
 
 
@@ -4186,22 +4672,66 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
   impl_->effectsScrollArea->setWidgetResizable(true);
   impl_->effectsTabWidget = new QWidget();
   auto effectsLayout = new QVBoxLayout();
+  auto *effectsHeaderFrame = new QFrame();
+  applyInspectorPalette(effectsHeaderFrame, true);
+  auto *effectsHeaderLayout = new QVBoxLayout(effectsHeaderFrame);
+  effectsHeaderLayout->setContentsMargins(10, 10, 10, 10);
+  effectsHeaderLayout->setSpacing(6);
+
   impl_->effectsStateLabel =
-      new QLabel("Open a composition to manage layer effects.");
+      new QLabel("Open a composition to manage effects.");
   impl_->effectsStateLabel->setWordWrap(true);
-  applyInspectorLabelPalette(impl_->effectsStateLabel, false);
-  effectsLayout->addWidget(impl_->effectsStateLabel);
+  applyInspectorLabelPalette(impl_->effectsStateLabel, true);
+  effectsHeaderLayout->addWidget(impl_->effectsStateLabel);
+
+  impl_->effectsTargetLabel =
+      new QLabel("Target: No composition selected");
+  impl_->effectsTargetLabel->setWordWrap(true);
+  applyInspectorLabelPalette(impl_->effectsTargetLabel, false);
+  effectsHeaderLayout->addWidget(impl_->effectsTargetLabel);
+
+  auto *effectsToolbarLayout = new QHBoxLayout();
+  effectsToolbarLayout->setContentsMargins(0, 0, 0, 0);
+  effectsToolbarLayout->setSpacing(8);
+  impl_->effectsQuickAddButton = new QPushButton("+ Add Effect");
+  applyInspectorButton(impl_->effectsQuickAddButton, true);
+  impl_->effectsQuickAddButton->setToolTip(
+      QStringLiteral("Open a searchable picker and add an effect to the current target."));
+  effectsToolbarLayout->addWidget(impl_->effectsQuickAddButton);
+  effectsToolbarLayout->addStretch(1);
+  effectsHeaderLayout->addLayout(effectsToolbarLayout);
+  effectsLayout->addWidget(effectsHeaderFrame);
+
+  auto *effectsSplitter = new QSplitter(Qt::Horizontal);
+  effectsSplitter->setChildrenCollapsible(false);
+
+  auto *stackPanel = new QFrame();
+  applyInspectorPalette(stackPanel, true);
+  auto *stackPanelLayout = new QVBoxLayout(stackPanel);
+  stackPanelLayout->setContentsMargins(8, 8, 8, 8);
+  stackPanelLayout->setSpacing(8);
+
+  impl_->effectsStackSummaryLabel = new QLabel("Effect stack");
+  impl_->effectsStackSummaryLabel->setWordWrap(true);
+  applyInspectorLabelPalette(impl_->effectsStackSummaryLabel, false);
+  stackPanelLayout->addWidget(impl_->effectsStackSummaryLabel);
+
+  auto *detailPanel = new QFrame();
+  applyInspectorPalette(detailPanel, true);
+  auto *detailPanelLayout = new QVBoxLayout(detailPanel);
+  detailPanelLayout->setContentsMargins(8, 8, 8, 8);
+  detailPanelLayout->setSpacing(8);
 
   impl_->effectParametersHintLabel =
-      new QLabel("Open a composition, then select a layer and effect. The selected effect's parameters appear below.");
+      new QLabel("Select an effect on the left. Its parameters stay visible here so editing feels anchored instead of jumping around the stack.");
   impl_->effectParametersHintLabel->setWordWrap(true);
   applyInspectorLabelPalette(impl_->effectParametersHintLabel, false);
-  effectsLayout->addWidget(impl_->effectParametersHintLabel);
+  detailPanelLayout->addWidget(impl_->effectParametersHintLabel);
 
   impl_->effectPropertyWidget = new ArtifactPropertyWidget();
   impl_->effectPropertyWidget->setVisible(false);
   impl_->effectPropertyWidget->setMinimumHeight(220);
-  effectsLayout->addWidget(impl_->effectPropertyWidget);
+  detailPanelLayout->addWidget(impl_->effectPropertyWidget, 1);
 
   QString rackNames[5] = {"Generator", "Geo Transform", "Material",
                           "Rasterizer", "Layer Transform"};
@@ -4213,11 +4743,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     auto rackLayout = new QVBoxLayout();
 
     impl_->racks[i].listWidget = new QListWidget();
-    const bool rasterizerRack =
-        stageFromRackIndex(i) == EffectPipelineStage::Rasterizer;
-    rackGroup->setVisible(rasterizerRack);
-    impl_->racks[i].listWidget->setMinimumHeight(rasterizerRack ? 72 : 36);
-    impl_->racks[i].listWidget->setMaximumHeight(rasterizerRack ? 100 : 56);
+    impl_->racks[i].listWidget->setMinimumHeight(72);
+    impl_->racks[i].listWidget->setMaximumHeight(180);
     impl_->racks[i].listWidget->setUniformItemSizes(true);
     impl_->racks[i].listWidget->setSelectionMode(QAbstractItemView::ExtendedSelection);
     impl_->racks[i].listWidget->setToolTip(
@@ -4238,6 +4765,8 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
     applyInspectorButton(impl_->racks[i].removeButton, false);
     applyInspectorButton(impl_->racks[i].moveUpButton, false);
     applyInspectorButton(impl_->racks[i].moveDownButton, false);
+    impl_->racks[i].addButton->setVisible(false);
+    impl_->racks[i].addButton->setEnabled(false);
     btnLayout->addWidget(impl_->racks[i].addButton);
     btnLayout->addWidget(impl_->racks[i].moveUpButton);
     btnLayout->addWidget(impl_->racks[i].moveDownButton);
@@ -4254,7 +4783,7 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
                                    kInspectorRackMarginB);
     rackGroup->setLayout(rackLayout);
 
-    effectsLayout->addWidget(rackGroup);
+    stackPanelLayout->addWidget(rackGroup);
 
     // Button signals
     QObject::connect(impl_->racks[i].addButton, &QPushButton::clicked, this,
@@ -4348,8 +4877,15 @@ ArtifactInspectorWidget::ArtifactInspectorWidget(QWidget *parent /*= nullptr*/)
           }
         });
   }
+  stackPanelLayout->addStretch(1);
+  effectsSplitter->addWidget(stackPanel);
+  effectsSplitter->addWidget(detailPanel);
+  effectsSplitter->setStretchFactor(0, 3);
+  effectsSplitter->setStretchFactor(1, 4);
+  effectsLayout->addWidget(effectsSplitter, 1);
+  QObject::connect(impl_->effectsQuickAddButton, &QPushButton::clicked, this,
+                   [this]() { impl_->handleAddEffectClicked(-1); });
 
-  effectsLayout->addStretch();
   effectsLayout->setContentsMargins(
       kInspectorSectionMarginL, kInspectorSectionMarginT,
       kInspectorSectionMarginR, kInspectorSectionMarginB);

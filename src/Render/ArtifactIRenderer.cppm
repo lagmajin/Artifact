@@ -369,6 +369,9 @@ namespace {
    RefCntAutoPtr<IFence>   fence;
    Uint64 signaledValue  = 0;  // value last EnqueueSignal()'d
    Uint64 completedValue = 0;  // value last observed as completed
+   Uint32 width = 0;
+   Uint32 height = 0;
+   TEXTURE_FORMAT format = TEX_FORMAT_UNKNOWN;
   };
   struct AsyncReadbackSlot {
    RefCntAutoPtr<ITexture> staging;
@@ -384,9 +387,6 @@ namespace {
   mutable std::array<AsyncReadbackSlot, kAsyncReadbackRingSize> m_asyncReadbackRing;
   mutable Uint32       m_readbackRingIndex = 0;
   mutable Uint32       m_asyncReadbackRingIndex = 0;
-  mutable Uint32       m_readbackStagingWidth = 0;
-  mutable Uint32       m_readbackStagingHeight = 0;
-  mutable TEXTURE_FORMAT m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
   mutable Uint32       m_asyncReadbackStagingWidth = 0;
   mutable Uint32       m_asyncReadbackStagingHeight = 0;
   mutable TEXTURE_FORMAT m_asyncReadbackStagingFormat = TEX_FORMAT_UNKNOWN;
@@ -1228,55 +1228,56 @@ namespace {
   }
 
   const TEXTURE_FORMAT srcFormat = srcTex->GetDesc().Format;
-  const bool useFloatReadback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
+  const bool useFloat16Readback = (srcFormat == TEX_FORMAT_RGBA16_FLOAT);
+  const bool useFloat32Readback = (srcFormat == TEX_FORMAT_RGBA32_FLOAT);
+  const bool useFloatReadback = useFloat16Readback || useFloat32Readback;
   const TEXTURE_FORMAT stagingFormat =
-      useFloatReadback ? TEX_FORMAT_RGBA16_FLOAT : TEX_FORMAT_RGBA8_UNORM;
+      useFloatReadback ? srcFormat : TEX_FORMAT_RGBA8_UNORM;
 
-  // Staging textures mirror the source format so we can either memcpy raw bytes
-  // for 8-bit sources or unpack half-floats for the HDR swap chain path. A 2-slot
-  // ring is (re)allocated as a unit whenever the dimensions/format change.
-  const bool ringNeedsRealloc =
-      (m_readbackStagingWidth  != srcWidth) ||
-      (m_readbackStagingHeight != srcHeight) ||
-      (m_readbackStagingFormat != stagingFormat);
-  if (ringNeedsRealloc) {
-    for (auto& slot : m_readbackRing) {
-      TextureDesc stagDesc = srcTex->GetDesc();
-      stagDesc.Name           = "ReadbackStagingTexture";
-      stagDesc.Width          = srcWidth;
-      stagDesc.Height         = srcHeight;
-      stagDesc.MipLevels      = 1;
-      stagDesc.Format         = stagingFormat;
-      stagDesc.Usage          = USAGE_STAGING;
-      stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
-      stagDesc.BindFlags      = BIND_NONE;
-      stagDesc.SampleCount    = 1;
-      stagDesc.ClearValue.Format = TEX_FORMAT_UNKNOWN;
-      device->CreateTexture(stagDesc, nullptr, &slot.staging);
-      if (!slot.staging) return {};
-
-      FenceDesc fDesc;
-      fDesc.Name = "ReadbackFence";
-      fDesc.Type = FENCE_TYPE_GENERAL;
-      device->CreateFence(fDesc, &slot.fence);
-      if (!slot.fence) return {};
-      slot.signaledValue  = 0;
-      slot.completedValue = 0;
-    }
-    m_readbackStagingWidth  = srcWidth;
-    m_readbackStagingHeight = srcHeight;
-    m_readbackStagingFormat = stagingFormat;
-    m_readbackRingIndex = 0;
-  }
-
-  // Advance to the next ring slot. If the *other* slot still has a copy in
-  // flight, wait for it before we overwrite it — but in the steady state of
-  // alternating captures this wait is already satisfied, so it adds no latency.
+  // Each ring slot owns its format and dimensions. Layer and accumulator
+  // diagnostics alternate between RGBA8 and RGBA32F, so a single global format
+  // descriptor would recreate both slots on every readback.
   ReadbackSlot& slot = m_readbackRing[m_readbackRingIndex];
   m_readbackRingIndex = (m_readbackRingIndex + 1) % kReadbackRingSize;
-  if (slot.signaledValue > slot.completedValue) {
+  if (slot.fence && slot.signaledValue > slot.completedValue) {
     slot.fence->Wait(slot.signaledValue);
     slot.completedValue = slot.signaledValue;
+  }
+  const bool slotNeedsRealloc =
+      !slot.staging || !slot.fence || slot.width != srcWidth ||
+      slot.height != srcHeight || slot.format != stagingFormat;
+  if (slotNeedsRealloc) {
+    // Diligent requires output RefCntAutoPtr values to be empty before Create*.
+    slot.staging = nullptr;
+    slot.fence = nullptr;
+    slot.signaledValue = 0;
+    slot.completedValue = 0;
+
+    TextureDesc stagDesc = srcTex->GetDesc();
+    stagDesc.Name = "ReadbackStagingTexture";
+    stagDesc.Width = srcWidth;
+    stagDesc.Height = srcHeight;
+    stagDesc.MipLevels = 1;
+    stagDesc.Format = stagingFormat;
+    stagDesc.Usage = USAGE_STAGING;
+    stagDesc.CPUAccessFlags = CPU_ACCESS_READ;
+    stagDesc.BindFlags = BIND_NONE;
+    stagDesc.SampleCount = 1;
+    stagDesc.ClearValue.Format = TEX_FORMAT_UNKNOWN;
+    device->CreateTexture(stagDesc, nullptr, &slot.staging);
+    if (!slot.staging) return {};
+
+    FenceDesc fDesc;
+    fDesc.Name = "ReadbackFence";
+    fDesc.Type = FENCE_TYPE_GENERAL;
+    device->CreateFence(fDesc, &slot.fence);
+    if (!slot.fence) {
+      slot.staging = nullptr;
+      return {};
+    }
+    slot.width = srcWidth;
+    slot.height = srcHeight;
+    slot.format = stagingFormat;
   }
 
   // Flush queued draws before reading back so both the 2D command buffer and
@@ -1312,7 +1313,10 @@ namespace {
                 QImage::Format_RGBA8888);
   const size_t copyRowBytes = static_cast<size_t>(srcWidth) * 4u;
   const size_t sourceRowBytes =
-      useFloatReadback ? static_cast<size_t>(srcWidth) * 8u : copyRowBytes;
+      useFloat16Readback
+          ? static_cast<size_t>(srcWidth) * 8u
+          : (useFloat32Readback ? static_cast<size_t>(srcWidth) * 16u
+                                : copyRowBytes);
   if (mapped.Stride < sourceRowBytes) {
    ctx->UnmapTextureSubresource(slot.staging, 0, 0);
    return {};
@@ -1323,17 +1327,25 @@ namespace {
     std::memcpy(result.scanLine(static_cast<int>(row)), srcRow, copyRowBytes);
     srcRow += mapped.Stride;
    }
-  } else {
+  } else if (useFloat16Readback) {
    const auto* srcRow = static_cast<const uint16_t*>(mapped.pData);
+   std::size_t nonFiniteCount = 0;
    for (Uint32 row = 0; row < srcHeight; ++row) {
     auto* dst = result.scanLine(static_cast<int>(row));
     const auto* srcHalf = srcRow;
     for (Uint32 x = 0; x < srcWidth; ++x) {
      // Half-float -> 8-bit sRGB for the HDR swap chain path.
-     const float r = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 0]), 0.0f, 1.0f);
-     const float g = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]), 0.0f, 1.0f);
-     const float b = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]), 0.0f, 1.0f);
-     const float a = std::clamp(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]), 0.0f, 1.0f);
+     const auto sanitize = [&nonFiniteCount](const float value) {
+       if (!std::isfinite(value)) {
+         ++nonFiniteCount;
+         return 0.0f;
+       }
+       return std::clamp(value, 0.0f, 1.0f);
+     };
+     const float r = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 0]));
+     const float g = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 1]));
+     const float b = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 2]));
+     const float a = sanitize(Float16::HalfBitsToFloat(srcHalf[x * 4 + 3]));
      dst[x * 4 + 0] = linearToSrgb8(r);
      dst[x * 4 + 1] = linearToSrgb8(g);
      dst[x * 4 + 2] = linearToSrgb8(b);
@@ -1341,6 +1353,40 @@ namespace {
     }
     srcRow = reinterpret_cast<const uint16_t*>(
         reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
+   }
+   if (nonFiniteCount > 0) {
+    qWarning() << "[ArtifactIRenderer] RGBA16F readback contained"
+               << nonFiniteCount << "non-finite channel values";
+   }
+  } else {
+   const auto* srcRow = static_cast<const float*>(mapped.pData);
+   std::size_t nonFiniteCount = 0;
+   for (Uint32 row = 0; row < srcHeight; ++row) {
+    auto* dst = result.scanLine(static_cast<int>(row));
+    const auto* srcFloat = srcRow;
+    for (Uint32 x = 0; x < srcWidth; ++x) {
+     const auto sanitize = [&nonFiniteCount](const float value) {
+       if (!std::isfinite(value)) {
+         ++nonFiniteCount;
+         return 0.0f;
+       }
+       return std::clamp(value, 0.0f, 1.0f);
+     };
+     const float r = sanitize(srcFloat[x * 4 + 0]);
+     const float g = sanitize(srcFloat[x * 4 + 1]);
+     const float b = sanitize(srcFloat[x * 4 + 2]);
+     const float a = sanitize(srcFloat[x * 4 + 3]);
+     dst[x * 4 + 0] = linearToSrgb8(r);
+     dst[x * 4 + 1] = linearToSrgb8(g);
+     dst[x * 4 + 2] = linearToSrgb8(b);
+     dst[x * 4 + 3] = static_cast<uint8_t>(a * 255.0f + 0.5f);
+    }
+    srcRow = reinterpret_cast<const float*>(
+        reinterpret_cast<const uint8_t*>(srcRow) + mapped.Stride);
+   }
+   if (nonFiniteCount > 0) {
+    qWarning() << "[ArtifactIRenderer] RGBA32F readback contained"
+               << nonFiniteCount << "non-finite channel values";
    }
   }
   ctx->UnmapTextureSubresource(slot.staging, 0, 0);
@@ -2012,6 +2058,9 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
    slot.fence   = nullptr;
    slot.signaledValue  = 0;
    slot.completedValue = 0;
+   slot.width = 0;
+   slot.height = 0;
+   slot.format = TEX_FORMAT_UNKNOWN;
   }
   for (auto& slot : m_asyncReadbackRing) {
    slot.staging = nullptr;
@@ -2025,9 +2074,6 @@ std::vector<ArtifactCore::FrameDebugPassRecord> ArtifactIRenderer::Impl::frameDe
   }
   m_readbackRingIndex    = 0;
   m_asyncReadbackRingIndex = 0;
-  m_readbackStagingWidth  = 0;
-  m_readbackStagingHeight = 0;
-  m_readbackStagingFormat = TEX_FORMAT_UNKNOWN;
   m_asyncReadbackStagingWidth = 0;
   m_asyncReadbackStagingHeight = 0;
   m_asyncReadbackStagingFormat = TEX_FORMAT_UNKNOWN;

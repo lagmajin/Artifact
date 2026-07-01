@@ -2236,7 +2236,7 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
   }
   if (impl_->summaryLabel_) {
     if (strips.isEmpty()) {
-      impl_->summaryLabel_->setText(QStringLiteral("No active layers"));
+      impl_->summaryLabel_->setText(QStringLiteral("Unavailable"));
     } else {
       impl_->summaryLabel_->setText(QStringLiteral("%1 layers · %2 FX · %3 solo · %4 mute")
                                         .arg(strips.size())
@@ -2246,23 +2246,35 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
     }
   }
 
-  if (auto *masterBus = impl_->mixer_->masterBus()) {
-    impl_->contentLayout_->addWidget(
-        new AudioMixerMasterRow(masterBus, impl_->contentWidget_));
-  }
   if (strips.isEmpty()) {
     impl_->emptyLabel_ =
-        new QLabel(QStringLiteral("No audio layers in the current composition"),
+        new QLabel(QStringLiteral("Audio Mixer is unavailable until the composition has audio layers"),
                    impl_->contentWidget_);
     impl_->emptyLabel_->setAlignment(Qt::AlignCenter);
-    impl_->emptyLabel_->setFixedWidth(180);
+    impl_->emptyLabel_->setWordWrap(true);
+    impl_->emptyLabel_->setMinimumWidth(260);
+    impl_->emptyLabel_->setMaximumWidth(420);
+    impl_->emptyLabel_->setSizePolicy(QSizePolicy::Expanding,
+                                      QSizePolicy::Preferred);
+    impl_->emptyLabel_->setEnabled(false);
     impl_->emptyLabel_->setAutoFillBackground(true);
     QPalette emptyPalette = impl_->emptyLabel_->palette();
-    emptyPalette.setColor(QPalette::WindowText, QColor(125, 139, 153));
-    emptyPalette.setColor(QPalette::Window, QColor(26, 32, 39));
+    emptyPalette.setColor(QPalette::WindowText, QColor(145, 155, 165));
+    emptyPalette.setColor(QPalette::Window, QColor(22, 27, 32));
+    emptyPalette.setColor(QPalette::Base, QColor(22, 27, 32));
+    emptyPalette.setColor(QPalette::Disabled, QPalette::WindowText,
+                          QColor(108, 117, 126));
+    emptyPalette.setColor(QPalette::Disabled, QPalette::Window,
+                          QColor(20, 23, 26));
     impl_->emptyLabel_->setPalette(emptyPalette);
+    impl_->contentLayout_->addStretch();
     impl_->contentLayout_->addWidget(impl_->emptyLabel_);
+    impl_->contentLayout_->addStretch();
   } else {
+    if (auto *masterBus = impl_->mixer_->masterBus()) {
+      impl_->contentLayout_->addWidget(
+          new AudioMixerMasterRow(masterBus, impl_->contentWidget_));
+    }
     impl_->contentLayout_->addWidget(
         new AudioStripSeparatorWidget(impl_->contentWidget_));
     for (int i = 0; i < strips.size(); ++i) {
@@ -2275,7 +2287,9 @@ void ArtifactCompositionAudioMixerWidget::refreshFromCurrentComposition() {
       }
     }
   }
-  impl_->contentLayout_->addStretch();
+  if (!strips.isEmpty()) {
+    impl_->contentLayout_->addStretch();
+  }
 }
 
 } // namespace Artifact

@@ -3838,20 +3838,25 @@ public:
 
 protected:
   void mousePressEvent(QMouseEvent *event) override {
-    if (event && event->button() == Qt::LeftButton && activatedCallback_) {
-      activatedCallback_();
-      event->accept();
-      return;
-    }
+    pressedInside_ =
+        event && event->button() == Qt::LeftButton && rect().contains(event->position().toPoint());
     QToolButton::mousePressEvent(event);
   }
 
   void mouseReleaseEvent(QMouseEvent *event) override {
+    const bool activate =
+        pressedInside_ && event && event->button() == Qt::LeftButton &&
+        rect().contains(event->position().toPoint());
+    pressedInside_ = false;
     QToolButton::mouseReleaseEvent(event);
+    if (activate && activatedCallback_) {
+      activatedCallback_();
+    }
   }
 
 private:
   std::function<void()> activatedCallback_;
+  bool pressedInside_ = false;
 };
 
 class CompositionOverlayWidget final : public QWidget {
@@ -5177,10 +5182,15 @@ ArtifactCompositionEditor::ArtifactCompositionEditor(QWidget *parent)
 
   impl_->viewportLayoutButton_ = new ViewportLayoutButton(impl_->topToolbar_);
   impl_->viewportLayoutButton_->setText(impl_->viewportLayoutLabel());
-  impl_->viewportLayoutButton_->setMinimumWidth(72);
+  impl_->viewportLayoutButton_->setFixedWidth(72);
+  impl_->viewportLayoutButton_->setAutoRaise(true);
+  impl_->viewportLayoutButton_->setToolButtonStyle(Qt::ToolButtonTextOnly);
+  impl_->viewportLayoutButton_->setSizePolicy(QSizePolicy::Fixed,
+                                               QSizePolicy::Preferred);
   impl_->viewportLayoutButton_->setToolTip(
       QStringLiteral("Cycle the viewport layout between 1, 2, and 4 views"));
   impl_->topToolbar_->addWidget(impl_->viewportLayoutButton_);
+  impl_->topToolbar_->addSeparator();
   auto setViewportLayout = [this](ArtifactCompositionEditor::Impl::ViewportLayoutMode mode) {
     if (!impl_) {
       return;

@@ -1307,7 +1307,10 @@ QIcon ArtifactAssetBrowser::Impl::fileTypeIconFor(const QString& fileName) const
   {QStringLiteral("aseprite"), QStringLiteral("asset_file_aseprite.svg")}
  };
 
- const QString iconName = iconBySuffix.value(suffix);
+ QString iconName = iconBySuffix.value(suffix);
+ if (!iconName.isEmpty()) {
+  iconName.replace(QStringLiteral(".svg"), QStringLiteral("_ext.svg"));
+ }
  if (!iconName.isEmpty()) {
   const QIcon icon(QStringLiteral(":/icons/Studio/%1").arg(iconName));
   if (!icon.isNull()) {

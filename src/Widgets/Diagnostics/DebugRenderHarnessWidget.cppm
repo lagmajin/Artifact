@@ -224,6 +224,7 @@ public:
         summary_->setPalette(palette);
         summary_->setTextFormat(Qt::PlainText);
         summary_->setWordWrap(true);
+        summary_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         summary_->setMinimumHeight(48);
         layout->addWidget(summary_);
 
@@ -236,6 +237,7 @@ public:
         reportMeta_->setPalette(palette);
         reportMeta_->setTextFormat(Qt::PlainText);
         reportMeta_->setWordWrap(false);
+        reportMeta_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
         reportMeta_->setMinimumHeight(24);
         reportBarLayout->addWidget(reportMeta_);
         reportBarLayout->addStretch();
@@ -700,7 +702,7 @@ public:
             ? mediaStateFromResource(snapshot_, QStringLiteral("text"), QStringLiteral("Glyph Atlas"))
             : QStringLiteral("none");
         const QString videoState = hasSnapshot_
-            ? mediaStateFromResource(snapshot_, QStringLiteral("video"), QStringLiteral("Video Decode"))
+            ? videoStateText()
             : QStringLiteral("none");
         const QString blendState = hasSnapshot_
             ? mediaStateFromResource(snapshot_, QStringLiteral("composition"), QStringLiteral("Render Path"))
@@ -869,7 +871,26 @@ public:
 
     QString videoStateText() const
     {
-        return mediaStateFromResource(snapshot_, QStringLiteral("video"), QStringLiteral("Video Decode"));
+        const QString snapshotState =
+            mediaStateFromResource(snapshot_, QStringLiteral("video"),
+                                   QStringLiteral("Video Decode"));
+        if (snapshotState != QStringLiteral("none")) {
+            return snapshotState;
+        }
+
+        const QString preset = scenePreset_.trimmed();
+        if (preset != QStringLiteral("video-only") &&
+            preset != QStringLiteral("mixed-media")) {
+            return QStringLiteral("none");
+        }
+
+        auto* fixture = ensureVideoFixtureLayer();
+        if (!fixture) {
+            return QStringLiteral("fixture-missing source=unresolved");
+        }
+        const QString state = fixture->decodeState().trimmed();
+        return state.isEmpty() ? QStringLiteral("fixture-present state=unknown")
+                               : QStringLiteral("fixture %1").arg(state);
     }
 
     QString textStateText() const

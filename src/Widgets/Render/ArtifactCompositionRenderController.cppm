@@ -172,6 +172,74 @@ QImage ensurePreviewImage(const QImage& image) {
              : image.convertToFormat(QImage::Format_RGBA8888);
 }
 
+QString previewPixelStats(const QImage& source) {
+  const QImage image = ensurePreviewImage(source);
+  if (image.isNull() || image.width() <= 0 || image.height() <= 0) {
+    return QStringLiteral("state=unavailable");
+  }
+
+  constexpr qint64 kMaxSamples = 65536;
+  const qint64 pixelCount =
+      static_cast<qint64>(image.width()) * static_cast<qint64>(image.height());
+  const int step =
+      std::max(1, static_cast<int>(std::ceil(
+                      std::sqrt(static_cast<double>(pixelCount) /
+                                static_cast<double>(kMaxSamples)))));
+  std::array<int, 4> minimum = {255, 255, 255, 255};
+  std::array<int, 4> maximum = {0, 0, 0, 0};
+  qint64 samples = 0;
+  qint64 rgbZero = 0;
+  qint64 rgbFull = 0;
+  qint64 blueDominant = 0;
+
+  for (int y = 0; y < image.height(); y += step) {
+    const auto* row = image.constScanLine(y);
+    for (int x = 0; x < image.width(); x += step) {
+      const auto* pixel = row + x * 4;
+      for (int channel = 0; channel < 4; ++channel) {
+        const int value = pixel[channel];
+        minimum[channel] = std::min(minimum[channel], value);
+        maximum[channel] = std::max(maximum[channel], value);
+      }
+      rgbZero += (pixel[0] == 0) + (pixel[1] == 0) + (pixel[2] == 0);
+      rgbFull += (pixel[0] == 255) + (pixel[1] == 255) + (pixel[2] == 255);
+      if (pixel[2] >= 240 && pixel[2] >= pixel[0] + 32 &&
+          pixel[2] >= pixel[1] + 32) {
+        ++blueDominant;
+      }
+      ++samples;
+    }
+  }
+
+  const double rgbDenominator =
+      std::max(1.0, static_cast<double>(samples) * 3.0);
+  const double sampleDenominator =
+      std::max(1.0, static_cast<double>(samples));
+  return QStringLiteral(
+             "state=sampled domain=post-readback-sdr samples=%1 step=%2 "
+             "min=%3,%4,%5,%6 max=%7,%8,%9,%10 "
+             "rgbZeroPct=%11 rgbFullPct=%12 blueDominantPct=%13")
+      .arg(samples)
+      .arg(step)
+      .arg(minimum[0])
+      .arg(minimum[1])
+      .arg(minimum[2])
+      .arg(minimum[3])
+      .arg(maximum[0])
+      .arg(maximum[1])
+      .arg(maximum[2])
+      .arg(maximum[3])
+      .arg(QString::number(100.0 * static_cast<double>(rgbZero) /
+                               rgbDenominator,
+                           'f', 2))
+      .arg(QString::number(100.0 * static_cast<double>(rgbFull) /
+                               rgbDenominator,
+                           'f', 2))
+      .arg(QString::number(100.0 * static_cast<double>(blueDominant) /
+                               sampleDenominator,
+                           'f', 2));
+}
+
 QImage makePreviewDiffImage(const QImage& before, const QImage& after) {
   if (before.isNull() || after.isNull() || before.size() != after.size()) {
     return {};
@@ -3892,6 +3960,8 @@ public:
   FloatColor viewportClearColor_;
   QImage lastLayerRtPreview_;
   QImage lastAccumRtPreview_;
+  QString lastLayerRtPixelStats_;
+  QString lastAccumRtPixelStats_;
   Diligent::ITextureView* lastPresentedReadbackSRV_ = nullptr;
   FloatColor lastBgColorCache_ = {-1.f, -1.f, -1.f, -1.f};
   CompositionID lastBackgroundCompositionId_;
@@ -5762,6 +5832,26 @@ CompositionRenderController::frameDebugSnapshot() const {
     }
     ArtifactCore::TraceRecorder::instance().recordScope(traceScope);
   };
+
+  if (impl_->renderer_) {
+    const int slotIndex = std::clamp(
+        impl_->activePreviewRenderPipelineSlot_, 0,
+        Impl::kPreviewRenderPipelineSlotCount - 1);
+    auto &diagnosticPipeline =
+        impl_->previewRenderPipelineSlots_[slotIndex].pipeline;
+    if (diagnosticPipeline.ready()) {
+      impl_->lastLayerRtPreview_ =
+          impl_->renderer_->readbackTextureViewToImage(
+              diagnosticPipeline.layerRTV());
+      impl_->lastAccumRtPreview_ =
+          impl_->renderer_->readbackTextureViewToImage(
+              diagnosticPipeline.accumRTV());
+      impl_->lastLayerRtPixelStats_ =
+          previewPixelStats(impl_->lastLayerRtPreview_);
+      impl_->lastAccumRtPixelStats_ =
+          previewPixelStats(impl_->lastAccumRtPreview_);
+    }
+  }
 
   ArtifactCore::FrameDebugSnapshot snapshot;
   const auto comp = impl_->previewPipeline_.composition();
@@ -8592,6 +8682,10 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         previewRenderSlot.depthTargetView != nullptr &&
         !previewRenderSlotAcquireHazard &&
         !transparentCompositionBackgroundRequested;
+    if (!pipelineEnabled) {
+      lastLayerRtPixelStats_.clear();
+      lastAccumRtPixelStats_.clear();
+    }
     previewRenderSlot.state = pipelineEnabled
                                   ? PreviewRenderPipelineSlot::State::Ready
                                   : PreviewRenderPipelineSlot::State::Free;
@@ -9064,12 +9158,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
         }
       }
 
-      if (renderer_) {
-        lastLayerRtPreview_ = renderer_->readbackTextureViewToImage(layerRTV);
-        lastAccumRtPreview_ =
-            renderer_->readbackTextureViewToImage(renderPipeline.accumRTV());
-      }
-
       // ==== オフスクリーン描画後: ホスト viewport に戻す ====
       renderer_->setViewportRect(origViewW, origViewH);
 
@@ -9122,7 +9210,6 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
       renderer_->setPan(0.0f, 0.0f);
       renderer_->drawSprite(0.0f, 0.0f, rcw, rch, finalPresentSRV,
                             1.0f);
-
       // コンポジションのキャンバス座標系に戻す
       if (compositionRenderer_) {
         compositionRenderer_->SetCompositionSize(cw, ch);
@@ -10472,7 +10559,8 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             "maskContract=%2 pipelineFormat=RGBA32F layerFormat=RGBA8_sRGB layerComputeFormat=RGBA32F "
             "layersDrawn=%3 nonNormal=%4 maskedLayers=%5 masks=%6 "
             "dispatch=%7 retryNormal=%8 failed=%9 directFallback=%10 "
-            "layerToFloatConvert=%11 notes=%12")
+            "layerToFloatConvert=%11 layerPixels={%12} accumPixels={%13} "
+            "notes=%14")
             .arg(pipelineEnabled ? QStringLiteral("gpu-blend")
                                  : QStringLiteral("fallback"))
             .arg(totalMaskCount > 0 ? QStringLiteral("pending")
@@ -10486,6 +10574,12 @@ void CompositionRenderController::Impl::renderOneFrameImpl(
             .arg(blendFailureCount)
             .arg(directBlendFallbackCount)
             .arg(layerToFloatConvertCount)
+            .arg(lastLayerRtPixelStats_.isEmpty()
+                     ? QStringLiteral("state=unavailable")
+                     : lastLayerRtPixelStats_)
+            .arg(lastAccumRtPixelStats_.isEmpty()
+                     ? QStringLiteral("state=unavailable")
+                     : lastAccumRtPixelStats_)
             .arg(blendMaskLayerNotes.isEmpty()
                      ? QStringLiteral("none")
                      : blendMaskLayerNotes.join(QStringLiteral("; ")));

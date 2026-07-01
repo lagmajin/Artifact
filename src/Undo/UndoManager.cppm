@@ -49,6 +49,8 @@ import Artifact.Layer.Abstract;
 import Artifact.Layer.Matte;
 import Artifact.Mask.LayerMask;
 import Artifact.Composition.Abstract;
+import Artifact.Event.Types;
+import Event.Bus;
 import Animation.Transform3D;
 import Time.Rational;
 import Artifact.Layers.Selection.Manager;
@@ -401,11 +403,29 @@ QString SetLayerShyCommand::label() const {
 ChangeLayerBlendModeCommand::ChangeLayerBlendModeCommand(ArtifactAbstractLayerPtr layer, LAYER_BLEND_TYPE newMode)
     : layer_(layer), oldMode_(layer ? layer->layerBlendType() : LAYER_BLEND_TYPE::BLEND_NORMAL), newMode_(newMode) {}
 
+namespace {
+
+void notifyLayerBlendModeChanged(const ArtifactAbstractLayerPtr& layer) {
+    if (!layer) {
+        return;
+    }
+    if (auto* composition =
+            static_cast<ArtifactAbstractComposition*>(layer->composition())) {
+        ArtifactCore::globalEventBus().publish<LayerChangedEvent>(
+            LayerChangedEvent{composition->id().toString(),
+                              layer->id().toString(),
+                              LayerChangedEvent::ChangeType::Modified});
+    }
+}
+
+}
+
 void ChangeLayerBlendModeCommand::undo() {
     auto layer = layer_.lock();
     if (layer) {
         layer->setBlendMode(oldMode_);
         layer->changed();
+        notifyLayerBlendModeChanged(layer);
         if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
     }
 }
@@ -415,6 +435,7 @@ void ChangeLayerBlendModeCommand::redo() {
     if (layer) {
         layer->setBlendMode(newMode_);
         layer->changed();
+        notifyLayerBlendModeChanged(layer);
         if (auto mgr = UndoManager::instance()) mgr->notifyAnythingChanged();
     }
 }

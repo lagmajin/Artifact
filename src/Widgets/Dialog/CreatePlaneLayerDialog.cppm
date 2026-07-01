@@ -1035,6 +1035,11 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(
     }
 
     chrome.scrollLayout->addWidget(makeSectionHeader(u8"作成", chrome.scrollContent));
+    // Settings page (サイズ + カラー sections)
+    auto* settingPage = impl_->settingPage = new PlaneLayerSettingPage(chrome.scrollContent);
+    settingPage->resizeCompositionSize();
+    chrome.scrollLayout->addWidget(settingPage);
+
     {
         impl_->placementCombo = new QComboBox(chrome.scrollContent);
         impl_->placementCombo->addItem(
@@ -1049,10 +1054,6 @@ CreateSolidLayerSettingDialog::CreateSolidLayerSettingDialog(
             makeRow(chrome.scrollContent, u8"作成位置", 100, impl_->placementCombo));
     }
 
-    // Settings page (サイズ + カラー sections)
-    auto* settingPage = impl_->settingPage = new PlaneLayerSettingPage(chrome.scrollContent);
-    settingPage->resizeCompositionSize();
-    chrome.scrollLayout->addWidget(settingPage);
     chrome.scrollLayout->addStretch();
 
     // Connections
