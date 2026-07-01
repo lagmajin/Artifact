@@ -75,6 +75,66 @@ public:
         if (type == QStringLiteral("remove_effect")) {
             return executeRemoveEffect(request);
         }
+        if (type == QStringLiteral("get_scene_info")) {
+            return executeGetSceneInfo(request);
+        }
+        if (type == QStringLiteral("get_layer_info")) {
+            return executeGetLayerInfo(request);
+        }
+        if (type == QStringLiteral("create_composition")) {
+            return executeCreateComposition(request);
+        }
+        if (type == QStringLiteral("switch_composition")) {
+            return executeSwitchComposition(request);
+        }
+        if (type == QStringLiteral("import_asset")) {
+            return executeImportAsset(request);
+        }
+        if (type == QStringLiteral("duplicate_layer")) {
+            return executeDuplicateLayer(request);
+        }
+        if (type == QStringLiteral("group_layers")) {
+            return executeGroupLayers(request);
+        }
+        if (type == QStringLiteral("set_layer_parent")) {
+            return executeSetLayerParent(request);
+        }
+        if (type == QStringLiteral("split_layer")) {
+            return executeSplitLayer(request);
+        }
+        if (type == QStringLiteral("get_keyframes")) {
+            return executeGetKeyframes(request);
+        }
+        if (type == QStringLiteral("delete_keyframe")) {
+            return executeDeleteKeyframe(request);
+        }
+        if (type == QStringLiteral("set_work_area")) {
+            return executeSetWorkArea(request);
+        }
+        if (type == QStringLiteral("add_marker")) {
+            return executeAddMarker(request);
+        }
+        if (type == QStringLiteral("set_effect_parameter")) {
+            return executeSetEffectParameter(request);
+        }
+        if (type == QStringLiteral("set_effect_enabled")) {
+            return executeSetEffectEnabled(request);
+        }
+        if (type == QStringLiteral("list_available_effects")) {
+            return executeListAvailableEffects(request);
+        }
+        if (type == QStringLiteral("start_render_queue")) {
+            return executeStartRenderQueue(request);
+        }
+        if (type == QStringLiteral("get_render_status")) {
+            return executeGetRenderStatus(request);
+        }
+        if (type == QStringLiteral("list_compositions")) {
+            return executeListCompositions(request);
+        }
+        if (type == QStringLiteral("list_project_items")) {
+            return executeListProjectItems(request);
+        }
 
         result.error = QStringLiteral("Unsupported command type: ") + type;
         return result;
@@ -422,6 +482,404 @@ private:
         if (!result.success) {
             result.error = QStringLiteral("removeEffect failed");
         }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeGetSceneInfo(const ArtifactCore::CommandRequest&)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = QStringLiteral("get_scene_info");
+        result.undoLabel = QStringLiteral("Get Scene Info");
+
+        QVariantMap info;
+        info.insert(QStringLiteral("project"), WorkspaceAutomation::projectSnapshot());
+        info.insert(QStringLiteral("composition"), WorkspaceAutomation::currentCompositionSnapshot());
+        info.insert(QStringLiteral("layers"), WorkspaceAutomation::listCurrentCompositionLayers());
+        info.insert(QStringLiteral("selection"), WorkspaceAutomation::selectionSnapshot());
+
+        result.success = true;
+        result.valid = true;
+        result.executed = true;
+        QVariantMap details;
+        details.insert(QStringLiteral("scene"), info);
+        result.diagnostics = details;
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeGetLayerInfo(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = QStringLiteral("get_layer_info");
+        result.undoLabel = QStringLiteral("Get Layer Info");
+
+        const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
+
+        QVariantList args{layerId};
+        QVariantList info;
+        info.append(WorkspaceAutomation::invokeMethod(QStringLiteral("getLayerPosition"), args));
+        info.append(WorkspaceAutomation::invokeMethod(QStringLiteral("getLayerScale"), args));
+        info.append(WorkspaceAutomation::invokeMethod(QStringLiteral("getLayerRotation"), args));
+        info.append(WorkspaceAutomation::invokeMethod(QStringLiteral("getLayerOpacity"), args));
+
+        result.success = true;
+        result.valid = true;
+        result.executed = true;
+        QVariantMap details;
+        details.insert(QStringLiteral("layerId"), layerId);
+        details.insert(QStringLiteral("properties"), info);
+        result.diagnostics = details;
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeCreateComposition(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Create Composition");
+
+        const QString name = request.arguments.value(QStringLiteral("name")).toString();
+        int w = request.arguments.value(QStringLiteral("width"), 1920).toInt();
+        int h = request.arguments.value(QStringLiteral("height"), 1080).toInt();
+
+        QVariantList args{name, w, h};
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("createComposition"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("createComposition failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeSwitchComposition(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Switch Composition");
+
+        const QString compId = request.arguments.value(QStringLiteral("compositionId")).toString();
+        QVariantList args{compId};
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("changeCurrentComposition"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("switchComposition failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeImportAsset(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Import Asset");
+
+        const QVariantList paths = request.arguments.value(QStringLiteral("filePaths")).toList();
+        QStringList filePaths;
+        for (const QVariant& p : paths) {
+            filePaths.append(p.toString());
+        }
+
+        QVariantList args;
+        args.append(QVariant::fromValue(filePaths));
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("importAssetsFromPaths"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("importAsset failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeDuplicateLayer(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Duplicate Layer");
+
+        const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
+        QVariantList args{layerId};
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("duplicateLayerInCurrentComposition"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("duplicateLayer failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeGroupLayers(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Group Layers");
+
+        const QString groupName = request.arguments.value(QStringLiteral("groupName")).toString();
+        const QVariantList layerIds = request.arguments.value(QStringLiteral("layerIds")).toList();
+
+        QVariantList args{groupName, 1920, 1080};
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("createGroupLayer"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("groupLayers failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeSetLayerParent(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Set Layer Parent");
+
+        const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
+        const QString parentId = request.arguments.value(QStringLiteral("parentLayerId")).toString();
+
+        QVariantList args{layerId, parentId};
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerParentInCurrentComposition"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("setLayerParent failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeSplitLayer(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Split Layer");
+
+        const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
+        QVariantList args{layerId};
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("splitLayerAtCurrentTime"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("splitLayer failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeGetKeyframes(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Get Keyframes");
+
+        const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
+        const QString propertyPath = request.target.value(QStringLiteral("propertyPath")).toString();
+
+        QVariantList args{layerId, propertyPath};
+        QVariant kfs = WorkspaceAutomation::invokeMethod(QStringLiteral("getKeyframes"), args);
+
+        result.success = true;
+        result.executed = true;
+        result.valid = true;
+        QVariantMap details;
+        details.insert(QStringLiteral("keyframes"), kfs);
+        result.diagnostics = details;
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeDeleteKeyframe(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Delete Keyframe");
+
+        const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
+        const QString propertyPath = request.target.value(QStringLiteral("propertyPath")).toString();
+        int frame = request.arguments.value(QStringLiteral("frame")).toInt();
+
+        QVariantList args{layerId, propertyPath, frame};
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("deleteKeyframe"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("deleteKeyframe failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeSetWorkArea(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Set Work Area");
+
+        int startFrame = request.arguments.value(QStringLiteral("startFrame")).toInt();
+        int endFrame = request.arguments.value(QStringLiteral("endFrame")).toInt();
+
+        QVariantList args;
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setWorkArea"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("setWorkArea failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeAddMarker(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Add Marker");
+
+        int frame = request.arguments.value(QStringLiteral("frame")).toInt();
+        const QString label = request.arguments.value(QStringLiteral("label")).toString();
+
+        QVariantList args;
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("playbackAddMarker"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("addMarker failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeSetEffectParameter(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Set Effect Parameter");
+
+        const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
+        int effectIndex = request.arguments.value(QStringLiteral("effectIndex")).toInt();
+        const QString paramName = request.arguments.value(QStringLiteral("paramName")).toString();
+        const QVariant value = request.arguments.value(QStringLiteral("value"));
+
+        QVariantList args{layerId, effectIndex, paramName, value};
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerEffectParameter"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("setEffectParameter failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeSetEffectEnabled(const ArtifactCore::CommandRequest& request)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = request.type;
+        result.undoLabel = QStringLiteral("Set Effect Enabled");
+
+        const QString layerId = request.target.value(QStringLiteral("layerId")).toString();
+        int effectIndex = request.arguments.value(QStringLiteral("effectIndex")).toInt();
+        bool enabled = request.arguments.value(QStringLiteral("enabled")).toBool();
+
+        QVariantList args{layerId, enabled};
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("setLayerEffectEnabled"), args);
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("setEffectEnabled failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeListAvailableEffects(const ArtifactCore::CommandRequest&)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = QStringLiteral("list_available_effects");
+        result.undoLabel = QStringLiteral("List Available Effects");
+
+        QVariantList effects;
+        QVariant presets = WorkspaceAutomation::invokeMethod(QStringLiteral("listLayerEffectPresets"), QVariantList());
+        if (presets.isValid()) {
+            effects.append(presets);
+        }
+
+        result.success = true;
+        result.executed = true;
+        result.valid = true;
+        QVariantMap details;
+        details.insert(QStringLiteral("effects"), effects);
+        result.diagnostics = details;
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeStartRenderQueue(const ArtifactCore::CommandRequest&)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = QStringLiteral("start_render_queue");
+        result.undoLabel = QStringLiteral("Start Render Queue");
+
+        QVariant ok = WorkspaceAutomation::invokeMethod(QStringLiteral("startAllRenderQueues"), QVariantList());
+
+        result.success = ok.isValid() && ok.toBool();
+        result.executed = result.success;
+        if (!result.success) {
+            result.error = QStringLiteral("startRenderQueue failed");
+        }
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeGetRenderStatus(const ArtifactCore::CommandRequest&)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = QStringLiteral("get_render_status");
+        result.undoLabel = QStringLiteral("Get Render Status");
+
+        QVariant status = WorkspaceAutomation::invokeMethod(QStringLiteral("renderQueueSnapshot"), QVariantList());
+
+        result.success = true;
+        result.executed = true;
+        result.valid = true;
+        QVariantMap details;
+        details.insert(QStringLiteral("renderQueue"), status);
+        result.diagnostics = details;
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeListCompositions(const ArtifactCore::CommandRequest&)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = QStringLiteral("list_compositions");
+        result.undoLabel = QStringLiteral("List Compositions");
+
+        QVariant comps = WorkspaceAutomation::invokeMethod(QStringLiteral("listCompositions"), QVariantList());
+
+        result.success = true;
+        result.executed = true;
+        result.valid = true;
+        QVariantMap details;
+        details.insert(QStringLiteral("compositions"), comps);
+        result.diagnostics = details;
+        return result;
+    }
+
+    static ArtifactCore::CommandResult executeListProjectItems(const ArtifactCore::CommandRequest&)
+    {
+        ArtifactCore::CommandResult result;
+        result.type = QStringLiteral("list_project_items");
+        result.undoLabel = QStringLiteral("List Project Items");
+
+        QVariant items = WorkspaceAutomation::invokeMethod(QStringLiteral("listProjectItems"), QVariantList());
+
+        result.success = true;
+        result.executed = true;
+        result.valid = true;
+        QVariantMap details;
+        details.insert(QStringLiteral("projectItems"), items);
+        result.diagnostics = details;
         return result;
     }
 };
